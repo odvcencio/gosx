@@ -2,6 +2,7 @@ package server
 
 import (
 	_ "embed"
+	"html"
 
 	"m31labs.dev/gosx"
 )
@@ -11,7 +12,21 @@ var navigationRuntime string
 
 // NavigationScript returns the inline GoSX page-navigation runtime.
 func NavigationScript() gosx.Node {
-	return gosx.RawHTML(`<script data-gosx-navigation="true">` + navigationRuntime + `</script>`)
+	return NavigationScriptWithNonce("")
+}
+
+// NavigationScriptWithNonce returns the inline GoSX page-navigation runtime
+// with a CSP nonce attribute attached. Passing an empty nonce is equivalent to
+// NavigationScript.
+func NavigationScriptWithNonce(nonce string) gosx.Node {
+	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + `>` + navigationRuntime + `</script>`)
+}
+
+func nonceAttr(nonce string) string {
+	if nonce == "" {
+		return ""
+	}
+	return ` nonce="` + html.EscapeString(nonce) + `"`
 }
 
 // Link renders an anchor tag opted into the GoSX page-navigation runtime.

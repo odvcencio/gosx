@@ -41,13 +41,26 @@ if err := field.Advect(decoded, particles, 0.016); err != nil {
 
 | Section | Bytes | Notes |
 |---|---|---|
-| Metadata | varies (~50–150) | Resolution, Components, Bounds, BitWidth, Mins, Maxs, IsDelta — JSON-encoded by stream.go, see `Quantized` struct for full layout |
+| Header | 30–60 (binary) | Resolution, Components, Bounds, BitWidth, flags |
 | Mins | 4 × Components | per-component min |
 | Maxs | 4 × Components | per-component max |
 | Packed | (voxels × components × bitWidth + 7) / 8 | deinterleaved by component |
 | Preview | optional, smaller bitWidth | progressive loading |
 
-A 64³ scalar field at 6 bits packs to ~200 KB. A 64³ vec3 field at 6 bits packs to ~600 KB. Delta encoding against a previous field reduces this significantly when the field is temporally coherent.
+A 64³ scalar field at 6 bits packs to ~200 KB. A 64³ vec3 field at 6 bits packs to ~600 KB.
+
+Compression is fixed-rate scalar quantization, so the ratio against float32 source data is exactly `32/bitWidth`. Delta encoding against a previous field narrows the quantized range and lowers the reconstruction error when the field is temporally coherent. It does not change the byte count.
+
+### Two transports
+
+| Call | Frame | Size |
+|---|---|---|
+| `PublishField` | JSON text frame | about 33% larger than `WireSize`, because `encoding/json` base64-encodes `Packed` and prints `Mins`/`Maxs` in decimal |
+| `PublishFieldBinary` | compact binary frame | `WireSize` plus a header of 30–60 bytes, which is about 25% smaller than the JSON frame |
+
+`Quantized.MarshalBinary`, `DecodeQuantized`, and `BinarySize` expose the binary codec on its own. `WireSize` counts only the packed payload; `BinarySize` counts the whole binary frame.
+
+The stock GoSX browser runtime ignores binary hub frames, so a page must supply its own decoder before it uses `PublishFieldBinary`.
 
 ## Operators
 
@@ -59,6 +72,35 @@ A 64³ scalar field at 6 bits packs to ~200 KB. A 64³ vec3 field at 6 bits pack
 | `Gradient(s)` | scalar field | vec3 field | normals from SDFs, drift from densities |
 | `Blur(f, radius)` | any field | same shape | smoothing, removing noise |
 | `Resample(f, newRes)` | any field | new resolution | LOD streaming |
+
+### Allocation-free forms
+
+Every operator that returns a field also has an output-parameter form. Use it in a per-frame loop, because the allocating form allocates the whole working set on every call.
+
+| Allocating | Output parameter |
+|---|---|
+| `Curl(v)` | `CurlInto(dst, v)` |
+| `Divergence(v)` | `DivergenceInto(dst, v)` |
+| `Gradient(s)` | `GradientInto(dst, s)` |
+| `Blur(f, r)` | `BlurInto(dst, f, r, scratch)` |
+| `Resample(f, res)` | `ResampleInto(dst, f)` |
+
+`Advect` already writes through the caller's particle slice and allocates nothing.
+
+`BlurInto` needs one `Scratch`. A separable Gaussian runs three passes, and the passes ping-pong between `dst` and the scratch buffer, so the third pass lands the result in `dst`. `dst` may alias the source, which gives an in-place blur. Pass `nil` for a one-off call.
+
+```go
+// Steady-state fluid loop: no allocation after the first step.
+curl := field.New(res, 3, bounds)
+blurred := field.New(res, 3, bounds)
+scratch := field.NewScratch(res, 3)
+
+for frame := range ticks {
+    _ = field.CurlInto(curl, velocity)
+    _ = field.BlurInto(blurred, curl, 1, scratch)
+    _ = field.Advect(blurred, particles, dt)
+}
+```
 
 ## Streaming
 

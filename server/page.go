@@ -65,6 +65,9 @@ type DocumentContext struct {
 	Navigation    bool
 	Head          gosx.Node
 	Body          gosx.Node
+	// Nonce is the per-request Content-Security-Policy script nonce, if any.
+	// GoSX's document shell attaches it to script elements it emits directly.
+	Nonce string
 }
 
 // DeferredResolver resolves a streamed page fragment after the initial HTML
@@ -97,10 +100,14 @@ type Context struct {
 }
 
 func newContext(r *http.Request) *Context {
-	return &Context{
+	ctx := &Context{
 		Request:   r,
 		PageState: *NewPageStateForRequest(r),
 	}
+	// Carry the generated Content-Security-Policy nonce, so the document shell
+	// and the streamed chunks attach the same value the header names.
+	ctx.SetNonce(RequestNonce(r))
+	return ctx
 }
 
 func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
@@ -108,6 +115,12 @@ func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, 
 	title := c.Title(defaultTitle)
 	path := documentContextPath(c.Request)
 	metadata := c.MetadataValue()
+	// A shared cache stores one body and replays it to every client, so the
+	// document must not name this request. Omit the request ID there.
+	requestID := ""
+	if !c.cache.SharedCacheable() {
+		requestID = RequestID(c.Request)
+	}
 	doc := &DocumentContext{
 		Request:    c.Request,
 		Pattern:    pattern,
@@ -115,10 +128,11 @@ func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, 
 		Title:      title,
 		PageID:     documentPageID(pattern, path),
 		Path:       path,
-		RequestID:  RequestID(c.Request),
+		RequestID:  requestID,
 		Metadata:   metadata,
 		Navigation: navigation,
 		Body:       body,
+		Nonce:      c.Nonce(),
 	}
 	if runtime := c.RuntimeState(); runtime != nil {
 		doc.Runtime = runtime.Summary()
@@ -172,22 +186,24 @@ type documentContractEnhancement struct {
 }
 
 type documentContractAssets struct {
-	BootstrapMode               string `json:"bootstrapMode"`
-	Manifest                    bool   `json:"manifest"`
-	RuntimePath                 string `json:"runtimePath,omitempty"`
-	WASMExecPath                string `json:"wasmExecPath,omitempty"`
-	StandardGoWASMExecPath      string `json:"standardGoWasmExecPath,omitempty"`
-	PatchPath                   string `json:"patchPath,omitempty"`
-	BootstrapPath               string `json:"bootstrapPath,omitempty"`
-	BootstrapFeatureIslandsPath string `json:"bootstrapFeatureIslandsPath,omitempty"`
-	BootstrapFeatureEnginesPath string `json:"bootstrapFeatureEnginesPath,omitempty"`
-	BootstrapFeatureHubsPath    string `json:"bootstrapFeatureHubsPath,omitempty"`
-	BootstrapFeatureScene3DPath string `json:"bootstrapFeatureScene3dPath,omitempty"`
-	HLSPath                     string `json:"hlsPath,omitempty"`
-	Islands                     int    `json:"islands,omitempty"`
-	ComputeIslands              int    `json:"computeIslands,omitempty"`
-	Engines                     int    `json:"engines,omitempty"`
-	Hubs                        int    `json:"hubs,omitempty"`
+	BootstrapMode                   string `json:"bootstrapMode"`
+	Manifest                        bool   `json:"manifest"`
+	RuntimePath                     string `json:"runtimePath,omitempty"`
+	WASMExecPath                    string `json:"wasmExecPath,omitempty"`
+	StandardGoWASMExecPath          string `json:"standardGoWasmExecPath,omitempty"`
+	PatchPath                       string `json:"patchPath,omitempty"`
+	BootstrapPath                   string `json:"bootstrapPath,omitempty"`
+	BootstrapFeatureIslandsPath     string `json:"bootstrapFeatureIslandsPath,omitempty"`
+	BootstrapFeatureEnginesPath     string `json:"bootstrapFeatureEnginesPath,omitempty"`
+	BootstrapFeatureHubsPath        string `json:"bootstrapFeatureHubsPath,omitempty"`
+	BootstrapFeatureControllersPath string `json:"bootstrapFeatureControllersPath,omitempty"`
+	BootstrapFeatureScene3DPath     string `json:"bootstrapFeatureScene3dPath,omitempty"`
+	HLSPath                         string `json:"hlsPath,omitempty"`
+	Islands                         int    `json:"islands,omitempty"`
+	ComputeIslands                  int    `json:"computeIslands,omitempty"`
+	Engines                         int    `json:"engines,omitempty"`
+	Hubs                            int    `json:"hubs,omitempty"`
+	Controllers                     int    `json:"controllers,omitempty"`
 }
 
 func documentContractNode(doc *DocumentContext) gosx.Node {
@@ -210,22 +226,24 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			Navigation: doc.Navigation,
 		},
 		Assets: documentContractAssets{
-			BootstrapMode:               documentBootstrapMode(doc.Runtime.BootstrapMode),
-			Manifest:                    doc.Runtime.Manifest,
-			RuntimePath:                 doc.Runtime.RuntimePath,
-			WASMExecPath:                doc.Runtime.WASMExecPath,
-			StandardGoWASMExecPath:      doc.Runtime.StandardGoWASMExecPath,
-			PatchPath:                   doc.Runtime.PatchPath,
-			BootstrapPath:               doc.Runtime.BootstrapPath,
-			BootstrapFeatureIslandsPath: doc.Runtime.BootstrapFeatureIslandsPath,
-			BootstrapFeatureEnginesPath: doc.Runtime.BootstrapFeatureEnginesPath,
-			BootstrapFeatureHubsPath:    doc.Runtime.BootstrapFeatureHubsPath,
-			BootstrapFeatureScene3DPath: doc.Runtime.BootstrapFeatureScene3DPath,
-			HLSPath:                     doc.Runtime.HLSPath,
-			Islands:                     doc.Runtime.Islands,
-			ComputeIslands:              doc.Runtime.ComputeIslands,
-			Engines:                     doc.Runtime.Engines,
-			Hubs:                        doc.Runtime.Hubs,
+			BootstrapMode:                   documentBootstrapMode(doc.Runtime.BootstrapMode),
+			Manifest:                        doc.Runtime.Manifest,
+			RuntimePath:                     doc.Runtime.RuntimePath,
+			WASMExecPath:                    doc.Runtime.WASMExecPath,
+			StandardGoWASMExecPath:          doc.Runtime.StandardGoWASMExecPath,
+			PatchPath:                       doc.Runtime.PatchPath,
+			BootstrapPath:                   doc.Runtime.BootstrapPath,
+			BootstrapFeatureIslandsPath:     doc.Runtime.BootstrapFeatureIslandsPath,
+			BootstrapFeatureEnginesPath:     doc.Runtime.BootstrapFeatureEnginesPath,
+			BootstrapFeatureHubsPath:        doc.Runtime.BootstrapFeatureHubsPath,
+			BootstrapFeatureControllersPath: doc.Runtime.BootstrapFeatureControllersPath,
+			BootstrapFeatureScene3DPath:     doc.Runtime.BootstrapFeatureScene3DPath,
+			HLSPath:                         doc.Runtime.HLSPath,
+			Islands:                         doc.Runtime.Islands,
+			ComputeIslands:                  doc.Runtime.ComputeIslands,
+			Engines:                         doc.Runtime.Engines,
+			Hubs:                            doc.Runtime.Hubs,
+			Controllers:                     doc.Runtime.Controllers,
 		},
 	})
 	if err != nil {
@@ -236,7 +254,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		">", "\\u003e",
 		"&", "\\u0026",
 	).Replace(string(payload))
-	return gosx.RawHTML(`<script id="gosx-document" type="application/json" data-gosx-document-contract>` + safe + `</script>`)
+	return gosx.RawHTML(`<script id="gosx-document" type="application/json" data-gosx-document-contract` + nonceAttr(doc.Nonce) + `>` + safe + `</script>`)
 }
 
 func documentBootstrapMode(value string) string {

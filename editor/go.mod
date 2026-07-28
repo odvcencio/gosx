@@ -3,7 +3,7 @@ module m31labs.dev/gosx/editor
 go 1.26
 
 require (
-	github.com/odvcencio/gotreesitter v0.20.4
+	github.com/odvcencio/gotreesitter v0.47.0
 	m31labs.dev/gosx v0.24.0
 )
 

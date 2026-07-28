@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/island"
 )
@@ -20,6 +21,7 @@ type PageState struct {
 	deferred    *DeferredRegistry
 	cache       *CacheState
 	runtime     *PageRuntime
+	nonce       string
 }
 
 // NewPageState creates an empty shared page-state container.
@@ -157,6 +159,24 @@ func (s *PageState) SetLastModified(at time.Time) {
 	s.CacheState().SetLastModified(at)
 }
 
+// SetNonce records the per-request Content-Security-Policy script nonce so
+// document and runtime helpers can attach it to GoSX-owned script elements.
+func (s *PageState) SetNonce(nonce string) {
+	if s == nil {
+		return
+	}
+	s.nonce = nonce
+}
+
+// Nonce returns the per-request Content-Security-Policy script nonce set via
+// SetNonce, or an empty string when none was set.
+func (s *PageState) Nonce() string {
+	if s == nil {
+		return ""
+	}
+	return s.nonce
+}
+
 // SetMetadata merges page metadata into the request context.
 func (s *PageState) SetMetadata(meta Metadata) {
 	if s == nil {
@@ -203,7 +223,7 @@ func (s *PageState) Head() gosx.Node {
 	}
 	nodes = append(nodes, s.head...)
 	if s.runtime != nil {
-		if runtimeHead := s.runtime.Head(); !runtimeHead.IsZero() {
+		if runtimeHead := s.runtime.HeadWithNonce(s.nonce); !runtimeHead.IsZero() {
 			nodes = append(nodes, runtimeHead)
 		}
 	}
@@ -257,6 +277,15 @@ func (s *PageState) ComputeIsland(cfg island.ComputeIslandConfig) string {
 		return ""
 	}
 	return s.Runtime().ComputeIsland(cfg)
+}
+
+// Controller registers a declarative headless browser controller for the
+// current page.
+func (s *PageState) Controller(cfg controller.Config) string {
+	if s == nil {
+		return ""
+	}
+	return s.Runtime().Controller(cfg)
 }
 
 // TextBlock renders a managed text-layout node for the current page.

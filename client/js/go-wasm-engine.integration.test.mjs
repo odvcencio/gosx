@@ -15,10 +15,15 @@ test("engine/wasm registers and disposes through the version-matched standard-Go
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "gosx-go-wasm-engine-"));
   const wasmPath = path.join(tempDir, "fixture.wasm");
   try {
-    const loaderSource = fs.readFileSync(
-      path.join(repoRoot, "client", "js", "bootstrap-src", "30-tail.js"),
-      "utf8",
-    );
+    // The former 30-tail.js is now the 30a..30k file set. Read every part so
+    // this contract check survives a later move between the tail files.
+    const tailDir = path.join(repoRoot, "client", "js", "bootstrap-src");
+    const loaderSource = fs
+      .readdirSync(tailDir)
+      .filter((name) => /^30[a-z]-tail-.*\.js$/.test(name))
+      .sort()
+      .map((name) => fs.readFileSync(path.join(tailDir, name), "utf8"))
+      .join("\n");
     const envContract = loaderSource.match(
       /goWASMEngineRegistrationTokenEnv\s*=\s*"([^"]+)"/,
     );

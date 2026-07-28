@@ -14,8 +14,6 @@ import (
 	"m31labs.dev/gosx/assetpipe"
 	"m31labs.dev/gosx/internal/version"
 	"m31labs.dev/gosx/scene"
-	"m31labs.dev/gosx/scene/capability"
-	"m31labs.dev/gosx/scene/cert"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 	"m31labs.dev/gosx/scene/preview"
 	sceneschema "m31labs.dev/gosx/scene/schema"
@@ -42,12 +40,11 @@ type sceneValidationSummary struct {
 }
 
 type sceneInspectionCommandReport struct {
-	Version       string                      `json:"version"`
-	Valid         bool                        `json:"valid"`
-	Scenes        []sceneinspect.SceneReport  `json:"scenes"`
-	Certification *cert.Report                `json:"certification,omitempty"`
-	Budgets       []sceneinspect.BudgetResult `json:"budgets,omitempty"`
-	AssetPlan     *assetpipe.Report           `json:"assetPlan,omitempty"`
+	Version   string                      `json:"version"`
+	Valid     bool                        `json:"valid"`
+	Scenes    []sceneinspect.SceneReport  `json:"scenes"`
+	Budgets   []sceneinspect.BudgetResult `json:"budgets,omitempty"`
+	AssetPlan *assetpipe.Report           `json:"assetPlan,omitempty"`
 }
 
 var errNoSceneJSONFiles = errors.New("no SceneIR JSON files found")
@@ -65,8 +62,10 @@ func runSceneCommand(args []string, stdout io.Writer) error {
 		return nil
 	}
 	switch args[0] {
-	case "certify":
-		return runSceneCertifyCommand(args[1:], stdout)
+	case "check":
+		return runSceneCheckCommand(args[1:], stdout)
+	case "diff":
+		return runSceneDiffCommand(args[1:], stdout)
 	case "inspect":
 		return runSceneInspectCommand(args[1:], stdout)
 	case "render":
@@ -97,6 +96,7 @@ func runSceneRenderCommand(args []string, stdout io.Writer) error {
 	background := fs.String("background", "", "override scene background color")
 	fast := fs.Bool("fast", false, "skip shadows/post-FX and cap curved geometry for quick thumbnails")
 	maxSegments := fs.Int("max-segments", 0, "cap curved primitive tessellation (0 preserves authored values)")
+	assetsRoot := fs.String("assets", "", "asset root that base color texture paths resolve against")
 	cameraX := fs.Float64("camera-x", 0, "override camera X")
 	cameraY := fs.Float64("camera-y", 0, "override camera Y")
 	cameraZ := fs.Float64("camera-z", 0, "override camera Z")
@@ -121,6 +121,9 @@ func runSceneRenderCommand(args []string, stdout io.Writer) error {
 	}
 	opts := preview.Options{Width: *width, Height: *height, Time: *timeSeconds, Background: *background,
 		DisableShadows: *fast, DisablePostFX: *fast, MaxSegments: segmentLimit}
+	if root := strings.TrimSpace(*assetsRoot); root != "" {
+		opts.AssetRoots = []string{root}
+	}
 	if *cameraX != 0 || *cameraY != 0 || *cameraZ != 0 || *fov != 0 {
 		cameraFOV := *fov
 		if cameraFOV == 0 {
@@ -154,10 +157,13 @@ func runSceneRenderCommand(args []string, stdout io.Writer) error {
 	if closeErr != nil {
 		return fmt.Errorf("close scene preview: %w", closeErr)
 	}
+	// Report the time this process measured. result.Stats.LastFrameMS is the
+	// renderer's clamped animation step, which is a constant for a single
+	// frame, so printing it would present a constant as a measurement.
 	fmt.Fprintf(stdout, "Rendered Scene3D preview: %s\n", destination)
-	fmt.Fprintf(stdout, "  %dx%d · %d objects · %d instanced batches · %d materials · %.2f ms\n",
+	fmt.Fprintf(stdout, "  %dx%d · %d objects · %d instanced batches · %d materials · %.2f ms measured on this machine\n",
 		*width, *height, result.Bundle.ObjectCount, len(result.Bundle.InstancedMeshes),
-		len(result.Bundle.Materials), result.Stats.LastFrameMS)
+		len(result.Bundle.Materials), float64(result.Duration.Microseconds())/1000)
 	for _, diagnostic := range result.Bundle.Diagnostics {
 		fmt.Fprintf(stdout, "  %s %s", diagnostic.Severity, diagnostic.Code)
 		if diagnostic.Target != "" {
@@ -178,7 +184,6 @@ func runSceneInspectCommand(args []string, stdout io.Writer) error {
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	strict := fs.Bool("strict", false, "treat strict-only checks and unknown budget measurements as errors")
 	budgetPath := fs.String("budget", "", "scene budget JSON file")
-	withCert := fs.Bool("cert", false, "include Scene3D certification summary")
 	assetsRoot := fs.String("assets", "", "asset root to inventory with the Scene3D asset planner")
 	maxTexturePixels := fs.Int("max-texture-pixels", 0, "maximum allowed HTML texture pixels")
 	if err := fs.Parse(args); err != nil {
@@ -203,13 +208,6 @@ func runSceneInspectCommand(args []string, stdout io.Writer) error {
 		Valid:   true,
 		Scenes:  []sceneinspect.SceneReport{},
 	}
-	if *withCert {
-		certReport := cert.BuildReport()
-		report.Certification = &certReport
-		if *strict && len(certReport.Summary.StrictFailures) > 0 {
-			report.Valid = false
-		}
-	}
 	if strings.TrimSpace(*assetsRoot) != "" {
 		plan, err := assetpipe.Plan([]string{*assetsRoot}, assetpipe.Options{})
 		if err != nil {
@@ -227,10 +225,14 @@ func runSceneInspectCommand(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
-		sceneReport, err := sceneinspect.InspectJSON(file, data, sceneinspect.Options{
+		inspectOptions := sceneinspect.Options{
 			Strict:           *strict,
 			MaxTexturePixels: *maxTexturePixels,
-		})
+		}
+		if root := strings.TrimSpace(*assetsRoot); root != "" {
+			inspectOptions.AssetRoots = []string{root}
+		}
+		sceneReport, err := sceneinspect.InspectJSON(file, data, inspectOptions)
 		if err != nil {
 			return err
 		}
@@ -333,183 +335,6 @@ func runSceneSchemaCommand(args []string, stdout io.Writer) error {
 		_, err = fmt.Fprintln(stdout)
 	}
 	return err
-}
-
-// sceneBackendCapsExtract is a minimal struct for extracting only the
-// backendCaps field from a serialized scene JSON. The full SceneIR type has
-// custom MarshalJSON methods on its sub-types (ObjectIR, ModelIR) that do not
-// affect deserialization, but using the minimal extract is simpler and avoids
-// any round-trip surprises.
-type sceneBackendCapsExtract struct {
-	BackendCaps *capability.BackendCaps `json:"backendCaps"`
-}
-
-func runSceneCertifyCommand(args []string, stdout io.Writer) error {
-	if len(args) > 0 && isHelpArg(args[0]) {
-		sceneCertifyUsage(stdout)
-		return nil
-	}
-	fs := flag.NewFlagSet("gosx scene certify", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	jsonOut := fs.Bool("json", false, "emit JSON")
-	strict := fs.Bool("strict", false, "fail if the current certification floor is not met")
-	backend := fs.String("backend", "", "check scene-file against a specific backend (webgpu|webgl|canvas2d)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	// When --backend is not set, preserve existing behavior: no operands allowed.
-	if *backend == "" {
-		if fs.NArg() > 0 {
-			return fmt.Errorf("unexpected scene certify operand %q", fs.Arg(0))
-		}
-		report := cert.BuildReport()
-		if *jsonOut {
-			data, err := json.MarshalIndent(report, "", "  ")
-			if err != nil {
-				return fmt.Errorf("marshal certification report: %w", err)
-			}
-			if _, err := stdout.Write(append(data, '\n')); err != nil {
-				return err
-			}
-		} else {
-			printSceneCertification(stdout, report)
-		}
-		if *strict && len(report.Summary.StrictFailures) > 0 {
-			return errors.New("scene certification strict gate failed")
-		}
-		return nil
-	}
-
-	// --backend is set: require exactly one scene-file operand.
-	targetBackend := capability.Backend(*backend)
-	switch targetBackend {
-	case capability.BackendWebGPU, capability.BackendWebGL, capability.BackendCanvas2D:
-		// valid
-	default:
-		return fmt.Errorf("unknown backend %q: must be one of webgpu, webgl, canvas2d", *backend)
-	}
-	if fs.NArg() != 1 {
-		return fmt.Errorf("scene certify --backend requires exactly one scene-file operand")
-	}
-	scenePath := fs.Arg(0)
-	data, err := os.ReadFile(scenePath)
-	if err != nil {
-		return fmt.Errorf("read scene file %q: %w", scenePath, err)
-	}
-	var extract sceneBackendCapsExtract
-	if err := json.Unmarshal(data, &extract); err != nil {
-		return fmt.Errorf("parse scene file %q: %w", scenePath, err)
-	}
-	caps := extract.BackendCaps
-
-	// Compute structural cert report (additive — always included).
-	report := cert.BuildReport()
-
-	// Determine whether the target backend is capable.
-	capable := false
-	if caps != nil {
-		for _, b := range caps.Capable {
-			if b == targetBackend {
-				capable = true
-				break
-			}
-		}
-	}
-
-	// Gather reasons that exclude the target backend from caps.Reasons.
-	var excludingReasons []capability.CapReason
-	if caps != nil {
-		for _, r := range caps.Reasons {
-			if r.Excludes == targetBackend {
-				excludingReasons = append(excludingReasons, r)
-			}
-		}
-	}
-
-	if *jsonOut {
-		type backendCapsSection struct {
-			Target   capability.Backend     `json:"target"`
-			Capable  bool                   `json:"capable"`
-			Degraded []capability.Feature   `json:"degraded,omitempty"`
-			Reasons  []capability.CapReason `json:"reasons,omitempty"`
-			NoCaps   bool                   `json:"noCaps,omitempty"`
-		}
-		type certifyWithBackend struct {
-			cert.Report
-			BackendCaps backendCapsSection `json:"backendCaps"`
-		}
-		section := backendCapsSection{
-			Target:  targetBackend,
-			Capable: capable,
-		}
-		if caps == nil {
-			section.NoCaps = true
-		} else {
-			section.Degraded = caps.Degraded[targetBackend]
-			section.Reasons = caps.Reasons
-		}
-		combined := certifyWithBackend{Report: report, BackendCaps: section}
-		out, err := json.MarshalIndent(combined, "", "  ")
-		if err != nil {
-			return fmt.Errorf("marshal certification report: %w", err)
-		}
-		if _, err := stdout.Write(append(out, '\n')); err != nil {
-			return err
-		}
-	} else {
-		printSceneCertification(stdout, report)
-		fmt.Fprintf(stdout, "\nBackend: %s\n", targetBackend)
-		if caps == nil {
-			fmt.Fprintln(stdout, "  no backendCaps in scene (older scene format)")
-		} else {
-			if capable {
-				fmt.Fprintf(stdout, "  Capable: yes\n")
-			} else {
-				fmt.Fprintf(stdout, "  Capable: no\n")
-			}
-			if degraded := caps.Degraded[targetBackend]; len(degraded) > 0 {
-				features := make([]string, len(degraded))
-				for i, f := range degraded {
-					features[i] = string(f)
-				}
-				fmt.Fprintf(stdout, "  Degraded: %s\n", strings.Join(features, ", "))
-			}
-			if len(caps.Reasons) > 0 {
-				fmt.Fprintln(stdout, "  Reasons:")
-				for _, r := range caps.Reasons {
-					if r.Excludes != "" {
-						fmt.Fprintf(stdout, "    %s excludes %s\n", r.Feature, r.Excludes)
-					} else if r.Degrades != "" {
-						fmt.Fprintf(stdout, "    %s degrades %s\n", r.Feature, r.Degrades)
-					}
-				}
-			}
-		}
-	}
-
-	// Strict gate for structural failures (no-backend behavior).
-	if *strict && len(report.Summary.StrictFailures) > 0 {
-		return errors.New("scene certification strict gate failed")
-	}
-	// Strict gate for backend capability.
-	if *strict {
-		if caps == nil {
-			return errors.New("scene certify --strict: no backendCaps in scene")
-		}
-		if !capable {
-			// Build error message naming the excluding features.
-			var features []string
-			for _, r := range excludingReasons {
-				features = append(features, string(r.Feature))
-			}
-			if len(features) == 0 {
-				return fmt.Errorf("scene certify --strict: backend %s is not capable", targetBackend)
-			}
-			return fmt.Errorf("scene certify --strict: backend %s excluded by: %s", targetBackend, strings.Join(features, ", "))
-		}
-	}
-	return nil
 }
 
 func validateScenePaths(paths []string, opts sceneschema.Options) (sceneValidationCommandReport, error) {
@@ -627,38 +452,6 @@ func isSceneJSONPath(path string) bool {
 	return name == "scene.json" || strings.HasSuffix(name, ".scene.json") || strings.HasSuffix(name, ".sceneir.json")
 }
 
-func printSceneCertification(w io.Writer, report cert.Report) {
-	fmt.Fprintf(w, "Scene3D certification: %d features\n", report.Summary.Features)
-	statuses := []cert.Status{cert.Complete, cert.Partial, cert.Fallback, cert.Unsupported, cert.NotApplicable}
-	for _, status := range statuses {
-		if count := report.Summary.StatusCounts[status]; count > 0 {
-			fmt.Fprintf(w, "  %s: %d\n", status, count)
-		}
-	}
-	if len(report.Summary.StrictFailures) == 0 {
-		fmt.Fprintln(w, "Strict gate: pass")
-	} else {
-		fmt.Fprintf(w, "Strict gate: fail (%d)\n", len(report.Summary.StrictFailures))
-		for _, failure := range report.Summary.StrictFailures {
-			fmt.Fprintf(w, "  %s %s is %s; %s\n", failure.Feature, failure.Dimension, failure.Status, failure.Required)
-		}
-	}
-
-	byCategory := map[string]int{}
-	for _, entry := range report.Entries {
-		byCategory[entry.Category]++
-	}
-	categories := make([]string, 0, len(byCategory))
-	for category := range byCategory {
-		categories = append(categories, category)
-	}
-	sort.Strings(categories)
-	fmt.Fprintln(w, "Categories:")
-	for _, category := range categories {
-		fmt.Fprintf(w, "  %s: %d\n", category, byCategory[category])
-	}
-}
-
 func printSceneValidation(w io.Writer, report sceneValidationCommandReport) {
 	status := "pass"
 	if !report.Valid {
@@ -697,10 +490,6 @@ func printSceneInspection(w io.Writer, report sceneInspectionCommandReport) {
 	}
 	fmt.Fprintf(w, "Scene3D inspection: %s\n", status)
 	fmt.Fprintf(w, "Scenes: %d\n", len(report.Scenes))
-	if report.Certification != nil {
-		summary := report.Certification.Summary
-		fmt.Fprintf(w, "Certification: %d features, %d strict failures\n", summary.Features, len(summary.StrictFailures))
-	}
 	if report.AssetPlan != nil {
 		fmt.Fprintf(w, "Asset plan: %d assets, %s expected GPU bytes\n", report.AssetPlan.Totals.Assets, formatByteCount(report.AssetPlan.Budget.ExpectedGPUBytes))
 	}
@@ -737,6 +526,27 @@ func printSceneInspection(w io.Writer, report sceneInspectionCommandReport) {
 				sceneReport.Assets.HTMLTextureSurfaces,
 				len(sceneReport.Assets.Sources),
 			)
+		}
+		if resolution := sceneReport.AssetResolution; resolution != nil {
+			if resolution.Checked {
+				fmt.Fprintf(w, "  Asset reachability: %d resolved, %d unresolved, %d remote (roots: %s)\n",
+					resolution.Resolved, resolution.Unresolved, resolution.Remote, strings.Join(resolution.Roots, ", "))
+				for _, asset := range resolution.Assets {
+					if asset.Resolved || asset.Remote {
+						continue
+					}
+					fmt.Fprintf(w, "    missing %s\n", asset.Src)
+					for _, reference := range asset.References {
+						fmt.Fprintf(w, "      wanted by %s", reference.Path)
+						if reference.ID != "" {
+							fmt.Fprintf(w, " id=%s", reference.ID)
+						}
+						fmt.Fprintln(w)
+					}
+				}
+			} else if resolution.Sources > 0 {
+				fmt.Fprintf(w, "  Asset reachability: %d sources, not checked (pass --assets to resolve them)\n", resolution.Sources)
+			}
 		}
 		if len(sceneReport.FeatureUse) > 0 {
 			fmt.Fprintf(w, "  Features: %s\n", formatFeatureUse(sceneReport.FeatureUse))
@@ -814,59 +624,57 @@ func formatByteCount(bytes int64) string {
 }
 
 func sceneUsage(w io.Writer) {
-	fmt.Fprintf(w, `gosx scene - Inspect and certify Scene3D contracts
+	fmt.Fprint(w, `gosx scene - Author, see, cost, and prove Scene3D contracts without a browser
 
 Usage:
-  gosx scene certify [--json] [--strict] [--backend webgpu|webgl|canvas2d <scene-file>]
-  gosx scene inspect [--json] [--strict] [--cert] [--budget file] [--assets root] <file-or-dir>...
+  gosx scene check [--json] [--golden baseline.png] [--repeat N] [--assets root] <scene-file>
+  gosx scene diff [--json] [--out diff.png] <reference.png> <candidate.png>
+  gosx scene inspect [--json] [--strict] [--budget file] [--assets root] <file-or-dir>...
   gosx scene render [--out image.png] [--width N] [--height N] <scene-file>
   gosx scene schema [--out path]
   gosx scene validate [--json] [--strict] [--max-texture-pixels N] <file-or-dir>...
 
-	`)
+Start with 'gosx scene check'. It runs validation, cost, render, determinism,
+and baseline comparison in one command and returns one verdict.
+
+`)
 }
 
 func sceneRenderUsage(w io.Writer) {
-	fmt.Fprintf(w, `gosx scene render - Render Scene3D to PNG entirely in Go
+	fmt.Fprint(w, `gosx scene render - Render Scene3D to PNG entirely in Go
 
 Usage:
   gosx scene render [--out image.png] [--width 1280] [--height 720] [--time seconds] [--fast]
+                    [--assets root] [--max-segments N]
                     [--background color] [--camera-x N --camera-y N --camera-z N --fov degrees]
-					[--max-segments N]
                     <scene-file>
 
 The input may be a bare SceneIR document or the runtime props JSON emitted by
 scene.Props. Rendering uses the deterministic CPU backend: no browser, WebGPU
 adapter, display server, or graphics driver is required.
 
+Pass --assets to resolve base color texture paths against a real directory.
+Without it the rasterizer cannot open a web-root path and draws a placeholder
+checker, and the frame reports which sources it could not open.
+
+The command prints the render time it measured on this machine. That number
+describes the machine, not the scene.
+
 `)
 }
 
 func sceneInspectUsage(w io.Writer) {
-	fmt.Fprintf(w, `gosx scene inspect - Inspect SceneIR feature use, fallbacks, assets, and budgets
+	fmt.Fprint(w, `gosx scene inspect - Inspect SceneIR feature use, fallbacks, assets, and budgets
 
 Usage:
-  gosx scene inspect [--json] [--strict] [--cert] [--budget file] [--assets root] [--max-texture-pixels N] <file-or-dir>...
+  gosx scene inspect [--json] [--strict] [--budget file] [--assets root] [--max-texture-pixels N] <file-or-dir>...
 
 Directory scans include scene.json, *.scene.json, and *.sceneir.json files.
 
-`)
-}
-
-func sceneCertifyUsage(w io.Writer) {
-	fmt.Fprintf(w, `gosx scene certify - Check Scene3D feature certification
-
-Usage:
-  gosx scene certify [--json] [--strict]
-  gosx scene certify [--json] [--strict] --backend <webgpu|webgl|canvas2d> <scene-file>
-
-Flags:
-  --json             Emit JSON output.
-  --strict           Fail if the certification floor is not met or if --backend
-                     is set and the target backend is not capable.
-  --backend <name>   Check a serialized scene file against the named backend.
-                     Requires exactly one scene-file operand. The scene file
-                     must contain a backendCaps field (produced by Props.SceneIR()).
+The --assets root does two jobs: it inventories the directory with the Scene3D
+asset planner, and it resolves every asset source the scenes reference. An
+unresolved source becomes an error that names the record that asked for it.
+Without --assets the report states that reachability was not checked.
 
 `)
 }

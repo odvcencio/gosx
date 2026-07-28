@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"m31labs.dev/gosx"
@@ -37,11 +38,38 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 	if !ok {
 		return "", false, fmt.Errorf("component %q not found", component)
 	}
-	html := renderer.renderNode(comp.Root, opts.EvalEnv)
+	// One builder carries the whole document. The renderer used to allocate a
+	// fresh strings.Builder per element and let the parent copy the child's
+	// string, which cost O(nodes x depth) byte traffic — a depth-100 page
+	// allocated 1,085,241 B to emit 5,556 bytes.
+	var b strings.Builder
+	b.Grow(fileProgramRenderSizeHint(prog))
+	renderer.writeNode(&b, comp.Root, opts.EvalEnv)
 	if renderer.err != nil {
 		return "", renderer.replaced, renderer.err
 	}
-	return html, renderer.replaced, nil
+	return b.String(), renderer.replaced, nil
+}
+
+// fileProgramRenderSizeHint estimates the output size from the node count so the
+// top-level builder starts near its final capacity. A strings.Builder that grows
+// from zero doubles its buffer, so it allocates about log2(N) times and copies
+// about 2N bytes. The estimate stays static: it needs no per-program state, so
+// it cannot retain a stale ir.Program after a hot reload.
+func fileProgramRenderSizeHint(prog *ir.Program) int {
+	const (
+		bytesPerNode = 32
+		minHint      = 256
+		maxHint      = 64 << 10
+	)
+	size := len(prog.Nodes) * bytesPerNode
+	if size < minHint {
+		return minHint
+	}
+	if size > maxHint {
+		return maxHint
+	}
+	return size
 }
 
 func newFileProgramRenderer(prog *ir.Program, opts fileRenderOptions) *fileProgramRenderer {
@@ -60,28 +88,34 @@ func newFileProgramRenderer(prog *ir.Program, opts fileRenderOptions) *fileProgr
 	}
 }
 
-func (r *fileProgramRenderer) renderNode(nodeID ir.NodeID, env fileRenderEnv) string {
+// writeNode appends one IR node's HTML to b.
+//
+// Every function on the render spine takes the shared builder instead of
+// returning a string. Leaf builtins that must hand their children to a helper
+// (Motion, Video, TextBlock, bound components) still call renderChildren, which
+// allocates its own builder.
+func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, env fileRenderEnv) {
 	node := r.prog.NodeAt(nodeID)
+	if node == nil {
+		return
+	}
 	switch node.Kind {
 	case ir.NodeElement:
-		return r.renderElement(node, env)
+		r.writeElement(b, node, env)
 	case ir.NodeComponent:
-		return r.renderComponent(node, env)
+		r.writeComponent(b, node, env)
 	case ir.NodeText:
-		return html.EscapeString(node.Text)
+		b.WriteString(html.EscapeString(node.Text))
 	case ir.NodeExpr:
-		return renderFileEvaluatedExpr(evalFileExpr(node.Text, env))
+		b.WriteString(renderFileEvaluatedExpr(evalFileExpr(node.Text, env)))
 	case ir.NodeFragment:
-		return r.renderChildren(node.Children, env)
+		r.writeChildren(b, node.Children, env)
 	case ir.NodeRawHTML:
-		return node.Text
-	default:
-		return ""
+		b.WriteString(node.Text)
 	}
 }
 
-func (r *fileProgramRenderer) renderElement(node *ir.Node, env fileRenderEnv) string {
-	var b strings.Builder
+func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	tag := html.EscapeString(node.Tag)
 	formContract := fileAutoManagedFormContract(node.Attrs, env, strings.EqualFold(node.Tag, "form"))
 	b.WriteByte('<')
@@ -90,98 +124,106 @@ func (r *fileProgramRenderer) renderElement(node *ir.Node, env fileRenderEnv) st
 	if formContract.Managed {
 		attrs = managedFormAttrs(node.Attrs)
 	}
-	r.renderAttrs(&b, attrs, env)
-	r.writeManagedFormContract(&b, node.Attrs, env, formContract)
-	if ir.VoidElements[node.Tag] {
+	r.renderAttrs(b, attrs, env)
+	r.writeManagedFormContract(b, node.Attrs, env, formContract)
+	// Match node.go's renderNodeHTML: only self-close a void element that has
+	// no children. The old branch dropped children silently.
+	if ir.VoidElements[node.Tag] && len(node.Children) == 0 {
 		b.WriteString(" />")
-		return b.String()
+		return
 	}
 	b.WriteByte('>')
-	b.WriteString(r.renderChildren(node.Children, env))
+	r.writeChildren(b, node.Children, env)
 	b.WriteString("</")
 	b.WriteString(tag)
 	b.WriteByte('>')
-	return b.String()
 }
 
-func (r *fileProgramRenderer) renderComponent(node *ir.Node, env fileRenderEnv) string {
+func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	if replacement, ok := r.opts.ComponentReplacements[node.Tag]; ok {
 		r.replaced = true
 		if replacement != "" {
-			return replacement
+			b.WriteString(replacement)
+			return
 		}
-		return r.renderChildren(node.Children, env)
+		r.writeChildren(b, node.Children, env)
+		return
 	}
 
-	if handled, out := r.renderBuiltinComponent(node, env); handled {
-		return out
+	if r.writeBuiltinComponent(b, node, env) {
+		return
 	}
 
 	if comp, ok := r.components[node.Tag]; ok {
 		switch {
 		case comp.IsIsland:
-			return r.renderLocalIsland(node.Tag, node, env)
+			b.WriteString(r.renderLocalIsland(node.Tag, node, env))
+			return
 		case !comp.IsEngine:
-			return r.renderLocalComponent(comp, node, env)
+			r.writeLocalComponent(b, comp, node, env)
+			return
 		}
 	}
 
 	if handled, out := r.renderBoundComponent(node, env); handled {
-		return out
+		b.WriteString(out)
+		return
 	}
 
-	return defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), r.renderChildren(node.Children, env))
+	b.WriteString(defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), r.renderChildren(node.Children, env)))
 }
 
-func (r *fileProgramRenderer) renderBuiltinComponent(node *ir.Node, env fileRenderEnv) (bool, string) {
+func (r *fileProgramRenderer) writeBuiltinComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) bool {
 	switch node.Tag {
 	case "If", "Show", "When":
-		return true, r.renderConditional(node, env)
+		r.writeConditional(b, node, env)
 	case "Each", "For":
-		return true, r.renderEach(node, env)
+		r.writeEach(b, node, env)
 	case "Link":
-		return true, r.renderLink(node, env)
+		r.writeLink(b, node, env)
 	case "Form":
-		return true, r.renderManagedForm(node, env, managedFormOptions{})
+		r.writeManagedForm(b, node, env, managedFormOptions{})
 	case "ActionForm":
-		return true, r.renderManagedForm(node, env, managedFormOptions{
+		r.writeManagedForm(b, node, env, managedFormOptions{
 			defaultMethod: strings.ToLower(http.MethodPost),
 			defaultAction: fileRenderActionPath(env, stringValue(attrValue(node.Attrs, env, "actionName"))),
 		})
 	case "Image":
-		return true, r.renderImage(node, env)
+		b.WriteString(r.renderImage(node, env))
 	case "Motion":
-		return true, r.renderMotion(node, env)
+		b.WriteString(r.renderMotion(node, env))
 	case "Video":
-		return true, r.renderVideo(node, env)
+		b.WriteString(r.renderVideo(node, env))
 	case "TextBlock":
-		return true, r.renderTextBlock(node, env)
+		b.WriteString(r.renderTextBlock(node, env))
 	case "Stylesheet":
-		return true, r.renderStylesheet(node, env)
+		b.WriteString(r.renderStylesheet(node, env))
 	case "Surface":
-		return true, r.renderSurface(node, env)
+		b.WriteString(r.renderSurface(node, env))
 	case "Worker":
-		return true, r.renderWorker(node, env)
+		b.WriteString(r.renderWorker(node, env))
 	case "Scene3D":
-		return true, r.renderScene3D(node, env)
+		b.WriteString(r.renderScene3D(node, env))
 	default:
-		return false, ""
+		return false
 	}
+	return true
 }
 
-func (r *fileProgramRenderer) renderConditional(node *ir.Node, env fileRenderEnv) string {
+func (r *fileProgramRenderer) writeConditional(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	condition := attrValue(node.Attrs, env, "when", "if", "cond", "test")
 	if truthy(condition) {
-		return r.renderChildren(node.Children, env)
+		r.writeChildren(b, node.Children, env)
+		return
 	}
 	fallback := attrValue(node.Attrs, env, "fallback", "else")
-	return renderFileEvaluatedExpr(fallback)
+	b.WriteString(renderFileEvaluatedExpr(fallback))
 }
 
-func (r *fileProgramRenderer) renderEach(node *ir.Node, env fileRenderEnv) string {
+func (r *fileProgramRenderer) writeEach(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	collection := attrValue(node.Attrs, env, "of", "each", "items")
 	if collection == nil {
-		return ""
+		return
 	}
 
 	itemName := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "as", "item")))
@@ -193,33 +235,47 @@ func (r *fileProgramRenderer) renderEach(node *ir.Node, env fileRenderEnv) strin
 	items := fileEachEntries(collection)
 	if len(items) == 0 {
 		fallback := attrValue(node.Attrs, env, "fallback", "empty")
-		return renderFileEvaluatedExpr(fallback)
+		b.WriteString(renderFileEvaluatedExpr(fallback))
+		return
 	}
 
-	var b strings.Builder
+	// Build the key binding name once instead of once per item, and take every
+	// per-item binding from one arena.
+	keyName := itemName + "Key"
+	arena := make(fileScopeArena, 0, len(items)*fileEachBindingsPerItem(items, indexName))
 	for _, entry := range items {
-		scope := env.withValue(itemName, entry.Value)
+		scope := arena.push(env.scope, itemName, entry.Value)
 		if indexName != "" {
-			scope = scope.withValue(indexName, entry.Index)
+			scope = arena.push(scope, indexName, entry.Index)
 		}
 		if entry.Key != nil {
-			scope = scope.withValue(itemName+"Key", entry.Key)
+			scope = arena.push(scope, keyName, entry.Key)
 		}
-		b.WriteString(r.renderChildren(node.Children, scope))
+		r.writeChildren(b, node.Children, env.withScope(scope))
 	}
-	return b.String()
 }
 
-func (r *fileProgramRenderer) renderLink(node *ir.Node, env fileRenderEnv) string {
-	var b strings.Builder
+// fileEachBindingsPerItem sizes the loop scope arena. It is a capacity hint, so
+// an inexact answer stays correct.
+func fileEachBindingsPerItem(items []fileEachEntry, indexName string) int {
+	count := 1
+	if indexName != "" {
+		count++
+	}
+	if len(items) > 0 && items[0].Key != nil {
+		count++
+	}
+	return count
+}
+
+func (r *fileProgramRenderer) writeLink(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	b.WriteString("<a")
 	contract := fileManagedLinkContractForAttrs(node.Attrs, env)
-	r.renderLinkAttrs(&b, node.Attrs, env)
-	r.writeManagedLinkContract(&b, node.Attrs, env, contract)
+	r.renderLinkAttrs(b, node.Attrs, env)
+	r.writeManagedLinkContract(b, node.Attrs, env, contract)
 	b.WriteByte('>')
-	b.WriteString(r.renderChildren(node.Children, env))
+	r.writeChildren(b, node.Children, env)
 	b.WriteString("</a>")
-	return b.String()
 }
 
 func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
@@ -229,11 +285,11 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 		}
 		switch attr.Kind {
 		case ir.AttrStatic:
-			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(attr.Value))
+			writeFileAttrPair(b, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(attr.Value))
 		case ir.AttrExpr:
 			renderFileEvaluatedAttr(b, html.EscapeString(normalizeFileAttrName(attr.Name)), evalFileExpr(attr.Expr, env))
 		case ir.AttrBool:
-			fmt.Fprintf(b, " %s", html.EscapeString(normalizeFileAttrName(attr.Name)))
+			writeFileAttrName(b, html.EscapeString(normalizeFileAttrName(attr.Name)))
 		case ir.AttrSpread:
 			for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
 				key := entry.Key
@@ -279,12 +335,14 @@ type fileManagedLinkPresence struct {
 }
 
 func fileCurrentRequestPath(env fileRenderEnv) string {
-	if pageValue, ok := env.values["page"].(map[string]any); ok {
+	pageBinding, _ := env.lookupValue("page")
+	if pageValue, ok := pageBinding.(map[string]any); ok {
 		if current := strings.TrimSpace(stringValue(pageValue["path"])); current != "" {
 			return current
 		}
 	}
-	if requestValue, ok := env.values["request"].(map[string]any); ok {
+	requestBinding, _ := env.lookupValue("request")
+	if requestValue, ok := requestBinding.(map[string]any); ok {
 		if current := strings.TrimSpace(stringValue(requestValue["path"])); current != "" {
 			return current
 		}
@@ -389,22 +447,20 @@ type fileManagedFormPresence struct {
 	Fallback         bool
 }
 
-func (r *fileProgramRenderer) renderManagedForm(node *ir.Node, env fileRenderEnv, opts managedFormOptions) string {
-	var b strings.Builder
+func (r *fileProgramRenderer) writeManagedForm(b *strings.Builder, node *ir.Node, env fileRenderEnv, opts managedFormOptions) {
 	contract := fileBuiltinManagedFormContract(node.Attrs, env, opts.defaultMethod)
 	b.WriteString("<form")
 	if method := strings.TrimSpace(opts.defaultMethod); method != "" && attrValue(node.Attrs, env, "method") == nil {
-		fmt.Fprintf(&b, ` method="%s"`, html.EscapeString(method))
+		fmt.Fprintf(b, ` method="%s"`, html.EscapeString(method))
 	}
 	if action := strings.TrimSpace(opts.defaultAction); action != "" && attrValue(node.Attrs, env, "action") == nil {
-		fmt.Fprintf(&b, ` action="%s"`, html.EscapeString(action))
+		fmt.Fprintf(b, ` action="%s"`, html.EscapeString(action))
 	}
-	r.renderAttrs(&b, managedFormAttrs(node.Attrs), env)
-	r.writeManagedFormContract(&b, node.Attrs, env, contract)
+	r.renderAttrs(b, managedFormAttrs(node.Attrs), env)
+	r.writeManagedFormContract(b, node.Attrs, env, contract)
 	b.WriteByte('>')
-	b.WriteString(r.renderChildren(node.Children, env))
+	r.writeChildren(b, node.Children, env)
 	b.WriteString("</form>")
-	return b.String()
 }
 
 func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) string {
@@ -485,10 +541,12 @@ func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) stri
 		Sync:          stringValue(attrValue(node.Attrs, env, "sync")),
 		SyncMode:      firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "syncMode")), stringValue(attrValue(node.Attrs, env, "sync_mode"))),
 		SyncStrategy:  firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "syncStrategy")), stringValue(attrValue(node.Attrs, env, "sync_strategy"))),
+		SyncTuning:    videoSyncTuningValue(firstNonEmptyValue(attrValue(node.Attrs, env, "syncTuning"), attrValue(node.Attrs, env, "sync_tuning"))),
 		HLS:           mapStringAnyValue(attrValue(node.Attrs, env, "hls")),
 		HLSConfig:     mapStringAnyValue(attrValue(node.Attrs, env, "hlsConfig", "hls_config")),
 		AudioTrack:    firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "audioTrack")), stringValue(attrValue(node.Attrs, env, "audio_track"))),
 		AudioTracks:   videoAudioTrackListValue(firstNonEmptyValue(attrValue(node.Attrs, env, "audioTracks"), attrValue(node.Attrs, env, "audio_tracks"))),
+		AudioSource:   videoAudioSourceOptionsValue(firstNonEmptyValue(attrValue(node.Attrs, env, "audioSource"), attrValue(node.Attrs, env, "audio_source"))),
 		SubtitleBase:  firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "subtitleBase")), stringValue(attrValue(node.Attrs, env, "subtitle_base"))),
 		SubtitleTrack: firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "subtitleTrack")), stringValue(attrValue(node.Attrs, env, "subtitle_track"))),
 		SubtitleTracks: videoTrackListValue(firstNonEmptyValue(
@@ -496,6 +554,12 @@ func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) stri
 			attrValue(node.Attrs, env, "subtitle_tracks"),
 			attrValue(node.Attrs, env, "tracks"),
 		)),
+		Subtitles:    videoSubtitleOptionsValue(firstNonEmptyValue(attrValue(node.Attrs, env, "subtitles"), attrValue(node.Attrs, env, "subtitleOptions"), attrValue(node.Attrs, env, "subtitle_options"))),
+		Fullscreen:   videoFullscreenOptionsValue(firstNonEmptyValue(attrValue(node.Attrs, env, "fullscreen"), attrValue(node.Attrs, env, "fullscreenOptions"), attrValue(node.Attrs, env, "fullscreen_options"))),
+		Telemetry:    videoTelemetryOptionsValue(firstNonEmptyValue(attrValue(node.Attrs, env, "telemetry"), attrValue(node.Attrs, env, "videoTelemetry"), attrValue(node.Attrs, env, "video_telemetry"))),
+		PersistPrefs: truthy(attrValue(node.Attrs, env, "persistPrefs", "persist_prefs")),
+		PersistKey:   firstNonEmptyString(stringValue(attrValue(node.Attrs, env, "persistKey")), stringValue(attrValue(node.Attrs, env, "persist_key"))),
+		LockInput:    truthy(attrValue(node.Attrs, env, "lockInput", "lock_input")),
 	}
 	extra := fileExtraNodeAttrs(node.Attrs, env, fileAttrNameSet(
 		"engineName", "name", "component",
@@ -510,13 +574,21 @@ func (r *fileProgramRenderer) renderVideo(node *ir.Node, env fileRenderEnv) stri
 		"width", "height",
 		"volume", "rate",
 		"sync", "syncMode", "sync_mode", "syncStrategy", "sync_strategy",
+		"syncTuning", "sync_tuning", "SyncTuning",
 		"hls", "hlsConfig", "hls_config",
 		"audioTrack", "audio_track",
 		"audioTracks", "audio_tracks",
+		"audioSource", "audio_source", "AudioSource",
 		"subtitleBase", "subtitle_base",
 		"subtitleTrack", "subtitle_track",
 		"subtitleTracks", "subtitle_tracks",
 		"tracks",
+		"subtitles", "subtitleOptions", "subtitle_options", "Subtitles",
+		"fullscreen", "fullscreenOptions", "fullscreen_options", "Fullscreen",
+		"telemetry", "videoTelemetry", "video_telemetry", "Telemetry",
+		"persistPrefs", "persist_prefs", "PersistPrefs",
+		"persistKey", "persist_key", "PersistKey",
+		"lockInput", "lock_input", "LockInput",
 	))
 	args := make([]any, 0, 2)
 	if len(extra) > 0 {
@@ -721,8 +793,17 @@ func (r *fileProgramRenderer) renderEngineFallbackChildren(node *ir.Node, env fi
 	return r.renderScene3DFallbackChildren(node.Children, env)
 }
 
+// renderScene3DFallbackChildren renders the DOM fallback for a Scene3D subtree.
+// It skips composable scene tags, which lower into the engine props instead.
+// The caller trims the result and wraps it in gosx.RawHTML, so this walk keeps
+// its own builder.
 func (r *fileProgramRenderer) renderScene3DFallbackChildren(children []ir.NodeID, env fileRenderEnv) string {
 	var b strings.Builder
+	r.writeScene3DFallbackChildren(&b, children, env)
+	return b.String()
+}
+
+func (r *fileProgramRenderer) writeScene3DFallbackChildren(b *strings.Builder, children []ir.NodeID, env fileRenderEnv) {
 	for _, childID := range children {
 		child := r.prog.NodeAt(childID)
 		if child == nil {
@@ -731,34 +812,34 @@ func (r *fileProgramRenderer) renderScene3DFallbackChildren(children []ir.NodeID
 		if child.Kind == ir.NodeComponent {
 			switch child.Tag {
 			case "Each", "For":
-				b.WriteString(r.renderScene3DFallbackEach(child, env))
+				r.writeScene3DFallbackEach(b, child, env)
 				continue
 			case "If", "Show", "When":
-				b.WriteString(r.renderScene3DFallbackConditional(child, env))
+				r.writeScene3DFallbackConditional(b, child, env)
 				continue
 			}
 			if isScene3DComposableTag(child.Tag) {
 				continue
 			}
 		}
-		b.WriteString(r.renderNode(childID, env))
+		r.writeNode(b, childID, env)
 	}
-	return b.String()
 }
 
-func (r *fileProgramRenderer) renderScene3DFallbackConditional(node *ir.Node, env fileRenderEnv) string {
+func (r *fileProgramRenderer) writeScene3DFallbackConditional(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	condition := attrValue(node.Attrs, env, "when", "if", "cond", "test")
 	if truthy(condition) {
-		return r.renderScene3DFallbackChildren(node.Children, env)
+		r.writeScene3DFallbackChildren(b, node.Children, env)
+		return
 	}
 	fallback := attrValue(node.Attrs, env, "fallback", "else")
-	return renderFileEvaluatedExpr(fallback)
+	b.WriteString(renderFileEvaluatedExpr(fallback))
 }
 
-func (r *fileProgramRenderer) renderScene3DFallbackEach(node *ir.Node, env fileRenderEnv) string {
+func (r *fileProgramRenderer) writeScene3DFallbackEach(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	collection := attrValue(node.Attrs, env, "of", "each", "items")
 	if collection == nil {
-		return ""
+		return
 	}
 
 	itemName := strings.TrimSpace(stringValue(attrValue(node.Attrs, env, "as", "item")))
@@ -770,21 +851,22 @@ func (r *fileProgramRenderer) renderScene3DFallbackEach(node *ir.Node, env fileR
 	items := fileEachEntries(collection)
 	if len(items) == 0 {
 		fallback := attrValue(node.Attrs, env, "fallback", "empty")
-		return renderFileEvaluatedExpr(fallback)
+		b.WriteString(renderFileEvaluatedExpr(fallback))
+		return
 	}
 
-	var b strings.Builder
+	keyName := itemName + "Key"
+	arena := make(fileScopeArena, 0, len(items)*fileEachBindingsPerItem(items, indexName))
 	for _, entry := range items {
-		scope := env.withValue(itemName, entry.Value)
+		scope := arena.push(env.scope, itemName, entry.Value)
 		if indexName != "" {
-			scope = scope.withValue(indexName, entry.Index)
+			scope = arena.push(scope, indexName, entry.Index)
 		}
 		if entry.Key != nil {
-			scope = scope.withValue(itemName+"Key", entry.Key)
+			scope = arena.push(scope, keyName, entry.Key)
 		}
-		b.WriteString(r.renderScene3DFallbackChildren(node.Children, scope))
+		r.writeScene3DFallbackChildren(b, node.Children, env.withScope(scope))
 	}
-	return b.String()
 }
 
 func engineComponentIdentity(attrs []ir.Attr, env fileRenderEnv, defaults fileEngineDefaults, transport fileEngineTransport) string {
@@ -908,13 +990,14 @@ func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRender
 	return true, defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), childrenHTML)
 }
 
-func (r *fileProgramRenderer) renderLocalComponent(comp *ir.Component, node *ir.Node, env fileRenderEnv) string {
-	childrenHTML := r.renderChildren(node.Children, env)
-	childrenNode := gosx.RawHTML(childrenHTML)
+func (r *fileProgramRenderer) writeLocalComponent(b *strings.Builder, comp *ir.Component, node *ir.Node, env fileRenderEnv) {
+	// Children render into their own string because the component body may
+	// reference them through the `children` binding.
+	childrenNode := gosx.RawHTML(r.renderChildren(node.Children, env))
 	props := componentProps(node.Attrs, env, childrenNode)
 	scope := env.withValue("props", props)
 	scope = scope.withValue("children", childrenNode)
-	return r.renderNode(comp.Root, scope)
+	r.writeNode(b, comp.Root, scope)
 }
 
 func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env fileRenderEnv) string {
@@ -952,11 +1035,20 @@ func (r *fileProgramRenderer) islandProgram(name string) (*islandprogram.Program
 	return prog, nil
 }
 
-func (r *fileProgramRenderer) renderChildren(children []ir.NodeID, env fileRenderEnv) string {
-	var b strings.Builder
+func (r *fileProgramRenderer) writeChildren(b *strings.Builder, children []ir.NodeID, env fileRenderEnv) {
 	for _, child := range children {
-		b.WriteString(r.renderNode(child, env))
+		r.writeNode(b, child, env)
 	}
+}
+
+// renderChildren renders children into their own string. Use writeChildren on
+// the render spine; use this only when a helper needs the child HTML as a value.
+func (r *fileProgramRenderer) renderChildren(children []ir.NodeID, env fileRenderEnv) string {
+	if len(children) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	r.writeChildren(&b, children, env)
 	return b.String()
 }
 
@@ -983,15 +1075,34 @@ func (r *fileProgramRenderer) componentAttrMap(attrs []ir.Attr, env fileRenderEn
 	return values
 }
 
+// writeFileAttrPair appends ` name="value"` without fmt.
+//
+// WHY: fmt.Fprintf boxes both arguments into an []any and runs the printer, so
+// it cost two to three allocations per attribute. After the shared-builder
+// change, renderFileAttr held 48.5% of the remaining allocated objects on a
+// depth-100 page. Direct writes cost none.
+func writeFileAttrPair(b *strings.Builder, name, value string) {
+	b.WriteByte(' ')
+	b.WriteString(name)
+	b.WriteString(`="`)
+	b.WriteString(value)
+	b.WriteByte('"')
+}
+
+func writeFileAttrName(b *strings.Builder, name string) {
+	b.WriteByte(' ')
+	b.WriteString(name)
+}
+
 func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv) {
 	name := html.EscapeString(attr.Name)
 	switch attr.Kind {
 	case ir.AttrStatic:
-		fmt.Fprintf(b, ` %s="%s"`, name, html.EscapeString(attr.Value))
+		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
 	case ir.AttrExpr:
 		renderFileEvaluatedAttr(b, name, evalFileExpr(attr.Expr, env))
 	case ir.AttrBool:
-		fmt.Fprintf(b, " %s", name)
+		writeFileAttrName(b, name)
 	case ir.AttrSpread:
 		renderFileSpreadAttrs(b, evalFileExpr(attr.Expr, env))
 	}
@@ -1004,6 +1115,31 @@ func renderFileSpreadAttrs(b *strings.Builder, value any) {
 			continue
 		}
 		renderFileEvaluatedAttr(b, html.EscapeString(normalized), entry.Value)
+	}
+}
+
+// fileScalarText formats a scalar without fmt. It reports false for values that
+// still need the reflect-based fmt path.
+//
+// WHY: fmt.Sprint boxes the value and runs the printer, which cost two
+// allocations per hole. The float64 case matters most — evalFileExpr returns
+// float64 for every arithmetic result, and fmt.Sprint held 11.1% of the
+// remaining allocated objects on a 100-item page. `%v` on a float64 equals
+// strconv.FormatFloat(v, 'g', -1, 64), including +Inf, -Inf and NaN.
+func fileScalarText(value any) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case int:
+		return strconv.Itoa(v), true
+	case int64:
+		return strconv.FormatInt(v, 10), true
+	case float64:
+		return strconv.FormatFloat(v, 'g', -1, 64), true
+	case bool:
+		return strconv.FormatBool(v), true
+	default:
+		return "", false
 	}
 }
 
@@ -1028,9 +1164,11 @@ func renderFileEvaluatedExpr(value any) string {
 		return html.EscapeString(strings.Join(v, ""))
 	case fmt.Stringer:
 		return html.EscapeString(v.String())
-	default:
-		return html.EscapeString(fmt.Sprint(v))
 	}
+	if text, ok := fileScalarText(value); ok {
+		return html.EscapeString(text)
+	}
+	return html.EscapeString(fmt.Sprint(value))
 }
 
 func plainTextFileEvaluatedExpr(value any) string {
@@ -1065,12 +1203,16 @@ func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
 		return
 	case bool:
 		if v {
-			fmt.Fprintf(b, " %s", name)
+			writeFileAttrName(b, name)
 		}
 	case fmt.Stringer:
-		fmt.Fprintf(b, ` %s="%s"`, name, html.EscapeString(v.String()))
+		writeFileAttrPair(b, name, html.EscapeString(v.String()))
 	default:
-		fmt.Fprintf(b, ` %s="%s"`, name, html.EscapeString(fmt.Sprint(v)))
+		if text, ok := fileScalarText(value); ok {
+			writeFileAttrPair(b, name, html.EscapeString(text))
+			return
+		}
+		writeFileAttrPair(b, name, html.EscapeString(fmt.Sprint(v)))
 	}
 }
 
@@ -1907,6 +2049,81 @@ func videoAudioTrackListValue(value any) []server.VideoAudioTrack {
 
 func videoTrackListValue(value any) []server.VideoTrack {
 	return decodeVideoListValue[server.VideoTrack](value)
+}
+
+func videoSyncTuningValue(value any) *server.SyncTuning {
+	if value == nil {
+		return nil
+	}
+	switch typed := value.(type) {
+	case server.SyncTuning:
+		return &typed
+	case *server.SyncTuning:
+		return typed
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var tuning server.SyncTuning
+	if err := json.Unmarshal(data, &tuning); err != nil {
+		return nil
+	}
+	if tuning == (server.SyncTuning{}) {
+		return nil
+	}
+	return &tuning
+}
+
+func videoSubtitleOptionsValue(value any) *server.SubtitleOptions {
+	return decodeVideoStructPointerValue[server.SubtitleOptions](value)
+}
+
+func videoAudioSourceOptionsValue(value any) *server.AudioSourceOptions {
+	return decodeVideoStructPointerValue[server.AudioSourceOptions](value)
+}
+
+func videoFullscreenOptionsValue(value any) *server.FullscreenOptions {
+	return decodeVideoStructPointerValue[server.FullscreenOptions](value)
+}
+
+func videoTelemetryOptionsValue(value any) *server.VideoTelemetryOptions {
+	return decodeVideoStructPointerValue[server.VideoTelemetryOptions](value)
+}
+
+func decodeVideoStructPointerValue[T comparable](value any) *T {
+	if value == nil {
+		return nil
+	}
+	if typed, ok := value.(T); ok {
+		if typed == *new(T) {
+			return nil
+		}
+		return &typed
+	}
+	if typed, ok := value.(*T); ok {
+		return typed
+	}
+	caseString, ok := value.(string)
+	if ok && strings.TrimSpace(caseString) == "" {
+		return nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var out T
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	if out == *new(T) {
+		return nil
+	}
+	return &out
 }
 
 func decodeVideoListValue[T any](value any) []T {

@@ -90,6 +90,9 @@ func (ci *ContentIndex) Search(query string, k int) []ContentResult {
 	return ci.searchVec(vec, k)
 }
 
+// searchVec runs the two-stage search: a quantized scan for a bounded candidate
+// set, then an exact cosine re-rank over those candidates only. See candidates.go
+// for the measurements behind the candidate size.
 func (ci *ContentIndex) searchVec(vec []float32, k int) []ContentResult {
 	if k <= 0 {
 		return nil
@@ -97,7 +100,7 @@ func (ci *ContentIndex) searchVec(vec []float32, k int) []ContentResult {
 	ci.mu.RLock()
 	defer ci.mu.RUnlock()
 
-	results := ci.index.Search(vec, len(ci.meta))
+	results := ci.index.Search(vec, candidateCount(k, len(ci.meta)))
 	out := make([]ContentResult, 0, len(results))
 	for _, r := range results {
 		meta, ok := ci.meta[r.ID]

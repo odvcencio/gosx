@@ -181,10 +181,58 @@ func (h *Hub) UnsyncDoc(name string) bool {
 	return true
 }
 
-func (h *Hub) hasSyncDocs() bool {
+// readLimitFor returns the inbound frame allowance for one connection.
+//
+// A CRDT bootstrap frame can reach megabytes, so a connection that may push
+// sync needs a large allowance. Every other connection keeps maxMessageSize.
+//
+// The earlier code read the allowance from the hub, not the connection, so
+// registering a single SyncDoc opened a 16 MiB frame allowance to every
+// connected client, including clients that touch no document. That is the
+// amplification this function removes.
+//
+// The gate is the inbound BinaryAuthorizer, because only a client that may
+// apply inbound sync can profit from a large inbound frame. Two limits follow
+// from that choice, and both are deliberate:
+//
+//   - With no BinaryAuthorizer installed the hub is allow-all, so every
+//     connection gets the large allowance. Install an authorizer to shrink the
+//     surface to the clients that write.
+//   - The allowance is fixed when the connection is accepted. A SyncDoc
+//     registered later does not raise the allowance of a live connection, and
+//     a revoked authorization does not lower it. Register documents and
+//     install the authorizer before serving.
+//
+// Set Hub.MaxSyncMessageSize to change the large allowance.
+func (h *Hub) readLimitFor(client *Client) int64 {
 	h.syncMu.RLock()
-	defer h.syncMu.RUnlock()
-	return len(h.syncDocs) > 0
+	names := make([]string, 0, len(h.syncDocs))
+	for _, binding := range h.syncDocs {
+		names = append(names, binding.name)
+	}
+	authorizer := h.binaryAuthorizer
+	h.syncMu.RUnlock()
+
+	if len(names) == 0 {
+		return maxMessageSize
+	}
+	if authorizer != nil {
+		allowed := false
+		for _, name := range names {
+			if authorizer(client, name) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return maxMessageSize
+		}
+	}
+	limit := h.MaxSyncMessageSize
+	if limit <= 0 {
+		limit = defaultSyncMessageSize
+	}
+	return int64(limit)
 }
 
 func (h *Hub) initClientSync(client *Client) {

@@ -252,13 +252,8 @@ func (r *Renderer) ensurePostFX(width, height int) error {
 // evaluate final display luminance instead of pre-tonemap HDR values.
 func (r *Renderer) recordPresentPass(enc gpu.CommandEncoder) {
 	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
-		ColorAttachments: []gpu.RenderPassColorAttachment{{
-			View:       r.postFXView,
-			LoadOp:     gpu.LoadOpClear,
-			StoreOp:    gpu.StoreOpStore,
-			ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 1},
-		}},
-		Label: "bundle.present.compose",
+		ColorAttachments: r.postColorAttachments(postSlotPresentCompose, r.postFXView),
+		Label:            "bundle.present.compose",
 	})
 	pass.SetPipeline(r.presentPipeline)
 	pass.SetBindGroup(0, r.presentBindGrp)
@@ -268,13 +263,8 @@ func (r *Renderer) recordPresentPass(enc gpu.CommandEncoder) {
 
 func (r *Renderer) recordFXAAPass(enc gpu.CommandEncoder, surfaceView gpu.TextureView) {
 	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
-		ColorAttachments: []gpu.RenderPassColorAttachment{{
-			View:       surfaceView,
-			LoadOp:     gpu.LoadOpClear,
-			StoreOp:    gpu.StoreOpStore,
-			ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 1},
-		}},
-		Label: "bundle.fxaa311",
+		ColorAttachments: r.postColorAttachments(postSlotFXAA, surfaceView),
+		Label:            "bundle.fxaa311",
 	})
 	pass.SetPipeline(r.fxaaPipeline)
 	pass.SetBindGroup(0, r.fxaaBindGrp)

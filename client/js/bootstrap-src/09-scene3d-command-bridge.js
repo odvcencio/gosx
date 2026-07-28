@@ -20,6 +20,9 @@
       var script = document.createElement("script");
       script.src = commandURL();
       script.async = true;
+      if (typeof gosxApplyCurrentScriptNonce === "function") {
+        gosxApplyCurrentScriptNonce(script);
+      }
       script.onload = function() { resolve(window.__gosx_scene3d_command_bridge); };
       script.onerror = function(err) {
         commandPromise = null;

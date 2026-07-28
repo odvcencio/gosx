@@ -12,6 +12,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/render/bundle"
@@ -40,6 +41,12 @@ type Options struct {
 	// MaxSegments caps curved primitive tessellation for fast thumbnails. Zero
 	// preserves authored geometry. Values below 3 are promoted to 3.
 	MaxSegments int
+	// AssetRoots are directories that a base colour texture path resolves
+	// against. The CPU rasterizer loads a texture by reading its source as a
+	// filesystem path, so a web-root path such as "/textures/floor.png" needs a
+	// root to become a real file. Without a root the frame keeps the authored
+	// source and the rasterizer draws its placeholder checker.
+	AssetRoots []string
 }
 
 // Result contains both the pixels and the exact renderer-facing payload used
@@ -49,6 +56,11 @@ type Result struct {
 	Image  *image.RGBA
 	Bundle engine.RenderBundle
 	Stats  bundle.FrameStats
+	// Duration is the wall-clock time that this process spent inside the CPU
+	// rasterizer for this frame. Read it as a measurement of this machine, not
+	// as a property of the scene. Bundle.Stats.LastFrameMS is a simulation step,
+	// not a render measurement, so tools must not print it as a render time.
+	Duration time.Duration
 }
 
 type wireDocument struct {
@@ -182,10 +194,12 @@ func renderBundle(frame engine.RenderBundle, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("scene preview: create renderer: %w", err)
 	}
 	defer renderer.Destroy()
+	started := time.Now()
 	if err := renderer.Frame(frame, opts.Width, opts.Height, opts.Time); err != nil {
 		return nil, fmt.Errorf("scene preview: render frame: %w", err)
 	}
-	return &Result{Image: cloneRGBA(device.Framebuffer()), Bundle: frame, Stats: renderer.Stats()}, nil
+	elapsed := time.Since(started)
+	return &Result{Image: cloneRGBA(device.Framebuffer()), Bundle: frame, Stats: renderer.Stats(), Duration: elapsed}, nil
 }
 
 // Bundle lowers typed authoring props to the renderer-facing native contract.
@@ -237,8 +251,21 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 		})
 	}
 
+	if diagnostics := lightDiagnostics(frame.Lights); len(diagnostics) > 0 {
+		frame.Diagnostics = append(frame.Diagnostics, diagnostics...)
+	}
+
+	if diagnostic, ok := materialCoverageDiagnostic(ir); ok {
+		frame.Diagnostics = append(frame.Diagnostics, diagnostic)
+	}
+	textures := newTextureResolver(opts.AssetRoots)
+
 	materialIndexes := make(map[string]int)
 	for _, object := range ir.Objects {
+		if diagnostic, ok := geometryDiagnostic(object.Kind, object.ID); ok {
+			frame.Diagnostics = append(frame.Diagnostics, diagnostic)
+		}
+		object.Texture = textures.resolve(object.Texture)
 		material := materialFromObject(object)
 		materialIndex := ensureMaterial(&frame, materialIndexes, material)
 		frame.InstancedMeshes = append(frame.InstancedMeshes, engine.RenderInstancedMesh{
@@ -252,6 +279,10 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 		})
 	}
 	for _, mesh := range ir.InstancedMeshes {
+		if diagnostic, ok := geometryDiagnostic(mesh.Kind, mesh.ID); ok {
+			frame.Diagnostics = append(frame.Diagnostics, diagnostic)
+		}
+		mesh.Texture = textures.resolve(mesh.Texture)
 		material := materialFromInstance(mesh)
 		materialIndex := ensureMaterial(&frame, materialIndexes, material)
 		count := mesh.Count
@@ -342,6 +373,7 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 	for _, html := range ir.HTML {
 		frame.Diagnostics = append(frame.Diagnostics, unsupported("html", html.ID, "native PNG previews do not rasterize HTML surfaces yet"))
 	}
+	frame.Diagnostics = append(frame.Diagnostics, textures.diagnostics()...)
 	frame.ObjectCount = len(ir.Objects) + len(ir.InstancedMeshes)
 	return frame
 }

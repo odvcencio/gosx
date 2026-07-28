@@ -218,7 +218,10 @@ type Props struct {
 	Audio *Audio
 }
 
-// Compression configures TurboQuant compression for Scene3D vertex data.
+// Compression configures scalar quantization for Scene3D vertex data.
+//
+// The codec is per-chunk min/max quantization with bit packing, implemented in
+// scene/compress.go. It does not use TurboQuant, and it has no delta stage.
 // When non-nil with BitWidth > 0, IR lowering quantizes bulk float arrays.
 type Compression struct {
 	BitWidth int `json:"bitWidth"` // 1-8, bits per coordinate. 0 = no compression.
@@ -448,7 +451,7 @@ type LODLevel struct {
 
 // LODGroup lowers conventional distance-threshold level-of-detail groups. It
 // complements Compression.LOD: discrete groups swap authored meshes/models,
-// while TurboQuant LOD swaps compressed vertex payload quality.
+// while compression LOD swaps compressed vertex payload quality.
 type LODGroup struct {
 	ID       string
 	Position Vector3
@@ -1190,7 +1193,7 @@ type LightProbe struct {
 // AnimationClip defines a procedural animation clip with keyframe channels.
 // Animation keyframes are high-dimensional vectors: a 64-joint skeleton with
 // 60 keyframes produces 64 * 60 * 7 floats (pos xyz + quat xyzw) = 26,880
-// floats. TurboQuant compression at 2-bit reduces this from ~107KB to ~6.7KB.
+// floats. Scalar quantization at 2-bit reduces this from ~107KB to ~6.7KB.
 type AnimationClip struct {
 	Name     string             // clip name (e.g. "idle", "walk")
 	Duration float64            // clip duration in seconds

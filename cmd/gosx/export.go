@@ -115,12 +115,18 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "bootstrap-feature-engines.js"), true
 	case "/gosx/bootstrap-feature-hubs.js":
 		return filepath.Join(buildDir, "bootstrap-feature-hubs.js"), true
+	case "/gosx/bootstrap-feature-controllers.js":
+		return filepath.Join(buildDir, "bootstrap-feature-controllers.js"), true
+	case "/gosx/bootstrap-feature-textlayout.js":
+		return filepath.Join(buildDir, "bootstrap-feature-textlayout.js"), true
 	case "/gosx/bootstrap-feature-scene3d.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d.js"), true
 	case "/gosx/bootstrap-feature-scene3d-command.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"), true
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-webgpu.js"), true
+	case "/gosx/bootstrap-feature-scene3d-webgl.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-webgl.js"), true
 	case "/gosx/bootstrap-feature-scene3d-gltf.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-gltf.js"), true
 	case "/gosx/bootstrap-feature-scene3d-animation.js":

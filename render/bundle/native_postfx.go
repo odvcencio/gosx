@@ -55,6 +55,13 @@ type nativePostFXResources struct {
 	vignetteUniform   gpu.Buffer
 	colorGradeUniform gpu.Buffer
 
+	// Last value written to each uniform above. The caches live here so a
+	// rebuilt post-FX chain starts with them invalid.
+	ssaoCache       vec4Cache
+	dofCache        vec4Cache
+	vignetteCache   vec4Cache
+	colorGradeCache vec4Cache
+
 	ssaoFromHDR           gpu.BindGroup
 	ssaoFromScratch       gpu.BindGroup
 	dofFromHDR            gpu.BindGroup
@@ -681,12 +688,10 @@ func (r *Renderer) configureNativePostFX(effects []nativePostFXEffect) {
 	for _, effect := range effects {
 		switch effect.kind {
 		case nativePostFXSSAO:
-			r.device.Queue().WriteBuffer(r.nativePostFX.ssaoUniform, 0, float32sToBytes([]float32{
+			r.writeVec4IfChanged(&r.nativePostFX.ssaoCache, r.nativePostFX.ssaoUniform,
 				float32(maxFloat(effect.radius, 1)),
 				float32(maxFloat(effect.intensity, 0)),
-				float32(maxFloat(effect.bias, 0)),
-				0,
-			}))
+				float32(maxFloat(effect.bias, 0)), 0)
 		case nativePostFXDOF:
 			focusDepth := effect.focus / (effect.focus + 1)
 			if focusDepth < 0 {
@@ -695,26 +700,18 @@ func (r *Renderer) configureNativePostFX(effects []nativePostFXEffect) {
 			if focusDepth > 1 {
 				focusDepth = 1
 			}
-			r.device.Queue().WriteBuffer(r.nativePostFX.dofUniform, 0, float32sToBytes([]float32{
+			r.writeVec4IfChanged(&r.nativePostFX.dofCache, r.nativePostFX.dofUniform,
 				float32(focusDepth),
 				float32(maxFloat(effect.aperture, 0)),
-				float32(maxFloat(effect.maxBlur, 0)),
-				0,
-			}))
+				float32(maxFloat(effect.maxBlur, 0)), 0)
 		case nativePostFXVignette:
-			r.device.Queue().WriteBuffer(r.nativePostFX.vignetteUniform, 0, float32sToBytes([]float32{
-				float32(maxFloat(effect.intensity, 0)),
-				0,
-				0,
-				0,
-			}))
+			r.writeVec4IfChanged(&r.nativePostFX.vignetteCache, r.nativePostFX.vignetteUniform,
+				float32(maxFloat(effect.intensity, 0)), 0, 0, 0)
 		case nativePostFXColorGrade:
-			r.device.Queue().WriteBuffer(r.nativePostFX.colorGradeUniform, 0, float32sToBytes([]float32{
+			r.writeVec4IfChanged(&r.nativePostFX.colorGradeCache, r.nativePostFX.colorGradeUniform,
 				float32(maxFloat(effect.exposure, 0)),
 				float32(maxFloat(effect.contrast, 0)),
-				float32(maxFloat(effect.saturation, 0)),
-				0,
-			}))
+				float32(maxFloat(effect.saturation, 0)), 0)
 		}
 	}
 }
@@ -803,13 +800,8 @@ func (r *Renderer) recordNativePostFXPasses(enc gpu.CommandEncoder, effects []na
 			continue
 		}
 		pass := enc.BeginRenderPass(gpu.RenderPassDesc{
-			ColorAttachments: []gpu.RenderPassColorAttachment{{
-				View:       outputView,
-				LoadOp:     gpu.LoadOpClear,
-				StoreOp:    gpu.StoreOpStore,
-				ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 1},
-			}},
-			Label: label,
+			ColorAttachments: r.postColorAttachments(postSlotNativeEffect, outputView),
+			Label:            label,
 		})
 		pass.SetPipeline(pipeline)
 		pass.SetBindGroup(0, bg)

@@ -8,8 +8,16 @@ import (
 )
 
 // TestInspectBackendIntentDerivesFromVerdict proves the surface report's
-// BackendIntent reflects the SceneIR's backendCaps verdict (webgl-only for a
-// pickable scene) rather than the legacy hardcoded triple.
+// BackendIntent reflects the SceneIR's backendCaps verdict rather than the
+// legacy hardcoded triple.
+//
+// A pickable scene yields [webgpu webgl]: both GPU backends implement
+// gpu-picking, and Canvas2D does not, so the required-feature rule drops
+// Canvas2D. The legacy fallback triple ends in "canvas", so a report that
+// stops at two GPU backends can only have come from the verdict.
+//
+// This test asserted [webgl] alone until gpu-picking shipped on WebGPU. See
+// the FeatureGPUPicking comment in scene/capability/capability.go.
 func TestInspectBackendIntentDerivesFromVerdict(t *testing.T) {
 	pickable := true
 	props := scene.Props{Graph: scene.NewGraph(scene.Mesh{
@@ -28,8 +36,14 @@ func TestInspectBackendIntentDerivesFromVerdict(t *testing.T) {
 		t.Fatalf("InspectJSON: %v", err)
 	}
 	got := report.Surface.BackendIntent
-	if len(got) != 1 || got[0] != "webgl" {
-		t.Fatalf("expected BackendIntent == [webgl] from verdict, got %v", got)
+	want := []string{"webgpu", "webgl"}
+	if len(got) != len(want) {
+		t.Fatalf("expected BackendIntent == %v from verdict, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected BackendIntent == %v from verdict, got %v", want, got)
+		}
 	}
 }
 

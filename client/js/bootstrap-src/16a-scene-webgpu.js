@@ -39,18 +39,34 @@
   // -----------------------------------------------------------------------
 
   // -- Shared constants embedded in multiple shaders --
+  //
+  // The light loop no longer carries a compile-time cap. lights is a
+  // runtime-sized storage array, so the fragment shader bounds itself with
+  // arrayLength(&lights). See sceneWebGPULightCapacityFor for the JS side.
   var WGSL_COMMON_CONSTANTS = [
     "const PI: f32 = 3.14159265359;",
-    "const MAX_LIGHTS: u32 = 8u;",
   ].join("\n");
 
   // -- Frame-level uniform structures --
+  //
+  // Light packs all seven GoSX light kinds. The type codes 0..4 match the
+  // WebGL2 renderer (0=ambient, 1=directional, 2=point, 3=spot,
+  // 4=hemisphere), so both backends read the same numbers. Code 5 is
+  // rect-area, which only this renderer shades as a rectangle. A LightProbe
+  // arrives as code 0, because a probe is a first-order ambient term with no
+  // position and no distance falloff.
+  //
+  // Keep this layout in step with sceneWebGPUPackLights and with
+  // SCENE_WEBGPU_LIGHT_FLOATS. The struct is 7 * vec4f = 112 bytes.
   var WGSL_FRAME_STRUCTS = [
     "struct Light {",
-    "    position: vec4f,",       // xyz = position, w = type (0=ambient,1=dir,2=point)
+    "    position: vec4f,",       // xyz = position, w = type code
     "    direction: vec4f,",      // xyz = direction, w = intensity
-    "    color: vec4f,",          // rgb = color, a = range
-    "    params: vec4f,",         // x = decay, y = shadowBias, z = castShadow, w = unused
+    "    color: vec4f,",          // rgb = color (sky color for hemisphere), a = range
+    "    params: vec4f,",         // x = decay, y = shadowBias, z = castShadow, w = spot cone angle
+    "    groundPenumbra: vec4f,", // rgb = hemisphere ground color, a = spot penumbra
+    "    areaHalfWidth: vec4f,",  // xyz = rect-area half-width vector, w = unused
+    "    areaHalfHeight: vec4f,", // xyz = rect-area half-height vector, w = unused
     "};",
     "",
     "struct FrameUniforms {",
@@ -1428,7 +1444,7 @@
     "    @location(5) instanceColor: vec4f,",
     "};",
     "",
-    "// Group 0: per-frame",
+    // Group 0: per-frame
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
     "@group(0) @binding(1) var<storage, read> lights: array<Light>;",
     "@group(0) @binding(2) var<uniform> fog: FogUniforms;",
@@ -1439,7 +1455,7 @@
     "@group(0) @binding(7) var shadowSampler1: sampler_comparison;",
     "@group(0) @binding(8) var<uniform> shadow: ShadowUniforms;",
     "",
-    "// Group 1: per-material",
+    // Group 1: per-material
     "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
     "@group(1) @binding(1) var albedoTex: texture_2d<f32>;",
     "@group(1) @binding(2) var albedoSamp: sampler;",
@@ -1458,7 +1474,7 @@
     "    return projCoords3 * 0.5 + 0.5;",
     "}",
     "",
-    "// 4-tap Poisson disk PCF shadow sampling for shadow slot 0.",
+    // 4-tap Poisson disk PCF shadow sampling for shadow slot 0.
     "fn shadowFactor0(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
     "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
     "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
@@ -1481,7 +1497,7 @@
     "    return select(1.0, shadowVal / 4.0, inside);",
     "}",
     "",
-    "// 4-tap Poisson disk PCF shadow sampling for shadow slot 1.",
+    // 4-tap Poisson disk PCF shadow sampling for shadow slot 1.
     "fn shadowFactor1(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
     "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
     "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
@@ -1504,7 +1520,7 @@
     "    return select(1.0, shadowVal / 4.0, inside);",
     "}",
     "",
-    "// GGX/Trowbridge-Reitz normal distribution function.",
+    // GGX/Trowbridge-Reitz normal distribution function.
     "fn distributionGGX(N: vec3f, H: vec3f, roughness: f32) -> f32 {",
     "    let a = roughness * roughness;",
     "    let a2 = a * a;",
@@ -1514,26 +1530,26 @@
     "    return a2 / max(PI * denom * denom, 0.0000001);",
     "}",
     "",
-    "// Smith geometry function (GGX variant) -- single direction.",
+    // Smith geometry function (GGX variant) -- single direction.
     "fn geometrySchlickGGX(NdotV: f32, roughness: f32) -> f32 {",
     "    let r = roughness + 1.0;",
     "    let k = (r * r) / 8.0;",
     "    return NdotV / (NdotV * (1.0 - k) + k);",
     "}",
     "",
-    "// Smith geometry function -- combined for view and light directions.",
+    // Smith geometry function -- combined for view and light directions.
     "fn geometrySmith(N: vec3f, V: vec3f, L: vec3f, roughness: f32) -> f32 {",
     "    let NdotV = max(dot(N, V), 0.0);",
     "    let NdotL = max(dot(N, L), 0.0);",
     "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
     "}",
     "",
-    "// Schlick fresnel approximation.",
+    // Schlick fresnel approximation.
     "fn fresnelSchlick(cosTheta: f32, F0: vec3f) -> vec3f {",
     "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
-    "// Point light distance attenuation.",
+    // Point light distance attenuation.
     "fn pointLightAttenuation(distance: f32, range: f32, decay: f32) -> f32 {",
     "    if (range > 0.0) {",
     "        let ratio = clamp(1.0 - pow(distance / range, 4.0), 0.0, 1.0);",
@@ -1542,8 +1558,140 @@
     "    return 1.0 / max(pow(distance, decay), 0.0001);",
     "}",
     "",
+    // Spot cone falloff. Ported from the WebGL2 renderer so a spot light shades
+    // the same on both GPU backends. L points from the surface toward the light;
+    // spotDir is the direction the light shines. These comments stay on the JS
+    // side on purpose: text inside a WGSL string ships in the bundle, a JS
+    // comment does not.
+    "fn spotConeAttenuation(L: vec3f, spotDir: vec3f, angle: f32, penumbra: f32) -> f32 {",
+    "    let cosAngle = dot(L, -normalize(spotDir));",
+    "    let outerCos = cos(angle);",
+    "    let innerCos = cos(angle * (1.0 - penumbra));",
+    "    return clamp((cosAngle - outerCos) / max(innerCos - outerCos, 0.001), 0.0, 1.0);",
+    "}",
+    "",
+    // -- Rect-area light: polygon form factor --------------------------------
+    //
+    // The next three functions reproduce the diffuse half of three.js
+    // RE_Direct_RectArea_Physical. three.js evaluates the diffuse term with
+    // LTC_Evaluate and an IDENTITY matrix, which reduces to the analytic polygon
+    // form factor and needs no lookup table. The diffuse response of a
+    // RectAreaLight is therefore exact here, not an approximation.
+    //
+    // The specular half of three.js reads two fitted 64x64 LTC tables. This
+    // renderer uploads no such tables, so rectAreaLightRadiance approximates
+    // specular with a representative point. See the rect-area-specular cell in
+    // scene/capability/capability.go for the recorded gap.
+
+    // Edge integral of the polygon form factor.
+    "fn ltcEdgeVectorFormFactor(v1: vec3f, v2: vec3f) -> vec3f {",
+    "    let x = dot(v1, v2);",
+    "    let y = abs(x);",
+    "    let a = 0.8543985 + (0.4965155 + 0.0145206 * y) * y;",
+    "    let b = 3.4175940 + (4.1616724 + y) * y;",
+    "    let v = a / b;",
+    "    var thetaSinTheta = 0.5 * inverseSqrt(max(1.0 - x * x, 0.0000001)) - v;",
+    "    if (x > 0.0) {",
+    "        thetaSinTheta = v;",
+    "    }",
+    "    return cross(v1, v2) * thetaSinTheta;",
+    "}",
+    "",
+    // Clipped sphere form factor of the accumulated edge vector.
+    "fn ltcClippedSphereFormFactor(f: vec3f) -> f32 {",
+    "    let l = length(f);",
+    "    return max((l * l + f.z) / (l + 1.0), 0.0);",
+    "}",
+    "",
+    // Diffuse form factor of a rectangle at a shaded point. Returns 0 when the
+    // point sits behind the emitter, so a rect-area light only lights the side
+    // its direction points at.
+    //
+    // The tangent basis: with the identity matrix the form factor depends only
+    // on N, so any basis around N gives the same answer. Pick a stable one.
+    "fn rectAreaFormFactor(N: vec3f, P: vec3f, halfWidth: vec3f, halfHeight: vec3f, center: vec3f) -> f32 {",
+    "    let rect0 = center + halfWidth - halfHeight;",
+    "    let rect1 = center - halfWidth - halfHeight;",
+    "    let rect2 = center - halfWidth + halfHeight;",
+    "    let rect3 = center + halfWidth + halfHeight;",
+    "    let lightNormal = cross(rect1 - rect0, rect3 - rect0);",
+    "    if (dot(lightNormal, P - rect0) < 0.0) {",
+    "        return 0.0;",
+    "    }",
+    "    var helper = vec3f(0.0, 0.0, 1.0);",
+    "    if (abs(N.z) > 0.999) {",
+    "        helper = vec3f(1.0, 0.0, 0.0);",
+    "    }",
+    "    let T1 = normalize(cross(helper, N));",
+    "    let T2 = cross(N, T1);",
+    "    let basis = transpose(mat3x3f(T1, T2, N));",
+    "    let c0 = normalize(basis * (rect0 - P));",
+    "    let c1 = normalize(basis * (rect1 - P));",
+    "    let c2 = normalize(basis * (rect2 - P));",
+    "    let c3 = normalize(basis * (rect3 - P));",
+    "    var edges = ltcEdgeVectorFormFactor(c0, c1);",
+    "    edges = edges + ltcEdgeVectorFormFactor(c1, c2);",
+    "    edges = edges + ltcEdgeVectorFormFactor(c2, c3);",
+    "    edges = edges + ltcEdgeVectorFormFactor(c3, c0);",
+    "    return ltcClippedSphereFormFactor(edges);",
+    "}",
+    "",
+    // Closest point on the rectangle to the mirror direction. This is the
+    // representative-point stand-in for the LTC specular table.
+    "fn rectAreaRepresentativePoint(P: vec3f, N: vec3f, V: vec3f, center: vec3f, halfWidth: vec3f, halfHeight: vec3f, planeNormal: vec3f) -> vec3f {",
+    "    let R = reflect(-V, N);",
+    "    var hit = center;",
+    "    let denom = dot(planeNormal, R);",
+    "    if (abs(denom) > 0.00001) {",
+    "        let t = dot(planeNormal, center - P) / denom;",
+    "        if (t > 0.0) {",
+    "            hit = P + R * t;",
+    "        }",
+    "    }",
+    "    let wLen = max(length(halfWidth), 0.00001);",
+    "    let hLen = max(length(halfHeight), 0.00001);",
+    "    let wDir = halfWidth / wLen;",
+    "    let hDir = halfHeight / hLen;",
+    "    let offset = hit - center;",
+    "    let u = clamp(dot(offset, wDir), -wLen, wLen);",
+    "    let v = clamp(dot(offset, hDir), -hLen, hLen);",
+    "    return center + wDir * u + hDir * v;",
+    "}",
+    "",
+    // Full rect-area contribution: exact diffuse form factor plus a
+    // representative-point specular lobe.
+    //
+    // three.js multiplies the diffuse term by diffuseColor, which already folds
+    // in metalness. The form factor carries the cosine and the solid angle, so
+    // there is no separate NdotL or 1/PI in the diffuse line.
+    "fn rectAreaLightRadiance(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, NoV: f32) -> vec3f {",
+    "    let center = light.position.xyz;",
+    "    let halfWidth = light.areaHalfWidth.xyz;",
+    "    let halfHeight = light.areaHalfHeight.xyz;",
+    "    let formFactor = rectAreaFormFactor(N, P, halfWidth, halfHeight, center);",
+    "    if (formFactor <= 0.0) {",
+    "        return vec3f(0.0);",
+    "    }",
+    "    let radiance = light.color.rgb * light.direction.w;",
+    "    var out = albedo * (1.0 - metalness) * radiance * formFactor;",
+    "    let repPoint = rectAreaRepresentativePoint(P, N, V, center, halfWidth, halfHeight, light.direction.xyz);",
+    "    let toRep = repPoint - P;",
+    "    let repDist = length(toRep);",
+    "    let L = toRep / max(repDist, 0.0001);",
+    "    let NdotL = max(dot(N, L), 0.0);",
+    "    if (NdotL > 0.0) {",
+    "        let H = normalize(V + L);",
+    "        let D = distributionGGX(N, H, roughness);",
+    "        let G = geometrySmith(N, V, L, roughness);",
+    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "        let brdf = (D * G * F) / (4.0 * NoV * NdotL + 0.0001);",
+    "        out = out + radiance * brdf * formFactor;",
+    "    }",
+    "    return out;",
+    "}",
+    "",
     "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
-    "    // Resolve material properties, sampling textures when available.",
+    // Resolve material properties, sampling textures when available.
     "    var albedo = material.albedo;",
     "    if (material.hasAlbedoMap != 0u) {",
     "        let texAlbedo = textureSample(albedoTex, albedoSamp, in.uv);",
@@ -1571,13 +1719,13 @@
     "        emissiveColor = textureSample(emissiveTex, emissiveSamp, in.uv).rgb;",
     "    }",
     "",
-    "    // Unlit path: output albedo directly.",
+    // Unlit path: output albedo directly.
     "    if (material.unlit != 0u) {",
     "        let color = albedo + emissiveColor * emissiveStrength;",
     "        return vec4f(color, finalOpacity);",
     "    }",
     "",
-    "    // Resolve per-pixel normal via TBN matrix.",
+    // Resolve per-pixel normal via TBN matrix.
     "    var N = normalize(in.normal);",
     "    if (material.hasNormalMap != 0u) {",
     "        let T = normalize(in.tangent);",
@@ -1590,13 +1738,15 @@
     "    let V = normalize(frame.cameraPos - in.worldPos);",
     "    let NoV = max(dot(N, V), 0.0);",
     "",
-    "    // Fresnel reflectance at normal incidence.",
+    // Fresnel reflectance at normal incidence.
     "    let F0 = mix(vec3f(0.04), albedo, metalness);",
     "",
-    "    // Accumulate direct lighting.",
+    // Accumulate direct lighting.
     "    var Lo = vec3f(0.0);",
     "",
-    "    let lightCount = min(frame.lightCount, MAX_LIGHTS);",
+    // arrayLength bounds the loop against the storage buffer the JS side sized
+    // this frame. No compile-time light cap remains.
+    "    let lightCount = min(frame.lightCount, arrayLength(&lights));",
     "    for (var i = 0u; i < lightCount; i = i + 1u) {",
     "        let light = lights[i];",
     "        let lightType = u32(light.position.w);",
@@ -1605,9 +1755,27 @@
     "        let range = light.color.a;",
     "        let decay = light.params.x;",
     "",
-    "        // Ambient light (type 0): add flat contribution, no BRDF.",
+    // Ambient light (type 0): flat contribution, no BRDF. A light probe
+    // arrives here too; see sceneWebGPULightTypeCode.
     "        if (lightType == 0u) {",
     "            Lo = Lo + albedo * lightColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
+    // Hemisphere light (type 4): sky/ground blend driven by normal Y. Matches
+    // the WebGL2 renderer.
+    "        if (lightType == 4u) {",
+    "            let hBlend = N.y * 0.5 + 0.5;",
+    "            let hemiColor = mix(light.groundPenumbra.rgb, lightColor, hBlend);",
+    "            Lo = Lo + albedo * hemiColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
+    // Rect-area light (type 5): the rectangle's shape drives both terms. The
+    // form factor already carries the cosine and the falloff, so the shared
+    // BRDF block below does not apply.
+    "        if (lightType == 5u) {",
+    "            Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, NoV);",
     "            continue;",
     "        }",
     "",
@@ -1615,10 +1783,17 @@
     "        var attenuation: f32 = 1.0;",
     "",
     "        if (lightType == 1u) {",
-    "            // Directional light.",
+    // Directional light.
     "            L = normalize(-light.direction.xyz);",
+    // Spot light (type 3): cone falloff times point-light distance falloff.
+    "        } else if (lightType == 3u) {",
+    "            let toLight = light.position.xyz - in.worldPos;",
+    "            let dist = length(toLight);",
+    "            L = toLight / max(dist, 0.0001);",
+    "            let cone = spotConeAttenuation(L, light.direction.xyz, light.params.w, light.groundPenumbra.a);",
+    "            attenuation = pointLightAttenuation(dist, range, decay) * cone;",
     "        } else {",
-    "            // Point light.",
+    // Point light (type 2).
     "            let toLight = light.position.xyz - in.worldPos;",
     "            let dist = length(toLight);",
     "            L = toLight / max(dist, 0.0001);",
@@ -1628,7 +1803,7 @@
     "        let H = normalize(V + L);",
     "        let NdotL = max(dot(N, L), 0.0);",
     "",
-    "        // Cook-Torrance specular BRDF.",
+    // Cook-Torrance specular BRDF.
     "        let D = distributionGGX(N, H, roughness);",
     "        let G = geometrySmith(N, V, L, roughness);",
     "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
@@ -1637,10 +1812,10 @@
     "        let denominator = 4.0 * NoV * NdotL + 0.0001;",
     "        let specular = numerator / denominator;",
     "",
-    "        // Energy conservation: diffuse complement of specular.",
+    // Energy conservation: diffuse complement of specular.
     "        let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
     "",
-    "        // Shadow attenuation for directional lights.",
+    // Shadow attenuation for directional lights.
     "        var shadowAtten: f32 = 1.0;",
     "        if (material.receiveShadow != 0u && lightType == 1u) {",
     "            if (shadow.hasShadow0 != 0u && i32(i) == shadow.shadowLightIndex0) {",
@@ -1661,7 +1836,7 @@
     "                   + env.groundColor * env.groundIntensity * (1.0 - hemi);",
     "    let ambient = envDiffuse * albedo;",
     "",
-    "    // Emissive contribution.",
+    // Emissive contribution.
     "    let emission = emissiveColor * emissiveStrength;",
     "",
     "    var color = ambient + Lo + emission;",
@@ -1689,14 +1864,14 @@
     "        color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
     "    }",
     "",
-    "    // Exponential fog.",
+    // Exponential fog.
     "    if (fog.hasFog != 0u) {",
     "        let fogDist = length(in.worldPos - frame.cameraPos);",
     "        let fogFactor = exp(-fog.fogDensity * fog.fogDensity * fogDist * fogDist);",
     "        color = mix(fog.fogColor, color, clamp(fogFactor, 0.0, 1.0));",
     "    }",
     "",
-    "    // Tone mapping (Reinhard) and gamma correction.",
+    // Tone mapping (Reinhard) and gamma correction.
     "    if (frame.toneMap != 0u) {",
     "        color = color / (color + vec3f(1.0));",
     "        color = pow(color, vec3f(1.0 / 2.2));",
@@ -2009,7 +2184,7 @@
     "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
     "@group(2) @binding(1) var<storage, read> particles: array<ParticleInstance>;",
     "",
-    "// Unit quad: 6 vertices for 2 triangles.",
+    // Unit quad: 6 vertices for 2 triangles.
     "const quadPos = array<vec2f, 6>(",
     "    vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(-0.5, 0.5),",
     "    vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5),",
@@ -2025,7 +2200,7 @@
     "    let worldPos = (points.modelMatrix * vec4f(p.position, 1.0)).xyz;",
     "    let viewPos = frame.viewMatrix * vec4f(worldPos, 1.0);",
     "",
-    "    // Compute point size with optional attenuation.",
+    // Compute point size with optional attenuation.
     "    var rawSize = p.size;",
     "    if (points.flags.y == 0u) { rawSize = points.defaultColorAndSize.w; }",
     "",
@@ -2043,7 +2218,7 @@
     "        pixelSize = min(pixelSize, points.params.w);",
     "    }",
     "",
-    "    // Billboard: offset in clip space by quad * pixelSize.",
+    // Billboard: offset in clip space by quad * pixelSize.
     "    let clipPos = frame.projMatrix * viewPos;",
     "    let ndcOffsetX = quad.x * pixelSize / frame.viewportWidth * clipPos.w * 2.0;",
     "    let ndcOffsetY = quad.y * pixelSize / frame.viewportHeight * clipPos.w * 2.0;",
@@ -2051,7 +2226,7 @@
     "    var out: PointsOutput;",
     "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
     "",
-    "    // Color.",
+    // Color.
     "    if (points.flags.x != 0u) {",
     "        out.color = p.color.rgb;",
     "    } else {",
@@ -2061,7 +2236,7 @@
     "    out.pointCoord = quad + vec2f(0.5, 0.5);",
     "    out.pointSize = pixelSize;",
     "",
-    "    // Fog.",
+    // Fog.
     "    if (points.params.y != 0.0) {",
     "        let dist = length(viewPos.xyz);",
     "        out.fogFactor = clamp(exp(-points.params.z * points.params.z * dist * dist), 0.0, 1.0);",
@@ -2102,7 +2277,7 @@
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
     "@group(2) @binding(0) var<uniform> points: PointsUniforms;",
     "",
-    "// Unit quad: 6 vertices for 2 triangles.",
+    // Unit quad: 6 vertices for 2 triangles.
     "const quadPos = array<vec2f, 6>(",
     "    vec2f(-0.5, -0.5), vec2f(0.5, -0.5), vec2f(-0.5, 0.5),",
     "    vec2f(0.5, -0.5), vec2f(0.5, 0.5), vec2f(-0.5, 0.5),",
@@ -2117,7 +2292,7 @@
     "    let worldPos = (points.modelMatrix * vec4f(in.position, 1.0)).xyz;",
     "    let viewPos = frame.viewMatrix * vec4f(worldPos, 1.0);",
     "",
-    "    // Compute point size with optional attenuation.",
+    // Compute point size with optional attenuation.
     "    var rawSize = in.size;",
     "    if (points.flags.y == 0u) { rawSize = points.defaultColorAndSize.w; }",
     "",
@@ -2135,7 +2310,7 @@
     "        pixelSize = min(pixelSize, points.params.w);",
     "    }",
     "",
-    "    // Billboard: offset in clip space by quad * pixelSize.",
+    // Billboard: offset in clip space by quad * pixelSize.
     "    let clipPos = frame.projMatrix * viewPos;",
     "    let ndcOffsetX = quad.x * pixelSize / frame.viewportWidth * clipPos.w * 2.0;",
     "    let ndcOffsetY = quad.y * pixelSize / frame.viewportHeight * clipPos.w * 2.0;",
@@ -2143,7 +2318,7 @@
     "    var out: PointsOutput;",
     "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
     "",
-    "    // Color.",
+    // Color.
     "    if (points.flags.x != 0u) {",
     "        out.color = in.color.rgb;",
     "    } else {",
@@ -2153,7 +2328,7 @@
     "    out.pointCoord = quad + vec2f(0.5, 0.5);",
     "    out.pointSize = pixelSize;",
     "",
-    "    // Fog.",
+    // Fog.
     "    if (points.params.y != 0.0) {",
     "        let dist = length(viewPos.xyz);",
     "        out.fogFactor = clamp(exp(-points.params.z * points.params.z * dist * dist), 0.0, 1.0);",
@@ -2345,7 +2520,53 @@
     "}",
   ].join("\n");
 
-  var WGSL_POST_BLUR_FRAGMENT = [
+  // -----------------------------------------------------------------------
+  // shader-f16 in the post chain
+  // -----------------------------------------------------------------------
+  //
+  // Half precision cuts register pressure and lets a GPU issue two lanes of
+  // arithmetic per cycle. The win lands on the integrated and mobile parts where
+  // GoSX is weakest, and it lands hardest on a shader that is a weighted average
+  // of many texture taps.
+  //
+  // Where it is SAFE here, and why. Every post target this renderer allocates
+  // uses targetFormat — the preferred canvas format, an 8-bit UNORM. See
+  // ensureFBOs and ensureBloomPingPong. So every value a post shader samples is
+  // already quantized to 8 bits in [0, 1]. An f16 carries an 11-bit significand,
+  // which strictly exceeds that, and the blur weights sum to 1, so the
+  // accumulator never leaves [0, 1] either. Half precision cannot lose a bit the
+  // target could have stored.
+  //
+  // Where it is NOT safe, and why these shaders stay f32:
+  //
+  //   tone mapping   multiplies by exposure BEFORE clamping, so it is the one
+  //                  post stage that handles values above 1 by design.
+  //   SSAO and DOF   reconstruct view-space position from depth. A depth value
+  //                  near the far plane loses metres of precision in f16.
+  //   PBR lighting   sums an unbounded number of lights into an HDR colour, and
+  //                  the GGX distribution divides by alpha squared. At roughness
+  //                  0.02 that term is 1.6e-7, below the smallest normal f16
+  //                  (6.1e-5), so it underflows to zero and the highlight
+  //                  vanishes. This is the precision hazard f16 is famous for.
+  //
+  // vignette, colour grading, the bloom bright pass and the bloom composite are
+  // one or two taps each. They are safe, but a single tap is not bandwidth bound,
+  // so converting them would add bytes and buy nothing measurable.
+  //
+  // The variant is a two-line preamble. The body is written once against the
+  // aliases, so there is no second copy of the shader to keep in step.
+  function sceneWebGPUPostPrecisionPreamble(useF16) {
+    if (!useF16) {
+      return ["alias pf = f32;", "alias pf3 = vec3f;", ""];
+    }
+    return ["enable f16;", "alias pf = f16;", "alias pf3 = vec3h;", ""];
+  }
+
+  function sceneWebGPUPostShaderSource(bodyLines, useF16) {
+    return sceneWebGPUPostPrecisionPreamble(useF16).concat(bodyLines).join("\n");
+  }
+
+  var WGSL_POST_BLUR_BODY = [
     "struct BlurParams {",
     "    direction: vec2f,",
     "    radius: f32,",
@@ -2359,20 +2580,23 @@
     "@fragment fn fragmentMain(@location(0) uv: vec2f) -> @location(0) vec4f {",
     "    let texDim = vec2f(textureDimensions(inputTex));",
     "    let texelSize = 1.0 / texDim;",
-    "    var result = textureSample(inputTex, inputSamp, uv).rgb * 0.227027;",
+    "    var result = pf3(textureSample(inputTex, inputSamp, uv).rgb) * pf(0.227027);",
     "",
     "    let offsets = array<f32, 4>(1.0, 2.0, 3.0, 4.0);",
-    "    let weights = array<f32, 4>(0.1945946, 0.1216216, 0.054054, 0.016216);",
+    "    let weights = array<pf, 4>(pf(0.1945946), pf(0.1216216), pf(0.054054), pf(0.016216));",
     "    let radiusStep = clamp(params.radius * 0.35, 1.0, 4.0);",
     "",
     "    for (var i = 0u; i < 4u; i = i + 1u) {",
     "        let offset = params.direction * texelSize * offsets[i] * radiusStep;",
-    "        result = result + textureSample(inputTex, inputSamp, uv + offset).rgb * weights[i];",
-    "        result = result + textureSample(inputTex, inputSamp, uv - offset).rgb * weights[i];",
+    "        result = result + pf3(textureSample(inputTex, inputSamp, uv + offset).rgb) * weights[i];",
+    "        result = result + pf3(textureSample(inputTex, inputSamp, uv - offset).rgb) * weights[i];",
     "    }",
-    "    return vec4f(result, 1.0);",
+    "    return vec4f(vec3f(result), 1.0);",
     "}",
-  ].join("\n");
+  ];
+
+  var WGSL_POST_BLUR_FRAGMENT = sceneWebGPUPostShaderSource(WGSL_POST_BLUR_BODY, false);
+  var WGSL_POST_BLUR_FRAGMENT_F16 = sceneWebGPUPostShaderSource(WGSL_POST_BLUR_BODY, true);
 
   var WGSL_POST_BLOOM_COMPOSITE_FRAGMENT = [
     "struct BloomCompositeParams {",
@@ -2444,11 +2668,17 @@
   // mirrors the native render/bundle FXAA pass (render/bundle/postfx.go,
   // fxaa311WGSLTemplate) for cross-backend parity: green-channel luma edge
   // detection, local contrast search, 2-tap + 2-tap subpixel blend.
-  var WGSL_POST_FXAA_FRAGMENT = [
+  // FXAA reads nine taps and blends four more. Every tap is an 8-bit UNORM in
+  // [0, 1] and every blend weight is at most 1, so half precision is exact
+  // against the storage format. The edge-direction vector stays f32: it is
+  // divided by a reduction term as small as 1/128, and its result is multiplied
+  // by the texel size, so a half-precision reciprocal would quantize the sample
+  // offsets and shift where FXAA looks.
+  var WGSL_POST_FXAA_BODY = [
     "@group(0) @binding(0) var inputTex: texture_2d<f32>;",
     "@group(0) @binding(1) var inputSamp: sampler;",
     "",
-    "fn greenLuma(c: vec3f) -> f32 {",
+    "fn greenLuma(c: pf3) -> pf {",
     "    return c.g;",
     "}",
     "",
@@ -2456,11 +2686,11 @@
     "    let texDim = vec2f(textureDimensions(inputTex));",
     "    let texelSize = 1.0 / texDim;",
     "",
-    "    let rgbNW = textureSample(inputTex, inputSamp, uv + vec2f(-1.0, -1.0) * texelSize).rgb;",
-    "    let rgbNE = textureSample(inputTex, inputSamp, uv + vec2f( 1.0, -1.0) * texelSize).rgb;",
-    "    let rgbSW = textureSample(inputTex, inputSamp, uv + vec2f(-1.0,  1.0) * texelSize).rgb;",
-    "    let rgbSE = textureSample(inputTex, inputSamp, uv + vec2f( 1.0,  1.0) * texelSize).rgb;",
-    "    let rgbM  = textureSample(inputTex, inputSamp, uv).rgb;",
+    "    let rgbNW = pf3(textureSample(inputTex, inputSamp, uv + vec2f(-1.0, -1.0) * texelSize).rgb);",
+    "    let rgbNE = pf3(textureSample(inputTex, inputSamp, uv + vec2f( 1.0, -1.0) * texelSize).rgb);",
+    "    let rgbSW = pf3(textureSample(inputTex, inputSamp, uv + vec2f(-1.0,  1.0) * texelSize).rgb);",
+    "    let rgbSE = pf3(textureSample(inputTex, inputSamp, uv + vec2f( 1.0,  1.0) * texelSize).rgb);",
+    "    let rgbM  = pf3(textureSample(inputTex, inputSamp, uv).rgb);",
     "",
     "    let lumaNW = greenLuma(rgbNW);",
     "    let lumaNE = greenLuma(rgbNE);",
@@ -2472,29 +2702,32 @@
     "    let lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));",
     "",
     "    var dir = vec2f(",
-    "        -((lumaNW + lumaNE) - (lumaSW + lumaSE)),",
-    "         ((lumaNW + lumaSW) - (lumaNE + lumaSE)),",
+    "        -f32((lumaNW + lumaNE) - (lumaSW + lumaSE)),",
+    "         f32((lumaNW + lumaSW) - (lumaNE + lumaSE)),",
     "    );",
     "",
     "    let reduceMul = 1.0 / 8.0;",
     "    let reduceMin = 1.0 / 128.0;",
     "    let spanMax = 8.0;",
-    "    let dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * reduceMul), reduceMin);",
+    "    let dirReduce = max(f32(lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * reduceMul), reduceMin);",
     "    let rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);",
     "    dir = clamp(dir * rcpDirMin, vec2f(-spanMax), vec2f(spanMax)) * texelSize;",
     "",
-    "    let rgbA = 0.5 * (",
-    "        textureSample(inputTex, inputSamp, uv + dir * (1.0 / 3.0 - 0.5)).rgb +",
-    "        textureSample(inputTex, inputSamp, uv + dir * (2.0 / 3.0 - 0.5)).rgb);",
-    "    let rgbB = rgbA * 0.5 + 0.25 * (",
-    "        textureSample(inputTex, inputSamp, uv + dir * -0.5).rgb +",
-    "        textureSample(inputTex, inputSamp, uv + dir *  0.5).rgb);",
+    "    let rgbA = pf(0.5) * (",
+    "        pf3(textureSample(inputTex, inputSamp, uv + dir * (1.0 / 3.0 - 0.5)).rgb) +",
+    "        pf3(textureSample(inputTex, inputSamp, uv + dir * (2.0 / 3.0 - 0.5)).rgb));",
+    "    let rgbB = rgbA * pf(0.5) + pf(0.25) * (",
+    "        pf3(textureSample(inputTex, inputSamp, uv + dir * -0.5).rgb) +",
+    "        pf3(textureSample(inputTex, inputSamp, uv + dir *  0.5).rgb));",
     "",
     "    let lumaB = greenLuma(rgbB);",
     "    let color = select(rgbB, rgbA, lumaB < lumaMin || lumaB > lumaMax);",
-    "    return vec4f(color, 1.0);",
+    "    return vec4f(vec3f(color), 1.0);",
     "}",
-  ].join("\n");
+  ];
+
+  var WGSL_POST_FXAA_FRAGMENT = sceneWebGPUPostShaderSource(WGSL_POST_FXAA_BODY, false);
+  var WGSL_POST_FXAA_FRAGMENT_F16 = sceneWebGPUPostShaderSource(WGSL_POST_FXAA_BODY, true);
 
   var WGSL_POST_SSAO_FRAGMENT = [
     "struct SSAOParams {",
@@ -3408,6 +3641,24 @@
   // persistent-error session looks like. Guarding makes the failure a
   // detectable event (reported once, cache invalidated so the next
   // ensureFBOs call retries) instead of a poisoned resource used forever.
+  // sceneWebGPUDeviceHasF16 reports whether the device negotiated shader-f16.
+  // 16z requests the feature when the page asks for optional features, so the
+  // gate already exists; this only reads the result.
+  function sceneWebGPUDeviceHasF16(device) {
+    var features = device && device.features;
+    if (!features) return false;
+    if (typeof features.has === "function") return features.has("shader-f16");
+    return false;
+  }
+
+  // sceneWebGPUPostPrecisionMode names which post variant a device gets.
+  // A page can force f32 with window.__gosx_scene3d_webgpu_post_f16 = false,
+  // which is the first thing to try if a blur ever looks banded.
+  function sceneWebGPUPostPrecisionMode(device) {
+    if (typeof window !== "undefined" && window.__gosx_scene3d_webgpu_post_f16 === false) return "f32-forced";
+    return sceneWebGPUDeviceHasF16(device) ? "f16" : "f32";
+  }
+
   // packSelenaUniforms is injected by the caller (createSceneWebGPURenderer)
   // because the Selena uniform packer — sceneSelenaUniformData and the
   // sceneSelenaMaterialLayout / sceneSelenaUniformValue helpers it needs — lives
@@ -3417,6 +3668,9 @@
   // normalizeScenePostEffect lowercased the kind, so this pass never ran and
   // never reached the uniform upload on the frame after its pipeline resolved.
   function wgpuCreatePostProcessor(device, targetFormat, onAllocationError, packSelenaUniforms) {
+    // Resolve the precision variant once per post processor, not per frame.
+    var postPrecisionMode = sceneWebGPUPostPrecisionMode(device);
+    var postUsesF16 = postPrecisionMode === "f16";
     var disposed = false;
     var sceneTex = null;
     var sceneTexView = null;
@@ -3749,7 +4003,7 @@
         var truth = renderTruth();
         var postTruthOn = truth.enabled();
         var postChain = postTruthOn ? truth.chain(effects) : null;
-        var stats = { postEffects: effects.length, postSSAOPasses: 0, postDOFPasses: 0, postChain: postChain };
+        var stats = { postEffects: effects.length, postSSAOPasses: 0, postDOFPasses: 0, postPrecision: postPrecisionMode, postChain: postChain };
         activePostChain = postChain;
 
         for (var i = 0; i < effects.length; i++) {
@@ -3802,7 +4056,7 @@
               fullscreenPass(encoder, brightPipeline, brightBG, pingPongAView);
 
               // 2. Horizontal blur: pingPongA -> pingPongB.
-              var blurPipeline = getPipeline("blur", WGSL_POST_BLUR_FRAGMENT, getPostParamsLayout());
+              var blurPipeline = getPipeline("blur", postUsesF16 ? WGSL_POST_BLUR_FRAGMENT_F16 : WGSL_POST_BLUR_FRAGMENT, getPostParamsLayout());
               var blurBuf = getParamBuffer("bloomBlurH", 16);
               device.queue.writeBuffer(blurBuf, 0, new Float32Array([1.0, 0.0, radius, 0]));
               var blurBGH = device.createBindGroup({
@@ -3906,7 +4160,7 @@
             case SCENE_POST_FXAA: {
               // Chain-end edge AA. Reuses the blit bind group layout
               // (texture + sampler, no uniforms) since FXAA has no params.
-              var fxaaPipeline = getPipeline("fxaa", WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout());
+              var fxaaPipeline = getPipeline("fxaa", postUsesF16 ? WGSL_POST_FXAA_FRAGMENT_F16 : WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout());
               var fxaaBG = device.createBindGroup({
                 layout: getPostBlitLayout(),
                 entries: [
@@ -4049,6 +4303,1353 @@
         pingPongHeight = 0;
       },
     };
+  }
+
+  // -----------------------------------------------------------------------
+  // GPU picking (r32uint ID attachment + async 1x1 readback)
+  // -----------------------------------------------------------------------
+  //
+  // Port of the native design in render/bundle/pick.go. The GPU answers ONE
+  // question exactly: which pickable draw covers the pointer pixel. A separate
+  // pick pass rasterizes only pickable geometry into an r32uint ID texture with
+  // its own depth buffer. A 1x1 copyTextureToBuffer + mapAsync reads the ID
+  // back. The frame never blocks on the readback.
+  //
+  // Deviation from pick.go, stated plainly: pick.go writes the ID as a second
+  // color attachment of the main pass. This renderer keeps a SEPARATE pass
+  // instead. A second main-pass attachment forces every one of the 31 main-pass
+  // pipelines to declare a matching @location(1) u32 fragment output; one miss
+  // is a pipeline/pass format mismatch that kills the whole frame. A separate
+  // pass has the same result, costs nothing on frames with no queued pick, and
+  // needs no edit to the existing pipelines.
+  //
+  // Parity rule: the ID only resolves IDENTITY. Every geometric field
+  // (triangleIndex, uv, localPosition, worldPosition, depth, distance) comes
+  // from the SAME shared CPU raycast helpers that 17-scene-input.js runs on
+  // WebGL2 (sceneRaycastPickGroup / sceneRaycastPickInstancedMeshes, exported
+  // on window.__gosx_scene3d_api). Both backends therefore return the same hit
+  // record shape with the same numbers. See sceneWebGPUPickResolve.
+
+  var SCENE_WEBGPU_PICK_ID_FORMAT = "r32uint";
+  // WebGPU requires bytesPerRow of a texture-to-buffer copy to be a multiple
+  // of 256. 256 is also the smallest legal copy target, so one row holds the
+  // single pixel we read.
+  var SCENE_WEBGPU_PICK_ROW_ALIGNMENT = 256;
+  // PickUniforms is a mat4x4f plus four u32: 80 bytes. Each draw gets its own
+  // 256-byte slot, because 256 is also the default
+  // minUniformBufferOffsetAlignment that a dynamic offset must respect.
+  var SCENE_WEBGPU_PICK_SLOT_BYTES = 80;
+  // Upper bound on pickable draws per pass. 4096 slots is 1 MiB of uniform
+  // space. Instanced meshes cost one slot per MESH, not per instance, so real
+  // scenes stay far below this.
+  var SCENE_WEBGPU_PICK_MAX_SLOTS = 4096;
+  // Mirror of SCENE_PICK_MIN_EXTENT_X / _Y in 17-scene-input.js. Keep the two
+  // in sync; sceneWebGPUPickAllowsObject must accept exactly the objects that
+  // sceneObjectAllowsPointerPick accepts, or the pick pass can hide a pickable
+  // object behind a non-pickable one.
+  var SCENE_WEBGPU_PICK_MIN_EXTENT_X = 0.12;
+  var SCENE_WEBGPU_PICK_MIN_EXTENT_Y = 0.08;
+
+  // Declarations shared by the three pick shaders. Keep them in one constant so
+  // the vertex and fragment stages cannot drift apart, and so the bundle ships
+  // one copy instead of three.
+  var WGSL_PICK_OUTPUT_STRUCT = [
+    "struct PickOutput {",
+    "  @builtin(position) clipPos: vec4f,",
+    "  @location(0) @interpolate(flat) id: u32,",
+    "};",
+  ].join("\n");
+
+  var WGSL_PICK_UNIFORM_STRUCT = [
+    "struct PickUniforms {",
+    "  viewProjection: mat4x4f,",
+    "  baseID: u32,",
+    "  _pad0: u32,",
+    "  _pad1: u32,",
+    "  _pad2: u32,",
+    "};",
+    "@group(0) @binding(0) var<uniform> pick: PickUniforms;",
+  ].join("\n");
+
+  var WGSL_PICK_VERTEX = [
+    WGSL_PICK_UNIFORM_STRUCT,
+    WGSL_PICK_OUTPUT_STRUCT,
+    "@vertex fn vertexMain(@location(0) position: vec3f) -> PickOutput {",
+    "  var out: PickOutput;",
+    "  out.clipPos = pick.viewProjection * vec4f(position, 1.0);",
+    "  out.id = pick.baseID;",
+    "  return out;",
+    "}",
+  ].join("\n");
+
+  // Instanced variant. Locations 4-7 carry the per-instance mat4, matching
+  // WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT. The ID is baseID + instance_index, so
+  // one draw stamps a distinct ID per instance exactly like
+  // buildInstancedPickTargets in render/bundle/pick.go.
+  var WGSL_PICK_INSTANCED_VERTEX = [
+    WGSL_PICK_UNIFORM_STRUCT,
+    WGSL_PICK_OUTPUT_STRUCT,
+    "struct PickVertexInput {",
+    "  @location(0) position: vec3f,",
+    "  @location(4) instanceMatrix0: vec4f,",
+    "  @location(5) instanceMatrix1: vec4f,",
+    "  @location(6) instanceMatrix2: vec4f,",
+    "  @location(7) instanceMatrix3: vec4f,",
+    "};",
+    "@vertex fn vertexMain(in: PickVertexInput, @builtin(instance_index) instance: u32) -> PickOutput {",
+    "  let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
+    "  var out: PickOutput;",
+    "  out.clipPos = pick.viewProjection * model * vec4f(in.position, 1.0);",
+    "  out.id = pick.baseID + instance;",
+    "  return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_PICK_FRAGMENT = [
+    WGSL_PICK_OUTPUT_STRUCT,
+    "@fragment fn fragmentMain(in: PickOutput) -> @location(0) u32 {",
+    "  return in.id;",
+    "}",
+  ].join("\n");
+
+  // cullMode "none" and depthCompare "less-equal" match wgpuCreatePBRPipeline,
+  // so the pick pass resolves the same front-most surface the main pass paints.
+  // Double-sided rasterization also matches the CPU raycast, which accepts both
+  // triangle windings.
+  function wgpuCreatePickPipeline(device, pipelineLayout, vertexModule, fragmentModule, vertexLayout, label) {
+    return device.createRenderPipeline({
+      label: label,
+      layout: pipelineLayout,
+      vertex: { module: vertexModule, entryPoint: "vertexMain", buffers: vertexLayout },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [{ format: SCENE_WEBGPU_PICK_ID_FORMAT }],
+      },
+      primitive: { topology: "triangle-list", cullMode: "none" },
+      depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "less-equal" },
+    });
+  }
+
+  function sceneWebGPUPickSharedAPI() {
+    if (typeof window === "undefined") return null;
+    return window.__gosx_scene3d_api || null;
+  }
+
+  function sceneWebGPUPickSharedFn(name) {
+    var api = sceneWebGPUPickSharedAPI();
+    var fn = api ? api[name] : null;
+    return typeof fn === "function" ? fn : null;
+  }
+
+  // Port of sceneBoundsSize in 17-scene-input.js: absolute extents, largest
+  // first.
+  function sceneWebGPUPickBoundsExtents(bounds) {
+    if (!bounds || typeof bounds !== "object") return [0, 0, 0];
+    return [
+      Math.abs(sceneNumber(bounds.maxX, 0) - sceneNumber(bounds.minX, 0)),
+      Math.abs(sceneNumber(bounds.maxY, 0) - sceneNumber(bounds.minY, 0)),
+      Math.abs(sceneNumber(bounds.maxZ, 0) - sceneNumber(bounds.minZ, 0)),
+    ].sort(function(a, b) { return b - a; });
+  }
+
+  // Port of sceneObjectAllowsPointerPick in 17-scene-input.js. The pick pass
+  // must draw exactly the set that file picks, so a non-pickable object never
+  // occludes a pickable one in the ID buffer.
+  function sceneWebGPUPickAllowsObject(object) {
+    if (!object || object.viewCulled) return false;
+    if (typeof object.pickable === "boolean") return object.pickable;
+    if (object.kind === "plane") return false;
+    var extents = sceneWebGPUPickBoundsExtents(object.bounds);
+    return extents[0] > SCENE_WEBGPU_PICK_MIN_EXTENT_X && extents[1] > SCENE_WEBGPU_PICK_MIN_EXTENT_Y;
+  }
+
+  // sceneWebGPUPickIDPlan assigns pick IDs over a bundle. ID 0 stays reserved
+  // for background, so the first target gets ID 1 — the same convention as
+  // buildInstancedPickTargets(meshes, 1) in render/bundle/pick.go.
+  //
+  // Group order matches sceneRaycastPick in 17-scene-input.js: mesh objects
+  // first, then instanced meshes. Each entry records the group, the index
+  // within that group, and the instance span, so a returned ID maps back to one
+  // exact draw.
+  function sceneWebGPUPickIDPlan(bundle) {
+    var plan = { entries: [], meshBases: [], instancedBases: [], nextID: 1 };
+    if (!bundle) return plan;
+
+    var meshObjects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+    for (var m = 0; m < meshObjects.length; m += 1) {
+      plan.meshBases[m] = 0;
+      var obj = meshObjects[m];
+      if (!obj || !sceneWebGPUPickAllowsObject(obj)) continue;
+      var vertexCount = Math.floor(sceneNumber(obj.vertexCount, 0));
+      if (!Number.isFinite(sceneNumber(obj.vertexOffset, NaN)) || vertexCount <= 0) continue;
+      plan.meshBases[m] = plan.nextID;
+      plan.entries.push({ id: plan.nextID, group: "mesh", index: m, count: 1, slot: plan.entries.length });
+      plan.nextID += 1;
+    }
+
+    var instanced = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+    for (var i = 0; i < instanced.length; i += 1) {
+      plan.instancedBases[i] = 0;
+      var mesh = instanced[i];
+      if (!mesh || !sceneWebGPUPickAllowsObject(mesh)) continue;
+      var transforms = mesh.transforms;
+      if (!transforms || typeof transforms.length !== "number") continue;
+      var count = Math.min(
+        Math.max(0, Math.floor(sceneNumber(mesh.count, 0))),
+        Math.floor(transforms.length / 16)
+      );
+      if (count <= 0) continue;
+      plan.instancedBases[i] = plan.nextID;
+      plan.entries.push({ id: plan.nextID, group: "instanced", index: i, count: count, slot: plan.entries.length });
+      plan.nextID += count;
+    }
+    return plan;
+  }
+
+  // sceneWebGPUPickEntryForID finds the plan entry that owns an ID and reports
+  // the instance offset inside it.
+  function sceneWebGPUPickEntryForID(plan, id) {
+    var wanted = Math.floor(sceneNumber(id, 0));
+    if (!plan || !Array.isArray(plan.entries) || wanted <= 0) return null;
+    for (var i = 0; i < plan.entries.length; i += 1) {
+      var entry = plan.entries[i];
+      if (!entry) continue;
+      if (wanted >= entry.id && wanted < entry.id + entry.count) {
+        return { entry: entry, instanceIndex: wanted - entry.id };
+      }
+    }
+    return null;
+  }
+
+  // sceneWebGPUPickSingleInstanceMesh clones a mesh down to the one instance
+  // the GPU selected. sceneRaycastPickInstancedMeshes then computes the hit for
+  // that instance with the identical math WebGL2 uses, instead of re-running
+  // its nearest-instance search (which uses a sphere approximation and can
+  // disagree with the exact rasterized answer).
+  function sceneWebGPUPickSingleInstanceMesh(mesh, instanceIndex) {
+    var transforms = mesh && mesh.transforms;
+    var base = instanceIndex * 16;
+    if (!transforms || typeof transforms.length !== "number" || base + 15 >= transforms.length) {
+      return null;
+    }
+    var slice = new Float32Array(16);
+    for (var k = 0; k < 16; k += 1) {
+      slice[k] = sceneNumber(transforms[base + k], 0);
+    }
+    var clone = Object.create(Object.getPrototypeOf(mesh) || Object.prototype);
+    for (var key in mesh) {
+      if (Object.prototype.hasOwnProperty.call(mesh, key)) clone[key] = mesh[key];
+    }
+    clone.count = 1;
+    clone.transforms = slice;
+    return clone;
+  }
+
+  // Port of sceneNearestRaycastHit in 17-scene-input.js.
+  function sceneWebGPUPickNearestHit(current, candidate) {
+    if (!candidate) return current;
+    if (!current || candidate.distance < current.distance) return candidate;
+    return current;
+  }
+
+  // sceneWebGPUPickRefineHit turns an ID into the full hit record by running
+  // the shared CPU raycast on the ONE target the GPU selected.
+  function sceneWebGPUPickRefineHit(bundle, plan, id, ray) {
+    var found = sceneWebGPUPickEntryForID(plan, id);
+    if (!found || !ray) return null;
+    var entry = found.entry;
+
+    if (entry.group === "mesh") {
+      var raycastGroup = sceneWebGPUPickSharedFn("sceneRaycastPickGroup");
+      var meshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      var obj = meshObjects[entry.index];
+      if (!raycastGroup || !obj) return null;
+      return raycastGroup(ray, [obj], bundle.worldMeshPositions, entry.index, bundle.worldMeshUVs);
+    }
+
+    var raycastInstanced = sceneWebGPUPickSharedFn("sceneRaycastPickInstancedMeshes");
+    var instanced = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+    var mesh = instanced[entry.index];
+    if (!raycastInstanced || !mesh) return null;
+    var single = sceneWebGPUPickSingleInstanceMesh(mesh, found.instanceIndex);
+    if (!single) return null;
+    var hit = raycastInstanced(ray, [single], entry.index);
+    if (!hit) return null;
+    // Report the real mesh and the real instance index, not the single-instance
+    // clone the raycast ran against.
+    hit.object = mesh;
+    hit.instanceIndex = found.instanceIndex;
+    return hit;
+  }
+
+  // sceneWebGPUPickResolve produces the final hit record for a read-back ID.
+  // It returns exactly what sceneRaycastPick returns on WebGL2: the same
+  // fields, from the same helpers, plus `ray`. null means background.
+  //
+  // The third CPU group (bundle.objects over bundle.worldPositions) is merged
+  // in on the CPU. The WebGPU renderer rasterizes bundle.worldPositions as a
+  // line list, never as triangles, so that group has no ID-buffer draw to
+  // resolve. Merging by nearest distance keeps coverage identical to
+  // sceneRaycastPick.
+  function sceneWebGPUPickResolve(bundle, plan, id, ray) {
+    if (!bundle || !ray) return null;
+    var hit = sceneWebGPUPickRefineHit(bundle, plan, id, ray);
+    var raycastGroup = sceneWebGPUPickSharedFn("sceneRaycastPickGroup");
+    if (raycastGroup && Array.isArray(bundle.objects) && bundle.objects.length > 0) {
+      hit = sceneWebGPUPickNearestHit(
+        hit,
+        raycastGroup(ray, bundle.objects, bundle.worldPositions, 0, null)
+      );
+    }
+    if (hit) hit.ray = ray;
+    return hit;
+  }
+
+  // createSceneWebGPUPicker owns the pick textures, pipelines, and the single
+  // in-flight readback. The adapter supplies the renderer-scoped closures the
+  // pick pass needs; keeping the picker at module scope stops
+  // createSceneWebGPURenderer from growing further.
+  //
+  // adapter fields:
+  //   viewProjection()          -> Float32Array(16), WebGPU-convention VP
+  //   meshPositions()           -> { buffer, components } or null
+  //   bindMeshPositions(...)    -> bool, binds a vertex slice by vertex range
+  //   instancedGeometry(mesh)   -> { positions, vertexCount, ... } or null
+  //   instancedGeometryBuffer(geom, slot, data) -> GPUBuffer
+  //   instancedTransformBuffer(mesh, data)      -> GPUBuffer
+  //   instancedCount(mesh)      -> int
+  //   instancedTransforms(mesh, count) -> Float32Array or null
+  //   onError(message)          -> void
+  function createSceneWebGPUPicker(device, adapter) {
+    if (!device || !adapter) return null;
+
+    var vertexModule = null;
+    var instancedVertexModule = null;
+    var fragmentModule = null;
+    var bindGroupLayout = null;
+    var pipelineLayout = null;
+    var pipeline = null;
+    var instancedPipeline = null;
+    var uniformBuffer = null;
+    var bindGroup = null;
+    var idTexture = null;
+    var idView = null;
+    var depthTexture = null;
+    var depthView = null;
+    var idWidth = 0;
+    var idHeight = 0;
+    var initFailed = false;
+    var uniformSlots = 0;
+    var uniformData = null;
+    var uniformIDs = null;
+    var pending = null;
+    // Superseded requests whose copy is already on the GPU. Their callbacks
+    // never fire, but their staging buffers must still be mapped and released
+    // or the buffer leaks. Mirrors retiredPicks in render/bundle/pick.go.
+    var retired = [];
+    var stats = { requests: 0, drops: 0, passes: 0, draws: 0, readbacks: 0, skipped: 0, lastID: 0, lastError: "" };
+
+    function ensureResources() {
+      if (initFailed) return false;
+      if (pipeline && instancedPipeline) return true;
+      try {
+        vertexModule = device.createShaderModule({ label: "pick-vert", code: WGSL_PICK_VERTEX });
+        instancedVertexModule = device.createShaderModule({ label: "pick-instanced-vert", code: WGSL_PICK_INSTANCED_VERTEX });
+        fragmentModule = device.createShaderModule({ label: "pick-frag", code: WGSL_PICK_FRAGMENT });
+        // hasDynamicOffset is what makes one buffer serve every draw. Without
+        // it each draw would need its own writeBuffer, and because
+        // queue.writeBuffer lands BEFORE the submitted commands run, every draw
+        // in the pass would read the LAST baseID written. One slot per draw plus
+        // a dynamic offset is the only correct single-buffer form.
+        bindGroupLayout = device.createBindGroupLayout({
+          label: "gosx-pick-frame",
+          entries: [{
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX,
+            buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: SCENE_WEBGPU_PICK_SLOT_BYTES },
+          }],
+        });
+        pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+        pipeline = wgpuCreatePickPipeline(
+          device, pipelineLayout, vertexModule, fragmentModule,
+          WGPU_SHADOW_VERTEX_LAYOUT, "gosx-pick"
+        );
+        instancedPipeline = wgpuCreatePickPipeline(
+          device, pipelineLayout, instancedVertexModule, fragmentModule,
+          WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT, "gosx-pick-instanced"
+        );
+        return true;
+      } catch (err) {
+        initFailed = true;
+        stats.lastError = String(err && (err.message || err) || "pick-init-failed");
+        if (typeof adapter.onError === "function") adapter.onError(stats.lastError);
+        return false;
+      }
+    }
+
+    function ensureTargets(width, height) {
+      if (idTexture && idWidth === width && idHeight === height) return true;
+      if (idTexture) idTexture.destroy();
+      if (depthTexture) depthTexture.destroy();
+      idTexture = depthTexture = null;
+      idView = depthView = null;
+      idWidth = idHeight = 0;
+      try {
+        idTexture = device.createTexture({
+          label: "gosx-pick-id",
+          size: [width, height, 1],
+          format: SCENE_WEBGPU_PICK_ID_FORMAT,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+        });
+        depthTexture = device.createTexture({
+          label: "gosx-pick-depth",
+          size: [width, height, 1],
+          format: "depth24plus",
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+        idView = idTexture.createView();
+        depthView = depthTexture.createView();
+        idWidth = width;
+        idHeight = height;
+        return true;
+      } catch (err) {
+        stats.lastError = String(err && (err.message || err) || "pick-target-failed");
+        if (typeof adapter.onError === "function") adapter.onError(stats.lastError);
+        return false;
+      }
+    }
+
+    // ensureUniformSlots grows the uniform buffer to hold one 256-byte slot per
+    // plan entry, and rebuilds the bind group to match. Returns the slot count
+    // the buffer can serve; entries past it are skipped and counted.
+    function ensureUniformSlots(wanted) {
+      var need = Math.max(1, Math.min(wanted, SCENE_WEBGPU_PICK_MAX_SLOTS));
+      if (uniformBuffer && uniformSlots >= need) return uniformSlots;
+      if (uniformBuffer) uniformBuffer.destroy();
+      uniformBuffer = device.createBuffer({
+        label: "gosx-pick-uniforms",
+        size: need * SCENE_WEBGPU_PICK_ROW_ALIGNMENT,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      bindGroup = device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [{
+          binding: 0,
+          resource: { buffer: uniformBuffer, offset: 0, size: SCENE_WEBGPU_PICK_ROW_ALIGNMENT },
+        }],
+      });
+      uniformSlots = need;
+      uniformData = new Float32Array(need * SCENE_WEBGPU_PICK_ROW_ALIGNMENT / 4);
+      uniformIDs = new Uint32Array(uniformData.buffer);
+      return uniformSlots;
+    }
+
+    // uploadPickUniforms fills every slot and uploads them in ONE writeBuffer,
+    // before the pass begins. Slot i holds the view-projection matrix and the
+    // base ID of plan entry i.
+    function uploadPickUniforms(plan, viewProjection) {
+      var slots = ensureUniformSlots(plan.entries.length);
+      var floatsPerSlot = SCENE_WEBGPU_PICK_ROW_ALIGNMENT / 4;
+      var used = Math.min(plan.entries.length, slots);
+      for (var i = 0; i < used; i += 1) {
+        var base = i * floatsPerSlot;
+        if (viewProjection && viewProjection.length >= 16) {
+          for (var k = 0; k < 16; k += 1) uniformData[base + k] = viewProjection[k];
+        }
+        uniformIDs[base + 16] = plan.entries[i].id >>> 0;
+        uniformIDs[base + 17] = 0;
+        uniformIDs[base + 18] = 0;
+        uniformIDs[base + 19] = 0;
+      }
+      if (plan.entries.length > slots) stats.skipped += plan.entries.length - slots;
+      device.queue.writeBuffer(uniformBuffer, 0, uniformData, 0, used * floatsPerSlot);
+      return used;
+    }
+
+    // queuePick records a request in the caller's pointer space. x, y, width,
+    // and height must be the SAME values the caller feeds sceneScreenToRay, so
+    // the GPU pixel and the CPU ray agree. Only one pick may wait at a time;
+    // a newer request replaces an older one that has not been submitted yet,
+    // matching QueuePickResult in render/bundle/pick.go.
+    function queuePick(x, y, width, height, callback) {
+      if (typeof callback !== "function") return false;
+      stats.requests += 1;
+      if (pending) {
+        stats.drops += 1;
+        pending.superseded = true;
+        if (pending.submitted && !pending.reading) {
+          // The GPU already owns this copy. Keep the request so finishReadback
+          // still maps and frees its staging buffer.
+          retired.push(pending);
+        } else if (!pending.submitted && pending.staging) {
+          try { pending.staging.destroy(); } catch (err) { void err; }
+        }
+        // A request already reading owns its own cleanup.
+      }
+      pending = {
+        x: sceneNumber(x, 0),
+        y: sceneNumber(y, 0),
+        width: Math.max(1, sceneNumber(width, 1)),
+        height: Math.max(1, sceneNumber(height, 1)),
+        callback: callback,
+        submitted: false,
+        superseded: false,
+        reading: false,
+        staging: null,
+        bundle: null,
+        plan: null,
+        ray: null,
+      };
+      return true;
+    }
+
+    function failPending(request) {
+      if (!request || request.superseded) return;
+      if (pending === request) pending = null;
+      request.callback(null);
+    }
+
+    // recordPickPass draws the pickable geometry of `bundle` into the ID
+    // texture and records the 1x1 copy. Call it with the frame encoder AFTER
+    // the main pass has ended, so every vertex and transform buffer exists.
+    // targetWidth/targetHeight are the render-target size in device pixels.
+    function recordPickPass(encoder, bundle, targetWidth, targetHeight) {
+      var request = pending;
+      if (!request || request.submitted || !encoder || !bundle) return false;
+      var deviceWidth = Math.max(1, Math.floor(targetWidth));
+      var deviceHeight = Math.max(1, Math.floor(targetHeight));
+
+      var scaleX = deviceWidth / request.width;
+      var scaleY = deviceHeight / request.height;
+      var px = Math.floor(request.x * scaleX);
+      var py = Math.floor(request.y * scaleY);
+      if (px < 0 || py < 0 || px >= deviceWidth || py >= deviceHeight) {
+        // Outside the surface. Report background, exactly like the
+        // out-of-bounds branch of recordPickCopy in render/bundle/pick.go.
+        failPending(request);
+        return false;
+      }
+
+      var plan = sceneWebGPUPickIDPlan(bundle);
+      var screenToRay = sceneWebGPUPickSharedFn("sceneScreenToRay");
+      if (!screenToRay) {
+        failPending(request);
+        return false;
+      }
+      var ray = screenToRay(request.x, request.y, request.width, request.height, bundle.camera);
+      if (!ensureResources() || !ensureTargets(deviceWidth, deviceHeight)) {
+        failPending(request);
+        return false;
+      }
+
+      var staging = null;
+      try {
+        staging = device.createBuffer({
+          label: "gosx-pick-staging",
+          size: SCENE_WEBGPU_PICK_ROW_ALIGNMENT,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        });
+      } catch (err) {
+        stats.lastError = String(err && (err.message || err) || "pick-staging-failed");
+        failPending(request);
+        return false;
+      }
+
+      // Fill every uniform slot BEFORE the pass. queue.writeBuffer lands ahead
+      // of the submitted commands, so per-draw writes would all collapse onto
+      // the last value.
+      var slots = uploadPickUniforms(
+        plan,
+        typeof adapter.viewProjection === "function" ? adapter.viewProjection() : null
+      );
+
+      var pass = encoder.beginRenderPass({
+        label: "gosx-pick-pass",
+        colorAttachments: [{
+          view: idView,
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        }],
+        depthStencilAttachment: {
+          view: depthView,
+          depthLoadOp: "clear",
+          depthClearValue: 1.0,
+          depthStoreOp: "discard",
+        },
+      });
+      // Only the pointer pixel is ever read back, so scissor the pass to it.
+      // Vertex work still runs, fragment work does not.
+      pass.setScissorRect(px, py, 1, 1);
+      var draws = drawPickPass(pass, bundle, plan, slots);
+      pass.end();
+
+      encoder.copyTextureToBuffer(
+        { texture: idTexture, origin: { x: px, y: py, z: 0 } },
+        { buffer: staging, bytesPerRow: SCENE_WEBGPU_PICK_ROW_ALIGNMENT, rowsPerImage: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+
+      request.staging = staging;
+      request.bundle = bundle;
+      request.plan = plan;
+      request.ray = ray;
+      request.submitted = true;
+      stats.passes += 1;
+      stats.draws += draws;
+      return true;
+    }
+
+    // drawPickPass records one draw per plan entry, each bound to its own
+    // uniform slot through a dynamic offset. `slots` is the number of entries
+    // the uniform buffer can serve; entries past it are dropped, not misdrawn.
+    function drawPickPass(pass, bundle, plan, slots) {
+      var draws = 0;
+      var meshRecord = typeof adapter.meshPositions === "function" ? adapter.meshPositions() : null;
+      var meshObjects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+      var instanced = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      var boundPipeline = "";
+
+      for (var e = 0; e < plan.entries.length && e < slots; e += 1) {
+        var entry = plan.entries[e];
+        if (!entry) continue;
+        var offset = [entry.slot * SCENE_WEBGPU_PICK_ROW_ALIGNMENT];
+
+        if (entry.group === "mesh") {
+          var obj = meshObjects[entry.index];
+          if (!obj || !meshRecord) continue;
+          var count = Math.floor(sceneNumber(obj.vertexCount, 0));
+          if (count <= 0) continue;
+          if (boundPipeline !== "mesh") {
+            pass.setPipeline(pipeline);
+            boundPipeline = "mesh";
+          }
+          pass.setBindGroup(0, bindGroup, offset);
+          if (!adapter.bindMeshPositions(pass, 0, meshRecord, sceneNumber(obj.vertexOffset, 0), count)) continue;
+          pass.draw(count);
+          draws += 1;
+          continue;
+        }
+
+        var mesh = instanced[entry.index];
+        if (!mesh) continue;
+        var instanceCount = adapter.instancedCount(mesh);
+        var transformData = adapter.instancedTransforms(mesh, instanceCount);
+        if (!transformData) continue;
+        var geom = adapter.instancedGeometry(mesh);
+        if (!geom || geom.vertexCount <= 0) continue;
+        if (boundPipeline !== "instanced") {
+          pass.setPipeline(instancedPipeline);
+          boundPipeline = "instanced";
+        }
+        pass.setBindGroup(0, bindGroup, offset);
+        pass.setVertexBuffer(0, adapter.instancedGeometryBuffer(geom, "_gosxWGPUInstancedShadowPositionBuffer", geom.positions));
+        pass.setVertexBuffer(1, adapter.instancedTransformBuffer(mesh, transformData));
+        // Draw every instance in one call so occlusion between a mesh's own
+        // instances is right. The shader stamps baseID + instance_index, so the
+        // read-back ID still names one exact instance.
+        pass.draw(geom.vertexCount, Math.min(instanceCount, entry.count));
+        draws += 1;
+      }
+      return draws;
+    }
+
+    // finishReadback starts the async map for a submitted request. It never
+    // blocks: mapAsync resolves on a later task, and the callback runs then.
+    // Call it right after device.queue.submit.
+    function finishReadback() {
+      // Drain superseded requests first so their staging buffers are freed even
+      // though nothing consumes their result.
+      if (retired.length > 0) {
+        var stale = retired;
+        retired = [];
+        for (var i = 0; i < stale.length; i += 1) startReadback(stale[i]);
+      }
+      return startReadback(pending);
+    }
+
+    function startReadback(request) {
+      if (!request || !request.submitted || !request.staging || request.reading) return false;
+      request.reading = true;
+      var staging = request.staging;
+      staging.mapAsync(GPUMapMode.READ).then(function() {
+        var id = 0;
+        try {
+          id = new Uint32Array(staging.getMappedRange(0, 4).slice(0))[0] >>> 0;
+        } catch (err) {
+          stats.lastError = String(err && (err.message || err) || "pick-map-failed");
+        }
+        try { staging.unmap(); } catch (unmapErr) { void unmapErr; }
+        staging.destroy();
+        stats.readbacks += 1;
+        stats.lastID = id;
+        if (request.superseded) return;
+        if (pending === request) pending = null;
+        request.callback(sceneWebGPUPickResolve(request.bundle, request.plan, id, request.ray));
+      }).catch(function(err) {
+        stats.lastError = String(err && (err.message || err) || "pick-readback-failed");
+        try { staging.destroy(); } catch (destroyErr) { void destroyErr; }
+        if (request.superseded) return;
+        if (pending === request) pending = null;
+        request.callback(null);
+      });
+      return true;
+    }
+
+    function hasPending() {
+      return Boolean(pending);
+    }
+
+    function diagnostics() {
+      return {
+        pickRequests: stats.requests,
+        pickDrops: stats.drops,
+        pickPasses: stats.passes,
+        pickDraws: stats.draws,
+        pickSkippedDraws: stats.skipped,
+        pickReadbacks: stats.readbacks,
+        pickLastID: stats.lastID,
+        pickLastError: stats.lastError,
+      };
+    }
+
+    function dispose() {
+      var abandoned = retired.concat(pending ? [pending] : []);
+      for (var i = 0; i < abandoned.length; i += 1) {
+        var request = abandoned[i];
+        request.superseded = true;
+        // A request already reading owns its own destroy in the map handler.
+        if (request.staging && !request.reading) {
+          try { request.staging.destroy(); } catch (err) { void err; }
+        }
+      }
+      retired = [];
+      pending = null;
+      if (idTexture) idTexture.destroy();
+      if (depthTexture) depthTexture.destroy();
+      if (uniformBuffer) uniformBuffer.destroy();
+      idTexture = depthTexture = uniformBuffer = null;
+      idView = depthView = bindGroup = null;
+      pipeline = instancedPipeline = null;
+      uniformData = uniformIDs = null;
+      idWidth = idHeight = uniformSlots = 0;
+    }
+
+    return {
+      queuePick: queuePick,
+      recordPickPass: recordPickPass,
+      finishReadback: finishReadback,
+      hasPending: hasPending,
+      diagnostics: diagnostics,
+      dispose: dispose,
+    };
+  }
+
+  // Publish the pure pick helpers so tests and tooling can check them against
+  // the WebGL2 pick contract without a GPU.
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.sceneWebGPUPickIDPlan = sceneWebGPUPickIDPlan;
+    window.__gosx_scene3d_api.sceneWebGPUPickEntryForID = sceneWebGPUPickEntryForID;
+    window.__gosx_scene3d_api.sceneWebGPUPickAllowsObject = sceneWebGPUPickAllowsObject;
+    window.__gosx_scene3d_api.sceneWebGPUPickResolve = sceneWebGPUPickResolve;
+    window.__gosx_scene3d_api.createSceneWebGPUPicker = createSceneWebGPUPicker;
+  }
+
+  // -----------------------------------------------------------------------
+  // Lights
+  // -----------------------------------------------------------------------
+  //
+  // GoSX declares seven light kinds. This renderer shades six of them
+  // directly and folds LightProbe into the ambient term:
+  //
+  //   ambient      -> code 0, flat term
+  //   light-probe  -> code 0, flat term (coefficients ignored)
+  //   directional  -> code 1, plus the two shadow slots
+  //   point        -> code 2, distance falloff
+  //   spot         -> code 3, cone falloff times distance falloff
+  //   hemisphere   -> code 4, sky/ground blend by normal Y
+  //   rect-area    -> code 5, polygon form factor plus representative-point
+  //                   specular
+  //
+  // Codes 0..4 are the same numbers the WebGL2 renderer writes, so a scene
+  // reads the same type on both GPU backends.
+
+  // One Light is 7 * vec4f. Keep in step with the WGSL struct.
+  var SCENE_WEBGPU_LIGHT_FLOATS = 28;
+  var SCENE_WEBGPU_LIGHT_BYTES = SCENE_WEBGPU_LIGHT_FLOATS * 4;
+
+  // The storage buffer starts at 8 lights and doubles on demand. WGSL bounds
+  // the loop with arrayLength(&lights), so the cap below only limits how much
+  // memory one scene may claim. Exceeding it reports through reportIssue
+  // instead of dropping lights in silence.
+  var SCENE_WEBGPU_LIGHT_CAPACITY_MIN = 8;
+  var SCENE_WEBGPU_LIGHT_CAPACITY_MAX = 256;
+
+  // sceneWebGPULightCapacityFor returns the storage capacity that holds count
+  // lights: a power of two, at least the minimum, never past the maximum.
+  function sceneWebGPULightCapacityFor(count) {
+    var wanted = Math.max(0, Math.floor(Number(count) || 0));
+    var capacity = SCENE_WEBGPU_LIGHT_CAPACITY_MIN;
+    while (capacity < wanted && capacity < SCENE_WEBGPU_LIGHT_CAPACITY_MAX) {
+      capacity = capacity * 2;
+    }
+    return Math.min(capacity, SCENE_WEBGPU_LIGHT_CAPACITY_MAX);
+  }
+
+  // sceneWebGPULightTypeCode maps a light IR kind to its WGSL type code.
+  //
+  // light-probe maps to ambient, not point. A LightProbe carries no position,
+  // so a point light would invent a falloff the author never asked for. The
+  // WebGL2 renderer makes the same choice, which keeps the two backends equal.
+  // Neither renderer reads LightProbe.Coefficients; see the light-probe-sh
+  // cell in scene/capability/capability.go.
+  function sceneWebGPULightTypeCode(kind) {
+    switch (kind) {
+      case "ambient": return 0;
+      case "light-probe": return 0;
+      case "directional": return 1;
+      case "point": return 2;
+      case "spot": return 3;
+      case "hemisphere": return 4;
+      case "rect-area": return 5;
+      default: return 2;
+    }
+  }
+
+  // sceneWebGPUCachedColor parses a light color once per distinct string.
+  function sceneWebGPUCachedColor(value, fallback, cache) {
+    var rgba = typeof value === "string" && cache ? cache[value] : null;
+    if (rgba) {
+      return rgba;
+    }
+    rgba = sceneColorRGBA(value, fallback);
+    if (typeof value === "string" && cache) {
+      cache[value] = rgba;
+    }
+    return rgba;
+  }
+
+  // sceneWebGPURectAreaBasis writes the world-space half-width and half-height
+  // vectors of a rect-area light into out[0..5].
+  //
+  // GoSX authors a RectAreaLight as a position, an emission direction, a width
+  // and a height. The WGSL form factor needs the two in-plane edge vectors, so
+  // build an orthonormal frame around the direction here, once per light per
+  // frame, instead of per fragment.
+  //
+  // Sign convention: three.js lights the side where
+  // dot(cross(halfWidth, halfHeight), P - center) < 0. Negating the up vector
+  // puts that lit side on the +direction side, so a rect-area light shines the
+  // way its Direction points, like every other GoSX light.
+  function sceneWebGPURectAreaBasis(light, out) {
+    var nx = sceneNumber(light && light.directionX, 0);
+    var ny = sceneNumber(light && light.directionY, -1);
+    var nz = sceneNumber(light && light.directionZ, 0);
+    var nlen = Math.sqrt((nx * nx) + (ny * ny) + (nz * nz));
+    if (!(nlen > 0.000001)) {
+      nx = 0; ny = -1; nz = 0; nlen = 1;
+    }
+    nx = nx / nlen; ny = ny / nlen; nz = nz / nlen;
+
+    // Pick the world axis least aligned with the normal so the cross product
+    // stays well conditioned.
+    var ax = 0, ay = 0, az = 1;
+    if (Math.abs(nz) > 0.9) {
+      ax = 1; ay = 0; az = 0;
+    }
+    var rx = (ay * nz) - (az * ny);
+    var ry = (az * nx) - (ax * nz);
+    var rz = (ax * ny) - (ay * nx);
+    var rlen = Math.sqrt((rx * rx) + (ry * ry) + (rz * rz));
+    if (!(rlen > 0.000001)) {
+      rx = 1; ry = 0; rz = 0; rlen = 1;
+    }
+    rx = rx / rlen; ry = ry / rlen; rz = rz / rlen;
+
+    var ux = (ny * rz) - (nz * ry);
+    var uy = (nz * rx) - (nx * rz);
+    var uz = (nx * ry) - (ny * rx);
+
+    var halfW = Math.max(0, sceneNumber(light && light.width, 1)) * 0.5;
+    var halfH = Math.max(0, sceneNumber(light && light.height, 1)) * 0.5;
+    out[0] = rx * halfW;
+    out[1] = ry * halfW;
+    out[2] = rz * halfW;
+    out[3] = -ux * halfH;
+    out[4] = -uy * halfH;
+    out[5] = -uz * halfH;
+    return out;
+  }
+
+  var _sceneWebGPURectBasis = new Float32Array(6);
+
+  // sceneWebGPUPackLights writes count lights into out as SCENE_WEBGPU_LIGHT_FLOATS
+  // floats each, in the WGSL Light layout. It returns a census the caller turns
+  // into author diagnostics.
+  //
+  // Defaults match the WebGL2 renderer field for field, so neither backend
+  // invents a value the other does not have. That includes angle: an unset
+  // cone angle stays 0 on both backends, which draws nothing. The caller
+  // reports that case instead of silently widening the cone here.
+  function sceneWebGPUPackLights(lightArray, count, out, colorCache) {
+    var census = {
+      count: 0,
+      spot: 0,
+      spotEmptyCone: 0,
+      hemisphere: 0,
+      rectArea: 0,
+      lightProbe: 0,
+      lightProbeWithCoefficients: 0,
+    };
+    var list = Array.isArray(lightArray) ? lightArray : [];
+    var limit = Math.max(0, Math.min(Math.floor(Number(count) || 0), list.length));
+    for (var i = 0; i < limit; i++) {
+      var light = list[i] || {};
+      var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+      var typeCode = sceneWebGPULightTypeCode(kind);
+      var base = i * SCENE_WEBGPU_LIGHT_FLOATS;
+
+      // position.xyz + type code
+      out[base + 0] = sceneNumber(light.x, 0);
+      out[base + 1] = sceneNumber(light.y, 0);
+      out[base + 2] = sceneNumber(light.z, 0);
+      out[base + 3] = typeCode;
+
+      // direction.xyz + intensity
+      out[base + 4] = sceneNumber(light.directionX, 0);
+      out[base + 5] = sceneNumber(light.directionY, -1);
+      out[base + 6] = sceneNumber(light.directionZ, 0);
+      out[base + 7] = sceneNumber(light.intensity, 1);
+
+      // color.rgb + range
+      var lc = sceneWebGPUCachedColor(light.color, [1, 1, 1, 1], colorCache);
+      out[base + 8] = lc[0];
+      out[base + 9] = lc[1];
+      out[base + 10] = lc[2];
+      out[base + 11] = sceneNumber(light.range, 0);
+
+      // params: decay, shadowBias, castShadow, spot cone angle
+      out[base + 12] = sceneNumber(light.decay, 2);
+      out[base + 13] = sceneNumber(light.shadowBias, 0.005);
+      out[base + 14] = light.castShadow ? 1 : 0;
+      out[base + 15] = sceneNumber(light.angle, 0);
+
+      // groundPenumbra: hemisphere ground color + spot penumbra
+      var gc = sceneWebGPUCachedColor(light.groundColor, [0, 0, 0, 1], colorCache);
+      out[base + 16] = gc[0];
+      out[base + 17] = gc[1];
+      out[base + 18] = gc[2];
+      out[base + 19] = clamp01(sceneNumber(light.penumbra, 0));
+
+      // areaHalfWidth / areaHalfHeight: rect-area edge vectors, else zero.
+      if (typeCode === 5) {
+        sceneWebGPURectAreaBasis(light, _sceneWebGPURectBasis);
+        out[base + 20] = _sceneWebGPURectBasis[0];
+        out[base + 21] = _sceneWebGPURectBasis[1];
+        out[base + 22] = _sceneWebGPURectBasis[2];
+        out[base + 24] = _sceneWebGPURectBasis[3];
+        out[base + 25] = _sceneWebGPURectBasis[4];
+        out[base + 26] = _sceneWebGPURectBasis[5];
+      } else {
+        out[base + 20] = 0;
+        out[base + 21] = 0;
+        out[base + 22] = 0;
+        out[base + 24] = 0;
+        out[base + 25] = 0;
+        out[base + 26] = 0;
+      }
+      out[base + 23] = 0;
+      out[base + 27] = 0;
+
+      census.count += 1;
+      if (typeCode === 3) {
+        census.spot += 1;
+        if (!(sceneNumber(light.angle, 0) > 0)) {
+          census.spotEmptyCone += 1;
+        }
+      } else if (typeCode === 4) {
+        census.hemisphere += 1;
+      } else if (typeCode === 5) {
+        census.rectArea += 1;
+      }
+      if (kind === "light-probe") {
+        census.lightProbe += 1;
+        if (Array.isArray(light.coefficients) && light.coefficients.length > 0) {
+          census.lightProbeWithCoefficients += 1;
+        }
+      }
+    }
+    return census;
+  }
+
+  // sceneWebGPUReportLightingIssue routes one lighting diagnostic to the shared
+  // issue channel. Authors cannot see a wrong image on a backend they do not
+  // run, so every known deviation reports itself.
+  function sceneWebGPUReportLightingIssue(record) {
+    try {
+      if (typeof window !== "undefined" && window.__gosx && typeof window.__gosx.reportIssue === "function") {
+        window.__gosx.reportIssue(record);
+        return true;
+      }
+    } catch (e) {
+      // Fall through to the console below.
+    }
+    if (typeof console !== "undefined" && typeof console.warn === "function") {
+      console.warn("[gosx] scene3d lighting: " + (record && record.message));
+    }
+    return false;
+  }
+
+  // sceneWebGPULightIssues turns a census plus a light total into the list of
+  // diagnostics an author must see. Pure, so a test can check it without a GPU.
+  function sceneWebGPULightIssues(census, requested, capacity) {
+    var issues = [];
+    var total = Math.max(0, Math.floor(Number(requested) || 0));
+    var cap = Math.max(0, Math.floor(Number(capacity) || 0));
+    if (total > cap) {
+      issues.push({
+        code: "light-cap",
+        message: total + " lights declared; WebGPU draws the first " + cap + ".",
+      });
+    }
+    if (census && census.spotEmptyCone > 0) {
+      issues.push({
+        code: "spot-empty-cone",
+        message: census.spotEmptyCone + " spot light(s) have Angle 0: the cone is empty and adds no light.",
+      });
+    }
+    if (census && census.rectArea > 0) {
+      issues.push({
+        code: "rect-area-specular",
+        message: census.rectArea + " rect-area light(s): diffuse is exact, specular is a representative-point approximation (no LTC tables).",
+      });
+    }
+    if (census && census.lightProbeWithCoefficients > 0) {
+      issues.push({
+        code: "light-probe-sh",
+        message: census.lightProbeWithCoefficients + " light probe(s): spherical-harmonic coefficients are ignored, the probe shades as ambient.",
+      });
+    }
+    return issues;
+  }
+
+  // Publish the pure light helpers so tests can check the packing, the type
+  // mapping, and the diagnostics without a GPU.
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.sceneWebGPULightTypeCode = sceneWebGPULightTypeCode;
+    window.__gosx_scene3d_api.sceneWebGPUPackLights = sceneWebGPUPackLights;
+    window.__gosx_scene3d_api.sceneWebGPURectAreaBasis = sceneWebGPURectAreaBasis;
+    window.__gosx_scene3d_api.sceneWebGPULightCapacityFor = sceneWebGPULightCapacityFor;
+    window.__gosx_scene3d_api.sceneWebGPULightIssues = sceneWebGPULightIssues;
+    window.__gosx_scene3d_api.SCENE_WEBGPU_LIGHT_FLOATS = SCENE_WEBGPU_LIGHT_FLOATS;
+    window.__gosx_scene3d_api.SCENE_WEBGPU_LIGHT_BYTES = SCENE_WEBGPU_LIGHT_BYTES;
+    window.__gosx_scene3d_api.SCENE_WEBGPU_LIGHT_CAPACITY_MAX = SCENE_WEBGPU_LIGHT_CAPACITY_MAX;
+  }
+
+  // SCENE_WEBGPU_BUILTIN_CULL_MIN_INSTANCES is the instance count above which
+  // the renderer's own cull kernel pays for itself. Below it, one compute
+  // dispatch, one uniform upload and one indirect draw cost more than drawing
+  // every instance.
+  var SCENE_WEBGPU_BUILTIN_CULL_MIN_INSTANCES = 256;
+
+  // -----------------------------------------------------------------------
+  // Render bundles
+  // -----------------------------------------------------------------------
+  //
+  // A GPURenderBundle records a set of draws once and replays them with one
+  // executeBundles call. Replay removes every per-draw crossing into the
+  // browser's WebGPU implementation, and it removes the per-draw validation the
+  // implementation repeats on a plain pass.
+  //
+  // The hard part is invalidation. A bundle holds its pipelines, bind groups and
+  // buffers BY REFERENCE. Buffer CONTENTS may change freely — a uniform written
+  // with queue.writeBuffer between frames reaches the replayed draw, which is
+  // the whole point. What must never change is the command stream itself: the
+  // object identities and the numeric arguments. Replaying a bundle whose draw
+  // set moved on renders the wrong image, silently.
+  //
+  // This renderer does not guess at the determinants. It records the exact
+  // command stream a frame WOULD encode, using a recorder that implements the
+  // encoder subset the draw functions call, and compares that stream against the
+  // stream the cached bundle was built from. The comparison is the command
+  // stream, so it has no blind spots by construction: any change in a pipeline,
+  // a bind group, a buffer, an offset, a vertex count or an instance count
+  // changes a token and forces a re-encode.
+  //
+  // The recorder costs one walk of the draw list per frame and issues no WebGPU
+  // calls. The saving is every setPipeline, setBindGroup, setVertexBuffer and
+  // draw call the frame would otherwise make.
+
+  var SCENE_WEBGPU_BUNDLE_OP_PIPELINE = 1;
+  var SCENE_WEBGPU_BUNDLE_OP_BIND_GROUP = 2;
+  var SCENE_WEBGPU_BUNDLE_OP_VERTEX_BUFFER = 3;
+  var SCENE_WEBGPU_BUNDLE_OP_INDEX_BUFFER = 4;
+  var SCENE_WEBGPU_BUNDLE_OP_DRAW = 5;
+  var SCENE_WEBGPU_BUNDLE_OP_DRAW_INDEXED = 6;
+  var SCENE_WEBGPU_BUNDLE_OP_DRAW_INDIRECT = 7;
+  var SCENE_WEBGPU_BUNDLE_OP_DRAW_INDEXED_INDIRECT = 8;
+
+  // sceneWebGPUBundleObjectID stamps a stable small integer on a GPU object so
+  // the recorder can compare identities with a number rather than a reference.
+  // A WeakMap would work too; a hidden property avoids the lookup cost on the
+  // hot path and lets a test read the id back.
+  function sceneWebGPUBundleObjectID(value, counter) {
+    if (value === null || value === undefined) return 0;
+    if (typeof value !== "object" && typeof value !== "function") return 0;
+    var id = value.__gosxWGPUBundleID;
+    if (typeof id === "number") return id;
+    id = counter.next++;
+    try {
+      Object.defineProperty(value, "__gosxWGPUBundleID", {
+        value: id,
+        enumerable: false,
+        writable: false,
+        configurable: false,
+      });
+    } catch (_stampError) {
+      // A frozen or exotic object cannot carry the stamp. Return 0, which never
+      // matches a stamped id, so such a frame simply never replays a bundle.
+      return 0;
+    }
+    return id;
+  }
+
+  // createSceneWebGPUDrawRecorder returns an object with the GPURenderPassEncoder
+  // subset the bundled draw paths use. It appends every call to a reusable
+  // numeric token array. It never allocates after the first few frames.
+  function createSceneWebGPUDrawRecorder() {
+    var tokens = [];
+    var length = 0;
+    var counter = { next: 1 };
+    var drawCount = 0;
+    var unsupported = 0;
+
+    function push(value) {
+      tokens[length++] = value;
+    }
+
+    function pushID(value) {
+      var id = sceneWebGPUBundleObjectID(value, counter);
+      if (id === 0 && value !== null && value !== undefined) unsupported++;
+      tokens[length++] = id;
+    }
+
+    return {
+      reset: function() {
+        length = 0;
+        drawCount = 0;
+        unsupported = 0;
+      },
+      length: function() { return length; },
+      drawCount: function() { return drawCount; },
+      // unsupportedCount counts objects that refused an identity stamp. A
+      // non-zero count makes the frame ineligible rather than risking a false
+      // match on id 0.
+      unsupportedCount: function() { return unsupported; },
+      tokens: function() { return tokens; },
+
+      setPipeline: function(pipeline) {
+        push(SCENE_WEBGPU_BUNDLE_OP_PIPELINE);
+        pushID(pipeline);
+      },
+      setBindGroup: function(index, group, offsets) {
+        push(SCENE_WEBGPU_BUNDLE_OP_BIND_GROUP);
+        push(index);
+        pushID(group);
+        // Dynamic offsets are numbers, and a changed offset changes the draw, so
+        // they belong in the stream.
+        if (offsets === null || offsets === undefined) {
+          push(-1);
+        } else if (typeof offsets === "number") {
+          push(1);
+          push(offsets);
+        } else {
+          push(offsets.length);
+          for (var i = 0; i < offsets.length; i++) push(offsets[i]);
+        }
+      },
+      setVertexBuffer: function(slot, buffer, offset, size) {
+        push(SCENE_WEBGPU_BUNDLE_OP_VERTEX_BUFFER);
+        push(slot);
+        pushID(buffer);
+        push(offset === undefined ? 0 : offset);
+        push(size === undefined ? -1 : size);
+      },
+      setIndexBuffer: function(buffer, format, offset, size) {
+        push(SCENE_WEBGPU_BUNDLE_OP_INDEX_BUFFER);
+        pushID(buffer);
+        push(format === "uint16" ? 16 : 32);
+        push(offset === undefined ? 0 : offset);
+        push(size === undefined ? -1 : size);
+      },
+      draw: function(vertexCount, instanceCount, firstVertex, firstInstance) {
+        push(SCENE_WEBGPU_BUNDLE_OP_DRAW);
+        push(vertexCount);
+        push(instanceCount === undefined ? 1 : instanceCount);
+        push(firstVertex === undefined ? 0 : firstVertex);
+        push(firstInstance === undefined ? 0 : firstInstance);
+        drawCount++;
+      },
+      drawIndexed: function(indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {
+        push(SCENE_WEBGPU_BUNDLE_OP_DRAW_INDEXED);
+        push(indexCount);
+        push(instanceCount === undefined ? 1 : instanceCount);
+        push(firstIndex === undefined ? 0 : firstIndex);
+        push(baseVertex === undefined ? 0 : baseVertex);
+        push(firstInstance === undefined ? 0 : firstInstance);
+        drawCount++;
+      },
+      drawIndirect: function(buffer, offset) {
+        push(SCENE_WEBGPU_BUNDLE_OP_DRAW_INDIRECT);
+        pushID(buffer);
+        push(offset === undefined ? 0 : offset);
+        drawCount++;
+      },
+      drawIndexedIndirect: function(buffer, offset) {
+        push(SCENE_WEBGPU_BUNDLE_OP_DRAW_INDEXED_INDIRECT);
+        pushID(buffer);
+        push(offset === undefined ? 0 : offset);
+        drawCount++;
+      },
+    };
+  }
+
+  // sceneWebGPUBundleTokensMatch compares a recorder's current stream against a
+  // saved copy. It bails at the first difference.
+  function sceneWebGPUBundleTokensMatch(tokens, length, saved) {
+    if (!saved || saved.length !== length) return false;
+    for (var i = 0; i < length; i++) {
+      if (tokens[i] !== saved[i]) return false;
+    }
+    return true;
+  }
+
+  // sceneWebGPUCopyBundleTokens snapshots the recorder's stream. The snapshot is
+  // a plain array of numbers, so it holds no reference to a GPU object and keeps
+  // nothing alive.
+  function sceneWebGPUCopyBundleTokens(tokens, length) {
+    var out = new Array(length);
+    for (var i = 0; i < length; i++) out[i] = tokens[i];
+    return out;
+  }
+
+  // createSceneWebGPUBundleCache owns one cached GPURenderBundle and the token
+  // stream it was built from. Call plan() with a function that drives an encoder,
+  // then act on the verdict.
+  function createSceneWebGPUBundleCache() {
+    var recorder = createSceneWebGPUDrawRecorder();
+    var savedTokens = null;
+    var savedLayout = "";
+    var bundle = null;
+    var encodes = 0;
+    var replays = 0;
+    var lastDrawCount = 0;
+
+    return {
+      recorder: recorder,
+      // plan records the frame's command stream and reports whether the cached
+      // bundle still matches it. layoutKey covers everything OUTSIDE the command
+      // stream that a bundle encoder bakes in: the colour formats, the depth
+      // format and the sample count.
+      plan: function(layoutKey, encodeFn) {
+        recorder.reset();
+        encodeFn(recorder);
+        lastDrawCount = recorder.drawCount();
+        if (recorder.unsupportedCount() > 0) {
+          return { reusable: false, eligible: false, reason: "unstamped-object" };
+        }
+        if (recorder.drawCount() === 0) {
+          return { reusable: false, eligible: false, reason: "no-draws" };
+        }
+        var reusable = bundle !== null &&
+          savedLayout === layoutKey &&
+          sceneWebGPUBundleTokensMatch(recorder.tokens(), recorder.length(), savedTokens);
+        return { reusable: reusable, eligible: true, reason: reusable ? "replay" : "re-encode" };
+      },
+      // adopt stores a freshly finished bundle together with the stream the
+      // recorder holds right now. Call it immediately after plan() reported a
+      // miss and the caller encoded for real.
+      adopt: function(layoutKey, finished) {
+        bundle = finished;
+        savedLayout = layoutKey;
+        savedTokens = sceneWebGPUCopyBundleTokens(recorder.tokens(), recorder.length());
+        encodes++;
+      },
+      markReplayed: function() { replays++; },
+      bundle: function() { return bundle; },
+      invalidate: function() {
+        bundle = null;
+        savedTokens = null;
+        savedLayout = "";
+      },
+      stats: function() {
+        return { encodes: encodes, replays: replays, draws: lastDrawCount };
+      },
+    };
+  }
+
+  // sceneWebGPUBundleLayoutKey names the render-target shape a bundle encoder
+  // bakes in. A bundle built for one shape is invalid for another.
+  function sceneWebGPUBundleLayoutKey(colorFormat, depthFormat, sampleCount) {
+    return String(colorFormat) + "|" + String(depthFormat) + "|" + String(sampleCount);
+  }
+
+  // sceneWebGPUBundleIneligibleReason names the first scene feature that keeps a
+  // frame off the bundled path, or "" when the frame qualifies.
+  //
+  // The bundled set is the PBR mesh draws plus the instanced mesh draws. Every
+  // other draw path stays on the direct encoder, and a frame that holds one of
+  // them does not bundle at all. Two reasons:
+  //
+  //   1. Draw ORDER inside one render pass decides the image. Bundling a subset
+  //      and interleaving direct draws around it would need the bundle split at
+  //      every boundary, which throws the saving away.
+  //   2. The excluded paths rebuild bind groups or reallocate vertex buffers per
+  //      frame, so their command stream rarely repeats. Recording them would
+  //      cost the walk and never earn a replay.
+  //
+  // The three per-object exclusions — skinned, computed-morph and Selena
+  // material draws — bind buffers a compute pass rewrites or bind groups a
+  // per-frame uniform owns. The recorder WOULD catch a change in those, so this
+  // is a payoff limit rather than a correctness limit.
+  function sceneWebGPUBundleIneligibleReason(flags) {
+    if (!flags) return "no-flags";
+    if (flags.disabled) return "disabled";
+    if (flags.hasWater) return "water";
+    if (flags.hasPoints) return "points";
+    if (flags.hasLabels) return "labels";
+    if (flags.hasScreenLines) return "screen-lines";
+    if (flags.hasSurfaces) return "surfaces";
+    if (flags.hasWorldLines) return "world-lines";
+    if (flags.hasDynamicMeshes) return "dynamic-meshes";
+    if (!flags.hasBundleableDraws) return "nothing-to-bundle";
+    return "";
+  }
+
+  // sceneWebGPUDrawListHasDynamicMesh reports whether any object in the three
+  // pass lists draws through a path the bundled set excludes.
+  function sceneWebGPUDrawListHasDynamicMesh(drawList, isDynamic) {
+    if (!drawList) return false;
+    var passes = ["opaque", "alpha", "additive"];
+    for (var p = 0; p < passes.length; p++) {
+      var list = drawList[passes[p]];
+      if (!Array.isArray(list)) continue;
+      for (var i = 0; i < list.length; i++) {
+        if (isDynamic(list[i])) return true;
+      }
+    }
+    return false;
+  }
+
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    window.__gosx_scene3d_api.createSceneWebGPUDrawRecorder = createSceneWebGPUDrawRecorder;
+    window.__gosx_scene3d_api.createSceneWebGPUBundleCache = createSceneWebGPUBundleCache;
+    window.__gosx_scene3d_api.sceneWebGPUBundleLayoutKey = sceneWebGPUBundleLayoutKey;
+    window.__gosx_scene3d_api.sceneWebGPUBundleIneligibleReason = sceneWebGPUBundleIneligibleReason;
+    window.__gosx_scene3d_api.sceneWebGPUDrawListHasDynamicMesh = sceneWebGPUDrawListHasDynamicMesh;
+    window.__gosx_scene3d_api.sceneWebGPUBundleObjectID = sceneWebGPUBundleObjectID;
+    window.__gosx_scene3d_api.SCENE_WEBGPU_BUILTIN_CULL_MIN_INSTANCES = SCENE_WEBGPU_BUILTIN_CULL_MIN_INSTANCES;
   }
 
   // -----------------------------------------------------------------------
@@ -4336,6 +5937,10 @@
     // Shadow resources.
     var shadowSlots = [null, null];
 
+    // GPU picking. Created on the first queuePick call, so a scene that never
+    // picks pays nothing — no textures, no pipelines, no extra pass.
+    var scenePicker = null;
+
     // Persistent GPU buffers.
     var frameUniformBuffer = null;
     var lightStorageBuffer = null;
@@ -4428,6 +6033,9 @@
     // once webGPUConsecutiveCleanFrames crosses its threshold) clears it, or
     // a fresh mount/renderer swap replaces this closure entirely.
     var postFXForceDisabled = false;
+    // webGPUBundleCache holds the cached GPURenderBundle and the command stream
+    // it was built from. Created on the first eligible frame.
+    var webGPUBundleCache = null;
 
     function ensureGPUTiming() {
       if (gpuTiming !== null) return gpuTiming;
@@ -4608,8 +6216,238 @@
       }
     }
 
+    // -----------------------------------------------------------------------
+    // Per-pass GPU timing
+    // -----------------------------------------------------------------------
+    //
+    // The frame timer above uses encoder.writeTimestamp. That call is NOT part
+    // of the WebGPU standard: it needed the timestamp-query-inside-passes
+    // feature, and Chromium removed it. On such an implementation
+    // gpuTimingEncodingAvailable goes false and the page gets no GPU time at
+    // all, so adaptive quality falls back to display-frame timing.
+    //
+    // The standard path is timestampWrites on the render-pass descriptor. It
+    // also gives something the frame timer never could: a time per pass. Four
+    // stamps per frame — shadow begin, shadow end, main begin, main end — yield
+    // the shadow cost, the main cost, and a whole-scene GPU time that works
+    // where writeTimestamp does not.
+    //
+    // Slot layout, per ring entry:
+    //   0 shadow begin   1 shadow end   2 main begin   3 main end
+    var SCENE_WEBGPU_PASS_STAMPS = 4;
+    var SCENE_WEBGPU_PASS_RING = 3;
+    var gpuPassTiming = null;
+    var gpuPassTimingSlot = null;
+    var gpuPassTimingShadowUsed = false;
+    var lastGPUPassSample = null;
+
+    function ensureGPUPassTiming() {
+      if (gpuPassTiming !== null) return gpuPassTiming;
+      gpuPassTiming = false;
+      var querySet = null;
+      var buffers = [];
+      try {
+        var supported = device && device.features && typeof device.features.has === "function" && device.features.has("timestamp-query");
+        if (!supported || typeof device.createQuerySet !== "function") {
+          if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "timer-unavailable");
+          return gpuPassTiming;
+        }
+        querySet = device.createQuerySet({
+          type: "timestamp",
+          count: SCENE_WEBGPU_PASS_STAMPS * SCENE_WEBGPU_PASS_RING,
+        });
+        var slots = [];
+        for (var i = 0; i < SCENE_WEBGPU_PASS_RING; i++) {
+          var resolve = device.createBuffer({
+            label: "gosx-pass-timing-resolve",
+            size: SCENE_WEBGPU_PASS_STAMPS * 8,
+            usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+          });
+          var readback = device.createBuffer({
+            label: "gosx-pass-timing-readback",
+            size: SCENE_WEBGPU_PASS_STAMPS * 8,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+          });
+          buffers.push(resolve, readback);
+          slots.push({ resolve: resolve, readback: readback, pending: false, mapping: false, frameSeq: 0, hasShadow: false });
+        }
+        gpuPassTiming = {
+          querySet: querySet,
+          slots: slots,
+          timestampPeriodNS: Math.max(0.000001, sceneNumber(device.limits && device.limits.timestampPeriod, 1)),
+        };
+        if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "pending");
+      } catch (_passTimingError) {
+        if (querySet && typeof querySet.destroy === "function") querySet.destroy();
+        for (var b = 0; b < buffers.length; b++) {
+          if (buffers[b] && typeof buffers[b].destroy === "function") buffers[b].destroy();
+        }
+        gpuPassTiming = false;
+        if (telemetryMount) telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "failed");
+      }
+      return gpuPassTiming;
+    }
+
+    // beginGPUPassTimingFrame picks the ring slot this frame writes into. It
+    // returns null when no slot is free, so a frame never overwrites a slot whose
+    // readback is still in flight.
+    function beginGPUPassTimingFrame() {
+      gpuPassTimingSlot = null;
+      gpuPassTimingShadowUsed = false;
+      var timing = ensureGPUPassTiming();
+      if (!timing) return;
+      var start = gpuTimingFrameSeq % timing.slots.length;
+      for (var i = 0; i < timing.slots.length; i++) {
+        var index = (start + i) % timing.slots.length;
+        var slot = timing.slots[index];
+        if (!slot || slot.pending || slot.mapping) continue;
+        slot.hasShadow = false;
+        gpuPassTimingSlot = { timing: timing, slot: slot, index: index };
+        return;
+      }
+    }
+
+    // gpuPassTimestampWrites returns the timestampWrites field for one pass, or
+    // null. Spread it into the beginRenderPass descriptor only when it is not
+    // null: a null field is a validation error on some implementations.
+    //
+    // Only the FIRST shadow pass is stamped. A second directional light opens a
+    // second shadow pass, and the ring holds one pair, so stamping both would
+    // report the second pass and hide the first.
+    function gpuPassTimestampWrites(passName) {
+      if (!gpuPassTimingSlot) return null;
+      var base = gpuPassTimingSlot.index * SCENE_WEBGPU_PASS_STAMPS;
+      if (passName === "shadow") {
+        if (gpuPassTimingShadowUsed) return null;
+        gpuPassTimingShadowUsed = true;
+        gpuPassTimingSlot.slot.hasShadow = true;
+        return { querySet: gpuPassTimingSlot.timing.querySet, beginningOfPassWriteIndex: base, endOfPassWriteIndex: base + 1 };
+      }
+      if (passName === "main") {
+        return { querySet: gpuPassTimingSlot.timing.querySet, beginningOfPassWriteIndex: base + 2, endOfPassWriteIndex: base + 3 };
+      }
+      return null;
+    }
+
+    // endGPUPassTimingFrame resolves the slot into its readback buffer. Call it
+    // once, after the last timed pass and before submit.
+    function endGPUPassTimingFrame(encoder) {
+      if (!gpuPassTimingSlot || !encoder) return;
+      if (typeof encoder.resolveQuerySet !== "function" || typeof encoder.copyBufferToBuffer !== "function") {
+        gpuPassTimingSlot = null;
+        return;
+      }
+      var token = gpuPassTimingSlot;
+      gpuPassTimingSlot = null;
+      try {
+        encoder.resolveQuerySet(
+          token.timing.querySet,
+          token.index * SCENE_WEBGPU_PASS_STAMPS,
+          SCENE_WEBGPU_PASS_STAMPS,
+          token.slot.resolve,
+          0
+        );
+        encoder.copyBufferToBuffer(token.slot.resolve, 0, token.slot.readback, 0, SCENE_WEBGPU_PASS_STAMPS * 8);
+        token.slot.pending = true;
+        token.slot.frameSeq = gpuTimingFrameSeq;
+      } catch (_passResolveError) {
+        token.slot.pending = false;
+        token.slot.mapping = false;
+        gpuPassTiming = false;
+      }
+    }
+
+    function pollGPUPassTimingReadback() {
+      var timing = gpuPassTiming;
+      if (!timing) return;
+      for (var i = 0; i < timing.slots.length; i++) {
+        var slot = timing.slots[i];
+        if (!slot.pending || slot.mapping || gpuTimingFrameSeq - slot.frameSeq < 2) continue;
+        if (!slot.readback || typeof slot.readback.mapAsync !== "function") continue;
+        slot.mapping = true;
+        (function(activeTiming, activeSlot) {
+          activeSlot.readback.mapAsync((typeof GPUMapMode !== "undefined" && GPUMapMode.READ) || 1).then(function() {
+            if (activeSlot.readback && typeof activeSlot.readback.getMappedRange === "function") {
+              var values = new BigUint64Array(activeSlot.readback.getMappedRange().slice(0));
+              recordGPUPassSample(activeTiming, activeSlot, values);
+              activeSlot.readback.unmap();
+            }
+            activeSlot.pending = false;
+            activeSlot.mapping = false;
+          }).catch(function() {
+            activeSlot.pending = false;
+            activeSlot.mapping = false;
+          });
+        })(timing, slot);
+        break;
+      }
+    }
+
+    // recordGPUPassSample turns four raw timestamps into milliseconds. A zero or
+    // decreasing pair means the implementation did not write that stamp, so the
+    // reading is dropped rather than published as 0.
+    function recordGPUPassSample(timing, slot, values) {
+      if (!values || values.length < SCENE_WEBGPU_PASS_STAMPS) return;
+      var toMS = function(begin, end) {
+        if (end <= begin) return -1;
+        return Number(end - begin) * timing.timestampPeriodNS / 1000000;
+      };
+      var shadowMS = slot.hasShadow ? toMS(values[0], values[1]) : 0;
+      var mainMS = toMS(values[2], values[3]);
+      if (mainMS < 0) return;
+      // The whole-scene span runs from the first stamped pass to the end of the
+      // main pass, so it includes the gap between passes — which is real GPU
+      // time the frame spent.
+      var sceneBegin = slot.hasShadow ? values[0] : values[2];
+      var sceneMS = toMS(sceneBegin, values[3]);
+      lastGPUPassSample = {
+        shadowMS: shadowMS < 0 ? 0 : shadowMS,
+        mainMS: mainMS,
+        sceneMS: sceneMS < 0 ? mainMS : sceneMS,
+        atMS: (typeof performance !== "undefined" && typeof performance.now === "function") ? performance.now() : Date.now(),
+      };
+      if (telemetryMount) {
+        telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-shadow-ms", lastGPUPassSample.shadowMS.toFixed(3));
+        telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-main-ms", lastGPUPassSample.mainMS.toFixed(3));
+        telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-scene-ms", lastGPUPassSample.sceneMS.toFixed(3));
+        telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing", "measured");
+      }
+      // Feed the shared performance sample only when the non-standard
+      // encoder-level timer is unavailable. Where both work, the frame timer
+      // keeps ownership so its existing budget assertions stay comparable.
+      if (gpuTimingEncodingAvailable === false || gpuTiming === false) {
+        lastGPUPerformanceSample = {
+          source: "gpu-pass-timestamp",
+          gpuMS: lastGPUPassSample.sceneMS,
+          atMS: lastGPUPassSample.atMS,
+        };
+        if (telemetryMount) {
+          telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-ms", lastGPUPassSample.sceneMS.toFixed(3));
+          telemetryMount.setAttribute("data-gosx-scene3d-webgpu-gpu-timing", "measured-pass");
+        }
+      }
+    }
+
+    function destroyGPUPassTimingResources() {
+      var timing = gpuPassTiming;
+      gpuPassTiming = null;
+      gpuPassTimingSlot = null;
+      if (!timing || timing === false) return;
+      if (timing.querySet && typeof timing.querySet.destroy === "function") timing.querySet.destroy();
+      for (var i = 0; i < timing.slots.length; i++) {
+        var slot = timing.slots[i];
+        if (!slot) continue;
+        try {
+          if (slot.readback && slot.mapping && typeof slot.readback.unmap === "function") slot.readback.unmap();
+        } catch (_unmapError) {}
+        if (slot.resolve && typeof slot.resolve.destroy === "function") slot.resolve.destroy();
+        if (slot.readback && typeof slot.readback.destroy === "function") slot.readback.destroy();
+      }
+    }
+
     function pollPerformanceSample() {
       pollGPUTimingReadback();
+      pollGPUPassTimingReadback();
       var sample = lastGPUPerformanceSample;
       lastGPUPerformanceSample = null;
       return sample;
@@ -4728,15 +6566,13 @@
     var scratchViewMatrix = new Float32Array(16);
     var scratchProjMatrix = new Float32Array(16);
     var scratchSelenaViewProjection = new Float32Array(16);
-    // Per-frame clock (seconds) fed to selena materials that declare `param time : float`.
-    // Set once per frame before any selena draw; explicit customUniforms.time still overrides.
-    var sceneSelenaFrameTime = 0;
-    var pointsIdentityMatrix = new Float32Array([
-      1, 0, 0, 0,
-      0, 1, 0, 0,
-      0, 0, 1, 0,
-      0, 0, 0, 1,
-    ]);
+    // selenaFrame hands the per-frame state to the module-scope uniform packer
+    // in 16a1. viewProjection holds a live reference to the scratch matrix, so
+    // the packer always reads the current frame matrix. time is the per-frame
+    // clock (seconds) fed to selena materials that declare `param time : float`;
+    // it is set once per frame before any selena draw, and an explicit
+    // customUniforms.time still overrides it.
+    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0 };
 
     // Hoisted uniform staging buffers — reused every frame to eliminate per-frame allocations.
     // Each scratch is consumed synchronously (filled → writeBuffer → done) before any reuse.
@@ -4756,8 +6592,16 @@
     var _envUniformF = new Float32Array(12);
 
     var _lightCountBuf  = new Uint32Array(1);
-    var _lightDataF     = new Float32Array(8 * 16);
+    var _lightCapacity  = SCENE_WEBGPU_LIGHT_CAPACITY_MIN;
+    var _lightDataF     = new Float32Array(_lightCapacity * SCENE_WEBGPU_LIGHT_FLOATS);
     var _lightColorCache = {};
+    // Grown-out light buffers wait here until dispose. A buffer the previous
+    // frame's submitted commands still reference must not be destroyed early.
+    // Growth doubles from 8 to 256, so this list holds at most five buffers.
+    var _retiredLightBuffers = [];
+    // Reported lighting diagnostics, keyed by code plus payload, so one wrong
+    // scene warns once instead of every frame.
+    var _lightIssuesReported = Object.create(null);
 
     var _materialUniformBuf = new ArrayBuffer(80);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
@@ -5323,8 +7167,12 @@
         // Create persistent uniform buffers.
         // FrameUniforms: 2*mat4 + vec3 + u32 + 2*f32 + 2*u32 = 128+16+16 = ~160 bytes.
         frameUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        // 8 lights * 64 bytes = 512 bytes.
-        lightStorageBuffer = device.createBuffer({ size: 512, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        // Lights start at the minimum capacity and grow in uploadLights.
+        lightStorageBuffer = device.createBuffer({
+          label: "gosx-lights",
+          size: _lightCapacity * SCENE_WEBGPU_LIGHT_BYTES,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -5500,14 +7348,6 @@
       return pipeline;
     }
 
-    function sceneSelenaMaterialLayout(material) {
-      var layout = material && material.shaderLayout;
-      if (!layout || typeof layout !== "object") return null;
-      if (!layout.uniformBlock || typeof layout.uniformBlock !== "object") return null;
-      if (!Array.isArray(layout.uniformBlock.fields)) return null;
-      return layout;
-    }
-
     function sceneSelenaIsMaterial(material) {
       return Boolean(
         material &&
@@ -5525,18 +7365,6 @@
         ? material.customVertexWGSL
         : material.customFragmentWGSL;
       return String(src || "").trim();
-    }
-
-    function sceneSelenaFloatCount(type) {
-      switch (String(type || "")) {
-      case "float": return 1;
-      case "vec2": return 2;
-      case "vec3": return 3;
-      case "vec4": return 4;
-      case "mat3": return 9;
-      case "mat4": return 16;
-      default: return 1;
-      }
     }
 
     function sceneSelenaAttributeComponents(type) {
@@ -5557,145 +7385,11 @@
       }
     }
 
-    function sceneSelenaUniformDefault(layout, name) {
-      var defaults = layout && layout.uniformBlock && Array.isArray(layout.uniformBlock.defaults)
-        ? layout.uniformBlock.defaults
-        : [];
-      for (var i = 0; i < defaults.length; i++) {
-        if (defaults[i] && defaults[i].name === name) {
-          return defaults[i].values;
-        }
-      }
-      return undefined;
-    }
-
-    function sceneSelenaRenderContextUniformValue(renderContext, field) {
-      var uniforms = renderContext && renderContext.uniforms;
-      var name = field && field.name;
-      if (!uniforms || typeof uniforms !== "object" || !name) return undefined;
-      if (Object.prototype.hasOwnProperty.call(uniforms, name)) return uniforms[name];
-      return undefined;
-    }
-
     function sceneSelenaUniformBufferSlot(renderContext) {
       var suffix = renderContext && typeof renderContext.uniformSlotSuffix === "string"
         ? renderContext.uniformSlotSuffix.trim().replace(/[^A-Za-z0-9_-]+/g, "-")
         : "";
       return suffix ? "_gosxWGPUSelenaUniform_" + suffix : "_gosxWGPUSelenaUniform";
-    }
-
-    function sceneSelenaUniformValue(material, layout, field, owner, renderContext) {
-      var name = field && field.name;
-      if (name === "mvp") return scratchSelenaViewProjection;
-      if (name === "viewProjectionMatrix") return scratchSelenaViewProjection;
-      if (name === "modelMatrix") return webGPUSelenaObjectModelMatrix(owner);
-      if (name === "normalMatrix") return [1, 0, 0, 0, 1, 0, 0, 0, 1];
-      var contextValue = sceneSelenaRenderContextUniformValue(renderContext, field);
-      if (contextValue !== undefined) return contextValue;
-      // time is a reserved auto-uniform (like mvp/normalMatrix): forced BEFORE
-      // customUniforms so a declared `param time` — whose compiled default ships
-      // in customUniforms via selenaDefaultUniforms — can't shadow the clock.
-      if (name === "time") return sceneSelenaFrameTime;
-      var value = sceneSelenaMaterialValue(material, name);
-      if (value !== undefined) return value;
-      var def = sceneSelenaUniformDefault(layout, name);
-      if (def !== undefined) return def;
-      var count = sceneSelenaFloatCount(field && field.type);
-      if (count === 16) return pointsIdentityMatrix;
-      if (count === 9) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
-      return 0;
-    }
-
-    function sceneSelenaScalar(value) {
-      if (Array.isArray(value) || (value && typeof value.length === "number")) {
-        return sceneNumber(value[0], 0);
-      }
-      return sceneNumber(value, 0);
-    }
-
-    // G1 -- array uniform packing. A descriptor field with `count > 1` (e.g.
-    // the water passes' `context { spheres : array<vec4,32> }`) is an ARRAY
-    // uniform: std140 requires every element to start at its own `stride`
-    // (bytes) boundary regardless of the element type's own natural size (for
-    // array<vec4,N>, stride==16==the vec4's own size, so elements are simply
-    // contiguous vec4s; a hypothetical array<float,N> would still pad each
-    // element out to 16 bytes). `value` is a FLAT Float32Array/Array sized
-    // count*componentsPerElement (see sceneWaterSpheresContextArray below,
-    // which builds exactly this shape for the water "spheres" context array).
-    // Element `i`'s components land at `base + i*(stride/4) .. +componentCount-1`.
-    function sceneSelenaWriteArrayUniformField(f32, base, type, value, arrayCount, strideBytes) {
-      var componentsPerElement = sceneSelenaFloatCount(type);
-      var strideFloats = Math.max(componentsPerElement, Math.floor(sceneNumber(strideBytes, componentsPerElement * 4) / 4));
-      var flat = (Array.isArray(value) || (value && typeof value.length === "number")) ? value : [];
-      for (var i = 0; i < arrayCount; i++) {
-        var elementBase = base + i * strideFloats;
-        for (var c = 0; c < componentsPerElement; c++) {
-          f32[elementBase + c] = sceneNumber(flat[i * componentsPerElement + c], 0);
-        }
-      }
-    }
-
-    function sceneSelenaWriteUniformField(f32, base, type, value, field) {
-      var arrayCount = field ? Math.floor(sceneNumber(field.count, 0)) : 0;
-      if (arrayCount > 1) {
-        sceneSelenaWriteArrayUniformField(f32, base, type, value, arrayCount, field && field.stride);
-        return;
-      }
-      var count = sceneSelenaFloatCount(type);
-      if (type === "float") {
-        f32[base] = sceneSelenaScalar(value);
-        return;
-      }
-      if (type === "mat3") {
-        for (var c = 0; c < 3; c++) {
-          f32[base + c * 4] = sceneNumber(value && value[c * 3], c === 0 ? 1 : 0);
-          f32[base + c * 4 + 1] = sceneNumber(value && value[c * 3 + 1], c === 1 ? 1 : 0);
-          f32[base + c * 4 + 2] = sceneNumber(value && value[c * 3 + 2], c === 2 ? 1 : 0);
-        }
-        return;
-      }
-      var vectorValue = Array.isArray(value) || (value && typeof value.length === "number");
-      if (!vectorValue) {
-        f32[base] = sceneSelenaScalar(value);
-        for (var zeroIndex = 1; zeroIndex < count; zeroIndex++) {
-          f32[base + zeroIndex] = 0;
-        }
-        return;
-      }
-      for (var i = 0; i < count; i++) {
-        f32[base + i] = sceneNumber(value[i], 0);
-      }
-    }
-
-    function sceneSelenaUniformData(material, owner, renderContext) {
-      var layout = sceneSelenaMaterialLayout(material);
-      if (!layout) return null;
-      var size = Math.max(16, Math.floor(sceneNumber(layout.uniformBlock.size, 16)));
-      var f32 = new Float32Array(Math.ceil(size / 4));
-      var fields = layout.uniformBlock.fields;
-      for (var i = 0; i < fields.length; i++) {
-        var field = fields[i];
-        if (!field || typeof field.name !== "string") continue;
-        sceneSelenaWriteUniformField(
-          f32,
-          Math.floor(sceneNumber(field.offset, 0) / 4),
-          String(field.type || "float"),
-          sceneSelenaUniformValue(material, layout, field, owner, renderContext),
-          field
-        );
-      }
-      return f32;
-    }
-
-    function sceneSelenaMaterialValue(material, name) {
-      var values = material && material.customUniforms;
-      if (values && typeof values === "object" && name && Object.prototype.hasOwnProperty.call(values, name)) {
-        return values[name];
-      }
-      if (material && name && Object.prototype.hasOwnProperty.call(material, name)) {
-        return material[name];
-      }
-      return undefined;
     }
 
     function sceneSelenaResourceRef(material, descriptor) {
@@ -6192,7 +7886,7 @@
     }
 
     function createSelenaBindGroup(material, resource, cacheOwner, renderContext) {
-      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext);
+      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext, selenaFrame);
       if (!uniformData || !resource) return null;
       var owner = (cacheOwner && typeof cacheOwner === "object") ? cacheOwner : material;
       var uniformSlot = sceneSelenaUniformBufferSlot(renderContext);
@@ -6477,7 +8171,7 @@
       entries.push({ binding: sceneNumber(stateWGSL.outBinding, 2), resource: { buffer: outBuf } });
       var hasUniforms = layout.uniformBlock && Array.isArray(layout.uniformBlock.fields) && layout.uniformBlock.fields.length > 0;
       if (hasUniforms) {
-        var uniformData = sceneSelenaUniformData({ shaderLayout: layout }, system, renderContext);
+        var uniformData = sceneSelenaUniformData({ shaderLayout: layout }, system, renderContext, selenaFrame);
         if (!uniformData) return null;
         var uniformBuffer = wgpuCachedTrackedBuffer(
           system,
@@ -6634,7 +8328,7 @@
     // WGSL), so the placeholder views are never actually sampled -- they exist
     // purely to satisfy the fixed bind group layout's entry count/kind.
     function createSelenaPostBindGroup(material, resource, cacheOwner, renderContext) {
-      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext);
+      var uniformData = sceneSelenaUniformData(material, cacheOwner, renderContext, selenaFrame);
       if (!uniformData || !resource) return null;
       var owner = (cacheOwner && typeof cacheOwner === "object") ? cacheOwner : material;
       var uniformSlot = sceneSelenaUniformBufferSlot(renderContext) + "_post";
@@ -6869,7 +8563,7 @@
     // ensurePointsAuthoredUserUniformBuffer: allocates / updates a per-layer
     // user-uniform buffer from entry.customUniforms and shaderLayout.
     function ensurePointsAuthoredUserUniformBuffer(entry, ownerKey, uniforms, layout) {
-      var uniformData = sceneSelenaUniformData({ customUniforms: uniforms, shaderLayout: layout });
+      var uniformData = sceneSelenaUniformData({ customUniforms: uniforms, shaderLayout: layout }, null, null, selenaFrame);
       if (!uniformData || uniformData.byteLength === 0) {
         // No user uniforms — create a minimal 16-byte placeholder so group(1) is always bound.
         uniformData = new Float32Array(4);
@@ -7796,7 +9490,7 @@
     // (createWaterComputeBindGroup/createWaterRenderBindGroup/
     // createWaterCausticsBindGroup bind binding 0 to it) -- every Selena
     // render pass gets its own uniform buffer via sceneSelenaUniformData with
-    // its own live `time` context field (sceneSelenaFrameTime), unaffected by
+    // its own live `time` context field (selenaFrame.time), unaffected by
     // this skip. Selena is the sole primary path (the demo's own tests assert
     // zero authored/fallback occurrences in the golden path), so skipping this
     // upload is a no-op almost always; IF a backend ever falls all the way
@@ -10308,7 +12002,7 @@
           opticsEnable: optics.caustics ? 1 : 0,
           gridResolution: sceneNumber(system && system.surfaceResolution, 201),
           resolution: sceneNumber(system && system.waterResolution, 256),
-          time: sceneSelenaFrameTime,
+          time: selenaFrame.time,
           objectKind: sceneNumber(system && system.waterObjectKind, 0),
           objectCount: sceneNumber(system && system.waterObjectSphereCount, 0),
           lightDir: [sceneNumber(light.x, 0.3), sceneNumber(light.y, 0.9), sceneNumber(light.z, 0.45)],
@@ -11187,12 +12881,21 @@
 
       var planes = extractFrustumPlanesJS(vp);
       var activeIds = new Set();
+      var fingerprintFn = cullApi && typeof cullApi.sceneInstanceTransformFingerprint === "function"
+        ? cullApi.sceneInstanceTransformFingerprint
+        : null;
+      var maxScaleFn = cullApi && typeof cullApi.sceneInstancedMaxTransformScale === "function"
+        ? cullApi.sceneInstancedMaxTransformScale
+        : null;
 
       for (var i = 0; i < instancedMeshes.length; i++) {
         var mesh = instancedMeshes[i];
         if (!mesh) continue;
         var wgsl = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim()) ? mesh.cullKernelWGSL.trim() : null;
-        if (!wgsl) continue; // mesh has no cull kernel — draw-all (D3)
+        // A mesh without an authored kernel still culls on the GPU when the
+        // renderer's own kernel applies. webGPUBuiltinCullEligible states the
+        // three conditions.
+        if (!wgsl && !webGPUBuiltinCullEligible(mesh)) continue;
         if (!createCullFn) continue;
 
         var meshId = (typeof mesh.id === "string" && mesh.id) ? mesh.id : ("mesh-" + i);
@@ -11205,7 +12908,7 @@
           if (existing && existing.system && typeof existing.system.dispose === "function") {
             existing.system.dispose();
           }
-          var newSystem = createCullFn(device, mesh);
+          var newSystem = createCullFn(device, mesh, { fallbackRadius: webGPUInstancedCullRadius(mesh) });
           instancedCullSystems.set(meshId, { system: newSystem, signature: sig });
           existing = instancedCullSystems.get(meshId);
         }
@@ -11228,12 +12931,30 @@
         // instanceCount→count→0, so the cull operates on the REAL count instead
         // of 0 (which left the input buffer unpopulated → drawIndirect rendered
         // only degenerate zero-matrix instances → an invisible ring).
+        // The identity check below catches a scene that reuses one transforms
+        // array. A scene core that rebuilds the array every frame defeats it,
+        // so the fingerprint catches that case too: equal contents skip the
+        // 80-byte-per-instance encode AND the queue.writeBuffer. A static
+        // 10 000-instance mesh re-uploaded 800 KB per frame before this.
         var instanceCount = instancedMeshCount(mesh);
         var transforms = mesh.transforms;
+        var fingerprint = fingerprintFn && transforms && instanceCount > 0
+          ? fingerprintFn(transforms, instanceCount)
+          : null;
         var records = null;
-        if (transforms && instanceCount > 0 && existing.uploadedTransforms !== transforms) {
+        // The fingerprint is authoritative when available. It also fixes the
+        // opposite defect: a scene that mutates one transforms array IN PLACE
+        // kept the array identity, so the identity check alone never re-uploaded
+        // and the GPU culled against stale transforms.
+        var contentsChanged = fingerprint !== null
+          ? existing.uploadedFingerprint !== fingerprint
+          : existing.uploadedTransforms !== transforms;
+        if (transforms && instanceCount > 0 && contentsChanged) {
           var tf = (transforms instanceof Float32Array) ? transforms : new Float32Array(transforms);
-          var recF = new Float32Array(instanceCount * 20); // 20 f32 slots = 80B per record; zero-init covers pickData
+          var recF = existing.recordScratch && existing.recordScratch.length === instanceCount * 20
+            ? existing.recordScratch
+            : new Float32Array(instanceCount * 20); // 20 f32 slots = 80B per record; zero-init covers pickData
+          existing.recordScratch = recF;
           for (var j = 0; j < instanceCount; j++) {
             var src = j * 16;
             var dst = j * 20;
@@ -11242,12 +12963,23 @@
           records = recF;
           existing.uploadedTransforms = transforms;
         }
+        if (contentsChanged) {
+          existing.uploadedFingerprint = fingerprint;
+          // maxInstanceScale only matters for an authored kernel, and it costs a
+          // pass over the transforms, so recompute it only when they change.
+          existing.maxInstanceScale = maxScaleFn && transforms
+            ? maxScaleFn(transforms, instanceCount)
+            : 1;
+        }
 
         // Get geometry vertex count for the drawArgs reset.
         var geom = getInstancedGeometry(mesh);
         var vertexCount = (geom && geom.vertexCount > 0) ? geom.vertexCount : 1;
 
-        sys.update(device, encoder, planes, vertexCount, records, instanceCount);
+        sys.update(device, encoder, planes, vertexCount, records, instanceCount, {
+          transformFingerprint: fingerprint,
+          maxInstanceScale: existing.maxInstanceScale,
+        });
       }
 
       // GC: dispose systems for meshes no longer in the bundle.
@@ -11441,58 +13173,68 @@
       };
     }
 
+    // ensureLightCapacity grows the light storage buffer to hold capacity
+    // lights. The frame bind group is rebuilt every frame after uploadLights,
+    // so the new buffer reaches the shader on the same frame it appears.
+    function ensureLightCapacity(capacity) {
+      if (capacity <= _lightCapacity && lightStorageBuffer) {
+        return;
+      }
+      if (lightStorageBuffer) {
+        _retiredLightBuffers.push(lightStorageBuffer);
+      }
+      _lightCapacity = capacity;
+      _lightDataF = new Float32Array(capacity * SCENE_WEBGPU_LIGHT_FLOATS);
+      lightStorageBuffer = device.createBuffer({
+        label: "gosx-lights",
+        size: capacity * SCENE_WEBGPU_LIGHT_BYTES,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+    }
+
+    // reportLightIssuesOnce forwards each new diagnostic exactly once.
+    function reportLightIssuesOnce(issues) {
+      for (var i = 0; i < issues.length; i++) {
+        var issue = issues[i];
+        var key = issue.code + "|" + issue.message;
+        if (_lightIssuesReported[key]) {
+          continue;
+        }
+        _lightIssuesReported[key] = true;
+        sceneWebGPUReportLightingIssue({
+          scope: "scene3d",
+          type: "lighting",
+          source: "webgpu",
+          code: issue.code,
+          message: issue.message,
+        });
+      }
+    }
+
     function uploadLights(lights) {
       var lightArray = Array.isArray(lights) ? lights : [];
-      var count = Math.min(lightArray.length, 8);
+      ensureLightCapacity(sceneWebGPULightCapacityFor(lightArray.length));
+      var count = Math.min(lightArray.length, _lightCapacity);
 
       // Write lightCount into frame uniform buffer at byte offset 140.
       _lightCountBuf[0] = count;
       device.queue.writeBuffer(frameUniformBuffer, 140, _lightCountBuf);
 
-      // Each light: 4 * vec4f = 64 bytes.
-      var lightData = _lightDataF;
-      var colorCache = _lightColorCache;
+      var census = sceneWebGPUPackLights(lightArray, count, _lightDataF, _lightColorCache);
+      reportLightIssuesOnce(sceneWebGPULightIssues(census, lightArray.length, _lightCapacity));
 
-      for (var i = 0; i < count; i++) {
-        var light = lightArray[i];
-        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-        var lightType = 2; // point
-        if (kind === "ambient") lightType = 0;
-        else if (kind === "directional") lightType = 1;
-
-        var base = i * 16;
-        // position (xyz) + type (w, stored as float, cast to u32 in WGSL)
-        lightData[base + 0] = sceneNumber(light.x, 0);
-        lightData[base + 1] = sceneNumber(light.y, 0);
-        lightData[base + 2] = sceneNumber(light.z, 0);
-        lightData[base + 3] = lightType;
-
-        // direction (xyz) + intensity (w)
-        lightData[base + 4] = sceneNumber(light.directionX, 0);
-        lightData[base + 5] = sceneNumber(light.directionY, -1);
-        lightData[base + 6] = sceneNumber(light.directionZ, 0);
-        lightData[base + 7] = sceneNumber(light.intensity, 1);
-
-        // color (rgb) + range (a)
-        var colorKey = light.color;
-        var lc = typeof colorKey === "string" && colorCache[colorKey];
-        if (!lc) {
-          lc = sceneColorRGBA(light.color, [1, 1, 1, 1]);
-          if (typeof colorKey === "string") colorCache[colorKey] = lc;
-        }
-        lightData[base + 8] = lc[0];
-        lightData[base + 9] = lc[1];
-        lightData[base + 10] = lc[2];
-        lightData[base + 11] = sceneNumber(light.range, 0);
-
-        // params: decay, shadowBias, castShadow, unused
-        lightData[base + 12] = sceneNumber(light.decay, 2);
-        lightData[base + 13] = sceneNumber(light.shadowBias, 0.005);
-        lightData[base + 14] = light.castShadow ? 1.0 : 0.0;
-        lightData[base + 15] = 0;
+      if (count > 0) {
+        // Write only the used prefix. The shader stops at lightCount, so stale
+        // floats past that point never reach a fragment.
+        device.queue.writeBuffer(
+          lightStorageBuffer,
+          0,
+          _lightDataF,
+          0,
+          count * SCENE_WEBGPU_LIGHT_FLOATS,
+        );
       }
-
-      device.queue.writeBuffer(lightStorageBuffer, 0, lightData);
+      return census;
     }
 
     function uploadFogUniforms(environment) {
@@ -11668,7 +13410,54 @@
       return matBG;
     }
 
+    // _frameBindGroupCache memoizes the frame bind group. Every entry is a
+    // buffer, a texture view or a sampler held BY REFERENCE, and every one of
+    // them is written with queue.writeBuffer rather than replaced, so the same
+    // bind group stays correct across frames. Rebuilding it each frame cost one
+    // createBindGroup per frame and, worse, gave the render-bundle recorder a
+    // new object identity every frame, so no bundle could ever replay.
+    //
+    // The cache compares identities, so a grown light buffer, a resized shadow
+    // map or a device-loss recovery rebuilds it.
+    var _frameBindGroupCache = null;
+
     function createFrameBindGroup(shadowView0, shadowView1) {
+      var view0 = shadowView0 || dummyShadowView;
+      var view1 = shadowView1 || dummyShadowView;
+      var cache = _frameBindGroupCache;
+      if (
+        cache &&
+        cache.device === device &&
+        cache.layout === frameBindGroupLayout &&
+        cache.frame === frameUniformBuffer &&
+        cache.lights === lightStorageBuffer &&
+        cache.fog === fogUniformBuffer &&
+        cache.env === envUniformBuffer &&
+        cache.view0 === view0 &&
+        cache.view1 === view1 &&
+        cache.sampler === comparisonSampler &&
+        cache.shadow === shadowUniformBuffer
+      ) {
+        return cache.bindGroup;
+      }
+      var bindGroup = _createFrameBindGroupUncached(view0, view1);
+      _frameBindGroupCache = {
+        device: device,
+        layout: frameBindGroupLayout,
+        frame: frameUniformBuffer,
+        lights: lightStorageBuffer,
+        fog: fogUniformBuffer,
+        env: envUniformBuffer,
+        view0: view0,
+        view1: view1,
+        sampler: comparisonSampler,
+        shadow: shadowUniformBuffer,
+        bindGroup: bindGroup,
+      };
+      return bindGroup;
+    }
+
+    function _createFrameBindGroupUncached(shadowView0, shadowView1) {
       return device.createBindGroup({
         layout: frameBindGroupLayout,
         entries: [
@@ -11749,19 +13538,6 @@
         webGPUDirectAttribute(obj, "joints", count, 4) &&
         webGPUDirectAttribute(obj, "weights", count, 4)
       );
-    }
-
-    function webGPUObjectModelMatrix(obj) {
-      var matrix = obj && obj.modelMatrix;
-      return matrix && typeof matrix.length === "number" && matrix.length >= 16
-        ? matrix
-        : pointsIdentityMatrix;
-    }
-    function webGPUSelenaObjectModelMatrix(obj) {
-      if (obj && obj.directVertices === true) {
-        return webGPUObjectModelMatrix(obj);
-      }
-      return pointsIdentityMatrix;
     }
 
     function webGPUMat4MultiplyInto(out, outOffset, a, b, bOffset) {
@@ -12407,7 +14183,7 @@
         ],
       });
 
-      var pass = encoder.beginRenderPass({
+      var shadowPassDescriptor = {
         colorAttachments: [],
         depthStencilAttachment: {
           view: shadowResource.view,
@@ -12415,7 +14191,10 @@
           depthClearValue: 1.0,
           depthStoreOp: "store",
         },
-      });
+      };
+      var shadowStamps = gpuPassTimestampWrites("shadow");
+      if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
+      var pass = encoder.beginRenderPass(shadowPassDescriptor);
 
       pass.setBindGroup(0, shadowBG);
       var currentShadowPipeline = "";
@@ -12774,7 +14553,7 @@
         // not-ready / no kernel / capability absent → draw-all).
         var meshId = (typeof mesh.id === "string" && mesh.id) ? mesh.id : ("mesh-" + i);
         var hasCullWGSL = (typeof mesh.cullKernelWGSL === "string" && mesh.cullKernelWGSL.trim().length > 0);
-        var cullRecord = hasCullWGSL ? instancedCullSystems.get(meshId) : null;
+        var cullRecord = (hasCullWGSL || webGPUBuiltinCullEligible(mesh)) ? instancedCullSystems.get(meshId) : null;
         var cullSys = cullRecord && cullRecord.system;
 
         if (cullSys && cullSys.isReady()) {
@@ -12800,6 +14579,39 @@
           pass.draw(geom.vertexCount, instanceCount);
         }
       }
+    }
+
+    // webGPUInstancedCullRadius returns a bounding-sphere radius that encloses
+    // the mesh's UNSCALED local geometry, padded by 5%. The cull kernel scales
+    // it per instance, so this value must never under-estimate the primitive.
+    // The pad covers the torus-knot envelope, which instancedLocalBounds
+    // approximates.
+    function webGPUInstancedCullRadius(mesh) {
+      var b = instancedLocalBounds(mesh);
+      if (!b) return 2;
+      var hx = Math.max(Math.abs(b.minX), Math.abs(b.maxX));
+      var hy = Math.max(Math.abs(b.minY), Math.abs(b.maxY));
+      var hz = Math.max(Math.abs(b.minZ), Math.abs(b.maxZ));
+      var radius = Math.sqrt(hx * hx + hy * hy + hz * hz) * 1.05;
+      return radius > 0 ? radius : 2;
+    }
+
+    // webGPUBuiltinCullEligible decides whether a mesh with no authored cull
+    // kernel may use the renderer's own kernel. Three conditions, each of them a
+    // correctness or a payoff limit:
+    //
+    //   1. The page has not opted out.
+    //   2. The mesh carries no per-instance colours. The culled draw path binds
+    //      the compacted 80-byte record, whose last vec4 is pick data, not
+    //      colour, so a coloured mesh would lose its colours.
+    //   3. The instance count is high enough that one compute dispatch and one
+    //      indirect draw beat a plain draw-all.
+    function webGPUBuiltinCullEligible(mesh) {
+      if (!mesh) return false;
+      if (typeof window !== "undefined" && window.__gosx_scene3d_webgpu_builtin_cull === false) return false;
+      var colors = mesh.colors;
+      if (colors && typeof colors.length === "number" && colors.length > 0) return false;
+      return instancedMeshCount(mesh) >= SCENE_WEBGPU_BUILTIN_CULL_MIN_INSTANCES;
     }
 
     function instancedLocalBounds(mesh) {
@@ -13748,6 +15560,22 @@
       // waitFor() polls observe a rest/wake transition promptly -- see
       // WATER_REST_ENERGY_EPSILON's comment above updateWaterSystems.
       setEssentialAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));
+      // Render-bundle state is essential tier: a tool that measures the saving
+      // must be able to prove a replay happened on the frame it timed, and a
+      // stale image is diagnosed by reading the reason.
+      setEssentialAttribute("data-gosx-scene3d-webgpu-bundle-state", String(published.bundleState || "direct"));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-bundle-reason", String(published.bundleReason || ""));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-bundle-encodes", String(published.bundleEncodes || 0));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-bundle-replays", String(published.bundleReplays || 0));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-bundle-draws", String(published.bundleDraws || 0));
+      // GPU cull dispatch counters. skipped-dispatches proves the static-scene
+      // fingerprint skip fired.
+      setEssentialAttribute("data-gosx-scene3d-webgpu-cull-dispatches", String(published.cullDispatches || 0));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-cull-skipped-dispatches", String(published.cullSkippedDispatches || 0));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-cull-builtin-systems", String(published.cullBuiltinSystems || 0));
+      // Which precision the post chain compiled with. "f16" means the device
+      // negotiated shader-f16 and the blur and FXAA stages run half precision.
+      setEssentialAttribute("data-gosx-scene3d-webgpu-post-precision", String(published.postPrecision || "none"));
       if (published.lastError) {
         setEssentialAttribute("data-gosx-scene3d-webgpu-last-error", String(published.lastError));
       } else if (webGPUEssentialAttributeCache["data-gosx-scene3d-webgpu-last-error"] !== null) {
@@ -13954,7 +15782,7 @@
           pointsDrawn: published.pointDrawEntries || 0,
           pointInstancesSubmitted: published.pointInstances || 0,
           pointInstancesDrawn: published.pointDrawInstances || 0,
-          uniformTime: sceneSelenaFrameTime,
+          uniformTime: selenaFrame.time,
           adapterInfo: webGPUAdapterInfoSnapshot(),
         });
       }
@@ -14418,7 +16246,7 @@
           var ownerKey = (typeof label.id === "string" && label.id) ? label.id : ("__bt:" + font + ":" + li);
           var owner = boardTextOwners.get(ownerKey);
           if (!owner) { owner = {}; boardTextOwners.set(ownerKey, owner); }
-          var uniformData = sceneSelenaUniformData(boardTextMaterial);
+          var uniformData = sceneSelenaUniformData(boardTextMaterial, null, null, selenaFrame);
           var uniformBuffer = wgpuCachedTrackedBuffer(
             owner, "_gosxBoardTextUniform", uniformData,
             GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, true
@@ -14452,6 +16280,108 @@
           pass.draw(vertexCount);
         }
       }
+    }
+
+    // -----------------------------------------------------------------------
+    // GPU picking wiring
+    // -----------------------------------------------------------------------
+
+    // The world-space mesh attribute record for the frame in flight. render()
+    // sets it; the pick adapter reads it so the pick pass binds the very same
+    // vertex buffer the main pass drew from.
+    var activePickMeshPositions = null;
+
+    function ensureScenePicker() {
+      if (scenePicker || !device) return scenePicker;
+      scenePicker = createSceneWebGPUPicker(device, {
+        viewProjection: function() { return scratchSelenaViewProjection; },
+        meshPositions: function() { return activePickMeshPositions && activePickMeshPositions.positions || null; },
+        bindMeshPositions: webGPUBindSceneMeshVertexBuffer,
+        instancedGeometry: getInstancedGeometry,
+        instancedGeometryBuffer: ensureInstancedGeometryGPUBuffer,
+        instancedTransformBuffer: ensureInstancedTransformGPUBuffer,
+        instancedCount: instancedMeshCount,
+        instancedTransforms: instancedMeshTransformData,
+        // Do NOT route pick failures through reportWebGPUFrameError. That
+        // counter drives the mount watchdog that falls the whole scene back to
+        // WebGL. A pick that cannot allocate must degrade picking alone.
+        onError: function(message) { console.warn("[gosx] WebGPU pick unavailable:", message); },
+      });
+      return scenePicker;
+    }
+
+    // queuePick schedules one GPU pick. x, y, width, and height are pointer-
+    // space values — pass the same numbers you pass sceneScreenToRay. The
+    // callback receives a hit record shaped exactly like sceneRaycastPick's, or
+    // null for background. It runs one to two frames later; nothing blocks.
+    function queuePick(x, y, width, height, callback) {
+      var picker = ensureScenePicker();
+      if (!picker) {
+        if (typeof callback === "function") callback(null);
+        return false;
+      }
+      return picker.queuePick(x, y, width, height, callback);
+    }
+
+    // webGPUSummarizeCullSystems totals the cull dispatch counters across the
+    // live systems so the mount can publish them.
+    function webGPUSummarizeCullSystems() {
+      var dispatches = 0;
+      var skipped = 0;
+      var builtin = 0;
+      instancedCullSystems.forEach(function(record) {
+        var system = record && record.system;
+        if (!system) return;
+        dispatches += sceneNumber(system.dispatchCount, 0);
+        skipped += sceneNumber(system.skippedDispatchCount, 0);
+        if (system.usesBuiltinKernel) builtin += 1;
+      });
+      return { dispatches: dispatches, skipped: skipped, builtin: builtin };
+    }
+
+    // webGPUObjectBlocksBundle names the three per-object draw paths the bundled
+    // set excludes. Each binds a resource a compute pass or a per-frame uniform
+    // owns, so its command stream changes nearly every frame.
+    function webGPUObjectBlocksBundle(obj, materials) {
+      if (!obj) return false;
+      if (webGPUObjectIsSkinned(obj)) return true;
+      if (webGPUObjectComputedMorphDrawRecord(obj)) return true;
+      var mat = materials[sceneNumber(obj.materialIndex, 0)] || null;
+      return Boolean(mat && typeof sceneSelenaIsMaterial === "function" && sceneSelenaIsMaterial(mat));
+    }
+
+    // encodeBundleableSceneDraws drives ONE target through the PBR and instanced
+    // draws of all three passes. The target is either the recorder (a dry run
+    // that issues no WebGPU calls) or a real GPURenderBundleEncoder. Both see the
+    // same call sequence, which is what makes the recorder's verdict sound.
+    function encodeBundleableSceneDraws(target, ctx) {
+      var passes = [
+        { name: "opaque", blend: "opaque", depthWrite: true },
+        { name: "alpha", blend: "alpha", depthWrite: false },
+        { name: "additive", blend: "additive", depthWrite: false },
+      ];
+      for (var p = 0; p < passes.length; p++) {
+        var spec = passes[p];
+        var meshList = ctx.drawList[spec.name];
+        if (meshList && meshList.length > 0) {
+          target.setPipeline(getPBRPipeline(spec.blend, spec.depthWrite));
+          target.setBindGroup(0, ctx.frameBindGroup);
+          drawPBRObjects(target, meshList, ctx.bundle, ctx.materials, ctx.frameBindGroup, spec.blend, spec.depthWrite, ctx.pbrBuffers);
+        }
+        var instancedList = ctx.instancedDrawList[spec.name];
+        if (instancedList && instancedList.length > 0) {
+          target.setBindGroup(0, ctx.frameBindGroup);
+          drawInstancedMeshes(target, instancedList, ctx.materials, spec.blend, spec.depthWrite);
+        }
+      }
+    }
+
+    // webGPURenderBundlesEnabled reports the page's opt-out. Bundling is on by
+    // default; set window.__gosx_scene3d_webgpu_render_bundles to false to force
+    // direct encoding, which is the first thing to try when an image looks stale.
+    function webGPURenderBundlesEnabled() {
+      if (typeof window === "undefined") return true;
+      return window.__gosx_scene3d_webgpu_render_bundles !== false;
     }
 
     function render(bundle, viewport, frameMeta) {
@@ -14589,6 +16519,10 @@
       gpuTimingFrameSeq += 1;
       drainDeferredGPUResources(false);
       var gpuTimingToken = beginGPUFrameTiming(encoder);
+      // Per-pass stamps ride on the render-pass descriptors, so the slot must be
+      // chosen before the shadow pass opens.
+      pollGPUPassTimingReadback();
+      beginGPUPassTimingFrame();
       var scopedFrameErrors = beginWebGPUErrorScope();
       var frameNowMS = frameMeta && Number.isFinite(frameMeta.nowMS)
         ? frameMeta.nowMS
@@ -14606,11 +16540,12 @@
             : (Number.isFinite(frameMeta.revision) ? frameMeta.revision : 0)))
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
-      sceneSelenaFrameTime = frameTimeSeconds; // feed auto time uniform; set before every selena draw this frame
+      selenaFrame.time = frameTimeSeconds; // feed auto time uniform; set before every selena draw this frame
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
       var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
       var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
+      activePickMeshPositions = pbrSceneBuffers;
       if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
         bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
         bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
@@ -14625,6 +16560,7 @@
       // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
       // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
       var instancedCullMap = updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
+      var webGPUCullTotals = webGPUSummarizeCullSystems();
 
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
@@ -14737,7 +16673,7 @@
         mainColorAttachment.resolveTarget = mainResolveView;
       }
 
-      var mainPass = encoder.beginRenderPass({
+      var mainPassDescriptor = {
         colorAttachments: [mainColorAttachment],
         depthStencilAttachment: {
           view: mainDepthTargetView,
@@ -14745,7 +16681,10 @@
           depthClearValue: 1.0,
           depthStoreOp: "store",
         },
-      });
+      };
+      var mainStamps = gpuPassTimestampWrites("main");
+      if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
+      var mainPass = encoder.beginRenderPass(mainPassDescriptor);
 
       var instancedDrawList = hasInstancedData
         ? buildInstancedDrawList(bundle, materials)
@@ -14785,6 +16724,9 @@
         elioSkinningKernel: elioSkinStats.elioSkinningKernel,
         instancedMeshes: Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes.length : 0,
         instancedInstances: webGPUPlannedInstanceCount(bundle.instancedMeshes),
+        cullDispatches: webGPUCullTotals.dispatches,
+        cullSkippedDispatches: webGPUCullTotals.skipped,
+        cullBuiltinSystems: webGPUCullTotals.builtin,
         lineEntries: thickLineRecord ? 1 : worldLineEntries.length,
         surfaceEntries: Array.isArray(bundle.surfaces) ? bundle.surfaces.length : 0,
         waterSystems: waterUpdateStats.waterSystems,
@@ -14910,8 +16852,80 @@
         customUniformFallbacks: customMaterialStats.customUniformFallbacks,
       };
 
+      // --- Render bundle decision ---
+      //
+      // A frame qualifies when it draws PBR meshes and instanced meshes only.
+      // Everything else keeps the direct encoder; see
+      // sceneWebGPUBundleIneligibleReason for why.
+      var bundleableDraws = (hasPBRData && (drawList.opaque.length + drawList.alpha.length + drawList.additive.length) > 0) ||
+        (hasInstancedData && (instancedDrawList.opaque.length + instancedDrawList.alpha.length + instancedDrawList.additive.length) > 0);
+      var bundleReason = sceneWebGPUBundleIneligibleReason({
+        // Both halves must exist. An implementation that can build a bundle but
+        // not replay one would leave the frame blank.
+        disabled: !webGPURenderBundlesEnabled() ||
+          typeof device.createRenderBundleEncoder !== "function" ||
+          typeof mainPass.executeBundles !== "function",
+        hasWater: hasWaterData,
+        hasPoints: hasPointsData,
+        hasLabels: hasLabels,
+        hasScreenLines: hasScreenLines,
+        hasSurfaces: hasSurfaces,
+        hasWorldLines: hasWorldLines,
+        hasDynamicMeshes: sceneWebGPUDrawListHasDynamicMesh(drawList, function(obj) {
+          return webGPUObjectBlocksBundle(obj, materials);
+        }),
+        hasBundleableDraws: bundleableDraws,
+      });
+      frameStats.bundleState = "direct";
+      frameStats.bundleReason = bundleReason;
+      frameStats.bundleEncodes = 0;
+      frameStats.bundleReplays = 0;
+      frameStats.bundleDraws = 0;
+
+      if (bundleReason === "") {
+        if (!webGPUBundleCache) webGPUBundleCache = createSceneWebGPUBundleCache();
+        var bundleLayoutKey = sceneWebGPUBundleLayoutKey(targetFormat, "depth24plus", sampleCount);
+        var bundleContext = {
+          drawList: drawList,
+          instancedDrawList: instancedDrawList,
+          bundle: bundle,
+          materials: materials,
+          frameBindGroup: frameBindGroup,
+          pbrBuffers: pbrSceneBuffers,
+        };
+        var verdict = webGPUBundleCache.plan(bundleLayoutKey, function(recorder) {
+          encodeBundleableSceneDraws(recorder, bundleContext);
+        });
+        if (!verdict.eligible) {
+          bundleReason = verdict.reason;
+          frameStats.bundleReason = bundleReason;
+        } else if (verdict.reusable) {
+          mainPass.executeBundles([webGPUBundleCache.bundle()]);
+          webGPUBundleCache.markReplayed();
+          frameStats.bundleState = "replayed";
+        } else {
+          var bundleEncoder = device.createRenderBundleEncoder({
+            label: "gosx-scene-bundle",
+            colorFormats: [targetFormat],
+            depthStencilFormat: "depth24plus",
+            sampleCount: sampleCount,
+          });
+          encodeBundleableSceneDraws(bundleEncoder, bundleContext);
+          var finishedBundle = bundleEncoder.finish({ label: "gosx-scene-bundle" });
+          webGPUBundleCache.adopt(bundleLayoutKey, finishedBundle);
+          mainPass.executeBundles([finishedBundle]);
+          frameStats.bundleState = "encoded";
+        }
+        if (frameStats.bundleState !== "direct") {
+          var bundleStats = webGPUBundleCache.stats();
+          frameStats.bundleEncodes = bundleStats.encodes;
+          frameStats.bundleReplays = bundleStats.replays;
+          frameStats.bundleDraws = bundleStats.draws;
+        }
+      }
+
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
-      if (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces) {
+      if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
         if (drawList.opaque.length > 0) {
           var opaquePipeline = getPBRPipeline("opaque", true);
@@ -15002,6 +17016,21 @@
 
       mainPass.end();
 
+      // GPU pick pass. Records only when a pick waits, and only ever touches
+      // its own ID and depth textures. Runs after the main pass so every vertex
+      // and instance-transform buffer the pick draws from already exists.
+      // Pick coordinates map onto the main render target, so use the same
+      // width/height the main pass used: scaled dimensions under post-FX,
+      // canvas dimensions otherwise.
+      if (scenePicker && scenePicker.hasPending()) {
+        scenePicker.recordPickPass(
+          encoder,
+          bundle,
+          usePostProcessing ? scaledW : width,
+          usePostProcessing ? scaledH : height
+        );
+      }
+
       // Post-processing.
       if (usePostProcessing && postProcessor) {
         var screenView = gpuCtx.getCurrentTexture().createView();
@@ -15009,7 +17038,11 @@
       }
 
       endGPUFrameTiming(encoder, gpuTimingToken);
+      endGPUPassTimingFrame(encoder);
       device.queue.submit([encoder.finish()]);
+      // Start the pick map AFTER submit. mapAsync resolves on a later task, so
+      // this adds no wait to the frame.
+      if (scenePicker) scenePicker.finishReadback();
       publishWebGPUFrameStats(frameStats);
       if (scopedFrameErrors) endWebGPUErrorScope();
 
@@ -15027,6 +17060,9 @@
 
     function dispose() {
       destroyGPUTimingResources(gpuTiming);
+      destroyGPUPassTimingResources();
+      if (webGPUBundleCache) webGPUBundleCache.invalidate();
+      webGPUBundleCache = null;
       gpuTiming = null;
       for (var failedTimingIndex = 0; failedTimingIndex < failedGPUTimings.length; failedTimingIndex++) {
         destroyGPUTimingResources(failedGPUTimings[failedTimingIndex].timing);
@@ -15034,10 +17070,19 @@
       failedGPUTimings.length = 0;
       drainDeferredGPUResources(true);
       lastGPUPerformanceSample = null;
+      if (scenePicker) scenePicker.dispose();
+      scenePicker = null;
+      activePickMeshPositions = null;
       if (!device) return;
 
       if (frameUniformBuffer) frameUniformBuffer.destroy();
       if (lightStorageBuffer) lightStorageBuffer.destroy();
+      // Release the light buffers that capacity growth replaced.
+      for (var retiredLight = 0; retiredLight < _retiredLightBuffers.length; retiredLight++) {
+        var oldLightBuffer = _retiredLightBuffers[retiredLight];
+        if (oldLightBuffer && typeof oldLightBuffer.destroy === "function") oldLightBuffer.destroy();
+      }
+      _retiredLightBuffers.length = 0;
       if (fogUniformBuffer) fogUniformBuffer.destroy();
       if (envUniformBuffer) envUniformBuffer.destroy();
       if (shadowUniformBuffer) shadowUniformBuffer.destroy();
@@ -15227,6 +17272,11 @@
       out.elioSkinningDispatches = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningDispatches || 0;
       out.elioSkinningVertices = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningVertices || 0;
       out.elioSkinningKernel = lastWebGPUFrameStats && lastWebGPUFrameStats.elioSkinningKernel || "";
+      // GPU picking. gpuPicking stays true whether or not a pick has run yet —
+      // it reports the renderer capability, matching the gpu-picking cell in
+      // 16a-scene-webgpu.capabilities.json.
+      out.gpuPicking = true;
+      if (scenePicker) Object.assign(out, scenePicker.diagnostics());
       // Render truth: implementation identity, the post-chain dispatch record
       // and the event journal, so a single diagnostics() call is a complete
       // dump rather than a starting point for DOM scraping.
@@ -15236,7 +17286,7 @@
       out.renderTruthEvents = typeof truthApi.events === "function" ? truthApi.events() : [];
       out.shaderDiagnostics = typeof truthApi.shaderCounts === "function" ? truthApi.shaderCounts() : { messages: 0, errors: 0 };
       out.postChain = lastWebGPUFrameStats && lastWebGPUFrameStats.postChain || null;
-      out.uniformTime = sceneSelenaFrameTime;
+      out.uniformTime = selenaFrame.time;
       return out;
     }
 
@@ -15244,6 +17294,7 @@
       kind: "webgpu",
       type: "webgpu",
       supportsBundle: supportsBundle,
+      queuePick: queuePick,
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,
       getPerformanceTimingStatus: getPerformanceTimingStatus,

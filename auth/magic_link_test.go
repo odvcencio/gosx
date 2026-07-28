@@ -19,6 +19,7 @@ func TestMagicLinkCallbackSignsIn(t *testing.T) {
 
 	var delivered MagicLinkDelivery
 	magic := authn.MagicLinks(MagicLinkOptions{
+		BaseURL:     "https://app.example",
 		SuccessPath: "/welcome",
 		Sender: MagicLinkSenderFunc(func(ctx context.Context, delivery MagicLinkDelivery) error {
 			delivered = delivery
@@ -83,6 +84,7 @@ func TestMagicLinkSanitizesRedirectTarget(t *testing.T) {
 	sessions := session.MustNew("magic-link-sanitize-secret", session.Options{})
 	authn := New(sessions, Options{})
 	magic := authn.MagicLinks(MagicLinkOptions{
+		BaseURL:     "https://app.example",
 		SuccessPath: "/safe",
 	})
 
@@ -119,9 +121,10 @@ func TestMagicLinkRejectsExpiredToken(t *testing.T) {
 	sessions := session.MustNew("magic-link-expired-secret", session.Options{})
 	authn := New(sessions, Options{})
 	magic := authn.MagicLinks(MagicLinkOptions{
-		TTL:   time.Minute,
-		Now:   func() time.Time { return now },
-		Store: NewMemoryMagicLinkStore(),
+		BaseURL: "https://app.example",
+		TTL:     time.Minute,
+		Now:     func() time.Time { return now },
+		Store:   NewMemoryMagicLinkStore(),
 	})
 
 	var token string

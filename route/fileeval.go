@@ -3,7 +3,6 @@ package route
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
 	"net/http"
 	"net/url"
@@ -21,12 +20,92 @@ import (
 )
 
 type fileRenderEnv struct {
-	values          map[string]any
-	funcs           map[string]any
+	values map[string]any
+	funcs  map[string]any
+	// scope holds the copy-on-write chain of loop and component bindings that
+	// shadow values. See fileRenderScope.
+	scope           *fileRenderScope
 	components      map[string]any
 	renderEngine    func(engine.Config, gosx.Node) gosx.Node
 	renderIsland    func(*islandprogram.Program, any) gosx.Node
 	enableBootstrap func()
+}
+
+// fileRenderScope is one copy-on-write binding in the render environment.
+//
+// WHY: fileRenderEnv.clone copied three maps on every call, and renderEach
+// calls withValue up to three times per loop item. A profile attributed 25.7%
+// of all allocated objects to clone alone — nine map allocations and about 51
+// map inserts per list item. A parent-pointer chain costs one allocation per
+// binding and copies nothing.
+//
+// Lookup walks the chain newest-first, so a later binding shadows an earlier
+// one exactly as a map overwrite did. The chain depth tracks template nesting,
+// not item count, because renderEach derives each item scope from the same
+// parent env.
+type fileRenderScope struct {
+	parent *fileRenderScope
+	name   string
+	value  any
+}
+
+// fileScopeArena hands out fileRenderScope nodes from one backing slice.
+//
+// WHY: a loop binds up to three names per item, so a 100-item list cost up to
+// 300 allocations. One arena sized for the whole loop costs one. A node stays
+// valid after append grows the slice: the older backing array is still reachable
+// through the parent chain, and a node never changes after it is pushed.
+type fileScopeArena []fileRenderScope
+
+func (a *fileScopeArena) push(parent *fileRenderScope, name string, value any) *fileRenderScope {
+	*a = append(*a, fileRenderScope{parent: parent, name: name, value: value})
+	return &(*a)[len(*a)-1]
+}
+
+// withScope returns an env whose shadowing chain ends at scope.
+func (env fileRenderEnv) withScope(scope *fileRenderScope) fileRenderEnv {
+	env.scope = scope
+	return env
+}
+
+// lookupScope returns a shadowing binding from the copy-on-write chain.
+func (env fileRenderEnv) lookupScope(name string) (any, bool) {
+	for s := env.scope; s != nil; s = s.parent {
+		if s.name == name {
+			return s.value, true
+		}
+	}
+	return nil, false
+}
+
+// lookupValue resolves a value binding: shadowing scope first, base map second.
+func (env fileRenderEnv) lookupValue(name string) (any, bool) {
+	if value, ok := env.lookupScope(name); ok {
+		return value, true
+	}
+	if env.values != nil {
+		value, ok := env.values[name]
+		return value, ok
+	}
+	return nil, false
+}
+
+// flattenedValues materializes the base map plus the whole scope chain. Only
+// callers that must own a real map use it — it costs one map copy.
+func (env fileRenderEnv) flattenedValues() map[string]any {
+	out := make(map[string]any, len(env.values)+4)
+	for key, value := range env.values {
+		out[key] = value
+	}
+	// Walk oldest-first so newer bindings overwrite older ones.
+	var chain []*fileRenderScope
+	for s := env.scope; s != nil; s = s.parent {
+		chain = append(chain, s)
+	}
+	for i := len(chain) - 1; i >= 0; i-- {
+		out[chain[i].name] = chain[i].value
+	}
+	return out
 }
 
 type fileRequestBindings struct {
@@ -43,46 +122,31 @@ type fileRequestBindings struct {
 	csrf          map[string]any
 }
 
-func (env fileRenderEnv) clone() fileRenderEnv {
+// withValue returns an env that binds name to value.
+//
+// Cost: one fileRenderScope allocation. It replaces three map copies plus the
+// map inserts that fileRenderEnv.clone used to pay per call.
+func (env fileRenderEnv) withValue(name string, value any) fileRenderEnv {
+	env.scope = &fileRenderScope{parent: env.scope, name: name, value: value}
+	return env
+}
+
+// withBindings merges module bindings into a fresh env. It runs once per
+// request, not per node, so it may pay the full map copy.
+func (env fileRenderEnv) withBindings(bindings FileTemplateBindings) fileRenderEnv {
 	next := fileRenderEnv{
-		values:     make(map[string]any, len(env.values)),
-		funcs:      make(map[string]any, len(env.funcs)),
-		components: make(map[string]any, len(env.components)),
-	}
-	for key, value := range env.values {
-		next.values[key] = value
+		values:          env.flattenedValues(),
+		funcs:           make(map[string]any, len(env.funcs)+len(bindings.Funcs)),
+		components:      make(map[string]any, len(env.components)+len(bindings.Components)),
+		renderEngine:    env.renderEngine,
+		renderIsland:    env.renderIsland,
+		enableBootstrap: env.enableBootstrap,
 	}
 	for key, value := range env.funcs {
 		next.funcs[key] = value
 	}
 	for key, value := range env.components {
 		next.components[key] = value
-	}
-	next.renderEngine = env.renderEngine
-	next.renderIsland = env.renderIsland
-	next.enableBootstrap = env.enableBootstrap
-	return next
-}
-
-func (env fileRenderEnv) withValue(name string, value any) fileRenderEnv {
-	next := env.clone()
-	if next.values == nil {
-		next.values = make(map[string]any)
-	}
-	next.values[name] = value
-	return next
-}
-
-func (env fileRenderEnv) withBindings(bindings FileTemplateBindings) fileRenderEnv {
-	next := env.clone()
-	if next.values == nil {
-		next.values = make(map[string]any)
-	}
-	if next.funcs == nil {
-		next.funcs = make(map[string]any)
-	}
-	if next.components == nil {
-		next.components = make(map[string]any)
 	}
 	for key, value := range bindings.Values {
 		next.values[key] = value
@@ -110,10 +174,10 @@ func (env fileRenderEnv) component(name string) (any, bool) {
 			return value, true
 		}
 	}
-	if env.values != nil {
-		if value, ok := env.values[name]; ok {
-			return value, true
-		}
+	// Scope and values together hold what the old single values map held, so
+	// keep the same precedence: components, then funcs, then value bindings.
+	if value, ok := env.lookupValue(name); ok {
+		return value, true
 	}
 	if strings.Contains(name, ".") {
 		if value := evalFileExpr(name, env); value != nil {
@@ -141,9 +205,10 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 	bindings := buildFileRequestBindings(ctx)
 
 	env := fileRenderEnv{
-		values:     baseFileRenderValues(page, bindings),
-		funcs:      map[string]any{},
-		components: map[string]any{},
+		values: baseFileRenderValues(page, bindings),
+		// Size funcs for the base set plus actionPath. components stays nil:
+		// a nil map reads like an empty one, and only withBindings adds to it.
+		funcs: make(map[string]any, 5),
 	}
 
 	if ctx != nil {
@@ -160,16 +225,15 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 	return env
 }
 
+// buildFileRequestBindings collects the request-derived template values.
+//
+// It allocates a map only when it has something to put in it. The old body
+// created seven empty maps up front and then threw six of them away on the
+// request path, which cost seven allocations on every render. A nil map reads
+// like an empty one, so a template that looks up a missing key still sees the
+// zero value.
 func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
-	bindings := fileRequestBindings{
-		query:         map[string]string{},
-		sessionValues: map[string]any{},
-		flashes:       map[string][]any{},
-		flash:         map[string]any{},
-		actions:       map[string]any{},
-		currentAction: map[string]any{},
-		csrf:          map[string]any{},
-	}
+	var bindings fileRequestBindings
 	if ctx == nil || ctx.Request == nil {
 		return bindings
 	}
@@ -187,8 +251,10 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 		bindings.user = templateUser(resolvedUser)
 	}
 	if token := session.Token(ctx.Request); token != "" {
-		bindings.csrf["token"] = token
-		bindings.csrf["field"] = defaultCSRFFieldName()
+		bindings.csrf = map[string]any{
+			"token": token,
+			"field": defaultCSRFFieldName(),
+		}
 	}
 	return bindings
 }
@@ -235,34 +301,14 @@ func evalStaticFileExpr(expr string) any {
 }
 
 func evalFileExpr(expr string, env fileRenderEnv) any {
-	parsed, err := parser.ParseExpr(strings.TrimSpace(expr))
-	if err != nil {
+	// Call the lowered closure. See route/exprlower.go for the lowering and
+	// route/exprcache.go for why sharing one lowered form across goroutines is
+	// safe.
+	lowered := compiledFileExpr(expr)
+	if lowered == nil {
 		return nil
 	}
-	return evalFileNode(parsed, env)
-}
-
-func evalFileNode(expr ast.Expr, env fileRenderEnv) any {
-	switch node := expr.(type) {
-	case *ast.BasicLit:
-		return evalBasicLit(node)
-	case *ast.Ident:
-		return evalIdent(node.Name, env)
-	case *ast.BinaryExpr:
-		return evalBinaryExpr(node, env)
-	case *ast.UnaryExpr:
-		return evalUnaryExpr(node, env)
-	case *ast.ParenExpr:
-		return evalFileNode(node.X, env)
-	case *ast.SelectorExpr:
-		return selectValue(evalFileNode(node.X, env), node.Sel.Name)
-	case *ast.IndexExpr:
-		return indexValue(evalFileNode(node.X, env), evalFileNode(node.Index, env))
-	case *ast.CallExpr:
-		return callValue(evalFileNode(node.Fun, env), evalCallArgs(node.Args, env))
-	default:
-		return nil
-	}
+	return lowered(env)
 }
 
 func evalBasicLit(node *ast.BasicLit) any {
@@ -291,10 +337,8 @@ func evalIdent(name string, env fileRenderEnv) any {
 	case "nil":
 		return nil
 	}
-	if env.values != nil {
-		if value, ok := env.values[name]; ok {
-			return value
-		}
+	if value, ok := env.lookupValue(name); ok {
+		return value
 	}
 	if env.funcs != nil {
 		if fn, ok := env.funcs[name]; ok {
@@ -302,75 +346,6 @@ func evalIdent(name string, env fileRenderEnv) any {
 		}
 	}
 	return nil
-}
-
-func evalBinaryExpr(node *ast.BinaryExpr, env fileRenderEnv) any {
-	left := evalFileNode(node.X, env)
-	right := evalFileNode(node.Y, env)
-
-	switch node.Op {
-	case token.ADD:
-		if isStringLike(left) || isStringLike(right) {
-			return stringifyValue(left) + stringifyValue(right)
-		}
-		return numericValue(left) + numericValue(right)
-	case token.SUB:
-		return numericValue(left) - numericValue(right)
-	case token.MUL:
-		return numericValue(left) * numericValue(right)
-	case token.QUO:
-		divisor := numericValue(right)
-		if divisor == 0 {
-			return 0
-		}
-		return numericValue(left) / divisor
-	case token.REM:
-		divisor := int64(numericValue(right))
-		if divisor == 0 {
-			return 0
-		}
-		return int64(numericValue(left)) % divisor
-	case token.LAND:
-		return truthy(left) && truthy(right)
-	case token.LOR:
-		return truthy(left) || truthy(right)
-	case token.EQL:
-		return equalValues(left, right)
-	case token.NEQ:
-		return !equalValues(left, right)
-	case token.GTR:
-		return compareValues(left, right) > 0
-	case token.GEQ:
-		return compareValues(left, right) >= 0
-	case token.LSS:
-		return compareValues(left, right) < 0
-	case token.LEQ:
-		return compareValues(left, right) <= 0
-	default:
-		return nil
-	}
-}
-
-func evalUnaryExpr(node *ast.UnaryExpr, env fileRenderEnv) any {
-	value := evalFileNode(node.X, env)
-	switch node.Op {
-	case token.NOT:
-		return !truthy(value)
-	case token.SUB:
-		return -numericValue(value)
-	case token.ADD:
-		return numericValue(value)
-	default:
-		return nil
-	}
-}
-
-func evalCallArgs(args []ast.Expr, env fileRenderEnv) []any {
-	values := make([]any, 0, len(args))
-	for _, arg := range args {
-		values = append(values, evalFileNode(arg, env))
-	}
-	return values
 }
 
 func selectValue(target any, name string) any {
@@ -971,9 +946,11 @@ func isNumeric(value any) bool {
 	}
 }
 
+// flattenQueryValues returns nil for an empty query. A nil map reads like an
+// empty one, and skipping the allocation saves one object per render.
 func flattenQueryValues(values url.Values) map[string]string {
 	if len(values) == 0 {
-		return map[string]string{}
+		return nil
 	}
 	flat := make(map[string]string, len(values))
 	for key, entries := range values {
@@ -986,7 +963,7 @@ func flattenQueryValues(values url.Values) map[string]string {
 
 func cloneStringMap(src map[string]string) map[string]string {
 	if len(src) == 0 {
-		return map[string]string{}
+		return nil
 	}
 	dst := make(map[string]string, len(src))
 	for key, value := range src {
@@ -1017,7 +994,7 @@ func serverRequestID(r *http.Request) string {
 
 func firstFlashValues(values map[string][]any) map[string]any {
 	if len(values) == 0 {
-		return map[string]any{}
+		return nil
 	}
 	out := make(map[string]any, len(values))
 	for key, entries := range values {
@@ -1036,7 +1013,7 @@ func preferredActionState(states map[string]any) map[string]any {
 			}
 		}
 	}
-	return map[string]any{}
+	return nil
 }
 
 func defaultCSRFFieldName() string {
@@ -1045,7 +1022,7 @@ func defaultCSRFFieldName() string {
 
 func templateActionStates(states map[string]action.View) map[string]any {
 	if len(states) == 0 {
-		return map[string]any{}
+		return nil
 	}
 	out := make(map[string]any, len(states))
 	for name, view := range states {

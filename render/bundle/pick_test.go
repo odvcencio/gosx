@@ -63,24 +63,54 @@ func TestQueuePickLeavesInFlightStagingOwnedByReadback(t *testing.T) {
 	}
 }
 
-func TestBuildPickTargetsAssignsStableObjectInstanceIDs(t *testing.T) {
-	bases, targets := buildPickTargets([]engine.RenderInstancedMesh{
-		{ID: "left", InstanceCount: 2},
-		{ID: "empty"},
-		{ID: "right", InstanceCount: 1},
+func TestUpdatePickSpansAssignsStableObjectInstanceIDs(t *testing.T) {
+	r := &Renderer{}
+	r.updatePickSpans(engine.RenderBundle{
+		InstancedMeshes: []engine.RenderInstancedMesh{
+			{ID: "left", InstanceCount: 2},
+			{ID: "empty"},
+			{ID: "right", InstanceCount: 1},
+		},
 	})
 
+	bases := r.pickBases
 	if len(bases) != 3 || bases[0] != 1 || bases[1] != 0 || bases[2] != 3 {
 		t.Fatalf("bases = %#v", bases)
 	}
-	if got := targets[1]; got.ObjectID != "left" || got.ObjectIndex != 0 || got.InstanceIndex != 0 {
+	targets := &pickTargets{spans: r.pickSpans}
+	if got := targets.resultForID(1); got.ObjectID != "left" || got.ObjectIndex != 0 || got.InstanceIndex != 0 {
 		t.Fatalf("target 1 = %#v", got)
 	}
-	if got := targets[2]; got.ObjectID != "left" || got.ObjectIndex != 0 || got.InstanceIndex != 1 {
+	if got := targets.resultForID(2); got.ObjectID != "left" || got.ObjectIndex != 0 || got.InstanceIndex != 1 {
 		t.Fatalf("target 2 = %#v", got)
 	}
-	if got := targets[3]; got.ObjectID != "right" || got.ObjectIndex != 2 || got.InstanceIndex != 0 {
+	if got := targets.resultForID(3); got.ObjectID != "right" || got.ObjectIndex != 2 || got.InstanceIndex != 0 {
 		t.Fatalf("target 3 = %#v", got)
+	}
+}
+
+// TestUpdatePickSpansReusesBackingSlices pins the allocation fix for defect A:
+// the renderer must not rebuild a per-instance pick map on every frame.
+func TestUpdatePickSpansReusesBackingSlices(t *testing.T) {
+	r := &Renderer{}
+	b := engine.RenderBundle{
+		InstancedMeshes: []engine.RenderInstancedMesh{
+			{ID: "grid", InstanceCount: 4096},
+		},
+	}
+	r.updatePickSpans(b)
+	basesPtr := &r.pickBases[0]
+	spansPtr := &r.pickSpans[0]
+
+	allocs := testing.AllocsPerRun(20, func() { r.updatePickSpans(b) })
+	if allocs != 0 {
+		t.Fatalf("updatePickSpans allocs per frame = %v, want 0", allocs)
+	}
+	if &r.pickBases[0] != basesPtr || &r.pickSpans[0] != spansPtr {
+		t.Fatal("updatePickSpans reallocated its backing slices")
+	}
+	if len(r.pickSpans) != 1 || r.pickSpans[0].count != 4096 {
+		t.Fatalf("spans = %#v, want one span covering 4096 instances", r.pickSpans)
 	}
 }
 
@@ -95,7 +125,7 @@ func TestPickResultForIDFallsBackToNumericIndex(t *testing.T) {
 	}
 }
 
-func TestEnrichPickTargetsWithRayAddsPrimitiveHitMetadata(t *testing.T) {
+func TestPickTargetsForRequestAddsPrimitiveHitMetadata(t *testing.T) {
 	b := engine.RenderBundle{
 		Camera: engine.RenderCamera{Z: 6, FOV: math.Pi / 2, Near: 0.1, Far: 100},
 		InstancedMeshes: []engine.RenderInstancedMesh{{
@@ -105,10 +135,11 @@ func TestEnrichPickTargetsWithRayAddsPrimitiveHitMetadata(t *testing.T) {
 			Transforms:    identityTransform(),
 		}},
 	}
-	bases, targets := buildPickTargets(b.InstancedMeshes)
-	enrichPickTargetsWithRay(targets, b, bases, nil, nil, 100, 100, 201, 201)
+	r := &Renderer{}
+	r.updatePickSpans(b)
+	targets := r.pickTargetsForRequest(b, 100, 100, 201, 201)
 
-	got := targets[1]
+	got := targets.resultForID(1)
 	if got.ObjectID != "hero" || got.ObjectIndex != 0 || got.InstanceIndex != 0 {
 		t.Fatalf("identity metadata = %#v", got)
 	}
@@ -131,7 +162,7 @@ func TestEnrichPickTargetsWithRayAddsPrimitiveHitMetadata(t *testing.T) {
 	}
 }
 
-func TestEnrichPickTargetsWithRayAddsSurfaceUVMetadata(t *testing.T) {
+func TestPickTargetsForRequestAddsSurfaceUVMetadata(t *testing.T) {
 	b := engine.RenderBundle{
 		Camera: engine.RenderCamera{Z: 6, FOV: math.Pi / 2, Near: 0.1, Far: 100},
 		Surfaces: []engine.RenderSurface{{
@@ -141,10 +172,11 @@ func TestEnrichPickTargetsWithRayAddsSurfaceUVMetadata(t *testing.T) {
 			VertexCount: 6,
 		}},
 	}
-	bases, targets, _ := buildSurfacePickTargets(b.Surfaces, 1, nil)
-	enrichPickTargetsWithRay(targets, b, nil, nil, bases, 100, 100, 201, 201)
+	r := &Renderer{}
+	r.updatePickSpans(b)
+	targets := r.pickTargetsForRequest(b, 100, 100, 201, 201)
 
-	got := targets[1]
+	got := targets.resultForID(1)
 	if got.ObjectID != "panel" || got.ObjectIndex != 0 || got.InstanceIndex != -1 {
 		t.Fatalf("surface metadata = %#v", got)
 	}
@@ -179,7 +211,7 @@ func TestInstanceRecordBytesPacksMatrixAndPickID(t *testing.T) {
 	}
 }
 
-func TestEnrichPickTargetsWithRayExposesClickRayOnHitsAndBackground(t *testing.T) {
+func TestPickTargetsForRequestExposesClickRayOnHitsAndBackground(t *testing.T) {
 	b := engine.RenderBundle{
 		Camera: engine.RenderCamera{Z: 6, FOV: math.Pi / 2, Near: 0.1, Far: 100},
 		InstancedMeshes: []engine.RenderInstancedMesh{{
@@ -189,22 +221,68 @@ func TestEnrichPickTargetsWithRayExposesClickRayOnHitsAndBackground(t *testing.T
 			Transforms:    identityTransform(),
 		}},
 	}
-	bases, targets := buildPickTargets(b.InstancedMeshes)
-	enrichPickTargetsWithRay(targets, b, bases, nil, nil, 100, 100, 201, 201)
+	r := &Renderer{}
+	r.updatePickSpans(b)
+	targets := r.pickTargetsForRequest(b, 100, 100, 201, 201)
 
-	got := targets[1]
+	got := targets.resultForID(1)
 	if math.Abs(float64(got.RayOrigin[0])) > 0.001 || math.Abs(float64(got.RayOrigin[1])) > 0.001 || math.Abs(float64(got.RayOrigin[2]-6)) > 0.001 {
 		t.Fatalf("ray origin = %#v, want camera position (0,0,6)", got.RayOrigin)
 	}
 	if math.Abs(float64(got.RayDirection[0])) > 0.001 || math.Abs(float64(got.RayDirection[1])) > 0.001 || math.Abs(float64(got.RayDirection[2]+1)) > 0.001 {
 		t.Fatalf("ray direction = %#v, want straight -Z for the center pixel", got.RayDirection)
 	}
-	background := pickResultForID(targets, 0)
+	background := targets.resultForID(0)
 	if background.ObjectIndex != -1 {
 		t.Fatalf("background result = %#v", background)
 	}
 	if background.RayOrigin != got.RayOrigin || background.RayDirection != got.RayDirection {
 		t.Fatalf("background click must still carry the ray: %#v", background)
+	}
+	// A missed instance keeps its identity from the span table and still
+	// carries the click ray, without any per-instance map ever being built.
+	missed := targets.resultForID(1)
+	if missed.ObjectID != "hero" {
+		t.Fatalf("span identity lost: %#v", missed)
+	}
+}
+
+// TestPickTargetsForRequestKeepsHitsMapSmall pins the second half of defect A:
+// only the instances the click ray crosses enter the map, so a dense scene does
+// not pay for one map entry per instance.
+func TestPickTargetsForRequestKeepsHitsMapSmall(t *testing.T) {
+	const instances = 512
+	transforms := make([]float64, instances*16)
+	for i := 0; i < instances; i++ {
+		base := i * 16
+		transforms[base+0] = 1
+		transforms[base+5] = 1
+		transforms[base+10] = 1
+		transforms[base+15] = 1
+		// Spread the instances along +X so the centre ray crosses only one.
+		transforms[base+12] = float64(i) * 8
+	}
+	b := engine.RenderBundle{
+		Camera: engine.RenderCamera{Z: 6, FOV: math.Pi / 2, Near: 0.1, Far: 100},
+		InstancedMeshes: []engine.RenderInstancedMesh{{
+			ID:            "row",
+			Kind:          "box",
+			InstanceCount: instances,
+			Transforms:    transforms,
+		}},
+	}
+	r := &Renderer{}
+	r.updatePickSpans(b)
+	targets := r.pickTargetsForRequest(b, 100, 100, 201, 201)
+
+	if len(targets.hits) != 1 {
+		t.Fatalf("hits = %d, want only the instance under the cursor", len(targets.hits))
+	}
+	if got := targets.resultForID(1); got.TriangleIndex < 0 {
+		t.Fatalf("instance under the cursor lost its geometry: %#v", got)
+	}
+	if got := targets.resultForID(instances); got.ObjectID != "row" || got.InstanceIndex != instances-1 {
+		t.Fatalf("off-ray instance identity = %#v", got)
 	}
 }
 

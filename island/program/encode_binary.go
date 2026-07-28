@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 )
 
 var (
@@ -16,6 +17,12 @@ var (
 const binaryVersion uint16 = 1
 
 // Section type tags.
+//
+// Tags 0x08 and up were added after the format shipped. Both directions stay
+// compatible because the section count is data-driven and the decoder's switch
+// skips a tag it does not know: an old decoder reads past the new sections, and
+// a new decoder leaves the matching fields zero when the sections are absent.
+// A tag number must never be reused for different content.
 const (
 	secStringTable uint8 = 0x00
 	secProps       uint8 = 0x01
@@ -25,7 +32,14 @@ const (
 	secComputeds   uint8 = 0x05
 	secHandlers    uint8 = 0x06
 	secStaticMask  uint8 = 0x07
+	secFuncs       uint8 = 0x08
+	secEngineNodes uint8 = 0x09
+	secMeta        uint8 = 0x0A
 )
+
+// sectionCount is the number of sections EncodeBinary always writes. Raise it in
+// the same change that adds a section.
+const sectionCount uint16 = 11
 
 // --- String table helpers ---
 
@@ -50,8 +64,14 @@ func (st *stringTable) intern(s string) uint16 {
 
 // internAll pre-interns every string in the program so the table is stable
 // before encoding begins.
+//
+// The section writers call st.intern again while they emit, and the string table
+// section is written first. So any string a section writer touches MUST appear
+// here, or the decoder gets an index past the end of its table. Add to this
+// function whenever you add a string to a section.
 func (st *stringTable) internAll(p *Program) {
 	st.intern(p.Name)
+	st.intern(p.Version)
 	for i := range p.Props {
 		st.intern(p.Props[i].Name)
 	}
@@ -76,6 +96,36 @@ func (st *stringTable) internAll(p *Program) {
 	for i := range p.Handlers {
 		st.intern(p.Handlers[i].Name)
 	}
+	for i := range p.Funcs {
+		st.intern(p.Funcs[i].Name)
+		for _, param := range p.Funcs[i].Params {
+			st.intern(param)
+		}
+	}
+	for i := range p.EngineNodes {
+		st.intern(p.EngineNodes[i].Kind)
+		st.intern(p.EngineNodes[i].Geometry)
+		st.intern(p.EngineNodes[i].Material)
+		// Sorted so the table order — and therefore the encoded bytes — do
+		// not depend on Go's random map iteration order. The build pipeline
+		// content-hashes this output.
+		for _, name := range sortedPropNames(p.EngineNodes[i].Props) {
+			st.intern(name)
+		}
+	}
+}
+
+// sortedPropNames returns the keys of an EngineNode prop map in a stable order.
+func sortedPropNames(props map[string]ExprID) []string {
+	if len(props) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // --- Encoder ---
@@ -107,6 +157,15 @@ func putUint16(buf *bytes.Buffer, val uint16) {
 	buf.WriteByte(byte(val >> 8))
 }
 
+// putUint32 appends `val` to buf in little-endian form. Used where a uint16
+// would clip: function arities, engine-node child indices, MaxCallDepth.
+func putUint32(buf *bytes.Buffer, val uint32) {
+	buf.WriteByte(byte(val))
+	buf.WriteByte(byte(val >> 8))
+	buf.WriteByte(byte(val >> 16))
+	buf.WriteByte(byte(val >> 24))
+}
+
 // EncodeBinary serializes an IslandProgram to a compact binary format.
 func EncodeBinary(p *Program) ([]byte, error) {
 	st := newStringTable()
@@ -121,7 +180,7 @@ func EncodeBinary(p *Program) ([]byte, error) {
 	// Header: magic + version + section count
 	buf.Write(magic[:])
 	putUint16(&buf, binaryVersion)
-	putUint16(&buf, 8) // always 8 sections
+	putUint16(&buf, sectionCount)
 
 	// writeSection writes tag + 4-byte length placeholder, invokes the
 	// section body writer (which appends directly to the main buffer),
@@ -150,6 +209,9 @@ func EncodeBinary(p *Program) ([]byte, error) {
 	writeSection(secComputeds, func() { encodeComputeds(&buf, p, st) })
 	writeSection(secHandlers, func() { encodeHandlers(&buf, p, st) })
 	writeSection(secStaticMask, func() { encodeStaticMask(&buf, p) })
+	writeSection(secFuncs, func() { encodeFuncs(&buf, p, st) })
+	writeSection(secEngineNodes, func() { encodeEngineNodes(&buf, p, st) })
+	writeSection(secMeta, func() { encodeMeta(&buf, p, st) })
 
 	return buf.Bytes(), nil
 }
@@ -237,6 +299,61 @@ func encodeHandlers(buf *bytes.Buffer, p *Program, st *stringTable) {
 			putUint16(buf, id)
 		}
 	}
+}
+
+// encodeFuncs writes the user-function registry (Slice Y.D). Programs with no
+// user functions write a zero count.
+func encodeFuncs(buf *bytes.Buffer, p *Program, st *stringTable) {
+	putUint16(buf, uint16(len(p.Funcs)))
+	for _, fn := range p.Funcs {
+		putUint16(buf, st.intern(fn.Name))
+		putUint32(buf, uint32(fn.Results))
+		putUint16(buf, uint16(len(fn.Params)))
+		for _, param := range fn.Params {
+			putUint16(buf, st.intern(param))
+		}
+		putUint16(buf, uint16(len(fn.Body)))
+		for _, id := range fn.Body {
+			putUint16(buf, id)
+		}
+	}
+}
+
+// encodeEngineNodes writes the scene-oriented node list carried by
+// SurfaceScene3D and SurfaceCanvas2D programs. Prop names are written in sorted
+// order so the byte output does not depend on map iteration order.
+func encodeEngineNodes(buf *bytes.Buffer, p *Program, st *stringTable) {
+	putUint16(buf, uint16(len(p.EngineNodes)))
+	for _, node := range p.EngineNodes {
+		putUint16(buf, st.intern(node.Kind))
+		putUint16(buf, st.intern(node.Geometry))
+		putUint16(buf, st.intern(node.Material))
+
+		names := sortedPropNames(node.Props)
+		putUint16(buf, uint16(len(names)))
+		for _, name := range names {
+			putUint16(buf, st.intern(name))
+			putUint16(buf, node.Props[name])
+		}
+
+		putUint16(buf, uint16(len(node.Children)))
+		for _, child := range node.Children {
+			putUint32(buf, uint32(child))
+		}
+
+		if node.Static {
+			buf.WriteByte(1)
+		} else {
+			buf.WriteByte(0)
+		}
+	}
+}
+
+// encodeMeta writes the envelope fields that live on Program itself rather than
+// in a list: the reserved Version string and the OpIndirectCall depth cap.
+func encodeMeta(buf *bytes.Buffer, p *Program, st *stringTable) {
+	putUint16(buf, st.intern(p.Version))
+	putUint32(buf, uint32(int32(p.MaxCallDepth)))
 }
 
 func encodeStaticMask(buf *bytes.Buffer, p *Program) {
@@ -400,6 +517,12 @@ func DecodeBinary(data []byte) (*Program, error) {
 			p.Handlers = decodeHandlers(sr, strings)
 		case secStaticMask:
 			p.StaticMask = decodeStaticMask(sr)
+		case secFuncs:
+			p.Funcs = decodeFuncs(sr, strings)
+		case secEngineNodes:
+			p.EngineNodes = decodeEngineNodes(sr, strings)
+		case secMeta:
+			p.Version, p.MaxCallDepth = decodeMeta(sr, strings)
 		}
 
 		if sr.err != nil {
@@ -572,6 +695,98 @@ func decodeHandlers(br *binReader, strings []string) []Handler {
 		}
 	}
 	return handlers
+}
+
+// decodeFuncs reads the user-function registry. A zero count yields nil so a
+// program with no user functions round-trips to the same value it started as.
+func decodeFuncs(br *binReader, strings []string) []FuncDef {
+	count := br.readU16()
+	if count == 0 {
+		return nil
+	}
+	funcs := make([]FuncDef, count)
+	for i := range count {
+		nameIdx := br.readU16()
+		results := int(int32(br.readU32()))
+
+		paramCount := br.readU16()
+		var params []string
+		if paramCount > 0 {
+			params = make([]string, paramCount)
+			for j := range paramCount {
+				params[j] = resolveString(strings, br.readU16())
+			}
+		}
+
+		bodyCount := br.readU16()
+		var body []ExprID
+		if bodyCount > 0 {
+			body = make([]ExprID, bodyCount)
+			for j := range bodyCount {
+				body[j] = br.readU16()
+			}
+		}
+
+		funcs[i] = FuncDef{
+			Name:    resolveString(strings, nameIdx),
+			Params:  params,
+			Body:    body,
+			Results: results,
+		}
+	}
+	return funcs
+}
+
+// decodeEngineNodes reads the scene-oriented node list. A zero count yields nil.
+func decodeEngineNodes(br *binReader, strings []string) []EngineNode {
+	count := br.readU16()
+	if count == 0 {
+		return nil
+	}
+	nodes := make([]EngineNode, count)
+	for i := range count {
+		kindIdx := br.readU16()
+		geometryIdx := br.readU16()
+		materialIdx := br.readU16()
+
+		propCount := br.readU16()
+		var props map[string]ExprID
+		if propCount > 0 {
+			props = make(map[string]ExprID, propCount)
+			for range propCount {
+				name := resolveString(strings, br.readU16())
+				props[name] = br.readU16()
+			}
+		}
+
+		childCount := br.readU16()
+		var children []int
+		if childCount > 0 {
+			children = make([]int, childCount)
+			for j := range childCount {
+				children[j] = int(int32(br.readU32()))
+			}
+		}
+
+		static := br.readByte() != 0
+
+		nodes[i] = EngineNode{
+			Kind:     resolveString(strings, kindIdx),
+			Geometry: resolveString(strings, geometryIdx),
+			Material: resolveString(strings, materialIdx),
+			Props:    props,
+			Children: children,
+			Static:   static,
+		}
+	}
+	return nodes
+}
+
+// decodeMeta reads the envelope fields encodeMeta wrote.
+func decodeMeta(br *binReader, strings []string) (string, int) {
+	versionIdx := br.readU16()
+	maxCallDepth := int(int32(br.readU32()))
+	return resolveString(strings, versionIdx), maxCallDepth
 }
 
 func decodeStaticMask(br *binReader) []bool {

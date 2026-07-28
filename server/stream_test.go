@@ -51,7 +51,7 @@ func TestAppSuspenseStreamsComponentBoundariesByCompletion(t *testing.T) {
 }
 
 func TestRenderDeferredChunkUsesCoreLifecycleWithNativeFallback(t *testing.T) {
-	body := renderDeferredChunk("slot-1", `<section>resolved</section>`)
+	body := renderDeferredChunk("slot-1", `<section>resolved</section>`, "")
 	if !strings.Contains(body, `window.__gosx&&window.__gosx.dom&&typeof window.__gosx.dom.replaceFragment==="function"`) {
 		t.Fatalf("expected streamed chunk to prefer the core fragment lifecycle, got %q", body)
 	}

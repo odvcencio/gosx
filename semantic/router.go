@@ -84,7 +84,9 @@ func (r *Router) Match(query string) (func(string) (any, error), string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	results := r.index.Search(vec, len(r.routes))
+	// Match wants one route, so fetch a bounded candidate set and re-rank only
+	// those exactly. See candidates.go for the accuracy measurements.
+	results := r.index.Search(vec, candidateCount(1, len(r.routes)))
 	if len(results) == 0 {
 		return nil, "", false
 	}

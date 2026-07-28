@@ -32,6 +32,7 @@ func TestRedisMagicLinkStoreSupportsCallbackFlow(t *testing.T) {
 
 	var delivered auth.MagicLinkDelivery
 	magic := authn.MagicLinks(auth.MagicLinkOptions{
+		BaseURL:     "https://app.example",
 		SuccessPath: "/welcome",
 		Store:       store,
 		Sender: auth.MagicLinkSenderFunc(func(ctx context.Context, delivery auth.MagicLinkDelivery) error {

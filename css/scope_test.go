@@ -1,14 +1,15 @@
 package css
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestScopeID(t *testing.T) {
 	id := ScopeID("Counter")
-	if len(id) != 4 {
-		t.Fatalf("expected 4-char scope ID, got %q", id)
+	if len(id) != ScopeIDLength {
+		t.Fatalf("expected a %d-char scope ID, got %q", ScopeIDLength, id)
 	}
 	// Deterministic
 	if ScopeID("Counter") != id {
@@ -252,5 +253,21 @@ func TestScopeCSSCommentBetweenRules(t *testing.T) {
 	}
 	if !strings.Contains(scoped, "Site shell, nav overlay, footer") {
 		t.Fatalf("comment content should pass through untouched, got:\n%s", scoped)
+	}
+}
+
+// TestScopeIDResistsCollisions proves that a realistic project does not give two
+// files one scope ID. A 16-bit ID collided at roughly even odds by 300 files, so
+// two components then shared one scope and leaked styles into each other.
+func TestScopeIDResistsCollisions(t *testing.T) {
+	const files = 4000
+	seen := make(map[string]string, files)
+	for i := 0; i < files; i++ {
+		name := "app/routes/section-" + strconv.Itoa(i%40) + "/page-" + strconv.Itoa(i) + ".css"
+		id := ScopeID(name)
+		if previous, clash := seen[id]; clash {
+			t.Fatalf("scope ID %q collides for %q and %q", id, previous, name)
+		}
+		seen[id] = name
 	}
 }

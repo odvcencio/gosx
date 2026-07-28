@@ -89,6 +89,12 @@ func Layout() Node {
 						class="nav-link"
 					>3D Engine</a>
 					<a
+						href="/docs/scene3d-vs-threejs"
+						data-gosx-link="true"
+						data-gosx-disclosure-close="#nav-overlay"
+						class="nav-link"
+					>Scene3D vs three.js</a>
+					<a
 						href="/docs/debugging-scene3d"
 						data-gosx-link="true"
 						data-gosx-disclosure-close="#nav-overlay"

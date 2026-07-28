@@ -1,6 +1,7 @@
 package bundle
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -15,9 +16,18 @@ import (
 // 2048² per cascade × 3 cascades = ~48 MB of depth memory on depth32float.
 const shadowMapSize = 2048
 
-// cascadeCount is the number of shadow cascades. Three covers near/mid/far
-// sensibly for common 100-unit scenes. Increasing costs linear memory + draw
-// time; decreasing leaves mid-range shadows banded. R4 can make this tunable.
+// cascadeCount is the number of shadow cascades, fixed at three.
+//
+// Making it variable needs runtime-sized bind-group arrays, a variable shadow
+// texture layer count, a variable scene uniform layout, and a WGSL constant.
+// Two cascades would save a whole shadow pass every frame, so the question is
+// whether two serve a typical scene.
+//
+// They do not. TestThreeCascadesBeatTwoOnNearFieldResolution measures it: two
+// cascades stretch the near cascade over the first third of the view range
+// instead of the first fifth, which coarsens every shadow texel within about 20
+// units of the camera by half again. Shadows are looked at close up, so that is
+// the wrong place to spend the saving. Three stays.
 const cascadeCount = 3
 
 // Renderer consumes engine.RenderBundle values and issues draw calls against
@@ -115,12 +125,15 @@ type Renderer struct {
 	// R4 GPU picking: per-pixel object ID as a second color attachment on
 	// the main pass + the async readback state that ties QueuePick to the
 	// copy-to-buffer + map-async sequence.
-	idBufferTex      gpu.Texture
-	idBufferView     gpu.TextureView
-	pickMu           sync.Mutex
-	pendingPick      *pickRequest
-	retiredPicks     []*pickRequest
-	pickTargets      map[uint32]PickResult
+	idBufferTex  gpu.Texture
+	idBufferView gpu.TextureView
+	pickMu       sync.Mutex
+	pendingPick  *pickRequest
+	retiredPicks []*pickRequest
+	// pickSpans maps runs of pick IDs back to bundle entries. Frame refreshes
+	// it with no allocation; a queued pick snapshots it. The renderer no longer
+	// builds a per-instance result map every frame.
+	pickSpans        []pickSpan
 	pickBases        []uint32
 	objectPickBases  []uint32
 	surfacePickBases []uint32
@@ -166,6 +179,10 @@ type Renderer struct {
 	// Failed authored render keys — avoid re-attempting broken shaders.
 	particleRenderOverrideFailed map[string]bool
 
+	// cascadeLambda blends the logarithmic and uniform cascade split schedules.
+	// Set from Config.ShadowCascadeLambda at construction.
+	cascadeLambda float32
+
 	// Tracks the previous frame's time for particle dt integration.
 	lastFrameTime float64
 
@@ -186,11 +203,99 @@ type Renderer struct {
 	bonePalettes       map[string]*BonePalette
 	defaultBonePalette *BonePalette
 
-	// Reusable per-instance transform buffer. Grows one-way to fit the
-	// largest instance count seen. R2 uses a single buffer since instanced
-	// meshes draw sequentially within a frame.
-	instanceBuf      gpu.Buffer
-	instanceBufBytes int
+	// Per-slot cache for the bundle's InstancedMeshes. prepareMeshStates fills
+	// it once per frame; the cull pass, the shadow passes, and the main pass all
+	// read from it instead of recomputing cache keys and materials.
+	meshStates []meshFrameState
+
+	// materialFPs memoizes one material fingerprint per bundle material index
+	// for the frame in progress. Many meshes normally share few materials.
+	materialFPs materialFingerprintMemo
+
+	// Reusable encode buffers. Every queue write copies its input, so one
+	// buffer per payload shape is enough and a steady-state frame allocates
+	// nothing for uniform or instance packing.
+	instanceEncodeScratch []byte
+	sceneUniformScratch   [sceneUniformSize]byte
+	shadowUniformScratch  [64]byte
+	cullUniformScratch    [cullUniformSize]byte
+	drawArgsScratch       [16]byte
+
+	// Reusable render-pass attachment records. WebGPU consumes a pass
+	// descriptor when the pass begins, so one set per pass shape avoids a slice
+	// allocation on every frame.
+	mainColorAttachments  [2]gpu.RenderPassColorAttachment
+	mainDepthAttachment   gpu.RenderPassDepthStencilAttachment
+	shadowDepthAttachment [cascadeCount]gpu.RenderPassDepthStencilAttachment
+	// postAttachments holds the single color attachment of every fullscreen
+	// post pass. Each pass owns its own slot, so a descriptor stays valid for
+	// the whole life of its pass.
+	postAttachments [postPassSlotCount]gpu.RenderPassColorAttachment
+	// vec4Scratch backs vec4Bytes. Every post-FX uniform block is one vec4.
+	vec4Scratch [16]byte
+	// submitScratch carries the frame's single command buffer into Submit
+	// without building a variadic slice.
+	submitScratch [1]gpu.CommandBuffer
+}
+
+// postPassSlot names one fullscreen post pass. Each slot owns a reusable color
+// attachment record in Renderer.postAttachments.
+type postPassSlot int
+
+const (
+	postSlotBloomBright postPassSlot = iota
+	postSlotBloomBlurH
+	postSlotBloomBlurV
+	postSlotPresentCompose
+	postSlotFXAA
+	postSlotNativeEffect
+	postPassSlotCount
+)
+
+// postColorAttachments fills one slot with a clear-then-store color attachment
+// and returns it as a one-element slice. The slice header points at Renderer
+// memory, so no frame allocates for it.
+func (r *Renderer) postColorAttachments(slot postPassSlot, view gpu.TextureView) []gpu.RenderPassColorAttachment {
+	r.postAttachments[slot] = gpu.RenderPassColorAttachment{
+		View:       view,
+		LoadOp:     gpu.LoadOpClear,
+		StoreOp:    gpu.StoreOpStore,
+		ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 1},
+	}
+	return r.postAttachments[slot : slot+1]
+}
+
+// vec4Bytes packs four floats into a Renderer-owned 16-byte buffer and returns
+// it. WriteBuffer copies its input, so one buffer serves every post-FX uniform
+// write in a frame.
+func (r *Renderer) vec4Bytes(x, y, z, w float32) []byte {
+	out := r.vec4Scratch[:]
+	binary.LittleEndian.PutUint32(out[0:4], math.Float32bits(x))
+	binary.LittleEndian.PutUint32(out[4:8], math.Float32bits(y))
+	binary.LittleEndian.PutUint32(out[8:12], math.Float32bits(z))
+	binary.LittleEndian.PutUint32(out[12:16], math.Float32bits(w))
+	return out
+}
+
+// vec4Cache remembers the last vec4 written to one uniform buffer.
+// writeVec4IfChanged uses it to skip repeat uploads: post-FX settings hold
+// still across frames, so the repeat write is pure overhead.
+type vec4Cache struct {
+	value [4]float32
+	valid bool
+}
+
+func (r *Renderer) writeVec4IfChanged(cache *vec4Cache, buf gpu.Buffer, x, y, z, w float32) {
+	if buf == nil {
+		return
+	}
+	next := [4]float32{x, y, z, w}
+	if cache.valid && cache.value == next {
+		return
+	}
+	cache.value = next
+	cache.valid = true
+	r.device.Queue().WriteBuffer(buf, 0, r.vec4Bytes(x, y, z, w))
 }
 
 // passResources holds the per-pass GPU buffers for a cached RenderPassBundle.
@@ -265,6 +370,17 @@ type Config struct {
 	// draw to consume.
 	ExternalComputePasses []compute.ExternalComputePass
 
+	// ShadowCascadeLambda blends the two cascade split schedules. 0 gives
+	// uniform splits, which spend shadow resolution far from the camera. 1 gives
+	// logarithmic splits, which spend it close to the camera and leave the far
+	// cascade coarse. nil selects 0.5, the same default the JavaScript WebGL
+	// backend uses, so both renderers place their cascade edges alike.
+	//
+	// Reach for this when a scene's near shadows read soft: a camera with a very
+	// small near plane pushes the uniform term high, and a larger lambda pulls
+	// the first cascade back in.
+	ShadowCascadeLambda *float64
+
 	// ParticleUpdateWGSL is an optional replacement for the built-in particle
 	// integrator kernel. When non-empty the renderer compiles and uses it for
 	// all particle-update dispatches. The kernel must expose the same buffer
@@ -318,7 +434,7 @@ func New(cfg Config) (*Renderer, error) {
 		particleRenderOverrideFailed: make(map[string]bool),
 		skinCache:                    make(map[string]*skinResources),
 		bonePalettes:                 make(map[string]*BonePalette),
-		pickTargets:                  make(map[uint32]PickResult),
+		cascadeLambda:                resolveCascadeLambda(cfg.ShadowCascadeLambda),
 	}
 	if err := r.buildUniformBuffers(); err != nil {
 		return nil, err
@@ -439,6 +555,8 @@ func (r *Renderer) Destroy() {
 		destroyCullResources(c)
 	}
 	r.cullCache = nil
+	// meshStates hold pointers into the caches just released.
+	r.meshStates = nil
 	if r.cullPipeline != nil {
 		r.cullPipeline.Destroy()
 	}
@@ -520,10 +638,6 @@ func (r *Renderer) Destroy() {
 		r.fallbackCubeTexture.tex.Destroy()
 		r.fallbackCubeTexture = nil
 	}
-	if r.instanceBuf != nil {
-		r.instanceBuf.Destroy()
-		r.instanceBuf = nil
-	}
 	if r.depthTex != nil {
 		r.depthTex.Destroy()
 		r.depthTex = nil
@@ -573,13 +687,22 @@ func (r *Renderer) Destroy() {
 	}
 }
 
-// Frame renders a bundle to the current surface image. Performs two render
-// passes per frame:
+// Frame renders a bundle to the current surface image. The frame runs:
 //
-//  1. Shadow pass — depth-only draw of all instanced meshes from the primary
-//     directional light's POV into the shadow map texture.
-//  2. Main pass — color + depth render to the surface. The lit pipeline
-//     samples the shadow map from step 1 via a comparison sampler.
+//  1. Cull pass — one compute dispatch per instanced mesh against the camera
+//     frustum, plus one per shadow cascade against that cascade's light volume.
+//     Each dispatch compacts the survivors and writes indirect draw args.
+//  2. Shadow passes — one depth-only pass per cascade, drawing that cascade's
+//     compacted casters through DrawIndirect.
+//  3. Main pass — color + depth into the HDR target, drawing the camera-frustum
+//     survivors through DrawIndirect, with the pick ID buffer as a second
+//     colour attachment.
+//  4. Post chain — native post-FX, bloom, tone map, then FXAA to the surface.
+//
+// A steady-state frame allocates nothing on the Go heap. prepareMeshStates
+// caches every per-mesh key, resource, and material across frames, and
+// recordCullPass fingerprints the instance transforms so unchanged geometry
+// costs no upload.
 //
 // Pre-batched Passes data (legacy) still goes through the unlit pipeline and
 // does not cast shadows — R3 revisits this when the pass data grows normals.
@@ -595,7 +718,10 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		return nil
 	}
 	b = applyNativeAnimations(b, timeSeconds)
-	r.preparePickTargets(b)
+	r.updatePickSpans(b)
+	if err := r.prepareMeshStates(b); err != nil {
+		return err
+	}
 	depthView, err := r.ensureDepth(width, height)
 	if err != nil {
 		return err
@@ -604,9 +730,11 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	viewProj := computeMVP(b.Camera, width, height)
 	lightDir, lightColor, ambientColor := resolveDirectionalLight(b)
 	skyColor, groundColor := resolveHemisphereAmbient(b)
-	cascades := computeCascades(b.Camera, lightDir)
+	// The cascade fit needs the framebuffer aspect. computeMVP applies it to the
+	// projection, so a cascade fitted without it covers the wrong volume.
+	cascades := computeCascades(b.Camera, lightDir, r.cascadeLambda, float32(width)/float32(height))
 
-	r.device.Queue().WriteBuffer(r.sceneUniformBuf, 0, buildSceneUniformBytes(sceneUniformBlock{
+	r.device.Queue().WriteBuffer(r.sceneUniformBuf, 0, r.sceneUniformBytes(sceneUniformBlock{
 		viewProj:       viewProj,
 		lightViewProjs: cascades.viewProjs,
 		cameraPos:      [4]float32{float32(b.Camera.X), float32(b.Camera.Y), float32(b.Camera.Z), 1},
@@ -619,7 +747,8 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		envParams:      environmentParams(b.Environment),
 	}))
 	for i := 0; i < cascadeCount; i++ {
-		r.device.Queue().WriteBuffer(r.shadowUniformBufs[i], 0, float32sToBytes(cascades.viewProjs[i][:]))
+		putFloat32s(r.shadowUniformScratch[:], cascades.viewProjs[i][:])
+		r.device.Queue().WriteBuffer(r.shadowUniformBufs[i], 0, r.shadowUniformScratch[:])
 	}
 
 	// Extract frustum planes once per frame for GPU-driven culling.
@@ -635,7 +764,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	// 1) GPU-driven culling: compute pass writes a compacted visible-
 	// transforms buffer + indirect draw args per InstancedMesh. It also
 	// uploads per-mesh source transforms that the shadow pass binds directly.
-	if err := r.recordCullPass(enc, b, frustum); err != nil {
+	if err := r.recordCullPass(enc, b, frustum, cascades); err != nil {
 		return err
 	}
 	// External render-coupled compute that feeds culling/instancing.
@@ -704,29 +833,29 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 
 	// 3) Main pass — lit scene rendered to the HDR intermediate with depth,
 	// plus the GPU picking id buffer as a second color attachment.
+	r.mainColorAttachments[0] = gpu.RenderPassColorAttachment{
+		View:       r.hdrView,
+		LoadOp:     gpu.LoadOpClear,
+		StoreOp:    gpu.StoreOpStore,
+		ClearValue: parseBackground(b.Background),
+	}
+	// pick ID = 0 means "background / not a pickable surface".
+	r.mainColorAttachments[1] = gpu.RenderPassColorAttachment{
+		View:       r.idBufferView,
+		LoadOp:     gpu.LoadOpClear,
+		StoreOp:    gpu.StoreOpStore,
+		ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 0},
+	}
+	r.mainDepthAttachment = gpu.RenderPassDepthStencilAttachment{
+		View:            depthView,
+		DepthLoadOp:     gpu.LoadOpClear,
+		DepthStoreOp:    gpu.StoreOpStore,
+		DepthClearValue: 1.0,
+	}
 	mainPass := enc.BeginRenderPass(gpu.RenderPassDesc{
-		ColorAttachments: []gpu.RenderPassColorAttachment{
-			{
-				View:       r.hdrView,
-				LoadOp:     gpu.LoadOpClear,
-				StoreOp:    gpu.StoreOpStore,
-				ClearValue: parseBackground(b.Background),
-			},
-			{
-				// pick ID = 0 means "background / not a pickable surface".
-				View:       r.idBufferView,
-				LoadOp:     gpu.LoadOpClear,
-				StoreOp:    gpu.StoreOpStore,
-				ClearValue: gpu.Color{R: 0, G: 0, B: 0, A: 0},
-			},
-		},
-		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{
-			View:            depthView,
-			DepthLoadOp:     gpu.LoadOpClear,
-			DepthStoreOp:    gpu.StoreOpStore,
-			DepthClearValue: 1.0,
-		},
-		Label: "bundle.main",
+		ColorAttachments:       r.mainColorAttachments[:],
+		DepthStencilAttachment: &r.mainDepthAttachment,
+		Label:                  "bundle.main",
 	})
 
 	// Unlit pre-batched passes (legacy RenderPassBundle).
@@ -748,65 +877,47 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		}
 	}
 
-	// Lit instanced meshes. Resolve each entry's material before binding
-	// because material bind groups are created lazily and may write their
-	// backing uniform buffer — writeBuffer is disallowed inside a pass, so
-	// this materialization happens between the two passes (shadow pass
-	// already ended) rather than mid-draw.
-	if len(b.InstancedMeshes) > 0 {
-		materials := make([]*materialResources, len(b.InstancedMeshes))
-		for i, im := range b.InstancedMeshes {
-			fp := resolveMaterialFingerprint(b, im)
-			mat, err := r.ensureMaterial(fp)
-			if err != nil {
-				mainPass.End()
-				return err
-			}
-			materials[i] = mat
-		}
+	// Lit instanced meshes. prepareMeshStates already resolved each slot's
+	// primitive buffers, material bind group, and cull resources before the
+	// first pass opened, because a material bind group may write its backing
+	// uniform buffer and a queue write inside an open pass is illegal.
+	if len(r.meshStates) > 0 {
 		mainPass.SetPipeline(r.litPipeline)
 		mainPass.SetBindGroup(0, r.litBindGrp)
-		for i, im := range b.InstancedMeshes {
-			if isSkinnedMesh(im) || im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+		for i := range r.meshStates {
+			st := &r.meshStates[i]
+			if !st.drawable || st.skinned {
 				continue
 			}
-			prim, err := r.ensurePrimitiveForMesh(im)
-			if err != nil {
-				mainPass.End()
-				return err
-			}
-			if prim == nil || prim.vertexCount == 0 {
+			inst, args, ok := r.instanceDrawSource(st)
+			if !ok {
+				// Unreachable: prepareMeshStates gives every drawable slot cull
+				// resources. Skip rather than bind a nil buffer, which would
+				// fault the device.
 				continue
 			}
-			mainPass.SetBindGroup(1, materials[i].bindGroup)
-			mainPass.SetVertexBuffer(0, prim.positions)
-			mainPass.SetVertexBuffer(1, prim.colors)
-			mainPass.SetVertexBuffer(2, prim.normals)
-			mainPass.SetVertexBuffer(3, prim.uvs)
-			if inst, args, ok := r.instanceDrawSource(instancedMeshKey(i, im)); ok {
-				mainPass.SetVertexBuffer(4, inst)
-				mainPass.DrawIndirect(args, 0)
-			} else {
-				mainPass.SetVertexBuffer(4, r.instanceBuf)
-				mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
-			}
+			mainPass.SetBindGroup(1, st.mat.bindGroup)
+			mainPass.SetVertexBuffer(0, st.prim.positions)
+			mainPass.SetVertexBuffer(1, st.prim.colors)
+			mainPass.SetVertexBuffer(2, st.prim.normals)
+			mainPass.SetVertexBuffer(3, st.prim.uvs)
+			mainPass.SetVertexBuffer(4, inst)
+			mainPass.DrawIndirect(args, 0)
 		}
 
 		mainPass.SetPipeline(r.skinnedLitPipeline)
 		mainPass.SetBindGroup(0, r.skinnedLitBindGrp)
-		for i, im := range b.InstancedMeshes {
-			if !isSkinnedMesh(im) || im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+		for i := range r.meshStates {
+			st := &r.meshStates[i]
+			if !st.drawable || !st.skinned {
 				continue
 			}
-			prim, err := r.ensurePrimitiveForMesh(im)
-			if err != nil {
-				mainPass.End()
-				return err
-			}
-			if prim == nil || prim.vertexCount == 0 {
+			inst, args, ok := r.instanceDrawSource(st)
+			if !ok {
 				continue
 			}
-			skin, err := r.ensureSkinBuffers(instancedMeshKey(i, im), prim.vertexCount, im)
+			im := b.InstancedMeshes[i]
+			skin, err := r.ensureSkinBuffers(st.key, st.vertexCount, im)
 			if err != nil {
 				mainPass.End()
 				return err
@@ -816,25 +927,17 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 				mainPass.End()
 				return fmt.Errorf("bundle.Frame: skinned mesh %q has no bone palette", im.ID)
 			}
-			mainPass.SetBindGroup(1, materials[i].skinnedBindGroup)
+			mainPass.SetBindGroup(1, st.mat.skinnedBindGroup)
 			mainPass.SetBindGroup(2, palette.bindGroup)
-			mainPass.SetVertexBuffer(0, prim.positions)
-			mainPass.SetVertexBuffer(1, prim.colors)
-			mainPass.SetVertexBuffer(2, prim.normals)
-			mainPass.SetVertexBuffer(3, prim.uvs)
+			mainPass.SetVertexBuffer(0, st.prim.positions)
+			mainPass.SetVertexBuffer(1, st.prim.colors)
+			mainPass.SetVertexBuffer(2, st.prim.normals)
+			mainPass.SetVertexBuffer(3, st.prim.uvs)
 			mainPass.SetVertexBuffer(5, skin.joints)
 			mainPass.SetVertexBuffer(6, skin.weights)
 			mainPass.SetVertexBuffer(7, skin.bindPose)
-			if inst, args, ok := r.instanceDrawSource(instancedMeshKey(i, im)); ok {
-				mainPass.SetVertexBuffer(4, inst)
-				mainPass.DrawIndirect(args, 0)
-			} else {
-				// recordCullPass populates the cull cache for every mesh, so this
-				// falls back to a non-culled draw only if both the bus and the
-				// cache miss — preventing a dropped frame.
-				mainPass.SetVertexBuffer(4, r.instanceBuf)
-				mainPass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
-			}
+			mainPass.SetVertexBuffer(4, inst)
+			mainPass.DrawIndirect(args, 0)
 		}
 	}
 
@@ -894,7 +997,12 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	}
 	r.recordFXAAPass(enc, surfaceView)
 
-	r.device.Queue().Submit(enc.Finish())
+	// Pass the command buffer through a reusable one-element array. A variadic
+	// call site would build a fresh slice, and Submit takes an interface, so
+	// escape analysis cannot keep that slice on the stack.
+	r.submitScratch[0] = enc.Finish()
+	r.device.Queue().Submit(r.submitScratch[:]...)
+	r.submitScratch[0] = nil
 
 	// After submission, kick off the async pick readback if one was queued.
 	// Runs in a goroutine — the frame completes immediately.
@@ -913,16 +1021,18 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 // render-coupled compute bus: an Elio-generated culling/instancing pass drives
 // the draw in place of the engine cull. Returns ok=false when neither source is
 // available, so the caller falls back to an unculled draw.
-func (r *Renderer) instanceDrawSource(key string) (instances, drawArgs gpu.Buffer, ok bool) {
-	if inst, iok := r.published[key+".instances"]; iok {
-		if args, aok := r.published[key+".drawArgs"]; aok &&
-			inst.Role == compute.RoleInstanceAttr && args.Role == compute.RoleIndirectArgs &&
-			inst.Buffer != nil && args.Buffer != nil {
-			return inst.Buffer, args.Buffer, true
+func (r *Renderer) instanceDrawSource(st *meshFrameState) (instances, drawArgs gpu.Buffer, ok bool) {
+	if len(r.published) > 0 {
+		if inst, iok := r.published[st.key+".instances"]; iok {
+			if args, aok := r.published[st.key+".drawArgs"]; aok &&
+				inst.Role == compute.RoleInstanceAttr && args.Role == compute.RoleIndirectArgs &&
+				inst.Buffer != nil && args.Buffer != nil {
+				return inst.Buffer, args.Buffer, true
+			}
 		}
 	}
-	if cull := r.cullCache[key]; cull != nil {
-		return cull.outputBuf, cull.drawArgsBuf, true
+	if st.cull != nil {
+		return st.cull.outputBuf, st.cull.drawArgsBuf, true
 	}
 	return nil, nil, false
 }
@@ -941,8 +1051,11 @@ func InstancedMeshKey(idx int, im engine.RenderInstancedMesh) string {
 // Combines the bundle index with the full primitive key so entries with the
 // same Kind but different authored geometry parameters do not share stale
 // vertex-count-dependent resources.
+//
+// Frame does not call this per draw. prepareMeshStates computes the key once
+// per slot and reuses it until the slot's geometry parameters change.
 func instancedMeshKey(idx int, im engine.RenderInstancedMesh) string {
-	return fmt.Sprintf("%d:%s", idx, primitiveCacheKey(primitiveParamsForInstancedMesh(im)))
+	return instancedMeshKeyForParams(idx, primitiveParamsForInstancedMesh(im))
 }
 
 func primitiveParamsForInstancedMesh(im engine.RenderInstancedMesh) primitiveParams {
@@ -994,51 +1107,86 @@ func (r *Renderer) runExternalPasses(enc gpu.CommandEncoder, phase compute.PassP
 // and dispatches the culling compute shader for every InstancedMesh in the
 // bundle. The compacted output + draw args land in GPU buffers that the
 // main pass reads later via DrawIndirect.
-func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle, frustum [6][4]float32) error {
-	if len(b.InstancedMeshes) == 0 {
+// The instance upload is fingerprinted: a mesh whose transforms did not change
+// since the last frame keeps the bytes already resident in its input buffer.
+// Static geometry therefore costs one hash pass over the source transforms and
+// no upload at all.
+func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle, frustum [6][4]float32, cascades cascadeData) error {
+	if len(r.meshStates) == 0 {
 		return nil
+	}
+	// Per-cascade shadow-caster frustum planes, taken from each cascade's light
+	// view-projection. The cascade volume already extends toward the light, so
+	// culling against its own planes keeps every caster that can reach it.
+	var casterPlanes [cascadeCount][6][4]float32
+	for cascade := 0; cascade < cascadeCount; cascade++ {
+		casterPlanes[cascade] = extractFrustumPlanes(cascades.viewProjs[cascade])
 	}
 	// Upload instance transforms + reset draw args BEFORE beginning the
 	// compute pass — writeBuffer operations within an open pass are not
 	// allowed.
-	for i, im := range b.InstancedMeshes {
-		if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+	drawable := 0
+	for i := range r.meshStates {
+		st := &r.meshStates[i]
+		if !st.drawable {
 			continue
 		}
-		prim, err := r.ensurePrimitiveForMesh(im)
-		if err != nil {
-			return err
+		drawable++
+		cull := st.cull
+		transforms := b.InstancedMeshes[i].Transforms
+		hash := instanceTransformHash(transforms, st.instanceCount, st.pickBase)
+		if !cull.haveUpload || cull.uploadedHash != hash || cull.uploadedCount != st.instanceCount {
+			records := r.instanceScratch(st.instanceCount * instanceRecordStride)
+			instanceRecordInto(records, transforms, st.instanceCount, st.pickBase)
+			r.device.Queue().WriteBuffer(cull.inputBuf, 0, records)
+			cull.uploadedHash = hash
+			cull.uploadedCount = st.instanceCount
+			cull.haveUpload = true
 		}
-		if prim == nil || prim.vertexCount == 0 {
-			continue
-		}
-		key := instancedMeshKey(i, im)
-		cull, err := r.ensureCullResources(key, im.InstanceCount)
-		if err != nil {
-			return err
-		}
-		instanceBytes := instanceRecordBytes(im.Transforms, im.InstanceCount, r.pickBaseForMesh(i))
-		r.device.Queue().WriteBuffer(cull.inputBuf, 0, instanceBytes)
-		r.device.Queue().WriteBuffer(cull.drawArgsBuf, 0, drawArgsResetBytes(uint32(prim.vertexCount)))
+		r.device.Queue().WriteBuffer(cull.drawArgsBuf, 0, r.drawArgsResetBytes(uint32(st.vertexCount)))
 		r.device.Queue().WriteBuffer(cull.cullUniform, 0,
-			cullUniformBytes(frustum, uint32(prim.vertexCount), primitiveCullRadius(primitiveParamsForInstancedMesh(im))))
+			r.cullUniformBytes(frustum, uint32(st.vertexCount), st.radius))
+		if !st.castShadow {
+			// A mesh that stopped casting shadows keeps its caster buffers, but
+			// nothing reads them. Skip the writes and the dispatch.
+			continue
+		}
+		for cascade := 0; cascade < cascadeCount; cascade++ {
+			caster := cull.casters[cascade]
+			if caster == nil {
+				continue
+			}
+			r.device.Queue().WriteBuffer(caster.drawArgsBuf, 0, r.drawArgsResetBytes(uint32(st.vertexCount)))
+			r.device.Queue().WriteBuffer(caster.cullUniform, 0,
+				r.cullUniformBytes(casterPlanes[cascade], uint32(st.vertexCount), st.radius))
+		}
+	}
+	if drawable == 0 {
+		return nil
 	}
 
 	pass := enc.BeginComputePass()
 	pass.SetPipeline(r.cullPipeline)
-	for i, im := range b.InstancedMeshes {
-		if im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+	for i := range r.meshStates {
+		st := &r.meshStates[i]
+		if !st.drawable {
 			continue
 		}
-		key := instancedMeshKey(i, im)
-		cull, ok := r.cullCache[key]
-		if !ok {
-			continue
-		}
-		pass.SetBindGroup(0, cull.bindGroup)
 		// workgroup_size is 64 in the shader; dispatch (N+63)/64 groups.
-		groups := (im.InstanceCount + 63) / 64
+		groups := (st.instanceCount + 63) / 64
+		pass.SetBindGroup(0, st.cull.bindGroup)
 		pass.DispatchWorkgroups(groups, 1, 1)
+		if !st.castShadow {
+			continue
+		}
+		for cascade := 0; cascade < cascadeCount; cascade++ {
+			caster := st.cull.casters[cascade]
+			if caster == nil {
+				continue
+			}
+			pass.SetBindGroup(0, caster.bindGroup)
+			pass.DispatchWorkgroups(groups, 1, 1)
+		}
 	}
 	pass.End()
 	return nil
@@ -1047,33 +1195,35 @@ func (r *Renderer) recordCullPass(enc gpu.CommandEncoder, b engine.RenderBundle,
 // recordShadowPass renders cascade-specific depth-only draws into the
 // cascade's layer of the shadow texture array. Called once per cascade index.
 func (r *Renderer) recordShadowPass(enc gpu.CommandEncoder, b engine.RenderBundle, cascade int) {
+	r.shadowDepthAttachment[cascade] = gpu.RenderPassDepthStencilAttachment{
+		View:            r.shadowLayerViews[cascade],
+		DepthLoadOp:     gpu.LoadOpClear,
+		DepthStoreOp:    gpu.StoreOpStore,
+		DepthClearValue: 1.0,
+	}
 	pass := enc.BeginRenderPass(gpu.RenderPassDesc{
-		DepthStencilAttachment: &gpu.RenderPassDepthStencilAttachment{
-			View:            r.shadowLayerViews[cascade],
-			DepthLoadOp:     gpu.LoadOpClear,
-			DepthStoreOp:    gpu.StoreOpStore,
-			DepthClearValue: 1.0,
-		},
-		Label: "bundle.shadow.cascade",
+		DepthStencilAttachment: &r.shadowDepthAttachment[cascade],
+		Label:                  "bundle.shadow.cascade",
 	})
-	if len(b.InstancedMeshes) > 0 {
+	if len(r.meshStates) > 0 {
 		pass.SetPipeline(r.shadowPipeline)
 		pass.SetBindGroup(0, r.shadowBindGrps[cascade])
-		for i, im := range b.InstancedMeshes {
-			if !im.CastShadow || im.InstanceCount <= 0 || len(im.Transforms) == 0 {
+		for i := range r.meshStates {
+			st := &r.meshStates[i]
+			if !st.drawable || !st.castShadow {
 				continue
 			}
-			prim, err := r.ensurePrimitiveForMesh(im)
-			if err != nil || prim == nil || prim.vertexCount == 0 {
+			if caster := st.cull.casters[cascade]; caster != nil {
+				// Per-cascade caster cull: draw only the instances whose
+				// bounding spheres reach this cascade's light volume.
+				pass.SetVertexBuffer(0, st.prim.positions)
+				pass.SetVertexBuffer(1, caster.outputBuf)
+				pass.DrawIndirect(caster.drawArgsBuf, 0)
 				continue
 			}
-			cull, ok := r.cullCache[instancedMeshKey(i, im)]
-			if !ok || cull == nil {
-				continue
-			}
-			pass.SetVertexBuffer(0, prim.positions)
-			pass.SetVertexBuffer(1, cull.inputBuf)
-			pass.Draw(prim.vertexCount, im.InstanceCount, 0, 0)
+			pass.SetVertexBuffer(0, st.prim.positions)
+			pass.SetVertexBuffer(1, st.cull.inputBuf)
+			pass.Draw(st.vertexCount, st.instanceCount, 0, 0)
 		}
 	}
 	if len(b.Objects) > 0 {
@@ -1280,30 +1430,6 @@ func (r *Renderer) bonePaletteForMesh(im engine.RenderInstancedMesh) *BonePalett
 		}
 	}
 	return r.defaultBonePalette
-}
-
-// ensureInstanceBuffer grows the shared per-instance buffer to at least size
-// bytes. Growth is one-way.
-func (r *Renderer) ensureInstanceBuffer(size int) error {
-	if size <= r.instanceBufBytes {
-		return nil
-	}
-	if r.instanceBuf != nil {
-		r.instanceBuf.Destroy()
-		r.instanceBuf = nil
-	}
-	grown := size + size/4
-	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
-		Size:  grown,
-		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
-		Label: "bundle.instance.transforms",
-	})
-	if err != nil {
-		return fmt.Errorf("bundle: create instance buffer: %w", err)
-	}
-	r.instanceBuf = buf
-	r.instanceBufBytes = grown
-	return nil
 }
 
 func (r *Renderer) ensurePassBuffers(pb engine.RenderPassBundle) (*passResources, error) {
@@ -1793,21 +1919,25 @@ type sceneUniformBlock struct {
 	envParams [4]float32
 }
 
-func buildSceneUniformBytes(s sceneUniformBlock) []byte {
-	out := make([]byte, sceneUniformSize)
-	copy(out[0:64], float32sToBytes(s.viewProj[:]))
+// sceneUniformBytes packs the scene uniform block into a Renderer-owned buffer
+// and returns it. The writes go straight into the buffer, so packing costs no
+// allocation at all. The previous version allocated the output plus eleven
+// throwaway float32 conversion slices on every frame.
+func (r *Renderer) sceneUniformBytes(s sceneUniformBlock) []byte {
+	out := r.sceneUniformScratch[:]
+	putFloat32s(out[0:64], s.viewProj[:])
 	for i := 0; i < cascadeCount; i++ {
-		copy(out[64+i*64:64+(i+1)*64], float32sToBytes(s.lightViewProjs[i][:]))
+		putFloat32s(out[64+i*64:64+(i+1)*64], s.lightViewProjs[i][:])
 	}
 	base := 64 + cascadeCount*64
-	copy(out[base+0:base+16], float32sToBytes(s.cameraPos[:]))
-	copy(out[base+16:base+32], float32sToBytes(s.lightDir[:]))
-	copy(out[base+32:base+48], float32sToBytes(s.lightColor[:]))
-	copy(out[base+48:base+64], float32sToBytes(s.ambientColor[:]))
-	copy(out[base+64:base+80], float32sToBytes(s.skyColor[:]))
-	copy(out[base+80:base+96], float32sToBytes(s.groundColor[:]))
-	copy(out[base+96:base+112], float32sToBytes(s.cascadeSplits[:]))
-	copy(out[base+112:base+128], float32sToBytes(s.envParams[:]))
+	putFloat32s(out[base+0:base+16], s.cameraPos[:])
+	putFloat32s(out[base+16:base+32], s.lightDir[:])
+	putFloat32s(out[base+32:base+48], s.lightColor[:])
+	putFloat32s(out[base+48:base+64], s.ambientColor[:])
+	putFloat32s(out[base+64:base+80], s.skyColor[:])
+	putFloat32s(out[base+80:base+96], s.groundColor[:])
+	putFloat32s(out[base+96:base+112], s.cascadeSplits[:])
+	putFloat32s(out[base+112:base+128], s.envParams[:])
 	return out
 }
 
@@ -1931,33 +2061,16 @@ func float64sToFloat32Bytes(src []float64) []byte {
 	return out
 }
 
-// instanceRecordBytes packs one instance record per transform. The first
-// 64 bytes are the column-major model matrix consumed by the render and
-// culling pipelines; the trailing vec4<u32> carries the stable pick ID.
+// instanceRecordBytes allocates and packs one instance record per transform.
+// Frame does not use it — recordCullPass packs into a reusable buffer through
+// instanceRecordInto. Single-shot callers such as the object-mesh upload path
+// use this wrapper.
 func instanceRecordBytes(transforms []float64, instanceCount int, pickBase uint32) []byte {
 	if instanceCount <= 0 {
 		return nil
 	}
 	out := make([]byte, instanceCount*instanceRecordStride)
-	for inst := 0; inst < instanceCount; inst++ {
-		recordOffset := inst * instanceRecordStride
-		transformOffset := inst * 16
-		for j := 0; j < 16; j++ {
-			value := float64(0)
-			if idx := transformOffset + j; idx >= 0 && idx < len(transforms) {
-				value = transforms[idx]
-			}
-			bits := math.Float32bits(float32(value))
-			base := recordOffset + j*4
-			out[base+0] = byte(bits)
-			out[base+1] = byte(bits >> 8)
-			out[base+2] = byte(bits >> 16)
-			out[base+3] = byte(bits >> 24)
-		}
-		if pickBase != 0 {
-			putUint32LE(out[recordOffset+64:recordOffset+68], pickBase+uint32(inst))
-		}
-	}
+	instanceRecordInto(out, transforms, instanceCount, pickBase)
 	return out
 }
 
@@ -2014,12 +2127,37 @@ func parseCSSColor(s string, fallback [3]float32) [3]float32 {
 	return fallback
 }
 
+// tryParseCSSColor decodes "#rrggbb". It reads the hex digits directly instead
+// of going through fmt.Sscanf, which allocated a scan state on every call.
+// Frame parses the background plus several material and light colours, so this
+// used to be the largest remaining per-frame allocation source.
 func tryParseCSSColor(s string) ([3]float32, bool) {
-	if len(s) == 7 && s[0] == '#' {
-		var r, g, b byte
-		if _, err := fmt.Sscanf(s, "#%02x%02x%02x", &r, &g, &b); err == nil {
-			return [3]float32{float32(r) / 255, float32(g) / 255, float32(b) / 255}, true
-		}
+	if len(s) != 7 || s[0] != '#' {
+		return [3]float32{}, false
 	}
-	return [3]float32{}, false
+	var channels [3]float32
+	for i := 0; i < 3; i++ {
+		hi, ok := hexNibble(s[1+i*2])
+		if !ok {
+			return [3]float32{}, false
+		}
+		lo, ok := hexNibble(s[2+i*2])
+		if !ok {
+			return [3]float32{}, false
+		}
+		channels[i] = float32(hi<<4|lo) / 255
+	}
+	return channels, true
+}
+
+func hexNibble(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
 }

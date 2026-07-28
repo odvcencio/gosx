@@ -5,9 +5,12 @@
 package route
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"path"
 	"runtime"
@@ -317,10 +320,13 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 			return
 		}
 
-		rec := &interceptResponseWriter{header: make(http.Header)}
+		rec := newInterceptResponseWriter(w)
 		mux.ServeHTTP(rec, req)
+		if rec.escaped() {
+			return
+		}
 		if rec.statusCode != 0 && rec.statusCode != http.StatusNotFound {
-			rec.commit(w)
+			rec.commit()
 			return
 		}
 
@@ -429,6 +435,13 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 		ctx.SetStatus(defaultStatus)
 	}
 
+	// Drop the nonce before the layouts run when a shared cache may store the
+	// body. One stored copy reaches many clients, so a per-request nonce in that
+	// copy would name a value the next client never received.
+	if ctx.CacheState().SharedCacheable() {
+		ctx.SetNonce("")
+	}
+
 	// The runtime head (engine manifest + bootstrap) is NOT added here:
 	// PageState.Head() resolves it lazily when the document shell renders,
 	// after every layout has run — so engines registered by layouts (e.g. a
@@ -437,19 +450,20 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 		node = layouts[i](ctx, node)
 	}
 
-	headers := ctx.Header()
-	status := ctx.StatusCode()
-	cache := ctx.CacheState()
-	if server.ApplyCacheHeaders(ctx.Request, headers, status, cache, r.Revalidator()) {
-		server.WriteNotModified(w, headers)
-		return
-	}
-
+	// Cache handling moved into WriteHTML. It used to run here, before the
+	// render, so the automatic ETag could only hash the request: two different
+	// bodies shared one validator and a stale conditional request won a 304
+	// with an empty body. WriteHTML now renders first and hashes the body.
 	server.WriteHTML(w, server.HTMLResponse{
-		Status:   status,
-		Headers:  headers,
-		Node:     node,
-		Deferred: ctx.DeferredRegistry(),
+		Status:             ctx.StatusCode(),
+		Headers:            ctx.Header(),
+		Node:               node,
+		Deferred:           ctx.DeferredRegistry(),
+		Request:            ctx.Request,
+		Cache:              ctx.CacheState(),
+		Revalidator:        r.Revalidator(),
+		CacheDigestExclude: []string{ctx.Nonce()},
+		Nonce:              ctx.Nonce(),
 	})
 }
 
@@ -561,10 +575,14 @@ func extractPatternParams(pattern string, requestPath string) map[string]string 
 func newRouteContext(req *http.Request) *RouteContext {
 	// Params is left nil; reads from a nil map are valid and the build-time
 	// closure assigns a sized map only when the route declares parameters.
-	return &RouteContext{
+	ctx := &RouteContext{
 		Request:   req,
 		PageState: *server.NewPageStateForRequest(req),
 	}
+	// Carry the generated Content-Security-Policy nonce, so the document shell
+	// and the streamed chunks attach the same value the header names.
+	ctx.SetNonce(server.RequestNonce(req))
+	return ctx
 }
 
 func joinPattern(prefix, pattern string) string {
@@ -738,10 +756,23 @@ func copyHeaders(dst, src http.Header) {
 	}
 }
 
+// interceptResponseWriter buffers a response so the router can drop it and
+// render its own not-found page instead.
+//
+// It forwards Flush, Hijack and Unwrap to the real writer. A handler that
+// streams or upgrades the connection must reach the network, so the first such
+// call commits the buffered bytes and switches to direct writes. escaped
+// reports that switch, and the router then treats the request as handled.
 type interceptResponseWriter struct {
-	header     http.Header
-	body       strings.Builder
-	statusCode int
+	dst         http.ResponseWriter
+	header      http.Header
+	body        strings.Builder
+	statusCode  int
+	passthrough bool
+}
+
+func newInterceptResponseWriter(dst http.ResponseWriter) *interceptResponseWriter {
+	return &interceptResponseWriter{dst: dst, header: make(http.Header)}
 }
 
 func (w *interceptResponseWriter) Header() http.Header {
@@ -755,20 +786,73 @@ func (w *interceptResponseWriter) Write(data []byte) (int, error) {
 	if w.statusCode == 0 {
 		w.statusCode = http.StatusOK
 	}
+	if w.passthrough {
+		return w.dst.Write(data)
+	}
 	return w.body.Write(data)
 }
 
 func (w *interceptResponseWriter) WriteHeader(status int) {
+	if w.passthrough {
+		return
+	}
 	w.statusCode = status
 }
 
-func (w *interceptResponseWriter) commit(dst http.ResponseWriter) {
-	copyHeaders(dst.Header(), w.header)
+// Flush sends the buffered bytes and then flushes the real writer.
+func (w *interceptResponseWriter) Flush() {
+	if w.dst == nil {
+		return
+	}
+	w.commit()
+	if flusher, ok := w.dst.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Hijack hands the raw connection to the caller. The buffer is dropped, because
+// the connection leaves HTTP and the caller writes the bytes itself.
+func (w *interceptResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.dst.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	conn, buffered, err := hijacker.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	w.passthrough = true
+	w.body.Reset()
+	return conn, buffered, nil
+}
+
+// Unwrap returns the real writer so http.ResponseController reaches it.
+func (w *interceptResponseWriter) Unwrap() http.ResponseWriter {
+	return w.dst
+}
+
+// escaped reports that the handler took over the connection.
+func (w *interceptResponseWriter) escaped() bool {
+	return w.passthrough
+}
+
+func (w *interceptResponseWriter) commit() {
+	if w.passthrough || w.dst == nil {
+		return
+	}
+	w.passthrough = true
+	copyHeaders(w.dst.Header(), w.header)
+	// Point Header at the real map, so a later header change still lands
+	// somewhere a caller can read.
+	w.header = w.dst.Header()
 	if w.statusCode == 0 {
 		w.statusCode = http.StatusOK
 	}
-	dst.WriteHeader(w.statusCode)
-	_, _ = dst.Write([]byte(w.body.String()))
+	w.dst.WriteHeader(w.statusCode)
+	if w.body.Len() > 0 {
+		_, _ = io.WriteString(w.dst, w.body.String())
+	}
+	w.body.Reset()
 }
 
 // safeHandle registers a handler on the mux, recovering mux failures as errors.

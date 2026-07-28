@@ -12,8 +12,10 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -27,19 +29,76 @@ const (
 	defaultFlashKey             = "__gosx_flash"
 	defaultCSRFKey              = "__gosx_csrf"
 	defaultCSRFField            = "csrf_token"
+	hostCookiePrefix            = "__Host-"
+)
+
+const (
+	// DefaultMaxAge is the session lifetime that New applies when
+	// Options.MaxAge is zero. The manager stamps every cookie with the
+	// issuance time and rejects a cookie that is older than this limit.
+	DefaultMaxAge = 30 * 24 * time.Hour
+
+	// DefaultLegacyCookieGrace is the window in which the manager still
+	// accepts a cookie that carries no issuance timestamp. The window starts
+	// when the process creates the manager.
+	DefaultLegacyCookieGrace = 30 * 24 * time.Hour
+
+	// MaxCookieSize is the per-cookie byte budget from RFC 6265. Browsers may
+	// drop a larger cookie without a report, so the manager refuses to write
+	// one.
+	MaxCookieSize = 4096
+
+	// clockSkewTolerance accepts a cookie stamped a short time in the future.
+	// Two servers behind one load balancer can disagree by a few minutes.
+	clockSkewTolerance = 5 * time.Minute
+)
+
+var (
+	// ErrSessionExpired reports a cookie that is older than the configured
+	// max age. The manager drops the session and starts an empty one.
+	ErrSessionExpired = errors.New("session cookie expired")
+
+	// ErrSessionTimestampInFuture reports a cookie stamped further ahead than
+	// the clock skew tolerance allows.
+	ErrSessionTimestampInFuture = errors.New("session cookie issued in the future")
+
+	// ErrSessionTooLarge reports a session that exceeds MaxCookieSize. The
+	// manager refuses to write the cookie instead of losing the write later.
+	ErrSessionTooLarge = errors.New("session cookie exceeds the browser size limit")
 )
 
 // Options configures a cookie-backed session manager.
 type Options struct {
-	CookieName      string
-	Path            string
-	Domain          string
-	MaxAge          time.Duration
-	Secure          bool
+	CookieName string
+	Path       string
+	Domain     string
+
+	// MaxAge limits both the browser cookie lifetime and the server-side
+	// session lifetime. New applies DefaultMaxAge when MaxAge is zero.
+	MaxAge time.Duration
+
+	// Secure marks the cookie Secure, so a browser sends it over HTTPS only.
+	// New sets Secure to true unless AllowInsecure is true.
+	Secure bool
+
+	// AllowInsecure clears the Secure flag for local HTTP development. Set it
+	// only when you serve plain HTTP on purpose.
+	AllowInsecure bool
+
 	HTTPOnly        bool
 	SameSite        http.SameSite
 	Encrypt         bool
 	PreviousSecrets []string
+
+	// LegacyCookieGrace sets how long the manager accepts a cookie that
+	// carries no issuance timestamp. New applies DefaultLegacyCookieGrace
+	// when the value is zero. Give a negative value to reject every
+	// timestamp-free cookie at once.
+	LegacyCookieGrace time.Duration
+
+	// OnError receives cookie write failures, such as an oversized session.
+	// The manager logs the failure when OnError is nil.
+	OnError func(error)
 }
 
 // Manager loads and persists signed cookie sessions.
@@ -47,11 +106,20 @@ type Manager struct {
 	secret          []byte
 	previousSecrets [][]byte
 	opts            Options
+	now             func() time.Time
+	startedAt       time.Time
 }
 
 type sessionEnvelope struct {
 	Values  map[string]any   `json:"values,omitempty"`
 	Flashes map[string][]any `json:"flashes,omitempty"`
+
+	// IssuedAt is the Unix millisecond at which the manager signed the
+	// envelope. The value sits inside the signed and encrypted payload, so a
+	// client cannot change it. decodeCookie compares it against
+	// Options.MaxAge. Zero marks a cookie from a release that did not stamp
+	// the envelope.
+	IssuedAt int64 `json:"iat_ms,omitempty"`
 }
 
 // Store holds request-scoped session state.
@@ -62,6 +130,7 @@ type Store struct {
 	outgoingFlashes map[string][]any
 	dirty           bool
 	destroyed       bool
+	writeErr        error
 }
 
 // New creates a new cookie-backed session manager.
@@ -76,7 +145,19 @@ func New(secret string, opts Options) (*Manager, error) {
 		opts.Path = "/"
 	}
 	if opts.MaxAge == 0 {
-		opts.MaxAge = 30 * 24 * time.Hour
+		opts.MaxAge = DefaultMaxAge
+	}
+	if opts.MaxAge < 0 {
+		return nil, fmt.Errorf("session max age must not be negative")
+	}
+	if opts.LegacyCookieGrace == 0 {
+		opts.LegacyCookieGrace = DefaultLegacyCookieGrace
+	}
+	// Default to a Secure cookie. A session cookie sent over plain HTTP is
+	// readable by any network attacker, so the safe value must be the
+	// default. Set AllowInsecure for local HTTP development.
+	if !opts.Secure && !opts.AllowInsecure {
+		opts.Secure = true
 	}
 	if opts.HTTPOnly == false {
 		opts.HTTPOnly = true
@@ -84,11 +165,35 @@ func New(secret string, opts Options) (*Manager, error) {
 	if opts.SameSite == 0 {
 		opts.SameSite = http.SameSiteLaxMode
 	}
+	if err := validateHostPrefix(opts); err != nil {
+		return nil, err
+	}
 	return &Manager{
 		secret:          []byte(secret),
 		previousSecrets: normalizePreviousSecrets(opts.PreviousSecrets),
 		opts:            opts,
+		now:             time.Now,
+		startedAt:       time.Now(),
 	}, nil
+}
+
+// validateHostPrefix enforces the browser rules for the __Host- cookie name
+// prefix. A browser rejects such a cookie unless it is Secure, has the path
+// "/", and carries no Domain attribute.
+func validateHostPrefix(opts Options) error {
+	if !strings.HasPrefix(opts.CookieName, hostCookiePrefix) {
+		return nil
+	}
+	if !opts.Secure {
+		return fmt.Errorf("%s cookie name requires a secure cookie", hostCookiePrefix)
+	}
+	if opts.Domain != "" {
+		return fmt.Errorf("%s cookie name must not set a domain", hostCookiePrefix)
+	}
+	if opts.Path != "/" {
+		return fmt.Errorf("%s cookie name requires the path /", hostCookiePrefix)
+	}
+	return nil
 }
 
 // MustNew creates a new session manager.
@@ -410,10 +515,18 @@ func (m *Manager) load(r *http.Request) *Store {
 	return store
 }
 
+func (m *Manager) clock() time.Time {
+	if m == nil || m.now == nil {
+		return time.Now()
+	}
+	return m.now()
+}
+
 func (m *Manager) encode(store *Store) (string, error) {
 	envelope := sessionEnvelope{
-		Values:  store.values,
-		Flashes: store.outgoingFlashes,
+		Values:   store.values,
+		Flashes:  store.outgoingFlashes,
+		IssuedAt: m.clock().UnixMilli(),
 	}
 	payload, err := json.Marshal(envelope)
 	if err != nil {
@@ -440,14 +553,71 @@ func (m *Manager) decode(value string) (sessionEnvelope, error) {
 
 func (m *Manager) decodeCookie(value string) (sessionEnvelope, bool, error) {
 	parts := strings.Split(value, ".")
+	var (
+		envelope sessionEnvelope
+		refresh  bool
+		err      error
+	)
 	switch {
 	case len(parts) == 2:
-		return m.decodeLegacyCookie(parts[0], parts[1])
+		envelope, refresh, err = m.decodeLegacyCookie(parts[0], parts[1])
 	case len(parts) == 3 && parts[0] == "v2":
-		return m.decodeEncryptedCookie(parts[1], parts[2])
+		envelope, refresh, err = m.decodeEncryptedCookie(parts[1], parts[2])
 	default:
 		return sessionEnvelope{}, false, fmt.Errorf("invalid session cookie format")
 	}
+	if err != nil {
+		return sessionEnvelope{}, false, err
+	}
+	// Both cookie formats carry the issuance timestamp in the signed payload,
+	// so one age check covers the legacy 2-part cookie and the v2 cookie.
+	ageRefresh, err := m.checkEnvelopeAge(envelope)
+	if err != nil {
+		return sessionEnvelope{}, false, err
+	}
+	return envelope, refresh || ageRefresh, nil
+}
+
+// checkEnvelopeAge enforces the server-side session lifetime. It reports
+// whether the caller must write a fresh cookie.
+//
+// A cookie without a timestamp comes from a GoSX release that did not stamp
+// the envelope. The manager accepts such a cookie inside
+// Options.LegacyCookieGrace and re-issues it with a timestamp, so an upgrade
+// does not sign every user out. Trade-off: a captured timestamp-free cookie
+// still replays inside that window, and the window restarts with the process.
+// Set Options.LegacyCookieGrace to a negative value after the rollout to
+// reject every timestamp-free cookie.
+func (m *Manager) checkEnvelopeAge(envelope sessionEnvelope) (bool, error) {
+	now := m.clock()
+	maxAge := m.opts.MaxAge
+	if maxAge <= 0 {
+		maxAge = DefaultMaxAge
+	}
+	if envelope.IssuedAt == 0 {
+		grace := m.opts.LegacyCookieGrace
+		if grace < 0 {
+			return false, ErrSessionExpired
+		}
+		if now.After(m.startedAt.Add(grace)) {
+			return false, ErrSessionExpired
+		}
+		return true, nil
+	}
+	issuedAt := time.UnixMilli(envelope.IssuedAt)
+	if issuedAt.After(now.Add(clockSkewTolerance)) {
+		return false, ErrSessionTimestampInFuture
+	}
+	age := now.Sub(issuedAt)
+	if age > maxAge {
+		return false, ErrSessionExpired
+	}
+	// Renew an active session once it passes half of its lifetime. An idle
+	// session still expires at max age.
+	if age > maxAge/2 {
+		return true, nil
+	}
+	return false, nil
 }
 
 func (m *Manager) decodeLegacyCookie(payloadPart, signaturePart string) (sessionEnvelope, bool, error) {
@@ -584,9 +754,9 @@ func normalizePreviousSecrets(values []string) [][]byte {
 	return out
 }
 
-func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) {
+func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) error {
 	if w == nil || store == nil {
-		return
+		return nil
 	}
 	if store.destroyed || sessionEmpty(store) {
 		http.SetCookie(w, &http.Cookie{
@@ -600,23 +770,50 @@ func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) {
 			HttpOnly: m.opts.HTTPOnly,
 			SameSite: m.opts.SameSite,
 		})
-		return
+		return nil
 	}
 	encoded, err := m.encode(store)
 	if err != nil {
-		return
+		return err
 	}
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:     m.opts.CookieName,
 		Value:    encoded,
 		Path:     m.opts.Path,
 		Domain:   m.opts.Domain,
 		MaxAge:   int(m.opts.MaxAge / time.Second),
-		Expires:  time.Now().Add(m.opts.MaxAge),
+		Expires:  m.clock().Add(m.opts.MaxAge),
 		Secure:   m.opts.Secure,
 		HttpOnly: m.opts.HTTPOnly,
 		SameSite: m.opts.SameSite,
-	})
+	}
+	// Report an oversized cookie. A browser drops a cookie above the RFC 6265
+	// budget without any signal, so the session would vanish at random.
+	if size := len(cookie.String()); size > MaxCookieSize {
+		return fmt.Errorf("%w: %d of %d bytes", ErrSessionTooLarge, size, MaxCookieSize)
+	}
+	http.SetCookie(w, cookie)
+	return nil
+}
+
+func (m *Manager) reportError(err error) {
+	if m == nil || err == nil {
+		return
+	}
+	if m.opts.OnError != nil {
+		m.opts.OnError(err)
+		return
+	}
+	log.Printf("[gosx] session: %v", err)
+}
+
+// Err returns the last cookie write failure for this request, such as an
+// oversized session. It returns nil when the write succeeded.
+func (s *Store) Err() error {
+	if s == nil {
+		return nil
+	}
+	return s.writeErr
 }
 
 func sessionEmpty(store *Store) bool {
@@ -681,7 +878,10 @@ func (w *responseWriter) commitCookie() {
 	if w.store == nil || !w.store.dirty {
 		return
 	}
-	w.store.manager.writeCookie(w.ResponseWriter, w.store)
+	if err := w.store.manager.writeCookie(w.ResponseWriter, w.store); err != nil {
+		w.store.writeErr = err
+		w.store.manager.reportError(err)
+	}
 	w.store.dirty = false
 }
 

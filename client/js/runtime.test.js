@@ -7,15 +7,17 @@ const vm = require("node:vm");
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
 const bootstrapLiteSource = fs.readFileSync(path.join(__dirname, "bootstrap-lite.js"), "utf8");
 const bootstrapRuntimeSource = fs.readFileSync(path.join(__dirname, "bootstrap-runtime.js"), "utf8");
+const bootstrapFeatureTextLayoutSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-textlayout.js"), "utf8");
 const bootstrapFeatureIslandsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-islands.js"), "utf8");
 const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-engines.js"), "utf8");
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
 const bootstrapFeatureScene3DCommandSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-command.js"), "utf8");
+const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
 const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
-const bootstrapScene3DMountSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+const bootstrapScene3DMountSourceFile = readSceneMountSrc();
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
@@ -2014,6 +2016,18 @@ function createContext(options) {
   }
 
   const routes = new Map();
+  // The text-layout engine now ships as a lazily fetched chunk instead of
+  // riding in every bundle (see bootstrap-src/00-textlayout.js). Serve it by
+  // default: any page with a data-gosx-text-layout element, and any page whose
+  // manifest mounts a Scene3D engine, asks for it. A test can still override
+  // the route through options.fetchRoutes.
+  routes.set("/gosx/bootstrap-feature-textlayout.js", { text: bootstrapFeatureTextLayoutSource });
+  // The WebGL2 renderer ships as a lazily fetched chunk too, so a WebGPU-capable
+  // browser never downloads it (see bootstrap-src/16-scene-webgl.js). Serve it
+  // by default: every Scene3D page that draws with WebGL asks for it, and so
+  // does a WebGPU page whose device is lost. A test can still override the
+  // route through options.fetchRoutes, or drop it to prove the chunk is absent.
+  routes.set("/gosx/bootstrap-feature-scene3d-webgl.js", { text: bootstrapFeatureScene3DWebGLSource });
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
     routes.set(url, response);
   }
@@ -9803,7 +9817,7 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   const build = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
   const controls = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
   const strictSchema = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15-scene-ir-schema-strict.js"), "utf8");
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
   const waterDir = path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water");
   const waterPage = fs.readFileSync(path.join(waterDir, "page.gsx"), "utf8");
 
@@ -10114,7 +10128,7 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
 });
 
 test("Scene3D orbit controls keep upstream-style release inertia", () => {
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
 
   assert.match(mount, /const SCENE_ORBIT_MAX_SPEED = Math\.PI \* 6;/);
   assert.match(mount, /const SCENE_ORBIT_DAMPING = 6;/);
@@ -10184,7 +10198,7 @@ test("Scene3D WebGPU water consumes caustic reflection refraction optics flags",
 test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
 
   assert.match(webgpu, /SCENE_WATER_CAUSTICS_VERTEX_SOURCE/);
   assert.match(webgpu, /SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE/);
@@ -10274,7 +10288,7 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
 test("Scene3D WebGPU water renders upstream-style object texture targets", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
   const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.js"), "utf8");
   const waterPage = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "page.gsx"), "utf8");
   const waterProgram = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "program.go"), "utf8");
@@ -10601,7 +10615,7 @@ test("Scene3D planner hashes inline mesh vertex payloads", () => {
 });
 
 test("Scene3D static GLB models can receive live motion patches", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const source = readSceneMountSrc();
 
   assert.match(source, /function sceneRegisterStaticModelLiveRecord\(state, instanceModel, objectIDs\)/);
   assert.match(source, /staticModel: true/);
@@ -10695,10 +10709,13 @@ test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
 
 test("Scene3D FXAA is wired as the chain-end postfx pass in WebGL and WebGPU", () => {
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.js"), "utf8");
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 
   // WebGL: GLSL fullscreen pass, dedicated program, wired into the effect switch.
-  assert.match(webgl, /var SCENE_POST_FXAA = "fxaa";/);
+  // The SCENE_POST_* kind constants live in 16c because 10-runtime-scene-core.js
+  // publishes them for the WebGPU chunk and the WebGL file is now lazy.
+  assert.match(shared, /var SCENE_POST_FXAA = "fxaa";/);
   assert.match(webgl, /const SCENE_POST_FXAA_SOURCE = \[/);
   assert.match(webgl, /float greenLuma\(vec3 c\) \{ return c\.g; \}/);
   assert.match(webgl, /function applyFXAA\(inputTex, effect, targetFBO, w, h\)/);
@@ -10707,11 +10724,15 @@ test("Scene3D FXAA is wired as the chain-end postfx pass in WebGL and WebGPU", (
   assert.match(webgl, /currentTexture = applyFXAA\(currentTexture, effect, targetFBO, passW, passH\);/);
 
   // WebGPU: WGSL fullscreen pass reusing the blit (texture+sampler) bind
-  // group layout since FXAA has no tunable uniforms.
-  assert.match(webgpu, /var WGSL_POST_FXAA_FRAGMENT = \[/);
-  assert.match(webgpu, /fn greenLuma\(c: vec3f\) -> f32 \{/);
+  // group layout since FXAA has no tunable uniforms. The body is written once
+  // against precision aliases and compiled into an f32 and an f16 variant, so
+  // the source now names the body and the two variants built from it.
+  assert.match(webgpu, /var WGSL_POST_FXAA_BODY = \[/);
+  assert.match(webgpu, /var WGSL_POST_FXAA_FRAGMENT = sceneWebGPUPostShaderSource\(WGSL_POST_FXAA_BODY, false\);/);
+  assert.match(webgpu, /var WGSL_POST_FXAA_FRAGMENT_F16 = sceneWebGPUPostShaderSource\(WGSL_POST_FXAA_BODY, true\);/);
+  assert.match(webgpu, /fn greenLuma\(c: pf3\) -> pf \{/);
   assert.match(webgpu, /case SCENE_POST_FXAA: \{/);
-  assert.match(webgpu, /getPipeline\("fxaa", WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout\(\)\)/);
+  assert.match(webgpu, /getPipeline\("fxaa", postUsesF16 \? WGSL_POST_FXAA_FRAGMENT_F16 : WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout\(\)\)/);
 });
 
 test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
@@ -10748,7 +10769,7 @@ test("Scene3D WebGPU reports custom material fallback diagnostics", () => {
 
 test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () => {
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readWebGPUBackendSrc();
 
   assert.match(webgl, /function createSceneSelenaProgram\(gl, material, skinned\)/);
   assert.match(webgl, /ensureSelenaProgram\(mat, isSkinned\)/);
@@ -10773,20 +10794,22 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
 
 test("Scene3D selena time auto-uniform: both backends declare the clock var and assign it before draws", () => {
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readWebGPUBackendSrc();
 
-  // Both backends declare the per-frame clock variable in the closure scope.
+  // WebGL keeps the per-frame clock in its renderer closure. WebGPU keeps the
+  // same value on selenaFrame, the object it hands to the module-scope uniform
+  // packer in 16a1-scene-webgpu-selena-uniforms.js.
   assert.match(webgl, /var sceneSelenaFrameTime = 0;/);
-  assert.match(webgpu, /var sceneSelenaFrameTime = 0;/);
+  assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0 \};/);
 
   // time is a forced reserved auto-uniform: both resolvers return the clock for
   // name === "time" before user values can shadow it.
   assert.match(webgl, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,900}hasOwnProperty\.call\(values, name\)/);
-  assert.match(webgpu, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,240}sceneSelenaMaterialValue\(material, name\)/);
+  assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,240}sceneSelenaMaterialValue\(material, name\)/);
 
   // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
   // before any render-pass encoder draw commands.
-  assert.match(webgpu, /var frameTimeSeconds = frameNowMS \/ 1000;\s*\n\s*sceneSelenaFrameTime = frameTimeSeconds;/);
+  assert.match(webgpu, /var frameTimeSeconds = frameNowMS \/ 1000;\s*\n\s*selenaFrame\.time = frameTimeSeconds;/);
 
   // WebGL: clock is set right after scratchSelenaViewProjection is populated
   // (sceneMat4MultiplyInto), before the shadow pass and before drawPBRObjectList.
@@ -10795,7 +10818,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
 
 test("Scene3D selena time auto-uniform: time is forced before customUniforms (reserved name)", () => {
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readWebGPUBackendSrc();
 
   // The time branch must appear BEFORE the customUniforms early-return in both
   // resolvers (mirrors mvp/normalMatrix), so a compiled `param time` default
@@ -10873,7 +10896,9 @@ test("Scene3D water renderers use one scheduler and bounded balanced-quality wor
 });
 
 function loadSceneWaterClockAPI() {
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  // sceneNumber sits in the runtime-utils file and the water clock sits in the
+  // scene core file. The bundles load them next to each other, so join them.
+  const core = readBootstrapSrc("10-runtime-scene-utils.js", "10-runtime-scene-core.js");
   const start = core.indexOf("function sceneNumber(value, fallback)");
   const end = core.indexOf("function sceneNumberOrCSSVar", start);
   assert.notEqual(start, -1, "sceneNumber anchor missing from scene core");
@@ -10946,7 +10971,7 @@ test("Scene3D shared water clock is fixed-rate across display cadence and lifecy
 test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event IDs while paused", () => {
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
 
   assert.match(webgl, /var pendingDropEvents = new Map\(\)/);
   assert.match(webgl, /var pendingObjectDisplacementEvents = new Map\(\)/);
@@ -11147,19 +11172,21 @@ test("Scene3D WebGPU Selena materials can bind live water resources", () => {
 });
 
 test("Scene3D WebGPU Selena materials expose object matrices as auto-uniforms", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readWebGPUBackendSrc();
   const resolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,900}/)[0];
 
-  assert.match(resolver, /if \(name === "viewProjectionMatrix"\) return scratchSelenaViewProjection;/);
+  // mvp and viewProjectionMatrix read the live matrix off selenaFrame, which
+  // the renderer owns and passes in. The packer itself holds no renderer state.
+  assert.match(resolver, /if \(name === "mvp" \|\| name === "viewProjectionMatrix"\) \{[\s\S]{0,140}return \(frame && frame\.viewProjection\) \|\| selenaIdentityMatrix4;/);
   assert.match(resolver, /if \(name === "modelMatrix"\) return webGPUSelenaObjectModelMatrix\(owner\);/);
   assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)/);
   assert.match(webgpu, /obj && obj\.directVertices === true[\s\S]{0,120}return webGPUObjectModelMatrix\(obj\)/);
-  assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)[\s\S]{0,220}return pointsIdentityMatrix;/);
-  assert.match(webgpu, /sceneSelenaUniformData\(material, cacheOwner, renderContext\)/);
+  assert.match(webgpu, /function webGPUSelenaObjectModelMatrix\(obj\)[\s\S]{0,220}return selenaIdentityMatrix4;/);
+  assert.match(webgpu, /sceneSelenaUniformData\(material, cacheOwner, renderContext, selenaFrame\)/);
 });
 
 test("Scene3D animation loop supports foreground frame caps", () => {
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
 
   assert.match(mount, /function sceneAnimationFrameIntervalMS\(\)/);
   assert.match(mount, /props && props\.frameIntervalMS/);
@@ -11171,7 +11198,7 @@ test("Scene3D animation loop supports foreground frame caps", () => {
 
 test("Scene3D instanced meshes are WebGPU-native", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
 
   assert.match(webgpu, /var WGSL_PBR_INSTANCED_VERTEX = \[/);
   assert.match(webgpu, /var WGSL_SHADOW_INSTANCED_VERTEX = \[/);
@@ -11211,7 +11238,7 @@ test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
 
   assert.match(webgpu, /var WGSL_SCENE_WORLD_COLOR_VERTEX = \[/);
   assert.match(webgpu, /var WGSL_SCENE_CLIP_COLOR_VERTEX = \[/);
@@ -11240,7 +11267,7 @@ test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
 
 test("Scene3D WebGPU supports tiered MSAA render targets", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
-  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
   const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.js"), "utf8");
 
   assert.match(webgpu, /function createSceneWebGPURenderer\(canvas, options\)/);
@@ -12633,7 +12660,7 @@ test("bootstrap keeps Scene3D CSS transition diagnostics opt-in", () => {
 });
 
 test("bootstrap observes inherited root CSS var mutations for Scene3D", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const source = readSceneMountSrc();
 
   assert.match(source, /observer\.observe\(document\.documentElement,\s*\{/);
   assert.match(source, /attributeOldValue:\s*true/);
@@ -12643,7 +12670,7 @@ test("bootstrap observes inherited root CSS var mutations for Scene3D", () => {
 });
 
 test("bootstrap gates Scene3D viewport refreshes to viewport-shaped environment changes", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const source = readSceneMountSrc();
 
   assert.match(source, /function sceneViewportEnvironmentSignature\(environment\)/);
   assert.match(source, /sceneNumber\(environment\.devicePixelRatio,\s*1\)/);
@@ -12664,10 +12691,34 @@ test("bootstrap skips redundant runtime style and attribute writes", () => {
 test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
   const builder = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const utils = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-utils.js"), "utf8");
   const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.js"), "utf8");
 
-  assert.match(builder, /sourceExtract\(runtimeSceneCoreFile,\s*"runtime-utils"/);
-  assert.doesNotMatch(builder, /10a-runtime-utils/);
+  // The selective runtime bundle carries the runtime-utils head as a real
+  // file. The build used to cut it out of the scene core with two literal
+  // source markers, so a rename or a re-indent changed what shipped.
+  assert.deepEqual(
+    bootstrapChunkSources("bootstrap-runtime.js").filter((s) => s.includes("10-runtime-scene")),
+    ["bootstrap-src/10-runtime-scene-utils.js"],
+  );
+  // The scene3d chunk carries no copy of the utils file. It bridges the ten
+  // names it reads from window.__gosx_runtime_api instead, so the Chromium
+  // Scene3D route downloads those helpers once, not twice.
+  assert.deepEqual(
+    bootstrapChunkSources("bootstrap-feature-scene3d.js").filter((s) => s.includes("10-runtime-scene")),
+    ["bootstrap-src/10-runtime-scene-core.js"],
+  );
+  const scene3dPrefix = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "26d-feature-scene3d-prefix.js"), "utf8",
+  );
+  for (const name of [
+    "browserCapabilitySupported", "cancelEngineFrame", "engineCapabilityStatus", "engineFrame",
+    "gosxApplyCurrentScriptNonce", "loadManifest", "publishPointerSignals", "queueInputSignal",
+    "runtimeCapabilityStatus", "sceneNumber",
+  ]) {
+    assert.match(scene3dPrefix, new RegExp(`var ${name} = runtimeApi\\.${name}`), `${name} must be bridged`);
+    assert.match(utils, new RegExp(`__gosx_runtime_api\\.${name} = ${name};`), `${name} must be published`);
+  }
   assert.doesNotMatch(core, /function sceneBool\(/);
   assert.doesNotMatch(core, /function clearChildren\(/);
   assert.match(primitives, /function sceneBool\(/);
@@ -13343,6 +13394,308 @@ test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", a
   assert.equal(events.some((event) => event.msg === "renderer-canvas-replaced"), true);
   assert.equal(events.some((event) => event.msg === "renderer-swap" && event.fields.to === "webgl"), true);
   assert.equal(events.some((event) => event.msg === "renderer-fallback-unavailable"), false);
+  // The WebGL renderer now ships as a lazily fetched chunk, so the ladder had
+  // to fetch it during the fallback. Prove the fetch happened and that the
+  // ladder re-entered and completed the swap on the second pass.
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js").length,
+    1,
+    "device loss must fetch the WebGL chunk exactly once",
+  );
+  assert.equal(events.some((event) => event.msg === "webgl-fallback-chunk-fetch"), true);
+  assert.equal(events.some((event) => event.msg === "webgl-fallback-chunk-failed"), false);
+  assert.equal(events.some((event) => event.msg === "webgl-fallback-chunk-unusable"), false);
+});
+
+// --- WebGL chunk split (bootstrap-feature-scene3d-webgl.js) ------------------
+//
+// 16-scene-webgl.js left the base scene3d chunk. These tests pin the three
+// behaviours the split must not break:
+//   1. A WebGL page fetches the chunk and draws with WebGL.
+//   2. A WebGPU page does NOT fetch the chunk at mount.
+//   3. A page that cannot reach the chunk keeps walking the ladder to canvas2d
+//      instead of stalling on a dead renderer.
+
+function scene3dWebGLSplitManifest(mountID, props) {
+  return {
+    runtime: { path: "/gosx/runtime.wasm" },
+    engines: [
+      {
+        id: "gosx-engine-" + mountID,
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: mountID,
+        jsExport: "GoSXScene3D",
+        props: Object.assign({
+          width: 320,
+          height: 180,
+          scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+        }, props || {}),
+      },
+    ],
+  };
+}
+
+test("Scene3D WebGL page fetches the lazy WebGL chunk and draws with WebGL", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-lazy";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource } },
+    manifest: scene3dWebGLSplitManifest("scene-webgl-lazy", {}),
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  const webglFetches = env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js");
+  assert.equal(webglFetches.length, 1, "a WebGL page must fetch the WebGL chunk exactly once");
+  assert.ok(env.context.__gosx_scene3d_webgl_api, "the chunk must publish __gosx_scene3d_webgl_api");
+  assert.equal(typeof env.context.__gosx_scene3d_webgl_api.createScenePBRRendererOrFallback, "function");
+  assert.equal(typeof env.context.__gosx_scene3d_webgl_api.createSceneWaterRendererWebGL, "function");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.ok((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
+});
+
+test("Scene3D forceWebGL fetches the WebGL chunk and never fetches the WebGPU chunk", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-forced";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    enableWebGPU: true,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({ lost: new Promise(() => {}), features: new Set(), limits: {} }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource } },
+    manifest: scene3dWebGLSplitManifest("scene-webgl-forced", { forceWebGL: true }),
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js").length,
+    1,
+    "forceWebGL must force the WebGL fetch even where navigator.gpu exists",
+  );
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgpu.js"),
+    false,
+    "forceWebGL must skip WebGPU",
+  );
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+});
+
+test("Scene3D WebGPU page does not fetch the WebGL chunk at mount", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-unused";
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({ lost: new Promise(() => {}), features: new Set(), limits: {} }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              canvas.getContext("webgpu");
+              return { kind: "webgpu", render: function() {}, dispose: function() {} };
+            }
+          };
+        `,
+      },
+    },
+    manifest: scene3dWebGLSplitManifest("scene-webgl-unused", { preferWebGPU: true }),
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js"),
+    false,
+    "this is the whole saving: a WebGPU page must not download the WebGL renderer",
+  );
+});
+
+test("Scene3D null WebGPU adapter falls back through the lazy WebGL chunk", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-null-adapter";
+  const softwareWebGL = () => new FakeWebGLContext({
+    vendor: "Google Inc.",
+    renderer: "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device))",
+  });
+  const scene = {
+    backendCaps: {
+      capable: ["webgpu", "webgl", "canvas2d"],
+      degraded: {},
+      reasons: [],
+    },
+    objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }],
+  };
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    createWebGL2Context: softwareWebGL,
+    navigatorGPU: {
+      requestAdapter: async () => null,
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": { text: bootstrapFeatureScene3DWebGPUSource },
+    },
+    manifest: scene3dWebGLSplitManifest("scene-webgpu-null-adapter", {
+      preferWebGPU: true,
+      scene,
+    }),
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js").length,
+    1,
+    "a failed WebGPU probe must request the WebGL fallback chunk exactly once",
+  );
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.ok((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
+});
+
+test("Scene3D falls through to canvas2d when the lazy WebGL chunk publishes no API", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-broken-chunk";
+  const events = [];
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: false,
+    // An empty chunk body loads without error and publishes nothing, which is
+    // the failure ensureWebGLFeatureLoaded rejects on.
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgl.js": { text: "" },
+    },
+    manifest: scene3dWebGLSplitManifest("scene-webgl-broken-chunk", {}),
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.context.__gosx_emit = (level, cat, msg, fields) => {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.equal(
+    env.fetchCalls.some((call) => call.url === "/gosx/bootstrap-feature-scene3d-webgl.js"),
+    true,
+    "the mount must still try the chunk",
+  );
+  assert.equal(env.context.__gosx_scene3d_webgl_api, undefined);
+  assert.equal(
+    mount.getAttribute("data-gosx-scene3d-renderer"),
+    "canvas",
+    "an unreachable WebGL chunk must degrade to canvas2d, not to a dead renderer",
+  );
+});
+
+test("Scene3D base chunk keeps the backend-agnostic PBR helpers eager", () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  const api = env.context.__gosx_scene3d_api;
+  assert.ok(api, "base chunk must publish __gosx_scene3d_api");
+  // 15b-scene-planner.js, 10-runtime-scene-core.js and the WebGPU chunk read
+  // these. A WebGPU-only page never loads 16-scene-webgl.js, so a helper that
+  // slipped back into the lazy chunk would leave one of them undefined here and
+  // break WebGPU rendering with no test coverage short of a real GPU.
+  for (const name of [
+    "scenePBRViewMatrix",
+    "scenePBRProjectionMatrix",
+    "scenePBRProjectionMatrixForCamera",
+    "sceneShadowLightSpaceMatrix",
+    "sceneShadowComputeBounds",
+    "scenePBRObjectRenderPass",
+    "scenePBRDepthSort",
+    "generateInstancedGeometry",
+    "normalizeInstancedGeometryKind",
+    "hashLightContent",
+    "hashEnvironmentContent",
+  ]) {
+    assert.equal(typeof api[name], "function", `__gosx_scene3d_api.${name} must stay eager`);
+  }
+  for (const name of ["SCENE_POST_TONE_MAPPING", "SCENE_POST_FXAA", "SCENE_POST_CUSTOM_POST"]) {
+    assert.equal(typeof api[name], "string", `__gosx_scene3d_api.${name} must stay eager`);
+  }
+  // Nothing WebGL-specific may leak into the eager chunk.
+  assert.equal(env.context.__gosx_scene3d_webgl_api, undefined);
+});
+
+test("Scene3D spot lights get a usable default cone when the author omits Angle", () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  const api = env.context.__gosx_scene3d_api;
+
+  // Go's setNumeric drops zero values, so an unset SpotLight.Angle arrives as
+  // undefined. cos(0) admits no direction, so a 0 angle used to render nothing
+  // on WebGL and WebGPU alike.
+  const implicit = api.normalizeSceneLight({ kind: "spot", x: 0, y: 4, z: 0 }, 0, null);
+  assert.equal(implicit.kind, "spot");
+  assert.ok(implicit.angle > 0, "an omitted spot Angle must not collapse the cone");
+  assert.ok(Math.abs(implicit.angle - Math.PI / 6) < 1e-9, "the default cone is 30 degrees");
+
+  // An explicit zero is indistinguishable from unset over the wire, so it takes
+  // the same default rather than rendering an invisible light.
+  const explicitZero = api.normalizeSceneLight({ kind: "spot", angle: 0 }, 1, null);
+  assert.ok(Math.abs(explicitZero.angle - Math.PI / 6) < 1e-9);
+
+  // An authored angle passes through untouched, still clamped to [0, PI].
+  const authored = api.normalizeSceneLight({ kind: "spot", angle: Math.PI / 3 }, 2, null);
+  assert.ok(Math.abs(authored.angle - Math.PI / 3) < 1e-9);
+  const overWide = api.normalizeSceneLight({ kind: "spot", angle: 12 }, 3, null);
+  assert.ok(Math.abs(overWide.angle - Math.PI) < 1e-9);
+
+  // Only spot lights read angle. Every other kind keeps 0.
+  for (const kind of ["point", "directional", "ambient", "hemisphere", "rect-area"]) {
+    assert.equal(api.normalizeSceneLight({ kind }, 4, null).angle, 0, `${kind} must keep angle 0`);
+  }
+});
+
+test("16c-scene-shared-pbr.js stays free of WebGL context calls", () => {
+  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.js"), "utf8");
+  // Strip line comments so prose about WebGL cannot trip the scan.
+  const code = shared.split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
+  assert.doesNotMatch(code, /\bgl\s*\./, "16c must stay backend-agnostic; a gl. call means the WebGL split leaked back");
+  assert.doesNotMatch(code, /WebGL2RenderingContext|createProgram|getContext/,
+    "16c must not touch a rendering context");
 });
 
 // --- postfx-recovery / device-lost: handleSceneWebGPUProbeReady used to
@@ -16351,7 +16704,7 @@ function sceneCoreSourceRange(startAnchor, endAnchor) {
 }
 
 function loadSceneAdaptiveQualityAPI() {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const source = readSceneMountSrc();
   const start = source.indexOf("function createSceneAdaptiveQualityState");
   const end = source.indexOf("function applyScenePostFXState", start);
   assert.notEqual(start, -1, "adaptive controller start anchor missing");
@@ -16426,7 +16779,7 @@ test("Scene3D adaptive profiles start balanced and expose exact frame contract",
   assert.equal(mount.getAttribute("data-gosx-scene3d-quality-requested"), "balanced");
   assert.equal(mount.getAttribute("data-gosx-scene3d-quality-active"), "balanced");
   assert.equal(mount.__gosxScene3DQualityState.profile, state.activeProfile);
-  const mountSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mountSource = readSceneMountSrc();
   assert.match(mountSource, /qualityEnabled: qualityEnabled,[\s\S]{0,320}qualityProfile: qualityProfile,[\s\S]{0,320}performanceMeasurement: adaptiveQuality\.lastMeasurement/);
 });
 
@@ -16436,7 +16789,7 @@ test("Scene3D adaptive config objects default enabled and disabled mode sends no
   const disabled = api.createSceneAdaptiveQualityState({ adaptiveQuality: { enabled: false }, qualityTier: "balanced" }, {}, {});
   assert.equal(enabled.enabled, true);
   assert.equal(disabled.enabled, false);
-  const mountSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mountSource = readSceneMountSrc();
   assert.match(mountSource, /const qualityProfile = qualityEnabled && adaptiveQuality\.activeProfile[\s\S]{0,100}: null/);
 });
 
@@ -19390,9 +19743,17 @@ test("Scene3D public command API retries lazy command chunk load after failure",
   const commands = [{ kind: 14, data: { effects: [{ name: "retry", uniforms: { amount: 1 } }] } }];
   const applied = [];
   let attempts = 0;
+  // Count and fail only the command chunk. The base scene3d chunk also warm
+  // starts the WebGL chunk on a browser with no navigator.gpu, so a global
+  // counter would spend the injected failure on the wrong script.
   env.document.scriptLoader = function(src, scriptElement) {
-    attempts += 1;
     env.fetchCalls.push({ url: src, init: {} });
+    const isCommandChunk = String(src).indexOf("bootstrap-feature-scene3d-command.js") >= 0;
+    if (!isCommandChunk) {
+      setTimeout(() => { scriptElement.onload({}); }, 0);
+      return;
+    }
+    attempts += 1;
     setTimeout(() => {
       if (attempts === 1) {
         scriptElement.onerror(new Error("script not found: " + src));
@@ -21349,10 +21710,7 @@ test("bootstrap video follow sync consumes binary heartbeats and answers pings",
 test("video sync binary decode parses a 0x04 pong frame into an echoedTimestamp", () => {
   // Extract the module-private decode helpers from the unminified source so we
   // can exercise the new 0x04 case directly without a full DOM/brain mount.
-  const videoSource = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "30-tail.js"),
-    "utf8",
-  );
+  const videoSource = readBootstrapTailSrc();
   function extractFn(name) {
     const marker = "function " + name + "(";
     const start = videoSource.indexOf(marker);
@@ -23325,7 +23683,7 @@ test("chooseSceneBackend does not invent webgl for webgpu-only backendCaps", () 
 });
 
 test("Scene3D renderer recovery respects backendCaps fallbacks", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const source = readSceneMountSrc();
   assert.match(source, /function restoreSceneWebGLRenderer\(reason\) \{[\s\S]*sceneBackendCapsAllowsKind\(sceneBackendCapsOf\(props\), "webgl"\)/);
   assert.match(source, /const allowWebGLFallback = sceneBackendCapsAllowsKind\(backendCaps, "webgl"\)/);
   assert.match(source, /const allowCanvasFallback = sceneBackendCapsAllowsKind\(backendCaps, "canvas2d"\)/);
@@ -24107,6 +24465,11 @@ function makeFakeGPUDevice(options) {
   const validateBindings = Boolean(options && options.validateBindings);
   const timestampQuery = Boolean(options && options.timestampQuery);
   const timestampEncoder = !options || options.timestampEncoder !== false;
+  // writeTimestamp is a finer switch than timestampEncoder. Chromium removed
+  // encoder.writeTimestamp but kept resolveQuerySet and copyBufferToBuffer, so a
+  // test can model that exact implementation.
+  const encoderWriteTimestamp = !options || options.writeTimestamp !== false;
+  const renderBundles = Boolean(options && options.renderBundles);
   function validateBindGroupLayoutDesc(desc) {
     if (!validateBindings) return;
     const entries = (desc && desc.entries) || [];
@@ -24254,6 +24617,10 @@ function makeFakeGPUDevice(options) {
     writeTextureCalls: [],
     copyExternalCalls: [],
     copyBufferToTextureCalls: [],
+    // Render-bundle recording. renderBundleEncoders holds every encoder the
+    // renderer opened; renderBundles holds every finished bundle.
+    renderBundleEncoders: [],
+    renderBundles: [],
   };
   var textureSeq = 0;
   function makePass(descriptor, kind) {
@@ -24262,6 +24629,8 @@ function makeFakeGPUDevice(options) {
       descriptor,
       draws: [],
       drawIndirects: [],
+      drawIndexeds: [],
+      indexBuffers: [],
       pipelines: [],
       bindGroups: [],
       vertexBuffers: [],
@@ -24274,6 +24643,19 @@ function makeFakeGPUDevice(options) {
       },
       setVertexBuffer(slot, buffer, offset, size) {
         pass.vertexBuffers.push({ slot, buffer, offset, size });
+      },
+      setIndexBuffer(buffer, format, offset, size) {
+        pass.indexBuffers.push({ buffer, format, offset, size });
+      },
+      drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {
+        pass.drawIndexeds.push({
+          indexCount,
+          instanceCount: instanceCount == null ? 1 : instanceCount,
+          firstIndex: firstIndex == null ? 0 : firstIndex,
+          baseVertex: baseVertex == null ? 0 : baseVertex,
+          firstInstance: firstInstance == null ? 0 : firstInstance,
+          pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
+        });
       },
       draw(vertexCount, instanceCount, firstVertex, firstInstance) {
         const values = [
@@ -24306,10 +24688,17 @@ function makeFakeGPUDevice(options) {
         });
       },
       dispatchWorkgroups() {},
+      // executeBundles records a render-bundle replay. Tests assert on
+      // executedBundles to prove the renderer replayed rather than re-encoded.
+      executeBundles(bundles) {
+        const list = Array.isArray(bundles) ? bundles : [bundles];
+        for (const item of list) pass.executedBundles.push(item);
+      },
       end() {
         pass.ended = true;
       },
     };
+    pass.executedBundles = [];
     return pass;
   }
   const device = {
@@ -24424,8 +24813,19 @@ function makeFakeGPUDevice(options) {
         copyBufferToBuffer(_source, _sourceOffset, destination) {
           if (timestampQuery && destination && destination._backing) {
             const values = new BigUint64Array(destination._backing);
-            values[0] = 0n;
-            values[1] = 4_000_000n;
+            if (values.length >= 4) {
+              // The per-pass ring resolves four stamps: shadow begin/end then
+              // main begin/end. Give them a coherent ramp so the renderer's
+              // millisecond arithmetic can be asserted: shadow 1 ms, main
+              // 2.5 ms, whole scene 4 ms.
+              values[0] = 0n;
+              values[1] = 1_000_000n;
+              values[2] = 1_500_000n;
+              values[3] = 4_000_000n;
+            } else {
+              values[0] = 0n;
+              values[1] = 4_000_000n;
+            }
           }
         },
         copyBufferToTexture(source, destination, size) {
@@ -24449,6 +24849,8 @@ function makeFakeGPUDevice(options) {
         delete encoder.writeTimestamp;
         delete encoder.resolveQuerySet;
         delete encoder.copyBufferToBuffer;
+      } else if (!encoderWriteTimestamp) {
+        delete encoder.writeTimestamp;
       }
       return encoder;
     },
@@ -24457,69 +24859,109 @@ function makeFakeGPUDevice(options) {
       return Promise.resolve(null);
     },
   };
+  // Render bundles are opt-in. Without createRenderBundleEncoder the renderer
+  // takes the direct path, which is what every pre-existing harness test
+  // asserts on. options.renderBundles: true turns the bundled path on so a test
+  // can prove the encode, the replay and the invalidation.
+  if (renderBundles) {
+    device.createRenderBundleEncoder = function(descriptor) {
+      const bundleEncoder = makePass(descriptor, "bundle");
+      state.renderBundleEncoders.push(bundleEncoder);
+      bundleEncoder.finish = function(finishDescriptor) {
+        const bundle = {
+          __kind: "renderBundle",
+          label: (finishDescriptor && finishDescriptor.label) || (descriptor && descriptor.label) || "",
+          descriptor,
+          recorded: bundleEncoder,
+        };
+        state.renderBundles.push(bundle);
+        return bundle;
+      };
+      return bundleEncoder;
+    };
+  }
   return { device, state };
 }
 
-// freshFeatureBundleSource concatenates the CURRENT bootstrap-src/*.js files
-// for a given feature bundle, mirroring build-bootstrap.mjs's output
-// definition for that bundle (same file list and order -- see the
-// "bootstrap-feature-scene3d.js" / "bootstrap-feature-scene3d-webgpu.js"
-// entries in build-bootstrap.mjs), but WITHOUT invoking esbuild/minification
-// or writing anything to disk. The committed bootstrap-feature-*.js bundle
-// artifacts (bootstrapFeatureScene3DSource / bootstrapFeatureScene3DWebGPUSource
-// above) are prebuilt snapshots that go stale the moment a bootstrap-src file
-// changes; most tests intentionally exercise that committed snapshot (it's
-// what ships), but a test that needs to exercise a bootstrap-src edit BEFORE
-// the bundles are regenerated (e.g. this file's pool-pass Selena-routing test)
-// can opt into a bundle built fresh from bootstrap-src via this helper. If
-// build-bootstrap.mjs's file list for a bundle changes, update the matching
-// list below.
-function freshFeatureBundleSource(name, options) {
+// bootstrapChunkManifest is the generated chunk manifest that
+// cmd/buildbootstrap writes on every build. It is the single source of truth
+// for which bootstrap-src files each bundle carries, and in what order. This
+// file used to repeat those lists by hand, so a manifest edit silently made
+// the fresh-bundle helper below build a different bundle from the one that
+// ships. `go run ./cmd/buildbootstrap --check` fails when chunks.json is stale.
+const bootstrapChunkManifest = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "bootstrap-src", "chunks.json"), "utf8"),
+);
+
+// bootstrapChunkSources returns the bootstrap-src paths for one bundle, in
+// build order. The paths in chunks.json are relative to client/js.
+function bootstrapChunkSources(bundleName) {
+  const chunk = bootstrapChunkManifest.chunks.find((c) => c.name === bundleName);
+  if (!chunk) {
+    throw new Error("bootstrapChunkSources: unknown bundle " + bundleName);
+  }
+  return chunk.sources;
+}
+
+// readBootstrapSrc joins the named bootstrap-src files in the given order. Use
+// it when a test inspects source text that one file no longer holds alone.
+function readBootstrapSrc(...names) {
+  return names
+    .map((name) => fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8"))
+    .join("\n");
+}
+
+// readSceneMountSrc joins every 20x-scene-mount*.js file in build order. The
+// old single 20-scene-mount.js was 10_127 lines and 43 percent of the base
+// Scene3D chunk; it is now nine files. A source assertion about the mount path
+// must read them all.
+function readSceneMountSrc() {
   const srcDir = path.join(__dirname, "bootstrap-src");
+  const parts = fs.readdirSync(srcDir).filter((n) => /^20[a-z]?-scene-mount.*\.js$/.test(n));
+  // Build order: 20a..20h first, then the engine factory in 20-scene-mount.js.
+  parts.sort();
+  const factory = parts.indexOf("20-scene-mount.js");
+  if (factory !== -1) parts.push(parts.splice(factory, 1)[0]);
+  return parts.map((n) => fs.readFileSync(path.join(srcDir, n), "utf8")).join("\n");
+}
+
+// readWebGPUBackendSrc joins the WebGPU backend source files. The Selena
+// uniform packer moved out of createSceneWebGPURenderer into 16a1, so a source
+// assertion about the backend must read both files.
+function readWebGPUBackendSrc() {
+  return readBootstrapSrc("16a-scene-webgpu.js", "16a1-scene-webgpu-selena-uniforms.js");
+}
+
+// readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
+// single 30-tail.js is now that file set.
+function readBootstrapTailSrc() {
+  const srcDir = path.join(__dirname, "bootstrap-src");
+  return readBootstrapSrc(
+    ...fs.readdirSync(srcDir).filter((n) => /^30[a-z]-tail-.*\.js$/.test(n)).sort(),
+  );
+}
+
+// freshFeatureBundleSource concatenates the CURRENT bootstrap-src/*.js files
+// for a given feature bundle, using the generated chunk manifest, but WITHOUT
+// invoking esbuild/minification or writing anything to disk. The committed
+// bootstrap-feature-*.js bundle artifacts (bootstrapFeatureScene3DSource /
+// bootstrapFeatureScene3DWebGPUSource above) are prebuilt snapshots that go
+// stale the moment a bootstrap-src file changes; most tests intentionally
+// exercise that committed snapshot (it's what ships), but a test that needs to
+// exercise a bootstrap-src edit BEFORE the bundles are regenerated (for
+// example this file's pool-pass Selena-routing test) can opt into a bundle
+// built fresh from bootstrap-src via this helper.
+function freshFeatureBundleSource(name, options) {
+  const clientJS = __dirname;
   const opts = options || {};
   function read(rel) {
-    const source = fs.readFileSync(path.join(srcDir, rel), "utf8");
-    if (rel === "16-scene-webgl.js" && opts.exportWaterRendererForTest) {
+    const source = fs.readFileSync(path.join(clientJS, rel), "utf8");
+    if (rel.endsWith("16-scene-webgl.js") && opts.exportWaterRendererForTest) {
       return source + "\nwindow.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n";
     }
     return source;
   }
-  if (name === "scene3d") {
-    return [
-      "26d-feature-scene3d-prefix.js",
-      "10-runtime-primitives.js",
-      "10-runtime-scene-core.js",
-      "11-scene-math.js",
-      "11a-scene-decompress.js",
-      "12-scene-geometry.js",
-      "13-scene-material.js",
-      "14-scene-lighting.js",
-      "15-scene-ir-schema.js",
-      "15-scene-ir-schema-strict.js",
-      "15-scene-draw-plan.js",
-      "15b-scene-planner.js",
-      "15c-scene-backend-registry.js",
-      "15a-scene-postfx-shared.js",
-      "16b-scene-hdr.js",
-      "16b-scene-compute.js",
-      "16-scene-webgl.js",
-      "16z-scene-webgpu-probe.js",
-      "17-scene-input.js",
-      "18-scene-canvas.js",
-      "19b-scene-control-forms.js",
-      "20-scene-mount.js",
-      "26d-feature-scene3d-suffix.js",
-    ].map(read).join("\n");
-  }
-  if (name === "scene3d-webgpu") {
-    return [
-      "26e-feature-scene3d-webgpu-prefix.js",
-      "16a-scene-webgpu.js",
-      "16b-scene-compute.js",
-      "26e-feature-scene3d-webgpu-suffix.js",
-    ].map(read).join("\n");
-  }
-  throw new Error("freshFeatureBundleSource: unknown bundle " + name);
+  return bootstrapChunkSources("bootstrap-feature-" + name + ".js").map(read).join("\n");
 }
 
 // createBoardWebGPUHarness boots the runtime + scene3d + scene3d-webgpu chunks
@@ -26034,10 +26476,14 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
   const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  // The WebGL2 water runtime moved into the lazily fetched WebGL chunk. Load
+  // the chunk the way ensureWebGLFeatureLoaded does, then read the factory the
+  // chunk publishes.
   runScript(
-    freshFeatureBundleSource("scene3d", { exportWaterRendererForTest: true }),
+    freshFeatureBundleSource("scene3d-webgl", { exportWaterRendererForTest: true }),
     env.context,
-    "bootstrap-feature-scene3d-water-test.js",
+    "bootstrap-feature-scene3d-webgl.js",
   );
   const createWaterRenderer = env.context.__gosx_test_create_water_webgl;
   assert.equal(typeof createWaterRenderer, "function");
@@ -29018,7 +29464,20 @@ test("capability/drift: WebGPU-only capabilities are explicit in backend JSON", 
   assert.equal(webglCaps["water-object-texture-pass"], true, "WebGL2 capabilities JSON must declare water-object-texture-pass: true (runtime water renderer)");
   assert.ok("water-object-texture-pass" in webglCaps, "water-object-texture-pass must be explicit in WebGL2 capabilities JSON");
   assert.equal(webglCaps["water-simulation"], true, "WebGL2 capabilities JSON must declare water-simulation: true");
-  assert.equal(webglCaps["water-object-mesh-shadow-pass"], false, "WebGL2 capabilities JSON must declare water-object-mesh-shadow-pass: false");
+  // The mesh-shadow cell is FALSE for WebGL2, and that is a corroborated claim
+  // rather than a preference. A mesh shadow rasterizes the caster's geometry.
+  // Both WebGL2 shadow programs bind an empty vertex array object and draw one
+  // full-screen triangle, so both shade an analytic primitive. The identifier
+  // objectMeshShadow appears zero times in 16-scene-webgl.js. See
+  // scene/capability/water_shadow_test.go, which reads both renderers.
+  assert.equal(webglCaps["water-object-mesh-shadow-pass"], false, "WebGL2 capabilities JSON must declare water-object-mesh-shadow-pass: false (no mesh rasterization in the WebGL2 water renderer)");
+  assert.ok("water-object-mesh-shadow-pass" in webglCaps, "water-object-mesh-shadow-pass must be explicit in WebGL2 capabilities JSON (not absent)");
+  // ibl is false on BOTH backends. The WebGL2 path tone maps the environment to
+  // an 8-bit texture and taps it twice; it holds no samplerCube, no
+  // textureCubeLod and no BRDF lookup table. See assetpipe/ibl for the products
+  // a real consumer needs.
+  assert.equal(webglCaps["ibl"], false, "WebGL2 capabilities JSON must declare ibl: false (tone-mapped equirect is not prefiltered IBL)");
+  assert.equal(webgpuCaps["ibl"], false, "WebGPU capabilities JSON must declare ibl: false");
 });
 
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {
@@ -30198,13 +30657,692 @@ test("gpu-cull T2a: createSceneInstancedCullSystem creates buffers with correct 
     "drawArgsBuf must have STORAGE usage (atomicAdd in shader)");
 });
 
-test("gpu-cull T2b: absent cullKernelWGSL → null system (no buffers allocated)", async () => {
+// -------------------------------------------------------------------------
+// Per-pass GPU timing through the STANDARD timestampWrites API.
+//
+// encoder.writeTimestamp, which the frame timer uses, is not part of the
+// WebGPU standard and Chromium removed it. timestampWrites on the render-pass
+// descriptor is the standard path, and it also yields a time per pass.
+// -------------------------------------------------------------------------
+
+test("gpu pass timing: the shadow and main passes carry timestampWrites", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { timestampQuery: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ id: "m", color: "#8de1ff" }],
+      lights: [{ id: "sun", kind: "directional", directionX: 0, directionY: -1, directionZ: -0.2, castShadow: true }],
+      objects: bundleBoxes(2, 1),
+    },
+  }, { tier: "full" });
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], api.sceneStateLights(state), {}, 0, [], [], [], [], [], 0, false,
+  );
+
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+
+  const stamped = harness.fake.state.renderPasses.filter((p) => p.descriptor && p.descriptor.timestampWrites);
+  assert.ok(stamped.length >= 2, "the shadow pass and the main pass must both be stamped");
+  const indices = stamped.map((p) => [
+    p.descriptor.timestampWrites.beginningOfPassWriteIndex,
+    p.descriptor.timestampWrites.endOfPassWriteIndex,
+  ]);
+  // Four stamps per ring entry: shadow begin/end at base+0/1, main begin/end at
+  // base+2/3. The base depends on which ring slot the frame took.
+  const base = indices[0][0];
+  assert.equal(base % 4, 0, "the shadow pair must start on a ring boundary");
+  assert.deepEqual(indices.slice(0, 2), [[base, base + 1], [base + 2, base + 3]]);
+  const querySets = new Set(stamped.map((p) => p.descriptor.timestampWrites.querySet));
+  assert.equal(querySets.size, 1, "both passes must write into one query set");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing"), "pending");
+});
+
+test("gpu pass timing: a second shadow pass is not stamped over the first", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { timestampQuery: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  // Two directional casters open two shadow passes. The ring holds one pair, so
+  // stamping both would report the second and hide the first.
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ id: "m", color: "#8de1ff" }],
+      lights: [
+        { id: "sun", kind: "directional", directionX: 0, directionY: -1, directionZ: -0.2, castShadow: true },
+        { id: "fill", kind: "directional", directionX: 1, directionY: -1, directionZ: 0, castShadow: true },
+      ],
+      objects: bundleBoxes(2, 1),
+    },
+  }, { tier: "full" });
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], api.sceneStateLights(state), {}, 0, [], [], [], [], [], 0, false,
+  );
+
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  const stamped = harness.fake.state.renderPasses.filter((p) => p.descriptor && p.descriptor.timestampWrites);
+  const shadowStamps = stamped.filter((p) => p.descriptor.timestampWrites.beginningOfPassWriteIndex % 4 === 0);
+  assert.equal(shadowStamps.length, 1, "exactly one shadow pass may be stamped per frame");
+});
+
+test("gpu pass timing: the resolved stamps become per-pass milliseconds", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { timestampQuery: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ id: "m", color: "#8de1ff" }],
+      lights: [{ id: "sun", kind: "directional", directionX: 0, directionY: -1, directionZ: -0.2, castShadow: true }],
+      objects: bundleBoxes(2, 1),
+    },
+  }, { tier: "full" });
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], api.sceneStateLights(state), {}, 0, [], [], [], [], [], 0, false,
+  );
+
+  // The readback is deliberately delayed by two frames, so drive several frames
+  // and drain the async work between them.
+  for (let frame = 0; frame < 5; frame += 1) {
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 17, active: true });
+    await flushAsyncWork();
+  }
+
+  const mount = harness.mount;
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing"), "measured");
+  // The fake resolves [0, 1e6, 1.5e6, 4e6] ns with a 1 ns period.
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-shadow-ms"), "1.000");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-main-ms"), "2.500");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-scene-ms"), "4.000");
+});
+
+test("gpu pass timing: a device without timestamp-query reports the timer as unavailable", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  harness.renderer.render(bundleMeshScene(api, bundleBoxes(1, 1)), { width: 64, height: 64 }, { nowMS: 0, active: true });
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing"), "timer-unavailable");
+  const stamped = harness.fake.state.renderPasses.filter((p) => p.descriptor && p.descriptor.timestampWrites);
+  assert.equal(stamped.length, 0, "no pass may carry timestampWrites without the feature");
+});
+
+test("gpu pass timing: the pass timer feeds the shared sample when writeTimestamp is absent", async () => {
+  // This is the Chromium case: timestamp-query is present, encoder.writeTimestamp
+  // is not. Before the pass timer the page got no GPU time at all.
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { timestampQuery: true, writeTimestamp: false },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ id: "m", color: "#8de1ff" }],
+      lights: [{ id: "sun", kind: "directional", directionX: 0, directionY: -1, directionZ: -0.2, castShadow: true }],
+      objects: bundleBoxes(2, 1),
+    },
+  }, { tier: "full" });
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], api.sceneStateLights(state), {}, 0, [], [], [], [], [], 0, false,
+  );
+
+  for (let frame = 0; frame < 5; frame += 1) {
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 17, active: true });
+    await flushAsyncWork();
+  }
+  const mount = harness.mount;
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing"), "measured");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "measured-pass",
+    "the whole-scene span must stand in for the missing frame timer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-ms"), "4.000");
+});
+
+// -------------------------------------------------------------------------
+// Render bundles, executed end to end against the recording fake device.
+//
+// The unit tests for the recorder, the token stream and the invalidation live in
+// 16a-scene-webgpu-bundle.test.mjs. These tests drive the REAL renderer through
+// real frames and assert on what the device saw: one bundle encode, then
+// replays, then a fresh encode when the draw set moves.
+// -------------------------------------------------------------------------
+
+// bundleMeshScene builds a mesh-only scene. Mesh-only matters: water, points,
+// labels, screen lines, surfaces and world lines all keep the direct path.
+function bundleMeshScene(api, objects) {
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ id: "m", color: "#8de1ff", roughness: 0.4, metalness: 0.1 }],
+      objects: objects,
+    },
+  }, { tier: "full" });
+  const withMaterials = api.sceneStateObjectsWithMaterials(state);
+  return api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    withMaterials, [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+  );
+}
+
+function bundleBoxes(count, scale) {
+  const out = [];
+  for (let i = 0; i < count; i += 1) {
+    out.push({ id: "box-" + i, kind: "box", width: scale, height: scale, depth: scale, x: i * 0.5, y: 0, z: 0, material: "m", wireframe: false });
+  }
+  return out;
+}
+
+test("render bundles: a static mesh scene encodes once and replays after", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { renderBundles: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const bundle = bundleMeshScene(api, bundleBoxes(3, 1));
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+
+  const mount = harness.mount;
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "encoded",
+    "the first frame must encode a bundle");
+  assert.equal(harness.fake.state.renderBundles.length, 1);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-reason"), "");
+  const draws = Number(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-draws"));
+  assert.ok(draws >= 3, "all three boxes must be inside the bundle, got " + draws);
+
+  // The bundle encoder, not the main pass, carried the draws.
+  const bundleEncoder = harness.fake.state.renderBundleEncoders[0];
+  assert.equal(bundleEncoder.draws.length, draws);
+  const mainPass = harness.fake.state.renderPasses[harness.fake.state.renderPasses.length - 1];
+  assert.equal(mainPass.executedBundles.length, 1, "the main pass must replay the bundle");
+
+  for (let frame = 1; frame <= 3; frame += 1) {
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 17, active: true });
+    assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "replayed",
+      "frame " + frame + " must replay, not re-encode");
+  }
+  assert.equal(harness.fake.state.renderBundles.length, 1, "four frames, one encode");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-encodes"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-replays"), "3");
+});
+
+test("render bundles: adding an object re-encodes instead of replaying a stale bundle", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { renderBundles: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  const mount = harness.mount;
+
+  harness.renderer.render(bundleMeshScene(api, bundleBoxes(2, 1)), { width: 64, height: 64 }, { nowMS: 0, active: true });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "encoded");
+  const firstDraws = Number(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-draws"));
+
+  // A third box is a new draw. Replaying the two-box bundle would drop it from
+  // the image with no error anywhere.
+  harness.renderer.render(bundleMeshScene(api, bundleBoxes(3, 1)), { width: 64, height: 64 }, { nowMS: 17, active: true });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "encoded",
+    "a changed draw set must re-encode");
+  assert.equal(harness.fake.state.renderBundles.length, 2);
+  assert.ok(
+    Number(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-draws")) > firstDraws,
+    "the new bundle must carry the extra draw",
+  );
+
+  // Removing it again must also re-encode rather than replay the three-box
+  // bundle, which would draw a box that is no longer in the scene.
+  harness.renderer.render(bundleMeshScene(api, bundleBoxes(2, 1)), { width: 64, height: 64 }, { nowMS: 34, active: true });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "encoded");
+  assert.equal(harness.fake.state.renderBundles.length, 3);
+});
+
+test("render bundles: a scene the bundled set excludes keeps the direct path", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { renderBundles: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  // Points draw after the meshes in the same render pass, and the bundled set
+  // does not carry them, so the frame must not bundle at all.
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ id: "m", color: "#8de1ff" }],
+      objects: bundleBoxes(2, 1),
+    },
+  }, { tier: "full" });
+  const withMaterials = api.sceneStateObjectsWithMaterials(state);
+  const pointBundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    withMaterials, [], [], [], [], {}, 0,
+    [{ id: "stars", positions: [0, 0, 0, 1, 1, 1], size: 2, color: "#ffffff" }],
+    [], [], [], [], 0, false,
+  );
+
+  harness.renderer.render(pointBundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "direct");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-reason"), "points");
+  assert.equal(harness.fake.state.renderBundles.length, 0, "no bundle may be built");
+  // And the draws must still reach the main pass exactly once.
+  const mainPass = harness.fake.state.renderPasses[harness.fake.state.renderPasses.length - 1];
+  assert.ok(mainPass.draws.length > 0, "the direct path must still draw");
+});
+
+test("render bundles: a page can force the direct path", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { renderBundles: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.env.context.__gosx_scene3d_webgpu_render_bundles = false;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  harness.renderer.render(bundleMeshScene(api, bundleBoxes(2, 1)), { width: 64, height: 64 }, { nowMS: 0, active: true });
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "direct");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-reason"), "disabled");
+  assert.equal(harness.fake.state.renderBundles.length, 0);
+});
+
+test("render bundles: a device without createRenderBundleEncoder still renders", async () => {
+  // The fake device omits the method unless a test asks for it, which is the
+  // honest degrade: an implementation without render bundles draws directly.
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  harness.renderer.render(bundleMeshScene(api, bundleBoxes(2, 1)), { width: 64, height: 64 }, { nowMS: 0, active: true });
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "direct");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-reason"), "disabled");
+  const mainPass = harness.fake.state.renderPasses[harness.fake.state.renderPasses.length - 1];
+  assert.ok(mainPass.draws.length > 0);
+});
+
+// bundleInstancedMesh builds one instanced mesh with `count` identity-scaled
+// transforms spread along a grid, and no per-instance colours.
+//
+// The transforms are a PLAIN Array, not a Float32Array. instancedMeshTransformData
+// accepts either, but it tests `instanceof Float32Array`, and a typed array built
+// in this host realm is not an instance of the sandbox realm's constructor.
+// Array.isArray works across realms, so a plain Array is the correct shape for a
+// vm-hosted harness. A real page hands over a Float32Array from its own realm and
+// takes the other branch.
+function bundleInstancedMesh(count, scale) {
+  const transforms = new Array(count * 16).fill(0);
+  for (let i = 0; i < count; i += 1) {
+    const b = i * 16;
+    transforms[b + 0] = scale;
+    transforms[b + 5] = scale;
+    transforms[b + 10] = scale;
+    transforms[b + 15] = 1;
+    transforms[b + 12] = (i % 32) * 0.5;
+    transforms[b + 13] = Math.floor(i / 32) * 0.5;
+  }
+  return {
+    id: "ring",
+    kind: "box",
+    width: 1,
+    height: 1,
+    depth: 1,
+    count,
+    instanceCount: count,
+    transforms,
+    materialIndex: 0,
+    castShadow: false,
+    receiveShadow: false,
+  };
+}
+
+test("gpu-driven draw: a large instanced mesh culls on the GPU and draws indirectly", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { renderBundles: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  // No authored cullKernelWGSL. Before the built-in kernel this mesh drew every
+  // instance every frame with the CPU rebuilding the draw list.
+  const mesh = bundleInstancedMesh(512, 1);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 40, fov: 60, near: 0.05, far: 256 },
+    [], [], [], [], [], {}, 0, [], [mesh], [], [], [], 0, false,
+  );
+
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  await flushAsyncWork();
+  await flushAsyncWork();
+  const mount = harness.mount;
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-cull-builtin-systems"), "1",
+    "the mesh must have taken the renderer's own cull kernel");
+
+  // Second frame: the pipeline has resolved, so the draw must go indirect.
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 17, active: true });
+  const indirect = harness.fake.state.renderBundleEncoders
+    .concat(harness.fake.state.renderPasses)
+    .reduce((total, pass) => total + pass.drawIndirects.length, 0);
+  assert.ok(indirect >= 1, "the compacted survivors must be drawn with drawIndirect");
+  assert.ok(Number(mount.getAttribute("data-gosx-scene3d-webgpu-cull-dispatches")) >= 1);
+
+  // Third frame with the same transforms and the same camera: the whole cull
+  // dispatch must be skipped, and the bundle must replay. The GPU still owns the
+  // instance count, so the image is right without any CPU work at all.
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 34, active: true });
+  assert.ok(
+    Number(mount.getAttribute("data-gosx-scene3d-webgpu-cull-skipped-dispatches")) >= 1,
+    "a static instanced scene must stop re-dispatching the cull",
+  );
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "replayed");
+});
+
+test("gpu-driven draw: a small instanced mesh stays on the draw-all path", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  // Below the threshold one compute dispatch plus one indirect draw costs more
+  // than drawing every instance.
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 40, fov: 60, near: 0.05, far: 256 },
+    [], [], [], [], [], {}, 0, [], [bundleInstancedMesh(8, 1)], [], [], [], 0, false,
+  );
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  await flushAsyncWork();
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-cull-builtin-systems"), "0");
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 17, active: true });
+  const mainPass = harness.fake.state.renderPasses[harness.fake.state.renderPasses.length - 1];
+  assert.equal(mainPass.drawIndirects.length, 0, "a small mesh must draw directly");
+  assert.ok(mainPass.draws.some((d) => d.instanceCount === 8), "all eight instances must draw");
+});
+
+test("gpu-driven draw: per-instance colours keep a mesh off the cull path", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  // The compacted 80-byte record's last vec4 is pick data, not colour, so the
+  // cull vertex shader hands the fragment shader white. A coloured mesh routed
+  // through it would lose its colours, which is a silent wrong image.
+  const mesh = bundleInstancedMesh(512, 1);
+  mesh.colors = new Array(512 * 4).fill(0.5);
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 40, fov: 60, near: 0.05, far: 256 },
+    [], [], [], [], [], {}, 0, [], [mesh], [], [], [], 0, false,
+  );
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  await flushAsyncWork();
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-cull-builtin-systems"), "0",
+    "a coloured instanced mesh must not be culled by the built-in kernel");
+});
+
+test("gpu-driven draw: a page can turn the built-in cull off", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.env.context.__gosx_scene3d_webgpu_builtin_cull = false;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 40, fov: 60, near: 0.05, far: 256 },
+    [], [], [], [], [], {}, 0, [], [bundleInstancedMesh(512, 1)], [], [], [], 0, false,
+  );
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  await flushAsyncWork();
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-cull-builtin-systems"), "0");
+});
+
+test("render bundles: the frame bind group survives across frames", async () => {
+  // The bundle can only replay because the frame bind group is memoized. Prove
+  // the memo directly: a second frame must not build another one.
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { renderBundles: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  const bundle = bundleMeshScene(api, bundleBoxes(2, 1));
+
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  const afterFirst = harness.fake.state.bindGroups.length;
+  harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 17, active: true });
+  assert.equal(
+    harness.fake.state.bindGroups.length,
+    afterFirst,
+    "a static frame must create no new bind group at all",
+  );
+});
+
+// T2b changed contract. An absent cullKernelWGSL used to return null, which
+// meant a mesh only ever culled on the GPU when the author wrote a kernel. The
+// renderer now owns a kernel of its own, so an absent authored kernel builds a
+// system that runs the built-in one. The eligibility gate that decides WHICH
+// meshes take that path lives in 16a (webGPUBuiltinCullEligible); this factory
+// builds whatever it is asked for.
+test("gpu-cull T2b: absent cullKernelWGSL → built-in kernel system", async () => {
   const { device } = makeFakeGPUDevice();
   const harness = await createCullSystemHarness(device);
   const api = harness.api;
 
   const sys = api.createSceneInstancedCullSystem(device, { id: "no-kernel", instanceCount: 4 });
-  assert.equal(sys, null, "absent cullKernelWGSL must return null (no system)");
+  assert.ok(sys, "absent cullKernelWGSL must fall back to the renderer's own kernel");
+  assert.equal(sys.usesBuiltinKernel, true);
+  const authored = api.createSceneInstancedCullSystem(device,
+    { id: "authored", instanceCount: 4, cullKernelWGSL: MINIMAL_CULL_WGSL });
+  assert.equal(authored.usesBuiltinKernel, false, "an authored kernel must win");
+});
+
+// The defect this pins: a constant radius drops an instance that its transform
+// scales up, so the instance vanishes while it is plainly on screen. The built-in
+// kernel must scale the radius per thread, exactly as cullWGSL does in
+// render/bundle/cull.go. Removing any of the three length() calls fails this.
+test("gpu-cull T2b2: the built-in kernel scales the radius per instance", async () => {
+  const { device } = makeFakeGPUDevice();
+  const harness = await createCullSystemHarness(device);
+  const wgsl = harness.api.SCENE_INSTANCED_CULL_BUILTIN_WGSL;
+  void device;
+  assert.equal(typeof wgsl, "string");
+  assert.match(
+    wgsl,
+    /let scale = max\(length\(m\[0\]\.xyz\), max\(length\(m\[1\]\.xyz\), length\(m\[2\]\.xyz\)\)\);/,
+    "the kernel must take the largest of the three transform column lengths",
+  );
+  assert.match(wgsl, /if \(scale > 0\.0\) \{ radius = radius \* scale; \}/,
+    "the radius must be scaled, and a degenerate transform must keep the base radius");
+  assert.match(wgsl, /if \(d < -radius\) \{ return; \}/,
+    "the plane test must use the scaled radius");
+  // The input buffer's capacity runs past the live instance count and WebGPU
+  // zero-initializes a buffer, so a thread past the count would compact a
+  // zero-matrix record. It draws nothing, but it inflates the survivor count.
+  assert.match(
+    wgsl,
+    /if \(index >= min\(cull\.instanceCount, arrayLength\(&src\)\)\) \{ return; \}/,
+    "the thread guard must bound on the live instance count, not on the capacity",
+  );
+});
+
+test("gpu-cull T2b2b: the uniform carries the live instance count", async () => {
+  const fake = makeFakeGPUDeviceForCompute({});
+  const harness = await createCullSystemHarness(fake.device);
+  const api = harness.api;
+
+  const sys = api.createSceneInstancedCullSystem(fake.device, { id: "bounded", instanceCount: 500 });
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.ok(sys.isReady());
+  const encoder = fake.device.createCommandEncoder();
+  fake.state.writeBufferCalls.length = 0;
+  sys.update(fake.device, encoder, Array.from({ length: 6 }, () => [0, 0, 1, 10]), 36, new Float32Array(500 * 20), 500, {});
+  const uniform = fake.state.writeBufferCalls.filter((w) => w.buffer === sys.cullUniformBuf).pop();
+  assert.ok(uniform, "the uniform must be uploaded");
+  const words = new Uint32Array(uniform.data);
+  assert.equal(words[24], 36, "byte 96 is the vertex count");
+  assert.equal(words[26], 500, "byte 104 carries the live instance count");
+  assert.equal(words[27], 0, "byte 108 stays padding");
+  // Capacity runs past the count, which is exactly why the guard is needed.
+  assert.ok(sys.capacity > 500, `capacity ${sys.capacity} must exceed the count`);
+});
+
+test("gpu-cull T2b3: the CPU oracle matches the kernel's scale term", async () => {
+  const { device } = makeFakeGPUDevice();
+  const harness = await createCullSystemHarness(device);
+  const api = harness.api;
+
+  // Column-major mat4 with non-uniform scale 2, 3, 4.
+  const transforms = new Float32Array([
+    2, 0, 0, 0,
+    0, 3, 0, 0,
+    0, 0, 4, 0,
+    5, 6, 7, 1,
+  ]);
+  assert.equal(api.sceneInstanceColumnScale(transforms, 0), 4, "the largest column wins");
+  assert.equal(api.sceneInstanceCullRadius(1.5, transforms, 0), 6, "radius scales by the largest column");
+  // A degenerate transform must keep the base radius rather than collapse.
+  assert.equal(api.sceneInstanceCullRadius(1.5, new Float32Array(16), 0), 1.5);
+
+  const two = new Float32Array(32);
+  two.set(transforms, 0);
+  two.set([9, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], 16);
+  assert.equal(api.sceneInstancedMaxTransformScale(two, 2), 9, "the bound covers every instance");
+  assert.equal(api.sceneInstancedMaxTransformScale(new Float32Array(16), 1), 1,
+    "an all-zero transform must not report a zero bound");
+});
+
+test("gpu-cull T2b4: an authored kernel gets the conservative radius bound", async () => {
+  const fake = makeFakeGPUDeviceForCompute({});
+  const harness = await createCullSystemHarness(fake.device);
+  const api = harness.api;
+
+  const planes = Array.from({ length: 6 }, () => [0, 0, 1, 10]);
+  const encoder = fake.device.createCommandEncoder();
+
+  // An authored kernel may ignore per-instance scale entirely, so the JS side
+  // inflates the uniform radius by the largest instance scale. Over-including is
+  // safe; dropping a visible instance is not.
+  const authored = api.createSceneInstancedCullSystem(fake.device,
+    { id: "authored", instanceCount: 1, cullRadius: 2, cullKernelWGSL: MINIMAL_CULL_WGSL });
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.ok(authored.isReady());
+  fake.state.writeBufferCalls.length = 0;
+  authored.update(fake.device, encoder, planes, 36, new Float32Array(20), 1, { maxInstanceScale: 5 });
+  const authoredUniform = fake.state.writeBufferCalls.filter((w) => w.buffer === authored.cullUniformBuf).pop();
+  assert.ok(authoredUniform, "the uniform must be uploaded");
+  assert.equal(new Float32Array(authoredUniform.data)[25], 10, "2 * 5");
+
+  // The built-in kernel scales per thread, so inflating the uniform too would
+  // double-count and weaken the cull.
+  const builtin = api.createSceneInstancedCullSystem(fake.device,
+    { id: "builtin", instanceCount: 1, cullRadius: 2 });
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.ok(builtin.isReady());
+  fake.state.writeBufferCalls.length = 0;
+  builtin.update(fake.device, encoder, planes, 36, new Float32Array(20), 1, { maxInstanceScale: 5 });
+  const builtinUniform = fake.state.writeBufferCalls.filter((w) => w.buffer === builtin.cullUniformBuf).pop();
+  assert.equal(new Float32Array(builtinUniform.data)[25], 2, "the kernel owns the scale term");
+});
+
+test("gpu-cull T2b5: a repeated transform fingerprint skips the whole dispatch", async () => {
+  const fake = makeFakeGPUDeviceForCompute({});
+  const harness = await createCullSystemHarness(fake.device);
+  const api = harness.api;
+
+  const planes = Array.from({ length: 6 }, () => [0, 0, 1, 10]);
+  const sys = api.createSceneInstancedCullSystem(fake.device,
+    { id: "static", instanceCount: 2, cullKernelWGSL: MINIMAL_CULL_WGSL });
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.ok(sys.isReady());
+
+  const records = new Float32Array(40);
+  const encoder = fake.device.createCommandEncoder();
+
+  fake.state.writeBufferCalls.length = 0;
+  fake.state.computePasses.length = 0;
+  assert.equal(sys.update(fake.device, encoder, planes, 36, records, 2, { transformFingerprint: "abc" }), true);
+  assert.equal(fake.state.computePasses.length, 1, "the first frame must dispatch");
+  assert.ok(fake.state.writeBufferCalls.length >= 3, "reset, records and uniform all upload on the first frame");
+
+  fake.state.writeBufferCalls.length = 0;
+  fake.state.computePasses.length = 0;
+  assert.equal(sys.update(fake.device, encoder, planes, 36, null, 2, { transformFingerprint: "abc" }), false);
+  assert.equal(fake.state.computePasses.length, 0, "an unchanged scene must not dispatch again");
+  assert.equal(fake.state.writeBufferCalls.length, 0, "and must not re-upload anything");
+  assert.equal(sys.skippedDispatchCount, 1);
+
+  // A moved camera changes the planes, so the survivor set changes and the
+  // dispatch must come back even though the transforms did not move.
+  const moved = [[0, 0, 1, 20], [0, 0, 1, 10], [0, 0, 1, 10], [0, 0, 1, 10], [0, 0, 1, 10], [0, 0, 1, 10]];
+  fake.state.computePasses.length = 0;
+  assert.equal(sys.update(fake.device, encoder, moved, 36, null, 2, { transformFingerprint: "abc" }), true);
+  assert.equal(fake.state.computePasses.length, 1);
+
+  // A null fingerprint means the caller cannot vouch for the contents, so every
+  // frame must do the work.
+  fake.state.computePasses.length = 0;
+  assert.equal(sys.update(fake.device, encoder, moved, 36, null, 2, {}), true);
+  assert.equal(fake.state.computePasses.length, 1);
+});
+
+test("gpu-cull T2b6: the transform fingerprint changes with the data", async () => {
+  const { device } = makeFakeGPUDevice();
+  const harness = await createCullSystemHarness(device);
+  const fp = harness.api.sceneInstanceTransformFingerprint;
+
+  const a = new Float32Array(32);
+  a[0] = 1;
+  const b = new Float32Array(32);
+  b[0] = 1;
+  assert.equal(fp(a, 2), fp(b, 2), "equal contents fold to the same value");
+  b[17] = 0.5;
+  assert.notEqual(fp(a, 2), fp(b, 2), "one changed float must change the fold");
+  // A change beyond the requested count must not register.
+  const c = new Float32Array(32);
+  c[0] = 1;
+  c[16] = 99;
+  assert.equal(fp(a, 1), fp(c, 1), "the fold covers exactly count instances");
+  // A plain Array must fold identically to the typed array with the same values.
+  assert.equal(fp(a, 2), fp(Array.from(a), 2), "a plain Array must fold the same way");
 });
 
 test("gpu-cull T2c: zero/missing cullRadius defaults to non-zero (never literal 0)", async () => {
@@ -30842,8 +31980,7 @@ test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attribu
   // Run the telemetry function extracted from 20-scene-mount.js source in an
   // isolated vm context. We extract the function body and wrap it so it assigns
   // window.__gosx_scene3d_telemetry on a minimal window-like context.
-  const mountSrc = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mountSrc = readSceneMountSrc();
   // Extract the function definition from the source text.
   const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
   assert.ok(fnStart >= 0, "could not find __gosx_scene3d_telemetry in 20-scene-mount.js");
@@ -30895,8 +32032,7 @@ test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attribu
 // Telemetry T2: __gosx_scene3d_telemetry with null arg auto-finds mounted scene
 // -------------------------------------------------------------------------
 test("telemetry T2: __gosx_scene3d_telemetry(null) returns null when no mounted scene", () => {
-  const mountSrc = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mountSrc = readSceneMountSrc();
   const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
   const fnEnd = mountSrc.indexOf("\n  window.__gosx_register_engine_factory", fnStart);
   const fnSource = mountSrc.slice(fnStart, fnEnd);
@@ -30963,8 +32099,7 @@ test("telemetry T4: 16a-scene-webgpu.js gates survivor readback on __gosx_scene3
 // Telemetry T5: __gosx_scene3d_telemetry exposed in 20-scene-mount.js source
 // -------------------------------------------------------------------------
 test("telemetry T5: 20-scene-mount.js defines __gosx_scene3d_telemetry", () => {
-  const mount = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const mount = readSceneMountSrc();
 
   assert.match(mount, /__gosx_scene3d_telemetry/,
     "20-scene-mount must define window.__gosx_scene3d_telemetry");
@@ -32993,5 +34128,56 @@ test("Selena context-class fields resolve to live per-frame scene state on WebGL
     "context branch must sit between the time auto-uniform and customUniforms");
   for (const name of ["cameraPos", "sunDir", "sunColor", "ambient"]) {
     assert.match(uniformFn, new RegExp(`if \\(name === "${name}"\\) return sceneSelenaFrameContext\\.${name};`));
+  }
+});
+
+// Regression guard: cylinder, cone and pyramid drew as wireframes.
+// scenePrimitiveTriangleMesh (12-scene-geometry.js) had no case for them, so
+// 10-runtime-scene-core.js never set vertices, appendSceneObjectToBundle fell
+// through to sceneObjectSegments, 15-scene-draw-plan.js kept the object on the
+// line pass, and the WebGPU backend drew it with topology "line-list". All
+// three are documented primitive kinds. The plane case was broken too: it
+// sliced the first four boxVertices, which all share z = -depth/2, so a solid
+// plane was a zero-area strip.
+test("Scene3D primitive kinds all build solid triangle meshes", () => {
+  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.js"), "utf8");
+  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.js"), "utf8");
+  const context = {
+    window: {}, document: {}, console, Math, Number, Float32Array, Array,
+    Object, String, Boolean, JSON,
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    "(function(){\n" +
+    "  function sceneNumber(v, f) { var n = Number(v); return Number.isFinite(n) ? n : f; }\n" +
+    shared + "\n" + geometry + "\n" +
+    "  globalThis.__primitiveMesh = scenePrimitiveTriangleMesh;\n})();",
+    context,
+    { filename: "scene-geometry.js" },
+  );
+
+  const options = { radius: 0.5, width: 1, height: 1, depth: 1, size: 1, tube: 0.3, segments: 12 };
+  for (const kind of ["box", "cube", "plane", "sphere", "torus", "torusknot", "cylinder", "cone", "pyramid"]) {
+    const mesh = context.__primitiveMesh(Object.assign({ kind }, options));
+    assert.ok(mesh, `${kind} must build a solid triangle mesh, not fall through to the line pass`);
+    assert.ok(mesh.count >= 3 && mesh.count % 3 === 0, `${kind} vertex count ${mesh.count} must be whole triangles`);
+    assert.equal(mesh.positions.length, mesh.count * 3, `${kind} position stride`);
+    assert.equal(mesh.normals.length, mesh.count * 3, `${kind} normal stride`);
+    assert.equal(mesh.uvs.length, mesh.count * 2, `${kind} uv stride`);
+    assert.ok(Array.from(mesh.positions).every(Number.isFinite), `${kind} positions must be finite`);
+
+    // No axis may collapse. A solid plane spans x and z; a solid box spans all
+    // three. Collapse is what the plane bug produced.
+    const extent = [0, 1, 2].map((axis) => {
+      let min = Infinity, max = -Infinity;
+      for (let i = axis; i < mesh.positions.length; i += 3) {
+        if (mesh.positions[i] < min) min = mesh.positions[i];
+        if (mesh.positions[i] > max) max = mesh.positions[i];
+      }
+      return max - min;
+    });
+    const spread = extent.filter((v) => v > 1e-6).length;
+    const wanted = kind === "plane" ? 2 : 3;
+    assert.ok(spread >= wanted, `${kind} must span ${wanted} axes, spans ${spread} (${extent})`);
   }
 });

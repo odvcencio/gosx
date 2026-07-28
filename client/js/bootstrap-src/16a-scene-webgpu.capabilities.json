@@ -1,14 +1,14 @@
 {
   "skinning": true,
   "ibl": false,
-  "gpu-picking": false,
+  "gpu-picking": true,
   "line-dashed": false,
   "compute-particles": true,
-  "gpu-cull": false,
+  "gpu-cull": true,
   "water-simulation": true,
   "water-object-texture-pass": true,
   "water-object-mesh-shadow-pass": true,
-  "rect-area-light": false,
+  "rect-area-light": true,
   "rect-area-specular": false,
   "light-probe-sh": false
 }
