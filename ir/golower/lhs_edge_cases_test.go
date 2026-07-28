@@ -85,7 +85,7 @@ func F() float64 {
 // Slice Y.E.3 update: pre-Y.E this test relied on `p := &x` being
 // rejected at the `&` operator. Y.E now lowers `&x` cleanly (treats
 // it as a pass-through for the underlying Value because composite
-// values are reference-shared via Value.Fields/Items per Y.C/Y.D).
+// values are reference-shared via Value.Map()/Items per Y.C/Y.D).
 // The test now reaches the `*p` LHS rejection, which surfaces as
 // "left-hand side must be a simple identifier" — the dispatcher in
 // lowerAssignStmt's bare-ident branch is the gatekeeper.

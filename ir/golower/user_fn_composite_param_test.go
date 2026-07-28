@@ -2,7 +2,7 @@
 // retrospective handoff guarantee.
 //
 // Y.C's retrospective documented: "OpFieldSet on a parameter-typed
-// receiver already propagates because Value.Fields is reference-
+// receiver already propagates because Value.Map() is reference-
 // typed." Y.D inherits this verbatim — composite arguments are passed
 // by Value-by-value copy but their Fields/Items storage is shared, so
 // the callee's mutations land in the caller's storage.

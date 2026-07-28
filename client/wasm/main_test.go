@@ -179,8 +179,8 @@ func TestRuntimeSetSharedSignalExport(t *testing.T) {
 	if !ok {
 		t.Fatal("expected shared signal to be set")
 	}
-	if val.Fields["count"].Num != 3 {
-		t.Fatalf("expected count 3, got %v", val.Fields["count"].Num)
+	if val.Map()["count"].Number() != 3 {
+		t.Fatalf("expected count 3, got %v", val.Map()["count"].Number())
 	}
 }
 
@@ -520,10 +520,10 @@ func TestRuntimeSetInputBatchExport(t *testing.T) {
 	if !ok {
 		t.Fatal("expected pointer signal to be set")
 	}
-	if got := pointer.Fields["x"].Num; got != 18 {
+	if got := pointer.Map()["x"].Number(); got != 18 {
 		t.Fatalf("expected x 18, got %v", got)
 	}
-	if got := pointer.Fields["y"].Num; got != -4.5 {
+	if got := pointer.Map()["y"].Number(); got != -4.5 {
 		t.Fatalf("expected y -4.5, got %v", got)
 	}
 
@@ -531,8 +531,8 @@ func TestRuntimeSetInputBatchExport(t *testing.T) {
 	if !ok {
 		t.Fatal("expected key signal to be set")
 	}
-	if !keyboard.Fields["space"].Bool {
-		t.Fatalf("expected space=true, got %#v", keyboard.Fields["space"])
+	if !keyboard.Map()["space"].Truth() {
+		t.Fatalf("expected space=true, got %#v", keyboard.Map()["space"])
 	}
 }
 
@@ -1061,8 +1061,8 @@ func TestRuntimeReloadProgramExport(t *testing.T) {
 	}
 	// State preserved (2), new +10 handler active: 2 -> 12.
 	js.Global().Get("__gosx_action").Invoke("rc-0", "increment", `{}`)
-	if got, _ := b.GetStore().Get("$count"); got.Num != 12 {
-		t.Fatalf("$count after json reload+bump = %v, want 12", got.Num)
+	if got, _ := b.GetStore().Get("$count"); got.Number() != 12 {
+		t.Fatalf("$count after json reload+bump = %v, want 12", got.Number())
 	}
 
 	// Reload again via a Uint8Array binary payload (+5 this time): 12 -> 17.
@@ -1074,8 +1074,8 @@ func TestRuntimeReloadProgramExport(t *testing.T) {
 		t.Fatalf("reload (bin) returned %q, want null", ret.String())
 	}
 	js.Global().Get("__gosx_action").Invoke("rc-0", "increment", `{}`)
-	if got, _ := b.GetStore().Get("$count"); got.Num != 17 {
-		t.Fatalf("$count after binary reload+bump = %v, want 17", got.Num)
+	if got, _ := b.GetStore().Get("$count"); got.Number() != 17 {
+		t.Fatalf("$count after binary reload+bump = %v, want 17", got.Number())
 	}
 
 	// Unknown island id surfaces a string error.
