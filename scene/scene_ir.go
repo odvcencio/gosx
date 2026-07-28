@@ -208,49 +208,51 @@ type ObjectIR struct {
 	GizmoFormMode string `json:"gizmoFormMode,omitempty"`
 	// QualityGroup: see scene.Mesh.QualityGroup and QualityRung.LayerGroups
 	// (scene/quality_ladder.go). Empty means unconditionally visible.
-	QualityGroup   string         `json:"qualityGroup,omitempty"`
-	OutlineColor   string         `json:"outlineColor,omitempty"`
-	OutlineWidth   float64        `json:"outlineWidth,omitempty"`
-	CastShadow     bool           `json:"castShadow,omitempty"`
-	ReceiveShadow  bool           `json:"receiveShadow,omitempty"`
-	DepthWrite     *bool          `json:"depthWrite,omitempty"`
-	Roughness      float64        `json:"roughness,omitempty"`
-	Metalness      float64        `json:"metalness,omitempty"`
-	Clearcoat      float64        `json:"clearcoat,omitempty"`
-	Sheen          float64        `json:"sheen,omitempty"`
-	Transmission   float64        `json:"transmission,omitempty"`
-	Iridescence    float64        `json:"iridescence,omitempty"`
-	Anisotropy     float64        `json:"anisotropy,omitempty"`
-	NormalMap      string         `json:"normalMap,omitempty"`
-	RoughnessMap   string         `json:"roughnessMap,omitempty"`
-	MetalnessMap   string         `json:"metalnessMap,omitempty"`
-	EmissiveMap    string         `json:"emissiveMap,omitempty"`
-	LODGroup       string         `json:"lodGroup,omitempty"`
-	LODLevel       int            `json:"lodLevel,omitempty"`
-	LODMinDistance float64        `json:"lodMinDistance,omitempty"`
-	LODMaxDistance float64        `json:"lodMaxDistance,omitempty"`
-	X              float64        `json:"x,omitempty"`
-	Y              float64        `json:"y,omitempty"`
-	Z              float64        `json:"z,omitempty"`
-	RotationX      float64        `json:"rotationX,omitempty"`
-	RotationY      float64        `json:"rotationY,omitempty"`
-	RotationZ      float64        `json:"rotationZ,omitempty"`
-	ScaleX         float64        `json:"scaleX,omitempty"`
-	ScaleY         float64        `json:"scaleY,omitempty"`
-	ScaleZ         float64        `json:"scaleZ,omitempty"`
-	SpinX          float64        `json:"spinX,omitempty"`
-	SpinY          float64        `json:"spinY,omitempty"`
-	SpinZ          float64        `json:"spinZ,omitempty"`
-	ShiftX         float64        `json:"shiftX,omitempty"`
-	ShiftY         float64        `json:"shiftY,omitempty"`
-	ShiftZ         float64        `json:"shiftZ,omitempty"`
-	DriftSpeed     float64        `json:"driftSpeed,omitempty"`
-	DriftPhase     float64        `json:"driftPhase,omitempty"`
-	Transition     TransitionIR   `json:"transition,omitzero"`
-	InState        map[string]any `json:"inState,omitempty"`
-	OutState       map[string]any `json:"outState,omitempty"`
-	Live           []string       `json:"live,omitempty"`
-	Vertices       *MeshVertices  `json:"vertices,omitempty"`
+	QualityGroup       string                     `json:"qualityGroup,omitempty"`
+	OutlineColor       string                     `json:"outlineColor,omitempty"`
+	OutlineWidth       float64                    `json:"outlineWidth,omitempty"`
+	CastShadow         bool                       `json:"castShadow,omitempty"`
+	ReceiveShadow      bool                       `json:"receiveShadow,omitempty"`
+	DepthWrite         *bool                      `json:"depthWrite,omitempty"`
+	Roughness          float64                    `json:"roughness,omitempty"`
+	Metalness          float64                    `json:"metalness,omitempty"`
+	Clearcoat          float64                    `json:"clearcoat,omitempty"`
+	Sheen              float64                    `json:"sheen,omitempty"`
+	Transmission       float64                    `json:"transmission,omitempty"`
+	Iridescence        float64                    `json:"iridescence,omitempty"`
+	Anisotropy         float64                    `json:"anisotropy,omitempty"`
+	NormalMap          string                     `json:"normalMap,omitempty"`
+	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
+	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
+	OcclusionMap       string                     `json:"occlusionMap,omitempty"`
+	EmissiveMap        string                     `json:"emissiveMap,omitempty"`
+	TextureDescriptors MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
+	LODGroup           string                     `json:"lodGroup,omitempty"`
+	LODLevel           int                        `json:"lodLevel,omitempty"`
+	LODMinDistance     float64                    `json:"lodMinDistance,omitempty"`
+	LODMaxDistance     float64                    `json:"lodMaxDistance,omitempty"`
+	X                  float64                    `json:"x,omitempty"`
+	Y                  float64                    `json:"y,omitempty"`
+	Z                  float64                    `json:"z,omitempty"`
+	RotationX          float64                    `json:"rotationX,omitempty"`
+	RotationY          float64                    `json:"rotationY,omitempty"`
+	RotationZ          float64                    `json:"rotationZ,omitempty"`
+	ScaleX             float64                    `json:"scaleX,omitempty"`
+	ScaleY             float64                    `json:"scaleY,omitempty"`
+	ScaleZ             float64                    `json:"scaleZ,omitempty"`
+	SpinX              float64                    `json:"spinX,omitempty"`
+	SpinY              float64                    `json:"spinY,omitempty"`
+	SpinZ              float64                    `json:"spinZ,omitempty"`
+	ShiftX             float64                    `json:"shiftX,omitempty"`
+	ShiftY             float64                    `json:"shiftY,omitempty"`
+	ShiftZ             float64                    `json:"shiftZ,omitempty"`
+	DriftSpeed         float64                    `json:"driftSpeed,omitempty"`
+	DriftPhase         float64                    `json:"driftPhase,omitempty"`
+	Transition         TransitionIR               `json:"transition,omitzero"`
+	InState            map[string]any             `json:"inState,omitempty"`
+	OutState           map[string]any             `json:"outState,omitempty"`
+	Live               []string                   `json:"live,omitempty"`
+	Vertices           *MeshVertices              `json:"vertices,omitempty"`
 
 	// Points holds the polyline vertices of a line object. It sits last
 	// on purpose: a wrapper struct used to shadow it, which pushed
@@ -561,62 +563,64 @@ type PointsIR struct {
 
 // InstancedMeshIR is the typed compatibility record for one instanced mesh.
 type InstancedMeshIR struct {
-	ID                   string               `json:"id"`
-	Count                int                  `json:"count"`
-	Kind                 string               `json:"kind"`
-	Size                 float64              `json:"size,omitempty"`
-	Width                float64              `json:"width,omitempty"`
-	Height               float64              `json:"height,omitempty"`
-	Depth                float64              `json:"depth,omitempty"`
-	Radius               float64              `json:"radius,omitempty"`
-	RadiusTop            float64              `json:"radiusTop,omitempty"`
-	RadiusBottom         float64              `json:"radiusBottom,omitempty"`
-	Tube                 float64              `json:"tube,omitempty"`
-	Segments             int                  `json:"segments,omitempty"`
-	RadialSegments       int                  `json:"radialSegments,omitempty"`
-	TubularSegments      int                  `json:"tubularSegments,omitempty"`
-	MaterialKind         string               `json:"materialKind,omitempty"`
-	Color                string               `json:"color,omitempty"`
-	Texture              string               `json:"texture,omitempty"`
-	Opacity              *float64             `json:"opacity,omitempty"`
-	Emissive             *float64             `json:"emissive,omitempty"`
-	BlendMode            string               `json:"blendMode,omitempty"`
-	RenderPass           string               `json:"renderPass,omitempty"`
-	Wireframe            *bool                `json:"wireframe,omitempty"`
-	DepthWrite           *bool                `json:"depthWrite,omitempty"`
-	Roughness            float64              `json:"roughness,omitempty"`
-	Metalness            float64              `json:"metalness,omitempty"`
-	Clearcoat            float64              `json:"clearcoat,omitempty"`
-	Sheen                float64              `json:"sheen,omitempty"`
-	Transmission         float64              `json:"transmission,omitempty"`
-	Iridescence          float64              `json:"iridescence,omitempty"`
-	Anisotropy           float64              `json:"anisotropy,omitempty"`
-	NormalMap            string               `json:"normalMap,omitempty"`
-	RoughnessMap         string               `json:"roughnessMap,omitempty"`
-	MetalnessMap         string               `json:"metalnessMap,omitempty"`
-	EmissiveMap          string               `json:"emissiveMap,omitempty"`
-	CustomVertex         string               `json:"customVertex,omitempty"`
-	CustomFragment       string               `json:"customFragment,omitempty"`
-	CustomVertexWGSL     string               `json:"customVertexWGSL,omitempty"`
-	CustomFragmentWGSL   string               `json:"customFragmentWGSL,omitempty"`
-	CustomUniforms       map[string]any       `json:"customUniforms,omitempty"`
-	ShaderBackend        string               `json:"shaderBackend,omitempty"`
-	ShaderLayout         map[string]any       `json:"shaderLayout,omitempty"`
-	ShaderSource         string               `json:"shaderSource,omitempty"`
-	ShaderSourceFiles    map[string]string    `json:"shaderSourceFiles,omitempty"`
-	Transforms           []float64            `json:"transforms"`
-	Colors               []string             `json:"colors,omitempty"`
-	Attributes           map[string][]float64 `json:"attributes,omitempty"`
-	Pickable             *bool                `json:"pickable,omitempty"`
-	CastShadow           bool                 `json:"castShadow,omitempty"`
-	ReceiveShadow        bool                 `json:"receiveShadow,omitempty"`
-	CompressedTransforms []CompressedArray    `json:"compressedTransforms,omitempty"`
-	PreviewTransforms    []CompressedArray    `json:"previewTransforms,omitempty"`
-	TransformStride      int                  `json:"transformStride,omitempty"`
-	Transition           TransitionIR         `json:"transition,omitzero"`
-	InState              map[string]any       `json:"inState,omitempty"`
-	OutState             map[string]any       `json:"outState,omitempty"`
-	Live                 []string             `json:"live,omitempty"`
+	ID                   string                     `json:"id"`
+	Count                int                        `json:"count"`
+	Kind                 string                     `json:"kind"`
+	Size                 float64                    `json:"size,omitempty"`
+	Width                float64                    `json:"width,omitempty"`
+	Height               float64                    `json:"height,omitempty"`
+	Depth                float64                    `json:"depth,omitempty"`
+	Radius               float64                    `json:"radius,omitempty"`
+	RadiusTop            float64                    `json:"radiusTop,omitempty"`
+	RadiusBottom         float64                    `json:"radiusBottom,omitempty"`
+	Tube                 float64                    `json:"tube,omitempty"`
+	Segments             int                        `json:"segments,omitempty"`
+	RadialSegments       int                        `json:"radialSegments,omitempty"`
+	TubularSegments      int                        `json:"tubularSegments,omitempty"`
+	MaterialKind         string                     `json:"materialKind,omitempty"`
+	Color                string                     `json:"color,omitempty"`
+	Texture              string                     `json:"texture,omitempty"`
+	Opacity              *float64                   `json:"opacity,omitempty"`
+	Emissive             *float64                   `json:"emissive,omitempty"`
+	BlendMode            string                     `json:"blendMode,omitempty"`
+	RenderPass           string                     `json:"renderPass,omitempty"`
+	Wireframe            *bool                      `json:"wireframe,omitempty"`
+	DepthWrite           *bool                      `json:"depthWrite,omitempty"`
+	Roughness            float64                    `json:"roughness,omitempty"`
+	Metalness            float64                    `json:"metalness,omitempty"`
+	Clearcoat            float64                    `json:"clearcoat,omitempty"`
+	Sheen                float64                    `json:"sheen,omitempty"`
+	Transmission         float64                    `json:"transmission,omitempty"`
+	Iridescence          float64                    `json:"iridescence,omitempty"`
+	Anisotropy           float64                    `json:"anisotropy,omitempty"`
+	NormalMap            string                     `json:"normalMap,omitempty"`
+	RoughnessMap         string                     `json:"roughnessMap,omitempty"`
+	MetalnessMap         string                     `json:"metalnessMap,omitempty"`
+	OcclusionMap         string                     `json:"occlusionMap,omitempty"`
+	EmissiveMap          string                     `json:"emissiveMap,omitempty"`
+	TextureDescriptors   MaterialTextureDescriptors `json:"textureDescriptors,omitzero"`
+	CustomVertex         string                     `json:"customVertex,omitempty"`
+	CustomFragment       string                     `json:"customFragment,omitempty"`
+	CustomVertexWGSL     string                     `json:"customVertexWGSL,omitempty"`
+	CustomFragmentWGSL   string                     `json:"customFragmentWGSL,omitempty"`
+	CustomUniforms       map[string]any             `json:"customUniforms,omitempty"`
+	ShaderBackend        string                     `json:"shaderBackend,omitempty"`
+	ShaderLayout         map[string]any             `json:"shaderLayout,omitempty"`
+	ShaderSource         string                     `json:"shaderSource,omitempty"`
+	ShaderSourceFiles    map[string]string          `json:"shaderSourceFiles,omitempty"`
+	Transforms           []float64                  `json:"transforms"`
+	Colors               []string                   `json:"colors,omitempty"`
+	Attributes           map[string][]float64       `json:"attributes,omitempty"`
+	Pickable             *bool                      `json:"pickable,omitempty"`
+	CastShadow           bool                       `json:"castShadow,omitempty"`
+	ReceiveShadow        bool                       `json:"receiveShadow,omitempty"`
+	CompressedTransforms []CompressedArray          `json:"compressedTransforms,omitempty"`
+	PreviewTransforms    []CompressedArray          `json:"previewTransforms,omitempty"`
+	TransformStride      int                        `json:"transformStride,omitempty"`
+	Transition           TransitionIR               `json:"transition,omitzero"`
+	InState              map[string]any             `json:"inState,omitempty"`
+	OutState             map[string]any             `json:"outState,omitempty"`
+	Live                 []string                   `json:"live,omitempty"`
 
 	// Optional Elio GPU cull kernel carried through the scene payload.
 	// CullKernelWGSL is the inline WGSL source; CullKernelWGSLRef replaces it
@@ -1009,6 +1013,7 @@ type EnvironmentIR struct {
 	GroundColor      string         `json:"groundColor,omitempty"`
 	GroundIntensity  float64        `json:"groundIntensity,omitempty"`
 	EnvMap           string         `json:"envMap,omitempty"`
+	IBL              EnvironmentIBL `json:"ibl,omitzero"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
@@ -1233,6 +1238,7 @@ func (g Graph) SceneIR() SceneIR {
 		SpinTracks:         lowerer.spinTracks,
 		MaterialTracks:     lowerer.materialTracks,
 	}
+	populateSceneTextureDescriptors(&ir)
 
 	// Serialize spin tracks into MotionProgram so the browser can motionLoad()
 	// them. Build a scene-level Timeline from SpinTracks, intern target/prop
@@ -1931,7 +1937,11 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
+	setString(record, "occlusionMap", item.OcclusionMap)
 	setString(record, "emissiveMap", item.EmissiveMap)
+	if descriptors := legacyTextureDescriptors(item.TextureDescriptors); len(descriptors) > 0 {
+		record["textureDescriptors"] = descriptors
+	}
 	setString(record, "lodGroup", item.LODGroup)
 	setInt(record, "lodLevel", item.LODLevel)
 	setNumeric(record, "lodMinDistance", item.LODMinDistance)
@@ -2019,7 +2029,11 @@ func (item ModelIR) legacyProps() map[string]any {
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
+	setString(record, "occlusionMap", item.OcclusionMap)
 	setString(record, "emissiveMap", item.EmissiveMap)
+	if descriptors := legacyTextureDescriptors(item.TextureDescriptors); len(descriptors) > 0 {
+		record["textureDescriptors"] = descriptors
+	}
 	if item.BlendMode != "" {
 		record["blendMode"] = item.BlendMode
 	}
@@ -2211,7 +2225,11 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
+	setString(record, "occlusionMap", item.OcclusionMap)
 	setString(record, "emissiveMap", item.EmissiveMap)
+	if descriptors := legacyTextureDescriptors(item.TextureDescriptors); len(descriptors) > 0 {
+		record["textureDescriptors"] = descriptors
+	}
 	if len(item.CompressedTransforms) > 0 {
 		record["compressedTransforms"] = item.CompressedTransforms
 	} else if len(item.Transforms) > 0 {
@@ -2942,6 +2960,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.GroundColor == "" &&
 		item.GroundIntensity == 0 &&
 		item.EnvMap == "" &&
+		item.IBL.IsZero() &&
 		item.EnvIntensity == 0 &&
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
@@ -2966,6 +2985,9 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	setString(record, "groundColor", item.GroundColor)
 	setNumeric(record, "groundIntensity", item.GroundIntensity)
 	setString(record, "envMap", item.EnvMap)
+	if !item.IBL.IsZero() {
+		record["ibl"] = item.IBL
+	}
 	setNumeric(record, "envIntensity", item.EnvIntensity)
 	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
@@ -2985,6 +3007,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		GroundColor:      strings.TrimSpace(environment.GroundColor),
 		GroundIntensity:  environment.GroundIntensity,
 		EnvMap:           strings.TrimSpace(environment.EnvironmentMap),
+		IBL:              normalizeEnvironmentIBL(environment.IBL),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,
@@ -3104,6 +3127,9 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	if strings.TrimSpace(ir.Environment.EnvMap) != "" {
 		seen[capability.FeatureIBL] = true
 		seen[capability.FeatureEnvironmentMap] = true
+	}
+	if !ir.Environment.IBL.IsZero() {
+		seen[capability.FeatureIBL] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.
