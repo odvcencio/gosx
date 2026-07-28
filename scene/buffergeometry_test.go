@@ -64,6 +64,43 @@ func TestBufferGeometryExpandsIndices(t *testing.T) {
 	}
 }
 
+func TestBufferGeometryCarriesExplicitRetainedSnapshotContract(t *testing.T) {
+	props := Props{Graph: NewGraph(Mesh{
+		ID: "retained",
+		Geometry: BufferGeometry{
+			Positions: []float64{0, 0, 0, 1, 0, 0, 0, 1, 0},
+			Normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1},
+			UVs:       []float64{0, 0, 1, 0, 0, 1},
+			Tangents:  []float64{1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1},
+			Immutable: true,
+			Revision:  7,
+		},
+		Material: StandardMaterial{Color: "#ffffff"},
+	})}
+	vertices := props.SceneIR().Objects[0].Vertices
+	if vertices == nil || !vertices.Immutable || vertices.Dynamic {
+		t.Fatalf("unexpected retained contract: %+v", vertices)
+	}
+	if vertices.Revision == nil || *vertices.Revision != 7 {
+		t.Fatalf("expected revision 7, got %+v", vertices.Revision)
+	}
+	if len(vertices.Tangents) != 12 {
+		t.Fatalf("expected tangents to survive lowering, got %d", len(vertices.Tangents))
+	}
+}
+
+func TestBufferGeometryDefaultsToRevisionlessMutableContract(t *testing.T) {
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "mutable",
+		Geometry: BufferGeometry{Positions: []float64{0, 0, 0, 1, 0, 0, 0, 1, 0}},
+		Material: StandardMaterial{Color: "#ffffff"},
+	})}
+	vertices := props.SceneIR().Objects[0].Vertices
+	if vertices == nil || vertices.Immutable || vertices.Revision != nil || vertices.Dynamic {
+		t.Fatalf("default geometry must remain fail-closed: %+v", vertices)
+	}
+}
+
 // A non-pickable buffer mesh must add no backend constraint: all backends stay
 // capable (BufferGeometry must not gratuitously force WebGL).
 func TestBufferGeometryKeepsWebGPUCapable(t *testing.T) {
