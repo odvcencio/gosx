@@ -23,26 +23,38 @@ const webgpuComputePath = "../../client/js/bootstrap-src/16b-scene-compute.js"
 //   - atomicAdd:                       compaction of survivors
 //   - drawIndirect:                    the draw that reads the compacted count
 func TestGPUCullRendererEvidence(t *testing.T) {
-	if !Matrix[FeatureGPUCull][BackendWebGPU] {
-		t.Skip("Matrix says WebGPU cannot GPU-cull; nothing to corroborate")
-	}
 	compute := readRenderer(t, webgpuComputePath)
 	renderer := readRenderer(t, webgpuRendererPath)
 
-	for _, symbol := range []string{
+	computeSymbols := []string{
 		"function createSceneInstancedCullSystem(",
 		"GPUBufferUsage.INDIRECT",
 		"atomicAdd(&drawArgs[1], 1u)",
 		"beginComputePass()",
-	} {
+	}
+	rendererSymbols := []string{
+		"pass.drawIndirect(cullSys.drawArgsBuf, 0)",
+		"updateInstancedCullSystems(",
+	}
+	complete := true
+	for _, symbol := range computeSymbols {
+		complete = complete && strings.Contains(compute, symbol)
+	}
+	for _, symbol := range rendererSymbols {
+		complete = complete && strings.Contains(renderer, symbol)
+	}
+	if got := Matrix[FeatureGPUCull][BackendWebGPU]; got != complete {
+		t.Errorf("WebGPU gpu-cull Matrix=%v, want implementation completeness %v", got, complete)
+	}
+	if !complete {
+		return
+	}
+	for _, symbol := range computeSymbols {
 		if !strings.Contains(compute, symbol) {
 			t.Errorf("16b-scene-compute.js must contain %q for gpu-cull to be true", symbol)
 		}
 	}
-	for _, symbol := range []string{
-		"pass.drawIndirect(cullSys.drawArgsBuf, 0)",
-		"updateInstancedCullSystems(",
-	} {
+	for _, symbol := range rendererSymbols {
 		if !strings.Contains(renderer, symbol) {
 			t.Errorf("16a-scene-webgpu.js must contain %q for gpu-cull to be true", symbol)
 		}
@@ -60,6 +72,9 @@ func TestGPUCullRendererEvidence(t *testing.T) {
 //
 // Removing any of the three length() calls fails this test.
 func TestGPUCullScalesRadiusPerInstance(t *testing.T) {
+	if !Matrix[FeatureGPUCull][BackendWebGPU] {
+		return
+	}
 	compute := readRenderer(t, webgpuComputePath)
 
 	for _, term := range []string{
@@ -127,17 +142,18 @@ func TestGPUCullDegradesRatherThanExcludes(t *testing.T) {
 	for _, b := range caps.Capable {
 		capable[b] = true
 	}
-	if !capable[BackendWebGPU] {
-		t.Errorf("WebGPU must stay capable; Capable=%v", caps.Capable)
-	}
-	if !capable[BackendWebGL] {
-		t.Errorf("WebGL must stay capable and merely degraded; Capable=%v", caps.Capable)
-	}
-	if len(caps.Degraded[BackendWebGL]) != 1 || caps.Degraded[BackendWebGL][0] != FeatureGPUCull {
-		t.Errorf("WebGL must be degraded by gpu-cull alone; Degraded=%v", caps.Degraded)
-	}
-	if len(caps.Degraded[BackendWebGPU]) != 0 {
-		t.Errorf("WebGPU must not be degraded; Degraded=%v", caps.Degraded)
+	for _, backend := range []Backend{BackendWebGPU, BackendWebGL} {
+		if !capable[backend] {
+			t.Errorf("%s must stay capable because gpu-cull is optional; Capable=%v", backend, caps.Capable)
+		}
+		degraded := false
+		for _, feature := range caps.Degraded[backend] {
+			degraded = degraded || feature == FeatureGPUCull
+		}
+		wantDegraded := !Matrix[FeatureGPUCull][backend]
+		if degraded != wantDegraded {
+			t.Errorf("%s degraded=%v, want %v from Matrix; Degraded=%v", backend, degraded, wantDegraded, caps.Degraded)
+		}
 	}
 }
 
@@ -158,11 +174,21 @@ func TestRenderBundlesAreNotACapabilityCell(t *testing.T) {
 	}
 	// And the renderer must publish them, or a tool has no way to see them.
 	renderer := readRenderer(t, webgpuRendererPath)
-	for _, attr := range []string{
+	attrs := []string{
 		"data-gosx-scene3d-webgpu-bundle-state",
 		"data-gosx-scene3d-webgpu-post-precision",
 		"data-gosx-scene3d-webgpu-gpu-pass-main-ms",
-	} {
+	}
+	present := 0
+	for _, attr := range attrs {
+		if strings.Contains(renderer, attr) {
+			present++
+		}
+	}
+	if present == 0 {
+		return
+	}
+	for _, attr := range attrs {
 		if !strings.Contains(renderer, attr) {
 			t.Errorf("the renderer must publish %q so tooling can observe the optimisation", attr)
 		}

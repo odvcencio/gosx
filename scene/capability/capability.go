@@ -89,25 +89,17 @@ var Matrix = map[Feature]map[Backend]bool{
 	// ibl.ConsumerRequirements for the five pieces a consumer must add. Flip
 	// this cell when one exists, and not before.
 	FeatureIBL: {BackendWebGPU: false, BackendWebGL: false},
-	// gpu-picking is implemented on both GPU backends.
-	//
-	// The pick CONTRACT — the gosx:scene3d:input events, the pick/drag/event
-	// signal namespaces, and every hit field including the world-space ray — is
-	// produced by setupScenePickInteractions in 17-scene-input.js. That function
-	// takes no renderer argument and has no backend branch, so a page returns
-	// identical pick results whichever GPU backend draws it.
-	//
-	// On top of that shared contract the WebGPU renderer also implements a true
-	// GPU pick: createSceneWebGPUPicker in 16a-scene-webgpu.js rasterizes
-	// pickable geometry into an r32uint ID attachment and reads the pointer
-	// pixel back with copyTextureToBuffer + mapAsync, following the native
-	// design in render/bundle/pick.go. It resolves identity on the GPU and
-	// derives every geometric field from the same shared CPU raycast helpers
-	// WebGL2 uses, so both backends report the same numbers.
-	FeatureGPUPicking:   {BackendWebGPU: true, BackendWebGL: true},
+	// WebGL picking is implemented by the backend-neutral raycast contract in
+	// 17-scene-input.js. The WebGPU ID-buffer implementation is not part of
+	// this capability slice, so its cell stays false until those renderer
+	// symbols ship in the runtime slice.
+	FeatureGPUPicking:   {BackendWebGPU: false, BackendWebGL: true},
 	FeatureLineDashed:   {BackendWebGPU: false, BackendWebGL: true},
 	FeatureComputeParts: {BackendWebGPU: true, BackendWebGL: false},
-	FeatureGPUCull:      {BackendWebGPU: true, BackendWebGL: false},
+	// No browser renderer in this slice owns the compute-cull pipeline yet.
+	// Keep both cells false until the renderer supplies indirect draw,
+	// survivor compaction, and scale-aware bounds.
+	FeatureGPUCull: {BackendWebGPU: false, BackendWebGL: false},
 	// Water features are implemented on WebGL2 by the runtime water renderer
 	// (createSceneWaterRendererWebGL/createSceneWaterSimWebGL); WebGPU stays the
 	// preferred/primary backend, WebGL2 is the honest fallback.
@@ -127,35 +119,22 @@ var Matrix = map[Feature]map[Backend]bool{
 	// A mesh shadow and a primitive shadow are different images, so the cell is
 	// false. See the corroboration test in water_shadow_test.go.
 	FeatureWaterObjectMeshShadowPass: {BackendWebGPU: true, BackendWebGL: false},
-	// rect-area-light: the rectangle's shape drives the shading.
-	//
-	// WebGPU: rectAreaLightRadiance in 16a-scene-webgpu.js evaluates the
-	// analytic polygon form factor over the four world corners the JS side
-	// builds in sceneWebGPURectAreaBasis. This is the same term three.js gets
-	// from LTC_Evaluate with an identity matrix, so the diffuse response is
-	// exact and needs no lookup table.
-	//
-	// WebGL2: 16-scene-webgl.js maps kind "rect-area" to light type 2, the
-	// point light. Width and Height reach the IR and then stop. A rect-area
-	// light on WebGL2 has no shape, so this cell is false.
-	FeatureRectAreaLight: {BackendWebGPU: true, BackendWebGL: false},
+	// rect-area-light: neither browser renderer in this slice shades the
+	// authored rectangle. WebGL folds it to a point light; WebGPU has no
+	// rect-area branch yet. The runtime slice flips the WebGPU cell only when
+	// the polygon-form-factor implementation is present.
+	FeatureRectAreaLight: {BackendWebGPU: false, BackendWebGL: false},
 	// rect-area-specular: the LTC-fitted specular lobe of a rect-area light.
 	//
-	// False everywhere, and that is the honest record. three.js reads two
+	// False everywhere, and that is the honest record. A faithful renderer reads
 	// fitted 64x64 lookup tables (ltc_1 and ltc_2) to shape the specular
 	// highlight of a rectangle. Neither GoSX renderer uploads those tables.
-	// WebGPU substitutes a representative-point GGX lobe, which puts the
-	// energy in about the right place but gets the highlight's shape wrong on
-	// glossy surfaces. WebGL2 has no rect-area path at all.
 	FeatureRectAreaSpecular: {BackendWebGPU: false, BackendWebGL: false},
 	// light-probe-sh: spherical-harmonic probe coefficients.
 	//
 	// False everywhere. LightProbe.Coefficients survives lowering into
-	// LightIR.Coefficients, and then no renderer reads it. Both GPU backends
-	// shade a probe as a flat ambient term built from Color and Intensity.
-	// Ambient is the right fold — a probe carries no position, so a point
-	// light would invent a distance falloff — but it is not an SH evaluation,
-	// so the cell stays false until one exists.
+	// LightIR.Coefficients, and then no renderer evaluates the spherical-
+	// harmonic basis, so the cell stays false until one does.
 	FeatureLightProbeSH: {BackendWebGPU: false, BackendWebGL: false},
 }
 
