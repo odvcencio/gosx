@@ -27,6 +27,8 @@
   const ANNOUNCER_ATTR = "data-gosx-announcer";
   const MANAGED_FOCUS_ATTR = "data-gosx-focus-managed";
   const NAVIGATION_BEACON_SELECTOR = "script[type=\"application/json\"][data-gosx-navigation-beacon]";
+  const NAV_INLINE_REPLAY_ATTR = "data-gosx-navigation-replay";
+  const NAV_INLINE_REPLAYED_ATTR = "data-gosx-navigation-replayed";
   const URL_ATTRS = ["href", "src", "action", "poster"];
   const SUBMITTER_ATTRS = {
     formAction: "formaction",
@@ -1161,6 +1163,39 @@
     }
   }
 
+  function inlineNavigationScriptCanReplay(script) {
+    if (!isElement(script, "SCRIPT")) return false;
+    if (!script.hasAttribute(NAV_INLINE_REPLAY_ATTR)) return false;
+    if (script.hasAttribute(SCRIPT_ROLE)) return false;
+    if (script.getAttribute("src")) return false;
+    if (script.getAttribute(NAV_INLINE_REPLAYED_ATTR) === "true") return false;
+    const type = String(script.getAttribute("type") || "").trim().toLowerCase();
+    return !type
+      || type === "text/javascript"
+      || type === "application/javascript"
+      || type === "module";
+  }
+
+  function replayInlineNavigationScripts(root) {
+    if (!root || typeof root.querySelectorAll !== "function") return;
+    const scripts = root.querySelectorAll("script[" + NAV_INLINE_REPLAY_ATTR + "]");
+    for (const script of toArray(scripts)) {
+      if (!inlineNavigationScriptCanReplay(script) || !script.parentNode) {
+        continue;
+      }
+      const executable = document.createElement("script");
+      for (const attr of attributeEntries(script)) {
+        if (attr.name === NAV_INLINE_REPLAYED_ATTR) continue;
+        executable.setAttribute(attr.name, attr.value);
+      }
+      executable.setAttribute(NAV_INLINE_REPLAYED_ATTR, "true");
+      executable.textContent = script.textContent || "";
+      script.setAttribute(NAV_INLINE_REPLAYED_ATTR, "true");
+      script.parentNode.insertBefore(executable, script);
+      script.parentNode.removeChild(script);
+    }
+  }
+
   function collectManagedScripts(root, baseURL) {
     const found = [];
     function walk(node) {
@@ -1779,6 +1814,8 @@
     const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL, managedScripts);
     if (isCurrent && !isCurrent()) return;
     await bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs);
+    if (isCurrent && !isCurrent()) return;
+    replayInlineNavigationScripts(document.body);
   }
 
   function applyNavigationScroll(a11y, preserveScroll) {
