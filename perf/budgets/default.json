@@ -41,9 +41,9 @@
       ]
     },
     "docs-scene3d-ci": {
-      "description": "Documentation route with an intentional Scene3D teaching surface under CI software rasterization. Gates the shipped JavaScript and total network payload, plus bounded load and blocking time; long-task count is intentionally ungated because shader compilation on llvmpipe/SwiftShader crosses the 50ms boundary.",
+      "description": "Documentation route with an intentional Scene3D teaching surface under CI software rasterization. Gates the shipped JavaScript, including the valid lazy WebGL fallback path when WebGPU is unavailable, and total network payload, plus bounded load and blocking time; long-task count is intentionally ungated because shader compilation on llvmpipe/SwiftShader crosses the 50ms boundary.",
       "assertions": [
-        "js_total_kb <= 1250",
+        "js_total_kb <= 1450",
         "network_kb <= 1500",
         "lcp <= 18000",
         "tbt <= 15000"
