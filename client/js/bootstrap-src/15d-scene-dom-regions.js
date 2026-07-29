@@ -221,20 +221,32 @@
 
     function observeTargets(targets) {
       if (!resizeObserver || typeof resizeObserver.observe !== "function") return;
-      disconnectObserved();
+      var next = [];
       if (mount) {
-        resizeObserver.observe(mount);
-        observed.push(mount);
+        next.push(mount);
       }
       var activeCanvas = currentCanvas();
       if (activeCanvas) {
-        resizeObserver.observe(activeCanvas);
-        observed.push(activeCanvas);
+        next.push(activeCanvas);
       }
       for (var i = 0; i < targets.length; i += 1) {
-        resizeObserver.observe(targets[i]);
-        observed.push(targets[i]);
+        next.push(targets[i]);
       }
+      if (next.length === observed.length) {
+        var unchanged = true;
+        for (var j = 0; j < next.length; j += 1) {
+          if (next[j] !== observed[j]) {
+            unchanged = false;
+            break;
+          }
+        }
+        if (unchanged) return;
+      }
+      disconnectObserved();
+      for (var k = 0; k < next.length; k += 1) {
+        resizeObserver.observe(next[k]);
+      }
+      observed = next;
     }
 
     function queryTargets(selector) {

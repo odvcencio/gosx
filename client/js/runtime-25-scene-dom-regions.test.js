@@ -158,10 +158,26 @@ test("CustomPost DOMRegions coalesces unchanged keys and disposes listeners", as
   await flushAsyncWork();
   assert.equal(harness.patches.length, 1);
 
+  const observer = harness.env.resizeObservers.at(-1);
+  const observe = observer.observe.bind(observer);
+  const disconnect = observer.disconnect.bind(observer);
+  let observeCalls = 0;
+  let disconnectCalls = 0;
+  observer.observe = (target) => {
+    observeCalls += 1;
+    observe(target);
+  };
+  observer.disconnect = () => {
+    disconnectCalls += 1;
+    disconnect();
+  };
+
   harness.tracker.schedule();
   harness.raf.flush(32);
   await flushAsyncWork();
   assert.equal(harness.patches.length, 1, "unchanged geometry must not patch again");
+  assert.equal(observeCalls, 0, "unchanged targets must not be observed again");
+  assert.equal(disconnectCalls, 0, "unchanged targets must not disconnect the observer");
 
   assert.ok((harness.env.windowListeners.get("scroll") || []).length > 0);
   assert.ok(harness.env.resizeObservers.at(-1).targets.size > 0);
