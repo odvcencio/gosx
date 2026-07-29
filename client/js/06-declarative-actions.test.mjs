@@ -32,6 +32,9 @@ function makeEl(attrs = {}, opts = {}) {
     _attrs: attrs,
     tagName: (opts.tag || "div").toUpperCase(),
     disabled: false,
+    isConnected: opts.isConnected !== false,
+    name: opts.name || attrs.name || "",
+    value: opts.value || attrs.value || "",
     form: opts.form || null,
     getAttribute(n) { return n in this._attrs ? this._attrs[n] : null; },
     hasAttribute(n) { return n in this._attrs; },
@@ -63,7 +66,20 @@ function runModule(options = {}) {
   const ctx = {
     console,
     URLSearchParams,
-    FormData: class { constructor() {} }, // unused shape; body identity is enough
+    FormData: class {
+      constructor(form) {
+        this.entries = form && Array.isArray(form._formEntries) ? form._formEntries.slice() : [];
+      }
+      append(key, value) {
+        this.entries.push([String(key), value == null ? "" : String(value)]);
+      }
+      has(key) {
+        return this.entries.some((entry) => entry[0] === String(key));
+      }
+      [Symbol.iterator]() {
+        return this.entries[Symbol.iterator]();
+      }
+    },
     fetch: (url, opts) => {
       fetches.push({ url, opts });
       const response = {
@@ -219,6 +235,100 @@ test("data-gosx-action form submits via fetch and does not navigate", () => {
   assert.equal(fetches.length, 1);
   assert.equal(fetches[0].url, "/api/x/agent");
   assert.equal(fetches[0].opts.method, "POST");
+});
+
+test("data-gosx-action form includes the clicked submitter value", () => {
+  const { listeners, fetches } = runModule();
+  const submit = makeEl({ type: "submit", name: "post_action", value: "publish" }, { tag: "button" });
+  const form = makeEl({ "data-gosx-action": "", method: "POST", action: "/api/x/post" }, {
+    tag: "form",
+    submitBtn: submit,
+  });
+  form._formEntries = [["title", "Hello"]];
+  const prevented = listeners.submit({
+    target: form,
+    submitter: submit,
+    preventDefault: () => true,
+  });
+  assert.equal(prevented, undefined);
+  assert.equal(fetches.length, 1);
+  assert.equal(String(fetches[0].opts.body), "title=Hello&post_action=publish");
+});
+
+test("data-gosx-action form honors submitter formaction and formmethod", () => {
+  const { listeners, fetches } = runModule();
+  const submit = makeEl({
+    type: "submit",
+    name: "post_action",
+    value: "schedule",
+    formaction: "/api/x/schedule",
+    formmethod: "PATCH",
+  }, { tag: "button" });
+  const form = makeEl({ "data-gosx-action": "", method: "POST", action: "/api/x/update" }, {
+    tag: "form",
+    submitBtn: submit,
+  });
+  form._formEntries = [["publish_at", "2026-07-29T16:30"]];
+  listeners.submit({ target: form, submitter: submit, preventDefault() {} });
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].url, "/api/x/schedule");
+  assert.equal(fetches[0].opts.method, "PATCH");
+  assert.equal(String(fetches[0].opts.body), "publish_at=2026-07-29T16%3A30&post_action=schedule");
+});
+
+test("data-gosx-action form lets the submitter own the patch target", async () => {
+  const formTarget = { innerHTML: "<p>form</p>" };
+  const buttonTarget = { innerHTML: "<p>button</p>" };
+  const submit = makeEl({
+    type: "submit",
+    name: "post_action",
+    value: "publish",
+    "data-gosx-action-target": "#button-status",
+  }, { tag: "button" });
+  const form = makeEl({
+    "data-gosx-action": "",
+    "data-gosx-action-target": "#form-status",
+    method: "POST",
+    action: "/api/x/post",
+  }, { tag: "form", submitBtn: submit });
+  const { listeners } = runModule({
+    queryMap: {
+      "#form-status": formTarget,
+      "#button-status": buttonTarget,
+    },
+    responsePayload: { html: "<p>Published</p>" },
+  });
+  listeners.submit({ target: form, submitter: submit, preventDefault() {} });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(formTarget.innerHTML, "<p>form</p>");
+  assert.equal(buttonTarget.innerHTML, "<p>Published</p>");
+});
+
+test("data-gosx-action form exposes pending state during request and restores it", async () => {
+  let resolveFetch;
+  const { listeners } = runModule({
+    coreRequest() {
+      return new Promise((resolve) => {
+        resolveFetch = () => resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+      });
+    },
+  });
+  const submit = makeEl({ type: "submit" }, { tag: "button" });
+  const form = makeEl({
+    "data-gosx-action": "",
+    "data-gosx-form-state": "idle",
+    method: "POST",
+    action: "/api/x/post",
+  }, { tag: "form", submitBtn: submit });
+  listeners.submit({ target: form, submitter: submit, preventDefault() {} });
+  assert.equal(form.getAttribute("data-gosx-pending"), "true");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "pending");
+  resolveFetch();
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(form.hasAttribute("data-gosx-pending"), false);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
 });
 
 test("data-gosx-submit-on=change requests its form submit", () => {
@@ -381,4 +491,28 @@ test("data-gosx-action delegates target replacement to the core runtime DOM life
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
   assert.deepEqual(replacements, [{ nextTarget: target, html: "<p>Saved</p>" }]);
+});
+
+test("data-gosx-action target patch restores focus without scrolling", async () => {
+  const nextButton = makeEl({}, { tag: "button" });
+  let focusOptions = null;
+  nextButton.focus = (options) => { focusOptions = options; nextButton.focused = true; };
+  const target = {
+    innerHTML: "<p>old</p>",
+    querySelector: () => nextButton,
+  };
+  const oldButton = makeEl({
+    "data-gosx-action": "POST /api/save",
+    "data-gosx-action-target": "#status",
+  }, { tag: "button", isConnected: false });
+  const { listeners } = runModule({
+    targetSelector: "#status",
+    target,
+    responsePayload: { html: "<button>Saved</button>" },
+  });
+  fire(listeners.click, oldButton);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(nextButton.focused, true);
+  assert.equal(focusOptions && focusOptions.preventScroll, true);
 });
