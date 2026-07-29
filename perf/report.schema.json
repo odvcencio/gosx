@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gosx.dev/schemas/perf-report.schema.json",
+  "title": "GoSX performance report",
+  "type": "object",
+  "required": ["url", "timestamp"],
+  "properties": {
+    "url": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "pages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/page" }
+    },
+    "scene": { "$ref": "#/$defs/scene" }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "frameStats": {
+      "type": "object",
+      "required": ["p50", "p95", "p99", "max", "mean", "count"],
+      "properties": {
+        "p50": { "type": "number" },
+        "p95": { "type": "number" },
+        "p99": { "type": "number" },
+        "max": { "type": "number" },
+        "mean": { "type": "number" },
+        "count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "series": {
+      "type": "object",
+      "required": ["source", "unit", "stats", "cold", "warm"],
+      "properties": {
+        "source": { "type": "string" },
+        "unit": { "type": "string" },
+        "stats": { "$ref": "#/$defs/frameStats" },
+        "cold": { "$ref": "#/$defs/frameStats" },
+        "warm": { "$ref": "#/$defs/frameStats" }
+      }
+    },
+    "presentation": {
+      "allOf": [
+        { "$ref": "#/$defs/series" },
+        {
+          "type": "object",
+          "required": [
+            "estimatedRefreshIntervalMs",
+            "estimatedMissedVsyncs",
+            "hitchIntervals"
+          ],
+          "properties": {
+            "estimatedRefreshIntervalMs": { "type": "number", "minimum": 0 },
+            "estimatedMissedVsyncs": { "type": "integer", "minimum": 0 },
+            "hitchIntervals": { "type": "integer", "minimum": 0 },
+            "hitchClusters": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "startTime",
+                  "intervalCount",
+                  "estimatedMissedVsyncs",
+                  "durationMs",
+                  "maxIntervalMs"
+                ],
+                "additionalProperties": { "type": "number" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "gpu": {
+      "type": "object",
+      "properties": {
+        "total": { "$ref": "#/$defs/series" },
+        "passes": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/series" }
+        },
+        "status": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "mount": {
+      "type": "object",
+      "required": ["index"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "backend": { "type": "string" },
+        "renderer": { "type": "string" },
+        "fallback": { "type": "string" },
+        "profile": { "type": "string" },
+        "pixelRatio": { "type": "number", "minimum": 0 },
+        "devicePixelRatio": { "type": "number", "minimum": 0 },
+        "effectivePixelRatio": { "type": "number", "minimum": 0 },
+        "canvas": {
+          "type": "object",
+          "properties": {
+            "width": { "type": "number", "minimum": 0 },
+            "height": { "type": "number", "minimum": 0 },
+            "cssWidth": { "type": "number", "minimum": 0 },
+            "cssHeight": { "type": "number", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "scene": {
+      "type": "object",
+      "required": ["firstFrameMs", "frameStats", "droppedFrames", "frameCount"],
+      "properties": {
+        "firstFrameMs": { "type": "number" },
+        "frameStats": { "$ref": "#/$defs/frameStats" },
+        "droppedFrames": { "type": "integer", "minimum": 0 },
+        "frameCount": { "type": "integer", "minimum": 0 },
+        "firstRenderStartMs": { "type": "number", "minimum": 0 },
+        "cpuRenderSubmit": { "$ref": "#/$defs/series" },
+        "cpuTimings": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/series" }
+        },
+        "presentation": { "$ref": "#/$defs/presentation" },
+        "gpu": { "$ref": "#/$defs/gpu" },
+        "mounts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mount" }
+        },
+        "counters": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "geometry": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "pipeline": {
+          "type": "object",
+          "additionalProperties": { "type": "number" }
+        },
+        "status": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "startTime", "phase"],
+            "properties": {
+              "type": { "type": "string" },
+              "detail": { "type": "object" },
+              "startTime": { "type": "number", "minimum": 0 },
+              "phase": { "enum": ["cold", "warm"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "unavailable": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "page": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string" },
+        "scene": { "$ref": "#/$defs/scene" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

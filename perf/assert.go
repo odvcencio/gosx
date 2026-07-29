@@ -11,6 +11,9 @@ type Assertion struct {
 	Metric string // e.g. "p95", "ttfb", "dropped_frames"
 	Op     string // "<", ">", "<=", ">=", "=="
 	Value  float64
+	// Optional makes an unavailable metric a skipped/pass result. It is
+	// expressed by suffixing the metric with "?", e.g. gpu_total_p95?.
+	Optional bool
 }
 
 // AssertionResult is the outcome of evaluating one assertion.
@@ -28,6 +31,11 @@ func ParseAssertion(expr string) (Assertion, error) {
 	}
 
 	metric := parts[0]
+	optional := strings.HasSuffix(metric, "?")
+	metric = strings.TrimSuffix(metric, "?")
+	if metric == "" {
+		return Assertion{}, fmt.Errorf("empty metric in %q", expr)
+	}
 	op := parts[1]
 
 	switch op {
@@ -41,7 +49,7 @@ func ParseAssertion(expr string) (Assertion, error) {
 		return Assertion{}, fmt.Errorf("bad value %q in %q: %w", parts[2], expr, err)
 	}
 
-	return Assertion{Metric: metric, Op: op, Value: val}, nil
+	return Assertion{Metric: metric, Op: op, Value: val, Optional: optional}, nil
 }
 
 // EvalAssertions evaluates all assertions against a Report.
@@ -56,6 +64,8 @@ func EvalAssertions(assertions []Assertion, r *Report) []AssertionResult {
 		}
 		if ok {
 			res.Passed = compare(actual, a.Op, a.Value)
+		} else if a.Optional {
+			res.Passed = true
 		}
 		results[i] = res
 	}
@@ -151,8 +161,125 @@ func ResolvePageMetric(name string, p *PageReport) (float64, bool) {
 		return float64(p.Scene.DroppedFrames), true
 	case "frame_count", "scene_frame_count":
 		return float64(p.Scene.FrameCount), true
+	case "cpu_submit_p50", "scene_cpu_submit_p50":
+		return telemetryStat(p.Scene.CPURenderSubmit, "all", "p50")
+	case "cpu_submit_p95", "scene_cpu_submit_p95":
+		return telemetryStat(p.Scene.CPURenderSubmit, "all", "p95")
+	case "cpu_submit_p99", "scene_cpu_submit_p99":
+		return telemetryStat(p.Scene.CPURenderSubmit, "all", "p99")
+	case "cpu_submit_warm_p95", "scene_cpu_submit_warm_p95":
+		return telemetryStat(p.Scene.CPURenderSubmit, "warm", "p95")
+	case "presented_p50", "presentation_p50", "scene_presented_p50":
+		return presentationStat(p.Scene.Presentation, "all", "p50")
+	case "presented_p95", "presentation_p95", "scene_presented_p95":
+		return presentationStat(p.Scene.Presentation, "all", "p95")
+	case "presented_p99", "presentation_p99", "scene_presented_p99":
+		return presentationStat(p.Scene.Presentation, "all", "p99")
+	case "presented_max", "presentation_max", "scene_presented_max":
+		return presentationStat(p.Scene.Presentation, "all", "max")
+	case "presented_cold_p95", "presentation_cold_p95":
+		return presentationStat(p.Scene.Presentation, "cold", "p95")
+	case "presented_warm_p95", "presentation_warm_p95":
+		return presentationStat(p.Scene.Presentation, "warm", "p95")
+	case "missed_vsyncs", "scene_missed_vsyncs":
+		if p.Scene.Presentation == nil {
+			return 0, false
+		}
+		return float64(p.Scene.Presentation.EstimatedMissedVsyncs), true
+	case "hitch_intervals", "scene_hitch_intervals":
+		if p.Scene.Presentation == nil {
+			return 0, false
+		}
+		return float64(p.Scene.Presentation.HitchIntervals), true
+	case "hitch_clusters", "scene_hitch_clusters":
+		if p.Scene.Presentation == nil {
+			return 0, false
+		}
+		return float64(len(p.Scene.Presentation.HitchClusters)), true
+	case "gpu_total_p50", "scene_gpu_total_p50":
+		return gpuTotalStat(p.Scene.GPU, "all", "p50")
+	case "gpu_total_p95", "scene_gpu_total_p95":
+		return gpuTotalStat(p.Scene.GPU, "all", "p95")
+	case "gpu_total_p99", "scene_gpu_total_p99":
+		return gpuTotalStat(p.Scene.GPU, "all", "p99")
+	case "gpu_total_warm_p95", "scene_gpu_total_warm_p95":
+		return gpuTotalStat(p.Scene.GPU, "warm", "p95")
 	}
 
+	if strings.HasPrefix(name, "gpu_pass_") {
+		return resolveGPUPassMetric(strings.TrimPrefix(name, "gpu_pass_"), p.Scene.GPU)
+	}
+	if strings.HasPrefix(name, "scene_counter_") {
+		key := strings.ReplaceAll(strings.TrimPrefix(name, "scene_counter_"), "_", "-")
+		value, ok := p.Scene.Counters[key]
+		return value, ok
+	}
+	return 0, false
+}
+
+func telemetryStat(series *TelemetrySeries, phase, stat string) (float64, bool) {
+	if series == nil {
+		return 0, false
+	}
+	selected := series.Stats
+	switch phase {
+	case "cold":
+		selected = series.Cold
+	case "warm":
+		selected = series.Warm
+	}
+	if selected.Count == 0 {
+		return 0, false
+	}
+	switch stat {
+	case "p50":
+		return selected.P50, true
+	case "p95":
+		return selected.P95, true
+	case "p99":
+		return selected.P99, true
+	case "max":
+		return selected.Max, true
+	}
+	return 0, false
+}
+
+func presentationStat(metric *PresentationMetric, phase, stat string) (float64, bool) {
+	if metric == nil {
+		return 0, false
+	}
+	return telemetryStat(&metric.TelemetrySeries, phase, stat)
+}
+
+func gpuTotalStat(gpu *SceneGPUTelemetry, phase, stat string) (float64, bool) {
+	if gpu == nil {
+		return 0, false
+	}
+	return telemetryStat(gpu.Total, phase, stat)
+}
+
+func resolveGPUPassMetric(metric string, gpu *SceneGPUTelemetry) (float64, bool) {
+	if gpu == nil {
+		return 0, false
+	}
+	for _, suffix := range []string{"_warm_p95", "_cold_p95", "_p50", "_p95", "_p99", "_max"} {
+		if !strings.HasSuffix(metric, suffix) {
+			continue
+		}
+		pass := strings.TrimSuffix(metric, suffix)
+		series, ok := gpu.Passes[pass]
+		if !ok {
+			return 0, false
+		}
+		phase := "all"
+		stat := strings.TrimPrefix(suffix, "_")
+		if strings.HasPrefix(stat, "warm_") {
+			phase, stat = "warm", strings.TrimPrefix(stat, "warm_")
+		} else if strings.HasPrefix(stat, "cold_") {
+			phase, stat = "cold", strings.TrimPrefix(stat, "cold_")
+		}
+		return telemetryStat(&series, phase, stat)
+	}
 	return 0, false
 }
 

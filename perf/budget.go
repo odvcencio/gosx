@@ -53,6 +53,8 @@ type BudgetAssertionResult struct {
 	Actual     float64 `json:"actual"`
 	Passed     bool    `json:"passed"`
 	Found      bool    `json:"found"`
+	Optional   bool    `json:"optional,omitempty"`
+	Skipped    bool    `json:"skipped,omitempty"`
 }
 
 // LoadBudgetFile reads a JSON perf budget file.
@@ -123,6 +125,10 @@ func FormatBudgetResult(result BudgetCheckResult) string {
 				mark = "fail"
 			}
 			if !assertion.Found {
+				if assertion.Skipped {
+					b.WriteString(fmt.Sprintf("    %-4s %-28s optional metric unavailable (skipped)\n", "skip", assertion.Expression))
+					continue
+				}
 				b.WriteString(fmt.Sprintf("    %-4s %-28s metric not found\n", mark, assertion.Expression))
 				continue
 			}
@@ -250,7 +256,8 @@ func evalBudgetPage(page PageReport, profile string, expressions []string) Budge
 			continue
 		}
 		actual, ok := ResolvePageMetric(assertion.Metric, &page)
-		passed := ok && compare(actual, assertion.Op, assertion.Value)
+		skipped := assertion.Optional && !ok
+		passed := skipped || (ok && compare(actual, assertion.Op, assertion.Value))
 		if !passed {
 			result.Passed = false
 		}
@@ -262,6 +269,8 @@ func evalBudgetPage(page PageReport, profile string, expressions []string) Budge
 			Actual:     actual,
 			Passed:     passed,
 			Found:      ok,
+			Optional:   assertion.Optional,
+			Skipped:    skipped,
 		})
 	}
 	return result

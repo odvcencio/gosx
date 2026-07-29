@@ -258,7 +258,14 @@ material WaterSurfaceBelow {
             coord = clamp(coord + pinfo.zw * 0.005, vec2f(0.0, 0.0), vec2f(1.0, 1.0))
             pinfo = stateAt(coord)
         }
-        let n         = -normalFromState(pinfo, normalScale)
+        let baseNormal  = -normalFromState(pinfo, normalScale)
+        let detailPhase = coord.x * 71.0 + coord.y * 53.0 + pinfo.x * 19.0
+        let microPhase  = coord.x * 173.0 - coord.y * 137.0 - pinfo.x * 31.0
+        let fineSlope   = vec2f(
+            sin(detailPhase) * 0.010 + sin(microPhase) * 0.004,
+            cos(detailPhase * 0.91) * 0.010 + cos(microPhase * 1.07) * 0.004
+        )
+        let n         = normalize(vec3f(baseNormal.x - fineSlope.x, min(baseNormal.y, -0.08), baseNormal.z - fineSlope.y))
         let ldir      = normalize(lightDir)
         // wallRL is the light ray refracted at the (flat, y-up) water
         // plane, used by wallShade/poolBox for both rays below. It depends
@@ -269,8 +276,12 @@ material WaterSurfaceBelow {
         let wallRL    = -refract(-ldir, vec3f(0.0, 1.0, 0.0), 1.0 / 1.333)
         let viewDir   = normalize(cameraPos - wp)
         let reflectD  = reflect(-viewDir, n)
-        let refractD  = refract(-viewDir, n, 1.333 / 1.0)
-        let fresnel   = mix(0.50, 1.0, pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 3.0))
+        let waterIOR  = 1.333
+        let refractD  = refract(-viewDir, n, waterIOR / 1.0)
+        let f0Ratio   = (1.0 - waterIOR) / (1.0 + waterIOR)
+        let f0        = f0Ratio * f0Ratio
+        let viewCos   = clamp(dot(n, viewDir), 0.0, 1.0)
+        let fresnel   = f0 + (1.0 - f0) * pow(1.0 - viewCos, 5.0)
 
         let objC      = vec3f(objectCenter.x * poolWidth, objectCenter.y, objectCenter.z * poolLength)
         let objH      = vec3f(objectHalf.x * poolWidth, objectHalf.y, objectHalf.z * poolLength)
@@ -386,7 +397,18 @@ material WaterSurfaceBelow {
         let rfSky      = sampleCube(sky, refractD).rgb + sunGlint(refractD, ldir)
         let rfHitWall  = refractD.y < 0.0 || rfWallP.y < 2.0 / 12.0
         let rfBase     = rfHitObj ? rfObjColor : rfHitWall ? rfWallColor : rfSky
-        let refracted  = rfBase * vec3f(0.8, 1.0, 1.1)
+        // This pass is viewed from below the interface. The refracted ray
+        // continues into air, so its object/pool hit distance is not water
+        // travel. Beer-Lambert attenuation belongs to the segment every
+        // interface contribution shares: surface point -> underwater camera.
+        let waterTravel = clamp(length(cameraPos - wp), 0.0, max(ph * 2.5, 0.1))
+        let transmittance = vec3f(
+            exp(-0.72 * waterTravel),
+            exp(-0.24 * waterTravel),
+            exp(-0.11 * waterTravel)
+        )
+        let scatterAmount = 1.0 - (transmittance.x + transmittance.y + transmittance.z) / 3.0
+        let refracted = rfBase
 
         let rlSimple      = objectHitSimple(wp, reflectD, objectKind, objC, objR, objH)
         let rlObjDist     = objActive ? rlSimple.x : 1000000.0
@@ -412,6 +434,14 @@ material WaterSurfaceBelow {
         let rlBase     = rlHitObj ? rlObjColor : rlHitWall ? rlWallColor : rlSky
         let reflected  = reflectD.y < 0.0 ? rlBase * vec3f(0.4, 0.9, 1.0) : rlBase
 
-        return vec4f(mix(reflected, refracted, (1.0 - fresnel) * length(refractD)), 1.0)
+        // refract() returns the zero vector at total internal reflection. Fold
+        // that directly into the blend so the underwater view becomes fully
+        // reflective at the critical angle without a branch.
+        let refractAvailability = clamp(length(refractD), 0.0, 1.0)
+        let reflectWeight       = mix(1.0, fresnel, refractAvailability)
+        let interfaceColor      = mix(refracted, reflected, reflectWeight)
+        let transportedColor    = interfaceColor * transmittance
+                              + vec3f(0.025, 0.20, 0.24) * scatterAmount * 0.58
+        return vec4f(transportedColor, 1.0)
     }
 }

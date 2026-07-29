@@ -1,0 +1,88 @@
+{
+  "$schema": "./water-profile-evidence-budget.schema.json",
+  "schemaVersion": 1,
+  "description": "Suggested authored-resource invariants and opt-in real-hardware cadence thresholds for /demos/water. Timing thresholds are not enabled for software rasterization or unspecified machines.",
+  "profiles": {
+    "hero": {
+      "dprCap": 1.9,
+      "maxPixels": 2073600,
+      "simulationResolution": 256,
+      "surfaceResolution": 64,
+      "causticsResolution": 1024,
+      "objectShadowResolution": 1024,
+      "objectTextureMaxSide": 887,
+      "objectTexturePixelBudget": 786432,
+      "expensivePassCadence": 1,
+      "msaaSamples": 4,
+      "features": {
+        "caustics": true,
+        "reflection": true,
+        "refraction": true
+      }
+    },
+    "balanced": {
+      "dprCap": 1.6,
+      "maxPixels": 1200000,
+      "simulationResolution": 256,
+      "surfaceResolution": 48,
+      "causticsResolution": 1024,
+      "objectShadowResolution": 1024,
+      "objectTextureMaxSide": 628,
+      "objectTexturePixelBudget": 393216,
+      "expensivePassCadence": 1,
+      "msaaSamples": 0,
+      "features": {
+        "caustics": true,
+        "reflection": true,
+        "refraction": true
+      }
+    },
+    "battery": {
+      "dprCap": 1.25,
+      "maxPixels": 921600,
+      "simulationResolution": 256,
+      "surfaceResolution": 32,
+      "causticsResolution": 512,
+      "objectShadowResolution": 512,
+      "objectTextureMaxSide": 480,
+      "objectTexturePixelBudget": 230400,
+      "expensivePassCadence": 1,
+      "msaaSamples": 1,
+      "features": {
+        "caustics": true,
+        "reflection": true,
+        "refraction": true
+      }
+    }
+  },
+  "hardwareThresholds": {
+    "webgpu": {
+      "sphere": {
+        "fpsMin": 50,
+        "p95MaxMS": 25,
+        "p99MaxMS": 33,
+        "maxMaxMS": 50
+      },
+      "duck": {
+        "fpsMin": 45,
+        "p95MaxMS": 33,
+        "p99MaxMS": 50,
+        "maxMaxMS": 80
+      }
+    },
+    "webgl": {
+      "sphere": {
+        "fpsMin": 50,
+        "p95MaxMS": 25,
+        "p99MaxMS": 33,
+        "maxMaxMS": 50
+      },
+      "duck": {
+        "fpsMin": 45,
+        "p95MaxMS": 33,
+        "p99MaxMS": 50,
+        "maxMaxMS": 80
+      }
+    }
+  }
+}

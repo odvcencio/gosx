@@ -3,6 +3,7 @@ package perf
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -37,16 +38,92 @@ func FormatTable(r *Report) string {
 	// Scene3D
 	if p.Scene != nil {
 		b.WriteString("\n  Scene3D\n")
-		b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "First frame", p.Scene.FirstFrameMs))
+		if p.Scene.FirstRenderStartMs > 0 {
+			b.WriteString(fmt.Sprintf("    %-24s%.1fms after navigation\n", "First render start", p.Scene.FirstRenderStartMs))
+		}
+		if p.Scene.FirstFrameMs > 0 {
+			b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "First CPU submit", p.Scene.FirstFrameMs))
+		}
 
 		fs := p.Scene.FrameStats
 		if fs.Count > 0 {
-			b.WriteString(fmt.Sprintf("    Frame budget (%d frames)\n", fs.Count))
+			b.WriteString(fmt.Sprintf("    CPU render/submit (%d measures)\n", fs.Count))
 			b.WriteString(fmt.Sprintf("      p50    %.1fms    p95    %.1fms    p99    %.1fms    max    %.1fms\n",
 				fs.P50, fs.P95, fs.P99, fs.Max))
 		}
 
-		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Frame count", p.Scene.FrameCount))
+		if presentation := p.Scene.Presentation; presentation != nil {
+			fs = presentation.Stats
+			b.WriteString(fmt.Sprintf("    rAF presentation cadence (%d intervals)\n", fs.Count))
+			b.WriteString(fmt.Sprintf("      p50    %.1fms    p95    %.1fms    p99    %.1fms    max    %.1fms\n",
+				fs.P50, fs.P95, fs.P99, fs.Max))
+			b.WriteString(fmt.Sprintf("      refresh estimate %.2fms    missed-vsync estimate %d    hitch clusters %d\n",
+				presentation.EstimatedRefreshIntervalMs,
+				presentation.EstimatedMissedVsyncs,
+				len(presentation.HitchClusters)))
+			if presentation.Cold.Count > 0 || presentation.Warm.Count > 0 {
+				b.WriteString(fmt.Sprintf("      cold p95 %.1fms (%d)    warm p95 %.1fms (%d)\n",
+					presentation.Cold.P95, presentation.Cold.Count,
+					presentation.Warm.P95, presentation.Warm.Count))
+			}
+		}
+
+		if gpu := p.Scene.GPU; gpu != nil {
+			if gpu.Total != nil && gpu.Total.Stats.Count > 0 {
+				b.WriteString(fmt.Sprintf("    %-24sp50 %.1fms  p95 %.1fms  p99 %.1fms\n",
+					"GPU total", gpu.Total.Stats.P50, gpu.Total.Stats.P95, gpu.Total.Stats.P99))
+			}
+			if len(gpu.Passes) > 0 {
+				passNames := make([]string, 0, len(gpu.Passes))
+				for name := range gpu.Passes {
+					passNames = append(passNames, name)
+				}
+				sort.Strings(passNames)
+				for _, name := range passNames {
+					pass := gpu.Passes[name]
+					b.WriteString(fmt.Sprintf("      GPU pass %-14sp50 %.1fms  p95 %.1fms\n",
+						name, pass.Stats.P50, pass.Stats.P95))
+				}
+			}
+			if gpu.Status != "" {
+				b.WriteString(fmt.Sprintf("    %-24s%s\n", "GPU timing status", gpu.Status))
+			}
+		}
+
+		for _, mount := range p.Scene.Mounts {
+			label := fmt.Sprintf("Mount %d profile", mount.Index)
+			b.WriteString(fmt.Sprintf("    %-24sbackend=%s renderer=%s profile=%s dpr=%.2f effective=%.2f\n",
+				label, mount.Backend, mount.Renderer, mount.Profile,
+				mount.PixelRatio, mount.EffectivePixelRatio))
+			if mount.Fallback != "" {
+				b.WriteString(fmt.Sprintf("      fallback %s\n", mount.Fallback))
+			}
+			if mount.Canvas != nil {
+				b.WriteString(fmt.Sprintf("      target %.0fx%.0f  css %.0fx%.0f  device dpr %.2f\n",
+					mount.Canvas.Width, mount.Canvas.Height,
+					mount.Canvas.CSSWidth, mount.Canvas.CSSHeight,
+					mount.DevicePixelRatio))
+			}
+		}
+
+		if len(p.Scene.Geometry) > 0 {
+			b.WriteString(fmt.Sprintf("    %-24s%d retained metrics (JSON has values)\n", "Geometry telemetry", len(p.Scene.Geometry)))
+		}
+		if len(p.Scene.Pipeline) > 0 {
+			b.WriteString(fmt.Sprintf("    %-24s%d compile/cache metrics (JSON has values)\n", "Pipeline telemetry", len(p.Scene.Pipeline)))
+		}
+		if len(p.Scene.Unavailable) > 0 {
+			keys := make([]string, 0, len(p.Scene.Unavailable))
+			for key := range p.Scene.Unavailable {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				b.WriteString(fmt.Sprintf("    %-24sunavailable: %s\n", key, p.Scene.Unavailable[key]))
+			}
+		}
+
+		b.WriteString(fmt.Sprintf("    %-24s%d CPU render measures\n", "Frame count", p.Scene.FrameCount))
 	}
 
 	// Interactions

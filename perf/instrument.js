@@ -23,7 +23,17 @@
     cumulativeLayoutShift: 0,
     firstInputDelay: 0,
     signalWrites: 0,
-    signalReads: 0
+    signalReads: 0,
+
+    // Browser animation-frame cadence and Scene3D telemetry are sampled
+    // independently from scene3d-render. The latter is CPU submission work,
+    // not evidence that a frame was presented by the compositor.
+    coldFrameCount: 30,
+    sceneStartedAt: 0,
+    warmAt: 0,
+    presentedFrameIntervals: [], // {duration, startTime, phase}
+    sceneAttributeSamples: [],   // {mount, name, value, numericValue, startTime, phase}
+    sceneTelemetryEvents: []     // {type, detail, startTime, phase}
   };
 
   // --- 1. Bridge gosx:ready CustomEvent → performance mark ---
@@ -43,6 +53,7 @@
           perf.frameCount++;
           if (!perf.firstFrame) {
             perf.firstFrame = true;
+            perf.sceneStartedAt = entries[i].startTime;
             performance.mark("gosx:scene:first-frame");
           }
         }
@@ -51,7 +62,173 @@
     sceneObserver.observe({ type: "measure", buffered: true });
   } catch (_e) {}
 
-  // --- 3a. Long task observer (tasks > 50ms that block main thread) ---
+  // --- 3a. Browser animation-frame cadence ---
+  // requestAnimationFrame timestamps describe display-opportunity cadence.
+  // They do not prove compositor presentation, so the Go report retains this
+  // source label and reports estimated missed-vsyncs rather than "GPU frames".
+  var _lastAnimationFrameAt = 0;
+  var _sampleLimit = 8192;
+  function _phaseAt(at) {
+    return perf.warmAt > 0 && at >= perf.warmAt ? "warm" : "cold";
+  }
+  function _boundedPush(target, value) {
+    target.push(value);
+    if (target.length > _sampleLimit) {
+      // Compact in batches to avoid an O(n) shift on every renderer update
+      // after the buffer fills.
+      target.splice(0, Math.floor(_sampleLimit / 2));
+    }
+  }
+  function _sampleAnimationFrame(at) {
+    if (document.visibilityState !== "hidden") {
+      if (_lastAnimationFrameAt > 0 && at > _lastAnimationFrameAt) {
+        _boundedPush(perf.presentedFrameIntervals, {
+          duration: at - _lastAnimationFrameAt,
+          startTime: _lastAnimationFrameAt,
+          phase: _phaseAt(at)
+        });
+        if (perf.sceneStartedAt > 0 && perf.warmAt === 0) {
+          var sceneFrameIntervals = 0;
+          for (var i = perf.presentedFrameIntervals.length - 1; i >= 0; i--) {
+            if (perf.presentedFrameIntervals[i].startTime < perf.sceneStartedAt) break;
+            sceneFrameIntervals++;
+          }
+          if (sceneFrameIntervals >= perf.coldFrameCount) perf.warmAt = at;
+        }
+      }
+      _lastAnimationFrameAt = at;
+    } else {
+      // Do not turn time spent in a background tab into a fake hitch.
+      _lastAnimationFrameAt = 0;
+    }
+    requestAnimationFrame(_sampleAnimationFrame);
+  }
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(_sampleAnimationFrame);
+  }
+
+  // --- 3b. Stable Scene3D mount telemetry ---
+  // Renderer backends publish diagnostics as data-gosx-scene3d-* mount
+  // attributes. Sample timing and lifecycle counters as they change, while
+  // keeping a complete latest-value snapshot for debugging.
+  function _sceneMounts() {
+    return document.querySelectorAll(
+      "[data-gosx-scene3d-mounted], [data-gosx-scene3d-renderer], [data-gosx-scene3d-ready]"
+    );
+  }
+  function _sceneMountIndex(node) {
+    var mounts = _sceneMounts();
+    for (var i = 0; i < mounts.length; i++) {
+      if (mounts[i] === node) return i;
+    }
+    return -1;
+  }
+  function _isSampledSceneAttribute(name, value) {
+    if (name.indexOf("data-gosx-scene3d-") !== 0) return false;
+    var numeric = Number(value);
+    if (!Number.isFinite(numeric)) return false;
+    return /(?:gpu|cpu-ms|planner|bundle|pipeline|shader|compile|warmup|cache|upload|alloc|retir|rebuild|fallback|draw|dispatch|pass|bytes|entries|miss|hit)/.test(name);
+  }
+  function _recordSceneAttribute(node, name) {
+    if (!node || node.nodeType !== 1 || !_isSampledSceneAttribute(name, node.getAttribute(name))) {
+      return;
+    }
+    var value = node.getAttribute(name);
+    var at = performance.now();
+    _boundedPush(perf.sceneAttributeSamples, {
+      mount: _sceneMountIndex(node),
+      name: name,
+      value: value,
+      numericValue: Number(value),
+      startTime: at,
+      phase: _phaseAt(at)
+    });
+  }
+  try {
+    var sceneAttributeObserver = new MutationObserver(function(records) {
+      for (var i = 0; i < records.length; i++) {
+        var record = records[i];
+        if (record.type === "attributes") {
+          _recordSceneAttribute(record.target, record.attributeName || "");
+        }
+      }
+    });
+    sceneAttributeObserver.observe(document, {
+      attributes: true,
+      childList: true,
+      subtree: true
+    });
+  } catch (_e) {}
+
+  // Backends may emit structured telemetry events in addition to attributes.
+  // Keep this deliberately generic and bounded so future pass/water metrics
+  // can be consumed without changing the injected profiler.
+  function _recordSceneTelemetryEvent(event) {
+    var at = performance.now();
+    var detail = null;
+    try {
+      detail = JSON.parse(JSON.stringify(event.detail == null ? null : event.detail));
+    } catch (_e) {
+      detail = null;
+    }
+    _boundedPush(perf.sceneTelemetryEvents, {
+      type: event.type,
+      detail: detail,
+      startTime: at,
+      phase: _phaseAt(at)
+    });
+  }
+  document.addEventListener("gosx:scene3d:telemetry", _recordSceneTelemetryEvent);
+  document.addEventListener("gosx:scene3d:perf", _recordSceneTelemetryEvent);
+
+  window.__gosx_perf_scene_snapshot = function() {
+    var mounts = _sceneMounts();
+    var mountSnapshots = [];
+    for (var i = 0; i < mounts.length; i++) {
+      var mount = mounts[i];
+      var attributes = {};
+      for (var j = 0; j < mount.attributes.length; j++) {
+        var attr = mount.attributes[j];
+        if (attr.name.indexOf("data-gosx-scene3d-") === 0) {
+          attributes[attr.name] = attr.value;
+        }
+      }
+      var canvas = mount.querySelector("canvas[data-gosx-scene3d-canvas], canvas");
+      var canvasSnapshot = null;
+      if (canvas) {
+        var rect = null;
+        try { rect = canvas.getBoundingClientRect(); } catch (_e) {}
+        canvasSnapshot = {
+          width: Number(canvas.width) || 0,
+          height: Number(canvas.height) || 0,
+          cssWidth: rect ? Number(rect.width) || 0 : Number(canvas.clientWidth) || 0,
+          cssHeight: rect ? Number(rect.height) || 0 : Number(canvas.clientHeight) || 0
+        };
+      }
+      mountSnapshots.push({
+        index: i,
+        id: mount.id || "",
+        attributes: attributes,
+        canvas: canvasSnapshot
+      });
+    }
+    return {
+      available: mountSnapshots.length > 0,
+      rafAvailable: typeof requestAnimationFrame === "function",
+      visibilityState: document.visibilityState || "",
+      coldFrameCount: perf.coldFrameCount,
+      sceneStartedAt: perf.sceneStartedAt,
+      warmAt: perf.warmAt,
+      capturedAt: performance.now(),
+      devicePixelRatio: Number(window.devicePixelRatio) || 0,
+      presentedFrameIntervals: perf.presentedFrameIntervals.slice(),
+      attributeSamples: perf.sceneAttributeSamples.slice(),
+      telemetryEvents: perf.sceneTelemetryEvents.slice(),
+      mounts: mountSnapshots
+    };
+  };
+
+  // --- 3c. Long task observer (tasks > 50ms that block main thread) ---
   // This is the single most valuable signal for scroll jank diagnosis:
   // any main-thread task > 50ms will cause dropped frames during scroll.
   try {
@@ -69,7 +246,7 @@
     longTaskObserver.observe({ type: "longtask", buffered: true });
   } catch (_e) {}
 
-  // --- 3b. Core Web Vitals: Largest Contentful Paint ---
+  // --- 3d. Core Web Vitals: Largest Contentful Paint ---
   try {
     var lcpObserver = new PerformanceObserver(function(list) {
       var entries = list.getEntries();
@@ -82,7 +259,7 @@
     lcpObserver.observe({ type: "largest-contentful-paint", buffered: true });
   } catch (_e) {}
 
-  // --- 3c. Core Web Vitals: Cumulative Layout Shift ---
+  // --- 3e. Core Web Vitals: Cumulative Layout Shift ---
   try {
     var clsObserver = new PerformanceObserver(function(list) {
       var entries = list.getEntries();
@@ -97,7 +274,7 @@
     clsObserver.observe({ type: "layout-shift", buffered: true });
   } catch (_e) {}
 
-  // --- 3d. Core Web Vitals: First Input Delay ---
+  // --- 3f. Core Web Vitals: First Input Delay ---
   try {
     var fidObserver = new PerformanceObserver(function(list) {
       var entries = list.getEntries();

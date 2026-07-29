@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gosx.dev/schemas/water-profile-evidence-budget.schema.json",
+  "title": "GoSX water profile evidence budget",
+  "type": "object",
+  "required": ["schemaVersion", "profiles", "hardwareThresholds"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "description": { "type": "string" },
+    "profiles": {
+      "type": "object",
+      "required": ["hero", "balanced", "battery"],
+      "additionalProperties": false,
+      "properties": {
+        "hero": { "$ref": "#/$defs/profile" },
+        "balanced": { "$ref": "#/$defs/profile" },
+        "battery": { "$ref": "#/$defs/profile" }
+      }
+    },
+    "hardwareThresholds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "$ref": "#/$defs/timing" }
+      }
+    }
+  },
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "required": [
+        "dprCap",
+        "maxPixels",
+        "simulationResolution",
+        "surfaceResolution",
+        "causticsResolution",
+        "objectShadowResolution",
+        "objectTextureMaxSide",
+        "objectTexturePixelBudget",
+        "expensivePassCadence",
+        "msaaSamples",
+        "features"
+      ],
+      "properties": {
+        "dprCap": { "type": "number", "exclusiveMinimum": 0 },
+        "maxPixels": { "type": "integer", "minimum": 1 },
+        "simulationResolution": { "type": "integer", "minimum": 1 },
+        "surfaceResolution": { "type": "integer", "minimum": 1 },
+        "causticsResolution": { "type": "integer", "minimum": 1 },
+        "objectShadowResolution": { "type": "integer", "minimum": 1 },
+        "objectTextureMaxSide": { "type": "integer", "minimum": 1 },
+        "objectTexturePixelBudget": { "type": "integer", "minimum": 1 },
+        "expensivePassCadence": { "type": "integer", "minimum": 1 },
+        "msaaSamples": { "type": "integer", "minimum": 0 },
+        "features": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" }
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "properties": {
+        "fpsMin": { "type": "number", "minimum": 0 },
+        "p95MaxMS": { "type": "number", "minimum": 0 },
+        "p99MaxMS": { "type": "number", "minimum": 0 },
+        "maxMaxMS": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

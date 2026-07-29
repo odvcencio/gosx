@@ -185,17 +185,17 @@ func TestWaterDemoDataCompiles(t *testing.T) {
 	if duckMesh["rotationY"] != float64(0) || duckMesh["scaleX"] != float64(1) || duckMesh["scaleY"] != float64(1) || duckMesh["scaleZ"] != float64(1) {
 		t.Fatalf("Duck mesh transform = %#v, want upstream-neutral transform before Scene3D model fit", duckMesh)
 	}
-	if duckMesh["bounds"] != float64(0.5) || duckMesh["fit"] != "contain" || duckMesh["fitAlign"] != "center-min-y" {
-		t.Fatalf("Duck mesh fit metadata = %#v, want upstream duck normalization metadata", duckMesh)
+	if duckMesh["bounds"] != float64(0.65) || duckMesh["fit"] != "contain" || duckMesh["fitAlign"] != "center-min-y" {
+		t.Fatalf("Duck mesh fit metadata = %#v, want flagship duck normalization metadata", duckMesh)
 	}
 	duckSpheres, ok := duck["objectDisplacementSpheres"].([]any)
 	if !ok || len(duckSpheres) != 3 {
 		t.Fatalf("Duck objectDisplacementSpheres = %#v, want upstream 3-sphere volume approximation", duck["objectDisplacementSpheres"])
 	}
 	for index, want := range []map[string]float64{
-		{"offsetX": 0, "offsetY": 0, "offsetZ": 0, "radius": 0.15},
-		{"offsetX": 0, "offsetY": 0.1, "offsetZ": 0.1, "radius": 0.08},
-		{"offsetX": 0, "offsetY": -0.08, "offsetZ": -0.05, "radius": 0.1},
+		{"offsetX": 0, "offsetY": 0, "offsetZ": 0, "radius": 0.195},
+		{"offsetX": 0, "offsetY": 0.13, "offsetZ": 0.13, "radius": 0.104},
+		{"offsetX": 0, "offsetY": -0.104, "offsetZ": -0.065, "radius": 0.13},
 	} {
 		sphere, ok := duckSpheres[index].(map[string]any)
 		if !ok {
@@ -301,20 +301,22 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`data-gosx-scene3d-control-group="Lights"`,
 		`data-gosx-scene3d-panel-toggle="water-demo-help"`,
 		`data-gosx-scene3d-help-panel="true"`,
-		`GoSX Water`,
+		`Water, in motion.`,
 		`jeantimex/threejs-water`,
 		`Ported to GoSX by`,
 		`Scroll or pinch to zoom`,
 		`Press SPACEBAR to pause and unpause`,
 		`controlTargetY={-0.5}`,
+		`capabilityTier={data.diagCapabilityTier}`,
 		`controlRotateMode="pixel-degrees"`,
 		`controlRotateDirection="grab"`,
 		`controlMinDistance={2}`,
 		`controlMaxDistance={10}`,
 		`controlPitchLimit={1.5707788735}`,
-		`x={1.2695827068526726}`,
-		`y={1.1904730469627978}`,
-		`z={3.395653196065958}`,
+		`x={1.38}`,
+		`y={1.52}`,
+		`z={2.87}`,
+		`fov={42}`,
 		`interactionProfile="water-object-drop-orbit"`,
 		`interactionTarget="water-main"`,
 		`interactionObject="Sphere"`,
@@ -343,20 +345,33 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`data-gosx-scene3d-rounded-control="true"`,
 		`data-gosx-scene3d-pool-boundary-control="true"`,
 		`cubeMap="/water/"`,
-		`shallowColor="#7ad1eb"`,
-		`deepColor="#082e57"`,
-		`aboveWaterColorR={0.25}`,
-		`aboveWaterColorG={1.0}`,
-		`aboveWaterColorB={1.25}`,
-		`lightDirectionX={2}`,
-		`lightDirectionY={2}`,
-		`lightDirectionZ={-1}`,
+		`shallowColor="#54c4d8"`,
+		`deepColor="#041c38"`,
+		`aboveWaterColorR={0.18}`,
+		`aboveWaterColorG={0.78}`,
+		`aboveWaterColorB={0.98}`,
+		`lightDirectionX={1.4}`,
+		`lightDirectionY={2.8}`,
+		`lightDirectionZ={-1.6}`,
 		`waveSpeed={1.0}`,
 		`damping={0.995}`,
 		`adaptiveQuality={true}`,
 		`adaptiveTargetFrameMS={16.7}`,
 		`adaptiveWarmupFrames={12}`,
+		`qualityProfiles={data.diagQualityProfiles}`,
 		`qualityTier="full"`,
+		`msaaSamples={data.diagMsaa}`,
+		`antialias={data.diagAntialias}`,
+		`toneMapping="aces"`,
+		`data-quality={data.diagQuality}`,
+		`href="?quality=hero"`,
+		`href="?quality=balanced"`,
+		`href="?quality=battery"`,
+		`aria-current={data.diagQualityHeroCurrent}`,
+		`aria-current={data.diagQualityBalancedCurrent}`,
+		`aria-current={data.diagQualityBatteryCurrent}`,
+		`Dielectric Fresnel`,
+		`Depth absorption`,
 		// Every cost knob binds to the diag-resolved data value so the
 		// waterDiagDefaults table in diag.go is the single source of truth
 		// for shipped configuration. Hardcoded literals here regressed once
@@ -494,17 +509,20 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		".water-demo__scene {\n  position: absolute !important;\n  top: 0 !important;\n  right: min(20rem, calc(100vw - 3.5rem)) !important;",
-		".water-demo__help[data-gosx-scene3d-panel-open=\"false\"] {\n  transform: translateX(0);",
+		".water-demo__scene {\n  position: absolute !important;\n  inset: 0 !important;\n  width: 100% !important;",
+		".water-demo__help[data-gosx-scene3d-panel-open=\"false\"] {\n  transform: translateX(calc(100% + var(--space-lg)));",
 		".water-demo__help-toggle {\n  position: absolute;",
-		"display: none;",
+		"display: grid;",
+		".water-demo__intro {",
+		".water-demo__quality {",
+		`.water-demo[data-quality="hero"]`,
+		"font-family: var(--font-display);",
+		"color: var(--color-text-secondary);",
 		"@media (max-width: 720px)",
-		".water-demo__scene {\n    right: 0 !important;\n    width: 100% !important;",
-		".water-demo__help[data-gosx-scene3d-panel-open=\"false\"] {\n    transform: translateX(100%);",
-		".water-demo__help-toggle {\n    display: grid;",
+		"@media (prefers-reduced-motion: reduce)",
 	} {
 		if !strings.Contains(css, want) {
-			t.Fatalf("page.css missing upstream-style responsive help panel contract %q", want)
+			t.Fatalf("page.css missing flagship responsive visual contract %q", want)
 		}
 	}
 	for _, stale := range []string{
@@ -726,7 +744,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		"torusKnotDisplacementSpheres",
 		"duckDisplacementSpheres",
 		"/water/models/duck/Duck.gltf",
-		`"bounds": 0.5`,
+		`"bounds": 0.65`,
 		`"fit": "contain"`,
 		`"fitAlign": "center-min-y"`,
 	} {
@@ -1127,6 +1145,134 @@ func TestWaterObjectShadowSelenaWiringForwardsWorldSpaceParams(t *testing.T) {
 	} {
 		if !strings.Contains(webgpuSource, want) {
 			t.Fatalf("Scene3D WebGPU water runtime missing object-shadow world-space wiring %q", want)
+		}
+	}
+}
+
+func TestWaterHeroOpticsRemainAuthoredInSelena(t *testing.T) {
+	aboveBytes, err := waterSelenaFS.ReadFile("shaders/jeantimex-water.selena/surface.sel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	belowBytes, err := waterSelenaFS.ReadFile("shaders/jeantimex-water.selena/surface-below.sel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	above := string(aboveBytes)
+	below := string(belowBytes)
+	for _, want := range []string{
+		"let f0Ratio", "pow(1.0 - viewCos, 5.0)",
+		"let transmittance", "let scatterAmount",
+		"let fineSlope", "let edgeFoam", "let contactFoam",
+	} {
+		if !strings.Contains(above, want) {
+			t.Fatalf("surface.sel lost flagship optical term %q", want)
+		}
+	}
+	for _, want := range []string{
+		"let f0Ratio", "pow(1.0 - viewCos, 5.0)",
+		"let transmittance", "let scatterAmount",
+		"let fineSlope", "let reflectWeight",
+		"length(cameraPos - wp)", "let transportedColor",
+	} {
+		if !strings.Contains(below, want) {
+			t.Fatalf("surface-below.sel lost flagship optical term %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"mix(0.25, 1.0", "mix(0.50, 1.0",
+		"rfHitObj ? max(rfObjDist",
+	} {
+		if strings.Contains(above, stale) || strings.Contains(below, stale) {
+			t.Fatalf("water shader regressed to nonphysical Fresnel floor %q", stale)
+		}
+	}
+}
+
+func TestWaterQualityProfilesPreserveTruthfulFeatureCoverage(t *testing.T) {
+	wantMesh := map[string]int{"hero": 64, "balanced": 48, "battery": 32}
+	wantMSAA := map[string]int{"hero": 4, "balanced": 0, "battery": 1}
+	wantAntialias := map[string]any{"hero": true, "balanced": nil, "battery": false}
+	wantCapabilityTier := map[string]string{"hero": "full", "balanced": "", "battery": "constrained"}
+	number := func(value any) float64 {
+		switch value := value.(type) {
+		case int:
+			return float64(value)
+		case float64:
+			return value
+		default:
+			t.Fatalf("quality value %T(%v) is not numeric", value, value)
+			return 0
+		}
+	}
+	for name, mesh := range wantMesh {
+		resolved, profile := waterQualityProfile(name)
+		if resolved != name {
+			t.Fatalf("waterQualityProfile(%q) resolved %q", name, resolved)
+		}
+		if got := profile["meshRes"]; got != mesh {
+			t.Errorf("%s meshRes = %v, want %d", name, got, mesh)
+		}
+		if got := profile["resolution"]; got != 256 {
+			t.Errorf("%s simulation resolution = %v, want full 256", name, got)
+		}
+		if got := profile["msaa"]; got != wantMSAA[name] {
+			t.Errorf("%s MSAA samples = %v, want %d", name, got, wantMSAA[name])
+		}
+		if got := profile["antialias"]; got != wantAntialias[name] {
+			t.Errorf("%s antialias = %v, want %v", name, got, wantAntialias[name])
+		}
+		if got := profile["capabilityTier"]; got != wantCapabilityTier[name] {
+			t.Errorf("%s capability tier = %v, want %q", name, got, wantCapabilityTier[name])
+		}
+		adaptive := waterAdaptiveQualityProfiles(profile)["full"]
+		if got := adaptive["dprCap"]; got != profile["dpr"] {
+			t.Errorf("%s adaptive dprCap = %v, want authored %v", name, got, profile["dpr"])
+		}
+		if got := adaptive["surfaceResolution"]; got != mesh {
+			t.Errorf("%s adaptive surface resolution = %v, want authored %d", name, got, mesh)
+		}
+		adaptiveProfiles := waterAdaptiveQualityProfiles(profile)
+		adaptiveTiers := []string{"full", "balanced", "survival"}
+		for _, field := range []string{
+			"dprCap",
+			"surfaceResolution",
+			"causticsResolution",
+			"objectShadowResolution",
+			"objectTextureMaxSide",
+			"objectTexturePixelBudget",
+		} {
+			previous := number(adaptiveProfiles[adaptiveTiers[0]][field])
+			for _, tier := range adaptiveTiers[1:] {
+				current := number(adaptiveProfiles[tier][field])
+				if current > previous {
+					t.Errorf("%s adaptive %s increases %s from %v to %v", name, tier, field, previous, current)
+				}
+				previous = current
+			}
+		}
+		for _, feature := range []string{"water", "caustics", "reflection", "refraction"} {
+			if enabled, _ := profile[feature].(bool); !enabled {
+				t.Errorf("%s profile silently disables %s", name, feature)
+			}
+		}
+	}
+	resolved, _ := waterQualityProfile("unknown")
+	if resolved != "balanced" {
+		t.Fatalf("unknown quality resolved %q, want balanced", resolved)
+	}
+
+	orderedProfiles := []string{"hero", "balanced", "battery"}
+	for _, field := range []string{"dpr", "maxPixels", "meshRes", "causticsRes", "shadowRes", "objectTexBudget"} {
+		_, first := waterQualityProfile(orderedProfiles[0])
+		previous := number(first[field])
+		for _, name := range orderedProfiles[1:] {
+			_, profile := waterQualityProfile(name)
+			current := number(profile[field])
+			if current > previous {
+				t.Errorf("%s profile increases %s from %v to %v", name, field, previous, current)
+			}
+			previous = current
 		}
 	}
 }

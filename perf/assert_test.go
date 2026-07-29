@@ -33,6 +33,16 @@ func TestParseAssertionAllOps(t *testing.T) {
 	}
 }
 
+func TestParseAssertionOptionalMetric(t *testing.T) {
+	a, err := ParseAssertion("gpu_total_p95? <= 20")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a.Metric != "gpu_total_p95" || !a.Optional {
+		t.Fatalf("unexpected optional assertion: %+v", a)
+	}
+}
+
 func TestParseAssertionError(t *testing.T) {
 	cases := []string{
 		"garbage",
@@ -171,5 +181,34 @@ func TestResolveMetricUnknown(t *testing.T) {
 	_, ok := ResolveMetric("nonexistent", r)
 	if ok {
 		t.Fatalf("expected ok=false for unknown metric")
+	}
+}
+
+func TestResolveMetricNewSceneTelemetry(t *testing.T) {
+	r := &Report{PageReport: PageReport{Scene: &SceneMetric{
+		CPURenderSubmit: &TelemetrySeries{Stats: FrameStats{P95: 3, Count: 2}},
+		Presentation: &PresentationMetric{
+			TelemetrySeries:       TelemetrySeries{Stats: FrameStats{P95: 17, Count: 4}},
+			EstimatedMissedVsyncs: 2,
+		},
+		GPU: &SceneGPUTelemetry{
+			Total: &TelemetrySeries{Stats: FrameStats{P95: 8, Count: 2}},
+			Passes: map[string]TelemetrySeries{
+				"shadow": {Stats: FrameStats{P95: 1.5, Count: 2}},
+			},
+		},
+	}}}
+
+	for metric, want := range map[string]float64{
+		"cpu_submit_p95":      3,
+		"presented_p95":       17,
+		"missed_vsyncs":       2,
+		"gpu_total_p95":       8,
+		"gpu_pass_shadow_p95": 1.5,
+	} {
+		got, ok := ResolveMetric(metric, r)
+		if !ok || math.Abs(got-want) > 0.01 {
+			t.Fatalf("%s: got %.2f, %v; want %.2f, true", metric, got, ok, want)
+		}
 	}
 }

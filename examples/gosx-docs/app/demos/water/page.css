@@ -1,25 +1,50 @@
 .water-demo {
+  --color-water-panel: color-mix(in srgb, var(--color-canvas) 82%, transparent);
+  --color-water-panel-solid: color-mix(in srgb, var(--color-surface) 88%, #06151a);
+  --color-water-accent-soft: color-mix(in srgb, var(--color-accent) 13%, transparent);
+  --color-water-accent-glow: color-mix(in srgb, var(--color-accent) 34%, transparent);
+  --color-water-shadow: color-mix(in srgb, var(--color-canvas) 78%, transparent);
+  --color-water-vignette: color-mix(in srgb, var(--color-canvas) 72%, transparent);
+  --water-demo-chrome-offset: calc(var(--demo-site-nav-offset, 61px) + 44px);
   position: relative;
-  flex: 0 0 calc(100vh - 91px) !important;
-  height: calc(100vh - 91px) !important;
-  min-height: 0;
+  flex: 0 0 calc(100svh - var(--water-demo-chrome-offset)) !important;
+  height: calc(100svh - var(--water-demo-chrome-offset)) !important;
+  min-height: 34rem;
   overflow: hidden;
-  background: #061113;
-  color: #eef8f3;
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  isolation: isolate;
 }
 
 main.water-demo {
-  flex: 0 0 calc(100vh - 91px) !important;
-  height: calc(100vh - 91px) !important;
+  flex: 0 0 calc(100svh - var(--water-demo-chrome-offset)) !important;
+  height: calc(100svh - var(--water-demo-chrome-offset)) !important;
+}
+
+.water-demo::before,
+.water-demo::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  content: "";
+  pointer-events: none;
+}
+
+.water-demo::before {
+  background:
+    linear-gradient(90deg, var(--color-water-vignette) 0, transparent 36%),
+    linear-gradient(0deg, var(--color-water-shadow) 0, transparent 28%);
+}
+
+.water-demo::after {
+  box-shadow: inset 0 0 7rem var(--color-water-vignette);
 }
 
 .water-demo__scene {
   position: absolute !important;
-  top: 0 !important;
-  right: min(20rem, calc(100vw - 3.5rem)) !important;
-  bottom: 0 !important;
-  left: 0 !important;
-  width: auto !important;
+  inset: 0 !important;
+  width: 100% !important;
   height: 100% !important;
 }
 
@@ -29,136 +54,323 @@ main.water-demo {
   height: 100%;
 }
 
+.water-demo__intro {
+  position: absolute;
+  top: var(--space-lg);
+  left: var(--space-lg);
+  z-index: 2;
+  width: min(31rem, calc(100vw - 8rem));
+  pointer-events: none;
+}
+
+.water-demo__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin: 0 0 var(--space-xs);
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.water-demo__intro .water-demo__eyebrow span {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 1rem var(--color-water-accent-glow);
+}
+
+.water-demo__intro h1 {
+  max-width: 12ch;
+  margin: 0;
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-3xl);
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  line-height: 0.94;
+  text-wrap: balance;
+}
+
+.water-demo__lede {
+  max-width: 34rem;
+  margin: var(--space-sm) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-sm);
+  line-height: 1.55;
+  text-wrap: balance;
+}
+
+.water-demo__proofs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.water-demo__proofs span {
+  padding: 0.36rem 0.58rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-water-panel);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.01em;
+  backdrop-filter: blur(12px);
+}
+
+.water-demo__quality {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  width: max-content;
+  margin-top: var(--space-sm);
+  padding: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-water-panel);
+  box-shadow: 0 1rem 2.8rem var(--color-water-shadow);
+  pointer-events: auto;
+  backdrop-filter: blur(16px);
+}
+
+.water-demo__quality > span {
+  padding: 0 var(--space-xs);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.water-demo__quality a {
+  min-height: 2rem;
+  padding: 0.44rem 0.68rem;
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  font-size: var(--type-xs);
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.water-demo__quality a:hover,
+.water-demo__quality a:focus-visible {
+  background: var(--color-water-accent-soft);
+  color: var(--color-text);
+}
+
+.water-demo__quality a:focus-visible,
+.water-demo__help a:focus-visible,
+.water-demo__help-toggle:focus-visible,
+.water-demo__controls-toggle:focus-visible,
+.water-demo__controls :is(select, input):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.water-demo__quality a:active,
+.water-demo__help-toggle:active,
+.water-demo__controls-toggle:active {
+  transform: translateY(1px);
+}
+
+.water-demo[data-quality="hero"] .water-demo__quality [data-profile="hero"],
+.water-demo[data-quality="balanced"] .water-demo__quality [data-profile="balanced"],
+.water-demo[data-quality="battery"] .water-demo__quality [data-profile="battery"] {
+  background: var(--color-accent);
+  color: var(--color-canvas);
+}
+
+.water-demo__gesture {
+  width: max-content;
+  max-width: 28rem;
+  margin: var(--space-sm) 0 0;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.02em;
+}
+
 .water-demo__help {
   position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 4;
-  width: min(20rem, calc(100vw - 3.5rem));
-  padding: 1.1rem 1.25rem 1.4rem 1rem;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  bottom: var(--space-sm);
+  z-index: 5;
+  width: min(23rem, calc(100vw - var(--space-xl)));
+  padding: var(--space-lg);
   overflow: auto;
-  background: rgba(7, 12, 14, 0.78);
-  color: #f4f8f1;
-  backdrop-filter: blur(12px);
-  transform: translateX(0);
-  transition: transform 180ms ease;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 1rem;
+  background: var(--color-water-panel-solid);
+  box-shadow: 0 2rem 6rem var(--color-water-shadow);
+  color: var(--color-text);
+  backdrop-filter: blur(22px);
+  transform: translateX(calc(100% + var(--space-lg)));
+  transition: transform var(--duration-reveal) var(--ease-out);
 }
 
-.water-demo__help[data-gosx-scene3d-panel-open="true"],
+.water-demo__help[data-gosx-scene3d-panel-open="true"] {
+  transform: translateX(0);
+}
+
 .water-demo__help[data-gosx-scene3d-panel-open="false"] {
-  transform: translateX(0);
-}
-
-.water-demo__help h1 {
-  margin: 0 0 0.75rem;
-  font: italic 700 1.9rem/1 Georgia, serif;
-  letter-spacing: 0;
+  transform: translateX(calc(100% + var(--space-lg)));
 }
 
 .water-demo__help h2 {
-  margin: 1rem 0 0.45rem;
-  font: italic 700 1.05rem/1.1 Georgia, serif;
-  letter-spacing: 0;
+  margin: var(--space-lg) 0 var(--space-xs);
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--type-lg);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.water-demo__help .water-demo__eyebrow + h2 {
+  margin-top: 0;
+  font-size: var(--type-xl);
 }
 
 .water-demo__help p,
 .water-demo__help li {
-  color: #e3ece8;
-  font-size: 0.82rem;
-  line-height: 1.38;
+  color: var(--color-text-secondary);
+  font-size: var(--type-sm);
+  line-height: 1.5;
 }
 
 .water-demo__help p {
-  margin: 0.35rem 0;
+  margin: var(--space-xs) 0;
+}
+
+.water-demo__help-summary {
+  color: var(--color-text-muted) !important;
 }
 
 .water-demo__help ul {
+  display: grid;
+  gap: 0.35rem;
   margin: 0;
-  padding-left: 1.15rem;
+  padding-left: var(--space-md);
 }
 
 .water-demo__help a {
-  color: #9af0d8;
+  color: var(--color-accent);
+  text-underline-offset: 0.18em;
 }
 
 .water-demo__help-toggle {
   position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  z-index: 5;
-  display: none;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  z-index: 6;
+  display: grid;
   place-items: center;
-  width: 2.15rem;
-  height: 2.15rem;
-  border: 1px solid rgba(205, 236, 232, 0.32);
-  border-radius: 6px;
-  background: rgba(5, 13, 16, 0.82);
-  color: #f7fbf3;
-  font-size: 0.68rem;
-  font-weight: 800;
+  min-width: 4.25rem;
+  min-height: 2.5rem;
+  padding: 0 var(--space-sm);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-water-panel);
+  box-shadow: 0 1rem 3rem var(--color-water-shadow);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
+  backdrop-filter: blur(16px);
+  transition:
+    right var(--duration-reveal) var(--ease-out),
+    background var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.water-demo__help-toggle:hover {
+  background: var(--color-water-accent-soft);
 }
 
 .water-demo__help-toggle[aria-expanded="true"] {
-  right: min(20.75rem, calc(100vw - 2.75rem));
+  right: min(24.2rem, calc(100vw - 5.5rem));
 }
 
 .water-demo__controls {
   position: absolute;
-  top: clamp(1rem, 3vh, 1.6rem);
-  left: clamp(1rem, 2vw, 1.5rem);
+  bottom: var(--space-lg);
+  left: var(--space-lg);
   z-index: 3;
   display: grid;
-  width: min(17.5rem, calc(100vw - 2rem));
-  padding: 0.5rem;
-  border: 1px solid rgba(205, 236, 232, 0.28);
-  border-radius: 8px;
-  background: rgba(5, 13, 16, 0.72);
-  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
-  backdrop-filter: blur(12px);
+  width: min(18rem, calc(100vw - var(--space-xl)));
+  max-height: min(58vh, 31rem);
+  padding: 0.42rem;
+  overflow: auto;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.8rem;
+  background: var(--color-water-panel);
+  box-shadow: 0 1.5rem 4rem var(--color-water-shadow);
+  backdrop-filter: blur(18px);
 }
 
 .water-demo__controls-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  color: #f5f7ef;
-  font-size: 0.83rem;
+  gap: var(--space-sm);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .water-demo__controls-toggle {
-  min-height: 1.9rem;
-  padding: 0 0.45rem;
+  min-height: 2.25rem;
+  padding: 0 var(--space-xs);
   border: 0;
-  border-radius: 6px;
-  background: rgba(127, 229, 204, 0.12);
-  color: #f5f7ef;
+  border-radius: 0.5rem;
+  background: var(--color-water-accent-soft);
+  color: var(--color-text);
   font: inherit;
-  font-weight: 850;
+  font-weight: 700;
   text-align: left;
   text-transform: uppercase;
   cursor: pointer;
+  transition:
+    background var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.water-demo__controls-toggle:hover {
+  background: var(--color-water-accent-glow);
 }
 
 .water-demo__controls-toggle::before {
-  content: "+";
   display: inline-block;
   width: 1rem;
-  color: #88ead3;
+  color: var(--color-accent);
+  content: "+";
 }
 
 .water-demo__controls[data-gosx-scene3d-control-open="true"] .water-demo__controls-toggle::before {
-  content: "-";
+  content: "−";
 }
 
 .water-demo__controls-body {
   display: grid;
-  gap: 0.62rem;
-  padding-top: 0.62rem;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
 }
 
 .water-demo__controls[data-gosx-scene3d-control-open="false"] .water-demo__controls-body {
@@ -167,34 +379,36 @@ main.water-demo {
 
 .water-demo__control-group {
   display: grid;
-  gap: 0.62rem;
+  gap: var(--space-xs);
   margin: 0;
-  padding: 0.62rem;
-  border: 1px solid rgba(196, 233, 226, 0.18);
-  border-radius: 6px;
-  background: rgba(2, 10, 12, 0.34);
+  padding: var(--space-xs);
+  border: 1px solid var(--color-border);
+  border-radius: 0.6rem;
+  background: color-mix(in srgb, var(--color-canvas) 36%, transparent);
 }
 
 .water-demo__control-group legend {
-  padding: 0 0.28rem;
-  color: #88ead3;
-  font-size: 0.72rem;
-  font-weight: 850;
+  padding: 0 0.3rem;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  font-weight: 700;
   text-transform: uppercase;
 }
 
 .water-demo__controls output {
-  color: #88ead3;
-  font-size: 0.78rem;
-  font-weight: 800;
+  padding-right: var(--space-xs);
+  color: var(--color-accent);
+  font-size: var(--type-xs);
+  font-weight: 700;
 }
 
 .water-demo__controls label {
   display: grid;
   gap: 0.34rem;
-  color: #d9ebe7;
-  font-size: 0.78rem;
-  font-weight: 700;
+  color: var(--color-text-secondary);
+  font-size: var(--type-xs);
+  font-weight: 600;
 }
 
 .water-demo__controls select,
@@ -203,16 +417,17 @@ main.water-demo {
 }
 
 .water-demo__controls select {
-  min-height: 2rem;
-  border: 1px solid rgba(196, 233, 226, 0.26);
-  border-radius: 6px;
-  background: rgba(7, 21, 25, 0.94);
-  color: #f6faf6;
+  min-height: 2.25rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 0.5rem;
+  background: var(--color-surface);
+  color: var(--color-text);
   font: inherit;
 }
 
-.water-demo__controls input[type="range"] {
-  accent-color: #73e1c7;
+.water-demo__controls input[type="range"],
+.water-demo__toggle input {
+  accent-color: var(--color-accent);
 }
 
 .water-demo__controls :disabled {
@@ -224,19 +439,18 @@ main.water-demo {
   display: flex !important;
   grid-template-columns: auto 1fr;
   align-items: center;
-  gap: 0.5rem !important;
+  gap: var(--space-xs) !important;
 }
 
 .water-demo__toggle input {
   width: 1rem;
   height: 1rem;
-  accent-color: #73e1c7;
 }
 
 .water-demo__control-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.5rem;
+  gap: var(--space-xs);
 }
 
 .water-demo__controls[data-density-open="false"] [data-gosx-scene3d-density-control],
@@ -246,45 +460,92 @@ main.water-demo {
 }
 
 @media (max-width: 720px) {
-  .water-demo__scene {
-    right: 0 !important;
-    width: 100% !important;
+  .water-demo {
+    min-height: 32rem;
+  }
+
+  .water-demo::before {
+    background:
+      linear-gradient(180deg, var(--color-water-vignette) 0, transparent 36%),
+      linear-gradient(0deg, var(--color-water-shadow) 0, transparent 24%);
+  }
+
+  .water-demo__intro {
+    top: var(--space-sm);
+    left: var(--space-sm);
+    width: calc(100vw - 6.75rem);
+  }
+
+  .water-demo__intro h1 {
+    font-size: var(--type-2xl);
+  }
+
+  .water-demo__lede,
+  .water-demo__proofs {
+    display: none;
+  }
+
+  .water-demo__quality {
+    margin-top: var(--space-xs);
+  }
+
+  .water-demo__quality > span {
+    display: none;
+  }
+
+  .water-demo__quality a {
+    display: inline-grid;
+    place-items: center;
+    min-height: 2.75rem;
+    padding: 0.38rem 0.55rem;
+  }
+
+  .water-demo__gesture {
+    max-width: calc(100vw - 2 * var(--space-sm));
+    margin-top: var(--space-xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .water-demo__controls {
-    top: 0.75rem;
-    left: 0.75rem;
-    width: min(15rem, calc(100vw - 1.5rem));
-    max-height: 46vh;
-    overflow: auto;
-    transition: opacity 160ms ease, transform 160ms ease;
+    bottom: var(--space-sm);
+    left: var(--space-sm);
+    width: min(15rem, calc(100vw - 2 * var(--space-sm)));
+    max-height: 44vh;
   }
 
-  .water-demo[data-gosx-scene3d-active-panel="water-demo-help"] .water-demo__controls {
+  .water-demo[data-gosx-scene3d-active-panel="water-demo-help"] .water-demo__controls,
+  .water-demo[data-gosx-scene3d-active-panel="water-demo-help"] .water-demo__intro {
     opacity: 0;
     pointer-events: none;
     transform: translateY(-0.5rem);
   }
 
   .water-demo__help {
-    width: min(16rem, calc(100vw - 3.5rem));
-    transform: translateX(100%);
-  }
-
-  .water-demo__help[data-gosx-scene3d-panel-open="true"] {
-    transform: translateX(0);
-  }
-
-  .water-demo__help[data-gosx-scene3d-panel-open="false"] {
-    transform: translateX(100%);
+    top: var(--space-xs);
+    right: var(--space-xs);
+    bottom: var(--space-xs);
+    width: calc(100vw - var(--space-md));
+    padding: var(--space-md);
   }
 
   .water-demo__help-toggle {
-    display: grid;
+    top: var(--space-sm);
+    right: var(--space-sm);
+    min-width: 4rem;
   }
 
   .water-demo__help-toggle[aria-expanded="true"] {
-    right: min(16.75rem, calc(100vw - 2.75rem));
+    right: var(--space-md);
   }
+}
 
+@media (prefers-reduced-motion: reduce) {
+  .water-demo *,
+  .water-demo *::before,
+  .water-demo *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

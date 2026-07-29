@@ -5,18 +5,19 @@ import "strings"
 // DemoDefinition is the single product contract behind the demos index, dock,
 // and metadata drawer. Keep claims here specific and verifiable.
 type DemoDefinition struct {
-	Slug        string
-	Title       string
-	Tag         string
-	Promise     string
-	Lesson      string
-	Accent      string
-	Facets      []string
-	SourcePath  string
-	Packages    []string
-	Status      string
-	RenderMode  string
-	Limitations string
+	Slug         string
+	Title        string
+	Tag          string
+	Promise      string
+	Lesson       string
+	Accent       string
+	Facets       []string
+	SourcePath   string
+	Packages     []string
+	Status       string
+	RenderMode   string
+	Limitations  string
+	ShowcaseRank int
 }
 
 var demoCatalog = []DemoDefinition{
@@ -27,16 +28,18 @@ var demoCatalog = []DemoDefinition{
 		Accent:  "#e5b84f", Facets: []string{"Scene3D", "Hub", "Simulation", "Selena", "Arbiter policy", "Elio adapter"},
 		SourcePath: "examples/gosx-docs/app/demos/checkers/page.gsx", Packages: []string{"scene", "hub", "route", "selena", "arbiter", "elio"},
 		Status: "live", RenderMode: "SSR + Scene3D GPU runtime + authoritative GoSX Hub",
-		Limitations: "Playable mode is two-player and in-memory. There is no product network multiplayer or persistence; the active CPU uses bounded Go search with a compiled Arbiter policy fallback, while Elio hints remain optional and inactive.",
+		Limitations:  "Playable mode is two-player and in-memory. There is no product network multiplayer or persistence; the active CPU uses bounded Go search with a compiled Arbiter policy fallback, while Elio hints remain optional and inactive.",
+		ShowcaseRank: 3,
 	},
 	{
-		Slug: "water", Title: "Water Lab", Tag: "adaptive GPU simulation",
-		Promise: "Disturb a physically responsive pool with caustics, buoyant objects, and adaptive quality.",
-		Lesson:  "A typed GoSX WaterSystem drives Selena-authored shaders through native WebGPU and WebGL2 backends.",
-		Accent:  "#69e3c7", Facets: []string{"Scene3D", "Selena", "WebGPU", "WebGL2"},
+		Slug: "water", Title: "Water", Tag: "flagship real-time optics",
+		Promise: "Disturb a physically responsive pool with dielectric Fresnel, depth absorption, live caustics, buoyant objects, and bounded quality profiles.",
+		Lesson:  "A typed GoSX WaterSystem drives one Selena-authored optical model through native WebGPU and WebGL2 backends.",
+		Accent:  "#69e3c7", Facets: []string{"Scene3D", "Selena", "WebGPU", "WebGL2", "Physical optics"},
 		SourcePath: "examples/gosx-docs/app/demos/water/page.gsx", Packages: []string{"scene", "selena", "route"},
 		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
-		Limitations: "WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2.",
+		Limitations:  "WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2. Hero targets discrete GPUs; the new optical ALU still needs Apple/Metal hardware certification.",
+		ShowcaseRank: 1,
 	},
 	{
 		Slug: "playground", Title: "GoSX Playground", Tag: "compile .gsx live",
@@ -81,7 +84,8 @@ var demoCatalog = []DemoDefinition{
 		Accent:  "#5fb4ff", Facets: []string{"Scene3D", "PBR", "PostFX"},
 		SourcePath: "examples/gosx-docs/app/demos/scene3d/page.gsx", Packages: []string{"scene", "route"},
 		Status: "live", RenderMode: "SSR + Scene3D GPU runtime",
-		Limitations: "Rendering capability and backend depend on the browser GPU stack.",
+		Limitations:  "Rendering capability and backend depend on the browser GPU stack.",
+		ShowcaseRank: 2,
 	},
 	{
 		Slug: "scene3d-bench", Title: "Scene3D Bench", Tag: "renderer diagnostics",
@@ -90,7 +94,8 @@ var demoCatalog = []DemoDefinition{
 		Accent:  "#cbd5e1", Facets: []string{"Scene3D", "Performance", "Diagnostics"},
 		SourcePath: "examples/gosx-docs/app/demos/scene3d-bench/page.gsx", Packages: []string{"scene", "route"},
 		Status: "lab", RenderMode: "SSR + instrumented Scene3D runtime",
-		Limitations: "Measurements reflect the current machine and browser; they are not cross-device benchmarks.",
+		Limitations:  "Measurements reflect the current machine and browser; they are not cross-device benchmarks.",
+		ShowcaseRank: 4,
 	},
 	{
 		Slug: "cms", Title: "CMS Editor", Tag: "block-editor with live preview",
@@ -114,6 +119,32 @@ func FindDemo(slug string) (DemoDefinition, bool) {
 		}
 	}
 	return DemoDefinition{}, false
+}
+
+// ShowcaseDemos returns the editorially promoted demos in an explicit, stable
+// order. Promotion is independent from maturity status: the diagnostic bench
+// remains an honestly labelled lab even while the index gives it prominence.
+func ShowcaseDemos() []DemoDefinition {
+	showcase := make([]DemoDefinition, 0, 4)
+	for rank := 1; rank <= 4; rank++ {
+		for _, demo := range demoCatalog {
+			if demo.ShowcaseRank == rank {
+				showcase = append(showcase, demo)
+				break
+			}
+		}
+	}
+	return showcase
+}
+
+func AdditionalDemos() []DemoDefinition {
+	additional := make([]DemoDefinition, 0, len(demoCatalog)-4)
+	for _, demo := range demoCatalog {
+		if demo.ShowcaseRank == 0 {
+			additional = append(additional, demo)
+		}
+	}
+	return additional
 }
 
 func demoValues(values []string) string {
