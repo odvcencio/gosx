@@ -79,6 +79,10 @@ func (s *gsxScanner) Deserialize(payload any, buf []byte) {}
 
 func (s *gsxScanner) SupportsIncrementalReuse() bool { return true }
 
+func (s *gsxScanner) ExternalScannerIsStateless() bool { return true }
+
+func (s *gsxScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (s *gsxScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if s == nil || s.lang == nil {
 		return false
@@ -127,7 +131,7 @@ func (s *gsxScanner) scanAutomaticSemicolon(lexer *gotreesitter.ExternalLexer) b
 	// comment as an extra and then calls this scanner again.
 	for {
 		switch lexer.Lookahead() {
-		case ' ', '\t', '\r':
+		case ' ', '\t':
 			lexer.Advance(true)
 			continue
 		}
@@ -135,6 +139,15 @@ func (s *gsxScanner) scanAutomaticSemicolon(lexer *gotreesitter.ExternalLexer) b
 	}
 
 	switch lexer.Lookahead() {
+	case '\r':
+		lexer.Advance(false)
+		if lexer.Lookahead() != '\n' {
+			return false
+		}
+		lexer.Advance(false)
+		lexer.MarkEnd()
+		lexer.SetResultSymbol(s.externalSymbol(s.idxAutoSemicolon))
+		return true
 	case '\n':
 		// Take the newline as the token span, as the `/\n/` alternative does.
 		lexer.Advance(false)

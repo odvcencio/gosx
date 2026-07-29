@@ -151,6 +151,164 @@ func App() Node {
 	return <div><span>inner</span></div>
 }
 `},
+	{"nested_inline_anchor_with_expression_child", `package main
+
+func App(data Data) Node {
+	return <span class="music-title"><a href={data.post.Music} target="_blank" rel="noopener">{data.musicTitle}</a></span>
+}
+`},
+	{"nested_child_self_closing_then_element", `package main
+
+func App(data Data) Node {
+	return <span class="post-mood"><img class={"mood-icon " + data.moodAnim} src={data.moodIcon} alt={data.post.Mood} width="18" height="18" /><span class="mood-label">{data.post.Mood}</span></span>
+}
+`},
+	{"component_child_wraps_self_closing_then_element", `package main
+
+func App(data Data) Node {
+	return <If when={data.post.Mood != ""}><span class="post-mood"><img class={"mood-icon " + data.moodAnim} src={data.moodIcon} alt={data.post.Mood} width="18" height="18" /><span class="mood-label">{data.post.Mood}</span></span></If>
+}
+`},
+	{"nested_component_wraps_self_closing_then_element", `package main
+
+func App(data Data) Node {
+	return <If when={data.post.Mood != "" || data.post.Music != ""}><div class="post-mood-music"><If when={data.post.Mood != ""}><span class="post-mood"><img class={"mood-icon " + data.moodAnim} src={data.moodIcon} alt={data.post.Mood} width="18" height="18" /><span class="mood-label">{data.post.Mood}</span></span></If></div></If>
+}
+`},
+	{"multiline_nested_component_wraps_self_closing_then_element", `package main
+
+func App(data Data) Node {
+	return <If when={data.post.Mood != "" || data.post.Music != ""}>
+		<div class="post-mood-music">
+			<If when={data.post.Mood != ""}>
+				<span class="post-mood">
+					<img class={"mood-icon " + data.moodAnim} src={data.moodIcon} alt={data.post.Mood} width="18" height="18" />
+					<span class="mood-label">{data.post.Mood}</span>
+				</span>
+			</If>
+		</div>
+	</If>
+}
+`},
+	{"element_parent_wraps_nested_component_with_self_closing_child", `package main
+
+func App(data Data) Node {
+	return <header class="post-header">
+		<If when={data.post.Mood != "" || data.post.Music != ""}>
+			<div class="post-mood-music">
+				<If when={data.post.Mood != ""}>
+					<span class="post-mood">
+						<img class={"mood-icon " + data.moodAnim} src={data.moodIcon} alt={data.post.Mood} width="18" height="18" />
+						<span class="mood-label">{data.post.Mood}</span>
+					</span>
+				</If>
+			</div>
+		</If>
+	</header>
+}
+`},
+	{"sibling_button_before_nested_inline_anchor", `package main
+
+func App(data Data) Node {
+	return <span class="post-music"><button class="music-play" data-youtube-url={data.post.Music} aria-label="Play music">&#9654;</button><span class="music-title"><a href={data.post.Music} target="_blank" rel="noopener">{data.musicTitle}</a></span></span>
+}
+`},
+	{"post_header_mood_music_conditionals", `package main
+
+func App(data Data) Node {
+	return <header class="post-header">
+		<If when={data.post.Mood != "" || data.post.Music != ""}>
+			<div class="post-mood-music">
+				<If when={data.post.Mood != ""}>
+					<span class="post-mood">
+						<img class={"mood-icon " + data.moodAnim} src={data.moodIcon} alt={data.post.Mood} width="18" height="18" />
+						<span class="mood-label">{data.post.Mood}</span>
+					</span>
+				</If>
+				<If when={data.post.Music != ""}>
+					<span class="post-music">
+						<button class="music-play" data-youtube-url={data.post.Music} aria-label="Play music">&#9654;</button>
+						<span class="music-title"><a href={data.post.Music} target="_blank" rel="noopener">{data.musicTitle}</a></span>
+					</span>
+				</If>
+			</div>
+		</If>
+	</header>
+}
+`},
+	{"inline_if_with_element_child", `package main
+
+func App(data Data) Node {
+	return <If when={len(data.attribution.TopSources) == 0}><p class="admin-empty">No source data yet.</p></If>
+}
+`},
+	{"multiline_text_with_inline_code_and_trailing_dot", `package main
+
+func App(data Data) Node {
+	return <article class="prose">
+		<p>
+			The auth middleware resolves the current user once, stores it on the request context, and exposes it to file-routed
+			<span class="inline-code">.gsx</span>
+			pages as
+			<span class="inline-code">user</span>
+			.
+		</p>
+	</article>
+}
+`},
+	{"docs_auth_template_form_and_callout", `package main
+
+func App(data Data) Node {
+	return <article class="prose">
+		<div class="page-topper">
+			<span class="eyebrow">Auth</span>
+			<p class="lede">
+				Session-backed auth state now rides on the same request context as file pages, actions, and route middleware.
+			</p>
+		</div>
+		<h1>
+			Auth in GoSX is a session concern, not a separate framework bolted on later.
+		</h1>
+		<p>
+			The auth middleware resolves the current user once, stores it on the request context, and exposes it to file-routed
+			<span class="inline-code">.gsx</span>
+			pages as
+			<span class="inline-code">user</span>
+			.
+		</p>
+		<div class="note-grid">
+			<div class="note">
+				<strong>Current user</strong>
+				<p>{user.name}</p>
+			</div>
+			<div class="note">
+				<strong>Session flash</strong>
+				<p>{flash.notice}</p>
+			</div>
+		</div>
+		<form class="docs-form" method="post" action={actionPath("signIn")}>
+			<input type="hidden" name="csrf_token" value={csrf.token}></input>
+			<label class="field">
+				<span>Name</span>
+				<input name="name"></input>
+			</label>
+			<p class="form-error">{actions.signIn.fieldErrors.name}</p>
+			<div class="hero-actions">
+				<button class="cta-link primary" type="submit">Sign in to the docs demo</button>
+				<button class="cta-link" type="submit" formaction={actionPath("signOut")}>Sign out</button>
+			</div>
+		</form>
+		<section class="callout">
+			<strong>Protected route</strong>
+			<p>
+				Try the guarded lab route:
+				<a href="/labs/secret" data-gosx-link class="cta-link">Open the secret page</a>
+			</p>
+		</section>
+		<p class="form-status">{action.message}</p>
+	</article>
+}
+`},
 	{"text_adjacent_to_tags", `package main
 
 func App() Node {
@@ -288,6 +446,25 @@ func TestGrammarBlobParsesCorpusWithoutErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGrammarBlobParsesCRLFTemplateWithoutErrors(t *testing.T) {
+	lang, err := Language()
+	if err != nil {
+		t.Fatalf("Language(): %v", err)
+	}
+	for _, tc := range parityCorpus {
+		if tc.name != "docs_auth_template_form_and_callout" {
+			continue
+		}
+		src := []byte(strings.ReplaceAll(tc.source, "\n", "\r\n"))
+		root := parseWith(t, lang, src)
+		if root.HasError() {
+			t.Fatalf("parse error:\n%s", dumpCST(root, lang))
+		}
+		return
+	}
+	t.Fatal("docs_auth_template_form_and_callout fixture missing")
 }
 
 // gsxCorpusFiles collects the .gsx files that ship in this repository.
