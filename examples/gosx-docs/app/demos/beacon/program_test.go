@@ -7,98 +7,88 @@ import (
 	"m31labs.dev/gosx/scene"
 )
 
-func TestBlackglassBeaconStaysWithinDeclaredBudget(t *testing.T) {
-	props := BlackglassBeaconProgram()
-	if len(props.Graph.Nodes) != beaconNodeBudget {
-		t.Fatalf("node count = %d, want %d", len(props.Graph.Nodes), beaconNodeBudget)
+func TestBlackglassCoastRuntimeContractMatchesStudioWorldSemantics(t *testing.T) {
+	contract := BlackglassCoastRuntimeContract()
+	if contract.Schema != "gosx.scene3d.world/v1" || contract.DocumentID != "blackglass-coast" || contract.Revision != 1 {
+		t.Fatalf("unexpected contract identity: %#v", contract)
 	}
-	if props.MaxFPS != 30 || props.MaxDevicePixelRatio != 1.5 || props.MaxPixels != beaconMaxPixels {
+	if contract.ArtDirection != "sunlit volcanic naturalism" || contract.Water.RuntimeProfile != "blackglass-coast" {
+		t.Fatalf("authored art/runtime contract was lost: %#v", contract)
+	}
+	if contract.Water.Size != scene.Vec3(34, 10, 24) || contract.Water.SurfaceY != 0 || contract.Water.BuoyancyScale != 1.15 || contract.Water.LinearDrag != 0.35 {
+		t.Fatalf("water zone differs from Studio contract: %#v", contract.Water)
+	}
+	for _, id := range []string{"arrival", "opening-camera", "beacon-terrace", "beacon-lens", "cinematic-beacon"} {
+		if _, ok := contract.Marker(id); !ok {
+			t.Errorf("missing authored marker %q", id)
+		}
+	}
+	if got := contract.Local(scene.Vec3(-12, 3, -6)); got != scene.Vec3(0, 3, 0) {
+		t.Fatalf("water-centered transform = %#v, want local origin", got)
+	}
+}
+
+func TestBlackglassCoastStaysWithinDeclaredBudget(t *testing.T) {
+	props := BlackglassBeaconProgram()
+	if len(props.Graph.Nodes) != blackglassCoastNodeBudget {
+		t.Fatalf("node count = %d, want %d", len(props.Graph.Nodes), blackglassCoastNodeBudget)
+	}
+	if props.MaxFPS != 60 || props.MaxDevicePixelRatio != 1.5 || props.MaxPixels != blackglassCoastMaxPixels {
 		t.Errorf("render budget = fps %.0f, dpr %.1f, pixels %d", props.MaxFPS, props.MaxDevicePixelRatio, props.MaxPixels)
+	}
+	if props.AdaptiveTargetFrameMS != 16.7 || props.AdaptiveQuality == nil || !*props.AdaptiveQuality {
+		t.Error("adaptive 16.7ms quality governor must be enabled")
 	}
 	if props.PostFX.MaxPixels != scene.PostFXMaxPixels540p || props.Shadows.MaxPixels != scene.ShadowMaxPixels512 {
 		t.Errorf("postfx/shadow caps = %d/%d", props.PostFX.MaxPixels, props.Shadows.MaxPixels)
 	}
-	key, ok := props.Graph.Nodes[0].(scene.DirectionalLight)
-	if !ok || key.ShadowSize != 512 {
-		t.Errorf("key shadow size = %d, want 512", key.ShadowSize)
+	water, ok := props.Graph.Nodes[3].(scene.WaterSystem)
+	if !ok {
+		t.Fatalf("node 3 = %T, want WaterSystem", props.Graph.Nodes[3])
 	}
-	if props.AdaptiveTargetFrameMS != 24 || props.AdaptiveQuality == nil || !*props.AdaptiveQuality {
-		t.Error("adaptive 24ms quality governor must be enabled")
+	contract := BlackglassCoastRuntimeContract()
+	if water.ID != contract.Water.ID || water.PoolWidth != contract.Water.Size.X || water.PoolLength != contract.Water.Size.Z || water.InteractionProfile != contract.Water.RuntimeProfile {
+		t.Fatalf("WaterSystem is not bound to Studio contract: %#v", water)
 	}
-	expandedVertices := 0
-	for _, node := range props.Graph.Nodes {
-		mesh, ok := node.(scene.Mesh)
-		if !ok {
-			continue
-		}
-		switch geometry := mesh.Geometry.(type) {
-		case scene.PlaneGeometry:
-			expandedVertices += 6
-		case scene.BoxGeometry:
-			expandedVertices += 36
-		case scene.PyramidGeometry:
-			expandedVertices += 24
-		case scene.SphereGeometry:
-			segments := geometry.Segments
-			if segments < 3 {
-				segments = 32
-			}
-			expandedVertices += 6 * segments * segments
-		case scene.TorusGeometry:
-			radial := geometry.RadialSegments
-			if radial < 3 {
-				radial = 32
-			}
-			tubular := geometry.TubularSegments
-			if tubular < 3 {
-				tubular = 16
-			}
-			expandedVertices += 6 * radial * tubular
-		case scene.LinesGeometry:
-			expandedVertices += 2 * len(geometry.Segments)
-		default:
-			t.Fatalf("mesh %q uses unbudgeted geometry %T", mesh.ID, mesh.Geometry)
-		}
+	if water.Resolution != 128 || water.SurfaceResolution != 96 || water.ObjectTexturePixelBudget > 786432 {
+		t.Fatalf("unexpected water budget: %#v", water)
 	}
-	if expandedVertices > beaconExpandedVertexBudget {
-		t.Errorf("expanded vertex estimate = %d, budget %d", expandedVertices, beaconExpandedVertexBudget)
-	}
-	want := []reflect.Type{reflect.TypeOf(scene.Bloom{}), reflect.TypeOf(scene.Tonemap{}), reflect.TypeOf(scene.Vignette{})}
-	got := make([]reflect.Type, 0, len(props.PostFX.Effects))
-	for _, effect := range props.PostFX.Effects {
-		got = append(got, reflect.TypeOf(effect))
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("postfx order = %v, want Bloom → Tonemap → Vignette", got)
+	ir := props.SceneIR()
+	if len(ir.WaterSystems) != 1 || ir.WaterSystems[0].ID != contract.Water.ID || len(ir.InstancedMeshes) != 1 || ir.InstancedMeshes[0].Count != 12 {
+		t.Fatalf("lowered world lost water or instancing: water=%#v instances=%#v", ir.WaterSystems, ir.InstancedMeshes)
 	}
 }
 
-func TestBlackglassBeaconIsAssetFreeMotionSafeAndStable(t *testing.T) {
+func TestBlackglassCoastHasAStableWorldAndNoAutonomousMotion(t *testing.T) {
 	props := BlackglassBeaconProgram()
 	if props.AutoRotate == nil || *props.AutoRotate || props.FillHeight == nil || !*props.FillHeight {
-		t.Error("beacon must be fill-height without autonomous motion")
+		t.Fatal("coast must be fill-height without autonomous camera motion")
 	}
-	want := []string{"beacon-key", "beacon-cyan-fill", "beacon-warm-core-light", "beacon-hemi", "beacon-ground", "beacon-plinth-base", "beacon-plinth-step", "beacon-plinth-slab", "beacon-tower-foot", "beacon-tower-shaft", "beacon-tower-spine", "beacon-tower-fin-left", "beacon-tower-fin-right", "beacon-crown-deck", "beacon-cyan-crown", "beacon-lantern-cyan", "beacon-eclipse-disc", "beacon-warm-core", "beacon-eclipse-beam"}
+	want := []string{"coast-sun", "coast-sky", "beacon-fire", "blackglass-cove", "coast-sand", "coast-cliff-west", "coast-cliff-east", "coast-cliff-overlook", "coast-basalt-scatter", "ruin-arch-left", "ruin-arch-right", "ruin-arch-lintel", "beacon-plinth", "blackglass-beacon", "beacon-lens", "arrival-marker"}
 	got := make([]string, 0, len(props.Graph.Nodes))
 	for _, node := range props.Graph.Nodes {
 		switch value := node.(type) {
 		case scene.DirectionalLight:
 			got = append(got, value.ID)
+		case scene.HemisphereLight:
+			got = append(got, value.ID)
 		case scene.PointLight:
 			got = append(got, value.ID)
-		case scene.HemisphereLight:
+		case scene.WaterSystem:
 			got = append(got, value.ID)
 		case scene.Mesh:
 			got = append(got, value.ID)
 			if value.Spin != (scene.Euler{}) || value.Drift != (scene.Vector3{}) {
 				t.Errorf("mesh %q has autonomous motion", value.ID)
 			}
-			if material, ok := value.Material.(scene.StandardMaterial); ok && (material.Texture != "" || material.NormalMap != "" || material.EmissiveMap != "") {
-				t.Errorf("mesh %q uses an asset", value.ID)
+		case scene.InstancedMesh:
+			got = append(got, value.ID)
+			if value.Count != 12 || len(value.Positions) != value.Count || len(value.Scales) != value.Count {
+				t.Errorf("instanced basalt batch is incoherent: %#v", value)
 			}
 		}
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("stable node IDs = %#v", got)
+		t.Fatalf("stable world node IDs = %#v", got)
 	}
 }

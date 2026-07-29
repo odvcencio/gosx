@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	docsapp.RegisterStaticDocsPage("Blackglass Beacon — Eclipse Protocol", "An asset-free, bounded Scene3D tower that demonstrates a cinematic Go-authored scene with truthful backend fallback.", route.FileModuleOptions{
+	docsapp.RegisterStaticDocsPage("Blackglass Coast", "A Studio-authored volcanic cove bound to GoSX Scene3D water, gameplay anchors, and performance telemetry.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{"scene": BlackglassBeaconProgram()}, nil
 		},
