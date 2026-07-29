@@ -2,6 +2,7 @@ package docs
 
 import (
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"m31labs.dev/gosx"
@@ -17,6 +18,7 @@ func tooltipCounter() int {
 // CodeBlock renders a syntax-highlighted code sample in a dark glass panel.
 func CodeBlock(lang, source string) gosx.Node {
 	normalized := highlight.NormalizeLanguage(lang)
+	source = normalizeCodeBlockSource(lang, source)
 	lineCount := highlight.LineCount(source)
 	return gosx.El("figure", gosx.Attrs(
 		gosx.Attr("class", "code-sample"),
@@ -36,6 +38,117 @@ func CodeBlock(lang, source string) gosx.Node {
 			),
 		),
 	)
+}
+
+const codeBlockTabWidth = 4
+
+// normalizeCodeBlockSource removes the incidental margin introduced when a
+// multiline snippet is nested inside a formatted GoSX expression. Plain text
+// and unknown languages remain byte-exact because their leading whitespace may
+// be the content (for example, directory trees or whitespace-sensitive DSLs).
+func normalizeCodeBlockSource(lang, source string) string {
+	if !codeBlockLanguageSupportsDedent(lang) {
+		return source
+	}
+
+	lines := strings.Split(source, "\n")
+	first := 0
+	for first < len(lines) && strings.TrimSpace(lines[first]) == "" {
+		first++
+	}
+	last := len(lines)
+	for last > first && strings.TrimSpace(lines[last-1]) == "" {
+		last--
+	}
+	if first == last {
+		return ""
+	}
+	lines = lines[first:last]
+
+	// A raw/interpreted literal commonly starts immediately after its opening
+	// delimiter. Its first line is already at display column zero, while every
+	// continuation line still carries the enclosing GoSX expression's margin.
+	indentStart := 0
+	if first == 0 && leadingCodeIndentColumns(lines[0]) == 0 && len(lines) > 1 {
+		indentStart = 1
+	}
+
+	commonIndent := -1
+	for _, line := range lines[indentStart:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := leadingCodeIndentColumns(line)
+		if commonIndent < 0 || indent < commonIndent {
+			commonIndent = indent
+		}
+	}
+	if commonIndent <= 0 {
+		return strings.Join(lines, "\n")
+	}
+
+	for index, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[index] = ""
+			continue
+		}
+		if index < indentStart {
+			continue
+		}
+		lines[index] = removeCodeIndentColumns(line, commonIndent)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func codeBlockLanguageSupportsDedent(lang string) bool {
+	switch strings.ToLower(strings.TrimSpace(lang)) {
+	case "go", "gosx", "gsx",
+		"javascript", "js",
+		"json",
+		"bash", "sh", "shell",
+		"html", "http":
+		return true
+	default:
+		return false
+	}
+}
+
+func leadingCodeIndentColumns(line string) int {
+	columns := 0
+	for index := 0; index < len(line); index++ {
+		switch line[index] {
+		case ' ':
+			columns++
+		case '\t':
+			columns += codeBlockTabWidth - columns%codeBlockTabWidth
+		default:
+			return columns
+		}
+	}
+	return columns
+}
+
+func removeCodeIndentColumns(line string, columns int) string {
+	current := 0
+	for index := 0; index < len(line); index++ {
+		var next int
+		switch line[index] {
+		case ' ':
+			next = current + 1
+		case '\t':
+			next = current + codeBlockTabWidth - current%codeBlockTabWidth
+		default:
+			return line[index:]
+		}
+		if next > columns {
+			return strings.Repeat(" ", next-columns) + line[index+1:]
+		}
+		current = next
+		if current == columns {
+			return line[index+1:]
+		}
+	}
+	return ""
 }
 
 // StatCard renders a proof-point stat card.

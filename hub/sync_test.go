@@ -477,37 +477,47 @@ func TestHubBinaryAuthorizerDropsUnauthorizedInboundSync(t *testing.T) {
 // on the case it means to check: a frame that does carry a change.
 func clientFrameWithChanges(t *testing.T, serverDoc *crdt.Doc) (*crdt.Doc, []byte) {
 	t.Helper()
-	for attempt := 0; attempt < 32; attempt++ {
-		clientDoc := crdt.NewDoc()
-		clientState := crdtsync.NewState()
-		bootstrapState := crdtsync.NewState()
-		bootstrap, ok := serverDoc.GenerateSyncMessage(bootstrapState)
-		if !ok {
-			t.Fatal("expected bootstrap sync message")
-		}
-		if err := clientDoc.ReceiveSyncMessage(clientState, bootstrap); err != nil {
-			t.Fatal(err)
-		}
-		if err := clientDoc.Put(crdt.Root, "title", crdt.StringValue("client")); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := clientDoc.Commit("client edit"); err != nil {
-			t.Fatal(err)
-		}
-		frame, ok := clientDoc.GenerateSyncMessage(clientState)
-		if !ok {
-			t.Fatal("expected client sync message")
-		}
-		changes, err := decodeSyncChanges(frame)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(changes) > 0 {
-			return clientDoc, frame
-		}
+	clientDoc := crdt.NewDoc()
+	clientState := crdtsync.NewState()
+	bootstrapState := crdtsync.NewState()
+	bootstrap, ok := serverDoc.GenerateSyncMessage(bootstrapState)
+	if !ok {
+		t.Fatal("expected bootstrap sync message")
 	}
-	t.Fatal("no sync frame carried a change after 32 attempts")
-	return nil, nil
+	if err := clientDoc.ReceiveSyncMessage(clientState, bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientDoc.Put(crdt.Root, "title", crdt.StringValue("client")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientDoc.Commit("client edit"); err != nil {
+		t.Fatal(err)
+	}
+	// The bootstrap frame seeded clientState.PeerBloom from a tiny (single
+	// entry) server-side Bloom filter, which has a measured ~10% false
+	// positive rate. GenerateSyncMessage consults that filter to decide
+	// whether to include this change's bytes; a false positive makes it
+	// advertise only the new head and omit the change, producing an empty
+	// changes slice that a single direct handleBinaryMessage call never
+	// resends. That is real, already-covered protocol behaviour — see
+	// TestHubSyncDocBootstrapsAndAppliesBinaryChanges, which forces the false
+	// positive on purpose to exercise the Need/retry path — but it is
+	// orthogonal to the authorizer decision the callers check. Clearing the
+	// filter makes the change present in the first frame every time, so the
+	// callers need no retry loop.
+	clientState.PeerBloom = nil
+	frame, ok := clientDoc.GenerateSyncMessage(clientState)
+	if !ok {
+		t.Fatal("expected client sync message")
+	}
+	changes, err := decodeSyncChanges(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) == 0 {
+		t.Fatal("sync frame carried no change even with the peer Bloom filter cleared")
+	}
+	return clientDoc, frame
 }
 
 func TestHubBinaryChangeAuthorizerRejectsActorSubstitutionBeforeMerge(t *testing.T) {

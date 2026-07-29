@@ -425,4 +425,3 @@
     setAttrValue(mount, "data-gosx-scene3d-post-uniform-patches", String(Math.max(0, Math.floor(sceneNumber(state.postUniformPatches, 0)))));
     setAttrValue(mount, "data-gosx-scene3d-post-uniform-patch-misses", String(Math.max(0, Math.floor(sceneNumber(state.postUniformPatchMisses, 0)))));
   }
-

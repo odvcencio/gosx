@@ -24,8 +24,16 @@
     // so the decompress chunk must land first. A scene with plain float arrays
     // and no generator descriptor fetches nothing and resolves at once.
     await settleSceneDecompressFeature(props);
+    // The assetpipe IBL contract points at KTX2 half-float products. Its reader
+    // currently shares the glTF sub-feature chunk, so settle that tiny upload
+    // dependency before either renderer freezes its resource layouts.
+    await settleSceneIBLFeature(props);
     const sceneState = createSceneState(props, capability);
     sceneState._modelStatusMount = ctx.mount;
+    // Model fetches start immediately, but glTF texture URI selection waits for
+    // this mount's actual renderer. The scope key is available now for honest
+    // cache separation even while its context Promise is still pending.
+    sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
     // The manifest is immutable for the lifetime of an engine mount. Parse its
     // large inline shader payload once instead of once per rendered frame.
     const mountedWaterShaderSources = typeof window !== "undefined" &&
@@ -36,7 +44,28 @@
     if (ctx.mount && typeof window !== "undefined" && window.__gosx_scene3d_water_shader_sources_by_id) {
       ctx.mount.__gosxScene3DWaterShaderSources = window.__gosx_scene3d_water_shader_sources_by_id;
     }
-    const sceneModelHydration = hydrateSceneStateModels(sceneState, props);
+    // Attach the terminal rejection handler at creation time. Most hydration
+    // failures are returned as structured transactional outcomes, but this
+    // guard also covers an unexpected producer/listener exception without
+    // leaving a long gap in which the browser can report unhandledrejection.
+    const sceneModelHydration = Promise.resolve(hydrateSceneStateModels(sceneState, props)).catch(function(error) {
+      console.warn("[gosx] Scene3D model hydration failed; mounting without the affected model(s):",
+        error && error.message ? error.message : error);
+      gosxSceneEmit("warn", "model-hydration-failed", {
+        generation: Math.max(0, Math.floor(sceneNumber(sceneState && sceneState._modelHydrationGeneration, 0))),
+        committed: false,
+        stale: false,
+        stage: "unexpected",
+        error: error && error.message ? String(error.message) : String(error),
+      });
+      return {
+        generation: Math.max(0, Math.floor(sceneNumber(sceneState && sceneState._modelHydrationGeneration, 0))),
+        outcome: "failed",
+        committed: false,
+        stale: false,
+        failureStage: "unexpected",
+      };
+    });
     const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const lifecycle = initialSceneLifecycleState();
     const motion = initialSceneMotionState(props);
@@ -201,6 +230,15 @@
 
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
+      // Initial hydration was deliberately started before backend acquisition.
+      // Fence it before returning an unsupported handle so a late asset can
+      // only finish as stale and release its staged resources.
+      invalidateSceneModelHydration(sceneState);
+      settleSceneModelTextureVariantScope(
+        sceneState._modelTextureVariantScope,
+        sceneModelTextureVariantContextForRenderer(null)
+      );
+      publishSceneModelTextureVariantContext(ctx.mount, sceneState._modelTextureVariantScope);
       console.warn("[gosx] Scene3D could not acquire a renderer");
       const unsupportedReason = initialRenderer && initialRenderer.unsupportedReason
         ? initialRenderer.unsupportedReason
@@ -222,6 +260,8 @@
         sentinelLayer.parentNode.removeChild(sentinelLayer);
       }
       delete ctx.mount.__gosxScene3DSentinels;
+      delete ctx.mount.__gosxScene3DState;
+      delete ctx.mount.__gosxScene3DTextureVariantContext;
       delete ctx.mount.__gosxScene3DCSSDynamic;
       delete ctx.mount.__gosxScene3DCSSRevision;
       delete ctx.mount.__gosxScene3DCSSAnimationUntil;
@@ -241,6 +281,11 @@
       canvas.appendChild(sentinelLayer);
     }
     let renderer = initialRenderer.renderer;
+    settleSceneModelTextureVariantScope(
+      sceneState._modelTextureVariantScope,
+      sceneModelTextureVariantContextForRenderer(renderer)
+    );
+    publishSceneModelTextureVariantContext(ctx.mount, sceneState._modelTextureVariantScope);
     applySceneRendererState(ctx.mount, renderer, initialRenderer.fallbackReason || "", initialRenderer.degraded || []);
     publishSceneWaterRendererState(ctx.mount, sceneState, renderer, "");
     publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
@@ -1017,6 +1062,8 @@
 	      }
       const previous = renderer;
       renderer = nextRenderer;
+      const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, renderer);
+      publishSceneModelTextureVariantContext(ctx.mount, variantScopeChange.scope);
       applySceneRendererState(ctx.mount, renderer, fallbackReason);
       publishSceneWaterRendererState(ctx.mount, sceneState, renderer, "");
       notifySceneRendererLifecycle(fallbackReason || "renderer-swap", true, false);
@@ -1032,8 +1079,25 @@
         from: previous && previous.kind ? previous.kind : "",
         to: nextRenderer.kind || "",
         reason: fallbackReason || "",
-	      });
-	      return true;
+		      });
+      if (variantScopeChange.changed && sceneHydrationModels(sceneState, null).length > 0) {
+        const variantHydration = sceneRehydrateModelsAfterCommand(sceneState);
+        if (variantHydration && typeof variantHydration.then === "function") {
+          variantHydration.then(function(result) {
+            if (!disposed && result && result.committed) {
+              scheduleRender("renderer-texture-variants");
+            }
+          }, function(error) {
+            gosxSceneEmit("warn", "model-variant-rehydrate-failed", {
+              backend: variantScopeChange.scope && variantScopeChange.scope.context
+                ? variantScopeChange.scope.context.backend
+                : "",
+              error: error && error.message ? String(error.message) : String(error || ""),
+            });
+          });
+        }
+      }
+		      return true;
 	    }
 
 	    function detachSceneCanvasContextListeners(target) {
@@ -1042,6 +1106,7 @@
 	      }
 	      target.removeEventListener("webglcontextlost", onWebGLContextLost);
 	      target.removeEventListener("webglcontextrestored", onWebGLContextRestored);
+	      target.removeEventListener("gosx:scene3d:resource-ready", onSceneResourceReady);
 	    }
 
 	    function attachSceneCanvasContextListeners(target) {
@@ -1050,6 +1115,13 @@
 	      }
 	      target.addEventListener("webglcontextlost", onWebGLContextLost);
 	      target.addEventListener("webglcontextrestored", onWebGLContextRestored);
+	      target.addEventListener("gosx:scene3d:resource-ready", onSceneResourceReady);
+	    }
+
+	    function onSceneResourceReady() {
+	      if (!disposed) {
+	        scheduleRender("resource-ready");
+	      }
 	    }
 
 	    function prepareSceneReplacementCanvas() {
@@ -1304,6 +1376,17 @@
       if (sceneWebGLFallbackChunkState === "loading") {
         return false;
       }
+      // A retained bundle is backend-specific. Never replay it after a
+      // renderer/context/device swap onto a renderer that cannot consume local
+      // geometry (or vice versa); the scheduled render below rebuilds the
+      // bundle with the new renderer's capability.
+      if (
+        Boolean(latestBundle.retainedGeometryEnabled) !==
+        Boolean(renderer.supportsRetainedGeometry === true)
+      ) {
+        scheduleRenderWithViewport(reason || "retained-geometry-capability-change");
+        return false;
+      }
       if (!ensureRendererCanCoverBundle(latestBundle)) {
         return false;
       }
@@ -1404,6 +1487,8 @@
       const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
       if (!swapped) {
+        const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, sceneRendererLostStub);
+        publishSceneModelTextureVariantContext(ctx.mount, variantScopeChange.scope);
         gosxSceneEmit("warn", "webgl-context-lost-no-fallback", {});
       }
     }
@@ -2557,6 +2642,7 @@
         sceneState.postEffects,
         sceneState.postFXMaxPixels,
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
+        { retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true) },
       );
       latestBundle.waterShaderSourcesByID = mountedWaterShaderSources;
       sceneHydrateBundleWaterShaderSources(latestBundle, latestBundle.waterShaderSourcesByID);
@@ -2690,27 +2776,11 @@
       });
     }
 
-    // hydrateSceneStateModels already turns a per-model load failure (e.g. a
-    // 404 on a declared GLB/glTF src) into a logged warning and an empty
-    // asset, never a rejection — see loadSceneModelAsset's try/catch in
-    // 20b-scene-mount-webgl-chunk.js. This guard is defense in depth for any
-    // OTHER step in the hydration pipeline (asset instantiation, skin setup)
-    // that is not yet behind its own try/catch: a broken model asset must
-    // degrade the scene, not abort the mount. Without this, the mount would
-    // never reach scheduleInitialRender below, so it would never publish
-    // data-gosx-scene3d-mounted or -backend, and any caller waiting on the
-    // mount (including the honesty-gate contract: a scene must always report
-    // its chosen backend even when one of its assets fails to load) would
-    // hang instead of seeing an honest, if degraded, mount.
-    try {
-      await sceneModelHydration;
-    } catch (error) {
-      console.warn("[gosx] Scene3D model hydration failed; mounting without the affected model(s):",
-        error && error.message ? error.message : error);
-      gosxSceneEmit("warn", "model-hydration-failed", {
-        error: error && error.message ? String(error.message) : String(error),
-      });
-    }
+    // The handler above is attached at Promise creation, so awaiting here is
+    // safe even when loading, instantiation, skin setup, or status listeners
+    // fail. The mount continues with the prior committed generation (or no
+    // model-derived records on initial hydration).
+    await sceneModelHydration;
     scenePrimeInitialTransitions(sceneState, motion.reducedMotion, 0);
 
     // Defer the first Scene3D render until after a first-paint boundary.
@@ -2898,6 +2968,10 @@
       },
       dispose() {
         disposed = true;
+        // Supersede any SetModels/initial staging still waiting on I/O before
+        // releasing committed records. Its terminal generation check will
+        // dispose staged mixers and refuse all late status/scene mutation.
+        invalidateSceneModelHydration(sceneState);
         initPending = false;
         if (initHandle != null) {
           cancelEngineFrame(initHandle);
@@ -2982,6 +3056,7 @@
         }
         delete ctx.mount.__gosxScene3DSentinels;
         delete ctx.mount.__gosxScene3DState;
+        delete ctx.mount.__gosxScene3DTextureVariantContext;
         delete ctx.mount.__gosxScene3DCSSDynamic;
         delete ctx.mount.__gosxScene3DCSSRevision;
         delete ctx.mount.__gosxScene3DCSSAnimationUntil;

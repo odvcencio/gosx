@@ -453,7 +453,18 @@ const budgets = [
   // validation on top of this branch's split + KTX2 measurement above.
   // Ceiling re-set from measurement of the merged bundle: 1_397_872 raw,
   // 375_182 gzip, 303_695 brotli.
-  { file: "bootstrap.js", raw: 1_399_000, gzip: 376_000, brotli: 304_000 },
+  //
+  // Final audit slices add observable telemetry delivery, atomic model
+  // hydration, renderer resource teardown and page/mount Scene3D diagnostics.
+  // Measured after the single canonical regeneration: 1_413_092 / 379_757 /
+  // 307_683; ceilings are the next narrow rounded values.
+  // Final integrated retained-geometry, HDR/IBL, model-hydration and
+  // resource-ready artifact: 1_457_286 / 393_510 / 316_534.
+  // FINAL-FIX-19 adds retained-resource retirement, per-renderer planner
+  // accounting, and change-only WebGL telemetry publication. Exact regenerated
+  // measurement: 1_458_092 / 393_850 / 316_914. Only the breached raw ceiling
+  // moves; compressed ceilings retain their prior headroom.
+  { file: "bootstrap.js", raw: 1_458_092, gzip: 394_000, brotli: 317_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -497,7 +508,10 @@ const budgets = [
   // drop its duplicate copy of the whole file, so the route pays 554 raw bytes
   // here to save 45_750 there. Measured before 122_824 / 33_056 / 28_965;
   // after 123_378 / 33_194 / 29_089.
-  { file: "bootstrap-runtime.js", raw: 124_500, gzip: 33_500, brotli: 29_500 },
+  //
+  // Observable transport outcomes and queue health are available on every
+  // runtime surface. Final measurement: 125_629 / 34_137 / 29_910.
+  { file: "bootstrap-runtime.js", raw: 126_000, gzip: 34_500, brotli: 30_000 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -526,7 +540,10 @@ const budgets = [
   // was 42_738 of 131_137 minified bytes here (32.6%) and now ships as a lazily
   // fetched chunk. Measured before 138_518 / 36_131 / 31_765; after
   // 95_866 / 25_543 / 22_713.
-  { file: "bootstrap-lite.js", raw: 97_000, gzip: 26_000, brotli: 23_000 },
+  //
+  // The lite surface carries the same audited observable telemetry transport.
+  // Final measurement: 98_110 / 26_463 / 23_574.
+  { file: "bootstrap-lite.js", raw: 98_500, gzip: 26_500, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -727,7 +744,9 @@ const budgets = [
   // Merged main's render-truth telemetry: this chunk carries 15a-scene-postfx
   // -shared.js and 16-scene-webgl.js, both render-truth call sites. Ceiling
   // re-set from measurement of the merged bundle: 194_403 / 52_664 / 45_104.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 195_000, gzip: 53_000, brotli: 45_400 },
+  // Final integrated measurement: 209_702 / 57_564 / 49_044.
+  // FINAL-FIX-19 exact measurement: 209_610 / 57_612 / 49_007.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 210_000, gzip: 57_612, brotli: 49_100 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -774,7 +793,12 @@ const budgets = [
   // bootstrap-feature-scene3d-compute.js (below); this chunk only gains
   // 20-scene-mount.js's backend-truth record. Ceiling set from measurement:
   // 472_688 / 130_602 / 108_631.
-  { file: "bootstrap-feature-scene3d.js", raw: 474_000, gzip: 131_000, brotli: 109_000 },
+  //
+  // Atomic model hydration, deterministic cleanup and scoped telemetry landed
+  // in the final audit. Measured: 484_997 / 133_999 / 111_308.
+  // Final integrated measurement: 496_933 / 137_294 / 113_937.
+  // FINAL-FIX-19 exact measurement: 497_103 / 137_333 / 113_960.
+  { file: "bootstrap-feature-scene3d.js", raw: 497_103, gzip: 137_500, brotli: 114_000 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -928,7 +952,11 @@ const budgets = [
   // the KTX2 upload branch above. Ceiling re-set from measurement of the
   // merged bundle: 365_415 raw (gzip and brotli keep their existing headroom
   // at 87_101 and 72_916).
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 366_000, gzip: 87_300, brotli: 73_300 },
+  // Final renderer teardown/resource accounting measures 365_863 / 87_380 /
+  // 73_252, so only the breached gzip ceiling moves.
+  // Final integrated measurement: 381_179 / 91_911 / 76_934.
+  // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 381_939, gzip: 92_096, brotli: 77_192 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -944,7 +972,8 @@ const budgets = [
   // the assertions run raw first and stop. main carries no KTX2 work, so its
   // corresponding measurement (22_000 / 8_000 / 7_000) predates all of this
   // and is superseded by it.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 27_500, gzip: 10_300, brotli: 9_200 },
+  // Final integrated measurement: 29_276 / 11_004 / 9_772.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 29_500, gzip: 11_100, brotli: 9_800 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.js (the JS drift engine): raw 52_000 ->
@@ -1121,9 +1150,10 @@ const routeBudgets = [
     // a base without the text-layout split above) at 252_472 / 70_035 / 61_684
     // (gzip 70_000 -> 70_100). Ceiling re-set from measurement of the merged
     // route.
-    raw: 229_000,
-    gzip: 65_500,
-    brotli: 57_800,
+    // Final observable-telemetry measurement: 229_436 / 65_617 / 57_847.
+    raw: 230_000,
+    gzip: 66_000,
+    brotli: 58_000,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1207,9 +1237,14 @@ const routeBudgets = [
     // bootstrap-feature-scene3d-webgpu.js budgets above; this route carries
     // both). Ceiling re-set from measurement of the merged route:
     // 1_108_083 / 293_291 / 248_309.
-    raw: 1_109_000,
-    gzip: 294_000,
-    brotli: 249_000,
+    // Final hydration/lifecycle/telemetry measurement:
+    // 1_122_619 / 297_774 / 252_038.
+    // Final integrated measurement: 1_149_871 / 305_600 / 258_349.
+    // FINAL-FIX-19 exact measurement: 1_150_801 / 305_824 / 258_630.
+    // Only the breached raw and Brotli ceilings move.
+    raw: 1_150_801,
+    gzip: 306_000,
+    brotli: 258_630,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1274,9 +1309,12 @@ const routeBudgets = [
     // 16-scene-webgl.js through bootstrap-feature-scene3d.js and
     // bootstrap-feature-scene3d-webgl.js). Ceiling re-set from measurement of
     // the merged route: 937_071 / 258_854 / 220_497.
-    raw: 938_000,
-    gzip: 259_500,
-    brotli: 221_000,
+    // Final hydration/lifecycle/telemetry measurement:
+    // 951_588 / 263_185 / 223_963.
+    // Final integrated measurement: 978_394 / 271_253 / 230_459.
+    raw: 978_500,
+    gzip: 271_500,
+    brotli: 230_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1331,9 +1369,13 @@ const routeBudgets = [
     // pipeline validation (this route loads both backends, so it carries the
     // full cost of both). Ceiling re-set from measurement of the merged
     // route: 1_302_486 / 345_955 / 293_413.
-    raw: 1_303_500,
-    gzip: 346_500,
-    brotli: 294_000,
+    // Final hydration/lifecycle/telemetry measurement:
+    // 1_317_451 / 350_565 / 297_215.
+    // Final integrated measurement: 1_359_573 / 363_164 / 307_393.
+    // FINAL-FIX-19 exact measurement: 1_360_411 / 363_436 / 307_637.
+    raw: 1_360_411,
+    gzip: 363_500,
+    brotli: 307_637,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1390,9 +1432,13 @@ const routeBudgets = [
     // pipeline validation (this route carries bootstrap-feature-scene3d.js
     // and bootstrap-feature-scene3d-webgpu.js). Ceiling re-set from
     // measurement of the merged route: 961_953 / 251_033 / 210_741.
-    raw: 962_500,
-    gzip: 251_500,
-    brotli: 211_000,
+    // Final hydration/lifecycle/telemetry measurement:
+    // 976_489 / 255_516 / 214_470.
+    // Final integrated measurement: 1_003_741 / 263_342 / 220_781.
+    // FINAL-FIX-19 exact measurement: 1_004_671 / 263_566 / 221_062.
+    raw: 1_004_671,
+    gzip: 263_566,
+    brotli: 221_062,
   },
 
 ];

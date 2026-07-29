@@ -22,120 +22,62 @@ func readRenderer(t *testing.T, path string) string {
 	return string(data)
 }
 
-// TestWebGLEnvironmentPathIsNotPrefilteredIBL corroborates the gap against the
-// shipped renderer source.
-//
-// capability.Matrix says Matrix[FeatureIBL][BackendWebGL] is true. The WebGL2
-// path behind that cell is scenePBRLoadHDRTexture: it fetches the .hdr, calls
-// scenePBRTonemapHDRPixels to squeeze the high dynamic range values into 8-bit
-// low dynamic range, uploads one RGBA UNSIGNED_BYTE 2D texture, and the shader
-// samples that one texture twice, once along the normal and once along the
-// reflection vector. There is no prefiltering, no split-sum lookup table, and no
-// cube texture.
-//
-// So the cell overstates what the renderer does. This test proves the
-// overstatement instead of arguing about it, and it fails the moment somebody
-// implements the real thing, which forces the record to be updated at the same
-// time.
-//
-// The same class of error as the gpu-picking case: the drift guard compares the
-// Matrix against a capability manifest, and a manifest is one boolean anyone can
-// edit. Only a test that reads the renderer can tell the truth.
-func TestWebGLEnvironmentPathIsNotPrefilteredIBL(t *testing.T) {
+// TestWebGLEnvironmentPathConsumesPrefilteredIBL corroborates the real,
+// capable-device consumer while keeping the unconditional matrix cell false.
+func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 	source := readRenderer(t, webglRendererPath)
 
-	// Evidence the path tone maps to 8-bit low dynamic range.
-	tonemapMarkers := []string{
-		"function scenePBRTonemapHDRPixels(parsed)",
-		"new Uint8Array(width * height * 4)",
-		"Math.pow(r / (1 + r), 1 / 2.2)",
-		"gl.RGBA, gl.UNSIGNED_BYTE, ldr.pixels",
-	}
-	for _, marker := range tonemapMarkers {
+	for _, marker := range []string{
+		"uniform samplerCube u_iblIrradiance;",
+		"uniform samplerCube u_iblRadiance;",
+		"uniform sampler2D u_iblBRDFLUT;",
+		"textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod)",
+		"texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg",
+		"prefiltered * (F0 * brdf.x + brdf.y)",
+		"irradiance * albedo * kDenv",
+		"scenePBRLinearHDRPixels",
+		"gl.RGBA16F || 0x881A",
+		"OES_texture_float_linear",
+	} {
 		if !strings.Contains(source, marker) {
-			t.Errorf("the WebGL environment path changed: %q is gone from %s.\n"+
-				"Re-check capability.Matrix[ibl][webgl] and this test's claim.", marker, webglRendererPath)
+			t.Errorf("the WebGL IBL consumer is missing %q in %s", marker, webglRendererPath)
 		}
 	}
-
-	// Evidence the shader samples one equirectangular 2D texture twice.
-	shaderMarkers := []string{
-		"uniform sampler2D u_envMap;",
-		"texture(u_envMap, envEquirectUV(Nr)).rgb",
-		"texture(u_envMap, envEquirectUV(Rr)).rgb",
-		// The ad hoc gloss falloff that stands in for the split-sum term.
-		"envSpecular * Fenv * (1.0 - roughness * 0.65)",
-	}
-	for _, marker := range shaderMarkers {
+	for _, marker := range []string{"maxUnits >= 18", "fragment-texture-units<18"} {
 		if !strings.Contains(source, marker) {
-			t.Errorf("the WebGL environment shader changed: %q is gone from %s.\n"+
-				"If real IBL landed, flip the claim in this test and check the Matrix cell.",
-				marker, webglRendererPath)
-		}
-	}
-
-	// Evidence the real-IBL pieces are absent. Each name is one of the five
-	// requirements ConsumerRequirements lists.
-	absent := map[string]string{
-		"samplerCube":            "a prefiltered specular cube sampler",
-		"u_brdfLUT":              "the split-sum lookup table sampler",
-		"textureCubeLod":         "the roughness-indexed cube tap",
-		"textureLod(u_envMap":    "any roughness-indexed environment tap",
-		"KTX 20":                 "a KTX2 container reader",
-		"supercompressionScheme": "a KTX2 supercompression reader",
-	}
-	for marker, what := range absent {
-		if strings.Contains(source, marker) {
-			t.Errorf("%s appeared in %s (%q). Real IBL may have landed: update "+
-				"ConsumerRequirements and re-check capability.Matrix[ibl][webgl].",
-				what, webglRendererPath, marker)
+			t.Errorf("the WebGL staged capability gate is missing %q", marker)
 		}
 	}
 }
 
-// TestNeitherRendererConsumesTheGeneratedIBLProducts states the whole gap in one
-// place: this package writes four products and nothing reads any of them.
-func TestNeitherRendererConsumesTheGeneratedIBLProducts(t *testing.T) {
+// TestBothRenderersConsumeTheGeneratedIBLProducts pins the shared metadata and
+// exact split-sum convention in both runtime backends.
+func TestBothRenderersConsumeTheGeneratedIBLProducts(t *testing.T) {
 	for _, path := range []string{webglRendererPath, webgpuRendererPath} {
 		source := readRenderer(t, path)
 		for _, marker := range []string{
-			"GoSXiblModel",       // The container key that pins the convention.
-			".ibl.json",          // The sidecar the executor writes.
-			".brdf-lut.ktx2",     // The split-sum table the executor writes.
-			".irradiance.ktx2",   // The diffuse cube the executor writes.
-			".ibl.ktx2",          // The prefiltered specular cube.
-			"roughnessPerLevel",  // The sidecar field mapping roughness to a level.
-			"sphericalHarmonics", // The sidecar field holding the diffuse bands.
+			"GoSXiblRole",
+			"GoSXColorSpace",
+			"GoSXiblModel",
+			"ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+			"prefiltered * (F0 * brdf.x + brdf.y)",
+			"irradiance * albedo * kDenv",
 		} {
-			if strings.Contains(source, marker) {
-				t.Errorf("%s now mentions %q. A consumer may exist: update "+
-					"ConsumerRequirements and the IBL Matrix cells.", path, marker)
+			if !strings.Contains(source, marker) {
+				t.Errorf("%s does not consume the generated IBL contract marker %q", path, marker)
 			}
 		}
 	}
 }
 
-// TestTheIBLTextureSlotsExistButStayUnbound records the nearest-miss state.
-//
-// sceneAllocateTextureUnits already reserves three texture units per IBL scene
-// and names them irradiance, radiance, and brdfLUT. Only the first is ever
-// bound, and what binds into it is the tone-mapped equirectangular 2D texture,
-// not a diffuse irradiance cube. The radiance and brdfLUT slots are reserved and
-// never filled.
-//
-// The plumbing is therefore further along than the shading. That is worth
-// recording precisely, because it changes the size of the remaining work: the
-// unit budget is already accounted for, so a real consumer does not have to
-// renegotiate texture units with the cascaded shadow allocator.
-func TestTheIBLTextureSlotsExistButStayUnbound(t *testing.T) {
+// TestTheIBLTextureSlotsAreAllocatedAndBound records the WebGL resource path.
+func TestTheIBLTextureSlotsAreAllocatedAndBound(t *testing.T) {
 	// The three units moved out of 15a-scene-postfx-shared.js into
 	// 15a1-scene-texture-budget.js when the base 3D chunk was split by feature.
 	// 15a1 ships in the WebGL chunk now, because 16-scene-webgl.js is its only
 	// caller, so a WebGPU page stops paying for a WebGL2 sampler table.
 	//
-	// The reservation itself is unchanged, which is the point of this test: the
-	// units are still allocated and still negotiated against the cascaded shadow
-	// allocator, and radiance and brdfLUT are still never bound.
+	// The units are negotiated against the cascaded-shadow allocator.
 	const sharedPath = "../../client/js/bootstrap-src/15a1-scene-texture-budget.js"
 	data, err := os.ReadFile(sharedPath)
 	if err != nil {
@@ -148,20 +90,16 @@ func TestTheIBLTextureSlotsExistButStayUnbound(t *testing.T) {
 		}
 	}
 	renderer := readRenderer(t, webglRendererPath)
-	if !strings.Contains(renderer, "layout.ibl.irradiance") {
-		t.Error("the WebGL renderer no longer binds the irradiance slot")
-	}
-	for _, unused := range []string{"layout.ibl.radiance", "layout.ibl.brdfLUT"} {
-		if strings.Contains(renderer, unused) {
-			t.Errorf("%s is now bound in %s. Real IBL may have landed: update "+
-				"ConsumerRequirements and the IBL Matrix cells.", unused, webglRendererPath)
+	for _, bound := range []string{"layout.ibl.irradiance", "layout.ibl.radiance", "layout.ibl.brdfLUT"} {
+		if !strings.Contains(renderer, bound) {
+			t.Errorf("%s is not bound in %s", bound, webglRendererPath)
 		}
 	}
 }
 
 // TestConsumerRequirementsRecordTheGapHonestly keeps the reported list in step
-// with the tests above. Every requirement is absent today, so every Present flag
-// must be false. Flipping one without adding renderer code makes the report lie.
+// with the tests above. All five consumer pieces are implemented; availability
+// policy is recorded separately by the capability matrix.
 func TestConsumerRequirementsRecordTheGapHonestly(t *testing.T) {
 	requirements := ConsumerRequirements()
 	if len(requirements) != 5 {
@@ -169,9 +107,6 @@ func TestConsumerRequirementsRecordTheGapHonestly(t *testing.T) {
 	}
 	ids := map[string]bool{}
 	for _, requirement := range requirements {
-		if requirement.Present {
-			t.Errorf("requirement %q claims to be present; no renderer implements it", requirement.ID)
-		}
 		if requirement.ID == "" || requirement.Title == "" || requirement.Detail == "" || requirement.Where == "" {
 			t.Errorf("requirement %+v is incomplete", requirement)
 		}
@@ -179,6 +114,9 @@ func TestConsumerRequirementsRecordTheGapHonestly(t *testing.T) {
 			t.Errorf("duplicate requirement id %q", requirement.ID)
 		}
 		ids[requirement.ID] = true
+		if !requirement.Present {
+			t.Errorf("implemented consumer requirement %q is still reported absent", requirement.ID)
+		}
 	}
 	for _, id := range []string{"ktx2-reader-js", "cube-upload", "brdf-lut-upload", "shader-combine", "ir-carrier"} {
 		if !ids[id] {
@@ -187,14 +125,9 @@ func TestConsumerRequirementsRecordTheGapHonestly(t *testing.T) {
 	}
 }
 
-// TestIREnvironmentCannotCarryTheProducts corroborates the ir-carrier
-// requirement against scene/ir.go.
-//
-// IREnvironment has one string for the environment. It cannot name the
-// prefiltered cube, the irradiance cube, the lookup table, the mip level count,
-// or the harmonics. A renderer that only sees EnvMap has no way to find what the
-// build wrote.
-func TestIREnvironmentCannotCarryTheProducts(t *testing.T) {
+// TestIREnvironmentCarriesTheProducts corroborates the completed source/IR
+// contract without implying that either renderer consumes it.
+func TestIREnvironmentCarriesTheProducts(t *testing.T) {
 	data, err := os.ReadFile("../../scene/ir.go")
 	if err != nil {
 		t.Fatalf("read scene/ir.go: %v", err)
@@ -212,11 +145,8 @@ func TestIREnvironmentCannotCarryTheProducts(t *testing.T) {
 	if !strings.Contains(block, "EnvMap") {
 		t.Fatal("IREnvironment no longer carries EnvMap")
 	}
-	for _, field := range []string{"SpecularURI", "IrradianceURI", "BRDFLUTURI", "SphericalHarmonics", "SpecularMipLevels"} {
-		if strings.Contains(block, field) {
-			t.Errorf("IREnvironment gained %s. The ir-carrier requirement is done: "+
-				"update ConsumerRequirements.", field)
-		}
+	if !strings.Contains(block, "IBL") {
+		t.Fatalf("IREnvironment does not carry EnvironmentIBL: %s", block)
 	}
 }
 
@@ -252,8 +182,7 @@ func TestIBLMatrixCellsAreRecorded(t *testing.T) {
 		t.Fatal("capability.Matrix no longer has an ibl row")
 	}
 	t.Logf("capability.Matrix[ibl] = webgpu:%v webgl:%v", row[capability.BackendWebGPU], row[capability.BackendWebGL])
-	if row[capability.BackendWebGL] && len(ConsumerRequirements()) == 5 {
-		t.Logf("the webgl cell is true while all five IBL consumer pieces are missing; " +
-			"see TestWebGLEnvironmentPathIsNotPrefilteredIBL for the renderer evidence")
+	if row[capability.BackendWebGL] {
+		t.Log("the WebGL cell is true; verify the 18-unit staged gate has become universal before keeping it")
 	}
 }

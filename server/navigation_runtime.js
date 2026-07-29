@@ -19,6 +19,7 @@
   const FORM_STATE_ATTR = "data-gosx-form-state";
   const FORM_PENDING_ATTR = "data-gosx-pending";
   const PREFETCH_ATTR = "data-gosx-prefetch";
+  const NAVIGATION_BEACON_ATTR = "data-gosx-navigation-beacon";
   const NAV_STATE_ATTR = "data-gosx-navigation-state";
   const NAV_CURRENT_PATH_ATTR = "data-gosx-navigation-current-path";
   const NAV_PENDING_URL_ATTR = "data-gosx-navigation-pending-url";
@@ -43,6 +44,7 @@
   let activeNavigationController = null;
   let announceSeq = 0;
   let navigationFrameSequence = 0;
+  const sentNavigationBeacons = new Set();
   window.__gosx_loaded_scripts = scriptCache;
   window.__gosx_page_cache = pageCache;
 
@@ -461,6 +463,102 @@
     return !!left && !!right && left.origin === right.origin && left.path === right.path && left.search === right.search;
   }
 
+  function navigationUUID() {
+    const cryptoRef = window.crypto || null;
+    if (cryptoRef && typeof cryptoRef.randomUUID === "function") {
+      return cryptoRef.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    if (cryptoRef && typeof cryptoRef.getRandomValues === "function") {
+      cryptoRef.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < bytes.length; i += 1) {
+        bytes[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.prototype.map.call(bytes, function(byte) {
+      return byte.toString(16).padStart(2, "0");
+    }).join("");
+    return [
+      hex.slice(0, 8),
+      hex.slice(8, 12),
+      hex.slice(12, 16),
+      hex.slice(16, 20),
+      hex.slice(20),
+    ].join("-");
+  }
+
+  function navigationBeaconConfigs() {
+    return collectElements(document.head, function(node) {
+      return isElement(node, "SCRIPT")
+        && node.hasAttribute
+        && node.hasAttribute(NAVIGATION_BEACON_ATTR);
+    }).map(function(node) {
+      try {
+        const config = JSON.parse(String(node.textContent || ""));
+        return config && typeof config === "object" ? config : null;
+      } catch (error) {
+        reportNavigationFailure("navigation beacon config", error, {
+          source: NAVIGATION_BEACON_ATTR,
+        });
+        return null;
+      }
+    }).filter(Boolean);
+  }
+
+  function sendNavigationBeacons(url) {
+    const parsed = parsedNavigationURL(url);
+    if (!parsed) return;
+    const path = String(parsed.pathname || "/") + String(parsed.search || "");
+    for (const config of navigationBeaconConfigs()) {
+      const endpoint = String(config.url || "").trim();
+      if (!endpoint) continue;
+      const endpointURL = parsedNavigationURL(endpoint);
+      if (!endpointURL || endpointURL.origin !== parsed.origin) {
+        observeNavigation("warning", "navigation beacon rejected", {
+          name: String(config.name || ""),
+          reason: "cross-origin-endpoint",
+        });
+        continue;
+      }
+      const key = [String(config.name || ""), endpointURL.href, path].join("\n");
+      if (sentNavigationBeacons.has(key)) continue;
+      sentNavigationBeacons.add(key);
+
+      const navigationID = navigationUUID();
+      const payload = {};
+      payload[String(config.pathField || "path")] = path;
+      payload[String(config.navigationIDField || "navigation_id")] = navigationID;
+      gosxRuntimeRequest(endpoint, {
+        method: String(config.method || "POST").toUpperCase(),
+        credentials: String(config.credentials || "same-origin"),
+        keepalive: config.keepalive !== false,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).then(function(response) {
+        if (!response || !response.ok) {
+          throw new Error("navigation beacon failed with status " + String(response && response.status || 0));
+        }
+        observeNavigation("debug", "navigation beacon sent", {
+          name: String(config.name || ""),
+          path: path,
+          navigationID: navigationID,
+        });
+      }).catch(function(error) {
+        reportNavigationFailure("navigation beacon", error, {
+          source: endpoint,
+          telemetry: {
+            name: String(config.name || ""),
+            path: path,
+            navigationID: navigationID,
+          },
+        });
+      });
+    }
+  }
+
   function ancestorNavigationURL(parent, child) {
     if (!parent || !child || parent.origin !== child.origin) {
       return false;
@@ -594,6 +692,8 @@
 
   function shouldPrefetchLink(anchor, trigger) {
     if (!anchor || !anchor.getAttribute) return false;
+    const target = navigationURLParts(anchor.getAttribute("href"));
+    if (sameNavigationURL(target, currentNavigationURL())) return false;
     const mode = linkPrefetchMode(anchor);
     if (mode === "off") return false;
     const snapshot = currentNavigationSnapshot();
@@ -1608,6 +1708,18 @@
     if (activeNavigationController && typeof activeNavigationController.abort === "function") {
       activeNavigationController.abort();
     }
+    const target = navigationURLParts(url);
+    if (sameNavigationURL(target, currentNavigationURL())) {
+      activeNavigationController = null;
+      setNavigationState({
+        phase: "idle",
+        currentURL: target.href,
+        pendingURL: "",
+      }, "navigate:current");
+      observeNavigation("debug", "navigation already current", { url: target.href });
+      finalizeNavigation(target.href, opts, resolveNavigationA11y(target.href));
+      return true;
+    }
     activeNavigationController = typeof AbortController === "function" ? new AbortController() : null;
     const signal = activeNavigationController ? activeNavigationController.signal : null;
     startNavigation(url);
@@ -1654,6 +1766,7 @@
       pendingURL: "",
     }, "navigate:complete");
     observeNavigation("info", "navigation completed", { url: String(url || "") });
+    sendNavigationBeacons(url);
     prefetchManagedLinks("render");
   }
 

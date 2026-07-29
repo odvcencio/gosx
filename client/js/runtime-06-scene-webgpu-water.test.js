@@ -1496,7 +1496,10 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
     assert.match(webgpu, new RegExp(`${field}: f32`));
     assert.match(webgpu, new RegExp(`material\\.${field}`));
   }
-  assert.match(webgpu, /new ArrayBuffer\(80\)/);
+  assert.match(webgpu, /new ArrayBuffer\(160\)/);
+  assert.match(webgpu, /modelMatrix: mat4x4f/);
+  assert.match(webgpu, /modelScaleSigns: vec4f/);
+  assert.match(webgpu, /f\[20 \+ mi\] = model/);
   assert.match(webgpu, /f\[7\] = clamp01\(sceneNumber\(mat\.clearcoat, 0\)\)/);
   assert.match(webgpu, /f\[8\] = clamp01\(sceneNumber\(mat\.sheen, 0\)\)/);
   assert.match(webgpu, /f\[9\] = clamp01\(sceneNumber\(mat\.transmission, 0\)\)/);

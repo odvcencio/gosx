@@ -404,4 +404,3 @@
       connectHub(entry);
     }
   }
-

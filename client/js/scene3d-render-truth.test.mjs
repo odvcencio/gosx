@@ -27,7 +27,10 @@ function readSrc(name) {
 const sharedSource = readSrc("15a-scene-postfx-shared.js");
 const webglSource = readSrc("16-scene-webgl.js");
 const webgpuSource = readSrc("16a-scene-webgpu.js");
-const mountSource = readSrc("20-scene-mount.js");
+// sceneRenderBackendTruth and its DOM surface live in
+// 20b-scene-mount-webgl-chunk.js, not 20-scene-mount.js: applySceneRendererState
+// (its only caller) moved there when the former single 20-scene-mount.js split
+// into the 20a..20h file set.
 const backendMountSource = readSrc("20b-scene-mount-webgl-chunk.js");
 
 // loadRenderTruth evaluates 15a in a throwaway VM with a minimal window and

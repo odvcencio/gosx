@@ -1,6 +1,36 @@
   // Scene planner — backend-agnostic preparation of render bundles into pass
   // buckets, cache keys, and shared upload-cache helpers.
 
+  var scenePlannerTelemetryState = {
+    plans: 0,
+    cacheHits: 0,
+    rebuilds: 0,
+    fullVertexHashScans: 0,
+    retainedHashFastPaths: 0,
+    plannerCPUms: 0,
+    lastPlannerCPUms: 0,
+  };
+
+  function scenePlannerNow() {
+    return typeof performance !== "undefined" && typeof performance.now === "function"
+      ? performance.now()
+      : Date.now();
+  }
+
+  function scenePlannerTelemetrySnapshot(fullVertexHashScansBefore) {
+    const snapshot = Object.assign({}, scenePlannerTelemetryState);
+    // The renderer publishes fullVertexHashScans on its own mount. Preserve
+    // the page-wide diagnostic total under an explicit name, while the
+    // historical field reports only work performed by this prepare call so
+    // one Scene3D mount cannot inherit another mount's hash scans.
+    snapshot.fullVertexHashScansTotal = snapshot.fullVertexHashScans;
+    snapshot.fullVertexHashScans = Math.max(
+      0,
+      snapshot.fullVertexHashScans - sceneNumber(fullVertexHashScansBefore, snapshot.fullVertexHashScans),
+    );
+    return snapshot;
+  }
+
   function sceneCSSDebugLog() {
     if (typeof window === "undefined" || window.__gosx_scene3d_css_debug !== true) {
       return;
@@ -11,6 +41,9 @@
   }
 
   function prepareScene(ir, camera, viewport, lastPrepared, cssContext) {
+    const plannerStartedAt = scenePlannerNow();
+    const fullVertexHashScansBefore = scenePlannerTelemetryState.fullVertexHashScans;
+    scenePlannerTelemetryState.plans += 1;
     const initialSource = ir && typeof ir === "object" ? ir : {};
     const css = sceneCSSResolverContext(cssContext);
     css.nowMs = typeof cssContext === "object" && cssContext && cssContext.nowMs ? cssContext.nowMs : Date.now();
@@ -30,12 +63,18 @@
     const resolvedCamera = camera || source.camera || {};
     const signature = scenePreparedSignature(source, resolvedCamera, viewport);
     if (lastPrepared && lastPrepared.signature === signature) {
+      scenePlannerTelemetryState.cacheHits += 1;
       lastPrepared.ir = source;
       lastPrepared.camera = resolvedCamera;
       lastPrepared.viewport = viewport;
       lastPrepared.resolvedEnv = source.environment || {};
       lastPrepared.cssDynamic = Boolean(cssResolved.dynamic);
       lastPrepared.cssCache = cssResolved.cache;
+      const elapsed = Math.max(0, scenePlannerNow() - plannerStartedAt);
+      scenePlannerTelemetryState.lastPlannerCPUms = elapsed;
+      scenePlannerTelemetryState.plannerCPUms += elapsed;
+      lastPrepared.telemetry = scenePlannerTelemetrySnapshot(fullVertexHashScansBefore);
+      source.plannerTelemetry = lastPrepared.telemetry;
       return lastPrepared;
     }
 
@@ -61,6 +100,12 @@
       cssCache: cssResolved.cache,
       rebuilds: lastPrepared ? lastPrepared.rebuilds + 1 : 1,
     };
+    scenePlannerTelemetryState.rebuilds += 1;
+    const elapsed = Math.max(0, scenePlannerNow() - plannerStartedAt);
+    scenePlannerTelemetryState.lastPlannerCPUms = elapsed;
+    scenePlannerTelemetryState.plannerCPUms += elapsed;
+    prepared.telemetry = scenePlannerTelemetrySnapshot(fullVertexHashScansBefore);
+    source.plannerTelemetry = prepared.telemetry;
     return prepared;
   }
 
@@ -1524,6 +1569,15 @@
     hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.castShadow ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
+    if (object && object.retainedGeometry) {
+      scenePlannerTelemetryState.retainedHashFastPaths += 1;
+      hash = scenePlannerHashString(hash, String(object.geometryRevision == null ? 0 : object.geometryRevision));
+      // Retained geometry is immutable between explicit revisions, so hashing
+      // every position/normal/UV on every animated frame would recreate the
+      // exact O(vertices) cost the retained path removes. The compact model
+      // matrix is the only per-frame geometry state the pass planner needs.
+      return scenePlannerHashFloatArray(hash, object.modelMatrix, 16);
+    }
     return scenePlannerHashMeshVertices(hash, object && object.vertices);
   }
 
@@ -1596,6 +1650,7 @@
   }
 
   function scenePlannerHashMeshVertices(hash, vertices) {
+    scenePlannerTelemetryState.fullVertexHashScans += 1;
     if (!vertices || typeof vertices !== "object") {
       return scenePlannerHashNumber(hash, 0);
     }

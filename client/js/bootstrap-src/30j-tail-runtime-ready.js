@@ -47,4 +47,3 @@
       refreshGosxDocumentState("ready");
     });
   };
-

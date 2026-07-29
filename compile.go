@@ -23,10 +23,7 @@ var (
 func SetGrammarBlob(data []byte) error {
 	var err error
 	gosxLangOnce.Do(func() {
-		gosxLangCached, gosxLangErr = LoadLanguageBlob(data)
-		if gosxLangErr == nil && gosxLangCached != nil {
-			gosxLangCached.ExternalScanner = newGSXScanner(gosxLangCached)
-		}
+		gosxLangCached, gosxLangErr = loadGSXLanguageBlob(data)
 	})
 	if gosxLangErr != nil {
 		err = gosxLangErr
@@ -40,16 +37,52 @@ func SetGrammarBlob(data []byte) error {
 func Language() (*gotreesitter.Language, error) {
 	gosxLangOnce.Do(func() {
 		if len(embeddedGrammarBlob) > 0 {
-			gosxLangCached, gosxLangErr = LoadLanguageBlob(embeddedGrammarBlob)
+			gosxLangCached, gosxLangErr = loadGSXLanguageBlob(embeddedGrammarBlob)
 		} else {
-			g := GosxGrammar()
-			gosxLangCached, _, gosxLangErr = GenerateLanguageAndBlob(g)
+			gosxLangCached, _, gosxLangErr = GenerateLanguageAndBlob(GosxGrammar())
 		}
-		if gosxLangErr == nil && gosxLangCached != nil {
+		if gosxLangErr == nil && gosxLangCached == nil {
+			gosxLangCached, _, gosxLangErr = GenerateLanguageAndBlob(GosxGrammar())
+		}
+		if gosxLangErr == nil && gosxLangCached != nil && gosxLangCached.ExternalScanner == nil {
 			gosxLangCached.ExternalScanner = newGSXScanner(gosxLangCached)
 		}
 	})
 	return gosxLangCached, gosxLangErr
+}
+
+func loadGSXLanguageBlob(data []byte) (*gotreesitter.Language, error) {
+	lang, err := LoadLanguageBlob(data)
+	if err != nil {
+		return nil, err
+	}
+	if lang != nil {
+		lang.ExternalScanner = newGSXScanner(lang)
+		if err := validateGSXLanguage(lang); err == nil {
+			return lang, nil
+		}
+	}
+	lang, _, err = GenerateLanguageAndBlob(GosxGrammar())
+	if err != nil {
+		return nil, err
+	}
+	if lang != nil {
+		lang.ExternalScanner = newGSXScanner(lang)
+	}
+	return lang, nil
+}
+
+func validateGSXLanguage(lang *gotreesitter.Language) error {
+	const smoke = "package app\nfunc Page() Node {\n\treturn <div>ok</div>\n}\n"
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse([]byte(smoke))
+	if err != nil {
+		return err
+	}
+	if root := tree.RootNode(); root == nil || root.HasError() {
+		return fmt.Errorf("embedded gosx grammar blob failed smoke parse")
+	}
+	return nil
 }
 
 // Parse parses GoSX source into a tree-sitter tree.

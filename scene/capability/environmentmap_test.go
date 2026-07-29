@@ -43,16 +43,12 @@ func TestWebGL2ReadsTheEnvironmentMap(t *testing.T) {
 		"the rotation, and samples the texture, so it reads the authored image. That is what this cell asks.")
 }
 
-// TestWebGPUReadsNoEnvironmentMap corroborates the false cell.
+// TestWebGPUReadsNoEnvironmentMap corroborates the false legacy-image cell.
 //
-// A PASS PROVES: the browser WebGPU renderer names none of the three authored
-// environment fields, in any letter case, anywhere in the file. A viewer on the
-// preferred backend therefore sees no contribution from an authored env-map,
-// while the same scene shows one on WebGL2 and one in a poster.
-//
-// A PASS DOES NOT PROVE: that adding the three identifiers would close the gap.
-// The renderer also needs a cube texture, a sampler, three uniform lanes and the
-// two taps. This guard is the tripwire, not the specification.
+// WebGPU now names envIntensity and envRotation for the distinct EnvironmentIBL
+// contract, so those shared controls are no longer evidence that it consumes
+// the authored legacy envMap image. This test pins the actual carrier instead:
+// the renderer still never names envMap.
 //
 // WHEN THIS TEST FAILS because the renderer gained the feature: flip the WebGPU
 // cell to true, update 16a-scene-webgpu.capabilities.json in the same change, and
@@ -61,9 +57,9 @@ func TestWebGL2ReadsTheEnvironmentMap(t *testing.T) {
 func TestWebGPUReadsNoEnvironmentMap(t *testing.T) {
 	webgpu := strings.ToLower(readRenderer(t, webgpuRendererPath))
 	evidence := evidenceFor(t, FeatureEnvironmentMap, BackendWebGPU).
-		refutedBy(webgpuRendererPath, webgpu, environmentMapIdentifiers...)
-	evidence.assertAgrees("The browser WebGPU renderer names envMap, envIntensity and envRotation zero times, " +
-		"so it cannot read the authored image. Its whole environment response is the hemisphere ambient term.")
+		refutedBy(webgpuRendererPath, webgpu, "envmap")
+	evidence.assertAgrees("The browser WebGPU renderer never names envMap, so it cannot read the authored legacy " +
+		"image. envIntensity and envRotation belong to the separate generated EnvironmentIBL path.")
 }
 
 // TestEnvironmentMapExcludesNoBackend pins that the row reports and does not

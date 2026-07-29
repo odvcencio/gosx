@@ -28,4 +28,3 @@
 
     window.__gosx.hubs.delete(hubID);
   };
-

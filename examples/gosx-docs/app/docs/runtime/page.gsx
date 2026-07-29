@@ -2,6 +2,33 @@ package docs
 
 func Page() Node {
 	return <div>
+		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
+			<div id={docScene.SurfaceID} class="doc-scene__surface">
+				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
+					<div class="doc-scene__fallback">{docScene.Scene.UnsupportedMessage}</div>
+				</Scene3D>
+			</div>
+			<div class="doc-scene__teaching">
+				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
+					{docScene.Title}
+				</p>
+				<p class="doc-scene__summary">{docScene.Summary}</p>
+				<dl class="doc-scene__facts">
+					<div>
+						<dt>Backend contract</dt>
+						<dd>{docScene.BackendTruth}</dd>
+					</div>
+					<div>
+						<dt>Interaction</dt>
+						<dd>{docScene.InteractionHint}</dd>
+					</div>
+				</dl>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
+					{docScene.DemoLabel}
+				</a>
+			</div>
+		</section>
 		<section id="client-navigation">
 			<h2>Client Navigation</h2>
 			<p>
@@ -91,6 +118,141 @@ func Page() Node {
 	    server.AssetURL("analytics.js"),
 	    server.ManagedScriptOptions{},
 	)`)}
+		</section>
+		<section id="runtime-telemetry">
+			<h2>Runtime Telemetry</h2>
+			<p>
+				The browser runtime batches structured events for
+				<span class="inline-code">/_gosx/client-events</span>
+				. Transport errors never enter application control flow; inspect the read-only accounting snapshot when you need to know what the runtime queued, attempted, or could not send.
+			</p>
+			{CodeBlock("javascript", `const telemetry = window.__gosx.telemetry
+	telemetry.emit("info", "checkout", "payment-dialog-opened", { orderID: "o_123" })
+	console.table(telemetry.snapshot())`)}
+			<p>
+				<span class="inline-code">window.__gosx.telemetry.snapshot()</span>
+				returns a frozen object. Read its counters as transport accounting:
+			</p>
+			<ul>
+				<li>
+					<span class="inline-code">enabled</span>
+					and
+					<span class="inline-code">session</span>
+					report whether the client transport is active and its page-session ID.
+					<span class="inline-code">emittedEvents</span>
+					counts every emit call, including events later refused because the queue was full.
+				</li>
+				<li>
+					<span class="inline-code">queueDepth</span>
+					is the number of events still waiting in memory.
+					<span class="inline-code">queueCapacity</span>
+					and
+					<span class="inline-code">batchCapacity</span>
+					report the configured limits. An event already handed to fetch is no longer in the queue.
+				</li>
+				<li>
+					<span class="inline-code">attemptedEvents</span>
+					and
+					<span class="inline-code">attemptedBatches</span>
+					count batches removed from the queue for serialization.
+					<span class="inline-code">dispatchedEvents</span>
+					and
+					<span class="inline-code">dispatchedBatches</span>
+					count transport calls that were invoked successfully.
+				</li>
+				<li>
+					<span class="inline-code">browserAcceptedEvents</span>
+					and
+					<span class="inline-code">browserAcceptedBatches</span>
+					increase only when
+					<span class="inline-code">navigator.sendBeacon()</span>
+					returns true. That means the browser accepted the payload for delivery; it does not confirm that the server received or logged it.
+				</li>
+				<li>
+					<span class="inline-code">serverAcceptedEvents</span>
+					and
+					<span class="inline-code">serverAcceptedBatches</span>
+					increase only after a fetch request receives a successful HTTP response. Beacon delivery cannot contribute to these counters because the beacon API exposes no response.
+				</li>
+				<li>
+					<span class="inline-code">droppedOverflowEvents</span>
+					counts events refused when the queue is full.
+					<span class="inline-code">droppedSerializationEvents</span>
+					counts events that could not be normalized or serialized.
+					<span class="inline-code">failedEvents</span>
+					and
+					<span class="inline-code">failedBatches</span>
+					count the event and batch impact of terminal normalization, serialization, or fetch failures.
+					<span class="inline-code">beaconFailures</span>
+					and
+					<span class="inline-code">fetchFailures</span>
+					count failed transport attempts in batch units. A rejected beacon increments
+					<span class="inline-code">beaconFailures</span>
+					and falls back to fetch; it is terminal only if that fallback also fails.
+				</li>
+				<li>
+					<span class="inline-code">pendingRequests</span>
+					is the number of fetch promises still in flight. A zero queue with a nonzero pending count is dispatched, not settled.
+					<span class="inline-code">lastFlushAt</span>
+					,
+					<span class="inline-code">lastFlushReason</span>
+					,
+					<span class="inline-code">lastFailureAt</span>
+					, and
+					<span class="inline-code">lastFailureReason</span>
+					explain the most recent transition.
+				</li>
+			</ul>
+			<p>
+				Attempted batches are not automatically requeued after a terminal failure. The counters preserve that outcome so a quiet queue cannot be mistaken for confirmed delivery.
+			</p>
+			<h3>Drain before leaving the page</h3>
+			<p>
+				On
+				<span class="inline-code">pagehide</span>
+				and when the document becomes hidden, the runtime drains every queued batch up to the configured queue capacity. It prefers
+				<span class="inline-code">sendBeacon()</span>
+				and falls back to a keepalive fetch when beacon submission is unavailable, rejected, or throws. You can request the same behavior manually:
+			</p>
+			{CodeBlock("javascript", `window.__gosx.telemetry.flush({ drain: true })  // drain with keepalive fetch
+	window.__gosx.telemetry.flush({ beacon: true }) // drain, preferring sendBeacon`)}
+			<p>
+				Flush is best-effort and does not return a delivery promise. Check
+				<span class="inline-code">pendingRequests</span>
+				for unsettled fetches, and do not treat a browser-accepted beacon as server confirmation.
+			</p>
+			<h3>Disable telemetry and bound ingestion</h3>
+			<p>
+				To disable browser telemetry, set the configuration before the runtime loads:
+			</p>
+			{CodeBlock("javascript", `window.__gosx_telemetry_config = { enabled: false }`)}
+			<p>
+				The public API remains available for feature detection:
+				<span class="inline-code">telemetry.enabled</span>
+				is false,
+				<span class="inline-code">session()</span>
+				returns an empty string, emit and flush are no-ops, and snapshot counters remain zero.
+			</p>
+			<p>
+				The server switch is independent.
+				<span class="inline-code">GOSX_TELEMETRY=off</span>
+				(or
+				<span class="inline-code">false</span>
+				,
+				<span class="inline-code">0</span>
+				,
+				<span class="inline-code">disabled</span>
+				, or
+				<span class="inline-code">no</span>
+				) makes the built-in endpoint return 404 without logging events. Unless you also disable the browser, that response appears as a fetch failure in the snapshot.
+			</p>
+			<p>
+				The built-in server limit is 60 events per minute per remote address, not 60 HTTP requests. A custom
+				<span class="inline-code">ClientEventsHandler</span>
+				can set
+				<span class="inline-code">ClientEventsOptions.RatePerMin</span>
+				; nonpositive values select the default. The server validates JSON first, caps a batch at 100 events, and then reserves quota for the accepted event count atomically. If the full count does not fit, it rejects the batch with 429, logs none of it, and does not consume partial quota.
+			</p>
 		</section>
 		<section id="prefetch">
 			<h2>Prefetch</h2>

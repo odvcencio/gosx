@@ -196,6 +196,12 @@ type Action struct {
 type Variant struct {
 	URI                  string   `json:"uri"`
 	Kind                 string   `json:"kind,omitempty"`
+	Role                 string   `json:"role,omitempty"`
+	ColorSpace           string   `json:"colorSpace,omitempty"`
+	Channels             string   `json:"channels,omitempty"`
+	View                 string   `json:"view,omitempty"`
+	Format               string   `json:"format,omitempty"`
+	MipLevels            int      `json:"mipLevels,omitempty"`
 	Quality              string   `json:"quality,omitempty"`
 	Compression          string   `json:"compression,omitempty"`
 	SourceAction         string   `json:"sourceAction,omitempty"`

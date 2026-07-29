@@ -803,10 +803,41 @@
       normalMap: "",
       roughnessMap: "",
       metalnessMap: "",
+      occlusionMap: "",
       emissiveMap: "",
       alphaMode: "OPAQUE",
       doubleSided: false,
     };
+  }
+
+  function gltfTextureDescriptor(uri, role, colorSpace, channels) {
+    uri = typeof uri === "string" ? uri.trim() : "";
+    if (!uri) {
+      return null;
+    }
+    return {
+      uri: uri,
+      role: role,
+      colorSpace: colorSpace,
+      channels: channels,
+      view: "2d",
+    };
+  }
+
+  function gltfMaterialTextureDescriptors(baseColor, normal, roughness, metalness, occlusion, emissive) {
+    var descriptors = {};
+    function add(name, descriptor) {
+      if (descriptor) {
+        descriptors[name] = descriptor;
+      }
+    }
+    add("baseColor", gltfTextureDescriptor(baseColor, "base-color", "srgb", "rgba"));
+    add("normal", gltfTextureDescriptor(normal, "normal", "linear", "rgb"));
+    add("roughness", gltfTextureDescriptor(roughness, "roughness", "linear", "g"));
+    add("metalness", gltfTextureDescriptor(metalness, "metalness", "linear", "b"));
+    add("occlusion", gltfTextureDescriptor(occlusion, "ambient-occlusion", "linear", "r"));
+    add("emissive", gltfTextureDescriptor(emissive, "emissive", "srgb", "rgb"));
+    return descriptors;
   }
 
   function gltfResolveTexture(gltf, textureInfo, binaryBuffer) {
@@ -927,7 +958,11 @@
     // glTF metallicRoughnessTexture packs metalness in the B channel and
     // roughness in the G channel. The PBR shader already samples these
     // channels separately, so we assign the same texture to both maps.
+    var baseColorURL = gltfResolveTexture(gltf, pbr.baseColorTexture, binaryBuffer);
+    var normalURL = gltfResolveTexture(gltf, mat.normalTexture, binaryBuffer);
     var metallicRoughnessURL = gltfResolveTexture(gltf, pbr.metallicRoughnessTexture, binaryBuffer);
+    var occlusionURL = gltfResolveTexture(gltf, mat.occlusionTexture, binaryBuffer);
+    var emissiveURL = gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer);
 
     var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
     var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
@@ -940,6 +975,14 @@
       emissiveStrength *= gltfExtensionFactor(emissiveExtension, "emissiveStrength", 1, 0, 1000);
     }
 
+    var textureDescriptors = gltfMaterialTextureDescriptors(
+      baseColorURL,
+      normalURL,
+      metallicRoughnessURL,
+      metallicRoughnessURL,
+      occlusionURL,
+      emissiveURL
+    );
     var record = {
       kind: "standard",
       color: gltfBaseColorToHex(baseColorFactor),
@@ -947,14 +990,18 @@
       metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 0.0,
       opacity: baseColorFactor[3],
       emissive: emissiveStrength,
-      texture: gltfResolveTexture(gltf, pbr.baseColorTexture, binaryBuffer),
-      normalMap: gltfResolveTexture(gltf, mat.normalTexture, binaryBuffer),
+      texture: baseColorURL,
+      normalMap: normalURL,
       roughnessMap: metallicRoughnessURL,
       metalnessMap: metallicRoughnessURL,
-      emissiveMap: gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer),
+      occlusionMap: occlusionURL,
+      emissiveMap: emissiveURL,
       alphaMode: mat.alphaMode || "OPAQUE",
       doubleSided: mat.doubleSided || false,
     };
+    if (Object.keys(textureDescriptors).length) {
+      record.textureDescriptors = textureDescriptors;
+    }
 
     // KHR_materials_clearcoat -> StandardMaterial.Clearcoat, range 0 to 1.
     var clearcoat = gltfExtension(mat, "KHR_materials_clearcoat");
@@ -1540,28 +1587,30 @@
     return table && typeof table === "object" ? table : null;
   }
 
-  // gltfTextureVariantTokens reads the capability set the live device proved.
-  // An absent probe means no evidence, which means no swap.
-  function gltfTextureVariantTokens() {
-    if (typeof window === "undefined" || typeof window.__gosx_scene3d_texture_tokens !== "function") {
-      return null;
-    }
-    var tokens = window.__gosx_scene3d_texture_tokens();
-    if (!Array.isArray(tokens) || !tokens.length) {
+  // gltfTextureVariantTokens reads the explicit mount-scoped renderer snapshot.
+  // No context means no evidence, which means no swap. In particular, never
+  // infer the selected renderer from page globals: concurrent mounts may use
+  // different backends and extension sets.
+  function gltfTextureVariantTokens(context) {
+    if (!context || context.uploadReady !== true || !Array.isArray(context.tokens) || !context.tokens.length) {
       return null;
     }
     var set = {};
-    for (var i = 0; i < tokens.length; i++) {
-      set[String(tokens[i] || "").trim().toLowerCase()] = true;
+    for (var i = 0; i < context.tokens.length; i++) {
+      set[String(context.tokens[i] || "").trim().toLowerCase()] = true;
     }
     return set;
   }
 
-  function gltfVariantUploadPathReady() {
-    return typeof window !== "undefined"
-      && !!window.__gosx_scene3d_ktx2
-      && typeof window.__gosx_scene3d_ktx2.uploadPathReady === "function"
-      && window.__gosx_scene3d_ktx2.uploadPathReady();
+  function gltfTextureVariantContext(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+    return {
+      backend: String(value.backend || "").trim().toLowerCase(),
+      uploadReady: value.uploadReady === true,
+      tokens: Array.isArray(value.tokens) ? value.tokens.slice() : [],
+    };
   }
 
   // gltfVariantTableKeys lists the spellings a manifest may use for one image.
@@ -1642,14 +1691,18 @@
     return best;
   }
 
-  function gltfResolveExternalImageURIs(gltf, baseURL) {
+  function gltfResolveExternalImageURIs(gltf, baseURL, variantContext) {
     if (!gltf || !gltf.images || !gltf.images.length) {
       return;
     }
-    // Read the table, the tokens and the upload gate once per document. Any of
-    // the three missing means every image keeps its authored URI.
-    var table = gltfVariantUploadPathReady() ? gltfTextureVariantTable() : null;
-    var tokens = table ? gltfTextureVariantTokens() : null;
+    // Read the table and the renderer-scoped evidence once per document. Either
+    // missing means every image keeps its authored URI.
+    var context = gltfTextureVariantContext(variantContext);
+    var tokens = gltfTextureVariantTokens(context);
+    var table = tokens ? gltfTextureVariantTable() : null;
+    if (!table) {
+      tokens = null;
+    }
     for (var i = 0; i < gltf.images.length; i += 1) {
       var image = gltf.images[i];
       if (!image || typeof image.uri !== "string" || !image.uri || image.uri.indexOf("data:") === 0) {
@@ -1708,10 +1761,16 @@
     return "";
   }
 
-  async function sceneLoadGLTFModel(url) {
+  async function sceneLoadGLTFModel(url, variantContext) {
     var isGLB = sceneGLTFAssetFormat(url) === "glb";
     var assetURL = gltfAbsoluteURL(url);
     var response;
+    // Start backend settlement alongside network I/O. A mounted caller passes
+    // its deferred renderer scope; direct/preload callers pass nothing and stay
+    // deliberately neutral.
+    var variantContextPromise = variantContext == null
+      ? Promise.resolve(null)
+      : Promise.resolve(variantContext).then(gltfTextureVariantContext, function() { return null; });
 
     if (isGLB) {
       response = await fetch(url, { credentials: "same-origin" });
@@ -1720,6 +1779,7 @@
       }
       var arrayBuffer = await response.arrayBuffer();
       var parsed = sceneParseGLB(arrayBuffer);
+      gltfResolveExternalImageURIs(parsed.json, assetURL, await variantContextPromise);
       return gltfExtractScene(parsed.json, parsed.binaryBuffer);
     }
 
@@ -1729,8 +1789,15 @@
       throw new Error("Failed to fetch glTF: " + url + " (HTTP " + response.status + ")");
     }
     var json = await response.json();
-    gltfResolveExternalImageURIs(json, assetURL);
-    var bufferData = await gltfFetchExternalBuffers(json, assetURL);
+    // External buffers do not depend on image variant selection, so fetch them
+    // while the renderer context is still settling.
+    var bufferPromise = gltfFetchExternalBuffers(json, assetURL);
+    // Mark an early network failure handled immediately. The original Promise
+    // remains rejected, so the later await still throws the same error after
+    // renderer-context settlement without opening an unhandledrejection window.
+    bufferPromise.catch(function() {});
+    gltfResolveExternalImageURIs(json, assetURL, await variantContextPromise);
+    var bufferData = await bufferPromise;
     return gltfExtractScene(json, bufferData);
   }
 

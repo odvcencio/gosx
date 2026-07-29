@@ -33,6 +33,18 @@ test("Scene3D animation loop supports foreground frame caps", () => {
   assert.match(mount, /lastAnimationFrameAt = typeof now === "number" \? now : 0;/);
 });
 
+test("Scene3D resource readiness is canvas-scoped and detach-safe", () => {
+  const mount = readSceneMountSrc();
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+
+  assert.match(mount, /target\.addEventListener\("gosx:scene3d:resource-ready", onSceneResourceReady\)/);
+  assert.match(mount, /target\.removeEventListener\("gosx:scene3d:resource-ready", onSceneResourceReady\)/);
+  assert.match(mount, /function onSceneResourceReady\(\)[\s\S]{0,120}!disposed[\s\S]{0,120}scheduleRender\("resource-ready"\)/);
+  assert.match(webgl, /new CustomEvent\("gosx:scene3d:resource-ready"\)/);
+  assert.match(webgpu, /new CustomEvent\("gosx:scene3d:resource-ready"\)/);
+});
+
 test("Scene3D instanced meshes are WebGPU-native", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
   const mount = readSceneMountSrc();
@@ -45,7 +57,7 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
   assert.match(webgpu, /function drawInstancedMeshes\(pass, meshList, materials/);
   assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
   assert.match(webgpu, /function getShadowInstancedPipeline/);
-  assert.match(webgpu, /createMaterialBindGroup\(material, receiveShadow, cacheOwner\)/);
+  assert.match(webgpu, /createMaterialBindGroup\(\s*mat,\s*receiveShadow,\s*materialOwner,\s*obj\.retainedGeometry \? webGPUObjectModelMatrix\(obj\) : null,\s*obj\.retainedGeometry \? obj\.modelScaleSigns : null\s*\)/);
   assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
   assert.doesNotMatch(mount, /instanced-meshes/);
 });

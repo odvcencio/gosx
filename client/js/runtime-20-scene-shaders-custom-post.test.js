@@ -1178,6 +1178,121 @@ test("custom post WebGPU: a customPost authored through createSceneState is comp
   assert.deepEqual(failWarns, [], "a valid authored custom pass must not warn");
 });
 
+test("custom post WebGPU: reserved time and patched uniforms reach the post uniform buffer", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  let nowMS = 3100;
+  const harness = await createComputeParticleHarness(fake.device, { performanceNow: () => nowMS });
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    name: "galaxy-liquid-glass",
+    fragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }",
+    vertexWGSL: "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }",
+    uniforms: { time: 0, cardPresence: 0.75 },
+    shaderLayout: {
+      uniformBlock: {
+        name: "UserUniforms",
+        size: 16,
+        fields: [
+          { name: "time", type: "float", offset: 0 },
+          { name: "cardPresence", type: "float", offset: 4 },
+        ],
+      },
+    },
+  });
+
+  harness.renderer.render(bundle, viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  nowMS = 4200;
+  harness.renderer.render(bundle, viewport);
+
+  const postUniformWrites = fake.state.writeBufferCalls
+    .filter((call) => call.data && call.data.length >= 2)
+    .filter((call) => Math.abs(Number(call.data[1]) - 0.75) < 0.00001);
+  assert.equal(postUniformWrites.length >= 1, true, "patched cardPresence must reach the custom post uniform buffer");
+  const packed = postUniformWrites[postUniformWrites.length - 1].data;
+  assert.equal(Math.abs(Number(packed[0]) - 4.2) < 0.00001, true,
+    "reserved time must use the renderer frame clock, not the compiled default or effect.uniforms.time");
+});
+
+test("Selena mesh WebGPU: postFX MSAA render pass uses a matching pipeline sample count", async () => {
+  const harness = await createBoardWebGPUHarness();
+  const viewport = { cssWidth: 320, height: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  viewport.cssHeight = viewport.height;
+  delete viewport.height;
+  const selenaWGSL = [
+    "struct UserUniforms { value: vec4f };",
+    "@group(0) @binding(0) var<uniform> user: UserUniforms;",
+    "struct VertexOutput { @builtin(position) clipPos: vec4f };",
+    "@vertex fn vertexMain(@location(0) position: vec3f) -> VertexOutput {",
+    "  var out: VertexOutput;",
+    "  out.clipPos = vec4f(position, 1.0);",
+    "  return out;",
+    "}",
+    "@fragment fn fragmentMain() -> @location(0) vec4f {",
+    "  return user.value;",
+    "}",
+  ].join("\n");
+  const bundle = {
+    camera: { x: 0, y: 0, z: 5, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    msaaSamples: 4,
+    points: [], instancedMeshes: [], objects: [],
+    materials: [{
+      key: "selena-msaa",
+      shaderBackend: "selena",
+      renderPass: "additive",
+      customVertexWGSL: selenaWGSL,
+      customFragmentWGSL: selenaWGSL,
+      customUniforms: { value: [1, 1, 1, 1] },
+      shaderLayout: {
+        material: "MSAAPostSelena",
+        attributes: [{ name: "position", type: "vec3", location: 0 }],
+        uniformBlock: {
+          size: 16,
+          fields: [{ name: "value", type: "vec4", offset: 0 }],
+        },
+        wgsl: { group: 0, binding: 0 },
+      },
+    }],
+    meshObjects: [{ id: "selena-plane", materialIndex: 0, vertexOffset: 0, vertexCount: 3 }],
+    postEffects: [{ kind: "toneMapping", exposure: 1 }],
+    computeParticles: [], labels: [], sprites: [], lights: [],
+    positions: new Float32Array(0), colors: new Float32Array(0),
+    worldPositions: new Float32Array(0), worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array([-0.5, -0.5, 0, 0.5, -0.5, 0, 0, 0.5, 0]),
+    worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+    worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0,
+    worldVertexCount: 0,
+  };
+
+  harness.renderer.render(bundle, viewport);
+
+  const selenaPipelines = harness.fake.state.renderPipelines.filter((pipeline) => {
+    return pipeline.desc && pipeline.desc.label === "gosx-selena-MSAAPostSelena-additive";
+  });
+  assert.equal(selenaPipelines.length, 1, "the Selena mesh must build one pipeline for this material");
+  assert.equal(selenaPipelines[0].desc.multisample && selenaPipelines[0].desc.multisample.count, 4,
+    "Selena mesh pipeline sample count must match the active MSAA render pass");
+  const passes = mainRenderPasses(harness.fake);
+  assert.ok(passes.some((pass) => pass.draws.some((draw) => draw.pipeline === selenaPipelines[0])),
+    "the MSAA-compatible Selena pipeline must be used by the main render pass");
+});
+
 test("custom post WebGPU: identical complete WGSL module is submitted once", async () => {
   const fake = makeFakeGPUDeviceForCompute({
     pipelineAsyncBehavior(desc) {
@@ -1447,7 +1562,7 @@ test("custom post WebGL2: compile/link failure warns once and falls back to iden
 });
 
 test("computeParticles WebGL: renderVertex/renderFragment use authored points program and expose draw counters", async () => {
-  const { env, renderer, canvas, warnLog } = createWebGLRendererForPost();
+  const { env, renderer, canvas, warnLog } = createWebGLRendererForPost({ fresh: true });
   const mount = env.document.createElement("div");
   mount.setAttribute("id", "webgl-compute-particles-test");
   mount.appendChild(canvas);
@@ -1500,7 +1615,37 @@ test("computeParticles WebGL: renderVertex/renderFragment use authored points pr
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-compute-particle-authored-draw-calls"), "1");
   assert.equal(warnLog.filter((m) => m.includes("Points authored") && m.includes("falling back")).length, 0);
 
+  const authoredProgram = gl.programMatching("uniform float brightness");
+  assert.ok(authoredProgram, "the authored points program must be identifiable by its shader source");
+  const authoredShaders = authoredProgram.attached.slice();
+  const deletedPrograms = [];
+  const deletedShaders = [];
+  const deleteProgram = gl.deleteProgram.bind(gl);
+  const deleteShader = gl.deleteShader.bind(gl);
+  gl.deleteProgram = function(program) {
+    deletedPrograms.push(program);
+    deleteProgram(program);
+  };
+  gl.deleteShader = function(shader) {
+    deletedShaders.push(shader);
+    deleteShader(shader);
+  };
+
   renderer.dispose();
+  renderer.dispose();
+
+  assert.equal(
+    deletedPrograms.filter((program) => program === authoredProgram).length,
+    1,
+    "authored points program must be deleted exactly once and removed from its cache",
+  );
+  for (const shader of authoredShaders) {
+    assert.equal(
+      deletedShaders.filter((deleted) => deleted === shader).length,
+      1,
+      "each authored points shader must be deleted exactly once",
+    );
+  }
 });
 
 // -------------------------------------------------------------------------
@@ -1921,6 +2066,75 @@ test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope 
   diag = harness.renderer.diagnostics();
   assert.equal(diag.postProcessing, true, "the next render() call with a non-empty postEffects bundle must rebuild the post chain");
   assert.equal(harness.renderer.enablePostProcessing(), false, "idempotent: not currently demoted");
+});
+
+test("Scene3D WebGPU device loss disposes every live resource once and leaves explicit disposal idempotent", async () => {
+  let resolveDeviceLost;
+  const lost = new Promise((resolve) => {
+    resolveDeviceLost = resolve;
+  });
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { lost },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      objects: [{ id: "loss-sphere", kind: "sphere", radius: 0.5, color: "#8de1ff", wireframe: false }],
+      postEffects: [{ kind: "bloom", threshold: 0.8, intensity: 0.2 }],
+    },
+  });
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], state.postEffects, 0, false,
+  );
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+  harness.renderer.render(bundle, { width: 64, height: 64 });
+  await flushAsyncWork();
+
+  const liveResources = harness.fake.state.buffers
+    .concat(harness.fake.state.textures)
+    .filter((resource) => resource && !resource.destroyed && typeof resource.destroy === "function");
+  assert.ok(liveResources.length > 0, "the rendered scene must allocate live buffers/textures before loss");
+  for (let resourceIndex = 0; resourceIndex < liveResources.length; resourceIndex += 1) {
+    const resource = liveResources[resourceIndex];
+    const destroy = resource.destroy.bind(resource);
+    resource.destroyCalls = 0;
+    resource.destroy = function() {
+      resource.destroyCalls += 1;
+      if (resourceIndex === 0) throw new Error("injected destroy failure");
+      destroy();
+    };
+  }
+
+  resolveDeviceLost({ reason: "destroyed", message: "test loss" });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  const afterLoss = harness.renderer.diagnostics();
+  assert.equal(afterLoss.ready, false);
+  assert.equal(afterLoss.resourcesDisposed, true);
+  assert.equal(afterLoss.resourceCacheEntries, 0, "device loss must clear every renderer-owned cache/map");
+  assert.equal(afterLoss.postProcessing, false);
+  assert.equal(afterLoss.postFXDisabled, false, "terminal teardown must not retain a stale post-FX demotion latch");
+  for (const resource of liveResources) {
+    assert.equal(
+      resource.destroyCalls,
+      1,
+      "each live GPU buffer/texture must receive exactly one destroy call even when an earlier destroy throws",
+    );
+  }
+
+  const destroyCounts = liveResources.map((resource) => resource.destroyCalls);
+  assert.doesNotThrow(() => harness.renderer.dispose());
+  assert.doesNotThrow(() => harness.renderer.dispose());
+  assert.deepEqual(
+    liveResources.map((resource) => resource.destroyCalls),
+    destroyCounts,
+    "explicit/repeated disposal after device loss must not destroy resources again",
+  );
 });
 
 // window_testFrameState sets the window.__testWebGPU* control variables the

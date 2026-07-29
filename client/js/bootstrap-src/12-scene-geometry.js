@@ -197,6 +197,9 @@
       uvs: new Float32Array(out.uvs),
       tangents: new Float32Array(0),
       count: out.count,
+      immutable: true,
+      revision: 0,
+      dynamic: false,
     };
   }
 
@@ -533,6 +536,9 @@
       uvs: mesh.uvs,
       tangents: mesh.tangents || new Float32Array(0),
       count: mesh.vertexCount,
+      immutable: true,
+      revision: 0,
+      dynamic: false,
     };
   }
 

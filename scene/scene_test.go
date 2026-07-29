@@ -3869,6 +3869,24 @@ func TestPerspectiveCameraTransitionMSInSceneProps(t *testing.T) {
 	}
 }
 
+func TestScenePropsLowerScrollCameraOffset(t *testing.T) {
+	props := Props{
+		Camera:             PerspectiveCamera{Position: Vec3(0, 0, 6), FOV: 60},
+		ScrollCameraOffset: Vec3(0, -0.06, 0.02),
+	}
+	spread := props.GoSXSpreadProps()
+	offset, ok := spread["scrollCameraOffset"].(map[string]any)
+	if !ok {
+		t.Fatalf("scrollCameraOffset = %#v, want map", spread["scrollCameraOffset"])
+	}
+	if got := offset["y"]; got != -0.06 {
+		t.Fatalf("scrollCameraOffset.y = %#v, want -0.06", got)
+	}
+	if got := offset["z"]; got != 0.02 {
+		t.Fatalf("scrollCameraOffset.z = %#v, want 0.02", got)
+	}
+}
+
 func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 	props := Props{
 		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},

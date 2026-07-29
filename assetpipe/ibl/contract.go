@@ -36,11 +36,10 @@ type ConsumerRequirement struct {
 // ConsumerRequirements lists everything a correct image-based-lighting consumer
 // needs for the products this package bakes.
 //
-// Every entry is false today. The WebGL2 renderer fetches the source .hdr,
-// tone maps it to 8-bit low dynamic range, and samples one equirectangular 2D
-// texture twice with no prefiltering and no split-sum term. That is an
-// environment reflection, not image based lighting, and none of the five pieces
-// below exists in either renderer.
+// The IR carrier and both renderer consumers are present. WebGL2 activates the
+// full path when at least 18 fragment texture units are available and reports a
+// deterministic degradation otherwise; the unconditional FeatureIBL matrix
+// cell therefore remains false even though the consumer pieces below exist.
 //
 // The build side is complete: the specular cubemap, the diffuse irradiance
 // cubemap, the spherical-harmonic sidecar, and the split-sum lookup table all
@@ -54,10 +53,10 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"index. Take vkFormat, pixelWidth, faceCount, levelCount, and " +
 				"supercompressionScheme from the header, then slice each level payload by " +
 				"byteOffset and byteLength. Inflate scheme 3 with DecompressionStream(\"deflate\"). " +
-				"Skip the data format descriptor and the key/value block for upload; read the " +
-				"key/value block only to check GoSXiblModel. About 60 lines for the formats this " +
+				"Read the key/value block to check GoSXiblRole, GoSXColorSpace and GoSXiblModel for the formats this " +
 				"pipeline writes: R16G16B16A16_SFLOAT and R16G16_SFLOAT.",
-			Where: "client/js/bootstrap-src/16-scene-webgl.js and 16a-scene-webgpu.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js",
+			Present: true,
 		},
 		{
 			ID:    "cube-upload",
@@ -66,10 +65,11 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"stored smallest level first inside the file but indexed level 0 first. On WebGL2 " +
 				"bind TEXTURE_CUBE_MAP, upload each face at each level with internalFormat RGBA16F, " +
 				"format RGBA, type HALF_FLOAT, and set TEXTURE_MIN_FILTER to LINEAR_MIPMAP_LINEAR. " +
-				"Half-float cube textures are filterable in WebGL2 core, so no extension is needed. " +
+				"Require OES_texture_float_linear before enabling linear half-float sampling. " +
 				"KTX2 face order is +X, -X, +Y, -Y, +Z, -Z, which matches the GL cube face enums in " +
 				"order. Upload the irradiance cube the same way with one level.",
-			Where: "client/js/bootstrap-src/16-scene-webgl.js and 16a-scene-webgpu.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js, 16-scene-webgl.js and 16a-scene-webgpu.js",
+			Present: true,
 		},
 		{
 			ID:    "brdf-lut-upload",
@@ -78,7 +78,8 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"roughness, both sampled at texel centres, so the shader must sample with " +
 				"CLAMP_TO_EDGE and LINEAR filtering and must not offset the coordinates. The table " +
 				"is scene independent, so one upload serves every page in a project.",
-			Where: "client/js/bootstrap-src/16-scene-webgl.js and 16a-scene-webgpu.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js, 16-scene-webgl.js and 16a-scene-webgpu.js",
+			Present: true,
 		},
 		{
 			ID:    "shader-combine",
@@ -91,18 +92,18 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"The roughness-to-level mapping must match roughnessPerLevel in the sidecar, which " +
 				"is level / (levels - 1). The current code multiplies the specular tap by " +
 				"(1 - roughness * 0.65), an ad hoc falloff with no derivation; that term goes away.",
-			Where: "client/js/bootstrap-src/16-scene-webgl.js and 16a-scene-webgpu.js",
+			Where:   "client/js/bootstrap-src/16-scene-webgl.js and 16a-scene-webgpu.js",
+			Present: true,
 		},
 		{
 			ID:    "ir-carrier",
 			Title: "an IR carrier for the generated products",
-			Detail: "scene.IREnvironment has only EnvMap, one string. It cannot name a prefiltered " +
-				"cubemap, an irradiance cubemap, a lookup table, a mip level count, or the " +
-				"spherical-harmonic coefficients. Add IREnvironmentIBL with fields SpecularURI, " +
-				"IrradianceURI, BRDFLUTURI, SpecularMipLevels, BRDFModel, and SphericalHarmonics " +
-				"[9][3]float64, populated from the .ibl.json sidecar at lowering time. A renderer " +
-				"that only sees EnvMap has no way to find the products this package wrote.",
-			Where: "scene/ir.go and scene/scene_ir.go",
+			Detail: "scene.EnvironmentIBL now carries radiance, irradiance and BRDF-LUT texture " +
+				"descriptors, mip levels, the BRDF model, roughness mapping, and spherical " +
+				"harmonics through compatibility and canonical SceneIR. Renderer binding is " +
+				"tracked by the other present requirements.",
+			Where:   "scene/texture_contract.go, scene/ir.go, and scene/scene_ir.go",
+			Present: true,
 		},
 	}
 }

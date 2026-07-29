@@ -424,13 +424,14 @@
   }
 
   function sceneAdvanceScrollCamera(scrollCamera) {
-    if (!scrollCamera || scrollCamera.start === scrollCamera.end) {
+    if (!scrollCamera) {
       return;
     }
     const scrollTop = sceneNumber(scrollCamera._scrollTop, 0);
     const scrollMax = Math.max(1, sceneNumber(scrollCamera._scrollMax, 1));
-    scrollCamera._progress = Math.pow(Math.min(1, Math.max(0, scrollTop / scrollMax)), 0.5);
-    var target = scrollCamera._progress || 0;
+    const usesRange = scrollCamera.start !== scrollCamera.end;
+    scrollCamera._progress = usesRange ? Math.pow(Math.min(1, Math.max(0, scrollTop / scrollMax)), 0.5) : 0;
+    var target = usesRange ? (scrollCamera._progress || 0) : 0;
     var current = sceneNumber(scrollCamera._smoothProgress, target);
     if (sceneNumber(scrollCamera._activeInputUntil, 0) >= sceneNowMilliseconds()) {
       current = target;
@@ -456,6 +457,12 @@
     if (scrollCamera && scrollCamera.start !== scrollCamera.end) {
       var progress = sceneNumber(scrollCamera._smoothProgress, sceneNumber(scrollCamera._progress, 0));
       cam.z = scrollCamera.start + progress * (scrollCamera.end - scrollCamera.start);
+    }
+    if (scrollCamera && scrollCamera.offset) {
+      var scrollTop = sceneNumber(scrollCamera._scrollTop, 0);
+      cam.x += scrollTop * sceneNumber(scrollCamera.offset.x, 0);
+      cam.y += scrollTop * sceneNumber(scrollCamera.offset.y, 0);
+      cam.z += scrollTop * sceneNumber(scrollCamera.offset.z, 0);
     }
     return cam;
   }
@@ -1007,4 +1014,3 @@
       },
     };
   }
-

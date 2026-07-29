@@ -15,6 +15,23 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch whitespace check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -eu
+          zero_sha=0000000000000000000000000000000000000000
+          base_sha="$EVENT_BASE_SHA"
+          if [ -z "$base_sha" ] || [ "$base_sha" = "$zero_sha" ]; then
+            base_sha="$(git hash-object -t tree /dev/null)"
+          fi
+          echo "checking whitespace in ${EVENT_NAME} patch ${base_sha}..${EVENT_HEAD_SHA}"
+          git diff --check "$base_sha" "$EVENT_HEAD_SHA"
 
       - name: Set up Go
         uses: actions/setup-go@v5

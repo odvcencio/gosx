@@ -50,11 +50,11 @@ func Page() Node {
 			{CodeBlock("go", `// 640px: fits on one line
 	server.TextBlock(server.TextBlockProps{Font: "400 16px Inter", MaxWidth: 640},
 	    "GoSX measures text server-side with actual font metrics.")
-	
+
 	// 320px: breaks into two lines
 	server.TextBlock(server.TextBlockProps{Font: "400 16px Inter", MaxWidth: 320},
 	    "GoSX measures text server-side with actual font metrics.")
-	
+
 	// 160px: breaks into four lines
 	server.TextBlock(server.TextBlockProps{Font: "400 16px Inter", MaxWidth: 160},
 	    "GoSX measures text server-side with actual font metrics.")`)}
@@ -144,7 +144,7 @@ func Page() Node {
 	    Font:     "700 20px Space Grotesk",
 	    MaxWidth: 400,
 	}, "Server-final text, no enhancement needed.")
-	
+
 	// bootstrap mode: server first-pass + client refinement
 	server.TextBlock(server.TextBlockProps{
 	    Mode:     server.TextBlockModeBootstrap,

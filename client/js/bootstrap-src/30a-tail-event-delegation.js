@@ -129,4 +129,3 @@
       console.error(`[gosx] action error (${islandID}/${handlerName}):`, err);
     }
   }
-

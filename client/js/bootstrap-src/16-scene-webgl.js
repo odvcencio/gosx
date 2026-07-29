@@ -12,6 +12,13 @@
 
   // --- PBR Shader Sources ---
 
+  function scenePBRSRGBChannelToLinear(value) {
+    var channel = Math.max(0, Math.min(1, sceneNumber(value, 0)));
+    return channel <= 0.04045
+      ? channel / 12.92
+      : Math.pow((channel + 0.055) / 1.055, 2.4);
+  }
+
   const SCENE_PBR_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -24,6 +31,8 @@
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
+    "uniform mat4 u_modelMatrix;",
+    "uniform vec3 u_modelScaleSigns;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -39,18 +48,24 @@
     "    vec3 gosxNormal = a_normal;",
     "    vec2 gosxUV = a_uv;",
     "    gosxApplyCustomVertex(gosxPosition, gosxNormal, gosxUV);",
-    "    v_worldPosition = gosxPosition;",
-    "    v_normal = normalize(gosxNormal);",
+    "    vec4 gosxWorldPosition = u_modelMatrix * vec4(gosxPosition, 1.0);",
+    "    mat3 gosxModelBasis = mat3(",
+    "        normalize(u_modelMatrix[0].xyz) * u_modelScaleSigns.x,",
+    "        normalize(u_modelMatrix[1].xyz) * u_modelScaleSigns.y,",
+    "        normalize(u_modelMatrix[2].xyz) * u_modelScaleSigns.z",
+    "    );",
+    "    v_worldPosition = gosxWorldPosition.xyz;",
+    "    v_normal = normalize(gosxModelBasis * gosxNormal);",
     "    v_uv = gosxUV;",
     "",
-    "    vec3 T = normalize(a_tangent.xyz);",
+    "    vec3 T = normalize(gosxModelBasis * a_tangent.xyz);",
     "    vec3 N = v_normal;",
     "    vec3 B = cross(N, T) * a_tangent.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
     "    v_instanceColor = vec4(1.0);",
     "",
-    "    gl_Position = u_projectionMatrix * u_viewMatrix * vec4(gosxPosition, 1.0);",
+    "    gl_Position = u_projectionMatrix * u_viewMatrix * gosxWorldPosition;",
     "}",
   ].join("\n");
 
@@ -58,6 +73,7 @@
     "#version 300 es",
     "precision highp float;",
     "precision highp int;",
+    "#define GOSX_HDR_IBL 1",
     "",
     "in vec3 v_worldPosition;",
     "in vec3 v_normal;",
@@ -88,11 +104,17 @@
     "uniform sampler2D u_normalMap;",
     "uniform sampler2D u_roughnessMap;",
     "uniform sampler2D u_metalnessMap;",
+    "#if GOSX_HDR_IBL",
+    "uniform sampler2D u_occlusionMap;",
+    "#endif",
     "uniform sampler2D u_emissiveMap;",
     "uniform bool u_hasAlbedoMap;",
     "uniform bool u_hasNormalMap;",
     "uniform bool u_hasRoughnessMap;",
     "uniform bool u_hasMetalnessMap;",
+    "#if GOSX_HDR_IBL",
+    "uniform bool u_hasOcclusionMap;",
+    "#endif",
     "uniform bool u_hasEmissiveMap;",
     "",
     // Lights (max 8)
@@ -117,6 +139,13 @@
     "uniform float u_groundIntensity;",
     "uniform sampler2D u_envMap;",
     "uniform bool u_hasEnvMap;",
+    "#if GOSX_HDR_IBL",
+    "uniform samplerCube u_iblIrradiance;",
+    "uniform samplerCube u_iblRadiance;",
+    "uniform sampler2D u_iblBRDFLUT;",
+    "uniform bool u_hasIBL;",
+    "uniform float u_iblRadianceMaxLod;",
+    "#endif",
     "uniform float u_envIntensity;",
     "uniform float u_envRotation;",
     "",
@@ -157,6 +186,7 @@
     // Exposure and tone mapping control.
     "uniform float u_exposure;",
     "uniform int u_toneMapMode;",
+    "uniform int u_outputLinear;",
     "",
     // Fog
     "uniform int u_hasFog;",
@@ -349,6 +379,13 @@
     "    }",
     "    metalness = clamp(metalness, 0.0, 1.0);",
     "",
+    "    float ambientOcclusion = 1.0;",
+    "#if GOSX_HDR_IBL",
+    "    if (u_hasOcclusionMap) {",
+    "        ambientOcclusion = clamp(texture(u_occlusionMap, v_uv).r, 0.0, 1.0);",
+    "    }",
+    "#endif",
+    "",
     "    float emissiveStrength = u_emissive;",
     "    vec3 emissiveColor = albedo;",
     "    if (u_hasEmissiveMap) {",
@@ -467,8 +504,24 @@
     "        Lo += (kD * albedo / PI + specular) * radiance * NdotL * shadow;",
     "    }",
     "",
-    // Environment lighting: equirectangular envMap when loaded, hemisphere fallback otherwise.
+    // Environment lighting: assetpipe split-sum IBL, legacy equirectangular
+    // reflection, then the hemisphere fallback. All inputs here are linear;
+    // base-color/emissive transfer functions are resolved by texture formats.
     "    vec3 ambient;",
+    "#if GOSX_HDR_IBL",
+    "    if (u_hasIBL) {",
+    "        vec3 Nr = rotateEnvY(N, u_envRotation);",
+    "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
+    "        vec3 Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
+    "        vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metalness);",
+    "        vec3 irradiance = texture(u_iblIrradiance, Nr).rgb;",
+    "        vec3 prefiltered = textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod).rgb;",
+    "        vec2 brdf = texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg;",
+    "        vec3 diffuseIBL = irradiance * albedo * kDenv;",
+    "        vec3 specularIBL = prefiltered * (F0 * brdf.x + brdf.y);",
+    "        ambient = (diffuseIBL + specularIBL) * u_envIntensity;",
+    "    } else",
+    "#endif",
     "    if (u_hasEnvMap) {",
     "        vec3 Nr = rotateEnvY(N, u_envRotation);",
     "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
@@ -484,6 +537,9 @@
     "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
     "        ambient = envDiffuse * albedo;",
     "    }",
+    "#if GOSX_HDR_IBL",
+    "    ambient *= ambientOcclusion;",
+    "#endif",
     "",
     // Emissive contribution.
     "    vec3 emission = emissiveColor * emissiveStrength;",
@@ -533,10 +589,10 @@
     //
     // Mode 3 arrives here only from sceneToneMapMode, which learned the name
     // "filmic" on 2026-07-27. Before that the name fell through to ACES.
-    "    if (u_toneMapMode == 3) {",
+    "    if (u_outputLinear == 0 && u_toneMapMode == 3) {",
     "        vec3 hejl = max(vec3(0.0), color - vec3(0.004));",
     "        color = clamp((hejl * (6.2 * hejl + 0.5)) / (hejl * (6.2 * hejl + 1.7) + 0.06), 0.0, 1.0);",
-    "    } else {",
+    "    } else if (u_outputLinear == 0) {",
     "        if (u_toneMapMode == 1) {",
     // ACES filmic.
     "            color = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);",
@@ -1362,6 +1418,9 @@
     "    } else {",
     "        color = aces(color);",
     "    }",
+    "    if (u_toneMapMode != 3) {",
+    "        color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));",
+    "    }",
     "    fragColor = vec4(color, 1.0);",
     "}",
   ].join("\n");
@@ -1634,7 +1693,16 @@
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    return { fbo: fbo, colorTex: colorTex, depthRB: depthRB, depthTex: depthTex, width: width, height: height };
+    return {
+      fbo: fbo,
+      colorTex: colorTex,
+      depthRB: depthRB,
+      depthTex: depthTex,
+      width: width,
+      height: height,
+      hdrSupported: hdrSupported,
+      colorFormat: hdrSupported ? "rgba16f" : "rgba8",
+    };
   }
 
   // Create a ping-pong FBO pair for multi-pass effect processing.
@@ -3986,6 +4054,7 @@
 
     return {
       kind: "webgl",
+      supportsRetainedGeometry: false,
       isWaterForced: true,
       render: render,
       getStats: function() {
@@ -4066,6 +4135,7 @@
     var pingPong = null;
     var currentWidth = 0;
     var currentHeight = 0;
+    var hdrDegradationReported = false;
 
     // Lazily compiled shader programs, keyed by effect name.
     var programs = {};
@@ -4406,6 +4476,11 @@
         if (sw !== currentWidth || sh !== currentHeight) {
           if (sceneFBO) disposeScenePostFBO(gl, sceneFBO);
           sceneFBO = createScenePostFBO(gl, sw, sh, true);
+          if (!sceneFBO.hdrSupported && !hdrDegradationReported) {
+            hdrDegradationReported = true;
+            console.warn("[gosx] WebGL post processing degraded to an RGBA8 LDR intermediate: EXT_color_buffer_float is unavailable.");
+            postProcessorRenderTruth().record("post-hdr-degraded", "rgba8-no-ext-color-buffer-float");
+          }
           if (auxFBO) disposeScenePostFBO(gl, auxFBO);
           auxFBO = null;
           if (scratchFBO) disposeScenePostFBO(gl, scratchFBO);
@@ -4415,8 +4490,25 @@
         }
 	        clearPostTextureBindings();
 	        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
-	        return { width: sw, height: sh, factor: factor };
+	        return {
+            width: sw,
+            height: sh,
+            factor: factor,
+            hdrSupported: sceneFBO.hdrSupported,
+            colorFormat: sceneFBO.colorFormat,
+          };
 	      },
+
+      diagnostics: function() {
+        var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
+        return {
+          linearSceneInput: true,
+          hdrIntermediate: hdrSupported,
+          intermediateFormat: sceneFBO ? sceneFBO.colorFormat : "unallocated",
+          degraded: Boolean(sceneFBO && !hdrSupported),
+          degradationReason: sceneFBO && !hdrSupported ? "missing-ext-color-buffer-float" : "",
+        };
+      },
 
       // Process the effect chain and output to the screen. Takes the scaled
       // dims (for intermediate FBO writes) and the canvas dims (for the final
@@ -4617,6 +4709,20 @@
       : null;
   }
 
+  function scenePBRNotifyTextureSettled(record) {
+    var generation = record && record.generation;
+    if (
+      !record ||
+      record.disposed ||
+      !generation ||
+      generation.disposed ||
+      typeof generation.onResourceReady !== "function"
+    ) {
+      return;
+    }
+    generation.onResourceReady();
+  }
+
   // scenePBRUploadKTX2Texture fetches, decodes and uploads one KTX2 container
   // into an existing texture record.
   //
@@ -4635,40 +4741,53 @@
       return Promise.resolve(record);
     }
     return ktx2.load(url).then(function(image) {
+      if (record.disposed || record.generation && record.generation.disposed) {
+        return record;
+      }
       ktx2.uploadWebGL2(gl, image, { texture: record.texture });
-      // Block textures carry their own mip chain, so never call generateMipmap
-      // here: WebGL2 rejects it for a compressed target.
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER,
+      if (record.disposed || record.generation && record.generation.disposed) {
+        return record;
+      }
+      var target = image.faces === 6 ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
+      gl.texParameteri(target, gl.TEXTURE_MIN_FILTER,
         image.levels.length > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       record.width = image.width;
       record.height = image.height;
+      record.faces = image.faces;
+      record.levels = image.levels.length;
+      record.vkFormat = image.vkFormat;
+      record.target = target;
+      record.keyValues = image.keyValues || {};
       record.ktx2 = true;
       record.loaded = true;
+      scenePBRNotifyTextureSettled(record);
       return record;
     }).catch(function(error) {
+      if (record.disposed || record.generation && record.generation.disposed) return record;
       record.failed = true;
       record.error = error && error.message ? error.message : String(error);
       try {
         console.warn("[gosx] KTX2 texture " + url + " failed: " + record.error);
       } catch (_e) {}
+      scenePBRNotifyTextureSettled(record);
       return record;
     });
   }
 
-  function scenePBRTonemapHDRPixels(parsed) {
+  function scenePBRLinearHDRPixels(parsed) {
     var width = Math.max(1, Math.floor(sceneNumber(parsed && parsed.width, 1)));
     var height = Math.max(1, Math.floor(sceneNumber(parsed && parsed.height, 1)));
     var source = parsed && parsed.data;
-    var pixels = new Uint8Array(width * height * 4);
+    var pixels = new Float32Array(width * height * 4);
     for (var i = 0, j = 0; i < width * height; i++, j += 3) {
       var r = Math.max(0, sceneNumber(source && source[j], 0));
       var g = Math.max(0, sceneNumber(source && source[j + 1], 0));
       var b = Math.max(0, sceneNumber(source && source[j + 2], 0));
-      pixels[i * 4] = Math.max(0, Math.min(255, Math.round(Math.pow(r / (1 + r), 1 / 2.2) * 255)));
-      pixels[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(Math.pow(g / (1 + g), 1 / 2.2) * 255)));
-      pixels[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(Math.pow(b / (1 + b), 1 / 2.2) * 255)));
-      pixels[i * 4 + 3] = 255;
+      pixels[i * 4] = r;
+      pixels[i * 4 + 1] = g;
+      pixels[i * 4 + 2] = b;
+      pixels[i * 4 + 3] = 1;
     }
     return { width: width, height: height, pixels: pixels };
   }
@@ -4676,6 +4795,14 @@
   function scenePBRLoadHDRTexture(gl, key, texture, record) {
     if (typeof fetch !== "function" || typeof sceneParseRadianceHDR !== "function") {
       return false;
+    }
+    if (typeof gl.getExtension !== "function" || !gl.getExtension("OES_texture_float_linear")) {
+      record.failed = true;
+      record.error = "this context cannot linearly filter half-float HDR textures";
+      try {
+        console.warn("[gosx] HDR environment map " + key + " fell back: " + record.error);
+      } catch (_error) {}
+      return true;
     }
     fetch(key)
       .then(function(response) {
@@ -4685,45 +4812,108 @@
         return response.arrayBuffer();
       })
       .then(function(buffer) {
+        if (record.disposed || record.generation && record.generation.disposed) return;
         var parsed = sceneParseRadianceHDR(buffer);
-        var ldr = scenePBRTonemapHDRPixels(parsed);
+        var linear = scenePBRLinearHDRPixels(parsed);
         gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ldr.width, ldr.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, ldr.pixels);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F || 0x881A, linear.width, linear.height, 0, gl.RGBA, gl.FLOAT, linear.pixels);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         record.loaded = true;
-        record.width = ldr.width;
-        record.height = ldr.height;
+        record.width = linear.width;
+        record.height = linear.height;
         record.hdr = true;
+        record.colorSpace = "linear";
+        record.format = "rgba16f";
+        scenePBRNotifyTextureSettled(record);
       })
-      .catch(function() {
+      .catch(function(error) {
+        if (record.disposed || record.generation && record.generation.disposed) return;
         record.failed = true;
+        record.error = error && error.message ? error.message : String(error || "HDR texture upload failed");
+        try {
+          console.warn("[gosx] HDR environment map " + key + " failed: " + record.error);
+        } catch (_error) {}
+        scenePBRNotifyTextureSettled(record);
       });
     return true;
   }
 
-  function scenePBRLoadTexture(gl, url, cache) {
+  function scenePBRTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
+    var descriptor = raw && typeof raw === "object" ? raw : {};
+    return {
+      uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
+      role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
+      colorSpace: typeof descriptor.colorSpace === "string" && descriptor.colorSpace.trim()
+        ? descriptor.colorSpace.trim().toLowerCase()
+        : String(fallbackColorSpace || "linear"),
+      view: typeof descriptor.view === "string" && descriptor.view.trim() ? descriptor.view.trim().toLowerCase() : "2d",
+      format: typeof descriptor.format === "string" ? descriptor.format.trim().toLowerCase() : "",
+      mipLevels: Math.max(0, Math.floor(sceneNumber(descriptor.mipLevels, 0))),
+      width: Math.max(0, Math.floor(sceneNumber(descriptor.width, 0))),
+      height: Math.max(0, Math.floor(sceneNumber(descriptor.height, 0))),
+      faces: Math.max(0, Math.floor(sceneNumber(descriptor.faces, 0))),
+    };
+  }
+
+  function scenePBRTextureCacheKey(descriptor) {
+    return [
+      descriptor.uri,
+      descriptor.role,
+      descriptor.colorSpace,
+      descriptor.view,
+      descriptor.format,
+      descriptor.width,
+      descriptor.height,
+      descriptor.faces,
+      descriptor.mipLevels,
+    ].join("\u0000");
+  }
+
+  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
     if (!cache) return null;
     const textureMap = cache;
-    const key = typeof url === "string" ? url.trim() : "";
+    var descriptor = scenePBRTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
+    const key = descriptor.uri;
     if (!key) {
       return null;
     }
-    if (textureMap.has(key)) {
-      return textureMap.get(key);
+    var cacheKey = scenePBRTextureCacheKey(descriptor);
+    if (textureMap.has(cacheKey)) {
+      return textureMap.get(cacheKey);
     }
 
     const texture = gl.createTexture();
-    const record = { texture: texture, src: key, loaded: false, failed: false };
-    textureMap.set(key, record);
+    var target = descriptor.view === "cube" ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
+    const record = {
+      texture: texture,
+      src: key,
+      descriptor: descriptor,
+      target: target,
+      loaded: false,
+      failed: false,
+      generation: textureMap._gosxGeneration || null,
+      disposed: false,
+    };
+    textureMap.set(cacheKey, record);
 
     // Initialize with a 1x1 white pixel placeholder.
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(target, texture);
+    var placeholder = new Uint8Array([255, 255, 255, 255]);
+    if (target === gl.TEXTURE_CUBE_MAP) {
+      for (var face = 0; face < 6; face++) {
+        gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, placeholder);
+      }
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, placeholder);
+    }
+    gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    if (target === gl.TEXTURE_CUBE_MAP && gl.TEXTURE_WRAP_R !== undefined) {
+      gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+    }
 
     if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
       return record;
@@ -4738,21 +4928,33 @@
       return record;
     }
 
-    if (typeof Image === "function") {
+    if (target === gl.TEXTURE_CUBE_MAP) {
+      record.failed = true;
+      record.error = "cube descriptors require a KTX2 upload path";
+    } else if (typeof Image === "function") {
       const image = new Image();
+      record.image = image;
       image.onload = function() {
+        if (record.disposed || record.generation && record.generation.disposed) return;
         gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        var srgb = descriptor.colorSpace === "srgb";
+        var internalFormat = srgb ? (gl.SRGB8_ALPHA8 || 0x8C43) : (gl.RGBA8 || 0x8058);
+        gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, image);
         if (typeof gl.generateMipmap === "function" && gl.LINEAR_MIPMAP_LINEAR !== undefined) {
           gl.generateMipmap(gl.TEXTURE_2D);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
         } else {
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         }
+        record.colorSpace = srgb ? "srgb" : "linear";
+        record.format = srgb ? "srgb8-alpha8" : "rgba8";
         record.loaded = true;
+        scenePBRNotifyTextureSettled(record);
       };
       image.onerror = function() {
+        if (record.disposed || record.generation && record.generation.disposed) return;
         record.failed = true;
+        scenePBRNotifyTextureSettled(record);
       };
       image.src = key;
     }
@@ -4761,9 +4963,9 @@
   }
 
   // Bind a texture record to a specific sampler unit.
-  function scenePBRBindTexture(gl, unit, texture) {
+  function scenePBRBindTexture(gl, unit, texture, target) {
     gl.activeTexture(gl.TEXTURE0 + unit);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.bindTexture(target || gl.TEXTURE_2D, texture);
   }
 
   // --- Shader Program ---
@@ -4774,6 +4976,8 @@
     var uniforms = {
       viewMatrix: gl.getUniformLocation(program, "u_viewMatrix"),
       projectionMatrix: gl.getUniformLocation(program, "u_projectionMatrix"),
+      modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+      modelScaleSigns: gl.getUniformLocation(program, "u_modelScaleSigns"),
       cameraPosition: gl.getUniformLocation(program, "u_cameraPosition"),
 
       albedo: gl.getUniformLocation(program, "u_albedo"),
@@ -4792,11 +4996,13 @@
       normalMap: gl.getUniformLocation(program, "u_normalMap"),
       roughnessMap: gl.getUniformLocation(program, "u_roughnessMap"),
       metalnessMap: gl.getUniformLocation(program, "u_metalnessMap"),
+      occlusionMap: gl.getUniformLocation(program, "u_occlusionMap"),
       emissiveMap: gl.getUniformLocation(program, "u_emissiveMap"),
       hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
       hasNormalMap: gl.getUniformLocation(program, "u_hasNormalMap"),
       hasRoughnessMap: gl.getUniformLocation(program, "u_hasRoughnessMap"),
       hasMetalnessMap: gl.getUniformLocation(program, "u_hasMetalnessMap"),
+      hasOcclusionMap: gl.getUniformLocation(program, "u_hasOcclusionMap"),
       hasEmissiveMap: gl.getUniformLocation(program, "u_hasEmissiveMap"),
 
       lightCount: gl.getUniformLocation(program, "u_lightCount"),
@@ -4819,6 +5025,11 @@
       groundIntensity: gl.getUniformLocation(program, "u_groundIntensity"),
       envMap: gl.getUniformLocation(program, "u_envMap"),
       hasEnvMap: gl.getUniformLocation(program, "u_hasEnvMap"),
+      iblIrradiance: gl.getUniformLocation(program, "u_iblIrradiance"),
+      iblRadiance: gl.getUniformLocation(program, "u_iblRadiance"),
+      iblBRDFLUT: gl.getUniformLocation(program, "u_iblBRDFLUT"),
+      hasIBL: gl.getUniformLocation(program, "u_hasIBL"),
+      iblRadianceMaxLod: gl.getUniformLocation(program, "u_iblRadianceMaxLod"),
       envIntensity: gl.getUniformLocation(program, "u_envIntensity"),
       envRotation: gl.getUniformLocation(program, "u_envRotation"),
 
@@ -4850,6 +5061,7 @@
 
       exposure: gl.getUniformLocation(program, "u_exposure"),
       toneMapMode: gl.getUniformLocation(program, "u_toneMapMode"),
+      outputLinear: gl.getUniformLocation(program, "u_outputLinear"),
 
       hasFog: gl.getUniformLocation(program, "u_hasFog"),
       fogDensity: gl.getUniformLocation(program, "u_fogDensity"),
@@ -4987,6 +5199,26 @@
     );
   }
 
+  function scenePBRHDRIBLAvailable(gl) {
+    var maxUnits = 0;
+    try {
+      maxUnits = gl && typeof gl.getParameter === "function"
+        ? Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0))
+        : 0;
+    } catch (_error) {
+      maxUnits = 0;
+    }
+    // 6 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
+    return maxUnits >= 18;
+  }
+
+  function scenePBRFragmentSourceForContext(gl, source) {
+    return String(source || SCENE_PBR_FRAGMENT_SOURCE).replace(
+      "#define GOSX_HDR_IBL 1",
+      "#define GOSX_HDR_IBL " + (scenePBRHDRIBLAvailable(gl) ? "1" : "0"),
+    );
+  }
+
   // Compile PBR vertex + fragment shaders and return a program object with
   // cached uniform locations. Returns null on compile/link failure so the
   // caller can fall back to the legacy renderer.
@@ -4995,7 +5227,7 @@
     if (!vertexShader) {
       return null;
     }
-    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    const fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -5287,7 +5519,7 @@
 
   function createScenePBRCustomProgram(gl, material) {
     const vertexSource = scenePBRBuildCustomVertexSource(material);
-    const fragmentSource = scenePBRBuildCustomFragmentSource(material);
+    const fragmentSource = scenePBRFragmentSourceForContext(gl, scenePBRBuildCustomFragmentSource(material));
     const vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
     if (!vertexShader) {
       return null;
@@ -5322,7 +5554,7 @@
   function createScenePBRSkinnedProgram(gl) {
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_SKINNED_VERTEX_SOURCE);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -5412,7 +5644,7 @@
   function createScenePBRInstancedProgram(gl) {
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_PBR_INSTANCED_VERTEX_SOURCE);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_PBR_FRAGMENT_SOURCE);
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, scenePBRFragmentSourceForContext(gl, SCENE_PBR_FRAGMENT_SOURCE));
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -5690,13 +5922,20 @@
     var exposure = sceneNumber(env.exposure, 0);
     if (exposure <= 0) exposure = 1.0;
     var toneMapMode = usePostProcessing ? 0 : sceneToneMapMode(env.toneMapping);
-    if (uniforms._lastExposure === exposure && uniforms._lastToneMapMode === toneMapMode) {
+    var outputLinear = usePostProcessing ? 1 : 0;
+    if (
+      uniforms._lastExposure === exposure &&
+      uniforms._lastToneMapMode === toneMapMode &&
+      uniforms._lastOutputLinear === outputLinear
+    ) {
       return;
     }
     uniforms._lastExposure = exposure;
     uniforms._lastToneMapMode = toneMapMode;
+    uniforms._lastOutputLinear = outputLinear;
     gl.uniform1f(uniforms.exposure, exposure);
     gl.uniform1i(uniforms.toneMapMode, toneMapMode);
+    gl.uniform1i(uniforms.outputLinear, outputLinear);
   }
 
   // Scratch buffers for cascade matrix / split uploads — 4 cascades × 16 =
@@ -5706,7 +5945,11 @@
   var _scenePBRCascadeSplitScratch = new Float32Array(4);
 
   function scenePBREnvironmentHasMap(environment) {
-    return Boolean(environment && typeof environment.envMap === "string" && environment.envMap.trim());
+    var ibl = environment && environment.ibl;
+    return Boolean(
+      (environment && typeof environment.envMap === "string" && environment.envMap.trim()) ||
+      (ibl && ibl.radiance && ibl.irradiance && ibl.brdfLUT)
+    );
   }
 
   function scenePBRSlotCascadeCount(slot, lightIndex) {
@@ -5824,20 +6067,172 @@
     gl.uniform1i(uniforms[indexKey], lightIndex);
   }
 
+  var SCENE_IBL_BRDF_MODEL = "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel";
+  var scenePBRIBLWarnings = new Set();
+
+  function scenePBRWarnIBLOnce(code, detail) {
+    var key = code + ":" + detail;
+    if (scenePBRIBLWarnings.has(key)) return;
+    scenePBRIBLWarnings.add(key);
+    try {
+      console.warn("[gosx] IBL " + code + ": " + detail);
+    } catch (_error) {}
+  }
+
+  function scenePBRIBLProductDescriptor(ibl, name, role, view, format) {
+    var source = ibl && ibl[name] && typeof ibl[name] === "object" ? ibl[name] : null;
+    if (!source || typeof source.uri !== "string" || !source.uri.trim()) return null;
+    var descriptor = scenePBRTextureDescriptor(source, source.uri, role, "linear");
+    if (descriptor.role !== role || descriptor.colorSpace !== "linear" || descriptor.view !== view) {
+      return null;
+    }
+    if (format && descriptor.format && descriptor.format !== format) return null;
+    return descriptor;
+  }
+
+  function scenePBRIBLRecordValid(record, descriptor, brdfModel) {
+    if (!record || !record.loaded || record.failed) return false;
+    if (!descriptor || descriptor.width <= 0 || descriptor.height <= 0 || descriptor.faces <= 0 || descriptor.mipLevels <= 0) return false;
+    var metadata = record.keyValues || {};
+    if (metadata.GoSXiblRole !== descriptor.role) return false;
+    if (metadata.GoSXColorSpace !== "linear") return false;
+    if (brdfModel && metadata.GoSXiblModel !== brdfModel) return false;
+    var expectedVKFormat = descriptor.format === "rgba16f" ? 97 : (descriptor.format === "rg16f" ? 83 : 0);
+    if (!expectedVKFormat || record.vkFormat !== expectedVKFormat) return false;
+    if (record.width !== descriptor.width || record.height !== descriptor.height) return false;
+    if (record.faces !== descriptor.faces || record.levels !== descriptor.mipLevels) return false;
+    return true;
+  }
+
+  function scenePBRIBLRoughnessMappingValid(ibl, mipLevels) {
+    var mapping = ibl && Array.isArray(ibl.roughnessPerLevel) ? ibl.roughnessPerLevel : [];
+    if (mipLevels <= 0 || mapping.length !== mipLevels) return false;
+    for (var i = 0; i < mapping.length; i++) {
+      var expected = mipLevels <= 1 ? 0 : i / (mipLevels - 1);
+      if (!Number.isFinite(mapping[i]) || Math.abs(mapping[i] - expected) > 0.000001) return false;
+    }
+    return true;
+  }
+
+  function scenePBRPlaceholderCube(gl, textureCache) {
+    var key = "\u0000gosx-ibl-placeholder-cube";
+    if (textureCache.has(key)) return textureCache.get(key);
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_CUBE_MAP, texture);
+    var pixel = new Uint8Array([0, 0, 0, 255]);
+    for (var face = 0; face < 6; face++) {
+      gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+    }
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    var record = { texture: texture, target: gl.TEXTURE_CUBE_MAP, loaded: true, placeholder: true };
+    textureCache.set(key, record);
+    return record;
+  }
+
   function scenePBRUploadEnvironmentMap(gl, uniforms, environment, textureCache, shadowSlots, shadowLightIndices) {
     var env = environment || {};
+    var ibl = env.ibl && typeof env.ibl === "object" ? env.ibl : null;
     var envMap = typeof env.envMap === "string" ? env.envMap.trim() : "";
+    var hdrIBLAvailable = scenePBRHDRIBLAvailable(gl);
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env);
+    // An active samplerCube may not alias a sampler2D unit in WebGL even when
+    // a branch flag is false. Assign both cube samplers to a real black cube
+    // on a dedicated unit before considering authored products.
+    if (hdrIBLAvailable) {
+      var safeLayout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, { ibl: { radiance: {}, irradiance: {}, brdfLUT: {} } });
+      if (safeLayout && safeLayout.ibl) {
+        var cubePlaceholder = scenePBRPlaceholderCube(gl, textureCache);
+        scenePBRBindTexture(gl, safeLayout.ibl.radiance, cubePlaceholder.texture, gl.TEXTURE_CUBE_MAP);
+        gl.uniform1i(uniforms.iblIrradiance, safeLayout.ibl.radiance);
+        gl.uniform1i(uniforms.iblRadiance, safeLayout.ibl.radiance);
+      }
+    }
+    var hasIBLDescriptor = Boolean(ibl);
+    var iblStatus = {
+      requested: hasIBLDescriptor,
+      active: false,
+      state: hasIBLDescriptor ? "validating" : "not-requested",
+      reason: "",
+      radianceMipLevels: 0,
+    };
+    gl.uniform1i(uniforms.hasIBL, 0);
+    gl.uniform1f(uniforms.iblRadianceMaxLod, 0);
+
+    if (hasIBLDescriptor) {
+      var radianceDescriptor = scenePBRIBLProductDescriptor(ibl, "radiance", "environment-radiance", "cube", "rgba16f");
+      var irradianceDescriptor = scenePBRIBLProductDescriptor(ibl, "irradiance", "environment-irradiance", "cube", "rgba16f");
+      var brdfDescriptor = scenePBRIBLProductDescriptor(ibl, "brdfLUT", "brdf-lut", "2d", "rg16f");
+      var model = typeof ibl.brdfModel === "string" ? ibl.brdfModel.trim() : "";
+      if (!hdrIBLAvailable) {
+        iblStatus.state = "unsupported";
+        iblStatus.reason = "fragment-texture-units<18";
+      } else if (!radianceDescriptor || !irradianceDescriptor || !brdfDescriptor) {
+        iblStatus.state = "unsupported";
+        iblStatus.reason = "descriptor-role-color-view-format";
+      } else if (model !== SCENE_IBL_BRDF_MODEL) {
+        iblStatus.state = "unsupported";
+        iblStatus.reason = "brdf-model:" + (model || "missing");
+      } else if (!scenePBRIBLRoughnessMappingValid(ibl, radianceDescriptor.mipLevels)) {
+        iblStatus.state = "unsupported";
+        iblStatus.reason = "roughness-mip-mapping";
+      } else if (!layout || !layout.ibl) {
+        iblStatus.state = "unsupported";
+        iblStatus.reason = "texture-unit-budget";
+      } else {
+        var radianceRecord = scenePBRLoadTexture(gl, radianceDescriptor.uri, textureCache, radianceDescriptor);
+        var irradianceRecord = scenePBRLoadTexture(gl, irradianceDescriptor.uri, textureCache, irradianceDescriptor);
+        var brdfRecord = scenePBRLoadTexture(gl, brdfDescriptor.uri, textureCache, brdfDescriptor);
+        var failed = [radianceRecord, irradianceRecord, brdfRecord].some(function(record) { return record && record.failed; });
+        var active = scenePBRIBLRecordValid(radianceRecord, radianceDescriptor, model) &&
+          scenePBRIBLRecordValid(irradianceRecord, irradianceDescriptor, "lambert-sh9") &&
+          scenePBRIBLRecordValid(brdfRecord, brdfDescriptor, model) &&
+          radianceRecord.target === gl.TEXTURE_CUBE_MAP &&
+          irradianceRecord.target === gl.TEXTURE_CUBE_MAP &&
+          brdfRecord.target === gl.TEXTURE_2D;
+        if (active) {
+          scenePBRBindTexture(gl, layout.ibl.irradiance, irradianceRecord.texture, gl.TEXTURE_CUBE_MAP);
+          gl.uniform1i(uniforms.iblIrradiance, layout.ibl.irradiance);
+          scenePBRBindTexture(gl, layout.ibl.radiance, radianceRecord.texture, gl.TEXTURE_CUBE_MAP);
+          gl.uniform1i(uniforms.iblRadiance, layout.ibl.radiance);
+          scenePBRBindTexture(gl, layout.ibl.brdfLUT, brdfRecord.texture, gl.TEXTURE_2D);
+          gl.uniform1i(uniforms.iblBRDFLUT, layout.ibl.brdfLUT);
+          var mipLevels = Math.max(1, radianceRecord.levels || radianceDescriptor.mipLevels || 1);
+          gl.uniform1f(uniforms.iblRadianceMaxLod, mipLevels - 1);
+          gl.uniform1i(uniforms.hasIBL, 1);
+          iblStatus.active = true;
+          iblStatus.state = "active";
+          iblStatus.radianceMipLevels = mipLevels;
+        } else {
+          var allLoaded = [radianceRecord, irradianceRecord, brdfRecord].every(function(record) {
+            return record && record.loaded;
+          });
+          iblStatus.state = failed || allLoaded ? "failed" : "loading";
+          iblStatus.reason = failed ? "product-upload" : (allLoaded ? "product-container-metadata" : "product-pending");
+        }
+      }
+      if (iblStatus.state === "unsupported" || iblStatus.state === "failed") {
+        scenePBRWarnIBLOnce(iblStatus.state, iblStatus.reason);
+      }
+    }
+
+    uniforms._gosxIBLDiagnostics = iblStatus;
     if (!envMap) {
       gl.uniform1i(uniforms.hasEnvMap, 0);
-      gl.uniform1f(uniforms.envIntensity, 0);
-      gl.uniform1f(uniforms.envRotation, 0);
+      gl.uniform1f(uniforms.envIntensity, hasIBLDescriptor ? Math.max(0, sceneNumber(env.envIntensity, 1)) : 0);
+      gl.uniform1f(uniforms.envRotation, sceneNumber(env.envRotation, 0));
+      return;
+    }
+    if (iblStatus.active) {
+      gl.uniform1i(uniforms.hasEnvMap, 0);
       return;
     }
 
-    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env);
     var unit = layout && layout.ibl ? layout.ibl.irradiance : null;
-    var record = scenePBRLoadTexture(gl, envMap, textureCache);
-    var available = Boolean(record && record.texture && !record.failed);
+    var record = scenePBRLoadTexture(gl, envMap, textureCache, null, "environment-radiance", "linear");
+    var available = Boolean(record && record.texture && record.loaded && !record.failed);
     gl.uniform1i(uniforms.hasEnvMap, available ? 1 : 0);
     var envIntensity = Object.prototype.hasOwnProperty.call(env, "envIntensity")
       ? sceneNumber(env.envIntensity, 1)
@@ -5942,6 +6337,24 @@
     // scene unmount without needing a per-subsystem bookkeeping pass.
     const staticMeshArrayVBOs = new WeakMap();
     const pointsEntryBuffers = new Set();
+    // Direct mesh buffers are renderer-owned. GPU handles must never live on
+    // shared vertex objects: simultaneous renderers may use different
+    // contexts, and context recovery may reuse the same JS `gl` identity
+    // after all old handles have been deleted.
+    const directMeshAttributeCache = new Map();
+    var directMeshAttributeEpoch = 0;
+    var retainedMeshBufferStats = {
+      liveBytes: 0,
+      hits: 0,
+      misses: 0,
+      uploadCalls: 0,
+      uploadBytes: 0,
+      allocations: 0,
+      rebuilds: 0,
+      revisionInvalidations: 0,
+      retirements: 0,
+    };
+    var webGLTelemetryAttributeCache = Object.create(null);
     const staticPointEntries = new Set();
     const activeStaticPointEntries = new Set();
     const staticPointKeyedVBOs = new Map();
@@ -6059,10 +6472,32 @@
     }
 
     function publishWebGLRenderTruth(bundle) {
-      var api = webglRenderTruth();
-      if (!api.enabled()) return;
       var mount = canvas && canvas.parentNode ? canvas.parentNode : null;
       if (!mount) return;
+      function setTelemetryAttribute(name, value) {
+        if (webGLTelemetryAttributeCache[name] === value) return;
+        webGLTelemetryAttributeCache[name] = value;
+        mount.setAttribute(name, value);
+      }
+      setTelemetryAttribute("data-gosx-scene3d-retained-mesh-objects", String(sceneNumber(bundle && bundle.retainedMeshObjectCount, 0)));
+      setTelemetryAttribute("data-gosx-scene3d-retained-mesh-vertices", String(sceneNumber(bundle && bundle.retainedMeshVertexCount, 0)));
+      setTelemetryAttribute("data-gosx-scene3d-world-baked-mesh-objects", String(sceneNumber(bundle && bundle.worldBakedMeshObjectCount, 0)));
+      setTelemetryAttribute("data-gosx-scene3d-world-baked-mesh-vertices", String(sceneNumber(bundle && bundle.worldBakedMeshVertexCount, 0)));
+      var retainedStats = webGLRetainedMeshBufferStats();
+      mount.__gosxScene3DRetainedGeometryStats = retainedStats;
+      setTelemetryAttribute("data-gosx-scene3d-retained-cache-entries", String(retainedStats.cacheEntries));
+      setTelemetryAttribute("data-gosx-scene3d-retained-cache-hits", String(retainedStats.hits));
+      setTelemetryAttribute("data-gosx-scene3d-retained-cache-misses", String(retainedStats.misses));
+      setTelemetryAttribute("data-gosx-scene3d-retained-upload-bytes", String(retainedStats.uploadBytes));
+      setTelemetryAttribute("data-gosx-scene3d-retained-allocations", String(retainedStats.allocations));
+      setTelemetryAttribute("data-gosx-scene3d-retained-rebuilds", String(retainedStats.rebuilds));
+      setTelemetryAttribute("data-gosx-scene3d-retained-retirements", String(retainedStats.retirements));
+      setTelemetryAttribute("data-gosx-scene3d-retained-live-bytes", String(retainedStats.liveBytes));
+      setTelemetryAttribute("data-gosx-scene3d-bundle-build-cpu-ms", String(sceneNumber(bundle && bundle.bundleBuildCPUms, 0)));
+      setTelemetryAttribute("data-gosx-scene3d-planner-cpu-ms", String(sceneNumber(bundle && bundle.plannerTelemetry && bundle.plannerTelemetry.lastPlannerCPUms, 0)));
+      setTelemetryAttribute("data-gosx-scene3d-planner-full-vertex-hash-scans", String(sceneNumber(bundle && bundle.plannerTelemetry && bundle.plannerTelemetry.fullVertexHashScans, 0)));
+      var api = webglRenderTruth();
+      if (!api.enabled()) return;
       var meshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
       api.publish(mount, {
         backend: "webgl",
@@ -6077,6 +6512,10 @@
         pointsDrawn: webglRenderTruthStats.pointsDrawn,
         pointInstancesSubmitted: webglRenderTruthStats.pointInstancesSubmitted,
         pointInstancesDrawn: webglRenderTruthStats.pointInstancesDrawn,
+        retainedMeshObjects: sceneNumber(bundle && bundle.retainedMeshObjectCount, 0),
+        retainedMeshVertices: sceneNumber(bundle && bundle.retainedMeshVertexCount, 0),
+        worldBakedMeshObjects: sceneNumber(bundle && bundle.worldBakedMeshObjectCount, 0),
+        worldBakedMeshVertices: sceneNumber(bundle && bundle.worldBakedMeshVertexCount, 0),
         uniformTime: sceneSelenaFrameTime,
       });
     }
@@ -6248,6 +6687,17 @@
 
     // Local texture cache for this renderer instance.
     const textureCache = new Map();
+    textureCache._gosxGeneration = {
+      disposed: false,
+      onResourceReady: function() {
+        if (canvas && typeof canvas.dispatchEvent === "function") {
+          const event = typeof CustomEvent === "function"
+            ? new CustomEvent("gosx:scene3d:resource-ready")
+            : { type: "gosx:scene3d:resource-ready" };
+          canvas.dispatchEvent(event);
+        }
+      },
+    };
 
     // Persistent shadow pass state — reuses one GL buffer and one scratch
     // Float32Array across all objects and lights, grown as needed.
@@ -6314,12 +6764,13 @@
 	        ],
 	      };
 	    }
-	    var identityModelMatrix = new Float32Array([
-	      1, 0, 0, 0,
-	      0, 1, 0, 0,
-	      0, 0, 1, 0,
-	      0, 0, 0, 1,
-	    ]);
+    var identityModelMatrix = new Float32Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]);
+    var identityModelScaleSigns = new Float32Array([1, 1, 1, 0]);
 
     // Per-frame camera cache — set once in render(), reused in
     // drawPBRObjectList and drawInstancedMeshes. Pre-allocated so
@@ -6424,13 +6875,19 @@
       // consumer mutates a material in place, they're expected to flip
       // the bundle's materialIndex, which gives a different reference
       // and naturally triggers a re-upload.
-      if (uniforms._lastMaterial === material) {
+      if (uniforms._lastMaterial === material && uniforms._lastMaterialTexturesReady) {
         uploadCustomUniforms(gl, uniforms, mat.customUniforms);
         return;
       }
       uniforms._lastMaterial = material;
+      uniforms._lastMaterialTexturesReady = true;
       const albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
-      gl.uniform3f(uniforms.albedo, albedoRGBA[0], albedoRGBA[1], albedoRGBA[2]);
+      gl.uniform3f(
+        uniforms.albedo,
+        scenePBRSRGBChannelToLinear(albedoRGBA[0]),
+        scenePBRSRGBChannelToLinear(albedoRGBA[1]),
+        scenePBRSRGBChannelToLinear(albedoRGBA[2]),
+      );
       gl.uniform1f(uniforms.roughness, sceneNumber(mat.roughness, 0.5));
       gl.uniform1f(uniforms.metalness, sceneNumber(mat.metalness, 0));
       gl.uniform1f(uniforms.clearcoat, clamp01(sceneNumber(mat.clearcoat, 0)));
@@ -6444,19 +6901,28 @@
 
       // Bind texture maps. Each map uses a dedicated texture unit.
       var textureMaps = [
-        { prop: "texture",      has: "hasAlbedoMap",    sampler: "albedoMap",    unit: 0 },
-        { prop: "normalMap",    has: "hasNormalMap",     sampler: "normalMap",    unit: 1 },
-        { prop: "roughnessMap", has: "hasRoughnessMap",  sampler: "roughnessMap", unit: 2 },
-        { prop: "metalnessMap", has: "hasMetalnessMap",  sampler: "metalnessMap", unit: 3 },
-        { prop: "emissiveMap",  has: "hasEmissiveMap",   sampler: "emissiveMap",  unit: 4 },
+        { prop: "texture",      descriptor: "baseColor", role: "base-color", colorSpace: "srgb", has: "hasAlbedoMap",    sampler: "albedoMap",    unit: 0 },
+        { prop: "normalMap",    descriptor: "normal",    role: "normal", colorSpace: "linear", has: "hasNormalMap",     sampler: "normalMap",    unit: 1 },
+        { prop: "roughnessMap", descriptor: "roughness", role: "roughness", colorSpace: "linear", has: "hasRoughnessMap", sampler: "roughnessMap", unit: 2 },
+        { prop: "metalnessMap", descriptor: "metalness", role: "metalness", colorSpace: "linear", has: "hasMetalnessMap", sampler: "metalnessMap", unit: 3 },
+        { prop: "emissiveMap",  descriptor: "emissive",  role: "emissive", colorSpace: "srgb", has: "hasEmissiveMap",   sampler: "emissiveMap",  unit: 4 },
+        { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", has: "hasOcclusionMap", sampler: "occlusionMap", unit: 5, hdrOnly: true },
       ];
       for (var ti = 0; ti < textureMaps.length; ti++) {
         var tm = textureMaps[ti];
-        var record = mat[tm.prop] ? scenePBRLoadTexture(gl, mat[tm.prop], textureCache) : null;
+        if (tm.hdrOnly && !scenePBRHDRIBLAvailable(gl)) continue;
+        var descriptor = mat.textureDescriptors && mat.textureDescriptors[tm.descriptor];
+        var url = descriptor && typeof descriptor.uri === "string" && descriptor.uri.trim()
+          ? descriptor.uri.trim()
+          : mat[tm.prop];
+        var record = url ? scenePBRLoadTexture(gl, url, textureCache, descriptor, tm.role, tm.colorSpace) : null;
         var loaded = Boolean(record && record.texture && record.loaded);
+        if (record && !record.loaded && !record.failed) {
+          uniforms._lastMaterialTexturesReady = false;
+        }
         gl.uniform1i(uniforms[tm.has], loaded ? 1 : 0);
         if (loaded) {
-          scenePBRBindTexture(gl, tm.unit, record.texture);
+          scenePBRBindTexture(gl, tm.unit, record.texture, record.target);
           gl.uniform1i(uniforms[tm.sampler], tm.unit);
         }
       }
@@ -6572,9 +7038,6 @@
         (Array.isArray(bundle.surfaces) && bundle.surfaces.some(function(surface) {
           return surface && !(surface.sourceKind === "html" && !surface.textureReady);
         }));
-      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasLineData) {
-        return;
-      }
       const preparedScene = typeof prepareScene === "function"
         ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
           mount: canvas && canvas.parentNode || null,
@@ -6587,6 +7050,11 @@
         if (canvas && canvas.parentNode) {
           canvas.parentNode.__gosxScene3DCSSDynamic = Boolean(preparedScene.cssDynamic);
         }
+      }
+      beginWebGLDirectMeshBufferFrame(bundle);
+      if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasLineData) {
+        sweepWebGLDirectMeshBuffers();
+        return;
       }
 
       // --- Camera Matrices ---
@@ -6800,6 +7268,7 @@
         // "post-authored=1, post-dispatched=0" must never look alike.
         webglRenderTruthStats.postChain = [];
       }
+      sweepWebGLDirectMeshBuffers();
       publishWebGLRenderTruth(bundle);
 
       if (perfEnabled) {
@@ -6997,7 +7466,7 @@
       if (!attr || attr.loc < 0) return;
       var directKey = name === "position" ? "positions" : name === "normal" ? "normals" : name === "uv" ? "uvs" : "";
       var direct = directVertices ? scenePBRDirectAttribute(obj.vertices, directKey, count, attr.size) : null;
-      if (bindScenePBRDirectAttribute(obj.vertices, directKey, attr.loc, attr.size, direct)) {
+      if (bindScenePBRDirectAttribute(obj, directKey, attr.loc, attr.size, direct)) {
         return;
       }
       if (name === "position") {
@@ -7102,32 +7571,122 @@
 	      return record.view;
 	    }
 
-    function bindScenePBRDirectAttribute(vertices, key, attrib, size, data) {
+    function retireWebGLDirectMeshAttribute(entry, key) {
+      var record = entry && entry.attributes && entry.attributes[key];
+      if (!record) return;
+      if (record.buffer) {
+        gl.deleteBuffer(record.buffer);
+        pointsEntryBuffers.delete(record.buffer);
+      }
+      if (entry.retained) {
+        retainedMeshBufferStats.liveBytes = Math.max(0, retainedMeshBufferStats.liveBytes - record.byteLength);
+        retainedMeshBufferStats.retirements += 1;
+      }
+      delete entry.attributes[key];
+    }
+
+    function retireWebGLDirectMeshEntry(vertices, entry) {
+      if (!entry) return;
+      var keys = Object.keys(entry.attributes || {});
+      for (var i = 0; i < keys.length; i++) {
+        retireWebGLDirectMeshAttribute(entry, keys[i]);
+      }
+      directMeshAttributeCache.delete(vertices);
+    }
+
+    function beginWebGLDirectMeshBufferFrame(bundle) {
+      directMeshAttributeEpoch += 1;
+      var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
+      for (var i = 0; i < objects.length; i++) {
+        var obj = objects[i];
+        if (!obj || !obj.directVertices || !obj.vertices) continue;
+        var entry = directMeshAttributeCache.get(obj.vertices);
+        if (entry) entry.lastSeenEpoch = directMeshAttributeEpoch;
+      }
+    }
+
+    function sweepWebGLDirectMeshBuffers() {
+      for (const pair of Array.from(directMeshAttributeCache.entries())) {
+        if (pair[1].lastSeenEpoch !== directMeshAttributeEpoch) {
+          retireWebGLDirectMeshEntry(pair[0], pair[1]);
+        }
+      }
+    }
+
+    function webGLRetainedMeshBufferStats() {
+      var retainedEntries = 0;
+      for (const entry of directMeshAttributeCache.values()) {
+        if (entry.retained) retainedEntries += 1;
+      }
+      return Object.assign({}, retainedMeshBufferStats, {
+        cacheEntries: retainedEntries,
+        epoch: directMeshAttributeEpoch,
+      });
+    }
+
+    function bindScenePBRDirectAttribute(obj, key, attrib, size, data) {
+      var vertices = obj && obj.vertices;
       if (!vertices || !Number.isFinite(attrib) || attrib < 0 || !(data instanceof Float32Array)) {
         return false;
       }
-      let buffers = vertices._pbrAttributeBuffers;
-      if (!buffers) {
-        buffers = Object.create(null);
-        vertices._pbrAttributeBuffers = buffers;
+      var retained = obj.retainedGeometry === true;
+      var revision = retained ? obj.geometryRevision : null;
+      let entry = directMeshAttributeCache.get(vertices);
+      if (
+        entry &&
+        (entry.retained !== retained || (retained && entry.revision !== revision))
+      ) {
+        if (retained || entry.retained) {
+          retainedMeshBufferStats.rebuilds += 1;
+          if (entry.revision !== revision) retainedMeshBufferStats.revisionInvalidations += 1;
+        }
+        retireWebGLDirectMeshEntry(vertices, entry);
+        entry = null;
       }
-	      let record = buffers[key];
-	      if (!record || record.gl !== gl || record.data !== data) {
-	        if (record && record.buffer && record.gl === gl) {
-	          gl.deleteBuffer(record.buffer);
-	          pointsEntryBuffers.delete(record.buffer);
-	        }
+      if (!entry) {
+        entry = {
+          retained,
+          revision,
+          lastSeenEpoch: directMeshAttributeEpoch,
+          attributes: Object.create(null),
+        };
+        directMeshAttributeCache.set(vertices, entry);
+      }
+      entry.lastSeenEpoch = directMeshAttributeEpoch;
+	      let record = entry.attributes[key];
+	      if (!record || record.data !== data || record.size !== size) {
+	        if (record) {
+            if (retained) retainedMeshBufferStats.rebuilds += 1;
+            retireWebGLDirectMeshAttribute(entry, key);
+          }
 	        record = {
-	          gl,
 	          data,
+            size,
+            byteLength: data.byteLength,
 	          buffer: gl.createBuffer(),
 	        };
 	        pointsEntryBuffers.add(record.buffer);
-        buffers[key] = record;
+        entry.attributes[key] = record;
+        if (retained) {
+          retainedMeshBufferStats.misses += 1;
+          retainedMeshBufferStats.allocations += 1;
+          retainedMeshBufferStats.liveBytes += data.byteLength;
+        }
         gl.bindBuffer(gl.ARRAY_BUFFER, record.buffer);
-        gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, data, retained ? gl.STATIC_DRAW : gl.DYNAMIC_DRAW);
+        if (retained) {
+          retainedMeshBufferStats.uploadCalls += 1;
+          retainedMeshBufferStats.uploadBytes += data.byteLength;
+        }
       } else {
         gl.bindBuffer(gl.ARRAY_BUFFER, record.buffer);
+        if (retained) {
+          retainedMeshBufferStats.hits += 1;
+        } else {
+          // Skinning/morph/authored shader geometry remains mutable and is
+          // uploaded every draw instead of inheriting retained semantics.
+          gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+        }
       }
       gl.enableVertexAttribArray(attrib);
       gl.vertexAttribPointer(attrib, size, gl.FLOAT, false, 0, 0);
@@ -7264,11 +7823,27 @@
         }
 
 	        // Skinning: upload joint matrices and enable skin flag.
+	        if (currentUniforms.modelMatrix) {
+	          gl.uniformMatrix4fv(
+	            currentUniforms.modelMatrix,
+	            false,
+	            obj.directVertices && obj.modelMatrix ? obj.modelMatrix : identityModelMatrix
+	          );
+	        }
+	        if (currentUniforms.modelScaleSigns) {
+	          var modelScaleSigns = obj.directVertices && obj.modelScaleSigns
+	            ? obj.modelScaleSigns
+	            : identityModelScaleSigns;
+	          gl.uniform3f(
+	            currentUniforms.modelScaleSigns,
+	            modelScaleSigns[0],
+	            modelScaleSigns[1],
+	            modelScaleSigns[2]
+	          );
+	        }
+
 	        if (isSkinned) {
 	          gl.uniform1i(currentUniforms.hasSkin, 1);
-	          if (currentUniforms.modelMatrix) {
-	            gl.uniformMatrix4fv(currentUniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
-	          }
 
           var jointMatrices = obj.skin.jointMatrices;
           if (jointMatrices) {
@@ -7309,7 +7884,7 @@
         const directTangents = directVertices ? scenePBRDirectAttribute(obj.vertices, "tangents", count, 4) : null;
 
         // Positions (vec3).
-        if (!bindScenePBRDirectAttribute(obj.vertices, "positions", currentAttribs.position, 3, directPositions)) {
+        if (!bindScenePBRDirectAttribute(obj, "positions", currentAttribs.position, 3, directPositions)) {
           const positions = sliceToFloat32(bundle.worldMeshPositions, offset, count, 3, "positions");
           gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
@@ -7318,7 +7893,7 @@
         }
 
         // Normals (vec3).
-        if (!bindScenePBRDirectAttribute(obj.vertices, "normals", currentAttribs.normal, 3, directNormals)) {
+        if (!bindScenePBRDirectAttribute(obj, "normals", currentAttribs.normal, 3, directNormals)) {
           const normals = sliceToFloat32(bundle.worldMeshNormals, offset, count, 3, "normals");
           gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
           gl.bufferData(gl.ARRAY_BUFFER, normals, gl.DYNAMIC_DRAW);
@@ -7327,7 +7902,7 @@
         }
 
         // UVs (vec2).
-        if (bindScenePBRDirectAttribute(obj.vertices, "uvs", currentAttribs.uv, 2, directUVs)) {
+        if (bindScenePBRDirectAttribute(obj, "uvs", currentAttribs.uv, 2, directUVs)) {
           // Cached direct attribute bound.
         } else if (bundle.worldMeshUVs && !directVertices) {
           const uvs = sliceToFloat32(bundle.worldMeshUVs, offset, count, 2, "uvs");
@@ -7341,7 +7916,7 @@
         }
 
         // Tangents (vec4).
-        if (bindScenePBRDirectAttribute(obj.vertices, "tangents", currentAttribs.tangent, 4, directTangents)) {
+        if (bindScenePBRDirectAttribute(obj, "tangents", currentAttribs.tangent, 4, directTangents)) {
           // Cached direct attribute bound.
         } else if (bundle.worldMeshTangents && !directVertices) {
           const tangents = sliceToFloat32(bundle.worldMeshTangents, offset, count, 4, "tangents");
@@ -7361,14 +7936,14 @@
 
           const directJoints = directVertices ? scenePBRDirectAttribute(obj.vertices, "joints", count, 4) : null;
           const directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
-          if (!bindScenePBRDirectAttribute(obj.vertices, "joints", currentAttribs.joints, 4, directJoints)) {
+          if (!bindScenePBRDirectAttribute(obj, "joints", currentAttribs.joints, 4, directJoints)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
             gl.enableVertexAttribArray(currentAttribs.joints);
             gl.vertexAttribPointer(currentAttribs.joints, 4, gl.FLOAT, false, 0, 0);
           }
 
-          if (!bindScenePBRDirectAttribute(obj.vertices, "weights", currentAttribs.weights, 4, directWeights)) {
+          if (!bindScenePBRDirectAttribute(obj, "weights", currentAttribs.weights, 4, directWeights)) {
             gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
             gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
             gl.enableVertexAttribArray(currentAttribs.weights);
@@ -8192,6 +8767,10 @@
     }
 
     function dispose() {
+      for (const pair of Array.from(directMeshAttributeCache.entries())) {
+        retireWebGLDirectMeshEntry(pair[0], pair[1]);
+      }
+      webGLTelemetryAttributeCache = Object.create(null);
       gl.deleteBuffer(positionBuffer);
       gl.deleteBuffer(normalBuffer);
       gl.deleteBuffer(uvBuffer);
@@ -8219,7 +8798,15 @@
       lastComputeParticleTimeSeconds = null;
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
 
+      textureCache._gosxGeneration.disposed = true;
       for (const record of textureCache.values()) {
+        if (record) {
+          record.disposed = true;
+          if (record.image) {
+            record.image.onload = null;
+            record.image.onerror = null;
+          }
+        }
         if (record && record.texture) {
           gl.deleteTexture(record.texture);
         }
@@ -8259,6 +8846,17 @@
         gl.deleteProgram(pointsProgram.program);
         pointsProgram = null;
       }
+      // Authored points programs own their shader objects independently of the
+      // builtin points program. Clear both maps so repeated disposal cannot
+      // delete the same GL objects twice or retain failed layer IDs.
+      for (const authoredRecord of pointsAuthoredGLPrograms.values()) {
+        if (!authoredRecord || authoredRecord.failed) continue;
+        gl.deleteShader(authoredRecord.vertexShader);
+        gl.deleteShader(authoredRecord.fragmentShader);
+        gl.deleteProgram(authoredRecord.program);
+      }
+      pointsAuthoredGLPrograms.clear();
+      pointsAuthoredGLFailed.clear();
 
       // Clean up instanced PBR program.
       if (instancedProgram) {
@@ -8298,11 +8896,71 @@
       gl.deleteProgram(program);
     }
 
+    var textureVariantTokens = [];
+    try {
+      if (typeof window !== "undefined" && typeof window.__gosx_scene3d_texture_tokens === "function") {
+        textureVariantTokens = window.__gosx_scene3d_texture_tokens("webgl", gl);
+      }
+    } catch (_textureVariantError) {
+      textureVariantTokens = [];
+    }
+    var textureVariantContext = {
+      backend: "webgl",
+      // This renderer owns scenePBRUploadKTX2Texture. Do not consult the
+      // page-global KTX2 reader here: the glTF sub-feature may load after the
+      // renderer, and sceneLoadGLTFModel settles that reader before selection.
+      uploadReady: typeof scenePBRUploadKTX2Texture === "function",
+      tokens: Array.isArray(textureVariantTokens) ? textureVariantTokens.slice().sort() : [],
+    };
+
+    function diagnostics() {
+      var failedTextures = 0;
+      var loadedTextures = 0;
+      for (const record of textureCache.values()) {
+        if (record && record.failed) failedTextures++;
+        if (record && record.loaded && !record.placeholder) loadedTextures++;
+      }
+      return {
+        renderer: "webgl",
+        fragmentTextureUnits: typeof gl.getParameter === "function"
+          ? sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0)
+          : 0,
+        textureCacheEntries: textureCache.size,
+        loadedTextures: loadedTextures,
+        failedTextures: failedTextures,
+        ibl: Object.assign({
+          requested: false,
+          active: false,
+          state: "not-requested",
+          reason: "",
+          radianceMipLevels: 0,
+        }, uniforms._gosxIBLDiagnostics || {}),
+        textureVariantContext: {
+          backend: textureVariantContext.backend,
+          uploadReady: textureVariantContext.uploadReady,
+          tokens: textureVariantContext.tokens.slice(),
+        },
+        retainedGeometry: webGLRetainedMeshBufferStats(),
+        postProcessing: postProcessor && typeof postProcessor.diagnostics === "function"
+          ? postProcessor.diagnostics()
+          : {
+            linearSceneInput: true,
+            hdrIntermediate: false,
+            intermediateFormat: "unallocated",
+            degraded: false,
+            degradationReason: "",
+          },
+      };
+    }
+
     return {
       kind: "webgl",
+      supportsRetainedGeometry: true,
       render: render,
       dispose: dispose,
+      diagnostics: diagnostics,
       type: "webgl-pbr",
+      textureVariantContext: textureVariantContext,
     };
   }
 

@@ -98,6 +98,36 @@ function extractMaterial(context, material) {
   return plain(call(context, `gltfExtractMaterial(${doc}, 0, null)`));
 }
 
+function extractTexturedMaterial(context) {
+  const doc = {
+    asset: { version: "2.0" },
+    images: [
+      { uri: "base.png" },
+      { uri: "normal.png" },
+      { uri: "metal-rough.png" },
+      { uri: "ao.png" },
+      { uri: "emissive.png" },
+    ],
+    textures: [
+      { source: 0 },
+      { source: 1 },
+      { source: 2 },
+      { source: 3 },
+      { source: 4 },
+    ],
+    materials: [{
+      pbrMetallicRoughness: {
+        baseColorTexture: { index: 0 },
+        metallicRoughnessTexture: { index: 2 },
+      },
+      normalTexture: { index: 1 },
+      occlusionTexture: { index: 3 },
+      emissiveTexture: { index: 4 },
+    }],
+  };
+  return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
+}
+
 // --- KHR_materials_* factor mapping ----------------------------------------
 
 test("gltf material without extensions keeps the base PBR mapping", () => {
@@ -111,6 +141,27 @@ test("gltf material without extensions keeps the base PBR mapping", () => {
   assert.equal(material.clearcoat, undefined);
   assert.equal(material.sheen, undefined);
   assert.equal(material.unlit, undefined);
+});
+
+test("glTF texture slots carry explicit color roles and transfer functions", () => {
+  const { context } = createLoaderContext();
+  const material = extractTexturedMaterial(context);
+
+  assert.equal(material.texture, "base.png");
+  assert.equal(material.normalMap, "normal.png");
+  assert.equal(material.roughnessMap, "metal-rough.png");
+  assert.equal(material.metalnessMap, "metal-rough.png");
+  assert.equal(material.occlusionMap, "ao.png");
+  assert.equal(material.emissiveMap, "emissive.png");
+
+  assert.deepEqual(material.textureDescriptors, {
+    baseColor: { uri: "base.png", role: "base-color", colorSpace: "srgb", channels: "rgba", view: "2d" },
+    normal: { uri: "normal.png", role: "normal", colorSpace: "linear", channels: "rgb", view: "2d" },
+    roughness: { uri: "metal-rough.png", role: "roughness", colorSpace: "linear", channels: "g", view: "2d" },
+    metalness: { uri: "metal-rough.png", role: "metalness", colorSpace: "linear", channels: "b", view: "2d" },
+    occlusion: { uri: "ao.png", role: "ambient-occlusion", colorSpace: "linear", channels: "r", view: "2d" },
+    emissive: { uri: "emissive.png", role: "emissive", colorSpace: "srgb", channels: "rgb", view: "2d" },
+  });
 });
 
 test("KHR_materials_clearcoat maps clearcoatFactor onto clearcoat", () => {
