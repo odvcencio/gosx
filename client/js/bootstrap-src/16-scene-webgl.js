@@ -6257,8 +6257,11 @@
     const attribs = pbrProgram.attributes;
     const uniforms = pbrProgram.uniforms;
     const lineProgram = typeof createSceneWebGLProgram === "function" ? createSceneWebGLProgram(gl) : null;
+    const surfaceProgram = typeof createSceneWebGLSurfaceProgram === "function"
+      ? createSceneWebGLSurfaceProgram(gl)
+      : null;
     const lineResources = lineProgram && typeof createSceneWebGLResources === "function"
-      ? createSceneWebGLResources(gl, lineProgram, null)
+      ? createSceneWebGLResources(gl, lineProgram, surfaceProgram)
       : null;
 
 	    // Skinned PBR program — compiled lazily on first skinned object.

@@ -586,6 +586,17 @@
     return entries;
   }
 
+  function sceneHTMLTextureSurfaceIsLive(htmlEntry) {
+    return Boolean(
+      htmlEntry &&
+      normalizeSceneHTMLMode(htmlEntry.mode, "dom") === "texture" &&
+      htmlEntry.textureReady &&
+      htmlEntry.textureRasterized &&
+      htmlEntry.textureRendererReady &&
+      !htmlEntry.textureOverBudget
+    );
+  }
+
   function renderSceneHTMLElement(element, htmlEntry, box, hidden, occluded) {
     const zIndex = Math.max(1, 1000 + Math.round(sceneNumber(htmlEntry.priority, 0) * 10) - Math.round(sceneNumber(htmlEntry.depth, 0) * 10));
     element.setAttribute("data-gosx-scene-html", htmlEntry.id || "");
@@ -607,7 +618,22 @@
     setAttrValue(element, "data-gosx-scene-html-texture-upload-pending-bytes", sceneNumber(htmlEntry.texturePendingUploadBytes, 0) > 0 ? sceneNumber(htmlEntry.texturePendingUploadBytes, 0) : "");
     setAttrValue(element, "data-gosx-scene-html-texture-manager", htmlEntry.textureManager || "");
     setAttrValue(element, "data-gosx-scene-html-texture-rasterized", htmlEntry.textureRasterized ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-texture-renderer-ready", htmlEntry.textureRendererReady ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-texture-upload-state", htmlEntry.textureUploadState || "idle");
+    setAttrValue(element, "data-gosx-scene-html-texture-upload-failed", htmlEntry.textureUploadFailed ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-texture-upload-bytes", sceneNumber(htmlEntry.textureUploadBytes, 0) > 0 ? sceneNumber(htmlEntry.textureUploadBytes, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-raster-width", sceneNumber(htmlEntry.textureRasterWidth, 0) > 0 ? sceneNumber(htmlEntry.textureRasterWidth, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-raster-height", sceneNumber(htmlEntry.textureRasterHeight, 0) > 0 ? sceneNumber(htmlEntry.textureRasterHeight, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-pixel-ratio", sceneNumber(htmlEntry.textureDevicePixelRatio, 0) > 0 ? sceneNumber(htmlEntry.textureDevicePixelRatio, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-style-sheets", sceneNumber(htmlEntry.textureStyleSheets, 0) > 0 ? sceneNumber(htmlEntry.textureStyleSheets, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-blocked-sheets", sceneNumber(htmlEntry.textureBlockedSheets, 0) > 0 ? sceneNumber(htmlEntry.textureBlockedSheets, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-font-faces", sceneNumber(htmlEntry.textureFontFaces, 0) > 0 ? sceneNumber(htmlEntry.textureFontFaces, 0) : "");
+    setAttrValue(element, "data-gosx-scene-html-texture-font-state", htmlEntry.textureFontState || "");
+    setAttrValue(
+      element,
+      "data-gosx-scene-html-texture-mirror",
+      sceneHTMLTextureSurfaceIsLive(htmlEntry) ? "true" : "false"
+    );
     setAttrValue(element, "data-gosx-scene-html-occlude", htmlEntry.occlude ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-occluded", occluded ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-visibility", hidden ? "hidden" : "visible");
@@ -671,8 +697,8 @@
       if (!element || typeof element.dispatchEvent !== "function") {
         continue;
       }
-      const width = Math.max(1, sceneNumber(htmlEntry.width, 1));
-      const height = Math.max(1, sceneNumber(htmlEntry.height, 1));
+      const width = Math.max(1, sceneNumber(htmlEntry.textureWidth, sceneNumber(htmlEntry.width, 1)));
+      const height = Math.max(1, sceneNumber(htmlEntry.textureHeight, sceneNumber(htmlEntry.height, 1)));
       const uvX = clamp01(sceneHTMLTextureNumber(detail.uvX, 0));
       const uvY = clamp01(sceneHTMLTextureNumber(detail.uvY, 0));
       const localX = uvX * width;
@@ -712,21 +738,54 @@
     return dispatched;
   }
 
+  const sceneHTMLTextureStates = new Set();
+
   function createSceneHTMLTextureState() {
-    return {
+    const state = {
       records: new Map(),
       revision: 0,
       disposed: 0,
       disposedBytes: 0,
       requestRender: null,
     };
+    sceneHTMLTextureStates.add(state);
+    return state;
   }
 
   function disposeSceneHTMLTextureState(state) {
     if (!state || !state.records) {
       return;
     }
+    sceneHTMLTextureStates.delete(state);
+    state.requestRender = null;
     state.records.clear();
+  }
+
+  function requestSceneHTMLTextureFontRefresh() {
+    sceneHTMLTextureStates.forEach(function(state) {
+      if (state && typeof state.requestRender === "function") {
+        state.requestRender("html-texture-fonts");
+      }
+    });
+  }
+
+  function settleSceneHTMLTextureUpload(state, textureKey, loaded) {
+    const key = typeof textureKey === "string" ? textureKey.trim() : "";
+    if (!state || !state.records || !key) {
+      return false;
+    }
+    let matched = false;
+    state.records.forEach(function(record) {
+      if (!record || record.textureKey !== key) {
+        return;
+      }
+      record.rendererReady = loaded === true;
+      record.uploadFailed = loaded !== true;
+      record.uploadState = loaded === true ? "ready" : "failed";
+      record.pendingUploadBytes = 0;
+      matched = true;
+    });
+    return matched;
   }
 
   function sceneHTMLTextureLifecycleID(html, index) {
@@ -739,6 +798,74 @@
     return "scene-html-" + index;
   }
 
+  function sceneHTMLTextureCurrentDevicePixelRatio() {
+    const dpr = sceneNumber(typeof window !== "undefined" ? window.devicePixelRatio : 1, 1);
+    return dpr > 0 ? Math.min(4, dpr) : 1;
+  }
+
+  const sceneHTMLTextureInvalidations = new Map();
+  let sceneHTMLTextureGlobalInvalidation = 0;
+
+  function sceneHTMLTextureInvalidationToken(id) {
+    const scoped = id ? sceneHTMLTextureInvalidations.get(id) : 0;
+    return sceneHTMLTextureGlobalInvalidation + (scoped || 0);
+  }
+
+  function invalidateSceneHTMLTexture(surfaceID) {
+    const key = typeof surfaceID === "string" ? surfaceID.trim() : "";
+    if (key) {
+      sceneHTMLTextureInvalidations.set(key, (sceneHTMLTextureInvalidations.get(key) || 0) + 1);
+    } else {
+      sceneHTMLTextureGlobalInvalidation += 1;
+    }
+    return true;
+  }
+
+  function publishSceneHTMLTextureAPI() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (window.__gosx_scene3d_html && window.__gosx_scene3d_html.schema === "gosx.scene3d.html.v1") {
+      return;
+    }
+    const api = {
+      schema: "gosx.scene3d.html.v1",
+      invalidate: invalidateSceneHTMLTexture,
+      invalidateStyles: function() {
+        sceneHTMLTextureInvalidateStyles();
+        return true;
+      },
+      styleState: function() {
+        return {
+          revision: sceneHTMLTextureStyleCache.revision,
+          styleSheets: sceneHTMLTextureStyleCache.sheetCount,
+          blockedSheets: sceneHTMLTextureStyleCache.blockedSheets,
+          fontFaces: sceneHTMLTextureStyleCache.fontFaces,
+          fontBytes: sceneHTMLTextureStyleCache.fontBytes,
+          fontState: sceneHTMLTextureStyleCache.fontState,
+        };
+      },
+    };
+    try {
+      Object.defineProperty(window, "__gosx_scene3d_html", { configurable: true, value: api });
+    } catch (_err) {
+      window.__gosx_scene3d_html = api;
+    }
+  }
+
+  function applySceneHTMLTextureRasterFields(html, record) {
+    if (!html || !record) {
+      return;
+    }
+    html.textureRasterWidth = record.rasterWidth || 0;
+    html.textureRasterHeight = record.rasterHeight || 0;
+    html.textureDevicePixelRatio = record.devicePixelRatio || 0;
+    html.textureStyleSheets = record.styleSheets || 0;
+    html.textureBlockedSheets = record.blockedSheets || 0;
+    html.textureFontFaces = record.fontFaces || 0;
+    html.textureFontState = record.fontState || "";
+  }
+
   function sceneHTMLTextureLifecycleSignature(html, record) {
     const textureKey = record && record.textureKey === (html && html.textureKey) && record.sourceKey
       ? record.sourceKey
@@ -749,6 +876,9 @@
       sceneNumber(html && html.textureHeight, 0),
       sceneNumber(html && html.textureBytes, 0),
       sceneNumber(html && html.textureMaxBytes, 0),
+      sceneHTMLTextureCurrentDevicePixelRatio().toFixed(3),
+      sceneHTMLTextureStyleCache.revision,
+      sceneHTMLTextureInvalidationToken(record && record.id),
       html && html.html ? html.html : "",
     ].join("|");
   }
@@ -758,6 +888,7 @@
     if (!state || !state.records) {
       return lifecycle;
     }
+    publishSceneHTMLTextureAPI();
     const active = new Set();
     for (let index = 0; index < entries.length; index += 1) {
       const html = entries[index] && entries[index].html;
@@ -768,7 +899,18 @@
       active.add(id);
       let record = state.records.get(id);
       if (!record) {
-        record = { id, revision: 0, signature: "", bytes: 0, dirty: false, dirtyBytes: 0, pendingUploadBytes: 0 };
+        record = {
+          id,
+          revision: 0,
+          signature: "",
+          bytes: 0,
+          dirty: false,
+          dirtyBytes: 0,
+          pendingUploadBytes: 0,
+          rendererReady: false,
+          uploadFailed: false,
+          uploadState: "idle",
+        };
         state.records.set(id, record);
       }
       const signature = sceneHTMLTextureLifecycleSignature(html, record);
@@ -783,10 +925,12 @@
       }
       record.bytes = bytes;
       record.ready = Boolean(html.textureReady && !html.textureOverBudget);
-      if (record.ready) {
+      if (record.ready && !record.dirty) {
         record.dirty = false;
         record.dirtyBytes = 0;
-        record.pendingUploadBytes = 0;
+        record.pendingUploadBytes = !record.rendererReady && !record.uploadFailed && record.rasterized
+          ? Math.max(0, Math.floor(sceneNumber(record.uploadBytes, 0)))
+          : 0;
       }
       html.textureRevision = record.revision;
       html.textureDirty = record.dirty;
@@ -794,7 +938,11 @@
       html.texturePendingUploadBytes = record.pendingUploadBytes;
       html.textureManager = record.manager || "";
       html.textureRasterized = Boolean(record.rasterized);
+      html.textureRendererReady = Boolean(record.rendererReady);
+      html.textureUploadState = record.uploadState || "idle";
+      html.textureUploadFailed = Boolean(record.uploadFailed);
       html.textureUploadBytes = record.uploadBytes || 0;
+      applySceneHTMLTextureRasterFields(html, record);
       if (record.dirty) {
         lifecycle.dirty += 1;
         lifecycle.dirtyBytes += record.dirtyBytes;
@@ -816,7 +964,21 @@
   }
 
   function sceneHTMLTextureStats(entries, lifecycle) {
-    const stats = { bytes: 0, capBytes: 0, overBudget: 0, ready: 0, count: 0, dirty: 0, dirtyBytes: 0, pendingUploadBytes: 0, disposed: 0, disposedBytes: 0, revision: 0 };
+    const stats = {
+      bytes: 0,
+      capBytes: 0,
+      overBudget: 0,
+      ready: 0,
+      uploaded: 0,
+      uploadFailed: 0,
+      count: 0,
+      dirty: 0,
+      dirtyBytes: 0,
+      pendingUploadBytes: 0,
+      disposed: 0,
+      disposedBytes: 0,
+      revision: 0,
+    };
     for (const entry of entries || []) {
       const html = entry && entry.html;
       if (!html || normalizeSceneHTMLMode(html.mode, "dom") !== "texture") {
@@ -831,6 +993,12 @@
       if (html.textureReady) {
         stats.ready += 1;
       }
+      if (html.textureRendererReady) {
+        stats.uploaded += 1;
+      }
+      if (html.textureUploadFailed) {
+        stats.uploadFailed += 1;
+      }
     }
     if (lifecycle) {
       stats.dirty = Math.max(0, Math.floor(sceneNumber(lifecycle.dirty, 0)));
@@ -843,28 +1011,372 @@
     return stats;
   }
 
-  function sceneHTMLTextureDataURL(html) {
-    const width = Math.max(1, Math.floor(sceneNumber(html && html.textureWidth, 512)));
-    const height = Math.max(1, Math.floor(sceneNumber(html && html.textureHeight, 320)));
+  const sceneHTMLTextureStyleCache = {
+    revision: 0,
+    css: "",
+    sheetCount: 0,
+    blockedSheets: 0,
+    fontCSS: "",
+    fontFaces: 0,
+    fontBytes: 0,
+    fontState: "idle",
+    collected: false,
+  };
+  const SCENE_HTML_TEXTURE_FONT_BYTE_CAP = 4 * 1024 * 1024;
+  const SCENE_HTML_TEXTURE_INHERITED = [
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "font-variant",
+    "font-feature-settings",
+    "line-height",
+    "letter-spacing",
+    "word-spacing",
+    "color",
+    "text-align",
+    "text-transform",
+    "direction",
+    "-webkit-font-smoothing",
+  ];
+  const SCENE_HTML_TEXTURE_CUSTOM_PROPERTY_CAP = 256;
+  const SCENE_HTML_TEXTURE_SCOPE_ATTR = "data-gosx-s";
+
+  function sceneHTMLTextureCSSOMAvailable() {
+    return Boolean(
+      typeof document !== "undefined" &&
+      document &&
+      typeof document.styleSheets === "object" &&
+      document.styleSheets
+    );
+  }
+
+  function sceneHTMLTextureCollectDocumentCSS() {
+    if (!sceneHTMLTextureCSSOMAvailable()) {
+      return { css: "", sheets: 0, blocked: 0 };
+    }
+    const parts = [];
+    let sheets = 0;
+    let blocked = 0;
+    for (let index = 0; index < document.styleSheets.length; index += 1) {
+      let rules = null;
+      try {
+        rules = document.styleSheets[index] && document.styleSheets[index].cssRules;
+      } catch (_err) {
+        rules = null;
+      }
+      if (!rules) {
+        blocked += 1;
+        continue;
+      }
+      sheets += 1;
+      for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex += 1) {
+        const rule = rules[ruleIndex];
+        if (!rule || typeof rule.cssText !== "string" || rule.type === 5) {
+          continue;
+        }
+        parts.push(rule.cssText);
+      }
+    }
+    return { css: parts.join("\n"), sheets, blocked };
+  }
+
+  function sceneHTMLTextureEnsureDocumentCSS() {
+    if (sceneHTMLTextureStyleCache.collected) {
+      return sceneHTMLTextureStyleCache;
+    }
+    const collected = sceneHTMLTextureCollectDocumentCSS();
+    sceneHTMLTextureStyleCache.css = collected.css;
+    sceneHTMLTextureStyleCache.sheetCount = collected.sheets;
+    sceneHTMLTextureStyleCache.blockedSheets = collected.blocked;
+    sceneHTMLTextureStyleCache.collected = true;
+    return sceneHTMLTextureStyleCache;
+  }
+
+  function sceneHTMLTextureInvalidateStyles() {
+    sceneHTMLTextureStyleCache.collected = false;
+    sceneHTMLTextureStyleCache.revision += 1;
+  }
+
+  function sceneHTMLTextureFontURLs(cssText) {
+    const urls = [];
+    const pattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"\s]+))\s*\)/g;
+    let match = pattern.exec(cssText);
+    while (match) {
+      const url = match[1] || match[2] || match[3] || "";
+      if (url && url.indexOf("data:") !== 0) {
+        urls.push(url);
+      }
+      match = pattern.exec(cssText);
+    }
+    return urls;
+  }
+
+  function sceneHTMLTextureBase64(buffer) {
+    if (typeof btoa !== "function") {
+      return "";
+    }
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 1) {
+      binary += String.fromCharCode(bytes[index]);
+    }
+    return btoa(binary);
+  }
+
+  function sceneHTMLTextureFontMime(url) {
+    const clean = String(url).split("?")[0].split("#")[0].toLowerCase();
+    if (clean.endsWith(".woff2")) return "font/woff2";
+    if (clean.endsWith(".woff")) return "font/woff";
+    if (clean.endsWith(".otf")) return "font/otf";
+    if (clean.endsWith(".ttf")) return "font/ttf";
+    return "application/octet-stream";
+  }
+
+  function sceneHTMLTextureInlineFonts() {
+    if (sceneHTMLTextureStyleCache.fontState !== "idle") {
+      return;
+    }
+    if (!sceneHTMLTextureCSSOMAvailable() || typeof fetch !== "function" || typeof btoa !== "function") {
+      sceneHTMLTextureStyleCache.fontState = "unavailable";
+      return;
+    }
+    const faces = [];
+    for (let index = 0; index < document.styleSheets.length; index += 1) {
+      let rules = null;
+      try {
+        rules = document.styleSheets[index] && document.styleSheets[index].cssRules;
+      } catch (_err) {
+        rules = null;
+      }
+      if (!rules) continue;
+      for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex += 1) {
+        const rule = rules[ruleIndex];
+        if (rule && rule.type === 5 && typeof rule.cssText === "string") {
+          faces.push(rule.cssText);
+        }
+      }
+    }
+    if (faces.length === 0) {
+      sceneHTMLTextureStyleCache.fontState = "none";
+      return;
+    }
+    sceneHTMLTextureStyleCache.fontState = "loading";
+    let budget = SCENE_HTML_TEXTURE_FONT_BYTE_CAP;
+    const inlined = [];
+    const pending = faces.map(function(cssText) {
+      const urls = sceneHTMLTextureFontURLs(cssText);
+      if (urls.length === 0) {
+        return Promise.resolve();
+      }
+      const url = urls[0];
+      return fetch(url, { credentials: "same-origin" }).then(function(response) {
+        return response && response.ok ? response.arrayBuffer() : null;
+      }).then(function(buffer) {
+        if (!buffer || buffer.byteLength > budget) {
+          return;
+        }
+        const base64 = sceneHTMLTextureBase64(buffer);
+        if (!base64) {
+          return;
+        }
+        budget -= buffer.byteLength;
+        sceneHTMLTextureStyleCache.fontBytes += buffer.byteLength;
+        sceneHTMLTextureStyleCache.fontFaces += 1;
+        const dataURL = "url(data:" + sceneHTMLTextureFontMime(url) + ";base64," + base64 + ")";
+        inlined.push(cssText.replace(/src\s*:[^;}]*/i, "src: " + dataURL));
+      }).catch(function() {
+        // A failed font is an observable fallback, not a surface failure.
+      });
+    });
+    Promise.all(pending).then(function() {
+      sceneHTMLTextureStyleCache.fontCSS = inlined.join("\n");
+      sceneHTMLTextureStyleCache.fontState = inlined.length > 0 ? "ready" : "unavailable";
+      sceneHTMLTextureStyleCache.revision += 1;
+      requestSceneHTMLTextureFontRefresh();
+    });
+  }
+
+  function sceneHTMLTextureInheritedStyle(element) {
+    if (!element || typeof window === "undefined" || typeof window.getComputedStyle !== "function") {
+      return "";
+    }
+    let computed = null;
+    try {
+      computed = window.getComputedStyle(element);
+    } catch (_err) {
+      computed = null;
+    }
+    if (!computed || typeof computed.getPropertyValue !== "function") {
+      return "";
+    }
+    const declarations = [];
+    for (const property of SCENE_HTML_TEXTURE_INHERITED) {
+      const value = computed.getPropertyValue(property);
+      if (value) {
+        declarations.push(property + ":" + value);
+      }
+    }
+    let customCount = 0;
+    const length = Math.max(0, Math.floor(sceneNumber(computed.length, 0)));
+    for (let index = 0; index < length && customCount < SCENE_HTML_TEXTURE_CUSTOM_PROPERTY_CAP; index += 1) {
+      const name = typeof computed.item === "function" ? computed.item(index) : "";
+      if (typeof name !== "string" || name.indexOf("--") !== 0) {
+        continue;
+      }
+      const value = computed.getPropertyValue(name);
+      if (value) {
+        declarations.push(name + ":" + value);
+        customCount += 1;
+      }
+    }
+    return declarations.join(";");
+  }
+
+  function sceneHTMLTextureScopeChain(element) {
+    const scopes = [];
+    const seen = new Set();
+    let node = element;
+    while (node && typeof node.getAttribute === "function") {
+      const value = node.getAttribute(SCENE_HTML_TEXTURE_SCOPE_ATTR);
+      if (value && !seen.has(value)) {
+        seen.add(value);
+        scopes.unshift(value);
+      }
+      node = node.parentElement;
+    }
+    return scopes;
+  }
+
+  function sceneHTMLTextureEscapeAttr(value) {
+    return String(value)
+      .split("&").join("&amp;")
+      .split("<").join("&lt;")
+      .split('"').join("&quot;");
+  }
+
+  function sceneHTMLTextureWrapInScopes(content, scopes) {
+    let open = "";
+    let close = "";
+    for (const scope of scopes) {
+      open += '<div xmlns="http://www.w3.org/1999/xhtml" ' +
+        SCENE_HTML_TEXTURE_SCOPE_ATTR + '="' + sceneHTMLTextureEscapeAttr(scope) +
+        '" style="display:contents">';
+      close += "</div>";
+    }
+    return open + content + close;
+  }
+
+  function sceneHTMLTextureSerializeContent(html, element, width, height) {
+    const inheritedStyle = sceneHTMLTextureInheritedStyle(element);
+    const resetStyle = [
+      "box-sizing:border-box",
+      "position:static",
+      "inset:auto",
+      "margin:0",
+      "transform:none",
+      "opacity:1",
+      "visibility:visible",
+      "clip-path:none",
+      "contain:none",
+      "width:" + width + "px",
+      "height:" + height + "px",
+      "min-height:" + height + "px",
+    ].join(";");
+    if (
+      element &&
+      typeof element.cloneNode === "function" &&
+      typeof XMLSerializer === "function" &&
+      typeof document !== "undefined"
+    ) {
+      try {
+        const clone = element.cloneNode(true);
+        if (typeof clone.removeAttribute === "function") {
+          clone.removeAttribute("data-gosx-scene-html-visibility");
+          clone.removeAttribute("data-gosx-scene-html-texture-mirror");
+          clone.removeAttribute("aria-hidden");
+        }
+        if (clone.querySelectorAll) {
+          const scripts = clone.querySelectorAll("script");
+          for (let index = 0; index < scripts.length; index += 1) {
+            if (scripts[index] && scripts[index].parentNode) {
+              scripts[index].parentNode.removeChild(scripts[index]);
+            }
+          }
+        }
+        if (typeof clone.setAttribute === "function") {
+          clone.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+          clone.setAttribute("style", (inheritedStyle ? inheritedStyle + ";" : "") + resetStyle);
+        }
+        const serialized = new XMLSerializer().serializeToString(clone);
+        if (serialized) {
+          return serialized;
+        }
+      } catch (_err) {
+        // Fall back to the authored markup.
+      }
+    }
     const markup = typeof html.html === "string" ? html.html : "";
     if (!markup.trim()) {
       return "";
     }
-    const bodyStyle = [
-      "box-sizing:border-box",
-      "width:" + width + "px",
-      "min-height:" + height + "px",
-      "font:14px system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif",
-      "color:#fff",
-    ].join(";");
+    return '<div xmlns="http://www.w3.org/1999/xhtml" style="' +
+      (inheritedStyle ? inheritedStyle + ";" : "") + resetStyle + '">' + markup + "</div>";
+  }
+
+  function sceneHTMLTextureDevicePixelRatio(html, width, height) {
+    let dpr = sceneNumber(html && html.textureDevicePixelRatio, 0);
+    if (dpr <= 0) {
+      dpr = sceneHTMLTextureCurrentDevicePixelRatio();
+    }
+    dpr = Math.min(4, dpr > 0 ? dpr : 1);
+    const maxPixels = Math.max(0, Math.floor(sceneNumber(html && html.maxTexturePixels, 0)));
+    if (maxPixels > 0) {
+      dpr = Math.min(dpr, Math.sqrt(maxPixels / Math.max(1, width * height)));
+    }
+    return Math.max(0.5, dpr);
+  }
+
+  function sceneHTMLTextureDataURL(html, element) {
+    const width = Math.max(1, Math.floor(sceneNumber(html && html.textureWidth, 512)));
+    const height = Math.max(1, Math.floor(sceneNumber(html && html.textureHeight, 320)));
+    const content = sceneHTMLTextureSerializeContent(html, element, width, height);
+    if (!content) {
+      return null;
+    }
+    const styles = sceneHTMLTextureEnsureDocumentCSS();
+    sceneHTMLTextureInlineFonts();
+    const dpr = sceneHTMLTextureDevicePixelRatio(html, width, height);
+    const rasterWidth = Math.max(1, Math.round(width * dpr));
+    const rasterHeight = Math.max(1, Math.round(height * dpr));
+    const css = [sceneHTMLTextureStyleCache.fontCSS, styles.css].filter(Boolean).join("\n");
+    const styleBlock = css
+      ? '<style xmlns="http://www.w3.org/1999/xhtml" type="text/css"><![CDATA[' +
+        css.split("]]>").join("]]&gt;") +
+        "]]></style>"
+      : "";
     const svg = [
-      '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + " " + height + '">',
+      '<svg xmlns="http://www.w3.org/2000/svg" width="' + rasterWidth + '" height="' + rasterHeight +
+        '" viewBox="0 0 ' + width + " " + height + '">',
       '<foreignObject x="0" y="0" width="100%" height="100%">',
-      '<div xmlns="http://www.w3.org/1999/xhtml" style="' + bodyStyle + '">',
-      markup,
+      '<div xmlns="http://www.w3.org/1999/xhtml" style="box-sizing:border-box;width:' + width +
+        "px;height:" + height + 'px">',
+      styleBlock,
+      sceneHTMLTextureWrapInScopes(content, sceneHTMLTextureScopeChain(element)),
       "</div></foreignObject></svg>",
     ].join("");
-    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    return {
+      url: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg),
+      width,
+      height,
+      rasterWidth,
+      rasterHeight,
+      devicePixelRatio: dpr,
+      sheetCount: styles.sheetCount,
+      blockedSheets: styles.blockedSheets,
+      fontFaces: sceneHTMLTextureStyleCache.fontFaces,
+      fontState: sceneHTMLTextureStyleCache.fontState,
+    };
   }
 
   function rasterizeSceneHTMLTextureEntry(textureState, html, element, index) {
@@ -876,28 +1388,48 @@
     if (!record || html.textureOverBudget || !record.dirty) {
       return false;
     }
-    const textureKey = sceneHTMLTextureDataURL(html);
-    if (!textureKey) {
+    const raster = sceneHTMLTextureDataURL(html, element);
+    if (!raster || !raster.url) {
       record.manager = "unavailable";
       return false;
     }
-    record.sourceKey = html.textureKey || ("gosx-html://" + id);
+    const textureKey = raster.url;
+    const textureChanged = record.textureKey !== textureKey;
+    record.sourceKey = record.textureKey === html.textureKey && record.sourceKey
+      ? record.sourceKey
+      : (html.textureKey || ("gosx-html://" + id));
     record.textureKey = textureKey;
     record.manager = "svg-foreignobject";
     record.rasterized = true;
     record.ready = true;
     record.dirty = false;
     record.dirtyBytes = 0;
-    record.pendingUploadBytes = 0;
-    record.uploadBytes = Math.max(0, Math.floor(sceneNumber(html.textureBytes, 0)));
+    record.uploadBytes = raster.rasterWidth * raster.rasterHeight * 4;
+    if (textureChanged) {
+      record.rendererReady = false;
+      record.uploadFailed = false;
+      record.uploadState = "pending";
+    }
+    record.pendingUploadBytes = record.rendererReady || record.uploadFailed ? 0 : record.uploadBytes;
+    record.rasterWidth = raster.rasterWidth;
+    record.rasterHeight = raster.rasterHeight;
+    record.devicePixelRatio = raster.devicePixelRatio;
+    record.styleSheets = raster.sheetCount;
+    record.blockedSheets = raster.blockedSheets;
+    record.fontFaces = raster.fontFaces;
+    record.fontState = raster.fontState;
     html.textureKey = textureKey;
     html.textureReady = true;
     html.textureManager = record.manager;
     html.textureRasterized = true;
+    html.textureRendererReady = Boolean(record.rendererReady);
+    html.textureUploadState = record.uploadState;
+    html.textureUploadFailed = Boolean(record.uploadFailed);
     html.textureDirty = false;
     html.textureDirtyBytes = 0;
-    html.texturePendingUploadBytes = 0;
+    html.texturePendingUploadBytes = record.pendingUploadBytes;
     html.textureUploadBytes = record.uploadBytes;
+    applySceneHTMLTextureRasterFields(html, record);
     if (html.fallbackReason === "html-texture-manager-unavailable" || !html.fallbackReason) {
       html.fallbackReason = "html-texture-accessibility-mirror";
     }
@@ -928,10 +1460,14 @@
       entry.textureReady = true;
       entry.textureManager = record.manager || "";
       entry.textureRasterized = Boolean(record.rasterized);
+      entry.textureRendererReady = Boolean(record.rendererReady);
+      entry.textureUploadState = record.uploadState || "idle";
+      entry.textureUploadFailed = Boolean(record.uploadFailed);
       entry.textureUploadBytes = record.uploadBytes || 0;
+      applySceneHTMLTextureRasterFields(entry, record);
       entry.textureDirty = false;
       entry.textureDirtyBytes = 0;
-      entry.texturePendingUploadBytes = 0;
+      entry.texturePendingUploadBytes = record.pendingUploadBytes;
       if (entry.fallbackReason === "html-texture-manager-unavailable" || !entry.fallbackReason) {
         entry.fallbackReason = "html-texture-accessibility-mirror";
       }
@@ -942,6 +1478,8 @@
     setAttrValue(layer, "aria-hidden", entryCount > 0 ? "false" : "true");
     setAttrValue(layer, "data-gosx-scene-html-texture-count", textureStats.count > 0 ? textureStats.count : "");
     setAttrValue(layer, "data-gosx-scene-html-texture-ready", textureStats.ready > 0 ? textureStats.ready : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-uploaded", textureStats.uploaded > 0 ? textureStats.uploaded : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-upload-failed", textureStats.uploadFailed > 0 ? textureStats.uploadFailed : "");
     setAttrValue(layer, "data-gosx-scene-html-texture-bytes", textureStats.bytes > 0 ? textureStats.bytes : "");
     setAttrValue(layer, "data-gosx-scene-html-texture-cap-bytes", textureStats.capBytes > 0 ? textureStats.capBytes : "");
     setAttrValue(layer, "data-gosx-scene-html-texture-over-budget", textureStats.overBudget > 0 ? textureStats.overBudget : "");

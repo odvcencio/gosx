@@ -2018,6 +2018,14 @@
       '  opacity: 0;',
       '  visibility: hidden;',
       '}',
+      // A live texture surface already draws this content in the scene.
+      // Clip paint without removing layout, computed styles, accessibility,
+      // or the copy/paste surface the rasterizer and assistive tech consume.
+      '[data-gosx-scene-html][data-gosx-scene-html-texture-mirror="true"] {',
+      '  clip-path: inset(50%);',
+      '  pointer-events: none;',
+      '  transition: none;',
+      '}',
       '[data-gosx-scene-html][data-gosx-scene-html-occluded="true"] {',
       '  --gosx-scene-html-opacity: 0.42;',
       '}',
@@ -2027,7 +2035,9 @@
       '[data-gosx-scene3d-mounted="true"][data-gosx-scene3d-reduced-motion="true"] [data-gosx-scene-html] {',
       '  transition: none;',
       '}',
-    ].join("\\n");
+    // This must be a real newline. A literal backslash-n makes CSS parse the
+    // following selector as a nonexistent <n> type selector.
+    ].join("\n");
     document.head.appendChild(style);
   }
 

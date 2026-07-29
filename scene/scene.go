@@ -980,6 +980,10 @@ const (
 )
 
 // HTML lowers into a DOM-backed Scene3D overlay projected from world space.
+//
+// Texture-mode HTML draws inside the scene's post-processing chain, so it
+// receives the same tonemap, bloom, and grade as the geometry it is mounted
+// on. UI chrome that must remain outside post-processing should use HTMLDOM.
 type HTML struct {
 	ID               string
 	Target           string
@@ -995,35 +999,46 @@ type HTML struct {
 	SurfaceWidth     float64
 	SurfaceHeight    float64
 	Position         Vector3
-	Priority         float64
-	Shift            Vector3
-	DriftSpeed       float64
-	DriftPhase       float64
-	Width            float64
-	Height           float64
-	Scale            float64
-	Opacity          float64
-	OffsetX          float64
-	OffsetY          float64
-	AnchorX          float64
-	AnchorY          float64
-	Occlude          bool
-	PointerEvents    string
-	Transition       Transition
-	Live             []string
+	// Rotation orients a texture surface in world space, in radians, applied
+	// X then Y then Z. The quad starts in the XZ plane; Rotation.X = -math.Pi/2
+	// stands it upright. DOM-mode overlays ignore this field.
+	Rotation Euler
+	// Spin adds constant angular velocity in radians per second.
+	Spin          Euler
+	Priority      float64
+	Shift         Vector3
+	DriftSpeed    float64
+	DriftPhase    float64
+	Width         float64
+	Height        float64
+	Scale         float64
+	Opacity       float64
+	OffsetX       float64
+	OffsetY       float64
+	AnchorX       float64
+	AnchorY       float64
+	Occlude       bool
+	PointerEvents string
+	Transition    Transition
+	Live          []string
 }
 
 // HTMLSurface declares a texture-mode HTML surface. Until the native texture
 // manager lands, it lowers as an explicit DOM overlay fallback with mode kept
 // in SceneIR so runtimes and tooling can diagnose the degradation.
 type HTMLSurface struct {
-	ID               string
-	Target           string
-	Markup           string
-	ClassName        string
-	Fallback         string
-	FallbackReason   string
-	Position         Vector3
+	ID             string
+	Target         string
+	Markup         string
+	ClassName      string
+	Fallback       string
+	FallbackReason string
+	Position       Vector3
+	// Rotation orients the surface in world space. The quad starts in the XZ
+	// plane, so Rotation.X = -math.Pi/2 makes an upright wall panel.
+	Rotation Euler
+	// Spin adds constant angular velocity in radians per second.
+	Spin             Euler
 	SurfaceWidth     float64
 	SurfaceHeight    float64
 	Width            float64
@@ -2295,6 +2310,8 @@ func htmlSurfaceFallback(surface HTMLSurface) HTML {
 		SurfaceWidth:     surfaceWidth,
 		SurfaceHeight:    surfaceHeight,
 		Position:         surface.Position,
+		Rotation:         surface.Rotation,
+		Spin:             surface.Spin,
 		Priority:         surface.Priority,
 		Width:            surfaceWidth,
 		Height:           surfaceHeight,
@@ -3786,6 +3803,12 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 		X:                position.X,
 		Y:                position.Y,
 		Z:                position.Z,
+		RotationX:        item.html.Rotation.X,
+		RotationY:        item.html.Rotation.Y,
+		RotationZ:        item.html.Rotation.Z,
+		SpinX:            item.html.Spin.X,
+		SpinY:            item.html.Spin.Y,
+		SpinZ:            item.html.Spin.Z,
 		Priority:         item.html.Priority,
 		ShiftX:           item.html.Shift.X,
 		ShiftY:           item.html.Shift.Y,

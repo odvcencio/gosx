@@ -2076,6 +2076,8 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 				Markup:         `<div>Panel</div>`,
 				Fallback:       `<div>Panel fallback</div>`,
 				FallbackReason: "accessible-dom-fallback",
+				Rotation:       Euler{X: -math.Pi / 2, Y: 0.25},
+				Spin:           Euler{Y: 0.5},
 				Width:          512,
 				Height:         320,
 			},
@@ -2111,6 +2113,11 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	if math.Abs(ir.HTML[1].Width-1.8) > 1e-9 || math.Abs(ir.HTML[1].Height-1.125) > 1e-9 {
 		t.Fatalf("expected html surface fallback world size, got (%#v,%#v)", ir.HTML[1].Width, ir.HTML[1].Height)
 	}
+	if math.Abs(ir.HTML[1].RotationX+math.Pi/2) > 1e-9 ||
+		math.Abs(ir.HTML[1].RotationY-0.25) > 1e-9 ||
+		math.Abs(ir.HTML[1].SpinY-0.5) > 1e-9 {
+		t.Fatalf("expected html surface rotation and spin, got %#v", ir.HTML[1])
+	}
 
 	legacy := props.LegacyProps()
 	sceneValue, ok := legacy["scene"].(map[string]any)
@@ -2136,6 +2143,12 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	if got := html[1]["textureWidth"]; got != 512 {
 		t.Fatalf("expected html surface texture width in legacy props, got %#v", got)
 	}
+	if got, ok := html[1]["rotationX"].(float64); !ok || math.Abs(got+math.Pi/2) > 1e-9 {
+		t.Fatalf("expected html surface rotationX in legacy props, got %#v", got)
+	}
+	if got := html[1]["spinY"]; got != 0.5 {
+		t.Fatalf("expected html surface spinY in legacy props, got %#v", got)
+	}
 
 	canonical := props.CanonicalIR()
 	var htmlNodes int
@@ -2147,8 +2160,15 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 		if node.ID == "inspect-card" && node.HTML.Target != "hero" {
 			t.Fatalf("expected canonical html target preservation, got %#v", node.HTML)
 		}
-		if node.ID == "panel" && (node.HTML.Target != "hero" || node.HTML.Fallback != `<div>Panel fallback</div>` || node.HTML.TextureWidth != 512) {
-			t.Fatalf("expected canonical html surface fallback metadata, got %#v", node.HTML)
+		if node.ID == "panel" {
+			if node.HTML.Target != "hero" || node.HTML.Fallback != `<div>Panel fallback</div>` || node.HTML.TextureWidth != 512 {
+				t.Fatalf("expected canonical html surface fallback metadata, got %#v", node.HTML)
+			}
+			if math.Abs(node.Transform.RotationX+math.Pi/2) > 1e-9 ||
+				math.Abs(node.Transform.RotationY-0.25) > 1e-9 ||
+				math.Abs(node.Transform.SpinY-0.5) > 1e-9 {
+				t.Fatalf("expected canonical html transform, got %#v", node.Transform)
+			}
 		}
 	}
 	if htmlNodes != 2 {

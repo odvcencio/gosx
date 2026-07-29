@@ -569,19 +569,42 @@
     const record = { texture, src: key, loaded: false };
     resources.textureCache.set(key, record);
     if (!texture) {
+      record.failed = true;
+      if (typeof notifySceneTextureLoaded === "function") {
+        notifySceneTextureLoaded(key, false);
+      }
       return record;
     }
     initializeSceneWebGLTexture(gl, resources, texture);
     const image = createSceneWebGLImage();
     if (!image) {
+      record.failed = true;
+      if (typeof notifySceneTextureLoaded === "function") {
+        notifySceneTextureLoaded(key, false);
+      }
       return record;
     }
     image.onload = function() {
-      uploadSceneWebGLTextureImage(gl, resources, texture, image);
-      record.loaded = true;
+      try {
+        uploadSceneWebGLTextureImage(gl, resources, texture, image);
+        record.loaded = true;
+        if (typeof notifySceneTextureLoaded === "function") {
+          notifySceneTextureLoaded(key, true);
+        }
+      } catch (error) {
+        record.failed = true;
+        record.error = error && error.message ? error.message : String(error);
+        if (typeof notifySceneTextureLoaded === "function") {
+          notifySceneTextureLoaded(key, false);
+        }
+      }
     };
     image.onerror = function() {
       record.failed = true;
+      record.error = "image decode failed";
+      if (typeof notifySceneTextureLoaded === "function") {
+        notifySceneTextureLoaded(key, false);
+      }
     };
     image.src = key;
     return record;

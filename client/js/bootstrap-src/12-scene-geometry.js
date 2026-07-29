@@ -47,9 +47,22 @@
     return indexSegments(boxVertices(object.width, object.height, object.depth), boxEdgePairs);
   }
 
+  // boxVertices packs the -Z face first, so at height zero slice(0, 4)
+  // collapses to one edge. These indices walk the actual XZ corner ring.
+  const planeQuadIndices = [0, 1, 5, 4];
+
+  function planeQuadVertices(width, depth) {
+    const vertices = boxVertices(width, 0, depth);
+    return [
+      vertices[planeQuadIndices[0]],
+      vertices[planeQuadIndices[1]],
+      vertices[planeQuadIndices[2]],
+      vertices[planeQuadIndices[3]],
+    ];
+  }
+
   function planeSegments(object) {
-    const vertices = boxVertices(object.width, 0, object.depth);
-    return indexSegments(vertices.slice(0, 4), [
+    return indexSegments(planeQuadVertices(object.width, object.depth), [
       [0, 1], [1, 2], [2, 3], [3, 0],
     ]);
   }
@@ -298,8 +311,7 @@
     // and 0, 3, 2. That winds both triangles counter-clockwise seen from above,
     // which is where the +y normal points. generateInstancedPlaneGeometry in
     // 16c-scene-shared-pbr.js measures +1.000000 for the same quad.
-    const box = boxVertices(object.width, 0, object.depth);
-    const vertices = [box[0], box[1], box[5], box[4]];
+    const vertices = planeQuadVertices(object.width, object.depth);
     const out = scenePrimitiveMeshBuilder();
     const normal = { x: 0, y: 1, z: 0 };
     scenePushMeshTriangle(out, vertices[0], vertices[2], vertices[1], normal, { x: 0, y: 1 }, { x: 1, y: 0 }, { x: 1, y: 1 });
@@ -632,11 +644,10 @@
   }
 
   function scenePlaneLocalCorners(object) {
-    return boxVertices(
+    return planeQuadVertices(
       sceneNumber(object && object.width, 1),
-      0,
       sceneNumber(object && object.depth, sceneNumber(object && object.height, 1)),
-    ).slice(0, 4);
+    );
   }
 
   // Module-level scratch for scenePlaneSurfaceCorners. Four stable corner
