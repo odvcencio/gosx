@@ -36,6 +36,9 @@ func TestBlackglassCoastStaysWithinDeclaredBudget(t *testing.T) {
 	if props.MaxFPS != 60 || props.MaxDevicePixelRatio != 1.5 || props.MaxPixels != blackglassCoastMaxPixels {
 		t.Errorf("render budget = fps %.0f, dpr %.1f, pixels %d", props.MaxFPS, props.MaxDevicePixelRatio, props.MaxPixels)
 	}
+	if props.Stats == nil || !*props.Stats {
+		t.Error("live renderer telemetry must be enabled")
+	}
 	if props.AdaptiveTargetFrameMS != 16.7 || props.AdaptiveQuality == nil || !*props.AdaptiveQuality {
 		t.Error("adaptive 16.7ms quality governor must be enabled")
 	}
