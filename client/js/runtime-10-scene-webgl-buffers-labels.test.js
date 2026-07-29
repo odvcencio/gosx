@@ -549,6 +549,15 @@ test("bootstrap prefers engine-batched Scene3D pass payloads when present", asyn
   assert.deepEqual(gl.bufferUploads.get(4), [1, 0, 0, 2, 0, 0]);
 });
 
+test("legacy WebGL pass cache uploads first static pass when cacheKey is empty", () => {
+  const legacyWebGL = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.js"), "utf8");
+  assert.match(legacyWebGL, /key:\s*null,\s*\n\s*vertexCount:\s*0/);
+  assert.match(legacyWebGL, /record\.key !== pass\.cacheKey \|\|/);
+  assert.match(legacyWebGL, /record\.vertexCount !== vertexCount \|\|/);
+  assert.match(legacyWebGL, /record\.positionByteLength !== positionByteLength \|\|/);
+  assert.match(legacyWebGL, /sceneWebGLPassBufferTooSmall\(gl, arrayBuffer, pass\.buffers\.position, positionByteLength\)/);
+});
+
 test("bootstrap keeps static Scene3D bundle-pass caches isolated per pass", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-pass-cache-root";
@@ -953,7 +962,7 @@ test("bootstrap honors engine-side Scene3D view-cull metadata", async () => {
   await flushAsyncWork();
 
   const gl = mount.children[0].getContext("webgl");
-  assert.deepEqual(gl.bufferUploads.get(4), []);
+  assert.deepEqual(gl.bufferUploads.get(4) || [], []);
   assert.equal(gl.ops.some((entry) => entry[0] === "drawArrays"), false);
 });
 

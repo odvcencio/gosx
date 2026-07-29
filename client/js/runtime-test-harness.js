@@ -219,6 +219,7 @@ class FakeWebGLContext {
     this.ops = [];
     this.programs = [];
     this.bufferUploads = new Map();
+    this.bufferByteSizes = new Map();
     this.textureUploads = new Map();
     this._nextBufferID = 1;
     this._nextTextureID = 1;
@@ -296,6 +297,7 @@ class FakeWebGLContext {
     this.DRAW_FRAMEBUFFER = 0x8CA9;
     this.READ_FRAMEBUFFER = 0x8CA8;
     this.COLOR = 0x1800;
+    this.BUFFER_SIZE = 0x8764;
   }
 
   createShader(type) {
@@ -467,8 +469,17 @@ class FakeWebGLContext {
     const bufferID = this._boundArrayBuffer && this._boundArrayBuffer.id;
     if (bufferID != null) {
       this.bufferUploads.set(bufferID, Array.from(data || []));
+      this.bufferByteSizes.set(bufferID, data && Number.isFinite(data.byteLength) ? data.byteLength : 0);
     }
     this.ops.push(["bufferData", target, bufferID, data.length, usage]);
+  }
+
+  getBufferParameter(target, param) {
+    if (target === this.ARRAY_BUFFER && param === this.BUFFER_SIZE) {
+      const bufferID = this._boundArrayBuffer && this._boundArrayBuffer.id;
+      return bufferID == null ? 0 : this.bufferByteSizes.get(bufferID) || 0;
+    }
+    return 0;
   }
 
   bufferSubData(target, offset, data) {
@@ -3003,6 +3014,7 @@ function loadSceneAdaptiveQualityAPI() {
       createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
       sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,
       sceneEffectivePointQualityGroup, sceneFilterPointsByQualityGroups,
+      sceneQualityLadderPointBudgetScale, sceneApplyPointBudgetScale,
       scenePrimeAdaptiveQuality,
     };
   `, context, { filename: "scene-adaptive-quality.js" });
@@ -3083,7 +3095,7 @@ function createQualityLadderHarness(qualityLadder, extraProps) {
 
 const THREE_RUNG_LADDER = [
   { name: "raw" },
-  { name: "glow", postEffects: ["bloom"], layerGroups: ["particles"] },
+  { name: "glow", postEffects: ["bloom"], layerGroups: ["particles"], pointBudgetScale: 0.5 },
   { name: "full", postEffects: ["bloom", "toneMapping", "test-lens"], layerGroups: ["particles", "far-decor"] },
 ];
 

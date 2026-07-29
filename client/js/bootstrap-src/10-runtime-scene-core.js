@@ -2409,6 +2409,11 @@
         if (scale === 0) return 1;
         return Math.max(0, Math.min(1, scale));
       })(),
+      pointBudgetScale: (function() {
+        const scale = sceneNumber(item.pointBudgetScale, 0);
+        if (scale === 0) return 1;
+        return Math.max(0, Math.min(1, scale));
+      })(),
       expensivePassCadence: Math.max(1, Math.floor(sceneNumber(item.expensivePassCadence, 1))),
     };
   }

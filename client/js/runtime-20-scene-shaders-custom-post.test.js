@@ -45,6 +45,20 @@ const {
   makeSceneApiEnv,
 } = require("./runtime-test-harness.js");
 
+test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  assert.match(webgl, /function sceneWebGLNormalizeCustomShaderSource\(source\)/);
+  assert.match(webgl, /precision\s+highp\s+float/);
+  assert.match(webgl, /precision\s+highp\s+int/);
+  assert.match(webgl, /vertexSource = sceneWebGLNormalizeCustomShaderSource\(vertexSource\);/);
+  assert.match(webgl, /fragmentSource = sceneWebGLNormalizeCustomShaderSource\(fragmentSource\);/);
+  assert.match(webgl, /var vertexSource = sceneWebGLNormalizeCustomShaderSource\(material\.customVertex\);/);
+  assert.match(webgl, /var fragmentSource = sceneWebGLNormalizeCustomShaderSource\(material\.customFragment\);/);
+  assert.match(webgl, /sceneWebGLNormalizeCustomShaderSource\(entry\.customVertex\.trim\(\)\)/);
+  assert.match(webgl, /sceneWebGLNormalizeCustomShaderSource\(entry\.customFragment\.trim\(\)\)/);
+});
+
 test("compute particle payload kernel: invalid WGSL (async rejection) falls back to builtin, caches failure, warns once", async () => {
   // Simulate the real browser failure mode: createComputePipelineAsync REJECTS
   // for the payload WGSL (Tint validation error), then resolves for the builtin.
