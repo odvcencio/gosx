@@ -1758,9 +1758,29 @@
     return { program: prog, vertexShader: vs, fragmentShader: fs };
   }
 
+  function sceneWebGLNormalizeCustomShaderSource(source) {
+    if (typeof source !== "string" || source.length === 0) {
+      return source;
+    }
+    if (/^\s*#version\s+300\s+es\b/.test(source)) {
+      return source;
+    }
+    let out = source.replace(/\bprecision\s+(lowp|mediump|highp)\s+float\s*;/g, "precision highp float;");
+    out = out.replace(/\bprecision\s+(lowp|mediump|highp)\s+int\s*;/g, "precision highp int;");
+    if (!/\bprecision\s+highp\s+float\s*;/.test(out)) {
+      out = "precision highp float;\n" + out;
+    }
+    if (!/\bprecision\s+highp\s+int\s*;/.test(out)) {
+      out = out.replace(/precision\s+highp\s+float\s*;/, "precision highp float;\nprecision highp int;");
+    }
+    return out;
+  }
+
   // createSceneCustomPostProgram: links a Selena post program using the
   // caller-supplied vertex source (Selena emits its own vertex GLSL).
   function createSceneCustomPostProgram(gl, vertexSource, fragmentSource) {
+    vertexSource = sceneWebGLNormalizeCustomShaderSource(vertexSource);
+    fragmentSource = sceneWebGLNormalizeCustomShaderSource(fragmentSource);
     var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
     if (!vs) return null;
     var fs = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
@@ -5465,7 +5485,8 @@
   function createSceneSelenaProgram(gl, material, skinned) {
     var layout = sceneSelenaMaterialLayout(material);
     if (!layout) return null;
-    var vertexSource = material.customVertex;
+    var vertexSource = sceneWebGLNormalizeCustomShaderSource(material.customVertex);
+    var fragmentSource = sceneWebGLNormalizeCustomShaderSource(material.customFragment);
     var skinInfo = null;
     if (skinned) {
       skinInfo = scenePBRSelenaSkinAugmentVertex(vertexSource);
@@ -5474,7 +5495,7 @@
     }
     var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertexSource);
     if (!vertexShader) return null;
-    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, material.customFragment);
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
     if (!fragmentShader) {
       gl.deleteShader(vertexShader);
       return null;
@@ -6555,6 +6576,40 @@
         gl.bindBuffer(gl.ARRAY_BUFFER, buf);
         gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
       });
+    }
+
+    function sceneInstancedAttributeCapacity(data, components) {
+      if (!data || typeof data.length !== "number" || components <= 0) {
+        return 0;
+      }
+      return Math.floor(data.length / components);
+    }
+
+    function bindInstancedVertexAttribute(location, data, components, fallback) {
+      if (location < 0) {
+        return 0;
+      }
+      var capacity = sceneInstancedAttributeCapacity(data, components);
+      if (capacity <= 0) {
+        gl.disableVertexAttribArray(location);
+        gl.vertexAttrib4f(location, fallback[0] || 0, fallback[1] || 0, fallback[2] || 0, fallback.length > 3 ? fallback[3] : 1);
+        return 0;
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, data));
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, components, gl.FLOAT, false, 0, 0);
+      return capacity;
+    }
+
+    function sceneDisableUnownedVertexAttribArrays(allowed) {
+      var maxAttribs = Math.max(0, sceneNumber(gl.getParameter(gl.MAX_VERTEX_ATTRIBS), 0));
+      for (var i = 0; i < maxAttribs; i++) {
+        if (allowed && allowed[i]) {
+          continue;
+        }
+        gl.vertexAttribDivisor(i, 0);
+        gl.disableVertexAttribArray(i);
+      }
     }
 
     function releaseEntryBufferSlot(entry, bufferSlot, keySlot) {
@@ -7993,8 +8048,8 @@
     function ensurePointsAuthoredGLProgram(entry, layerID) {
       var cached = pointsAuthoredGLPrograms.get(layerID);
       if (cached) return cached.failed ? null : cached;
-      var vertSrc = typeof entry.customVertex === "string" ? entry.customVertex.trim() : "";
-      var fragSrc = typeof entry.customFragment === "string" ? entry.customFragment.trim() : "";
+      var vertSrc = typeof entry.customVertex === "string" ? sceneWebGLNormalizeCustomShaderSource(entry.customVertex.trim()) : "";
+      var fragSrc = typeof entry.customFragment === "string" ? sceneWebGLNormalizeCustomShaderSource(entry.customFragment.trim()) : "";
       if (!vertSrc || !fragSrc) return null;
       var vs = scenePBRCompileShader(gl, gl.VERTEX_SHADER, vertSrc);
       if (!vs) {
@@ -8508,9 +8563,10 @@
       if (!mesh || count <= 0) {
         return null;
       }
-      if (mesh._cachedInstanceColors) {
+      if (mesh._cachedInstanceColors && mesh._cachedInstanceColors.length >= count * 4) {
         return mesh._cachedInstanceColors;
       }
+      mesh._cachedInstanceColors = null;
       var rawColors = mesh.colors;
       if (!rawColors || typeof rawColors.length !== "number") {
         return null;
@@ -8603,25 +8659,16 @@
         // Per-object shadow receive control.
         gl.uniform1i(ip.uniforms.receiveShadow, mesh.receiveShadow ? 1 : 0);
 
-        // Bind per-geometry cached VBOs. getInstancedGeometry returns
-        // the same geom object for any mesh sharing kind+dimensions, so
-        // the WeakMap keyed by geom.positions / normals / uvs / tangents
-        // hits on every subsequent draw and avoids the repeat bufferData.
-        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.positions));
-        gl.enableVertexAttribArray(ip.attributes.position);
-        gl.vertexAttribPointer(ip.attributes.position, 3, gl.FLOAT, false, 0, 0);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.normals));
-        gl.enableVertexAttribArray(ip.attributes.normal);
-        gl.vertexAttribPointer(ip.attributes.normal, 3, gl.FLOAT, false, 0, 0);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.uvs));
-        gl.enableVertexAttribArray(ip.attributes.uv);
-        gl.vertexAttribPointer(ip.attributes.uv, 2, gl.FLOAT, false, 0, 0);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, ensureStaticArrayVBO(staticMeshArrayVBOs, geom.tangents));
-        gl.enableVertexAttribArray(ip.attributes.tangent);
-        gl.vertexAttribPointer(ip.attributes.tangent, 4, gl.FLOAT, false, 0, 0);
+        // Bind per-geometry cached VBOs. Firefox validates all enabled
+        // attributes on instanced draws. If an optional generated stream is
+        // absent or short, use a constant attribute instead of a zero-length
+        // VBO so drawArraysInstanced does not spam vertex-fetch warnings.
+        var positionCapacity = bindInstancedVertexAttribute(ip.attributes.position, geom.positions, 3, [0, 0, 0]);
+        if (positionCapacity <= 0) continue;
+        var drawVertexCount = Math.min(geom.vertexCount, positionCapacity);
+        bindInstancedVertexAttribute(ip.attributes.normal, geom.normals, 3, [0, 1, 0]);
+        bindInstancedVertexAttribute(ip.attributes.uv, geom.uvs, 2, [0, 0]);
+        bindInstancedVertexAttribute(ip.attributes.tangent, geom.tangents, 4, [1, 0, 0, 1]);
 
         // Cache the transforms Float32Array on the mesh entry (same
         // pattern as points _cachedPos). normalizeSceneInstancedMeshEntry
@@ -8637,6 +8684,8 @@
         }
         var transformData = mesh._cachedTransforms;
         if (!transformData) continue;
+        instanceCount = Math.min(instanceCount, sceneInstancedAttributeCapacity(transformData, 16));
+        if (instanceCount <= 0) continue;
 
         // -----------------------------------------------------------------------
         // CPU frustum cull (WebGL2 path — gpu-cull capability absent).
@@ -8721,6 +8770,21 @@
           gl.uniform1i(ip.uniforms.hasInstanceColor, hasInstanceColor ? 1 : 0);
         }
 
+        var baseLoc = ip.attributes.instanceMatrix;
+        if (baseLoc < 0) continue;
+        var instancedAllowedAttribs = {};
+        if (ip.attributes.position >= 0) instancedAllowedAttribs[ip.attributes.position] = true;
+        if (ip.attributes.normal >= 0) instancedAllowedAttribs[ip.attributes.normal] = true;
+        if (ip.attributes.uv >= 0) instancedAllowedAttribs[ip.attributes.uv] = true;
+        if (ip.attributes.tangent >= 0) instancedAllowedAttribs[ip.attributes.tangent] = true;
+        for (var allowedCol = 0; allowedCol < 4; allowedCol++) {
+          instancedAllowedAttribs[baseLoc + allowedCol] = true;
+        }
+        if (hasInstanceColor) {
+          instancedAllowedAttribs[ip.attributes.instanceColor] = true;
+        }
+        sceneDisableUnownedVertexAttribArrays(instancedAllowedAttribs);
+
         // Bind transforms VBO: dynamic cull VBO or static cached VBO.
         if (useCullVBOs) {
           gl.bindBuffer(gl.ARRAY_BUFFER, mesh._cpuCullTransformVBO);
@@ -8730,7 +8794,6 @@
 
         // Set up mat4 attribute (4 × vec4, each with divisor 1).
         // a_instanceMatrix occupies attribute locations starting at ip.attributes.instanceMatrix.
-        var baseLoc = ip.attributes.instanceMatrix;
         for (var col = 0; col < 4; col++) {
           var loc = baseLoc + col;
           gl.enableVertexAttribArray(loc);
@@ -8750,7 +8813,7 @@
         }
 
         // Draw instanced.
-        gl.drawArraysInstanced(gl.TRIANGLES, 0, geom.vertexCount, instanceCount);
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, drawVertexCount, instanceCount);
 
         if (hasInstanceColor) {
           gl.vertexAttribDivisor(ip.attributes.instanceColor, 0);

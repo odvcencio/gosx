@@ -131,7 +131,7 @@
       textureWrapT: typeof gl.TEXTURE_WRAP_T === "number" ? gl.TEXTURE_WRAP_T : 0x2803,
       passCache: {
         staticOpaque: {
-          key: "",
+          key: null,
           vertexCount: 0,
         },
       },
@@ -854,6 +854,33 @@
     return maxCount;
   }
 
+  function sceneWebGLPassBufferByteLength(values) {
+    return values && Number.isFinite(values.byteLength) ? values.byteLength : 0;
+  }
+
+  function sceneWebGLBufferByteLength(gl, arrayBuffer, buffer) {
+    if (!buffer || typeof gl.getBufferParameter !== "function") {
+      return -1;
+    }
+    const bufferSize = typeof gl.BUFFER_SIZE === "number" ? gl.BUFFER_SIZE : 0x8764;
+    try {
+      gl.bindBuffer(arrayBuffer, buffer);
+      const value = Number(gl.getBufferParameter(arrayBuffer, bufferSize));
+      return Number.isFinite(value) ? value : -1;
+    } catch (_) {
+      return -1;
+    }
+  }
+
+  function sceneWebGLPassBufferTooSmall(gl, arrayBuffer, buffer, byteLength) {
+    const expected = Math.max(0, Math.floor(sceneNumber(byteLength, 0)));
+    if (!expected) {
+      return false;
+    }
+    const actual = sceneWebGLBufferByteLength(gl, arrayBuffer, buffer);
+    return actual >= 0 && actual < expected;
+  }
+
   function drawSceneWebGLPasses(gl, arrayBuffer, floatType, linesMode, positionLocation, colorLocation, materialLocation, passes, cache, stateCache) {
     for (const pass of passes) {
       const vertexCount = uploadSceneWebGLPass(gl, arrayBuffer, pass, cache);
@@ -870,20 +897,42 @@
     if (!pass || !pass.buffers) {
       return 0;
     }
+    const vertexCount = sceneWorldWebGLPassVertexCount(pass, pass.positions, pass.colors, pass.materials);
+    if (!vertexCount) {
+      return 0;
+    }
     if (pass.cacheSlot) {
-      const record = cache[pass.cacheSlot] || (cache[pass.cacheSlot] = { key: "", vertexCount: 0 });
-      if (record.key !== pass.cacheKey) {
+      const record = cache[pass.cacheSlot] || (cache[pass.cacheSlot] = { key: null, vertexCount: 0 });
+      const positionByteLength = sceneWebGLPassBufferByteLength(pass.positions);
+      const colorByteLength = sceneWebGLPassBufferByteLength(pass.colors);
+      const materialByteLength = sceneWebGLPassBufferByteLength(pass.materials);
+      if (
+        record.key !== pass.cacheKey ||
+        record.vertexCount !== vertexCount ||
+        record.positionBuffer !== pass.buffers.position ||
+        record.colorBuffer !== pass.buffers.color ||
+        record.materialBuffer !== pass.buffers.material ||
+        record.positionByteLength !== positionByteLength ||
+        record.colorByteLength !== colorByteLength ||
+        record.materialByteLength !== materialByteLength ||
+        sceneWebGLPassBufferTooSmall(gl, arrayBuffer, pass.buffers.position, positionByteLength) ||
+        sceneWebGLPassBufferTooSmall(gl, arrayBuffer, pass.buffers.color, colorByteLength) ||
+        sceneWebGLPassBufferTooSmall(gl, arrayBuffer, pass.buffers.material, materialByteLength)
+      ) {
         uploadSceneWebGLBuffers(gl, arrayBuffer, pass.usage, pass.buffers.position, pass.buffers.color, pass.buffers.material, pass.positions, pass.colors, pass.materials);
         record.key = pass.cacheKey;
-        record.vertexCount = pass.vertexCount;
+        record.vertexCount = vertexCount;
+        record.positionBuffer = pass.buffers.position;
+        record.colorBuffer = pass.buffers.color;
+        record.materialBuffer = pass.buffers.material;
+        record.positionByteLength = positionByteLength;
+        record.colorByteLength = colorByteLength;
+        record.materialByteLength = materialByteLength;
       }
       return record.vertexCount;
     }
-    if (!pass.vertexCount) {
-      return 0;
-    }
     uploadSceneWebGLBuffers(gl, arrayBuffer, pass.usage, pass.buffers.position, pass.buffers.color, pass.buffers.material, pass.positions, pass.colors, pass.materials);
-    return pass.vertexCount;
+    return vertexCount;
   }
 
   function uploadSceneWebGLBuffers(gl, arrayBuffer, usage, positionBuffer, colorBuffer, materialBuffer, positions, colors, materials) {

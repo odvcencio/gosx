@@ -1279,9 +1279,9 @@ test("cpu-cull S3-T4: 16-scene-webgl.js contains CPU cull path with correct stru
   assert.match(webgl, /gl\.bufferData\(gl\.ARRAY_BUFFER.*DYNAMIC_DRAW/,
     "must upload compacted data via bufferData with DYNAMIC_DRAW");
 
-  // The draw call must use the compacted survivorCount.
-  assert.match(webgl, /gl\.drawArraysInstanced\(gl\.TRIANGLES,\s*0,\s*geom\.vertexCount,\s*instanceCount\)/,
-    "drawArraysInstanced must use (possibly reduced) instanceCount");
+  // The draw call must use validated vertex and instance counts.
+  assert.match(webgl, /gl\.drawArraysInstanced\(gl\.TRIANGLES,\s*0,\s*drawVertexCount,\s*instanceCount\)/,
+    "drawArraysInstanced must use validated vertex and instance counts");
 
   // No-cull-config path: must still draw all instances (no early return before draw).
   assert.match(webgl, /var hasCullConfig.*\n.*var instanceColorData/s,
@@ -1306,6 +1306,67 @@ test("cpu-cull S3-T5: no cullKernelWGSL on WebGL2 → draw-all (unchanged instan
   assert.ok(cidPos > 0, "instanceColorData declaration must exist");
   assert.ok(cullPos > 0, "hasCullConfig branch must exist");
   assert.ok(cidPos < cullPos, "instanceColorData must be declared BEFORE the hasCullConfig branch");
+});
+
+test("cpu-cull S3-T5b: WebGL instanced draw validates attribute capacity before drawArraysInstanced", () => {
+  const webgl = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  assert.match(webgl, /function sceneInstancedAttributeCapacity\(data, components\)/,
+    "instanced path must measure typed-array capacity");
+  assert.match(webgl, /function bindInstancedVertexAttribute\(location, data, components, fallback\)/,
+    "instanced path must bind per-vertex attributes through a capacity-aware helper");
+  assert.match(webgl, /gl\.disableVertexAttribArray\(location\);\s*\n\s*gl\.vertexAttrib4f\(location/,
+    "short optional streams must use a constant attribute instead of a zero-length VBO");
+  assert.match(webgl, /var positionCapacity = bindInstancedVertexAttribute\(ip\.attributes\.position, geom\.positions, 3, \[0, 0, 0\]\);/,
+    "required position stream must be validated");
+  assert.match(webgl, /var drawVertexCount = Math\.min\(geom\.vertexCount, positionCapacity\);/,
+    "draw vertex count must not exceed supplied position vertices");
+  assert.match(webgl, /instanceCount = Math\.min\(instanceCount, sceneInstancedAttributeCapacity\(transformData, 16\)\);/,
+    "instance count must not exceed supplied transform matrices");
+  assert.match(webgl, /if \(mesh\._cachedInstanceColors && mesh\._cachedInstanceColors\.length >= count \* 4\)/,
+    "cached instance colors must be revalidated against the requested count");
+});
+
+test("cpu-cull S3-T5c: WebGL instanced draw disables stale unowned vertex attributes", () => {
+  const webgl = fs.readFileSync(
+    path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+
+  assert.match(webgl, /function sceneDisableUnownedVertexAttribArrays\(allowed\)/,
+    "instanced path must clear stale global vertex attributes");
+  assert.match(webgl, /sceneDisableUnownedVertexAttribArrays\(instancedAllowedAttribs\);/,
+    "instanced path must clear stale attributes before drawArraysInstanced");
+
+  const fnMatch = webgl.match(/function sceneDisableUnownedVertexAttribArrays\(allowed\) \{[\s\S]*?\n    \}/);
+  assert.ok(fnMatch, "reset helper source must be extractable");
+  const ops = [];
+  const context = {
+    gl: {
+      MAX_VERTEX_ATTRIBS: 8,
+      getParameter(param) {
+        assert.equal(param, 8);
+        return 8;
+      },
+      vertexAttribDivisor(location, divisor) {
+        ops.push(["divisor", location, divisor]);
+      },
+      disableVertexAttribArray(location) {
+        ops.push(["disable", location]);
+      },
+    },
+    sceneNumber(value, fallback) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    },
+  };
+  vm.runInNewContext(fnMatch[0] + "\nsceneDisableUnownedVertexAttribArrays({0:true,4:true,5:true,6:true,7:true});", context);
+
+  assert.deepEqual(
+    ops.filter((op) => op[0] === "disable").map((op) => op[1]),
+    [1, 2, 3],
+    "stale zero-capacity attributes outside the instanced pass ownership set must be disabled");
+  assert.ok(ops.some((op) => op[0] === "divisor" && op[1] === 1 && op[2] === 0),
+    "stale attributes must also have divisors reset");
 });
 
 // -------------------------------------------------------------------------

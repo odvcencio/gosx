@@ -60,6 +60,18 @@
       return false;
     }
     const frameMS = sample.durationMS;
+    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
+    if (isRAFMeasured && sceneQualityLadderScrollInputActive(sceneState, now)) {
+      state.lastFrameMS = frameMS;
+      state.measurement = sample.source + "-scroll-interaction";
+      state.lastMeasurement = sample;
+      state.badFrames = 0;
+      state.goodFrames = 0;
+      state.severeFrames = 0;
+      state.rungPromoteRule = "scroll-interaction-held";
+      applySceneAdaptiveQualityState(mount, state, now, false);
+      return false;
+    }
     state.lastFrameMS = frameMS;
     state.measurement = sample.source;
     state.lastMeasurement = sample;
@@ -74,10 +86,6 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    // isRAFMeasured: true when this sample comes from the cpu-raf fallback
-    // (no GPU timestamp-query support — the common case on regular Chrome
-    // stable) rather than real GPU timing.
-    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
     const target = Math.max(8, sceneNumber(isRAFMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
@@ -342,6 +350,156 @@
     return result;
   }
 
+  function sceneQualityLadderPointBudgetScale(adaptiveQuality) {
+    if (!adaptiveQuality || adaptiveQuality.mode !== "ladder" || !Array.isArray(adaptiveQuality.ladder)) {
+      return 1;
+    }
+    const rung = adaptiveQuality.ladder[adaptiveQuality.rungIndex];
+    const scale = sceneNumber(rung && rung.pointBudgetScale, 0);
+    if (scale === 0) {
+      return 1;
+    }
+    return Math.max(0, Math.min(1, scale));
+  }
+
+  function scenePointSampleOutput(raw, length, previous) {
+    if (previous && previous.length === length) {
+      const rawIsFloat32 = raw instanceof Float32Array;
+      if ((rawIsFloat32 && previous instanceof Float32Array) || (!rawIsFloat32 && Array.isArray(previous))) {
+        return previous;
+      }
+    }
+    return raw instanceof Float32Array ? new Float32Array(length) : new Array(length);
+  }
+
+  function sceneSamplePointField(raw, authoredCount, drawCount, components, previous) {
+    if (!raw || authoredCount <= 0 || drawCount <= 0 || components <= 0 || typeof raw.length !== "number") {
+      return null;
+    }
+    if (raw.length < authoredCount * components) {
+      return null;
+    }
+    const out = scenePointSampleOutput(raw, drawCount * components, previous);
+    for (let i = 0; i < drawCount; i += 1) {
+      const src = Math.min(authoredCount - 1, Math.floor(((i + 0.5) * authoredCount) / drawCount));
+      for (let c = 0; c < components; c += 1) {
+        out[i * components + c] = raw[src * components + c];
+      }
+    }
+    return out;
+  }
+
+  function sceneSamplePointScalarField(raw, authoredCount, drawCount, previous) {
+    if (!raw || authoredCount <= 0 || drawCount <= 0 || typeof raw.length !== "number" || raw.length < authoredCount) {
+      return null;
+    }
+    const out = scenePointSampleOutput(raw, drawCount, previous);
+    for (let i = 0; i < drawCount; i += 1) {
+      const src = Math.min(authoredCount - 1, Math.floor(((i + 0.5) * authoredCount) / drawCount));
+      out[i] = raw[src];
+    }
+    return out;
+  }
+
+  function sceneScalePointEntryBudget(entry, drawCount, scale, index) {
+    if (!entry || drawCount <= 0 || scale >= 1) {
+      return entry;
+    }
+    const authoredCount = Math.max(0, Math.floor(sceneNumber(entry.count, 0)));
+    const rawPositions = entry._cachedPos || entry.positions;
+    const rawSizes = entry._cachedSizes || entry.sizes;
+    const rawColors = entry._cachedColors || entry.colors;
+    const cacheKey = String(authoredCount) + ":" + String(drawCount) + ":" + String(scale);
+    const cache = entry._qualityPointBudgetCache;
+    const canReuse = cache && cache.key === cacheKey && cache.entry;
+    const next = canReuse ? Object.assign(cache.entry, entry) : Object.assign({}, entry);
+    next.count = drawCount;
+    next._qualityPointBudgetScale = scale;
+    next._qualityPointAuthoredCount = authoredCount;
+    next._qualityPointBudgetIndex = index;
+    const sampledPositions = sceneSamplePointField(rawPositions, authoredCount, drawCount, 3, canReuse ? cache.sampledPositions : null);
+    if (sampledPositions) {
+      next.positions = sampledPositions;
+      next._cachedPos = sampledPositions;
+    } else {
+      delete next._cachedPos;
+    }
+    const sampledSizes = sceneSamplePointScalarField(rawSizes, authoredCount, drawCount, canReuse ? cache.sampledSizes : null);
+    if (sampledSizes) {
+      next.sizes = sampledSizes;
+      next._cachedSizes = sampledSizes;
+    } else {
+      delete next._cachedSizes;
+    }
+    let sampledColors = null;
+    if (rawColors && typeof rawColors.length === "number") {
+      if (Array.isArray(rawColors) && typeof rawColors[0] === "string" && rawColors.length >= authoredCount) {
+        sampledColors = sceneSamplePointScalarField(rawColors, authoredCount, drawCount, canReuse ? cache.sampledColors : null);
+      } else if (rawColors.length >= authoredCount * 4) {
+        sampledColors = sceneSamplePointField(rawColors, authoredCount, drawCount, 4, canReuse ? cache.sampledColors : null);
+      } else if (rawColors.length >= authoredCount * 3) {
+        sampledColors = sceneSamplePointField(rawColors, authoredCount, drawCount, 3, canReuse ? cache.sampledColors : null);
+      }
+    }
+    if (sampledColors) {
+      next.colors = sampledColors;
+      next._cachedColors = sampledColors;
+    } else {
+      delete next._cachedColors;
+    }
+    entry._qualityPointBudgetCache = {
+      key: cacheKey,
+      entry: next,
+      sampledPositions,
+      sampledSizes,
+      sampledColors,
+    };
+    return next;
+  }
+
+  function sceneApplyPointBudgetScale(points, scale) {
+    if (!Array.isArray(points) || points.length === 0) {
+      return points;
+    }
+    const pointScale = Math.max(0, Math.min(1, sceneNumber(scale, 1)));
+    let scaled = null;
+    let authoredInstances = 0;
+    let drawInstances = 0;
+    let scaledEntries = 0;
+    for (let i = 0; i < points.length; i += 1) {
+      const entry = points[i];
+      const authored = Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0)));
+      authoredInstances += authored;
+      let drawCount = authored;
+      if (pointScale < 1 && authored > 0) {
+        drawCount = Math.max(1, Math.floor(authored * pointScale));
+      }
+      drawInstances += drawCount;
+      if (drawCount !== authored) {
+        scaledEntries += 1;
+        if (!scaled) scaled = points.slice(0, i);
+        scaled.push(sceneScalePointEntryBudget(entry, drawCount, pointScale, i));
+      } else if (scaled) {
+        scaled.push(entry);
+      }
+    }
+    const result = scaled || points;
+    result.qualityPointBudgetScale = pointScale;
+    result.qualityPointAuthoredInstances = authoredInstances;
+    result.qualityPointDrawInstances = drawInstances;
+    result.qualityPointBudgetScaledEntries = scaledEntries;
+    return result;
+  }
+
+  function sceneQualityLadderScrollInputActive(sceneState, nowMS) {
+    const scrollCamera = sceneState && sceneState._scrollCamera;
+    if (!scrollCamera) {
+      return false;
+    }
+    const activeUntil = sceneNumber(scrollCamera._activeInputUntil, 0);
+    return activeUntil > 0 && activeUntil + 1500 >= nowMS;
+  }
+
   // applySceneQualityLadderState is applySceneAdaptiveQualityState's ladder
   // counterpart — same publish-throttle shape (force / 250ms / revision-
   // changed gate via lastPublishedAtMS/lastPublishedRevision, reused
@@ -399,6 +557,7 @@
     // any actual compute/cadence dispatch, just published for apps that want
     // to drive their own reduction off these values.
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-compute-budget-scale", rung ? String(rung.computeBudgetScale) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-rung-point-budget-scale", rung ? String(rung.pointBudgetScale) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-cadence", rung ? String(rung.expensivePassCadence) : "");
   }
 

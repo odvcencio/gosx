@@ -313,6 +313,32 @@ test("Scene3D QualityLadder: cpu-raf measurement does NOT promote when frames ex
   assert.equal(state.rungPromoteRule, "raf-cadence");
 });
 
+test("Scene3D QualityLadder: active scroll input does not demote on cpu-raf cadence spikes", () => {
+  const harness = createQualityLadderRAFHarness(THREE_RUNG_LADDER, {
+    qualityStartRung: 1,
+  });
+  const { state, sceneState, sample, clock } = harness;
+  sceneState._scrollCamera = {
+    start: 10,
+    end: 4,
+    _activeInputUntil: clock.now + 5000,
+  };
+  for (let i = 0; i < 30; i++) sample(40);
+  assert.equal(state.rungIndex, 1, "scroll-time cpu-raf spikes must not demote the ladder");
+  assert.equal(state.badFrames, 0);
+  assert.equal(state.severeFrames, 0);
+  assert.equal(state.measurement, "cpu-raf-scroll-interaction");
+  assert.equal(state.rungPromoteRule, "scroll-interaction-held");
+
+  sceneState._scrollCamera._activeInputUntil = clock.now - 1000;
+  for (let i = 0; i < 3; i++) sample(40);
+  assert.equal(state.rungIndex, 1, "post-scroll cooldown must still hold the current rung");
+
+  sceneState._scrollCamera._activeInputUntil = clock.now - 2000;
+  for (let i = 0; i < 3; i++) sample(40);
+  assert.equal(state.rungIndex, 0, "real post-scroll severe misses must still demote");
+});
+
 test("Scene3D QualityLadder: GPU-measured samples still use the original headroom rule (unchanged)", () => {
   const { state, sample, mount } = createQualityLadderHarness(THREE_RUNG_LADDER, {
     qualityStartRung: 0,
@@ -397,6 +423,78 @@ test("Scene3D QualityLadder: Points LayerGroups filter — untagged always drawn
   const noFilterNeeded = api.sceneFilterPointsByQualityGroups(admittedOnly, admitted, pointQualityGroups);
   assert.strictEqual(noFilterNeeded, admittedOnly, "nothing dropped -> same array reference, no allocation on the hot per-frame path");
   assert.equal(noFilterNeeded.qualitySkippedCount, 0);
+});
+
+test("Scene3D QualityLadder: PointBudgetScale keeps every admitted layer and samples each GLB point array deterministically", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const ladderState = { mode: "ladder", ladder: THREE_RUNG_LADDER.map(function(r) {
+    return { name: r.name, layerGroups: r.layerGroups || [], postEffects: r.postEffects || [], pointBudgetScale: r.pointBudgetScale || 1 };
+  }), rungIndex: 1 };
+
+  assert.equal(api.sceneQualityLadderPointBudgetScale(null), 1);
+  assert.equal(api.sceneQualityLadderPointBudgetScale(ladderState), 0.5);
+
+  const core = {
+    id: "core-points",
+    count: 8,
+    positions: new Float32Array([
+      0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0,
+      4, 0, 0, 5, 0, 0, 6, 0, 0, 7, 0, 0,
+    ]),
+    sizes: new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]),
+    colors: new Float32Array([
+      0, 0, 0, 1, 1, 0, 0, 1, 2, 0, 0, 1, 3, 0, 0, 1,
+      4, 0, 0, 1, 5, 0, 0, 1, 6, 0, 0, 1, 7, 0, 0, 1,
+    ]),
+  };
+  const detail = { id: "detail-points", count: 4, positions: new Float32Array(12) };
+  const scaled = api.sceneApplyPointBudgetScale([core, detail], 0.5);
+
+  assert.equal(scaled.length, 2, "every admitted layer remains present");
+  assert.equal(scaled[0].count, 4);
+  assert.equal(scaled[1].count, 2);
+  assert.deepEqual(Array.from(scaled[0].positions), [
+    1, 0, 0, 3, 0, 0, 5, 0, 0, 7, 0, 0,
+  ], "bucket midpoint sampling must preserve spread, not take a prefix");
+  assert.deepEqual(Array.from(scaled[0].sizes), [2, 4, 6, 8]);
+  assert.equal(scaled.qualityPointBudgetScale, 0.5);
+  assert.equal(scaled.qualityPointAuthoredInstances, 12);
+  assert.equal(scaled.qualityPointDrawInstances, 6);
+  assert.equal(scaled.qualityPointBudgetScaledEntries, 2);
+  assert.strictEqual(api.sceneApplyPointBudgetScale([core], 1)[0], core, "scale=1 leaves entries untouched");
+});
+
+test("Scene3D QualityLadder: PointBudgetScale refreshes mutable typed-array samples", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const entry = {
+    id: "dynamic-points",
+    count: 4,
+    positions: new Float32Array([
+      0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0,
+    ]),
+    sizes: new Float32Array([1, 2, 3, 4]),
+    colors: new Float32Array([
+      0, 0, 0, 1, 1, 0, 0, 1, 2, 0, 0, 1, 3, 0, 0, 1,
+    ]),
+  };
+
+  const first = api.sceneApplyPointBudgetScale([entry], 0.5)[0];
+  const firstPositions = first.positions;
+  assert.deepEqual(Array.from(first.positions), [1, 0, 0, 3, 0, 0]);
+
+  entry.positions[3] = 10;
+  entry.positions[9] = 30;
+  entry.sizes[1] = 20;
+  entry.sizes[3] = 40;
+  entry.colors[4] = 10;
+  entry.colors[12] = 30;
+  const second = api.sceneApplyPointBudgetScale([entry], 0.5)[0];
+
+  assert.strictEqual(second.positions, firstPositions, "stable output buffer may be reused");
+  assert.deepEqual(Array.from(second.positions), [10, 0, 0, 30, 0, 0], "same-source mutations must refresh sampled positions");
+  assert.deepEqual(Array.from(second.sizes), [20, 40], "same-source mutations must refresh sampled sizes");
+  assert.equal(second.colors[0], 10);
+  assert.equal(second.colors[4], 30);
 });
 
 test("Scene3D QualityLadder: QualityStartRung on a rung with empty/absent LayerGroups admits everything from frame one", () => {
