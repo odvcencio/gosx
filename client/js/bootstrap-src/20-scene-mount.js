@@ -1165,6 +1165,9 @@
 	      canvas = nextCanvas;
 	      attachSceneCanvasContextListeners(canvas);
 	      viewportDirty = true;
+	      if (domRegionTracker) {
+	        domRegionTracker.schedule();
+	      }
 	      reinstallSceneCanvasInteractionHandles(reason || "canvas-replaced");
 	      gosxSceneEmit("info", "renderer-canvas-replaced", {
 	        reason: reason || "",
@@ -1619,6 +1622,10 @@
       viewportDirty = true;
       scheduleRender(reason);
     }
+
+    const domRegionTracker = typeof createSceneCustomPostDOMRegionTracker === "function"
+      ? createSceneCustomPostDOMRegionTracker(ctx.mount, function() { return canvas; }, sceneState, scheduleRender)
+      : null;
 
     function markSceneCSSInvalidated(reason) {
       const revision = Number(ctx.mount && ctx.mount.__gosxScene3DCSSRevision);
@@ -2826,6 +2833,9 @@
         sceneState._deferredPostEffects = null;
         sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
         applyScenePostFXState(ctx.mount, sceneState);
+        if (domRegionTracker) {
+          domRegionTracker.configure(sceneState.postEffects);
+        }
         if (sceneWantsAnimation()) {
           // Animation loop will render the upgraded chain.
         } else {
@@ -2880,6 +2890,9 @@
         // at mount time, so a scene whose post-FX was restored by a progressive
         // upgrade still reads "none" — a diagnostic that actively misleads.
         applyScenePostFXState(ctx.mount, sceneState);
+        if (domRegionTracker) {
+          domRegionTracker.configure(sceneState.postEffects);
+        }
         publishSceneWaterStateSnapshot(ctx.mount, sceneState);
         publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
         notifySceneRendererLifecycle("commands", false, false);
@@ -2960,6 +2973,9 @@
             applyScenePostFXState(ctx.mount, sceneState);
           }
         }
+        if (Object.prototype.hasOwnProperty.call(partial, "postEffects") && domRegionTracker) {
+          domRegionTracker.configure(sceneState.postEffects);
+        }
         if (touchedViewport) {
           const nextBase = sceneViewportBase(props);
           viewportBase.baseWidth = nextBase.baseWidth;
@@ -3013,6 +3029,9 @@
         releaseLifecycleObserver();
         releaseMotionObserver();
         releaseSceneCSSObserver();
+        if (domRegionTracker) {
+          domRegionTracker.dispose();
+        }
         releaseManagedControlForms();
         releaseTextLayoutListener();
         releaseSceneDebugSurface();

@@ -437,6 +437,8 @@ test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", a
   await flushAsyncWork();
 
   const replacementCanvas = mount.children[0];
+  raf.flush(64);
+  await flushAsyncWork();
   assert.notEqual(replacementCanvas, firstCanvas);
   assert.equal(firstCanvas.parentNode, null);
   assert.equal(replacementCanvas.getAttribute("data-gosx-scene3d-canvas"), "true");
