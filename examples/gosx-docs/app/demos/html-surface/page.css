@@ -1,7 +1,7 @@
 /* HTML surfaces on 3D geometry.
-   These are ordinary page styles. The runtime serializes the live CSSOM into
-   the foreignObject raster, so the same rules style both the accessible DOM
-   mirror and the texture mapped onto scene geometry. */
+   These are ordinary page styles. The runtime serializes the live CSS object
+   model (CSSOM) into the foreignObject raster. The same rules style the
+   accessible DOM mirror and the texture mapped onto scene geometry. */
 
 .html-surface {
   position: relative;

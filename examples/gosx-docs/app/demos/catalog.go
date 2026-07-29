@@ -99,12 +99,12 @@ var demoCatalog = []DemoDefinition{
 	},
 	{
 		Slug: "html-surface", Title: "Diegetic Panels", Tag: "HTML textured onto 3D geometry",
-		Promise: "Read three HTML panels rendered as textures on real scene geometry: one head-on, one turned 36 degrees away, one lying flat and turning.",
-		Lesson:  "A texture-mode scene.HTML is a quad in the scene graph, so the page's CSS, layout, and webfonts render on a surface that rotates, occludes, and holds depth like any other mesh.",
+		Promise: "Read three HTML panels rendered as textures on real scene geometry. One faces forward, one turns 36 degrees, and one lies flat while rotating.",
+		Lesson:  "A texture-mode scene.HTML is a quad in the scene graph. Page CSS, layout, and webfonts render with mesh-like rotation, occlusion, and depth.",
 		Accent:  "#35d6ff", Facets: []string{"Scene3D", "HTML surface", "WebGPU", "WebGL2"},
 		SourcePath: "examples/gosx-docs/app/demos/html-surface/program.go", Packages: []string{"scene", "route"},
 		Status: "lab", RenderMode: "SSR + Scene3D GPU runtime",
-		Limitations: "Pointer hits expose CSS-pixel surface coordinates, but the runtime does not synthesize DOM events for individual descendants. Rasterization invalidates on authored markup, content size, device pixel ratio, stylesheet revisions, or an explicit API call—not arbitrary DOM mutations. Cross-origin stylesheets are reported as blocked rather than guessed at.",
+		Limitations: "Pointer hits expose CSS-pixel surface coordinates. The runtime does not synthesize DOM events for descendants. Rasterization responds to authored markup, size, device pixel ratio, stylesheet revisions, and explicit invalidation. It does not observe arbitrary DOM mutations. Cross-origin stylesheets are reported as blocked.",
 	},
 	{
 		Slug: "cms", Title: "CMS Editor", Tag: "block-editor with live preview",
