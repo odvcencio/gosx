@@ -2979,6 +2979,9 @@
   }
 
   function wgpuNotifyTextureSettled(record) {
+    if (record && typeof notifySceneTextureLoaded === "function") {
+      notifySceneTextureLoaded(record.src, Boolean(record.loaded && !record.failed));
+    }
     var generation = record && record.generation;
     if (
       !record ||
@@ -3128,6 +3131,7 @@
       record.failed = true;
       record.pending = false;
       record.error = "cube descriptors require a KTX2 upload path";
+      wgpuNotifyTextureSettled(record);
     } else if (typeof Image === "function") {
       var image = new Image();
       record.image = image;
@@ -3171,6 +3175,7 @@
         } else {
           record.failed = true;
           record.pending = false;
+          wgpuNotifyTextureSettled(record);
         }
       };
       image.onerror = function() {
@@ -3184,6 +3189,7 @@
     } else {
       record.failed = true;
       record.pending = false;
+      wgpuNotifyTextureSettled(record);
     }
 
     return record;

@@ -1,7 +1,8 @@
-/* HTML surfaces on 3D geometry.
-   These are ordinary page styles. The runtime serializes the live CSSOM into
-   the foreignObject raster, so the same rules style both the accessible DOM
-   mirror and the texture mapped onto scene geometry. */
+/* Hypertext Markup Language (HTML) surfaces on 3D geometry.
+   These are ordinary page styles. CSS means Cascading Style Sheets. The runtime
+   serializes the CSS Object Model (CSSOM) into the foreignObject raster. The same
+   rules style the accessible Document Object Model (DOM) mirror. The runtime maps
+   the texture onto scene geometry and applies the same rules to it. */
 
 .html-surface {
   position: relative;

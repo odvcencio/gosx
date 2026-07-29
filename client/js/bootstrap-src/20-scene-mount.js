@@ -359,7 +359,10 @@
     const htmlTextureState = createSceneHTMLTextureState();
     htmlTextureState.requestRender = scheduleRender;
     const releaseTextureLoadListener = typeof onSceneTextureLoaded === "function"
-      ? onSceneTextureLoaded(function() { scheduleRender("texture-loaded"); })
+      ? onSceneTextureLoaded(function(src, loaded) {
+        settleSceneHTMLTextureUpload(htmlTextureState, src, loaded);
+        scheduleRender(loaded === false ? "texture-failed" : "texture-loaded");
+      })
       : null;
     let labelRefreshHandle = null;
 

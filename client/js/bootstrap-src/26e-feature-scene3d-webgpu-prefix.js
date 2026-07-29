@@ -97,6 +97,7 @@
       ArrayBuffer.isView(value) &&
       Object.prototype.toString.call(value) !== "[object DataView]";
   };
+  var notifySceneTextureLoaded = sceneApi.notifySceneTextureLoaded;
   // createSceneParticleSystem + sceneComputeSystemSignature are defined
   // by 16b-scene-compute.js concatenated into this same IIFE below —
   // no bridge needed.

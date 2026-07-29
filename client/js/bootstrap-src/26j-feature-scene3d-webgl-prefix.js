@@ -63,6 +63,7 @@
       Object.prototype.toString.call(value) !== "[object DataView]";
   };
   var sceneCanvasAlpha = sceneApi.sceneCanvasAlpha || function() { return true; };
+  var notifySceneTextureLoaded = sceneApi.notifySceneTextureLoaded;
 
   // --- Culling (11-scene-math.js). The WebGL2 CPU-cull fallback calls both.
   var extractFrustumPlanesJS = sceneApi.extractFrustumPlanesJS;

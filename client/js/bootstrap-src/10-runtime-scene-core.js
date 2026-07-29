@@ -1146,10 +1146,10 @@
     };
   }
 
-  function notifySceneTextureLoaded(src) {
+  function notifySceneTextureLoaded(src, loaded) {
     sceneTextureLoadListeners.forEach(function(listener) {
       try {
-        listener(src);
+        listener(src, loaded !== false);
       } catch (_err) {
         // One mount's scheduler must not stop another's.
       }
@@ -5868,6 +5868,7 @@
     normalizeSceneLabelWhiteSpace,
     normalizeSceneLight,
     normalizeSceneObject,
+    notifySceneTextureLoaded,
     sceneGizmoTargetAnchor,
     normalizeSceneSprite,
     normalizeSceneSpriteFit,

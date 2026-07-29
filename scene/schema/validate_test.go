@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -77,6 +78,47 @@ func TestValidateJSONTextureHTMLRequiresFallbackInStrictMode(t *testing.T) {
 	}
 	if !hasCode(report, "scene.html.texture_fallback") {
 		t.Fatalf("expected texture fallback diagnostic: %+v", report.Diagnostics)
+	}
+}
+
+func TestValidateHTMLRejectsNonFiniteRotationAndSpin(t *testing.T) {
+	fields := []struct {
+		name string
+		set  func(*scene.HTMLIR, float64)
+	}{
+		{name: "rotationX", set: func(html *scene.HTMLIR, value float64) { html.RotationX = value }},
+		{name: "rotationY", set: func(html *scene.HTMLIR, value float64) { html.RotationY = value }},
+		{name: "rotationZ", set: func(html *scene.HTMLIR, value float64) { html.RotationZ = value }},
+		{name: "spinX", set: func(html *scene.HTMLIR, value float64) { html.SpinX = value }},
+		{name: "spinY", set: func(html *scene.HTMLIR, value float64) { html.SpinY = value }},
+		{name: "spinZ", set: func(html *scene.HTMLIR, value float64) { html.SpinZ = value }},
+	}
+	values := []struct {
+		name  string
+		value float64
+	}{
+		{name: "NaN", value: math.NaN()},
+		{name: "positive infinity", value: math.Inf(1)},
+		{name: "negative infinity", value: math.Inf(-1)},
+	}
+
+	for _, field := range fields {
+		for _, nonFinite := range values {
+			t.Run(field.name+"/"+nonFinite.name, func(t *testing.T) {
+				html := scene.HTMLIR{ID: "panel", Mode: "dom"}
+				field.set(&html, nonFinite.value)
+				report := Report{}
+				validateHTML(&report, html, "html[0]", Options{}, nil)
+
+				wantPath := "html[0]." + field.name
+				for _, diagnostic := range report.Diagnostics {
+					if diagnostic.Code == "scene.numeric.non_finite" && diagnostic.Path == wantPath {
+						return
+					}
+				}
+				t.Fatalf("expected non-finite diagnostic at %s: %+v", wantPath, report.Diagnostics)
+			})
+		}
 	}
 }
 

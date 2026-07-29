@@ -11,10 +11,12 @@ func Page() Node {
 			</p>
 			<h1 class="html-surface__title">Diegetic panels</h1>
 			<p class="html-surface__tagline">
-				Each panel is a quad in the scene graph whose texture is the page's own markup, laid out by the browser and rasterized at device resolution. Orbit the scene: the panels rotate with it, occlude behind geometry, and stay legible off-axis.
+				Each panel is a quad in the scene graph. The browser lays out the page markup and rasterizes it at device resolution. Orbit the scene: the panels rotate with it, occlude behind geometry, and stay legible off-axis.
 			</p>
 			<details class="html-surface__proof">
-				<summary>How this differs from a DOM overlay</summary>
+				<summary>
+					How this differs from a document object model (DOM) overlay
+				</summary>
 				<ul>
 					<li>
 						The panel has a world transform. Rotation.X = -Pi/2 stands it up; Rotation.Y turns it away from the camera.
