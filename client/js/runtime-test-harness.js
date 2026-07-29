@@ -40,6 +40,7 @@ const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "b
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
+const stripeBridgeSource = fs.readFileSync(path.join(__dirname, "stripe-bridge.js"), "utf8");
 const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
 
 function bootstrapSourceMapSource(mapName, sourceName) {
@@ -5295,6 +5296,7 @@ module.exports = {
   bootstrapScene3DInputSourceFile,
   bootstrapScene3DMountSourceFile,
   patchSource,
+  stripeBridgeSource,
   navigationSource,
   bootstrapSourceMapSource,
   ELEMENT_NODE,

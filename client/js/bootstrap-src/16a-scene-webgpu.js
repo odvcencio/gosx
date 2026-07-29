@@ -2290,8 +2290,9 @@
     "",
     // Billboard: offset in clip space by quad * pixelSize.
     "    let clipPos = frame.projMatrix * viewPos;",
-    "    let ndcOffsetX = quad.x * pixelSize / frame.viewportWidth * clipPos.w * 2.0;",
-    "    let ndcOffsetY = quad.y * pixelSize / frame.viewportHeight * clipPos.w * 2.0;",
+    "    let viewport = max(vec2f(frame.viewportWidth, frame.viewportHeight), vec2f(1.0));",
+    "    let ndcOffsetX = quad.x * pixelSize / viewport.x * clipPos.w * 2.0;",
+    "    let ndcOffsetY = quad.y * pixelSize / viewport.y * clipPos.w * 2.0;",
     "",
     "    var out: PointsOutput;",
     "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",
@@ -2382,8 +2383,9 @@
     "",
     // Billboard: offset in clip space by quad * pixelSize.
     "    let clipPos = frame.projMatrix * viewPos;",
-    "    let ndcOffsetX = quad.x * pixelSize / frame.viewportWidth * clipPos.w * 2.0;",
-    "    let ndcOffsetY = quad.y * pixelSize / frame.viewportHeight * clipPos.w * 2.0;",
+    "    let viewport = max(vec2f(frame.viewportWidth, frame.viewportHeight), vec2f(1.0));",
+    "    let ndcOffsetX = quad.x * pixelSize / viewport.x * clipPos.w * 2.0;",
+    "    let ndcOffsetY = quad.y * pixelSize / viewport.y * clipPos.w * 2.0;",
     "",
     "    var out: PointsOutput;",
     "    out.clipPos = vec4f(clipPos.x + ndcOffsetX, clipPos.y + ndcOffsetY, clipPos.z, clipPos.w);",

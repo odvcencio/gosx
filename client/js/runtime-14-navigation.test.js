@@ -17,6 +17,7 @@ const {
   bootstrapFeatureScene3DSource,
   bootstrapFeatureScene3DCommandSource,
   bootstrapScene3DMountSourceFile,
+  stripeBridgeSource,
   navigationSource,
   scene3DCommandFetchRoutes,
   FakeElement,
@@ -600,6 +601,127 @@ test("navigation runtime reuses an engine with an identical scene: same canvas e
     true,
   );
   assert.strictEqual(env.context.__gosx.engines.get("bg-scene"), recordBefore, "the SAME engine record must persist");
+});
+
+test("stripe-bridge wrapper forwards the reuse Set to the previous __gosx_bootstrap_page and __gosx_dispose_page handlers", async () => {
+  const env = createContext({});
+
+  const bootstrapCalls = [];
+  const disposeCalls = [];
+  env.context.__gosx_bootstrap_page = async function(reuseEngineIDs) {
+    bootstrapCalls.push(reuseEngineIDs);
+  };
+  env.context.__gosx_dispose_page = async function(reuseEngineIDs) {
+    disposeCalls.push(reuseEngineIDs);
+  };
+
+  runScript(stripeBridgeSource, env.context, "stripe-bridge.js");
+  await flushAsyncWork();
+
+  const reuseSet = new env.context.Set(["bg-scene"]);
+  await env.context.__gosx_bootstrap_page(reuseSet);
+  await env.context.__gosx_dispose_page(reuseSet);
+
+  assert.equal(bootstrapCalls.length, 1);
+  assert.strictEqual(bootstrapCalls[0], reuseSet, "stripe-bridge must forward the exact reuse Set to the wrapped bootstrap handler, not drop it");
+  assert.equal(disposeCalls.length, 1);
+  assert.strictEqual(disposeCalls[0], reuseSet, "stripe-bridge must forward the exact reuse Set to the wrapped dispose handler, not drop it");
+});
+
+test("navigation runtime reuses an engine across a soft navigation when stripe-bridge wraps the page lifecycle hooks", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "bg-scene-stripe";
+
+  const sceneProps = {
+    width: 320,
+    height: 180,
+    autoRotate: false,
+    scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] },
+  };
+  const manifestA = {
+    engines: [
+      {
+        id: "bg-scene-stripe",
+        mountId: "bg-scene-stripe",
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: sceneProps,
+        capabilities: ["canvas", "webgl", "animation"],
+      },
+    ],
+  };
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    manifest: manifestA,
+    fetchRoutes: {
+      "http://localhost:3000/next": { text: "__STRIPE_REUSE_NEXT__", url: "http://localhost:3000/next" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  // stripe-bridge loads as a managed script AFTER bootstrap.js on a real
+  // page (see server/navigation_runtime.js's script-role ordering), wrapping
+  // whatever window.__gosx_bootstrap_page/__gosx_dispose_page bootstrap.js
+  // already installed.
+  runScript(stripeBridgeSource, env.context, "stripe-bridge.js");
+  await flushAsyncWork();
+
+  const recordBefore = env.context.__gosx.engines.get("bg-scene-stripe");
+  assert.ok(recordBefore, "expected the Scene3D engine to mount initially");
+  const canvasBefore = mount.children[0];
+  assert.ok(canvasBefore, "expected Scene3D to create a canvas inside the mount");
+
+  let disposed = false;
+  const originalDispose = recordBefore.handle.dispose.bind(recordBefore.handle);
+  recordBefore.handle.dispose = function() {
+    disposed = true;
+    return originalDispose();
+  };
+
+  const nextMountPlaceholder = new FakeElement("div", null);
+  nextMountPlaceholder.id = "bg-scene-stripe";
+  const manifestScript = new FakeElement("script", null);
+  manifestScript.id = "gosx-manifest";
+  manifestScript.textContent = JSON.stringify(manifestA);
+
+  parsedDocs.set("__STRIPE_REUSE_NEXT__", buildNavigatedDocument({
+    title: "Next",
+    bodyNodes: [nextMountPlaceholder, manifestScript],
+  }));
+
+  const events = [];
+  env.context.__gosx_emit = function(level, cat, msg, fields) {
+    events.push({ level, cat, msg, fields: fields || {} });
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/next");
+  await flushAsyncWork();
+
+  assert.equal(disposed, false, "identical-scene navigation must not dispose the engine, even through the stripe-bridge wrapper");
+  const liveMount = env.document.getElementById("bg-scene-stripe");
+  assert.strictEqual(liveMount, mount, "the mount element itself must be the SAME live element, not a clone");
+  assert.strictEqual(liveMount.children[0], canvasBefore, "the SAME canvas element must survive the navigation");
+  assert.equal(
+    events.some((e) => e.msg === "engine-reused-across-navigation" && e.fields.engineID === "bg-scene-stripe"),
+    true,
+    "reuse telemetry must fire when the reuse Set reaches mountAllEngines through the stripe-bridge wrapper",
+  );
+  assert.equal(
+    events.some((e) => e.msg === "engine-remounted" && e.fields.engineID === "bg-scene-stripe"),
+    false,
+    "an engine carried across the navigation must not also be reported as remounted",
+  );
+  assert.strictEqual(env.context.__gosx.engines.get("bg-scene-stripe"), recordBefore, "the SAME engine record must persist");
 });
 
 test("navigation runtime reuses an engine when incoming scene still carries shaderLib postEffect refs", async () => {
