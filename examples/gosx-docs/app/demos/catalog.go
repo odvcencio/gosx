@@ -32,6 +32,16 @@ var demoCatalog = []DemoDefinition{
 		ShowcaseRank: 3,
 	},
 	{
+		Slug: "beacon", Title: "Blackglass Beacon", Tag: "signature cinematic Scene3D",
+		Promise: "Orbit an original brutalist signal tower with an eclipsed cyan crown, warm lantern core, hard-edged shadows, and a luminous diagonal beam.",
+		Lesson:  "A bounded typed Go scene can deliver distinctive art direction, honest renderer fallback, and production-minded performance limits without external assets or custom shaders.",
+		Accent:  "#69e3c7", Facets: []string{"Scene3D", "PBR", "PostFX", "WebGPU", "WebGL2"},
+		SourcePath: "examples/gosx-docs/app/demos/beacon/program.go", Packages: []string{"scene", "route"},
+		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
+		Limitations:  "WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2 or its bounded primitive fallback. The scene is intentionally capped at 30 FPS, 1.5 DPR, and a 720p render surface.",
+		ShowcaseRank: 1,
+	},
+	{
 		Slug: "water", Title: "Water", Tag: "flagship real-time optics",
 		Promise: "Disturb a physically responsive pool with dielectric Fresnel, depth absorption, live caustics, buoyant objects, and bounded quality profiles.",
 		Lesson:  "A typed GoSX WaterSystem drives one Selena-authored optical model through native WebGPU and WebGL2 backends.",
@@ -39,7 +49,7 @@ var demoCatalog = []DemoDefinition{
 		SourcePath: "examples/gosx-docs/app/demos/water/page.gsx", Packages: []string{"scene", "selena", "route"},
 		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
 		Limitations:  "WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2. Hero targets discrete GPUs; the new optical ALU still needs Apple/Metal hardware certification.",
-		ShowcaseRank: 1,
+		ShowcaseRank: 2,
 	},
 	{
 		Slug: "playground", Title: "GoSX Playground", Tag: "compile .gsx live",
@@ -84,8 +94,7 @@ var demoCatalog = []DemoDefinition{
 		Accent:  "#5fb4ff", Facets: []string{"Scene3D", "PBR", "PostFX"},
 		SourcePath: "examples/gosx-docs/app/demos/scene3d/page.gsx", Packages: []string{"scene", "route"},
 		Status: "live", RenderMode: "SSR + Scene3D GPU runtime",
-		Limitations:  "Rendering capability and backend depend on the browser GPU stack.",
-		ShowcaseRank: 2,
+		Limitations: "Rendering capability and backend depend on the browser GPU stack.",
 	},
 	{
 		Slug: "scene3d-bench", Title: "Scene3D Bench", Tag: "renderer diagnostics",
