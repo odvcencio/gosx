@@ -16,7 +16,12 @@
   }
 
   function sceneDOMRegionUniformName(value, fallback) {
-    return typeof value === "string" && value.trim() ? value.trim() : fallback;
+    var name = typeof value === "string" ? value.trim() : "";
+    if (!name) return fallback;
+    for (var i = 0; i < name.length; i += 1) {
+      if (!/[A-Za-z0-9_[\].]/.test(name.charAt(i))) return fallback;
+    }
+    return name;
   }
 
   function sceneDOMRegionUniformPattern(value, fallback) {

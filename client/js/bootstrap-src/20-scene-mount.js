@@ -1165,6 +1165,9 @@
 	      canvas = nextCanvas;
 	      attachSceneCanvasContextListeners(canvas);
 	      viewportDirty = true;
+	      if (domRegionTracker) {
+	        domRegionTracker.schedule();
+	      }
 	      reinstallSceneCanvasInteractionHandles(reason || "canvas-replaced");
 	      gosxSceneEmit("info", "renderer-canvas-replaced", {
 	        reason: reason || "",

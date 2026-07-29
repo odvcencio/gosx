@@ -140,9 +140,11 @@ test("CustomPost DOMRegions caps targets and clears stale slots", async () => {
 
 test("CustomPost DOMRegions normalizes unsafe slot patterns", () => {
   const harness = createDOMRegionTrackerHarness({
-    uniforms: { count: "uCount", aspect: "uAspect", rect: "bad slot", meta: "slot%d%dMeta" },
+    uniforms: { count: "bad count", aspect: "bad/aspect", rect: "bad slot", meta: "slot%d%dMeta" },
   });
   const config = harness.env.context.__gosx_scene3d_dom_regions.config(harness.state.postEffects[0]);
+  assert.equal(config.uniforms.count, "regionCount");
+  assert.equal(config.uniforms.aspect, "regionAspect");
   assert.equal(config.uniforms.rect, "region%dRect");
   assert.equal(config.uniforms.meta, "region%dMeta");
   harness.tracker.dispose();
@@ -250,6 +252,11 @@ test("CustomPost DOMRegions tracker is wired into Scene3D mount lifecycle", () =
   assert.match(bootstrapFeatureScene3DSource, /__gosx_scene3d_dom_regions/);
   assert.match(bootstrapFeatureScene3DSource, /createSceneCustomPostDOMRegionTracker/);
   assert.match(bootstrapScene3DMountSourceFile, /createSceneCustomPostDOMRegionTracker\(ctx\.mount,\s*function\(\) \{ return canvas; \},\s*sceneState,\s*scheduleRender\)/);
+  assert.match(
+    bootstrapScene3DMountSourceFile,
+    /function commitSceneCanvasReplacement\([\s\S]*?canvas = nextCanvas;[\s\S]*?domRegionTracker\.schedule\(\);[\s\S]*?return true;/,
+    "renderer canvas replacement must schedule DOM-region remeasurement",
+  );
   assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.configure\(sceneState\.postEffects\)/);
   assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.dispose\(\)/);
 });

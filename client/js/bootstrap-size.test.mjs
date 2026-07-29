@@ -472,8 +472,10 @@ const budgets = [
   // until the active renderer confirms success, including split WebGPU/WebGL
   // bundles. DOM-region custom-post tracking brings the combined exact
   // measurement to 1_475_286 / 399_336 / 320_944. Stable observer
-  // subscriptions bring the final totals to 1_475_412 / 399_353 / 321_214.
-  { file: "bootstrap.js", raw: 1_475_412, gzip: 399_353, brotli: 321_214 },
+  // subscriptions bring the totals to 1_475_412 / 399_353 / 321_214.
+  // Canvas-replacement remeasurement and browser-side uniform-name validation
+  // bring the final totals to 1_475_522 / 399_375 / 320_983.
+  { file: "bootstrap.js", raw: 1_475_522, gzip: 399_375, brotli: 320_983 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -812,8 +814,10 @@ const budgets = [
   // 505_522 / 139_885 / 116_180.
   // HTML upload settlement plus DOM-region custom-post tracking:
   // 513_610 / 142_456 / 118_147. Stable observer subscriptions bring the
-  // final totals to 513_736 / 142_509 / 118_210.
-  { file: "bootstrap-feature-scene3d.js", raw: 513_736, gzip: 142_509, brotli: 118_210 },
+  // totals to 513_736 / 142_509 / 118_210. Canvas-replacement
+  // remeasurement and browser-side uniform-name validation bring the final
+  // totals to 513_846 / 142_528 / 118_140.
+  { file: "bootstrap-feature-scene3d.js", raw: 513_846, gzip: 142_528, brotli: 118_140 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1264,9 +1268,9 @@ const routeBudgets = [
     // a small cost while preventing invisible DOM fallback after a decode or
     // GPU upload failure. DOM-region tracking brings the combined exact route
     // totals to:
-    raw: 1_167_829,
-    gzip: 311_085,
-    brotli: 262_966,
+    raw: 1_167_939,
+    gzip: 311_104,
+    brotli: 262_896,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1336,9 +1340,9 @@ const routeBudgets = [
     // Final integrated measurement: 978_394 / 271_253 / 230_459.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals.
-    raw: 995_586,
-    gzip: 276_613,
-    brotli: 234_778,
+    raw: 995_696,
+    gzip: 276_632,
+    brotli: 234_708,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1400,9 +1404,9 @@ const routeBudgets = [
     // WebGPU point-billboard viewport guards add 138 raw bytes.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals.
-    raw: 1_377_772,
-    gzip: 368_765,
-    brotli: 312_025,
+    raw: 1_377_882,
+    gzip: 368_784,
+    brotli: 311_955,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1467,9 +1471,9 @@ const routeBudgets = [
     // 220_952; Brotli remains under its existing ceiling.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals.
-    raw: 1_021_551,
-    gzip: 268_798,
-    brotli: 225_367,
+    raw: 1_021_661,
+    gzip: 268_817,
+    brotli: 225_297,
   },
 
 ];
