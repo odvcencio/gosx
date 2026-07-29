@@ -6,9 +6,9 @@ import (
 	"m31labs.dev/gosx/scene"
 )
 
-// HTMLSurfaceProgram demonstrates that texture-mode HTML is world geometry:
-// the browser lays out the markup in CSS pixels, then Scene3D maps the raster
-// onto a quad that rotates, occludes, and participates in post-processing.
+// HTMLSurfaceProgram shows texture-mode HTML on world geometry. The browser
+// lays out markup in CSS pixels. Scene3D maps the raster to a quad. The quad
+// rotates, occludes, and uses post-processing.
 func HTMLSurfaceProgram() scene.Props {
 	upright := scene.Euler{X: -math.Pi / 2}
 	return scene.Props{

@@ -779,16 +779,19 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-revision"), "1");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-dirty"), "false");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-dirty-bytes"), null);
-  assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-pending-bytes"), null);
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-pending-bytes"), "2621440");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-manager"), "svg-foreignobject");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-rasterized"), "true");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-renderer-ready"), "false");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-state"), "pending");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-failed"), "false");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-upload-bytes"), "2621440");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-raster-width"), "1024");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-raster-height"), "640");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-pixel-ratio"), "2");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-style-sheets"), "1");
   assert.equal(html.getAttribute("data-gosx-scene-html-texture-font-state"), "unavailable");
-  assert.equal(html.getAttribute("data-gosx-scene-html-texture-mirror"), "true");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-mirror"), "false");
   assert.match(
     decodeURIComponent(html.getAttribute("data-gosx-scene-html-texture-key")),
     /\.hud \{ display:grid; color:#8de1ff; \}/,
@@ -798,7 +801,7 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
   assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-bytes"), "655360");
   assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-dirty"), null);
   assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-dirty-bytes"), null);
-  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-upload-pending-bytes"), null);
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-upload-pending-bytes"), "2621440");
   assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-revision"), "1");
   assert.equal(html.getAttribute("data-gosx-scene-html-pointer-events"), "auto");
   assert.equal(html.getAttribute("aria-hidden"), "false");
@@ -819,6 +822,65 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
       fontState: "unavailable",
     },
   );
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("bootstrap clips HTML texture mirrors only after renderer upload succeeds", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-html-upload-root";
+  const env = createContext({
+    elements: [mount],
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-html-upload",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-html-upload-root",
+          props: {
+            width: 640,
+            height: 360,
+            scene: {
+              html: [
+                { id: "upload-ok", mode: "texture", html: "<strong>Uploaded</strong>", width: 1.6, height: 0.8 },
+                { id: "upload-fails", mode: "texture", html: "<strong>Fallback</strong>", width: 1.6, height: 0.8 },
+              ],
+            },
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+          },
+          capabilities: ["canvas"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  const uploaded = labelLayer.children.find((child) => child.getAttribute("data-gosx-scene-html") === "upload-ok");
+  const fallback = labelLayer.children.find((child) => child.getAttribute("data-gosx-scene-html") === "upload-fails");
+  assert.equal(uploaded.getAttribute("data-gosx-scene-html-texture-mirror"), "false");
+  assert.equal(fallback.getAttribute("data-gosx-scene-html-texture-mirror"), "false");
+  assert.equal(uploaded.getAttribute("data-gosx-scene-html-texture-upload-state"), "pending");
+  assert.equal(fallback.getAttribute("data-gosx-scene-html-texture-upload-state"), "pending");
+
+  const api = env.context.__gosx_scene3d_api;
+  api.notifySceneTextureLoaded(uploaded.getAttribute("data-gosx-scene-html-texture-key"), true);
+  api.notifySceneTextureLoaded(fallback.getAttribute("data-gosx-scene-html-texture-key"), false);
+  await flushAsyncWork();
+
+  assert.equal(uploaded.getAttribute("data-gosx-scene-html-texture-renderer-ready"), "true");
+  assert.equal(uploaded.getAttribute("data-gosx-scene-html-texture-upload-state"), "ready");
+  assert.equal(uploaded.getAttribute("data-gosx-scene-html-texture-upload-failed"), "false");
+  assert.equal(uploaded.getAttribute("data-gosx-scene-html-texture-mirror"), "true");
+  assert.equal(fallback.getAttribute("data-gosx-scene-html-texture-renderer-ready"), "false");
+  assert.equal(fallback.getAttribute("data-gosx-scene-html-texture-upload-state"), "failed");
+  assert.equal(fallback.getAttribute("data-gosx-scene-html-texture-upload-failed"), "true");
+  assert.equal(fallback.getAttribute("data-gosx-scene-html-texture-mirror"), "false");
+  assert.equal(fallback.getAttribute("aria-hidden"), "false");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-uploaded"), "1");
+  assert.equal(labelLayer.getAttribute("data-gosx-scene-html-texture-upload-failed"), "1");
   assert.equal(env.consoleLogs.error.length, 0);
 });
 

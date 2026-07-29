@@ -592,6 +592,7 @@
       normalizeSceneHTMLMode(htmlEntry.mode, "dom") === "texture" &&
       htmlEntry.textureReady &&
       htmlEntry.textureRasterized &&
+      htmlEntry.textureRendererReady &&
       !htmlEntry.textureOverBudget
     );
   }
@@ -617,6 +618,9 @@
     setAttrValue(element, "data-gosx-scene-html-texture-upload-pending-bytes", sceneNumber(htmlEntry.texturePendingUploadBytes, 0) > 0 ? sceneNumber(htmlEntry.texturePendingUploadBytes, 0) : "");
     setAttrValue(element, "data-gosx-scene-html-texture-manager", htmlEntry.textureManager || "");
     setAttrValue(element, "data-gosx-scene-html-texture-rasterized", htmlEntry.textureRasterized ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-texture-renderer-ready", htmlEntry.textureRendererReady ? "true" : "false");
+    setAttrValue(element, "data-gosx-scene-html-texture-upload-state", htmlEntry.textureUploadState || "idle");
+    setAttrValue(element, "data-gosx-scene-html-texture-upload-failed", htmlEntry.textureUploadFailed ? "true" : "false");
     setAttrValue(element, "data-gosx-scene-html-texture-upload-bytes", sceneNumber(htmlEntry.textureUploadBytes, 0) > 0 ? sceneNumber(htmlEntry.textureUploadBytes, 0) : "");
     setAttrValue(element, "data-gosx-scene-html-texture-raster-width", sceneNumber(htmlEntry.textureRasterWidth, 0) > 0 ? sceneNumber(htmlEntry.textureRasterWidth, 0) : "");
     setAttrValue(element, "data-gosx-scene-html-texture-raster-height", sceneNumber(htmlEntry.textureRasterHeight, 0) > 0 ? sceneNumber(htmlEntry.textureRasterHeight, 0) : "");
@@ -751,6 +755,25 @@
     state.records.clear();
   }
 
+  function settleSceneHTMLTextureUpload(state, textureKey, loaded) {
+    const key = typeof textureKey === "string" ? textureKey.trim() : "";
+    if (!state || !state.records || !key) {
+      return false;
+    }
+    let matched = false;
+    state.records.forEach(function(record) {
+      if (!record || record.textureKey !== key) {
+        return;
+      }
+      record.rendererReady = loaded === true;
+      record.uploadFailed = loaded !== true;
+      record.uploadState = loaded === true ? "ready" : "failed";
+      record.pendingUploadBytes = 0;
+      matched = true;
+    });
+    return matched;
+  }
+
   function sceneHTMLTextureLifecycleID(html, index) {
     if (html && typeof html.id === "string" && html.id.trim()) {
       return html.id.trim();
@@ -862,7 +885,18 @@
       active.add(id);
       let record = state.records.get(id);
       if (!record) {
-        record = { id, revision: 0, signature: "", bytes: 0, dirty: false, dirtyBytes: 0, pendingUploadBytes: 0 };
+        record = {
+          id,
+          revision: 0,
+          signature: "",
+          bytes: 0,
+          dirty: false,
+          dirtyBytes: 0,
+          pendingUploadBytes: 0,
+          rendererReady: false,
+          uploadFailed: false,
+          uploadState: "idle",
+        };
         state.records.set(id, record);
       }
       const signature = sceneHTMLTextureLifecycleSignature(html, record);
@@ -880,7 +914,9 @@
       if (record.ready) {
         record.dirty = false;
         record.dirtyBytes = 0;
-        record.pendingUploadBytes = 0;
+        record.pendingUploadBytes = !record.rendererReady && !record.uploadFailed && record.rasterized
+          ? Math.max(0, Math.floor(sceneNumber(record.uploadBytes, 0)))
+          : 0;
       }
       html.textureRevision = record.revision;
       html.textureDirty = record.dirty;
@@ -888,6 +924,9 @@
       html.texturePendingUploadBytes = record.pendingUploadBytes;
       html.textureManager = record.manager || "";
       html.textureRasterized = Boolean(record.rasterized);
+      html.textureRendererReady = Boolean(record.rendererReady);
+      html.textureUploadState = record.uploadState || "idle";
+      html.textureUploadFailed = Boolean(record.uploadFailed);
       html.textureUploadBytes = record.uploadBytes || 0;
       applySceneHTMLTextureRasterFields(html, record);
       if (record.dirty) {
@@ -911,7 +950,21 @@
   }
 
   function sceneHTMLTextureStats(entries, lifecycle) {
-    const stats = { bytes: 0, capBytes: 0, overBudget: 0, ready: 0, count: 0, dirty: 0, dirtyBytes: 0, pendingUploadBytes: 0, disposed: 0, disposedBytes: 0, revision: 0 };
+    const stats = {
+      bytes: 0,
+      capBytes: 0,
+      overBudget: 0,
+      ready: 0,
+      uploaded: 0,
+      uploadFailed: 0,
+      count: 0,
+      dirty: 0,
+      dirtyBytes: 0,
+      pendingUploadBytes: 0,
+      disposed: 0,
+      disposedBytes: 0,
+      revision: 0,
+    };
     for (const entry of entries || []) {
       const html = entry && entry.html;
       if (!html || normalizeSceneHTMLMode(html.mode, "dom") !== "texture") {
@@ -925,6 +978,12 @@
       }
       if (html.textureReady) {
         stats.ready += 1;
+      }
+      if (html.textureRendererReady) {
+        stats.uploaded += 1;
+      }
+      if (html.textureUploadFailed) {
+        stats.uploadFailed += 1;
       }
     }
     if (lifecycle) {
@@ -1320,6 +1379,7 @@
       return false;
     }
     const textureKey = raster.url;
+    const textureChanged = record.textureKey !== textureKey;
     record.sourceKey = html.textureKey || ("gosx-html://" + id);
     record.textureKey = textureKey;
     record.manager = "svg-foreignobject";
@@ -1327,8 +1387,13 @@
     record.ready = true;
     record.dirty = false;
     record.dirtyBytes = 0;
-    record.pendingUploadBytes = 0;
     record.uploadBytes = raster.rasterWidth * raster.rasterHeight * 4;
+    if (textureChanged) {
+      record.rendererReady = false;
+      record.uploadFailed = false;
+      record.uploadState = "pending";
+    }
+    record.pendingUploadBytes = record.rendererReady || record.uploadFailed ? 0 : record.uploadBytes;
     record.rasterWidth = raster.rasterWidth;
     record.rasterHeight = raster.rasterHeight;
     record.devicePixelRatio = raster.devicePixelRatio;
@@ -1340,9 +1405,12 @@
     html.textureReady = true;
     html.textureManager = record.manager;
     html.textureRasterized = true;
+    html.textureRendererReady = Boolean(record.rendererReady);
+    html.textureUploadState = record.uploadState;
+    html.textureUploadFailed = Boolean(record.uploadFailed);
     html.textureDirty = false;
     html.textureDirtyBytes = 0;
-    html.texturePendingUploadBytes = 0;
+    html.texturePendingUploadBytes = record.pendingUploadBytes;
     html.textureUploadBytes = record.uploadBytes;
     applySceneHTMLTextureRasterFields(html, record);
     if (html.fallbackReason === "html-texture-manager-unavailable" || !html.fallbackReason) {
@@ -1375,11 +1443,14 @@
       entry.textureReady = true;
       entry.textureManager = record.manager || "";
       entry.textureRasterized = Boolean(record.rasterized);
+      entry.textureRendererReady = Boolean(record.rendererReady);
+      entry.textureUploadState = record.uploadState || "idle";
+      entry.textureUploadFailed = Boolean(record.uploadFailed);
       entry.textureUploadBytes = record.uploadBytes || 0;
       applySceneHTMLTextureRasterFields(entry, record);
       entry.textureDirty = false;
       entry.textureDirtyBytes = 0;
-      entry.texturePendingUploadBytes = 0;
+      entry.texturePendingUploadBytes = record.pendingUploadBytes;
       if (entry.fallbackReason === "html-texture-manager-unavailable" || !entry.fallbackReason) {
         entry.fallbackReason = "html-texture-accessibility-mirror";
       }
@@ -1390,6 +1461,8 @@
     setAttrValue(layer, "aria-hidden", entryCount > 0 ? "false" : "true");
     setAttrValue(layer, "data-gosx-scene-html-texture-count", textureStats.count > 0 ? textureStats.count : "");
     setAttrValue(layer, "data-gosx-scene-html-texture-ready", textureStats.ready > 0 ? textureStats.ready : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-uploaded", textureStats.uploaded > 0 ? textureStats.uploaded : "");
+    setAttrValue(layer, "data-gosx-scene-html-texture-upload-failed", textureStats.uploadFailed > 0 ? textureStats.uploadFailed : "");
     setAttrValue(layer, "data-gosx-scene-html-texture-bytes", textureStats.bytes > 0 ? textureStats.bytes : "");
     setAttrValue(layer, "data-gosx-scene-html-texture-cap-bytes", textureStats.capBytes > 0 ? textureStats.capBytes : "");
     setAttrValue(layer, "data-gosx-scene-html-texture-over-budget", textureStats.overBudget > 0 ? textureStats.overBudget : "");
