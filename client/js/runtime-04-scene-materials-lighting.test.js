@@ -825,6 +825,133 @@ test("bootstrap renders declarative Scene3D HTML overlays on the canvas backend"
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
+test("bootstrap rerasterizes static HTML textures after async webfonts settle", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-html-font-root";
+  const disposedMount = new FakeElement("div", null);
+  disposedMount.id = "scene-html-font-disposed-root";
+  let resolveFont;
+  const fontResponse = new Promise((resolve) => {
+    resolveFont = resolve;
+  });
+  const env = createContext({
+    elements: [mount, disposedMount],
+    fetchRoutes: {
+      "/fonts/panel.woff2": () => fontResponse,
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-html-font",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-html-font-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            scene: {
+              html: [
+                {
+                  id: "font-panel",
+                  mode: "texture",
+                  className: "font-panel",
+                  html: "<strong>Async font</strong>",
+                  width: 1.6,
+                  height: 0.8,
+                },
+              ],
+            },
+            camera: { x: 0, y: 0, z: 6, fov: 72 },
+          },
+          capabilities: ["canvas"],
+        },
+        {
+          id: "gosx-engine-html-font-disposed",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-html-font-disposed-root",
+          props: {
+            width: 320,
+            height: 180,
+            autoRotate: false,
+            scene: {
+              html: [
+                {
+                  id: "disposed-font-panel",
+                  mode: "texture",
+                  html: "<strong>Disposed font</strong>",
+                  width: 1,
+                  height: 0.5,
+                },
+              ],
+            },
+          },
+          capabilities: ["canvas"],
+        },
+      ],
+    },
+  });
+  env.context.btoa = (value) => Buffer.from(value, "binary").toString("base64");
+  env.context.window.__gosx_scene3d_perf = true;
+  env.document.styleSheets = [
+    {
+      cssRules: [
+        { type: 5, cssText: '@font-face { font-family: "Panel"; src: url("/fonts/panel.woff2"); }' },
+        { type: 1, cssText: '.font-panel { font-family: "Panel"; }' },
+      ],
+    },
+  ];
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const labelLayer = mount.children[1];
+  const html = labelLayer.children.find((child) => child.getAttribute("data-gosx-scene-html") === "font-panel");
+  const loadingRevision = Number(html.getAttribute("data-gosx-scene-html-texture-revision"));
+  const loadingKey = html.getAttribute("data-gosx-scene-html-texture-key");
+  assert.equal(html.getAttribute("data-gosx-scene-html-texture-font-state"), "loading");
+  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:html-texture-fonts"], undefined);
+  env.context.__gosx_dispose_engine("gosx-engine-html-font-disposed");
+  const disposedFontSchedules = disposedMount.__gosxScene3DScheduleCounts["schedule:html-texture-fonts"] || 0;
+
+  resolveFont({ bytes: [0, 1, 2, 3, 4, 5] });
+  for (
+    let attempt = 0;
+    attempt < 8 && env.context.__gosx_scene3d_html.styleState().fontState !== "ready";
+    attempt += 1
+  ) {
+    await flushAsyncWork();
+  }
+  assert.equal(env.context.__gosx_scene3d_html.styleState().fontState, "ready");
+  await flushAsyncWork();
+
+  assert.equal(
+    html.getAttribute("data-gosx-scene-html-texture-font-state"),
+    "ready",
+    JSON.stringify({
+      styleState: env.context.__gosx_scene3d_html.styleState(),
+      scheduleCounts: mount.__gosxScene3DScheduleCounts,
+    }),
+  );
+  assert.equal(Number(html.getAttribute("data-gosx-scene-html-texture-revision")), loadingRevision + 1);
+  assert.notEqual(html.getAttribute("data-gosx-scene-html-texture-key"), loadingKey);
+  assert.ok(
+    mount.__gosxScene3DScheduleCounts["schedule:html-texture-fonts"] >= 1,
+    "a static scene must schedule a frame after asynchronous fonts settle",
+  );
+  assert.equal(
+    disposedMount.__gosxScene3DScheduleCounts["schedule:html-texture-fonts"] || 0,
+    disposedFontSchedules,
+    "font settlement must not retain or wake a disposed texture state",
+  );
+  assert.match(
+    decodeURIComponent(html.getAttribute("data-gosx-scene-html-texture-key")),
+    /data:font\/woff2;base64,AAECAwQF/,
+  );
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
 test("bootstrap clips HTML texture mirrors only after renderer upload succeeds", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-html-upload-root";

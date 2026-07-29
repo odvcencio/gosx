@@ -738,21 +738,35 @@
     return dispatched;
   }
 
+  const sceneHTMLTextureStates = new Set();
+
   function createSceneHTMLTextureState() {
-    return {
+    const state = {
       records: new Map(),
       revision: 0,
       disposed: 0,
       disposedBytes: 0,
       requestRender: null,
     };
+    sceneHTMLTextureStates.add(state);
+    return state;
   }
 
   function disposeSceneHTMLTextureState(state) {
     if (!state || !state.records) {
       return;
     }
+    sceneHTMLTextureStates.delete(state);
+    state.requestRender = null;
     state.records.clear();
+  }
+
+  function requestSceneHTMLTextureFontRefresh() {
+    sceneHTMLTextureStates.forEach(function(state) {
+      if (state && typeof state.requestRender === "function") {
+        state.requestRender("html-texture-fonts");
+      }
+    });
   }
 
   function settleSceneHTMLTextureUpload(state, textureKey, loaded) {
@@ -911,7 +925,7 @@
       }
       record.bytes = bytes;
       record.ready = Boolean(html.textureReady && !html.textureOverBudget);
-      if (record.ready) {
+      if (record.ready && !record.dirty) {
         record.dirty = false;
         record.dirtyBytes = 0;
         record.pendingUploadBytes = !record.rendererReady && !record.uploadFailed && record.rasterized
@@ -1179,6 +1193,7 @@
       sceneHTMLTextureStyleCache.fontCSS = inlined.join("\n");
       sceneHTMLTextureStyleCache.fontState = inlined.length > 0 ? "ready" : "unavailable";
       sceneHTMLTextureStyleCache.revision += 1;
+      requestSceneHTMLTextureFontRefresh();
     });
   }
 
@@ -1380,7 +1395,9 @@
     }
     const textureKey = raster.url;
     const textureChanged = record.textureKey !== textureKey;
-    record.sourceKey = html.textureKey || ("gosx-html://" + id);
+    record.sourceKey = record.textureKey === html.textureKey && record.sourceKey
+      ? record.sourceKey
+      : (html.textureKey || ("gosx-html://" + id));
     record.textureKey = textureKey;
     record.manager = "svg-foreignobject";
     record.rasterized = true;
