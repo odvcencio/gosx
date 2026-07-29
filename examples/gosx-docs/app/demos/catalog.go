@@ -38,7 +38,7 @@ var demoCatalog = []DemoDefinition{
 		Accent:  "#69e3c7", Facets: []string{"Scene3D", "PBR", "PostFX", "WebGPU", "WebGL2"},
 		SourcePath: "examples/gosx-docs/app/demos/beacon/program.go", Packages: []string{"scene", "route"},
 		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
-		Limitations:  "WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2 or its bounded primitive fallback. The scene is intentionally capped at 30 FPS, 1.5 DPR, and a 720p render surface.",
+		Limitations:  "WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2 or its bounded primitive fallback. The scene is intentionally capped at 30 frames per second (FPS), a device pixel ratio (DPR) of 1.5, and a 720p render surface.",
 		ShowcaseRank: 1,
 	},
 	{

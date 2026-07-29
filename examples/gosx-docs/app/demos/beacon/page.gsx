@@ -40,8 +40,8 @@ func Page() Node {
 				<li>19 nodes</li>
 				<li>&lt;40k vertices</li>
 				<li>zero asset bytes</li>
-				<li>30 FPS cap</li>
-				<li>DPR ≤ 1.5</li>
+				<li>30 frames per second (FPS) cap</li>
+				<li>device pixel ratio (DPR) ≤ 1.5</li>
 				<li>720p render</li>
 				<li>540p post FX</li>
 				<li>~24 ms adaptive target</li>
