@@ -141,6 +141,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/15b-scene-planner.js"),
 			sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
 			sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
+			sourceFile("bootstrap-src/15d-scene-dom-regions.js"),
 			sourceFile("bootstrap-src/15a1-scene-texture-budget.js"),
 			sourceFile("bootstrap-src/16b-scene-hdr.js"),
 			// 16c holds the backend-agnostic PBR helpers 16-scene-webgl.js used
@@ -353,6 +354,7 @@ var outputs = []output{
 			// 16b-scene-hdr.js moved there too: sceneParseRadianceHDR has one
 			// caller in the tree, and it is 16-scene-webgl.js.
 			sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
+			sourceFile("bootstrap-src/15d-scene-dom-regions.js"),
 			// 16b-scene-compute.js is NOT here any more — it moved to
 			// bootstrap-feature-scene3d-compute.js. A scene with one cube and one
 			// directional light runs no particle simulation, no CPU particle

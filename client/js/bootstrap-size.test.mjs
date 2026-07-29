@@ -470,10 +470,14 @@ const budgets = [
   // 1_466_817 / 396_394 / 319_142.
   // HTML texture upload settlement keeps the accessible DOM mirror visible
   // until the active renderer confirms success, including split WebGPU/WebGL
-  // bundles. Exact lifecycle-fix measurement: 1_468_978 / 396_900 / 319_187.
+  // bundles. DOM-region custom-post tracking brings the combined exact
+  // measurement to 1_475_286 / 399_336 / 320_944. Stable observer
+  // subscriptions bring the totals to 1_475_412 / 399_353 / 321_214.
+  // Canvas-replacement remeasurement and browser-side uniform-name validation
+  // bring the final totals to 1_475_522 / 399_375 / 320_983.
   // Declarative Scene3D status bindings replace demo scripts and CSS :has().
-  // Exact regenerated measurement: 1_470_029 / 397_201 / 319_547.
-  { file: "bootstrap.js", raw: 1_470_029, gzip: 397_201, brotli: 319_547 },
+  // Exact combined measurement: 1_476_573 / 399_672 / 321_022.
+  { file: "bootstrap.js", raw: 1_476_573, gzip: 399_672, brotli: 321_022 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -810,9 +814,14 @@ const budgets = [
   // FINAL-FIX-19 exact measurement: 497_103 / 137_333 / 113_960.
   // HTML texture raster lifecycle diagnostics and style/font capture:
   // 505_522 / 139_885 / 116_180.
+  // HTML upload settlement plus DOM-region custom-post tracking:
+  // 513_610 / 142_456 / 118_147. Stable observer subscriptions bring the
+  // totals to 513_736 / 142_509 / 118_210. Canvas-replacement
+  // remeasurement and browser-side uniform-name validation bring the final
+  // totals to 513_846 / 142_528 / 118_140.
   // Declarative renderer/fallback/quality outputs add 1_048 reusable raw bytes.
-  // Exact regenerated measurement: 508_394 / 140_651 / 116_693.
-  { file: "bootstrap-feature-scene3d.js", raw: 508_394, gzip: 140_651, brotli: 116_693 },
+  // Exact combined measurement: 514_894 / 142_886 / 118_566.
+  { file: "bootstrap-feature-scene3d.js", raw: 514_894, gzip: 142_886, brotli: 118_566 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1260,11 +1269,12 @@ const routeBudgets = [
     // compressed output remains inside the existing ceilings.
     // HTML texture surfaces: exact measured route totals.
     // Upload settlement and the split-renderer notification bridge add only
-    // 1_933 raw / 486 gzip / 492 brotli bytes while preventing invisible DOM
-    // fallback after a decode or GPU upload failure.
-    raw: 1_162_487,
-    gzip: 309_227,
-    brotli: 261_449,
+    // a small cost while preventing invisible DOM fallback after a decode or
+    // GPU upload failure. DOM-region tracking brings the combined exact route
+    // totals to:
+    raw: 1_168_987,
+    gzip: 311_462,
+    brotli: 263_322,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1332,10 +1342,11 @@ const routeBudgets = [
     // Final hydration/lifecycle/telemetry measurement:
     // 951_588 / 263_185 / 223_963.
     // Final integrated measurement: 978_394 / 271_253 / 230_459.
-    // HTML texture surfaces plus upload settlement: exact measured totals.
-    raw: 990_244,
-    gzip: 274_755,
-    brotli: 233_261,
+    // HTML texture upload settlement plus DOM-region custom-post tracking:
+    // exact measured route totals.
+    raw: 996_744,
+    gzip: 276_990,
+    brotli: 235_134,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1395,10 +1406,11 @@ const routeBudgets = [
     // Final integrated measurement: 1_359_573 / 363_164 / 307_393.
     // FINAL-FIX-19 exact measurement: 1_360_411 / 363_436 / 307_637.
     // WebGPU point-billboard viewport guards add 138 raw bytes.
-    // HTML texture surfaces plus upload settlement: exact measured totals.
-    raw: 1_372_430,
-    gzip: 366_907,
-    brotli: 310_508,
+    // HTML texture upload settlement plus DOM-region custom-post tracking:
+    // exact measured route totals.
+    raw: 1_378_930,
+    gzip: 369_142,
+    brotli: 312_381,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1461,10 +1473,11 @@ const routeBudgets = [
     // FINAL-FIX-19 exact measurement: 1_004_671 / 263_566 / 221_062.
     // WebGPU point-billboard viewport guards measure 1_004_809 / 263_568 /
     // 220_952; Brotli remains under its existing ceiling.
-    // HTML texture surfaces plus upload settlement: exact measured totals.
-    raw: 1_016_209,
-    gzip: 266_940,
-    brotli: 223_850,
+    // HTML texture upload settlement plus DOM-region custom-post tracking:
+    // exact measured route totals.
+    raw: 1_022_709,
+    gzip: 269_175,
+    brotli: 225_723,
   },
 
 ];
