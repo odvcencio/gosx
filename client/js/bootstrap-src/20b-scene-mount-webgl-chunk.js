@@ -3730,6 +3730,7 @@
       webgpuDiagnostics.adapterInfo.architecture || "",
       webgpuDiagnostics.adapterInfo.device || "",
     ].filter(Boolean).join(" ") : "");
+    sceneSyncStatusBindings(mount);
   }
 
   function showSceneRequiredRendererMessage(mount, props, reason) {
@@ -3839,6 +3840,51 @@
       props && (props.deferPostFXDelayMS != null ? props.deferPostFXDelayMS : props.postFXDelayMS),
       0,
     ));
+  }
+
+  function sceneStatusBindingLabel(value) {
+    const normalized = String(value || "");
+    const branded = normalized.replace(/^webgpu(?=-|$)/, "WebGPU").replace(/^webgl2?(?=-|$)/, "WebGL2");
+    return branded.replace(/(^|-)([a-z])/g, function(_match, dash, letter) {
+      return (dash ? " " : "") + letter.toUpperCase();
+    });
+  }
+
+  // Declarative status bindings keep Scene3D diagnostics visible without
+  // requiring demo-specific scripts or CSS parent selectors. A status scope
+  // owns one scene mount and any number of renderer/fallback/quality outputs.
+  function sceneSyncStatusBindings(mount) {
+    if (!mount) return;
+    let scope = mount;
+    while (scope && (!scope.hasAttribute || !scope.hasAttribute("data-gosx-scene3d-status-scope"))) {
+      scope = scope.parentNode;
+    }
+    if (!scope || typeof scope.querySelectorAll !== "function") return;
+    const bindings = scope.querySelectorAll("[data-gosx-scene3d-status]");
+    const backend = mount.getAttribute("data-gosx-scene3d-renderer") || "starting";
+    const fallback = mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "";
+    const quality = mount.getAttribute("data-gosx-scene3d-quality-active") || "measuring";
+    for (let i = 0; i < bindings.length; i++) {
+      const output = bindings[i];
+      const kind = output.getAttribute("data-gosx-scene3d-status") || "";
+      let value = "";
+      if (kind === "renderer") {
+        value = backend === "starting" ? "starting…" : sceneStatusBindingLabel(backend);
+        output.hidden = false;
+        setAttrValue(output, "data-state", backend);
+      } else if (kind === "fallback") {
+        value = fallback ? "· fallback: " + sceneStatusBindingLabel(fallback) : "";
+        output.hidden = !fallback;
+        setAttrValue(output, "data-state", fallback ? "active" : "none");
+      } else if (kind === "quality") {
+        value = quality === "measuring" ? "measuring…" : sceneStatusBindingLabel(quality);
+        output.hidden = false;
+        setAttrValue(output, "data-state", quality);
+      } else {
+        continue;
+      }
+      if (output.textContent !== value) output.textContent = value;
+    }
   }
 
   function createSceneAdaptiveQualityState(props, base, capability) {
@@ -4028,6 +4074,7 @@
     setAttrValue(mount, "data-gosx-scene3d-quality-object-texture-pixel-budget", String(profile.objectTexturePixelBudget || 0));
     setAttrValue(mount, "data-gosx-scene3d-quality-expensive-pass-cadence", String(profile.expensivePassCadence || 1));
     setAttrValue(mount, "data-gosx-scene3d-quality-postfx-suppressed", state.postFXSuppressed ? "true" : "false");
+    sceneSyncStatusBindings(mount);
   }
 
   function scenePrimeAdaptiveQuality(state, viewport, mount, sceneState) {

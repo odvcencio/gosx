@@ -79,37 +79,8 @@
 	color: var(--demo-muted);
 }
 
-.beacon__backend,
-.beacon__fallback {
-	display: none;
-}
-
-.beacon__backend--starting {
-	display: inline;
-}
-
-.beacon:has([data-gosx-scene3d-renderer="webgpu"]) .beacon__backend--starting,
-.beacon:has([data-gosx-scene3d-renderer="webgl"]) .beacon__backend--starting,
-.beacon:has([data-gosx-scene3d-renderer="webgl2"]) .beacon__backend--starting {
-	display: none;
-}
-
-.beacon:has([data-gosx-scene3d-renderer="webgpu"]) .beacon__backend--webgpu,
-.beacon:has([data-gosx-scene3d-renderer="webgl"]) .beacon__backend--webgl,
-.beacon:has([data-gosx-scene3d-renderer="webgl2"]) .beacon__backend--webgl {
-	display: inline;
-}
-
-.beacon:has([data-gosx-scene3d-renderer]:not([data-gosx-scene3d-renderer="starting"]):not([data-gosx-scene3d-renderer="webgpu"]):not([data-gosx-scene3d-renderer="webgl"]):not([data-gosx-scene3d-renderer="webgl2"])) .beacon__backend--starting {
-	display: none;
-}
-
-.beacon:has([data-gosx-scene3d-renderer]:not([data-gosx-scene3d-renderer="starting"]):not([data-gosx-scene3d-renderer="webgpu"]):not([data-gosx-scene3d-renderer="webgl"]):not([data-gosx-scene3d-renderer="webgl2"])) .beacon__backend--other {
-	display: inline;
-}
-
-.beacon:has([data-gosx-scene3d-renderer-fallback]:not([data-gosx-scene3d-renderer-fallback=""])) .beacon__fallback {
-	display: inline;
+.beacon__runtime output + output {
+	margin-left: calc(-1 * var(--space-2xs));
 }
 
 .beacon__budgets {
@@ -177,29 +148,6 @@
 .beacon__quality output {
 	color: var(--demo-accent);
 }
-
-.beacon__tier {
-	display: none;
-}
-
-.beacon__tier--starting {
-	display: inline;
-}
-
-.beacon:has([data-gosx-scene3d-quality-active]) .beacon__tier--starting {
-	display: none;
-}
-
-.beacon:has([data-gosx-scene3d-quality-active="full"]) .beacon__tier--full,
-.beacon:has([data-gosx-scene3d-quality-active="balanced"]) .beacon__tier--balanced,
-.beacon:has([data-gosx-scene3d-quality-active="survival"]) .beacon__tier--survival {
-	display: inline;
-}
-
-.beacon:has([data-gosx-scene3d-quality-active]:not([data-gosx-scene3d-quality-active="full"]):not([data-gosx-scene3d-quality-active="balanced"]):not([data-gosx-scene3d-quality-active="survival"])) .beacon__tier--fixed {
-	display: inline;
-}
-
 .beacon__telemetry {
 	display: flex;
 	flex-wrap: wrap;

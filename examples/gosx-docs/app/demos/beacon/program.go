@@ -28,7 +28,7 @@ func BlackglassBeaconProgram() scene.Props {
 		FillHeight:            scene.Bool(true),
 		PreferWebGPU:          scene.Bool(true),
 		CanvasAlpha:           scene.Bool(false),
-		UnsupportedMessage:    "Interactive 3D is unavailable in this browser. The Eclipse Protocol remains described in the page overlay.",
+		UnsupportedMessage:    "Interactive 3D is unavailable in this browser. The page overlay describes the Eclipse Protocol.",
 		ControlTarget:         scene.Vec3(0, 2.15, 0),
 		ControlMinDistance:    6.5,
 		ControlMaxDistance:    12,

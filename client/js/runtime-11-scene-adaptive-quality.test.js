@@ -26,6 +26,39 @@ const {
   readSceneMountSrc,
 } = require("./runtime-test-harness.js");
 
+test("Scene3D declarative status bindings expose backend fallback and quality without CSS :has()", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const scope = new FakeElement("section", null);
+  const mount = new FakeElement("div", null);
+  const renderer = new FakeElement("output", null);
+  const fallback = new FakeElement("output", null);
+  const quality = new FakeElement("output", null);
+  scope.setAttribute("data-gosx-scene3d-status-scope", "");
+  renderer.setAttribute("data-gosx-scene3d-status", "renderer");
+  fallback.setAttribute("data-gosx-scene3d-status", "fallback");
+  quality.setAttribute("data-gosx-scene3d-status", "quality");
+  scope.appendChild(mount);
+  scope.appendChild(renderer);
+  scope.appendChild(fallback);
+  scope.appendChild(quality);
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgl");
+  mount.setAttribute("data-gosx-scene3d-renderer-fallback", "webgpu-unavailable");
+  mount.setAttribute("data-gosx-scene3d-quality-active", "balanced");
+  api.sceneSyncStatusBindings(mount);
+
+  assert.equal(renderer.textContent, "WebGL2");
+  assert.equal(renderer.getAttribute("data-state"), "webgl");
+  assert.equal(fallback.textContent, "· fallback: WebGPU Unavailable");
+  assert.equal(fallback.hidden, false);
+  assert.equal(quality.textContent, "Balanced");
+
+  mount.setAttribute("data-gosx-scene3d-renderer-fallback", "");
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(fallback.textContent, "");
+  assert.equal(fallback.hidden, true);
+});
+
 test("Scene3D adaptive profiles start balanced and expose exact frame contract", () => {
   const { state, mount } = createAdaptiveQualityHarness();
   assert.equal(state.requestedTier, "balanced");
