@@ -9,7 +9,7 @@ import (
 
 func TestBlackglassCoastRuntimeContractMatchesStudioWorldSemantics(t *testing.T) {
 	contract := BlackglassCoastRuntimeContract()
-	if contract.Schema != "gosx.scene3d.world/v1" || contract.DocumentID != "blackglass-coast" || contract.Revision != 1 {
+	if contract.Schema != "gosx.scene3d.world/v1" || contract.DocumentID != "blackglass-coast" || contract.Revision != 1 || contract.DocumentFingerprint != blackglassCoastSceneDocSHA256 {
 		t.Fatalf("unexpected contract identity: %#v", contract)
 	}
 	if contract.ArtDirection != "sunlit volcanic naturalism" || contract.Water.RuntimeProfile != "blackglass-coast" {
