@@ -957,6 +957,17 @@ class FakeElement {
       }
     }
 
+    if (
+      node.nodeType === ELEMENT_NODE &&
+      node.tagName === "SCRIPT" &&
+      this.ownerDocument &&
+      typeof this.ownerDocument.inlineScriptLoader === "function" &&
+      !node.getAttribute("src") &&
+      node.getAttribute("data-gosx-navigation-replayed") === "true"
+    ) {
+      this.ownerDocument.inlineScriptLoader(node);
+    }
+
     return node;
   }
 
@@ -989,6 +1000,16 @@ class FakeElement {
     this.childNodes.splice(idx, 0, node);
     if (node.nodeType === ELEMENT_NODE && this.ownerDocument) {
       this.ownerDocument.indexNode(node);
+    }
+    if (
+      node.nodeType === ELEMENT_NODE &&
+      node.tagName === "SCRIPT" &&
+      this.ownerDocument &&
+      typeof this.ownerDocument.inlineScriptLoader === "function" &&
+      !node.getAttribute("src") &&
+      node.getAttribute("data-gosx-navigation-replayed") === "true"
+    ) {
+      this.ownerDocument.inlineScriptLoader(node);
     }
     return node;
   }
