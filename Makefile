@@ -20,7 +20,9 @@ WATER_EVIDENCE_URL ?= http://127.0.0.1:3000/demos/water
 WATER_EVIDENCE_OUT ?= build/water-profile-evidence
 WATER_EVIDENCE_BUDGET ?= perf/budgets/water-profile-evidence.json
 WATER_EVIDENCE_FLAGS ?=
-FUZZTIME ?= 5s
+# A fixed execution count keeps CI deterministic and avoids wall-clock fuzz
+# shutdown races while preserving every smoke target.
+FUZZTIME ?= 2000x
 FUZZ_TIMEOUT ?= 45s
 FUZZ_PARALLEL ?= 2
 GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build/*')
