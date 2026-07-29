@@ -2600,6 +2600,7 @@
           }
           if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart, now, renderer)) {
             viewportDirty = true;
+            scheduleRender("quality-transition");
           }
           publishReady();
           scheduleNextAnimationFrame();
@@ -2636,6 +2637,12 @@
       if (perfEnabled) performance.mark("scene3d-bundle-start");
       const activeCamera = sceneCurrentControlCamera(sceneControlHandle.controller, sceneState.camera, sceneState._scrollCamera);
       applySceneHTMLTextureRecordsToState(sceneState, htmlTextureState);
+      const pointQualityGroups = sceneQualityLadderAdmittedGroups(adaptiveQuality);
+      const pointBudgetScale = sceneQualityLadderPointBudgetScale(adaptiveQuality);
+      const budgetedPoints = sceneApplyPointBudgetScale(
+        sceneFilterPointsByQualityGroups(sceneStatePointsWithMaterials(sceneState), pointQualityGroups, sceneState.pointQualityGroups),
+        pointBudgetScale,
+      );
       latestBundle = createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
@@ -2648,7 +2655,7 @@
         sceneStateLights(sceneState),
         sceneState.environment,
         timeSeconds,
-        sceneFilterPointsByQualityGroups(sceneStatePointsWithMaterials(sceneState), sceneQualityLadderAdmittedGroups(adaptiveQuality), sceneState.pointQualityGroups),
+        budgetedPoints,
         sceneStateInstancedMeshesWithMaterials(sceneState),
         sceneState.computeParticles,
         sceneState.waterSystems,
@@ -2666,6 +2673,10 @@
       // drawPointsEntries) and WebGL (16-scene-webgl.js drawPointsEntries)
       // backends draw from, so this single attribute covers both.
       setAttrValue(ctx.mount, "data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
+      setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-scale", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualityPointBudgetScale || 1) : 1));
+      setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
+      setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
+      setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
         performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
@@ -2691,6 +2702,7 @@
       }
       if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart, now, renderer)) {
         viewportDirty = true;
+        scheduleRender("quality-transition");
       }
       publishReady();
       scheduleNextAnimationFrame();

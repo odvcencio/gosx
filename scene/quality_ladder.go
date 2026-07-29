@@ -13,6 +13,7 @@ type QualityRungIR struct {
 	PostEffects          []string `json:"postEffects,omitempty"`
 	LayerGroups          []string `json:"layerGroups,omitempty"`
 	ComputeBudgetScale   float64  `json:"computeBudgetScale,omitempty"`
+	PointBudgetScale     float64  `json:"pointBudgetScale,omitempty"`
 	ExpensivePassCadence int      `json:"expensivePassCadence,omitempty"`
 }
 
@@ -68,6 +69,13 @@ type QualityRung struct {
 	// should read the attribute/event and drive their own particle counts.
 	ComputeBudgetScale float64
 
+	// PointBudgetScale scales Points draw counts at this rung. Range [0, 1];
+	// 1 = full authored point budget, values are clamped at lowering time.
+	// The runtime preserves every admitted point layer and draws a stable
+	// stratified sample for each layer, so demotion reduces work without
+	// dropping layer categories or reducing resolution.
+	PointBudgetScale float64
+
 	// ExpensivePassCadence: 1 = run every frame, N = run every Nth frame.
 	// This is a WORK reduction (allowed by the design law), not a
 	// resolution reduction. Values below 1 are clamped to 1 at lowering.
@@ -81,9 +89,9 @@ type QualityRung struct {
 }
 
 // resolveQualityRung normalizes one authored QualityRung for IR emission:
-// clamps ComputeBudgetScale to [0,1], ExpensivePassCadence to >=1, and
-// falls back to "rung-<index>" when Name is blank. Called once per rung by
-// sceneIR() below.
+// clamps ComputeBudgetScale and PointBudgetScale to [0,1],
+// ExpensivePassCadence to >=1, and falls back to "rung-<index>" when Name
+// is blank. Called once per rung by sceneIR() below.
 func resolveQualityRung(r QualityRung, index int) QualityRungIR {
 	name := strings.TrimSpace(r.Name)
 	if name == "" {
@@ -100,6 +108,14 @@ func resolveQualityRung(r QualityRung, index int) QualityRungIR {
 		scale = 0
 	} else if scale > 1 {
 		scale = 1
+	}
+	pointScale := r.PointBudgetScale
+	if pointScale == 0 {
+		pointScale = 1
+	} else if pointScale < 0 {
+		pointScale = 0
+	} else if pointScale > 1 {
+		pointScale = 1
 	}
 	cadence := r.ExpensivePassCadence
 	if cadence < 1 {
@@ -124,6 +140,7 @@ func resolveQualityRung(r QualityRung, index int) QualityRungIR {
 		PostEffects:          postEffects,
 		LayerGroups:          layerGroups,
 		ComputeBudgetScale:   scale,
+		PointBudgetScale:     pointScale,
 		ExpensivePassCadence: cadence,
 	}
 }
@@ -142,6 +159,7 @@ func (r QualityRungIR) legacyProps() map[string]any {
 		out["layerGroups"] = append([]string(nil), r.LayerGroups...)
 	}
 	setNumeric(out, "computeBudgetScale", r.ComputeBudgetScale)
+	setNumeric(out, "pointBudgetScale", r.PointBudgetScale)
 	setInt(out, "expensivePassCadence", r.ExpensivePassCadence)
 	return out
 }
@@ -210,6 +228,9 @@ func qualityLadderWarnings(rungs []QualityRung, startRung int, adaptiveQuality *
 	for i, r := range rungs {
 		if r.ComputeBudgetScale < 0 || r.ComputeBudgetScale > 1 {
 			warnings = append(warnings, "QualityLadder["+intString(i)+"].ComputeBudgetScale must be in [0,1]; it will be clamped")
+		}
+		if r.PointBudgetScale < 0 || r.PointBudgetScale > 1 {
+			warnings = append(warnings, "QualityLadder["+intString(i)+"].PointBudgetScale must be in [0,1]; it will be clamped")
 		}
 		if r.ExpensivePassCadence < 1 {
 			warnings = append(warnings, "QualityLadder["+intString(i)+"].ExpensivePassCadence must be >= 1; it will be clamped to 1")
