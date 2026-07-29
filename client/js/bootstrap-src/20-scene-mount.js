@@ -8256,6 +8256,28 @@
       }
     }
 
+    function releaseWebGLContextOnDispose(reason) {
+      if (!canvas || !renderer || renderer.kind !== "webgl") {
+        return false;
+      }
+      try {
+        const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+        const extension = gl && typeof gl.getExtension === "function"
+          ? gl.getExtension("WEBGL_lose_context")
+          : null;
+        if (extension && typeof extension.loseContext === "function") {
+          extension.loseContext();
+          gosxSceneEmit("info", "webgl-context-released-on-dispose", {
+            reason: reason || "dispose",
+          });
+          return true;
+        }
+      } catch (_err) {
+        /* disposal must continue even if the browser rejects context loss */
+      }
+      return false;
+    }
+
     // Watchdog for voluntary-restore: Chrome does NOT always fire
     // `webglcontextrestored` after a voluntary `ext.restoreContext()` call,
     // particularly when the tab was foregrounded but the scene was briefly
@@ -8699,7 +8721,7 @@
     };
 
     function onWebGLContextLost(event) {
-      if (!renderer || renderer.kind !== "webgl") {
+      if (disposed || !renderer || renderer.kind !== "webgl") {
         return;
       }
       if (event && typeof event.preventDefault === "function") {
@@ -10249,7 +10271,11 @@
         dragHandle.dispose();
         pickHandle.dispose();
         sceneControlHandle.dispose();
+        const disposeRendererKind = renderer && renderer.kind;
         renderer.dispose();
+        if (disposeRendererKind === "webgl") {
+          releaseWebGLContextOnDispose("engine-dispose");
+        }
         disposeSceneHTMLTextureState(htmlTextureState);
         if (wasmMotionState === 1 && typeof window !== "undefined"
             && typeof window.__gosx_motion_unload === "function") {

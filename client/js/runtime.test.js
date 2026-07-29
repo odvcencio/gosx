@@ -19756,6 +19756,170 @@ test("navigation runtime disposes and remounts an engine when the scene payload 
   assert.equal(events.some((e) => e.msg === "engine-reused-across-navigation"), false);
 });
 
+test("navigation runtime remounts a unique Scene3D route scene and draws after route-back", async () => {
+  let liveContextCount = 0;
+  const contexts = [];
+  function createPressureContext() {
+    const gl = new FakeWebGLContext();
+    contexts.push(gl);
+    liveContextCount += 1;
+    gl.__released = false;
+    const originalGetExtension = gl.getExtension.bind(gl);
+    gl.getExtension = function(name) {
+      if (name === "WEBGL_lose_context") {
+        return {
+          loseContext() {
+            if (gl.__released) return;
+            gl.__released = true;
+            liveContextCount -= 1;
+            gl.ops.push(["loseContext"]);
+          },
+        };
+      }
+      return originalGetExtension(name);
+    };
+    for (const method of ["drawArrays", "drawElements", "drawArraysInstanced", "drawElementsInstanced"]) {
+      const original = gl[method].bind(gl);
+      gl[method] = function(...args) {
+        if (liveContextCount > 2) {
+          gl.ops.push([method + "SuppressedByContextPressure", liveContextCount]);
+          return;
+        }
+        return original(...args);
+      };
+    }
+    return gl;
+  }
+
+  function sceneProps(color) {
+    return {
+      width: 320,
+      height: 180,
+      autoRotate: true,
+      preferWebGPU: false,
+      scene: {
+        objects: [{
+          kind: "box",
+          width: 1,
+          height: 1,
+          depth: 1,
+          color: color === "home" ? "#ff6b4a" : "#38bdf8",
+        }],
+      },
+    };
+  }
+
+  function manifestFor(mountID, color) {
+    return {
+      engines: [{
+        id: "gosx-engine-0",
+        mountId: mountID,
+        component: "GoSXScene3D",
+        kind: "surface",
+        jsExport: "GoSXScene3D",
+        props: sceneProps(color),
+        capabilities: ["canvas", "webgl", "animation"],
+      }],
+    };
+  }
+
+  function mountFor(id) {
+    const mount = new FakeElement("div", null);
+    mount.id = id;
+    return mount;
+  }
+
+  function manifestScript(manifest) {
+    const script = new FakeElement("script", null);
+    script.id = "gosx-manifest";
+    script.textContent = JSON.stringify(manifest);
+    return script;
+  }
+
+  function hasDraw(gl) {
+    return gl.ops.some((entry) => (
+      entry[0] === "drawArrays"
+      || entry[0] === "drawElements"
+      || entry[0] === "drawArraysInstanced"
+      || entry[0] === "drawElementsInstanced"
+    ));
+  }
+
+  const homeManifest = manifestFor("galaxy-scene-primary", "home");
+  const productManifest = manifestFor("starfield-background", "products");
+  const parsedDocs = new Map();
+  const homeMount = mountFor("galaxy-scene-primary");
+  const env = createContext({
+    elements: [homeMount],
+    createWebGLContext: createPressureContext,
+    createWebGL2Context: createPressureContext,
+    manifest: homeManifest,
+    fetchRoutes: {
+      "http://localhost:3000/products": { text: "__PRODUCTS_ROUTE__", url: "http://localhost:3000/products" },
+      "http://localhost:3000/": { text: "__HOME_ROUTE__", url: "http://localhost:3000/" },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  parsedDocs.set("__PRODUCTS_ROUTE__", buildNavigatedDocument({
+    title: "Products",
+    bodyNodes: [mountFor("starfield-background"), manifestScript(productManifest)],
+  }));
+  parsedDocs.set("__HOME_ROUTE__", buildNavigatedDocument({
+    title: "Home",
+    bodyNodes: [mountFor("galaxy-scene-primary"), manifestScript(homeManifest)],
+  }));
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const firstHomeRecord = env.context.__gosx.engines.get("gosx-engine-0");
+  assert.ok(firstHomeRecord, "expected the initial home Scene3D engine to mount");
+  const firstHomeCanvas = homeMount.children[0];
+  assert.ok(firstHomeCanvas, "expected the initial home Scene3D canvas");
+  const firstHomeGL = firstHomeCanvas._webglContext;
+  assert.ok(firstHomeGL, "expected the initial home Scene3D WebGL context");
+  assert.ok(hasDraw(firstHomeGL), "initial home scene must draw at least one frame");
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/products");
+  await flushAsyncWork();
+
+  const productsMount = env.document.getElementById("starfield-background");
+  const productRecord = env.context.__gosx.engines.get("gosx-engine-0");
+  assert.ok(productRecord, "expected products Scene3D engine to mount");
+  assert.notStrictEqual(productRecord, firstHomeRecord, "products route must replace the home engine record");
+  assert.notStrictEqual(productsMount, homeMount, "products route must use its own mount");
+  const productCanvas = productsMount.children[0];
+  const productGL = productCanvas && productCanvas._webglContext;
+  assert.ok(productGL, "expected the products Scene3D WebGL context");
+  assert.ok(hasDraw(productGL), "products scene must draw while the first disposed context is released");
+  assert.equal(firstHomeGL.ops.some((entry) => entry[0] === "loseContext"), true);
+
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/");
+  await flushAsyncWork();
+
+  const returnedMount = env.document.getElementById("galaxy-scene-primary");
+  const returnedRecord = env.context.__gosx.engines.get("gosx-engine-0");
+  assert.ok(returnedRecord, "expected the route-back home Scene3D engine to mount");
+  assert.notStrictEqual(returnedRecord, productRecord, "route-back must replace the products engine record");
+  assert.notStrictEqual(returnedMount, homeMount, "route-back must mount the incoming home placeholder");
+  assert.notStrictEqual(returnedMount.children[0], firstHomeCanvas, "route-back must create a fresh Scene3D canvas");
+  const returnedCanvas = returnedMount.children[0];
+  const returnedGL = returnedCanvas && returnedCanvas._webglContext;
+  assert.ok(returnedGL, "expected the route-back home Scene3D WebGL context");
+  assert.equal(productGL.ops.some((entry) => entry[0] === "loseContext"), true);
+  assert.ok(hasDraw(returnedGL), "route-back home scene must resume real WebGL drawing");
+  assert.equal(
+    returnedGL.ops.some((entry) => String(entry[0]).includes("SuppressedByContextPressure")),
+    false,
+    "route-back draw must not be suppressed by unreleased prior contexts",
+  );
+  assert.equal(returnedMount.getAttribute("data-gosx-scene3d-render-loop"), "active");
+});
+
 test("navigation runtime reuses an engine while hub subscriptions disconnect and re-arm cleanly", async () => {
   function makeSocket(url) {
     return {
@@ -20143,6 +20307,87 @@ test("navigation runtime consumes exact current-page link clicks without soft na
     JSON.stringify(env.scrollCalls.at(-1)),
     JSON.stringify([{ top: 0, left: 0, behavior: "instant" }]),
   );
+});
+
+test("navigation runtime keeps mounted Scene3D intact on exact current-page link clicks", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/");
+  link.setAttribute("data-gosx-link", "");
+  link.setAttribute("data-gosx-prefetch", "intent");
+  link.textContent = "Home";
+
+  const mount = new FakeElement("div", null);
+  mount.id = "galaxy-scene-primary";
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgpu");
+  mount.setAttribute("data-gosx-scene3d-mounted", "true");
+  mount.setAttribute("data-gosx-scene3d-webgpu-last-error", "");
+  mount.setAttribute("data-gosx-scene3d-webgpu-device-lost-reason", "");
+
+  const canvas = new FakeElement("canvas", null);
+  canvas.setAttribute("data-gosx-scene3d-canvas", "true");
+  mount.appendChild(canvas);
+
+  const disposeCalls = [];
+  const bootstrapCalls = [];
+  const env = createContext({
+    elements: [link, mount],
+  });
+  env.context.__gosx = env.context.__gosx || {};
+  env.context.__gosx.engines = env.context.__gosx.engines || new Map();
+
+  const engineRecord = {
+    component: "GoSXScene3D",
+    mount,
+    disposed: false,
+    handle: {
+      dispose() {
+        disposeCalls.push("engine");
+        engineRecord.disposed = true;
+      },
+    },
+  };
+  env.context.__gosx.engines.set("galaxy-scene-primary", engineRecord);
+  env.context.__gosx_dispose_page = async function() {
+    disposeCalls.push("page");
+  };
+  env.context.__gosx_bootstrap_page = async function() {
+    bootstrapCalls.push("bootstrap");
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+
+  let prevented = false;
+  const clickListener = env.document.eventListeners.get("click")[0];
+  clickListener({
+    type: "click",
+    target: link,
+    button: 0,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true, "active current nav click should stay enhanced");
+  assert.equal(env.fetchCalls.length, 0, "active current nav click must not fetch the route");
+  assert.deepEqual(disposeCalls, [], "current nav click must not dispose the page or Scene3D engine");
+  assert.deepEqual(bootstrapCalls, [], "current nav click must not remount the page");
+  assert.strictEqual(env.context.__gosx.engines.get("galaxy-scene-primary"), engineRecord);
+  assert.strictEqual(env.document.getElementById("galaxy-scene-primary"), mount);
+  assert.strictEqual(mount.children[0], canvas, "Scene3D canvas identity must survive the click");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-last-error"), "");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-device-lost-reason"), "");
 });
 
 test("navigation runtime absolutizes managed asset URLs during navigation", async () => {
