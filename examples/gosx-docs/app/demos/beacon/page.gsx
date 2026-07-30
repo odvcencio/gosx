@@ -1,12 +1,7 @@
 package docs
 
 func Page() Node {
-	return <section
-		class="beacon"
-		aria-label="Blackglass Coast"
-		role="region"
-		data-gosx-scene3d-status-scope
-	>
+	return <section class="beacon" aria-label="Blackglass Coast" role="region" data-gosx-scene3d-status-scope>
 		<div class="beacon__canvas">
 			<Scene3D {...data.scene} />
 		</div>
