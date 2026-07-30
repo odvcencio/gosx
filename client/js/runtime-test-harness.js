@@ -2990,7 +2990,7 @@ function sceneCoreSourceRange(startAnchor, endAnchor) {
 
 function loadSceneAdaptiveQualityAPI() {
   const source = readSceneMountSrc();
-  const start = source.indexOf("function createSceneAdaptiveQualityState");
+  const start = source.indexOf("function sceneStatusBindingLabel");
   const end = source.indexOf("function applyScenePostFXState", start);
   assert.notEqual(start, -1, "adaptive controller start anchor missing");
   assert.notEqual(end, -1, "adaptive controller end anchor missing");
@@ -3016,6 +3016,7 @@ function loadSceneAdaptiveQualityAPI() {
       sceneEffectivePointQualityGroup, sceneFilterPointsByQualityGroups,
       sceneQualityLadderPointBudgetScale, sceneApplyPointBudgetScale,
       scenePrimeAdaptiveQuality,
+      sceneSyncStatusBindings,
     };
   `, context, { filename: "scene-adaptive-quality.js" });
   return { api: context.adaptiveAPI, clock };

@@ -9,8 +9,8 @@ import (
 )
 
 func TestDemoCatalogContracts(t *testing.T) {
-	if len(Demos()) != 10 {
-		t.Fatalf("Demos() length = %d, want 10", len(Demos()))
+	if len(Demos()) != 11 {
+		t.Fatalf("Demos() length = %d, want 11", len(Demos()))
 	}
 	seen := make(map[string]bool, len(Demos()))
 	validStatus := map[string]bool{"featured": true, "live": true, "lab": true, "prototype": true}
@@ -67,8 +67,8 @@ func TestShowcaseDemosHaveStableTruthfulPromotion(t *testing.T) {
 		slug   string
 		status string
 	}{
+		{slug: "beacon", status: "featured"},
 		{slug: "water", status: "featured"},
-		{slug: "scene3d", status: "live"},
 		{slug: "checkers", status: "live"},
 		{slug: "scene3d-bench", status: "lab"},
 	}

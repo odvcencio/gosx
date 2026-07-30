@@ -71,7 +71,7 @@ func TestPresenceResolverMatchesRendererLanguages(t *testing.T) {
 
 	// WebGL2 reads the GLSL fields.
 	for _, symbol := range []string{
-		"var vertexSource = material.customVertex;",
+		"var vertexSource = sceneWebGLNormalizeCustomShaderSource(material.customVertex);",
 		"material.customFragment",
 	} {
 		if !strings.Contains(webgl, symbol) {
