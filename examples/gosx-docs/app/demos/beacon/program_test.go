@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx/scene"
+	"m31labs.dev/gosx/scene/geom"
+	"m31labs.dev/gosx/scene/preview"
 )
 
 func TestBlackglassCoastRuntimeContractMatchesStudioWorldSemantics(t *testing.T) {
@@ -59,6 +61,33 @@ func TestBlackglassCoastStaysWithinDeclaredBudget(t *testing.T) {
 	ir := props.SceneIR()
 	if len(ir.WaterSystems) != 1 || ir.WaterSystems[0].ID != contract.Water.ID || len(ir.InstancedMeshes) != 1 || ir.InstancedMeshes[0].Count != 12 {
 		t.Fatalf("lowered world lost water or instancing: water=%#v instances=%#v", ir.WaterSystems, ir.InstancedMeshes)
+	}
+}
+
+func TestBlackglassCoastExpandedGeometryStaysWithinDeclaredBudget(t *testing.T) {
+	props := BlackglassBeaconProgram()
+	result, err := preview.Render(props, preview.Options{
+		Width: 320, Height: 180, Background: props.Background, DisableShadows: true, DisablePostFX: true,
+	})
+	if err != nil {
+		t.Fatalf("lower renderer-facing coast geometry: %v", err)
+	}
+	expandedVertices := 0
+	for _, mesh := range result.Bundle.InstancedMeshes {
+		vertices := geom.DrawVertexCount(geom.Params{
+			Kind: mesh.Kind, Size: mesh.Size, Width: mesh.Width, Height: mesh.Height, Depth: mesh.Depth,
+			Radius: mesh.Radius, RadiusTop: mesh.RadiusTop, RadiusBottom: mesh.RadiusBottom, Tube: mesh.Tube,
+			Segments: mesh.Segments, RadialSegments: mesh.RadialSegments, TubularSegments: mesh.TubularSegments,
+		})
+		if vertices <= 0 || mesh.InstanceCount <= 0 {
+			t.Fatalf("mesh %q has an invalid renderer-facing count: vertices=%d instances=%d", mesh.ID, vertices, mesh.InstanceCount)
+		}
+		// Instancing uploads one expanded geometry and reuses it for every
+		// transform, so the upload budget counts the mesh once.
+		expandedVertices += vertices
+	}
+	if expandedVertices <= 0 || expandedVertices > blackglassCoastExpandedVertexBudget {
+		t.Fatalf("expanded renderer-facing vertices = %d, budget = %d", expandedVertices, blackglassCoastExpandedVertexBudget)
 	}
 }
 
