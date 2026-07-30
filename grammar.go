@@ -15,6 +15,10 @@ package gosx
 //	<div>{cond && <span>yes</span>}</div> -> conditional via Go expressions
 func GosxGrammar() *Grammar {
 	return ExtendGrammar("gosx", GoGrammar(), func(g *Grammar) {
+		g.ReuseRepeatAuxForParents = append(g.ReuseRepeatAuxForParents,
+			"jsx_opening_element",
+			"jsx_self_closing_element",
+		)
 
 		// The generated CST keeps `jsx_*` node names for compatibility with the
 		// existing lowering, formatting, and transpile pipeline. The language

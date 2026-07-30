@@ -478,7 +478,9 @@ const budgets = [
   // Declarative Scene3D status bindings replace demo scripts and CSS :has().
   // Merged with main's retained-geometry and quality-ladder work; exact
   // combined measurement: 1_481_931 / 401_314 / 322_353.
-  { file: "bootstrap.js", raw: 1_481_931, gzip: 401_314, brotli: 322_353 },
+  // Merging main's declarative submit-action fixes with the Scene3D status
+  // bindings yields the combined generated bundle measured here.
+  { file: "bootstrap.js", raw: 1_483_937, gzip: 401_833, brotli: 323_032 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -525,7 +527,9 @@ const budgets = [
   //
   // Observable transport outcomes and queue health are available on every
   // runtime surface. Final measurement: 125_629 / 34_137 / 29_910.
-  { file: "bootstrap-runtime.js", raw: 126_000, gzip: 34_500, brotli: 30_000 },
+  // Main's declarative submit-action handling is part of the shared runtime.
+  // Combined post-merge measurement: 127_488 / 34_643 / 30_304.
+  { file: "bootstrap-runtime.js", raw: 127_488, gzip: 34_643, brotli: 30_304 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -557,7 +561,9 @@ const budgets = [
   //
   // The lite surface carries the same audited observable telemetry transport.
   // Final measurement: 98_110 / 26_463 / 23_574.
-  { file: "bootstrap-lite.js", raw: 98_500, gzip: 26_500, brotli: 24_000 },
+  // The same submit-action handling reaches the lite bundle. Brotli remains
+  // within its existing ceiling; raw/gzip measure 99_966 / 26_949.
+  { file: "bootstrap-lite.js", raw: 99_966, gzip: 26_949, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1179,9 +1185,11 @@ const routeBudgets = [
     // (gzip 70_000 -> 70_100). Ceiling re-set from measurement of the merged
     // route.
     // Final observable-telemetry measurement: 229_436 / 65_617 / 57_847.
-    raw: 230_000,
-    gzip: 66_000,
-    brotli: 58_000,
+    // Main's declarative submit-action handling is shared by the selective
+    // runtime; record the combined post-merge measurement.
+    raw: 231_295,
+    gzip: 66_123,
+    brotli: 58_241,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1277,10 +1285,11 @@ const routeBudgets = [
     // GPU upload failure. DOM-region tracking brings the combined exact route
     // totals to 1_168_987 / 311_462 / 263_322. Merging current main's
     // retained-geometry and quality-ladder work with declarative status
-    // bindings brings the exact route total to:
-    raw: 1_172_422,
-    gzip: 312_383,
-    brotli: 263_966,
+    // bindings, plus main's declarative submit-action fix, brings the exact
+    // route total to:
+    raw: 1_174_281,
+    gzip: 312_889,
+    brotli: 264_360,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1350,10 +1359,11 @@ const routeBudgets = [
     // Final integrated measurement: 978_394 / 271_253 / 230_459.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals. Merging current main with declarative
-    // status bindings brings the exact route total to:
-    raw: 1_002_205,
-    gzip: 278_626,
-    brotli: 236_388,
+    // status bindings, plus main's declarative submit-action fix, brings the
+    // exact route total to:
+    raw: 1_004_064,
+    gzip: 279_132,
+    brotli: 236_782,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1415,10 +1425,11 @@ const routeBudgets = [
     // WebGPU point-billboard viewport guards add 138 raw bytes.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals. Merging current main with declarative
-    // status bindings brings the exact route total to:
-    raw: 1_384_391,
-    gzip: 370_778,
-    brotli: 313_635,
+    // status bindings, plus main's declarative submit-action fix, brings the
+    // exact route total to:
+    raw: 1_386_250,
+    gzip: 371_284,
+    brotli: 314_029,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1483,10 +1494,11 @@ const routeBudgets = [
     // 220_952; Brotli remains under its existing ceiling.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals. Merging current main with declarative
-    // status bindings brings the exact route total to:
-    raw: 1_026_144,
-    gzip: 270_096,
-    brotli: 226_367,
+    // status bindings, plus main's declarative submit-action fix, brings the
+    // exact route total to:
+    raw: 1_028_003,
+    gzip: 270_602,
+    brotli: 226_761,
   },
 
 ];
