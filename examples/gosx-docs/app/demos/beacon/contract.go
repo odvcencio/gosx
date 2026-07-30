@@ -121,6 +121,9 @@ func loadBlackglassCoastRuntimeContract(payload []byte) (BlackglassCoastContract
 	if !ok || zone.ID != "blackglass-cove" || zone.RuntimeProfile == "" || zone.Size.X <= 0 || zone.Size.Y <= 0 || zone.Size.Z <= 0 {
 		return BlackglassCoastContract{}, fmt.Errorf("invalid blackglass-cove water zone")
 	}
+	if err := validateBlackglassRuntimeMarkers(document.World.Markers); err != nil {
+		return BlackglassCoastContract{}, err
+	}
 	markers := make([]BlackglassMarker, 0, len(document.World.Markers))
 	for id, marker := range document.World.Markers {
 		if marker.ID != id || marker.Kind == "" {
@@ -135,6 +138,21 @@ func loadBlackglassCoastRuntimeContract(payload []byte) (BlackglassCoastContract
 		Water:        BlackglassWaterZone{ID: zone.ID, Name: zone.Name, Center: scene.Vec3(zone.Center.X, zone.Center.Y, zone.Center.Z), Size: scene.Vec3(zone.Size.X, zone.Size.Y, zone.Size.Z), SurfaceY: zone.SurfaceY, Current: scene.Vec3(zone.Current.X, zone.Current.Y, zone.Current.Z), BuoyancyScale: zone.BuoyancyScale, LinearDrag: zone.LinearDrag, RuntimeProfile: zone.RuntimeProfile},
 		Markers:      markers,
 	}, nil
+}
+
+func validateBlackglassRuntimeMarkers(markers map[string]blackglassMarker) error {
+	for _, required := range []struct {
+		id, kind, entity string
+	}{
+		{id: "opening-camera", kind: "camera-start", entity: "coast-cliff-overlook"},
+		{id: "cinematic-beacon", kind: "cinematic-target", entity: "blackglass-beacon"},
+	} {
+		marker, ok := markers[required.id]
+		if !ok || marker.ID != required.id || marker.Kind != required.kind || marker.EntityID != required.entity {
+			return fmt.Errorf("invalid required marker %q", required.id)
+		}
+	}
+	return nil
 }
 
 func cloneBlackglassCoastContract(contract BlackglassCoastContract) BlackglassCoastContract {

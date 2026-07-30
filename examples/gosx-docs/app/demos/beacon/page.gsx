@@ -38,7 +38,8 @@ func Page() Node {
 				<li>512px shadow</li>
 			</ul>
 			<p class="beacon__controls">
-				Drag to orbit · scroll or pinch to zoom
+				Drag or swipe to orbit · scroll or pinch to zoom
+				<span>Keyboard: arrows explore · +/− zoom · Home restores the opening view</span>
 			</p>
 		</div>
 	</section>
