@@ -125,36 +125,33 @@ var Matrix = map[Feature]map[Backend]bool{
 	// key in both renderer manifests, so it is a reported finding here, not a
 	// silent row.
 	FeatureSkinning: {BackendWebGPU: true, BackendWebGL: true},
-	// False everywhere. The WebGL2 cell read true and no code backed it.
+	// WebGPU true, WebGL2 false. Both cells are corroborated against renderer
+	// source; see ibl_test.go.
 	//
 	// Image-based lighting (IBL) needs a prefiltered specular cube, an
 	// irradiance cube and a split-sum bidirectional reflectance distribution
-	// function (BRDF) lookup table. The WebGL2 path has none of the three. It
-	// tone maps the source environment to an 8-bit low-dynamic-range texture
-	// through scenePBRTonemapHDRPixels, taps that one equirectangular texture
-	// twice, and scales the result by (1.0 - roughness * 0.65). The renderer
-	// holds no samplerCube, no textureCubeLod and no u_brdfLUT.
+	// function (BRDF) lookup table. The WebGPU renderer holds all three: group(0)
+	// bindings 9-12 bind iblIrradiance/iblRadiance/iblBRDFLUT/iblSampler
+	// (16a-scene-webgpu.js), and syncEnvironmentIBL loads the KTX2 products,
+	// validates the BRDF model and the roughnessPerLevel mapping, and binds them
+	// through the frame bind group every frame with no texture-unit budget to
+	// negotiate — RGBA16F cube sampling is unconditional in core WebGPU. A
+	// validation failure degrades per frame with a recorded render-truth reason
+	// rather than silently shading wrong, so the cell is unconditionally true.
 	//
-	// (1.0 - roughness * 0.65) HAS NO DERIVATION, and the criticism reaches
-	// further than this cell. render/bundle/lit.go carries the SAME factor on
-	// the SAME line shape: it taps one cube at level zero for the diffuse term,
-	// taps it again along the reflection vector, and scales the second tap by
-	// that expression. So the ad hoc roughness response is a property of the
-	// whole engine, not of the WebGL2 renderer. A split-sum fit would read
-	// roughness through a prefiltered mip chain and a two-term BRDF lookup, and
-	// no backend does. render/bundle/lit_drift_test.go carries the
-	// environment-map row that states this and pins both halves.
+	// WebGL2 holds the same three samplers (u_iblIrradiance, u_iblRadiance,
+	// u_iblBRDFLUT, behind #if GOSX_HDR_IBL) and the same runtime asset path
+	// (scenePBRUploadEnvironmentMap), but scenePBRHDRIBLAvailable gates the
+	// whole branch on MAX_TEXTURE_IMAGE_UNITS >= 18. A Matrix cell answers an
+	// unconditional question — "does this backend shade IBL for every
+	// authoring scene" — and a device below the gate does not, regardless of
+	// what the shader compiles. See assetpipe/ibl/contract.go:38-46 for the
+	// gate's rationale and PR-8 (ibl_test.go) for the SH9 irradiance fallback
+	// that keeps sub-18-unit devices from losing ambient light entirely.
 	//
-	// sceneAllocateTextureUnits in 15a-scene-postfx-shared.js already reserves
-	// three units named irradiance, radiance and brdfLUT, and negotiates them
-	// against the cascaded shadow allocator. Only irradiance is ever bound, and
-	// what binds into it is the tone-mapped 2D texture, not an irradiance cube.
-	// So the unit budget a real consumer needs is solved; the content is not.
-	//
-	// assetpipe/ibl produces the correct products and pins the convention. See
-	// ibl.ConsumerRequirements for the five pieces a consumer must add. Flip
-	// this cell when one exists, and not before.
-	FeatureIBL: {BackendWebGPU: false, BackendWebGL: false},
+	// The ad hoc (1.0 - roughness * 0.65) legacy equirect-tap response —
+	// unrelated to this row — lives under FeatureEnvironmentMap below.
+	FeatureIBL: {BackendWebGPU: true, BackendWebGL: false},
 	// environment-map: does the backend READ Environment.EnvMap at all.
 	//
 	// This row exists because the ibl row above reads as parity and is not. Both
