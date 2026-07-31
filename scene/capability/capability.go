@@ -129,31 +129,39 @@ var Matrix = map[Feature]map[Backend]bool{
 	//
 	// Image-based lighting (IBL) needs a prefiltered specular cube, an
 	// irradiance cube and a split-sum bidirectional reflectance distribution
-	// function (BRDF) lookup table. The WebGL2 path has none of the three. It
-	// tone maps the source environment to an 8-bit low-dynamic-range texture
-	// through scenePBRTonemapHDRPixels, taps that one equirectangular texture
-	// twice, and scales the result by (1.0 - roughness * 0.65). The renderer
-	// holds no samplerCube, no textureCubeLod and no u_brdfLUT.
+	// function (BRDF) lookup table. Both backends now consume the assetpipe
+	// split-sum products behind a device gate: 16-scene-webgl.js binds
+	// u_iblIrradiance, u_iblRadiance and u_iblBRDFLUT as real samplerCube and
+	// sampler2D uniforms and reads them with textureLod(u_iblRadiance, ...);
+	// 16a-scene-webgpu.js binds the WGSL equivalents and reads them with
+	// textureSampleLevel(iblRadiance, ...). This prose used to claim neither
+	// backend had these bindings; that claim went stale when the split-sum
+	// shaders merged, and TestIBLIsFalseOnBothBackends corroborates the
+	// corrected claim against source on every run.
 	//
-	// (1.0 - roughness * 0.65) HAS NO DERIVATION, and the criticism reaches
-	// further than this cell. render/bundle/lit.go carries the SAME factor on
-	// the SAME line shape: it taps one cube at level zero for the diffuse term,
-	// taps it again along the reflection vector, and scales the second tap by
-	// that expression. So the ad hoc roughness response is a property of the
-	// whole engine, not of the WebGL2 renderer. A split-sum fit would read
-	// roughness through a prefiltered mip chain and a two-term BRDF lookup, and
-	// no backend does. render/bundle/lit_drift_test.go carries the
-	// environment-map row that states this and pins both halves.
+	// The cell stays false anyway, because the path is not yet universal. The
+	// WebGL2 split-sum layout needs 18 fragment texture units (material plus
+	// cascaded shadows plus IBL); the spec-minimum device exposes 16. Below
+	// that gate (maxUnits >= 18 in 16-scene-webgl.js), the renderer compiles a
+	// bounded legacy variant and records the diagnostic
+	// "fragment-texture-units<18". Claiming the feature at the Matrix level
+	// would hide that deterministic degradation from authors who target
+	// spec-minimum hardware. Flip this cell when the split-sum path no longer
+	// needs a device gate on either backend, and not before.
 	//
-	// sceneAllocateTextureUnits in 15a-scene-postfx-shared.js already reserves
-	// three units named irradiance, radiance and brdfLUT, and negotiates them
-	// against the cascaded shadow allocator. Only irradiance is ever bound, and
-	// what binds into it is the tone-mapped 2D texture, not an irradiance cube.
-	// So the unit budget a real consumer needs is solved; the content is not.
+	// One derivation gap survives, scoped to the legacy fallback only. The
+	// WebGL2 u_hasEnvMap branch — taken when no split-sum products are bound —
+	// still scales its specular tap by (1.0 - roughness * 0.65), an ad hoc
+	// roughness response with no derivation. render/bundle/lit.go:393 carries
+	// the identical factor on the identical line shape in the native
+	// equirectangular fallback. A split-sum fit reads roughness through a
+	// prefiltered mip chain and a two-term BRDF lookup instead; both fallback
+	// paths still do not. render/bundle/lit_drift_test.go's environment-map row
+	// pins both halves of that residue.
 	//
-	// assetpipe/ibl produces the correct products and pins the convention. See
-	// ibl.ConsumerRequirements for the five pieces a consumer must add. Flip
-	// this cell when one exists, and not before.
+	// See TestIBLIsFalseOnBothBackends in water_shadow_test.go for the
+	// corroboration: both the positive split-sum markers and the staging-gate
+	// markers, read from renderer source before the cell is asserted.
 	FeatureIBL: {BackendWebGPU: false, BackendWebGL: false},
 	// environment-map: does the backend READ Environment.EnvMap at all.
 	//
