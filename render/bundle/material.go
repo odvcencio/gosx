@@ -36,6 +36,9 @@ type materialFingerprint struct {
 	roughnessURL string
 	metalnessURL string
 	emissiveURL  string
+	// occlusionURL: the glTF ambient-occlusion map slot. litWGSL samples red
+	// (the glTF 2.0 convention) and scales the indirect light only.
+	occlusionURL string
 	// useVertexColor = 1 when the renderer should mix in the per-vertex color
 	// as baseColor. Unlit-fallback legacy primitives (cube/plane/sphere)
 	// set this; explicit RenderMaterial entries clear it.
@@ -176,6 +179,7 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		roughnessURL:     mat.RoughnessMap,
 		metalnessURL:     mat.MetalnessMap,
 		emissiveURL:      mat.EmissiveMap,
+		occlusionURL:     mat.OcclusionMap,
 		useVertexColor:   false,
 	}
 }
@@ -281,13 +285,18 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 		buf.Destroy()
 		return nil, fmt.Errorf("bundle: resolve emissive map: %w", err)
 	}
+	occlusionTex, err := r.ensureMaterialTexture(fp.occlusionURL)
+	if err != nil {
+		buf.Destroy()
+		return nil, fmt.Errorf("bundle: resolve occlusion map: %w", err)
+	}
 
-	bg, err := r.createMaterialBindGroup(r.litMaterialLayout, buf, tex, normalTex, roughTex, metalTex, emissiveTex, "bundle.material.bindgroup")
+	bg, err := r.createMaterialBindGroup(r.litMaterialLayout, buf, tex, normalTex, roughTex, metalTex, emissiveTex, occlusionTex, "bundle.material.bindgroup")
 	if err != nil {
 		buf.Destroy()
 		return nil, fmt.Errorf("bundle: create material bind group: %w", err)
 	}
-	skinnedBG, err := r.createMaterialBindGroup(r.skinnedLitMaterialLayout, buf, tex, normalTex, roughTex, metalTex, emissiveTex, "bundle.material.skinned.bindgroup")
+	skinnedBG, err := r.createMaterialBindGroup(r.skinnedLitMaterialLayout, buf, tex, normalTex, roughTex, metalTex, emissiveTex, occlusionTex, "bundle.material.skinned.bindgroup")
 	if err != nil {
 		buf.Destroy()
 		bg.Destroy()
@@ -298,7 +307,7 @@ func (r *Renderer) ensureMaterial(fp materialFingerprint) (*materialResources, e
 	return res, nil
 }
 
-func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.Buffer, tex, normalTex, roughTex, metalTex, emissiveTex *textureResources, label string) (gpu.BindGroup, error) {
+func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.Buffer, tex, normalTex, roughTex, metalTex, emissiveTex, occlusionTex *textureResources, label string) (gpu.BindGroup, error) {
 	return r.device.CreateBindGroup(gpu.BindGroupDesc{
 		Layout: layout,
 		Entries: []gpu.BindGroupEntry{
@@ -310,6 +319,7 @@ func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.B
 			{Binding: 5, TextureView: roughTex.view},
 			{Binding: 6, TextureView: metalTex.view},
 			{Binding: 7, TextureView: emissiveTex.view},
+			{Binding: 8, TextureView: occlusionTex.view},
 		},
 		Label: label,
 	})
@@ -322,7 +332,7 @@ func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.B
 //	16..32  pbrParams     vec4 (metalness, roughness, emissiveStrength, useVertexColor)
 //	32..48  emissive      vec4 (rgba) — reserved, litWGSL reads baseColor
 //	48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
-//	64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
+//	64..80  textureParams2 vec4 (hasEmissiveMap, hasOcclusionMap, 0, 0)
 //	80..96  physicalParams vec4 (clearcoat, sheen, transmission, iridescence)
 //	96..112 physicalParams2 vec4 (anisotropy, 0, 0, 0)
 func materialUniformBytes(fp materialFingerprint) []byte {
@@ -345,8 +355,8 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 		dequantize(fp.emissiveR), dequantize(fp.emissiveG), dequantize(fp.emissiveB), 1,
 		// textureParams (hasBaseColor, hasNormal, hasRough, hasMetal)
 		flag(fp.textureURL), flag(fp.normalURL), flag(fp.roughnessURL), flag(fp.metalnessURL),
-		// textureParams2 (hasEmissive, 0, 0, 0)
-		flag(fp.emissiveURL), 0, 0, 0,
+		// textureParams2 (hasEmissive, hasOcclusion, 0, 0)
+		flag(fp.emissiveURL), flag(fp.occlusionURL), 0, 0,
 		// physicalParams (clearcoat, sheen, transmission, iridescence)
 		dequantize(fp.clearcoat), dequantize(fp.sheen), dequantize(fp.transmission), dequantize(fp.iridescence),
 		// physicalParams2 (anisotropy, 0, 0, 0)

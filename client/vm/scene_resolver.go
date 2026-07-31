@@ -75,6 +75,7 @@ type sceneObject struct {
 	RoughnessMap       string
 	MetalnessMap       string
 	EmissiveMap        string
+	OcclusionMap       string
 	CustomVertex       string
 	CustomFragment     string
 	CustomVertexWGSL   string
@@ -99,6 +100,7 @@ type sceneObject struct {
 	HasRoughnessMap    bool
 	HasMetalnessMap    bool
 	HasEmissiveMap     bool
+	HasOcclusionMap    bool
 	Static             bool
 }
 
@@ -135,6 +137,8 @@ type MaterialProfile struct {
 	HasMetalnessMap bool
 	EmissiveMap     string
 	HasEmissiveMap  bool
+	OcclusionMap    string
+	HasOcclusionMap bool
 	ShaderData      []float64
 }
 
@@ -900,6 +904,7 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 	rawRoughnessMap := propValue(node.Props, "roughnessMap")
 	rawMetalnessMap := propValue(node.Props, "metalnessMap")
 	rawEmissiveMap := propValue(node.Props, "emissiveMap")
+	rawOcclusionMap := propValue(node.Props, "occlusionMap")
 	rawPickable := propValue(node.Props, "pickable")
 	kind := normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry))
 	points := scenePointList(propValue(node.Props, "points"))
@@ -950,6 +955,7 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		RoughnessMap:       strings.TrimSpace(stringFromAny(rawRoughnessMap, "")),
 		MetalnessMap:       strings.TrimSpace(stringFromAny(rawMetalnessMap, "")),
 		EmissiveMap:        strings.TrimSpace(stringFromAny(rawEmissiveMap, "")),
+		OcclusionMap:       strings.TrimSpace(stringFromAny(rawOcclusionMap, "")),
 		CustomVertex:       strings.TrimSpace(stringFromAny(propValue(node.Props, "customVertex"), "")),
 		CustomFragment:     strings.TrimSpace(stringFromAny(propValue(node.Props, "customFragment"), "")),
 		CustomVertexWGSL:   strings.TrimSpace(stringFromAny(propValue(node.Props, "customVertexWGSL"), "")),
@@ -974,6 +980,7 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		HasRoughnessMap:    rawRoughnessMap != nil,
 		HasMetalnessMap:    rawMetalnessMap != nil,
 		HasEmissiveMap:     rawEmissiveMap != nil,
+		HasOcclusionMap:    rawOcclusionMap != nil,
 		Static:             node.Static,
 	}
 }

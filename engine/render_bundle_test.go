@@ -21,6 +21,7 @@ func TestRenderMaterialCustomShaderFieldsRoundTrip(t *testing.T) {
 		RoughnessMap:       "/roughness.webp",
 		MetalnessMap:       "/metalness.webp",
 		EmissiveMap:        "/emissive.webp",
+		OcclusionMap:       "/occlusion.webp",
 		CustomVertexWGSL:   "fn gosx_vertex() {}",
 		CustomFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
 		CustomUniforms: map[string]any{
@@ -41,7 +42,7 @@ func TestRenderMaterialCustomShaderFieldsRoundTrip(t *testing.T) {
 	if decoded.CustomFragmentWGSL != source.CustomFragmentWGSL {
 		t.Fatalf("CustomFragmentWGSL = %q", decoded.CustomFragmentWGSL)
 	}
-	if decoded.Roughness != 0.32 || decoded.Metalness != 0.8 || decoded.Clearcoat != 0.35 || decoded.Sheen != 0.2 || decoded.Transmission != 0.12 || decoded.Iridescence != 0.18 || decoded.Anisotropy != -0.25 || decoded.NormalMap != "/normal.webp" || decoded.RoughnessMap != "/roughness.webp" || decoded.MetalnessMap != "/metalness.webp" || decoded.EmissiveMap != "/emissive.webp" {
+	if decoded.Roughness != 0.32 || decoded.Metalness != 0.8 || decoded.Clearcoat != 0.35 || decoded.Sheen != 0.2 || decoded.Transmission != 0.12 || decoded.Iridescence != 0.18 || decoded.Anisotropy != -0.25 || decoded.NormalMap != "/normal.webp" || decoded.RoughnessMap != "/roughness.webp" || decoded.MetalnessMap != "/metalness.webp" || decoded.EmissiveMap != "/emissive.webp" || decoded.OcclusionMap != "/occlusion.webp" {
 		t.Fatalf("PBR fields = %#v", decoded)
 	}
 	if decoded.CustomUniforms["pulse"] != 0.75 {

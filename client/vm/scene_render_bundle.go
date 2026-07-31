@@ -753,6 +753,7 @@ func renderMaterialEqual(left, right rootengine.RenderMaterial) bool {
 		left.RoughnessMap != right.RoughnessMap ||
 		left.MetalnessMap != right.MetalnessMap ||
 		left.EmissiveMap != right.EmissiveMap ||
+		left.OcclusionMap != right.OcclusionMap ||
 		left.CustomVertex != right.CustomVertex ||
 		left.CustomFragment != right.CustomFragment ||
 		left.CustomVertexWGSL != right.CustomVertexWGSL ||
@@ -842,6 +843,9 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 		if customProfile.HasEmissiveMap {
 			profile.EmissiveMap = strings.TrimSpace(customProfile.EmissiveMap)
 		}
+		if customProfile.HasOcclusionMap {
+			profile.OcclusionMap = strings.TrimSpace(customProfile.OcclusionMap)
+		}
 	}
 
 	switch kindKey {
@@ -918,6 +922,9 @@ func resolveRenderMaterial(object sceneObject) rootengine.RenderMaterial {
 	if object.HasEmissiveMap {
 		profile.EmissiveMap = strings.TrimSpace(object.EmissiveMap)
 	}
+	if object.HasOcclusionMap {
+		profile.OcclusionMap = strings.TrimSpace(object.OcclusionMap)
+	}
 	if profile.Opacity < 0.999 && profile.BlendMode == "opaque" {
 		profile.BlendMode = "alpha"
 	}
@@ -954,9 +961,10 @@ func renderMaterialKey(profile rootengine.RenderMaterial) string {
 	roughnessMap := strings.TrimSpace(profile.RoughnessMap)
 	metalnessMap := strings.TrimSpace(profile.MetalnessMap)
 	emissiveMap := strings.TrimSpace(profile.EmissiveMap)
+	occlusionMap := strings.TrimSpace(profile.OcclusionMap)
 	blendMode := strings.ToLower(strings.TrimSpace(profile.BlendMode))
 	var b strings.Builder
-	b.Grow(len(kind) + len(color) + len(texture) + len(normalMap) + len(roughnessMap) + len(metalnessMap) + len(emissiveMap) + len(blendMode) + len(profile.RenderPass) + 120)
+	b.Grow(len(kind) + len(color) + len(texture) + len(normalMap) + len(roughnessMap) + len(metalnessMap) + len(emissiveMap) + len(occlusionMap) + len(blendMode) + len(profile.RenderPass) + 120)
 	b.WriteString(kind)
 	b.WriteByte('|')
 	b.WriteString(color)
@@ -984,6 +992,8 @@ func renderMaterialKey(profile rootengine.RenderMaterial) string {
 	b.WriteString(metalnessMap)
 	b.WriteByte('|')
 	b.WriteString(emissiveMap)
+	b.WriteByte('|')
+	b.WriteString(occlusionMap)
 	b.WriteByte('|')
 	b.WriteString(strconv.FormatFloat(profile.Opacity, 'f', 3, 64))
 	b.WriteByte('|')

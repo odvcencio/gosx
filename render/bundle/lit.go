@@ -61,7 +61,7 @@ struct Material {
   pbrParams     : vec4<f32>, // x=metalness, y=roughness, z=emissiveStrength, w=useVertexColor
   emissive      : vec4<f32>,
   textureParams : vec4<f32>, // x=hasBaseColor, y=hasNormal, z=hasRoughMap, w=hasMetalMap
-  textureParams2: vec4<f32>, // x=hasEmissiveMap
+  textureParams2: vec4<f32>, // x=hasEmissiveMap, y=hasOcclusionMap
   physicalParams : vec4<f32>, // x=clearcoat, y=sheen, z=transmission, w=iridescence
   physicalParams2: vec4<f32>, // x=anisotropy
 };
@@ -83,6 +83,7 @@ struct Material {
 @group(1) @binding(5) var          roughnessMapTex   : texture_2d<f32>;
 @group(1) @binding(6) var          metalnessMapTex   : texture_2d<f32>;
 @group(1) @binding(7) var          emissiveMapTex    : texture_2d<f32>;
+@group(1) @binding(8) var          occlusionMapTex   : texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -392,6 +393,16 @@ fn fs_main(in : VSOut) -> FSOut {
   let envReflect = rotateEnvY(reflect(-V, N), scene.envParams.y);
   let envSpecular = textureSample(envCubeTexture, envCubeSampler, envReflect).rgb * F * (1.0 - roughness * 0.65);
   let cubeIBL = (cubeDiffuse + envSpecular) * scene.envParams.x * scene.envParams.z;
+  // Ambient occlusion: sample the red channel (glTF 2.0 convention) and scale
+  // the two indirect terms only. Direct light and emissive stay untouched, so
+  // AO darkens crevices without dimming a light or a glow the author placed
+  // there on purpose. This follows the browser WebGPU renderer, the shading
+  // rule of record for this cluster (16a-scene-webgpu.js WGSL_PBR_FRAGMENT:
+  // ambientOcclusion gates material.hasOcclusionMap and then scales ambient
+  // before emissive is added).
+  let hasOcclusionMap = step(0.5, material.textureParams2.y);
+  let occlusionSample = clamp(textureSample(occlusionMapTex, baseColorSampler, in.uv).r, 0.0, 1.0);
+  let ao = mix(1.0, occlusionSample, hasOcclusionMap);
   // Emissive colour: start from the shaded base colour, and let the emissive
   // map replace it. Both browser renderers do the same. The earlier form
   // multiplied the map by material.emissive.rgb. materialFromRender fills those
@@ -401,7 +412,7 @@ fn fs_main(in : VSOut) -> FSOut {
   let emissiveSample = textureSample(emissiveMapTex, baseColorSampler, in.uv).rgb;
   let emissiveColor = mix(baseColor, emissiveSample, hasEmissiveMap);
   let emissive = emissiveColor * material.pbrParams.z;
-  var color = direct + ambient + cubeIBL + emissive;
+  var color = direct + (ambient + cubeIBL) * ao + emissive;
   // Clear coat: scale the lobe by 0.28, as both browser renderers do. The
   // earlier gain of 1.0 made a coated highlight about 3.6 times too bright.
   let clearcoat = clamp(material.physicalParams.x, 0.0, 1.0);

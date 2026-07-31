@@ -28,9 +28,9 @@ func TestMaterialBindGroupIncludesNormalMap(t *testing.T) {
 	if !ok {
 		t.Fatalf("material bind group type = %T", res.bindGroup)
 	}
-	// uniform + baseColor tex + sampler + normal + sampler + rough + metal + emissive = 8.
-	if got := len(bg.desc.Entries); got != 8 {
-		t.Fatalf("material bind group entries = %d, want 8", got)
+	// uniform + baseColor tex + sampler + normal + sampler + rough + metal + emissive + occlusion = 9.
+	if got := len(bg.desc.Entries); got != 9 {
+		t.Fatalf("material bind group entries = %d, want 9", got)
 	}
 	if bg.desc.Entries[3].TextureView == nil {
 		t.Fatal("normal-map texture view was not bound")
@@ -47,6 +47,9 @@ func TestMaterialBindGroupIncludesNormalMap(t *testing.T) {
 	if bg.desc.Entries[7].TextureView == nil {
 		t.Fatal("emissive-map texture view was not bound")
 	}
+	if bg.desc.Entries[8].TextureView == nil {
+		t.Fatal("occlusion-map texture view was not bound")
+	}
 	if _, ok := r.textureCache["/normal.png"]; !ok {
 		t.Fatal("normal-map texture was not loaded into the texture cache")
 	}
@@ -61,6 +64,30 @@ func TestMaterialUniformFlagsNormalMap(t *testing.T) {
 	want := float32sToBytes([]float32{1, 1, 0, 0})
 	if string(got) != string(want) {
 		t.Fatalf("textureParams bytes = %v, want %v", got, want)
+	}
+}
+
+func TestMaterialUniformFlagsOcclusionMap(t *testing.T) {
+	fp := materialFromRender(engine.RenderMaterial{
+		Texture:      "/albedo.png",
+		OcclusionMap: "/occlusion.png",
+	})
+	got := materialUniformBytes(fp)[64:80]
+	want := float32sToBytes([]float32{0, 1, 0, 0})
+	if string(got) != string(want) {
+		t.Fatalf("textureParams2 bytes = %v, want %v", got, want)
+	}
+}
+
+// TestMaterialFingerprintDiffersOnOcclusionMap keeps the occlusion map a
+// distinguishing part of the material cache key. Two materials that differ
+// only by OcclusionMap must not share a cached uniform buffer and bind group,
+// or one mesh would render with the other's AO texture.
+func TestMaterialFingerprintDiffersOnOcclusionMap(t *testing.T) {
+	base := materialFromRender(engine.RenderMaterial{Color: "#ffffff"})
+	withMap := materialFromRender(engine.RenderMaterial{Color: "#ffffff", OcclusionMap: "/occlusion.png"})
+	if base == withMap {
+		t.Fatal("materialFingerprint must differ when only OcclusionMap differs")
 	}
 }
 

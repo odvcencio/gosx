@@ -1955,16 +1955,18 @@ type materialState struct {
 	iridescence  float32
 	anisotropy   float32
 
-	hasNormalMap   bool
-	hasRoughMap    bool
-	hasMetalMap    bool
-	hasEmissiveMap bool
+	hasNormalMap    bool
+	hasRoughMap     bool
+	hasMetalMap     bool
+	hasEmissiveMap  bool
+	hasOcclusionMap bool
 
 	baseColorMap textureBinding
 	normalMap    textureBinding
 	roughMap     textureBinding
 	metalMap     textureBinding
 	emissiveMap  textureBinding
+	occlusionMap textureBinding
 }
 
 // defaultMaterialState matches defaultVertexColorMaterial in render/bundle: a
@@ -1981,6 +1983,7 @@ func defaultMaterialState() materialState {
 		roughMap:       textureBinding{layer: -1},
 		metalMap:       textureBinding{layer: -1},
 		emissiveMap:    textureBinding{layer: -1},
+		occlusionMap:   textureBinding{layer: -1},
 	}
 }
 
@@ -2023,6 +2026,7 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 			state.hasRoughMap = readFloat32At(data, offset+56) >= 0.5
 			state.hasMetalMap = readFloat32At(data, offset+60) >= 0.5
 			state.hasEmissiveMap = readFloat32At(data, offset+64) >= 0.5
+			state.hasOcclusionMap = readFloat32At(data, offset+68) >= 0.5
 			state.clearcoat = readFloat32At(data, offset+80)
 			state.sheen = readFloat32At(data, offset+84)
 			state.transmission = readFloat32At(data, offset+88)
@@ -2038,6 +2042,8 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 			state.metalMap = bind(entry)
 		case 7:
 			state.emissiveMap = bind(entry)
+		case 8:
+			state.occlusionMap = bind(entry)
 		}
 	}
 	return state
@@ -2707,6 +2713,14 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	// Direct light: one Cook-Torrance lobe per scene light, summed.
 	color := p.directLight(f, N, V, baseColor, f0, metalness, roughness, NdotV)
 
+	// Ambient occlusion: sample the red channel (glTF 2.0 convention) and scale
+	// the indirect terms only, matching litWGSL. Direct light and emissive stay
+	// untouched.
+	ao := float32(1)
+	if m.hasOcclusionMap {
+		ao = clamp01f(m.occlusionMap.sampleRGB(f.uv)[0])
+	}
+
 	// Environment ambient: three independent terms, each gated by its own
 	// intensity only. The sky and ground intensities arrive premultiplied into
 	// the colour from resolveHemisphereAmbient in render/bundle/renderer.go.
@@ -2716,7 +2730,7 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 		envDiffuse := l.ambientColor[i]*l.ambientColor[3] +
 			l.skyColor[i]*hemi + l.groundColor[i]*(1-hemi)
 		ambient[i] = envDiffuse * baseColor[i]
-		color[i] += ambient[i]
+		color[i] += ambient[i] * ao
 	}
 
 	// Image-based lighting. envParams.z is zero for a scene with no environment
@@ -2731,7 +2745,7 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 		for i := 0; i < 3; i++ {
 			cubeDiffuse := diffuseEnv[i] * baseColor[i] * kD[i]
 			cubeSpecular := specularEnv[i] * fresnel[i] * roughFade
-			color[i] += (cubeDiffuse + cubeSpecular) * gain
+			color[i] += (cubeDiffuse + cubeSpecular) * gain * ao
 		}
 	}
 

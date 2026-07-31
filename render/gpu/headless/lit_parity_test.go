@@ -265,9 +265,9 @@ func TestLitProgramStructureMatchesTheShader(t *testing.T) {
 			needle: "let emissiveColor = mix(baseColor, emissiveSample, hasEmissiveMap);",
 		},
 		{
-			id:     "emissive-added-after-light",
-			effect: "An unlit emissive face stops glowing.",
-			needle: "var color = direct + ambient + cubeIBL + emissive;",
+			id:     "occlusion-map-scales-indirect-only",
+			effect: "AO stops darkening the indirect terms, or starts dimming direct light too.",
+			needle: "var color = direct + (ambient + cubeIBL) * ao + emissive;",
 		},
 		// The rows below arrived with the runtime light array on 2026-07-27.
 		// litProgram.directLight is the CPU copy of that loop.

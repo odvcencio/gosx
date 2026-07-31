@@ -301,7 +301,24 @@ func (r *Renderer) ensureSurfaceMaterialBindGroup(mat *materialResources, fp mat
 	if err != nil {
 		return nil, fmt.Errorf("bundle.surface: resolve emissive map: %w", err)
 	}
-	bg, err := r.createMaterialBindGroup(layout, mat.buf, tex, normalTex, roughTex, metalTex, emissiveTex, "bundle.surface.material."+mode)
+	// surfaceWGSL is an unlit texture-tint shader: it carries no ambient or
+	// indirect term for an occlusion map to gate, and its group(1) layout stops
+	// at binding 7. Do not reuse the lit-path createMaterialBindGroup helper
+	// here; its binding 8 entry would have no matching layout entry.
+	bg, err := r.device.CreateBindGroup(gpu.BindGroupDesc{
+		Layout: layout,
+		Entries: []gpu.BindGroupEntry{
+			{Binding: 0, Buffer: mat.buf, Size: materialUniformSize},
+			{Binding: 1, TextureView: tex.view},
+			{Binding: 2, Sampler: r.materialSampler},
+			{Binding: 3, TextureView: normalTex.view},
+			{Binding: 4, Sampler: r.materialSampler},
+			{Binding: 5, TextureView: roughTex.view},
+			{Binding: 6, TextureView: metalTex.view},
+			{Binding: 7, TextureView: emissiveTex.view},
+		},
+		Label: "bundle.surface.material." + mode,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("bundle.surface: create material bind group: %w", err)
 	}

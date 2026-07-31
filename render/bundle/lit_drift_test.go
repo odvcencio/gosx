@@ -279,6 +279,30 @@ var litSharedTerms = []sharedTerm{
 		jsPat:  `let emission = emissiveColor \* emissiveStrength;`,
 	},
 	{
+		// Both copies read the occlusion map's RED channel (the glTF 2.0
+		// convention) and clamp it to [0, 1] before it scales anything. This row
+		// is a presence check, not a value check, for the same reason the
+		// emissive-map row above is: the native flag is a float lane the shader
+		// mixes on, and the browser flag is a u32 the shader branches on.
+		id:     "occlusion-map-reads-clamped-red-channel",
+		effect: "AO drives from the wrong channel or is left unclamped, so the same map darkens a surface by a different amount on the two backends.",
+		goPat:  `clamp\(textureSample\(occlusionMapTex, [A-Za-z]+, in\.uv\)\.r, 0\.0, 1\.0\)`,
+		jsPat:  `clamp\(textureSample\(occlusionTex, [A-Za-z]+, in\.uv\)\.r, 0\.0, 1\.0\)`,
+	},
+	{
+		// Both copies scale the indirect (ambient/IBL) term by AO and leave direct
+		// light and emissive alone. The native copy folds ambient and cubeIBL into
+		// one multiply before summing; the browser copy multiplies its single
+		// `ambient` accumulator, which already holds the equivalent split-sum or
+		// hemisphere term (see the "environment-map" divergence row for why the
+		// two indirect terms are not the same computation). This row pins that
+		// both sides gate on the indirect term only, not the value of that term.
+		id:     "occlusion-scales-indirect-light-only",
+		effect: "AO darkens direct light or emissive on one backend, or stops darkening the indirect term on the other.",
+		goPat:  `var color = direct \+ \(ambient \+ cubeIBL\) \* ao \+ emissive;`,
+		jsPat:  `ambient = ambient \* ambientOcclusion;`,
+	},
+	{
 		// The three ambient terms are independent, so each intensity gates only
 		// its own colour. The native copy used to multiply the sky and ground
 		// blend by the ambient intensity as well. That cut the whole dome to the

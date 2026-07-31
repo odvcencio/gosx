@@ -183,6 +183,7 @@ type RenderMaterial struct {
 	RoughnessMap       string         `json:"roughnessMap,omitempty"`
 	MetalnessMap       string         `json:"metalnessMap,omitempty"`
 	EmissiveMap        string         `json:"emissiveMap,omitempty"`
+	OcclusionMap       string         `json:"occlusionMap,omitempty"`
 	CustomVertex       string         `json:"customVertex,omitempty"`
 	CustomFragment     string         `json:"customFragment,omitempty"`
 	CustomVertexWGSL   string         `json:"customVertexWGSL,omitempty"`

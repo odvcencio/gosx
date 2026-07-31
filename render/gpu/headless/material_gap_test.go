@@ -92,6 +92,36 @@ func litSphereScene(material engine.RenderMaterial) engine.RenderBundle {
 	}
 }
 
+// litAmbientOnlyScene isolates the environment ambient term from direct light,
+// so a term that scales indirect light only (occlusion) moves the frame even
+// though it leaves direct light untouched. The key light points away from the
+// surface (NdotL = 0 at DirectionY: 1, the same convention litSurfaceScene
+// documents), and ambientColor carries the one lit term: sky and ground stay
+// black so resolveHemisphereAmbient's full-intensity substitution for an unset
+// sky or ground contributes nothing to mix in.
+func litAmbientOnlyScene(material engine.RenderMaterial) engine.RenderBundle {
+	return engine.RenderBundle{
+		Background: "#000000",
+		Camera:     engine.RenderCamera{Y: 5, RotationX: 1.5707963, FOV: 1, Near: 0.1, Far: 100},
+		Materials:  []engine.RenderMaterial{material},
+		Lights: []engine.RenderLight{{
+			Kind: "directional", Color: "#ffffff", Intensity: 1,
+			DirectionY: 1,
+		}},
+		Environment: engine.RenderEnvironment{
+			AmbientColor: "#ffffff", AmbientIntensity: 1,
+			SkyColor: "#000000", SkyIntensity: 0.0001,
+			GroundColor: "#000000", GroundIntensity: 0.0001,
+			ToneMapping: "none",
+		},
+		InstancedMeshes: []engine.RenderInstancedMesh{{
+			ID: "floor", Kind: "plane", Width: 6, Height: 6,
+			MaterialIndex: 0, InstanceCount: 1,
+			Transforms: []float64{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+		}},
+	}
+}
+
 // darkEnvironment holds every ambient term at almost nothing, so a fixture reads
 // the key light alone. Author all three: resolveHemisphereAmbient substitutes a
 // full intensity for an unset sky or ground, and that substitution is disputed.
@@ -221,6 +251,9 @@ func TestPhysicallyBasedMaterialFieldsReachThePixels(t *testing.T) {
 	roughnessMap := solidTextureURL(t, color.RGBA{R: 255, G: 40, B: 255, A: 255})
 	metalnessMap := solidTextureURL(t, color.RGBA{R: 255, G: 255, B: 40, A: 255})
 	emissiveMap := solidTextureURL(t, color.RGBA{R: 240, G: 20, B: 20, A: 255})
+	// litWGSL reads AO from the red channel only; green and blue are set high so
+	// a copy that read the wrong channel would fail to darken the frame.
+	darkOcclusionMap := solidTextureURL(t, color.RGBA{R: 0, G: 255, B: 255, A: 255})
 
 	for _, tc := range []struct {
 		feature string
@@ -296,6 +329,14 @@ func TestPhysicallyBasedMaterialFieldsReachThePixels(t *testing.T) {
 			mutate:   func(m *engine.RenderMaterial) { m.EmissiveMap = emissiveMap },
 			minDelta: 60,
 			why:      "the map replaces the emissive colour, so a blue body glows red",
+		},
+		{
+			feature:  "occlusionMap",
+			base:     engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5},
+			mutate:   func(m *engine.RenderMaterial) { m.OcclusionMap = darkOcclusionMap },
+			scene:    litAmbientOnlyScene,
+			minDelta: 40,
+			why:      "AO scales the indirect (ambient + cubeIBL) term toward black; direct light stays at zero in this framing, so the whole face darkens",
 		},
 		{
 			feature:  "sheen",
@@ -586,6 +627,7 @@ func TestMaterialFeatureFloorsRejectALostTerm(t *testing.T) {
 		{"roughness", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.2}, nil, 12},
 		{"metalness", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.4}, nil, 40},
 		{"clearcoat", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5}, nil, 20},
+		{"occlusionMap", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5}, litAmbientOnlyScene, 40},
 		{"sheen", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.6}, litSphereScene, 8},
 		{"iridescence", engine.RenderMaterial{Kind: "standard", Color: "#c0c0c0", Roughness: 0.4}, litSphereScene, 8},
 	} {

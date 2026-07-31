@@ -1046,6 +1046,7 @@ func TestSceneAdapterRenderBundlePreservesPBRMaterialFields(t *testing.T) {
 					"transmission": 13,
 					"iridescence":  14,
 					"anisotropy":   15,
+					"occlusionMap": 16,
 				},
 			},
 		},
@@ -1066,6 +1067,7 @@ func TestSceneAdapterRenderBundlePreservesPBRMaterialFields(t *testing.T) {
 			{Op: islandprogram.OpLitFloat, Value: "0.12", Type: islandprogram.TypeFloat},
 			{Op: islandprogram.OpLitFloat, Value: "0.18", Type: islandprogram.TypeFloat},
 			{Op: islandprogram.OpLitFloat, Value: "-0.25", Type: islandprogram.TypeFloat},
+			{Op: islandprogram.OpLitString, Value: "/occlusion.webp", Type: islandprogram.TypeString},
 		},
 	}
 
@@ -1084,10 +1086,10 @@ func TestSceneAdapterRenderBundlePreservesPBRMaterialFields(t *testing.T) {
 	if material.Clearcoat != 0.35 || material.Sheen != 0.2 || material.Transmission != 0.12 || material.Iridescence != 0.18 || material.Anisotropy != -0.25 {
 		t.Fatalf("physical PBR fields were not preserved: %#v", material)
 	}
-	if material.Texture != "/albedo.webp" || material.NormalMap != "/normal.webp" || material.RoughnessMap != "/roughness.webp" || material.MetalnessMap != "/metalness.webp" || material.EmissiveMap != "/emissive.webp" {
+	if material.Texture != "/albedo.webp" || material.NormalMap != "/normal.webp" || material.RoughnessMap != "/roughness.webp" || material.MetalnessMap != "/metalness.webp" || material.EmissiveMap != "/emissive.webp" || material.OcclusionMap != "/occlusion.webp" {
 		t.Fatalf("PBR texture maps were not preserved: %#v", material)
 	}
-	for _, fragment := range []string{"/normal.webp", "/roughness.webp", "/metalness.webp", "/emissive.webp", "0.320", "0.800", "0.350", "0.200", "0.120", "0.180", "-0.250"} {
+	for _, fragment := range []string{"/normal.webp", "/roughness.webp", "/metalness.webp", "/emissive.webp", "/occlusion.webp", "0.320", "0.800", "0.350", "0.200", "0.120", "0.180", "-0.250"} {
 		if !strings.Contains(material.Key, fragment) {
 			t.Fatalf("material key %q does not include %q", material.Key, fragment)
 		}
