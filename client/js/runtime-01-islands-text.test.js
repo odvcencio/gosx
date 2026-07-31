@@ -167,6 +167,53 @@ test("bootstrap records island hydration failures and keeps the server fallback 
   assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:error"), true);
 });
 
+test("bootstrap keeps first-time engine factory registration open after init", () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const early = function() {};
+  env.context.__gosx_register_engine_factory("EarlyComp", early);
+  assert.equal(env.context.__gosx_engine_factories.EarlyComp, early);
+
+  // Fire the post-init registrar swap.
+  env.document.dispatchEvent({ type: "DOMContentLoaded" });
+
+  // A feature chunk on a cold cache can land after init (production
+  // regression: bootstrap-feature-scene3d arrived ~2s after init on a cold
+  // first load, its registration was rejected, and the page's Scene3D
+  // engines never mounted until a refresh). First-time registration must
+  // stay open and hand the name to the late-mount hook.
+  const lateMounted = [];
+  env.context.__gosx_mount_late_engine_factory = function(name) {
+    lateMounted.push(name);
+  };
+  const late = function() {};
+  env.context.__gosx_register_engine_factory("LateComp", late);
+  assert.equal(env.context.__gosx_engine_factories.LateComp, late);
+  assert.deepEqual(lateMounted, ["LateComp"]);
+
+  // Overriding an already-registered name stays closed after init — that is
+  // the tamper resistance the old full lockdown provided.
+  env.context.__gosx_register_engine_factory("LateComp", function() {});
+  assert.equal(env.context.__gosx_engine_factories.LateComp, late);
+  assert.deepEqual(lateMounted, ["LateComp"]);
+});
+
+test("engine runtime publishes the late-factory mount hook", () => {
+  const src = require("node:fs").readFileSync(
+    path.join(__dirname, "bootstrap-src", "30b-tail-engine-mounting.js"),
+    "utf8",
+  );
+  assert.ok(
+    src.includes("window.__gosx_mount_late_engine_factory = function"),
+    "30b must publish the late-mount hook",
+  );
+  assert.ok(
+    src.includes("lastMountManifest = manifest"),
+    "mountAllEngines must record the manifest for late mounts",
+  );
+});
+
 test("bootstrap exposes subscribable diagnostics with scoped clearing", () => {
   const env = createContext({ elements: [] });
   runScript(bootstrapSource, env.context, "bootstrap.js");
