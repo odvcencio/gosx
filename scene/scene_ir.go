@@ -3065,6 +3065,7 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureRectAreaLight,
 	capability.FeatureRectAreaSpecular,
 	capability.FeatureLightProbeSH,
+	capability.FeatureWireframe,
 }
 
 func waterSystemUsesObjectTexturePass(w WaterSystemIR) bool {
@@ -3232,6 +3233,29 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 		if ir.InstancedMeshes[i].CullKernelWGSL != "" || ir.InstancedMeshes[i].CullKernelWGSLRef != "" {
 			seen[capability.FeatureGPUCull] = true
 			break
+		}
+	}
+
+	// wireframe: an ObjectIR or InstancedMeshIR carries an EXPLICIT authored
+	// Wireframe. Wireframe is *bool (nil = unauthored) on both wire types, so
+	// this check cannot fire for a scene that never mentions it — there is no
+	// default-true fallback to guard against here. (client/vm carries a
+	// separate legacy default-true routing for untextured "flat" objects into
+	// its own world-line pass; that model never reaches this function, has no
+	// SceneIR of its own, and computes no capability verdict, so it raises
+	// nothing here regardless.)
+	for i := range ir.Objects {
+		if ir.Objects[i].Wireframe != nil && *ir.Objects[i].Wireframe {
+			seen[capability.FeatureWireframe] = true
+			break
+		}
+	}
+	if !seen[capability.FeatureWireframe] {
+		for i := range ir.InstancedMeshes {
+			if ir.InstancedMeshes[i].Wireframe != nil && *ir.InstancedMeshes[i].Wireframe {
+				seen[capability.FeatureWireframe] = true
+				break
+			}
 		}
 	}
 

@@ -60,6 +60,7 @@ const (
 	FeatureRectAreaLight             Feature = "rect-area-light"
 	FeatureRectAreaSpecular          Feature = "rect-area-specular"
 	FeatureLightProbeSH              Feature = "light-probe-sh"
+	FeatureWireframe                 Feature = "wireframe"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -304,6 +305,32 @@ var Matrix = map[Feature]map[Backend]bool{
 	// light would invent a distance falloff — but it is not an SH evaluation,
 	// so the cell stays false until one exists.
 	FeatureLightProbeSH: {BackendWebGPU: false, BackendWebGL: false},
+	// wireframe: RenderMaterial.Wireframe on a solid mesh material.
+	//
+	// WebGPU draws it now. vertexMain writes a barycentric coordinate from
+	// vertex_index % 3 — every mesh path here draws non-indexed triangle
+	// soup — and fragmentMain discards fragments away from a triangle edge
+	// when material.modelScaleSigns.w (the flag lane; see the comment on
+	// WGSL_MATERIAL_STRUCT) is set. No index buffer, no geometry pass, no
+	// second pipeline.
+	//
+	// WebGL2 stays false. gl_VertexID exists in GLSL ES 3.00, so the same
+	// barycentric trick is available there, but it is follow-on work per the
+	// WebGPU-first constraint (Q5 in the cluster spec); it is not implemented.
+	//
+	// This row means an EXPLICIT authored Wireframe on a solid mesh material.
+	// It is not the legacy default-true flat-object path: an untextured
+	// object without an authored texture routes to the world-line pass by
+	// design (13-scene-material.js:316, client/vm/scene_resolver.go,
+	// client/vm/scene_render_bundle.go), and that path already draws lines,
+	// on every backend, regardless of this row. collectFeatures raises this
+	// feature only for an explicit authored Wireframe on a solid mesh
+	// material; raising it from the legacy default would degrade nearly
+	// every legacy scene that never asked for a wireframe look.
+	//
+	// Droppable: a wireframe material still renders a silhouette in the same
+	// pixels on WebGL2, just filled instead of edged.
+	FeatureWireframe: {BackendWebGPU: true, BackendWebGL: false},
 }
 
 func supports(b Backend, f Feature) bool {

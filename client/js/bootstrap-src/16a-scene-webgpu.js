@@ -146,6 +146,13 @@
     "    receiveShadow: u32,",
     "    hasOcclusionMap: u32,",
     "    modelMatrix: mat4x4f,",
+    // modelScaleSigns.w carries the wireframe flag (1.0 = on), not a fourth
+    // scale sign. modelMatrix needs 16-byte (vec4/mat4) alignment, so adding a
+    // field between hasOcclusionMap and modelMatrix would shift modelMatrix's
+    // offset and desync every hand-written f[20+mi] write in
+    // materialUniformData below. modelScaleSigns already reserves a vec4f and
+    // only ever writes x/y/z (materialUniformData leaves w untouched); reusing
+    // w keeps the struct's byte layout, and the JS packer's offsets, unchanged.
     "    modelScaleSigns: vec4f,",
     "};",
   ].join("\n");
@@ -173,12 +180,18 @@
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
     "    @location(5) instanceColor: vec4f,",
+    // bary is (1,0,0), (0,1,0) or (0,0,1) on the three corners of an
+    // unindexed triangle, selected by vertex_index % 3. Default
+    // (perspective-correct) interpolation carries it across the triangle, so
+    // fragmentMain can find the distance to the nearest edge without an
+    // index buffer or a geometry pass. Matches render/bundle/lit.go litWGSL.
+    "    @location(6) bary: vec3f,",
     "};",
     "",
     "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
     "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
     "",
-    "@vertex fn vertexMain(in: VertexInput) -> VertexOutput {",
+    "@vertex fn vertexMain(@builtin(vertex_index) vertexIndex: u32, in: VertexInput) -> VertexOutput {",
     "    var out: VertexOutput;",
     "    let worldPosition = material.modelMatrix * vec4f(in.position, 1.0);",
     "    let modelBasis = mat3x3f(",
@@ -195,6 +208,11 @@
     "    out.bitangent = cross(N, T) * in.tangent.w;",
     "    out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);",
     "    out.clipPos = frame.projMatrix * frame.viewMatrix * worldPosition;",
+    // Every mesh path here draws non-indexed triangle soup (pass.draw, not
+    // drawIndexed), so vertex_index % 3 names the corner within its triangle
+    // without a topology change or a second pipeline.
+    "    let corner = vertexIndex % 3u;",
+    "    out.bary = vec3f(f32(corner == 0u), f32(corner == 1u), f32(corner == 2u));",
     "    return out;",
     "}",
   ].join("\n");
@@ -1464,6 +1482,7 @@
     "    @location(3) tangent: vec3f,",
     "    @location(4) bitangent: vec3f,",
     "    @location(5) instanceColor: vec4f,",
+    "    @location(6) bary: vec3f,",
     "};",
     "",
     // Group 0: per-frame
@@ -1729,6 +1748,22 @@
     "}",
     "",
     "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
+    // Wireframe: in.bary is a pure function of vertex_index % 3 (see
+    // vertexMain), and default interpolation carries it perspective-correct
+    // across the triangle. The fragment nearest an edge has one barycentric
+    // component near zero; smoothstep turns that into an antialiased band,
+    // and fragments outside the band discard before they cost a lighting
+    // evaluation. Depth still writes for the surviving fragments, so
+    // wireframe needs no second pipeline and no index buffer. Matches
+    // render/bundle/lit.go litWGSL's fs_main.
+    "    if (material.modelScaleSigns.w > 0.5) {",
+    "        let bd = min(min(in.bary.x, in.bary.y), in.bary.z);",
+    "        let bw = fwidth(bd);",
+    "        let bedge = 1.0 - smoothstep(0.0, bw * 1.5, bd);",
+    "        if (bedge < 0.5) {",
+    "            discard;",
+    "        }",
+    "    }",
     // Resolve material properties, sampling textures when available.
     "    var albedo = material.albedo;",
     "    if (material.hasAlbedoMap != 0u) {",
@@ -13786,7 +13821,9 @@
       f[36] = modelScaleSigns ? sceneNumber(modelScaleSigns[0], 1) : 1;
       f[37] = modelScaleSigns ? sceneNumber(modelScaleSigns[1], 1) : 1;
       f[38] = modelScaleSigns ? sceneNumber(modelScaleSigns[2], 1) : 1;
-      f[39] = 0;
+      // modelScaleSigns.w carries the wireframe flag; see the comment on
+      // WGSL_MATERIAL_STRUCT for why it is not a fifth named field.
+      f[39] = mat.wireframe ? 1 : 0;
       return { data: f, u: u };
     }
 

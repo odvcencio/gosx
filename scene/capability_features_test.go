@@ -254,6 +254,107 @@ func TestCollectFeatures(t *testing.T) {
 			t.Error("did not expect FeatureGPUCull without a cull kernel")
 		}
 	})
+
+	t.Run("explicit wireframe object triggers wireframe capability", func(t *testing.T) {
+		ir := SceneIR{
+			Objects: []ObjectIR{{ID: "cage", Kind: "box", Wireframe: Bool(true)}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if !got[capability.FeatureWireframe] {
+			t.Error("expected FeatureWireframe from an explicit authored Wireframe; not present")
+		}
+	})
+
+	t.Run("explicit wireframe instanced mesh triggers wireframe capability", func(t *testing.T) {
+		ir := SceneIR{
+			InstancedMeshes: []InstancedMeshIR{{ID: "cages", Count: 4, Wireframe: Bool(true)}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if !got[capability.FeatureWireframe] {
+			t.Error("expected FeatureWireframe from an explicit authored InstancedMeshIR.Wireframe; not present")
+		}
+	})
+
+	t.Run("explicit wireframe false does not trigger wireframe capability", func(t *testing.T) {
+		ir := SceneIR{
+			Objects: []ObjectIR{{ID: "solid", Kind: "box", Wireframe: Bool(false)}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if got[capability.FeatureWireframe] {
+			t.Error("did not expect FeatureWireframe from an explicit Wireframe:false")
+		}
+	})
+
+	t.Run("unauthored wireframe does not trigger wireframe capability", func(t *testing.T) {
+		ir := SceneIR{
+			Objects: []ObjectIR{{ID: "plain", Kind: "box"}},
+		}
+		got := featureSet(collectFeatures(ir))
+		if got[capability.FeatureWireframe] {
+			t.Error("did not expect FeatureWireframe when the wire record never sets Wireframe (nil)")
+		}
+	})
+}
+
+// TestCollectFeaturesRaisesWireframeOnlyWhenAuthored is the non-regression
+// case the cluster spec names as risk R4: collectFeatures must raise
+// wireframe for an EXPLICIT authored Wireframe only, never for a legacy
+// default. The subtests inside TestCollectFeatures above already cover the
+// explicit-true, explicit-false and unauthored (nil) cases against
+// collectFeatures directly.
+//
+// This test covers the other half: the scene package's own author-facing
+// lowering (Props.SceneIR, through the StandardMaterial.Wireframe field) must
+// leave Wireframe nil for a mesh that never authors it, so an untextured
+// "flat" mesh — which the legacy client/vm pipeline routes to a world-line
+// pass by a DIFFERENT default it owns — carries no wireframe claim on this
+// wire format at all. There is no default here to trip; this test is the
+// record that stays true only as long as that remains so.
+func TestCollectFeaturesRaisesWireframeOnlyWhenAuthored(t *testing.T) {
+	props := Props{
+		Graph: Graph{
+			Nodes: []Node{
+				Mesh{
+					ID:       "untextured-flat",
+					Geometry: CubeGeometry{Size: 1},
+					// No Material at all: the most natural authoring of an
+					// untextured "flat" mesh, and the shape client/vm's
+					// separate default-true routing keys off in its own
+					// pipeline (which this wire format never reaches).
+				},
+				Mesh{
+					ID:       "explicit-wireframe",
+					Geometry: CubeGeometry{Size: 1},
+					Material: StandardMaterial{Wireframe: Bool(true)},
+				},
+			},
+		},
+	}
+	ir := props.SceneIR()
+
+	var flat, wireframeObj *ObjectIR
+	for i := range ir.Objects {
+		switch ir.Objects[i].ID {
+		case "untextured-flat":
+			flat = &ir.Objects[i]
+		case "explicit-wireframe":
+			wireframeObj = &ir.Objects[i]
+		}
+	}
+	if flat == nil || wireframeObj == nil {
+		t.Fatalf("expected both objects in the lowered IR; got %+v", ir.Objects)
+	}
+	if flat.Wireframe != nil {
+		t.Errorf("an untextured flat mesh that never authors wireframe must lower Wireframe to nil, got %v", *flat.Wireframe)
+	}
+	if wireframeObj.Wireframe == nil || !*wireframeObj.Wireframe {
+		t.Fatalf("an explicit StandardMaterial{Wireframe: Bool(true)} must lower Wireframe to true, got %v", wireframeObj.Wireframe)
+	}
+
+	got := featureSet(collectFeatures(ir))
+	if !got[capability.FeatureWireframe] {
+		t.Error("expected FeatureWireframe from the explicit-wireframe mesh; not present")
+	}
 }
 
 // TestComputeParticlesReportsWebGLDegraded verifies the honesty-gate fix:

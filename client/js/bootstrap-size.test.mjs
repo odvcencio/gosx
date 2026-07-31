@@ -480,7 +480,10 @@ const budgets = [
   // combined measurement: 1_481_931 / 401_314 / 322_353.
   // Merging main's declarative submit-action fixes with the Scene3D status
   // bindings yields the combined generated bundle measured here.
-  { file: "bootstrap.js", raw: 1_483_937, gzip: 401_833, brotli: 323_032 },
+  // Barycentric-discard wireframe (vertex_index-derived bary varying plus the
+  // fragment edge test) on the WebGPU PBR pipeline: exact regenerated
+  // measurement 1_484_444 / 401_953 / 322_905.
+  { file: "bootstrap.js", raw: 1_484_444, gzip: 401_953, brotli: 322_905 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -990,7 +993,11 @@ const budgets = [
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
   // WebGPU point-billboard viewport guards measure 382_077 / 92_098 / 77_082.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_186, gzip: 92_152, brotli: 77_247 },
+  // Barycentric-discard wireframe (vertex_index-derived bary varying on
+  // WGSL_PBR_VERTEX/FRAGMENT, the fragment edge test, and the
+  // modelScaleSigns.w flag lane): exact regenerated measurement
+  // 382_693 / 92_270 / 77_368.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_693, gzip: 92_270, brotli: 77_368 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1286,10 +1293,13 @@ const routeBudgets = [
     // totals to 1_168_987 / 311_462 / 263_322. Merging current main's
     // retained-geometry and quality-ladder work with declarative status
     // bindings, plus main's declarative submit-action fix, brings the exact
-    // route total to:
-    raw: 1_174_281,
-    gzip: 312_889,
-    brotli: 264_360,
+    // route total to 1_174_281 / 312_889 / 264_360.
+    // Barycentric-discard wireframe on the WebGPU PBR pipeline (bary varying,
+    // fragment edge test, modelScaleSigns.w flag lane): exact regenerated
+    // route total:
+    raw: 1_174_788,
+    gzip: 313_007,
+    brotli: 264_481,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1426,10 +1436,12 @@ const routeBudgets = [
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
-    // exact route total to:
-    raw: 1_386_250,
-    gzip: 371_284,
-    brotli: 314_029,
+    // exact route total to 1_386_250 / 371_284 / 314_029.
+    // Barycentric-discard wireframe on the WebGPU PBR pipeline: exact
+    // regenerated route total:
+    raw: 1_386_757,
+    gzip: 371_402,
+    brotli: 314_150,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1495,10 +1507,12 @@ const routeBudgets = [
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
-    // exact route total to:
-    raw: 1_028_003,
-    gzip: 270_602,
-    brotli: 226_761,
+    // exact route total to 1_028_003 / 270_602 / 226_761.
+    // Barycentric-discard wireframe on the WebGPU PBR pipeline: exact
+    // regenerated route total:
+    raw: 1_028_510,
+    gzip: 270_720,
+    brotli: 226_882,
   },
 
 ];
