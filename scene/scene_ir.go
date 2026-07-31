@@ -3065,6 +3065,8 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureRectAreaLight,
 	capability.FeatureRectAreaSpecular,
 	capability.FeatureLightProbeSH,
+	capability.FeatureShadowCascades,
+	capability.FeaturePointLightShadow,
 }
 
 func waterSystemUsesObjectTexturePass(w WaterSystemIR) bool {
@@ -3245,6 +3247,12 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	// exclude a backend.
 	for i := range ir.Lights {
 		for _, f := range capability.LightKindFeatures(ir.Lights[i].Kind) {
+			seen[f] = true
+		}
+		// Shadow features depend on kind plus fields (CastShadow, cascade
+		// count), not on kind alone, so they need their own helper beside
+		// LightKindFeatures. See capability.LightShadowFeatures.
+		for _, f := range capability.LightShadowFeatures(ir.Lights[i].Kind, ir.Lights[i].CastShadow, ir.Lights[i].ShadowCascades) {
 			seen[f] = true
 		}
 	}

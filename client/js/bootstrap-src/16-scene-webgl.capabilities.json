@@ -11,5 +11,7 @@
   "water-object-mesh-shadow-pass": false,
   "rect-area-light": false,
   "rect-area-specular": false,
-  "light-probe-sh": false
+  "light-probe-sh": false,
+  "shadow-cascades": true,
+  "point-light-shadow": false
 }

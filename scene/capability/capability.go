@@ -60,6 +60,8 @@ const (
 	FeatureRectAreaLight             Feature = "rect-area-light"
 	FeatureRectAreaSpecular          Feature = "rect-area-specular"
 	FeatureLightProbeSH              Feature = "light-probe-sh"
+	FeatureShadowCascades            Feature = "shadow-cascades"
+	FeaturePointLightShadow          Feature = "point-light-shadow"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -88,6 +90,37 @@ func LightKindFeatures(kind string) []Feature {
 		return []Feature{FeatureRectAreaLight, FeatureRectAreaSpecular}
 	case "light-probe":
 		return []Feature{FeatureLightProbeSH}
+	}
+	return nil
+}
+
+// LightShadowFeatures returns the shadow features one lowered light needs for
+// a faithful image, given its kind, whether it casts a shadow, and its
+// authored cascade count. Unlike LightKindFeatures, the answer depends on
+// fields as well as kind, so collectFeatures in scene/scene_ir.go calls this
+// beside LightKindFeatures for every LightIR the graph lowerer emits.
+//
+//   - directional + castShadow + cascades >= 2 needs shadow-cascades: WebGPU
+//     renders one whole-scene ortho fit with no cascades today, while WebGL2
+//     splits the view frustum into up to four. A single-cascade directional
+//     shadow needs neither backend to split anything, so it raises nothing.
+//   - point + castShadow needs point-light-shadow: no backend renders a
+//     point-light shadow at all today (scene.PointLight cannot even author
+//     one before this cluster's PR4).
+//   - Every other combination (no CastShadow, or a kind neither branch names)
+//     raises nothing: a shadowless light or a spot light costs the author no
+//     capability gap this cluster tracks.
+func LightShadowFeatures(kind string, castShadow bool, cascades int) []Feature {
+	if !castShadow {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "directional":
+		if cascades >= 2 {
+			return []Feature{FeatureShadowCascades}
+		}
+	case "point":
+		return []Feature{FeaturePointLightShadow}
 	}
 	return nil
 }
@@ -296,6 +329,36 @@ var Matrix = map[Feature]map[Backend]bool{
 	// light would invent a distance falloff — but it is not an SH evaluation,
 	// so the cell stays false until one exists.
 	FeatureLightProbeSH: {BackendWebGPU: false, BackendWebGL: false},
+	// shadow-cascades: a directional shadow split into multiple cascades
+	// (parallel-split shadow maps) instead of one whole-scene ortho fit.
+	//
+	// WebGL2 already carries up to four cascades per slot: the PSSM split
+	// scheme, the per-cascade sub-frustum fit and texel-snapped ortho boxes
+	// (u_shadowCascadeSplits0/1, shadowFactorSlot0/1 in 16-scene-webgl.js).
+	// WebGPU renders one texture_depth_2d shadow map per slot with a single
+	// whole-scene ortho fit and no per-cascade split at all — the cell reads
+	// false, honestly, at the moment this row lands. A cascaded scene then
+	// degrades WebGPU on the wire, before the implementation PR closes the
+	// gap by giving WebGPU a texture_depth_2d_array slot and the same PSSM
+	// fit math (moved to 16c-scene-shared-pbr.js so both backends share one
+	// implementation). See shadowparity_test.go for the source corroboration
+	// of both halves, and flip this cell in the same commit as that PR.
+	FeatureShadowCascades: {BackendWebGPU: false, BackendWebGL: true},
+	// point-light-shadow: a shadow cast by a point light (omnidirectional,
+	// six-face cube depth).
+	//
+	// False everywhere at the moment this row lands. scene.PointLight cannot
+	// even author a shadow yet (that lands in this cluster's PointLight
+	// authoring PR), and neither browser renderer has a cube-shadow path:
+	// "samplerCubeShadow" appears zero times in 16-scene-webgl.js and
+	// "texture_depth_cube" appears zero times in 16a-scene-webgpu.js. The
+	// WebGPU cell flips once the six-face cube depth path lands (bindings 13
+	// and 14). The WebGL2 cell is a deliberate, permanent record rather than
+	// a staging value: the fallback renderer's texture-unit budget is
+	// already at its 16-unit ceiling before a cube shadow sampler (see the
+	// ibl row's unit arithmetic), so the gap is recorded here rather than
+	// implemented. See shadowparity_test.go for both halves.
+	FeaturePointLightShadow: {BackendWebGPU: false, BackendWebGL: false},
 }
 
 func supports(b Backend, f Feature) bool {
