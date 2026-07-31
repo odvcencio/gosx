@@ -35,6 +35,13 @@
     formMethod: "formmethod",
     formTarget: "formtarget",
   };
+  // A prefetched page never revalidates on its own, so a stale entry can
+  // outlive the session that time-boxed its content (rotating tokens,
+  // bucketed data). PAGE_CACHE_TTL_MS bounds how long a cached page answers
+  // before the next lookup treats it as a miss and refetches.
+  const PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+  const PAGE_CACHE_OPT_OUT_META = "gosx-page-cache";
+  const PAGE_CACHE_OPT_OUT_VALUE = "no-store";
   const scriptCache = window.__gosx_loaded_scripts || new Map();
   const pageCache = window.__gosx_page_cache || new Map();
   let navigationState = {
@@ -1694,10 +1701,43 @@
     return new DOMParser().parseFromString(html, "text/html");
   }
 
+  // pageCacheOptsOut reads the FETCHED page's own head, not the live
+  // document's — a page opts its own HTML out of pageCache with <meta
+  // name="gosx-page-cache" content="no-store">, the same meta/attribute
+  // lookup shape as csrfTokenFromMeta above.
+  function pageCacheOptsOut(html) {
+    let doc;
+    try {
+      doc = parseDocument(html);
+    } catch (_e) {
+      return false;
+    }
+    const meta = findElement(doc && doc.head, function(node) {
+      return isElement(node, "META")
+        && node.getAttribute
+        && node.getAttribute("name") === PAGE_CACHE_OPT_OUT_META;
+    });
+    return !!meta && String(meta.getAttribute("content") || "").toLowerCase() === PAGE_CACHE_OPT_OUT_VALUE;
+  }
+
+  // A pageCache entry is a Promise, decorated with its own insertion time
+  // (__gosxCachedAt) rather than wrapped in a {value, insertedAt} record, so
+  // the map keeps its original Map<string, Promise<{html,url}>> shape for
+  // any code outside this module that already reads window.__gosx_page_cache.
+  function pageCacheEntryExpired(entry) {
+    return typeof entry.__gosxCachedAt === "number"
+      && (Date.now() - entry.__gosxCachedAt) > PAGE_CACHE_TTL_MS;
+  }
+
   async function fetchPage(url, signal) {
     const key = String(url);
-    if (pageCache.has(key)) {
-      return pageCache.get(key);
+    const cached = pageCache.get(key);
+    if (cached) {
+      if (pageCacheEntryExpired(cached)) {
+        pageCache.delete(key);
+      } else {
+        return cached;
+      }
     }
 
     const request = (async function() {
@@ -1719,8 +1759,13 @@
     })();
 
     pageCache.set(key, request);
+    request.__gosxCachedAt = Date.now();
     try {
-      return await request;
+      const page = await request;
+      if (pageCacheOptsOut(page.html)) {
+        pageCache.delete(key);
+      }
+      return page;
     } catch (err) {
       pageCache.delete(key);
       throw err;
