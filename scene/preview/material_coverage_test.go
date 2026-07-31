@@ -115,6 +115,10 @@ func TestUnresolvedTextureIsReported(t *testing.T) {
 // runs the whole litWGSL fragment stage and shades all three. Reporting them
 // would tell an author their material does nothing while it is shading, which
 // invites deleting work that functions.
+//
+// wireframe left the ignored set the same way: litWGSL's barycentric edge
+// discard now shades it, so this scene authors it (on object "b") only to
+// prove it stays OUT of the note, alongside roughness/metalness/normalMap.
 func TestIgnoredMaterialFieldsAreReported(t *testing.T) {
 	doc := `{"schema":"gosx.scene3d.ir.v1","objects":[
 		{"id":"a","kind":"sphere","radius":1,"roughness":0.9,"metalness":0.4,"normalMap":"/n.png","materialKind":"glass"},
@@ -129,15 +133,13 @@ func TestIgnoredMaterialFieldsAreReported(t *testing.T) {
 		t.Fatalf("expected one material coverage note: %+v", result.Bundle.Diagnostics)
 	}
 	message := diagnostics[0].Message
-	for _, want := range []string{"wireframe(1)", "materialKind(1)"} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("material note missing %q: %s", want, message)
-		}
+	if !strings.Contains(message, "materialKind(1)") {
+		t.Fatalf("material note missing %q: %s", "materialKind(1)", message)
 	}
 	// The other half, and the one that matters more. A field the fragment stage
 	// shades must NOT appear here. Naming a working field is the expensive
 	// direction of a wrong diagnostic.
-	for _, shaded := range []string{"roughness", "metalness", "normalMap", "clearcoat", "sheen"} {
+	for _, shaded := range []string{"roughness", "metalness", "normalMap", "clearcoat", "sheen", "wireframe"} {
 		if strings.Contains(message, shaded) {
 			t.Fatalf("%q reaches a CPU pixel and must not be reported as ignored: %s", shaded, message)
 		}

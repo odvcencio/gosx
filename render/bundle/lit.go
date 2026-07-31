@@ -62,7 +62,7 @@ struct Material {
   pbrParams     : vec4<f32>, // x=metalness, y=roughness, z=emissiveStrength, w=useVertexColor
   emissive      : vec4<f32>,
   textureParams : vec4<f32>, // x=hasBaseColor, y=hasNormal, z=hasRoughMap, w=hasMetalMap
-  textureParams2: vec4<f32>, // x=hasEmissiveMap, y=hasOcclusionMap
+  textureParams2: vec4<f32>, // x=hasEmissiveMap, y=hasOcclusionMap, z=wireframe
   physicalParams : vec4<f32>, // x=clearcoat, y=sheen, z=transmission, w=iridescence
   physicalParams2: vec4<f32>, // x=anisotropy
 };
@@ -94,6 +94,13 @@ struct VSOut {
   @location(3) viewZ    : f32,
   @location(4) uv       : vec2<f32>,
   @location(5) @interpolate(flat) pickId : u32,
+  // bary is (1,0,0), (0,1,0) or (0,0,1) on the three corners of an
+  // unindexed triangle, selected by vertex_index % 3 in vs_main. Default
+  // (perspective-correct) interpolation carries it across the triangle, so
+  // fs_main can find the fragment's distance to the nearest edge without an
+  // index buffer or a geometry-shader pass. See the wireframe gate in
+  // fs_main.
+  @location(6) bary : vec3<f32>,
 };
 
 struct FSOut {
@@ -103,6 +110,7 @@ struct FSOut {
 
 @vertex
 fn vs_main(
+  @builtin(vertex_index) vi : u32,
   @location(0) pos    : vec3<f32>,
   @location(1) color  : vec3<f32>,
   @location(2) normal : vec3<f32>,
@@ -130,6 +138,11 @@ fn vs_main(
   out.viewZ    = length(toCam);
   out.uv       = uv;
   out.pickId   = pickData.x;
+  // Every mesh path here draws non-indexed triangle soup (pass.Draw, not
+  // DrawIndexed), so vertex_index % 3 names the corner within its triangle
+  // without needing a topology change or a second pipeline.
+  let corner = vi % 3u;
+  out.bary = vec3<f32>(f32(corner == 0u), f32(corner == 1u), f32(corner == 2u));
   return out;
 }
 
@@ -232,6 +245,21 @@ fn perturbNormal(geomN : vec3<f32>, worldPos : vec3<f32>, uv : vec2<f32>) -> vec
 
 @fragment
 fn fs_main(in : VSOut) -> FSOut {
+  // Wireframe: every mesh here is non-indexed triangle soup, so vs_main wrote
+  // a pure function of vertex_index % 3 into in.bary and default
+  // interpolation carried it across the triangle. The fragment nearest an
+  // edge has one barycentric component near zero; smoothstep turns that into
+  // an antialiased band, and fragments outside the band discard before they
+  // cost a lighting evaluation. Depth still writes for the surviving
+  // fragments, so wireframe needs no second pipeline and no index buffer.
+  if (material.textureParams2.z > 0.5) {
+    let d = min(min(in.bary.x, in.bary.y), in.bary.z);
+    let w = fwidth(d);
+    let edge = 1.0 - smoothstep(0.0, w * 1.5, d);
+    if (edge < 0.5) {
+      discard;
+    }
+  }
   let geomN = normalize(in.worldNrm);
   let mappedN = perturbNormal(geomN, in.worldPos, in.uv);
   let hasNormalMap = step(0.5, material.textureParams.y);
@@ -453,6 +481,7 @@ fn fs_main(in : VSOut) -> FSOut {
 
 func skinnedLitWGSL() string {
 	const signature = `fn vs_main(
+  @builtin(vertex_index) vi : u32,
   @location(0) pos    : vec3<f32>,
   @location(1) color  : vec3<f32>,
   @location(2) normal : vec3<f32>,
@@ -464,6 +493,7 @@ func skinnedLitWGSL() string {
   @location(8) pickData : vec4<u32>,
 ) -> VSOut {`
 	const skinnedSignature = `fn vs_main(
+  @builtin(vertex_index) vi : u32,
   @location(0) pos     : vec3<f32>,
   @location(1) color   : vec3<f32>,
   @location(2) normal  : vec3<f32>,

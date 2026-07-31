@@ -36,7 +36,16 @@ import (
 // material was ignored when it was not, which is the more expensive direction
 // of a wrong diagnostic: it invites deleting work that functions.
 //
-// Two remain, for different reasons.
+// wireframe left the list too: vs_main writes a barycentric coordinate from
+// vertex_index % 3 (every mesh here draws non-indexed triangle soup), and
+// fs_main discards fragments away from a triangle edge when
+// material.textureParams2.z is set. render/gpu/headless mirrors the discard
+// from the same perspective-correct weights the software rasterizer already
+// carries per fragment. See TestPhysicallyBasedMaterialFieldsReachThePixels
+// and TestWireframeDiscardsInteriorNotEdges in
+// render/gpu/headless/material_gap_test.go.
+//
+// One remains.
 //
 // materialKind: render/bundle drops it before the GPU. materialFromRender reads
 // colour, opacity, the physical scalars and the map slots, and never reads Kind.
@@ -44,17 +53,12 @@ import (
 // byte-identical to a standard material with the same colour and opacity.
 // TestMaterialKindsShadeIdentically pins that.
 //
-// wireframe: it has no lane in materialFingerprint, so it never reaches the
-// material uniform at all. It needs a line-topology pipeline and an edge walk in
-// render/bundle, not a shading term, so no shader change can move it.
-//
 // Note on metalnessMap and emissiveMap: both are MODULATING maps. They scale a
 // factor, so they change nothing when that factor is zero. They are sampled, and
 // therefore not ignored — but an author who sees no change should check the
 // scalar before suspecting the map.
 var ignoredMaterialFields = []string{
 	"materialKind",
-	"wireframe",
 }
 
 // cpuBaselineMaterialKind is the one authored material kind that describes what
@@ -93,11 +97,9 @@ func materialCoverageDiagnostic(ir scene.SceneIR) (engine.RenderDiagnostic, bool
 		}
 	}
 	for _, object := range ir.Objects {
-		countIgnoredMaterialFields(count, boolValue(object.Wireframe))
 		count("materialKind", materialKindIgnored(object.MaterialKind))
 	}
 	for _, mesh := range ir.InstancedMeshes {
-		countIgnoredMaterialFields(count, boolValue(mesh.Wireframe))
 		count("materialKind", materialKindIgnored(mesh.MaterialKind))
 	}
 	if len(used) == 0 {
@@ -116,18 +118,6 @@ func materialCoverageDiagnostic(ir scene.SceneIR) (engine.RenderDiagnostic, bool
 			"these authored fields still did not change the frame, with the number of records that set each: " +
 			strings.Join(names, ", "),
 	}, true
-}
-
-// countIgnoredMaterialFields counts only the fields the CPU rasterizer really
-// cannot express. It used to count eleven more, and every one of those now
-// reaches a pixel through the litWGSL fragment stage. Counting them told an
-// author their roughness or normal map was ignored while it was shading, which
-// is the expensive direction of a wrong diagnostic.
-//
-// Keep this function in step with ignoredMaterialFields; the doc comment there
-// explains why materialKind and wireframe are the two that remain.
-func countIgnoredMaterialFields(count func(string, bool), wireframe bool) {
-	count("wireframe", wireframe)
 }
 
 // textureResolver rewrites base colour texture sources onto real files.

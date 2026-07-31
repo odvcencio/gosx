@@ -91,6 +91,31 @@ func TestMaterialFingerprintDiffersOnOcclusionMap(t *testing.T) {
 	}
 }
 
+func TestMaterialUniformFlagsWireframe(t *testing.T) {
+	fp := materialFromRender(engine.RenderMaterial{
+		Texture:   "/albedo.png",
+		Wireframe: true,
+	})
+	got := materialUniformBytes(fp)[64:80]
+	want := float32sToBytes([]float32{0, 0, 1, 0})
+	if string(got) != string(want) {
+		t.Fatalf("textureParams2 bytes = %v, want %v", got, want)
+	}
+}
+
+// TestMaterialFingerprintDiffersOnWireframe is the lane
+// render/gpu/headless/material_gap_test.go's pinning test named as missing
+// (material_gap_test.go:369, before this PR). Two materials that differ only
+// by Wireframe must not share a cached uniform buffer, or one mesh would draw
+// with the other's wireframe state.
+func TestMaterialFingerprintDiffersOnWireframe(t *testing.T) {
+	base := materialFromRender(engine.RenderMaterial{Color: "#ffffff"})
+	wireframe := materialFromRender(engine.RenderMaterial{Color: "#ffffff", Wireframe: true})
+	if base == wireframe {
+		t.Fatal("materialFingerprint must differ when only Wireframe differs")
+	}
+}
+
 func TestMaterialUniformEncodesOpacity(t *testing.T) {
 	fp := materialFromRender(engine.RenderMaterial{
 		Color:   "#ffffff",

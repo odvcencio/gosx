@@ -310,6 +310,14 @@ func TestPhysicallyBasedMaterialFieldsReachThePixels(t *testing.T) {
 			why:      "the shading normal leaves the geometric normal, so NdotL and NdotH move",
 		},
 		{
+			feature:  "wireframe",
+			base:     engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5},
+			mutate:   func(m *engine.RenderMaterial) { m.Wireframe = true },
+			minDelta: 40,
+			why: "the barycentric edge discard clears every interior fragment on both triangles of the " +
+				"floor plane, so most of the frame falls back to the black background",
+		},
+		{
 			feature:  "roughnessMap",
 			base:     engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.9},
 			mutate:   func(m *engine.RenderMaterial) { m.RoughnessMap = roughnessMap },
@@ -384,12 +392,67 @@ func TestPhysicallyBasedMaterialFieldsReachThePixels(t *testing.T) {
 	}
 }
 
-// TestMaterialFieldsStillInvisible names every material field that reaches
-// engine.RenderMaterial and never reaches a CPU pixel.
+// TestWireframeDiscardsInteriorNotEdges pins the SHAPE of the wireframe
+// discard, not just that it moves the frame. A discard test that fired on
+// every fragment would clear TestPhysicallyBasedMaterialFieldsReachThePixels'
+// floor too (an all-black frame is a huge delta from a lit one), so that test
+// alone cannot tell "draws a wireframe" from "draws nothing".
 //
-// Identity is the honest current behaviour, not a wish. Invert the case that
-// fails on the day the rasterizer learns the feature, and say in the commit
-// message which feature it learned.
+// This test renders the same floor plane with and without Wireframe, then
+// scans every pixel instead of naming one by hand: the floor plane's default
+// triangulation splits it along a diagonal that runs through the centre of
+// the frame (buildPlane in scene/geom/primitives.go winds triangles
+// {0,2,1} and {0,3,2}, sharing the edge from corner 0 to corner 2, which
+// passes through the origin the camera looks at), so no single hand-picked
+// pixel is safely "interior" or "on an edge" across a triangulation change. A
+// scan proves both kinds of pixel exist without assuming where they land.
+func TestWireframeDiscardsInteriorNotEdges(t *testing.T) {
+	base := engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5}
+	reference := renderMaterialFrame(t, litSurfaceScene(base, -1))
+
+	wireframe := base
+	wireframe.Wireframe = true
+	frame := renderMaterialFrame(t, litSurfaceScene(wireframe, -1))
+
+	bounds := frame.Bounds()
+	var sawSurvivingEdge, sawDiscardedInterior bool
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			wire := frame.RGBAAt(x, y)
+			lit := reference.RGBAAt(x, y)
+			switch {
+			case wire == lit:
+				sawSurvivingEdge = true
+			case wire.R == 0 && wire.G == 0 && wire.B == 0:
+				sawDiscardedInterior = true
+			}
+		}
+	}
+	if !sawSurvivingEdge {
+		t.Fatal("no pixel kept the plane's lit colour under wireframe; the discard test is eating every " +
+			"fragment, including the shared edge between the plane's two triangles")
+	}
+	if !sawDiscardedInterior {
+		t.Fatal("no pixel fell back to the black background under wireframe; the interior of a triangle " +
+			"never discards, so this is not drawing a wireframe")
+	}
+}
+
+// TestMaterialFieldsStillInvisible used to name every material field that
+// reached engine.RenderMaterial and never reached a CPU pixel, through an
+// identity table paired with the "reads" table below. wireframe was the last
+// and only entry; its case moved to
+// TestPhysicallyBasedMaterialFieldsReachThePixels (a measured floor plus an
+// interior-versus-edge probe) and to TestWireframeDiscardsInteriorNotEdges
+// (the shape of the discard) when materialFingerprint gained a wireframe
+// lane. The identity table is gone rather than left empty: an empty table
+// asserts nothing and would silently stop guarding the day a new field
+// reaches engine.RenderMaterial and stays invisible. Reintroduce it, with an
+// entry, the next time that happens.
+//
+// The proof that the shading model reads the fields it claims to read stays
+// live below: a model that ignored everything would let a wrongly-reopened
+// identity table above pass by never trying anything.
 func TestMaterialFieldsStillInvisible(t *testing.T) {
 	base := engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5}
 	reference := renderCenterPixel(t, litSurfaceScene(base, -1))
@@ -397,37 +460,6 @@ func TestMaterialFieldsStillInvisible(t *testing.T) {
 		t.Fatalf("the reference surface did not draw: %+v", reference)
 	}
 
-	for _, tc := range []struct {
-		feature string
-		mutate  func(*engine.RenderMaterial)
-		// why records what blocks the field today, so a reader knows which
-		// layer to change rather than searching the shading model.
-		why string
-	}{
-		{
-			feature: "wireframe",
-			mutate:  func(m *engine.RenderMaterial) { m.Wireframe = true },
-			why: "materialFingerprint in render/bundle/material.go carries no wireframe lane, " +
-				"so the flag never reaches the material uniform and no shading term could read it. " +
-				"Wireframe is a rasterizer state, not a material term: it needs a line-topology " +
-				"pipeline in render/bundle/renderer.go and an edge walk here.",
-		},
-	} {
-		t.Run(tc.feature, func(t *testing.T) {
-			material := base
-			tc.mutate(&material)
-			got := renderCenterPixel(t, litSurfaceScene(material, -1))
-			if got != reference {
-				t.Fatalf("%s now changes a CPU pixel: %+v against %+v.\n"+
-					"Recorded reason it could not: %s\n"+
-					"Move the case into TestPhysicallyBasedMaterialFieldsReachThePixels with a measured floor.",
-					tc.feature, got, reference, tc.why)
-			}
-		})
-	}
-
-	// The other half of the proof. A shading model that ignored every field would
-	// pass the cases above, so the fields the model does read must move the pixel.
 	for _, tc := range []struct {
 		feature string
 		mutate  func(*engine.RenderMaterial)
@@ -628,6 +660,7 @@ func TestMaterialFeatureFloorsRejectALostTerm(t *testing.T) {
 		{"metalness", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.4}, nil, 40},
 		{"clearcoat", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5}, nil, 20},
 		{"occlusionMap", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5}, litAmbientOnlyScene, 40},
+		{"wireframe", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.5, Wireframe: true}, nil, 40},
 		{"sheen", engine.RenderMaterial{Kind: "standard", Color: "#4080c0", Roughness: 0.6}, litSphereScene, 8},
 		{"iridescence", engine.RenderMaterial{Kind: "standard", Color: "#c0c0c0", Roughness: 0.4}, litSphereScene, 8},
 	} {

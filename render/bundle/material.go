@@ -39,6 +39,10 @@ type materialFingerprint struct {
 	// occlusionURL: the glTF ambient-occlusion map slot. litWGSL samples red
 	// (the glTF 2.0 convention) and scales the indirect light only.
 	occlusionURL string
+	// wireframe gates the barycentric edge discard in litWGSL's fs_main. It is
+	// a rasterizer-state flag carried through the material uniform, not a
+	// shading term, so it needs no colour or texture lane of its own.
+	wireframe bool
 	// useVertexColor = 1 when the renderer should mix in the per-vertex color
 	// as baseColor. Unlit-fallback legacy primitives (cube/plane/sphere)
 	// set this; explicit RenderMaterial entries clear it.
@@ -180,6 +184,7 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		metalnessURL:     mat.MetalnessMap,
 		emissiveURL:      mat.EmissiveMap,
 		occlusionURL:     mat.OcclusionMap,
+		wireframe:        mat.Wireframe,
 		useVertexColor:   false,
 	}
 }
@@ -332,7 +337,7 @@ func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.B
 //	16..32  pbrParams     vec4 (metalness, roughness, emissiveStrength, useVertexColor)
 //	32..48  emissive      vec4 (rgba) — reserved, litWGSL reads baseColor
 //	48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
-//	64..80  textureParams2 vec4 (hasEmissiveMap, hasOcclusionMap, 0, 0)
+//	64..80  textureParams2 vec4 (hasEmissiveMap, hasOcclusionMap, wireframe, 0)
 //	80..96  physicalParams vec4 (clearcoat, sheen, transmission, iridescence)
 //	96..112 physicalParams2 vec4 (anisotropy, 0, 0, 0)
 func materialUniformBytes(fp materialFingerprint) []byte {
@@ -346,6 +351,10 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 		}
 		return 1
 	}
+	wireframeFlag := float32(0)
+	if fp.wireframe {
+		wireframeFlag = 1
+	}
 	values := []float32{
 		// baseColor (rgba)
 		dequantize(fp.baseColorR), dequantize(fp.baseColorG), dequantize(fp.baseColorB), dequantize(fp.opacity),
@@ -355,8 +364,8 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 		dequantize(fp.emissiveR), dequantize(fp.emissiveG), dequantize(fp.emissiveB), 1,
 		// textureParams (hasBaseColor, hasNormal, hasRough, hasMetal)
 		flag(fp.textureURL), flag(fp.normalURL), flag(fp.roughnessURL), flag(fp.metalnessURL),
-		// textureParams2 (hasEmissive, hasOcclusion, 0, 0)
-		flag(fp.emissiveURL), flag(fp.occlusionURL), 0, 0,
+		// textureParams2 (hasEmissive, hasOcclusion, wireframe, 0)
+		flag(fp.emissiveURL), flag(fp.occlusionURL), wireframeFlag, 0,
 		// physicalParams (clearcoat, sheen, transmission, iridescence)
 		dequantize(fp.clearcoat), dequantize(fp.sheen), dequantize(fp.transmission), dequantize(fp.iridescence),
 		// physicalParams2 (anisotropy, 0, 0, 0)

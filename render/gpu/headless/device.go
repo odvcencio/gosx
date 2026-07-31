@@ -1960,6 +1960,11 @@ type materialState struct {
 	hasMetalMap     bool
 	hasEmissiveMap  bool
 	hasOcclusionMap bool
+	// hasWireframe mirrors litWGSL's textureParams2.z gate. It is read by
+	// rasterizeTriangle, not by litProgram.shade: wireframe is a rasterizer
+	// discard, not a shading term, and the WGSL copy discards before it
+	// shades too.
+	hasWireframe bool
 
 	baseColorMap textureBinding
 	normalMap    textureBinding
@@ -2027,6 +2032,7 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 			state.hasMetalMap = readFloat32At(data, offset+60) >= 0.5
 			state.hasEmissiveMap = readFloat32At(data, offset+64) >= 0.5
 			state.hasOcclusionMap = readFloat32At(data, offset+68) >= 0.5
+			state.hasWireframe = readFloat32At(data, offset+72) >= 0.5
 			state.clearcoat = readFloat32At(data, offset+80)
 			state.sheen = readFloat32At(data, offset+84)
 			state.transmission = readFloat32At(data, offset+88)
@@ -3009,6 +3015,23 @@ func rasterizeTriangle(target rasterTarget, verts [3]rasterVertex, shading *litP
 				p0 = verts[0].invW * w0 / invSum
 				p1 = verts[1].invW * w1 / invSum
 				p2 = verts[2].invW * w2 / invSum
+			}
+			// Wireframe: p0/p1/p2 ARE the perspective-correct barycentric
+			// weights litWGSL's in.bary carries (vs_main writes the same
+			// (1,0,0)/(0,1,0)/(0,0,1) corners; default WGSL interpolation is
+			// perspective-correct). A software rasterizer walks one pixel at a
+			// time and has no 2x2 quad to take fwidth(d) from, so this oracle
+			// uses a fixed barycentric-space band instead of a
+			// screen-space-constant antialiased one. That is a recorded
+			// approximation, not a bug: the measured floor in
+			// TestPhysicallyBasedMaterialFieldsReachThePixels proves the term
+			// reaches a pixel; it does not claim the CPU and GPU wireframes are
+			// antialiased identically.
+			if shading != nil && shading.material.hasWireframe {
+				const wireframeEdgeBand = 0.06
+				if min3(p0, p1, p2) > wireframeEdgeBand {
+					continue
+				}
 			}
 			var out [4]float32
 			for i := 0; i < 4; i++ {

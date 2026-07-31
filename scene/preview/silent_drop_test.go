@@ -309,6 +309,7 @@ func TestPhysicallyBasedFieldsChangeNoPixel(t *testing.T) {
 		{"anisotropy", `"anisotropy":1`},
 		{"normalMap", `"normalMap":"/textures/normal.png"`},
 		{"roughnessMap", `"roughnessMap":"/textures/rough.png"`},
+		{"wireframe", `"wireframe":true`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if hashPixels(render(t, tc.json).Image) == baseHash {
@@ -331,18 +332,14 @@ func TestPhysicallyBasedFieldsChangeNoPixel(t *testing.T) {
 		})
 	}
 
-	// wireframe is the one material field left that truly cannot reach a pixel.
-	// It has no lane in materialFingerprint, so it never reaches the material
-	// uniform; it needs a line-topology pipeline in render/bundle. Invert this
-	// case when that exists.
-	t.Run("wireframe", func(t *testing.T) {
+	// wireframe reached a pixel through litWGSL's barycentric edge discard once
+	// materialFingerprint gained a wireframe lane; its case moved into the loop
+	// above. It must also stop appearing in the ignored-fields diagnostic.
+	t.Run("wireframe-not-reported-ignored", func(t *testing.T) {
 		result := render(t, `"wireframe":true`)
-		if hashPixels(result.Image) != baseHash {
-			t.Fatal("wireframe now changes a CPU pixel; remove it from IgnoredMaterialFields and invert this case")
-		}
-		diagnostic, reported := findDiagnostic(result.Bundle.Diagnostics, "scene.preview.material_fields_ignored")
-		if !reported || !strings.Contains(diagnostic.Message, "wireframe") {
-			t.Fatalf("wireframe changed nothing and was not named: %+v", result.Bundle.Diagnostics)
+		if diagnostic, reported := findDiagnostic(result.Bundle.Diagnostics, "scene.preview.material_fields_ignored"); reported &&
+			strings.Contains(diagnostic.Message, "wireframe") {
+			t.Fatalf("wireframe shades and must not be reported as ignored: %s", diagnostic.Message)
 		}
 	})
 
