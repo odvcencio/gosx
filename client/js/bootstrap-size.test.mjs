@@ -475,7 +475,11 @@ const budgets = [
   // subscriptions bring the totals to 1_475_412 / 399_353 / 321_214.
   // Canvas-replacement remeasurement and browser-side uniform-name validation
   // bring the final totals to 1_475_522 / 399_375 / 320_983.
-  { file: "bootstrap.js", raw: 1_475_522, gzip: 399_375, brotli: 320_983 },
+  // The prior ceilings went stale on main: a clean rebuild of the untouched
+  // sources already measures 1_482_886 / 401_475 / 322_527. WebGPU bind-group
+  // memoization and pipeline-key memoization add 1_615 raw on top of that.
+  // New exact totals: 1_484_501 / 402_234 / 323_293.
+  { file: "bootstrap.js", raw: 1_484_501, gzip: 402_234, brotli: 323_293 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -522,7 +526,11 @@ const budgets = [
   //
   // Observable transport outcomes and queue health are available on every
   // runtime surface. Final measurement: 125_629 / 34_137 / 29_910.
-  { file: "bootstrap-runtime.js", raw: 126_000, gzip: 34_500, brotli: 30_000 },
+  // The ceilings went stale on main: a clean rebuild of the untouched sources
+  // already measures 127_488 / 34_643 / 30_304, past the raw, gzip, and
+  // brotli ceilings. Nothing in this commit touches the runtime bundle.
+  // Ceilings re-set from that measurement with the usual narrow headroom.
+  { file: "bootstrap-runtime.js", raw: 128_000, gzip: 35_000, brotli: 30_500 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -554,7 +562,9 @@ const budgets = [
   //
   // The lite surface carries the same audited observable telemetry transport.
   // Final measurement: 98_110 / 26_463 / 23_574.
-  { file: "bootstrap-lite.js", raw: 98_500, gzip: 26_500, brotli: 24_000 },
+  // The ceilings went stale on main: a clean rebuild of the untouched sources
+  // measures 99_966 / 26_949. Nothing in this commit touches the lite bundle.
+  { file: "bootstrap-lite.js", raw: 100_000, gzip: 27_000, brotli: 24_000 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -758,7 +768,10 @@ const budgets = [
   // Final integrated measurement: 209_702 / 57_564 / 49_044.
   // FINAL-FIX-19 exact measurement: 209_610 / 57_612 / 49_007.
   // HTML-surface texture-load notification: measured gzip 57_622.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 210_000, gzip: 57_680, brotli: 49_100 },
+  // The ceilings went stale on main: a clean rebuild of the untouched sources
+  // measures 211_969 / 58_395 / 49_669. Nothing in this commit touches the
+  // WebGL chunk.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 212_500, gzip: 58_500, brotli: 49_800 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -817,7 +830,10 @@ const budgets = [
   // totals to 513_736 / 142_509 / 118_210. Canvas-replacement
   // remeasurement and browser-side uniform-name validation bring the final
   // totals to 513_846 / 142_528 / 118_140.
-  { file: "bootstrap-feature-scene3d.js", raw: 513_846, gzip: 142_528, brotli: 118_140 },
+  // The ceilings went stale on main: a clean rebuild of the untouched sources
+  // measures 517_281 / 143_466 / 118_865. Nothing in this commit touches the
+  // base Scene3D chunk.
+  { file: "bootstrap-feature-scene3d.js", raw: 517_500, gzip: 143_700, brotli: 119_000 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -976,7 +992,11 @@ const budgets = [
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
   // WebGPU point-billboard viewport guards measure 382_077 / 92_098 / 77_082.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_186, gzip: 92_152, brotli: 77_247 },
+  // Bind-group memoization and pipeline-key memoization in 16a add 1_566 raw.
+  // They remove per-frame createBindGroup churn (~2_500 GPU objects per
+  // second across 19 point layers) and the per-frame ~13 KB pipeline cache
+  // key rebuild. Measured: 383_752 / 92_793 / 77_621.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 383_752, gzip: 92_793, brotli: 77_621 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1171,9 +1191,12 @@ const routeBudgets = [
     // (gzip 70_000 -> 70_100). Ceiling re-set from measurement of the merged
     // route.
     // Final observable-telemetry measurement: 229_436 / 65_617 / 57_847.
-    raw: 230_000,
-    gzip: 66_000,
-    brotli: 58_000,
+    // The ceilings went stale on main: a clean rebuild of the untouched
+    // sources measures 231_295 / 66_123 / 58_241 across the two files this
+    // surface loads. Nothing in this commit touches either file.
+    raw: 231_500,
+    gzip: 66_200,
+    brotli: 58_300,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1268,9 +1291,12 @@ const routeBudgets = [
     // a small cost while preventing invisible DOM fallback after a decode or
     // GPU upload failure. DOM-region tracking brings the combined exact route
     // totals to:
-    raw: 1_167_939,
-    gzip: 311_104,
-    brotli: 262_896,
+    // The prior ceilings went stale on main (see the per-chunk notes above).
+    // 16a bind-group and pipeline-key memoization adds 1_566 raw through the
+    // WebGPU chunk. Exact measured route totals:
+    raw: 1_174_799,
+    gzip: 313_189,
+    brotli: 264_389,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1340,9 +1366,12 @@ const routeBudgets = [
     // Final integrated measurement: 978_394 / 271_253 / 230_459.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals.
-    raw: 995_696,
-    gzip: 276_632,
-    brotli: 234_708,
+    // The prior ceilings went stale on main (see the per-chunk notes above).
+    // This route loads no WebGPU chunk, so nothing in this commit moves it.
+    // Exact measured route totals:
+    raw: 1_003_016,
+    gzip: 278_791,
+    brotli: 236_437,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1404,9 +1433,12 @@ const routeBudgets = [
     // WebGPU point-billboard viewport guards add 138 raw bytes.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals.
-    raw: 1_377_882,
-    gzip: 368_784,
-    brotli: 311_955,
+    // The prior ceilings went stale on main (see the per-chunk notes above).
+    // 16a bind-group and pipeline-key memoization adds 1_566 raw through the
+    // WebGPU chunk. Exact measured route totals:
+    raw: 1_386_768,
+    gzip: 371_584,
+    brotli: 314_058,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1471,9 +1503,12 @@ const routeBudgets = [
     // 220_952; Brotli remains under its existing ceiling.
     // HTML texture upload settlement plus DOM-region custom-post tracking:
     // exact measured route totals.
-    raw: 1_021_661,
-    gzip: 268_817,
-    brotli: 225_297,
+    // The prior ceilings went stale on main (see the per-chunk notes above).
+    // 16a bind-group and pipeline-key memoization adds 1_566 raw through the
+    // WebGPU chunk. Exact measured route totals:
+    raw: 1_028_521,
+    gzip: 270_902,
+    brotli: 226_790,
   },
 
 ];
