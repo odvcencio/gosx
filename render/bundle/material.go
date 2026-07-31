@@ -51,9 +51,14 @@ type materialResources struct {
 }
 
 // materialUniformSize is the std140-aligned size of the WGSL Material struct.
-// Seven vec4 records = 112 bytes (baseColor + pbrParams + emissive + two
-// texture-flag vectors + two physical-material vectors).
-const materialUniformSize = 112
+// Eleven vec4 records = 176 bytes: the original seven (baseColor + pbrParams +
+// emissive + two texture-flag vectors + two physical-material vectors) plus
+// four physical-lobe extension lanes (sheenParams, attenuationParams,
+// iridescenceParams, specularParams) appended in Scene3D parity cluster C.
+// Offsets 0-111 keep their exact original meaning; nothing before offset 112
+// moved. See the layout table on materialUniformBytes and
+// docs/scene3d-native-webgpu-spec.md section 9.1.
+const materialUniformSize = 176
 
 // resolveMaterialFingerprint picks the effective material for one instanced
 // mesh. Lookup prefers materials[MaterialIndex]; out-of-range or missing
@@ -318,13 +323,24 @@ func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.B
 // materialUniformBytes encodes the Material struct layout expected by
 // litWGSL. Layout in bytes:
 //
-//	 0..16  baseColor     vec4 (rgba)
-//	16..32  pbrParams     vec4 (metalness, roughness, emissiveStrength, useVertexColor)
-//	32..48  emissive      vec4 (rgba) — reserved, litWGSL reads baseColor
-//	48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
-//	64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
-//	80..96  physicalParams vec4 (clearcoat, sheen, transmission, iridescence)
-//	96..112 physicalParams2 vec4 (anisotropy, 0, 0, 0)
+//	  0..16  baseColor        vec4 (rgba)
+//	 16..32  pbrParams        vec4 (metalness, roughness, emissiveStrength, useVertexColor)
+//	 32..48  emissive         vec4 (rgba) — reserved, litWGSL reads baseColor
+//	 48..64  textureParams    vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
+//	 64..80  textureParams2   vec4 (hasEmissiveMap, hasClearcoatNormalMap, reserved, 0)
+//	 80..96  physicalParams   vec4 (clearcoat, sheen, transmission, iridescence)
+//	 96..112 physicalParams2  vec4 (anisotropy, clearcoatRoughness, ior, thickness)
+//	112..128 sheenParams      vec4 (sheenColor.rgb, sheenRoughness)
+//	128..144 attenuationParams vec4 (attenuationColor.rgb, attenuationDistance)
+//	144..160 iridescenceParams vec4 (iridescenceIOR, thicknessMinNm, thicknessMaxNm, anisotropyRotation)
+//	160..176 specularParams   vec4 (specularColor.rgb, specularIntensity)
+//
+// Offsets 0-111 keep their exact original meaning from before Scene3D parity
+// cluster C. The four lanes at 112-175 are new; every lane this package does
+// not yet fill in (textureParams2.y/z, physicalParams2.y/z/w, and the whole
+// 112-175 span) stays zero until the authoring fields land in a later PR, so
+// growing the buffer changes no existing frame. See
+// docs/scene3d-native-webgpu-spec.md section 9.1.
 func materialUniformBytes(fp materialFingerprint) []byte {
 	useVertex := float32(0)
 	if fp.useVertexColor {
@@ -349,8 +365,16 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 		flag(fp.emissiveURL), 0, 0, 0,
 		// physicalParams (clearcoat, sheen, transmission, iridescence)
 		dequantize(fp.clearcoat), dequantize(fp.sheen), dequantize(fp.transmission), dequantize(fp.iridescence),
-		// physicalParams2 (anisotropy, 0, 0, 0)
+		// physicalParams2 (anisotropy, clearcoatRoughness, ior, thickness)
 		dequantizeSignedUnit(fp.anisotropy), 0, 0, 0,
+		// sheenParams (sheenColor.rgb, sheenRoughness) — unfilled, zero
+		0, 0, 0, 0,
+		// attenuationParams (attenuationColor.rgb, attenuationDistance) — unfilled, zero
+		0, 0, 0, 0,
+		// iridescenceParams (iridescenceIOR, thicknessMinNm, thicknessMaxNm, anisotropyRotation) — unfilled, zero
+		0, 0, 0, 0,
+		// specularParams (specularColor.rgb, specularIntensity) — unfilled, zero
+		0, 0, 0, 0,
 	}
 	out := make([]byte, materialUniformSize)
 	copy(out[:len(values)*4], float32sToBytes(values))

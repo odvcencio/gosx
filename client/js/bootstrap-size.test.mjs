@@ -480,7 +480,13 @@ const budgets = [
   // combined measurement: 1_481_931 / 401_314 / 322_353.
   // Merging main's declarative submit-action fixes with the Scene3D status
   // bindings yields the combined generated bundle measured here.
-  { file: "bootstrap.js", raw: 1_483_937, gzip: 401_833, brotli: 323_032 },
+  // Scene3D parity cluster C, PR1 (material uniform layout groundwork): the
+  // browser MaterialUniforms struct and the materialUniformData packer grew
+  // by five zero-filled vec4f lanes (160 -> 240 bytes) to make room for the
+  // clearcoat/sheen/transmission/iridescence/anisotropy BRDF fields the
+  // later lobe PRs land. Exact regenerated measurement: 1_484_117 / 401_889
+  // / 323_072.
+  { file: "bootstrap.js", raw: 1_484_300, gzip: 402_100, brotli: 323_300 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -990,7 +996,11 @@ const budgets = [
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
   // WebGPU point-billboard viewport guards measure 382_077 / 92_098 / 77_082.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_186, gzip: 92_152, brotli: 77_247 },
+  // Scene3D parity cluster C, PR1 (material uniform layout groundwork): the
+  // MaterialUniforms struct and materialUniformData packer grew by five
+  // zero-filled vec4f lanes (160 -> 240 bytes). Exact measurement:
+  // 382_366 / 92_207 / 77_227.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_550, gzip: 92_400, brotli: 77_400 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1287,9 +1297,13 @@ const routeBudgets = [
     // retained-geometry and quality-ladder work with declarative status
     // bindings, plus main's declarative submit-action fix, brings the exact
     // route total to:
-    raw: 1_174_281,
-    gzip: 312_889,
-    brotli: 264_360,
+    // Scene3D parity cluster C, PR1 (material uniform layout groundwork):
+    // this route carries bootstrap-feature-scene3d-webgpu.js, which holds the
+    // grown MaterialUniforms struct and packer. Exact regenerated
+    // measurement: 1_174_461 / 312_944 / 264_340.
+    raw: 1_174_700,
+    gzip: 313_200,
+    brotli: 264_600,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1427,9 +1441,13 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_386_250,
-    gzip: 371_284,
-    brotli: 314_029,
+    // Scene3D parity cluster C, PR1 (material uniform layout groundwork):
+    // this route loads both GPU backends, so it carries the grown WebGPU
+    // MaterialUniforms struct and packer. Exact regenerated measurement:
+    // 1_386_430 / 371_339 / 314_009.
+    raw: 1_386_700,
+    gzip: 371_600,
+    brotli: 314_300,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1496,9 +1514,12 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_028_003,
-    gzip: 270_602,
-    brotli: 226_761,
+    // Scene3D parity cluster C, PR1 (material uniform layout groundwork):
+    // this route carries bootstrap-feature-scene3d-webgpu.js. Exact
+    // regenerated measurement: 1_028_183 / 270_657 / 226_741.
+    raw: 1_028_400,
+    gzip: 270_900,
+    brotli: 226_950,
   },
 
 ];

@@ -147,6 +147,17 @@
     "    hasOcclusionMap: u32,",
     "    modelMatrix: mat4x4f,",
     "    modelScaleSigns: vec4f,",
+    // Scene3D parity cluster C: five physical-lobe extension lanes appended
+    // after modelScaleSigns. f[0]..f[39] above keep their float indices in
+    // materialUniformData; nothing before this line moved. No shader stage
+    // reads these five lanes yet — each lobe PR wires the term that consumes
+    // its field in the same commit. See docs/scene3d-native-webgpu-spec.md
+    // section 9.1 and render/bundle/material.go for the native twin layout.
+    "    ccVolumeParams: vec4f,",      // x=clearcoatRoughness, y=ior, z=thickness, w=attenuationDistance
+    "    sheenParams: vec4f,",         // xyz=sheenColor (linear), w=sheenRoughness
+    "    attenuationParams: vec4f,",   // xyz=attenuationColor (linear), w=specularIntensity
+    "    iridescenceParams: vec4f,",   // x=iridescenceIOR, y=thicknessMinNm, z=thicknessMaxNm, w=anisotropyRotation
+    "    specularFlagParams: vec4f,",  // xyz=specularColor (linear), w=hasClearcoatNormalMap (0/1)
     "};",
   ].join("\n");
 
@@ -6935,7 +6946,13 @@
     // scene warns once instead of every frame.
     var _lightIssuesReported = Object.create(null);
 
-    var _materialUniformBuf = new ArrayBuffer(160);
+    // 240 bytes = the original 160 (PBR fields + modelMatrix + modelScaleSigns,
+    // f[0]..f[39]) plus five vec4f physical-lobe extension lanes (f[40]..f[59])
+    // Scene3D parity cluster C appended. f[0]..f[39] keep their original
+    // indices; growing the buffer changes no existing frame because the new
+    // lanes stay zero until an authoring PR fills them and a lobe PR reads
+    // them.
+    var _materialUniformBuf = new ArrayBuffer(240);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -13787,6 +13804,13 @@
       f[37] = modelScaleSigns ? sceneNumber(modelScaleSigns[1], 1) : 1;
       f[38] = modelScaleSigns ? sceneNumber(modelScaleSigns[2], 1) : 1;
       f[39] = 0;
+      // f[40..59]: Scene3D parity cluster C physical-lobe extension lanes
+      // (ccVolumeParams, sheenParams, attenuationParams, iridescenceParams,
+      // specularFlagParams). Zero-filled here; no shader reads them yet. A
+      // later PR in the cluster fills these from mat.* fields.
+      for (var pi = 40; pi < 60; pi++) {
+        f[pi] = 0;
+      }
       return { data: f, u: u };
     }
 

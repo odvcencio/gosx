@@ -61,9 +61,16 @@ struct Material {
   pbrParams     : vec4<f32>, // x=metalness, y=roughness, z=emissiveStrength, w=useVertexColor
   emissive      : vec4<f32>,
   textureParams : vec4<f32>, // x=hasBaseColor, y=hasNormal, z=hasRoughMap, w=hasMetalMap
-  textureParams2: vec4<f32>, // x=hasEmissiveMap
+  textureParams2: vec4<f32>, // x=hasEmissiveMap, y=hasClearcoatNormalMap, z=reserved
   physicalParams : vec4<f32>, // x=clearcoat, y=sheen, z=transmission, w=iridescence
-  physicalParams2: vec4<f32>, // x=anisotropy
+  physicalParams2: vec4<f32>, // x=anisotropy, y=clearcoatRoughness, z=ior, w=thickness
+  // The four lanes below are Scene3D parity cluster C additions. No fragment
+  // stage reads them yet; each one arrives gated behind the lobe PR that
+  // consumes it, per docs/scene3d-native-webgpu-spec.md section 9.1.
+  sheenParams       : vec4<f32>, // xyz=sheenColor, w=sheenRoughness
+  attenuationParams : vec4<f32>, // xyz=attenuationColor, w=attenuationDistance
+  iridescenceParams : vec4<f32>, // x=iridescenceIOR, y=thicknessMinNm, z=thicknessMaxNm, w=anisotropyRotation
+  specularParams    : vec4<f32>, // xyz=specularColor, w=specularIntensity
 };
 
 @group(0) @binding(0) var<uniform> scene             : Scene;

@@ -11,5 +11,10 @@
   "water-object-mesh-shadow-pass": false,
   "rect-area-light": false,
   "rect-area-specular": false,
-  "light-probe-sh": false
+  "light-probe-sh": false,
+  "material-clearcoat-brdf": false,
+  "material-sheen-charlie": false,
+  "material-transmission-refraction": false,
+  "material-iridescence-thin-film": false,
+  "material-anisotropy-ggx": false
 }

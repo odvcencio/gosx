@@ -60,6 +60,16 @@ const (
 	FeatureRectAreaLight             Feature = "rect-area-light"
 	FeatureRectAreaSpecular          Feature = "rect-area-specular"
 	FeatureLightProbeSH              Feature = "light-probe-sh"
+	// The five physical material lobes of Scene3D parity cluster C. Each cell
+	// starts false on every backend in the groundwork PR; the cluster flips
+	// the WebGPU cell in the PR that lands the real BRDF term. WebGL2 keeps
+	// the pre-cluster view-angle approximation as a permanent degraded tier —
+	// see the per-feature Matrix comments below for the corroborating source.
+	FeatureMaterialClearcoatBRDF   Feature = "material-clearcoat-brdf"
+	FeatureMaterialSheenCharlie    Feature = "material-sheen-charlie"
+	FeatureMaterialTransmission    Feature = "material-transmission-refraction"
+	FeatureMaterialIridescenceFilm Feature = "material-iridescence-thin-film"
+	FeatureMaterialAnisotropicGGX  Feature = "material-anisotropy-ggx"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -296,6 +306,23 @@ var Matrix = map[Feature]map[Backend]bool{
 	// light would invent a distance falloff — but it is not an SH evaluation,
 	// so the cell stays false until one exists.
 	FeatureLightProbeSH: {BackendWebGPU: false, BackendWebGL: false},
+	// The five physical material lobes: real BRDF layers versus the shared
+	// view-angle approximations described at render/bundle/lit.go and
+	// mirrored in 16-scene-webgl.js. Both cells start false in the
+	// groundwork PR of Scene3D parity cluster C, because neither renderer
+	// carries the named term yet (Charlie sheen distribution, thin-film
+	// iridescence fit, tangent-space anisotropic GGX, second clearcoat GGX
+	// lobe, or screen-space transmission refraction). Each lobe PR flips the
+	// WebGPU cell in the same commit that adds the term to litWGSL and
+	// WGSL_PBR_FRAGMENT. WebGL2 has no browser-side plan to gain any of the
+	// five; it keeps the approximation as a permanent, honestly-recorded
+	// degraded tier (never in DefaultPolicy), matching the FeatureLineDashed
+	// precedent of "a degraded image beats a blank canvas."
+	FeatureMaterialClearcoatBRDF:   {BackendWebGPU: false, BackendWebGL: false},
+	FeatureMaterialSheenCharlie:    {BackendWebGPU: false, BackendWebGL: false},
+	FeatureMaterialTransmission:    {BackendWebGPU: false, BackendWebGL: false},
+	FeatureMaterialIridescenceFilm: {BackendWebGPU: false, BackendWebGL: false},
+	FeatureMaterialAnisotropicGGX:  {BackendWebGPU: false, BackendWebGL: false},
 }
 
 func supports(b Backend, f Feature) bool {

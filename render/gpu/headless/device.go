@@ -1936,6 +1936,12 @@ func clampIndex(i, size int) int {
 // The byte offsets follow materialUniformBytes in render/bundle/material.go. Add
 // a lane there and add a field here, or the rasterizer shades a material the
 // shader would shade differently and no golden frame can see the difference.
+//
+// render/bundle/material.go grew materialUniformSize from 112 to 176 bytes to
+// add four physical-lobe extension lanes (sheenParams, attenuationParams,
+// iridescenceParams, specularParams) at offsets 112-175. Nothing below reads
+// them yet: each lobe PR in the Scene3D parity cluster C series adds the field
+// here and the read at its offset in the same commit it adds the shader term.
 type materialState struct {
 	baseColor      [3]float32
 	opacity        float32

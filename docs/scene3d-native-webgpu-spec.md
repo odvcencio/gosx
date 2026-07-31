@@ -477,6 +477,47 @@ Standard material should remain roughness/metalness PBR and carry:
 
 The WebGPU material uniform layout must be documented and tested whenever fields are added.
 
+#### 9.1.1 Native WGSL `Material` layout (render/bundle)
+
+`materialUniformSize` in `render/bundle/material.go` is 176 bytes (11 vec4
+lanes). Offsets 0-111 predate Scene3D parity cluster C and never move.
+Offsets 112-175 are cluster C additions; a lane stays zero until the PR that
+authors it fills it, and stays unread until the PR that shades it reads it.
+`render/bundle/material_test.go` and `render/bundle/material_layout_test.go`
+pin this table.
+
+| Offset | Lane | x | y | z | w |
+|---|---|---|---|---|---|
+| 0   | baseColor       | r | g | b | a |
+| 16  | pbrParams       | metalness | roughness | emissiveStrength | useVertexColor |
+| 32  | emissive        | r | g | b | 1 |
+| 48  | textureParams   | hasBaseColor | hasNormal | hasRoughMap | hasMetalMap |
+| 64  | textureParams2  | hasEmissiveMap | hasClearcoatNormalMap | reserved | 0 |
+| 80  | physicalParams  | clearcoat | sheen | transmission | iridescence |
+| 96  | physicalParams2 | anisotropy | clearcoatRoughness | ior | thickness |
+| 112 | sheenParams        | sheenColor.r | sheenColor.g | sheenColor.b | sheenRoughness |
+| 128 | attenuationParams  | attenColor.r | attenColor.g | attenColor.b | attenuationDistance |
+| 144 | iridescenceParams  | iridescenceIOR | thicknessMinNm | thicknessMaxNm | anisotropyRotation |
+| 160 | specularParams     | specColor.r | specColor.g | specColor.b | specularIntensity |
+
+#### 9.1.2 Browser WGSL `MaterialUniforms` layout (16a-scene-webgpu.js)
+
+The browser material scratch buffer (`_materialUniformBuf` in
+`client/js/bootstrap-src/16a-scene-webgpu.js`) is 240 bytes (60 floats).
+Float indices 0-39 predate cluster C and never move; `materialUniformData`
+still writes them at the same indices. Indices 40-59 are cluster C additions,
+appended after `modelScaleSigns`, zero-filled until an authoring PR sets them.
+`render/bundle/material_layout_test.go` pins the struct order and the buffer
+size from the Go side, because this file carries no JS unit tests.
+
+| Float index | Byte offset | Member | Lanes |
+|---|---|---|---|
+| 40-43 | 160 | ccVolumeParams | clearcoatRoughness, ior, thickness, attenuationDistance |
+| 44-47 | 176 | sheenParams | sheenColor.rgb (linear), sheenRoughness |
+| 48-51 | 192 | attenuationParams | attenuationColor.rgb (linear), specularIntensity |
+| 52-55 | 208 | iridescenceParams | iridescenceIOR, thicknessMinNm, thicknessMaxNm, anisotropyRotation |
+| 56-59 | 224 | specularFlagParams | specularColor.rgb (linear), hasClearcoatNormalMap (0/1) |
+
 ### 9.2 Custom materials
 
 Custom WGSL hooks should be sandboxed by convention:
