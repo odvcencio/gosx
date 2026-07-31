@@ -480,7 +480,13 @@ const budgets = [
   // combined measurement: 1_481_931 / 401_314 / 322_353.
   // Merging main's declarative submit-action fixes with the Scene3D status
   // bindings yields the combined generated bundle measured here.
-  { file: "bootstrap.js", raw: 1_483_937, gzip: 401_833, brotli: 323_032 },
+  //
+  // Bumped raw 1_483_937 -> 1_487_000, gzip 401_833 -> 402_500, brotli
+  // 323_032 -> 323_500 for the Scene3D parity cluster A WebGPU environment-map
+  // work (see the bootstrap-feature-scene3d-webgpu.js note above; the
+  // monolith carries the same source). Measured: 1_485_701 / 402_227 /
+  // 323_084.
+  { file: "bootstrap.js", raw: 1_487_000, gzip: 402_500, brotli: 323_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -990,7 +996,15 @@ const budgets = [
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
   // WebGPU point-billboard viewport guards measure 382_077 / 92_098 / 77_082.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_186, gzip: 92_152, brotli: 77_247 },
+  //
+  // Bumped raw 382_186 -> 384_500, gzip 92_152 -> 92_800, brotli 77_247 ->
+  // 77_700 for the Scene3D parity cluster A lighting-environment work: the
+  // envEquirectUV WGSL port, the envMapTex/envMapSampler bindings 13/14, the
+  // dedicated repeat/clamp-to-edge sampler, and the hasEnvMap EnvUniforms lane
+  // (with its three pad words) that let the WebGPU renderer read
+  // Environment.EnvironmentMap for the first time. Measured: 383_950 / 92_524
+  // / 77_422.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 384_500, gzip: 92_800, brotli: 77_700 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1287,9 +1301,14 @@ const routeBudgets = [
     // retained-geometry and quality-ladder work with declarative status
     // bindings, plus main's declarative submit-action fix, brings the exact
     // route total to:
-    raw: 1_174_281,
-    gzip: 312_889,
-    brotli: 264_360,
+    //
+    // Bumped raw 1_174_281 -> 1_177_000, gzip 312_889 -> 313_500, brotli
+    // 264_360 -> 264_800 for the Scene3D parity cluster A WebGPU
+    // environment-map work (see bootstrap-feature-scene3d-webgpu.js above;
+    // this route carries that chunk). Measured: 1_176_045 / 313_261 / 264_535.
+    raw: 1_177_000,
+    gzip: 313_500,
+    brotli: 264_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1427,9 +1446,14 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_386_250,
-    gzip: 371_284,
-    brotli: 314_029,
+    //
+    // Bumped raw 1_386_250 -> 1_389_000, gzip 371_284 -> 372_000, brotli
+    // 314_029 -> 314_500 for the Scene3D parity cluster A WebGPU
+    // environment-map work (see bootstrap-feature-scene3d-webgpu.js above;
+    // this route carries that chunk). Measured: 1_388_014 / 371_656 / 314_204.
+    raw: 1_389_000,
+    gzip: 372_000,
+    brotli: 314_500,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1496,9 +1520,14 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_028_003,
-    gzip: 270_602,
-    brotli: 226_761,
+    //
+    // Bumped raw 1_028_003 -> 1_030_500, gzip 270_602 -> 271_200, brotli
+    // 226_761 -> 227_200 for the Scene3D parity cluster A WebGPU
+    // environment-map work (see bootstrap-feature-scene3d-webgpu.js above;
+    // this route carries that chunk). Measured: 1_029_767 / 270_974 / 226_936.
+    raw: 1_030_500,
+    gzip: 271_200,
+    brotli: 227_200,
   },
 
 ];

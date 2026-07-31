@@ -154,32 +154,26 @@ var Matrix = map[Feature]map[Backend]bool{
 	FeatureIBL: {BackendWebGPU: true, BackendWebGL: false},
 	// environment-map: does the backend READ Environment.EnvMap at all.
 	//
-	// This row exists because the ibl row above reads as parity and is not. Both
-	// ibl cells are false, correctly, because neither browser backend runs a
-	// split-sum fit. That hid a much larger gap underneath: one backend samples
-	// the authored image and the other never opens it.
+	// This row exists because the ibl row above reads as parity and is not.
+	// Neither browser backend runs a split-sum fit for this legacy path — WebGL2
+	// tone maps and taps one equirectangular texture twice; WebGPU now does the
+	// same. Both are the ad hoc (1.0 - roughness * 0.65) legacy response, not
+	// split-sum IBL, which is why that critique lives here and not on the ibl
+	// row above.
 	//
-	// Count the three authored identifiers, case-insensitive, over
-	// client/js/bootstrap-src:
+	// WebGPU: group(0) bindings 13/14 bind envMapTex/envMapSampler (dedicated
+	// repeat/clamp-to-edge sampler, distinct from iblSampler, for the equirect
+	// wrap seam). syncEnvironmentMap loads the authored image through the same
+	// wgpuLoadTexture path material albedo maps use, and the fragment shader
+	// taps envEquirectUV(N) and envEquirectUV(R) exactly where WebGL2 orders
+	// them: after the IBL branch, before the hemisphere fallback. IBL wins —
+	// syncEnvironmentMap suppresses the equirect map once ibl.active is true,
+	// mirroring WebGL2's iblStatus.active gate — so an author who authors both
+	// products on the same scene gets one term, not two stacked ambient terms.
 	//
-	//	identifier      16a-scene-webgpu.js   16-scene-webgl.js
-	//	envMap                            0                  16
-	//	envIntensity                      0                   7
-	//	envRotation                       0                   6
-	//
-	// So an author who writes EnvMap gets a reflection on WebGL2, gets one in a
-	// poster (render/bundle/environment.go loads a cube and lit.go samples it),
-	// and gets NOTHING on WebGPU — which is the preferred backend, so it is the
-	// one most viewers see. Nothing told the author that before this row.
-	//
-	// The cell is a RECORD, not a plan. It is absent from DefaultPolicy, so it
-	// excludes no backend; it adds one name to the WebGPU degraded list, which
-	// is the honest report. Implementing the WebGPU environment map is renderer
-	// work: a cube texture, a sampler, three uniform lanes and the two taps.
-	// Flip this cell when 16a-scene-webgpu.js carries them, and not before.
-	// TestWebGPUReadsNoEnvironmentMap in environmentmap_test.go fails on the day
-	// it does, and names the three edits the flip needs.
-	FeatureEnvironmentMap: {BackendWebGPU: false, BackendWebGL: true},
+	// See environmentmap_test.go for the corroboration and the identifier
+	// counts before this row flipped.
+	FeatureEnvironmentMap: {BackendWebGPU: true, BackendWebGL: true},
 	// gpu-picking is implemented on both GPU backends.
 	//
 	// The pick CONTRACT — the gosx:scene3d:input events, the pick/drag/event
