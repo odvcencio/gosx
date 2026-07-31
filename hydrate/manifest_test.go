@@ -403,8 +403,8 @@ func TestManifestAddEngineWithPixelSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddEngineWithRuntime failed: %v", err)
 	}
-	if id != "gosx-engine-0" {
-		t.Fatalf("expected gosx-engine-0, got %s", id)
+	if id != "gosx-engine-retro-root" {
+		t.Fatalf("expected gosx-engine-retro-root, got %s", id)
 	}
 
 	data, err := m.Marshal()
@@ -453,8 +453,8 @@ func TestManifestAddEngineWithRequiredCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddEngineWithRuntimeRequirements failed: %v", err)
 	}
-	if id != "gosx-engine-0" {
-		t.Fatalf("expected gosx-engine-0, got %s", id)
+	if id != "gosx-engine-strict-root" {
+		t.Fatalf("expected gosx-engine-strict-root, got %s", id)
 	}
 
 	data, err := m.Marshal()
@@ -468,6 +468,71 @@ func TestManifestAddEngineWithRequiredCapabilities(t *testing.T) {
 	if got := decoded.Engines[0].RequiredCapabilities; len(got) != 2 || got[0] != "wasm" || got[1] != "webgl" {
 		t.Fatalf("unexpected required capabilities: %#v", got)
 	}
+}
+
+// TestManifestEngineIDDerivesFromMountID pins the id engineID(...) assigns
+// for every mount id shape it must tell apart: none, an authored id, and
+// island.Renderer.RenderEngine's own positional placeholder
+// ("gosx-engine-mount-<n>") for a mount-needing engine the caller left
+// unnamed. Two different routes whose first engine is a different authored
+// surface (the bug this pins: m31labs.dev's galaxy and starfield engines
+// both landed on "gosx-engine-0") must not collide on a shared positional id.
+func TestManifestEngineIDDerivesFromMountID(t *testing.T) {
+	t.Run("no mount id falls back to the positional id", func(t *testing.T) {
+		m := NewManifest()
+		first, err := m.AddEngineWithRuntime("First", "surface", "", "", "", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("AddEngineWithRuntime: %v", err)
+		}
+		second, err := m.AddEngineWithRuntime("Second", "surface", "", "", "", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("AddEngineWithRuntime: %v", err)
+		}
+		if first != "gosx-engine-0" {
+			t.Fatalf("expected gosx-engine-0, got %s", first)
+		}
+		if second != "gosx-engine-1" {
+			t.Fatalf("expected gosx-engine-1, got %s", second)
+		}
+	})
+
+	t.Run("an authored mount id derives the engine id directly", func(t *testing.T) {
+		m := NewManifest()
+		id, err := m.AddEngineWithRuntime("GalaxyScene", "surface", "", "galaxy-scene-primary", "", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("AddEngineWithRuntime: %v", err)
+		}
+		if id != "gosx-engine-galaxy-scene-primary" {
+			t.Fatalf("expected gosx-engine-galaxy-scene-primary, got %s", id)
+		}
+	})
+
+	t.Run("two routes' first engine no longer collide on a shared positional id", func(t *testing.T) {
+		galaxyRoute := NewManifest()
+		galaxyID, err := galaxyRoute.AddEngineWithRuntime("GoSXScene3D", "surface", "", "galaxy-scene-primary", "", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("AddEngineWithRuntime: %v", err)
+		}
+		starfieldRoute := NewManifest()
+		starfieldID, err := starfieldRoute.AddEngineWithRuntime("GoSXScene3D", "surface", "", "starfield-background", "", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("AddEngineWithRuntime: %v", err)
+		}
+		if galaxyID == starfieldID {
+			t.Fatalf("expected distinct engine ids for distinct mount ids, both got %s", galaxyID)
+		}
+	})
+
+	t.Run("island.Renderer's own auto-generated placeholder mount id still falls back to the positional id", func(t *testing.T) {
+		m := NewManifest()
+		id, err := m.AddEngineWithRuntime("Unnamed", "surface", "", "gosx-engine-mount-0", "", nil, nil, nil)
+		if err != nil {
+			t.Fatalf("AddEngineWithRuntime: %v", err)
+		}
+		if id != "gosx-engine-0" {
+			t.Fatalf("expected the placeholder mount id to fall back to gosx-engine-0, got %s", id)
+		}
+	})
 }
 
 func TestManifestAddEngineRejectsMalformedGoWASMRuntime(t *testing.T) {

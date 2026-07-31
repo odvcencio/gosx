@@ -27,6 +27,7 @@ const {
   flushAsyncWork,
   appendManagedHead,
   buildNavigatedDocument,
+  installManualClock,
 } = require("./runtime-test-harness.js");
 
 test("bootstrap exposes page lifecycle hooks and can re-bootstrap after disposal", async () => {
@@ -1669,6 +1670,102 @@ test("navigation runtime prefetches marked links and reuses cached HTML", async 
 
   assert.equal(env.fetchCalls.length, 1);
   assert.equal(env.document.title, "Prefetched");
+});
+
+test("navigation runtime page cache entries expire after their TTL", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/ttl-page");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "TTL page";
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/ttl-page": {
+        text: "__TTL_DOC__",
+        url: "http://localhost:3000/ttl-page",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  parsedDocs.set("__TTL_DOC__", buildNavigatedDocument({
+    title: "TTL",
+    bodyNodes: [new FakeElement("div", null)],
+  }));
+
+  const clock = installManualClock(env.context, 0);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(link.getAttribute("data-gosx-prefetch-state"), "ready");
+
+  // Well inside the 5-minute TTL: the cached entry still answers a re-hover.
+  clock.advance(60 * 1000);
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 1);
+
+  // Past the 5-minute TTL: the entry is a miss, so the runtime refetches.
+  clock.advance(5 * 60 * 1000);
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 2);
+  assert.equal(env.fetchCalls[1].url, env.fetchCalls[0].url);
+});
+
+test("navigation runtime never caches HTML for a page that opts out via meta", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/no-store-page");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "No-store page";
+
+  const optOutMeta = new FakeElement("meta", null);
+  optOutMeta.setAttribute("name", "gosx-page-cache");
+  optOutMeta.setAttribute("content", "no-store");
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/no-store-page": {
+        text: "__NO_STORE_DOC__",
+        url: "http://localhost:3000/no-store-page",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  parsedDocs.set("__NO_STORE_DOC__", buildNavigatedDocument({
+    title: "No store",
+    headNodes: [optOutMeta],
+    bodyNodes: [new FakeElement("div", null)],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const overListener = env.document.eventListeners.get("mouseover")[0];
+
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(link.getAttribute("data-gosx-prefetch-state"), "ready");
+  assert.equal(env.context.__gosx_page_cache.size, 0);
+
+  // A second hover has nothing cached to reuse, so it fetches again.
+  overListener({ type: "mouseover", target: link });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 2);
+  assert.equal(env.context.__gosx_page_cache.size, 0);
 });
 
 test("navigation runtime eagerly prefetches render-marked links", async () => {

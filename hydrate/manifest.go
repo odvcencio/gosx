@@ -422,7 +422,7 @@ func (m *Manifest) AddEngineWithRuntimeRequirements(component, kind, programRef,
 	if err != nil {
 		return "", err
 	}
-	id := engineID(len(m.Engines))
+	id := engineID(len(m.Engines), mountID)
 	entry := EngineEntry{
 		ID:                   id,
 		Component:            component,
@@ -522,7 +522,23 @@ func controllerID(n int) string {
 	return "gosx-controller-" + itoa(n)
 }
 
-func engineID(n int) string {
+// autoMountIDPrefix is island.Renderer.RenderEngine's own placeholder mount
+// id ("gosx-engine-mount-<n>") for a mount-needing engine whose caller left
+// Config.MountID empty. It carries no author identity, so it is still
+// positional and engineID must not treat it as one — that pairing must stay
+// in sync with island/island.go's fallback.
+const autoMountIDPrefix = "gosx-engine-mount-"
+
+// engineID assigns a stable engine id. An authored mount id derives the id
+// directly (two engines never share a mount id, since it is also the DOM
+// element the engine attaches to), so two engines on different routes with
+// different mount ids never collide on a shared positional id. An engine
+// with no mount id, or only the auto-generated placeholder mount id, falls
+// back to the positional id.
+func engineID(n int, mountID string) string {
+	if mountID != "" && !strings.HasPrefix(mountID, autoMountIDPrefix) {
+		return "gosx-engine-" + mountID
+	}
 	return "gosx-engine-" + itoa(n)
 }
 

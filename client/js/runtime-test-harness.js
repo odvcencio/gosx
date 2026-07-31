@@ -2550,6 +2550,28 @@ function installManualTimers(context) {
   };
 }
 
+// installManualClock replaces context.Date with a minimal double exposing
+// only Date.now() — the one clock entry point server/navigation_runtime.js
+// reads (see PAGE_CACHE_TTL_MS). A test advances it explicitly instead of
+// waiting on the real clock.
+function installManualClock(context, startAt) {
+  let current = typeof startAt === "number" ? startAt : Date.now();
+  context.Date = {
+    now() {
+      return current;
+    },
+  };
+  return {
+    now() {
+      return current;
+    },
+    advance(ms) {
+      current += Number(ms) || 0;
+      return current;
+    },
+  };
+}
+
 function runScript(source, context, filename) {
   vm.runInContext(source, context, { filename });
 }
@@ -5371,6 +5393,7 @@ module.exports = {
   installManualRAF,
   flushSceneInitialFrameBoundary,
   installManualTimers,
+  installManualClock,
   runScript,
   flushAsyncWork,
   sharedSignalValue,
