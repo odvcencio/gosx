@@ -4699,7 +4699,39 @@
     if (moduleRecord) moduleRecord.mountedIDs.add(entry.id);
   }
 
+  // The manifest of the most recent mountAllEngines call, kept for the
+  // late-factory hook below. Bundles do not share the runtime's
+  // pendingManifest closure variable, so this module records its own copy.
+  let lastMountManifest = null;
+
+  // A feature chunk can register its engine factory AFTER bootstrap already
+  // tried to mount (a cold cache plus a slow network loses the race against
+  // DOMContentLoaded). The post-init registrar in the bootstrap head calls
+  // this hook after storing a late factory: mount every manifest engine of
+  // that component that has no live record and no pending claim.
+  // mountEngine owns takeover semantics (it revokes an existing record and
+  // pending claim on entry), so a duplicate trigger converges to one
+  // mounted engine. A stale manifest after navigation is harmless: the
+  // entries' mounts are gone and mountEngine returns without them.
+  window.__gosx_mount_late_engine_factory = function(name) {
+    const manifest = lastMountManifest;
+    if (!manifest || !Array.isArray(manifest.engines)) return;
+    for (const entry of manifest.engines) {
+      if (!entry || typeof entry !== "object") continue;
+      if (engineExportName(entry) !== name) continue;
+      const engineID = String(entry.id || "");
+      if (!engineID) continue;
+      if (window.__gosx.engines.has(engineID)) continue;
+      if (pendingEngineRuntimes.has(engineID)) continue;
+      console.info("[gosx] mounting engine after late factory registration:", engineID);
+      mountEngine(entry).catch(function(err) {
+        console.error("[gosx] late engine mount failed for " + engineID + ":", err);
+      });
+    }
+  };
+
   async function mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap) {
+    lastMountManifest = manifest;
     if (!manifest.engines || manifest.engines.length === 0) return;
     // isNavigationBootstrap is true only when this bootstrap is running as
     // part of a soft navigation (see bootstrapPage/window.__gosx_reusable_engines).
