@@ -33,9 +33,10 @@ func Page() Node {
 			</div>
 			<ul class="beacon__budgets" aria-label="Declared rendering budgets">
 				<li>live FPS and frame-time telemetry</li>
-				<li>16 stable nodes</li>
+				<li>17 stable nodes</li>
 				<li>12 instanced basalt forms</li>
 				<li>128² water simulation</li>
+				<li>≤320 ember particles</li>
 				<li>60 frames per second (FPS) cap</li>
 				<li>device pixel ratio (DPR) ≤ 1.5</li>
 				<li>720p render</li>
