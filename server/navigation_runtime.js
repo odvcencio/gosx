@@ -27,6 +27,8 @@
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
   const MANAGED_FOCUS_ATTR = "data-gosx-focus-managed";
+  const NAV_INLINE_REPLAY_ATTR = "data-gosx-navigation-replay";
+  const NAV_INLINE_REPLAYED_ATTR = "data-gosx-navigation-replayed";
   const URL_ATTRS = ["href", "src", "action", "poster"];
   const SUBMITTER_ATTRS = {
     formAction: "formaction",
@@ -1197,6 +1199,52 @@
     }
   }
 
+  function inlineNavigationScriptCanReplay(script) {
+    if (!isElement(script, "SCRIPT")) return false;
+    if (!script.hasAttribute(NAV_INLINE_REPLAY_ATTR)) return false;
+    if (script.hasAttribute(SCRIPT_ROLE)) return false;
+    if (script.getAttribute("src")) return false;
+    if (script.getAttribute(NAV_INLINE_REPLAYED_ATTR) === "true") return false;
+    const type = String(script.getAttribute("type") || "").trim().toLowerCase();
+    return !type
+      || type === "text/javascript"
+      || type === "application/javascript"
+      || type === "module";
+  }
+
+  // The marker value selects when the script replays during navigation.
+  // "pre-bootstrap" runs before managed scripts load and before the engine
+  // bootstrap consumes the manifest. Every other value replays after
+  // bootstrap completes.
+  function inlineNavigationReplayPhase(script) {
+    const value = String(script.getAttribute(NAV_INLINE_REPLAY_ATTR) || "").trim().toLowerCase();
+    return value === "pre-bootstrap" ? "pre-bootstrap" : "post";
+  }
+
+  function replayInlineNavigationScripts(root, phase) {
+    if (!root || typeof root.querySelectorAll !== "function") return;
+    const activePhase = phase === "pre-bootstrap" ? "pre-bootstrap" : "post";
+    const scripts = root.querySelectorAll("script[" + NAV_INLINE_REPLAY_ATTR + "]");
+    for (const script of toArray(scripts)) {
+      if (!inlineNavigationScriptCanReplay(script) || !script.parentNode) {
+        continue;
+      }
+      if (inlineNavigationReplayPhase(script) !== activePhase) {
+        continue;
+      }
+      const executable = document.createElement("script");
+      for (const attr of attributeEntries(script)) {
+        if (attr.name === NAV_INLINE_REPLAYED_ATTR) continue;
+        executable.setAttribute(attr.name, attr.value);
+      }
+      executable.setAttribute(NAV_INLINE_REPLAYED_ATTR, "true");
+      executable.textContent = script.textContent || "";
+      script.setAttribute(NAV_INLINE_REPLAYED_ATTR, "true");
+      script.parentNode.insertBefore(executable, script);
+      script.parentNode.removeChild(script);
+    }
+  }
+
   function collectManagedScripts(root, baseURL) {
     const found = [];
     function walk(node) {
@@ -1826,9 +1874,16 @@
     if (isCurrent && !isCurrent()) return;
     replaceBody(nextDoc, nextURL, reuseIDs);
     updateHistory(nextURL, !!replace);
+    // Pre-bootstrap replays run before the managed scene chunks load and
+    // before bootstrap consumes the manifest. A manifest-rewriting boot
+    // script therefore observes the same ordering a full page load gives it.
+    replayInlineNavigationScripts(document.body, "pre-bootstrap");
+    if (isCurrent && !isCurrent()) return;
     const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL, managedScripts);
     if (isCurrent && !isCurrent()) return;
     await bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs);
+    if (isCurrent && !isCurrent()) return;
+    replayInlineNavigationScripts(document.body, "post");
   }
 
   function applyNavigationScroll(a11y, preserveScroll) {
@@ -1897,6 +1952,11 @@
   function onPopState() {
     navigate(window.location.href, { replace: true, preserveScroll: true }).catch(function(err) {
       console.error("[gosx] popstate navigation failed:", err);
+      // The browser already moved the URL. A soft-nav failure here would
+      // leave the old DOM under the new URL, so fall back to a hard load
+      // of the URL the history entry points at — the same safety net
+      // onClick has.
+      window.location.reload();
     });
   }
 

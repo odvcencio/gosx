@@ -480,7 +480,9 @@ const budgets = [
   // combined measurement: 1_481_931 / 401_314 / 322_353.
   // Merging main's declarative submit-action fixes with the Scene3D status
   // bindings yields the combined generated bundle measured here.
-  { file: "bootstrap.js", raw: 1_483_937, gzip: 401_833, brotli: 323_032 },
+  // 16a bind-group and pipeline-key memoization (see the WebGPU chunk
+  // note below). Exact merged measurement: 1_485_552 / 402_573 / 323_578.
+  { file: "bootstrap.js", raw: 1_485_552, gzip: 402_573, brotli: 323_578 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -990,7 +992,11 @@ const budgets = [
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
   // WebGPU point-billboard viewport guards measure 382_077 / 92_098 / 77_082.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_186, gzip: 92_152, brotli: 77_247 },
+  // 16a bind-group and pipeline-key memoization removes the per-frame
+  // createBindGroup churn and the ~13 KB per-frame pipeline cache-key
+  // rebuild across the point layers. Costs 1_566 raw in this chunk.
+  // Exact merged measurement: 383_752 / 92_793 / 77_621.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 383_752, gzip: 92_793, brotli: 77_621 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1287,9 +1293,11 @@ const routeBudgets = [
     // retained-geometry and quality-ladder work with declarative status
     // bindings, plus main's declarative submit-action fix, brings the exact
     // route total to:
-    raw: 1_174_281,
-    gzip: 312_889,
-    brotli: 264_360,
+    // 16a memoization rides in through the WebGPU chunk. Exact merged
+    // route measurement: 1_175_847 / 313_530 / 264_734.
+    raw: 1_175_847,
+    gzip: 313_530,
+    brotli: 264_734,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1427,9 +1435,11 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_386_250,
-    gzip: 371_284,
-    brotli: 314_029,
+    // 16a memoization rides in through the WebGPU chunk. Exact merged
+    // route measurement: 1_387_816 / 371_925 / 314_403.
+    raw: 1_387_816,
+    gzip: 371_925,
+    brotli: 314_403,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1496,9 +1506,11 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_028_003,
-    gzip: 270_602,
-    brotli: 226_761,
+    // 16a memoization rides in through the WebGPU chunk. Exact merged
+    // route measurement: 1_029_569 / 271_243 / 227_135.
+    raw: 1_029_569,
+    gzip: 271_243,
+    brotli: 227_135,
   },
 
 ];
