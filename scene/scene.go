@@ -1133,6 +1133,13 @@ type DirectionalLight struct {
 }
 
 // PointLight adds a positioned scene light with optional range falloff.
+//
+// CastShadow, ShadowBias and ShadowSize author a six-face cube depth shadow
+// on the WebGPU backend (see capability.FeaturePointLightShadow). Range
+// doubles as the shadow far distance, so no separate far-plane field exists.
+// ShadowCascades has no meaning for an omnidirectional cube and ShadowSoftness
+// has no consumer in this cluster, so neither field exists here; add
+// ShadowSoftness only alongside a renderer that reads it.
 type PointLight struct {
 	ID         string
 	Color      string
@@ -1140,6 +1147,9 @@ type PointLight struct {
 	Position   Vector3
 	Range      float64
 	Decay      float64
+	CastShadow bool
+	ShadowBias float64
+	ShadowSize int
 	Transition Transition
 	InState    *LightProps
 	OutState   *LightProps
@@ -3576,6 +3586,9 @@ func (l *graphLowerer) lowerPointLight(light PointLight, parent worldTransform) 
 		Z:          world.Position.Z,
 		Range:      light.Range,
 		Decay:      light.Decay,
+		CastShadow: light.CastShadow,
+		ShadowBias: light.ShadowBias,
+		ShadowSize: light.ShadowSize,
 		Transition: lowerTransition(light.Transition),
 		InState:    light.InState.legacyProps(),
 		OutState:   light.OutState.legacyProps(),

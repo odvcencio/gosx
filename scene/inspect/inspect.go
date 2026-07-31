@@ -256,7 +256,14 @@ func InspectDocumentWithOptions(path string, doc sceneschema.Document, validatio
 			if size <= 0 {
 				size = 1024
 			}
-			report.Memory.ShadowBytes += int64(size) * int64(size) * 4
+			// A point-light shadow is a six-face depth cube (see
+			// capability.FeaturePointLightShadow), not a single 2D map, so
+			// its memory estimate carries six surfaces instead of one.
+			surfaces := int64(1)
+			if strings.EqualFold(strings.TrimSpace(light.Kind), "point") {
+				surfaces = 6
+			}
+			report.Memory.ShadowBytes += int64(size) * int64(size) * 4 * surfaces
 		}
 	}
 	if doc.ShadowMaxPixels > 0 {

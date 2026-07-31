@@ -3278,6 +3278,110 @@ func TestPropsSceneIRLowersSpotLight(t *testing.T) {
 	}
 }
 
+// TestLowerPointLight_ShadowFields is the cluster-B shadow-parity table for
+// PointLight's three new shadow fields (CastShadow, ShadowBias, ShadowSize).
+// It asserts survival through two independent lowering paths: the typed
+// LightIR (what collectFeatures and the JS runtime read) and legacyProps
+// (the wire form __gosx_scene3d_resource_api consumes). scene.PointLight
+// carries no ShadowCascades or ShadowSoftness field (see the PointLight doc
+// comment), so this table does not exercise them.
+func TestLowerPointLight_ShadowFields(t *testing.T) {
+	cases := []struct {
+		name       string
+		castShadow bool
+		shadowBias float64
+		shadowSize int
+	}{
+		{"no shadow", false, 0, 0},
+		{"positive bias", true, 0.01, 1024},
+		{"negative bias", true, -0.005, 512},
+		{"zero bias with shadow on", true, 0, 256},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			props := Props{
+				Graph: NewGraph(PointLight{
+					ID:         "beacon",
+					Color:      "#ff8a48",
+					Intensity:  2.6,
+					Position:   Vec3(8, 7.5, -4),
+					Range:      26,
+					Decay:      2,
+					CastShadow: tc.castShadow,
+					ShadowBias: tc.shadowBias,
+					ShadowSize: tc.shadowSize,
+				}),
+			}
+
+			ir := props.SceneIR()
+			if len(ir.Lights) != 1 {
+				t.Fatalf("expected one lowered light, got %d: %#v", len(ir.Lights), ir.Lights)
+			}
+			light := ir.Lights[0]
+			if light.Kind != "point" || light.ID != "beacon" {
+				t.Fatalf("expected point light, got %#v", light)
+			}
+			if light.CastShadow != tc.castShadow {
+				t.Fatalf("expected castShadow=%v, got %v", tc.castShadow, light.CastShadow)
+			}
+			if light.ShadowBias != tc.shadowBias {
+				t.Fatalf("expected shadowBias=%v, got %v", tc.shadowBias, light.ShadowBias)
+			}
+			if light.ShadowSize != tc.shadowSize {
+				t.Fatalf("expected shadowSize=%v, got %v", tc.shadowSize, light.ShadowSize)
+			}
+			// Range still doubles as the shadow far distance; lowering must
+			// not disturb it.
+			if light.Range != 26 || light.Decay != 2 {
+				t.Fatalf("expected range=26 decay=2 preserved, got %v %v", light.Range, light.Decay)
+			}
+
+			legacy := props.LegacyProps()
+			sceneValue, ok := legacy["scene"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected scene map, got %#v", legacy["scene"])
+			}
+			lights, ok := sceneValue["lights"].([]map[string]any)
+			if !ok || len(lights) != 1 {
+				t.Fatalf("expected one light in legacy props, got %#v", sceneValue["lights"])
+			}
+			record := lights[0]
+			if record["kind"] != "point" {
+				t.Fatalf("expected point kind in legacy props, got %#v", record["kind"])
+			}
+			if tc.castShadow {
+				if record["castShadow"] != true {
+					t.Fatalf("expected castShadow=true in legacy props, got %#v", record["castShadow"])
+				}
+			} else if _, present := record["castShadow"]; present {
+				t.Fatalf("expected castShadow to be omitted from legacy props when false, got %#v", record["castShadow"])
+			}
+			if tc.shadowBias != 0 {
+				if record["shadowBias"] != tc.shadowBias {
+					t.Fatalf("expected shadowBias=%v in legacy props, got %#v", tc.shadowBias, record["shadowBias"])
+				}
+			} else if _, present := record["shadowBias"]; present {
+				t.Fatalf("expected shadowBias to be omitted from legacy props when zero, got %#v", record["shadowBias"])
+			}
+			if tc.shadowSize != 0 {
+				if record["shadowSize"] != tc.shadowSize {
+					t.Fatalf("expected shadowSize=%v in legacy props, got %#v", tc.shadowSize, record["shadowSize"])
+				}
+			} else if _, present := record["shadowSize"]; present {
+				t.Fatalf("expected shadowSize to be omitted from legacy props when zero, got %#v", record["shadowSize"])
+			}
+			// PointLight has no ShadowCascades/ShadowSoftness field, so
+			// neither key should ever appear for a point light.
+			if _, present := record["shadowCascades"]; present {
+				t.Fatalf("expected no shadowCascades key for a point light, got %#v", record["shadowCascades"])
+			}
+			if _, present := record["shadowSoftness"]; present {
+				t.Fatalf("expected no shadowSoftness key for a point light, got %#v", record["shadowSoftness"])
+			}
+		})
+	}
+}
+
 func TestPropsSceneIRLowersHemisphereLight(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
