@@ -110,6 +110,17 @@ type Renderer struct {
 	fallbackCubeTexture *textureResources
 	envBindGroupKey     string
 
+	// defaultTangentBuf is the single [1,0,0,1] tangent record the lit and
+	// skinned-lit pipelines bind at the tangent vertex-attribute slot
+	// (location 9 rigid, location 15 skinned; see litWGSL). It is declared
+	// with ArrayStride 0, so every vertex of every draw reads the same 16
+	// bytes: WebGPU defines a stride-0 vertex buffer layout as "do not
+	// advance between vertices," which is exactly the constant-attribute
+	// fallback the browser copy gets from filling a real per-vertex array
+	// with the same four floats. No lobe reads this attribute yet — see
+	// Scene3D parity cluster C PR2.
+	defaultTangentBuf gpu.Buffer
+
 	// GPU-driven culling pipeline + layout. Per-mesh resources live in
 	// cullCache.
 	cullPipeline gpu.ComputePipeline
@@ -465,6 +476,9 @@ func New(cfg Config) (*Renderer, error) {
 	if _, err := r.ensureFallbackTexture(); err != nil {
 		return nil, err
 	}
+	if err := r.buildDefaultTangentBuffer(); err != nil {
+		return nil, err
+	}
 	if err := r.buildUnlitPipeline(); err != nil {
 		return nil, err
 	}
@@ -654,6 +668,10 @@ func (r *Renderer) Destroy() {
 	if r.fallbackCubeTexture != nil && r.fallbackCubeTexture.tex != nil {
 		r.fallbackCubeTexture.tex.Destroy()
 		r.fallbackCubeTexture = nil
+	}
+	if r.defaultTangentBuf != nil {
+		r.defaultTangentBuf.Destroy()
+		r.defaultTangentBuf = nil
 	}
 	if r.depthTex != nil {
 		r.depthTex.Destroy()
@@ -945,6 +963,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			mainPass.SetVertexBuffer(2, st.prim.normals)
 			mainPass.SetVertexBuffer(3, st.prim.uvs)
 			mainPass.SetVertexBuffer(4, inst)
+			mainPass.SetVertexBuffer(5, r.defaultTangentBuf)
 			mainPass.DrawIndirect(args, 0)
 		}
 
@@ -980,6 +999,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 			mainPass.SetVertexBuffer(6, skin.weights)
 			mainPass.SetVertexBuffer(7, skin.bindPose)
 			mainPass.SetVertexBuffer(4, inst)
+			mainPass.SetVertexBuffer(8, r.defaultTangentBuf)
 			mainPass.DrawIndirect(args, 0)
 		}
 	}
@@ -1703,6 +1723,23 @@ func (r *Renderer) buildMaterialSampler() error {
 	return nil
 }
 
+// buildDefaultTangentBuffer creates the shared [1,0,0,1] tangent record every
+// lit and skinned-lit draw binds at the new tangent vertex-attribute slot
+// until a mesh carries authored tangents. See defaultTangentBuf.
+func (r *Renderer) buildDefaultTangentBuffer() error {
+	buf, err := r.device.CreateBuffer(gpu.BufferDesc{
+		Size:  16,
+		Usage: gpu.BufferUsageVertex | gpu.BufferUsageCopyDst,
+		Label: "bundle.tangent.default",
+	})
+	if err != nil {
+		return fmt.Errorf("bundle.buildDefaultTangentBuffer: %w", err)
+	}
+	r.device.Queue().WriteBuffer(buf, 0, float32sToBytes([]float32{1, 0, 0, 1}))
+	r.defaultTangentBuf = buf
+	return nil
+}
+
 func alphaBlendState() *gpu.BlendState {
 	return &gpu.BlendState{
 		Color: gpu.BlendComponent{SrcFactor: gpu.BlendSrcAlpha, DstFactor: gpu.BlendOneMinusSrcAlpha, Operation: gpu.BlendOpAdd},
@@ -1744,6 +1781,13 @@ func (r *Renderer) buildLitPipeline() error {
 					{ShaderLocation: 6, Offset: 32, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 7, Offset: 48, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 8, Offset: 64, Format: gpu.VertexFormatUint32x4},
+				}},
+				// Tangent, slot 5, location 9. ArrayStride 0 makes every vertex of
+				// every draw read the same defaultTangentBuf record, so no lobe
+				// consumes it, no golden frame moves, and no per-mesh tangent
+				// buffer needs to exist yet. See Scene3D parity cluster C PR2.
+				{ArrayStride: 0, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 9, Offset: 0, Format: gpu.VertexFormatFloat32x4},
 				}},
 			},
 		},
@@ -1824,6 +1868,12 @@ func (r *Renderer) buildSkinnedLitPipeline() error {
 					{ShaderLocation: 12, Offset: 16, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 13, Offset: 32, Format: gpu.VertexFormatFloat32x4},
 					{ShaderLocation: 14, Offset: 48, Format: gpu.VertexFormatFloat32x4},
+				}},
+				// Tangent, slot 8, location 15 (locations 9-14 are the skinning
+				// attributes above). Same ArrayStride-0 default-record trick as the
+				// rigid pipeline. See Scene3D parity cluster C PR2.
+				{ArrayStride: 0, StepMode: gpu.StepVertex, Attributes: []gpu.VertexAttribute{
+					{ShaderLocation: 15, Offset: 0, Format: gpu.VertexFormatFloat32x4},
 				}},
 			},
 		},

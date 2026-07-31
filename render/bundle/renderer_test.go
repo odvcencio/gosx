@@ -31,8 +31,8 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	if got := len(d.computePipelines); got != 2 {
 		t.Errorf("expected 2 compute pipelines (cull + particleUpdate), got %d", got)
 	}
-	if got := len(d.buffers); got != 6 {
-		t.Errorf("expected 6 startup buffers (scene + scene lights + 3 shadow cascades + default bone palette), got %d", got)
+	if got := len(d.buffers); got != 7 {
+		t.Errorf("expected 7 startup buffers (scene + scene lights + 3 shadow cascades + default bone palette + default tangent), got %d", got)
 	}
 	if got := len(d.textures); got != 3 {
 		t.Errorf("expected 3 textures at construction (shadow map + 1x1 fallback + fallback env cube), got %d", got)
@@ -56,10 +56,13 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 		t.Error("shadow map must have TextureBinding usage so lit pass can sample it")
 	}
 
-	// Lit pipeline = 5 vertex buffers (positions + colors + normals + uvs + instance record).
+	// Lit pipeline = 6 vertex buffers (positions + colors + normals + uvs +
+	// instance record + tangent). The tangent slot is Scene3D parity cluster C
+	// PR2: no lobe reads it yet, so every draw binds the shared
+	// defaultTangentBuf ([1,0,0,1]) at ArrayStride 0.
 	lit := findPipeline(t, d, "bundle.lit")
-	if got := len(lit.desc.Vertex.Buffers); got != 5 {
-		t.Errorf("lit: expected 5 vertex buffers (pos+col+nrm+uv+instance record), got %d", got)
+	if got := len(lit.desc.Vertex.Buffers); got != 6 {
+		t.Errorf("lit: expected 6 vertex buffers (pos+col+nrm+uv+instance record+tangent), got %d", got)
 	}
 	if got := lit.desc.Vertex.Buffers[4].StepMode; got != gpu.StepInstance {
 		t.Errorf("lit: slot 4 (instance) step mode should be Instance, got %v", got)
@@ -74,17 +77,42 @@ func TestNewBuildsAllPipelines(t *testing.T) {
 	if got := attrs[4]; got.ShaderLocation != 8 || got.Offset != 64 || got.Format != gpu.VertexFormatUint32x4 {
 		t.Errorf("lit: pick attribute = %#v, want location 8 offset 64 uint32x4", got)
 	}
+	litTangent := lit.desc.Vertex.Buffers[5]
+	if litTangent.ArrayStride != 0 {
+		t.Errorf("lit: tangent slot array stride = %d, want 0 (constant attribute)", litTangent.ArrayStride)
+	}
+	if litTangent.StepMode != gpu.StepVertex {
+		t.Errorf("lit: tangent slot step mode = %v, want StepVertex", litTangent.StepMode)
+	}
+	if len(litTangent.Attributes) != 1 {
+		t.Fatalf("lit: tangent slot attrs = %d, want 1", len(litTangent.Attributes))
+	}
+	if got := litTangent.Attributes[0]; got.ShaderLocation != 9 || got.Offset != 0 || got.Format != gpu.VertexFormatFloat32x4 {
+		t.Errorf("lit: tangent attribute = %#v, want location 9 offset 0 float32x4", got)
+	}
 
-	// Skinned lit pipeline = rigid lit buffers + joints + weights + bind-pose mat4.
+	// Skinned lit pipeline = rigid lit buffers (minus tangent) + joints +
+	// weights + bind-pose mat4 + tangent at location 15 (locations 9-14 are
+	// the skinning attributes).
 	skinnedLit := findPipeline(t, d, "bundle.lit.skinned")
-	if got := len(skinnedLit.desc.Vertex.Buffers); got != 8 {
-		t.Errorf("skinned lit: expected 8 vertex buffers, got %d", got)
+	if got := len(skinnedLit.desc.Vertex.Buffers); got != 9 {
+		t.Errorf("skinned lit: expected 9 vertex buffers, got %d", got)
 	}
 	if got := skinnedLit.desc.Vertex.Buffers[5].Attributes[0].Format; got != gpu.VertexFormatUint32x4 {
 		t.Errorf("skinned lit joints format = %v, want %v", got, gpu.VertexFormatUint32x4)
 	}
 	if got := skinnedLit.desc.Vertex.Buffers[5].Attributes[0].ShaderLocation; got != 9 {
 		t.Errorf("skinned lit joints location = %d, want 9 after pick data", got)
+	}
+	skinnedTangent := skinnedLit.desc.Vertex.Buffers[8]
+	if skinnedTangent.ArrayStride != 0 {
+		t.Errorf("skinned lit: tangent slot array stride = %d, want 0 (constant attribute)", skinnedTangent.ArrayStride)
+	}
+	if len(skinnedTangent.Attributes) != 1 {
+		t.Fatalf("skinned lit: tangent slot attrs = %d, want 1", len(skinnedTangent.Attributes))
+	}
+	if got := skinnedTangent.Attributes[0]; got.ShaderLocation != 15 || got.Offset != 0 || got.Format != gpu.VertexFormatFloat32x4 {
+		t.Errorf("skinned lit: tangent attribute = %#v, want location 15 offset 0 float32x4", got)
 	}
 
 	surfaceOpaque := findPipeline(t, d, "bundle.surface.opaque")

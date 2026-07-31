@@ -498,6 +498,13 @@ func (r *RenderPassEncoder) SetBindGroup(slot int, bg gpu.BindGroup) {
 		}
 	}
 }
+// SetVertexBuffer accepts any slot index, including the ones the "bundle.lit"
+// and "bundle.lit.skinned" pipelines added in Scene3D parity cluster C PR2 for
+// the new tangent attribute (slot 5 rigid, slot 8 skinned; see
+// render/bundle/renderer.go buildLitPipeline / buildSkinnedLitPipeline). This
+// map takes any slot without validation, so the new binding needs no change
+// here; rasterizeDraw below simply never reads slots 5 or 8, matching that fs_main
+// does not read the tangent/bitangent varyings yet.
 func (r *RenderPassEncoder) SetVertexBuffer(slot int, b gpu.Buffer) {
 	if buf, ok := b.(*Buffer); ok {
 		if r.vertexBuffers == nil {

@@ -99,6 +99,13 @@ struct VSOut {
   @location(3) viewZ    : f32,
   @location(4) uv       : vec2<f32>,
   @location(5) @interpolate(flat) pickId : u32,
+  // tangent/bitangent: Scene3D parity cluster C PR2 (native tangent
+  // attribute). fs_main does not read either field yet — no lobe in this
+  // cluster consumes them until the anisotropy PR. They exist so the vertex
+  // stage has somewhere to put the world-space tangent frame it now derives
+  // from the new location-9/15 vertex attribute below.
+  @location(6) tangent   : vec3<f32>,
+  @location(7) bitangent : vec3<f32>,
 };
 
 struct FSOut {
@@ -117,10 +124,13 @@ fn vs_main(
   @location(6) m2     : vec4<f32>,
   @location(7) m3     : vec4<f32>,
   @location(8) pickData : vec4<u32>,
+  @location(9) tangent : vec4<f32>, // xyz=tangent dir, w=handedness (PR2)
 ) -> VSOut {
   let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
   let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);
+  let worldTangent = normalize((model * vec4<f32>(tangent.xyz, 0.0)).xyz);
+  let worldBitangent = cross(worldNormal, worldTangent) * tangent.w;
 
   var out : VSOut;
   out.pos      = scene.viewProj * world;
@@ -135,6 +145,8 @@ fn vs_main(
   out.viewZ    = length(toCam);
   out.uv       = uv;
   out.pickId   = pickData.x;
+  out.tangent   = worldTangent;
+  out.bitangent = worldBitangent;
   return out;
 }
 
@@ -446,7 +458,11 @@ func skinnedLitWGSL() string {
   @location(6) m2     : vec4<f32>,
   @location(7) m3     : vec4<f32>,
   @location(8) pickData : vec4<u32>,
+  @location(9) tangent : vec4<f32>, // xyz=tangent dir, w=handedness (PR2)
 ) -> VSOut {`
+	// The skinned signature moves tangent to location 15: locations 9-14 are
+	// already the skinning attributes (joints, weights, bindPose columns), so
+	// tangent has to sit after them, per the cluster spec's PR2 slice.
 	const skinnedSignature = `fn vs_main(
   @location(0) pos     : vec3<f32>,
   @location(1) color   : vec3<f32>,
@@ -463,16 +479,26 @@ func skinnedLitWGSL() string {
   @location(12) b1     : vec4<f32>,
   @location(13) b2     : vec4<f32>,
   @location(14) b3     : vec4<f32>,
+  @location(15) tangent : vec4<f32>, // xyz=tangent dir, w=handedness (PR2)
 ) -> VSOut {`
 	const rigidTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
-  let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);`
+  let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);
+  let worldTangent = normalize((model * vec4<f32>(tangent.xyz, 0.0)).xyz);
+  let worldBitangent = cross(worldNormal, worldTangent) * tangent.w;`
+	// applySkinningNormal blends a direction vector the same way for a normal
+	// or a tangent — both are unit directions carried in bind pose, not
+	// positions — so the tangent skins with the exact function the normal
+	// already uses above it.
 	const skinnedTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
   let bindPose = mat4x4<f32>(b0, b1, b2, b3);
   let skinnedLocal = bindPose * applySkinning(pos, joints, weights);
   let skinnedNormal = normalize((bindPose * vec4<f32>(applySkinningNormal(normal, joints, weights), 0.0)).xyz);
+  let skinnedTangentLocal = normalize((bindPose * vec4<f32>(applySkinningNormal(tangent.xyz, joints, weights), 0.0)).xyz);
   let world = model * skinnedLocal;
-  let worldNormal = normalize((model * vec4<f32>(skinnedNormal, 0.0)).xyz);`
+  let worldNormal = normalize((model * vec4<f32>(skinnedNormal, 0.0)).xyz);
+  let worldTangent = normalize((model * vec4<f32>(skinnedTangentLocal, 0.0)).xyz);
+  let worldBitangent = cross(worldNormal, worldTangent) * tangent.w;`
 	src := strings.Replace(litWGSL, signature, skinnedSignature, 1)
 	src = strings.Replace(src, rigidTransform, skinnedTransform, 1)
 	return skinningWGSL + "\n" + src
