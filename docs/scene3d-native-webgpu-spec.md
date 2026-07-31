@@ -514,6 +514,8 @@ Shadow policy:
 - Per-light shadow size declares desired quality.
 - Renderer clamps per-light allocation to cap.
 - Cascades are explicit renderer policy.
+- Cascade support is a per-backend contract, not a WebGL2-only feature.
+- Point lights cast shadows through cube shadow maps.
 - Shadow casters/receivers are object-level fields.
 - Debug overlay can show effective shadow sizes and cascade splits.
 
@@ -523,6 +525,7 @@ Environment must cover:
 
 - Ambient color/intensity.
 - Sky and ground color/intensity.
+- Background sky: cube map, equirectangular image, or procedural gradient.
 - Cubemap/HDR IBL.
 - Exposure.
 - Tone mapping.
@@ -743,6 +746,40 @@ Started in follow-on passes:
 - Performance flame chart for Scene3D passes.
 - Asset memory panel.
 
+### R8: WebGPU parity ladder
+
+Scene3D does not absorb the full three.js surface. The target is narrower: the WebGPU path renders at three.js class, and WebGL2 degrades honestly through the capability verdict. This item sequences that ladder. It serves the three.js-subsumption initiative.
+
+**Catch-up items.** The preferred WebGPU browser path renders less than the WebGL2 fallback in four places. Close these first:
+
+- Environment maps. `Environment.EnvironmentMap` reflects on WebGL2 and renders nothing on WebGPU. The capability matrix records the false cell.
+- Shadow cascades. WebGL2 filters up to 4 cascades with percentage-closer soft shadows (PCSS). WebGPU holds one uncascaded map with 4-tap percentage-closer filtering (PCF).
+- Skinned lighting. The WebGPU compute skin transforms positions only. Normals and tangents stay in rest pose, so skinned surfaces light incorrectly. Extend the linear-blend-skinning kernel to normals and tangents.
+- Dashed lines. WebGPU refuses the draw. R3 already owns the fix.
+
+**Build-first items.** Build these on WebGPU first. Let WebGL2 degrade with a recorded capability reason:
+
+- Background sky. No backend draws a skybox or background environment today. Add the background draws that section 10.3 declares.
+- Runtime image-based lighting (IBL). Split-sum shaders exist in both browser backends, and `assetpipe/ibl` bakes radiance, irradiance, and BRDF lookup tables. Wire the runtime asset path (R6). WebGPU has no fragment-texture-unit ceiling. WebGL2 needs 18 units against a 16-unit specification minimum, so its cell stays false with that recorded reason.
+- Physical material lobes (R5). Replace the ad-hoc view-angle terms for clearcoat, sheen, transmission, iridescence, and anisotropy with real bidirectional reflectance distribution function (BRDF) layers: a second clearcoat specular lobe, Charlie sheen, and refraction with an index of refraction.
+- Point-light cube shadows, per the section 10.2 policy.
+- Rect-area specular through linearly transformed cosine (LTC) tables, and spherical-harmonic light probes. Both capability cells are false on every backend today.
+
+**Capability truth corrections:**
+
+- Correct the stale IBL prose at `scene/capability/capability.go:128-157`. The shipped shaders and `scene/capability/water_shadow_test.go:147-203` contradict it.
+- Re-derive both `.capabilities.json` manifests when runtime IBL lands.
+- Stop dropping `OcclusionMap` and fog on the native path.
+- Implement `Wireframe` or remove the field. It is authored everywhere and drawn nowhere.
+
+**Validation scene.** Blackglass Coast (`examples/gosx-docs/app/demos/beacon`) is the standing validation scene for this ladder:
+
+- Add FXAA to its post chain now. The offscreen post chain defeats multisample antialiasing (MSAA).
+- Adopt baked IBL when the runtime asset path lands.
+- Replace the scaled-sphere cliffs with authored GLB meshes through `assetpipe`.
+- Add ember compute particles at the beacon and pointer-driven water drop events.
+- Drive an opening camera dolly from the `opening-camera` and `cinematic-beacon` contract markers.
+
 ## 16. Acceptance criteria
 
 Scene3D reaches the intended standard when:
@@ -756,6 +793,7 @@ Scene3D reaches the intended standard when:
 7. Dynamic scenes expose measurable frame/memory/upload budgets.
 8. Server-driven scene diffs can update objects/materials/labels/HTML without remounting.
 9. The public docs never need to say “this works only in the JS renderer” except for explicitly deprecated compatibility features.
+10. For any authored scene, the WebGPU backend renders every feature the WebGL2 path renders, at equal or better fidelity.
 
 ## 17. Immediate patch summary
 
