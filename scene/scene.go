@@ -78,7 +78,10 @@ type Environment struct {
 	EnvironmentMap   string
 	// IBL carries prefiltered HDR products and their sampling semantics. It is
 	// additive metadata; renderer capability remains governed by capability.Matrix.
-	IBL          EnvironmentIBL
+	IBL EnvironmentIBL
+	// Sky selects the background source drawn behind the scene. A nil Sky
+	// keeps the flat Props.Background clear color. See sky.go.
+	Sky          *Sky
 	EnvIntensity float64
 	EnvRotation  float64
 	Exposure     float64

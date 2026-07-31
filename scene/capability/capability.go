@@ -60,6 +60,11 @@ const (
 	FeatureRectAreaLight             Feature = "rect-area-light"
 	FeatureRectAreaSpecular          Feature = "rect-area-specular"
 	FeatureLightProbeSH              Feature = "light-probe-sh"
+	// FeatureSkyEnvironment tracks only the environment-cube sky mode. Gradient
+	// sky draws on every backend, including Canvas2D (a genuine ctx2d gradient
+	// fill, not a degrade), so it earns no row: an absent feature is supported
+	// everywhere, per the Matrix contract. See sky_test.go.
+	FeatureSkyEnvironment Feature = "sky-environment"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -287,6 +292,12 @@ var Matrix = map[Feature]map[Backend]bool{
 	// light would invent a distance falloff — but it is not an SH evaluation,
 	// so the cell stays false until one exists.
 	FeatureLightProbeSH: {BackendWebGPU: false, BackendWebGL: false},
+	// sky-environment: does the backend draw the environment-cube/equirect sky
+	// mode. False everywhere at this row's introduction — no backend draws any
+	// sky yet. Gradient sky (the other Sky.Mode) draws on every backend
+	// including Canvas2D and earns no row of its own; see the const doc.
+	// Flip each cell as its draw lands. See sky_test.go.
+	FeatureSkyEnvironment: {BackendWebGPU: false, BackendWebGL: false},
 }
 
 func supports(b Backend, f Feature) bool {
