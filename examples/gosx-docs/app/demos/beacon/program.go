@@ -37,6 +37,7 @@ func BlackglassBeaconProgram() scene.Props {
 			scene.Bloom{Threshold: 1.06, Strength: 0.24, Radius: 7, Scale: 0.35},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
 			scene.Vignette{Intensity: 0.16},
+			scene.FXAA{},
 		}},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels512},
 		Graph:   scene.NewGraph(blackglassCoastNodes(contract)...),

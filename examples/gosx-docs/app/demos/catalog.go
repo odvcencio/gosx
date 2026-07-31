@@ -35,7 +35,7 @@ var demoCatalog = []DemoDefinition{
 		Slug: "beacon", Title: "Blackglass Coast", Tag: "Studio-authored water world",
 		Promise: "Orbit a sunlit volcanic cove with a live water surface, basalt shelves, ruins, and an ember beacon—authored as a world, not a prop.",
 		Lesson:  "A typed Studio world contract carries water-volume and gameplay anchors into a bounded GoSX Scene3D runtime with truthful backend fallback and frame-quality telemetry.",
-		Accent:  "#e7bd6b", Facets: []string{"Scene3D", "Studio", "WaterSystem", "PBR", "WebGPU", "WebGL2"},
+		Accent:  "#e7bd6b", Facets: []string{"Scene3D", "Studio", "WaterSystem", "PBR", "PostFX", "WebGPU", "WebGL2"},
 		SourcePath: "examples/gosx-docs/app/demos/beacon/program.go", Packages: []string{"scene", "route"},
 		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
 		Limitations:  "This first vertical slice binds the authored cove and its water semantics, but it is an orbitable world showcase—not yet a third-person game. WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2 or its bounded primitive fallback. The scene caps rendering at 60 frames per second (FPS), a device pixel ratio (DPR) of 1.5, and a 720p render surface.",
