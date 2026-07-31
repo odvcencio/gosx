@@ -480,7 +480,12 @@ const budgets = [
   // combined measurement: 1_481_931 / 401_314 / 322_353.
   // Merging main's declarative submit-action fixes with the Scene3D status
   // bindings yields the combined generated bundle measured here.
-  { file: "bootstrap.js", raw: 1_483_937, gzip: 401_833, brotli: 323_032 },
+  // Cluster-B shadow-parity PR1 moves the four pure CSM helpers from
+  // 16-scene-webgl.js into 16c-scene-shared-pbr.js so the WebGPU backend can
+  // share the WebGL2 PSSM fit; the base chunk carries them now, plus the new
+  // window.__gosx_scene3d_api bridge entries. Exact measurement:
+  // 1_484_183 / 401_848 / 323_078.
+  { file: "bootstrap.js", raw: 1_484_183, gzip: 401_848, brotli: 323_078 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -831,7 +836,11 @@ const budgets = [
   // Declarative renderer/fallback/quality outputs add 1_048 reusable raw bytes.
   // Merged with main's retained-geometry and quality-ladder work; exact
   // combined measurement: 518_329 / 143_807 / 119_210.
-  { file: "bootstrap-feature-scene3d.js", raw: 518_329, gzip: 143_807, brotli: 119_210 },
+  // Cluster-B shadow-parity PR1 moves the four pure CSM helpers into this
+  // chunk's 16c-scene-shared-pbr.js (the base scene3d chunk carries it) and
+  // adds their window.__gosx_scene3d_api bridge entries. Exact measurement:
+  // 520_772 / 145_045 / 120_115.
+  { file: "bootstrap-feature-scene3d.js", raw: 520_772, gzip: 145_045, brotli: 120_115 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1287,9 +1296,13 @@ const routeBudgets = [
     // retained-geometry and quality-ladder work with declarative status
     // bindings, plus main's declarative submit-action fix, brings the exact
     // route total to:
-    raw: 1_174_281,
-    gzip: 312_889,
-    brotli: 264_360,
+    // Cluster-B shadow-parity PR1 (see the bootstrap.js budget above) adds the
+    // moved CSM helpers and their window.__gosx_scene3d_api bridge entries to
+    // the base scene3d chunk, which this route carries. Exact measurement:
+    // 1_176_724 / 314_127 / 265_265.
+    raw: 1_176_724,
+    gzip: 314_127,
+    brotli: 265_265,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1361,9 +1374,13 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_004_064,
-    gzip: 279_132,
-    brotli: 236_782,
+    // Cluster-B shadow-parity PR1 (see the bootstrap.js budget above) adds the
+    // moved CSM helpers and their window.__gosx_scene3d_api bridge, plus the
+    // small 26j-feature-scene3d-webgl-prefix.js bridge lines this route's
+    // WebGL chunk carries. Exact measurement: 1_004_392 / 279_222 / 236_761.
+    raw: 1_004_392,
+    gzip: 279_222,
+    brotli: 236_761,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1427,9 +1444,13 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_386_250,
-    gzip: 371_284,
-    brotli: 314_029,
+    // Cluster-B shadow-parity PR1 (see the bootstrap.js budget above) adds the
+    // moved CSM helpers, their window.__gosx_scene3d_api bridge, and the
+    // small WebGL-chunk bridge lines; this route loads both backends so it
+    // carries the full cost. Exact measurement: 1_386_578 / 371_374 / 314_008.
+    raw: 1_386_578,
+    gzip: 371_374,
+    brotli: 314_008,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1496,9 +1517,13 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_028_003,
-    gzip: 270_602,
-    brotli: 226_761,
+    // Cluster-B shadow-parity PR1 (see the bootstrap.js budget above) adds the
+    // moved CSM helpers and their window.__gosx_scene3d_api bridge entries to
+    // the base scene3d chunk, which this route carries. Exact measurement:
+    // 1_030_446 / 271_840 / 227_666.
+    raw: 1_030_446,
+    gzip: 271_840,
+    brotli: 227_666,
   },
 
 ];

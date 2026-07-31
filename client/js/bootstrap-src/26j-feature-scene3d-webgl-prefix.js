@@ -159,6 +159,10 @@
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
+  var sceneShadowComputeCascadeSplits = sceneApi.sceneShadowComputeCascadeSplits;
+  var sceneShadowFrustumSubCorners = sceneApi.sceneShadowFrustumSubCorners;
+  var sceneInvertOrthonormalView = sceneApi.sceneInvertOrthonormalView;
+  var sceneShadowFitLightSpaceOrtho = sceneApi.sceneShadowFitLightSpaceOrtho;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;

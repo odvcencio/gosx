@@ -5966,6 +5966,13 @@
     scenePBRViewMatrix: typeof scenePBRViewMatrix === "function" ? scenePBRViewMatrix : undefined,
     sceneShadowLightSpaceMatrix: typeof sceneShadowLightSpaceMatrix === "function" ? sceneShadowLightSpaceMatrix : undefined,
     sceneShadowComputeBounds: typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds : undefined,
+    // Cascaded shadow map helpers, moved from 16-scene-webgl.js to
+    // 16c-scene-shared-pbr.js so the WebGPU chunk can share the WebGL2 PSSM
+    // fit math (see 16c's "--- Cascaded Shadow Map helpers ---" section).
+    sceneShadowComputeCascadeSplits: typeof sceneShadowComputeCascadeSplits === "function" ? sceneShadowComputeCascadeSplits : undefined,
+    sceneShadowFrustumSubCorners: typeof sceneShadowFrustumSubCorners === "function" ? sceneShadowFrustumSubCorners : undefined,
+    sceneInvertOrthonormalView: typeof sceneInvertOrthonormalView === "function" ? sceneInvertOrthonormalView : undefined,
+    sceneShadowFitLightSpaceOrtho: typeof sceneShadowFitLightSpaceOrtho === "function" ? sceneShadowFitLightSpaceOrtho : undefined,
     generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
     normalizeInstancedGeometryKind: typeof normalizeInstancedGeometryKind === "function" ? normalizeInstancedGeometryKind : undefined,
 
