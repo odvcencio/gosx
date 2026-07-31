@@ -110,17 +110,29 @@
     "    radianceMipLevels: u32,",
     "};",
     "",
+    // ShadowSlot carries one directional shadow slot's cascade data: up to
+    // four light-space matrices (index by the fragment's selected cascade),
+    // the far split of each cascade (view-space positive depth), and the
+    // slot's own bias/softness/light-index state. Cascade entries beyond
+    // cascadeCount duplicate cascade 0, matching the WebGL2 safe-fallback
+    // packing (uploadShadowUniforms fills them; see 16-scene-webgl.js's
+    // u_lightSpaceMatrices0/1 fallback), so a stray dynamic index never reads
+    // an uninitialized matrix.
+    "struct ShadowSlot {",
+    "    lightSpaceMatrices: array<mat4x4f, 4>,",
+    "    cascadeSplits: vec4f,",
+    "    cascadeCount: u32,",
+    "    hasShadow: u32,",
+    "    lightIndex: i32,",
+    "    bias: f32,",
+    "    softness: f32,",
+    "    _pad0: f32,",
+    "    _pad1: f32,",
+    "    _pad2: f32,",
+    "};",
+    "",
     "struct ShadowUniforms {",
-    "    lightSpaceMatrix0: mat4x4f,",
-    "    lightSpaceMatrix1: mat4x4f,",
-    "    hasShadow0: u32,",
-    "    hasShadow1: u32,",
-    "    shadowBias0: f32,",
-    "    shadowBias1: f32,",
-    "    shadowLightIndex0: i32,",
-    "    shadowLightIndex1: i32,",
-    "    _pad0: u32,",
-    "    _pad1: u32,",
+    "    slots: array<ShadowSlot, 2>,",
     "};",
   ].join("\n");
 
@@ -1471,9 +1483,9 @@
     "@group(0) @binding(1) var<storage, read> lights: array<Light>;",
     "@group(0) @binding(2) var<uniform> fog: FogUniforms;",
     "@group(0) @binding(3) var<uniform> env: EnvUniforms;",
-    "@group(0) @binding(4) var shadowMap0: texture_depth_2d;",
+    "@group(0) @binding(4) var shadowMap0: texture_depth_2d_array;",
     "@group(0) @binding(5) var shadowSampler0: sampler_comparison;",
-    "@group(0) @binding(6) var shadowMap1: texture_depth_2d;",
+    "@group(0) @binding(6) var shadowMap1: texture_depth_2d_array;",
     "@group(0) @binding(7) var shadowSampler1: sampler_comparison;",
     "@group(0) @binding(8) var<uniform> shadow: ShadowUniforms;",
     "@group(0) @binding(9) var iblIrradiance: texture_cube<f32>;",
@@ -1502,50 +1514,103 @@
     "    return projCoords3 * 0.5 + 0.5;",
     "}",
     "",
-    // 4-tap Poisson disk PCF shadow sampling for shadow slot 0.
-    "fn shadowFactor0(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
-    "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
-    "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
-    "    let poissonDisk = array<vec2f, 4>(",
-    "        vec2f(-0.94201624, -0.39906216),",
-    "        vec2f(0.94558609, -0.76890725),",
-    "        vec2f(-0.094184101, -0.92938870),",
-    "        vec2f(0.34495938, 0.29387760),",
-    "    );",
+    // 8-tap Poisson disk, shared by the hard-shadow PCF path (first four taps,
+    // matching the shipped 1-texel default) and the PCSS blocker search / final
+    // filter (all eight). Same constants as WebGL2's kPoissonDisk8
+    // (16-scene-webgl.js), so a constant drift between backends fails a WGSL
+    // string test instead of an eyeball.
+    "const kPoissonDisk8 = array<vec2f, 8>(",
+    "    vec2f(-0.94201624, -0.39906216),",
+    "    vec2f(0.94558609, -0.76890725),",
+    "    vec2f(-0.09418410, -0.92938870),",
+    "    vec2f(0.34495938, 0.29387760),",
+    "    vec2f(-0.91588581, 0.45771432),",
+    "    vec2f(-0.81544232, -0.87912464),",
+    "    vec2f(0.38277543, 0.27676845),",
+    "    vec2f(0.97484398, 0.75648379),",
+    ");",
     "",
-    "    var shadowVal: f32 = 0.0;",
-    "    let texDim = textureDimensions(shadowMap0);",
-    "    let texelSize = 1.0 / f32(texDim.x);",
-    "",
-    "    for (var i = 0u; i < 4u; i = i + 1u) {",
-    "        let sampleUV = clamp(projCoords.xy + poissonDisk[i] * texelSize, vec2f(0.0), vec2f(1.0));",
-    "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
-    "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap0, shadowSampler0, sampleUV, refDepth);",
-    "    }",
-    "    return select(1.0, shadowVal / 4.0, inside);",
+    // Selects the active cascade for one shadow slot by comparing the
+    // fragment's view-space positive depth against the slot's far splits, the
+    // same three comparisons WebGL2's shadowFactorSlot0/1 make.
+    "fn shadowCascadeIndex(slot: ShadowSlot, viewDepth: f32) -> u32 {",
+    "    var c: u32 = 0u;",
+    "    if (slot.cascadeCount >= 2u && viewDepth >= slot.cascadeSplits.x) { c = 1u; }",
+    "    if (slot.cascadeCount >= 3u && viewDepth >= slot.cascadeSplits.y) { c = 2u; }",
+    "    if (slot.cascadeCount >= 4u && viewDepth >= slot.cascadeSplits.z) { c = 3u; }",
+    "    return c;",
     "}",
     "",
-    // 4-tap Poisson disk PCF shadow sampling for shadow slot 1.
-    "fn shadowFactor1(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
-    "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
+    // shadowFactorCascade replaces the duplicated shadowFactor0/shadowFactor1
+    // pair with one function; the two call sites below unroll only the texture
+    // and sampler bindings WGSL cannot select dynamically, and read the
+    // per-slot uniform data (matrices, splits, bias, softness) through
+    // slotIndex.
+    //
+    // softness <= 0.0001 keeps the shipped 4-tap 1-texel PCF (the first four
+    // kPoissonDisk8 taps) rather than switching to a hard single tap the way
+    // WebGL2 does at softness 0. Defaulting WebGPU to hard shadows would
+    // visually regress every shipped WebGPU scene, so this is a deliberate
+    // cross-backend delta at softness 0, not an oversight.
+    //
+    // softness > 0.0001 runs full PCSS, ported from WebGL2's shadowFactor:
+    // an 8-tap blocker search over raw (non-comparison) depth via textureLoad
+    // -- depth textures are not filterable by a plain sampler, so textureLoad
+    // is the only way to read an unfiltered value -- a penumbra estimate, and
+    // a final 8-tap PCF through textureSampleCompareLevel. Hardware bilinear
+    // comparison is equal or better than WebGL2's manual step-compare; that
+    // small positive quality delta is accepted and noted here rather than
+    // reproduced exactly.
+    "fn shadowFactorCascade(tex: texture_depth_2d_array, samp: sampler_comparison, slotIndex: u32, viewDepth: f32, worldPos: vec3f) -> f32 {",
+    "    let slot = shadow.slots[slotIndex];",
+    "    let c = shadowCascadeIndex(slot, viewDepth);",
+    "    let projCoords = shadowProjectedCoords(worldPos, slot.lightSpaceMatrices[c]);",
     "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
-    "    let poissonDisk = array<vec2f, 4>(",
-    "        vec2f(-0.94201624, -0.39906216),",
-    "        vec2f(0.94558609, -0.76890725),",
-    "        vec2f(-0.094184101, -0.92938870),",
-    "        vec2f(0.34495938, 0.29387760),",
-    "    );",
+    "    if (!inside) { return 1.0; }",
+    "",
+    "    let receiverDepth = projCoords.z;",
+    "    let texDim = textureDimensions(tex);",
+    "    let texelSize = 1.0 / f32(texDim.x);",
+    "    let layer = i32(c);",
+    "",
+    "    if (slot.softness <= 0.0001) {",
+    "        var shadowVal: f32 = 0.0;",
+    "        for (var i = 0u; i < 4u; i = i + 1u) {",
+    "            let sampleUV = clamp(projCoords.xy + kPoissonDisk8[i] * texelSize, vec2f(0.0), vec2f(1.0));",
+    "            let refDepth = clamp(receiverDepth - slot.bias, 0.0, 1.0);",
+    "            shadowVal = shadowVal + textureSampleCompareLevel(tex, samp, sampleUV, layer, refDepth);",
+    "        }",
+    "        return shadowVal / 4.0;",
+    "    }",
+    "",
+    // Blocker search: sample a disk sized by softness and average the raw
+    // depth of taps behind the receiver.
+    "    let blockerRadius = max(1.0, slot.softness * 32.0);",
+    "    var blockerDepthSum: f32 = 0.0;",
+    "    var blockerCount: f32 = 0.0;",
+    "    let maxTexel = vec2i(texDim) - vec2i(1, 1);",
+    "    for (var i = 0u; i < 8u; i = i + 1u) {",
+    "        let sampleUV = projCoords.xy + kPoissonDisk8[i] * texelSize * blockerRadius;",
+    "        let texel = clamp(vec2i(sampleUV * vec2f(texDim)), vec2i(0, 0), maxTexel);",
+    "        let d = textureLoad(tex, texel, layer, 0);",
+    "        if (receiverDepth - slot.bias > d) {",
+    "            blockerDepthSum = blockerDepthSum + d;",
+    "            blockerCount = blockerCount + 1.0;",
+    "        }",
+    "    }",
+    "    if (blockerCount < 0.5) { return 1.0; }",
+    "",
+    "    let avgBlockerDepth = blockerDepthSum / blockerCount;",
+    "    let penumbra = (receiverDepth - avgBlockerDepth) * slot.softness / max(avgBlockerDepth, 1e-4);",
+    "    let filterRadius = max(1.0, clamp(penumbra * 128.0, 1.0, slot.softness * 96.0));",
     "",
     "    var shadowVal: f32 = 0.0;",
-    "    let texDim = textureDimensions(shadowMap1);",
-    "    let texelSize = 1.0 / f32(texDim.x);",
-    "",
-    "    for (var i = 0u; i < 4u; i = i + 1u) {",
-    "        let sampleUV = clamp(projCoords.xy + poissonDisk[i] * texelSize, vec2f(0.0), vec2f(1.0));",
-    "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
-    "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap1, shadowSampler1, sampleUV, refDepth);",
+    "    for (var i = 0u; i < 8u; i = i + 1u) {",
+    "        let sampleUV = clamp(projCoords.xy + kPoissonDisk8[i] * texelSize * filterRadius, vec2f(0.0), vec2f(1.0));",
+    "        let refDepth = clamp(receiverDepth - slot.bias, 0.0, 1.0);",
+    "        shadowVal = shadowVal + textureSampleCompareLevel(tex, samp, sampleUV, layer, refDepth);",
     "    }",
-    "    return select(1.0, shadowVal / 4.0, inside);",
+    "    return shadowVal / 8.0;",
     "}",
     "",
     // GGX/Trowbridge-Reitz normal distribution function.
@@ -1787,6 +1852,11 @@
     // Accumulate direct lighting.
     "    var Lo = vec3f(0.0);",
     "",
+    // View-space positive depth of this fragment, used to pick a cascade in
+    // shadowCascadeIndex. Independent of light index, so it is computed once
+    // per fragment rather than once per shadow-casting light.
+    "    let shadowViewDepth = -(frame.viewMatrix * vec4f(in.worldPos, 1.0)).z;",
+    "",
     // arrayLength bounds the loop against the storage buffer the JS side sized
     // this frame. No compile-time light cap remains.
     "    let lightCount = min(frame.lightCount, arrayLength(&lights));",
@@ -1861,10 +1931,10 @@
     // Shadow attenuation for directional lights.
     "        var shadowAtten: f32 = 1.0;",
     "        if (material.receiveShadow != 0u && lightType == 1u) {",
-    "            if (shadow.hasShadow0 != 0u && i32(i) == shadow.shadowLightIndex0) {",
-    "                shadowAtten = shadowFactor0(in.worldPos, shadow.lightSpaceMatrix0, shadow.shadowBias0);",
-    "            } else if (shadow.hasShadow1 != 0u && i32(i) == shadow.shadowLightIndex1) {",
-    "                shadowAtten = shadowFactor1(in.worldPos, shadow.lightSpaceMatrix1, shadow.shadowBias1);",
+    "            if (shadow.slots[0].hasShadow != 0u && i32(i) == shadow.slots[0].lightIndex) {",
+    "                shadowAtten = shadowFactorCascade(shadowMap0, shadowSampler0, 0u, shadowViewDepth, in.worldPos);",
+    "            } else if (shadow.slots[1].hasShadow != 0u && i32(i) == shadow.slots[1].lightIndex) {",
+    "                shadowAtten = shadowFactorCascade(shadowMap1, shadowSampler1, 1u, shadowViewDepth, in.worldPos);",
     "            }",
     "        }",
     "",
@@ -3329,9 +3399,9 @@
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", viewDimension: "2d-array" } },
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth" } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "depth", viewDimension: "2d-array" } },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "comparison" } },
         { binding: 8, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
         { binding: 9, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
@@ -3883,13 +3953,74 @@
   // Shadow Resources
   // -----------------------------------------------------------------------
 
-  function wgpuCreateShadowMap(device, size) {
+  // Creates one shadow slot's depth-array texture: layerCount cascades,
+  // clamped to [1,4]. `view` is the whole-array view bound at group 0
+  // binding 4/6 for texture_depth_2d_array sampling; `layerViews[i]` is a
+  // single-layer "2d" view for the render pass that fills cascade i. A
+  // single-cascade light gets a 1-layer array, matching the dummy texture's
+  // shape, so both draw through the same texture_depth_2d_array binding.
+  function wgpuCreateShadowMap(device, size, layerCount) {
+    var n = Math.max(1, Math.min(4, layerCount | 0) || 1);
     var texture = device.createTexture({
-      size: [size, size, 1],
+      size: [size, size, n],
       format: "depth24plus",
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
-    return { texture: texture, view: texture.createView(), size: size };
+    var layerViews = [];
+    for (var i = 0; i < n; i++) {
+      layerViews.push(texture.createView({ dimension: "2d", baseArrayLayer: i, arrayLayerCount: 1 }));
+    }
+    var arrayView = texture.createView({ dimension: "2d-array", baseArrayLayer: 0, arrayLayerCount: n });
+    return { texture: texture, view: arrayView, layerViews: layerViews, size: size, layerCount: n };
+  }
+
+  // Fits one directional light's per-cascade light-space matrices, porting
+  // WebGL2's computeShadowSlotCascadeMatrices (16-scene-webgl.js) onto
+  // WebGPU's slot shape: this returns plain arrays instead of mutating a
+  // slot.cascades record, but the math is identical -- both backends run the
+  // same PSSM split (sceneShadowComputeCascadeSplits) and the same tight
+  // ortho fit (sceneShadowFrustumSubCorners, sceneShadowFitLightSpaceOrtho),
+  // moved to 16c-scene-shared-pbr.js for exactly this reuse.
+  //
+  // numCascades <= 1 falls back to the legacy whole-scene ortho fit
+  // (sceneShadowLightSpaceMatrix), matching the pre-CSM single-map output on
+  // both backends.
+  //
+  // Known deviation from WebGL2: light.shadowCascadeLambda is read here the
+  // same way WebGL2 reads it, but LightIR never emits that key on the wire
+  // (see the cluster-B shadow-parity spec's open question Q1), so it always
+  // resolves to the 0.5 default on both backends today. This mirrors the
+  // existing WebGL2 limitation rather than introducing a new one.
+  function wgpuComputeShadowCascadeMatrices(light, numCascades, shadowMapSize, sceneBounds, viewMatrix, fovDeg, aspect, camNear, camFar) {
+    if (numCascades <= 1) {
+      return { matrices: [sceneShadowLightSpaceMatrix(light, sceneBounds)], splits: [camFar || 100] };
+    }
+
+    var lambda = sceneNumber(light.shadowCascadeLambda, 0.5);
+    var splits = sceneShadowComputeCascadeSplits(camNear || 0.1, camFar || 100, numCascades, lambda);
+
+    var dx = sceneNumber(light.directionX, 0);
+    var dy = sceneNumber(light.directionY, -1);
+    var dz = sceneNumber(light.directionZ, 0);
+    var len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len < 0.0001) { dx = 0; dy = -1; dz = 0; len = 1; }
+    dx /= len; dy /= len; dz /= len;
+
+    var ex = (sceneBounds.maxX - sceneBounds.minX) * 0.5;
+    var ey = (sceneBounds.maxY - sceneBounds.minY) * 0.5;
+    var ez = (sceneBounds.maxZ - sceneBounds.minZ) * 0.5;
+    var sceneRadius = Math.sqrt(ex * ex + ey * ey + ez * ez);
+
+    var matrices = [];
+    var prevSplit = camNear || 0.1;
+    for (var i = 0; i < numCascades; i++) {
+      var splitFar = splits[i];
+      var corners = sceneShadowFrustumSubCorners(viewMatrix, fovDeg, aspect, prevSplit, splitFar);
+      var matrix = sceneShadowFitLightSpaceOrtho([dx, dy, dz], corners, sceneRadius, shadowMapSize);
+      matrices.push(matrix);
+      prevSplit = splitFar;
+    }
+    return { matrices: matrices, splits: splits };
   }
 
   // -----------------------------------------------------------------------
@@ -6770,9 +6901,18 @@
       return { available: active, active: active, pending: pending, failed: gpuTimingFailed, source: "gpu-timestamp" };
     }
 
-    // Shadow pass buffer.
+    // Shadow pass buffers. Cascades need one independent uniform buffer per
+    // depth pass, not one shared buffer: device.queue.writeBuffer() calls
+    // execute in the order they are enqueued relative to device.queue.submit,
+    // so writing the SAME buffer once per cascade before the single
+    // end-of-frame submit would leave every cascade's depth pass reading the
+    // LAST cascade's matrix (the writes all resolve before the one command
+    // buffer that reads them runs). SCENE_WEBGPU_SHADOW_PASS_BUFFER_COUNT (2
+    // directional slots x 4 cascades) sizes a pool of small buffers so every
+    // pass in a frame writes and reads its own buffer object.
+    var SCENE_WEBGPU_SHADOW_PASS_BUFFER_COUNT = 8;
     var shadowPositionBuffer = null;
-    var shadowFrameBuffer = null;
+    var shadowPassUniformBuffers = null;
 
     // Depth texture for main render pass.
     var mainDepthTexture = null;
@@ -6789,6 +6929,7 @@
     // 1x1 dummy depth texture for shadow map bind group when no shadows.
     var dummyShadowTex = null;
     var dummyShadowView = null;
+    var dummyShadowArrayView = null;
 
     // Default sampler for materials.
     var linearSampler = null;
@@ -6914,7 +7055,9 @@
     var _fogUniformF   = new Float32Array(_fogUniformBuf);
     var _fogUniformU   = new Uint32Array(_fogUniformBuf);
 
-    var _shadowUniformBuf = new ArrayBuffer(160);
+    // 608 bytes: array<ShadowSlot, 2>, ShadowSlot = 304 bytes (see the
+    // shadowUniformBuffer creation comment for the field-by-field layout).
+    var _shadowUniformBuf = new ArrayBuffer(608);
     var _shadowUniformF   = new Float32Array(_shadowUniformBuf);
     var _shadowUniformU   = new Uint32Array(_shadowUniformBuf);
     var _shadowUniformI   = new Int32Array(_shadowUniformBuf);
@@ -7494,8 +7637,15 @@
         });
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        // ShadowUniforms: array<ShadowSlot, 2>. Each ShadowSlot is
+        // array<mat4x4f,4> (256B) + cascadeSplits vec4f (16B) + cascadeCount/
+        // hasShadow/lightIndex/bias/softness + 3 pad floats (32B) = 304B, so
+        // two slots is 608B. Well under the 64 KiB uniform limit.
+        shadowUniformBuffer = device.createBuffer({ size: 608, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        shadowPassUniformBuffers = [];
+        for (var spi = 0; spi < SCENE_WEBGPU_SHADOW_PASS_BUFFER_COUNT; spi++) {
+          shadowPassUniformBuffers.push(device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
+        }
 
         // Create samplers.
         linearSampler = device.createSampler({
@@ -7518,13 +7668,19 @@
           minFilter: "linear",
         });
 
-        // Create 1x1 dummy shadow depth texture.
+        // Create a 1x1, 1-layer dummy shadow depth array texture: binding 4/6
+        // now declare viewDimension "2d-array", so a missing slot must bind
+        // an array view too. dummyShadowArrayView is the "2d-array" view
+        // texture_depth_2d_array reads; dummyShadowView keeps the default
+        // "2d" dimension a render-pass attachment needs for the clear pass
+        // below (a 1-layer texture's default view dimension is already "2d").
         dummyShadowTex = device.createTexture({
           size: [1, 1, 1],
           format: "depth24plus",
           usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
         dummyShadowView = dummyShadowTex.createView();
+        dummyShadowArrayView = dummyShadowTex.createView({ dimension: "2d-array", baseArrayLayer: 0, arrayLayerCount: 1 });
 
         // Clear the dummy shadow texture to depth 1.0.
         var initEncoder = device.createCommandEncoder();
@@ -13706,43 +13862,45 @@
       device.queue.writeBuffer(envUniformBuffer, 0, data);
     }
 
-    function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
-      var lightArray = Array.isArray(lights) ? lights : [];
-      // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + pad(8) = 160. Round up to 256.
+    // ShadowUniforms: array<ShadowSlot, 2>. Each ShadowSlot is 76 words (304
+    // bytes): lightSpaceMatrices (64 words), cascadeSplits (4 words),
+    // cascadeCount, hasShadow, lightIndex, bias, softness, then 3 pad words.
+    // slotData[s] is either null (no shadow this slot) or
+    // { matrices: [mat0..mat3] (Float32Array(16) each, cascade 0 duplicated
+    // into unused entries), splits: [s0..s3], cascadeCount, lightIndex, bias,
+    // softness }, exactly what the render loop's shadow pass builds.
+    var SCENE_WEBGPU_SHADOW_SLOT_WORDS = 76;
+    function uploadShadowUniforms(slotData) {
       var f = _shadowUniformF;
       var u = _shadowUniformU;
       var i = _shadowUniformI;
 
-      if (shadowLightMatrices[0]) {
-        f.set(shadowLightMatrices[0], 0);   // lightSpaceMatrix0 @ offset 0
-      } else {
-        f.fill(0, 0, 16);                   // zero out slot 0 (no stale matrix)
+      for (var s = 0; s < 2; s++) {
+        var base = s * SCENE_WEBGPU_SHADOW_SLOT_WORDS;
+        var data = slotData[s];
+        if (data) {
+          for (var m = 0; m < 4; m++) {
+            f.set(data.matrices[m], base + m * 16);
+          }
+          f[base + 64] = data.splits[0];
+          f[base + 65] = data.splits[1];
+          f[base + 66] = data.splits[2];
+          f[base + 67] = data.splits[3];
+          u[base + 68] = data.cascadeCount; // cascadeCount
+          u[base + 69] = 1;                 // hasShadow
+          i[base + 70] = data.lightIndex;   // lightIndex
+          f[base + 71] = data.bias;         // bias
+          f[base + 72] = data.softness;     // softness
+        } else {
+          f.fill(0, base, base + 68);       // matrices + splits, zeroed (no stale data)
+          u[base + 68] = 0;                 // cascadeCount
+          u[base + 69] = 0;                 // hasShadow = 0
+          i[base + 70] = -1;                // lightIndex
+          f[base + 71] = 0.005;             // bias (inert while hasShadow == 0)
+          f[base + 72] = 0;                 // softness
+        }
+        f[base + 73] = 0; f[base + 74] = 0; f[base + 75] = 0; // pad
       }
-      if (shadowLightMatrices[1]) {
-        f.set(shadowLightMatrices[1], 16);  // lightSpaceMatrix1 @ offset 64
-      } else {
-        f.fill(0, 16, 32);                  // zero out slot 1 (no stale matrix)
-      }
-
-      u[32] = shadowLightMatrices[0] ? 1 : 0;  // hasShadow0
-      u[33] = shadowLightMatrices[1] ? 1 : 0;  // hasShadow1
-
-      var bias0 = 0.005;
-      if (shadowLightIndices[0] >= 0 && lightArray[shadowLightIndices[0]]) {
-        bias0 = sceneNumber(lightArray[shadowLightIndices[0]].shadowBias, 0.005);
-      }
-      f[34] = bias0;  // shadowBias0
-
-      var bias1 = 0.005;
-      if (shadowLightIndices[1] >= 0 && lightArray[shadowLightIndices[1]]) {
-        bias1 = sceneNumber(lightArray[shadowLightIndices[1]].shadowBias, 0.005);
-      }
-      f[35] = bias1;  // shadowBias1
-
-      i[36] = shadowLightIndices[0];  // shadowLightIndex0
-      i[37] = shadowLightIndices[1];  // shadowLightIndex1
-      u[38] = 0; // pad
-      u[39] = 0; // pad
 
       device.queue.writeBuffer(shadowUniformBuffer, 0, f);
     }
@@ -13878,8 +14036,8 @@
     var _frameBindGroupCache = null;
 
     function createFrameBindGroup(shadowView0, shadowView1) {
-      var view0 = shadowView0 || dummyShadowView;
-      var view1 = shadowView1 || dummyShadowView;
+      var view0 = shadowView0 || dummyShadowArrayView;
+      var view1 = shadowView1 || dummyShadowArrayView;
       var iblIrradianceView = iblResources.active && iblResources.irradiance ? iblResources.irradiance.view : placeholderCubeView;
       var iblRadianceView = iblResources.active && iblResources.radiance ? iblResources.radiance.view : placeholderCubeView;
       var iblBRDFView = iblResources.active && iblResources.brdfLUT ? iblResources.brdfLUT.view : placeholderView;
@@ -13932,9 +14090,9 @@
           { binding: 1, resource: { buffer: lightStorageBuffer } },
           { binding: 2, resource: { buffer: fogUniformBuffer } },
           { binding: 3, resource: { buffer: envUniformBuffer } },
-          { binding: 4, resource: shadowView0 || dummyShadowView },
+          { binding: 4, resource: shadowView0 || dummyShadowArrayView },
           { binding: 5, resource: comparisonSampler },
-          { binding: 6, resource: shadowView1 || dummyShadowView },
+          { binding: 6, resource: shadowView1 || dummyShadowArrayView },
           { binding: 7, resource: comparisonSampler },
           { binding: 8, resource: { buffer: shadowUniformBuffer } },
           { binding: 9, resource: iblIrradianceView || placeholderCubeView },
@@ -14823,24 +14981,35 @@
     // Shadow pass
     // -----------------------------------------------------------------------
 
-    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
+    // cascadeIndex selects shadowResource.layerViews[cascadeIndex] as the
+    // render target. passBufferIndex selects a dedicated small uniform
+    // buffer from shadowPassUniformBuffers, so a light with multiple
+    // cascades (or a second shadow-casting light) never has one pass's
+    // writeBuffer overwrite another pass's matrix before the frame's single
+    // submit runs them (see the SCENE_WEBGPU_SHADOW_PASS_BUFFER_COUNT
+    // comment at this closure's shadow-buffer declarations).
+    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers, cascadeIndex, passBufferIndex) {
       var sp = getShadowPipeline();
       if (!sp) return;
 
-      // Upload light space matrix.
-      device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix);
+      var passBuffer = shadowPassUniformBuffers[passBufferIndex % SCENE_WEBGPU_SHADOW_PASS_BUFFER_COUNT];
+      device.queue.writeBuffer(passBuffer, 0, lightMatrix);
 
       var shadowBG = device.createBindGroup({
         layout: shadowBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: shadowFrameBuffer } },
+          { binding: 0, resource: { buffer: passBuffer } },
         ],
       });
+
+      var targetView = shadowResource.layerViews
+        ? shadowResource.layerViews[cascadeIndex || 0]
+        : shadowResource.view;
 
       var shadowPassDescriptor = {
         colorAttachments: [],
         depthStencilAttachment: {
-          view: shadowResource.view,
+          view: targetView,
           depthLoadOp: "clear",
           depthClearValue: 1.0,
           depthStoreOp: "store",
@@ -17240,9 +17409,9 @@
       uploadEnvUniforms(bundle.environment);
 
       // --- Shadow Pass ---
-      var shadowLightMatrices = [null, null];
-      var shadowLightIndices = [-1, -1];
+      var shadowSlotUniformData = [null, null];
       var activeShadowCount = 0;
+      var shadowPassBufferIndex = 0;
 
       var encoder = device.createCommandEncoder({ label: "gosx-frame" });
       gpuTimingFrameSeq += 1;
@@ -17294,6 +17463,7 @@
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
       var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
+      var shadowAspect = Math.max(0.0001, scaledW / Math.max(1, scaledH));
 
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
@@ -17304,24 +17474,50 @@
         if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
 
         var slot = activeShadowCount;
+        var numCascades = Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1));
         var shadowSize = sceneNumber(light.shadowSize, 1024);
         shadowSize = Math.max(256, Math.min(4096, shadowSize));
         shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
 
-        if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
+        if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize || shadowSlots[slot].layerCount !== numCascades) {
           if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();
-          shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
+          shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize, numCascades);
         }
 
-        var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
-        shadowLightMatrices[slot] = lightMatrix;
-        shadowLightIndices[slot] = li;
+        var cascadeFit = wgpuComputeShadowCascadeMatrices(
+          light, numCascades, shadowSize, sceneBounds,
+          scratchViewMatrix, cam.fov, shadowAspect, cam.near, cam.far
+        );
 
-        renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot], pbrSceneBuffers);
+        for (var ci = 0; ci < numCascades; ci++) {
+          renderShadowPass(encoder, cascadeFit.matrices[ci], bundle, shadowSlots[slot], pbrSceneBuffers, ci, shadowPassBufferIndex);
+          shadowPassBufferIndex++;
+        }
+
+        // Pack to 4 entries, duplicating cascade 0 into unused slots -- the
+        // same safe-fallback packing WebGL2's uniform upload uses, so a
+        // dynamic cascade-index read (which the WGSL side never issues out
+        // of range, but which the buffer contents must still make safe)
+        // never lands on uninitialized data.
+        var packedMatrices = [];
+        var packedSplits = [0, 0, 0, 0];
+        for (var pi = 0; pi < 4; pi++) {
+          packedMatrices.push(cascadeFit.matrices[pi] || cascadeFit.matrices[0]);
+          packedSplits[pi] = cascadeFit.splits[pi] !== undefined ? cascadeFit.splits[pi] : cascadeFit.splits[numCascades - 1];
+        }
+        shadowSlotUniformData[slot] = {
+          matrices: packedMatrices,
+          splits: packedSplits,
+          cascadeCount: numCascades,
+          lightIndex: li,
+          bias: sceneNumber(light.shadowBias, 0.005),
+          softness: Math.max(0, sceneNumber(light.shadowSoftness, 0)),
+        };
+
         activeShadowCount++;
       }
 
-      uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights);
+      uploadShadowUniforms(shadowSlotUniformData);
 
       // Create frame bind group.
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;
@@ -17858,8 +18054,12 @@
       tangentBuffer = null;
       destroyRendererGPUResource(shadowPositionBuffer);
       shadowPositionBuffer = null;
-      destroyRendererGPUResource(shadowFrameBuffer);
-      shadowFrameBuffer = null;
+      if (Array.isArray(shadowPassUniformBuffers)) {
+        for (var spdi = 0; spdi < shadowPassUniformBuffers.length; spdi++) {
+          destroyRendererGPUResource(shadowPassUniformBuffers[spdi]);
+        }
+      }
+      shadowPassUniformBuffers = null;
       pointsEntryGPUBuffers.forEach(function(buffer) {
         destroyRendererGPUResource(buffer);
       });
@@ -17895,6 +18095,7 @@
       destroyRendererGPUResource(dummyShadowTex);
       dummyShadowTex = null;
       dummyShadowView = null;
+      dummyShadowArrayView = null;
       destroyRendererGPUResource(placeholderTex);
       placeholderTex = null;
       placeholderView = null;

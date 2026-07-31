@@ -278,6 +278,63 @@ test("gpu pass timing: a second shadow pass is not stamped over the first", asyn
   assert.equal(shadowStamps.length, 1, "exactly one shadow pass may be stamped per frame");
 });
 
+// -------------------------------------------------------------------------
+// Cluster-B shadow parity: WebGPU cascades
+// -------------------------------------------------------------------------
+
+test("shadow cascades: a 3-cascade directional light renders through the fake device with validated bindings", async () => {
+  const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    fakeDeviceOptions: { validateBindings: true },
+  });
+  const api = harness.env.context.__gosx_scene3d_api;
+  harness.canvas.width = 64;
+  harness.canvas.height = 64;
+
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ id: "m", color: "#8de1ff" }],
+      lights: [
+        { id: "sun", kind: "directional", directionX: 0, directionY: -1, directionZ: -0.2, castShadow: true, shadowCascades: 3 },
+      ],
+      objects: bundleBoxes(2, 1),
+    },
+  }, { tier: "full" });
+  const bundle = api.createSceneRenderBundle(
+    64, 64, "#000000",
+    { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
+    api.sceneStateObjectsWithMaterials(state), [], [], [], api.sceneStateLights(state), {}, 0, [], [], [], [], [], 0, false,
+  );
+
+  // Must not throw: the fake device's structural validator (validateBindings)
+  // checks every createBindGroupLayout/createBindGroup/createRenderPipeline
+  // call against the WGSL @group/@binding declarations it parses out of every
+  // createShaderModule call, so a mismatch between the "2d-array" viewDimension
+  // this cluster added to the frame bind group layout and the
+  // texture_depth_2d_array binding declarations in WGSL_PBR_FRAGMENT would
+  // fail here.
+  //
+  // Count passes AFTER this baseline: renderer factory setup already recorded
+  // one depth-only pass (the 1x1 dummy shadow texture's init clear), which
+  // this frame's cascade passes must not be confused with.
+  const passesBefore = harness.fake.state.renderPasses.length;
+  assert.doesNotThrow(() => {
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 0, active: true });
+  });
+
+  // Three cascade depth passes recorded (one per layer), plus the main pass.
+  const depthPasses = harness.fake.state.renderPasses.slice(passesBefore).filter(
+    (p) => p.descriptor && p.descriptor.depthStencilAttachment && p.descriptor.colorAttachments && p.descriptor.colorAttachments.length === 0,
+  );
+  assert.equal(depthPasses.length, 3, "one shadow depth pass per cascade");
+
+  // A second render call reuses the same texture (same cascade count and
+  // size), so the shadow slot must not be recreated or grow unbounded.
+  assert.doesNotThrow(() => {
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: 16, active: true });
+  });
+});
+
 test("gpu pass timing: the resolved stamps become per-pass milliseconds", async () => {
   const harness = await createBoardWebGPUHarness({
     fresh: true,
@@ -1062,7 +1119,7 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
   // Use the call site, not the function definition — the definition appears first
   // in the file but runs only when invoked.  The call passes `shadowSlots[slot]`
   // which is unique to the call site; the definition uses parameter names.
-  const shadowPos = webgpu.indexOf("renderShadowPass(encoder, lightMatrix, bundle, shadowSlots");
+  const shadowPos = webgpu.indexOf("renderShadowPass(encoder, cascadeFit.matrices[ci], bundle, shadowSlots");
   // The main color pass is identified by `var mainPass = encoder.beginRenderPass(`
   // to avoid matching earlier shadow/utility beginRenderPass calls.
   const mainPassPos = webgpu.indexOf("var mainPass = encoder.beginRenderPass(");

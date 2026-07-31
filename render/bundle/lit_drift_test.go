@@ -389,7 +389,12 @@ var litSharedTerms = []sharedTerm{
 		id:     "shadow-follows-one-directional-light",
 		effect: "The shadow map lands on a light it was never fitted to, or on every light at once.",
 		goPat:  `if \(kind == 1u && i32\(i\) == shadowLightIndex\)`,
-		jsPat:  `if \(shadow\.hasShadow0 != 0u && i32\(i\) == shadow\.shadowLightIndex0\)`,
+		// shadow.hasShadow0/shadow.shadowLightIndex0 moved into the
+		// ShadowSlot array (shadow.slots[0].hasShadow /
+		// shadow.slots[0].lightIndex) when cluster-B shadow-parity PR3 gave
+		// each slot per-cascade matrices and splits; slot 0 is still the
+		// same first shadow-casting light this term pins.
+		jsPat: `if \(shadow\.slots\[0\]\.hasShadow != 0u && i32\(i\) == shadow\.slots\[0\]\.lightIndex\)`,
 	},
 }
 

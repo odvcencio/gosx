@@ -485,7 +485,11 @@ const budgets = [
   // share the WebGL2 PSSM fit; the base chunk carries them now, plus the new
   // window.__gosx_scene3d_api bridge entries. Exact measurement:
   // 1_484_183 / 401_848 / 323_078.
-  { file: "bootstrap.js", raw: 1_484_183, gzip: 401_848, brotli: 323_078 },
+  // PR3 gives WebGPU cascaded shadows: a texture_depth_2d_array shadow slot,
+  // ShadowUniforms v2 (per-cascade matrices/splits), the shared PSSM fit
+  // consumed from 16c, and softness-gated PCF/PCSS filtering. Exact
+  // measurement: 1_486_947 / 403_129 / 323_393.
+  { file: "bootstrap.js", raw: 1_486_947, gzip: 403_129, brotli: 323_393 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -999,7 +1003,11 @@ const budgets = [
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
   // WebGPU point-billboard viewport guards measure 382_077 / 92_098 / 77_082.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_186, gzip: 92_152, brotli: 77_247 },
+  // Cluster-B shadow-parity PR3 (WebGPU cascaded shadows: texture_depth_2d_array
+  // slots, ShadowUniforms v2, shadowFactorCascade PCF/PCSS, and the shared
+  // PSSM cascade-fit orchestration) lands entirely in this chunk. Exact
+  // measurement: 385_061 / 93_444 / 78_184.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 385_061, gzip: 93_444, brotli: 78_184 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1300,9 +1308,13 @@ const routeBudgets = [
     // moved CSM helpers and their window.__gosx_scene3d_api bridge entries to
     // the base scene3d chunk, which this route carries. Exact measurement:
     // 1_176_724 / 314_127 / 265_265.
-    raw: 1_176_724,
-    gzip: 314_127,
-    brotli: 265_265,
+    // PR3's WebGPU cascade implementation (bindings, ShadowUniforms v2, the
+    // cascade-fit orchestration, and the shadowFactorCascade WGSL) lands in
+    // this route's WebGPU chunk. Exact measurement: 1_179_599 / 315_419 /
+    // 266_202.
+    raw: 1_179_599,
+    gzip: 315_419,
+    brotli: 266_202,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1448,9 +1460,11 @@ const routeBudgets = [
     // moved CSM helpers, their window.__gosx_scene3d_api bridge, and the
     // small WebGL-chunk bridge lines; this route loads both backends so it
     // carries the full cost. Exact measurement: 1_386_578 / 371_374 / 314_008.
-    raw: 1_386_578,
-    gzip: 371_374,
-    brotli: 314_008,
+    // PR3's WebGPU cascade implementation lands in the WebGPU chunk this
+    // route also carries. Exact measurement: 1_389_453 / 372_666 / 314_945.
+    raw: 1_389_453,
+    gzip: 372_666,
+    brotli: 314_945,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1521,9 +1535,11 @@ const routeBudgets = [
     // moved CSM helpers and their window.__gosx_scene3d_api bridge entries to
     // the base scene3d chunk, which this route carries. Exact measurement:
     // 1_030_446 / 271_840 / 227_666.
-    raw: 1_030_446,
-    gzip: 271_840,
-    brotli: 227_666,
+    // PR3's WebGPU cascade implementation lands in the WebGPU chunk this
+    // route also carries. Exact measurement: 1_033_321 / 273_132 / 228_603.
+    raw: 1_033_321,
+    gzip: 273_132,
+    brotli: 228_603,
   },
 
 ];

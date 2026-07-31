@@ -12,6 +12,6 @@
   "rect-area-light": true,
   "rect-area-specular": false,
   "light-probe-sh": false,
-  "shadow-cascades": false,
+  "shadow-cascades": true,
   "point-light-shadow": false
 }

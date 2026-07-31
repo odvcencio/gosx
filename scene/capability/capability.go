@@ -332,18 +332,21 @@ var Matrix = map[Feature]map[Backend]bool{
 	// shadow-cascades: a directional shadow split into multiple cascades
 	// (parallel-split shadow maps) instead of one whole-scene ortho fit.
 	//
-	// WebGL2 already carries up to four cascades per slot: the PSSM split
-	// scheme, the per-cascade sub-frustum fit and texel-snapped ortho boxes
+	// WebGL2 carries up to four cascades per slot: the PSSM split scheme,
+	// the per-cascade sub-frustum fit and texel-snapped ortho boxes
 	// (u_shadowCascadeSplits0/1, shadowFactorSlot0/1 in 16-scene-webgl.js).
-	// WebGPU renders one texture_depth_2d shadow map per slot with a single
-	// whole-scene ortho fit and no per-cascade split at all — the cell reads
-	// false, honestly, at the moment this row lands. A cascaded scene then
-	// degrades WebGPU on the wire, before the implementation PR closes the
-	// gap by giving WebGPU a texture_depth_2d_array slot and the same PSSM
-	// fit math (moved to 16c-scene-shared-pbr.js so both backends share one
-	// implementation). See shadowparity_test.go for the source corroboration
-	// of both halves, and flip this cell in the same commit as that PR.
-	FeatureShadowCascades: {BackendWebGPU: false, BackendWebGL: true},
+	//
+	// WebGPU now carries the same fit through the same shared helpers,
+	// moved to 16c-scene-shared-pbr.js so both backends run one PSSM
+	// implementation (wgpuComputeShadowCascadeMatrices in
+	// 16a-scene-webgpu.js calls them directly). Each directional shadow
+	// slot is a texture_depth_2d_array with up to four layers, one render
+	// pass per cascade; the fragment shader selects a cascade by comparing
+	// view-space depth against the same three split comparisons WebGL2
+	// uses (shadowCascadeIndex), then filters with the same softness-gated
+	// PCF/PCSS shadowFactorCascade uses. See shadowparity_test.go for the
+	// source corroboration of both halves.
+	FeatureShadowCascades: {BackendWebGPU: true, BackendWebGL: true},
 	// point-light-shadow: a shadow cast by a point light (omnidirectional,
 	// six-face cube depth).
 	//

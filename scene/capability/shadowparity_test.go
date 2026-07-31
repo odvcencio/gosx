@@ -10,24 +10,25 @@ import (
 // shadow passes. readRenderer, webgpuRendererPath and webglRendererPath come
 // from lights_test.go.
 //
-// Both rows land with today's truth, ahead of the implementation PRs that
-// flip the WebGPU cells (PR3 for shadow-cascades, PR5 for point-light-shadow).
-// evidenceFor reads the renderer FIRST and demands the cell match, in
-// whichever direction, so a stale cell fails this test instead of a manifest
-// drift check that cannot see it.
+// Both rows landed with the pre-implementation truth (both cells false on
+// WebGPU); shadow-cascades flipped to true in the same commit as the WebGPU
+// cascade implementation (PR3). point-light-shadow still awaits its
+// implementation PR (PR5). evidenceFor reads the renderer FIRST and demands
+// the cell match, in whichever direction, so a stale cell fails this test
+// instead of a manifest drift check that cannot see it.
 
 // TestShadowCascadesCellsMatchRendererSource corroborates BOTH halves of the
 // shadow-cascades row.
 //
-// WebGL2 already carries the parallel-split shadow map (PSSM) fit: the
-// per-cascade splits and the per-slot cascade-selection branch.
+// WebGL2 carries the parallel-split shadow map (PSSM) fit: the per-cascade
+// splits and the per-slot cascade-selection branch.
 //
-// WebGPU renders one texture_depth_2d shadow map per slot with a single
-// whole-scene ortho fit and no cascades, so the cell must read false until the
-// renderer gains a texture_depth_2d_array slot. This test fails the day that
-// symbol appears with the cell still false, which is exactly the flip signal:
-// move the cell to true, update 16a-scene-webgpu.capabilities.json in the same
-// commit, and add the positive WGSL string markers below.
+// WebGPU now carries the same fit: a texture_depth_2d_array shadow slot (up
+// to four layers), one render pass per cascade, and a fragment-side cascade
+// selection reusing the shared PSSM math from 16c-scene-shared-pbr.js. This
+// test fails the day that symbol disappears with the cell still true, which
+// is the un-flip signal: move the cell back to false and update
+// 16a-scene-webgpu.capabilities.json in the same commit.
 func TestShadowCascadesCellsMatchRendererSource(t *testing.T) {
 	webgl := readRenderer(t, webglRendererPath)
 	evidenceFor(t, FeatureShadowCascades, BackendWebGL).
@@ -38,9 +39,8 @@ func TestShadowCascadesCellsMatchRendererSource(t *testing.T) {
 	webgpu := readRenderer(t, webgpuRendererPath)
 	evidenceFor(t, FeatureShadowCascades, BackendWebGPU).
 		needs(webgpuRendererPath, webgpu, "texture_depth_2d_array").
-		assertAgrees("WebGPU renders one texture_depth_2d shadow map per slot with a single whole-scene " +
-			"ortho fit and no per-cascade split; the cell flips to true only once the renderer gains a " +
-			"texture_depth_2d_array slot and the shared PSSM fit from 16c-scene-shared-pbr.js")
+		assertAgrees("WebGPU renders a texture_depth_2d_array shadow slot with one render pass per " +
+			"cascade and the shared PSSM fit from 16c-scene-shared-pbr.js, so the cell reads true")
 }
 
 // TestPointLightShadowIsWebGPUOnlyAfterPR5 corroborates BOTH halves of the
@@ -89,7 +89,7 @@ func TestPointLightShadowIsWebGPUOnlyAfterPR5(t *testing.T) {
 func TestShadowFeaturesDegradeRatherThanExclude(t *testing.T) {
 	pol := DefaultPolicy()
 	if pol.Required[FeatureShadowCascades] {
-		t.Fatal("shadow-cascades must not be required: it would exclude WebGPU while its cell is false")
+		t.Fatal("shadow-cascades must not be required: a scene that loses cascades still renders the same geometry, a degraded image rather than a different scene")
 	}
 	if pol.Required[FeaturePointLightShadow] {
 		t.Fatal("point-light-shadow must not be required: it would exclude WebGL2 permanently")
@@ -108,7 +108,9 @@ func TestShadowFeaturesDegradeRatherThanExclude(t *testing.T) {
 		t.Errorf("WebGL2 must stay capable and merely degraded; Capable=%v", caps.Capable)
 	}
 
-	wantWebGPU := map[Feature]bool{FeatureShadowCascades: true, FeaturePointLightShadow: true}
+	// shadow-cascades is true on both backends after PR3, so it degrades
+	// neither. point-light-shadow is false on both, so it degrades both.
+	wantWebGPU := map[Feature]bool{FeaturePointLightShadow: true}
 	wantWebGL := map[Feature]bool{FeaturePointLightShadow: true}
 	for _, f := range caps.Degraded[BackendWebGPU] {
 		if !wantWebGPU[f] {

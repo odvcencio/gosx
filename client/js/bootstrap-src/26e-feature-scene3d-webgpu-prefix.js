@@ -80,6 +80,13 @@
   var scenePBRViewMatrix = sceneApi.scenePBRViewMatrix;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
+  // Cascaded shadow map fit helpers (16c-scene-shared-pbr.js). 16a's
+  // wgpuComputeShadowCascadeMatrices calls these directly to reuse the exact
+  // WebGL2 PSSM split and tight ortho fit, so WebGPU cascades are parity by
+  // construction with the WebGL2 renderer.
+  var sceneShadowComputeCascadeSplits = sceneApi.sceneShadowComputeCascadeSplits;
+  var sceneShadowFrustumSubCorners = sceneApi.sceneShadowFrustumSubCorners;
+  var sceneShadowFitLightSpaceOrtho = sceneApi.sceneShadowFitLightSpaceOrtho;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
