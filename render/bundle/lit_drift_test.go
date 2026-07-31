@@ -34,6 +34,26 @@ import (
 // material into pixels. A viewer who loads the same scene under server side
 // rendering and under the browser must see the same surface. Each pinned row
 // names the term, the value, and the visible effect of a change.
+//
+// RECORDED RESIDUE: fog does not reach every native surface.
+//
+// litWGSL's exponential-squared fog term (pinned above by the
+// fog-distance/fog-is-exponential-squared/fog-mixes-toward-fog-colour rows and
+// by TestFogFormulaMatchesAllThreeRenderers) covers the lit mesh path only.
+// Two surfaces stay out of scope:
+//
+//   - render/bundle/unlit.go's fs_main never reads fogParams. An unlit mesh
+//     therefore never fades into distance fog on any backend that draws it
+//     through this path.
+//   - render/bundle has no points renderer at all, so there is no native copy
+//     of the browser WebGPU points pipeline's fog term
+//     (16a-scene-webgpu.js:2313, gated by points.params.y) to bring in step.
+//     A server side render or a poster of a points layer carries no fog even
+//     when the mesh in the same scene does.
+//
+// This is not a silent gap: it is a deliberately scoped-out decision recorded
+// here in writing (native fog landed for the lit mesh path only), rather than
+// only in a PR description that nobody re-reads at the next fog change.
 
 // litJSFragmentName is the browser copy of the lit fragment shader.
 const litJSFragmentName = "WGSL_PBR_FRAGMENT"
@@ -414,6 +434,24 @@ var litSharedTerms = []sharedTerm{
 		effect: "The shadow map lands on a light it was never fitted to, or on every light at once.",
 		goPat:  `if \(kind == 1u && i32\(i\) == shadowLightIndex\)`,
 		jsPat:  `if \(shadow\.hasShadow0 != 0u && i32\(i\) == shadow\.shadowLightIndex0\)`,
+	},
+	{
+		id:     "fog-distance-is-world-space-to-camera",
+		effect: "Fog thickens or thins by a different amount per unit of camera movement on the two backends.",
+		goPat:  `let fogDist = length\(in\.worldPos - [A-Za-z.]+\);`,
+		jsPat:  `let fogDist = length\(in\.worldPos - [A-Za-z.]+\);`,
+	},
+	{
+		id:     "fog-is-exponential-squared",
+		effect: "Fog grows linearly with distance on one backend and quadratically on the other, so the two disagree on how quickly a scene fades.",
+		goPat:  `let fogFactor = exp\(-[A-Za-z.]+ \* [A-Za-z.]+ \* fogDist \* fogDist\);`,
+		jsPat:  `let fogFactor = exp\(-[A-Za-z.]+ \* [A-Za-z.]+ \* fogDist \* fogDist\);`,
+	},
+	{
+		id:     "fog-mixes-toward-fog-colour-clamped",
+		effect: "A fogged surface overshoots past the fog colour, or never reaches it, on one backend only.",
+		goPat:  `color = mix\([A-Za-z.]+, color, clamp\(fogFactor, 0\.0, 1\.0\)\);`,
+		jsPat:  `color = mix\([A-Za-z.]+, color, clamp\(fogFactor, 0\.0, 1\.0\)\);`,
 	},
 }
 
@@ -907,6 +945,51 @@ func TestLitWGSLKnownDivergenceFromJSWebGPU(t *testing.T) {
 	goSrc, jsSrc := litShaderCopies(t)
 	for _, problem := range checkDivergentTerms(litDivergentTerms, goLitWhere, goSrc, jsLitWhere, jsSrc) {
 		t.Error(problem)
+	}
+}
+
+// TestFogFormulaMatchesAllThreeRenderers pins the exponential-squared fog
+// expression across the native shader and both browser renderers, not just
+// the native-versus-WebGPU pair litSharedTerms compares. WebGL2 spells the
+// same formula in GLSL rather than WGSL, so it needs its own reader
+// (readJSWebGLRenderer) instead of the WGSL-only litShaderCopies helper.
+//
+// A PASS PROVES: all three renderers still compute
+// exp(-density^2 * dist^2), the exact expression, not merely something that
+// darkens toward a colour with distance. A PASS DOES NOT PROVE the three
+// apply it at the same point in their pipelines; each shader's own drift
+// tests cover placement.
+func TestFogFormulaMatchesAllThreeRenderers(t *testing.T) {
+	const wantFormula = "exp(-density * density * dist * dist)"
+
+	goSrc := normalizeWGSLSyntax(litWGSL)
+	goNormalized := strings.ReplaceAll(
+		strings.ReplaceAll(goSrc, "scene.fogParams.w", "density"),
+		"fogDist", "dist")
+	if !strings.Contains(goNormalized, wantFormula) {
+		t.Errorf("%s: fog formula does not normalize to %q; got the shader text instead", goLitWhere, wantFormula)
+	}
+
+	webgpuSrc := jsShaderSource(t, readJSWebGPURenderer(t), litJSFragmentName)
+	webgpuNormalized := strings.ReplaceAll(
+		strings.ReplaceAll(webgpuSrc, "fog.fogDensity", "density"),
+		"fogDist", "dist")
+	if !strings.Contains(webgpuNormalized, wantFormula) {
+		t.Errorf("%s: fog formula does not normalize to %q; got the shader text instead", jsLitWhere, wantFormula)
+	}
+
+	// WebGL2 carries two copies of the formula: one per fragment (variable
+	// fogDist, the legacy non-instanced program) and one per vertex (variable
+	// dist, the instanced program's v_fogFactor varying). Normalize both
+	// distance spellings so either counts as a match.
+	webglSrc := readJSWebGLRenderer(t)
+	webglNormalized := strings.ReplaceAll(
+		strings.ReplaceAll(webglSrc, "u_fogDensity * u_fogDensity", "density * density"),
+		"fogDist", "dist")
+	if !strings.Contains(webglNormalized, wantFormula) {
+		t.Errorf("client/js/bootstrap-src/16-scene-webgl.js: fog formula does not normalize to %q; "+
+			"WebGL2 draws fog per vertex (v_fogFactor) or per fragment (fogDist), but the expression itself must match",
+			wantFormula)
 	}
 }
 

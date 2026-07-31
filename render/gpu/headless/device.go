@@ -2090,6 +2090,10 @@ type sceneLighting struct {
 	envCube     textureBinding
 	shadow      *Texture
 	shadowLayer int
+	// fogParams mirrors the Scene uniform lane litWGSL reads: xyz is the fog
+	// colour in linear rgb, w is the exponential-squared density. w <= 0 means
+	// no fog, and litProgram.shade skips the term entirely.
+	fogParams [4]float32
 
 	// lights holds every authored scene light, in bundle order. litWGSL reads
 	// the same records from a storage buffer at group 0 binding 5 and shades one
@@ -2136,9 +2140,9 @@ const (
 const lightRecordSize = 80
 
 // sceneUniformSize is the byte size of the Scene struct litWGSL reads: four mat4
-// and nine vec4. It mirrors sceneUniformSize in render/bundle/renderer.go, and
+// and ten vec4. It mirrors sceneUniformSize in render/bundle/renderer.go, and
 // activeLighting reads every lane of it.
-const sceneUniformSize = 400
+const sceneUniformSize = 416
 
 func defaultSceneLighting() sceneLighting {
 	state := sceneLighting{
@@ -2200,7 +2204,7 @@ func (r *RenderPassEncoder) activeLighting() sceneLighting {
 			// The guard covers every lane this switch reads. It used to stop at
 			// 368, which is the offset of envParams and not its end, so the
 			// envParams read below could run past a buffer of exactly 384 bytes.
-			// lightParams ends at 400.
+			// lightParams ends at 400 and fogParams ends at 416.
 			if offset < 0 || offset+sceneUniformSize > len(buf.data) {
 				continue
 			}
@@ -2217,6 +2221,7 @@ func (r *RenderPassEncoder) activeLighting() sceneLighting {
 			state.cascadeSplits = [3]float32{splits[0], splits[1], splits[2]}
 			state.envParams = readVec4At(buf.data, offset+368)
 			state.lightParams = readVec4At(buf.data, offset+384)
+			state.fogParams = readVec4At(buf.data, offset+400)
 		case 5:
 			buf, ok := entry.Buffer.(*Buffer)
 			if !ok || buf == nil {
@@ -2798,6 +2803,18 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 		weight := transmission * transmissionMixGain
 		for i := 0; i < 3; i++ {
 			color[i] = mix(color[i], ambient[i]+baseColor[i]*transmissionBaseGain, weight)
+		}
+	}
+
+	// Exponential-squared fog, applied last, mirroring litWGSL: both browser
+	// renderers fog before exposure/tone-mapping, and this shader has none, so
+	// the last step before output is the equivalent point.
+	if l.fogParams[3] > 0 {
+		dist := length3(subVec3(f.world, l.cameraPos))
+		fogFactor := float32(math.Exp(float64(-l.fogParams[3] * l.fogParams[3] * dist * dist)))
+		fogFactor = clamp01f(fogFactor)
+		for i := 0; i < 3; i++ {
+			color[i] = mix(l.fogParams[i], color[i], fogFactor)
 		}
 	}
 	return color

@@ -54,6 +54,7 @@ struct Scene {
   cascadeSplits    : vec4<f32>, // xyz = view-space far distances for cascades 0/1/2
   envParams        : vec4<f32>, // x = cubemap intensity, y = Y rotation, z = has cubemap
   lightParams      : vec4<f32>, // x = light count, y = shadowed light index, zw reserved
+  fogParams        : vec4<f32>, // xyz = fog colour (linear rgb), w = density; density <= 0 means no fog
 };
 
 struct Material {
@@ -432,6 +433,17 @@ fn fs_main(in : VSOut) -> FSOut {
   color = mix(color, color * (vec3<f32>(0.65) + iri * 0.7), iridescence * pow(1.0 - NdotV, 2.0));
   let transmission = clamp(material.physicalParams.z, 0.0, 1.0) * (1.0 - metalness);
   color = mix(color, ambient + baseColor * 0.1, transmission * 0.55);
+  // Exponential-squared fog, applied last: both browser renderers fog before
+  // exposure/tone-mapping, and this shader has no tone-map stage, so the last
+  // step before output is the equivalent point. Both browser copies compute
+  // exactly this expression; keep the three in step
+  // (render/bundle/lit_drift_test.go pins it) rather than following whatever a
+  // stale comment nearby claims.
+  if (scene.fogParams.w > 0.0) {
+    let fogDist = length(in.worldPos - scene.cameraPos.xyz);
+    let fogFactor = exp(-scene.fogParams.w * scene.fogParams.w * fogDist * fogDist);
+    color = mix(scene.fogParams.rgb, color, clamp(fogFactor, 0.0, 1.0));
+  }
   var out : FSOut;
   out.color  = vec4<f32>(color, clamp(material.baseColor.a, 0.0, 1.0));
   out.pickId = in.pickId;

@@ -79,10 +79,9 @@ func TestComputeParticlesNeedMoreThanOneFrameAndSayWhy(t *testing.T) {
 // TestEnvironmentFieldsThatChangeNothingAreReported covers the environment terms
 // the CPU path never reads, and the terms it reads and once did not.
 //
-// Fog is the only one left in the ignored list. No copy of the material carries
-// a fog term on the native side at all, so it is a material gap and not a pass
-// gap. Exposure, tone mapping and the environment map all reach a pixel now, so
-// each has a case that proves it and states the direction of the change.
+// The ignored list is empty now. Fog was the last member: litWGSL and the
+// headless CPU oracle both gained an exponential-squared fog term, so its
+// case moved below next to exposure, tone mapping and the environment map.
 func TestEnvironmentFieldsThatChangeNothingAreReported(t *testing.T) {
 	base := `{"schema":"gosx.scene3d.ir.v1","objects":[{"id":"probe","kind":"sphere","radius":1.3,"color":"#66ccff"}],
 		"lights":[{"id":"sun","kind":"directional","directionX":-0.4,"directionY":-1,"directionZ":-0.3,"intensity":1.2}]`
@@ -107,32 +106,6 @@ func TestEnvironmentFieldsThatChangeNothingAreReported(t *testing.T) {
 	if coverage, unique, variance := frameMetrics(baseline); coverage < 0.05 || unique < 80 || variance < 0.007 {
 		t.Fatalf("the baseline sphere is not shaded: coverage %.4f, unique colours %d, variance %.6f",
 			coverage, unique, variance)
-	}
-
-	// envMap left this list. The rasterizer now samples an environment cubemap
-	// for image-based lighting, so it reaches a pixel; its case moved below.
-	//
-	// Exposure and tone mapping left it on 2026-07-26, when the headless device
-	// started running the present pass instead of copying it. Their cases moved
-	// below too.
-	//
-	// Fog is the one that remains, and it is not a post-pass problem. Neither
-	// litWGSL in render/bundle nor the CPU rasterizer carries a fog term at all.
-	// The browser applies fog inside its material shader, so closing this needs
-	// a material change on both sides, not a pass.
-	for _, tc := range []struct{ name, environment, field string }{
-		{"fog", `{"fogColor":"#ffffff","fogDensity":0.6}`, "fogDensity"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			result := render(t, tc.environment)
-			if hashPixels(result.Image) != baseHash {
-				t.Fatalf("%s now changes the frame; move it out of the ignored list and pin the new pixels", tc.name)
-			}
-			diagnostic, reported := findDiagnostic(result.Bundle.Diagnostics, "scene.preview.environment_fields_ignored")
-			if !reported || !strings.Contains(diagnostic.Message, tc.field) {
-				t.Fatalf("%s changed nothing and was not named: %+v", tc.name, result.Bundle.Diagnostics)
-			}
-		})
 	}
 
 	// The present pass runs on the CPU path, so these two now shape the frame.
@@ -166,6 +139,18 @@ func TestEnvironmentFieldsThatChangeNothingAreReported(t *testing.T) {
 		}
 		if hashPixels(clamped.Image) == hashPixels(reinhard.Image) {
 			t.Fatal(`"none" and "reinhard" produced the same frame; the mode lane is not selecting an operator`)
+		}
+	})
+
+	// fog reaches a pixel through litWGSL's exponential-squared term, read from
+	// the headless device's Scene uniform fogParams lane.
+	// render/gpu/headless.TestNativeFogMovesTowardFogColorByDistance pins the
+	// distance-ordered shape of that term; this case only guards the preview
+	// pipeline against silently dropping FogColor/FogDensity again.
+	t.Run("fog-reaches-the-frame", func(t *testing.T) {
+		result := render(t, `{"fogColor":"#ffffff","fogDensity":0.6}`)
+		if hashPixels(result.Image) == baseHash {
+			t.Fatal("fog changed no pixel; litWGSL or the headless Scene uniform upload lost the fogParams lane")
 		}
 	})
 

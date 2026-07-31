@@ -153,9 +153,6 @@ func unsupportedRecordDiagnostics(ir scene.SceneIR) []engine.RenderDiagnostic {
 				"fifteen percent of its life, so a single frame shows nothing; "+
 				"closing this needs the preview to advance particle state before the captured frame"))
 	}
-	if diagnostic, ok := environmentDiagnostic(ir.Environment); ok {
-		out = append(out, diagnostic)
-	}
 	if diagnostic, ok := environmentMapBackendDiagnostic(ir.Environment); ok {
 		out = append(out, diagnostic)
 	}
@@ -193,44 +190,17 @@ func environmentMapBackendDiagnostic(env scene.EnvironmentIR) (engine.RenderDiag
 	}, true
 }
 
-// environmentDiagnostic names the environment fields the frame carries and the
-// CPU rasterizer never reads.
-//
-// The rasterizer reads the ambient, sky and ground terms, samples an environment
-// cubemap for image-based lighting, and now runs the present pass — so envMap,
-// envIntensity, envRotation, exposure and toneMapping all left this list. Each
-// entry was correct when it was written and became a lie as the CPU path grew;
-// keeping one tells an author their authored value does nothing while it is
-// shading, which invites deleting work that functions.
-//
-// Fog alone remains, and it is not a post-effect gap. Neither native copy has a
-// fog term at all: litWGSL carries none, and the browser applies fog inside its
-// material shader rather than a pass. So closing fog is a change to the material
-// on both sides, not another pass on this device.
-//
-// This function reports only what THIS device drops. It says nothing about the
-// browser, and dropping envMap from the list above created a second problem it
-// cannot see: the poster now shades a term the WebGPU browser renderer ignores.
-// environmentMapBackendDiagnostic below reports that half.
-func environmentDiagnostic(env scene.EnvironmentIR) (engine.RenderDiagnostic, bool) {
-	var ignored []string
-	if strings.TrimSpace(env.FogColor) != "" || env.FogDensity != 0 {
-		ignored = append(ignored, "fogColor", "fogDensity")
-	}
-	if len(ignored) == 0 {
-		return engine.RenderDiagnostic{}, false
-	}
-	sort.Strings(ignored)
-	return engine.RenderDiagnostic{
-		Severity: "info",
-		Code:     "scene.preview.environment_fields_ignored",
-		Backend:  "headless",
-		Message: "native preview shades the ambient, sky, ground and environment-map terms and runs the present pass; " +
-			"fog lives in the browser material shader and has no native counterpart, so these authored fields did not " +
-			"change the frame: " +
-			strings.Join(ignored, ", "),
-	}, true
-}
+// environmentDiagnostic named the environment fields the frame carried and the
+// CPU rasterizer never read. envMap, envIntensity, envRotation, exposure and
+// toneMapping left the list first, as the CPU path grew to shade each one.
+// Fog was the last member: render/bundle/lit.go litWGSL now carries an
+// exponential-squared fog term the headless device reads through the Scene
+// uniform's fogParams lane, exactly as the browser copies do. With no member
+// left, the function and its "scene.preview.environment_fields_ignored"
+// diagnostic are retired rather than kept as a stub that never fires; a
+// dropped record channel still gets one from unsupportedRecordDiagnostics
+// above, and a per-field regression here should read as a Matrix/evidence-
+// ledger gap, not a resurrected version of this function.
 
 // nearestKind returns the closest supported kind when the author probably made
 // a spelling mistake. It returns an empty string when nothing is close enough,

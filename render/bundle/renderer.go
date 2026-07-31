@@ -783,6 +783,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 		cascadeSplits:  cascades.farSplits,
 		envParams:      environmentParams(b.Environment),
 		lightParams:    [4]float32{float32(lightCount), float32(shadowLightIndex), 0, 0},
+		fogParams:      resolveFogParams(b.Environment),
 	}))
 	for i := 0; i < cascadeCount; i++ {
 		putFloat32s(r.shadowUniformScratch[:], cascades.viewProjs[i][:])
@@ -1986,12 +1987,12 @@ func (r *Renderer) createLitSceneBindGroup(layout gpu.BindGroupLayout, envTex *t
 }
 
 // sceneUniformSize is the layout size of the Scene struct in WGSL. 4 mat4
-// (viewProj + 3 cascade lightViewProjs) = 256, plus 9 vec4 = 144 -> 400 bytes.
+// (viewProj + 3 cascade lightViewProjs) = 256, plus 10 vec4 = 160 -> 416 bytes.
 //
-// lightParams was appended at 384. Every earlier offset stayed, so the CPU
-// decode in render/gpu/headless/device.go activeLighting needs one added read
-// and no edit to an existing one.
-const sceneUniformSize = 400
+// lightParams was appended at 384 and fogParams at 400. Every earlier offset
+// stayed, so the CPU decode in render/gpu/headless/device.go activeLighting
+// needs one added read and no edit to an existing one.
+const sceneUniformSize = 416
 
 type sceneUniformBlock struct {
 	viewProj       mat4
@@ -2012,6 +2013,10 @@ type sceneUniformBlock struct {
 	// frame. lightParams.y is the index of the light the cascaded shadow map is
 	// fitted to, or -1 when no light reads it.
 	lightParams [4]float32
+	// fogParams.xyz is the fog colour in linear rgb; fogParams.w is the
+	// exponential-squared density. A density of zero or less means the scene
+	// carries no fog, and litWGSL skips the term entirely.
+	fogParams [4]float32
 }
 
 // sceneUniformBytes packs the scene uniform block into a Renderer-owned buffer
@@ -2034,6 +2039,7 @@ func (r *Renderer) sceneUniformBytes(s sceneUniformBlock) []byte {
 	putFloat32s(out[base+96:base+112], s.cascadeSplits[:])
 	putFloat32s(out[base+112:base+128], s.envParams[:])
 	putFloat32s(out[base+128:base+144], s.lightParams[:])
+	putFloat32s(out[base+144:base+160], s.fogParams[:])
 	return out
 }
 

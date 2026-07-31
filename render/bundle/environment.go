@@ -135,3 +135,19 @@ func environmentParams(env engine.RenderEnvironment) [4]float32 {
 	}
 	return [4]float32{intensity, float32(env.EnvRotation), 1, 0}
 }
+
+// resolveFogParams packs RenderEnvironment's fog authoring fields into the
+// Scene uniform's fogParams lane: xyz is the fog colour in linear rgb, w is
+// the exponential-squared density. A density of zero or less leaves litWGSL's
+// fog gate closed, matching both browser renderers' hasFog = fogDensity > 0
+// rule (16a-scene-webgpu.js:13585). The default colour (0.5, 0.5, 0.5)
+// matches the browser default for an unauthored FogColor
+// (sceneColorRGBA(env.fogColor, [0.5, 0.5, 0.5, 1])).
+func resolveFogParams(env engine.RenderEnvironment) [4]float32 {
+	density := float32(env.FogDensity)
+	if density <= 0 {
+		return [4]float32{}
+	}
+	fogColor := parseCSSColor(env.FogColor, [3]float32{0.5, 0.5, 0.5})
+	return [4]float32{fogColor[0], fogColor[1], fogColor[2], density}
+}
