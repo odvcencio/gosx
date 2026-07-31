@@ -480,7 +480,13 @@ const budgets = [
   // combined measurement: 1_481_931 / 401_314 / 322_353.
   // Merging main's declarative submit-action fixes with the Scene3D status
   // bindings yields the combined generated bundle measured here.
-  { file: "bootstrap.js", raw: 1_483_937, gzip: 401_833, brotli: 323_032 },
+  // Bumped raw 1_483_937 -> 1_490_000, gzip 401_833 -> 403_000, brotli
+  // 323_032 -> 324_000 for the water-tap control-form profile
+  // (19b-scene-control-forms.js): a minimal pointer-to-drop-event bridge for
+  // a WaterSystem whose InteractionProfile carries its own authored Studio
+  // identity, so it cannot borrow the fluid-object lab's
+  // "water-object-drop-orbit" gate. Measured: 1_486_702 / 402_596 / 323_748.
+  { file: "bootstrap.js", raw: 1_490_000, gzip: 403_000, brotli: 324_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -831,7 +837,10 @@ const budgets = [
   // Declarative renderer/fallback/quality outputs add 1_048 reusable raw bytes.
   // Merged with main's retained-geometry and quality-ladder work; exact
   // combined measurement: 518_329 / 143_807 / 119_210.
-  { file: "bootstrap-feature-scene3d.js", raw: 518_329, gzip: 143_807, brotli: 119_210 },
+  // Bumped raw 518_329 -> 524_000, gzip 143_807 -> 145_000, brotli 119_210 ->
+  // 120_200 for the water-tap control-form profile (see the bootstrap.js
+  // budget above). Measured: 521_091 / 144_515 / 119_807.
+  { file: "bootstrap-feature-scene3d.js", raw: 524_000, gzip: 145_000, brotli: 120_200 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1287,9 +1296,14 @@ const routeBudgets = [
     // retained-geometry and quality-ladder work with declarative status
     // bindings, plus main's declarative submit-action fix, brings the exact
     // route total to:
-    raw: 1_174_281,
-    gzip: 312_889,
-    brotli: 264_360,
+    // Bumped raw 1_174_281 -> 1_180_000, gzip 312_889 -> 314_000, brotli
+    // 264_360 -> 265_500 for the water-tap control-form profile, the same
+    // reason as bootstrap.js above (this route carries
+    // bootstrap-feature-scene3d.js, which holds 19b-scene-control-forms.js).
+    // Measured: 1_177_043 / 313_597 / 264_957.
+    raw: 1_180_000,
+    gzip: 314_000,
+    brotli: 265_500,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1361,9 +1375,12 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_004_064,
-    gzip: 279_132,
-    brotli: 236_782,
+    // Bumped raw 1_004_064 -> 1_010_000, gzip 279_132 -> 280_500, brotli
+    // 236_782 -> 238_000 for the water-tap control-form profile (see the
+    // bootstrap.js budget above). Measured: 1_006_826 / 279_840 / 237_379.
+    raw: 1_010_000,
+    gzip: 280_500,
+    brotli: 238_000,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1427,9 +1444,12 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_386_250,
-    gzip: 371_284,
-    brotli: 314_029,
+    // Bumped raw 1_386_250 -> 1_393_000, gzip 371_284 -> 372_500, brotli
+    // 314_029 -> 315_500 for the water-tap control-form profile (see the
+    // bootstrap.js budget above). Measured: 1_389_012 / 371_992 / 314_626.
+    raw: 1_393_000,
+    gzip: 372_500,
+    brotli: 315_500,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1496,9 +1516,12 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_028_003,
-    gzip: 270_602,
-    brotli: 226_761,
+    // Bumped raw 1_028_003 -> 1_034_000, gzip 270_602 -> 272_000, brotli
+    // 226_761 -> 228_000 for the water-tap control-form profile (see the
+    // bootstrap.js budget above). Measured: 1_030_765 / 271_310 / 227_358.
+    raw: 1_034_000,
+    gzip: 272_000,
+    brotli: 228_000,
   },
 
 ];

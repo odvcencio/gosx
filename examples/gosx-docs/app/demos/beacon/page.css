@@ -18,6 +18,12 @@
 	height: 100%;
 }
 
+/* Carries only data attributes for the water-tap pointer-drop control
+   profile (see 19b-scene-control-forms.js); it has no visible fields. */
+.beacon__ripple-control {
+	display: none;
+}
+
 .beacon__canvas .gosx-scene3d-unsupported {
 	display: grid;
 	min-height: 100%;

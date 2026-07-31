@@ -1,10 +1,16 @@
 package docs
 
 func Page() Node {
-	return <section class="beacon" aria-label="Blackglass Coast" role="region" data-gosx-scene3d-status-scope>
+	return <section class="beacon" aria-label="Blackglass Coast" role="region" data-gosx-scene3d-status-scope data-gosx-scene3d-control-scope>
 		<div class="beacon__canvas">
 			<Scene3D {...data.scene} />
 		</div>
+		<form
+			class="beacon__ripple-control"
+			aria-hidden="true"
+			data-gosx-scene3d-control-form="water-tap"
+			data-gosx-scene3d-control-subject="blackglass-cove"
+		></form>
 		<div class="beacon__overlay">
 			<p class="beacon__eyebrow">Studio world contract · Scene3D</p>
 			<h1>
@@ -27,9 +33,10 @@ func Page() Node {
 			</div>
 			<ul class="beacon__budgets" aria-label="Declared rendering budgets">
 				<li>live FPS and frame-time telemetry</li>
-				<li>16 stable nodes</li>
+				<li>17 stable nodes</li>
 				<li>12 instanced basalt forms</li>
 				<li>128² water simulation</li>
+				<li>≤320 ember particles</li>
 				<li>60 frames per second (FPS) cap</li>
 				<li>device pixel ratio (DPR) ≤ 1.5</li>
 				<li>720p render</li>
@@ -38,7 +45,7 @@ func Page() Node {
 				<li>512px shadow</li>
 			</ul>
 			<p class="beacon__controls">
-				Drag or swipe to orbit · scroll or pinch to zoom
+				Drag or swipe to orbit · scroll or pinch to zoom · tap the cove for ripples
 				<span>Keyboard: arrows explore · +/− zoom · Home restores the opening view</span>
 			</p>
 		</div>
