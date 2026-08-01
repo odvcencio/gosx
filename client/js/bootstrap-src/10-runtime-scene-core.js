@@ -1684,6 +1684,15 @@
       spinX: sceneNumber(item.spinX, sceneNumber(current.spinX, 0)),
       spinY: sceneNumber(item.spinY, sceneNumber(current.spinY, 0)),
       spinZ: sceneNumber(item.spinZ, sceneNumber(current.spinZ, 0)),
+      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
+      shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend.trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
+      shaderLayout: sceneIsPlainObject(item.shaderLayout) ? sceneCloneData(item.shaderLayout) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
+      shaderSource: typeof item.shaderSource === "string" ? item.shaderSource.trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      shaderSourceFiles: sceneIsPlainObject(item.shaderSourceFiles) ? sceneCloneData(item.shaderSourceFiles) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
       // qualityGroup: G2 QualityLadder layer tagging (see scene.Points.QualityGroup
       // / QualityRung.LayerGroups). Empty means unconditionally visible at
       // every rung — a ladder only gates points layers that opted in. Read by

@@ -174,6 +174,49 @@ test("bootstrap applies named Scene3D materials to point layers", async () => {
   assert.equal(again[0], points[0]);
 });
 
+test("bootstrap preserves inline authored shaders on Scene3D point layers", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "twinkle",
+          count: 1,
+          positions: [0, 0, 0],
+          sizes: [1],
+          colors: [1, 1, 1, 1],
+          customVertex: "void main() {}",
+          customFragment: "void main() {}",
+          customVertexWGSL: "@vertex fn main() -> @builtin(position) vec4f { return vec4f(); }",
+          customFragmentWGSL: "@fragment fn main() -> @location(0) vec4f { return vec4f(1); }",
+          customUniforms: { time: 99, brightness: 1.25 },
+          shaderBackend: "SELENA",
+          shaderLayout: { fields: [{ name: "time", type: "float" }] },
+          shaderSource: "points.selena",
+          shaderSourceFiles: { "points.selena": "shader source" },
+        },
+      ],
+    },
+  });
+  const entry = state.points[0];
+
+  assert.equal(entry.customVertex, "void main() {}");
+  assert.equal(entry.customFragment, "void main() {}");
+  assert.match(entry.customVertexWGSL, /@vertex/);
+  assert.match(entry.customFragmentWGSL, /@fragment/);
+  assert.equal(entry.customUniforms.time, 99);
+  assert.equal(entry.customUniforms.brightness, 1.25);
+  assert.equal(entry.shaderBackend, "selena");
+  assert.equal(entry.shaderLayout.fields[0].name, "time");
+  assert.equal(entry.shaderLayout.fields[0].type, "float");
+  assert.equal(entry.shaderSource, "points.selena");
+  assert.equal(entry.shaderSourceFiles["points.selena"], "shader source");
+});
+
 test("bootstrap selects Scene3D material variants from capability tier", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");

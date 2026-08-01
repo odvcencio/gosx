@@ -23,6 +23,7 @@ const {
   mountMotionSeamScene,
   motionMeshExtents,
   mountMaterialMotionScene,
+  FakeWebGLContext,
 } = require("./runtime-test-harness.js");
 
 test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
@@ -143,7 +144,7 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   assert.equal(env.engineRenderCalls.length > 0, true);
   assert.equal(env.engineTickCalls.length, 0);
-  const gl = mount.children[0].getContext("webgl");
+  const gl = mount.children[0].getContext("webgl2") || mount.children[0].getContext("webgl");
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform4f" && entry[1] === "u_camera"));
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[2] === 3));
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 2 && entry[2] === 3));
@@ -287,9 +288,11 @@ function createDeclarativeMaterialAnimationEnv(options = {}) {
   }, options.props || {});
   const env = createContext({
     elements: [mount],
-    enableWebGL: true,
+    enableWebGL: options.enableWebGL2 ? false : true,
+    enableWebGL2: Boolean(options.enableWebGL2),
     disableCanvas2D: true,
     prefersReducedMotion: Boolean(options.prefersReducedMotion),
+    performanceNow: options.performanceNow,
     manifest: {
       engines: [
         {
@@ -302,6 +305,9 @@ function createDeclarativeMaterialAnimationEnv(options = {}) {
       ],
     },
   });
+  if (options.enableWebGL2) {
+    env.context.WebGL2RenderingContext = FakeWebGLContext;
+  }
   return { env, mount };
 }
 
@@ -335,6 +341,75 @@ test("Scene3D materialAnimation keeps declarative material frames running withou
   assert.equal(mount.__gosxScene3DState.camera.x, 0);
   assert.equal(mount.__gosxScene3DState.camera.y, 0);
   assert.equal(mount.__gosxScene3DState.camera.z, 6);
+});
+
+test("Scene3D materialAnimation uploads authored point time on each WebGL frame", async () => {
+  let nowMS = 1000;
+  const vertexGLSL = [
+    "attribute vec3 a_position;",
+    "attribute float a_size;",
+    "attribute vec4 a_color;",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "uniform mat4 u_modelMatrix;",
+    "uniform float time;",
+    "uniform float brightness;",
+    "void main() {",
+    "  gl_Position = u_projectionMatrix * u_viewMatrix * u_modelMatrix * vec4(a_position, 1.0);",
+    "  gl_PointSize = max(1.0, a_size + brightness + sin(time));",
+    "}",
+  ].join("\n");
+  const fragmentGLSL = [
+    "precision mediump float;",
+    "uniform float time;",
+    "uniform float brightness;",
+    "void main() {",
+    "  gl_FragColor = vec4(abs(sin(time)) * brightness, 0.25, 0.5, 1.0);",
+    "}",
+  ].join("\n");
+  const { env, mount, raf } = await mountDeclarativeSceneWithRAF({
+    materialAnimation: true,
+    enableWebGL2: true,
+    performanceNow: () => nowMS,
+    props: {
+      scene: {
+        points: [
+          {
+            id: "twinkle-points",
+            count: 2,
+            positions: [0, 0, 0, 1, 0, 0],
+            sizes: [1, 1],
+            colors: [1, 1, 1, 1, 0.5, 0.5, 1, 1],
+            customVertex: vertexGLSL,
+            customFragment: fragmentGLSL,
+            customUniforms: { time: 99, brightness: 1.25 },
+          },
+        ],
+      },
+    },
+  });
+  const gl = mount.children[0].getContext("webgl2") || mount.children[0].getContext("webgl");
+  nowMS = 2160;
+  raf.flush(48);
+  await Promise.resolve();
+  nowMS = 3320;
+  raf.flush(64);
+  await Promise.resolve();
+
+  const authoredProgram = gl.programMatching("abs(sin(time))");
+  assert.ok(authoredProgram, "authored point GLSL program must compile");
+  const authoredDraws = gl.ops.filter((entry) =>
+    entry[0] === "drawArrays" && entry[1] === gl.POINTS && entry[4] === authoredProgram.id);
+  assert.equal(authoredDraws.length >= 3, true, "materialAnimation must draw authored points across frames");
+  const timeUploads = gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
+    .map((entry) => entry[2]);
+  assert.ok(timeUploads.includes(1), "initial frame must upload authored point time");
+  assert.ok(timeUploads.includes(2.16), "frame two must upload updated authored point time");
+  assert.ok(timeUploads.includes(3.32), "frame three must upload updated authored point time");
+  assert.equal(timeUploads.includes(99), false, "customUniforms.time must not shadow runtime-owned time");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "material-animation");
+  assert.equal(env.consoleLogs.warn.filter((m) => m.includes("Points authored") && m.includes("falling back")).length, 0);
 });
 
 test("Scene3D materialAnimation is opt-in for declarative static scenes", async () => {

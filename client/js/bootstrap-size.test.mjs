@@ -490,7 +490,9 @@ const budgets = [
   // Exact measured totals: 1_486_351 / 402_830 / 323_782.
   // Scene3D materialAnimation adds a public opt-in render-loop prop.
   // Exact measured totals: 1_486_417 / 402_838 / 323_827.
-  { file: "bootstrap.js", raw: 1_486_417, gzip: 402_838, brotli: 323_827 },
+  // Inline authored point shaders preserve their shader envelope through
+  // point normalization. Exact measured totals: 1_487_515 / 402_873 / 323_827.
+  { file: "bootstrap.js", raw: 1_487_515, gzip: 402_873, brotli: 323_827 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -845,7 +847,9 @@ const budgets = [
   // combined measurement: 518_329 / 143_807 / 119_210.
   // materialAnimation adds a public opt-in render-loop prop.
   // Exact measured totals: 518_394 / 143_816 / 119_162.
-  { file: "bootstrap-feature-scene3d.js", raw: 518_394, gzip: 143_816, brotli: 119_210 },
+  // Inline authored point shader preservation adds 1_088 raw bytes and 28
+  // gzip bytes.
+  { file: "bootstrap-feature-scene3d.js", raw: 519_482, gzip: 143_844, brotli: 119_210 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1309,8 +1313,10 @@ const routeBudgets = [
     // route measurement: 1_176_526 / 313_698 / 264_905.
     // materialAnimation adds the same public render-loop prop to this route.
     // Exact measured route total: 1_176_591 / 313_707 / 264_857.
-    raw: 1_176_591,
-    gzip: 313_707,
+    // Inline authored point shader preservation adds 1_088 raw bytes and 28
+    // gzip bytes.
+    raw: 1_177_679,
+    gzip: 313_735,
     brotli: 264_905,
   },
   {
@@ -1387,8 +1393,9 @@ const routeBudgets = [
     // 1_004_862 / 279_337 / 236_985.
     // materialAnimation brings this route to:
     // 1_004_927 / 279_346 / 236_937.
-    raw: 1_004_927,
-    gzip: 279_346,
+    // Inline authored point shader preservation adds the same base chunk bytes.
+    raw: 1_006_015,
+    gzip: 279_374,
     brotli: 236_985,
   },
   {
@@ -1459,8 +1466,10 @@ const routeBudgets = [
     // 1_388_614 / 372_130 / 314_606.
     // materialAnimation brings this route to:
     // 1_388_679 / 372_139 / 314_558.
-    raw: 1_388_679,
-    gzip: 372_139,
+    // Inline authored point shader preservation adds the base Scene3D bytes
+    // and gzip bytes.
+    raw: 1_389_767,
+    gzip: 372_167,
     brotli: 314_606,
   },
   {
@@ -1532,8 +1541,10 @@ const routeBudgets = [
     // route measurement: 1_029_823 / 271_279 / 227_216.
     // materialAnimation brings this route to:
     // 1_029_888 / 271_288 / 227_168.
-    raw: 1_029_888,
-    gzip: 271_288,
+    // Inline authored point shader preservation adds the base Scene3D bytes.
+    // Exact route measurement: 1_030_976 / 271_316 / 227_216.
+    raw: 1_030_976,
+    gzip: 271_316,
     brotli: 227_216,
   },
 
