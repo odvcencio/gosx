@@ -4592,9 +4592,9 @@
   // of 256. 256 is also the smallest legal copy target, so one row holds the
   // single pixel we read.
   var SCENE_WEBGPU_PICK_ROW_ALIGNMENT = 256;
-  // PickUniforms is a mat4x4f plus four u32: 80 bytes. Each draw gets its own
-  // 256-byte slot, because 256 is also the default
-  // minUniformBufferOffsetAlignment that a dynamic offset must respect.
+  // PickUniforms is viewProjection, baseID padding, and modelMatrix: 144
+  // bytes. Each draw gets its own 256-byte slot, because 256 is also the
+  // default minUniformBufferOffsetAlignment that a dynamic offset must respect.
   var SCENE_WEBGPU_PICK_SLOT_BYTES = 144;
   // Upper bound on pickable draws per pass. 4096 slots is 1 MiB of uniform
   // space. Instanced meshes cost one slot per MESH, not per instance, so real

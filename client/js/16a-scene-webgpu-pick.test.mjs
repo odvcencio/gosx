@@ -172,6 +172,8 @@ function createFakeGPU() {
           size: size === undefined ? floats.length : size,
           // Base ID of slot i lives at word (i * 64) + 16 (byte 256*i + 64).
           slotID(i) { return words[i * 64 + 16]; },
+          // The retained-geometry model matrix starts at float word 20.
+          slotModelMatrix(i) { return Array.from(floats.slice(i * 64 + 20, i * 64 + 36)); },
         });
       },
       submit() {},
@@ -829,7 +831,7 @@ test("each pick draw reads its own base ID through a dynamic offset", () => {
 
   const layout = gpu.log.bindGroupLayouts[0];
   assert.equal(layout.hasDynamicOffset, true, "the pick bind group needs a dynamic offset");
-  assert.equal(layout.minBindingSize, 80, "PickUniforms is mat4x4f + 4 u32 = 80 bytes");
+  assert.equal(layout.minBindingSize, 144, "PickUniforms is viewProjection + 4 u32 + modelMatrix = 144 bytes");
 
   // Exactly one upload for the whole pass.
   const uniformWrites = gpu.log.writes.filter((w) => w.label === "gosx-pick-uniforms");
@@ -839,6 +841,12 @@ test("each pick draw reads its own base ID through a dynamic offset", () => {
   assert.equal(uniformWrites[0].slotID(0), 1);
   assert.equal(uniformWrites[0].slotID(1), 2);
   assert.equal(uniformWrites[0].slotID(2), 3);
+  assert.deepEqual(uniformWrites[0].slotModelMatrix(0), [
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
 
   // Distinct dynamic offsets, 256 bytes apart, one per draw.
   const pass = gpu.log.passes[0];

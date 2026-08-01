@@ -464,7 +464,9 @@ const budgets = [
   // accounting, and change-only WebGL telemetry publication. Exact regenerated
   // measurement: 1_458_092 / 393_850 / 316_914. Only the breached raw ceiling
   // moves; compressed ceilings retain their prior headroom.
-  { file: "bootstrap.js", raw: 1_458_092, gzip: 394_000, brotli: 317_000 },
+  // DPR floor support adds a raw-only viewport resolver delta. Exact
+  // regenerated measurement: 1_458_482 / 394_002 / 317_042.
+  { file: "bootstrap.js", raw: 1_458_482, gzip: 394_100, brotli: 317_100 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -798,7 +800,8 @@ const budgets = [
   // in the final audit. Measured: 484_997 / 133_999 / 111_308.
   // Final integrated measurement: 496_933 / 137_294 / 113_937.
   // FINAL-FIX-19 exact measurement: 497_103 / 137_333 / 113_960.
-  { file: "bootstrap-feature-scene3d.js", raw: 497_103, gzip: 137_500, brotli: 114_000 },
+  // DPR floor support exact measurement: 497_493 / 137_435 / 114_109.
+  { file: "bootstrap-feature-scene3d.js", raw: 497_493, gzip: 137_500, brotli: 114_200 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1242,9 +1245,10 @@ const routeBudgets = [
     // Final integrated measurement: 1_149_871 / 305_600 / 258_349.
     // FINAL-FIX-19 exact measurement: 1_150_801 / 305_824 / 258_630.
     // Only the breached raw and Brotli ceilings move.
-    raw: 1_150_801,
+    // DPR floor support exact measurement: 1_151_191 / 305_926 / 258_779.
+    raw: 1_151_191,
     gzip: 306_000,
-    brotli: 258_630,
+    brotli: 258_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1312,9 +1316,10 @@ const routeBudgets = [
     // Final hydration/lifecycle/telemetry measurement:
     // 951_588 / 263_185 / 223_963.
     // Final integrated measurement: 978_394 / 271_253 / 230_459.
-    raw: 978_500,
+    // DPR floor support exact measurement: 978_862 / 271_442 / 230_594.
+    raw: 978_862,
     gzip: 271_500,
-    brotli: 230_500,
+    brotli: 230_600,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1373,9 +1378,10 @@ const routeBudgets = [
     // 1_317_451 / 350_565 / 297_215.
     // Final integrated measurement: 1_359_573 / 363_164 / 307_393.
     // FINAL-FIX-19 exact measurement: 1_360_411 / 363_436 / 307_637.
-    raw: 1_360_411,
-    gzip: 363_500,
-    brotli: 307_637,
+    // DPR floor support exact measurement: 1_360_801 / 363_538 / 307_786.
+    raw: 1_360_801,
+    gzip: 363_600,
+    brotli: 307_800,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1436,9 +1442,10 @@ const routeBudgets = [
     // 976_489 / 255_516 / 214_470.
     // Final integrated measurement: 1_003_741 / 263_342 / 220_781.
     // FINAL-FIX-19 exact measurement: 1_004_671 / 263_566 / 221_062.
-    raw: 1_004_671,
-    gzip: 263_566,
-    brotli: 221_062,
+    // DPR floor support exact measurement: 1_005_061 / 263_668 / 221_211.
+    raw: 1_005_061,
+    gzip: 263_700,
+    brotli: 221_300,
   },
 
 ];

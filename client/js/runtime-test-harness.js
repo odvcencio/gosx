@@ -3007,6 +3007,80 @@ function loadSceneAdaptiveQualityAPI() {
   return { api: context.adaptiveAPI, clock };
 }
 
+function loadSceneViewportAPI(options = {}) {
+  const mountSource = readSceneMountSrc();
+  const start = mountSource.indexOf("function sceneViewportDevicePixelRatio");
+  const end = mountSource.indexOf("function observeSceneViewport", start);
+  assert.notEqual(start, -1, "viewport start anchor missing");
+  assert.notEqual(end, -1, "viewport end anchor missing");
+  const baseStart = mountSource.indexOf("function sceneViewportBase");
+  const baseEnd = mountSource.indexOf("function scheduleSceneIdleTask", baseStart);
+  assert.notEqual(baseStart, -1, "viewport base start anchor missing");
+  assert.notEqual(baseEnd, -1, "viewport base end anchor missing");
+  const devicePixelRatio = Number.isFinite(Number(options.devicePixelRatio))
+    ? Number(options.devicePixelRatio)
+    : 1;
+  const environment = Object.assign({ devicePixelRatio }, options.environment || {});
+  const context = {
+    window: { devicePixelRatio },
+    __environment: environment,
+  };
+  vm.runInNewContext(`
+    function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+    function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
+    function sceneEnvironmentState() { return __environment; }
+    function defaultSceneMaxDevicePixelRatio(capability) {
+      if (capability && (capability.reducedData || capability.lowPower)) {
+        switch (capability.tier) {
+          case "constrained": return 1.25;
+          case "balanced": return 1.5;
+          default: return 1.75;
+        }
+      }
+      switch (capability && capability.tier) {
+        case "constrained": return 1.5;
+        case "balanced": return 1.75;
+        default: return 2;
+      }
+    }
+  ` + mountSource.slice(baseStart, baseEnd) + mountSource.slice(start, end) + `
+    globalThis.viewportAPI = {
+      sceneViewportBase,
+      sceneViewportDevicePixelRatio,
+      sceneViewportFromMount,
+    };
+  `, context, { filename: "scene-viewport.js" });
+  return context.viewportAPI;
+}
+
+function resolveSceneViewportForTest(props, options = {}) {
+  const api = loadSceneViewportAPI(options);
+  const width = Number.isFinite(Number(options.measuredWidth))
+    ? Number(options.measuredWidth)
+    : sceneNumberForTest(props && props.width, 390);
+  const height = Number.isFinite(Number(options.measuredHeight))
+    ? Number(options.measuredHeight)
+    : sceneNumberForTest(props && props.height, 844);
+  const base = api.sceneViewportBase(Object.assign({ responsive: false }, props || {}));
+  if (options.base) Object.assign(base, options.base);
+  const rect = { width, height, left: 0, top: 0 };
+  const mount = { getBoundingClientRect() { return rect; } };
+  const canvas = { getBoundingClientRect() { return rect; } };
+  return api.sceneViewportFromMount(
+    mount,
+    Object.assign({ responsive: false }, props || {}),
+    base,
+    canvas,
+    options.capability || { tier: "full" },
+    options.adaptiveQuality || null,
+  );
+}
+
+function sceneNumberForTest(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function createAdaptiveQualityHarness(extraProps) {
   const loaded = loadSceneAdaptiveQualityAPI();
   const props = Object.assign({
@@ -5351,6 +5425,8 @@ module.exports = {
   CUSTOM_POST_TIME_LAYOUT_FIXTURE,
   sceneCoreSourceRange,
   loadSceneAdaptiveQualityAPI,
+  loadSceneViewportAPI,
+  resolveSceneViewportForTest,
   createAdaptiveQualityHarness,
   createQualityLadderHarness,
   THREE_RUNG_LADDER,
