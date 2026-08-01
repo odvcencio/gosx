@@ -264,6 +264,132 @@ test("Scene3D initial render waits for the second frame boundary", async () => {
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 1);
 });
 
+function createDeclarativeMaterialAnimationEnv(options = {}) {
+  const mount = new FakeElement("div", null);
+  mount.id = options.mountId || "scene-material-animation-root";
+  const props = Object.assign({
+    width: 320,
+    height: 180,
+    background: "#08151f",
+    materialAnimation: Boolean(options.materialAnimation),
+    scene: {
+      labels: [
+        {
+          id: "clock-label",
+          text: "Clock",
+          x: 0,
+          y: 0,
+          z: 0,
+          maxWidth: 120,
+        },
+      ],
+    },
+  }, options.props || {});
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    prefersReducedMotion: Boolean(options.prefersReducedMotion),
+    manifest: {
+      engines: [
+        {
+          id: options.engineId || "gosx-engine-material-animation",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: mount.id,
+          props,
+        },
+      ],
+    },
+  });
+  return { env, mount };
+}
+
+async function mountDeclarativeSceneWithRAF(options = {}) {
+  const setup = createDeclarativeMaterialAnimationEnv(options);
+  const raf = installManualRAF(setup.env.context);
+  runScript(bootstrapSource, setup.env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await Promise.resolve();
+  raf.flush(32);
+  await Promise.resolve();
+  return Object.assign({ raf }, setup);
+}
+
+test("Scene3D materialAnimation keeps declarative material frames running without autoRotate", async () => {
+  const { mount, raf } = await mountDeclarativeSceneWithRAF({ materialAnimation: true });
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop"), "active");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "material-animation");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-wants-animation"), "true");
+  assert.equal(raf.count(), 1, "materialAnimation owns one continuous frame");
+  assert.equal(mount.__gosxScene3DState.camera.x, 0);
+  assert.equal(mount.__gosxScene3DState.camera.y, 0);
+  assert.equal(mount.__gosxScene3DState.camera.z, 6);
+
+  raf.flush(48);
+  await Promise.resolve();
+
+  assert.equal(raf.count(), 1, "materialAnimation must not stack frame handles");
+  assert.equal(mount.__gosxScene3DState.camera.x, 0);
+  assert.equal(mount.__gosxScene3DState.camera.y, 0);
+  assert.equal(mount.__gosxScene3DState.camera.z, 6);
+});
+
+test("Scene3D materialAnimation is opt-in for declarative static scenes", async () => {
+  const { mount, raf } = await mountDeclarativeSceneWithRAF({ materialAnimation: false });
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop"), "stopped");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "static");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-wants-animation"), "false");
+  assert.equal(raf.count(), 0);
+});
+
+test("Scene3D materialAnimation honors reduced motion and offscreen lifecycle", async () => {
+  const reduced = await mountDeclarativeSceneWithRAF({
+    mountId: "scene-material-animation-reduced",
+    engineId: "gosx-engine-material-animation-reduced",
+    materialAnimation: true,
+    prefersReducedMotion: true,
+  });
+
+  assert.equal(reduced.mount.getAttribute("data-gosx-scene3d-reduced-motion"), "true");
+  assert.equal(reduced.mount.getAttribute("data-gosx-scene3d-render-loop"), "stopped");
+  assert.equal(reduced.mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "reduced-motion");
+  assert.equal(reduced.raf.count(), 0);
+
+  const active = await mountDeclarativeSceneWithRAF({
+    mountId: "scene-material-animation-lifecycle",
+    engineId: "gosx-engine-material-animation-lifecycle",
+    materialAnimation: true,
+  });
+
+  assert.equal(active.env.intersectionObservers.length, 1);
+  assert.equal(active.raf.count(), 1);
+  active.env.intersectionObservers[0].trigger([
+    { target: active.mount, isIntersecting: false, intersectionRatio: 0 },
+  ]);
+  await flushAsyncWork();
+
+  assert.equal(active.mount.getAttribute("data-gosx-scene3d-active"), "false");
+  assert.equal(active.mount.getAttribute("data-gosx-scene3d-render-loop"), "stopped");
+  assert.equal(active.mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "offscreen");
+  assert.equal(active.raf.count(), 0);
+
+  active.env.intersectionObservers[0].trigger([
+    { target: active.mount, isIntersecting: true, intersectionRatio: 1 },
+  ]);
+  await flushAsyncWork();
+  active.raf.flush(64);
+  await Promise.resolve();
+
+  assert.equal(active.mount.getAttribute("data-gosx-scene3d-active"), "true");
+  assert.equal(active.mount.getAttribute("data-gosx-scene3d-render-loop"), "active");
+  assert.equal(active.mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "material-animation");
+  assert.equal(active.raf.count(), 1);
+});
+
 test("Scene3D scroll camera offset moves camera by absolute scroll pixels", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-scroll-offset-root";

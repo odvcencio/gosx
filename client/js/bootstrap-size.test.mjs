@@ -488,7 +488,9 @@ const budgets = [
   // by its share of that. Exact measured totals per entry.
   // Authored WebGL point shaders now receive framework-owned time.
   // Exact measured totals: 1_486_351 / 402_830 / 323_782.
-  { file: "bootstrap.js", raw: 1_486_351, gzip: 402_830, brotli: 323_782 },
+  // Scene3D materialAnimation adds a public opt-in render-loop prop.
+  // Exact measured totals: 1_486_417 / 402_838 / 323_827.
+  { file: "bootstrap.js", raw: 1_486_417, gzip: 402_838, brotli: 323_827 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -841,7 +843,9 @@ const budgets = [
   // Declarative renderer/fallback/quality outputs add 1_048 reusable raw bytes.
   // Merged with main's retained-geometry and quality-ladder work; exact
   // combined measurement: 518_329 / 143_807 / 119_210.
-  { file: "bootstrap-feature-scene3d.js", raw: 518_329, gzip: 143_807, brotli: 119_210 },
+  // materialAnimation adds a public opt-in render-loop prop.
+  // Exact measured totals: 518_394 / 143_816 / 119_162.
+  { file: "bootstrap-feature-scene3d.js", raw: 518_394, gzip: 143_816, brotli: 119_210 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1303,8 +1307,10 @@ const routeBudgets = [
     // route total to:
     // 16a memoization rides in through the WebGPU chunk. Exact merged
     // route measurement: 1_176_526 / 313_698 / 264_905.
-    raw: 1_176_526,
-    gzip: 313_698,
+    // materialAnimation adds the same public render-loop prop to this route.
+    // Exact measured route total: 1_176_591 / 313_707 / 264_857.
+    raw: 1_176_591,
+    gzip: 313_707,
     brotli: 264_905,
   },
   {
@@ -1379,8 +1385,10 @@ const routeBudgets = [
     // exact route total to:
     // Authored WebGL point shader time brings the route to:
     // 1_004_862 / 279_337 / 236_985.
-    raw: 1_004_862,
-    gzip: 279_337,
+    // materialAnimation brings this route to:
+    // 1_004_927 / 279_346 / 236_937.
+    raw: 1_004_927,
+    gzip: 279_346,
     brotli: 236_985,
   },
   {
@@ -1449,8 +1457,10 @@ const routeBudgets = [
     // route measurement: 1_388_495 / 372_093 / 314_574.
     // Authored WebGL point shader time brings this route to:
     // 1_388_614 / 372_130 / 314_606.
-    raw: 1_388_614,
-    gzip: 372_130,
+    // materialAnimation brings this route to:
+    // 1_388_679 / 372_139 / 314_558.
+    raw: 1_388_679,
+    gzip: 372_139,
     brotli: 314_606,
   },
   {
@@ -1520,8 +1530,10 @@ const routeBudgets = [
     // exact route total to:
     // 16a memoization rides in through the WebGPU chunk. Exact merged
     // route measurement: 1_029_823 / 271_279 / 227_216.
-    raw: 1_029_823,
-    gzip: 271_279,
+    // materialAnimation brings this route to:
+    // 1_029_888 / 271_288 / 227_168.
+    raw: 1_029_888,
+    gzip: 271_288,
     brotli: 227_216,
   },
 

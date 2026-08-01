@@ -1127,6 +1127,15 @@ func TestPropsEngineCapabilitiesIncludeWebGPUByDefault(t *testing.T) {
 	}
 }
 
+func TestPropsEngineConfigCarriesMaterialAnimationContract(t *testing.T) {
+	props := Props{MaterialAnimation: Bool(true)}
+
+	cfg := props.EngineConfig()
+	if !contains(string(cfg.Props), `"materialAnimation":true`) {
+		t.Fatalf("expected material animation prop in engine payload, got %s", string(cfg.Props))
+	}
+}
+
 func TestPropsEngineCapabilitiesIncludeWebGPUForComputeParticles(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(

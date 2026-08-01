@@ -107,6 +107,9 @@
       if (sceneBool(props.autoRotate, false)) {
         return { wants: true, reason: "auto-rotate" };
       }
+      if (sceneBool(props.materialAnimation, false)) {
+        return { wants: true, reason: "material-animation" };
+      }
       if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
         return { wants: true, reason: "compute-particles" };
       }

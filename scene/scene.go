@@ -104,6 +104,7 @@ type Props struct {
 	Background           string   `json:"background,omitempty"`
 	Controls             string   `json:"controls,omitempty"`
 	AutoRotate           *bool    `json:"autoRotate,omitempty"`
+	MaterialAnimation    *bool    `json:"materialAnimation,omitempty"`
 	Responsive           *bool    `json:"responsive,omitempty"`
 	FillHeight           *bool    `json:"fillHeight,omitempty"`
 	PreferWebGPU         *bool    `json:"preferWebGPU,omitempty"`
@@ -1759,6 +1760,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "background", p.Background)
 	setString(out, "controls", p.Controls)
 	setBool(out, "autoRotate", p.AutoRotate)
+	setBool(out, "materialAnimation", p.MaterialAnimation)
 	setBool(out, "responsive", p.Responsive)
 	setBool(out, "fillHeight", p.FillHeight)
 	setBool(out, "preferWebGPU", p.PreferWebGPU)
