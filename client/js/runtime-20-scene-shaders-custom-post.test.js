@@ -1662,6 +1662,65 @@ test("computeParticles WebGL: renderVertex/renderFragment use authored points pr
   }
 });
 
+test("authored points WebGL: reserved time advances and does not read customUniforms.time", async () => {
+  const { env, renderer, canvas, warnLog } = createWebGLRendererForPost({ fresh: true });
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const vertexGLSL = [
+    "attribute vec3 a_position;",
+    "attribute float a_size;",
+    "attribute vec4 a_color;",
+    "uniform mat4 u_viewMatrix;",
+    "uniform mat4 u_projectionMatrix;",
+    "uniform mat4 u_modelMatrix;",
+    "uniform float time;",
+    "uniform float brightness;",
+    "void main() {",
+    "  gl_Position = u_projectionMatrix * u_viewMatrix * u_modelMatrix * vec4(a_position, 1.0);",
+    "  gl_PointSize = max(1.0, a_size + brightness + sin(time) * 0.0);",
+    "}",
+  ].join("\n");
+  const fragmentGLSL = [
+    "precision mediump float;",
+    "uniform float time;",
+    "uniform float brightness;",
+    "void main() {",
+    "  gl_FragColor = vec4(brightness + time * 0.0, 0.25, 0.5, 1.0);",
+    "}",
+  ].join("\n");
+  const bundle = makePointsBundle({
+    id: "webgl-authored-points-time",
+    count: 2,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0]),
+    sizes: new Float32Array([1, 1]),
+    colors: new Float32Array([1, 1, 1, 1, 0.5, 0.5, 1, 1]),
+    customVertex: vertexGLSL,
+    customFragment: fragmentGLSL,
+    customUniforms: { time: 99, brightness: 1.25 },
+  });
+
+  let nowMs = 1234;
+  env.context.performance.now = () => nowMs;
+  renderer.render(bundle, viewport);
+  nowMs = 2345;
+  renderer.render(bundle, viewport);
+
+  const gl = canvas.getContext("webgl2");
+  const timeUploads = gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
+    .map((entry) => entry[2]);
+  assert.ok(timeUploads.includes(1.234), "frame one must upload runtime seconds");
+  assert.ok(timeUploads.includes(2.345), "frame two must upload advanced runtime seconds");
+  assert.equal(timeUploads.includes(99), false, "customUniforms.time must not shadow reserved runtime time");
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "brightness" && entry[2] === 1.25),
+    "non-reserved custom uniforms must remain stable");
+  assert.ok(gl.ops.some((entry) => entry[0] === "drawArrays" && entry[1] === gl.POINTS && entry[3] === 2),
+    "authored point layer must draw without CPU point updates");
+  assert.equal(warnLog.filter((m) => m.includes("Points authored") && m.includes("falling back")).length, 0);
+
+  renderer.dispose();
+});
+
 // -------------------------------------------------------------------------
 // Reconciliation A — dual-entry vertexStorageMain selection (WebGPU, 16a)
 // -------------------------------------------------------------------------

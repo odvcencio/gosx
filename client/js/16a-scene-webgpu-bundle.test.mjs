@@ -53,6 +53,35 @@ test("pipeline validation helpers cross the gated WebGPU chunk boundary", () => 
   }
 });
 
+test("authored points WebGPU user uniforms receive reserved frame time without mutating custom uniforms", () => {
+  assert.match(
+    webgpuSource,
+    /sceneSelenaUniformData\(\{ customUniforms: uniforms, shaderLayout: layout \}, null, null, selenaFrame\)/,
+    "authored points must pack user uniforms from the live renderer frame",
+  );
+  assert.match(
+    webgpuSource,
+    /selenaFrame\.time = frameTimeSeconds;[\s\S]*drawPointsEntries\(mainPass, bundle, cam, frameTimeSeconds\)/,
+    "the frame clock must be set before authored point draws",
+  );
+  const selenaUniforms = fs.readFileSync(path.join(srcDir, "16a1-scene-webgpu-selena-uniforms.js"), "utf8");
+  assert.match(
+    selenaUniforms,
+    /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]*var value = sceneSelenaMaterialValue\(material, name\);/,
+    "reserved time must resolve before customUniforms",
+  );
+  assert.match(
+    webgpuSource,
+    /ensurePointsAuthoredUserUniformBuffer\(entry, "_gosxWGPUPointsUserUniform", entry\.customUniforms, entry\.shaderLayout\)/,
+    "authored point layers must use the shared user uniform packer",
+  );
+  assert.match(
+    webgpuSource,
+    /ensurePointsAuthoredUserUniformBuffer\(system, "_gosxWGPUCPRenderUserUniform", entry\.renderUniforms, entry\.renderShaderLayout\)/,
+    "authored compute-particle point render must share the same time semantics",
+  );
+});
+
 function createContext() {
   const sandbox = {
     console: { warn() {}, log() {}, error() {} },

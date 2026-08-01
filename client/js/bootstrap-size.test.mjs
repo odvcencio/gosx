@@ -486,7 +486,9 @@ const budgets = [
   // (cold-cache chunk race fix) add ~680 raw across the shared bootstrap
   // head and the engine tail; every bundle and route ceiling below moves
   // by its share of that. Exact measured totals per entry.
-  { file: "bootstrap.js", raw: 1_486_231, gzip: 402_762, brotli: 323_723 },
+  // Authored WebGL point shaders now receive framework-owned time.
+  // Exact measured totals: 1_486_351 / 402_830 / 323_782.
+  { file: "bootstrap.js", raw: 1_486_351, gzip: 402_830, brotli: 323_782 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -775,7 +777,9 @@ const budgets = [
   // HTML-surface texture-load notification: measured gzip 57_622.
   // Current main's retained-geometry path brings the exact merged chunk to
   // 211_969 / 58_395 / 49_669.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 211_969, gzip: 58_395, brotli: 49_669 },
+  // Authored point shader time adds one cached uniform location and upload.
+  // Exact measured chunk: 212_088 / 58_432 / 49_701.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 212_088, gzip: 58_432, brotli: 49_701 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1373,9 +1377,11 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_004_743,
-    gzip: 279_300,
-    brotli: 236_953,
+    // Authored WebGL point shader time brings the route to:
+    // 1_004_862 / 279_337 / 236_985.
+    raw: 1_004_862,
+    gzip: 279_337,
+    brotli: 236_985,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1441,9 +1447,11 @@ const routeBudgets = [
     // exact route total to:
     // 16a memoization rides in through the WebGPU chunk. Exact merged
     // route measurement: 1_388_495 / 372_093 / 314_574.
-    raw: 1_388_495,
-    gzip: 372_093,
-    brotli: 314_574,
+    // Authored WebGL point shader time brings this route to:
+    // 1_388_614 / 372_130 / 314_606.
+    raw: 1_388_614,
+    gzip: 372_130,
+    brotli: 314_606,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,

@@ -8102,6 +8102,7 @@
         hasFog: gl.getUniformLocation(prog, "u_hasFog"),
         fogDensity: gl.getUniformLocation(prog, "u_fogDensity"),
         fogColor: gl.getUniformLocation(prog, "u_fogColor"),
+        time: gl.getUniformLocation(prog, "time"),
       };
       // Upload author-defined uniforms (customUniforms).
       var record = { program: prog, vertexShader: vs, fragmentShader: fs, attributes: attrs, uniforms: uniforms };
@@ -8109,14 +8110,18 @@
       return record;
     }
 
-    // applyPointsAuthoredCustomUniforms: uploads entry.customUniforms to the
-    // authored program. Uses the shaderLayout fields to determine byte count;
-    // simple name → value binding via getUniformLocation.
-    function applyPointsAuthoredCustomUniforms(prog, uniforms) {
+    // applyPointsAuthoredCustomUniforms uploads framework-owned live uniforms
+    // first, then static entry.customUniforms. Reserved names are skipped in
+    // the static pass so authored values cannot shadow the frame clock.
+    function applyPointsAuthoredCustomUniforms(prog, uniforms, timeSeconds) {
+      if (prog.uniforms.time != null) {
+        gl.uniform1f(prog.uniforms.time, sceneNumber(timeSeconds, 0));
+      }
       if (!uniforms || typeof uniforms !== "object") return;
       var keys = Object.keys(uniforms);
       for (var k = 0; k < keys.length; k++) {
         var name = keys[k];
+        if (name === "time") continue;
         var val = uniforms[name];
         var loc = gl.getUniformLocation(prog.program, name);
         if (loc == null) continue;
@@ -8330,7 +8335,7 @@
         }
         // Upload authored custom uniforms if using an authored program.
         if (usedAuthored) {
-          applyPointsAuthoredCustomUniforms(pp, entry.customUniforms);
+          applyPointsAuthoredCustomUniforms(pp, entry.customUniforms, timeSeconds);
         }
 
         var px = sceneNumber(entry.x, 0);
