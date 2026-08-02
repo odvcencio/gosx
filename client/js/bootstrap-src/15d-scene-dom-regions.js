@@ -197,7 +197,11 @@
     var resizeObserver = null;
     var observed = [];
     var geometryTracking = false;
+    var scrollResumeTimer = null;
+    var scrollSuspended = false;
+    var clearSuspensionAfterMeasure = false;
     var scheduledRender = typeof scheduleRender === "function" ? scheduleRender : function() {};
+    var scrollQuietMS = 180;
 
     function currentCanvas() {
       if (typeof canvas === "function") {
@@ -248,33 +252,40 @@
 
     function measureNow() {
       raf = null;
-      if (disposed || configs.length === 0) return;
-      var entries = [];
-      var targetKeyParts = [];
-      var allTargets = [];
-      var activeCanvas = currentCanvas();
-      for (var i = 0; i < configs.length; i += 1) {
-        var config = configs[i];
-        var targets = queryTargets(config.selector);
-        allTargets = allTargets.concat(targets.slice(0, config.max));
-        targetKeyParts.push(config.name + ":" + config.selector + ":" + targets.length);
-        entries.push(sceneDOMRegionPatch(config, sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max)));
-      }
-      observeTargets(allTargets);
-      var patchKey = JSON.stringify(entries);
-      if (patchKey === lastPatchKey) return;
-      lastPatchKey = patchKey;
-      if (typeof applyScenePostUniformsCommand === "function") {
-        applyScenePostUniformsCommand(state, { effects: entries });
-      }
-      scheduledRender("custom-post-dom-regions");
-      if (mount && typeof mount.setAttribute === "function") {
-        mount.setAttribute("data-gosx-scene3d-dom-regions", String(entries.length));
-        mount.setAttribute("data-gosx-scene3d-dom-region-targets", targetKeyParts.join("|"));
+      var clearAfter = clearSuspensionAfterMeasure;
+      clearSuspensionAfterMeasure = false;
+      try {
+        if (disposed || configs.length === 0) return;
+        var entries = [];
+        var targetKeyParts = [];
+        var allTargets = [];
+        var activeCanvas = currentCanvas();
+        for (var i = 0; i < configs.length; i += 1) {
+          var config = configs[i];
+          var targets = queryTargets(config.selector);
+          allTargets = allTargets.concat(targets.slice(0, config.max));
+          targetKeyParts.push(config.name + ":" + config.selector + ":" + targets.length);
+          entries.push(sceneDOMRegionPatch(config, sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max)));
+        }
+        observeTargets(allTargets);
+        var patchKey = JSON.stringify(entries);
+        if (patchKey === lastPatchKey) return;
+        lastPatchKey = patchKey;
+        if (typeof applyScenePostUniformsCommand === "function") {
+          applyScenePostUniformsCommand(state, { effects: entries });
+        }
+        scheduledRender("custom-post-dom-regions");
+        if (mount && typeof mount.setAttribute === "function") {
+          mount.setAttribute("data-gosx-scene3d-dom-regions", String(entries.length));
+          mount.setAttribute("data-gosx-scene3d-dom-region-targets", targetKeyParts.join("|"));
+        }
+      } finally {
+        if (clearAfter && !disposed) setSuspended(false);
       }
     }
 
-    function scheduleMeasure() {
+    function scheduleMeasure(clearSuspensionWhenDone) {
+      if (clearSuspensionWhenDone) clearSuspensionAfterMeasure = true;
       if (disposed || configs.length === 0 || raf != null) return;
       var rafFn = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
         ? window.requestAnimationFrame.bind(window)
@@ -291,6 +302,26 @@
       raf = null;
     }
 
+    function clearScrollResumeTimer() {
+      if (scrollResumeTimer == null) return;
+      clearTimeout(scrollResumeTimer);
+      scrollResumeTimer = null;
+    }
+
+    function setSuspended(suspended) {
+      suspended = Boolean(suspended);
+      if (scrollSuspended === suspended) return;
+      scrollSuspended = suspended;
+      if (!mount || typeof mount.setAttribute !== "function") return;
+      if (suspended) {
+        mount.setAttribute("data-gosx-scene3d-dom-regions-suspended", "true");
+      } else if (typeof mount.removeAttribute === "function") {
+        mount.removeAttribute("data-gosx-scene3d-dom-regions-suspended");
+      } else {
+        mount.setAttribute("data-gosx-scene3d-dom-regions-suspended", "false");
+      }
+    }
+
     function enableGeometryTracking() {
       if (geometryTracking || disposed) return;
       geometryTracking = true;
@@ -298,8 +329,8 @@
         resizeObserver = new ResizeObserver(onGeometryChange);
       }
       if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-        window.addEventListener("scroll", onGeometryChange, true);
-        window.addEventListener("resize", onGeometryChange);
+        window.addEventListener("scroll", onScrollGeometryChange, { capture: true, passive: true });
+        window.addEventListener("resize", onGeometryChange, { passive: true });
       }
     }
 
@@ -307,8 +338,11 @@
       disconnectObserved();
       resizeObserver = null;
       cancelMeasure();
+      clearScrollResumeTimer();
+      clearSuspensionAfterMeasure = false;
+      setSuspended(false);
       if (geometryTracking && typeof window !== "undefined" && typeof window.removeEventListener === "function") {
-        window.removeEventListener("scroll", onGeometryChange, true);
+        window.removeEventListener("scroll", onScrollGeometryChange, { capture: true });
         window.removeEventListener("resize", onGeometryChange);
       }
       geometryTracking = false;
@@ -340,8 +374,29 @@
     }
 
     function onGeometryChange() {
+      if (disposed || configs.length === 0) return;
+      if (scrollSuspended || scrollResumeTimer != null) {
+        deferGeometryCatchUp();
+        return;
+      }
       lastPatchKey = "";
       scheduleMeasure();
+    }
+
+    function deferGeometryCatchUp() {
+      if (disposed || configs.length === 0) return;
+      lastPatchKey = "";
+      cancelMeasure();
+      setSuspended(true);
+      clearScrollResumeTimer();
+      scrollResumeTimer = setTimeout(function() {
+        scrollResumeTimer = null;
+        scheduleMeasure(true);
+      }, scrollQuietMS);
+    }
+
+    function onScrollGeometryChange() {
+      deferGeometryCatchUp();
     }
 
     configure(state && state.postEffects);

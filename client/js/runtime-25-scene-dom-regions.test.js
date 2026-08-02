@@ -15,6 +15,7 @@ const {
   FakeElement,
   createContext,
   installManualRAF,
+  installManualTimers,
   runScript,
   flushAsyncWork,
 } = require("./runtime-test-harness.js");
@@ -53,6 +54,7 @@ function createDOMRegionTrackerHarness(options = {}) {
 
   const env = createContext({ elements: [mount].concat(targets) });
   const raf = installManualRAF(env.context);
+  const timers = installManualTimers(env.context);
   const patches = [];
   const renders = [];
   env.context.applyScenePostUniformsCommand = function(state, data) {
@@ -94,6 +96,7 @@ function createDOMRegionTrackerHarness(options = {}) {
     set activeCanvas(value) { activeCanvas = value; },
     targets,
     raf,
+    timers,
     patches,
     renders,
     state,
@@ -173,6 +176,141 @@ test("CustomPost DOMRegions coalesces unchanged keys and disposes listeners", as
   assert.equal(harness.raf.count(), 0);
 });
 
+test("CustomPost DOMRegions suspends expensive region measurement during active scroll", async () => {
+  const harness = createDOMRegionTrackerHarness();
+  harness.raf.flush(16);
+  await flushAsyncWork();
+  assert.equal(harness.patches.length, 1);
+
+  harness.env.context.dispatchEvent({ type: "scroll" });
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "true");
+  assert.equal(harness.raf.count(), 0, "scroll must not schedule immediate DOM-region measurement");
+
+  harness.env.context.dispatchEvent({ type: "scroll" });
+  assert.equal(harness.raf.count(), 0, "repeat scroll must stay coalesced until quiet");
+
+  assert.equal(harness.timers.runDelay(180), 1);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "true");
+  assert.equal(harness.raf.count(), 1, "quiet period schedules one catch-up measurement");
+
+  harness.raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), null);
+  assert.equal(harness.patches.length, 2, "quiet catch-up may patch once after active scroll");
+  assert.deepEqual(harness.renders.slice(-1), ["custom-post-dom-regions"]);
+});
+
+test("CustomPost DOMRegions defers resize signals into the scroll quiet catch-up", async () => {
+  const harness = createDOMRegionTrackerHarness();
+  harness.raf.flush(16);
+  await flushAsyncWork();
+  assert.equal(harness.patches.length, 1);
+
+  harness.env.context.dispatchEvent({ type: "scroll" });
+  assert.equal(harness.timers.count(), 1);
+  assert.equal(harness.raf.count(), 0);
+
+  harness.env.resizeObservers.at(-1).trigger();
+  harness.env.context.dispatchEvent({ type: "resize" });
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "true");
+  assert.equal(harness.timers.count(), 1, "resize work must share the active scroll timer");
+  assert.equal(harness.raf.count(), 0, "resize during scroll must not measure immediately");
+
+  assert.equal(harness.timers.runDelay(180), 1);
+  assert.equal(harness.raf.count(), 1);
+  harness.raf.flush(64);
+  await flushAsyncWork();
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), null);
+  assert.equal(harness.patches.length, 2);
+  assert.deepEqual(harness.renders.slice(-1), ["custom-post-dom-regions"]);
+});
+
+test("CustomPost DOMRegions avoids repeated suspended attribute writes during scroll bursts", async () => {
+  const harness = createDOMRegionTrackerHarness();
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  let suspendedWrites = 0;
+  const originalSetAttribute = harness.mount.setAttribute.bind(harness.mount);
+  harness.mount.setAttribute = function(name, value) {
+    if (name === "data-gosx-scene3d-dom-regions-suspended") suspendedWrites += 1;
+    return originalSetAttribute(name, value);
+  };
+
+  for (let i = 0; i < 8; i += 1) {
+    harness.env.context.dispatchEvent({ type: "scroll" });
+  }
+
+  assert.equal(suspendedWrites, 1);
+  assert.equal(harness.timers.count(), 1);
+  assert.equal(harness.raf.count(), 0);
+});
+
+test("CustomPost DOMRegions keeps suspension until catch-up measurement applies", async () => {
+  const harness = createDOMRegionTrackerHarness();
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  let removedAfterPatch = false;
+  const originalRemoveAttribute = harness.mount.removeAttribute.bind(harness.mount);
+  harness.mount.removeAttribute = function(name) {
+    if (name === "data-gosx-scene3d-dom-regions-suspended") {
+      removedAfterPatch = harness.patches.length === 2;
+    }
+    return originalRemoveAttribute(name);
+  };
+
+  harness.env.context.dispatchEvent({ type: "scroll" });
+  assert.equal(harness.timers.runDelay(180), 1);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "true");
+  assert.equal(harness.patches.length, 1);
+
+  harness.raf.flush(80);
+  await flushAsyncWork();
+  assert.equal(removedAfterPatch, true);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), null);
+});
+
+test("CustomPost DOMRegions coalesces rapid scroll bursts into one quiet measurement", async () => {
+  const harness = createDOMRegionTrackerHarness();
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  for (let i = 0; i < 5; i += 1) {
+    harness.env.context.dispatchEvent({ type: "scroll" });
+    harness.env.resizeObservers.at(-1).trigger();
+  }
+
+  assert.equal(harness.timers.count(), 1);
+  assert.equal(harness.raf.count(), 0);
+  assert.equal(harness.timers.runDelay(180), 1);
+  assert.equal(harness.raf.count(), 1);
+
+  harness.raf.flush(96);
+  await flushAsyncWork();
+  assert.equal(harness.patches.length, 2);
+  assert.equal(harness.renders.filter((reason) => reason === "custom-post-dom-regions").length, 2);
+});
+
+test("CustomPost DOMRegions dispose cancels pending scroll quiet work", async () => {
+  const harness = createDOMRegionTrackerHarness();
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  harness.env.context.dispatchEvent({ type: "scroll" });
+  assert.equal(harness.timers.count(), 1);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), "true");
+
+  harness.tracker.dispose();
+  assert.equal(harness.timers.count(), 0);
+  assert.equal(harness.raf.count(), 0);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions-suspended"), null);
+  assert.equal(harness.timers.runDelay(180), 0);
+  assert.equal(harness.raf.count(), 0);
+  assert.equal(harness.patches.length, 1);
+  assert.equal(harness.renders.length, 1);
+});
+
 test("CustomPost DOMRegions stays observer-free until a region config exists", () => {
   const harness = createDOMRegionTrackerHarness({ postEffects: [] });
   assert.equal(harness.raf.count(), 0);
@@ -236,4 +374,6 @@ test("CustomPost DOMRegions tracker is wired into Scene3D mount lifecycle", () =
   assert.match(bootstrapScene3DMountSourceFile, /createSceneCustomPostDOMRegionTracker\(ctx\.mount,\s*function\(\) \{ return canvas; \},\s*sceneState,\s*scheduleRender\)/);
   assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.configure\(sceneState\.postEffects\)/);
   assert.match(bootstrapScene3DMountSourceFile, /domRegionTracker\.dispose\(\)/);
+  assert.match(bootstrapScene3DDOMRegionsSourceFile, /data-gosx-scene3d-dom-regions-suspended/);
+  assert.match(bootstrapScene3DDOMRegionsSourceFile, /addEventListener\("scroll", onScrollGeometryChange, \{ capture: true, passive: true \}\)/);
 });
