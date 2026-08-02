@@ -464,9 +464,10 @@ const budgets = [
   // accounting, and change-only WebGL telemetry publication. Exact regenerated
   // measurement: 1_458_092 / 393_850 / 316_914. Only the breached raw ceiling
   // moves; compressed ceilings retain their prior headroom.
-  // DPR floor support adds a raw-only viewport resolver delta. Exact
-  // regenerated measurement: 1_458_482 / 394_002 / 317_042.
-  { file: "bootstrap.js", raw: 1_458_482, gzip: 394_100, brotli: 317_100 },
+  // Authored-points time support adds a raw-only Scene3D point normalizer /
+  // frame-clock delta. Exact regenerated measurement:
+  // 1_459_875 / 394_097 / 317_380.
+  { file: "bootstrap.js", raw: 1_459_875, gzip: 394_100, brotli: 317_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -747,8 +748,8 @@ const budgets = [
   // -shared.js and 16-scene-webgl.js, both render-truth call sites. Ceiling
   // re-set from measurement of the merged bundle: 194_403 / 52_664 / 45_104.
   // Final integrated measurement: 209_702 / 57_564 / 49_044.
-  // FINAL-FIX-19 exact measurement: 209_610 / 57_612 / 49_007.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 210_000, gzip: 57_612, brotli: 49_100 },
+  // Authored-points time support exact measurement: 209_726 / 57_632 / 49_102.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 210_000, gzip: 57_632, brotli: 49_200 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -800,8 +801,8 @@ const budgets = [
   // in the final audit. Measured: 484_997 / 133_999 / 111_308.
   // Final integrated measurement: 496_933 / 137_294 / 113_937.
   // FINAL-FIX-19 exact measurement: 497_103 / 137_333 / 113_960.
-  // DPR floor support exact measurement: 497_493 / 137_435 / 114_109.
-  { file: "bootstrap-feature-scene3d.js", raw: 497_493, gzip: 137_500, brotli: 114_200 },
+  // Authored-points time support exact measurement: 498_790 / 137_622 / 114_072.
+  { file: "bootstrap-feature-scene3d.js", raw: 498_790, gzip: 137_700, brotli: 114_200 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1245,9 +1246,10 @@ const routeBudgets = [
     // Final integrated measurement: 1_149_871 / 305_600 / 258_349.
     // FINAL-FIX-19 exact measurement: 1_150_801 / 305_824 / 258_630.
     // Only the breached raw and Brotli ceilings move.
-    // DPR floor support exact measurement: 1_151_191 / 305_926 / 258_779.
-    raw: 1_151_191,
-    gzip: 306_000,
+    // Authored-points time support exact measurement:
+    // 1_152_488 / 306_113 / 258_742.
+    raw: 1_152_488,
+    gzip: 306_200,
     brotli: 258_800,
   },
   {
@@ -1316,10 +1318,11 @@ const routeBudgets = [
     // Final hydration/lifecycle/telemetry measurement:
     // 951_588 / 263_185 / 223_963.
     // Final integrated measurement: 978_394 / 271_253 / 230_459.
-    // DPR floor support exact measurement: 978_862 / 271_442 / 230_594.
-    raw: 978_862,
-    gzip: 271_500,
-    brotli: 230_600,
+    // Authored-points time support exact measurement:
+    // 980_275 / 271_649 / 230_652.
+    raw: 980_275,
+    gzip: 271_700,
+    brotli: 230_700,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1378,10 +1381,10 @@ const routeBudgets = [
     // 1_317_451 / 350_565 / 297_215.
     // Final integrated measurement: 1_359_573 / 363_164 / 307_393.
     // FINAL-FIX-19 exact measurement: 1_360_411 / 363_436 / 307_637.
-    // DPR floor support exact measurement: 1_360_801 / 363_538 / 307_786.
-    raw: 1_360_801,
-    gzip: 363_600,
-    brotli: 307_800,
+    // Authored-points time support exact measurement: 1_362_214 / 363_745 / 307_844.
+    raw: 1_362_214,
+    gzip: 363_800,
+    brotli: 307_900,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1442,9 +1445,9 @@ const routeBudgets = [
     // 976_489 / 255_516 / 214_470.
     // Final integrated measurement: 1_003_741 / 263_342 / 220_781.
     // FINAL-FIX-19 exact measurement: 1_004_671 / 263_566 / 221_062.
-    // DPR floor support exact measurement: 1_005_061 / 263_668 / 221_211.
-    raw: 1_005_061,
-    gzip: 263_700,
+    // Authored-points time support exact measurement: 1_006_358 / 263_855 / 221_174.
+    raw: 1_006_358,
+    gzip: 263_900,
     brotli: 221_300,
   },
 

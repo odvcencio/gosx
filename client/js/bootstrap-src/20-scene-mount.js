@@ -124,6 +124,9 @@
       })) {
         return { wants: true, reason: "point-spin" };
       }
+      if (Array.isArray(sceneState.points) && sceneState.points.some(scenePointUsesFrameTime)) {
+        return { wants: true, reason: "point-time" };
+      }
       if (sceneStateObjects(sceneState).some(sceneObjectAnimated)) {
         return { wants: true, reason: "object-animation" };
       }
@@ -137,6 +140,19 @@
         return { wants: true, reason: "html-animation" };
       }
       return { wants: false, reason: "static" };
+    }
+
+    function scenePointUsesFrameTime(point) {
+      if (!point || typeof point !== "object") return false;
+      if (/\btime\b/.test([
+        point.customVertex, point.customFragment, point.customVertexWGSL, point.customFragmentWGSL,
+      ].filter(function(part) { return typeof part === "string" && part.indexOf("time") >= 0; }).join("\n"))) return true;
+      const layout = point.shaderLayout;
+      const block = layout && layout.uniformBlock;
+      const fields = block && Array.isArray(block.fields) ? block.fields : [];
+      return fields.some(function(field) {
+        return field && field.name === "time";
+      });
     }
 
     function sceneShouldAnimate() {

@@ -1573,6 +1573,41 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
   assert.match(webgl, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, projMatrix, viewMatrix\);\s*\n\s*sceneSelenaFrameTime = performance\.now\(\) \/ 1000;/);
 });
 
+test("Scene3D WebGL authored points use the frame clock for reserved time", () => {
+  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const uploader = webgl.match(/function applyPointsAuthoredCustomUniforms[\s\S]{0,900}/);
+  assert.ok(uploader, "missing authored-points custom uniform uploader");
+  assert.match(uploader[0], /getUniformLocation\(prog\.program, "time"\)/);
+  assert.match(uploader[0], /uniform1f\(timeLoc, Number\.isFinite\(timeSeconds\) \? timeSeconds : 0\)/);
+  assert.match(uploader[0], /if \(name === "time"\) continue;/);
+  assert.match(webgl, /applyPointsAuthoredCustomUniforms\(pp, entry\.customUniforms, timeSeconds\)/);
+});
+
+test("Scene3D authored points with time keep the render loop active", () => {
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  assert.match(mount, /function scenePointUsesFrameTime\(point\)/);
+  assert.match(mount, /sceneState\.points\.some\(scenePointUsesFrameTime\)/);
+  assert.match(mount, /return \{ wants: true, reason: "point-time" \};/);
+  assert.match(mount, /field && field\.name === "time"/);
+});
+
+test("Scene3D point normalization preserves inline authored shaders", () => {
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const normalizer = core.match(/function normalizeScenePointsEntry[\s\S]{0,5200}/);
+  assert.ok(normalizer, "missing point normalizer");
+  for (const field of [
+    "customVertex",
+    "customFragment",
+    "customVertexWGSL",
+    "customFragmentWGSL",
+    "customUniforms",
+    "shaderBackend",
+    "shaderLayout",
+  ]) {
+    assert.match(normalizer[0], new RegExp(field), `point normalizer must preserve ${field}`);
+  }
+});
+
 test("Scene3D selena time auto-uniform: time is forced before customUniforms (reserved name)", () => {
   const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
   const webgpu = readWebGPUBackendSrc();

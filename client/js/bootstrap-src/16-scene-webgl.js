@@ -8052,13 +8052,18 @@
     }
 
     // applyPointsAuthoredCustomUniforms: uploads entry.customUniforms to the
-    // authored program. Uses the shaderLayout fields to determine byte count;
-    // simple name → value binding via getUniformLocation.
-    function applyPointsAuthoredCustomUniforms(prog, uniforms) {
+    // authored program. Treats `time` as the reserved frame clock, matching
+    // Selena mesh and post uniforms.
+    function applyPointsAuthoredCustomUniforms(prog, uniforms, timeSeconds) {
+      var timeLoc = gl.getUniformLocation(prog.program, "time");
+      if (timeLoc != null) {
+        gl.uniform1f(timeLoc, Number.isFinite(timeSeconds) ? timeSeconds : 0);
+      }
       if (!uniforms || typeof uniforms !== "object") return;
       var keys = Object.keys(uniforms);
       for (var k = 0; k < keys.length; k++) {
         var name = keys[k];
+        if (name === "time") continue;
         var val = uniforms[name];
         var loc = gl.getUniformLocation(prog.program, name);
         if (loc == null) continue;
@@ -8272,7 +8277,7 @@
         }
         // Upload authored custom uniforms if using an authored program.
         if (usedAuthored) {
-          applyPointsAuthoredCustomUniforms(pp, entry.customUniforms);
+          applyPointsAuthoredCustomUniforms(pp, entry.customUniforms, timeSeconds);
         }
 
         var px = sceneNumber(entry.x, 0);

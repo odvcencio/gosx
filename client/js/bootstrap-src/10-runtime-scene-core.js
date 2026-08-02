@@ -1663,6 +1663,13 @@
       qualityGroup: typeof item.qualityGroup === "string" && item.qualityGroup.trim()
         ? item.qualityGroup.trim()
         : (typeof current.qualityGroup === "string" ? current.qualityGroup : ""),
+      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      customUniforms: sceneIsPlainObject(item.customUniforms) ? Object.assign({}, item.customUniforms) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
+      shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
+      shaderLayout: sceneIsPlainObject(item.shaderLayout) ? sceneCloneData(item.shaderLayout) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
       _outState: lifecycle.outState,
