@@ -807,6 +807,14 @@ function fakeElementQuerySelectorAll(root, selector, includeSelf = false) {
   return matches;
 }
 
+function fakeScriptTypeCanExecute(node) {
+  const type = String(node && node.getAttribute && node.getAttribute("type") || "").trim().toLowerCase();
+  return !type ||
+    type === "text/javascript" ||
+    type === "application/javascript" ||
+    type === "module";
+}
+
 class FakeElement {
   constructor(tagName, ownerDocument) {
     this.nodeType = ELEMENT_NODE;
@@ -942,6 +950,8 @@ class FakeElement {
       const src = node.src || node.getAttribute("src");
       if (src) {
         this.ownerDocument.scriptLoader(src, node);
+      } else if (fakeScriptTypeCanExecute(node) && typeof this.ownerDocument.inlineScriptRunner === "function") {
+        this.ownerDocument.inlineScriptRunner(String(node.textContent || ""), node);
       }
     }
 
@@ -977,6 +987,17 @@ class FakeElement {
     this.childNodes.splice(idx, 0, node);
     if (node.nodeType === ELEMENT_NODE && this.ownerDocument) {
       this.ownerDocument.indexNode(node);
+    }
+    if (
+      node.nodeType === ELEMENT_NODE &&
+      node.tagName === "SCRIPT" &&
+      (this.tagName === "HEAD" || this.tagName === "HTML" || this.tagName === "BODY") &&
+      this.ownerDocument &&
+      typeof this.ownerDocument.inlineScriptRunner === "function" &&
+      !node.getAttribute("src") &&
+      fakeScriptTypeCanExecute(node)
+    ) {
+      this.ownerDocument.inlineScriptRunner(String(node.textContent || ""), node);
     }
     return node;
   }
@@ -1248,6 +1269,7 @@ class FakeDocument {
     this.createWebGLContext = null;
     // Set by createContext to simulate <script src> loading from fetchRoutes.
     this.scriptLoader = null;
+    this.inlineScriptRunner = null;
   }
 
   createElement(tagName) {
@@ -2378,6 +2400,17 @@ function createContext(options) {
         scriptElement.onload({});
       }
     }, 0);
+  };
+  document.inlineScriptRunner = function(source, scriptElement) {
+    try {
+      vm.runInContext(String(source || ""), context, { filename: "inline-script.js" });
+    } catch (e) {
+      if (scriptElement && typeof scriptElement.onerror === "function") {
+        scriptElement.onerror(e);
+      } else {
+        throw e;
+      }
+    }
   };
 
   if (options.manifest) {

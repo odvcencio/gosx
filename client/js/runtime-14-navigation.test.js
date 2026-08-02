@@ -165,6 +165,135 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   assert.equal(env.scrollCalls[0][0].behavior, "instant");
 });
 
+test("navigation runtime replays only opted-in inline scripts after page bootstrap", async () => {
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Home";
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/": {
+        text: "__HOME_DOC__",
+        url: "http://localhost:3000/",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__scriptOrder = [];
+  env.context.__bootstrapDone = false;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const originalBootstrap = env.context.__gosx_bootstrap_page;
+  env.context.__gosx_bootstrap_page = async function(reuseIDs) {
+    env.context.__scriptOrder.push("bootstrap");
+    await originalBootstrap(reuseIDs);
+    env.context.__bootstrapDone = true;
+  };
+  env.context.__gosx_dispose_page = async function() {};
+
+  const unmarkedScript = new FakeElement("script", null);
+  unmarkedScript.textContent = "window.__scriptOrder.push('unmarked');";
+
+  const dataScript = new FakeElement("script", null);
+  dataScript.setAttribute("type", "application/json");
+  dataScript.setAttribute("data-gosx-navigation-replay", "true");
+  dataScript.textContent = "{\"ignored\":true}";
+
+  const replayScript = new FakeElement("script", null);
+  replayScript.id = "replay-script";
+  replayScript.setAttribute("data-gosx-navigation-replay", "true");
+  replayScript.textContent = [
+    "window.__inlineReplayCount = (window.__inlineReplayCount || 0) + 1;",
+    "window.__scriptOrder.push(window.__bootstrapDone ? 'replay-after-bootstrap' : 'replay-before-bootstrap');",
+  ].join("\n");
+
+  const nextBody = new FakeElement("main", null);
+  nextBody.id = "home-page";
+  nextBody.textContent = "home";
+
+  parsedDocs.set("__HOME_DOC__", buildNavigatedDocument({
+    title: "Home",
+    bodyNodes: [dataScript, unmarkedScript, replayScript, nextBody],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/");
+  await flushAsyncWork();
+
+  assert.deepEqual(env.context.__scriptOrder, ["bootstrap", "replay-after-bootstrap"]);
+  assert.equal(env.context.__inlineReplayCount, 1);
+  assert.equal(env.document.getElementById("home-page").textContent, "home");
+  assert.equal(env.document.getElementById("replay-script").getAttribute("data-gosx-navigation-replayed"), "true");
+});
+
+test("navigation runtime replays pre-bootstrap inline scripts before page bootstrap", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/inline-replay-pre": {
+        text: "__INLINE_REPLAY_PRE_DOC__",
+        url: "http://localhost:3000/inline-replay-pre",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__scriptOrder = [];
+  env.context.__bootstrapDone = false;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const originalBootstrap = env.context.__gosx_bootstrap_page;
+  env.context.__gosx_bootstrap_page = async function(reuseIDs) {
+    env.context.__scriptOrder.push("bootstrap");
+    await originalBootstrap(reuseIDs);
+    env.context.__bootstrapDone = true;
+  };
+  env.context.__gosx_dispose_page = async function() {};
+
+  const page = new FakeElement("main", null);
+  page.id = "inline-replay-pre-page";
+  page.textContent = "Inline replay pre";
+
+  const preScript = new FakeElement("script", null);
+  preScript.id = "replay-pre-script";
+  preScript.setAttribute("data-gosx-navigation-replay", "pre-bootstrap");
+  preScript.textContent =
+    "window.__scriptOrder.push(window.__bootstrapDone ? 'pre-after-bootstrap' : 'pre-before-bootstrap');";
+
+  const postScript = new FakeElement("script", null);
+  postScript.id = "replay-post-script";
+  postScript.setAttribute("data-gosx-navigation-replay", "true");
+  postScript.textContent =
+    "window.__scriptOrder.push(window.__bootstrapDone ? 'post-after-bootstrap' : 'post-before-bootstrap');";
+
+  parsedDocs.set("__INLINE_REPLAY_PRE_DOC__", buildNavigatedDocument({
+    title: "Inline Replay Pre",
+    bodyNodes: [page, preScript, postScript],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/inline-replay-pre");
+  await flushAsyncWork();
+
+  assert.deepEqual(env.context.__scriptOrder, [
+    "pre-before-bootstrap",
+    "bootstrap",
+    "post-after-bootstrap",
+  ]);
+  assert.equal(env.document.getElementById("replay-pre-script").getAttribute("data-gosx-navigation-replayed"), "true");
+  assert.equal(env.document.getElementById("replay-post-script").getAttribute("data-gosx-navigation-replayed"), "true");
+});
+
 test("navigation runtime sends typed beacons once per soft navigation path", async () => {
   function beaconScript() {
     const script = new FakeElement("script", null);

@@ -209,6 +209,54 @@ test("selective runtime mounts native JS engines without loading the shared wasm
   assert.equal(mount.getAttribute("data-disposed"), "true");
 });
 
+test("engine factory registration stays open for lazy Scene3D feature chunks after DOMContentLoaded", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "late-scene-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "late-scene-engine",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "late-scene-root",
+          props: { width: 320, height: 180 },
+        },
+      ],
+    },
+  });
+  env.document.readyState = "loading";
+  env.context.__gosx_scene3d_available = true;
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  env.document.readyState = "complete";
+  env.document.dispatchEvent({ type: "DOMContentLoaded", target: env.document });
+  await flushAsyncWork();
+
+  let factoryRuns = 0;
+  env.context.__gosx_register_engine_factory("GoSXScene3D", function(ctx) {
+    factoryRuns += 1;
+    ctx.mount.setAttribute("data-late-scene-mounted", "true");
+    return { dispose() {} };
+  });
+
+  await env.context.__gosx_bootstrap_page();
+  await flushAsyncWork();
+
+  assert.equal(factoryRuns, 1);
+  assert.equal(mount.getAttribute("data-late-scene-mounted"), "true");
+  assert.equal(env.context.__gosx.engines.has("late-scene-engine"), true);
+  assert.equal(
+    env.consoleLogs.error.some((entry) => String(entry.join(" ")).includes("engine factory registration is closed after init")),
+    false,
+  );
+});
+
 // Regression test for the split feature-bundle build: bootstrap-feature-engines.js
 // runs in its own IIFE (see 26b-feature-engines-prefix.js), separate from the
 // runtime bundle's closure. normalizeEngineRenderBundle (concatenated in from

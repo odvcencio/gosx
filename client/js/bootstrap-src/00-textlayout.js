@@ -21,16 +21,14 @@
       console.error("[gosx] invalid engine factory registration");
       return;
     }
+    if (engineFactories[name] === factory) {
+      return;
+    }
+    if (engineFactories[name] && engineFactories[name] !== factory) {
+      console.warn("[gosx] replacing engine factory registration:", name);
+    }
     engineFactories[name] = factory;
   };
-
-  // Lock down factory registration after DOM content loaded
-  document.addEventListener("DOMContentLoaded", function() {
-    window.__gosx_register_engine_factory = function(name) {
-      console.error("[gosx] engine factory registration is closed after init:", name);
-    };
-    Object.freeze(engineFactories);
-  });
 
   window.__gosx = {
     version: GOSX_VERSION,
