@@ -1591,6 +1591,15 @@ test("Scene3D authored points with time keep the render loop active", () => {
   assert.match(mount, /field && field\.name === "time"/);
 });
 
+test("Scene3D custom post effects with time keep the render loop active", () => {
+  const mount = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  assert.match(mount, /function scenePostEffectUsesFrameTime\(effect\)/);
+  assert.match(mount, /sceneState\.postEffects\.some\(scenePostEffectUsesFrameTime\)/);
+  assert.match(mount, /return \{ wants: true, reason: "post-time" \};/);
+  assert.match(mount, /effect\.vertexGLSL,\s*effect\.fragmentGLSL,\s*effect\.vertexWGSL,\s*effect\.fragmentWGSL/);
+  assert.match(mount, /sceneShaderUsesFrameTime\(\[[\s\S]*\], effect\.shaderLayout\)/);
+});
+
 test("Scene3D point normalization preserves inline authored shaders", () => {
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
   const normalizer = core.match(/function normalizeScenePointsEntry[\s\S]{0,5200}/);

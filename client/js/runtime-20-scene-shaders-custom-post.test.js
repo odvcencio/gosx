@@ -1225,6 +1225,71 @@ test("custom post WebGPU: reserved time and patched uniforms reach the post unif
     "reserved time must use the renderer frame clock, not the compiled default or effect.uniforms.time");
 });
 
+test("custom post time keeps the Scene3D mount RAF loop alive without spin", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-custom-post-time-loop";
+  const card = new FakeElement("section", null);
+  card.className = "glass-card";
+  const env = createContext({
+    elements: [mount, card],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    manifest: {
+      engines: [{
+        id: "gosx-engine-custom-post-time-loop",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: mount.id,
+        props: {
+          width: 320,
+          height: 180,
+          forceWebGL: true,
+          autoRotate: false,
+          scene: {
+            objects: [
+              { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+            ],
+            postEffects: [{
+              kind: "customPost",
+              name: "glass-time",
+              fragmentGLSL: "uniform float time; out vec4 outColor; void main(){ outColor = vec4(vec3(fract(time)), 1.0); }",
+              uniforms: { time: 0 },
+              shaderLayout: {
+                uniformBlock: {
+                  name: "UserUniforms",
+                  size: 4,
+                  fields: [{ name: "time", type: "float", offset: 0 }],
+                },
+              },
+              domRegions: { selector: ".glass-card" },
+            }],
+          },
+        },
+      }],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop"), "active");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "post-time");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-wants-animation"), "true");
+  assert.equal(raf.count(), 1, "the post-time animation chain must schedule the next RAF");
+
+  raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "post-time");
+  assert.equal(raf.count(), 1, "the post-time animation chain must stay alive after a frame");
+});
+
 test("Selena mesh WebGPU: postFX MSAA render pass uses a matching pipeline sample count", async () => {
   const harness = await createBoardWebGPUHarness();
   const viewport = { cssWidth: 320, height: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };

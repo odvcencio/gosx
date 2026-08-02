@@ -127,6 +127,9 @@
       if (Array.isArray(sceneState.points) && sceneState.points.some(scenePointUsesFrameTime)) {
         return { wants: true, reason: "point-time" };
       }
+      if (Array.isArray(sceneState.postEffects) && sceneState.postEffects.some(scenePostEffectUsesFrameTime)) {
+        return { wants: true, reason: "post-time" };
+      }
       if (sceneStateObjects(sceneState).some(sceneObjectAnimated)) {
         return { wants: true, reason: "object-animation" };
       }
@@ -144,10 +147,23 @@
 
     function scenePointUsesFrameTime(point) {
       if (!point || typeof point !== "object") return false;
-      if (/\btime\b/.test([
+      return sceneShaderUsesFrameTime([
         point.customVertex, point.customFragment, point.customVertexWGSL, point.customFragmentWGSL,
-      ].filter(function(part) { return typeof part === "string" && part.indexOf("time") >= 0; }).join("\n"))) return true;
-      const layout = point.shaderLayout;
+      ], point.shaderLayout);
+    }
+
+    function scenePostEffectUsesFrameTime(effect) {
+      if (!effect || typeof effect !== "object") return false;
+      return sceneShaderUsesFrameTime([
+        effect.vertexGLSL, effect.fragmentGLSL, effect.vertexWGSL, effect.fragmentWGSL,
+        effect.customVertex, effect.customFragment, effect.customVertexWGSL, effect.customFragmentWGSL,
+      ], effect.shaderLayout);
+    }
+
+    function sceneShaderUsesFrameTime(sourceParts, layout) {
+      if (/\btime\b/.test((Array.isArray(sourceParts) ? sourceParts : [])
+        .filter(function(part) { return typeof part === "string" && part.indexOf("time") >= 0; })
+        .join("\n"))) return true;
       const block = layout && layout.uniformBlock;
       const fields = block && Array.isArray(block.fields) ? block.fields : [];
       return fields.some(function(field) {

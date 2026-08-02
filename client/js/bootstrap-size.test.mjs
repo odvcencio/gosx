@@ -466,7 +466,9 @@ const budgets = [
   // moves; compressed ceilings retain their prior headroom.
   // Authored-points time support plus DOM-region custom-post tracking.
   // Measured: 1_466_190 / 396_503 / 318_902.
-  { file: "bootstrap.js", raw: 1_466_190, gzip: 396_503, brotli: 318_902 },
+  // Bumped 1_466_190 / 396_503 -> 1_466_535 / 396_585 for post-effect
+  // time loop admission. Brotli retains its prior headroom.
+  { file: "bootstrap.js", raw: 1_466_535, gzip: 396_585, brotli: 318_902 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -802,7 +804,9 @@ const budgets = [
   // FINAL-FIX-19 exact measurement: 497_103 / 137_333 / 113_960.
   // Authored-points time support plus DOM-region custom-post tracking.
   // Measured: 505_058 / 139_828 / 116_000.
-  { file: "bootstrap-feature-scene3d.js", raw: 505_058, gzip: 139_828, brotli: 116_000 },
+  // Post-effect time loop admission exact measurement: 505_397 / 139_905 /
+  // 116_116.
+  { file: "bootstrap-feature-scene3d.js", raw: 505_397, gzip: 139_905, brotli: 116_116 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1247,9 +1251,11 @@ const routeBudgets = [
     // FINAL-FIX-19 exact measurement: 1_150_801 / 305_824 / 258_630.
     // Authored-points time support plus DOM-region custom-post tracking.
     // Measured: 1_158_756 / 308_319 / 260_670.
-    raw: 1_158_756,
-    gzip: 308_319,
-    brotli: 260_670,
+    // Bumped to exact 1_159_095 / 308_396 / 260_786 for post-effect time loop
+    // admission in the base Scene3D chunk.
+    raw: 1_159_095,
+    gzip: 308_396,
+    brotli: 260_786,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1319,9 +1325,11 @@ const routeBudgets = [
     // Final integrated measurement: 978_394 / 271_253 / 230_459.
     // Authored-points time support plus DOM-region custom-post tracking.
     // Measured: 986_543 / 273_855 / 232_580.
-    raw: 986_543,
-    gzip: 273_855,
-    brotli: 232_580,
+    // Post-effect time loop admission exact measurement: 986_882 / 273_932 /
+    // 232_696.
+    raw: 986_882,
+    gzip: 273_932,
+    brotli: 232_696,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1382,9 +1390,11 @@ const routeBudgets = [
     // FINAL-FIX-19 exact measurement: 1_360_411 / 363_436 / 307_637.
     // Authored-points time support plus DOM-region custom-post tracking.
     // Measured: 1_368_482 / 365_951 / 309_772.
-    raw: 1_368_482,
-    gzip: 365_951,
-    brotli: 309_772,
+    // Post-effect time loop admission exact measurement: 1_368_821 / 366_028 /
+    // 309_888.
+    raw: 1_368_821,
+    gzip: 366_028,
+    brotli: 309_888,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1447,9 +1457,11 @@ const routeBudgets = [
     // FINAL-FIX-19 exact measurement: 1_004_671 / 263_566 / 221_062.
     // Authored-points time support plus DOM-region custom-post tracking.
     // Measured: 1_012_626 / 266_061 / 223_102.
-    raw: 1_012_626,
-    gzip: 266_061,
-    brotli: 223_102,
+    // Post-effect time loop admission exact measurement: 1_012_965 / 266_138 /
+    // 223_218.
+    raw: 1_012_965,
+    gzip: 266_138,
+    brotli: 223_218,
   },
 
 ];
