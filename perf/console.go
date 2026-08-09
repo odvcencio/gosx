@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/chromedp/cdproto/runtime"
-	"github.com/chromedp/chromedp"
 )
 
 // ConsoleEntry is a single captured console API call or uncaught exception.
@@ -25,7 +24,7 @@ type ConsoleEntry struct {
 // events for the life of its context. It's installed once per Driver and
 // read via Entries().
 //
-// Only Warning, Error, Assert, and exceptions are kept — info/log/debug are
+// Only Warning, Error, Assert, and exceptions are kept - info/log/debug are
 // noisy and rarely actionable in a perf report. Callers who want the full
 // log can use CaptureAllLevels.
 type ConsoleCapture struct {
@@ -56,7 +55,7 @@ func startConsoleCapture(d *Driver, all bool) (*ConsoleCapture, error) {
 
 	// Listen on the driver's parent context so the subscription lives as
 	// long as the driver does.
-	chromedp.ListenTarget(d.ctx, func(ev interface{}) {
+	d.ListenTarget(func(ev any) {
 		switch e := ev.(type) {
 		case *runtime.EventConsoleAPICalled:
 			level := string(e.Type)
@@ -93,7 +92,7 @@ func startConsoleCapture(d *Driver, all bool) (*ConsoleCapture, error) {
 	})
 
 	// Enable the Runtime domain so the events actually fire.
-	if err := chromedp.Run(d.ctx, runtime.Enable()); err != nil {
+	if err := d.Run(runtime.Enable()); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -124,7 +123,7 @@ func (c *ConsoleCapture) Clear() {
 // Disable turns off Runtime event delivery. The capture keeps whatever it
 // already collected.
 func (c *ConsoleCapture) Disable(ctx context.Context) error {
-	return chromedp.Run(ctx, runtime.Disable())
+	return runtime.Disable().Do(ctx)
 }
 
 func isNotableLevel(level string) bool {

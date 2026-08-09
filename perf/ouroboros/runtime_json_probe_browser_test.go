@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/page"
-	"github.com/chromedp/chromedp"
 
 	"m31labs.dev/gosx/perf"
 )
@@ -780,10 +779,10 @@ func requireOuroborosProbeDriver(t *testing.T, timeout time.Duration) *perf.Driv
 
 func injectRuntimeJSONProbeForTest(d *perf.Driver, script string) error {
 	addScript := page.AddScriptToEvaluateOnNewDocument(script)
-	return chromedp.Run(d.Context(), chromedp.ActionFunc(func(ctx context.Context) error {
+	return d.RunFunc(func(ctx context.Context) error {
 		_, err := addScript.Do(ctx)
 		return err
-	}))
+	})
 }
 
 func newRuntimeJSONAttributionServerForTest(t *testing.T, scriptQuery string) *httptest.Server {

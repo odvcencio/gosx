@@ -18,14 +18,17 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/page"
-	"github.com/chromedp/chromedp"
 )
 
 // Recorder captures browser screencast frames.
 type Recorder struct {
-	mu     sync.Mutex
-	frames []recordedFrame
-	done   chan struct{}
+	mu           sync.Mutex
+	frames       []recordedFrame
+	done         chan struct{}
+	cancelListen context.CancelFunc
+	ackWG        sync.WaitGroup
+	stopOnce     sync.Once
+	stopped      chan struct{}
 }
 
 type recordedFrame struct {
@@ -41,7 +44,7 @@ type recordedFrame struct {
 //
 // Chrome delivers a Page.screencastFrame event only when the compositor
 // commits a NEW frame. A page that draws once and then holds still delivers
-// nothing at all — not even an initial image. So a plain
+// nothing at all - not even an initial image. So a plain
 // Page.startScreencast over a static page captured zero frames, and Stop
 // returned "no frames captured" for a page that had rendered correctly.
 // TestRecordGIF caught this the first time it ever compiled.
@@ -51,12 +54,18 @@ type recordedFrame struct {
 // each later change.
 func StartRecording(d *Driver) (*Recorder, error) {
 	rec := &Recorder{
-		done: make(chan struct{}),
+		done:    make(chan struct{}),
+		stopped: make(chan struct{}),
 	}
 
-	chromedp.ListenTarget(d.ctx, func(ev any) {
+	rec.cancelListen = d.ListenTarget(func(ev any) {
 		switch e := ev.(type) {
 		case *page.EventScreencastFrame:
+			select {
+			case <-rec.stopped:
+				return
+			default:
+			}
 			raw, err := base64.StdEncoding.DecodeString(e.Data)
 			if err != nil {
 				return
@@ -72,26 +81,33 @@ func StartRecording(d *Driver) (*Recorder, error) {
 			})
 			rec.mu.Unlock()
 
-			// Ack the frame in a goroutine to avoid deadlocking the
-			// event dispatch loop (chromedp.Run blocks until done).
+			// Ack the frame in a goroutine to avoid blocking the event loop.
+			rec.ackWG.Add(1)
 			go func() {
-				_ = chromedp.Run(d.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+				defer rec.ackWG.Done()
+				select {
+				case <-rec.stopped:
+					return
+				default:
+				}
+				_ = d.RunFunc(func(ctx context.Context) error {
 					return page.ScreencastFrameAck(e.SessionID).Do(ctx)
-				}))
+				})
 			}()
 		}
 	})
 
 	// Start the screencast (JPEG, quality 80, reasonable size).
-	err := chromedp.Run(d.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+	err := d.RunFunc(func(ctx context.Context) error {
 		return page.StartScreencast().
 			WithFormat(page.ScreencastFormatJpeg).
 			WithQuality(80).
 			WithMaxWidth(1280).
 			WithMaxHeight(720).
 			Do(ctx)
-	}))
+	})
 	if err != nil {
+		rec.cancel()
 		return nil, fmt.Errorf("start screencast: %w", err)
 	}
 
@@ -110,14 +126,14 @@ func StartRecording(d *Driver) (*Recorder, error) {
 // the screencast uses, so writeGIF decodes both kinds through one path.
 func captureSeedFrame(d *Driver) (recordedFrame, error) {
 	var data []byte
-	err := chromedp.Run(d.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+	err := d.RunFunc(func(ctx context.Context) error {
 		var err error
 		data, err = page.CaptureScreenshot().
 			WithFormat(page.CaptureScreenshotFormatJpeg).
 			WithQuality(80).
 			Do(ctx)
 		return err
-	}))
+	})
 	if err != nil {
 		return recordedFrame{}, err
 	}
@@ -151,16 +167,44 @@ func (r *Recorder) ScreencastFrames() int {
 // Supports .gif output via pure Go (always available).
 // Supports .mp4/.webm if ffmpeg is on PATH.
 func (r *Recorder) Stop(d *Driver, path string) error {
-	// Stop the screencast.
-	_ = chromedp.Run(d.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return page.StopScreencast().Do(ctx)
-	}))
+	r.stop(d)
+	r.ackWG.Wait()
+
+	if path == "" {
+		return nil
+	}
 
 	r.mu.Lock()
 	frames := make([]recordedFrame, len(r.frames))
 	copy(frames, r.frames)
 	r.mu.Unlock()
 
+	return r.writeFrames(frames, path)
+}
+
+func (r *Recorder) stop(d *Driver) {
+	if r == nil {
+		return
+	}
+	r.stopOnce.Do(func() {
+		close(r.stopped)
+		r.cancel()
+		if d != nil {
+			_ = d.RunFunc(func(ctx context.Context) error {
+				return page.StopScreencast().Do(ctx)
+			})
+		}
+	})
+}
+
+func (r *Recorder) cancel() {
+	if r != nil && r.cancelListen != nil {
+		r.cancelListen()
+	}
+}
+
+func (r *Recorder) writeFrames(frames []recordedFrame, path string) error {
+	// Stop the screencast.
 	if len(frames) == 0 {
 		// StartRecording seeds a frame, so an empty set means the screenshot
 		// AND the screencast both produced nothing. Name both, because the

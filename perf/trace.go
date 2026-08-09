@@ -32,7 +32,7 @@ import (
 //	os.WriteFile("trace.json", trace, 0o644)
 //
 // Users then drop trace.json into chrome://tracing, https://ui.perfetto.dev,
-// or Chrome DevTools' Performance panel (Load profile…).
+// or Chrome DevTools' Performance panel (Load profile...).
 func CaptureTrace(d *Driver, during func() error) ([]byte, error) {
 	return CaptureTraceWithCategories(d, defaultTraceCategories(), during)
 }
@@ -55,15 +55,12 @@ func CaptureTraceWithCategories(d *Driver, categories []string, during func() er
 		doneOnce sync.Once
 	)
 
-	listenCtx, cancelListen := context.WithCancel(d.ctx)
-	defer cancelListen()
-
-	chromedp.ListenTarget(listenCtx, func(ev interface{}) {
+	cancelListen := d.ListenTarget(func(ev any) {
 		switch e := ev.(type) {
 		case *tracing.EventDataCollected:
 			// Each Value is a single raw trace event (as a JSON object).
 			// Some Chrome builds deliver events this way; others deliver
-			// everything via a stream handle. Handle both — stream wins
+			// everything via a stream handle. Handle both - stream wins
 			// when present.
 			mu.Lock()
 			for _, v := range e.Value {
@@ -77,6 +74,7 @@ func CaptureTraceWithCategories(d *Driver, categories []string, during func() er
 			doneOnce.Do(func() { close(doneCh) })
 		}
 	})
+	defer cancelListen()
 
 	// Start tracing before the callback runs.
 	startParams := tracing.Start().
@@ -86,27 +84,27 @@ func CaptureTraceWithCategories(d *Driver, categories []string, during func() er
 			RecordMode:         tracing.RecordModeRecordUntilFull,
 			IncludedCategories: categories,
 		})
-	if err := chromedp.Run(d.ctx, startParams); err != nil {
+	if err := d.Run(startParams); err != nil {
 		return nil, fmt.Errorf("tracing.Start: %w", err)
 	}
 
 	// Run the user callback while tracing is active.
 	cbErr := during()
 
-	// End tracing — Chrome flushes the buffer and fires TracingComplete.
-	if err := chromedp.Run(d.ctx, tracing.End()); err != nil {
+	// End tracing - Chrome flushes the buffer and fires TracingComplete.
+	if err := d.Run(tracing.End()); err != nil {
 		return nil, fmt.Errorf("tracing.End: %w", err)
 	}
 
-	// Wait for TracingComplete — Chrome sometimes takes a moment to fire
+	// Wait for TracingComplete - Chrome sometimes takes a moment to fire
 	// it after End() returns. Bail out if the underlying context dies.
 	select {
 	case <-doneCh:
-	case <-d.ctx.Done():
+	case <-d.Done():
 		return nil, fmt.Errorf("tracing: context ended before TracingComplete")
 	}
 
-	// Prefer the stream handle path — TransferModeReturnAsStream is the
+	// Prefer the stream handle path - TransferModeReturnAsStream is the
 	// modern default and guarantees a well-formed JSON document.
 	mu.Lock()
 	sh := streamH
@@ -116,13 +114,13 @@ func CaptureTraceWithCategories(d *Driver, categories []string, during func() er
 	var data []byte
 	if sh != "" {
 		var err error
-		data, err = readTraceStream(d.ctx, sh)
+		data, err = readTraceStream(d, sh)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// Fallback: assemble inline event fragments into a single array.
-		// Each fragment is already a JSON array — concatenate with commas
+		// Each fragment is already a JSON array - concatenate with commas
 		// and wrap. This branch is rarely hit with modern Chrome.
 		if len(inlineEvents) == 0 {
 			return nil, fmt.Errorf("tracing: no trace data received")
@@ -151,16 +149,20 @@ func CaptureTraceWithCategories(d *Driver, categories []string, during func() er
 // readTraceStream pulls all chunks from a CDP stream handle and returns
 // the assembled bytes. Chrome delivers trace streams in base64-encoded
 // chunks of a few KB each; we loop until EOF.
-func readTraceStream(ctx context.Context, handle io.StreamHandle) ([]byte, error) {
+func readTraceStream(d *Driver, handle io.StreamHandle) ([]byte, error) {
+	op, cancel := d.WithOperationContext(context.Background(), d.operationTimeout())
+	defer cancel()
+
+	execCtx := cdp.WithExecutor(op.ctx, chromedp.FromContext(op.ctx).Target)
 	var out []byte
 	for {
-		data, eof, err := io.Read(handle).WithSize(1 << 20).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
+		data, eof, err := io.Read(handle).WithSize(1 << 20).Do(execCtx)
 		if err != nil {
-			return nil, fmt.Errorf("io.Read: %w", err)
+			return nil, d.redactRemoteError(fmt.Errorf("io.Read: %w", err))
 		}
 		// Chrome may return base64 even when not requested if the chunk
 		// contains non-UTF8 bytes. Detect via the ReadReturns.Base64encoded
-		// flag — but chromedp's helper discards that, so we heuristically
+		// flag - but chromedp's helper discards that, so we heuristically
 		// try to decode as base64 only when the raw text isn't valid JSON.
 		out = append(out, []byte(data)...)
 		if eof {
@@ -168,7 +170,7 @@ func readTraceStream(ctx context.Context, handle io.StreamHandle) ([]byte, error
 		}
 	}
 	// Close the stream to release browser-side resources.
-	_ = io.Close(handle).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
+	_ = io.Close(handle).Do(execCtx)
 
 	// If the assembled bytes look base64-encoded (no leading {), try to
 	// decode. Chrome with JSON stream format usually returns plain text,
@@ -194,7 +196,7 @@ type TraceHotEvent struct {
 // SummarizeTrace parses a captured Chrome trace and returns the top-N longest
 // events matching an interesting-subset filter (JS compile/parse, script eval,
 // event dispatch, microtasks, animation frame, layout/paint). Anything under
-// minMs is skipped — we care about things that show up on the main thread,
+// minMs is skipped - we care about things that show up on the main thread,
 // not noise.
 func SummarizeTrace(trace []byte, topN int, minMs float64) ([]TraceHotEvent, error) {
 	var doc struct {
@@ -210,7 +212,7 @@ func SummarizeTrace(trace []byte, topN int, minMs float64) ([]TraceHotEvent, err
 	}
 
 	// Only keep events whose name signals main-thread JS work or layout
-	// cost — anything users can act on. The toplevel/RunTask shells are
+	// cost - anything users can act on. The toplevel/RunTask shells are
 	// intentionally excluded because they just wrap the real work and
 	// double-count it in the summary.
 	interesting := map[string]bool{
@@ -296,7 +298,7 @@ func FormatTraceSummary(events []TraceHotEvent, tracePath string) string {
 			extra = e.Function
 		}
 		if len(extra) > 48 {
-			extra = "…" + extra[len(extra)-47:]
+			extra = "..." + extra[len(extra)-47:]
 		}
 		b.WriteString(fmt.Sprintf("      %-24s%7.1fms  %s\n", e.Name, e.Duration, extra))
 	}

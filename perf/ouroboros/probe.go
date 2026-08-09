@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/chromedp/cdproto/page"
-	"github.com/chromedp/chromedp"
 
 	"m31labs.dev/gosx/perf"
 )
@@ -201,10 +200,10 @@ func InjectOuroborosProbe(d *perf.Driver) error {
 
 func injectPreloadScript(d *perf.Driver, script string) error {
 	addScript := page.AddScriptToEvaluateOnNewDocument(script)
-	return chromedp.Run(d.Context(), chromedp.ActionFunc(func(ctx context.Context) error {
+	return d.RunFunc(func(ctx context.Context) error {
 		_, err := addScript.Do(ctx)
 		return err
-	}))
+	})
 }
 
 func numberFromAny(value any) (float64, bool) {

@@ -143,3 +143,48 @@ func TestRecordGIFCapturesScreencastFrames(t *testing.T) {
 			"writeGIF drops frames", images, delivered)
 	}
 }
+
+func TestRecordStopIsIdempotentAndCleansListener(t *testing.T) {
+	d, rec := startRecordingOn(t, animatedRecordPage)
+
+	time.Sleep(300 * time.Millisecond)
+	gifPath := filepath.Join(t.TempDir(), "first.gif")
+	if err := rec.Stop(d, gifPath); err != nil {
+		t.Fatalf("first Stop: %v", err)
+	}
+	framesAfterStop := rec.ScreencastFrames()
+	if err := rec.Stop(d, filepath.Join(t.TempDir(), "second.gif")); err != nil {
+		t.Fatalf("second Stop: %v", err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := rec.ScreencastFrames(); got != framesAfterStop {
+		t.Fatalf("frames changed after Stop: got %d, want %d", got, framesAfterStop)
+	}
+}
+
+func TestRecordRepeatedStartStopCleanup(t *testing.T) {
+	d := requireDriver(t, 20*time.Second)
+	srv := serveRecordPage(t, animatedRecordPage)
+	if err := d.Navigate(srv.URL); err != nil {
+		t.Fatalf("Navigate: %v", err)
+	}
+	if err := d.WaitReady(); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		rec, err := StartRecording(d)
+		if err != nil {
+			t.Fatalf("StartRecording %d: %v", i, err)
+		}
+		time.Sleep(200 * time.Millisecond)
+		if err := rec.Stop(d, filepath.Join(t.TempDir(), fmt.Sprintf("record-%d.gif", i))); err != nil {
+			t.Fatalf("Stop %d: %v", i, err)
+		}
+		frames := rec.ScreencastFrames()
+		time.Sleep(150 * time.Millisecond)
+		if got := rec.ScreencastFrames(); got != frames {
+			t.Fatalf("recorder %d still collected frames after Stop: got %d, want %d", i, got, frames)
+		}
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/chromedp/cdproto/emulation"
-	"github.com/chromedp/chromedp"
 )
 
 // MobileProfile describes a device simulation preset. Matches the fields
@@ -47,7 +46,7 @@ func ApplyCPUThrottle(d *Driver, rate float64) error {
 	if d == nil || rate <= 1 {
 		return nil
 	}
-	return chromedp.Run(d.ctx, emulation.SetCPUThrottlingRate(rate))
+	return d.Run(emulation.SetCPUThrottlingRate(rate))
 }
 
 // ApplyMobileEmulation configures viewport, device scale, and user agent
@@ -64,12 +63,12 @@ func ApplyMobileEmulation(d *Driver, profile MobileProfile) error {
 		profile.ScaleFactor,
 		true, // mobile
 	)
-	if err := chromedp.Run(d.ctx, metrics); err != nil {
+	if err := d.Run(metrics); err != nil {
 		return fmt.Errorf("emulation.SetDeviceMetricsOverride: %w", err)
 	}
 	if profile.UserAgent != "" {
 		ua := emulation.SetUserAgentOverride(profile.UserAgent).WithPlatform("Android")
-		if err := chromedp.Run(d.ctx, ua); err != nil {
+		if err := d.Run(ua); err != nil {
 			return fmt.Errorf("emulation.SetUserAgentOverride: %w", err)
 		}
 	}

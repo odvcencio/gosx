@@ -9,7 +9,7 @@ import (
 
 // Click clicks the first element matching selector and waits for idle.
 func Click(d *Driver, selector string) error {
-	return chromedp.Run(d.ctx,
+	return d.Run(
 		chromedp.WaitVisible(selector, chromedp.ByQuery),
 		chromedp.Click(selector, chromedp.ByQuery),
 		chromedp.Sleep(100*time.Millisecond),
@@ -18,7 +18,7 @@ func Click(d *Driver, selector string) error {
 
 // Type types text into the element matching selector.
 func Type(d *Driver, selector, text string) error {
-	return chromedp.Run(d.ctx,
+	return d.Run(
 		chromedp.WaitVisible(selector, chromedp.ByQuery),
 		chromedp.SendKeys(selector, text, chromedp.ByQuery),
 		chromedp.Sleep(100*time.Millisecond),

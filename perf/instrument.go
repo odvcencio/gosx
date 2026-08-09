@@ -5,7 +5,6 @@ import (
 	_ "embed"
 
 	"github.com/chromedp/cdproto/page"
-	"github.com/chromedp/chromedp"
 )
 
 //go:embed instrument.js
@@ -19,13 +18,13 @@ var instrumentJS string
 // Call Inject once after creating the Driver, before the first Navigate.
 func Inject(ctx context.Context) error {
 	addScript := page.AddScriptToEvaluateOnNewDocument(instrumentJS)
-	return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		_, err := addScript.Do(ctx)
-		return err
-	}))
+	_, err := addScript.Do(ctx)
+	return err
 }
 
 // InjectDriver is a convenience that calls Inject with the Driver's context.
 func InjectDriver(d *Driver) error {
-	return Inject(d.Context())
+	return d.RunFunc(func(ctx context.Context) error {
+		return Inject(ctx)
+	})
 }

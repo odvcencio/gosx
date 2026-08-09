@@ -13,14 +13,14 @@ import (
 
 // TakeHeapSnapshot captures a Chrome heap snapshot and returns it as bytes
 // ready to write to a .heapsnapshot file. Load the file into Chrome
-// DevTools' Memory panel (Load…) to inspect retainers, compare snapshots,
+// DevTools' Memory panel (Load...) to inspect retainers, compare snapshots,
 // and find leaks.
 //
 // HeapProfiler streams the snapshot as sequential EventAddHeapSnapshotChunk
-// events containing JSON string fragments — we listen, concatenate, and
+// events containing JSON string fragments - we listen, concatenate, and
 // return the assembled document.
 //
-// Running garbage collection first is recommended — otherwise the snapshot
+// Running garbage collection first is recommended - otherwise the snapshot
 // includes ephemeral allocations from recent JS execution that aren't
 // actually leaks. Call TakeHeapSnapshotAfterGC to get the cleaner variant.
 func TakeHeapSnapshot(d *Driver) ([]byte, error) {
@@ -40,43 +40,43 @@ func takeHeapSnapshot(d *Driver, collectGC bool) ([]byte, error) {
 
 	// Collect chunks via a listener on the driver context. The listener
 	// goroutine appends under a mutex, so a concurrent Entries-style read
-	// would be safe — but here we only read after tracing completes.
+	// would be safe - but here we only read after tracing completes.
 	var (
 		mu     sync.Mutex
 		chunks []string
 	)
 
-	listenCtx, cancelListen := context.WithCancel(d.ctx)
-	defer cancelListen()
-
-	chromedp.ListenTarget(listenCtx, func(ev interface{}) {
+	cancelListen := d.ListenTarget(func(ev any) {
 		if e, ok := ev.(*heapprofiler.EventAddHeapSnapshotChunk); ok {
 			mu.Lock()
 			chunks = append(chunks, e.Chunk)
 			mu.Unlock()
 		}
 	})
+	defer cancelListen()
 
-	// CDP commands need an executor-scoped context bound to the active
-	// target; see coverage.go for the same pattern.
-	execCtx := cdp.WithExecutor(d.ctx, chromedp.FromContext(d.ctx).Target)
+	op, cancel := d.WithOperationContext(context.Background(), d.operationTimeout())
+	defer cancel()
+
+	// CDP commands need an executor-scoped context bound to the active target.
+	execCtx := cdp.WithExecutor(op.ctx, chromedp.FromContext(op.ctx).Target)
 
 	// HeapProfiler has to be enabled before snapshots can be taken.
 	if err := heapprofiler.Enable().Do(execCtx); err != nil {
-		return nil, fmt.Errorf("heapprofiler.Enable: %w", err)
+		return nil, d.redactRemoteError(fmt.Errorf("heapprofiler.Enable: %w", err))
 	}
 	defer func() { _ = heapprofiler.Disable().Do(execCtx) }()
 
 	if collectGC {
 		if err := heapprofiler.CollectGarbage().Do(execCtx); err != nil {
-			return nil, fmt.Errorf("heapprofiler.CollectGarbage: %w", err)
+			return nil, d.redactRemoteError(fmt.Errorf("heapprofiler.CollectGarbage: %w", err))
 		}
 	}
 
 	// Take the snapshot. The Do call returns when the last chunk event
-	// fires — no separate "complete" signal needed.
+	// fires - no separate "complete" signal needed.
 	if err := heapprofiler.TakeHeapSnapshot().Do(execCtx); err != nil {
-		return nil, fmt.Errorf("heapprofiler.TakeHeapSnapshot: %w", err)
+		return nil, d.redactRemoteError(fmt.Errorf("heapprofiler.TakeHeapSnapshot: %w", err))
 	}
 
 	mu.Lock()
@@ -88,7 +88,7 @@ func takeHeapSnapshot(d *Driver, collectGC bool) ([]byte, error) {
 }
 
 // MemoryStats is a lightweight memory summary using Performance.memory +
-// DOM counters — suitable for checking delta between a baseline and an
+// DOM counters - suitable for checking delta between a baseline and an
 // after-interaction state. For deep retainer analysis, use the full
 // heap snapshot.
 type MemoryStats struct {
