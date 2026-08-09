@@ -152,8 +152,17 @@
     clearChildren(ctx.mount);
     const readyAttr = "data-gosx-scene3d-ready";
     const mountedAttr = "data-gosx-scene3d-mounted";
+    // Opt-in first-content reveal: when the mount declares
+    // data-gosx-scene3d-reveal-class, the runtime adds that class to the
+    // document element (and stamps revealedAttr on the mount) after the
+    // first frame that had drawable content — so pure CSS can fade out a
+    // static boot placeholder without any app-authored JS. The class is
+    // removed again on dispose so soft navigation starts clean.
+    const revealedAttr = "data-gosx-scene3d-revealed";
+    const revealClass = String(ctx.mount.getAttribute("data-gosx-scene3d-reveal-class") || "").trim();
     ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
     setAttrValue(ctx.mount, readyAttr, "false");
+    setAttrValue(ctx.mount, revealedAttr, "false");
     setAttrValue(ctx.mount, "data-gosx-scene3d-controls", normalizeSceneControlsMode(props.controls));
     setAttrValue(ctx.mount, "data-gosx-scene3d-pick-signals", scenePickSignalNamespace(props));
     setAttrValue(ctx.mount, "data-gosx-scene3d-event-signals", sceneEventSignalNamespace(props));
@@ -442,6 +451,7 @@
     let initPending = true;
     let initReason = "";
     let readySent = false;
+    let revealSent = false;
     let disposed = false;
     let lastRenderReason = "";
     let lastRenderLoopReason = "initializing";
@@ -2533,6 +2543,41 @@
       });
     }
 
+    // sceneFrameHasContent mirrors maybeEmitRenderEmpty's notion of a
+    // drawable frame: legacy verts, surfaces, or a modern PBR mesh/instance
+    // list on the bundle, else declared points/objects on sceneState (the
+    // points path draws from state, not the bundle lists).
+    function sceneFrameHasContent(bundle) {
+      if (bundle) {
+        if (Number(bundle.vertexCount || 0) > 0 || Number(bundle.worldVertexCount || 0) > 0) {
+          return true;
+        }
+        if ((Array.isArray(bundle.surfaces) && bundle.surfaces.length > 0)
+            || (Array.isArray(bundle.meshObjects) && bundle.meshObjects.length > 0)
+            || (Array.isArray(bundle.instancedMeshes) && bundle.instancedMeshes.length > 0)) {
+          return true;
+        }
+      }
+      if (Array.isArray(sceneState.points) && sceneState.points.length > 0) {
+        return true;
+      }
+      if (sceneState.meshObjects && sceneState.meshObjects.length > 0) {
+        return true;
+      }
+      return Array.isArray(sceneState.objects) && sceneState.objects.length > 0;
+    }
+
+    function publishRevealed(bundle) {
+      if (revealSent || disposed || !sceneFrameHasContent(bundle)) {
+        return;
+      }
+      revealSent = true;
+      setAttrValue(ctx.mount, revealedAttr, "true");
+      if (revealClass && document.documentElement) {
+        document.documentElement.classList.add(revealClass);
+      }
+    }
+
     function renderFrame(now, reason) {
       if (initPending) {
         initReason = reason || initReason || "refresh";
@@ -2603,6 +2648,7 @@
             scheduleRender("quality-transition");
           }
           publishReady();
+          publishRevealed(effectiveBundle);
           scheduleNextAnimationFrame();
           return;
         }
@@ -2705,6 +2751,7 @@
         scheduleRender("quality-transition");
       }
       publishReady();
+      publishRevealed(latestBundle);
       scheduleNextAnimationFrame();
     }
 
@@ -3002,6 +3049,9 @@
       },
       dispose() {
         disposed = true;
+        if (revealSent && revealClass && document.documentElement) {
+          document.documentElement.classList.remove(revealClass);
+        }
         // Supersede any SetModels/initial staging still waiting on I/O before
         // releasing committed records. Its terminal generation check will
         // dispose staged mixers and refuse all late status/scene mutation.
