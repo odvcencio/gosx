@@ -1,0 +1,391 @@
+{
+  "schemaVersion": "gosx.ouroboros.fixtures.v1",
+  "contractVersion": "O0.2",
+  "corpusID": "gosx-ouroboros-o0.2-v1",
+  "fixtureApp": "examples/ouroboros-corpus",
+  "authoring": [
+    "go",
+    "gsx-compatible-node-api"
+  ],
+  "routes": [
+    {
+      "id": "R00",
+      "route": "/static",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "ssr"
+      ],
+      "expectedTinyGoCurrent": "none",
+      "expectedTinyGoFuture": "none",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /static"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "no bootstrap",
+        "no manifest"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "SSR only",
+      "expectedRuntime": "none"
+    },
+    {
+      "id": "R01",
+      "route": "/lite",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "regions",
+        "actions"
+      ],
+      "expectedTinyGoCurrent": "none",
+      "expectedTinyGoFuture": "core",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /lite"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "bootstrap mode lite",
+        "no wasm"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "declarative regions/actions without WASM",
+      "expectedRuntime": "lite"
+    },
+    {
+      "id": "R02",
+      "route": "/island/counter",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "island",
+        "action"
+      ],
+      "expectedTinyGoCurrent": "islands",
+      "expectedTinyGoFuture": "core",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /island/counter"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "one island",
+        "patch runtime",
+        "valid action endpoint"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "one visual island and one action",
+      "expectedRuntime": "islands"
+    },
+    {
+      "id": "R03",
+      "route": "/islands/kitchen",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "islands",
+        "signals"
+      ],
+      "expectedTinyGoCurrent": "islands",
+      "expectedTinyGoFuture": "core",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /islands/kitchen"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "five islands",
+        "shared signal program",
+        "shared signal manifest entry"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "multiple islands and shared signals",
+      "expectedRuntime": "islands"
+    },
+    {
+      "id": "R04",
+      "route": "/action/form",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "actions",
+        "redirect"
+      ],
+      "expectedTinyGoCurrent": "none",
+      "expectedTinyGoFuture": "core",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /action/form"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "declarative action marker",
+        "bootstrap mode lite",
+        "validation response",
+        "redirect response"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "server action with validation and redirect",
+      "expectedRuntime": "action bridge"
+    },
+    {
+      "id": "R05",
+      "route": "/canvas-board",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "canvas",
+        "engine"
+      ],
+      "expectedTinyGoCurrent": "runtime",
+      "expectedTinyGoFuture": "engine",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /canvas-board"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "CanvasBoard marker",
+        "canvas2d surface"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "CanvasBoard engine surface",
+      "expectedRuntime": "engine"
+    },
+    {
+      "id": "R06",
+      "route": "/hub/echo",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "hub",
+        "signals"
+      ],
+      "expectedTinyGoCurrent": "runtime",
+      "expectedTinyGoFuture": "collab",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /hub/echo"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "hub manifest",
+        "echo binding",
+        "no wasm runtime path"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "hub bind, fanout, and shared signal update",
+      "expectedRuntime": "collab"
+    },
+    {
+      "id": "R07",
+      "route": "/video-sync",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "video",
+        "engine"
+      ],
+      "expectedTinyGoCurrent": "runtime",
+      "expectedTinyGoFuture": "engine",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /video-sync"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "video engine",
+        "follow sync props",
+        "local media endpoint",
+        "same-origin sync socket",
+        "no wasm runtime path"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "video engine and drift bridge",
+      "expectedRuntime": "video"
+    },
+    {
+      "id": "R08",
+      "route": "/scene/basic",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "scene3d",
+        "webgpu",
+        "webgl"
+      ],
+      "expectedTinyGoCurrent": "runtime",
+      "expectedTinyGoFuture": "engine",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /scene/basic"
+      ],
+      "requiredScreenshots": [
+        "webgpu-initial",
+        "webgpu-settled",
+        "webgl-initial",
+        "webgl-settled"
+      ],
+      "routePlanAssertions": [
+        "Scene3D engine",
+        "scene3d feature path",
+        "WebGPU remains selectable",
+        "no wasm runtime path"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "bounded Scene3D PBR scene",
+      "expectedRuntime": "scene3d"
+    },
+    {
+      "id": "R09A",
+      "route": "/navigation/a",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "navigation",
+        "dispose"
+      ],
+      "expectedTinyGoCurrent": "none",
+      "expectedTinyGoFuture": "core",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /navigation/a"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "data-gosx-link",
+        "same-document navigation",
+        "island dispose/remount evidence"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "client navigation entry route",
+      "expectedRuntime": "navigation"
+    },
+    {
+      "id": "R09B",
+      "route": "/navigation/b",
+      "fixtureApp": "examples/ouroboros-corpus",
+      "expectedCapabilities": [
+        "navigation",
+        "dispose"
+      ],
+      "expectedTinyGoCurrent": "none",
+      "expectedTinyGoFuture": "core",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "GET /navigation/b"
+      ],
+      "requiredScreenshots": [
+        "desktop"
+      ],
+      "routePlanAssertions": [
+        "data-gosx-link",
+        "same-document navigation",
+        "island dispose/remount evidence"
+      ],
+      "disallowedRuntimeAssets": [
+        "app-side-js",
+        "app-side-ts",
+        "package-json",
+        "bundler-config"
+      ],
+      "purpose": "client navigation target route",
+      "expectedRuntime": "navigation"
+    },
+    {
+      "id": "R10",
+      "route": "/demos/water",
+      "fixtureApp": "examples/gosx-docs",
+      "expectedCapabilities": [
+        "scene3d",
+        "webgpu",
+        "webgl",
+        "water"
+      ],
+      "expectedTinyGoCurrent": "runtime",
+      "expectedTinyGoFuture": "engine",
+      "serverBuildMode": "dev,production",
+      "requiredInteractions": [
+        "load water route",
+        "profile with scripts/water-profile-evidence.mjs"
+      ],
+      "requiredScreenshots": [
+        "webgpu-initial",
+        "webgpu-settled",
+        "webgl-initial",
+        "webgl-settled"
+      ],
+      "routePlanAssertions": [
+        "external reference only"
+      ],
+      "disallowedRuntimeAssets": [
+        "fixture-local-copy"
+      ],
+      "external": true,
+      "notes": "The heavy water route stays external to this fixture.",
+      "purpose": "flagship heavy Scene3D route",
+      "expectedRuntime": "water scene3d"
+    }
+  ]
+}
