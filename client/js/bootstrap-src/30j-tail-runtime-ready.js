@@ -9,6 +9,11 @@
   // Called by the Go WASM binary once the runtime has finished initializing
   // and all exported functions (__gosx_hydrate, __gosx_action, etc.) are
   // registered. This is the signal that it is safe to hydrate islands.
+  function markRuntimeReady() {
+    window.__gosx.ready = true;
+    refreshGosxDocumentState("ready");
+  }
+
   window.__gosx_runtime_ready = function() {
     if (typeof window.__gosx_text_layout === "function" && window.__gosx_text_layout !== gosxTextLayout) {
       adoptTextLayoutImpl(window.__gosx_text_layout);
@@ -26,8 +31,7 @@
     refreshGosxDocumentState("runtime-ready");
     refreshGosxEnvironmentState("runtime-ready");
     if (!pendingManifest) {
-      window.__gosx.ready = true;
-      refreshGosxDocumentState("ready");
+      markRuntimeReady();
       return;
     }
 
@@ -38,12 +42,10 @@
         mountAllControllers(pendingManifest),
       ]);
     }).then(function() {
-      window.__gosx.ready = true;
-      refreshGosxDocumentState("ready");
+      markRuntimeReady();
       document.dispatchEvent(new CustomEvent("gosx:ready"));
     }).catch(function(e) {
       console.error("[gosx] bootstrap failed:", e);
-      window.__gosx.ready = true;
-      refreshGosxDocumentState("ready");
+      markRuntimeReady();
     });
   };

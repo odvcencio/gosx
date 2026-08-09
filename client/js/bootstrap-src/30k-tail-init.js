@@ -63,38 +63,31 @@
   }
 
   function manifestNeedsRuntimeBridge(manifest) {
-    const surfaces = manifest.selfDescribingSurfaces || [];
     return manifestHasEntries(manifest, "islands")
       || manifestHasEntries(manifest, "computeIslands")
       || manifestHasEntries(manifest, "hubs")
-      || Boolean(manifest && manifest.clientIdentity)
+      || !!(manifest && manifest.clientIdentity)
       || manifestNeedsVideoBridge(manifest)
       || manifestNeedsEngineInputBridge(manifest)
       || (manifestHasEntries(manifest, "engines") && manifest.engines.some(engineUsesSharedRuntime))
-      || surfaces.some((entry) => (entry.runtime || "shared") === "shared");
+      || (manifest.selfDescribingSurfaces || []).some((entry) => (entry.runtime || "shared") === "shared");
   }
 
   function manifestNeedsEngineInputBridge(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
+    return manifestHasEntries(manifest, "engines") && manifest.engines.some(function(entry) {
       const capabilities = capabilityList(entry);
       return capabilities.includes("keyboard") || capabilities.includes("pointer") || capabilities.includes("gamepad");
     });
   }
 
   function manifestNeedsVideoBridge(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
+    return manifestHasEntries(manifest, "engines") && manifest.engines.some(function(entry) {
       return entry && entry.kind === "video";
     });
   }
 
   function manifestHasEntries(manifest, key) {
-    return Boolean(manifest && manifest[key] && manifest[key].length > 0);
+    return !!(manifest && manifest[key] && manifest[key].length);
   }
 
   window.__gosx_bootstrap_page = bootstrapPage;
