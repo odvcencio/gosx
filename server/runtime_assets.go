@@ -95,6 +95,13 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Devtools assets are embedded in the server binary, so they resolve
+	// before (and independently of) the runtime asset root.
+	if name == "devtools-lantern.js" {
+		serveDevtoolsLantern(w, r)
+		return
+	}
+
 	root := a.effectiveRuntimeRoot()
 	if root == "" {
 		if name == "bootstrap.js" || name == "bootstrap-lite.js" || name == "bootstrap-runtime.js" {
