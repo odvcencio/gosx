@@ -167,6 +167,263 @@ func TestPublishRuntimeBuildOutputRefusesExistingDestination(t *testing.T) {
 	}
 }
 
+func TestRunBuildRuntimePublishesWASMVariantsAndTinyGoShim(t *testing.T) {
+	restore := stubRuntimeBuildHooks(t)
+	defer restore()
+	dir := t.TempDir()
+	tinygoPath, shimPath := writeFakeTinyGoWithShim(t, dir, []byte("tinygo shim bytes"))
+	outDir := filepath.Join(dir, "runtime-out")
+	runtimeResolveWASMCompiler = func() (wasmCompiler, string, error) { return wasmCompilerTinyGo, tinygoPath, nil }
+	runtimeStageTinyGoWASMExec = stageTinyGoWASMExec
+	runtimeBuildTinyGoWASM = func(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+			return err
+		}
+		return os.WriteFile(outputPath, []byte(filepath.Base(outputPath)), 0644)
+	}
+
+	if err := RunBuildRuntimeWithOptions(outDir, buildRuntimeOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"gosx-runtime.wasm", "gosx-runtime-islands.wasm", "wasm_exec.js"} {
+		info, err := os.Stat(filepath.Join(outDir, name))
+		if err != nil {
+			t.Fatalf("published %s missing: %v", name, err)
+		}
+		if got := info.Mode().Perm(); got != 0644 {
+			t.Fatalf("%s mode = %v, want 0644", name, got)
+		}
+	}
+	source, err := os.ReadFile(shimPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := os.ReadFile(filepath.Join(outDir, "wasm_exec.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(published) != string(source) {
+		t.Fatalf("published shim bytes = %q, want %q", published, source)
+	}
+}
+
+func TestRunBuildRuntimePublishesCanonicalOutputWithTinyGoShim(t *testing.T) {
+	restore := stubRuntimeBuildHooks(t)
+	defer restore()
+	dir := t.TempDir()
+	tinygoPath, shimPath := writeFakeTinyGoWithShim(t, dir, []byte("canonical tinygo shim"))
+	outDir := filepath.Join(dir, "runtime-out")
+	artifactRoot := filepath.Join(dir, "evidence")
+	runtimeResolveWASMCompiler = func() (wasmCompiler, string, error) { return wasmCompilerTinyGo, tinygoPath, nil }
+	runtimeStageTinyGoWASMExec = stageTinyGoWASMExec
+	runtimeBuildTinyGoWASM = func(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+			return err
+		}
+		return os.WriteFile(outputPath, []byte("wasm "+filepath.Base(outputPath)), 0644)
+	}
+
+	if err := RunBuildRuntimeWithOptions(outDir, buildRuntimeOptions{
+		OuroborosOut:  artifactRoot,
+		InventoryPath: filepath.Join(dir, "source-inventory.json"),
+		RepoRoot:      ".",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, ".runtime-out.ouroboros-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("canonical temp directory remained: %#v", matches)
+	}
+	for _, name := range []string{"gosx-runtime.wasm", "gosx-runtime-islands.wasm", "wasm_exec.js"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			t.Fatalf("published %s missing: %v", name, err)
+		}
+	}
+	sourceMetrics, err := ouroboros.MetricsForFile(shimPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputMetrics, err := ouroboros.MetricsForFile(filepath.Join(outDir, "wasm_exec.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outputMetrics.SHA256 != sourceMetrics.SHA256 || outputMetrics.Bytes != sourceMetrics.Bytes {
+		t.Fatalf("published shim metrics = %#v, want source %#v", outputMetrics, sourceMetrics)
+	}
+	var evidence ouroboros.RuntimeBuildEvidence
+	body, err := os.ReadFile(filepath.Join(artifactRoot, "wasm", "runtime-artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	for _, variant := range evidence.Variants {
+		if variant.ID != "runtime" && variant.ID != "islands" {
+			continue
+		}
+		if variant.Shim == nil {
+			t.Fatalf("%s variant is missing shim provenance: %#v", variant.ID, variant)
+		}
+		if variant.Shim.SHA256 != sourceMetrics.SHA256 || variant.Shim.SourcePath != sourceMetrics.SourcePath {
+			t.Fatalf("%s shim provenance = %#v, want %#v", variant.ID, variant.Shim, sourceMetrics)
+		}
+	}
+}
+
+func TestRunBuildRuntimeFailsClosedWhenTinyGoShimIsMissing(t *testing.T) {
+	restore := stubRuntimeBuildHooks(t)
+	defer restore()
+	dir := t.TempDir()
+	tinygoPath := writeFakeTinyGo(t, dir, filepath.Join(dir, "tinygo-root"))
+	outDir := filepath.Join(dir, "runtime-out")
+	artifactRoot := filepath.Join(dir, "evidence")
+	runtimeResolveWASMCompiler = func() (wasmCompiler, string, error) { return wasmCompilerTinyGo, tinygoPath, nil }
+	runtimeStageTinyGoWASMExec = stageTinyGoWASMExec
+
+	err := RunBuildRuntimeWithOptions(outDir, buildRuntimeOptions{
+		OuroborosOut:  artifactRoot,
+		InventoryPath: filepath.Join(dir, "source-inventory.json"),
+		RepoRoot:      ".",
+	})
+	if err == nil || !strings.Contains(err.Error(), "resolve TinyGo wasm_exec.js") {
+		t.Fatalf("RunBuildRuntimeWithOptions error = %v, want missing shim failure", err)
+	}
+	if _, statErr := os.Stat(outDir); !os.IsNotExist(statErr) {
+		t.Fatalf("canonical output was published after missing shim: %v", statErr)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, ".runtime-out.ouroboros-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("partial canonical temp directory remained: %#v", matches)
+	}
+}
+
+func TestRunBuildRuntimeCleansCanonicalOutputAfterShimStageFailure(t *testing.T) {
+	restore := stubRuntimeBuildHooks(t)
+	defer restore()
+	dir := t.TempDir()
+	outDir := filepath.Join(dir, "runtime-out")
+	artifactRoot := filepath.Join(dir, "evidence")
+	runtimeStageTinyGoWASMExec = func(tinygoPath, buildOutDir string) (runtimeShimPublication, error) {
+		if err := os.MkdirAll(buildOutDir, 0755); err != nil {
+			return runtimeShimPublication{}, err
+		}
+		if err := os.WriteFile(filepath.Join(buildOutDir, "wasm_exec.js"), []byte("partial"), 0644); err != nil {
+			return runtimeShimPublication{}, err
+		}
+		return runtimeShimPublication{}, errors.New("stage shim failed")
+	}
+
+	err := RunBuildRuntimeWithOptions(outDir, buildRuntimeOptions{
+		OuroborosOut:  artifactRoot,
+		InventoryPath: filepath.Join(dir, "source-inventory.json"),
+		RepoRoot:      ".",
+	})
+	if err == nil || !strings.Contains(err.Error(), "stage shim failed") {
+		t.Fatalf("RunBuildRuntimeWithOptions error = %v, want shim stage failure", err)
+	}
+	if _, statErr := os.Stat(outDir); !os.IsNotExist(statErr) {
+		t.Fatalf("canonical output was published after shim failure: %v", statErr)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, ".runtime-out.ouroboros-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("partial canonical temp directory remained: %#v", matches)
+	}
+}
+
+func TestRunBuildRuntimeRejectsShimMutationAfterWASMBuild(t *testing.T) {
+	for name, mutate := range map[string]func(t *testing.T, shimPath string){
+		"changed": func(t *testing.T, shimPath string) {
+			t.Helper()
+			if err := os.WriteFile(shimPath, []byte("changed shim"), 0644); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"removed": func(t *testing.T, shimPath string) {
+			t.Helper()
+			if err := os.Remove(shimPath); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			restore := stubRuntimeBuildHooks(t)
+			defer restore()
+			dir := t.TempDir()
+			tinygoPath, _ := writeFakeTinyGoWithShim(t, dir, []byte("trusted shim"))
+			outDir := filepath.Join(dir, "runtime-out")
+			artifactRoot := filepath.Join(dir, "evidence")
+			runtimeResolveWASMCompiler = func() (wasmCompiler, string, error) { return wasmCompilerTinyGo, tinygoPath, nil }
+			runtimeStageTinyGoWASMExec = stageTinyGoWASMExec
+			builds := 0
+			runtimeBuildTinyGoWASM = func(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
+				if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+					return err
+				}
+				if err := os.WriteFile(outputPath, []byte("wasm "+filepath.Base(outputPath)), 0644); err != nil {
+					return err
+				}
+				builds++
+				mutate(t, filepath.Join(filepath.Dir(outputPath), "wasm_exec.js"))
+				return nil
+			}
+
+			err := RunBuildRuntimeWithOptions(outDir, buildRuntimeOptions{
+				OuroborosOut:  artifactRoot,
+				InventoryPath: filepath.Join(dir, "source-inventory.json"),
+				RepoRoot:      ".",
+			})
+			if err == nil || !strings.Contains(err.Error(), "validate TinyGo wasm_exec.js after runtime build") {
+				t.Fatalf("RunBuildRuntimeWithOptions error = %v, want post-build shim validation failure", err)
+			}
+			if builds != 1 {
+				t.Fatalf("build count = %d, want early failure after first build", builds)
+			}
+			if _, statErr := os.Stat(outDir); !os.IsNotExist(statErr) {
+				t.Fatalf("canonical output was published after shim mutation: %v", statErr)
+			}
+			matches, err := filepath.Glob(filepath.Join(dir, ".runtime-out.ouroboros-*"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(matches) != 0 {
+				t.Fatalf("partial canonical temp directory remained: %#v", matches)
+			}
+		})
+	}
+}
+
+func TestTinyGoWASMExecSourcePathRejectsShimOutsideTinyGoRoot(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "tinygo-root")
+	targetsDir := filepath.Join(root, "targets")
+	if err := os.MkdirAll(targetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "outside-wasm_exec.js")
+	if err := os.WriteFile(outside, []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(targetsDir, "wasm_exec.js")); err != nil {
+		t.Fatal(err)
+	}
+	tinygoPath := writeFakeTinyGo(t, dir, root)
+
+	_, err := tinyGoWASMExecSourcePath(tinygoPath)
+	if err == nil || !strings.Contains(err.Error(), "outside TINYGOROOT") {
+		t.Fatalf("tinyGoWASMExecSourcePath error = %v, want outside-root refusal", err)
+	}
+}
+
 func TestReservedRuntimeVariantIDs(t *testing.T) {
 	got := []string{
 		plannedRuntimeVariant("core", nil).ID,
@@ -297,15 +554,28 @@ func stubRuntimeBuildHooks(t *testing.T) func() {
 	oldBuild := runtimeBuildTinyGoWASM
 	oldOptimize := runtimeOptimizeWASMWithWasmOpt
 	oldMetrics := runtimeMetricsForFile
-	oldShim := runtimeTinyGoShimMetrics
+	oldStageShim := runtimeStageTinyGoWASMExec
 	oldResolve := runtimeResolveWASMCompiler
 	oldInput := runtimeBuildInputEvidenceForRepo
 	oldSource := runtimeBuildCanonicalSourceIdentity
 	runtimeResolveWASMCompiler = func() (wasmCompiler, string, error) { return wasmCompilerTinyGo, "tinygo", nil }
 	runtimeOptimizeWASMWithWasmOpt = func(string) (bool, error) { return false, nil }
 	runtimeMetricsForFile = ouroboros.MetricsForFile
-	runtimeTinyGoShimMetrics = func(string) ouroboros.AssetMetrics {
-		return ouroboros.AssetMetrics{File: "wasm_exec.js", SourcePath: "tinygo/targets/wasm_exec.js", SHA256: strings.Repeat("b", 64), Bytes: 1}
+	runtimeStageTinyGoWASMExec = func(tinygoPath, buildOutDir string) (runtimeShimPublication, error) {
+		if err := os.MkdirAll(buildOutDir, 0755); err != nil {
+			return runtimeShimPublication{}, err
+		}
+		outPath := filepath.Join(buildOutDir, "wasm_exec.js")
+		if err := os.WriteFile(outPath, []byte("shim"), 0644); err != nil {
+			return runtimeShimPublication{}, err
+		}
+		output, err := ouroboros.MetricsForFile(outPath)
+		if err != nil {
+			return runtimeShimPublication{}, err
+		}
+		source := output
+		source.SourcePath = "tinygo/targets/wasm_exec.js"
+		return runtimeShimPublication{Source: source, Output: output}, nil
 	}
 	runtimeBuildInputEvidenceForRepo = func(repoRoot, manifestPath, exportPath string) (ouroboros.BuildInputEvidence, error) {
 		return ouroboros.BuildInputEvidence{GoSXModuleDir: repoRoot, RejectsModuleCacheMismatch: true}, nil
@@ -317,11 +587,37 @@ func stubRuntimeBuildHooks(t *testing.T) func() {
 		runtimeBuildTinyGoWASM = oldBuild
 		runtimeOptimizeWASMWithWasmOpt = oldOptimize
 		runtimeMetricsForFile = oldMetrics
-		runtimeTinyGoShimMetrics = oldShim
+		runtimeStageTinyGoWASMExec = oldStageShim
 		runtimeResolveWASMCompiler = oldResolve
 		runtimeBuildInputEvidenceForRepo = oldInput
 		runtimeBuildCanonicalSourceIdentity = oldSource
 	}
+}
+
+func writeFakeTinyGoWithShim(t *testing.T, dir string, shim []byte) (string, string) {
+	t.Helper()
+	root := filepath.Join(dir, "tinygo-root")
+	shimPath := filepath.Join(root, "targets", "wasm_exec.js")
+	if err := os.MkdirAll(filepath.Dir(shimPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shimPath, shim, 0644); err != nil {
+		t.Fatal(err)
+	}
+	return writeFakeTinyGo(t, dir, root), shimPath
+}
+
+func writeFakeTinyGo(t *testing.T, dir, root string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "targets"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "tinygo")
+	script := "#!/bin/sh\nif [ \"$1\" = \"env\" ] && [ \"$2\" = \"TINYGOROOT\" ]; then\n  printf '%s\\n' '" + root + "'\n  exit 0\nfi\nexit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func strictTestSourceIdentity() ouroboros.SourceIdentity {

@@ -1229,6 +1229,88 @@ func TestAppServesCompatRuntimeAssetsFromSourceBuild(t *testing.T) {
 	}
 }
 
+func TestAppServesAllTinyGoRuntimeAssetsFromSourceBuild(t *testing.T) {
+	root := t.TempDir()
+	buildDir := filepath.Join(root, "build")
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"gosx-runtime.wasm":         "runtime wasm",
+		"gosx-runtime-islands.wasm": "islands wasm",
+		"wasm_exec.js":              "tinygo shim",
+	}
+	for name, body := range files {
+		path := filepath.Join(buildDir, name)
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeTestGzip(path+".gz", []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+
+	requests := map[string]struct {
+		body                  string
+		normalContentType     string
+		compressedContentType string
+	}{
+		"/gosx/runtime.wasm": {
+			body:                  "runtime wasm",
+			normalContentType:     "application/wasm",
+			compressedContentType: "application/wasm",
+		},
+		"/gosx/runtime-islands.wasm": {
+			body:                  "islands wasm",
+			normalContentType:     "application/wasm",
+			compressedContentType: "application/wasm",
+		},
+		"/gosx/wasm_exec.js": {
+			body:                  "tinygo shim",
+			normalContentType:     "javascript",
+			compressedContentType: "application/javascript; charset=utf-8",
+		},
+	}
+	for path, want := range requests {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200", path, w.Code)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+			t.Fatalf("%s Cache-Control = %q, want source-build no-store policy", path, got)
+		}
+		if got := w.Header().Get("Content-Type"); !strings.Contains(got, want.normalContentType) {
+			t.Fatalf("%s Content-Type = %q, want %q", path, got, want.normalContentType)
+		}
+		if body := w.Body.String(); body != want.body {
+			t.Fatalf("%s body = %q, want %q", path, body, want.body)
+		}
+
+		req = httptest.NewRequest(http.MethodHead, path, nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		w = httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s gzip HEAD status = %d, want 200", path, w.Code)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+			t.Fatalf("%s gzip HEAD Cache-Control = %q, want source-build no-store policy", path, got)
+		}
+		if got := w.Header().Get("Content-Encoding"); got != "gzip" {
+			t.Fatalf("%s gzip HEAD Content-Encoding = %q, want gzip", path, got)
+		}
+		if got := w.Header().Get("Content-Type"); got != want.compressedContentType {
+			t.Fatalf("%s gzip HEAD Content-Type = %q, want %q", path, got, want.compressedContentType)
+		}
+	}
+}
+
 func TestAppServesCompatRuntimeHLSAssetFromSourceBuild(t *testing.T) {
 	root := t.TempDir()
 	buildDir := filepath.Join(root, "build")
