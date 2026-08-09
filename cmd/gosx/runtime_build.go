@@ -233,7 +233,7 @@ type runtimeBuildTarget struct {
 func runtimeBuildTargets() []runtimeBuildTarget {
 	return []runtimeBuildTarget{
 		{id: "runtime", label: "runtime", file: "gosx-runtime.wasm", selectedRoutes: []string{"R05", "R06", "R07", "R08", "R10"}},
-		{id: "islands", label: "islands", file: "gosx-runtime-islands.wasm", tags: islandOnlyWASMTags(wasmCompilerTinyGo), selectedRoutes: []string{"R02", "R03"}},
+		{id: "islands", label: "islands", file: "gosx-runtime-islands.wasm", tags: islandOnlyWASMTags(wasmCompilerTinyGo), selectedRoutes: []string{"R02", "R03", "R09A", "R09B"}},
 	}
 }
 

@@ -709,9 +709,14 @@ func TestCorpusTinyGoCurrentAndFutureRows(t *testing.T) {
 	if _, ok := future["R09"]; ok {
 		t.Fatal("stale canonical R09 route survived")
 	}
-	for _, id := range []string{"R04", "R09A", "R09B"} {
+	for _, id := range []string{"R04"} {
 		if current[id] != "none" || future[id] != "core" {
 			t.Fatalf("%s TinyGo = current %q future %q, want none/core", id, current[id], future[id])
+		}
+	}
+	for _, id := range []string{"R09A", "R09B"} {
+		if current[id] != "islands" || future[id] != "core" {
+			t.Fatalf("%s TinyGo = current %q future %q, want islands/core", id, current[id], future[id])
 		}
 	}
 	if future["R01"] != "core" || future["R06"] != "collab" || future["R10"] != "engine" {
@@ -751,6 +756,69 @@ func TestCorpusTinyGoCurrentAndFutureRows(t *testing.T) {
 	inv.Manifest = manifest
 	if err := ValidateInventory(inv); err == nil {
 		t.Fatal("ValidateInventory accepted future-full variant")
+	}
+}
+
+func TestValidateInventoryRejectsCurrentVariantRouteDrift(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Inventory)
+		want   string
+	}{
+		{
+			name: "omitted-r09",
+			mutate: func(inv *Inventory) {
+				for i := range inv.Manifest.Variants {
+					if inv.Manifest.Variants[i].ID == "islands" {
+						inv.Manifest.Variants[i].SelectedByRoutes = []string{"R02", "R03", "R09B"}
+					}
+				}
+			},
+			want: "expectedTinyGoCurrent",
+		},
+		{
+			name: "extra-r09",
+			mutate: func(inv *Inventory) {
+				for i := range inv.Manifest.Variants {
+					if inv.Manifest.Variants[i].ID == "runtime" {
+						inv.Manifest.Variants[i].SelectedByRoutes = append(inv.Manifest.Variants[i].SelectedByRoutes, "R09A")
+					}
+				}
+			},
+			want: "expectedTinyGoCurrent",
+		},
+		{
+			name: "duplicate-route",
+			mutate: func(inv *Inventory) {
+				for i := range inv.Manifest.Variants {
+					if inv.Manifest.Variants[i].ID == "islands" {
+						inv.Manifest.Variants[i].SelectedByRoutes = append(inv.Manifest.Variants[i].SelectedByRoutes, "R09A")
+					}
+				}
+			},
+			want: "runtime variant islands selectedByRoutes has duplicate route R09A",
+		},
+		{
+			name: "unknown-route",
+			mutate: func(inv *Inventory) {
+				for i := range inv.Manifest.Variants {
+					if inv.Manifest.Variants[i].ID == "islands" {
+						inv.Manifest.Variants[i].SelectedByRoutes = append(inv.Manifest.Variants[i].SelectedByRoutes, "R99")
+					}
+				}
+			},
+			want: "runtime variant islands selectedByRoutes references unknown route R99",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := minimalValidInventory()
+			tc.mutate(inv)
+			err := ValidateInventory(inv)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateInventory error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

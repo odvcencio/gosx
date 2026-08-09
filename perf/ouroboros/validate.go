@@ -307,21 +307,37 @@ func validateManifestVariants(inv *Inventory) error {
 	futureIDs := map[string]bool{"core": true, "engine": true, "collab": true, "full": true}
 	currentRouteValues := map[string]bool{"runtime": true, "islands": true, "none": true}
 	futureRouteValues := map[string]bool{"core": true, "engine": true, "collab": true, "full": true, "none": true}
+	expectedCurrent := map[string][]string{}
+	expectedFuture := map[string][]string{}
+	routeIDs := map[string]bool{}
 	for _, route := range inv.Manifest.FixtureRoutes {
 		if route.ID == "" || route.Route == "" || route.FixtureApp == "" {
 			return fmt.Errorf("malformed fixture route: %+v", route)
 		}
+		if routeIDs[route.ID] {
+			return fmt.Errorf("duplicate fixture route %s", route.ID)
+		}
+		routeIDs[route.ID] = true
 		if !currentRouteValues[route.ExpectedTinyGoCurrent] {
 			return fmt.Errorf("route %s has invalid current TinyGo variant %q", route.ID, route.ExpectedTinyGoCurrent)
 		}
 		if !futureRouteValues[route.ExpectedTinyGoFuture] {
 			return fmt.Errorf("route %s has invalid future TinyGo variant %q", route.ID, route.ExpectedTinyGoFuture)
 		}
+		if route.ExpectedTinyGoCurrent != "none" {
+			expectedCurrent[route.ExpectedTinyGoCurrent] = append(expectedCurrent[route.ExpectedTinyGoCurrent], route.ID)
+		}
+		if route.ExpectedTinyGoFuture != "none" {
+			expectedFuture[route.ExpectedTinyGoFuture] = append(expectedFuture[route.ExpectedTinyGoFuture], route.ID)
+		}
 	}
 	seen := map[string]bool{}
 	for _, variant := range inv.Manifest.Variants {
 		if variant.ID == "" || variant.Generation == "" || variant.Status == "" || variant.SelectedByRoutes == nil {
 			return fmt.Errorf("malformed runtime variant: %+v", variant)
+		}
+		if err := validateSelectedRoutes(routeIDs, variant); err != nil {
+			return err
 		}
 		if seen[variant.ID] {
 			return fmt.Errorf("duplicate runtime variant %s", variant.ID)
@@ -344,6 +360,9 @@ func validateManifestVariants(inv *Inventory) error {
 			if err := validateArtifactRef(inv, variant.ID, "wasm", variant.WASMArtifact); err != nil {
 				return err
 			}
+			if !equalStrings(variant.SelectedByRoutes, expectedCurrent[variant.ID]) {
+				return fmt.Errorf("current runtime variant %s selectedByRoutes = %+v, want routes with expectedTinyGoCurrent %s: %+v", variant.ID, variant.SelectedByRoutes, variant.ID, expectedCurrent[variant.ID])
+			}
 		case "future":
 			if !futureIDs[variant.ID] {
 				return fmt.Errorf("invalid future runtime variant %q", variant.ID)
@@ -356,6 +375,9 @@ func validateManifestVariants(inv *Inventory) error {
 			}
 			if variant.SizeArtifact != nil || variant.WASMArtifact != nil {
 				return fmt.Errorf("planned runtime variant %s must not carry artifact refs", variant.ID)
+			}
+			if !equalStrings(variant.SelectedByRoutes, expectedFuture[variant.ID]) {
+				return fmt.Errorf("future runtime variant %s selectedByRoutes = %+v, want routes with expectedTinyGoFuture %s: %+v", variant.ID, variant.SelectedByRoutes, variant.ID, expectedFuture[variant.ID])
 			}
 		default:
 			return fmt.Errorf("runtime variant %s has invalid generation %q", variant.ID, variant.Generation)
@@ -373,6 +395,20 @@ func validateManifestVariants(inv *Inventory) error {
 	}
 	if seen["future-full"] {
 		return fmt.Errorf("runtime variant future-full is not allowed")
+	}
+	return nil
+}
+
+func validateSelectedRoutes(routeIDs map[string]bool, variant RuntimeVariant) error {
+	seen := map[string]bool{}
+	for _, routeID := range variant.SelectedByRoutes {
+		if !routeIDs[routeID] {
+			return fmt.Errorf("runtime variant %s selectedByRoutes references unknown route %s", variant.ID, routeID)
+		}
+		if seen[routeID] {
+			return fmt.Errorf("runtime variant %s selectedByRoutes has duplicate route %s", variant.ID, routeID)
+		}
+		seen[routeID] = true
 	}
 	return nil
 }

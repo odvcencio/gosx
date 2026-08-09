@@ -77,8 +77,8 @@
     { "id": "R06", "route": "/hub/echo", "fixtureApp": "examples/ouroboros-corpus", "purpose": "hub bind, fanout, and shared signal update", "expectedRuntime": "collab", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "collab", "expectedCapabilities": ["hub", "signals"] },
     { "id": "R07", "route": "/video-sync", "fixtureApp": "examples/ouroboros-corpus", "purpose": "video engine and drift bridge", "expectedRuntime": "video", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["video", "engine"] },
     { "id": "R08", "route": "/scene/basic", "fixtureApp": "examples/ouroboros-corpus", "purpose": "bounded Scene3D PBR scene", "expectedRuntime": "scene3d", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["scene3d", "webgpu", "webgl"] },
-    { "id": "R09A", "route": "/navigation/a", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation entry route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
-    { "id": "R09B", "route": "/navigation/b", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation target route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
+    { "id": "R09A", "route": "/navigation/a", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation entry route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "islands", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
+    { "id": "R09B", "route": "/navigation/b", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation target route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "islands", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
     { "id": "R10", "route": "/demos/water", "fixtureApp": "examples/gosx-docs", "purpose": "flagship heavy Scene3D route", "expectedRuntime": "water scene3d", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["scene3d", "webgpu", "webgl", "water"] }
   ],
   "runtimeVariants": [
@@ -120,7 +120,7 @@
         "baseRevision": "__required_at_runtime__",
         "overlayHash": "sha256:clean"
       },
-      "selectedByRoutes": ["R02", "R03"]
+      "selectedByRoutes": ["R02", "R03", "R09A", "R09B"]
     },
     {
       "id": "core",

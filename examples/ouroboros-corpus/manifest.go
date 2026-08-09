@@ -45,8 +45,8 @@ var corpusManifest = RouteManifest{
 		route("R06", "/hub/echo", "hub bind, fanout, and shared signal update", "collab", []string{"hub", "signals"}, "runtime", "collab", []string{"hub manifest", "echo binding", "no wasm runtime path"}),
 		route("R07", "/video-sync", "video engine and drift bridge", "video", []string{"video", "engine"}, "runtime", "engine", []string{"video engine", "follow sync props", "local media endpoint", "same-origin sync socket", "no wasm runtime path"}),
 		sceneRoute("R08", "/scene/basic", "bounded Scene3D PBR scene", "scene3d", []string{"scene3d", "webgpu", "webgl"}, "runtime", "engine", []string{"Scene3D engine", "scene3d feature path", "WebGPU remains selectable", "no wasm runtime path"}),
-		route("R09A", "/navigation/a", "client navigation entry route", "navigation", []string{"navigation", "dispose"}, "none", "core", []string{"data-gosx-link", "same-document navigation", "island dispose/remount evidence"}),
-		route("R09B", "/navigation/b", "client navigation target route", "navigation", []string{"navigation", "dispose"}, "none", "core", []string{"data-gosx-link", "same-document navigation", "island dispose/remount evidence"}),
+		route("R09A", "/navigation/a", "client navigation entry route", "navigation", []string{"navigation", "dispose"}, "islands", "core", []string{"data-gosx-link", "same-document navigation", "island dispose/remount evidence"}),
+		route("R09B", "/navigation/b", "client navigation target route", "navigation", []string{"navigation", "dispose"}, "islands", "core", []string{"data-gosx-link", "same-document navigation", "island dispose/remount evidence"}),
 		{
 			ID:                    "R10",
 			Route:                 "/demos/water",

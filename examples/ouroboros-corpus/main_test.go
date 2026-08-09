@@ -255,7 +255,7 @@ func TestTinyGoCurrentVariantsAreCanonical(t *testing.T) {
 				t.Fatalf("%s runtime current route missing bootstrap evidence: %+v", record.ID, contract)
 			}
 		case "none":
-			if record.ID != "R09A" && record.ID != "R09B" && contract.Assets.RuntimePath != "" {
+			if contract.Assets.RuntimePath != "" {
 				t.Fatalf("%s none current route unexpectedly declares runtime path: %+v", record.ID, contract)
 			}
 		}

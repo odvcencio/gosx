@@ -299,7 +299,7 @@
         "navigation",
         "dispose"
       ],
-      "expectedTinyGoCurrent": "none",
+      "expectedTinyGoCurrent": "islands",
       "expectedTinyGoFuture": "core",
       "serverBuildMode": "dev,production",
       "requiredInteractions": [
@@ -330,7 +330,7 @@
         "navigation",
         "dispose"
       ],
-      "expectedTinyGoCurrent": "none",
+      "expectedTinyGoCurrent": "islands",
       "expectedTinyGoFuture": "core",
       "serverBuildMode": "dev,production",
       "requiredInteractions": [

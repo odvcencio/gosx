@@ -463,7 +463,7 @@ func TestRuntimeBuildEvidenceUsesExactSixRows(t *testing.T) {
 		routes     []string
 	}{
 		"runtime": {"current", "measured", []string{"R05", "R06", "R07", "R08", "R10"}},
-		"islands": {"current", "measured", []string{"R02", "R03"}},
+		"islands": {"current", "measured", []string{"R02", "R03", "R09A", "R09B"}},
 		"core":    {"future", "planned", []string{"R01", "R02", "R03", "R04", "R09A", "R09B"}},
 		"engine":  {"future", "planned", []string{"R05", "R07", "R08", "R10"}},
 		"collab":  {"future", "planned", []string{"R06"}},
