@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"m31labs.dev/gosx/visual"
@@ -29,6 +30,20 @@ func cmdVisual() {
 	diffOut := fs.String("diff", "", "where to write the diff image on failure")
 	jsonOut := fs.Bool("json", false, "emit result as JSON")
 	requireBackend := fs.String("require-backend", "", "hard-fail unless the mounted Scene3D backend is webgpu, webgl, or any-gpu (default: no check)")
+	pixelEvidenceOut := fs.String("ouroboros-pixels-out", "", "write O0.2 Scene3D pixel evidence to this artifact directory")
+	pixelMode := fs.String("ouroboros-mode", string(visual.PixelModeRecordBaseline), "O0.2 pixel mode: record-baseline or candidate")
+	pixelBaselineRoot := fs.String("ouroboros-baseline-root", "", "existing O0.2 pixel baseline root for candidate comparisons")
+	pixelRouteID := fs.String("ouroboros-route-id", "", "O0.2 route ID for pixel evidence, such as R08 or R10")
+	pixelSamples := fs.Int("ouroboros-pixel-samples", 3, "O0.2 pixel captures per state")
+	pixelInitialWait := fs.Duration("ouroboros-initial-wait", 0, "O0.2 wait after first rendered frame before initial capture")
+	pixelSettledWait := fs.Duration("ouroboros-settled-wait", 3*time.Second, "O0.2 settled-state wait before capture")
+	pixelWarmupFrames := fs.Int("ouroboros-warmup-frames", 30, "O0.2 settled-state minimum frame advance after initial readiness")
+	pixelCanvasSelector := fs.String("ouroboros-canvas-selector", "canvas", "canvas selector for O0.2 pixel evidence")
+	pixelAllowOverwrite := fs.Bool("ouroboros-allow-overwrite", false, "allow O0.2 record-baseline to write into a non-empty artifact directory")
+	pixelForceWebGL := fs.Bool("ouroboros-force-webgl", false, "set the O0.2 probe-only Scene3D WebGL flag before navigation")
+	pixelBaseRevision := fs.String("ouroboros-base-revision", "", "O0.2 source base revision for pixel evidence")
+	pixelOverlayHash := fs.String("ouroboros-overlay-hash", "", "O0.2 source overlay hash for pixel evidence")
+	pixelInventorySHA256 := fs.String("ouroboros-inventory-sha256", "", "O0.2 source inventory SHA-256 for pixel evidence")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `gosx visual - pixel-level visual regression testing
 
@@ -58,6 +73,13 @@ Examples:
   # Refuse a Scene3D capture that silently fell back to the 2D canvas
   # renderer instead of WebGPU (see /docs/debugging-scene3d on gosx-docs):
   gosx visual --require-backend webgpu http://localhost:8080/scene
+
+  # Record O0.2 canvas-pixel evidence into a caller-selected new artifact root:
+  gosx visual --ouroboros-pixels-out build/ouroboros/o0.2/pixels/R08 \
+    --ouroboros-route-id R08 --require-backend webgl --ouroboros-force-webgl \
+    --ouroboros-base-revision abc1234 --ouroboros-overlay-hash sha256:clean \
+    --ouroboros-inventory-sha256 sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+    http://localhost:8080/scene/basic
 
 Environment:
   CHROME_WS_URL  If set, connects to a remote headless-shell service
@@ -98,6 +120,40 @@ Environment:
 	}
 
 	ctx := context.Background()
+	if strings.TrimSpace(*pixelEvidenceOut) != "" {
+		if !visual.ValidPixelEvidenceMode(*pixelMode) {
+			fatal("visual: --ouroboros-mode must be record-baseline or candidate (got %q)", *pixelMode)
+		}
+		manifest, err := visual.CapturePixelEvidence(ctx, url, visual.PixelEvidenceOptions{
+			Mode:         visual.PixelEvidenceMode(*pixelMode),
+			RouteID:      *pixelRouteID,
+			ArtifactRoot: *pixelEvidenceOut,
+			BaselineRoot: *pixelBaselineRoot,
+			Source: visual.PixelSourceIdentity{
+				BaseRevision:    *pixelBaseRevision,
+				OverlayHash:     *pixelOverlayHash,
+				InventorySHA256: *pixelInventorySHA256,
+			},
+			Backend:        visual.RequireBackend(*requireBackend),
+			Samples:        *pixelSamples,
+			Viewport:       visual.Viewport{Width: *viewportW, Height: *viewportH, Scale: *scale},
+			InitialWait:    *pixelInitialWait,
+			SettledWait:    *pixelSettledWait,
+			WarmupFrames:   *pixelWarmupFrames,
+			WaitSelector:   *waitSel,
+			CanvasSelector: *pixelCanvasSelector,
+			Timeout:        *timeout,
+			ThresholdPct:   *threshold,
+			AllowOverwrite: *pixelAllowOverwrite,
+			ForceWebGL:     *pixelForceWebGL,
+		})
+		if err != nil {
+			fatal("visual: O0.2 pixel evidence failed: %v", err)
+		}
+		out, _ := json.MarshalIndent(manifest, "", "  ")
+		fmt.Println(string(out))
+		return
+	}
 	err := visual.Assert(ctx, url, opts)
 
 	if *update {
@@ -176,6 +232,12 @@ Common flags:
   --selector <css>          capture one element instead of the full viewport
   --eval <javascript>       run JavaScript before capture
   --require-backend <name>  hard-fail unless Scene3D mounted webgpu, webgl, or any-gpu
+  --ouroboros-pixels-out    write O0.2 Scene3D pixel evidence to an artifact directory
+                            requires explicit --require-backend webgpu or webgl
+  --ouroboros-base-revision source base revision for O0.2 pixel evidence
+  --ouroboros-overlay-hash  source overlay hash for O0.2 pixel evidence
+  --ouroboros-inventory-sha256
+                            source inventory SHA-256 for O0.2 pixel evidence
   --json                    emit JSON
 
 `)

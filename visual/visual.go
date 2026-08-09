@@ -417,13 +417,13 @@ type DiffResult struct {
 
 // Diff compares two PNG byte buffers and returns a DiffResult.
 func Diff(baseline, current []byte) (DiffResult, error) {
-	baseImg, err := png.Decode(bytes.NewReader(baseline))
+	baseImg, err := decodeBoundedPNG("baseline", baseline)
 	if err != nil {
-		return DiffResult{}, fmt.Errorf("visual: decode baseline: %w", err)
+		return DiffResult{}, err
 	}
-	currImg, err := png.Decode(bytes.NewReader(current))
+	currImg, err := decodeBoundedPNG("current", current)
 	if err != nil {
-		return DiffResult{}, fmt.Errorf("visual: decode current: %w", err)
+		return DiffResult{}, err
 	}
 
 	baseRect := baseImg.Bounds()
@@ -495,6 +495,38 @@ func Diff(baseline, current []byte) (DiffResult, error) {
 		DiffPct:         pct,
 		DimensionsMatch: true,
 	}, nil
+}
+
+func decodeBoundedPNG(label string, data []byte) (image.Image, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("visual: decode %s: empty PNG", label)
+	}
+	if len(data) > MaxPixelPNGBytes {
+		return nil, fmt.Errorf("visual: decode %s: PNG exceeds %d bytes", label, MaxPixelPNGBytes)
+	}
+	reader := bytes.NewReader(data)
+	config, err := png.DecodeConfig(reader)
+	if err != nil {
+		return nil, fmt.Errorf("visual: decode %s config: %w", label, err)
+	}
+	if err := validatePixelImageBounds(config.Width, config.Height); err != nil {
+		return nil, fmt.Errorf("visual: decode %s config: %w", label, err)
+	}
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("visual: rewind %s PNG: %w", label, err)
+	}
+	img, err := png.Decode(reader)
+	if err != nil {
+		return nil, fmt.Errorf("visual: decode %s: %w", label, err)
+	}
+	rect := img.Bounds()
+	if rect.Dx() != config.Width || rect.Dy() != config.Height {
+		return nil, fmt.Errorf("visual: decode %s: decoded dimensions %dx%d do not match config %dx%d", label, rect.Dx(), rect.Dy(), config.Width, config.Height)
+	}
+	if err := validatePixelImageBounds(rect.Dx(), rect.Dy()); err != nil {
+		return nil, fmt.Errorf("visual: decode %s: %w", label, err)
+	}
+	return img, nil
 }
 
 // AssertOptions configures a baseline-backed assert.
