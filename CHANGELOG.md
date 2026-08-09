@@ -1,5 +1,64 @@
 # Changelog
 
+## v0.37.0 (2026-08-09)
+
+### New framework surfaces that retire app-authored scripts
+
+Three features moved out of the first consumer (m31labs.dev) and into the
+framework, so any GoSX app gets them declaratively:
+
+- **Scene3D first-content reveal.** An opt-in
+  `data-gosx-scene3d-reveal-class` mount attribute names a CSS class. After
+  the first frame with drawable content, the mount stamps
+  `data-gosx-scene3d-revealed="true"` and the runtime adds the class to the
+  document element; dispose removes it. Apps fade a static boot placeholder
+  with pure CSS instead of a hand-written readiness watcher.
+- **Lantern Scene3D inspector.** A read-only dev inspector served embedded
+  at `/gosx/devtools-lantern.js` (`server.DevtoolsLanternPath`). Shift+D
+  toggles a panel with truthful render FPS, backend and adaptive-quality
+  state, live node-type counts, draw calls, and camera state — all read
+  from the debug registry the production bundle already ships.
+- **YouTube audio bridge.** A declarative background-audio bridge served
+  embedded at `/gosx/youtube-audio.js` (`server.YouTubeAudioBridgePath`).
+  Elements with `data-gosx-youtube-audio="<url>"` toggle one shared hidden
+  player; the active element carries
+  `data-gosx-youtube-audio-state="playing"` for CSS styling.
+
+Embedded runtime assets resolve before the runtime asset root, so they work
+in bare `go run` development with no build step.
+
+### Editor
+
+- Fixed blank-area clicks in the native editor: clicking below the last
+  line focuses the end of the document. It no longer appends newlines or
+  dispatches a synthetic input event, which corrupted autosave state in
+  consumer apps. The source textarea also gained a configurable accessible
+  name (`Options.Label`, falling back to `Title`, then "Editor").
+
+### Since v0.36.0, grouped
+
+This release also rolls up the main-line work merged since v0.36.0:
+
+- **Scene3D rendering** — retained geometry, HDR IBL, native lighting and
+  post FX additions, DOM region bindings for custom post effects,
+  HTML-texture surfaces gated on confirmed uploads, hardened WebGL
+  instanced draws with point budget scaling, WebGPU bind-group and
+  pipeline-key memoization, and per-feature chunk splitting with
+  re-measured size ceilings.
+- **Runtime and navigation** — late engine factory registration, stable
+  engine IDs with a page cache TTL, soft-navigation replay of opted-in
+  inline scripts, declarative submit-action preservation, and Scene3D
+  scroll and device lifecycle stabilization.
+- **Water** — quality profiles and workload telemetry.
+- **Server** — trailing-slash redirects no longer capture descendant
+  paths.
+- **Parser** — nested GoSX parsing fixed on forward GoTreeSitter (v0.47
+  line), which lets consumers drop their gotreesitter downgrade pins.
+- **CI** — Go CI split into parallel unit and CLI lanes with a focused PR
+  race lane.
+- **Showcase** — the Blackglass Beacon demo became the Coast world with
+  headless render evidence.
+
 ## v0.36.0 (2026-07-26)
 
 ### Checkable cross-file claims (`internal/claimcheck`)
