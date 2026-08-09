@@ -13,8 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"m31labs.dev/gosx/perf"
 	"m31labs.dev/gosx/visual"
@@ -1362,8 +1365,14 @@ func TestRouteStateMachineAssertionsDoNotUseConstantTruth(t *testing.T) {
 		"counterAfter !== counterBefore",
 		"validationAfter !== validationBefore",
 		"invalidResult.status === 422 &&",
+		"structured-validation-response",
+		"submitFormBrowserRedirectResult",
+		"text/html,application/xhtml+xml,*/*;q=0.8",
 		`msg.event === "echo"`,
 		`{event:"echo", data:{}}`,
+		"ignored.push",
+		`name === "__welcome"`,
+		"unexpected:true",
 		`waitFor(function(){`,
 		`sharedSignalValue("$ouroboros.echo")`,
 		"waitSceneMountCanvas",
@@ -1390,6 +1399,146 @@ func TestRouteStateMachineAssertionsDoNotUseConstantTruth(t *testing.T) {
 		if strings.Contains(js, forbidden) {
 			t.Fatalf("routeStateMachineJS still contains weak proof %q", forbidden)
 		}
+	}
+}
+
+func TestRouteStateMachineR04SplitsStructuredValidationAndBrowserRedirect(t *testing.T) {
+	d := requireOuroborosBrowserDriver(t, 45*time.Second)
+	srv, requests := newR04ProofMockServer(t)
+	defer srv.Close()
+	if err := d.Navigate(srv.URL + "/action/form"); err != nil {
+		t.Fatalf("Navigate: %v", err)
+	}
+	if err := d.WaitReady(); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	bundle, err := executeRouteStateMachine(d, r04ProofRoute(), ExternalRouteEvidence{}, SampleLaneProduct)
+	if err != nil {
+		t.Fatalf("R04 route state machine: %v bundle=%+v", err, bundle)
+	}
+	if bundle.FirstUsable.Name != "visible-validation" || !bundle.FirstUsable.OK {
+		t.Fatalf("first usable = %+v", bundle.FirstUsable)
+	}
+	validation := requireProofPayload(t, bundle, "structured-validation-response")
+	if got := intFromAny(validation["status"]); got != http.StatusUnprocessableEntity {
+		t.Fatalf("validation status = %d payload=%+v", got, validation)
+	}
+	redirect := requireProofPayload(t, bundle, "valid-result")
+	if redirected, _ := redirect["redirected"].(bool); !redirected {
+		t.Fatalf("valid result did not follow a browser redirect: %+v", redirect)
+	}
+	if accept := stringFromAny(redirect["accept"]); strings.Contains(accept, "application/json") {
+		t.Fatalf("redirect proof used JSON accept: %+v", redirect)
+	}
+	if url := stringFromAny(redirect["url"]); !strings.Contains(url, "/action/form?ok=1") {
+		t.Fatalf("redirect final URL = %q payload=%+v", url, redirect)
+	}
+	requests.mu.Lock()
+	defer requests.mu.Unlock()
+	if requests.invalidJSON != 1 {
+		t.Fatalf("invalid JSON request count = %d", requests.invalidJSON)
+	}
+	if requests.validBrowser != 1 {
+		t.Fatalf("valid browser request count = %d", requests.validBrowser)
+	}
+	if strings.Contains(requests.validAccept, "application/json") {
+		t.Fatalf("valid redirect accept = %q", requests.validAccept)
+	}
+}
+
+func TestRouteStateMachineR06IgnoresControlFramesBeforeEcho(t *testing.T) {
+	d := requireOuroborosBrowserDriver(t, 45*time.Second)
+	srv := newR06ControlFrameMockServer(t)
+	defer srv.Close()
+	if err := d.Navigate(srv.URL + "/hub/echo"); err != nil {
+		t.Fatalf("Navigate: %v", err)
+	}
+	if err := d.WaitReady(); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	var ready bool
+	if err := d.Evaluate(`(async function(){
+		var deadline = performance.now() + 2000;
+		while (performance.now() <= deadline) {
+			if (window.__r06Ready) return true;
+			await new Promise(function(resolve){ setTimeout(resolve, 25); });
+		}
+		return false;
+	})()`, &ready); err != nil {
+		t.Fatalf("wait for page websocket: %v", err)
+	}
+	if !ready {
+		t.Fatal("page websocket did not open")
+	}
+	bundle, err := executeRouteStateMachine(d, r06ProofRoute(), ExternalRouteEvidence{}, SampleLaneProduct)
+	if err != nil {
+		t.Fatalf("R06 route state machine: %v bundle=%+v", err, bundle)
+	}
+	payload := requireProofPayload(t, bundle, "socket-echo-applied")
+	echoed, ok := payload["echoed"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing echoed payload: %+v", payload)
+	}
+	if event := stringFromAny(echoed["event"]); event != "echo" {
+		t.Fatalf("echoed event = %q payload=%+v", event, echoed)
+	}
+	ignored, ok := echoed["ignored"].([]any)
+	if !ok || len(ignored) != 1 {
+		t.Fatalf("welcome frame was not recorded as the only ignored frame: %+v", echoed)
+	}
+	welcome, ok := ignored[0].(map[string]any)
+	if !ok || stringFromAny(welcome["event"]) != "__welcome" {
+		t.Fatalf("ignored frame = %+v", ignored)
+	}
+	if signal := stringFromAny(payload["signal"]); signal != "echo" {
+		t.Fatalf("echo signal = %q payload=%+v", signal, payload)
+	}
+}
+
+func TestRouteStateMachineR06RejectsUnexpectedPreEchoEvent(t *testing.T) {
+	d := requireOuroborosBrowserDriver(t, 45*time.Second)
+	srv := newR06MockServer(t, []r06PreEchoFrame{{Event: "presence", Data: map[string]int{"count": 1}}})
+	defer srv.Close()
+	if err := d.Navigate(srv.URL + "/hub/echo"); err != nil {
+		t.Fatalf("Navigate: %v", err)
+	}
+	if err := d.WaitReady(); err != nil {
+		t.Fatalf("WaitReady: %v", err)
+	}
+	var ready bool
+	if err := d.Evaluate(`(async function(){
+		var deadline = performance.now() + 2000;
+		while (performance.now() <= deadline) {
+			if (window.__r06Ready) return true;
+			await new Promise(function(resolve){ setTimeout(resolve, 25); });
+		}
+		return false;
+	})()`, &ready); err != nil {
+		t.Fatalf("wait for page websocket: %v", err)
+	}
+	if !ready {
+		t.Fatal("page websocket did not open")
+	}
+	bundle, err := executeRouteStateMachine(d, r06ProofRoute(), ExternalRouteEvidence{}, SampleLaneProduct)
+	if err == nil {
+		t.Fatalf("R06 proof passed with unexpected pre-echo event: %+v", bundle)
+	}
+	if bundle.FirstUsable.OK {
+		t.Fatalf("first usable passed with unexpected event: %+v", bundle.FirstUsable)
+	}
+	if !containsString(bundle.MissingRequired, "socket-echo-applied") {
+		t.Fatalf("missing required = %+v", bundle.MissingRequired)
+	}
+	payload := requireFailedProofPayload(t, bundle, "socket-echo-applied")
+	echoed, ok := payload["echoed"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing echoed payload: %+v", payload)
+	}
+	if event := stringFromAny(echoed["event"]); event != "presence" {
+		t.Fatalf("unexpected event = %q payload=%+v", event, echoed)
+	}
+	if unexpected, _ := echoed["unexpected"].(bool); !unexpected {
+		t.Fatalf("unexpected flag missing: %+v", echoed)
 	}
 }
 
@@ -2152,6 +2301,204 @@ func r05ProofRoute() FixtureSpec {
 		Route:               "/canvas-board",
 		RoutePlanAssertions: []string{"CanvasBoard marker", "canvas2d surface"},
 	}
+}
+
+func r04ProofRoute() FixtureSpec {
+	return FixtureSpec{
+		ID:    "R04",
+		Route: "/action/form",
+		RoutePlanAssertions: []string{
+			"declarative action marker",
+			"bootstrap mode lite",
+			"validation response",
+			"redirect response",
+		},
+	}
+}
+
+func r06ProofRoute() FixtureSpec {
+	return FixtureSpec{
+		ID:                  "R06",
+		Route:               "/hub/echo",
+		RoutePlanAssertions: []string{"hub manifest", "echo binding", "no wasm runtime path"},
+	}
+}
+
+type r04ProofRequests struct {
+	mu           sync.Mutex
+	invalidJSON  int
+	validBrowser int
+	validAccept  string
+}
+
+func newR04ProofMockServer(t *testing.T) (*httptest.Server, *r04ProofRequests) {
+	t.Helper()
+	requests := &r04ProofRequests{}
+	handler := http.NewServeMux()
+	handler.HandleFunc("/action/form", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, r04ProofMockPage())
+	})
+	handler.HandleFunc("/action/form/__actions/validate-name", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSpace(r.Form.Get("name"))
+		accept := r.Header.Get("Accept")
+		if strings.Contains(accept, "application/json") {
+			requests.mu.Lock()
+			requests.invalidJSON++
+			requests.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"ok":false,"message":"name required","data":{"html":"<p data-action-state=\"error\">name required</p>"},"fieldErrors":{"name":"name required"},"values":{"name":""}}`)
+			return
+		}
+		if name == "baseline" {
+			requests.mu.Lock()
+			requests.validBrowser++
+			requests.validAccept = accept
+			requests.mu.Unlock()
+			http.Redirect(w, r, "/action/form?ok=1", http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "unexpected action request", http.StatusBadRequest)
+	})
+	return httptest.NewServer(handler), requests
+}
+
+func r04ProofMockPage() string {
+	return `<!doctype html><html><head><title>R04 mock</title></head><body>
+<main>
+<section data-route-id="R04" data-marker="action-form" data-expected-capability="action-bridge">
+<form method="post" action="/action/form/__actions/validate-name" data-action-name="validate-name" data-gosx-action="POST /action/form/__actions/validate-name" data-gosx-action-target="#action-state" data-gosx-action-signal="$ouroboros.action.name">
+<label>Name <input name="name" value=""></label>
+<button type="submit">Submit</button>
+<output id="action-state" data-action-state="idle">idle</output>
+</form>
+</section>
+</main>
+<script>window.__gosx = {ready:true};</script>
+</body></html>`
+}
+
+type r06WSClient struct {
+	conn *websocket.Conn
+	send chan []byte
+}
+
+type r06PreEchoFrame struct {
+	Event string
+	Data  any
+}
+
+func newR06ControlFrameMockServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return newR06MockServer(t, nil)
+}
+
+func newR06MockServer(t *testing.T, preEcho []r06PreEchoFrame) *httptest.Server {
+	t.Helper()
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	var mu sync.Mutex
+	clients := map[*r06WSClient]bool{}
+	encode := func(event string, data any) []byte {
+		body, err := json.Marshal(data)
+		if err != nil {
+			t.Fatalf("marshal websocket data: %v", err)
+		}
+		msg, err := json.Marshal(map[string]any{"event": event, "data": string(body)})
+		if err != nil {
+			t.Fatalf("marshal websocket message: %v", err)
+		}
+		return msg
+	}
+	broadcast := func(payload []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		for client := range clients {
+			select {
+			case client.send <- payload:
+			default:
+			}
+		}
+	}
+	handler := http.NewServeMux()
+	handler.HandleFunc("/hub/echo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = io.WriteString(w, r06ControlFrameMockPage())
+	})
+	handler.HandleFunc("/_ouroboros/hub/echo", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		client := &r06WSClient{conn: conn, send: make(chan []byte, 8)}
+		mu.Lock()
+		clients[client] = true
+		mu.Unlock()
+		go func() {
+			defer conn.Close()
+			for payload := range client.send {
+				if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+					return
+				}
+			}
+		}()
+		client.send <- encode("__welcome", map[string]string{"clientId": "r06-test"})
+		for _, frame := range preEcho {
+			client.send <- encode(frame.Event, frame.Data)
+		}
+		go func() {
+			defer func() {
+				mu.Lock()
+				delete(clients, client)
+				mu.Unlock()
+				close(client.send)
+				_ = conn.Close()
+			}()
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var msg struct {
+					Event string `json:"event"`
+				}
+				if err := json.Unmarshal(payload, &msg); err != nil {
+					continue
+				}
+				if msg.Event == "echo" {
+					broadcast(encode("echo", map[string]string{"status": "echo"}))
+				}
+			}
+		}()
+	})
+	return httptest.NewServer(handler)
+}
+
+func r06ControlFrameMockPage() string {
+	return `<!doctype html><html><head><title>R06 mock</title></head><body>
+<main>
+<section data-route-id="R06" data-marker="hub-echo" data-expected-capability="collab">
+<div data-hub="ouroboros-echo"><p data-signal="$ouroboros.echo">echo signal</p></div>
+</section>
+</main>
+<script>
+(function(){
+  window.__gosx = {hubs:new Map(), sharedSignals:{values:new Map(), subscribers:new Map()}};
+  var ws = new WebSocket(location.origin.replace(/^http/, "ws") + "/_ouroboros/hub/echo");
+  ws.onopen = function(){ window.__r06Ready = true; };
+  ws.onmessage = function(event) {
+    try {
+      var msg = JSON.parse(event.data || "{}");
+      var data = typeof msg.data === "string" ? JSON.parse(msg.data) : (msg.data || {});
+      if (msg.event === "echo" && data.status === "echo") window.__gosx.sharedSignals.values.set("$ouroboros.echo", data);
+    } catch (_) {}
+  };
+})();
+</script></body></html>`
 }
 
 func newR05ProofMockServer(t *testing.T, body string) *httptest.Server {

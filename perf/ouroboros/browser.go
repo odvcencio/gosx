@@ -1783,6 +1783,52 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 			}
 			return {ok:false, missing:"fetch"};
 		}
+		async function submitFormStructuredResult(sel, name) {
+			var f = qs(sel || "form");
+			if (!f) return {ok:false, missing:"form"};
+			var value = name === undefined ? "valid" : name;
+			var input = f.querySelector("input[name=name]");
+			if (input) {
+				input.value = value;
+				input.dispatchEvent(new Event("input", {bubbles:true}));
+			}
+			if (!window.fetch) return {ok:false, missing:"fetch"};
+			try {
+				var body = new URLSearchParams();
+				body.set("name", value);
+				var resp = await fetch(f.getAttribute("action") || location.pathname, {method:"POST", headers:{Accept:"application/json"}, body: body});
+				var textBody = await resp.text();
+				var parsed = null;
+				try { parsed = textBody ? JSON.parse(textBody) : null; } catch (_) { parsed = null; }
+				return {ok:resp.ok, status:resp.status || 0, redirected:!!resp.redirected, url:resp.url || "", json:parsed, body:textBody.slice(0, 240), accept:"application/json"};
+			} catch (e) { return {ok:false, error:String(e && (e.message || e)).slice(0, 160), accept:"application/json"}; }
+		}
+		async function submitFormBrowserRedirectResult(sel, name) {
+			var f = qs(sel || "form");
+			if (!f) return {ok:false, missing:"form"};
+			var value = name === undefined ? "valid" : name;
+			var input = f.querySelector("input[name=name]");
+			if (input) {
+				input.value = value;
+				input.dispatchEvent(new Event("input", {bubbles:true}));
+			}
+			if (!window.fetch) return {ok:false, missing:"fetch"};
+			try {
+				var body = new URLSearchParams();
+				body.set("name", value);
+				var accept = "text/html,application/xhtml+xml,*/*;q=0.8";
+				var resp = await fetch(f.getAttribute("action") || location.pathname, {method:"POST", headers:{Accept:accept}, body: body, redirect:"follow"});
+				return {ok:resp.ok, status:resp.status || 0, redirected:!!resp.redirected, url:resp.url || "", accept:accept};
+			} catch (e) { return {ok:false, error:String(e && (e.message || e)).slice(0, 160), accept:"text/html,application/xhtml+xml,*/*;q=0.8"}; }
+		}
+		function applyActionHTML(result) {
+			var target = qs("#action-state");
+			var data = result && result.json && result.json.data;
+			var html = data && typeof data.html === "string" ? data.html : "";
+			if (!target || !html) return false;
+			target.innerHTML = html;
+			return true;
+		}
 		function registry() {
 			var out = {};
 			try {
@@ -2009,8 +2055,16 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 						if (typeof raw === "string") return raw;
 					}
 				} catch (_) {
-					return "";
 				}
+				try {
+					var values = window.__gosx && window.__gosx.sharedSignals && window.__gosx.sharedSignals.values;
+					if (values && typeof values.has === "function" && values.has(name)) {
+						var value = values.get(name);
+						if (typeof value === "string") return value;
+						if (value && typeof value.status === "string") return value.status;
+						return JSON.stringify(value == null ? null : value);
+					}
+				} catch (_) {}
 				return "";
 			}
 			function clearSharedSignal(name) {
@@ -2138,15 +2192,17 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 				var input = form.querySelector("input[name=name]");
 				if (input) input.value = "";
 				var validationBefore = text("#action-state");
-				await click("form button[type=submit]");
 			}
-			var invalidResult = await submitFormValidResult("form", "");
+			var invalidResult = await submitFormStructuredResult("form", "");
+			var appliedActionHTML = applyActionHTML(invalidResult);
 			var validationAfter = text("#action-state");
 			var fieldError = text("[data-field-error]");
-			var validation = invalidResult.status === 422 && validationAfter !== validationBefore && /required|error/.test(validationAfter + fieldError);
-			firstUsable = proof("visible-validation", validation, {before:validationBefore, after:validationAfter, fieldError:fieldError, invalid:invalidResult});
-			var validResult = await submitFormValidResult("form", "baseline");
-			proof("valid-result", validResult.ok, validResult);
+			var invalidJSON = invalidResult && invalidResult.json ? invalidResult.json : {};
+			var validation = invalidResult.status === 422 && invalidJSON.ok === false && !!(invalidJSON.fieldErrors && invalidJSON.fieldErrors.name) && validationAfter !== validationBefore && /required|error/.test(validationAfter + fieldError);
+			firstUsable = proof("visible-validation", validation, {before:validationBefore, after:validationAfter, fieldError:fieldError, invalid:invalidResult, appliedActionHTML:appliedActionHTML});
+			proof("structured-validation-response", invalidResult.status === 422 && invalidJSON.ok === false && !!(invalidJSON.fieldErrors && invalidJSON.fieldErrors.name), invalidResult);
+			var validResult = await submitFormBrowserRedirectResult("form", "baseline");
+			proof("valid-result", validResult.ok && validResult.redirected && validResult.accept.indexOf("application/json") < 0, validResult);
 			break;
 			case "R05":
 				await waitFor(function(){ return qs("#ouroboros-board[data-gosx-surface-id], canvas[data-gosx-surface-id]"); }, 4000, 50);
@@ -2193,13 +2249,23 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 				try {
 					var ws = new WebSocket(location.origin.replace(/^http/, "ws") + "/_ouroboros/hub/echo");
 					var done = false;
+					var ignored = [];
+					function isR06ControlEvent(name){ return name === "__welcome"; }
 					function finish(v){ if (!done) { done = true; try { ws.close(); } catch(_){} resolve(v); } }
 					ws.onopen = function(){ try { ws.send(JSON.stringify({event:"echo", data:{}})); } catch(_) { finish(false); } };
 					ws.onmessage = function(event){
 						try {
 							var msg = JSON.parse(event.data || "{}");
 							var data = typeof msg.data === "string" ? JSON.parse(msg.data) : (msg.data || {});
-							finish({ok:msg.event === "echo" && data.status === "echo", event:msg.event || "", data:data});
+							if (msg.event === "echo" && data.status === "echo") {
+								finish({ok:true, event:msg.event || "", data:data, ignored:ignored});
+								return;
+							}
+							if (!isR06ControlEvent(msg.event || "")) {
+								finish({ok:false, event:msg.event || "", data:data, ignored:ignored, unexpected:true});
+								return;
+							}
+							ignored.push({event:msg.event || "", data:data});
 						} catch (e) {
 							finish({ok:false, error:String(e && (e.message || e)).slice(0, 160)});
 						}
@@ -2384,13 +2450,15 @@ func executeRouteInteraction(d *perf.Driver, route FixtureSpec) error {
 				try {
 					var ws = new WebSocket(url);
 					var done = false;
+					function isR06ControlEvent(name){ return name === "__welcome"; }
 					function finish(v){ if (!done) { done = true; try { ws.close(); } catch(_){} resolve(v); } }
 					ws.onopen = function(){ try { ws.send(JSON.stringify({event:"echo", data:{}})); } catch(_) { finish(false); } };
 					ws.onmessage = function(event){
 						try {
 							var msg = JSON.parse(event.data || "{}");
 							var data = typeof msg.data === "string" ? JSON.parse(msg.data) : (msg.data || {});
-							finish(msg.event === "echo" && data.status === "echo");
+							if (msg.event === "echo" && data.status === "echo") finish(true);
+							if (!isR06ControlEvent(msg.event || "")) finish(false);
 						} catch (_) {
 							finish(false);
 						}
