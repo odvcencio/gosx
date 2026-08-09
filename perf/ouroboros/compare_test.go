@@ -279,6 +279,81 @@ func TestComparePolicyCompatibilityFailures(t *testing.T) {
 	})
 }
 
+func TestCanonicalCompareRequiresValidCompatibilityAuditIdentity(t *testing.T) {
+	canonicalSource := func() SourceIdentity {
+		source := compareSource("")
+		source.InventoryRef = "inventory.json"
+		source.InventorySHA256 = "sha256:inventory"
+		return source
+	}
+	valid := canonicalSource()
+	if err := requireCompareSource(valid, CompareModeCanonical); err != nil {
+		t.Fatalf("valid source rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		edit func(*SourceIdentity)
+		want string
+	}{
+		{
+			name: "missing scanStatus",
+			edit: func(source *SourceIdentity) {
+				source.CompatibilityAudit.ScanStatus = ""
+			},
+			want: "scanStatus",
+		},
+		{
+			name: "unknown scanStatus",
+			edit: func(source *SourceIdentity) {
+				source.CompatibilityAudit.ScanStatus = "unknown"
+			},
+			want: "scanStatus",
+		},
+		{
+			name: "failed scanStatus",
+			edit: func(source *SourceIdentity) {
+				source.CompatibilityAudit.ScanStatus = compatibilityScanStatusFailed
+				source.CompatibilityAudit.Status = "fail-closed"
+				source.CompatibilityAudit.CanonicalAvailable = false
+				source.CompatibilityAudit.Current = CompatibilityNameSetSummary{}
+				source.CompatibilityAudit.Reconciliation.RemovedSinceAnchorCount = 1
+			},
+			want: "complete passing compatibility audit",
+		},
+		{
+			name: "canonicalAvailable tamper",
+			edit: func(source *SourceIdentity) {
+				source.CompatibilityAudit.CanonicalAvailable = false
+			},
+			want: "canonical availability mismatch",
+		},
+		{
+			name: "status tamper",
+			edit: func(source *SourceIdentity) {
+				source.CompatibilityAudit.Status = "fail-closed"
+			},
+			want: "want pass",
+		},
+		{
+			name: "receipt diagnostic preserved",
+			edit: func(source *SourceIdentity) {
+				source.CompatibilityAudit.Receipt.Count = canonicalGosx - 1
+			},
+			want: "pinned 209-name receipt",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := canonicalSource()
+			tc.edit(&source)
+			err := requireCompareSource(source, CompareModeCanonical)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("requireCompareSource error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestCompareThresholdFailures(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -590,11 +665,17 @@ func compareSource(suffix string) SourceIdentity {
 			},
 		},
 		CompatibilityAudit: &CompatibilityAuditIdentity{
-			SchemaVersion: compatibilityAuditSchemaVersion,
-			Status:        "pass",
-			Receipt:       CompatibilityNameSetSummary{Count: canonicalGosx, NameSetHash: compatibilityReceiptHash},
-			Anchor:        CompatibilityNameSetSummary{Count: canonicalGosx, NameSetHash: "sha256:anchor"},
-			Current:       CompatibilityNameSetSummary{Count: canonicalGosx, NameSetHash: "sha256:current"},
+			SchemaVersion:                 compatibilityAuditSchemaVersion,
+			Status:                        "pass",
+			ScanStatus:                    compatibilityScanStatusComplete,
+			CanonicalAvailable:            true,
+			Receipt:                       CompatibilityNameSetSummary{Count: canonicalGosx, NameSetHash: compatibilityReceiptHash},
+			Anchor:                        CompatibilityNameSetSummary{Count: canonicalGosx, NameSetHash: "sha256:anchor"},
+			Current:                       CompatibilityNameSetSummary{Count: canonicalGosx, NameSetHash: "sha256:current"},
+			RuntimeJSONSourceIdentityHash: "sha256:source",
+			RuntimeJSONSemanticHash:       "sha256:semantic",
+			RuntimeJSONCountsHash:         "sha256:counts",
+			RuntimeJSONGlobalNameHash:     "sha256:globals",
 		},
 	}
 }
@@ -638,7 +719,7 @@ func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, inc
 			GosxNames:                     []GosxName{},
 			BroaderBrowserGosxNames:       []GosxName{},
 			SerializationSites:            []SerializationSite{},
-			CompatibilityAudit:            CompatibilityAudit{SchemaVersion: compatibilityAuditSchemaVersion, Status: "pass", CanonicalAvailable: true, Receipt: receiptSet, Anchor: anchorSet, Current: currentSet, Reconciliation: CompatibilityReconciliation{RecoveredPreexisting: []string{}, AddedSinceAnchor: []string{}, RemovedSinceAnchor: []string{}, MissingFromAnchor: []string{}}},
+			CompatibilityAudit:            CompatibilityAudit{SchemaVersion: compatibilityAuditSchemaVersion, Status: "pass", ScanStatus: compatibilityScanStatusComplete, CanonicalAvailable: true, Receipt: receiptSet, Anchor: anchorSet, Current: currentSet, Reconciliation: CompatibilityReconciliation{RecoveredPreexisting: []string{}, AddedSinceAnchor: []string{}, RemovedSinceAnchor: []string{}, MissingFromAnchor: []string{}}},
 			BroaderSerializationSiteCount: 0,
 		},
 		Ratchets: []ScopeRatchet{{ID: "fixture", Scope: "fixture", Status: "pass", Definition: "fixture"}},

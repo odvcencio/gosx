@@ -1317,6 +1317,12 @@ func requireCompareSource(source SourceIdentity, mode string) error {
 		if source.CompatibilityAudit == nil {
 			return fmt.Errorf("canonical compare requires compatibility audit identity")
 		}
+		if err := validateCompatibilityAuditIdentity(source.CompatibilityAudit); err != nil {
+			return fmt.Errorf("canonical compare requires valid compatibility audit identity: %w", err)
+		}
+		if source.CompatibilityAudit.ScanStatus != compatibilityScanStatusComplete || source.CompatibilityAudit.Status != "pass" || !source.CompatibilityAudit.CanonicalAvailable {
+			return fmt.Errorf("canonical compare requires complete passing compatibility audit")
+		}
 		if source.CompatibilityAudit.Receipt.Count != canonicalGosx || source.CompatibilityAudit.Receipt.NameSetHash != compatibilityReceiptHash {
 			return fmt.Errorf("canonical compare requires pinned 209-name receipt")
 		}

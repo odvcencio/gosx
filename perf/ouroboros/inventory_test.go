@@ -375,6 +375,9 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	if !audit.CanonicalAvailable || audit.Status != "pass" {
 		t.Fatalf("canonical availability = %v/%s, want pass with receipt/full scope differences recorded", audit.CanonicalAvailable, audit.Status)
 	}
+	if audit.ScanStatus != compatibilityScanStatusComplete {
+		t.Fatalf("scan status = %q, want complete", audit.ScanStatus)
+	}
 }
 
 func TestCompatibilityAuditRejectsUnsafeRevisionPathAndStaleIdentity(t *testing.T) {
@@ -429,6 +432,125 @@ func TestCompatibilityAuditRejectsUnsafeRevisionPathAndStaleIdentity(t *testing.
 	inv.Surface.CompatibilityAudit.Anchor.EvidenceHash = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	if err := ValidateInventory(inv); err == nil || !strings.Contains(err.Error(), "evidenceHash mismatch") {
 		t.Fatalf("ValidateInventory error = %v, want evidenceHash tamper failure", err)
+	}
+}
+
+func TestCompatibilityAuditScanStatusFailureValidation(t *testing.T) {
+	base := minimalValidInventory()
+	receipt := base.Surface.CompatibilityAudit.Receipt
+	anchor := base.Surface.CompatibilityAudit.Anchor
+
+	for _, tc := range []struct {
+		name  string
+		audit CompatibilityAudit
+	}{
+		{
+			name:  "anchor scan failure",
+			audit: failClosedCompatibilityAuditForInventory(*base, "scan anchor: test failure", receipt, CompatibilityNameSetEvidence{}, CompatibilityNameSetEvidence{}),
+		},
+		{
+			name:  "current scan failure",
+			audit: failClosedCompatibilityAuditForInventory(*base, "scan current: test failure", receipt, anchor, CompatibilityNameSetEvidence{}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := minimalValidInventory()
+			inv.Surface.CompatibilityAudit = tc.audit
+			if inv.Surface.CompatibilityAudit.ScanStatus != compatibilityScanStatusFailed {
+				t.Fatalf("scanStatus = %q, want failed", inv.Surface.CompatibilityAudit.ScanStatus)
+			}
+			if inv.Surface.CompatibilityAudit.CanonicalAvailable {
+				t.Fatal("canonicalAvailable = true, want false")
+			}
+			if err := ValidateInventory(inv); err != nil {
+				t.Fatalf("ValidateInventory failed audit: %v", err)
+			}
+		})
+	}
+}
+
+func TestCompatibilityAuditScanStatusTampering(t *testing.T) {
+	base := minimalValidInventory()
+	receipt := base.Surface.CompatibilityAudit.Receipt
+	failed := failClosedCompatibilityAuditForInventory(*base, "scan current: test failure", receipt, base.Surface.CompatibilityAudit.Anchor, CompatibilityNameSetEvidence{})
+
+	for _, tc := range []struct {
+		name string
+		edit func(*CompatibilityAudit)
+		want string
+	}{
+		{
+			name: "unknown scan status",
+			edit: func(a *CompatibilityAudit) {
+				a.ScanStatus = "unknown"
+			},
+			want: "scanStatus",
+		},
+		{
+			name: "failed status with completed scans",
+			edit: func(a *CompatibilityAudit) {
+				a.ScanStatus = compatibilityScanStatusFailed
+				a.Status = "fail-closed"
+				a.CanonicalAvailable = false
+			},
+			want: "failed with completed scans",
+		},
+		{
+			name: "failed changed to complete",
+			edit: func(a *CompatibilityAudit) {
+				*a = failed
+				a.ScanStatus = compatibilityScanStatusComplete
+			},
+			want: "without completed scans",
+		},
+		{
+			name: "failed changed to canonical",
+			edit: func(a *CompatibilityAudit) {
+				*a = failed
+				a.CanonicalAvailable = true
+			},
+			want: "canonical availability mismatch",
+		},
+		{
+			name: "complete with empty scan evidence",
+			edit: func(a *CompatibilityAudit) {
+				*a = failed
+				a.ScanStatus = compatibilityScanStatusComplete
+				a.Status = "fail-closed"
+				a.CanonicalAvailable = false
+			},
+			want: "without completed scans",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := minimalValidInventory()
+			tc.edit(&inv.Surface.CompatibilityAudit)
+			if err := ValidateInventory(inv); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateInventory error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCompatibilityAuditFailedScanHashesAreDeterministic(t *testing.T) {
+	base := minimalValidInventory()
+	first := failClosedCompatibilityAuditForInventory(*base, "scan current: test failure", base.Surface.CompatibilityAudit.Receipt, base.Surface.CompatibilityAudit.Anchor, CompatibilityNameSetEvidence{})
+	second := failClosedCompatibilityAuditForInventory(*base, "scan current: test failure", base.Surface.CompatibilityAudit.Receipt, base.Surface.CompatibilityAudit.Anchor, CompatibilityNameSetEvidence{})
+
+	if err := compareCompatibilityEvidence("current", first.Current, second.Current); err != nil {
+		t.Fatalf("current failure evidence is not deterministic: %v", err)
+	}
+	if !equalStrings(first.Reconciliation.AddedSinceAnchor, second.Reconciliation.AddedSinceAnchor) ||
+		!equalStrings(first.Reconciliation.RemovedSinceAnchor, second.Reconciliation.RemovedSinceAnchor) ||
+		first.Current.EvidenceHash != second.Current.EvidenceHash ||
+		first.Current.RuntimeJSONSourceIdentityHash != second.Current.RuntimeJSONSourceIdentityHash {
+		t.Fatalf("failed scan audit is not deterministic: first=%+v second=%+v", first, second)
+	}
+
+	inv := minimalValidInventory()
+	inv.Surface.CompatibilityAudit = first
+	if err := ValidateInventory(inv); err != nil {
+		t.Fatalf("ValidateInventory failed deterministic audit: %v", err)
 	}
 }
 
@@ -947,6 +1069,7 @@ func minimalCompatibilityAudit(baseRevision, overlayHash string) CompatibilityAu
 	return CompatibilityAudit{
 		SchemaVersion:      compatibilityAuditSchemaVersion,
 		Status:             "pass",
+		ScanStatus:         compatibilityScanStatusComplete,
 		CanonicalAvailable: true,
 		Receipt:            receiptEvidence,
 		Anchor:             anchor,

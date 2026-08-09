@@ -102,6 +102,8 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 		"bootstrap-feature-scene3d-animation.js": "bootstrap-feature-scene3d-animation",
 		"patch.js":                               "patch",
 		"hls.min.js":                             "hls",
+		"devtools-lantern.js":                    "devtools",
+		"youtube-audio.js":                       "youtube",
 		"islands/Counter.gxi":                    "counter",
 		"css/counter.css":                        "counter-css",
 	} {
@@ -115,6 +117,8 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 		"/gosx/bootstrap-feature-textlayout.js",
 		"/gosx/bootstrap-feature-scene3d-command.js",
 		"/gosx/hls.min.js",
+		"/gosx/devtools-lantern.js",
+		"/gosx/youtube-audio.js",
 		"/gosx/islands/Counter.gxi",
 		"/gosx/css/counter.css",
 	}}
@@ -131,6 +135,8 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 		"gosx/bootstrap-feature-textlayout.js",
 		"gosx/bootstrap-feature-scene3d-command.js",
 		"gosx/hls.min.js",
+		"gosx/devtools-lantern.js",
+		"gosx/youtube-audio.js",
 		"gosx/islands/Counter.gxi",
 		"gosx/css/counter.css",
 	} {

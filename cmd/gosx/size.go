@@ -245,6 +245,8 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "hls.min.js", file: rt.VideoHLS.File, role: "video hls chunk"},
 		{name: "stripe-bridge.js", file: rt.StripeBridge.File, role: "stripe bridge chunk"},
 		{name: "relay.js", file: rt.Relay.File, role: "cross-frame preview relay"},
+		{name: "devtools-lantern.js", file: rt.DevtoolsLantern.File, role: "devtools lantern inspector"},
+		{name: "youtube-audio.js", file: rt.YouTubeAudio.File, role: "youtube audio bridge"},
 	}
 }
 

@@ -23,6 +23,8 @@ func TestBuildSizeEvidenceAttributesRouteAssetsAndDedupesTotals(t *testing.T) {
 	writeTestFile(t, filepath.Join(runtimeDir, "gosx-runtime.4444.wasm"), "wasm-full")
 	writeTestFile(t, filepath.Join(runtimeDir, "gosx-runtime-islands.5555.wasm"), "wasm-islands")
 	writeTestFile(t, filepath.Join(runtimeDir, "wasm_exec.6666.js"), "shim")
+	writeTestFile(t, filepath.Join(runtimeDir, "devtools-lantern.7777.js"), "devtools")
+	writeTestFile(t, filepath.Join(runtimeDir, "youtube-audio.8888.js"), "youtube")
 	writeTestFile(t, filepath.Join(dir, "build.json"), `{
   "runtime": {
     "wasm": {"file": "gosx-runtime.4444.wasm", "hash": "4444", "size": 9},
@@ -30,7 +32,9 @@ func TestBuildSizeEvidenceAttributesRouteAssetsAndDedupesTotals(t *testing.T) {
     "wasmExec": {"file": "wasm_exec.6666.js", "hash": "6666", "size": 4},
     "bootstrapRuntime": {"file": "bootstrap-runtime.1111.js", "hash": "1111", "size": 14},
     "bootstrapFeatureIslands": {"file": "bootstrap-feature-islands.2222.js", "hash": "2222", "size": 15},
-    "bootstrapFeatureEngines": {"file": "bootstrap-feature-engines.3333.js", "hash": "3333", "size": 14}
+    "bootstrapFeatureEngines": {"file": "bootstrap-feature-engines.3333.js", "hash": "3333", "size": 14},
+    "devtoolsLantern": {"file": "devtools-lantern.7777.js", "hash": "7777", "size": 8},
+    "youtubeAudio": {"file": "youtube-audio.8888.js", "hash": "8888", "size": 7}
   },
   "islands": [],
   "css": []
@@ -41,8 +45,8 @@ func TestBuildSizeEvidenceAttributesRouteAssetsAndDedupesTotals(t *testing.T) {
     {"path": "/canvas-board", "file": "canvas-board/index.html", "capabilities": {"engines": 1}}
   ]
 }`)
-	writeTestFile(t, filepath.Join(dir, "static", "island", "counter", "index.html"), `<script src="/gosx/bootstrap-runtime.js"></script><script src="/gosx/bootstrap-feature-islands.js"></script>`)
-	writeTestFile(t, filepath.Join(dir, "static", "canvas-board", "index.html"), `<script src="/gosx/bootstrap-runtime.js"></script><script src="/gosx/bootstrap-feature-engines.js"></script>`)
+	writeTestFile(t, filepath.Join(dir, "static", "island", "counter", "index.html"), `<script src="/gosx/bootstrap-runtime.js"></script><script src="/gosx/bootstrap-feature-islands.js"></script><script src="/gosx/youtube-audio.js"></script>`)
+	writeTestFile(t, filepath.Join(dir, "static", "canvas-board", "index.html"), `<script src="/gosx/bootstrap-runtime.js"></script><script src="/gosx/bootstrap-feature-engines.js"></script><script src="/gosx/devtools-lantern.js"></script>`)
 
 	report, err := BuildSizeEvidenceWithOptions(SizeEvidenceOptions{
 		ManifestPath: filepath.Join(dir, "build.json"),
@@ -61,7 +65,7 @@ func TestBuildSizeEvidenceAttributesRouteAssetsAndDedupesTotals(t *testing.T) {
 	if report.Totals.RouteCount != 2 || report.Totals.RoutesWithExplicitRefs != 2 {
 		t.Fatalf("unexpected route totals: %#v", report.Totals)
 	}
-	if report.Totals.AssetCount != 6 {
+	if report.Totals.AssetCount != 8 {
 		t.Fatalf("unexpected asset count: %#v", report.Totals)
 	}
 	shared := findAssetByURL(report.Assets, "/gosx/bootstrap-runtime.js")
@@ -74,10 +78,25 @@ func TestBuildSizeEvidenceAttributesRouteAssetsAndDedupesTotals(t *testing.T) {
 	if len(shared.UsedByRoutes) != 2 {
 		t.Fatalf("shared asset routes = %#v", shared.UsedByRoutes)
 	}
+	devtools := findAssetByURL(report.Assets, "/gosx/devtools-lantern.js")
+	if devtools == nil || devtools.Bytes != int64(len("devtools")) || strings.Join(devtools.UsedByRoutes, ",") != "/canvas-board" {
+		t.Fatalf("bad devtools attribution: %#v", devtools)
+	}
+	youtube := findAssetByURL(report.Assets, "/gosx/youtube-audio.js")
+	if youtube == nil || youtube.Bytes != int64(len("youtube")) || strings.Join(youtube.UsedByRoutes, ",") != "/island/counter" {
+		t.Fatalf("bad youtube attribution: %#v", youtube)
+	}
 	for _, route := range report.Routes {
 		if route.SharedRawBytes != int64(len("shared-runtime")) {
 			t.Fatalf("route %s shared bytes = %d", route.Route, route.SharedRawBytes)
 		}
+	}
+	routes := routeEvidenceByPath(report.Routes)
+	if routes["/island/counter"].UniqueRawBytes != int64(len("islands-feature")+len("youtube")) {
+		t.Fatalf("island route inherited wrong unique bytes: %#v", routes["/island/counter"])
+	}
+	if routes["/canvas-board"].UniqueRawBytes != int64(len("engine-feature")+len("devtools")) {
+		t.Fatalf("canvas route inherited wrong unique bytes: %#v", routes["/canvas-board"])
 	}
 }
 
@@ -221,6 +240,80 @@ func TestDirectAssetSourceBindsExactManifestBucket(t *testing.T) {
 	if !ok || asset.Hash != "css" || !strings.HasSuffix(sourcePath, filepath.Join("assets", "css", "same.js")) {
 		t.Fatalf("css direct ref did not bind exact bucket: path=%s asset=%#v ok=%v", sourcePath, asset, ok)
 	}
+}
+
+func TestManifestRuntimeRefsIncludeLanternAndYouTubeAudio(t *testing.T) {
+	manifest := &buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			DevtoolsLantern: buildmanifest.HashedAsset{File: "devtools-lantern.1111.js", Hash: "1111", Size: 8},
+			YouTubeAudio:    buildmanifest.HashedAsset{File: "youtube-audio.2222.js", Hash: "2222", Size: 7},
+		},
+	}
+	refs := map[string]string{}
+	addManifestRuntimeRefs(refs, manifest)
+	if refs["/gosx/devtools-lantern.js"] != "manifest-runtime" {
+		t.Fatalf("missing devtools lantern manifest ref: %#v", refs)
+	}
+	if refs["/gosx/youtube-audio.js"] != "manifest-runtime" {
+		t.Fatalf("missing youtube audio manifest ref: %#v", refs)
+	}
+}
+
+func TestDirectAssetSourceBindsNewRuntimeAssetsToRuntimeBucket(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "assets", "runtime", "devtools-lantern.1111.js"), "runtime-devtools")
+	writeTestFile(t, filepath.Join(dir, "assets", "runtime", "youtube-audio.2222.js"), "runtime-youtube")
+	writeTestFile(t, filepath.Join(dir, "assets", "css", "devtools-lantern.1111.js"), "css-devtools")
+	manifest := &buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			DevtoolsLantern: buildmanifest.HashedAsset{File: "devtools-lantern.1111.js", Hash: "runtime-devtools"},
+			YouTubeAudio:    buildmanifest.HashedAsset{File: "youtube-audio.2222.js", Hash: "runtime-youtube"},
+		},
+		CSS: []buildmanifest.CSSAsset{{Component: "devtools", HashedAsset: buildmanifest.HashedAsset{File: "devtools-lantern.1111.js", Hash: "css"}}},
+	}
+	sourcePath, asset, ok := directAssetSource(dir, manifest, "runtime/devtools-lantern.1111.js")
+	if !ok || asset.Hash != "runtime-devtools" || !strings.HasSuffix(sourcePath, filepath.Join("assets", "runtime", "devtools-lantern.1111.js")) {
+		t.Fatalf("devtools direct ref did not bind runtime bucket: path=%s asset=%#v ok=%v", sourcePath, asset, ok)
+	}
+	sourcePath, asset, ok = directAssetSource(dir, manifest, "runtime/youtube-audio.2222.js")
+	if !ok || asset.Hash != "runtime-youtube" || !strings.HasSuffix(sourcePath, filepath.Join("assets", "runtime", "youtube-audio.2222.js")) {
+		t.Fatalf("youtube direct ref did not bind runtime bucket: path=%s asset=%#v ok=%v", sourcePath, asset, ok)
+	}
+}
+
+func TestCollectTransferredAssetsFailsClosedForNewRuntimeAssets(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		dir := t.TempDir()
+		manifest := &buildmanifest.Manifest{
+			Runtime: buildmanifest.RuntimeAssets{
+				DevtoolsLantern: buildmanifest.HashedAsset{File: "devtools-lantern.1111.js", Hash: "1111", Size: 8},
+			},
+		}
+		assets, unresolved, err := collectTransferredAssets(dir, manifest, map[string]string{"/gosx/devtools-lantern.js": "manifest-runtime"}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(assets) != 0 || len(unresolved) != 1 || !strings.Contains(unresolved[0].Reason, "not found") {
+			t.Fatalf("missing devtools did not fail closed: assets=%#v unresolved=%#v", assets, unresolved)
+		}
+	})
+	t.Run("size_mismatch", func(t *testing.T) {
+		dir := t.TempDir()
+		runtimeDir := filepath.Join(dir, "assets", "runtime")
+		writeTestFile(t, filepath.Join(runtimeDir, "youtube-audio.2222.js"), "youtube")
+		manifest := &buildmanifest.Manifest{
+			Runtime: buildmanifest.RuntimeAssets{
+				YouTubeAudio: buildmanifest.HashedAsset{File: "youtube-audio.2222.js", Hash: "2222", Size: 999},
+			},
+		}
+		assets, unresolved, err := collectTransferredAssets(dir, manifest, map[string]string{"/gosx/youtube-audio.js": "manifest-runtime"}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(assets) != 0 || len(unresolved) != 1 || !strings.Contains(unresolved[0].Reason, "size") {
+			t.Fatalf("size mismatch did not fail closed: assets=%#v unresolved=%#v", assets, unresolved)
+		}
+	})
 }
 
 func TestBuildSizeEvidenceRequiresInventoryForCanonicalMode(t *testing.T) {

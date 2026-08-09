@@ -18,7 +18,9 @@ func TestLoadAndURLs(t *testing.T) {
     "bootstrap": {"file": "bootstrap.33333333.js", "hash": "33333333", "size": 30},
     "bootstrapFeatureScene3dCommand": {"file": "bootstrap-feature-scene3d-command.3d3d3d3d.js", "hash": "3d3d3d3d", "size": 33},
     "patch": {"file": "patch.44444444.js", "hash": "44444444", "size": 40},
-    "videoHLS": {"file": "hls.min.77777777.js", "hash": "77777777", "size": 70}
+    "videoHLS": {"file": "hls.min.77777777.js", "hash": "77777777", "size": 70},
+    "devtoolsLantern": {"file": "devtools-lantern.88888888.js", "hash": "88888888", "size": 80},
+    "youtubeAudio": {"file": "youtube-audio.99999999.js", "hash": "99999999", "size": 90}
   },
   "islands": [
     {"name": "Counter", "format": "bin", "file": "Counter.55555555.gxi", "hash": "55555555", "size": 50}
@@ -54,6 +56,12 @@ func TestLoadAndURLs(t *testing.T) {
 	}
 	if runtime.VideoHLS != "/gosx/assets/runtime/hls.min.77777777.js" {
 		t.Fatalf("unexpected video hls url: %s", runtime.VideoHLS)
+	}
+	if runtime.DevtoolsLantern != "/gosx/assets/runtime/devtools-lantern.88888888.js" {
+		t.Fatalf("unexpected devtools lantern url: %s", runtime.DevtoolsLantern)
+	}
+	if runtime.YouTubeAudio != "/gosx/assets/runtime/youtube-audio.99999999.js" {
+		t.Fatalf("unexpected youtube audio url: %s", runtime.YouTubeAudio)
 	}
 
 	islandAsset, ok := manifest.IslandAssetByName("Counter")

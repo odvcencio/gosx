@@ -169,6 +169,17 @@ func validateCompatibilityAudit(inv *Inventory) error {
 	if audit.Status != "pass" && audit.Status != "fail-closed" {
 		return fmt.Errorf("compatibilityAudit status = %q", audit.Status)
 	}
+	if audit.ScanStatus != compatibilityScanStatusComplete && audit.ScanStatus != compatibilityScanStatusFailed {
+		return fmt.Errorf("compatibilityAudit scanStatus = %q", audit.ScanStatus)
+	}
+	if audit.ScanStatus == compatibilityScanStatusComplete {
+		if audit.Anchor.Count == 0 || audit.Current.Count == 0 {
+			return fmt.Errorf("compatibilityAudit scanStatus complete without completed scans")
+		}
+	}
+	if audit.ScanStatus == compatibilityScanStatusFailed && audit.Anchor.Count > 0 && audit.Current.Count > 0 {
+		return fmt.Errorf("compatibilityAudit scanStatus failed with completed scans")
+	}
 	if err := validateCompatibilityNameSet("receipt", audit.Receipt, compatibilityAuditScope, compatibilityReceiptMethod, compatibilityReceiptClassifier, false); err != nil {
 		return err
 	}
@@ -200,7 +211,7 @@ func validateCompatibilityAudit(inv *Inventory) error {
 		!equalStrings(missing, audit.Reconciliation.MissingFromAnchor) {
 		return fmt.Errorf("compatibilityAudit reconciliation mismatch")
 	}
-	available := len(added) == 0 && len(removed) == 0
+	available := audit.ScanStatus == compatibilityScanStatusComplete && len(added) == 0 && len(removed) == 0
 	if audit.CanonicalAvailable != available {
 		return fmt.Errorf("compatibilityAudit canonical availability mismatch")
 	}
@@ -492,6 +503,9 @@ func validateCompatibilityAuditFresh(ctx context.Context, repoRoot string, inv *
 	}
 	if inv.Surface.CompatibilityAudit.Status != freshAudit.Status {
 		return fmt.Errorf("fresh compatibility status = %q, want %q", inv.Surface.CompatibilityAudit.Status, freshAudit.Status)
+	}
+	if inv.Surface.CompatibilityAudit.ScanStatus != freshAudit.ScanStatus {
+		return fmt.Errorf("fresh compatibility scanStatus = %q, want %q", inv.Surface.CompatibilityAudit.ScanStatus, freshAudit.ScanStatus)
 	}
 	return nil
 }

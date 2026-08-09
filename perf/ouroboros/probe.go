@@ -52,6 +52,7 @@ type RuntimeJSONStaticIdentity struct {
 type CompatibilityAuditIdentity struct {
 	SchemaVersion                 string                         `json:"schemaVersion"`
 	Status                        string                         `json:"status"`
+	ScanStatus                    string                         `json:"scanStatus"`
 	CanonicalAvailable            bool                           `json:"canonicalAvailable"`
 	Receipt                       CompatibilityNameSetSummary    `json:"receipt"`
 	Anchor                        CompatibilityNameSetSummary    `json:"anchor"`

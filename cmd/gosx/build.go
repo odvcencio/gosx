@@ -518,6 +518,8 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS},
 		{"stripe-bridge", filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js"), &manifest.Runtime.StripeBridge},
 		{"relay", filepath.Join(gosxRoot, "client", "js", "relay.js"), &manifest.Runtime.Relay},
+		{"devtools-lantern", filepath.Join(gosxRoot, "server", "devtools_lantern.js"), &manifest.Runtime.DevtoolsLantern},
+		{"youtube-audio", filepath.Join(gosxRoot, "server", "youtube_audio.js"), &manifest.Runtime.YouTubeAudio},
 	} {
 		data, err := os.ReadFile(js.path)
 		if err != nil {
@@ -1050,6 +1052,10 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.StripeBridge.File)
 	case "/gosx/relay.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.Relay.File)
+	case "/gosx/devtools-lantern.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.DevtoolsLantern.File)
+	case "/gosx/youtube-audio.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.YouTubeAudio.File)
 	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/islands/"); ok && rel != "" {
 		name := filepath.Base(rel)

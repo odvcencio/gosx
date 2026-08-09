@@ -41,6 +41,8 @@ type RuntimeAssets struct {
 	VideoHLS                          HashedAsset `json:"videoHLS,omitempty"`
 	StripeBridge                      HashedAsset `json:"stripeBridge,omitempty"`
 	Relay                             HashedAsset `json:"relay,omitempty"`
+	DevtoolsLantern                   HashedAsset `json:"devtoolsLantern,omitempty"`
+	YouTubeAudio                      HashedAsset `json:"youtubeAudio,omitempty"`
 }
 
 type IslandAsset struct {
@@ -95,6 +97,8 @@ type RuntimePaths struct {
 	VideoHLS                          string
 	StripeBridge                      string
 	Relay                             string
+	DevtoolsLantern                   string
+	YouTubeAudio                      string
 }
 
 // Load reads a build manifest from disk.
@@ -138,6 +142,8 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		VideoHLS:                          AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
 		StripeBridge:                      AssetURL(assetBaseURL, "runtime", m.Runtime.StripeBridge.File),
 		Relay:                             AssetURL(assetBaseURL, "runtime", m.Runtime.Relay.File),
+		DevtoolsLantern:                   AssetURL(assetBaseURL, "runtime", m.Runtime.DevtoolsLantern.File),
+		YouTubeAudio:                      AssetURL(assetBaseURL, "runtime", m.Runtime.YouTubeAudio.File),
 	}
 }
 

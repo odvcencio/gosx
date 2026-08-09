@@ -18,6 +18,8 @@ func TestBuildSizeReportCountsColdStartRuntimeAssets(t *testing.T) {
 	mustWriteFile(t, filepath.Join(runtimeDir, "bootstrap-feature-islands.hash.js"), "feature-islands")
 	mustWriteFile(t, filepath.Join(runtimeDir, "bootstrap-feature-engines.hash.js"), "feature-engines")
 	mustWriteFile(t, filepath.Join(runtimeDir, "bootstrap-feature-scene3d.hash.js"), "scene")
+	mustWriteFile(t, filepath.Join(runtimeDir, "devtools-lantern.hash.js"), "devtools")
+	mustWriteFile(t, filepath.Join(runtimeDir, "youtube-audio.hash.js"), "youtube")
 	mustWriteFile(t, filepath.Join(dir, "build.json"), `{
   "runtime": {
     "wasm": {"file": "runtime.hash.wasm"},
@@ -27,7 +29,9 @@ func TestBuildSizeReportCountsColdStartRuntimeAssets(t *testing.T) {
     "bootstrapRuntime": {"file": "bootstrap-runtime.hash.js"},
 	    "bootstrapFeatureIslands": {"file": "bootstrap-feature-islands.hash.js"},
 	    "bootstrapFeatureEngines": {"file": "bootstrap-feature-engines.hash.js"},
-    "bootstrapFeatureScene3d": {"file": "bootstrap-feature-scene3d.hash.js"}
+    "bootstrapFeatureScene3d": {"file": "bootstrap-feature-scene3d.hash.js"},
+    "devtoolsLantern": {"file": "devtools-lantern.hash.js"},
+    "youtubeAudio": {"file": "youtube-audio.hash.js"}
   },
   "islands": [],
   "css": []
@@ -40,11 +44,11 @@ func TestBuildSizeReportCountsColdStartRuntimeAssets(t *testing.T) {
 	if report.ColdStartBytes != int64(len("wasm")+len("exec")+len("runtime")) {
 		t.Fatalf("unexpected cold start bytes: %#v", report)
 	}
-	if report.TotalBytes != int64(len("wasm")+len("islands")+len("exec")+len("standard-exec")+len("runtime")+len("feature-islands")+len("feature-engines")+len("scene")) {
+	if report.TotalBytes != int64(len("wasm")+len("islands")+len("exec")+len("standard-exec")+len("runtime")+len("feature-islands")+len("feature-engines")+len("scene")+len("devtools")+len("youtube")) {
 		t.Fatalf("unexpected total bytes: %#v", report)
 	}
-	if len(report.Assets) != 8 {
-		t.Fatalf("expected eight assets, got %#v", report.Assets)
+	if len(report.Assets) != 10 {
+		t.Fatalf("expected ten assets, got %#v", report.Assets)
 	}
 	if report.Assets[0].SHA256 == "" {
 		t.Fatalf("expected full sha256 in size asset: %#v", report.Assets[0])

@@ -345,6 +345,8 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		filepath.Join(distDir, "assets", "runtime", "patch.9999.js"):                     "patch",
 		filepath.Join(distDir, "assets", "runtime", "hls.min.aaaa.js"):                   "hls",
 		filepath.Join(distDir, "assets", "runtime", "relay.bbbb.js"):                     "relay",
+		filepath.Join(distDir, "assets", "runtime", "devtools-lantern.cccc.js"):          "devtools",
+		filepath.Join(distDir, "assets", "runtime", "youtube-audio.dddd.js"):             "youtube",
 		filepath.Join(distDir, "assets", "islands", "Counter.abcd.gxi"):                  "counter",
 		filepath.Join(distDir, "assets", "css", "counter.dcba.css"):                      "counter-css",
 	}
@@ -367,6 +369,8 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 			Patch:                   HashedAsset{File: "patch.9999.js"},
 			VideoHLS:                HashedAsset{File: "hls.min.aaaa.js"},
 			Relay:                   HashedAsset{File: "relay.bbbb.js"},
+			DevtoolsLantern:         HashedAsset{File: "devtools-lantern.cccc.js"},
+			YouTubeAudio:            HashedAsset{File: "youtube-audio.dddd.js"},
 		},
 		Islands: []IslandAsset{{Name: "Counter", Format: "bin", HashedAsset: HashedAsset{File: "Counter.abcd.gxi"}}},
 		CSS:     []CSSAsset{{Component: "Counter", Source: "counter.css", HashedAsset: HashedAsset{File: "counter.dcba.css"}}},
@@ -378,6 +382,8 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		"/gosx/bootstrap-feature-engines.js",
 		"/gosx/hls.min.js",
 		"/gosx/relay.js",
+		"/gosx/devtools-lantern.js",
+		"/gosx/youtube-audio.js",
 		"/gosx/islands/Counter.gxi",
 		"/gosx/css/counter.css",
 	}
@@ -393,6 +399,8 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 		"gosx/standard-go-wasm_exec.js",
 		"gosx/hls.min.js",
 		"gosx/relay.js",
+		"gosx/devtools-lantern.js",
+		"gosx/youtube-audio.js",
 		"gosx/islands/Counter.gxi",
 		"gosx/css/counter.css",
 	} {

@@ -40,6 +40,8 @@ const (
 	compatibilityAuditSchemaVersion = "gosx.ouroboros.compatibility-audit.v1"
 	compatibilityAuditScope         = "client/js/bootstrap-src/**/*.js + client/wasm/**/*.go"
 	compatibilityFullRuntimeScope   = "inventory.files.included + inventory.files.sidecars + inventory.files.embedded + client/wasm/**/*.go production owners"
+	compatibilityScanStatusComplete = "complete"
+	compatibilityScanStatusFailed   = "failed"
 	compatibilityReceiptMethod      = "gosx.ouroboros.compatibility-receipt.raw-name.v1"
 	compatibilityReceiptClassifier  = "none"
 	compatibilityFullMethod         = runtimeJSONStaticScannerVersion
@@ -239,6 +241,7 @@ type SerializationSite struct {
 type CompatibilityAudit struct {
 	SchemaVersion      string                       `json:"schemaVersion"`
 	Status             string                       `json:"status"`
+	ScanStatus         string                       `json:"scanStatus"`
 	CanonicalAvailable bool                         `json:"canonicalAvailable"`
 	Receipt            CompatibilityNameSetEvidence `json:"receipt"`
 	Anchor             CompatibilityNameSetEvidence `json:"anchor"`
@@ -1138,15 +1141,12 @@ func collectCompatibilityAudit(ctx context.Context, root string, inv *Inventory)
 	}
 	anchor, err := scanFullRuntimeJSONNameSetAtRevision(ctx, root, inv.BaseRevision, CompatibilitySourceIdentity{Kind: "clean-anchor", Revision: inv.BaseRevision, OverlayHash: OverlayClean})
 	if err != nil {
-		inv.Surface.CompatibilityAudit = failClosedCompatibilityAudit("scan anchor: " + err.Error())
-		inv.Surface.CompatibilityAudit.Receipt = receiptEvidence
+		inv.Surface.CompatibilityAudit = failClosedCompatibilityAuditForInventory(*inv, "scan anchor: "+err.Error(), receiptEvidence, CompatibilityNameSetEvidence{}, CompatibilityNameSetEvidence{})
 		return nil
 	}
 	current, err := scanFullRuntimeJSONNameSet(ctx, root, *inv, CompatibilitySourceIdentity{Kind: "current-overlay", Revision: inv.BaseRevision, OverlayHash: inv.OverlayHash})
 	if err != nil {
-		inv.Surface.CompatibilityAudit = failClosedCompatibilityAudit("scan current: " + err.Error())
-		inv.Surface.CompatibilityAudit.Receipt = receiptEvidence
-		inv.Surface.CompatibilityAudit.Anchor = anchor
+		inv.Surface.CompatibilityAudit = failClosedCompatibilityAuditForInventory(*inv, "scan current: "+err.Error(), receiptEvidence, anchor, CompatibilityNameSetEvidence{})
 		return nil
 	}
 	reconciliation := CompatibilityReconciliation{
@@ -1163,6 +1163,7 @@ func collectCompatibilityAudit(ctx context.Context, root string, inv *Inventory)
 	inv.Surface.CompatibilityAudit = CompatibilityAudit{
 		SchemaVersion:      compatibilityAuditSchemaVersion,
 		Status:             status,
+		ScanStatus:         compatibilityScanStatusComplete,
 		CanonicalAvailable: available,
 		Receipt:            receiptEvidence,
 		Anchor:             anchor,
@@ -1185,6 +1186,7 @@ func failClosedCompatibilityAudit(note string) CompatibilityAudit {
 	return CompatibilityAudit{
 		SchemaVersion:      compatibilityAuditSchemaVersion,
 		Status:             "fail-closed",
+		ScanStatus:         compatibilityScanStatusFailed,
 		CanonicalAvailable: false,
 		Reconciliation: CompatibilityReconciliation{
 			RecoveredPreexisting: []string{},
@@ -1194,6 +1196,45 @@ func failClosedCompatibilityAudit(note string) CompatibilityAudit {
 		},
 		Notes: []string{note},
 	}
+}
+
+func failClosedCompatibilityAuditForInventory(inv Inventory, note string, receipt, anchor, current CompatibilityNameSetEvidence) CompatibilityAudit {
+	if anchor.SchemaVersionlessEmpty() {
+		anchor = emptyRuntimeCompatibilityEvidence(CompatibilitySourceIdentity{Kind: "clean-anchor", Revision: inv.BaseRevision, OverlayHash: OverlayClean})
+	}
+	if current.SchemaVersionlessEmpty() {
+		current = emptyRuntimeCompatibilityEvidence(CompatibilitySourceIdentity{Kind: "current-overlay", Revision: inv.BaseRevision, OverlayHash: inv.OverlayHash})
+	}
+	return CompatibilityAudit{
+		SchemaVersion:      compatibilityAuditSchemaVersion,
+		Status:             "fail-closed",
+		ScanStatus:         compatibilityScanStatusFailed,
+		CanonicalAvailable: false,
+		Receipt:            receipt,
+		Anchor:             anchor,
+		Current:            current,
+		Reconciliation: CompatibilityReconciliation{
+			RecoveredPreexisting: differenceStrings(anchor.Names, receipt.Names),
+			AddedSinceAnchor:     differenceStrings(current.Names, anchor.Names),
+			RemovedSinceAnchor:   differenceStrings(anchor.Names, current.Names),
+			MissingFromAnchor:    differenceStrings(receipt.Names, anchor.Names),
+		},
+		Notes: []string{note, "canonical compatibility availability failed closed"},
+	}
+}
+
+func (set CompatibilityNameSetEvidence) SchemaVersionlessEmpty() bool {
+	return set.SourceIdentity.Kind == "" && set.Scope == "" && set.MethodVersion == "" && set.ClassifierVersion == "" && set.Names == nil
+}
+
+func emptyRuntimeCompatibilityEvidence(identity CompatibilitySourceIdentity) CompatibilityNameSetEvidence {
+	set := compatibilityEvidenceFromNamesWithEvidenceAndScope([]string{}, identity, compatibilityFullRuntimeScope, []string{})
+	set.RuntimeJSONSourceIdentityHash = sha256String("fail-closed:" + identity.Kind + ":source")
+	set.RuntimeJSONSemanticHash = sha256String("fail-closed:" + identity.Kind + ":semantic")
+	set.RuntimeJSONCountsHash = sha256String("fail-closed:" + identity.Kind + ":counts")
+	set.RuntimeJSONGlobalNameHash = RuntimeJSONStaticGlobalNameHash(set.Names)
+	set.EvidenceHash = compatibilityEvidenceHash(set)
+	return set
 }
 
 func loadCompatibilityReceipt() (compatibilityReceiptArtifact, error) {

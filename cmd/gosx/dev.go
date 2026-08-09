@@ -228,6 +228,12 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "relay.js"), filepath.Join(gosxRoot, "client", "js", "relay.js")); err != nil {
 		return fmt.Errorf("stage relay.js: %w", err)
 	}
+	if err := copyFile(filepath.Join(buildDir, "devtools-lantern.js"), filepath.Join(gosxRoot, "server", "devtools_lantern.js")); err != nil {
+		return fmt.Errorf("stage devtools-lantern.js: %w", err)
+	}
+	if err := copyFile(filepath.Join(buildDir, "youtube-audio.js"), filepath.Join(gosxRoot, "server", "youtube_audio.js")); err != nil {
+		return fmt.Errorf("stage youtube-audio.js: %w", err)
+	}
 
 	if err := compileDevIslands(dir, islandDir); err != nil {
 		return err

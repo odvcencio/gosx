@@ -1110,6 +1110,8 @@ func addManifestRuntimeRefs(refs map[string]string, manifest *buildmanifest.Mani
 		{"/gosx/hls.min.js", manifest.Runtime.VideoHLS.File},
 		{"/gosx/stripe-bridge.js", manifest.Runtime.StripeBridge.File},
 		{"/gosx/relay.js", manifest.Runtime.Relay.File},
+		{"/gosx/devtools-lantern.js", manifest.Runtime.DevtoolsLantern.File},
+		{"/gosx/youtube-audio.js", manifest.Runtime.YouTubeAudio.File},
 	} {
 		if strings.TrimSpace(item.file) != "" {
 			refs[item.ref] = "manifest-runtime"
@@ -1153,6 +1155,10 @@ func collectTransferredAssets(distDir string, manifest *buildmanifest.Manifest, 
 		metrics, err := MetricsForFile(sourcePath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("measure %s: %w", sourcePath, err)
+		}
+		if canonical && asset.Size > 0 && asset.Size != metrics.Bytes {
+			unresolved = append(unresolved, UnresolvedAssetRef{Ref: ref, Reason: "canonical asset size does not match build manifest"})
+			continue
 		}
 		entry := TransferredAsset{
 			ID:           stableAssetID(ref, sourcePath),
@@ -1235,6 +1241,10 @@ func manifestRefSource(distDir string, manifest *buildmanifest.Manifest, ref str
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.StripeBridge)
 	case "/gosx/relay.js":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.Relay)
+	case "/gosx/devtools-lantern.js":
+		return runtimeAssetSource(runtimeDir, manifest.Runtime.DevtoolsLantern)
+	case "/gosx/youtube-audio.js":
+		return runtimeAssetSource(runtimeDir, manifest.Runtime.YouTubeAudio)
 	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/islands/"); ok {
 		name := filepath.Base(rel)
@@ -1344,6 +1354,10 @@ func attributeRoutes(report *SizeEvidence, exportManifest exportEvidence, manife
 					}
 					metrics, err := MetricsForFile(sourcePath)
 					if err == nil {
+						if canonical && hashed.Size > 0 && hashed.Size != metrics.Bytes {
+							report.Unresolved = append(report.Unresolved, UnresolvedAssetRef{Ref: ref, Route: route.Path, Reason: "canonical route asset size does not match build manifest"})
+							continue
+						}
 						report.Assets = append(report.Assets, TransferredAsset{
 							ID:           stableAssetID(ref, sourcePath),
 							URL:          ref,
@@ -1549,6 +1563,7 @@ func runtimeManifestAssets(manifest *buildmanifest.Manifest) []buildmanifest.Has
 		rt.BootstrapFeatureScene3DGLTF, rt.BootstrapFeatureScene3DAnimation,
 		rt.BootstrapFeatureScene3DCompute, rt.BootstrapFeatureScene3DDecompress,
 		rt.Patch, rt.VideoHLS, rt.StripeBridge, rt.Relay,
+		rt.DevtoolsLantern, rt.YouTubeAudio,
 	}
 }
 
@@ -1768,6 +1783,7 @@ func compatibilityAuditIdentityFromInventory(audit CompatibilityAudit) *Compatib
 	return &CompatibilityAuditIdentity{
 		SchemaVersion:      audit.SchemaVersion,
 		Status:             audit.Status,
+		ScanStatus:         audit.ScanStatus,
 		CanonicalAvailable: audit.CanonicalAvailable,
 		Receipt:            compatibilityNameSetSummary(audit.Receipt),
 		Anchor:             compatibilityNameSetSummary(audit.Anchor),
@@ -1850,6 +1866,15 @@ func validateCompatibilityAuditIdentity(identity *CompatibilityAuditIdentity) er
 	if identity.Status == "" {
 		return fmt.Errorf("compatibility audit status is empty")
 	}
+	if identity.ScanStatus != compatibilityScanStatusComplete && identity.ScanStatus != compatibilityScanStatusFailed {
+		return fmt.Errorf("compatibility audit scanStatus = %q", identity.ScanStatus)
+	}
+	if identity.ScanStatus == compatibilityScanStatusComplete && (identity.Anchor.Count == 0 || identity.Current.Count == 0) {
+		return fmt.Errorf("compatibility audit scanStatus complete without completed scans")
+	}
+	if identity.ScanStatus == compatibilityScanStatusFailed && identity.Anchor.Count > 0 && identity.Current.Count > 0 {
+		return fmt.Errorf("compatibility audit scanStatus failed with completed scans")
+	}
 	if identity.Receipt.Count > 0 && identity.Receipt.NameSetHash == "" {
 		return fmt.Errorf("compatibility audit receipt hash is empty")
 	}
@@ -1858,6 +1883,16 @@ func validateCompatibilityAuditIdentity(identity *CompatibilityAuditIdentity) er
 	}
 	if identity.Current.Count > 0 && identity.Current.NameSetHash == "" {
 		return fmt.Errorf("compatibility audit current hash is empty")
+	}
+	available := identity.ScanStatus == compatibilityScanStatusComplete && identity.Reconciliation.AddedSinceAnchorCount == 0 && identity.Reconciliation.RemovedSinceAnchorCount == 0
+	if identity.CanonicalAvailable != available {
+		return fmt.Errorf("compatibility audit canonical availability mismatch")
+	}
+	if available && identity.Status != "pass" {
+		return fmt.Errorf("compatibility audit status = %q, want pass", identity.Status)
+	}
+	if !available && identity.Status != "fail-closed" {
+		return fmt.Errorf("compatibility audit status = %q, want fail-closed", identity.Status)
 	}
 	if identity.Status == "pass" || identity.CanonicalAvailable {
 		for _, check := range []struct {

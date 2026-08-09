@@ -293,10 +293,11 @@
     "compatibilityAudit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "status", "canonicalAvailable", "receipt", "anchor", "current", "reconciliation"],
+      "required": ["schemaVersion", "status", "scanStatus", "canonicalAvailable", "receipt", "anchor", "current", "reconciliation"],
       "properties": {
         "schemaVersion": { "const": "gosx.ouroboros.compatibility-audit.v1" },
         "status": { "enum": ["pass", "fail-closed"] },
+        "scanStatus": { "enum": ["complete", "failed"] },
         "canonicalAvailable": { "type": "boolean" },
         "receipt": { "$ref": "#/$defs/compatibilityNameSet" },
         "anchor": { "$ref": "#/$defs/compatibilityNameSet" },

@@ -64,9 +64,14 @@ func testCompatibilityAuditIdentity(status string, available bool, static *Runti
 	if static == nil {
 		static = testRuntimeJSONStaticIdentity()
 	}
+	addedCount := 0
+	if !available {
+		addedCount = 1
+	}
 	return &CompatibilityAuditIdentity{
 		SchemaVersion:      compatibilityAuditSchemaVersion,
 		Status:             status,
+		ScanStatus:         compatibilityScanStatusComplete,
 		CanonicalAvailable: available,
 		Receipt: CompatibilityNameSetSummary{
 			Count:       canonicalGosx,
@@ -85,6 +90,7 @@ func testCompatibilityAuditIdentity(status string, available bool, static *Runti
 			RecoveredPreexistingHash:  "sha256:recovered",
 			MissingFromAnchorCount:    8,
 			MissingFromAnchorHash:     "sha256:missing",
+			AddedSinceAnchorCount:     addedCount,
 			AddedSinceAnchorHash:      nameSetHash(nil),
 			RemovedSinceAnchorHash:    nameSetHash(nil),
 		},
