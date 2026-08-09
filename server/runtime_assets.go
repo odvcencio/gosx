@@ -95,10 +95,14 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Devtools assets are embedded in the server binary, so they resolve
-	// before (and independently of) the runtime asset root.
+	// Embedded runtime assets resolve before (and independently of) the
+	// runtime asset root.
 	if name == "devtools-lantern.js" {
 		serveDevtoolsLantern(w, r)
+		return
+	}
+	if name == "youtube-audio.js" {
+		serveYouTubeAudioBridge(w, r)
 		return
 	}
 
