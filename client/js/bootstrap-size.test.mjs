@@ -468,7 +468,12 @@ const budgets = [
   // Measured: 1_466_190 / 396_503 / 318_902.
   // Bumped 1_466_190 / 396_503 -> 1_466_535 / 396_585 for post-effect
   // time loop admission. Brotli retains its prior headroom.
-  { file: "bootstrap.js", raw: 1_466_535, gzip: 396_585, brotli: 318_902 },
+  //
+  // Bumped to exact 1_467_882 / 396_873 / 318_818 for the opt-in Scene3D
+  // first-content reveal (data-gosx-scene3d-reveal-class): the mount stamps
+  // data-gosx-scene3d-revealed and adds the declared class on the first
+  // drawable frame, so apps drop their hand-authored boot-reveal scripts.
+  { file: "bootstrap.js", raw: 1_467_882, gzip: 396_873, brotli: 318_818 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -806,7 +811,10 @@ const budgets = [
   // Measured: 505_058 / 139_828 / 116_000.
   // Post-effect time loop admission exact measurement: 505_397 / 139_905 /
   // 116_116.
-  { file: "bootstrap-feature-scene3d.js", raw: 505_397, gzip: 139_905, brotli: 116_116 },
+  // Scene3D first-content reveal exact measurement: 506_870 / 140_253 /
+  // 116_414, a cost of 1_473 raw / 348 gzip / 298 brotli for retiring
+  // app-side boot-reveal scripts.
+  { file: "bootstrap-feature-scene3d.js", raw: 506_870, gzip: 140_253, brotli: 116_414 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1253,9 +1261,11 @@ const routeBudgets = [
     // Measured: 1_158_756 / 308_319 / 260_670.
     // Bumped to exact 1_159_095 / 308_396 / 260_786 for post-effect time loop
     // admission in the base Scene3D chunk.
-    raw: 1_159_095,
-    gzip: 308_396,
-    brotli: 260_786,
+    // Bumped to exact 1_160_460 / 308_722 / 261_050 for the Scene3D
+    // first-content reveal in the base scene3d chunk.
+    raw: 1_160_460,
+    gzip: 308_722,
+    brotli: 261_050,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1327,9 +1337,11 @@ const routeBudgets = [
     // Measured: 986_543 / 273_855 / 232_580.
     // Post-effect time loop admission exact measurement: 986_882 / 273_932 /
     // 232_696.
-    raw: 986_882,
-    gzip: 273_932,
-    brotli: 232_696,
+    // Scene3D first-content reveal exact measurement: 988_247 / 274_258 /
+    // 232_960.
+    raw: 988_247,
+    gzip: 274_258,
+    brotli: 232_960,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1392,9 +1404,11 @@ const routeBudgets = [
     // Measured: 1_368_482 / 365_951 / 309_772.
     // Post-effect time loop admission exact measurement: 1_368_821 / 366_028 /
     // 309_888.
-    raw: 1_368_821,
-    gzip: 366_028,
-    brotli: 309_888,
+    // Scene3D first-content reveal exact measurement: 1_370_186 / 366_354 /
+    // 310_152.
+    raw: 1_370_186,
+    gzip: 366_354,
+    brotli: 310_152,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1459,9 +1473,11 @@ const routeBudgets = [
     // Measured: 1_012_626 / 266_061 / 223_102.
     // Post-effect time loop admission exact measurement: 1_012_965 / 266_138 /
     // 223_218.
-    raw: 1_012_965,
-    gzip: 266_138,
-    brotli: 223_218,
+    // Scene3D first-content reveal exact measurement: 1_014_330 / 266_464 /
+    // 223_482.
+    raw: 1_014_330,
+    gzip: 266_464,
+    brotli: 223_482,
   },
 
 ];
