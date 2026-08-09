@@ -39,6 +39,7 @@ type PageRuntimeSummary struct {
 	Islands                         int
 	ComputeIslands                  int
 	Engines                         int
+	SelfDescribingSurfaces          int
 	Hubs                            int
 	Controllers                     int
 }
@@ -71,6 +72,25 @@ func (r *PageRuntime) Engine(cfg engine.Config, fallback gosx.Node) gosx.Node {
 	}
 	r.active = true
 	return r.renderer.RenderEngine(cfg, fallback)
+}
+
+// Surface opts a self-describing browser surface into the shared runtime.
+//
+// The node must already contain the framework surface contract consumed by the
+// engine feature bootstrap, such as data-gosx-surface-kind on CanvasBoard. This
+// API activates the full shared runtime, wasm_exec, and
+// bootstrap-feature-engines path. It does not create a manifest engine entry,
+// does not require a programRef, and does not require a JavaScript factory.
+func (r *PageRuntime) Surface(node gosx.Node) gosx.Node {
+	if r == nil {
+		return node
+	}
+	kind, ok := node.Attribute("data-gosx-surface-kind")
+	if !ok || strings.TrimSpace(kind) == "" {
+		return node
+	}
+	r.active = true
+	return r.renderer.Surface(node)
 }
 
 // Island registers a compiled island program and returns its server-rendered shell.
@@ -291,6 +311,7 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		Islands:                         summary.Islands,
 		ComputeIslands:                  summary.ComputeIslands,
 		Engines:                         summary.Engines,
+		SelfDescribingSurfaces:          summary.SelfDescribingSurfaces,
 		Hubs:                            summary.Hubs,
 		Controllers:                     summary.Controllers,
 	}

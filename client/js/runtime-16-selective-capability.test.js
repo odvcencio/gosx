@@ -160,6 +160,111 @@ test("selective runtime loads islands feature for compute islands", async () => 
   assert.equal(env.context.__gosx.computeIslands.size, 1);
 });
 
+test("selective runtime loads engines feature and shared wasm for self-describing surfaces", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      selfDescribingSurfaces: [
+        {
+          kind: "canvas2d",
+          feature: "engines",
+          runtime: "shared",
+          count: 1,
+          capabilities: ["canvas", "webgpu"],
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), true);
+  assert.equal(typeof env.context.__gosx_hydrate, "function");
+  assert.equal(env.context.__gosx.ready, true);
+});
+
+test("selective runtime does not force wasm for non-shared self-describing surfaces", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      selfDescribingSurfaces: [
+        {
+          kind: "future-surface",
+          feature: "engines",
+          runtime: "none",
+          count: 1,
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), true);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(typeof env.context.__gosx_hydrate, "undefined");
+  assert.equal(env.context.__gosx.ready, true);
+});
+
+test("monolithic bootstrap loads shared wasm for self-describing surfaces", async () => {
+  const env = createContext({
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      selfDescribingSurfaces: [
+        {
+          kind: "canvas2d",
+          runtime: "shared",
+          count: 1,
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), true);
+  assert.equal(typeof env.context.__gosx_hydrate, "function");
+  assert.equal(env.context.__gosx.ready, true);
+});
+
+test("monolithic bootstrap does not force wasm for non-shared self-describing surfaces", async () => {
+  const env = createContext({
+    manifest: {
+      selfDescribingSurfaces: [
+        {
+          kind: "future-surface",
+          runtime: "none",
+          count: 1,
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(typeof env.context.__gosx_hydrate, "undefined");
+  assert.equal(env.context.__gosx.ready, true);
+});
+
 test("selective runtime mounts native JS engines without loading the shared wasm runtime", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "engine-root";

@@ -4,9 +4,7 @@
 
   const bootstrapFeatureFactories = window.__gosx_bootstrap_features || Object.create(null);
   const activeBootstrapFeatures = new Map();
-  // In-flight feature loads, keyed by name. Two callers can ask for the same
-  // feature in the same tick — the document gate and the manifest gate both ask
-  // for "textlayout" — and a feature factory must run exactly once.
+  // In-flight feature loads, keyed by name. A feature factory must run once.
   const pendingBootstrapFeatures = new Map();
   let pendingFeatureLoad = Promise.resolve([]);
 
@@ -14,7 +12,7 @@
   window.__gosx_register_bootstrap_feature = function(name, factory) {
     const featureName = String(name || "").trim();
     if (!featureName || typeof factory !== "function") {
-      console.error("[gosx] invalid bootstrap feature registration");
+      console.error("[gosx] bad feature registration");
       return;
     }
     bootstrapFeatureFactories[featureName] = factory;
@@ -161,7 +159,7 @@
     }
 
     if (typeof factory !== "function") {
-      console.error("[gosx] missing bootstrap feature:", name);
+      console.error("[gosx] missing feature:", name);
       return null;
     }
 
@@ -170,7 +168,7 @@
       activeBootstrapFeatures.set(name, feature);
       return feature;
     } catch (error) {
-      console.error("[gosx] failed to initialize bootstrap feature " + name + ":", error);
+      console.error("[gosx] feature init failed " + name + ":", error);
       return null;
     }
   }
@@ -211,6 +209,7 @@
 
   function manifestFeatureNames(manifest) {
     const names = [];
+    const surfaces = manifest.selfDescribingSurfaces || [];
     if (manifestHasEntries(manifest, "engines")) {
       names.push("engines");
       // Check if any engine is GoSXScene3D
@@ -219,6 +218,12 @@
           names.push("scene3d");
           break;
         }
+      }
+    }
+    for (const surface of surfaces) {
+      const name = surface.feature || "engines";
+      if (!names.includes(name)) {
+        names.push(name);
       }
     }
     if (manifestHasEntries(manifest, "hubs")) {
@@ -238,16 +243,8 @@
   }
 
   function manifestNeedsWASMRuntime(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || manifestNeedsSharedEngineRuntime(manifest);
-  }
-
-  function manifestNeedsSharedEngineRuntime(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
-      return entry && entry.runtime === "shared";
-    });
+    const surfaces = manifest.selfDescribingSurfaces || [];
+    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || (manifestHasEntries(manifest, "engines") && manifest.engines.some((entry) => entry && entry.runtime === "shared")) || surfaces.some((entry) => (entry.runtime || "shared") === "shared");
   }
 
   function setSharedSignalJSON(name, valueJSON) {
@@ -283,14 +280,7 @@
     if (manifestNeedsTextLayoutFeature(names)) {
       names.push("textlayout");
     }
-    if (names.length === 0) {
-      return Promise.resolve([]);
-    }
-    return Promise.all(names.map(function(name) {
-      return ensureBootstrapFeature(name);
-    })).then(function(features) {
-      return features.filter(Boolean);
-    });
+    return Promise.all(names.map(ensureBootstrapFeature));
   }
 
   async function runRuntimeReadyForPendingManifest() {
@@ -482,7 +472,7 @@
 
     if (manifestNeedsWASMRuntime(manifest)) {
       if (!manifest.runtime || !manifest.runtime.path) {
-        console.error("[gosx] islands, compute islands, and shared runtime engines require manifest.runtime.path");
+        console.error("[gosx] missing manifest.runtime.path");
         window.__gosx_runtime_ready();
         return;
       }

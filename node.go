@@ -94,6 +94,27 @@ func RawHTML(s string) Node {
 	return Node{kind: kindRawHTML, text: s}
 }
 
+// Attribute returns an element node's last attribute value for name.
+//
+// Non-element nodes and missing attributes return ok=false. When a caller
+// supplies duplicate attributes, the last value wins, matching browser DOM
+// normalization while keeping Node internals read-only.
+func (n Node) Attribute(name string) (string, bool) {
+	if n.kind != kindElement {
+		return "", false
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", false
+	}
+	for i := len(n.attrs) - 1; i >= 0; i-- {
+		if n.attrs[i].name == name {
+			return fmt.Sprint(n.attrs[i].value), true
+		}
+	}
+	return "", false
+}
+
 // AttrList is a list of attributes for element construction.
 type AttrList []nodeAttr
 

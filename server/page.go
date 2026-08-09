@@ -202,6 +202,7 @@ type documentContractAssets struct {
 	Islands                         int    `json:"islands,omitempty"`
 	ComputeIslands                  int    `json:"computeIslands,omitempty"`
 	Engines                         int    `json:"engines,omitempty"`
+	SelfDescribingSurfaces          int    `json:"selfDescribingSurfaces,omitempty"`
 	Hubs                            int    `json:"hubs,omitempty"`
 	Controllers                     int    `json:"controllers,omitempty"`
 }
@@ -242,6 +243,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			Islands:                         doc.Runtime.Islands,
 			ComputeIslands:                  doc.Runtime.ComputeIslands,
 			Engines:                         doc.Runtime.Engines,
+			SelfDescribingSurfaces:          doc.Runtime.SelfDescribingSurfaces,
 			Hubs:                            doc.Runtime.Hubs,
 			Controllers:                     doc.Runtime.Controllers,
 		},

@@ -47,32 +47,31 @@
     pendingManifest = manifest;
     window.__gosx.ready = false;
 
-    if (manifestNeedsRuntime(manifest)) {
+    const needsRuntimeBridge = manifestNeedsRuntimeBridge(manifest);
+    if (needsRuntimeBridge && manifest.runtime && manifest.runtime.path) {
       if (runtimeReady()) {
         window.__gosx_runtime_ready();
       } else {
         await loadRuntime(manifest.runtime);
       }
     } else {
-      if (manifestNeedsRuntimeBridge(manifest)) {
-        console.error("[gosx] islands, compute islands, and hub bindings require manifest.runtime.path");
+      if (needsRuntimeBridge) {
+        console.error("[gosx] missing runtime.path");
       }
       window.__gosx_runtime_ready();
     }
   }
 
   function manifestNeedsRuntimeBridge(manifest) {
+    const surfaces = manifest.selfDescribingSurfaces || [];
     return manifestHasEntries(manifest, "islands")
       || manifestHasEntries(manifest, "computeIslands")
       || manifestHasEntries(manifest, "hubs")
       || Boolean(manifest && manifest.clientIdentity)
       || manifestNeedsVideoBridge(manifest)
       || manifestNeedsEngineInputBridge(manifest)
-      || manifestNeedsSharedEngineRuntime(manifest);
-  }
-
-  function manifestNeedsRuntime(manifest) {
-    return Boolean(manifestNeedsRuntimeBridge(manifest) && manifest.runtime && manifest.runtime.path);
+      || (manifestHasEntries(manifest, "engines") && manifest.engines.some(engineUsesSharedRuntime))
+      || surfaces.some((entry) => (entry.runtime || "shared") === "shared");
   }
 
   function manifestNeedsEngineInputBridge(manifest) {
@@ -82,15 +81,6 @@
     return manifest.engines.some(function(entry) {
       const capabilities = capabilityList(entry);
       return capabilities.includes("keyboard") || capabilities.includes("pointer") || capabilities.includes("gamepad");
-    });
-  }
-
-  function manifestNeedsSharedEngineRuntime(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
-      return engineUsesSharedRuntime(entry);
     });
   }
 

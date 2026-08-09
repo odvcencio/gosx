@@ -551,3 +551,150 @@ func TestManifestAddEngineRejectsMalformedGoWASMRuntime(t *testing.T) {
 		t.Fatalf("invalid engines must not reach the manifest: %#v", m.Engines)
 	}
 }
+
+func TestManifestAddSelfDescribingSurfaceDefaultsAndRoundTrip(t *testing.T) {
+	m := NewManifest()
+	if err := m.AddSelfDescribingSurface("canvas2d", "", "", 0, []string{"canvas"}, []string{"wasm"}); err != nil {
+		t.Fatalf("AddSelfDescribingSurface failed: %v", err)
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	decoded, err := Unmarshal(data)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.SelfDescribingSurfaces) != 1 {
+		t.Fatalf("expected one self-describing surface, got %d", len(decoded.SelfDescribingSurfaces))
+	}
+	entry := decoded.SelfDescribingSurfaces[0]
+	if entry.Kind != "canvas2d" || entry.Feature != "engines" || entry.Runtime != "shared" || entry.Count != 1 {
+		t.Fatalf("unexpected self-describing surface entry: %#v", entry)
+	}
+	if entry.Capabilities[0] != "canvas" || entry.RequiredCapabilities[0] != "wasm" {
+		t.Fatalf("unexpected capabilities: %#v / %#v", entry.Capabilities, entry.RequiredCapabilities)
+	}
+}
+
+func TestNormalizeSelfDescribingSurfaceDefaults(t *testing.T) {
+	feature, err := NormalizeSelfDescribingSurfaceFeature(" ")
+	if err != nil {
+		t.Fatalf("NormalizeSelfDescribingSurfaceFeature default failed: %v", err)
+	}
+	if feature != "engines" {
+		t.Fatalf("default feature = %q, want engines", feature)
+	}
+	runtime, err := NormalizeSelfDescribingSurfaceRuntime(" ")
+	if err != nil {
+		t.Fatalf("NormalizeSelfDescribingSurfaceRuntime default failed: %v", err)
+	}
+	if runtime != "shared" {
+		t.Fatalf("default runtime = %q, want shared", runtime)
+	}
+}
+
+func TestManifestAddSelfDescribingSurfaceRejectsUnsupportedFeature(t *testing.T) {
+	m := NewManifest()
+	err := m.AddSelfDescribingSurface("canvas2d", "teleport", "shared", 1, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "unsupported self-describing surface feature") {
+		t.Fatalf("expected unsupported feature error, got %v", err)
+	}
+	if len(m.SelfDescribingSurfaces) != 0 {
+		t.Fatalf("invalid feature mutated manifest: %#v", m.SelfDescribingSurfaces)
+	}
+}
+
+func TestManifestAddSelfDescribingSurfaceRejectsUnsupportedRuntime(t *testing.T) {
+	m := NewManifest()
+	err := m.AddSelfDescribingSurface("canvas2d", "engines", "javascript", 1, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "unsupported self-describing surface runtime") {
+		t.Fatalf("expected unsupported runtime error, got %v", err)
+	}
+	if len(m.SelfDescribingSurfaces) != 0 {
+		t.Fatalf("invalid runtime mutated manifest: %#v", m.SelfDescribingSurfaces)
+	}
+}
+
+func TestManifestAddSelfDescribingSurfaceCoalescesCompatibleEntries(t *testing.T) {
+	m := NewManifest()
+	for i := 0; i < 3; i++ {
+		if err := m.AddSelfDescribingSurface("canvas2d", "engines", "shared", 1, []string{"canvas"}, nil); err != nil {
+			t.Fatalf("AddSelfDescribingSurface %d failed: %v", i, err)
+		}
+	}
+	if len(m.SelfDescribingSurfaces) != 1 {
+		t.Fatalf("expected coalesced entry, got %#v", m.SelfDescribingSurfaces)
+	}
+	if m.SelfDescribingSurfaces[0].Count != 3 {
+		t.Fatalf("coalesced count = %d, want 3", m.SelfDescribingSurfaces[0].Count)
+	}
+}
+
+func TestManifestAddSelfDescribingSurfaceKeepsIncompatibleEntriesSeparate(t *testing.T) {
+	m := NewManifest()
+	if err := m.AddSelfDescribingSurface("canvas2d", "engines", "shared", 1, []string{"canvas"}, nil); err != nil {
+		t.Fatalf("AddSelfDescribingSurface first failed: %v", err)
+	}
+	if err := m.AddSelfDescribingSurface("canvas2d", "engines", "shared", 1, []string{"webgpu"}, nil); err != nil {
+		t.Fatalf("AddSelfDescribingSurface second failed: %v", err)
+	}
+	if len(m.SelfDescribingSurfaces) != 2 {
+		t.Fatalf("expected separate entries, got %#v", m.SelfDescribingSurfaces)
+	}
+}
+
+func TestManifestAddSelfDescribingSurfaceCanonicalizesCapabilitiesForCoalescing(t *testing.T) {
+	m := NewManifest()
+	if err := m.AddSelfDescribingSurface(
+		"canvas2d",
+		"engines",
+		"shared",
+		1,
+		[]string{" webGPU ", "canvas", "Canvas", "webgpu"},
+		[]string{"WASM", " canvas ", "wasm"},
+	); err != nil {
+		t.Fatalf("AddSelfDescribingSurface first failed: %v", err)
+	}
+	if err := m.AddSelfDescribingSurface(
+		"canvas2d",
+		"engines",
+		"shared",
+		2,
+		[]string{"canvas", "webgpu"},
+		[]string{"canvas", "wasm"},
+	); err != nil {
+		t.Fatalf("AddSelfDescribingSurface second failed: %v", err)
+	}
+	if len(m.SelfDescribingSurfaces) != 1 {
+		t.Fatalf("expected canonical capability entries to coalesce, got %#v", m.SelfDescribingSurfaces)
+	}
+	entry := m.SelfDescribingSurfaces[0]
+	if entry.Count != 3 {
+		t.Fatalf("coalesced count = %d, want 3", entry.Count)
+	}
+	if got, want := entry.Capabilities, []string{"canvas", "webgpu"}; !stringSliceEqual(got, want) {
+		t.Fatalf("capabilities = %#v, want %#v", got, want)
+	}
+	if got, want := entry.RequiredCapabilities, []string{"canvas", "wasm"}; !stringSliceEqual(got, want) {
+		t.Fatalf("required capabilities = %#v, want %#v", got, want)
+	}
+}
+
+func TestManifestAddSelfDescribingSurfaceRejectsInvalidCapabilitySpelling(t *testing.T) {
+	m := NewManifest()
+	err := m.AddSelfDescribingSurface("canvas2d", "engines", "shared", 1, []string{"web gpu"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "unsupported engine capability") {
+		t.Fatalf("expected unsupported capability error, got %v", err)
+	}
+	if len(m.SelfDescribingSurfaces) != 0 {
+		t.Fatalf("invalid capability mutated manifest: %#v", m.SelfDescribingSurfaces)
+	}
+}
+
+func TestManifestAddSelfDescribingSurfaceRejectsBlankKind(t *testing.T) {
+	m := NewManifest()
+	if err := m.AddSelfDescribingSurface(" ", "", "", 1, nil, nil); err == nil {
+		t.Fatal("expected blank kind to fail")
+	}
+}

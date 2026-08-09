@@ -5,6 +5,7 @@ package hydrate
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"m31labs.dev/gosx/assetpipe"
@@ -25,6 +26,10 @@ type Manifest struct {
 
 	// Engines lists every engine instance on the page.
 	Engines []EngineEntry `json:"engines,omitempty"`
+
+	// SelfDescribingSurfaces lists no-code browser surfaces already described
+	// by server-rendered DOM attributes such as data-gosx-surface-kind.
+	SelfDescribingSurfaces []SelfDescribingSurfaceEntry `json:"selfDescribingSurfaces,omitempty"`
 
 	// Hubs lists realtime hub connections the client should establish.
 	Hubs []HubEntry `json:"hubs,omitempty"`
@@ -51,6 +56,38 @@ type Manifest struct {
 	// assetpipe.BuildVariantManifest already filtered on the built state.
 	TextureVariants map[string][]ManifestVariantRef `json:"textureVariants,omitempty"`
 }
+
+// SelfDescribingSurfaceEntry describes a no-code browser surface kind.
+//
+// These entries activate a bootstrap feature and runtime without creating a
+// generic engine entry. The DOM node itself carries the mount contract.
+type SelfDescribingSurfaceEntry struct {
+	Kind                 string   `json:"kind"`
+	Feature              string   `json:"feature,omitempty"`
+	Runtime              string   `json:"runtime,omitempty"`
+	Count                int      `json:"count,omitempty"`
+	Capabilities         []string `json:"capabilities,omitempty"`
+	RequiredCapabilities []string `json:"requiredCapabilities,omitempty"`
+}
+
+// SelfDescribingSurfaceFeature names a bootstrap feature that can own
+// self-describing DOM surfaces.
+type SelfDescribingSurfaceFeature string
+
+const (
+	SelfDescribingSurfaceFeatureEngines     SelfDescribingSurfaceFeature = "engines"
+	SelfDescribingSurfaceFeatureHubs        SelfDescribingSurfaceFeature = "hubs"
+	SelfDescribingSurfaceFeatureControllers SelfDescribingSurfaceFeature = "controllers"
+	SelfDescribingSurfaceFeatureIslands     SelfDescribingSurfaceFeature = "islands"
+	SelfDescribingSurfaceFeatureScene3D     SelfDescribingSurfaceFeature = "scene3d"
+)
+
+// SelfDescribingSurfaceRuntime names the runtime lane a surface needs.
+type SelfDescribingSurfaceRuntime string
+
+const (
+	SelfDescribingSurfaceRuntimeShared SelfDescribingSurfaceRuntime = "shared"
+)
 
 // ManifestVariantRef is one built asset variant a client may choose.
 //
@@ -437,6 +474,153 @@ func (m *Manifest) AddEngineWithRuntimeRequirements(component, kind, programRef,
 	}
 	m.Engines = append(m.Engines, entry)
 	return id, nil
+}
+
+// AddSelfDescribingSurface records a self-describing DOM surface requirement.
+// Compatible entries coalesce by kind, feature, runtime, and capabilities.
+func (m *Manifest) AddSelfDescribingSurface(kind, feature, runtime string, count int, capabilities, requiredCapabilities []string) error {
+	kind = strings.TrimSpace(kind)
+	feature = strings.TrimSpace(feature)
+	runtime = strings.TrimSpace(runtime)
+	if kind == "" {
+		return fmt.Errorf("self-describing surface kind is required")
+	}
+	var err error
+	feature, err = NormalizeSelfDescribingSurfaceFeature(feature)
+	if err != nil {
+		return err
+	}
+	runtime, err = NormalizeSelfDescribingSurfaceRuntime(runtime)
+	if err != nil {
+		return err
+	}
+	if count <= 0 {
+		count = 1
+	}
+	capabilities, err = normalizeSelfDescribingSurfaceCapabilities(capabilities)
+	if err != nil {
+		return err
+	}
+	requiredCapabilities, err = normalizeSelfDescribingSurfaceCapabilities(requiredCapabilities)
+	if err != nil {
+		return err
+	}
+	entry := SelfDescribingSurfaceEntry{
+		Kind:                 kind,
+		Feature:              feature,
+		Runtime:              runtime,
+		Count:                count,
+		Capabilities:         append([]string(nil), capabilities...),
+		RequiredCapabilities: append([]string(nil), requiredCapabilities...),
+	}
+	for i := range m.SelfDescribingSurfaces {
+		if selfDescribingSurfaceCompatible(m.SelfDescribingSurfaces[i], entry) {
+			m.SelfDescribingSurfaces[i].Count += count
+			return nil
+		}
+	}
+	m.SelfDescribingSurfaces = append(m.SelfDescribingSurfaces, entry)
+	return nil
+}
+
+func selfDescribingSurfaceCompatible(a, b SelfDescribingSurfaceEntry) bool {
+	return a.Kind == b.Kind &&
+		normalizeSurfaceFeature(a.Feature) == normalizeSurfaceFeature(b.Feature) &&
+		normalizeSurfaceRuntime(a.Runtime) == normalizeSurfaceRuntime(b.Runtime) &&
+		stringSliceEqual(a.Capabilities, b.Capabilities) &&
+		stringSliceEqual(a.RequiredCapabilities, b.RequiredCapabilities)
+}
+
+func normalizeSurfaceFeature(feature string) string {
+	feature, _ = NormalizeSelfDescribingSurfaceFeature(feature)
+	return feature
+}
+
+func normalizeSurfaceRuntime(runtime string) string {
+	runtime, _ = NormalizeSelfDescribingSurfaceRuntime(runtime)
+	return runtime
+}
+
+// NormalizeSelfDescribingSurfaceFeature applies the default feature and rejects
+// values the browser bootstrap will ignore.
+func NormalizeSelfDescribingSurfaceFeature(feature string) (string, error) {
+	feature = strings.TrimSpace(feature)
+	if feature == "" {
+		feature = string(SelfDescribingSurfaceFeatureEngines)
+	}
+	switch SelfDescribingSurfaceFeature(feature) {
+	case SelfDescribingSurfaceFeatureEngines,
+		SelfDescribingSurfaceFeatureHubs,
+		SelfDescribingSurfaceFeatureControllers,
+		SelfDescribingSurfaceFeatureIslands,
+		SelfDescribingSurfaceFeatureScene3D:
+		return feature, nil
+	default:
+		return "", fmt.Errorf("unsupported self-describing surface feature: %q", feature)
+	}
+}
+
+// NormalizeSelfDescribingSurfaceRuntime applies the default runtime and rejects
+// values the browser bootstrap cannot honor for self-describing surfaces.
+func NormalizeSelfDescribingSurfaceRuntime(runtime string) (string, error) {
+	runtime = strings.TrimSpace(runtime)
+	if runtime == "" {
+		runtime = string(SelfDescribingSurfaceRuntimeShared)
+	}
+	switch SelfDescribingSurfaceRuntime(runtime) {
+	case SelfDescribingSurfaceRuntimeShared:
+		return runtime, nil
+	default:
+		return "", fmt.Errorf("unsupported self-describing surface runtime: %q", runtime)
+	}
+}
+
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeSelfDescribingSurfaceCapabilities(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	caps := toEngineCapabilities(values)
+	if err := engine.ValidateCapabilities(caps); err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, cap := range caps {
+		value := strings.ToLower(strings.TrimSpace(string(cap)))
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func toEngineCapabilities(values []string) []engine.Capability {
+	out := make([]engine.Capability, 0, len(values))
+	for _, value := range values {
+		out = append(out, engine.Capability(value))
+	}
+	return out
 }
 
 // AddHub registers a realtime hub connection and returns the assigned ID.
