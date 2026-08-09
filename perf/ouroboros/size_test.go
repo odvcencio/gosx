@@ -571,15 +571,23 @@ func writeCurrentCanonicalInventory(t *testing.T) (repoRoot, inventoryPath, arti
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpParent := filepath.Join(root, "tmp")
-	if err := os.MkdirAll(tmpParent, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	artifactRoot, err = os.MkdirTemp(tmpParent, "size-evidence-canonical-*")
+	currentOverlay, err := BuildOverlayEvidence(context.Background(), root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(artifactRoot) })
+	if currentOverlay.Hash == OverlayClean {
+		artifactRoot = filepath.Join(t.TempDir(), "size-evidence-canonical")
+	} else {
+		tmpParent := filepath.Join(root, "tmp")
+		if err := os.MkdirAll(tmpParent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		artifactRoot, err = os.MkdirTemp(tmpParent, "size-evidence-canonical-*")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(artifactRoot) })
+	}
 	inv, err := Collect(context.Background(), CollectOptions{RepoRoot: root, ArtifactRoot: artifactRoot, Canopy: false, Git: true})
 	if err != nil {
 		t.Fatal(err)
