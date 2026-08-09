@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gosx.ouroboros.compare.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "contractVersion",
+    "generatedAt",
+    "mode",
+    "status",
+    "exitCode",
+    "selfCompare",
+    "baseline",
+    "candidate",
+    "compatibility",
+    "checks",
+    "ratchets",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "gosx.ouroboros.compare.v1" },
+    "contractVersion": { "const": "O0.2" },
+    "generatedAt": { "type": "string" },
+    "mode": { "enum": ["canonical", "smoke"] },
+    "status": { "enum": ["pass", "fail", "inconclusive"] },
+    "exitCode": { "enum": [0, 1, 2] },
+    "selfCompare": { "type": "boolean" },
+    "baseline": { "$ref": "#/$defs/endpoint" },
+    "candidate": { "$ref": "#/$defs/endpoint" },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaCompatible", "sourceCompatible", "environmentCompatible", "sampleMatrixCompatible", "artifactsCompatible"],
+      "properties": {
+        "schemaCompatible": { "type": "boolean" },
+        "sourceCompatible": { "type": "boolean" },
+        "environmentCompatible": { "type": "boolean" },
+        "sampleMatrixCompatible": { "type": "boolean" },
+        "artifactsCompatible": { "type": "boolean" },
+        "messages": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+    "ratchets": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkCount", "passCount", "failCount", "warnCount", "blockedCount", "unstableCount", "inconclusiveCount"],
+      "properties": {
+        "checkCount": { "type": "integer", "minimum": 0 },
+        "passCount": { "type": "integer", "minimum": 0 },
+        "failCount": { "type": "integer", "minimum": 0 },
+        "warnCount": { "type": "integer", "minimum": 0 },
+        "blockedCount": { "type": "integer", "minimum": 0 },
+        "unstableCount": { "type": "integer", "minimum": 0 },
+        "inconclusiveCount": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifestPath", "artifactRoot", "manifestSHA256", "source", "sampling", "environmentClass", "hardwareClassification", "canonical"],
+      "properties": {
+        "manifestPath": { "type": "string" },
+        "artifactRoot": { "type": "string" },
+        "manifestSHA256": { "type": "string" },
+        "rawSamplesSHA256": { "type": "string" },
+        "summarySHA256": { "type": "string" },
+        "environmentSHA256": { "type": "string" },
+        "sizeEvidenceSHA256": { "type": "string" },
+        "runtimeArtifactsSHA256": { "type": "string" },
+        "dynamicEvidenceSHA256": { "type": "string" },
+        "source": { "type": "object" },
+        "sampling": { "type": "object" },
+        "environmentClass": { "type": "string" },
+        "hardwareClassification": { "type": "string" },
+        "canonical": { "type": "boolean" },
+        "browserConnectionMode": { "type": "string" },
+        "remoteCDPEndpointHash": { "type": "string" },
+        "runtimeJSONScannerVersion": { "type": "string" },
+        "runtimeJSONPhaseClassifier": { "type": "string" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "status"],
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "routeID": { "type": "string" },
+        "cacheMode": { "type": "string" },
+        "metric": { "type": "string" },
+        "stat": { "type": "string" },
+        "direction": { "type": "string" },
+        "baseline": { "type": "number" },
+        "candidate": { "type": "number" },
+        "deltaAbs": { "type": "number" },
+        "deltaPct": { "type": "number" },
+        "allowedAbs": { "type": "number" },
+        "allowedPct": { "type": "number" },
+        "thresholdFormula": { "type": "string" },
+        "baselineUnstable": { "type": "boolean" },
+        "candidateUnstable": { "type": "boolean" },
+        "status": { "enum": ["pass", "fail", "warn", "blocked", "unstable-nonblocking"] },
+        "message": { "type": "string" },
+        "requiresHardware": { "type": "boolean" },
+        "prerequisiteMissing": { "type": "boolean" }
+      }
+    }
+  }
+}

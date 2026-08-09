@@ -18,6 +18,8 @@
 //	gosx lsp                     Start the GoSX language server over stdio
 //	gosx perf [--budget file] <url>
 //	                              Profile browser runtime performance
+//	gosx ouroboros inventory      Collect O0.2 runtime baseline inventory
+//	gosx ouroboros compare        Compare O0.2 browser baseline artifacts
 //	gosx perf budget <report> <budget>
 //	                              Check saved perf output against budgets
 //	gosx release check           Check release metadata consistency
@@ -82,6 +84,8 @@ func main() {
 		cmdLSP()
 	case "perf":
 		cmdPerf()
+	case "ouroboros":
+		cmdOuroboros()
 	case "size", "size-report":
 		cmdSizeReport()
 	case "visual":
@@ -195,6 +199,8 @@ Usage:
   gosx perf budget <report.json> <budget.json>
 
 `)
+	case "ouroboros":
+		ouroborosUsage(w)
 	case "size", "size-report":
 		sizeUsage(w)
 	case "visual":
@@ -247,6 +253,8 @@ Commands:
   lsp                  Start the GoSX language server
   perf [--budget file] <url>
                        Profile browser runtime performance
+  ouroboros inventory  Collect O0.2 runtime baseline inventory
+  ouroboros compare    Compare O0.2 browser baseline artifacts
   perf budget <report> <budget>
                        Check saved perf output against budgets
   size [--json] <dist|build.json>
