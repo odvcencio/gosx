@@ -43,6 +43,7 @@ func TestSubcommandHelpDoesNotTreatHelpAsOperand(t *testing.T) {
 		{name: "scene validate", args: []string{"scene", "validate", "--help"}, want: "gosx scene validate"},
 		{name: "ouroboros", args: []string{"ouroboros", "--help"}, want: "gosx ouroboros"},
 		{name: "ouroboros inventory", args: []string{"ouroboros", "inventory", "--help"}, want: "gosx ouroboros inventory"},
+		{name: "ouroboros source-identity", args: []string{"ouroboros", "source-identity", "--help"}, want: "gosx ouroboros source-identity"},
 		{name: "ouroboros compare", args: []string{"ouroboros", "compare", "--help"}, want: "gosx ouroboros compare"},
 		{name: "help init", args: []string{"help", "init"}, want: "gosx init"},
 	}

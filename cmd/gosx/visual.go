@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"m31labs.dev/gosx/perf/ouroboros"
 	"m31labs.dev/gosx/visual"
 )
 
@@ -41,6 +42,7 @@ func cmdVisual() {
 	pixelCanvasSelector := fs.String("ouroboros-canvas-selector", "canvas", "canvas selector for O0.2 pixel evidence")
 	pixelAllowOverwrite := fs.Bool("ouroboros-allow-overwrite", false, "allow O0.2 record-baseline to write into a non-empty artifact directory")
 	pixelForceWebGL := fs.Bool("ouroboros-force-webgl", false, "set the O0.2 probe-only Scene3D WebGL flag before navigation")
+	pixelSourceIdentity := fs.String("ouroboros-source-identity", "", "O0.2 source identity handoff JSON for pixel evidence")
 	pixelBaseRevision := fs.String("ouroboros-base-revision", "", "O0.2 source base revision for pixel evidence")
 	pixelOverlayHash := fs.String("ouroboros-overlay-hash", "", "O0.2 source overlay hash for pixel evidence")
 	pixelInventorySHA256 := fs.String("ouroboros-inventory-sha256", "", "O0.2 source inventory SHA-256 for pixel evidence")
@@ -77,8 +79,7 @@ Examples:
   # Record O0.2 canvas-pixel evidence into a caller-selected new artifact root:
   gosx visual --ouroboros-pixels-out build/ouroboros/o0.2/pixels/R08 \
     --ouroboros-route-id R08 --require-backend webgl --ouroboros-force-webgl \
-    --ouroboros-base-revision abc1234 --ouroboros-overlay-hash sha256:clean \
-    --ouroboros-inventory-sha256 sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+    --ouroboros-source-identity build/ouroboros/o0.2/source-identity.json \
     http://localhost:8080/scene/basic
 
 Environment:
@@ -124,16 +125,16 @@ Environment:
 		if !visual.ValidPixelEvidenceMode(*pixelMode) {
 			fatal("visual: --ouroboros-mode must be record-baseline or candidate (got %q)", *pixelMode)
 		}
+		source, err := pixelSourceIdentityFromFlags(fs, *pixelSourceIdentity, *pixelBaseRevision, *pixelOverlayHash, *pixelInventorySHA256)
+		if err != nil {
+			fatal("visual: %v", err)
+		}
 		manifest, err := visual.CapturePixelEvidence(ctx, url, visual.PixelEvidenceOptions{
-			Mode:         visual.PixelEvidenceMode(*pixelMode),
-			RouteID:      *pixelRouteID,
-			ArtifactRoot: *pixelEvidenceOut,
-			BaselineRoot: *pixelBaselineRoot,
-			Source: visual.PixelSourceIdentity{
-				BaseRevision:    *pixelBaseRevision,
-				OverlayHash:     *pixelOverlayHash,
-				InventorySHA256: *pixelInventorySHA256,
-			},
+			Mode:           visual.PixelEvidenceMode(*pixelMode),
+			RouteID:        *pixelRouteID,
+			ArtifactRoot:   *pixelEvidenceOut,
+			BaselineRoot:   *pixelBaselineRoot,
+			Source:         source,
 			Backend:        visual.RequireBackend(*requireBackend),
 			Samples:        *pixelSamples,
 			Viewport:       visual.Viewport{Width: *viewportW, Height: *viewportH, Scale: *scale},
@@ -218,6 +219,38 @@ func effectiveBaselinePath(url, explicit string) string {
 	return visual.DefaultBaselinePath(url)
 }
 
+func flagWasProvided(fs *flag.FlagSet, name string) bool {
+	provided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			provided = true
+		}
+	})
+	return provided
+}
+
+func pixelSourceIdentityFromFlags(fs *flag.FlagSet, handoffPath, baseRevision, overlayHash, inventorySHA256 string) (visual.PixelSourceIdentity, error) {
+	if strings.TrimSpace(handoffPath) == "" {
+		return visual.PixelSourceIdentity{
+			BaseRevision:    baseRevision,
+			OverlayHash:     overlayHash,
+			InventorySHA256: inventorySHA256,
+		}, nil
+	}
+	if flagWasProvided(fs, "ouroboros-base-revision") || flagWasProvided(fs, "ouroboros-overlay-hash") || flagWasProvided(fs, "ouroboros-inventory-sha256") {
+		return visual.PixelSourceIdentity{}, fmt.Errorf("--ouroboros-source-identity conflicts with manual source identity flags")
+	}
+	handoff, err := ouroboros.ReadSourceIdentityHandoffStrict(handoffPath)
+	if err != nil {
+		return visual.PixelSourceIdentity{}, fmt.Errorf("read --ouroboros-source-identity: %w", err)
+	}
+	return visual.PixelSourceIdentity{
+		BaseRevision:    handoff.Source.BaseRevision,
+		OverlayHash:     handoff.Source.OverlayHash,
+		InventorySHA256: handoff.Source.InventorySHA256,
+	}, nil
+}
+
 func visualUsage(w io.Writer) {
 	fmt.Fprintf(w, `gosx visual - Pixel-level visual regression testing
 
@@ -234,6 +267,8 @@ Common flags:
   --require-backend <name>  hard-fail unless Scene3D mounted webgpu, webgl, or any-gpu
   --ouroboros-pixels-out    write O0.2 Scene3D pixel evidence to an artifact directory
                             requires explicit --require-backend webgpu or webgl
+  --ouroboros-source-identity
+                            source identity handoff for O0.2 pixel evidence
   --ouroboros-base-revision source base revision for O0.2 pixel evidence
   --ouroboros-overlay-hash  source overlay hash for O0.2 pixel evidence
   --ouroboros-inventory-sha256

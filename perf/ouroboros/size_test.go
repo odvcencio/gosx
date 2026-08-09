@@ -1,6 +1,7 @@
 package ouroboros
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -464,6 +465,292 @@ func TestMaterializeOverlayInputsRewritesReplayableContainedRefs(t *testing.T) {
 	}
 	if _, err := ReplayInventoryReconstruction(context.Background(), root, inv); err != nil {
 		t.Fatalf("materialized inventory is not replayable: %v", err)
+	}
+}
+
+func TestSourceIdentityHandoffPredictsMaterializedInventoryWithoutCreatingRoot(t *testing.T) {
+	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+	futureRoot := filepath.Join(repoRoot, "build", "future-browser-out")
+	if err := os.RemoveAll(futureRoot); err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := BuildSourceIdentityHandoff(context.Background(), repoRoot, inventoryPath, futureRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(futureRoot); !os.IsNotExist(err) {
+		t.Fatalf("source identity handoff created future root: %v", err)
+	}
+	plan, err := PredictCanonicalInventoryMaterialization(context.Background(), repoRoot, inventoryPath, futureRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateSourceIdentityHandoffForMaterialization(handoff, plan); err != nil {
+		t.Fatalf("handoff does not bind predicted materialization: %v", err)
+	}
+	if handoff.ArtifactRoot != plan.ArtifactRoot || handoff.InventoryRef != CanonicalSourceInventoryRef || handoff.Source.InventorySHA256 != plan.SHA256 {
+		t.Fatalf("handoff did not record canonical root/ref/sha: %#v plan=%#v", handoff, plan)
+	}
+	if handoff.Source.TrackedDiffHash != OverlayClean || handoff.Source.UntrackedIncludedSourceHash != OverlayClean {
+		t.Fatalf("clean handoff did not normalize clean hashes: %#v", handoff.Source)
+	}
+	handoffPath := filepath.Join(t.TempDir(), "source-identity.json")
+	if err := WriteNewJSONFile(handoffPath, handoff); err != nil {
+		t.Fatal(err)
+	}
+	roundtrip, err := ReadSourceIdentityHandoffStrict(handoffPath)
+	if err != nil {
+		t.Fatalf("strict read rejected clean handoff: %v", err)
+	}
+	if roundtrip.Source.TrackedDiffHash != OverlayClean || roundtrip.Source.UntrackedIncludedSourceHash != OverlayClean {
+		t.Fatalf("strict clean handoff roundtrip changed clean hashes: %#v", roundtrip.Source)
+	}
+}
+
+func TestMaterializeCanonicalInventoryWritesPredictedBytes(t *testing.T) {
+	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+	materializedRoot := filepath.Join(repoRoot, "build", "materialized-browser-out")
+	if err := os.RemoveAll(materializedRoot); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PredictCanonicalInventoryMaterialization(context.Background(), repoRoot, inventoryPath, materializedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotPath, err := MaterializeCanonicalInventory(context.Background(), repoRoot, inventoryPath, materializedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != plan.Path {
+		t.Fatalf("materialized path = %s, want %s", gotPath, plan.Path)
+	}
+	body, err := os.ReadFile(gotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, plan.Bytes) {
+		t.Fatalf("materialized bytes differ from predicted bytes")
+	}
+}
+
+func TestDirtySourceIdentityHandoffPredictsMaterializedOverlayBytes(t *testing.T) {
+	repoRoot, inventoryPath := writeDirtyReplayableCanonicalInventory(t)
+	materializedRoot := filepath.Join(repoRoot, "build", "dirty-materialized-browser-out")
+	plan, err := PredictCanonicalInventoryMaterialization(context.Background(), repoRoot, inventoryPath, materializedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := BuildSourceIdentityHandoff(context.Background(), repoRoot, inventoryPath, materializedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff.Source.TrackedDiffHash == OverlayClean || handoff.Source.UntrackedIncludedSourceHash == OverlayClean {
+		t.Fatalf("dirty handoff lost dirty hashes: %#v", handoff.Source)
+	}
+	if err := ValidateSourceIdentityHandoffForMaterialization(handoff, plan); err != nil {
+		t.Fatal(err)
+	}
+	gotPath, err := MaterializeCanonicalInventory(context.Background(), repoRoot, inventoryPath, materializedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(gotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, plan.Bytes) {
+		t.Fatalf("dirty materialized bytes differ from predicted bytes")
+	}
+	if !strings.Contains(plan.Inventory.Overlay.PatchPath, "build/dirty-materialized-browser-out/source/tracked-overlay.patch") {
+		t.Fatalf("dirty patch ref was not rewritten for future root: %s", plan.Inventory.Overlay.PatchPath)
+	}
+	if !strings.Contains(plan.Inventory.Overlay.ArchivePath, "build/dirty-materialized-browser-out/source/untracked-sources") {
+		t.Fatalf("dirty archive ref was not rewritten for future root: %s", plan.Inventory.Overlay.ArchivePath)
+	}
+	if _, err := os.Stat(filepath.Join(materializedRoot, "source", "tracked-overlay.patch")); err != nil {
+		t.Fatalf("materialized tracked patch missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(materializedRoot, "source", "untracked-sources")); err != nil {
+		t.Fatalf("materialized untracked archive missing: %v", err)
+	}
+}
+
+func writeReplayableCanonicalInventory(t *testing.T) (repoRoot, inventoryPath string) {
+	return writeReplayableCanonicalInventoryWithDirtyOverlay(t, false)
+}
+
+func writeDirtyReplayableCanonicalInventory(t *testing.T) (repoRoot, inventoryPath string) {
+	return writeReplayableCanonicalInventoryWithDirtyOverlay(t, true)
+}
+
+func writeReplayableCanonicalInventoryWithDirtyOverlay(t *testing.T, dirty bool) (repoRoot, inventoryPath string) {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, root, "client/js/bootstrap-src/00-runtime.js", "window.__gosx_runtime_ready = true;\n")
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.invalid")
+	runGit(t, root, "config", "user.name", "test")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "base")
+	base := strings.TrimSpace(runGitOutput(t, root, "rev-parse", "HEAD"))
+	if dirty {
+		writeFile(t, root, "client/js/bootstrap-src/00-runtime.js", "window.__gosx_runtime_ready = true;\nwindow.__gosx_dirty = true;\n")
+		writeFile(t, root, "client/js/bootstrap-src/05-extra.js", "window.__gosx_extra = true;\n")
+	}
+	overlay, err := BuildOverlayEvidence(context.Background(), root, base)
+	if err != nil {
+		t.Fatalf("BuildOverlayEvidence: %v", err)
+	}
+	artifactRoot := filepath.Join(root, "perf", "ouroboros")
+	if dirty {
+		if err := WriteOverlayArtifacts(context.Background(), root, artifactRoot, overlay); err != nil {
+			t.Fatalf("WriteOverlayArtifacts: %v", err)
+		}
+		overlay.PatchPath = filepath.ToSlash(filepath.Join("perf", "ouroboros", "tracked-overlay.patch"))
+		overlay.ArchivePath = filepath.ToSlash(filepath.Join("perf", "ouroboros", "untracked-sources"))
+	}
+	inv := &Inventory{
+		BaseRevision: base,
+		OverlayHash:  overlay.Hash,
+		Overlay:      overlay,
+	}
+	inv.SchemaVersion = SchemaVersion
+	inv.Contract = ContractO02
+	inv.Initiative = Initiative
+	inv.Spec = Spec
+	inv.CorpusID = CorpusID
+	inv.ArtifactRoot = artifactRoot
+	inv.Scope = DefaultScope()
+	inv.Files = FileInventory{
+		Included: []SourceFile{},
+		Sidecars: []SourceFile{},
+		Embedded: []SourceFile{},
+		Excluded: []ExcludedFile{},
+		Audit:    []ExcludedFile{},
+	}
+	inv.Totals = Totals{ByExtension: map[string]int{}}
+	inv.Structural = Structural{Gotreesitter: ParseSummary{Language: "javascript"}}
+	inv.Surface = Surface{
+		GosxNames:               []GosxName{},
+		BroaderBrowserGosxNames: []GosxName{},
+		SerializationSites:      []SerializationSite{},
+	}
+	fresh, err := Collect(context.Background(), CollectOptions{RepoRoot: root, Git: true, Canopy: false})
+	if err != nil {
+		t.Fatalf("Collect fixture inventory: %v", err)
+	}
+	inv.Surface.CompatibilityAudit = fresh.Surface.CompatibilityAudit
+	inv.Ratchets = []ScopeRatchet{{ID: "test", Scope: "test", Status: "pass", Definition: "test"}}
+	inv.Manifest = minimalReplayableCorpusManifest(inv)
+	inventoryPath = filepath.Join(t.TempDir(), "source-inventory.json")
+	if err := WriteJSONFile(inventoryPath, inv); err != nil {
+		t.Fatal(err)
+	}
+	return root, inventoryPath
+}
+
+func minimalReplayableCorpusManifest(inv *Inventory) CorpusManifest {
+	size := int64(1)
+	route := func(id, current, future string) FixtureRoute {
+		return FixtureRoute{ID: id, Route: "/" + strings.ToLower(id), FixtureApp: "fixtures", Purpose: "test", ExpectedRuntime: "test", ExpectedTinyGoCurrent: current, ExpectedTinyGoFuture: future}
+	}
+	ref := func(id, kind string) *ArtifactRef {
+		return &ArtifactRef{SchemaVersion: "gosx.ouroboros.artifact-ref.v1", Path: kind + "/" + id + ".json", BaseRevision: inv.BaseRevision, OverlayHash: inv.OverlayHash, SHA256: "sha256:" + strings.Repeat("a", 64)}
+	}
+	return CorpusManifest{
+		SchemaVersion: SchemaVersion,
+		Contract:      ContractO02,
+		Initiative:    Initiative,
+		Spec:          Spec,
+		CorpusID:      CorpusID,
+		BaseRevision:  inv.BaseRevision,
+		OverlayHash:   inv.OverlayHash,
+		ArtifactRoot:  inv.ArtifactRoot,
+		Scope:         inv.Scope,
+		FixtureRoutes: []FixtureRoute{
+			route("R00", "runtime", "core"),
+			route("R01", "islands", "engine"),
+			route("R02", "none", "collab"),
+			route("R03", "none", "full"),
+		},
+		Variants: []RuntimeVariant{
+			{ID: "runtime", Generation: "current", Status: "measured", SizeBytes: &size, BudgetBytes: &size, SizeArtifact: ref("runtime", "size"), WASMArtifact: ref("runtime", "wasm"), SelectedByRoutes: []string{"R00"}},
+			{ID: "islands", Generation: "current", Status: "measured", SizeBytes: &size, BudgetBytes: &size, SizeArtifact: ref("islands", "size"), WASMArtifact: ref("islands", "wasm"), SelectedByRoutes: []string{"R01"}},
+			{ID: "core", Generation: "future", Status: "planned", SelectedByRoutes: []string{"R00"}},
+			{ID: "engine", Generation: "future", Status: "planned", SelectedByRoutes: []string{"R01"}},
+			{ID: "collab", Generation: "future", Status: "planned", SelectedByRoutes: []string{"R02"}},
+			{ID: "full", Generation: "future", Status: "planned", SelectedByRoutes: []string{"R03"}},
+		},
+	}
+}
+
+func TestReadSourceIdentityHandoffStrictRejectsTampering(t *testing.T) {
+	dir := t.TempDir()
+	valid := SourceIdentityHandoff{
+		SchemaVersion: SourceIdentityHandoffSchemaVersion,
+		Contract:      ContractO02,
+		ArtifactRoot:  filepath.Join(dir, "out"),
+		InventoryRef:  CanonicalSourceInventoryRef,
+		Source: SourceIdentityHandoffSource{
+			BaseRevision:                "abc1234",
+			OverlayHash:                 OverlayClean,
+			TrackedDiffHash:             sha256String(""),
+			UntrackedIncludedSourceHash: sha256String(""),
+			InventoryRef:                CanonicalSourceInventoryRef,
+			InventorySHA256:             sha256String("inventory"),
+		},
+	}
+	path := filepath.Join(dir, "source-identity.json")
+	if err := WriteNewJSONFile(path, valid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSourceIdentityHandoffStrict(path); err != nil {
+		t.Fatalf("valid handoff rejected: %v", err)
+	}
+	handoffJSON := func(source SourceIdentityHandoffSource) string {
+		t.Helper()
+		body, err := json.Marshal(SourceIdentityHandoff{
+			SchemaVersion: SourceIdentityHandoffSchemaVersion,
+			Contract:      ContractO02,
+			ArtifactRoot:  filepath.Join(dir, "case-out"),
+			InventoryRef:  CanonicalSourceInventoryRef,
+			Source:        source,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "unknown", body: `{"schemaVersion":"gosx.ouroboros.source-identity.v1","contractVersion":"O0.2","artifactRoot":"/tmp/out","inventoryRef":"source/source-inventory.json","source":{"baseRevision":"abc1234","overlayHash":"sha256:clean","trackedDiffHash":"sha256:` + strings.Repeat("a", 64) + `","untrackedIncludedSourceHash":"sha256:` + strings.Repeat("b", 64) + `","inventoryRef":"source/source-inventory.json","inventorySha256":"sha256:` + strings.Repeat("c", 64) + `"},"unknown":true}`, want: "unknown"},
+		{name: "trailing", body: `{"schemaVersion":"gosx.ouroboros.source-identity.v1","contractVersion":"O0.2","artifactRoot":"/tmp/out","inventoryRef":"source/source-inventory.json","source":{"baseRevision":"abc1234","overlayHash":"sha256:clean","trackedDiffHash":"sha256:` + strings.Repeat("a", 64) + `","untrackedIncludedSourceHash":"sha256:` + strings.Repeat("b", 64) + `","inventoryRef":"source/source-inventory.json","inventorySha256":"sha256:` + strings.Repeat("c", 64) + `"}} {}`, want: "trailing"},
+		{name: "clean-hashes", body: handoffJSON(SourceIdentityHandoffSource{BaseRevision: "abc1234", OverlayHash: OverlayClean, TrackedDiffHash: OverlayClean, UntrackedIncludedSourceHash: OverlayClean, InventoryRef: CanonicalSourceInventoryRef, InventorySHA256: "sha256:" + strings.Repeat("c", 64)}), want: ""},
+		{name: "dirty-hashes", body: handoffJSON(SourceIdentityHandoffSource{BaseRevision: "abc1234", OverlayHash: "sha256:" + strings.Repeat("d", 64), TrackedDiffHash: "sha256:" + strings.Repeat("a", 64), UntrackedIncludedSourceHash: "sha256:" + strings.Repeat("b", 64), InventoryRef: CanonicalSourceInventoryRef, InventorySHA256: "sha256:" + strings.Repeat("c", 64)}), want: ""},
+		{name: "malformed-hash", body: handoffJSON(SourceIdentityHandoffSource{BaseRevision: "abc1234", OverlayHash: OverlayClean, TrackedDiffHash: "bad", UntrackedIncludedSourceHash: "sha256:" + strings.Repeat("b", 64), InventoryRef: CanonicalSourceInventoryRef, InventorySHA256: "sha256:" + strings.Repeat("c", 64)}), want: "trackedDiffHash"},
+		{name: "clean-inventory-sha", body: handoffJSON(SourceIdentityHandoffSource{BaseRevision: "abc1234", OverlayHash: OverlayClean, TrackedDiffHash: OverlayClean, UntrackedIncludedSourceHash: OverlayClean, InventoryRef: CanonicalSourceInventoryRef, InventorySHA256: OverlayClean}), want: "inventorySha256"},
+		{name: "oversize", body: strings.Repeat(" ", MaxSourceIdentityHandoffBytes+1), want: "exceeds"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tampered := filepath.Join(dir, tc.name+".json")
+			if err := os.WriteFile(tampered, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := ReadSourceIdentityHandoffStrict(tampered)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("ReadSourceIdentityHandoffStrict rejected %s: %v", tc.name, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ReadSourceIdentityHandoffStrict error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

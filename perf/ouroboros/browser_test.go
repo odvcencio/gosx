@@ -2184,6 +2184,123 @@ func assertArtifactRootAbsent(t *testing.T, path string) {
 	}
 }
 
+func TestCanonicalBrowserPreflightAcceptsCleanSourceIdentityBeforePixelValidation(t *testing.T) {
+	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+	artifactRoot := filepath.Join(repoRoot, "build", "browser-preflight-clean")
+	plan, err := PredictCanonicalInventoryMaterialization(t.Context(), repoRoot, inventoryPath, artifactRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := BuildSourceIdentityHandoff(t.Context(), repoRoot, inventoryPath, artifactRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handoff.Source.TrackedDiffHash != OverlayClean || handoff.Source.UntrackedIncludedSourceHash != OverlayClean {
+		t.Fatalf("clean handoff hashes = %#v", handoff.Source)
+	}
+	handoffPath := filepath.Join(t.TempDir(), "source-identity.json")
+	if err := WriteNewJSONFile(handoffPath, handoff); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSourceIdentityHandoffStrict(handoffPath); err != nil {
+		t.Fatalf("strict read rejected clean handoff: %v", err)
+	}
+	evidenceRoot := filepath.Join(t.TempDir(), "evidence")
+	source := sourceIdentityFromMaterialization(plan)
+	pixelSource := visual.PixelSourceIdentity{BaseRevision: source.BaseRevision, OverlayHash: source.OverlayHash, InventorySHA256: source.InventorySHA256}
+	var pixelRefs []string
+	for _, routeID := range []string{"R08", "R10"} {
+		for _, backend := range []string{"webgpu", "webgl"} {
+			pixelRefs = append(pixelRefs, writeStrictCanonicalPixelManifestRef(t, evidenceRoot, routeID, backend, pixelSource))
+		}
+	}
+	err = preflightCanonicalBrowserInputs(t.Context(), BrowserBaselineOptions{
+		RepoRoot:           repoRoot,
+		ArtifactRoot:       artifactRoot,
+		EvidenceRoot:       evidenceRoot,
+		InventoryPath:      inventoryPath,
+		SourceIdentityPath: handoffPath,
+		PixelManifest:      strings.Join(pixelRefs, ","),
+		ViewportWidth:      1440,
+		ViewportHeight:     900,
+		DPR:                1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid O0.2 pixel baseline") {
+		t.Fatalf("preflight error = %v, want pixel validation after clean handoff acceptance", err)
+	}
+	if strings.Contains(err.Error(), "source identity handoff") || strings.Contains(err.Error(), "source mismatch") {
+		t.Fatalf("preflight rejected clean source identity handoff before pixel validation: %v", err)
+	}
+	assertArtifactRootAbsent(t, artifactRoot)
+}
+
+func TestCanonicalBrowserSourceIdentityHandoffMismatchBeforeRootMutation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*SourceIdentityHandoff)
+		want   string
+	}{
+		{
+			name: "artifact_root",
+			mutate: func(h *SourceIdentityHandoff) {
+				h.ArtifactRoot = filepath.Join(filepath.Dir(h.ArtifactRoot), "wrong-root")
+			},
+			want: "artifactRoot mismatch",
+		},
+		{
+			name: "inventory_hash",
+			mutate: func(h *SourceIdentityHandoff) {
+				h.Source.InventorySHA256 = "sha256:" + strings.Repeat("f", 64)
+			},
+			want: "source mismatch",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+			artifactRoot := filepath.Join(repoRoot, "build", "browser-preflight-mismatch")
+			plan, err := PredictCanonicalInventoryMaterialization(t.Context(), repoRoot, inventoryPath, artifactRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handoff, err := BuildSourceIdentityHandoff(t.Context(), repoRoot, inventoryPath, artifactRoot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(handoff)
+			handoffPath := filepath.Join(t.TempDir(), "source-identity.json")
+			if err := WriteNewJSONFile(handoffPath, handoff); err != nil {
+				t.Fatal(err)
+			}
+			evidenceRoot := filepath.Join(t.TempDir(), "evidence")
+			source := sourceIdentityFromMaterialization(plan)
+			pixelSource := visual.PixelSourceIdentity{BaseRevision: source.BaseRevision, OverlayHash: source.OverlayHash, InventorySHA256: source.InventorySHA256}
+			var pixelRefs []string
+			for _, routeID := range []string{"R08", "R10"} {
+				for _, backend := range []string{"webgpu", "webgl"} {
+					pixelRefs = append(pixelRefs, writeStrictCanonicalPixelManifestRef(t, evidenceRoot, routeID, backend, pixelSource))
+				}
+			}
+			_, err = RunBrowserBaseline(t.Context(), BrowserBaselineOptions{
+				RepoRoot:           repoRoot,
+				CorpusPath:         filepath.Join("..", "..", "examples", "ouroboros-corpus", "fixtures.v1.json"),
+				ArtifactRoot:       artifactRoot,
+				EvidenceRoot:       evidenceRoot,
+				InventoryPath:      inventoryPath,
+				SourceIdentityPath: handoffPath,
+				PixelManifest:      strings.Join(pixelRefs, ","),
+				Samples:            "baseline",
+				ViewportWidth:      1440,
+				ViewportHeight:     900,
+				DPR:                1,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("RunBrowserBaseline error = %v, want %q", err, tc.want)
+			}
+			assertArtifactRootAbsent(t, artifactRoot)
+		})
+	}
+}
+
 func TestCanonicalRejectsTamperedInventoryBeforeRootMutation(t *testing.T) {
 	root := t.TempDir()
 	inventoryPath := filepath.Join(root, "external-source-inventory.json")

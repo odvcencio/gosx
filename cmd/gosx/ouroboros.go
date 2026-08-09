@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"m31labs.dev/gosx/perf/ouroboros"
 )
@@ -23,6 +24,12 @@ func cmdOuroboros() {
 			return
 		}
 		cmdOuroborosInventory(os.Args[3:])
+	case "source-identity":
+		if len(os.Args) > 3 && isHelpArg(os.Args[3]) {
+			ouroborosSourceIdentityUsage(os.Stdout)
+			return
+		}
+		cmdOuroborosSourceIdentity(os.Args[3:])
 	case "compare":
 		if len(os.Args) > 3 && isHelpArg(os.Args[3]) {
 			ouroborosCompareUsage(os.Stdout)
@@ -32,6 +39,115 @@ func cmdOuroboros() {
 	default:
 		fatal("unknown ouroboros command: %s\nrun 'gosx ouroboros --help' for usage", os.Args[2])
 	}
+}
+
+func cmdOuroborosSourceIdentity(args []string) {
+	fs := flag.NewFlagSet("ouroboros source-identity", flag.ExitOnError)
+	root := fs.String("root", ".", "repository root")
+	inventory := fs.String("inventory", "", "strict O0.2 source inventory JSON")
+	artifactRoot := fs.String("artifact-root", "", "future browser artifact root")
+	outPath := fs.String("out", "", "write source identity handoff JSON to this path")
+	if err := fs.Parse(args); err != nil {
+		fatal("%v", err)
+	}
+	if fs.NArg() != 0 {
+		fatal("gosx ouroboros source-identity does not take positional arguments")
+	}
+	if strings.TrimSpace(*inventory) == "" {
+		fatal("gosx ouroboros source-identity requires --inventory")
+	}
+	if strings.TrimSpace(*artifactRoot) == "" {
+		fatal("gosx ouroboros source-identity requires --artifact-root")
+	}
+	if strings.TrimSpace(*outPath) == "" {
+		fatal("gosx ouroboros source-identity requires --out")
+	}
+	if err := rejectSourceIdentityOutUnderArtifactRoot(*outPath, *artifactRoot); err != nil {
+		fatal("gosx ouroboros source-identity: %v", err)
+	}
+	if _, err := os.Lstat(*artifactRoot); err == nil {
+		fatal("gosx ouroboros source-identity: future artifact root already exists: %s", *artifactRoot)
+	} else if !os.IsNotExist(err) {
+		fatal("gosx ouroboros source-identity: inspect future artifact root: %v", err)
+	}
+	if err := ouroboros.EnsureNewJSONFilePath(*outPath); err != nil {
+		fatal("gosx ouroboros source-identity: %v", err)
+	}
+	handoff, err := ouroboros.BuildSourceIdentityHandoff(context.Background(), *root, *inventory, *artifactRoot)
+	if err != nil {
+		fatal("gosx ouroboros source-identity: %v", err)
+	}
+	if err := ouroboros.ValidateSourceIdentityHandoff(handoff); err != nil {
+		fatal("gosx ouroboros source-identity: built invalid handoff: %v", err)
+	}
+	if err := ouroboros.WriteNewJSONFile(*outPath, handoff); err != nil {
+		fatal("gosx ouroboros source-identity: %v", err)
+	}
+}
+
+func rejectSourceIdentityOutUnderArtifactRoot(outPath, artifactRoot string) error {
+	outAbs, err := filepath.Abs(outPath)
+	if err != nil {
+		return err
+	}
+	rootAbs, err := filepath.Abs(artifactRoot)
+	if err != nil {
+		return err
+	}
+	outAbs = filepath.Clean(outAbs)
+	rootAbs = filepath.Clean(rootAbs)
+	if sameOrContainedPath(outAbs, rootAbs) {
+		return fmt.Errorf("--out must not be equal to or inside --artifact-root")
+	}
+	outReal, err := resolvePathWithExistingSymlinks(outAbs)
+	if err != nil {
+		return err
+	}
+	rootReal, err := resolvePathWithExistingSymlinks(rootAbs)
+	if err != nil {
+		return err
+	}
+	if sameOrContainedPath(outReal, rootReal) {
+		return fmt.Errorf("--out must not resolve inside --artifact-root")
+	}
+	return nil
+}
+
+func resolvePathWithExistingSymlinks(path string) (string, error) {
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved), nil
+	}
+	remaining := []string{}
+	current := path
+	for {
+		if current == "." || current == string(filepath.Separator) || current == filepath.VolumeName(current)+string(filepath.Separator) {
+			break
+		}
+		if _, err := os.Lstat(current); err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			parts := append([]string{resolved}, remaining...)
+			return filepath.Clean(filepath.Join(parts...)), nil
+		}
+		remaining = append([]string{filepath.Base(current)}, remaining...)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return path, nil
+}
+
+func sameOrContainedPath(child, root string) bool {
+	rel, err := filepath.Rel(root, child)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }
 
 func cmdOuroborosInventory(args []string) {
@@ -131,10 +247,13 @@ func ouroborosUsage(w interface{ Write([]byte) (int, error) }) {
 
 Usage:
   gosx ouroboros inventory [--root <repo>] [--out <file>] [--artifact-root <dir>] [--no-canopy]
+  gosx ouroboros source-identity --root <repo> --inventory <file> --artifact-root <future-browser-out> --out <file>
   gosx ouroboros compare --baseline <manifest|root> --candidate <manifest|root> --budget <file> [--out <file>]
 
 Commands:
   inventory   Collect O0.2 source inventory, compatibility surface, drift, and overlay evidence
+  source-identity
+              Write deterministic canonical source identity handoff for a future browser run
   compare     Compare O0.2 browser artifact roots and exit on regressions
 
 `)
@@ -145,6 +264,20 @@ func ouroborosInventoryUsage(w interface{ Write([]byte) (int, error) }) {
 
 Usage:
   gosx ouroboros inventory [--root <repo>] [--out <file>] [--artifact-root <dir>] [--no-canopy]
+
+`)
+}
+
+func ouroborosSourceIdentityUsage(w interface{ Write([]byte) (int, error) }) {
+	fmt.Fprintf(w, `gosx ouroboros source-identity - Predict canonical O0.2 source identity
+
+Usage:
+  gosx ouroboros source-identity --root <repo> --inventory <file> --artifact-root <future-browser-out> --out <file>
+
+Notes:
+  The command validates a strict fresh inventory and replay reconstruction.
+  It predicts source/source-inventory.json for the future artifact root.
+  It does not create or mutate the future artifact root, and refuses to overwrite --out.
 
 `)
 }

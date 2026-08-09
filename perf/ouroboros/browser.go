@@ -44,6 +44,7 @@ type BrowserBaselineOptions struct {
 	RepoRoot           string
 	CorpusPath         string
 	InventoryPath      string
+	SourceIdentityPath string
 	ArtifactRoot       string
 	EvidenceRoot       string
 	DocsBaseURL        string
@@ -1340,32 +1341,52 @@ func preflightCanonicalBrowserInputs(ctx context.Context, opts BrowserBaselineOp
 	if err != nil {
 		return err
 	}
-	tmpParent := filepath.Join(root, "tmp")
-	if err := os.MkdirAll(tmpParent, 0o755); err != nil {
-		return err
-	}
-	tmpRoot, err := os.MkdirTemp(tmpParent, ".browser-canonical-preflight-*")
+	plan, err := PredictCanonicalInventoryMaterialization(ctx, root, opts.InventoryPath, opts.ArtifactRoot)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpRoot)
-
-	preflightOpts := opts
-	preflightOpts.RepoRoot = root
-	preflightOpts.ArtifactRoot = tmpRoot
-	materializedInventory, err := MaterializeCanonicalInventory(ctx, root, opts.InventoryPath, tmpRoot)
-	if err != nil {
-		return err
+	if strings.TrimSpace(opts.SourceIdentityPath) != "" {
+		handoff, err := ReadSourceIdentityHandoffStrict(opts.SourceIdentityPath)
+		if err != nil {
+			return err
+		}
+		if err := ValidateSourceIdentityHandoffForMaterialization(handoff, plan); err != nil {
+			return err
+		}
 	}
-	preflightOpts.InventoryPath = materializedInventory
-	source, err := browserSourceIdentity(ctx, preflightOpts)
-	if err != nil {
-		return err
-	}
+	source := sourceIdentityFromMaterialization(plan)
 	if err := validateCanonicalEvidenceRefs(opts, source); err != nil {
 		return err
 	}
 	return nil
+}
+
+func sourceIdentityFromMaterialization(plan CanonicalInventoryMaterialization) SourceIdentity {
+	inv := plan.Inventory
+	probeNames := RuntimeJSONKnownProductionNames(inv)
+	return SourceIdentity{
+		BaseRevision:                inv.BaseRevision,
+		OverlayHash:                 inv.OverlayHash,
+		TrackedDiffHash:             inv.Overlay.TrackedDiffHash,
+		UntrackedIncludedSourceHash: hashUntracked(inv.Overlay.UntrackedSources),
+		InventoryRef:                plan.InventoryRef,
+		InventorySHA256:             plan.SHA256,
+		RejectsModuleCacheMismatch:  true,
+		CurrentOverlayVerified:      true,
+		StrictInventory:             true,
+		ReconstructionProof:         true,
+		Reconstruction: &ReconstructionEvidence{
+			Method:              inventoryReconstructionMethod,
+			BaseRevision:        inv.BaseRevision,
+			ObservedOverlayHash: inv.OverlayHash,
+			UntrackedCount:      len(inv.Overlay.UntrackedSources),
+			Isolated:            true,
+			Applied:             true,
+			Verified:            true,
+		},
+		RuntimeProbeNameCount: len(probeNames),
+		RuntimeProbeNames:     probeNames,
+	}
 }
 
 func validateCanonicalEvidenceRoot(opts BrowserBaselineOptions) error {

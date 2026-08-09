@@ -20,6 +20,7 @@ func cmdPerfOuroboros(args []string) {
 	root := fs.String("root", ".", "GoSX repository root")
 	corpus := fs.String("corpus", "", "O0.2 fixture corpus JSON")
 	inventory := fs.String("inventory", "", "O0.2 source inventory JSON to verify against current overlay")
+	sourceIdentity := fs.String("source-identity", "", "O0.2 source identity handoff JSON to bind canonical runs")
 	out := fs.String("out", "", "artifact root for raw samples and summaries")
 	evidenceRoot := fs.String("evidence-root", "", "existing root for accepted O02-F evidence refs")
 	pixelManifest := fs.String("pixel-manifest", "", "comma-separated O02-F pixel manifest refs under --evidence-root")
@@ -54,6 +55,7 @@ func cmdPerfOuroboros(args []string) {
 		RepoRoot:           *root,
 		CorpusPath:         *corpus,
 		InventoryPath:      *inventory,
+		SourceIdentityPath: *sourceIdentity,
 		ArtifactRoot:       *out,
 		EvidenceRoot:       *evidenceRoot,
 		PixelManifest:      *pixelManifest,
@@ -94,11 +96,12 @@ func perfOuroborosUsage(w interface{ Write([]byte) (int, error) }) {
 
 Usage:
   gosx perf ouroboros --serve --routes R00,R01 --samples smoke --out build/ouroboros/o0.2/browser-smoke
-  gosx perf ouroboros --base-url http://127.0.0.1:8080 --samples baseline --out build/ouroboros/o0.2/current --evidence-root build/ouroboros/o0.2/evidence --pixel-manifest r08/webgpu/pixel-evidence.json,r08/webgl/pixel-evidence.json,r10/webgpu/pixel-evidence.json,r10/webgl/pixel-evidence.json --chrome-ws-url "$CHROME_WS_URL"
+  gosx perf ouroboros --base-url http://127.0.0.1:8080 --samples baseline --out build/ouroboros/o0.2/current --inventory build/ouroboros/o0.2/source/source-inventory.json --source-identity build/ouroboros/o0.2/source-identity.json --evidence-root build/ouroboros/o0.2/evidence --pixel-manifest r08/webgpu/pixel-evidence.json,r08/webgl/pixel-evidence.json,r10/webgpu/pixel-evidence.json,r10/webgl/pixel-evidence.json --chrome-ws-url "$CHROME_WS_URL"
 
 Notes:
   smoke runs are reduced and can never update the canonical O0.2 baseline.
   baseline runs record canonical sample counts and must use a verified source overlay.
+  --source-identity narrows acceptance; the run recomputes source identity from --inventory and --out.
   remote Chrome endpoints are recorded only as a connection class and SHA-256.
 
 `)

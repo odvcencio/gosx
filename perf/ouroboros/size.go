@@ -183,6 +183,40 @@ type SizeEvidenceOptions struct {
 	Canonical     bool
 }
 
+const (
+	SourceIdentityHandoffSchemaVersion = "gosx.ouroboros.source-identity.v1"
+	MaxSourceIdentityHandoffBytes      = 64 << 10
+	CanonicalSourceInventoryRef        = "source/source-inventory.json"
+)
+
+type SourceIdentityHandoff struct {
+	SchemaVersion string                      `json:"schemaVersion"`
+	Contract      string                      `json:"contractVersion"`
+	ArtifactRoot  string                      `json:"artifactRoot"`
+	InventoryRef  string                      `json:"inventoryRef"`
+	Source        SourceIdentityHandoffSource `json:"source"`
+}
+
+type SourceIdentityHandoffSource struct {
+	BaseRevision                string `json:"baseRevision"`
+	OverlayHash                 string `json:"overlayHash"`
+	TrackedDiffHash             string `json:"trackedDiffHash"`
+	UntrackedIncludedSourceHash string `json:"untrackedIncludedSourceHash"`
+	InventoryRef                string `json:"inventoryRef"`
+	InventorySHA256             string `json:"inventorySha256"`
+}
+
+type CanonicalInventoryMaterialization struct {
+	RepoRoot     string
+	ArtifactRoot string
+	InventoryRef string
+	Path         string
+	Bytes        []byte
+	SHA256       string
+	Inventory    *Inventory
+	Original     *Inventory
+}
+
 func BuildSizeEvidenceWithOptions(opts SizeEvidenceOptions) (*SizeEvidence, error) {
 	manifestPath := opts.ManifestPath
 	distDir := opts.DistDir
@@ -339,59 +373,118 @@ func requireCanonicalSourceIdentity(source SourceIdentity) error {
 	return nil
 }
 
-func MaterializeCanonicalInventory(ctx context.Context, repoRoot, inventoryPath, artifactRoot string) (string, error) {
+func PredictCanonicalInventoryMaterialization(ctx context.Context, repoRoot, inventoryPath, artifactRoot string) (CanonicalInventoryMaterialization, error) {
 	root, err := resolveRepoRootForEvidence(repoRoot)
 	if err != nil {
-		return "", err
+		return CanonicalInventoryMaterialization{}, err
 	}
 	if strings.TrimSpace(inventoryPath) == "" {
-		return "", fmt.Errorf("canonical inventory materialization requires --inventory")
+		return CanonicalInventoryMaterialization{}, fmt.Errorf("canonical inventory materialization requires --inventory")
 	}
 	if strings.TrimSpace(artifactRoot) == "" {
-		return "", fmt.Errorf("canonical inventory materialization requires artifact root")
+		return CanonicalInventoryMaterialization{}, fmt.Errorf("canonical inventory materialization requires artifact root")
 	}
 	f, err := os.Open(inventoryPath)
 	if err != nil {
-		return "", err
+		return CanonicalInventoryMaterialization{}, err
 	}
 	inv, err := DecodeInventoryStrict(f)
 	_ = f.Close()
 	if err != nil {
-		return "", err
+		return CanonicalInventoryMaterialization{}, err
 	}
 	if err := ValidateInventoryFresh(ctx, root, inv); err != nil {
-		return "", err
+		return CanonicalInventoryMaterialization{}, err
 	}
 	if err := requireInventoryReplay(ctx, root, inv); err != nil {
-		return "", err
+		return CanonicalInventoryMaterialization{}, err
 	}
 	artifactRootAbs, err := filepath.Abs(artifactRoot)
 	if err != nil {
-		return "", err
+		return CanonicalInventoryMaterialization{}, err
 	}
+	artifactRootAbs = filepath.Clean(artifactRootAbs)
 	sourceDir := filepath.Join(artifactRootAbs, "source")
 	materializedPath := filepath.Join(sourceDir, "source-inventory.json")
 	candidate, err := cloneInventory(inv)
 	if err != nil {
-		return "", err
+		return CanonicalInventoryMaterialization{}, err
 	}
 	rewriteMaterializedOverlayRefs(root, sourceDir, candidate)
-	if _, err := os.Lstat(materializedPath); err == nil {
-		return materializedPath, validateReusableMaterializedInventory(ctx, root, materializedPath, candidate)
+	body, err := canonicalInventoryJSON(candidate)
+	if err != nil {
+		return CanonicalInventoryMaterialization{}, err
+	}
+	sum := sha256.Sum256(body)
+	return CanonicalInventoryMaterialization{
+		RepoRoot:     root,
+		ArtifactRoot: artifactRootAbs,
+		InventoryRef: CanonicalSourceInventoryRef,
+		Path:         materializedPath,
+		Bytes:        body,
+		SHA256:       "sha256:" + hex.EncodeToString(sum[:]),
+		Inventory:    candidate,
+		Original:     inv,
+	}, nil
+}
+
+func BuildSourceIdentityHandoff(ctx context.Context, repoRoot, inventoryPath, artifactRoot string) (*SourceIdentityHandoff, error) {
+	plan, err := PredictCanonicalInventoryMaterialization(ctx, repoRoot, inventoryPath, artifactRoot)
+	if err != nil {
+		return nil, err
+	}
+	source := SourceIdentityHandoffSource{
+		BaseRevision:                plan.Inventory.BaseRevision,
+		OverlayHash:                 plan.Inventory.OverlayHash,
+		TrackedDiffHash:             normalizedHandoffTrackedDiffHash(plan.Inventory),
+		UntrackedIncludedSourceHash: normalizedHandoffUntrackedHash(plan.Inventory),
+		InventoryRef:                plan.InventoryRef,
+		InventorySHA256:             plan.SHA256,
+	}
+	return &SourceIdentityHandoff{
+		SchemaVersion: SourceIdentityHandoffSchemaVersion,
+		Contract:      ContractO02,
+		ArtifactRoot:  plan.ArtifactRoot,
+		InventoryRef:  plan.InventoryRef,
+		Source:        source,
+	}, nil
+}
+
+func MaterializeCanonicalInventory(ctx context.Context, repoRoot, inventoryPath, artifactRoot string) (string, error) {
+	plan, err := PredictCanonicalInventoryMaterialization(ctx, repoRoot, inventoryPath, artifactRoot)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(plan.Path); err == nil {
+		return plan.Path, validateReusableMaterializedInventory(ctx, plan.RepoRoot, plan.Path, plan.Bytes)
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	if err := materializeOverlayInputs(root, sourceDir, inv); err != nil {
+	if err := materializeOverlayInputs(plan.RepoRoot, filepath.Join(plan.ArtifactRoot, "source"), plan.Original); err != nil {
 		return "", err
 	}
-	rewriteMaterializedOverlayRefs(root, sourceDir, inv)
-	if err := WriteNewJSONFile(materializedPath, inv); err != nil {
+	rewriteMaterializedOverlayRefs(plan.RepoRoot, filepath.Join(plan.ArtifactRoot, "source"), plan.Original)
+	actual, err := canonicalInventoryJSON(plan.Original)
+	if err != nil {
 		return "", err
 	}
-	return materializedPath, nil
+	if !bytes.Equal(actual, plan.Bytes) {
+		return "", fmt.Errorf("predicted canonical inventory bytes differ from materialized bytes")
+	}
+	if err := writeNewJSONBytesFile(plan.Path, plan.Bytes); err != nil {
+		return "", err
+	}
+	written, err := os.ReadFile(plan.Path)
+	if err != nil {
+		return "", err
+	}
+	if !bytes.Equal(written, plan.Bytes) {
+		return "", fmt.Errorf("materialized canonical inventory bytes differ from predicted bytes")
+	}
+	return plan.Path, nil
 }
 
-func validateReusableMaterializedInventory(ctx context.Context, repoRoot, materializedPath string, candidate *Inventory) error {
+func validateReusableMaterializedInventory(ctx context.Context, repoRoot, materializedPath string, expected []byte) error {
 	f, err := os.Open(materializedPath)
 	if err != nil {
 		return err
@@ -407,15 +500,11 @@ func validateReusableMaterializedInventory(ctx context.Context, repoRoot, materi
 	if err := requireInventoryReplay(ctx, repoRoot, existing); err != nil {
 		return err
 	}
-	got, err := canonicalInventoryJSON(existing)
+	got, err := os.ReadFile(materializedPath)
 	if err != nil {
 		return err
 	}
-	want, err := canonicalInventoryJSON(candidate)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(got, want) {
+	if !bytes.Equal(got, expected) {
 		return fmt.Errorf("contained canonical inventory differs from requested inventory")
 	}
 	return nil
@@ -584,6 +673,45 @@ func WriteNewJSONFile(path string, value any) error {
 	return writeJSONFileAtomic(path, value, false)
 }
 
+func writeNewJSONBytesFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("refusing to overwrite existing evidence %s", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tmpPath, path); err != nil {
+		return err
+	}
+	cleanup = false
+	_ = os.Remove(tmpPath)
+	return nil
+}
+
 func writeJSONFileAtomic(path string, value any, overwrite bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -635,6 +763,135 @@ func writeJSONFileAtomic(path string, value any, overwrite bool) error {
 	}
 	cleanup = false
 	return nil
+}
+
+func ReadSourceIdentityHandoffStrict(path string) (*SourceIdentityHandoff, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("source identity handoff path is empty")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	limited := io.LimitReader(f, MaxSourceIdentityHandoffBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > MaxSourceIdentityHandoffBytes {
+		return nil, fmt.Errorf("source identity handoff exceeds %d bytes", MaxSourceIdentityHandoffBytes)
+	}
+	var handoff SourceIdentityHandoff
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&handoff); err != nil {
+		return nil, err
+	}
+	if dec.Decode(&struct{}{}) != io.EOF {
+		return nil, fmt.Errorf("source identity handoff has trailing JSON")
+	}
+	if err := ValidateSourceIdentityHandoff(&handoff); err != nil {
+		return nil, err
+	}
+	return &handoff, nil
+}
+
+func ValidateSourceIdentityHandoff(h *SourceIdentityHandoff) error {
+	if h == nil {
+		return fmt.Errorf("missing source identity handoff")
+	}
+	if h.SchemaVersion != SourceIdentityHandoffSchemaVersion {
+		return fmt.Errorf("source identity handoff schemaVersion = %q, want %q", h.SchemaVersion, SourceIdentityHandoffSchemaVersion)
+	}
+	if h.Contract != ContractO02 {
+		return fmt.Errorf("source identity handoff contractVersion = %q, want %q", h.Contract, ContractO02)
+	}
+	if strings.TrimSpace(h.ArtifactRoot) == "" || !filepath.IsAbs(h.ArtifactRoot) || filepath.Clean(h.ArtifactRoot) != h.ArtifactRoot {
+		return fmt.Errorf("source identity handoff artifactRoot must be a cleaned absolute path")
+	}
+	if h.InventoryRef != CanonicalSourceInventoryRef {
+		return fmt.Errorf("source identity handoff inventoryRef = %q, want %q", h.InventoryRef, CanonicalSourceInventoryRef)
+	}
+	if h.Source.InventoryRef != h.InventoryRef {
+		return fmt.Errorf("source identity handoff source.inventoryRef mismatch")
+	}
+	if h.Source.BaseRevision == "" || h.Source.OverlayHash == "" || h.Source.TrackedDiffHash == "" ||
+		h.Source.UntrackedIncludedSourceHash == "" || h.Source.InventorySHA256 == "" {
+		return fmt.Errorf("source identity handoff has incomplete source identity")
+	}
+	if !gitRevisionRe.MatchString(h.Source.BaseRevision) {
+		return fmt.Errorf("source identity handoff source.baseRevision must be 7-40 lowercase hex characters")
+	}
+	if !validSourceIdentityCleanOrSHA256(h.Source.OverlayHash) {
+		return fmt.Errorf("source identity handoff source.overlayHash must be sha256:clean or sha256:<64 lowercase hex>")
+	}
+	for label, value := range map[string]string{
+		"source.trackedDiffHash":             h.Source.TrackedDiffHash,
+		"source.untrackedIncludedSourceHash": h.Source.UntrackedIncludedSourceHash,
+	} {
+		if !validSourceIdentityCleanOrSHA256(value) {
+			return fmt.Errorf("source identity handoff %s must be sha256:clean or sha256:<64 lowercase hex>", label)
+		}
+	}
+	if !validSourceIdentitySHA256(h.Source.InventorySHA256) {
+		return fmt.Errorf("source identity handoff source.inventorySha256 must be sha256:<64 lowercase hex>")
+	}
+	return nil
+}
+
+func validSourceIdentityCleanOrSHA256(value string) bool {
+	return value == OverlayClean || validSourceIdentitySHA256(value)
+}
+
+func validSourceIdentitySHA256(value string) bool {
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
+		return false
+	}
+	for _, r := range value[len("sha256:"):] {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func ValidateSourceIdentityHandoffForMaterialization(h *SourceIdentityHandoff, plan CanonicalInventoryMaterialization) error {
+	if err := ValidateSourceIdentityHandoff(h); err != nil {
+		return err
+	}
+	if h.ArtifactRoot != plan.ArtifactRoot {
+		return fmt.Errorf("source identity handoff artifactRoot mismatch: handoff=%s actual=%s", h.ArtifactRoot, plan.ArtifactRoot)
+	}
+	if h.InventoryRef != plan.InventoryRef {
+		return fmt.Errorf("source identity handoff inventoryRef mismatch: handoff=%s actual=%s", h.InventoryRef, plan.InventoryRef)
+	}
+	want := SourceIdentityHandoffSource{
+		BaseRevision:                plan.Inventory.BaseRevision,
+		OverlayHash:                 plan.Inventory.OverlayHash,
+		TrackedDiffHash:             normalizedHandoffTrackedDiffHash(plan.Inventory),
+		UntrackedIncludedSourceHash: normalizedHandoffUntrackedHash(plan.Inventory),
+		InventoryRef:                plan.InventoryRef,
+		InventorySHA256:             plan.SHA256,
+	}
+	if h.Source != want {
+		return fmt.Errorf("source identity handoff source mismatch")
+	}
+	return nil
+}
+
+func normalizedHandoffTrackedDiffHash(inv *Inventory) string {
+	if inv == nil || inv.OverlayHash == OverlayClean || inv.Overlay.TrackedDiffHash == "" {
+		return OverlayClean
+	}
+	return inv.Overlay.TrackedDiffHash
+}
+
+func normalizedHandoffUntrackedHash(inv *Inventory) string {
+	if inv == nil || len(inv.Overlay.UntrackedSources) == 0 {
+		return OverlayClean
+	}
+	return hashUntracked(inv.Overlay.UntrackedSources)
 }
 
 func MetricsForFile(file string) (AssetMetrics, error) {
