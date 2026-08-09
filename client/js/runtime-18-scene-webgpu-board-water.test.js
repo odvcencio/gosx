@@ -73,6 +73,60 @@ test("compiled Selena pool keeps box and rounded geometry on the same open-vesse
     "compiled box V corners must make the floor face up and walls face inward");
 });
 
+test("Scene3D WebGPU support checks explicit world line widths before projected fallback lines", async () => {
+  const harness = await createBoardWebGPUHarness({ fresh: true });
+  const projectedThickLine = {
+    from: { x: 0, y: 0 },
+    to: { x: 1, y: 1 },
+    color: "#ffffff",
+    lineWidth: 1.8,
+  };
+  const worldLineBundle = {
+    worldPositions: new Float32Array([0, 0, 0, 1, 1, 1]),
+    worldColors: new Float32Array([1, 1, 1, 1, 1, 1, 1, 1]),
+    worldVertexCount: 2,
+    worldLineWidths: new Float32Array([0]),
+    lines: [projectedThickLine],
+    positions: new Float32Array([0, 0, 1, 1]),
+    colors: new Float32Array([1, 1, 1, 1, 1, 1, 1, 1]),
+    vertexCount: 2,
+  };
+
+  assert.equal(
+    harness.renderer.supportsBundle(worldLineBundle),
+    true,
+    "explicit zero world-line width must override projected fallback lineWidth",
+  );
+
+  assert.equal(
+    harness.renderer.supportsBundle(Object.assign({}, worldLineBundle, {
+      worldVertexCount: 32770,
+      worldLineWidths: new Float32Array([2]),
+    })),
+    false,
+    "unsupported explicit thick world-line metadata must still block WebGPU",
+  );
+
+  assert.equal(
+    harness.renderer.supportsBundle(Object.assign({}, worldLineBundle, {
+      worldLineDashes: new Float32Array([1]),
+    })),
+    false,
+    "dashed world-line metadata must still block WebGPU",
+  );
+
+  assert.equal(
+    harness.renderer.supportsBundle({
+      positions: new Float32Array([0, 0, 1, 1]),
+      colors: new Float32Array([1, 1, 1, 1, 1, 1, 1, 1]),
+      vertexCount: 2,
+      lines: [projectedThickLine],
+    }),
+    false,
+    "legacy projected thick lines must keep the prior unsupported result",
+  );
+});
+
 test("Scene3D WebGPU pool pass routes through the generic Selena render path with matching bindings", async () => {
   // { fresh: true } builds the scene3d + scene3d-webgpu chunks straight from
   // bootstrap-src/*.js (see freshFeatureBundleSource) so this test exercises

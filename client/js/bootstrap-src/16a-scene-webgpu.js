@@ -15564,6 +15564,7 @@
         for (var i = 0; i < widths.length; i++) {
           if (sceneNumber(widths[i], 0) > 1) return true;
         }
+        return false;
       }
       var lines = Array.isArray(bundle && bundle.lines) ? bundle.lines : [];
       for (var li = 0; li < lines.length; li++) {
@@ -15574,7 +15575,7 @@
 
     function webGPUCanUseThickWorldLines(bundle) {
       if (!webGPUHasThickWorldLines(bundle)) return true;
-      if (typeof createSceneThickLineScratch !== "function" || typeof expandSceneThickLineIntoScratch !== "function") return false;
+      if (!createSceneThickLineScratch || !expandSceneThickLineIntoScratch) return false;
       var segmentCount = webGPUWorldLineSegmentCount(bundle);
       return segmentCount > 0 && segmentCount <= 16384;
     }
