@@ -14,8 +14,8 @@
 //
 // Usage:
 //
-//	go run ./cmd/buildbootstrap            # rebuild all bundles
-//	go run ./cmd/buildbootstrap --check    # exit 1 if committed bundles are stale
+//	go run -tags 'grammar_subset grammar_subset_typescript grammar_subset_tsx' .
+//	go run -tags 'grammar_subset grammar_subset_typescript grammar_subset_tsx' . --check
 //
 // The build also writes client/js/bootstrap-src/chunks.json, the machine-
 // readable copy of the chunk manifest below. JS tests read that file instead of
@@ -800,6 +800,9 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 		if err != nil {
 			return builtBundle{}, err
 		}
+		if err := validateTypedSource(src, data); err != nil {
+			return builtBundle{}, err
+		}
 		body := string(data)
 		sections = append(sections, section{
 			label:     src.label,
@@ -841,12 +844,16 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 // compacted map rides in as an inline sourceMappingURL data URL, and esbuild
 // emits the composed external map.
 func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
+	loader, err := esbuildLoaderForOutput(entry)
+	if err != nil {
+		return builtBundle{}, err
+	}
 	dataURL := "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(built.m))
 	input := built.code + "\n//# sourceMappingURL=" + dataURL
 	result := esbuild.Transform(input, esbuild.TransformOptions{
 		Charset:           esbuild.CharsetUTF8,
 		LegalComments:     esbuild.LegalCommentsNone,
-		Loader:            esbuild.LoaderJS,
+		Loader:            loader,
 		MinifyWhitespace:  true,
 		MinifyIdentifiers: true,
 		MinifySyntax:      true,
@@ -937,15 +944,19 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 			m:    minified.m,
 		}, nil
 	case "tdewolff":
-		minified, err := minifyTdewolff(built.code)
+		code, err := transpileTypedChunk(entry, built.code)
+		if err != nil {
+			return builtBundle{}, err
+		}
+		minified, err := minifyTdewolff(code)
 		if err != nil {
 			return builtBundle{}, fmt.Errorf("minify %s: %w", entry.name, err)
 		}
 		return builtBundle{
 			code: normalizeGeneratedCode(minified, entry.name+".map", debugSourcemaps),
-			// tdewolff cannot compose source maps; ship the compacted
-			// (pre-minify) map, which still carries accurate sources and
-			// sourcesContent.
+			// tdewolff cannot compose source maps. The pre-minify map keeps
+			// source names and contents. Typed mappings stop before type
+			// erasure, so the esbuild path remains the release default.
 			m: built.m,
 		}, nil
 	default:
@@ -1013,6 +1024,29 @@ func chunksManifestJSON() string {
 	return b.String()
 }
 
+func runtimeContractPath(dir string) string {
+	return filepath.Clean(filepath.Join(dir, "..", "runtime", "generated", "runtime-abi.ts"))
+}
+
+func writeRuntimeContract(dir string) error {
+	path := runtimeContractPath(dir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(runtimeContractTypeScript()), 0o644)
+}
+
+func runtimeContractIsCurrent(dir string) (bool, error) {
+	current, err := os.ReadFile(runtimeContractPath(dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return string(current) == runtimeContractTypeScript(), nil
+}
+
 func run() error {
 	dirFlag := flag.String("dir", "", "path to client/js (default: auto-detect from working directory)")
 	check := flag.Bool("check", false, "verify committed bundles are up to date; exit 1 when stale")
@@ -1044,6 +1078,13 @@ func run() error {
 		if current, _ := os.ReadFile(manifestPath); string(current) != manifest {
 			stale = append(stale, chunksManifestRel)
 		}
+		runtimeCurrent, err := runtimeContractIsCurrent(dir)
+		if err != nil {
+			return err
+		}
+		if !runtimeCurrent {
+			stale = append(stale, filepath.ToSlash(filepath.Clean(filepath.Join("..", "runtime", "generated", "runtime-abi.ts"))))
+		}
 		for _, entry := range outputs {
 			next, err := buildBundle(dir, entry, *minifier, debugSourcemaps)
 			if err != nil {
@@ -1067,6 +1108,9 @@ func run() error {
 	}
 
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+		return err
+	}
+	if err := writeRuntimeContract(dir); err != nil {
 		return err
 	}
 	for _, entry := range outputs {
