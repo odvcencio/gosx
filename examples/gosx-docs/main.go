@@ -82,12 +82,10 @@ func main() {
 	}
 
 	app := server.New()
-	// Keep page-generated hashed runtime URLs and the runtime file server on the
-	// same application root. Without this, `go run ./examples/gosx-docs` from
-	// the repository root can read the repository's dist/build.json while
-	// serving the docs app's build output, leaving Scene3D and navigation chunks
-	// as 404s.
-	app.SetRuntimeRoot(root)
+	// Prefer docs-local runtime assets. Source-mode docs runs have no local
+	// build output, so fall back to the repository root only when it has the
+	// measured WASM/shim and source bootstrap chunks needed by /gosx/*.
+	app.SetRuntimeRoot(docsRuntimeRoot(root))
 	router.SetRevalidator(app.Revalidator())
 	app.EnableISR()
 	app.EnableNavigation()
@@ -139,6 +137,59 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func docsRuntimeRoot(appRoot string) string {
+	appRoot = filepath.Clean(strings.TrimSpace(appRoot))
+	if appRoot == "" || appRoot == "." {
+		return appRoot
+	}
+	if docsHasRuntimeAssets(appRoot) {
+		return appRoot
+	}
+	repoRoot := filepath.Clean(filepath.Join(appRoot, "..", ".."))
+	if repoHasSourceRuntimeAssets(repoRoot) {
+		return repoRoot
+	}
+	return appRoot
+}
+
+func docsHasRuntimeAssets(root string) bool {
+	if fileExists(filepath.Join(root, "dist", "build.json")) || fileExists(filepath.Join(root, "build.json")) {
+		return true
+	}
+	for _, name := range []string{
+		"bootstrap-runtime.js",
+		"bootstrap-feature-engines.js",
+		"bootstrap-feature-scene3d.js",
+		"bootstrap-feature-scene3d-webgpu.js",
+	} {
+		if fileExists(filepath.Join(root, "build", name)) {
+			return true
+		}
+	}
+	return false
+}
+
+func repoHasSourceRuntimeAssets(root string) bool {
+	for _, path := range []string{
+		filepath.Join(root, "client", "js", "bootstrap-runtime.js"),
+		filepath.Join(root, "client", "js", "bootstrap-feature-engines.js"),
+		filepath.Join(root, "client", "js", "bootstrap-feature-scene3d.js"),
+		filepath.Join(root, "client", "js", "bootstrap-feature-scene3d-webgpu.js"),
+		filepath.Join(root, "build", "gosx-runtime.wasm"),
+		filepath.Join(root, "build", "wasm_exec.js"),
+	} {
+		if !fileExists(path) {
+			return false
+		}
+	}
+	return true
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func docsDemoUser(value string) auth.User {

@@ -232,6 +232,97 @@ func TestPlaygroundPageHasEditorPlumbing(t *testing.T) {
 	}
 }
 
+func TestDocsRuntimeRootSelection(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, repoRoot, appRoot string)
+		want  func(repoRoot, appRoot string) string
+	}{
+		{
+			name: "local_docs_build_wins",
+			setup: func(t *testing.T, repoRoot, appRoot string) {
+				writeDocsRuntimeMarker(t, appRoot, filepath.Join("build", "bootstrap-feature-engines.js"))
+				writeRepoSourceRuntimeMarkers(t, repoRoot)
+			},
+			want: func(_ string, appRoot string) string { return appRoot },
+		},
+		{
+			name: "local_dist_build_json_wins",
+			setup: func(t *testing.T, repoRoot, appRoot string) {
+				writeDocsRuntimeMarker(t, appRoot, filepath.Join("dist", "build.json"))
+				writeRepoSourceRuntimeMarkers(t, repoRoot)
+			},
+			want: func(_ string, appRoot string) string { return appRoot },
+		},
+		{
+			name: "local_build_json_wins",
+			setup: func(t *testing.T, repoRoot, appRoot string) {
+				writeDocsRuntimeMarker(t, appRoot, "build.json")
+				writeRepoSourceRuntimeMarkers(t, repoRoot)
+			},
+			want: func(_ string, appRoot string) string { return appRoot },
+		},
+		{
+			name: "source_mode_repo_runtime_fallback",
+			setup: func(t *testing.T, repoRoot, _ string) {
+				writeRepoSourceRuntimeMarkers(t, repoRoot)
+			},
+			want: func(repoRoot, _ string) string { return repoRoot },
+		},
+		{
+			name:  "unrelated_tree_keeps_app_root",
+			setup: func(t *testing.T, _, _ string) {},
+			want:  func(_ string, appRoot string) string { return appRoot },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot, appRoot := newDocsRuntimeRootFixture(t)
+			tt.setup(t, repoRoot, appRoot)
+			got := docsRuntimeRoot(appRoot)
+			want := tt.want(repoRoot, appRoot)
+			if got != want {
+				t.Fatalf("docsRuntimeRoot = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func newDocsRuntimeRootFixture(t *testing.T) (string, string) {
+	t.Helper()
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	appRoot := filepath.Join(repoRoot, "examples", "gosx-docs")
+	if err := os.MkdirAll(appRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return repoRoot, appRoot
+}
+
+func writeDocsRuntimeMarker(t *testing.T, root, rel string) {
+	t.Helper()
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeRepoSourceRuntimeMarkers(t *testing.T, repoRoot string) {
+	t.Helper()
+	for _, rel := range []string{
+		filepath.Join("client", "js", "bootstrap-runtime.js"),
+		filepath.Join("client", "js", "bootstrap-feature-engines.js"),
+		filepath.Join("client", "js", "bootstrap-feature-scene3d.js"),
+		filepath.Join("client", "js", "bootstrap-feature-scene3d-webgpu.js"),
+		filepath.Join("build", "gosx-runtime.wasm"),
+		filepath.Join("build", "wasm_exec.js"),
+	} {
+		writeDocsRuntimeMarker(t, repoRoot, rel)
+	}
+}
+
 // TestCMSDemoRewrittenShape verifies the CMS demo was rewritten to the editorial
 // magenta design language, has proper server-side state, and is free of dead
 // drag affordances.

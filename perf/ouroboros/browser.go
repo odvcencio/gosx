@@ -30,6 +30,8 @@ import (
 
 const BrowserBaselineSchemaVersion = "gosx.ouroboros.browser-baseline.v1"
 
+const r10MinimumSampleTimeout = 60 * time.Second
+
 type SampleLane string
 
 const (
@@ -334,9 +336,9 @@ func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (resul
 		if err == nil {
 			return
 		}
-		err = redactRemoteEndpointErrorForOptions(opts, err)
+		err = sanitizeArtifactErrorForOptions(opts, err)
 		if artifactWriteStarted {
-			writeRemoteBoundaryFailure(opts, err)
+			writeBoundaryFailure(opts, err)
 		}
 	}()
 	plan, err := samplingPlan(opts.Samples)
@@ -730,6 +732,8 @@ func firstR10Route(routes []FixtureSpec) (FixtureSpec, bool) {
 }
 
 func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan SamplingPlan, source SourceIdentity, route FixtureSpec, external ExternalRouteEvidence, raw io.Writer, log io.Writer) ([]BrowserRawSample, error) {
+	sampleOpts := opts
+	sampleOpts.Timeout = effectiveRouteTimeout(opts, route)
 	cold, warm := plan.ColdSamples, plan.WarmSamples
 	if isSceneRoute(route) {
 		cold, warm = plan.SceneColdSamples, plan.SceneWarmSamples
@@ -737,8 +741,8 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
 	var out []BrowserRawSample
 	totalCold := plan.PilotsDiscarded + cold
 	for i := 0; i < totalCold; i++ {
-		sampleCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		s, err := runSingleSample(sampleCtx, opts, source, route, external, SampleLaneProduct, "cold", i, i < plan.PilotsDiscarded, nil, log)
+		sampleCtx, cancel := context.WithTimeout(ctx, sampleOpts.Timeout)
+		s, err := runSingleSample(sampleCtx, sampleOpts, source, route, external, SampleLaneProduct, "cold", i, i < plan.PilotsDiscarded, nil, log)
 		cancel()
 		if err != nil {
 			return nil, err
@@ -748,21 +752,21 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
 		}
 		out = append(out, s)
 	}
-	warmDriver, err := newOuroborosDriver(ctx, opts, SampleLaneProduct)
+	warmDriver, err := newOuroborosDriver(ctx, sampleOpts, SampleLaneProduct)
 	if err != nil {
 		return nil, err
 	}
 	defer warmDriver.Close()
-	primeDriver, primeCancel := warmDriver.WithOperationContext(ctx, opts.Timeout)
-	if err := primeWarmRoute(primeDriver, opts, route); err != nil {
+	primeDriver, primeCancel := warmDriver.WithOperationContext(ctx, sampleOpts.Timeout)
+	if err := primeWarmRoute(primeDriver, sampleOpts, route); err != nil {
 		primeCancel()
 		return nil, err
 	}
 	primeCancel()
 	totalWarm := plan.PilotsDiscarded + warm
 	for i := 0; i < totalWarm; i++ {
-		sampleCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		s, err := runSingleSample(sampleCtx, opts, source, route, external, SampleLaneProduct, "warm", i, i < plan.PilotsDiscarded, warmDriver, log)
+		sampleCtx, cancel := context.WithTimeout(ctx, sampleOpts.Timeout)
+		s, err := runSingleSample(sampleCtx, sampleOpts, source, route, external, SampleLaneProduct, "warm", i, i < plan.PilotsDiscarded, warmDriver, log)
 		cancel()
 		if err != nil {
 			return nil, err
@@ -774,8 +778,8 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
 	}
 	if plan.Canonical {
 		for i := 0; i < plan.PilotsDiscarded; i++ {
-			sampleCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-			s, err := runSingleSample(sampleCtx, opts, source, route, external, SampleLaneProbeOverhead, "cold", i, true, nil, log)
+			sampleCtx, cancel := context.WithTimeout(ctx, sampleOpts.Timeout)
+			s, err := runSingleSample(sampleCtx, sampleOpts, source, route, external, SampleLaneProbeOverhead, "cold", i, true, nil, log)
 			cancel()
 			if err != nil {
 				return nil, err
@@ -785,8 +789,8 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
 			}
 			out = append(out, s)
 		}
-		sampleCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		s, err := runSingleSample(sampleCtx, opts, source, route, external, SampleLaneProbe, "cold", 0, false, nil, log)
+		sampleCtx, cancel := context.WithTimeout(ctx, sampleOpts.Timeout)
+		s, err := runSingleSample(sampleCtx, sampleOpts, source, route, external, SampleLaneProbe, "cold", 0, false, nil, log)
 		cancel()
 		if err != nil {
 			return nil, err
@@ -796,20 +800,20 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
 		}
 		out = append(out, s)
 
-		probeWarmDriver, err := newOuroborosDriver(ctx, opts, SampleLaneProbe)
+		probeWarmDriver, err := newOuroborosDriver(ctx, sampleOpts, SampleLaneProbe)
 		if err != nil {
 			return nil, err
 		}
 		defer probeWarmDriver.Close()
-		primeDriver, primeCancel := probeWarmDriver.WithOperationContext(ctx, opts.Timeout)
-		if err := primeWarmRoute(primeDriver, opts, route); err != nil {
+		primeDriver, primeCancel := probeWarmDriver.WithOperationContext(ctx, sampleOpts.Timeout)
+		if err := primeWarmRoute(primeDriver, sampleOpts, route); err != nil {
 			primeCancel()
 			return nil, err
 		}
 		primeCancel()
 		for i := 0; i < plan.PilotsDiscarded; i++ {
-			sampleCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-			s, err := runSingleSample(sampleCtx, opts, source, route, external, SampleLaneProbeOverhead, "warm", i, true, probeWarmDriver, log)
+			sampleCtx, cancel := context.WithTimeout(ctx, sampleOpts.Timeout)
+			s, err := runSingleSample(sampleCtx, sampleOpts, source, route, external, SampleLaneProbeOverhead, "warm", i, true, probeWarmDriver, log)
 			cancel()
 			if err != nil {
 				return nil, err
@@ -819,8 +823,8 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
 			}
 			out = append(out, s)
 		}
-		sampleCtx, cancel = context.WithTimeout(ctx, opts.Timeout)
-		s, err = runSingleSample(sampleCtx, opts, source, route, external, SampleLaneProbe, "warm", 0, false, probeWarmDriver, log)
+		sampleCtx, cancel = context.WithTimeout(ctx, sampleOpts.Timeout)
+		s, err = runSingleSample(sampleCtx, sampleOpts, source, route, external, SampleLaneProbe, "warm", 0, false, probeWarmDriver, log)
 		cancel()
 		if err != nil {
 			return nil, err
@@ -831,6 +835,17 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+func effectiveRouteTimeout(opts BrowserBaselineOptions, route FixtureSpec) time.Duration {
+	timeout := opts.Timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	if route.ID == "R10" && timeout < r10MinimumSampleTimeout {
+		return r10MinimumSampleTimeout
+	}
+	return timeout
 }
 
 func runSingleSample(ctx context.Context, opts BrowserBaselineOptions, source SourceIdentity, route FixtureSpec, external ExternalRouteEvidence, lane SampleLane, cacheMode string, idx int, pilot bool, existing *perf.Driver, log io.Writer) (BrowserRawSample, error) {
@@ -1178,7 +1193,7 @@ func collectR10ExternalEvidence(ctx context.Context, opts BrowserBaselineOptions
 
 	profileRef, profileErr := runWaterProfileEvidence(ctx, opts, route, url, log)
 	if profileErr != nil {
-		ev.Errors = append(ev.Errors, profileErr.Error())
+		ev.Errors = append(ev.Errors, sanitizeArtifactTextForOptions(opts, profileErr.Error()))
 	} else {
 		ev.WaterProfileRef = profileRef
 	}
@@ -1213,11 +1228,12 @@ func runWaterProfileEvidence(ctx context.Context, opts BrowserBaselineOptions, r
 		"--width", fmt.Sprint(opts.ViewportWidth),
 		"--height", fmt.Sprint(opts.ViewportHeight),
 	}
-	cmd := exec.CommandContext(runCtx, "node", args...)
+	node := resolveNodeExecutable()
+	cmd := exec.CommandContext(runCtx, node, args...)
 	cmd.Dir = opts.RepoRoot
 	cmd.Stdout = log
 	cmd.Stderr = log
-	logCommand(log, "node", args)
+	logCommand(log, safeCommandLabel(node), args)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("water profile evidence failed: %w", err)
 	}
@@ -1929,13 +1945,127 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 			}, 10000, 50);
 			return found || {mount:qs(sel), canvas: qs(sel) ? qs(sel).querySelector("canvas") : null};
 		}
-		function dispatchSceneOrbit(canvas) {
-			if (!canvas) return false;
+		function exactExternalR10WaterPath() {
+			return routeID === "R10" && (location.pathname === "/demos/water" || location.pathname.indexOf("/demos/water/") === 0) && !qsa("[data-fixture-local-copy]").length;
+		}
+		function sceneTelemetrySnapshot(mount) {
+			var out = {ok:false, reason:"", orbit:null, camera:null};
+			if (!mount) {
+				out.reason = "missing mount";
+				return out;
+			}
+			var fn = window.__gosx_scene3d_telemetry;
+			if (typeof fn !== "function") {
+				out.reason = "missing telemetry";
+				return out;
+			}
+			var raw;
+			try {
+				raw = fn(mount);
+			} catch (e) {
+				out.reason = "telemetry threw";
+				out.error = String(e && (e.message || e)).slice(0, 160);
+				return out;
+			}
+			var orbit = raw && raw.orbit;
+			var camera = raw && raw.camera;
+			function finite(n){ return Number.isFinite(Number(n)); }
+			function vec3(value) {
+				if (!value) return null;
+				if (Array.isArray(value)) return {x:Number(value[0]), y:Number(value[1]), z:Number(value[2])};
+				return {x:Number(value.x), y:Number(value.y), z:Number(value.z)};
+			}
+			function cameraPosition(value) {
+				return vec3(value && value.position) || vec3(value);
+			}
+			function cameraRotation(value) {
+				var nested = vec3(value && value.rotation);
+				if (nested) return nested;
+				if (!value) return null;
+				return {x:Number(value.rotationX), y:Number(value.rotationY), z:Number(value.rotationZ)};
+			}
+			var position = cameraPosition(camera);
+			var rotation = cameraRotation(camera);
+			if (!orbit || !finite(orbit.yaw) || !finite(orbit.pitch) || !finite(orbit.radius)) {
+				out.reason = "missing finite orbit";
+				return out;
+			}
+			if (!position || !rotation || !finite(position.x) || !finite(position.y) || !finite(position.z) || !finite(rotation.x) || !finite(rotation.y) || !finite(rotation.z)) {
+				out.reason = "missing finite camera";
+				return out;
+			}
+			out.ok = true;
+			out.reason = "telemetry ready";
+			out.orbit = {yaw:Number(orbit.yaw), pitch:Number(orbit.pitch), radius:Number(orbit.radius)};
+			out.camera = {position:position, rotation:rotation};
+			return out;
+		}
+		function telemetryDelta(before, after) {
+			function abs(a, b){ return Math.abs(Number(a || 0) - Number(b || 0)); }
+			var orbit = {
+				yaw: abs(before.orbit.yaw, after.orbit.yaw),
+				pitch: abs(before.orbit.pitch, after.orbit.pitch),
+				radius: abs(before.orbit.radius, after.orbit.radius)
+			};
+			var camera = {
+				position: {
+					x: abs(before.camera.position.x, after.camera.position.x),
+					y: abs(before.camera.position.y, after.camera.position.y),
+					z: abs(before.camera.position.z, after.camera.position.z)
+				},
+				rotation: {
+					x: abs(before.camera.rotation.x, after.camera.rotation.x),
+					y: abs(before.camera.rotation.y, after.camera.rotation.y),
+					z: abs(before.camera.rotation.z, after.camera.rotation.z)
+				}
+			};
+			var orbitMax = Math.max(orbit.yaw, orbit.pitch, orbit.radius);
+			var cameraMax = Math.max(camera.position.x, camera.position.y, camera.position.z, camera.rotation.x, camera.rotation.y, camera.rotation.z);
+			return {orbit:orbit, camera:camera, orbitMax:orbitMax, cameraMax:cameraMax};
+		}
+		async function proveSceneOrbitInput(sel) {
+			var found = await waitSceneMountCanvas(sel);
+			var mount = found.mount;
+			var canvas = found.canvas;
+			var before = sceneTelemetrySnapshot(mount);
+			var out = {ok:false, handled:false, mount:!!mount, canvas:!!canvas, before:before, after:null, deltas:null, reason:before.reason || ""};
+			if (!canvas || !before.ok) {
+				return out;
+			}
 			var r = canvas.getBoundingClientRect();
-			canvas.dispatchEvent(new PointerEvent("pointerdown", {clientX:r.left+r.width/2, clientY:r.top+r.height/2, bubbles:true}));
-			canvas.dispatchEvent(new PointerEvent("pointermove", {clientX:r.left+r.width/2+40, clientY:r.top+r.height/2+20, bubbles:true}));
-			canvas.dispatchEvent(new PointerEvent("pointerup", {clientX:r.left+r.width/2+40, clientY:r.top+r.height/2+20, bubbles:true}));
-			return true;
+			var startX = r.left + r.width / 2;
+			var startY = r.top + r.height / 2;
+			try {
+				canvas.dispatchEvent(new PointerEvent("pointerdown", {clientX:startX, clientY:startY, bubbles:true, pointerId:1, button:0, buttons:1}));
+				canvas.dispatchEvent(new PointerEvent("pointermove", {clientX:startX+72, clientY:startY+38, bubbles:true, pointerId:1, button:0, buttons:1}));
+				canvas.dispatchEvent(new PointerEvent("pointermove", {clientX:startX+96, clientY:startY+54, bubbles:true, pointerId:1, button:0, buttons:1}));
+				canvas.dispatchEvent(new PointerEvent("pointerup", {clientX:startX+96, clientY:startY+54, bubbles:true, pointerId:1, button:0, buttons:0}));
+				out.handled = true;
+			} catch (e) {
+				out.reason = "dispatch failed";
+				out.error = String(e && (e.message || e)).slice(0, 160);
+				return out;
+			}
+			var changed = await waitFor(function(){
+				var after = sceneTelemetrySnapshot(mount);
+				if (!after.ok) return false;
+				var deltas = telemetryDelta(before, after);
+				if (deltas.orbitMax >= 0.01 && deltas.cameraMax >= 0.01) return {after:after, deltas:deltas};
+				return false;
+			}, 1500, 50);
+			if (changed) {
+				out.ok = true;
+				out.reason = "orbit and camera changed";
+				out.after = changed.after;
+				out.deltas = changed.deltas;
+				return out;
+			}
+			out.after = sceneTelemetrySnapshot(mount);
+			if (out.after && out.after.ok) {
+				out.deltas = telemetryDelta(before, out.after);
+			}
+			out.reason = "orbit or camera unchanged";
+			return out;
 		}
 		async function waitSceneBackendCommit(sel) {
 			var timeout = Number(window.__gosxOuroborosSceneBackendWaitMS || 10000);
@@ -2156,12 +2286,13 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 							selectedID: selected,
 							probe: {available: !!(snapshot && snapshot.available), beforeCount: snapshot ? snapshot.count || 0 : 0, afterCount: probeEvents() ? probeEvents().length : 0},
 							kindEvidenceRequired: true
-						};
-					}
+		};
+		}
 		function routeRoot(){ return qs("[data-route-id]"); }
 		var root = routeRoot();
 		var assertionEvidence = {};
-		proof("route marker", !!root, {routeID: root ? root.getAttribute("data-route-id") : "", path: location.pathname}, "[data-route-id]");
+		var externalR10Route = exactExternalR10WaterPath();
+		proof("route marker", !!root || externalR10Route, {routeID: root ? root.getAttribute("data-route-id") : (externalR10Route ? "R10" : ""), path: location.pathname, external: externalR10Route}, "[data-route-id]");
 		var firstUsable = {name:"unset", ok:false, atMs:now(), payload:{}};
 		switch (routeID) {
 		case "R00":
@@ -2320,30 +2451,24 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 				capabilities: sceneCaps
 			};
 			var sceneMountCanvas = await waitSceneMountCanvas("[data-gosx-scene3d]");
-			var sceneOrbit = dispatchSceneOrbit(sceneMountCanvas.canvas);
-			if (sceneOrbit) {
-				await settle(300);
-			}
+			var sceneOrbit = await proveSceneOrbitInput("[data-gosx-scene3d]");
 			var sceneBackendCommit = await waitSceneBackendCommit("[data-gosx-scene3d]");
 			assertionEvidence.scene3dSelectable.backend = sceneBackendCommit.backend || "";
 			assertionEvidence.scene3dSelectable.renderGPU = sceneBackendCommit.renderGPU || "";
 			assertionEvidence.scene3dSelectable.backendTruth = sceneBackendCommit.truth || null;
 			assertionEvidence.scene3dSelectable.backendCommit = sceneBackendCommit;
 			firstUsable = proof("scene-backend-committed", !!sceneMountCanvas.canvas && !!(assertionEvidence.scene3dSelectable && assertionEvidence.scene3dSelectable.engine && sceneBackendCommit.ok), {canvas:!!sceneMountCanvas.canvas, scene3d:assertionEvidence.scene3dSelectable});
-			proof("scene-orbit-event", sceneOrbit);
+			proof("scene-orbit-state-changed", !!(sceneOrbit && sceneOrbit.ok), sceneOrbit);
 			break;
 		case "R10":
 			var waterMountCanvas = await waitSceneMountCanvas("[data-gosx-scene3d-mounted]");
-			var waterOrbit = dispatchSceneOrbit(waterMountCanvas.canvas);
-			if (waterOrbit) {
-				await settle(300);
-			}
+			var waterOrbit = await proveSceneOrbitInput("[data-gosx-scene3d-mounted]");
 			var waterBackendCommit = await waitSceneBackendCommit("[data-gosx-scene3d-mounted]");
 			var waterAssets = runtimeAssets();
 			var scene3dAsset = waterAssets.some(function(a){ return /bootstrap-feature-scene3d|runtime\.wasm|wasm_exec/.test(a.name); });
 			firstUsable = proof("water-scene-backend-committed", !!waterMountCanvas.mount && !!waterMountCanvas.canvas && waterBackendCommit.ok, {mount:!!waterMountCanvas.mount, canvas:!!waterMountCanvas.canvas, backend:waterBackendCommit.backend, renderGPU:waterBackendCommit.renderGPU, backendTruth:waterBackendCommit.truth || null, backendCommit:waterBackendCommit, pixelManifestRefs:"canonical sample artifacts"});
 			proof("water-runtime-assets", scene3dAsset, {assets: waterAssets.map(function(a){ return a.name; }).filter(function(n){ return /\/gosx\//.test(n); })});
-			proof("water-orbit-event", waterOrbit);
+			proof("water-orbit-state-changed", !!(waterOrbit && waterOrbit.ok), waterOrbit);
 			break;
 		default:
 			if (routeID.indexOf("R09") === 0) {
@@ -2396,7 +2521,7 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 				var videoEntry = videoManifestEntry();
 				assertions[a] = !!(videoEntry && videoEntry.props && videoEntry.props.syncMode === "follow" && videoEntry.props.sync === "/_ouroboros/video-sync" && videoEntry.props.src === "/media/ouroboros-placeholder.mp4");
 				break;
-			case "external reference only": assertions[a] = location.pathname.indexOf("/demos/water") === 0 && !qsa("[data-fixture-local-copy]").length; break;
+			case "external reference only": assertions[a] = exactExternalR10WaterPath(); break;
 			default: assertions[a] = false;
 			}
 		});
@@ -2409,7 +2534,7 @@ func routeStateMachineJS(route FixtureSpec, lane SampleLane) string {
 			if (item === "fixture-local-copy" && location.pathname.indexOf("/demos/water") !== 0) disallowedHits.push(item);
 		});
 		return {
-			routeID: root ? root.getAttribute("data-route-id") : "",
+			routeID: root ? root.getAttribute("data-route-id") : (externalR10Route ? "R10" : ""),
 			path: location.pathname,
 			marker: root ? root.getAttribute("data-marker") : "",
 			capability: root ? root.getAttribute("data-expected-capability") : "",
@@ -3331,11 +3456,12 @@ func browserSourceIdentity(ctx context.Context, opts BrowserBaselineOptions) (So
 
 func CollectBrowserEnvironment(ctx context.Context, opts BrowserBaselineOptions) (EnvironmentReport, error) {
 	selection, chromeErr := perf.ResolveAllocatorSelection(opts.ChromeWebSocketURL)
+	node := resolveNodeExecutable()
 	tools := map[string]string{
 		"go":             commandVersion("go", "version"),
 		"tinygo":         commandVersion("tinygo", "version"),
 		"wasm-opt":       commandVersion("wasm-opt", "--version"),
-		"node":           commandVersion("node", "--version"),
+		"node":           commandVersion(node, "--version"),
 		"canopy":         commandVersion("canopy", "--version"),
 		"gotreesitter":   "linked",
 		"browserVersion": "unknown",
@@ -3356,7 +3482,7 @@ func CollectBrowserEnvironment(ctx context.Context, opts BrowserBaselineOptions)
 		browser["remoteEndpointSHA256"] = selection.RemoteWebSocketURLSHA256
 		browser["closeSemantics"] = "session-only"
 	} else if chromeErr == nil {
-		browser["executable"] = selection.ChromePath
+		browser["executable"] = safeCommandLabel(selection.ChromePath)
 		tools["browserVersion"] = commandVersion(selection.ChromePath, "--version")
 	}
 	env := EnvironmentReport{
@@ -3504,6 +3630,31 @@ func redactRemoteEndpointErrorForOptions(opts BrowserBaselineOptions, err error)
 	return fmt.Errorf("%s", redactRemoteEndpointTextForOptions(opts, err.Error()))
 }
 
+func sanitizeArtifactErrorForOptions(opts BrowserBaselineOptions, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s", sanitizeArtifactTextForOptions(opts, err.Error()))
+}
+
+func sanitizeArtifactTextForOptions(opts BrowserBaselineOptions, text string) string {
+	text = redactRemoteEndpointTextForOptions(opts, text)
+	for _, value := range []string{
+		strings.TrimSpace(os.Getenv("NODE")),
+		strings.TrimSpace(os.Getenv("GOSX_BROWSER_EXECUTABLE")),
+	} {
+		if value == "" {
+			continue
+		}
+		label := safeCommandLabel(value)
+		text = strings.ReplaceAll(text, value, label)
+		if clean := filepath.Clean(value); clean != value {
+			text = strings.ReplaceAll(text, clean, label)
+		}
+	}
+	return text
+}
+
 func redactRemoteEndpointTextForOptions(opts BrowserBaselineOptions, text string) string {
 	redacted := remoteEndpointErrorPattern.ReplaceAllString(text, "remote-cdp-endpoint")
 	raw := strings.TrimSpace(opts.ChromeWebSocketURL)
@@ -3554,7 +3705,11 @@ func remoteEndpointConfigured(opts BrowserBaselineOptions) bool {
 }
 
 func writeRemoteBoundaryFailure(opts BrowserBaselineOptions, err error) {
-	if err == nil || !remoteEndpointConfigured(opts) || strings.TrimSpace(opts.ArtifactRoot) == "" {
+	writeBoundaryFailure(opts, err)
+}
+
+func writeBoundaryFailure(opts BrowserBaselineOptions, err error) {
+	if err == nil || strings.TrimSpace(opts.ArtifactRoot) == "" {
 		return
 	}
 	path := filepath.Join(opts.ArtifactRoot, "failure.json")
@@ -3563,7 +3718,7 @@ func writeRemoteBoundaryFailure(opts BrowserBaselineOptions, err error) {
 	}
 	_ = WriteJSONFile(path, BaselineValidation{
 		Status: "fail",
-		Errors: []string{err.Error()},
+		Errors: []string{sanitizeArtifactTextForOptions(opts, err.Error())},
 	})
 }
 
@@ -3698,12 +3853,11 @@ func (s *fixtureServer) Close() {
 	if s == nil {
 		return
 	}
+	if s.cmd != nil {
+		terminateFixtureCommand(s.cmd)
+	}
 	if s.cancel != nil {
 		s.cancel()
-	}
-	if s.cmd != nil && s.cmd.Process != nil {
-		_ = s.cmd.Process.Kill()
-		_, _ = s.cmd.Process.Wait()
 	}
 }
 
@@ -3759,28 +3913,41 @@ func startGoRunFixtureServer(ctx context.Context, app string, port int, readyPat
 	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
 	cmd.Stdout = log
 	cmd.Stderr = log
+	configureFixtureCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		cancel()
 		return nil, err
 	}
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	deadline := time.Now().Add(30 * time.Second)
+	client := &http.Client{Timeout: 500 * time.Millisecond}
 	for time.Now().Before(deadline) {
-		for _, readyPath := range readyPaths {
-			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+readyPath, nil)
-			resp, err := http.DefaultClient.Do(req)
-			if err == nil {
-				_ = resp.Body.Close()
-				if resp.StatusCode < 500 {
-					return &fixtureServer{cmd: cmd, baseURL: baseURL, cancel: cancel, dir: app, args: []string{"go", "run", "."}, pid: cmd.Process.Pid}, nil
-				}
-			}
+		if fixtureServerReady(ctx, client, baseURL, readyPaths) {
+			return &fixtureServer{cmd: cmd, baseURL: baseURL, cancel: cancel, dir: app, args: []string{"go", "run", "."}, pid: cmd.Process.Pid}, nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	cancel()
-	_ = cmd.Process.Kill()
+	terminateFixtureCommand(cmd)
 	return nil, fmt.Errorf("fixture server did not become ready at %s", baseURL)
+}
+
+func fixtureServerReady(ctx context.Context, client *http.Client, baseURL string, readyPaths []string) bool {
+	if len(readyPaths) == 0 {
+		return false
+	}
+	for _, readyPath := range readyPaths {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+readyPath, nil)
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+			return false
+		}
+	}
+	return true
 }
 
 func freePort() (int, error) {
@@ -3819,6 +3986,25 @@ func logCommand(w io.Writer, name string, args []string) {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", time.Now().UTC().Format(time.RFC3339Nano), name, strings.Join(args, " "))
+}
+
+func resolveNodeExecutable() string {
+	node := strings.TrimSpace(os.Getenv("NODE"))
+	if node == "" {
+		return "node"
+	}
+	return node
+}
+
+func safeCommandLabel(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "command"
+	}
+	if base := filepath.Base(name); base != "." && base != string(filepath.Separator) && base != "" {
+		return base
+	}
+	return name
 }
 
 func logBrowserCommand(w io.Writer, opts BrowserBaselineOptions, name string, args []string) {

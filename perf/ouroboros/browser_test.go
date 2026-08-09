@@ -1376,13 +1376,17 @@ func TestRouteStateMachineAssertionsDoNotUseConstantTruth(t *testing.T) {
 		`waitFor(function(){`,
 		`sharedSignalValue("$ouroboros.echo")`,
 		"waitSceneMountCanvas",
-		"dispatchSceneOrbit",
+		"proveSceneOrbitInput",
+		"scene-orbit-state-changed",
+		"water-orbit-state-changed",
 		"window.__gosxOuroborosSceneBackendWaitMS || 10000",
 		"scene-backend-committed",
 		"data-gosx-scene3d-render-backend-truth",
 		"data-gosx-scene3d-render-gpu",
 		"pixelManifestRefs:\"canonical sample artifacts\"",
 		"http://gosx.invalid/__gosx_ouroboros_harness/route-state-machine.js",
+		"pointerId:1",
+		"externalR10Route",
 	} {
 		if !strings.Contains(js, want) {
 			t.Fatalf("routeStateMachineJS missing %q", want)
@@ -1395,6 +1399,9 @@ func TestRouteStateMachineAssertionsDoNotUseConstantTruth(t *testing.T) {
 		"msg.payload",
 		"scene-backend-nonblank-frame",
 		"water-scene-nonblank-frame",
+		"dispatchSceneOrbit",
+		"scene-orbit-event",
+		"water-orbit-event",
 	} {
 		if strings.Contains(js, forbidden) {
 			t.Fatalf("routeStateMachineJS still contains weak proof %q", forbidden)
@@ -1656,6 +1663,17 @@ func r08BackendMockPage(setup string) string {
 <script id="gosx-manifest" type="application/json">{"engines":[{"id":"scene","kind":"surface","component":"GoSXScene3D","capabilities":["webgpu","webgl"],"props":{}}]}</script>
 <div id="scene" data-gosx-scene3d="true" style="width:320px;height:180px"><canvas width="320" height="180"></canvas></div>
 <script>
+var orbit = {yaw:1, pitch:0.5, radius:8};
+var camera = {position:{x:0,y:2,z:8}, rotation:{x:0.1,y:0.2,z:0.3}};
+window.__gosx_scene3d_telemetry = function(){ return {orbit:orbit, camera:camera}; };
+var dragging = false;
+document.addEventListener("pointerdown", function(event){ if (event.target && event.target.tagName === "CANVAS") dragging = true; });
+document.addEventListener("pointermove", function(){
+	if (!dragging) return;
+	orbit = {yaw:orbit.yaw+0.15, pitch:orbit.pitch+0.07, radius:orbit.radius};
+	camera = {position:{x:camera.position.x+0.2,y:camera.position.y,z:camera.position.z-0.2}, rotation:{x:camera.rotation.x,y:camera.rotation.y+0.2,z:camera.rotation.z}};
+});
+document.addEventListener("pointerup", function(){ dragging = false; });
 function commitSceneBackend(backend, truth) {
 	var m = document.querySelector("[data-gosx-scene3d]");
 	m.setAttribute("data-gosx-scene3d-backend", backend);
@@ -2222,6 +2240,108 @@ func TestExternalR10RequiresDocsBaseURL(t *testing.T) {
 	}
 }
 
+func TestResolveNodeExecutableHonorsTrimmedNODE(t *testing.T) {
+	t.Setenv("NODE", "  /tmp/custom-node  ")
+	if got := resolveNodeExecutable(); got != "/tmp/custom-node" {
+		t.Fatalf("resolveNodeExecutable = %q", got)
+	}
+	t.Setenv("NODE", "   ")
+	if got := resolveNodeExecutable(); got != "node" {
+		t.Fatalf("resolveNodeExecutable default = %q", got)
+	}
+}
+
+func TestWaterProfileUsesResolvedNodeSafeLogAndR10TimeoutFloor(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	fakeNode := filepath.Join(dir, "fake-node")
+	script := `#!/bin/sh
+out=""
+timeout=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --out-dir) shift; out="$1" ;;
+    --timeout-ms) shift; timeout="$1" ;;
+  esac
+  shift
+done
+mkdir -p "$out"
+printf '{"validation":{"passed":true,"failures":[]},"timeoutMS":%s}\n' "$timeout" > "$out/water-profile-evidence.json"
+`
+	if err := os.WriteFile(fakeNode, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NODE", "  "+fakeNode+"  ")
+	opts := BrowserBaselineOptions{
+		RepoRoot:       root,
+		ArtifactRoot:   filepath.Join(dir, "out"),
+		Timeout:        25 * time.Second,
+		ViewportWidth:  320,
+		ViewportHeight: 180,
+	}
+	var log bytes.Buffer
+	ref, err := runWaterProfileEvidence(t.Context(), opts, FixtureSpec{ID: "R10"}, "http://127.0.0.1:3000/demos/water", &log)
+	if err != nil {
+		t.Fatalf("runWaterProfileEvidence: %v", err)
+	}
+	if ref != "external/R10/water-profile/water-profile-evidence.json" {
+		t.Fatalf("water profile ref = %q", ref)
+	}
+	if strings.Contains(log.String(), fakeNode) {
+		t.Fatalf("command log leaked NODE path: %q", log.String())
+	}
+	if !strings.Contains(log.String(), "fake-node") {
+		t.Fatalf("command log missing safe node label: %q", log.String())
+	}
+	body, err := os.ReadFile(filepath.Join(opts.ArtifactRoot, ref))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"timeoutMS":60000`) {
+		t.Fatalf("water timeout was not floored: %s", body)
+	}
+}
+
+func TestEffectiveRouteTimeoutFloorsOnlyR10(t *testing.T) {
+	opts := BrowserBaselineOptions{Timeout: 25 * time.Second}
+	if got := effectiveRouteTimeout(opts, FixtureSpec{ID: "R10"}); got != 60*time.Second {
+		t.Fatalf("R10 timeout = %s", got)
+	}
+	if got := effectiveRouteTimeout(opts, FixtureSpec{ID: "R08"}); got != 25*time.Second {
+		t.Fatalf("R08 timeout = %s", got)
+	}
+	if got := effectiveRouteTimeout(BrowserBaselineOptions{Timeout: 75 * time.Second}, FixtureSpec{ID: "R10"}); got != 75*time.Second {
+		t.Fatalf("large R10 timeout = %s", got)
+	}
+}
+
+func TestFixtureServerReadyRequiresEveryPath2xxOr3xx(t *testing.T) {
+	handler := http.NewServeMux()
+	handler.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler.HandleFunc("/demos/water", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/demos/water/", http.StatusTemporaryRedirect)
+	})
+	handler.HandleFunc("/missing", func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	if !fixtureServerReady(t.Context(), client, server.URL, []string{"/readyz", "/demos/water"}) {
+		t.Fatal("ready paths with 2xx and 3xx did not pass")
+	}
+	if fixtureServerReady(t.Context(), client, server.URL, []string{"/readyz", "/missing"}) {
+		t.Fatal("readiness accepted a missing docs path")
+	}
+}
+
 func TestExternalR10ServerPlanDoesNotRequireCorpusBaseURL(t *testing.T) {
 	routes := []FixtureSpec{{ID: "R10", Route: "examples/gosx-docs:/demos/water", FixtureApp: "examples/gosx-docs", External: true}}
 	server, err := maybeStartFixtureServer(t.Context(), BrowserBaselineOptions{}, routes, io.Discard)
@@ -2241,6 +2361,69 @@ func TestExternalR10ServerPlanDoesNotRequireCorpusBaseURL(t *testing.T) {
 	}
 	if server != nil {
 		t.Fatal("provided docs base URL started managed docs server")
+	}
+}
+
+func TestBoundaryFailureWritesLocalSanitizedFailureOnce(t *testing.T) {
+	dir := t.TempDir()
+	node := filepath.Join(dir, "private-node")
+	t.Setenv("NODE", node)
+	opts := BrowserBaselineOptions{ArtifactRoot: filepath.Join(dir, "out")}
+	writeBoundaryFailure(opts, fmt.Errorf("exec %s: no such file or directory", node))
+	path := filepath.Join(opts.ArtifactRoot, "failure.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), node) || strings.Contains(string(body), dir) {
+		t.Fatalf("failure leaked local executable path: %s", body)
+	}
+	if !strings.Contains(string(body), "private-node") {
+		t.Fatalf("failure omitted safe command label: %s", body)
+	}
+	writeBoundaryFailure(opts, errors.New("second failure"))
+	body2, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body2) != string(body) {
+		t.Fatalf("failure was overwritten:\nfirst=%s\nsecond=%s", body, body2)
+	}
+}
+
+func TestR10ExternalEvidenceSanitizesMissingNodePath(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	node := filepath.Join(dir, "missing-node")
+	t.Setenv("NODE", node)
+	opts := BrowserBaselineOptions{
+		RepoRoot:       root,
+		ArtifactRoot:   filepath.Join(dir, "out"),
+		DocsBaseURL:    "http://127.0.0.1:3000",
+		Samples:        "smoke",
+		Timeout:        time.Millisecond,
+		ViewportWidth:  320,
+		ViewportHeight: 180,
+	}
+	route := FixtureSpec{ID: "R10", Route: "examples/gosx-docs:/demos/water", FixtureApp: "examples/gosx-docs", External: true}
+	ev := collectR10ExternalEvidence(t.Context(), opts, route, nil, io.Discard)
+	if len(ev.Errors) == 0 {
+		t.Fatal("expected missing NODE error")
+	}
+	body, err := os.ReadFile(filepath.Join(opts.ArtifactRoot, "external", "R10", "evidence.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range append(ev.Errors, string(body)) {
+		if strings.Contains(text, node) || strings.Contains(text, dir) {
+			t.Fatalf("external evidence leaked NODE path: %s", text)
+		}
+		if !strings.Contains(text, "missing-node") {
+			t.Fatalf("external evidence omitted safe label: %s", text)
+		}
 	}
 }
 
@@ -2267,6 +2450,188 @@ func TestR10ExternalEvidenceFailsClosed(t *testing.T) {
 	})
 	if len(missing) != 0 {
 		t.Fatalf("complete R10 evidence failed: %v", missing)
+	}
+}
+
+func TestRouteStateMachineR10ExternalRouteMarker(t *testing.T) {
+	d := requireOuroborosBrowserDriver(t, 45*time.Second)
+	completeExternal := ExternalRouteEvidence{
+		RouteID:         "R10",
+		URL:             "http://127.0.0.1:4000/demos/water",
+		BaseURL:         "http://127.0.0.1:4000",
+		WaterProfileRef: "external/R10/water-profile/water-profile-evidence.json",
+	}
+	tests := []struct {
+		name          string
+		path          string
+		body          string
+		wantMissing   []string
+		wantNoMissing []string
+		wantProof     string
+		wantPass      bool
+	}{
+		{
+			name:          "external_water_path_without_fixture_root",
+			path:          "/demos/water",
+			body:          r10ExternalMarkerMockPage(r10ExternalMarkerMockOptions{Telemetry: true, Handler: true}),
+			wantNoMissing: []string{"route marker", "routePlanAssertion:external reference only", "water-orbit-state-changed"},
+			wantProof:     "water-orbit-state-changed",
+			wantPass:      true,
+		},
+		{
+			name:        "wrong_path_does_not_fabricate_marker",
+			path:        "/demos/not-water",
+			body:        r10ExternalMarkerMockPage(r10ExternalMarkerMockOptions{Telemetry: true, Handler: true}),
+			wantMissing: []string{"route marker", "routePlanAssertion:external reference only"},
+		},
+		{
+			name:        "water_copy_prefix_rejected",
+			path:        "/demos/water-copy",
+			body:        r10ExternalMarkerMockPage(r10ExternalMarkerMockOptions{Telemetry: true, Handler: true}),
+			wantMissing: []string{"route marker", "routePlanAssertion:external reference only"},
+		},
+		{
+			name:        "waterfall_prefix_rejected",
+			path:        "/demos/waterfall",
+			body:        r10ExternalMarkerMockPage(r10ExternalMarkerMockOptions{Telemetry: true, Handler: true}),
+			wantMissing: []string{"route marker", "routePlanAssertion:external reference only"},
+		},
+		{
+			name:        "fixture_local_copy_does_not_fabricate_marker",
+			path:        "/demos/water",
+			body:        r10ExternalMarkerMockPage(r10ExternalMarkerMockOptions{LocalCopy: true, Telemetry: true, Handler: true}),
+			wantMissing: []string{"route marker", "routePlanAssertion:external reference only"},
+		},
+		{
+			name:        "no_telemetry_fails_orbit",
+			path:        "/demos/water",
+			body:        r10ExternalMarkerMockPage(r10ExternalMarkerMockOptions{}),
+			wantMissing: []string{"water-orbit-state-changed"},
+			wantProof:   "water-orbit-state-changed",
+		},
+		{
+			name:        "finite_telemetry_without_handler_fails_orbit",
+			path:        "/demos/water",
+			body:        r10ExternalMarkerMockPage(r10ExternalMarkerMockOptions{Telemetry: true}),
+			wantMissing: []string{"water-orbit-state-changed"},
+			wantProof:   "water-orbit-state-changed",
+		},
+		{
+			name:        "backend_only_canvas_fails_orbit",
+			path:        "/demos/water",
+			body:        r10ExternalMarkerMockPage(r10ExternalMarkerMockOptions{BackendOnly: true}),
+			wantMissing: []string{"water-orbit-state-changed"},
+			wantProof:   "water-orbit-state-changed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer srv.Close()
+			if err := d.Navigate(srv.URL + tt.path); err != nil {
+				t.Fatalf("Navigate: %v", err)
+			}
+			if err := d.WaitReady(); err != nil {
+				t.Fatalf("WaitReady: %v", err)
+			}
+			bundle, _ := executeRouteStateMachine(d, r10ExternalMarkerRoute(), completeExternal, SampleLaneProduct)
+			for _, want := range tt.wantMissing {
+				if !containsString(bundle.MissingRequired, want) {
+					t.Fatalf("missing required = %v, want %q", bundle.MissingRequired, want)
+				}
+			}
+			for _, forbidden := range tt.wantNoMissing {
+				if containsString(bundle.MissingRequired, forbidden) {
+					t.Fatalf("missing required contains %q: %v", forbidden, bundle.MissingRequired)
+				}
+			}
+			if tt.wantProof != "" {
+				proof := requireProofByName(t, bundle, tt.wantProof)
+				if proof.OK != tt.wantPass {
+					t.Fatalf("%s proof OK = %v, want %v payload=%+v", tt.wantProof, proof.OK, tt.wantPass, proof.Payload)
+				}
+				if tt.wantPass {
+					deltas, ok := proof.Payload["deltas"].(map[string]any)
+					if !ok || numberFromPayload(deltas, "orbitMax") < 0.01 || numberFromPayload(deltas, "cameraMax") < 0.01 {
+						t.Fatalf("orbit proof lacks nonzero deltas: %+v", proof.Payload)
+					}
+				}
+			}
+		})
+	}
+}
+
+func r10ExternalMarkerRoute() FixtureSpec {
+	return FixtureSpec{
+		ID:                  "R10",
+		Route:               "examples/gosx-docs:/demos/water",
+		External:            true,
+		RoutePlanAssertions: []string{"external reference only"},
+	}
+}
+
+type r10ExternalMarkerMockOptions struct {
+	LocalCopy   bool
+	Telemetry   bool
+	Handler     bool
+	BackendOnly bool
+}
+
+func r10ExternalMarkerMockPage(opts r10ExternalMarkerMockOptions) string {
+	local := ""
+	if opts.LocalCopy {
+		local = `<div data-fixture-local-copy="true"></div>`
+	}
+	telemetry := ""
+	if opts.Telemetry {
+		telemetry = `
+<script>
+var orbit = {yaw:1, pitch:0.5, radius:8};
+var camera = {x:0,y:2,z:8,rotationX:0.1,rotationY:0.2,rotationZ:0.3};
+window.__gosx_scene3d_telemetry = function(){ return {orbit:orbit, camera:camera}; };
+</script>`
+	}
+	handler := ""
+	if opts.Handler {
+		handler = `
+<script>
+var dragging = false;
+var canvas = document.querySelector("canvas");
+canvas.addEventListener("pointerdown", function(){ dragging = true; });
+canvas.addEventListener("pointermove", function(){
+	if (!dragging) return;
+	orbit = {yaw:orbit.yaw+0.15, pitch:orbit.pitch+0.07, radius:orbit.radius};
+	camera = {x:camera.x+0.2,y:camera.y,z:camera.z-0.2,rotationX:camera.rotationX,rotationY:camera.rotationY+0.2,rotationZ:camera.rotationZ};
+});
+canvas.addEventListener("pointerup", function(){ dragging = false; });
+</script>`
+	}
+	if opts.BackendOnly {
+		telemetry = ""
+		handler = ""
+	}
+	return `<!doctype html><html><head><title>Water | GoSX</title></head><body>` + local + `
+<div data-gosx-scene3d-mounted="true" data-gosx-scene3d-backend="webgpu" data-gosx-scene3d-render-gpu="true" data-gosx-scene3d-render-backend-truth='{"backend":"webgpu","gpu":true,"deviceLost":false,"initError":"","lastError":""}'>
+<canvas width="320" height="180" style="width:320px;height:180px"></canvas>
+</div>
+` + telemetry + handler + `
+</body></html>`
+}
+
+func numberFromPayload(values map[string]any, key string) float64 {
+	switch value := values[key].(type) {
+	case float64:
+		return value
+	case int:
+		return float64(value)
+	case json.Number:
+		out, _ := value.Float64()
+		return out
+	default:
+		return 0
 	}
 }
 
