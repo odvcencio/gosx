@@ -86,6 +86,7 @@ type PixelEvidenceManifest struct {
 	HardwareClassification string                 `json:"hardwareClassification"`
 	Browser                BrowserEvidence        `json:"browser"`
 	Viewport               ViewportEvidence       `json:"viewport"`
+	SettlePolicy           PixelSettlePolicy      `json:"settlePolicy"`
 	Selected               SelectedSceneEvidence  `json:"selected"`
 	States                 []PixelStateEvidence   `json:"states"`
 	Failures               []string               `json:"failures,omitempty"`
@@ -132,6 +133,7 @@ type ViewportEvidence struct {
 
 type PixelStateEvidence struct {
 	State    string                 `json:"state"`
+	Settle   PixelSettleResult      `json:"settle"`
 	Captures []PixelCaptureEvidence `json:"captures"`
 }
 
@@ -155,6 +157,7 @@ type PixelCaptureEvidence struct {
 	SoftwareRaster     bool                      `json:"softwareRaster"`
 	HardwareClass      string                    `json:"hardwareClass"`
 	FrameSeq           int                       `json:"frameSeq"`
+	RenderLoop         RenderLoopEvidence        `json:"renderLoop"`
 	Post               PostEvidence              `json:"post"`
 	ShaderDiagnostics  ShaderDiagnosticsEvidence `json:"shaderDiagnostics"`
 	WebGPU             WebGPUEvidence            `json:"webgpu"`
@@ -212,6 +215,30 @@ type PixelThresholdEvidence struct {
 	EffectivePct float64 `json:"effectivePct"`
 }
 
+type PixelSettlePolicy struct {
+	WarmupFrames                 int  `json:"warmupFrames"`
+	RuntimeRenderLoopRequired    bool `json:"runtimeRenderLoopRequired"`
+	StaticStoppedAllowsNoAdvance bool `json:"staticStoppedAllowsNoAdvance"`
+}
+
+type PixelSettleResult struct {
+	RequiredFrame   int                `json:"requiredFrame"`
+	ObservedFrame   int                `json:"observedFrame"`
+	AdvanceRequired bool               `json:"advanceRequired"`
+	StaticAccepted  bool               `json:"staticAccepted"`
+	RenderLoop      RenderLoopEvidence `json:"renderLoop"`
+}
+
+type RenderLoopEvidence struct {
+	State                string `json:"state"`
+	Reason               string `json:"reason"`
+	Active               bool   `json:"active"`
+	WantsAnimation       bool   `json:"wantsAnimation"`
+	StateParsed          bool   `json:"stateParsed"`
+	WantsAnimationParsed bool   `json:"wantsAnimationParsed"`
+	Valid                bool   `json:"valid"`
+}
+
 type pagePixelMetadata struct {
 	DevicePixelRatio float64               `json:"devicePixelRatio"`
 	EffectiveDPR     float64               `json:"effectiveDPR"`
@@ -219,6 +246,7 @@ type pagePixelMetadata struct {
 	Selected         SelectedSceneEvidence `json:"selected"`
 	Mount            sceneMountBackend     `json:"mount"`
 	Truth            sceneTruthEvidence    `json:"truth"`
+	RenderLoop       RenderLoopEvidence    `json:"renderLoop"`
 	WebGPU           WebGPUEvidence        `json:"webgpu"`
 	WebGL            WebGLEvidence         `json:"webgl"`
 	UserAgent        string                `json:"userAgent"`
@@ -364,27 +392,31 @@ func CapturePixelEvidence(ctx context.Context, url string, opts PixelEvidenceOpt
 		return manifest, err
 	}
 
-	initialFrame, err := waitForSceneReady(runCtx, runOpts, &manifest, 1)
+	initialSettle, err := waitForSceneReady(runCtx, runOpts, &manifest, pixelSettleTarget{MinFrame: 1})
 	if err != nil {
 		return writePixelManifestWithError(manifest, runOpts, err)
 	}
+	initialFrame := initialSettle.ObservedFrame
 	for _, state := range []struct {
-		name     string
-		wait     time.Duration
-		minFrame int
+		name            string
+		wait            time.Duration
+		minFrame        int
+		allowStatic     bool
+		advanceRequired bool
 	}{
 		{name: "initial", wait: opts.InitialWait, minFrame: initialFrame},
-		{name: "settled", wait: opts.SettledWait, minFrame: initialFrame + opts.WarmupFrames},
+		{name: "settled", wait: opts.SettledWait, minFrame: initialFrame + opts.WarmupFrames, allowStatic: true, advanceRequired: true},
 	} {
 		if state.wait > 0 {
 			if err := chromedp.Run(runCtx, chromedp.Sleep(state.wait)); err != nil {
 				return writePixelManifestWithError(manifest, runOpts, fmt.Errorf("visual: wait %s: %w", state.name, err))
 			}
 		}
-		if _, err := waitForSceneReady(runCtx, runOpts, &manifest, state.minFrame); err != nil {
+		settle, err := waitForSceneReady(runCtx, runOpts, &manifest, pixelSettleTarget{MinFrame: state.minFrame, AllowStaticStopped: state.allowStatic, AdvanceRequired: state.advanceRequired})
+		if err != nil {
 			return writePixelManifestWithError(manifest, runOpts, fmt.Errorf("visual: %s readiness: %w", state.name, err))
 		}
-		stateEvidence := PixelStateEvidence{State: state.name}
+		stateEvidence := PixelStateEvidence{State: state.name, Settle: settle}
 		var withinRunBaseline []byte
 		var withinRunBaselinePath string
 		for i := 0; i < opts.Samples; i++ {
@@ -430,7 +462,7 @@ func CapturePixelEvidence(ctx context.Context, url string, opts PixelEvidenceOpt
 	}
 	manifest.Failures = append(manifest.Failures, validateManifestCertification(opts, manifest)...)
 	if opts.Mode == PixelModeCandidateComparison && baseline != nil {
-		manifest.Failures = append(manifest.Failures, validateCandidateAgainstBaseline(manifest, baseline.Manifest)...)
+		manifest.Failures = append(manifest.Failures, validateCandidateAgainstBaseline(opts, manifest, baseline.Manifest)...)
 	}
 	manifest.Certified = len(manifest.Failures) == 0 && opts.Mode == PixelModeRecordBaseline
 	if len(manifest.Failures) > 0 {
@@ -467,6 +499,11 @@ func newPixelManifest(url string, opts PixelEvidenceOptions) PixelEvidenceManife
 			RequestedPct: opts.ThresholdPct,
 			EffectivePct: opts.ThresholdPct,
 		},
+		SettlePolicy: PixelSettlePolicy{
+			WarmupFrames:                 opts.WarmupFrames,
+			RuntimeRenderLoopRequired:    true,
+			StaticStoppedAllowsNoAdvance: true,
+		},
 		States: []PixelStateEvidence{},
 		Selected: SelectedSceneEvidence{
 			CanvasSelector: opts.CanvasSelector,
@@ -495,6 +532,9 @@ func validatePixelOptions(opts PixelEvidenceOptions) error {
 	}
 	if opts.Samples > MaxPixelEvidenceSamples {
 		return fmt.Errorf("visual: O0.2 pixel evidence allows at most %d samples per state", MaxPixelEvidenceSamples)
+	}
+	if opts.WarmupFrames < 0 {
+		return fmt.Errorf("visual: O0.2 pixel evidence warmup frames must not be negative")
 	}
 	if opts.Mode == PixelModeCandidateComparison && strings.TrimSpace(opts.BaselineRoot) == "" {
 		return fmt.Errorf("visual: candidate comparison requires BaselineRoot")
@@ -623,28 +663,57 @@ func navigatePixelPage(ctx context.Context, url string, opts PixelEvidenceOption
 	return nil
 }
 
-func waitForSceneReady(ctx context.Context, opts PixelEvidenceOptions, manifest *PixelEvidenceManifest, minFrame int) (int, error) {
+type pixelSettleTarget struct {
+	MinFrame           int
+	AllowStaticStopped bool
+	AdvanceRequired    bool
+}
+
+func waitForSceneReady(ctx context.Context, opts PixelEvidenceOptions, manifest *PixelEvidenceManifest, target pixelSettleTarget) (PixelSettleResult, error) {
 	deadline := time.Now().Add(opts.Timeout)
 	var last pagePixelMetadata
+	var lastValidation error
 	for time.Now().Before(deadline) {
 		meta, err := readPixelMetadata(ctx, opts)
 		if err == nil {
 			last = meta
 			recordRuntimeObservedBackend(manifest, meta)
 			if mismatch := runtimeObservedBackendMismatch(opts, meta); mismatch != "" {
-				return 0, fmt.Errorf("visual: %s", mismatch)
+				return PixelSettleResult{}, fmt.Errorf("visual: %s", mismatch)
 			}
-			if len(meta.Errors) == 0 && meta.Truth.FrameSeq >= minFrame && meta.Truth.Backend != "" {
-				if err := validateSelectedMeta(opts, meta); err == nil {
-					return meta.Truth.FrameSeq, nil
+			lastValidation = validateSelectedMeta(opts, meta)
+			if len(meta.Errors) == 0 && meta.Truth.Backend != "" && lastValidation == nil {
+				if meta.Truth.FrameSeq >= target.MinFrame {
+					return PixelSettleResult{
+						RequiredFrame:   target.MinFrame,
+						ObservedFrame:   meta.Truth.FrameSeq,
+						AdvanceRequired: target.AdvanceRequired,
+						RenderLoop:      meta.RenderLoop,
+					}, nil
+				}
+				if target.AllowStaticStopped && renderLoopIsStaticStopped(meta.RenderLoop) && meta.Truth.FrameSeq > 0 {
+					return PixelSettleResult{
+						RequiredFrame:   target.MinFrame,
+						ObservedFrame:   meta.Truth.FrameSeq,
+						AdvanceRequired: false,
+						StaticAccepted:  true,
+						RenderLoop:      meta.RenderLoop,
+					}, nil
 				}
 			}
 		}
 		if err := chromedp.Run(ctx, chromedp.Sleep(50*time.Millisecond)); err != nil {
-			return 0, err
+			break
 		}
 	}
-	return 0, fmt.Errorf("visual: scene did not reach frame %d for selector %q; last frame=%d errors=%v", minFrame, opts.CanvasSelector, last.Truth.FrameSeq, last.Errors)
+	if lastValidation != nil {
+		return PixelSettleResult{}, fmt.Errorf("visual: scene did not reach frame %d for selector %q; last frame=%d renderLoop=%s/%s wantsAnimation=%v validation=%v errors=%v", target.MinFrame, opts.CanvasSelector, last.Truth.FrameSeq, last.RenderLoop.State, last.RenderLoop.Reason, last.RenderLoop.WantsAnimation, lastValidation, last.Errors)
+	}
+	return PixelSettleResult{}, fmt.Errorf("visual: scene did not reach frame %d for selector %q; last frame=%d renderLoop=%s/%s wantsAnimation=%v errors=%v", target.MinFrame, opts.CanvasSelector, last.Truth.FrameSeq, last.RenderLoop.State, last.RenderLoop.Reason, last.RenderLoop.WantsAnimation, last.Errors)
+}
+
+func renderLoopIsStaticStopped(loop RenderLoopEvidence) bool {
+	return len(validateRenderLoopEvidence(loop)) == 0 && !loop.Active && !loop.WantsAnimation && loop.State == "stopped" && loop.Reason == "static"
 }
 
 func recordRuntimeObservedBackend(manifest *PixelEvidenceManifest, meta pagePixelMetadata) {
@@ -743,6 +812,7 @@ func capturePixelEvidenceSample(ctx context.Context, opts PixelEvidenceOptions, 
 		SoftwareRaster:     software,
 		HardwareClass:      class,
 		FrameSeq:           meta.Truth.FrameSeq,
+		RenderLoop:         meta.RenderLoop,
 		Post:               meta.Truth.Post,
 		ShaderDiagnostics:  meta.Truth.ShaderDiagnostics,
 		WebGPU:             mergeWebGPU(meta.WebGPU, meta.Truth),
@@ -775,6 +845,12 @@ func validateSelectedMeta(opts PixelEvidenceOptions, meta pagePixelMetadata) err
 	}
 	if meta.Truth.FallbackReason != "" {
 		return fmt.Errorf("visual: selected mount has fallback reason %q", meta.Truth.FallbackReason)
+	}
+	if !meta.RenderLoop.Valid {
+		return fmt.Errorf("visual: selected mount has missing or malformed render-loop telemetry")
+	}
+	if failures := validateRenderLoopEvidence(meta.RenderLoop); len(failures) > 0 {
+		return fmt.Errorf("visual: selected mount has malformed render-loop telemetry: %s", strings.Join(failures, "; "))
 	}
 	return checkBackendRequirement("O0.2 pixel capture", opts.Backend, []sceneMountBackend{meta.Mount})
 }
@@ -843,6 +919,12 @@ func validateCertifiedCapture(opts PixelEvidenceOptions, capture PixelCaptureEvi
 	if capture.FrameSeq <= 0 {
 		failures = append(failures, fmt.Sprintf("%s has no rendered frame sequence", capture.Path))
 	}
+	if !capture.RenderLoop.Valid {
+		failures = append(failures, fmt.Sprintf("%s has missing or malformed render-loop telemetry", capture.Path))
+	}
+	for _, failure := range validateRenderLoopEvidence(capture.RenderLoop) {
+		failures = append(failures, fmt.Sprintf("%s has malformed render-loop telemetry: %s", capture.Path, failure))
+	}
 	return failures
 }
 
@@ -868,6 +950,8 @@ func validateManifestCertification(opts PixelEvidenceOptions, manifest PixelEvid
 	if opts.Mode != PixelModeRecordBaseline {
 		return failures
 	}
+	failures = append(failures, validateSettlePolicy(opts, manifest)...)
+	failures = append(failures, validateManifestSettleRelations(opts, manifest)...)
 	if manifest.HardwareClassification != "hardware-webgpu" && manifest.HardwareClassification != "hardware-webgl" && manifest.HardwareClassification != "mixed-hardware" {
 		failures = append(failures, "record-baseline did not run on certified hardware")
 	}
@@ -886,9 +970,121 @@ func validateManifestCertification(opts PixelEvidenceOptions, manifest PixelEvid
 		if len(state.Captures) < 3 {
 			failures = append(failures, fmt.Sprintf("%s has %d captures, want at least 3", want, len(state.Captures)))
 		}
+		failures = append(failures, validateStateSettle(want, *state)...)
 		for _, capture := range state.Captures {
 			if capture.Comparison != nil && !capture.Comparison.Passed {
 				failures = append(failures, fmt.Sprintf("%s comparison failed for %s", want, capture.Path))
+			}
+		}
+	}
+	return failures
+}
+
+func validateSettlePolicy(opts PixelEvidenceOptions, manifest PixelEvidenceManifest) []string {
+	var failures []string
+	if manifest.SettlePolicy.WarmupFrames != opts.WarmupFrames {
+		failures = append(failures, fmt.Sprintf("settlePolicy warmupFrames=%d, want %d", manifest.SettlePolicy.WarmupFrames, opts.WarmupFrames))
+	}
+	if !manifest.SettlePolicy.RuntimeRenderLoopRequired {
+		failures = append(failures, "settlePolicy must require runtime render-loop telemetry")
+	}
+	if !manifest.SettlePolicy.StaticStoppedAllowsNoAdvance {
+		failures = append(failures, "settlePolicy must record static stopped no-advance support")
+	}
+	return failures
+}
+
+func validateRenderLoopEvidence(loop RenderLoopEvidence) []string {
+	var failures []string
+	if !loop.Valid {
+		failures = append(failures, "valid=false")
+	}
+	if !loop.StateParsed {
+		failures = append(failures, "stateParsed=false")
+	}
+	switch loop.State {
+	case "active":
+		if !loop.Active {
+			failures = append(failures, "state=active but active=false")
+		}
+	case "stopped":
+		if loop.Active {
+			failures = append(failures, "state=stopped but active=true")
+		}
+	default:
+		failures = append(failures, "state must be active or stopped")
+	}
+	if !loop.WantsAnimationParsed {
+		failures = append(failures, "wantsAnimationParsed=false")
+	}
+	if strings.TrimSpace(loop.Reason) == "" {
+		failures = append(failures, "reason is empty")
+	}
+	return failures
+}
+
+func validateStateSettle(stateName string, state PixelStateEvidence) []string {
+	var failures []string
+	if state.Settle.RequiredFrame <= 0 {
+		failures = append(failures, stateName+" settle requiredFrame must be positive")
+	}
+	if state.Settle.ObservedFrame <= 0 {
+		failures = append(failures, stateName+" settle observedFrame must be positive")
+	}
+	if !state.Settle.RenderLoop.Valid {
+		failures = append(failures, stateName+" settle has missing or malformed render-loop telemetry")
+	}
+	for _, failure := range validateRenderLoopEvidence(state.Settle.RenderLoop) {
+		failures = append(failures, stateName+" settle has malformed render-loop telemetry: "+failure)
+	}
+	if stateName != "settled" && state.Settle.StaticAccepted {
+		failures = append(failures, stateName+" settle must not use static acceptance")
+	}
+	if state.Settle.StaticAccepted {
+		if !renderLoopIsStaticStopped(state.Settle.RenderLoop) {
+			failures = append(failures, stateName+" settle static acceptance is not backed by static stopped telemetry")
+		}
+		if state.Settle.AdvanceRequired {
+			failures = append(failures, stateName+" settle static acceptance must not require frame advance")
+		}
+		if state.Settle.ObservedFrame >= state.Settle.RequiredFrame {
+			failures = append(failures, stateName+" settle static acceptance is only valid when observedFrame is below requiredFrame")
+		}
+		return failures
+	}
+	if state.Settle.ObservedFrame < state.Settle.RequiredFrame {
+		failures = append(failures, fmt.Sprintf("%s settle observedFrame=%d below requiredFrame=%d", stateName, state.Settle.ObservedFrame, state.Settle.RequiredFrame))
+	}
+	if stateName == "settled" && state.Settle.RequiredFrame > 1 && !state.Settle.AdvanceRequired {
+		failures = append(failures, stateName+" settle must require frame advance unless static acceptance is recorded")
+	}
+	return failures
+}
+
+func validateManifestSettleRelations(opts PixelEvidenceOptions, manifest PixelEvidenceManifest) []string {
+	var failures []string
+	initial := findPixelState(manifest, "initial")
+	settled := findPixelState(manifest, "settled")
+	if initial == nil || settled == nil {
+		return failures
+	}
+	if initial.Settle.StaticAccepted {
+		failures = append(failures, "initial settle must not use static acceptance")
+	}
+	if initial.Settle.AdvanceRequired {
+		failures = append(failures, "initial settle must not require frame advance")
+	}
+	wantSettledRequired := initial.Settle.RequiredFrame + opts.WarmupFrames
+	if settled.Settle.RequiredFrame != wantSettledRequired {
+		failures = append(failures, fmt.Sprintf("settled settle requiredFrame=%d, want initial requiredFrame %d + warmupFrames %d = %d", settled.Settle.RequiredFrame, initial.Settle.RequiredFrame, opts.WarmupFrames, wantSettledRequired))
+	}
+	for _, state := range []PixelStateEvidence{*initial, *settled} {
+		for _, capture := range state.Captures {
+			if capture.FrameSeq < state.Settle.ObservedFrame {
+				failures = append(failures, fmt.Sprintf("%s capture %d frameSeq=%d below settle observedFrame=%d", state.State, capture.Index, capture.FrameSeq, state.Settle.ObservedFrame))
+			}
+			if state.State == "settled" && state.Settle.StaticAccepted && !renderLoopIsStaticStopped(capture.RenderLoop) {
+				failures = append(failures, fmt.Sprintf("settled capture %d does not carry exact static stopped telemetry", capture.Index))
 			}
 		}
 	}
@@ -1129,6 +1325,8 @@ func validateCanonicalBaselineManifest(root string, opts PixelEvidenceOptions, m
 	if manifest.HardwareClassification != "hardware-webgpu" && manifest.HardwareClassification != "hardware-webgl" && manifest.HardwareClassification != "mixed-hardware" {
 		failures = append(failures, "baseline hardware class is not certified hardware")
 	}
+	failures = append(failures, validateSettlePolicy(opts, manifest)...)
+	failures = append(failures, validateManifestSettleRelations(opts, manifest)...)
 	if len(manifest.Failures) > 0 {
 		failures = append(failures, "baseline contains failures")
 	}
@@ -1164,6 +1362,7 @@ func validateCanonicalBaselineManifest(root string, opts PixelEvidenceOptions, m
 		if len(state.Captures) > MaxPixelEvidenceSamples {
 			failures = append(failures, fmt.Sprintf("baseline %s has %d captures, want at most %d", stateName, len(state.Captures), MaxPixelEvidenceSamples))
 		}
+		failures = append(failures, validateStateSettle(stateName, *state)...)
 		for _, capture := range state.Captures {
 			key := baselineCaptureKey{State: stateName, Index: capture.Index}
 			if capture.Index < 0 || capture.Index >= len(state.Captures) {
@@ -1192,8 +1391,10 @@ func validateCanonicalBaselineManifest(root string, opts PixelEvidenceOptions, m
 	return validated, failures
 }
 
-func validateCandidateAgainstBaseline(candidate PixelEvidenceManifest, baseline PixelEvidenceManifest) []string {
+func validateCandidateAgainstBaseline(opts PixelEvidenceOptions, candidate PixelEvidenceManifest, baseline PixelEvidenceManifest) []string {
 	var failures []string
+	failures = append(failures, validateSettlePolicy(opts, candidate)...)
+	failures = append(failures, validateManifestSettleRelations(opts, candidate)...)
 	if candidate.RouteID != baseline.RouteID {
 		failures = append(failures, "candidate route does not match baseline")
 	}
@@ -1240,6 +1441,20 @@ func validateCandidateAgainstBaseline(candidate PixelEvidenceManifest, baseline 
 	}
 	if candidate.HardwareClassification != baseline.HardwareClassification {
 		failures = append(failures, "candidate hardware class does not match baseline")
+	}
+	if candidate.SettlePolicy != baseline.SettlePolicy {
+		failures = append(failures, "candidate settle policy does not match baseline")
+	}
+	for _, stateName := range []string{"initial", "settled"} {
+		candidateState := findPixelState(candidate, stateName)
+		baselineState := findPixelState(baseline, stateName)
+		if candidateState == nil || baselineState == nil {
+			continue
+		}
+		failures = append(failures, validateStateSettle(stateName, *candidateState)...)
+		if candidateState.Settle.StaticAccepted != baselineState.Settle.StaticAccepted {
+			failures = append(failures, "candidate "+stateName+" static settle policy does not match baseline")
+		}
 	}
 	return failures
 }
@@ -1884,6 +2099,20 @@ const pixelMetadataProbeJS = `(async function() {
     },
     parsed: backendTruthParsed
   };
+  const renderLoopStateRaw = attr('data-gosx-scene3d-render-loop');
+  const renderLoopWantsRaw = attr('data-gosx-scene3d-render-loop-wants-animation');
+  const renderLoopReason = attr('data-gosx-scene3d-render-loop-reason');
+  const renderLoopStateParsed = renderLoopStateRaw === 'active' || renderLoopStateRaw === 'stopped';
+  const renderLoopWantsParsed = renderLoopWantsRaw === 'true' || renderLoopWantsRaw === 'false';
+  const renderLoop = {
+    state: renderLoopStateRaw,
+    reason: renderLoopReason,
+    active: renderLoopStateRaw === 'active',
+    wantsAnimation: renderLoopWantsRaw === 'true',
+    stateParsed: renderLoopStateParsed,
+    wantsAnimationParsed: renderLoopWantsParsed,
+    valid: renderLoopStateParsed && renderLoopWantsParsed && renderLoopReason !== ''
+  };
   return {
     devicePixelRatio: window.devicePixelRatio || 1,
     effectiveDPR: canvas && rect.width ? canvas.width / rect.width : 0,
@@ -1907,6 +2136,7 @@ const pixelMetadataProbeJS = `(async function() {
       fallbackReason: truth.fallbackReason
     },
     truth,
+    renderLoop,
     webgpu,
     webgl,
     userAgent: navigator.userAgent || '',

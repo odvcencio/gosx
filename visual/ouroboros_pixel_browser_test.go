@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,6 +27,9 @@ func TestOuroborosPixelEvidenceBrowserSmoke(t *testing.T) {
   data-gosx-scene3d-render-gpu="true"
   data-gosx-scene3d-render-implementation="webgl2"
   data-gosx-scene3d-render-backend-truth="{&quot;backend&quot;:&quot;webgl&quot;,&quot;gpu&quot;:true,&quot;fallbackReason&quot;:&quot;&quot;,&quot;implementation&quot;:&quot;webgl2&quot;,&quot;adapter&quot;:&quot;synthetic&quot;,&quot;adapterInfo&quot;:{&quot;vendor&quot;:&quot;synthetic&quot;},&quot;deviceLost&quot;:false,&quot;initError&quot;:&quot;&quot;,&quot;lastError&quot;:&quot;&quot;,&quot;shaderDiagnostics&quot;:{&quot;messages&quot;:1,&quot;errors&quot;:1}}"
+  data-gosx-scene3d-render-loop="active"
+  data-gosx-scene3d-render-loop-reason="runtime-program"
+  data-gosx-scene3d-render-loop-wants-animation="true"
   data-gosx-scene3d-webgl-frame-seq="40">
   <canvas data-gosx-scene3d-canvas width="96" height="64" style="width:96px;height:64px"></canvas>
 </div>
@@ -202,6 +206,196 @@ func TestOuroborosBackendSelectionBrowserSmoke(t *testing.T) {
 	})
 }
 
+func TestOuroborosPixelSettlePolicyBrowserSmoke(t *testing.T) {
+	if os.Getenv("GOSX_OUROBOROS_PIXEL_BROWSER_SMOKE") != "1" {
+		t.Skip("set GOSX_OUROBOROS_PIXEL_BROWSER_SMOKE=1 to run the browser smoke")
+	}
+
+	t.Run("static stopped settles without frame advance", func(t *testing.T) {
+		server := newSettlePolicySmokeServer(t, settleSmokeOptions{
+			RenderLoop:    validRenderLoop("stopped", "static", false),
+			InitialFrame:  5,
+			AdvanceFrames: false,
+			PublishLoop:   true,
+			WarmupFrames:  30,
+			SettledWait:   30 * time.Millisecond,
+			Timeout:       3 * time.Second,
+		})
+		defer server.Close()
+
+		manifest, err := CapturePixelEvidence(context.Background(), server.URL, pixelSettleSmokeCaptureOptions(t, "R08-static", 30, 3*time.Second))
+		if err != nil && strings.Contains(err.Error(), "settled readiness") {
+			t.Fatalf("static stopped route failed settled readiness: %v", err)
+		}
+		initial := findPixelState(manifest, "initial")
+		if initial == nil || initial.Settle.AdvanceRequired {
+			t.Fatalf("initial evidence = %#v, want no frame advance requirement", initial)
+		}
+		settled := findPixelState(manifest, "settled")
+		if settled == nil || !settled.Settle.StaticAccepted {
+			t.Fatalf("settled evidence = %#v, want static acceptance", settled)
+		}
+	})
+
+	t.Run("animated route must advance", func(t *testing.T) {
+		server := newSettlePolicySmokeServer(t, settleSmokeOptions{
+			RenderLoop:    validRenderLoop("active", "runtime-program", true),
+			InitialFrame:  1,
+			AdvanceFrames: true,
+			PublishLoop:   true,
+			WarmupFrames:  2,
+			SettledWait:   60 * time.Millisecond,
+			Timeout:       3 * time.Second,
+		})
+		defer server.Close()
+
+		manifest, err := CapturePixelEvidence(context.Background(), server.URL, pixelSettleSmokeCaptureOptions(t, "R08-animated", 2, 3*time.Second))
+		if err != nil && strings.Contains(err.Error(), "settled readiness") {
+			t.Fatalf("animated route did not advance: %v", err)
+		}
+		settled := findPixelState(manifest, "settled")
+		if settled == nil || settled.Settle.StaticAccepted || settled.Settle.ObservedFrame < settled.Settle.RequiredFrame {
+			t.Fatalf("settled evidence = %#v, want animated frame advance", settled)
+		}
+	})
+
+	t.Run("stalled animated route fails closed", func(t *testing.T) {
+		server := newSettlePolicySmokeServer(t, settleSmokeOptions{
+			RenderLoop:    validRenderLoop("active", "runtime-program", true),
+			InitialFrame:  1,
+			AdvanceFrames: false,
+			PublishLoop:   true,
+			WarmupFrames:  2,
+			SettledWait:   10 * time.Millisecond,
+			Timeout:       5 * time.Second,
+		})
+		defer server.Close()
+
+		_, err := CapturePixelEvidence(context.Background(), server.URL, pixelSettleSmokeCaptureOptions(t, "R08-stalled", 2, 5*time.Second))
+		if err == nil || !strings.Contains(err.Error(), "settled readiness") {
+			t.Fatalf("stalled animated route error = %v, want settled readiness failure", err)
+		}
+	})
+
+	t.Run("missing render loop telemetry fails closed", func(t *testing.T) {
+		server := newSettlePolicySmokeServer(t, settleSmokeOptions{
+			RenderLoop:    validRenderLoop("stopped", "static", false),
+			InitialFrame:  1,
+			AdvanceFrames: false,
+			PublishLoop:   false,
+			WarmupFrames:  2,
+			SettledWait:   10 * time.Millisecond,
+			Timeout:       5 * time.Second,
+		})
+		defer server.Close()
+
+		_, err := CapturePixelEvidence(context.Background(), server.URL, pixelSettleSmokeCaptureOptions(t, "R08-missing-loop", 2, 5*time.Second))
+		if err == nil || !strings.Contains(err.Error(), "render-loop telemetry") {
+			t.Fatalf("missing telemetry error = %v, want render-loop telemetry failure", err)
+		}
+	})
+
+	t.Run("malformed render loop telemetry fails closed", func(t *testing.T) {
+		server := newSettlePolicySmokeServer(t, settleSmokeOptions{
+			RenderLoop:    validRenderLoop("stopped", "static", false),
+			LoopStateRaw:  "paused",
+			LoopWantsRaw:  "maybe",
+			InitialFrame:  1,
+			AdvanceFrames: false,
+			PublishLoop:   true,
+			WarmupFrames:  2,
+			SettledWait:   10 * time.Millisecond,
+			Timeout:       5 * time.Second,
+		})
+		defer server.Close()
+
+		_, err := CapturePixelEvidence(context.Background(), server.URL, pixelSettleSmokeCaptureOptions(t, "R08-malformed-loop", 2, 5*time.Second))
+		if err == nil || !strings.Contains(err.Error(), "render-loop telemetry") {
+			t.Fatalf("malformed telemetry error = %v, want render-loop telemetry failure", err)
+		}
+	})
+}
+
+type settleSmokeOptions struct {
+	RenderLoop    RenderLoopEvidence
+	LoopStateRaw  string
+	LoopWantsRaw  string
+	InitialFrame  int
+	AdvanceFrames bool
+	PublishLoop   bool
+	WarmupFrames  int
+	SettledWait   time.Duration
+	Timeout       time.Duration
+}
+
+func pixelSettleSmokeCaptureOptions(t *testing.T, routeID string, warmupFrames int, timeout time.Duration) PixelEvidenceOptions {
+	t.Helper()
+	return PixelEvidenceOptions{
+		RouteID:        routeID,
+		ArtifactRoot:   filepath.Join(t.TempDir(), "pixels"),
+		Source:         testPixelSource(),
+		Backend:        RequireBackendWebGL,
+		Samples:        3,
+		SettledWait:    30 * time.Millisecond,
+		WarmupFrames:   warmupFrames,
+		WaitSelector:   "canvas",
+		CanvasSelector: "canvas[data-gosx-scene3d-canvas]",
+		Timeout:        timeout,
+	}
+}
+
+func newSettlePolicySmokeServer(t *testing.T, opts settleSmokeOptions) *httptest.Server {
+	t.Helper()
+	truth := `{"backend":"webgl","renderer":"webgl","gpu":true,"fallbackReason":"","implementation":"webgl2","adapter":"synthetic","adapterInfo":{"vendor":"synthetic"},"deviceLost":false,"initError":"","lastError":"","shaderDiagnostics":{"messages":1,"errors":0}}`
+	loopAttrs := ""
+	if opts.PublishLoop {
+		stateRaw := opts.RenderLoop.State
+		if opts.LoopStateRaw != "" {
+			stateRaw = opts.LoopStateRaw
+		}
+		wantsRaw := fmt.Sprintf("%t", opts.RenderLoop.WantsAnimation)
+		if opts.LoopWantsRaw != "" {
+			wantsRaw = opts.LoopWantsRaw
+		}
+		loopAttrs = fmt.Sprintf(` data-gosx-scene3d-render-loop="%s" data-gosx-scene3d-render-loop-reason="%s" data-gosx-scene3d-render-loop-wants-animation="%s"`, stateRaw, opts.RenderLoop.Reason, wantsRaw)
+	}
+	frame := opts.InitialFrame
+	if frame <= 0 {
+		frame = 1
+	}
+	advanceScript := ""
+	if opts.AdvanceFrames {
+		advanceScript = `
+setInterval(() => {
+  const m = document.querySelector("#scene-smoke");
+  m.setAttribute("data-gosx-scene3d-webgl-frame-seq", String(Number(m.getAttribute("data-gosx-scene3d-webgl-frame-seq") || 0) + 1));
+}, 16);`
+	}
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprintf(w, `<!doctype html>
+<html>
+<body>
+<div id="scene-smoke" data-gosx-scene3d-backend="webgl" data-gosx-scene3d-renderer="webgl" data-gosx-scene3d-webgl-frame-seq="%d"%s>
+  <canvas data-gosx-scene3d-canvas width="96" height="64" style="width:96px;height:64px"></canvas>
+</div>
+<script>
+document.querySelector("#scene-smoke").setAttribute("data-gosx-scene3d-render-backend-truth", %q);
+const c = document.querySelector("canvas");
+const ctx = c.getContext("2d");
+for (let y = 0; y < c.height; y++) {
+  for (let x = 0; x < c.width; x++) {
+    ctx.fillStyle = "rgb(" + ((x * 5) %% 255) + "," + ((y * 9) %% 255) + "," + ((x + y * 3) %% 255) + ")";
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+%s
+</script>
+</body>
+</html>`, frame, loopAttrs, truth, advanceScript)
+	}))
+}
+
 func newBackendSelectionSmokeServer(t *testing.T, observedBackend string, expectForced bool) *httptest.Server {
 	t.Helper()
 	forceWant := "false"
@@ -223,7 +417,7 @@ func newBackendSelectionSmokeServer(t *testing.T, observedBackend string, expect
 <script>window.__probeForceAtDocumentStart = window.__gosx_scene3d_force_webgl === true;</script>
 </head>
 <body>
-<div id="scene-smoke" data-gosx-scene3d-backend="%s" data-gosx-scene3d-renderer="%s" data-gosx-scene3d-render-gpu="true" data-gosx-scene3d-render-implementation="%s">
+<div id="scene-smoke" data-gosx-scene3d-backend="%s" data-gosx-scene3d-renderer="%s" data-gosx-scene3d-render-gpu="true" data-gosx-scene3d-render-implementation="%s" data-gosx-scene3d-render-loop="active" data-gosx-scene3d-render-loop-reason="runtime-program" data-gosx-scene3d-render-loop-wants-animation="true">
   <canvas data-gosx-scene3d-canvas width="96" height="64" style="width:96px;height:64px"></canvas>
 </div>
 <script>
@@ -262,7 +456,7 @@ func newBackendFlipSmokeServer(t *testing.T) *httptest.Server {
 		_, _ = fmt.Fprintf(w, `<!doctype html>
 <html>
 <body>
-<div id="scene-smoke" data-gosx-scene3d-backend="webgl" data-gosx-scene3d-renderer="webgl" data-gosx-scene3d-webgl-frame-seq="40">
+<div id="scene-smoke" data-gosx-scene3d-backend="webgl" data-gosx-scene3d-renderer="webgl" data-gosx-scene3d-webgl-frame-seq="40" data-gosx-scene3d-render-loop="active" data-gosx-scene3d-render-loop-reason="runtime-program" data-gosx-scene3d-render-loop-wants-animation="true">
   <canvas data-gosx-scene3d-canvas width="96" height="64" style="width:96px;height:64px"></canvas>
 </div>
 <script>

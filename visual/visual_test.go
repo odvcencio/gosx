@@ -383,6 +383,11 @@ func TestOuroborosPixelOptionsRequireBackendAndBaseline(t *testing.T) {
 	if err := validatePixelOptions(forced); err == nil {
 		t.Fatalf("accepted force-webgl with WebGPU backend")
 	}
+	negativeWarmup := PixelEvidenceOptions{Mode: PixelModeRecordBaseline, ArtifactRoot: t.TempDir(), Backend: RequireBackendWebGL, Samples: 3, WarmupFrames: -1, Source: testPixelSource()}
+	negativeWarmup.applyDefaults()
+	if err := validatePixelOptions(negativeWarmup); err == nil {
+		t.Fatalf("accepted negative warmup frames")
+	}
 }
 
 func TestOuroborosPixelOptionsRequireSourceIdentity(t *testing.T) {
@@ -468,12 +473,18 @@ func TestOuroborosPixelSelectedMetadataValidation(t *testing.T) {
 		})
 	}
 	valid := pagePixelMetadata{
-		Selected: SelectedSceneEvidence{CanvasCount: 1, MountCount: 1, MountID: "m"},
-		Mount:    sceneMountBackend{Backend: "webgl"},
-		Truth:    sceneTruthEvidence{Parsed: true, Backend: "webgl", GPU: true, Implementation: "angle-webgl"},
+		Selected:   SelectedSceneEvidence{CanvasCount: 1, MountCount: 1, MountID: "m"},
+		Mount:      sceneMountBackend{Backend: "webgl"},
+		Truth:      sceneTruthEvidence{Parsed: true, Backend: "webgl", GPU: true, Implementation: "angle-webgl"},
+		RenderLoop: validRenderLoop("active", "runtime-program", true),
 	}
 	if err := validateSelectedMeta(opts, valid); err != nil {
 		t.Fatalf("validateSelectedMeta valid = %v", err)
+	}
+	malformed := valid
+	malformed.RenderLoop = RenderLoopEvidence{State: "stopped", Active: true, WantsAnimation: false, StateParsed: true, WantsAnimationParsed: true, Reason: "static", Valid: true}
+	if err := validateSelectedMeta(opts, malformed); err == nil {
+		t.Fatalf("validateSelectedMeta accepted contradictory render-loop telemetry")
 	}
 }
 
@@ -718,6 +729,98 @@ func TestOuroborosCandidateBaselineLoadRejectsNonCanonicalJSON(t *testing.T) {
 				t.Fatalf("loadAndValidateBaselineManifest accepted %s", tc.name)
 			}
 		})
+	}
+}
+
+func TestOuroborosCandidateBaselineLoadRejectsSettleTampering(t *testing.T) {
+	opts := PixelEvidenceOptions{Mode: PixelModeCandidateComparison, RouteID: "R08", Backend: RequireBackendWebGL, ForceWebGL: true, CanvasSelector: "canvas", Viewport: Viewport{Width: 1440, Height: 900, Scale: 1}, Source: testPixelSource()}
+	opts.applyDefaults()
+	for _, tc := range []struct {
+		name   string
+		tamper func(*PixelEvidenceManifest)
+		want   string
+	}{
+		{
+			name: "render loop valid true contradictory state",
+			tamper: func(m *PixelEvidenceManifest) {
+				m.States[0].Settle.RenderLoop = RenderLoopEvidence{State: "stopped", Active: true, WantsAnimation: false, StateParsed: true, WantsAnimationParsed: true, Reason: "static", Valid: true}
+			},
+			want: "state=stopped but active=true",
+		},
+		{
+			name: "settled required frame lowered",
+			tamper: func(m *PixelEvidenceManifest) {
+				m.States[1].Settle.RequiredFrame = 1
+			},
+			want: "settled settle requiredFrame",
+		},
+		{
+			name: "settled capture below observed frame",
+			tamper: func(m *PixelEvidenceManifest) {
+				m.States[1].Captures[0].FrameSeq = m.States[1].Settle.ObservedFrame - 1
+			},
+			want: "below settle observedFrame",
+		},
+		{
+			name: "static accepted without static capture telemetry",
+			tamper: func(m *PixelEvidenceManifest) {
+				staticLoop := validRenderLoop("stopped", "static", false)
+				m.States[1].Settle.StaticAccepted = true
+				m.States[1].Settle.AdvanceRequired = false
+				m.States[1].Settle.RenderLoop = staticLoop
+				m.States[1].Captures[0].RenderLoop = validRenderLoop("active", "runtime-program", true)
+			},
+			want: "exact static stopped telemetry",
+		},
+		{
+			name: "static accepted after required frame reached",
+			tamper: func(m *PixelEvidenceManifest) {
+				staticLoop := validRenderLoop("stopped", "static", false)
+				m.States[1].Settle.StaticAccepted = true
+				m.States[1].Settle.AdvanceRequired = false
+				m.States[1].Settle.RenderLoop = staticLoop
+				m.States[1].Settle.ObservedFrame = m.States[1].Settle.RequiredFrame
+				for i := range m.States[1].Captures {
+					m.States[1].Captures[i].FrameSeq = m.States[1].Settle.ObservedFrame
+					m.States[1].Captures[i].RenderLoop = staticLoop
+				}
+			},
+			want: "observedFrame is below requiredFrame",
+		},
+		{
+			name: "settle policy warmup mismatch",
+			tamper: func(m *PixelEvidenceManifest) {
+				m.SettlePolicy.WarmupFrames = 1
+			},
+			want: "settlePolicy warmupFrames",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "baseline")
+			manifest := writeValidPixelBaseline(t, root, nil)
+			tc.tamper(&manifest)
+			writePixelManifestForTest(t, root, manifest)
+			if _, err := loadAndValidateBaselineManifest(root, opts); err == nil {
+				t.Fatalf("loadAndValidateBaselineManifest accepted %s", tc.name)
+			} else if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestOuroborosInitialSettleAllowsFastFirstFrameWithoutAdvance(t *testing.T) {
+	state := PixelStateEvidence{
+		State: "initial",
+		Settle: PixelSettleResult{
+			RequiredFrame:   7,
+			ObservedFrame:   7,
+			AdvanceRequired: false,
+			RenderLoop:      validRenderLoop("active", "runtime-program", true),
+		},
+	}
+	if failures := validateStateSettle("initial", state); len(failures) != 0 {
+		t.Fatalf("validateStateSettle initial fast frame failures = %v", failures)
 	}
 }
 
@@ -1051,6 +1154,8 @@ func TestOuroborosManifestWriteFailureDoesNotCreateFinalRoot(t *testing.T) {
 }
 
 func TestOuroborosCandidateBackendSelectionMustMatchBaseline(t *testing.T) {
+	opts := PixelEvidenceOptions{Backend: RequireBackendWebGL}
+	opts.applyDefaults()
 	baseline := PixelEvidenceManifest{
 		RouteID:                "R08",
 		BackendRequirement:     "webgl",
@@ -1069,7 +1174,7 @@ func TestOuroborosCandidateBackendSelectionMustMatchBaseline(t *testing.T) {
 	candidate.BaselineSource = &baseline.Source
 	candidate.SourceRelation = "same-source"
 	candidate.BackendSelection.RuntimeObservedBackend = "webgpu"
-	failures := validateCandidateAgainstBaseline(candidate, baseline)
+	failures := validateCandidateAgainstBaseline(opts, candidate, baseline)
 	if !containsFailure(failures, "observed backend") {
 		t.Fatalf("failures = %v, want observed backend mismatch", failures)
 	}
@@ -1077,7 +1182,7 @@ func TestOuroborosCandidateBackendSelectionMustMatchBaseline(t *testing.T) {
 	candidate.BaselineSource = &baseline.Source
 	candidate.SourceRelation = "same-source"
 	candidate.BackendSelection.PreNavigationHook = "gosx-o02-clear-force-webgl-new-document"
-	failures = validateCandidateAgainstBaseline(candidate, baseline)
+	failures = validateCandidateAgainstBaseline(opts, candidate, baseline)
 	if !containsFailure(failures, "pre-navigation hook") {
 		t.Fatalf("failures = %v, want hook mismatch", failures)
 	}
@@ -1085,7 +1190,7 @@ func TestOuroborosCandidateBackendSelectionMustMatchBaseline(t *testing.T) {
 	candidate.BaselineSource = &baseline.Source
 	candidate.SourceRelation = "same-source"
 	candidate.BackendSelection.ForceWebGL = false
-	failures = validateCandidateAgainstBaseline(candidate, baseline)
+	failures = validateCandidateAgainstBaseline(opts, candidate, baseline)
 	if !containsFailure(failures, "forceWebGL") {
 		t.Fatalf("failures = %v, want forceWebGL mismatch", failures)
 	}
@@ -1094,13 +1199,15 @@ func TestOuroborosCandidateBackendSelectionMustMatchBaseline(t *testing.T) {
 	candidate.BaselineSource = &baseline.Source
 	candidate.SourceRelation = "same-source"
 	candidate.BackendSelection.ForceWebGL = true
-	failures = validateCandidateAgainstBaseline(candidate, baseline)
+	failures = validateCandidateAgainstBaseline(opts, candidate, baseline)
 	if !containsFailure(failures, "forceWebGL") {
 		t.Fatalf("failures = %v, want reverse forceWebGL mismatch", failures)
 	}
 }
 
 func TestOuroborosCandidateRecordsBaselineSourceRelation(t *testing.T) {
+	opts := PixelEvidenceOptions{Backend: RequireBackendWebGL}
+	opts.applyDefaults()
 	baseline := PixelEvidenceManifest{
 		RouteID:                "R08",
 		BackendRequirement:     "webgl",
@@ -1123,12 +1230,12 @@ func TestOuroborosCandidateRecordsBaselineSourceRelation(t *testing.T) {
 	}
 	candidate.BaselineSource = &baseline.Source
 	candidate.SourceRelation = "candidate-compared-to-baseline"
-	failures := validateCandidateAgainstBaseline(candidate, baseline)
+	failures := validateCandidateAgainstBaseline(opts, candidate, baseline)
 	if containsFailure(failures, "source") {
 		t.Fatalf("failures = %v, cross-source regression comparison must be allowed with explicit relation", failures)
 	}
 	candidate.SourceRelation = "same-source"
-	failures = validateCandidateAgainstBaseline(candidate, baseline)
+	failures = validateCandidateAgainstBaseline(opts, candidate, baseline)
 	if !containsFailure(failures, "sourceRelation") {
 		t.Fatalf("failures = %v, want sourceRelation mismatch", failures)
 	}
@@ -1136,7 +1243,7 @@ func TestOuroborosCandidateRecordsBaselineSourceRelation(t *testing.T) {
 	other := baseline.Source
 	other.InventorySHA256 = "sha256:" + strings.Repeat("d", 64)
 	candidate.BaselineSource = &other
-	failures = validateCandidateAgainstBaseline(candidate, baseline)
+	failures = validateCandidateAgainstBaseline(opts, candidate, baseline)
 	if !containsFailure(failures, "baselineSource") {
 		t.Fatalf("failures = %v, want baselineSource mismatch", failures)
 	}
@@ -1149,6 +1256,7 @@ func TestOuroborosCanonicalBaselineForceWebGLFalseRejectsTrueOption(t *testing.T
 		m.BackendSelection.PreNavigationHook = "gosx-o02-clear-force-webgl-new-document"
 	})
 	opts := PixelEvidenceOptions{RouteID: "R08", Backend: RequireBackendWebGL, ForceWebGL: true, CanvasSelector: "canvas", Viewport: Viewport{Width: 1440, Height: 900, Scale: 1}, Source: testPixelSource()}
+	opts.applyDefaults()
 	if _, err := loadAndValidateBaselineManifest(root, opts); err == nil {
 		t.Fatalf("accepted false ForceWebGL baseline with true candidate option")
 	}
@@ -1158,6 +1266,7 @@ func TestOuroborosCanonicalBaselineForceWebGLTrueRejectsFalseOption(t *testing.T
 	root := filepath.Join(t.TempDir(), "baseline")
 	manifest := writeValidPixelBaseline(t, root, nil)
 	opts := PixelEvidenceOptions{RouteID: "R08", Backend: RequireBackendWebGL, ForceWebGL: false, CanvasSelector: "canvas", Viewport: Viewport{Width: 1440, Height: 900, Scale: 1}, Source: testPixelSource()}
+	opts.applyDefaults()
 	_, failures := validateCanonicalBaselineManifest(root, opts, manifest)
 	if !containsFailure(failures, "forceWebGL=true, want false") {
 		t.Fatalf("failures = %v, want forceWebGL mismatch", failures)
@@ -1168,6 +1277,7 @@ func TestValidateCanonicalPixelBaselineManifestReplaysEvidenceAndSource(t *testi
 	root := filepath.Join(t.TempDir(), "baseline")
 	manifest := writeValidPixelBaseline(t, root, nil)
 	opts := PixelEvidenceOptions{RouteID: "R08", Backend: RequireBackendWebGL, ForceWebGL: true, CanvasSelector: "canvas", Viewport: Viewport{Width: 1440, Height: 900, Scale: 1}}
+	opts.applyDefaults()
 	validated, err := ValidateCanonicalPixelBaselineManifest(filepath.Join(root, "pixel-evidence.json"), manifest.Source, opts)
 	if err != nil {
 		t.Fatalf("ValidateCanonicalPixelBaselineManifest: %v", err)
@@ -1311,9 +1421,21 @@ func writeValidPixelBaseline(t *testing.T, root string, edit func(*PixelEvidence
 		Viewport:               ViewportEvidence{Width: 1440, Height: 900, DPR: 1},
 		Selected:               SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: "canvas", CanvasCount: 1, MountCount: 1},
 		Threshold:              PixelThresholdEvidence{EffectivePct: 0.5},
+		SettlePolicy:           PixelSettlePolicy{WarmupFrames: 30, RuntimeRenderLoopRequired: true, StaticStoppedAllowsNoAdvance: true},
 	}
 	for _, stateName := range []string{"initial", "settled"} {
-		state := PixelStateEvidence{State: stateName}
+		settle := PixelSettleResult{
+			RequiredFrame:   10,
+			ObservedFrame:   10,
+			AdvanceRequired: false,
+			RenderLoop:      validRenderLoop("active", "runtime-program", true),
+		}
+		if stateName == "settled" {
+			settle.RequiredFrame = 40
+			settle.ObservedFrame = 40
+			settle.AdvanceRequired = true
+		}
+		state := PixelStateEvidence{State: stateName, Settle: settle}
 		for i := 0; i < 3; i++ {
 			data := variedPNG(t, 8, 8, 0)
 			path := filepath.Join(root, fmt.Sprintf("R08-%s-%02d.png", stateName, i))
@@ -1333,7 +1455,8 @@ func writeValidPixelBaseline(t *testing.T, root string, edit func(*PixelEvidence
 				RuntimeGPU:         true,
 				Implementation:     "angle-webgl",
 				HardwareClass:      "hardware-webgl",
-				FrameSeq:           10 + i,
+				FrameSeq:           settle.ObservedFrame + i,
+				RenderLoop:         settle.RenderLoop,
 				Selected:           manifest.Selected,
 				Comparison:         &PixelComparison{Passed: true, BaselineThresholdPct: 0.5, EffectiveThresholdPct: 0.5},
 			})
@@ -1351,6 +1474,29 @@ func writeValidPixelBaseline(t *testing.T, root string, edit func(*PixelEvidence
 		t.Fatalf("write manifest: %v", err)
 	}
 	return manifest
+}
+
+func validRenderLoop(state, reason string, wantsAnimation bool) RenderLoopEvidence {
+	return RenderLoopEvidence{
+		State:                state,
+		Reason:               reason,
+		Active:               state == "active",
+		WantsAnimation:       wantsAnimation,
+		StateParsed:          true,
+		WantsAnimationParsed: true,
+		Valid:                true,
+	}
+}
+
+func writePixelManifestForTest(t *testing.T, root string, manifest PixelEvidenceManifest) {
+	t.Helper()
+	body, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pixel-evidence.json"), body, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
 }
 
 func testPixelSource() PixelSourceIdentity {
