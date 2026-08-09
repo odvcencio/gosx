@@ -286,7 +286,7 @@ func TestDriverLongLivedBaseSurvivesCanceledOperation(t *testing.T) {
 
 func TestDriverPositiveTimeoutOperationDoesNotPoisonBase(t *testing.T) {
 	t.Setenv("CHROME_WS_URL", "")
-	d, err := New(WithHeadless(true), WithTimeout(time.Second))
+	d, err := New(WithHeadless(true))
 	if err != nil {
 		if os.Getenv("GOSX_REQUIRE_CHROME") != "" {
 			t.Fatalf("GOSX_REQUIRE_CHROME is set, so a browser is required: %v", err)
@@ -317,7 +317,7 @@ func TestDriverPositiveTimeoutOperationDoesNotPoisonBase(t *testing.T) {
 
 func TestDriverConcurrentRunAndRepeatedCancel(t *testing.T) {
 	t.Setenv("CHROME_WS_URL", "")
-	d, err := New(WithHeadless(true), WithTimeout(time.Second))
+	d, err := New(WithHeadless(true))
 	if err != nil {
 		if os.Getenv("GOSX_REQUIRE_CHROME") != "" {
 			t.Fatalf("GOSX_REQUIRE_CHROME is set, so a browser is required: %v", err)
@@ -328,6 +328,7 @@ func TestDriverConcurrentRunAndRepeatedCancel(t *testing.T) {
 	if err := d.BindTarget(); err != nil {
 		t.Fatalf("BindTarget: %v", err)
 	}
+	d.timeout = time.Second
 
 	op, cancel := d.WithOperationContext(context.Background(), time.Second)
 	cancel()
@@ -359,7 +360,7 @@ func TestDriverConcurrentRunAndRepeatedCancel(t *testing.T) {
 
 func TestDriverRunNonCooperativeTimeoutMarksUnusable(t *testing.T) {
 	t.Setenv("CHROME_WS_URL", "")
-	d, err := New(WithHeadless(true), WithTimeout(time.Second))
+	d, err := New(WithHeadless(true))
 	if err != nil {
 		if os.Getenv("GOSX_REQUIRE_CHROME") != "" {
 			t.Fatalf("GOSX_REQUIRE_CHROME is set, so a browser is required: %v", err)
