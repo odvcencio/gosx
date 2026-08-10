@@ -18,11 +18,13 @@ const {
   FakeElement,
   createContext,
   installManualRAF,
+  installManualTimers,
   runScript,
   flushAsyncWork,
   mountMotionSeamScene,
   motionMeshExtents,
   mountMaterialMotionScene,
+  freshFeatureBundleSource,
 } = require("./runtime-test-harness.js");
 
 test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
@@ -220,6 +222,7 @@ test("Scene3D initial render waits for the second frame boundary", async () => {
   });
   env.context.__gosx_scene3d_perf = true;
   const raf = installManualRAF(env.context);
+  const timers = installManualTimers(env.context);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -259,6 +262,7 @@ test("Scene3D initial render waits for the second frame boundary", async () => {
   assert.equal(env.engineRenderCalls.length, 1, "second frame performs the initial Scene3D render");
   assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "true");
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(timers.runDelay(64), 0, "normal second-frame render must clear the fallback timer");
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:commands"], 1);
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:update-props"], 1);
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 1);
@@ -347,6 +351,7 @@ test("Scene3D disposal cancels pending initial render before frame two", async (
     }),
   });
   const raf = installManualRAF(env.context);
+  const timers = installManualTimers(env.context);
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
@@ -361,6 +366,7 @@ test("Scene3D disposal cancels pending initial render before frame two", async (
 
   env.context.__gosx_dispose_engine("gosx-engine-initial-dispose");
   assert.equal(raf.count(), 0, "dispose must cancel the queued second-frame render");
+  assert.equal(timers.runDelay(64), 0, "dispose must clear the fallback timer");
 
   raf.flush(32);
   await Promise.resolve();
@@ -368,6 +374,263 @@ test("Scene3D disposal cancels pending initial render before frame two", async (
   assert.equal(env.engineRenderCalls.length, 0);
   assert.equal(mount.getAttribute("data-gosx-scene3d-ready"), "false");
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), null);
+});
+
+function installInitialRenderVirtualClock(context) {
+  let now = 0;
+  let nextTimer = 1;
+  const timers = new Map();
+  const rafCallbacks = [];
+  const canceledFrames = [];
+  context.setTimeout = (callback, delay, ...args) => {
+    const handle = nextTimer++;
+    timers.set(handle, { at: now + Number(delay || 0), callback, args });
+    return handle;
+  };
+  context.clearTimeout = (handle) => {
+    timers.delete(handle);
+  };
+  context.requestAnimationFrame = (callback) => {
+    const handle = 900 + rafCallbacks.length;
+    rafCallbacks.push({ handle, callback });
+    return handle;
+  };
+  context.cancelAnimationFrame = (handle) => {
+    canceledFrames.push(handle);
+  };
+  return {
+    get now() {
+      return now;
+    },
+    rafCallbacks,
+    canceledFrames,
+    advance(ms) {
+      now += Number(ms || 0);
+      const due = Array.from(timers.entries())
+        .filter(([, timer]) => timer.at <= now)
+        .sort((a, b) => a[1].at - b[1].at);
+      for (const [handle, timer] of due) {
+        if (!timers.has(handle)) {
+          continue;
+        }
+        timers.delete(handle);
+        timer.callback(...timer.args);
+      }
+      return due.length;
+    },
+  };
+}
+
+async function mountSceneWithParkedInitialRAF(scene3DSource, options) {
+  const opts = options || {};
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-initial-parked-raf-root" + (opts.idSuffix || "");
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function(canvas) {
+              return {
+                kind: "webgpu",
+                diagnostics: function() { return { adapterInfo: { vendor: "test-vendor" } }; },
+                render: function() {
+                  var mount = canvas && canvas.parentNode;
+                  var seq = Number(mount && mount.getAttribute("data-gosx-scene3d-webgpu-frame-seq") || 0) + 1;
+                  if (mount) mount.setAttribute("data-gosx-scene3d-webgpu-frame-seq", String(seq));
+                },
+                dispose: function() {}
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-initial-parked-raf" + (opts.idSuffix || ""),
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: mount.id,
+        props: {
+          width: 320,
+          height: 180,
+          background: "#08151f",
+          preferWebGPU: true,
+          scene: {
+            objects: [
+              { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+            ],
+          },
+        },
+      }],
+    },
+  });
+  env.context.__gosx_scene3d_perf = true;
+  const clock = installInitialRenderVirtualClock(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(scene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  clock.advance(32);
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  return {
+    env,
+    mount,
+    clock,
+    rafCallbacks: clock.rafCallbacks,
+    canceledFrames: clock.canceledFrames,
+  };
+}
+
+function sceneInitialFrameSeq(mount) {
+  return Number(mount.getAttribute("data-gosx-scene3d-webgpu-frame-seq") || 0);
+}
+
+test("Scene3D parked first-paint boundary renders once and closes static telemetry", async () => {
+  const currentSource = freshFeatureBundleSource("scene3d");
+  const marker = "\n    scheduleInitialRender();";
+  const helperPattern = /\n    \/\/ Defer the first Scene3D render until after a first-paint boundary\.[\s\S]*?\n    scheduleInitialRender\(\);/;
+  const oldSource = currentSource.replace(helperPattern, `
+    // Defer the first Scene3D render until after a first-paint boundary.
+    function scheduleInitialRender() {
+      if (disposed) return;
+      initHandle = engineFrame(function() {
+        initHandle = null;
+        if (disposed) return;
+        initHandle = engineFrame(function(now) {
+          initHandle = null;
+          if (disposed) return;
+          initPending = false;
+          renderFrame(typeof now === "number" ? now : 0, initReason || "");
+        });
+      });
+    }` + marker);
+  const singleTotalSource = currentSource.replace(helperPattern, `
+    // Defer the first Scene3D render until after a first-paint boundary.
+    function scheduleInitialRender() {
+      if (disposed) return;
+      let done = false;
+      const finish = function(now) {
+        if (done) return;
+        done = true;
+        cancelInitialRender();
+        if (disposed) return;
+        initPending = false;
+        renderFrame(typeof now === "number" ? now : sceneFrameNowMS(null), initReason || "");
+      };
+      initTimer = setTimeout(finish, 64);
+      initHandle = engineFrame(function() {
+        initHandle = null;
+        if (disposed || done) return;
+        initHandle = engineFrame(function(now) {
+          if (done) return;
+          finish(now);
+        });
+      });
+    }` + marker);
+
+  const oldRun = await mountSceneWithParkedInitialRAF(oldSource, { idSuffix: "-old" });
+  assert.equal(oldRun.mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(JSON.parse(oldRun.mount.getAttribute("data-gosx-scene3d-render-backend-truth")).backend, "webgpu");
+  assert.equal(oldRun.clock.advance(64), 0, "old scheduler has no bounded first-paint timer");
+  await flushAsyncWork();
+  assert.equal(sceneInitialFrameSeq(oldRun.mount), 0, "old scheduler stays at frame 0 when rAF parks");
+  assert.equal(oldRun.mount.getAttribute("data-gosx-scene3d-render-loop"), null);
+  assert.equal(oldRun.rafCallbacks.length, 2, "old scheduler parks the outer first-paint rAF after WebGPU prep");
+  assert.deepEqual(oldRun.canceledFrames, [900]);
+
+  const finalRun = await mountSceneWithParkedInitialRAF(currentSource, { idSuffix: "-final" });
+  assert.equal(finalRun.rafCallbacks.length, 2);
+  assert.equal(finalRun.clock.advance(64), 1, "final scheduler bounds a parked outer first-paint boundary");
+  await flushAsyncWork();
+  assert.equal(finalRun.mount.getAttribute("data-gosx-scene3d-renderer"), "webgpu");
+  assert.equal(JSON.parse(finalRun.mount.getAttribute("data-gosx-scene3d-render-backend-truth")).backend, "webgpu");
+  assert.ok(sceneInitialFrameSeq(finalRun.mount) >= 1, "timeout path must render a real frame");
+  assert.equal(finalRun.mount.getAttribute("data-gosx-scene3d-render-loop"), "stopped");
+  assert.equal(finalRun.mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "static");
+  assert.equal(finalRun.mount.getAttribute("data-gosx-scene3d-render-loop-wants-animation"), "false");
+  assert.deepEqual(finalRun.canceledFrames, [900, 901]);
+  assert.equal(finalRun.mount.__gosxScene3DScheduleCounts["render:animation"], 1);
+  finalRun.rafCallbacks[1].callback(16);
+  await flushAsyncWork();
+  assert.equal(finalRun.rafCallbacks.length, 2, "late outer rAF must not queue an inner frame");
+  assert.equal(sceneInitialFrameSeq(finalRun.mount), 1);
+  assert.equal(finalRun.mount.__gosxScene3DScheduleCounts["render:animation"], 1);
+
+  const innerRun = await mountSceneWithParkedInitialRAF(currentSource, { idSuffix: "-inner" });
+  innerRun.rafCallbacks[1].callback(16);
+  await flushAsyncWork();
+  assert.equal(innerRun.rafCallbacks.length, 3, "outer rAF must still preserve the normal second-frame boundary");
+  assert.equal(innerRun.clock.advance(64), 1);
+  await flushAsyncWork();
+  assert.equal(sceneInitialFrameSeq(innerRun.mount), 1);
+  assert.equal(innerRun.mount.getAttribute("data-gosx-scene3d-render-loop"), "stopped");
+  assert.equal(innerRun.mount.getAttribute("data-gosx-scene3d-render-loop-reason"), "static");
+  assert.deepEqual(innerRun.canceledFrames, [900, 901, 902]);
+  assert.equal(innerRun.mount.__gosxScene3DScheduleCounts["render:animation"], 1);
+  innerRun.rafCallbacks[2].callback(32);
+  await flushAsyncWork();
+  assert.equal(sceneInitialFrameSeq(innerRun.mount), 1, "late inner rAF must not render again");
+  assert.equal(innerRun.mount.__gosxScene3DScheduleCounts["render:animation"], 1);
+
+  const slowSingle = await mountSceneWithParkedInitialRAF(singleTotalSource, { idSuffix: "-slow-single" });
+  slowSingle.clock.advance(33);
+  slowSingle.rafCallbacks[1].callback(slowSingle.clock.now);
+  await flushAsyncWork();
+  assert.equal(slowSingle.rafCallbacks.length, 3);
+  slowSingle.clock.advance(31);
+  await flushAsyncWork();
+  assert.equal(sceneInitialFrameSeq(slowSingle.mount), 1, "single-total timer renders before the second 30Hz rAF");
+
+  const slowFinal = await mountSceneWithParkedInitialRAF(currentSource, { idSuffix: "-slow-final" });
+  slowFinal.clock.advance(33);
+  slowFinal.rafCallbacks[1].callback(slowFinal.clock.now);
+  await flushAsyncWork();
+  assert.equal(slowFinal.rafCallbacks.length, 3);
+  slowFinal.clock.advance(31);
+  await flushAsyncWork();
+  assert.equal(sceneInitialFrameSeq(slowFinal.mount), 0, "per-boundary timer must not beat a functioning second 30Hz rAF");
+  slowFinal.clock.advance(2);
+  slowFinal.rafCallbacks[2].callback(slowFinal.clock.now);
+  await flushAsyncWork();
+  assert.equal(sceneInitialFrameSeq(slowFinal.mount), 1);
+
+  const disposedRun = await mountSceneWithParkedInitialRAF(currentSource, { idSuffix: "-dispose" });
+  disposedRun.env.context.__gosx_dispose_engine("gosx-engine-initial-parked-raf-dispose");
+  assert.deepEqual(disposedRun.canceledFrames, [900, 901]);
+  assert.equal(disposedRun.clock.advance(64), 0, "dispose must clear the first-paint timer");
+  disposedRun.rafCallbacks[1].callback(16);
+  await flushAsyncWork();
+  assert.equal(disposedRun.rafCallbacks.length, 2, "late disposed outer rAF must not queue an inner frame");
+  assert.equal(sceneInitialFrameSeq(disposedRun.mount), 0);
+
+  const disposedInnerRun = await mountSceneWithParkedInitialRAF(currentSource, { idSuffix: "-dispose-inner" });
+  disposedInnerRun.rafCallbacks[1].callback(16);
+  await flushAsyncWork();
+  assert.equal(disposedInnerRun.rafCallbacks.length, 3);
+  disposedInnerRun.env.context.__gosx_dispose_engine("gosx-engine-initial-parked-raf-dispose-inner");
+  assert.deepEqual(disposedInnerRun.canceledFrames, [900, 901, 902]);
+  assert.equal(disposedInnerRun.clock.advance(64), 0, "dispose must clear the inner first-paint timer");
+  disposedInnerRun.rafCallbacks[2].callback(32);
+  await flushAsyncWork();
+  assert.equal(sceneInitialFrameSeq(disposedInnerRun.mount), 0);
 });
 
 // Regression test for the split feature-bundle build: bootstrap-feature-scene3d.js

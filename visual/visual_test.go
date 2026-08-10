@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chromedp/chromedp"
 )
 
 // solidPNG returns a PNG of the given size with a solid fill.
@@ -467,6 +469,73 @@ func TestOuroborosObservedBackendMismatchFails(t *testing.T) {
 	}
 }
 
+func TestActivateVisualTargetRequiresLiveTarget(t *testing.T) {
+	if err := activateVisualTarget(context.Background()); err == nil || !strings.Contains(err.Error(), "missing chromedp context") {
+		t.Fatalf("activateVisualTarget without chromedp context = %v", err)
+	}
+
+	ctx, cancel := chromedp.NewContext(context.Background())
+	defer cancel()
+	if err := activateVisualTarget(ctx); err == nil || !strings.Contains(err.Error(), "missing browser") {
+		t.Fatalf("activateVisualTarget without browser = %v", err)
+	}
+}
+
+func TestVisualActivationPrecedesViewportPreloadAndNavigation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		path       string
+		fn         string
+		mustFollow []string
+	}{
+		{
+			name: "capture",
+			path: "visual.go",
+			fn:   "func Capture(",
+			mustFollow: []string{
+				"chromedp.EmulateViewport",
+				"chromedp.Navigate",
+			},
+		},
+		{
+			name: "pixel",
+			path: "ouroboros_pixel.go",
+			fn:   "func navigatePixelPage(",
+			mustFollow: []string{
+				"chromedp.EmulateViewport",
+				"page.AddScriptToEvaluateOnNewDocument",
+				"chromedp.Navigate",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := os.ReadFile(tc.path)
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.path, err)
+			}
+			body := string(data)
+			fnStart := strings.Index(body, tc.fn)
+			if fnStart < 0 {
+				t.Fatalf("%s missing %q", tc.path, tc.fn)
+			}
+			body = body[fnStart:]
+			activate := strings.Index(body, "activateVisualTargetAction()")
+			if activate < 0 {
+				t.Fatalf("%s missing activateVisualTargetAction in %s", tc.path, tc.fn)
+			}
+			for _, marker := range tc.mustFollow {
+				next := strings.Index(body, marker)
+				if next < 0 {
+					t.Fatalf("%s missing %q after %s", tc.path, marker, tc.fn)
+				}
+				if activate > next {
+					t.Fatalf("%s activates after %s in %s", tc.path, marker, tc.fn)
+				}
+			}
+		})
+	}
+}
+
 func TestOuroborosPixelSelectedMetadataValidation(t *testing.T) {
 	opts := PixelEvidenceOptions{Backend: RequireBackendWebGL, CanvasSelector: "canvas"}
 	for _, tc := range []struct {
@@ -487,11 +556,16 @@ func TestOuroborosPixelSelectedMetadataValidation(t *testing.T) {
 	valid := pagePixelMetadata{
 		Selected:   SelectedSceneEvidence{CanvasCount: 1, MountCount: 1, MountID: "m"},
 		Mount:      sceneMountBackend{Backend: "webgl"},
-		Truth:      sceneTruthEvidence{Parsed: true, Backend: "webgl", GPU: true, Implementation: "angle-webgl"},
+		Truth:      sceneTruthEvidence{Parsed: true, Backend: "webgl", GPU: true, Implementation: "webgl2", AdapterInfo: map[string]interface{}{"vendor": "NVIDIA Corporation", "description": "ANGLE RTX"}},
 		RenderLoop: validRenderLoop("active", "runtime-program", true),
 	}
 	if err := validateSelectedMeta(opts, valid); err != nil {
 		t.Fatalf("validateSelectedMeta valid = %v", err)
+	}
+	noWebGLIdentity := valid
+	noWebGLIdentity.Truth.AdapterInfo = nil
+	if err := validateSelectedMeta(opts, noWebGLIdentity); err == nil || !strings.Contains(err.Error(), "WebGL backend truth has no adapter identity") {
+		t.Fatalf("validateSelectedMeta missing WebGL adapter identity error = %v", err)
 	}
 	malformed := valid
 	malformed.RenderLoop = RenderLoopEvidence{State: "stopped", Active: true, WantsAnimation: false, StateParsed: true, WantsAnimationParsed: true, Reason: "static", Valid: true}
@@ -509,6 +583,15 @@ func TestOuroborosForgedAttributesWithoutRuntimeTruthFail(t *testing.T) {
 	}
 	if err := validateSelectedMeta(opts, meta); err == nil {
 		t.Fatalf("validateSelectedMeta accepted forged backend attributes without parsed truth")
+	}
+	webglOpts := PixelEvidenceOptions{Backend: RequireBackendWebGL, CanvasSelector: "canvas"}
+	webglMeta := pagePixelMetadata{
+		Selected: SelectedSceneEvidence{CanvasCount: 1, MountCount: 1, MountID: "m"},
+		Mount:    sceneMountBackend{Backend: "webgl", Renderer: "webgl"},
+		Truth:    sceneTruthEvidence{Backend: "webgl", GPU: true, Implementation: "webgl2"},
+	}
+	if err := validateSelectedMeta(webglOpts, webglMeta); err == nil {
+		t.Fatalf("validateSelectedMeta accepted forged WebGL attributes without parsed truth")
 	}
 	capture := PixelCaptureEvidence{
 		Path:           filepath.Join(t.TempDir(), "capture.png"),
@@ -531,6 +614,47 @@ func TestOuroborosForgedAttributesWithoutRuntimeTruthFail(t *testing.T) {
 func TestOuroborosNavigatorGPUAndFakeWebGPUAttrsDoNotCertify(t *testing.T) {
 	if got := classifyHardware("webgpu", false, true, false); got != "headless-logic" {
 		t.Fatalf("classifyHardware with navigator GPU only = %q, want headless-logic", got)
+	}
+}
+
+func TestOuroborosWebGPUCertificationRequiresAdapterIdentity(t *testing.T) {
+	opts := PixelEvidenceOptions{Backend: RequireBackendWebGPU, CanvasSelector: "canvas"}
+	meta := pagePixelMetadata{
+		Selected:   SelectedSceneEvidence{CanvasCount: 1, MountCount: 1, MountID: "m"},
+		Mount:      sceneMountBackend{Backend: "webgpu", Renderer: "webgpu"},
+		Truth:      sceneTruthEvidence{Parsed: true, Backend: "webgpu", GPU: true, Implementation: "dawn"},
+		RenderLoop: validRenderLoop("active", "runtime-program", true),
+	}
+	if err := validateSelectedMeta(opts, meta); err == nil || !strings.Contains(err.Error(), "adapter identity") {
+		t.Fatalf("validateSelectedMeta missing adapter identity error = %v", err)
+	}
+	meta.Truth.AdapterInfo = map[string]interface{}{"vendor": "nvidia"}
+	if err := validateSelectedMeta(opts, meta); err != nil {
+		t.Fatalf("validateSelectedMeta valid adapter identity = %v", err)
+	}
+
+	capture := PixelCaptureEvidence{
+		Path:               filepath.Join(t.TempDir(), "capture.png"),
+		SHA256:             strings.Repeat("a", 64),
+		Backend:            "webgpu",
+		RuntimeTruthParsed: true,
+		RuntimeGPU:         true,
+		Implementation:     "dawn",
+		HardwareClass:      "hardware-webgpu",
+		FrameSeq:           1,
+		RenderLoop:         validRenderLoop("active", "runtime-program", true),
+	}
+	if err := os.WriteFile(capture.Path, solidPNG(t, 4, 4, color.RGBA{R: 1, G: 2, B: 3, A: 255}), 0o644); err != nil {
+		t.Fatalf("write capture: %v", err)
+	}
+	failures := validateCapture(opts, capture)
+	if !containsFailure(failures, "no adapter identity") {
+		t.Fatalf("failures = %v, want adapter identity failure", failures)
+	}
+	capture.WebGPU.Vendor = "nvidia"
+	failures = validateCapture(opts, capture)
+	if containsFailure(failures, "adapter identity") {
+		t.Fatalf("failures = %v, want adapter identity accepted", failures)
 	}
 }
 
@@ -572,6 +696,52 @@ func TestOuroborosWebGLRuntimeGPUFalseFails(t *testing.T) {
 	})
 	if !containsFailure(failures, "gpu=true") {
 		t.Fatalf("failures = %v, want gpu=false failure", failures)
+	}
+}
+
+func TestOuroborosWebGLTruthSoftwareAndHardwareCertification(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "capture.png")
+	png := solidPNG(t, 4, 4, color.RGBA{R: 10, G: 20, B: 30, A: 255})
+	if err := os.WriteFile(path, png, 0o644); err != nil {
+		t.Fatalf("write capture: %v", err)
+	}
+	base := PixelCaptureEvidence{
+		Path:               path,
+		SHA256:             strings.Repeat("a", 64),
+		Backend:            "webgl",
+		Bytes:              len(png),
+		Width:              4,
+		Height:             4,
+		RuntimeTruthParsed: true,
+		RuntimeGPU:         true,
+		Implementation:     "webgl2",
+		HardwareClass:      "hardware-webgl",
+		FrameSeq:           1,
+		RenderLoop:         validRenderLoop("active", "runtime-program", true),
+		WebGL:              WebGLEvidence{Vendor: "NVIDIA Corporation", Renderer: "ANGLE (NVIDIA GeForce RTX 4090 Direct3D11 vs_5_0 ps_5_0)", Version: "webgl2"},
+	}
+	failures := validateCapture(PixelEvidenceOptions{Backend: RequireBackendWebGL}, base)
+	if len(failures) != 0 {
+		t.Fatalf("hardware WebGL truth failures = %v", failures)
+	}
+	for _, renderer := range []string{
+		"ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device))",
+		"llvmpipe (LLVM 17.0.0, 256 bits)",
+	} {
+		software := base
+		software.WebGL = WebGLEvidence{Vendor: "Google Inc.", Renderer: renderer, Version: "webgl2"}
+		software.SoftwareRaster = isSoftwareRaster(software.WebGL.Vendor, software.WebGL.Renderer)
+		software.HardwareClass = classifyHardware("webgl", software.SoftwareRaster, false, true)
+		failures = validateCapture(PixelEvidenceOptions{Backend: RequireBackendWebGL}, software)
+		if !containsFailure(failures, "not real hardware") {
+			t.Fatalf("software WebGL truth %q failures = %v, want hardware rejection", renderer, failures)
+		}
+	}
+	noIdentity := base
+	noIdentity.WebGL = WebGLEvidence{Version: "webgl2"}
+	failures = validateCapture(PixelEvidenceOptions{Backend: RequireBackendWebGL}, noIdentity)
+	if !containsFailure(failures, "WebGL evidence has no adapter identity") {
+		t.Fatalf("missing WebGL identity failures = %v", failures)
 	}
 }
 
@@ -1469,6 +1639,7 @@ func writeValidPixelBaseline(t *testing.T, root string, edit func(*PixelEvidence
 				HardwareClass:      "hardware-webgl",
 				FrameSeq:           settle.ObservedFrame + i,
 				RenderLoop:         settle.RenderLoop,
+				WebGL:              WebGLEvidence{Vendor: "NVIDIA Corporation", Renderer: "ANGLE RTX", Version: "webgl"},
 				Selected:           manifest.Selected,
 				Comparison:         &PixelComparison{Passed: true, BaselineThresholdPct: 0.5, EffectiveThresholdPct: 0.5},
 			})

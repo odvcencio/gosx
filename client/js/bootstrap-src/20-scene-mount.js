@@ -448,6 +448,7 @@
     let frameHandle = null;
     let renderHandle = null;
     let initHandle = null;
+    let initTimer = null;
     let initPending = true;
     let initReason = "";
     let readySent = false;
@@ -1631,6 +1632,17 @@
     function scheduleRenderWithViewport(reason) {
       viewportDirty = true;
       scheduleRender(reason);
+    }
+
+    function cancelInitialRender() {
+      if (initHandle != null) {
+        cancelEngineFrame(initHandle);
+        initHandle = null;
+      }
+      if (initTimer != null) {
+        clearTimeout(initTimer);
+        initTimer = null;
+      }
     }
 
     const domRegionTracker = typeof createSceneCustomPostDOMRegionTracker === "function"
@@ -2858,14 +2870,23 @@
     // Defer the first Scene3D render until after a first-paint boundary.
     function scheduleInitialRender() {
       if (disposed) return;
-      initHandle = engineFrame(function() {
-        initHandle = null;
+      let done = false;
+      const finish = function(now) {
+        if (done) return;
+        done = true;
+        cancelInitialRender();
         if (disposed) return;
+        initPending = false;
+        renderFrame(typeof now === "number" ? now : sceneFrameNowMS(null), initReason || "");
+      };
+      initTimer = setTimeout(finish, 64);
+      initHandle = engineFrame(function() {
+        if (disposed || done) return;
+        cancelInitialRender();
+        initTimer = setTimeout(finish, 64);
         initHandle = engineFrame(function(now) {
-          initHandle = null;
-          if (disposed) return;
-          initPending = false;
-          renderFrame(typeof now === "number" ? now : 0, initReason || "");
+          if (done) return;
+          finish(now);
         });
       });
     }
@@ -3057,10 +3078,7 @@
         // dispose staged mixers and refuse all late status/scene mutation.
         invalidateSceneModelHydration(sceneState);
         initPending = false;
-        if (initHandle != null) {
-          cancelEngineFrame(initHandle);
-          initHandle = null;
-        }
+        cancelInitialRender();
 	        if (ctx.mount && typeof ctx.mount.removeEventListener === "function") {
 	          ctx.mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
 	        }

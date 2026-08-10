@@ -18296,16 +18296,6 @@
   // createSceneWebGPURenderer itself (the real factory, ~1300 lines
   // above) is still defined in this file and is exported by the suffix.
 
-  // Local sceneWebGPUAvailable for use by createSceneWebGPURenderer's
-  // own startup paths — checks the probe shared by the main bundle.
-  // _externalProbe is a function (not a snapshot) so each call sees
-  // the current probe state — the main bundle's probe is async and
-  // may still be pending when this chunk first loads.
-  function sceneWebGPUAvailable() {
-    var probe = _externalProbe();
-    return probe.ready && probe.adapter !== false && probe.adapter !== null;
-  }
-
   // Open the KTX2 variant-swap gate.
   //
   // 19-scene-gltf.js swaps an image URI for a block variant only when

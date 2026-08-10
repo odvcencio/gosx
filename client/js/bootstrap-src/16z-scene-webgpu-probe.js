@@ -45,6 +45,7 @@
   var _webgpuProbeWarnings = [];
   var _webgpuProbeInFlight = false;
   var _webgpuLastProbeStartedAt = 0;
+  var _webgpuProbeToken = 0;
   var WEBGPU_LOST_REPROBE_INTERVAL_MS = 1000;
   var WEBGPU_LOST_REPROBE_WINDOW_MS = 10000;
   var WEBGPU_LOST_REPROBE_MAX_PER_WINDOW = 3;
@@ -816,6 +817,18 @@
     return Date.now();
   }
 
+  function scenePromiseWithTimeout(promise, onTimeout) {
+    var timer = 0;
+    var timeout = new Promise(function(resolve, reject) {
+      timer = setTimeout(function() {
+        resolve(onTimeout(reject));
+      }, 10000);
+    });
+    return Promise.race([promise, timeout]).finally(function() {
+      clearTimeout(timer);
+    });
+  }
+
   function sceneWebGPUMaybeRetryUnavailableProbe() {
     if (!_webgpuDeviceLostInfo || _webgpuAdapterReady || _webgpuProbeInFlight) {
       return _webgpuProbePromise;
@@ -850,10 +863,11 @@
     return false;
   }
 
-  function sceneWebGPUProbeDevice(adapter, adapterRequest, retried, minimal) {
+  function sceneWebGPUProbeDevice(adapter, adapterRequest, retried, minimal, token) {
     sceneWebGPURememberAdapter(adapter);
     var descriptor = sceneWebGPUDeviceDescriptor(minimal);
     return sceneWebGPURequestDevice(adapter, descriptor).catch(function(err) {
+      if (token !== _webgpuProbeToken) return false;
       if (retried || !navigator.gpu || typeof navigator.gpu.requestAdapter !== "function") {
         throw err;
       }
@@ -862,13 +876,14 @@
       _webgpuProbeWarnings.push("requestDevice retry after: " + message);
       console.warn("[gosx] WebGPU probe requestDevice failed; retrying with a fresh adapter:", message);
       return navigator.gpu.requestAdapter(adapterRequest).then(function(retryAdapter) {
+        if (token !== _webgpuProbeToken) return false;
         if (!retryAdapter) {
           throw err;
         }
         // Fresh-adapter retry requests the browser's bare-default device
         // (minimal=true) instead of repeating the same requiredFeatures/
         // requiredLimits descriptor — see sceneWebGPUDeviceDescriptor.
-        return sceneWebGPUProbeDevice(retryAdapter, adapterRequest, true, true);
+        return sceneWebGPUProbeDevice(retryAdapter, adapterRequest, true, true, token);
       });
     });
   }
@@ -959,7 +974,9 @@
     // already in the document before this deferred feature script runs.
     _webgpuProbeOptions = sceneWebGPUProbeOptionsFromManifest();
     var adapterRequest = _webgpuProbeOptions && _webgpuProbeOptions.powerPreference ? _webgpuProbeOptions : undefined;
-    _webgpuProbePromise = navigator.gpu.requestAdapter(adapterRequest).then(function(adapter) {
+    var probeToken = ++_webgpuProbeToken;
+    _webgpuProbePromise = scenePromiseWithTimeout(navigator.gpu.requestAdapter(adapterRequest).then(function(adapter) {
+      if (probeToken !== _webgpuProbeToken) return false;
       if (!adapter) {
         _webgpuProbeError = "requestAdapter returned null";
         console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
@@ -972,8 +989,9 @@
       // fail the first empty requestDevice() after page startup while a fresh
       // adapter succeeds immediately after, so empty descriptors get one
       // adapter reacquire retry. Required features/limits remain strict.
-      return sceneWebGPUProbeDevice(adapter, adapterRequest, false);
+      return sceneWebGPUProbeDevice(adapter, adapterRequest, false, false, probeToken);
     }).then(function(device) {
+      if (probeToken !== _webgpuProbeToken) return false;
       if (device === false) {
         return false;
       }
@@ -983,13 +1001,6 @@
         _webgpuDeviceProbe = false;
         return false;
       }
-      // Full-lifecycle gate: confirm the browser can actually create AND
-      // configure a WebGPU canvas context (on a throwaway canvas) before we
-      // declare WebGPU available. This is the step that fails on some
-      // Windows Edge/Firefox GPU+driver combos despite a working
-      // adapter+device; catching it here keeps the mount canvas clean so the
-      // WebGL2 fallback can acquire a context instead of dying with
-      // "could not acquire a renderer".
       if (!sceneWebGPUProbeCanvasContext(device)) {
         if (!_webgpuProbeError) { _webgpuProbeError = "canvas webgpu context unavailable"; }
         _webgpuAdapterProbe = false;
@@ -1012,17 +1023,27 @@
       sceneWebGPUDispatchProbeReady(recoveredFromLoss);
       return true;
     }).catch(function(err) {
+      if (probeToken !== _webgpuProbeToken) return false;
       _webgpuProbeError = String(err && (err.message || err) || "unknown error");
       console.warn("[gosx] WebGPU probe failed:", _webgpuProbeError);
       _webgpuAdapterProbe = false;
       _webgpuDeviceProbe = false;
       return false;
+    }), function() {
+      if (probeToken === _webgpuProbeToken) {
+        _webgpuProbeToken++;
+        _webgpuAdapterReady = false;
+        _webgpuAdapterProbe = false;
+        _webgpuDeviceProbe = false;
+        _webgpuProbeInFlight = false;
+      }
+      return false;
     });
     _webgpuProbePromise = _webgpuProbePromise.then(function(result) {
-      _webgpuProbeInFlight = false;
+      if (probeToken === _webgpuProbeToken) _webgpuProbeInFlight = false;
       return result;
     }, function(err) {
-      _webgpuProbeInFlight = false;
+      if (probeToken === _webgpuProbeToken) _webgpuProbeInFlight = false;
       throw err;
     });
     return _webgpuProbePromise;

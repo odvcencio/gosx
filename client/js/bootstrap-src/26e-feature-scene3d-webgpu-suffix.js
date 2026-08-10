@@ -6,9 +6,6 @@
   // true on the next call, and subsequent scene mounts will use WebGPU.
   window.__gosx_scene3d_webgpu_api = {
     createRenderer: createSceneWebGPURenderer,
-    available: sceneWebGPUAvailable,
-    commandSequence: sceneWebGPUCommandSequence,
-    diagnostics: sceneWebGPUDiagnostics,
   };
   window.__gosx_scene3d_api.sceneWebGPUCommandSequence = sceneWebGPUCommandSequence;
   window.__gosx_scene3d_api.sceneWebGPUDiagnostics = sceneWebGPUDiagnostics;

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chromedp/chromedp"
 )
 
 func TestOuroborosPixelEvidenceBrowserSmoke(t *testing.T) {
@@ -314,6 +316,127 @@ func TestOuroborosPixelSettlePolicyBrowserSmoke(t *testing.T) {
 			t.Fatalf("malformed telemetry error = %v, want render-loop telemetry failure", err)
 		}
 	})
+}
+
+func TestOuroborosPixelMetadataRefreshesDelayedBackendTruth(t *testing.T) {
+	if os.Getenv("GOSX_OUROBOROS_PIXEL_BROWSER_SMOKE") != "1" {
+		t.Skip("set GOSX_OUROBOROS_PIXEL_BROWSER_SMOKE=1 to run the browser smoke")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html>
+<html>
+<body>
+<div id="scene-smoke">
+  <canvas data-gosx-scene3d-canvas width="96" height="64" style="width:96px;height:64px"></canvas>
+</div>
+<script>
+Object.defineProperty(navigator, "gpu", {
+  configurable: true,
+  value: { requestAdapter: () => {
+    window.__requestAdapterCalls = (window.__requestAdapterCalls || 0) + 1;
+    return new Promise(() => {});
+  } }
+});
+window.__requestAdapterCalls = 0;
+const truth = "{\"backend\":\"webgl\",\"renderer\":\"webgl\",\"gpu\":true,\"fallbackReason\":\"\",\"implementation\":\"webgl2\",\"adapter\":\"synthetic\",\"adapterInfo\":{\"vendor\":\"synthetic\"},\"deviceLost\":false,\"initError\":\"\",\"lastError\":\"\",\"shaderDiagnostics\":{\"messages\":1,\"errors\":0}}";
+const c = document.querySelector("canvas");
+const ctx = c.getContext("2d");
+for (let y = 0; y < c.height; y++) {
+  for (let x = 0; x < c.width; x++) {
+    ctx.fillStyle = "rgb(" + ((x * 3) % 255) + "," + ((y * 5) % 255) + "," + ((x + y) % 255) + ")";
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+window.__metadataCreateElementCalls = 0;
+window.__metadataGetContextCalls = 0;
+const nativeCreateElement = Document.prototype.createElement;
+Document.prototype.createElement = function(name, ...args) {
+  if (String(name).toLowerCase() === "canvas") {
+    window.__metadataCreateElementCalls++;
+  }
+  return nativeCreateElement.call(this, name, ...args);
+};
+const nativeGetContext = HTMLCanvasElement.prototype.getContext;
+HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+  window.__metadataGetContextCalls++;
+  return nativeGetContext.call(this, type, ...args);
+};
+setTimeout(() => {
+  const m = document.querySelector("#scene-smoke");
+  m.setAttribute("data-gosx-scene3d-ready", "true");
+  m.setAttribute("data-gosx-scene3d-mounted", "true");
+  m.setAttribute("data-gosx-scene3d-backend", "webgl");
+  m.setAttribute("data-gosx-scene3d-renderer", "webgl");
+  m.setAttribute("data-gosx-scene3d-render-backend-truth", truth);
+  m.setAttribute("data-gosx-scene3d-render-loop", "stopped");
+  m.setAttribute("data-gosx-scene3d-render-loop-reason", "static");
+  m.setAttribute("data-gosx-scene3d-render-loop-wants-animation", "false");
+  m.setAttribute("data-gosx-scene3d-webgl-frame-seq", "1");
+}, 150);
+</script>
+</body>
+</html>`))
+	}))
+	defer server.Close()
+
+	opts := PixelEvidenceOptions{
+		RouteID:        "R08-delayed-backend",
+		ArtifactRoot:   filepath.Join(t.TempDir(), "pixels"),
+		Backend:        RequireBackendWebGL,
+		ForceWebGL:     true,
+		WaitSelector:   "canvas",
+		CanvasSelector: "canvas[data-gosx-scene3d-canvas]",
+		Timeout:        3 * time.Second,
+	}
+	opts.applyDefaults()
+	manifest := newPixelManifest(server.URL, opts)
+
+	allocCtx, allocCancel, err := newAllocator(context.Background())
+	if err != nil {
+		t.Fatalf("newAllocator: %v", err)
+	}
+	defer allocCancel()
+	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
+	defer browserCancel()
+	runCtx, runCancel := context.WithTimeout(browserCtx, opts.Timeout)
+	defer runCancel()
+
+	if err := navigatePixelPage(runCtx, server.URL, opts, &manifest); err != nil {
+		t.Fatalf("navigatePixelPage: %v", err)
+	}
+	settle, err := waitForSceneReady(runCtx, opts, &manifest, pixelSettleTarget{MinFrame: 1})
+	if err != nil {
+		t.Fatalf("waitForSceneReady did not refresh delayed backend truth: %v", err)
+	}
+	if settle.ObservedFrame < 1 {
+		t.Fatalf("observed frame = %d, want at least 1", settle.ObservedFrame)
+	}
+	if manifest.BackendSelection.RuntimeObservedBackend != "webgl" {
+		t.Fatalf("observed backend = %q, want webgl", manifest.BackendSelection.RuntimeObservedBackend)
+	}
+	var adapterCalls int
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(`window.__requestAdapterCalls || 0`, &adapterCalls)); err != nil {
+		t.Fatalf("read requestAdapter calls: %v", err)
+	}
+	if adapterCalls != 0 {
+		t.Fatalf("metadata polling called navigator.gpu.requestAdapter %d times", adapterCalls)
+	}
+	var createElementCalls int
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(`window.__metadataCreateElementCalls || 0`, &createElementCalls)); err != nil {
+		t.Fatalf("read createElement calls: %v", err)
+	}
+	if createElementCalls != 0 {
+		t.Fatalf("metadata polling created %d scratch canvas elements", createElementCalls)
+	}
+	var getContextCalls int
+	if err := chromedp.Run(runCtx, chromedp.Evaluate(`window.__metadataGetContextCalls || 0`, &getContextCalls)); err != nil {
+		t.Fatalf("read getContext calls: %v", err)
+	}
+	if getContextCalls != 0 {
+		t.Fatalf("metadata polling called HTMLCanvasElement.getContext %d times", getContextCalls)
+	}
 }
 
 type settleSmokeOptions struct {

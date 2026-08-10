@@ -38,6 +38,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
 	"github.com/orisano/pixelmatch"
 	"m31labs.dev/gosx/perf"
@@ -323,6 +326,7 @@ func Capture(ctx context.Context, url string, opts CaptureOptions) ([]byte, erro
 	defer runCancel()
 
 	actions := []chromedp.Action{
+		activateVisualTargetAction(),
 		chromedp.EmulateViewport(
 			int64(opts.Viewport.Width),
 			int64(opts.Viewport.Height),
@@ -363,6 +367,38 @@ func Capture(ctx context.Context, url string, opts CaptureOptions) ([]byte, erro
 }
 
 var captureForAssert = Capture
+
+func activateVisualTargetAction() chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		return activateVisualTarget(ctx)
+	})
+}
+
+func activateVisualTarget(ctx context.Context) error {
+	chromeCtx := chromedp.FromContext(ctx)
+	if chromeCtx == nil {
+		return errors.New("visual: activate target: missing chromedp context")
+	}
+	if chromeCtx.Browser == nil {
+		return errors.New("visual: activate target: missing browser")
+	}
+	if chromeCtx.Target == nil {
+		return errors.New("visual: activate target: missing target")
+	}
+	targetID := chromeCtx.Target.TargetID
+	if targetID == "" {
+		return errors.New("visual: activate target: missing target id")
+	}
+	browserCtx := cdp.WithExecutor(ctx, chromeCtx.Browser)
+	if err := target.ActivateTarget(targetID).Do(browserCtx); err != nil {
+		return fmt.Errorf("visual: activate target %s: %w", targetID, err)
+	}
+	targetCtx := cdp.WithExecutor(ctx, chromeCtx.Target)
+	if err := page.BringToFront().Do(targetCtx); err != nil {
+		return fmt.Errorf("visual: bring target %s to front: %w", targetID, err)
+	}
+	return nil
+}
 
 // newAllocator picks between a remote CHROME_WS_URL and a local Chrome
 // launch. Remote is preferred because it's the single-source-of-truth for

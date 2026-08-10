@@ -24,7 +24,7 @@ import (
 
 const (
 	OuroborosPixelSchemaVersion   = "gosx.ouroboros.pixels.v1"
-	DefaultPixelCanvasSelector    = "canvas[data-gosx-scene3d-canvas], [data-gosx-scene3d-mounted] canvas"
+	DefaultPixelCanvasSelector    = "canvas[data-gosx-scene3d-canvas], [data-gosx-scene3d-ready] canvas, [data-gosx-scene3d-mounted] canvas"
 	MaxCanonicalPixelThresholdPct = 1.0
 	MaxPixelEvidenceSamples       = 10
 	MaxPixelManifestBytes         = 1 << 20
@@ -628,6 +628,7 @@ func navigatePixelPage(ctx context.Context, url string, opts PixelEvidenceOption
 	var flags []string
 	selectionScript := pixelBackendSelectionScript(opts)
 	actions := []chromedp.Action{
+		activateVisualTargetAction(),
 		chromedp.EmulateViewport(int64(opts.Viewport.Width), int64(opts.Viewport.Height), chromedp.EmulateScale(opts.Viewport.Scale)),
 	}
 	if selectionScript != "" {
@@ -844,6 +845,12 @@ func validateSelectedMeta(opts PixelEvidenceOptions, meta pagePixelMetadata) err
 	if meta.Truth.Implementation == "" {
 		return fmt.Errorf("visual: selected mount backend truth has no implementation identity")
 	}
+	if meta.Truth.Backend == "webgpu" && !webGPUTruthHasAdapterIdentity(meta.Truth) {
+		return fmt.Errorf("visual: selected mount WebGPU backend truth has no adapter identity")
+	}
+	if meta.Truth.Backend == "webgl" && !webGLTruthHasAdapterIdentity(meta.Truth) {
+		return fmt.Errorf("visual: selected mount WebGL backend truth has no adapter identity")
+	}
 	if meta.Truth.FallbackReason != "" {
 		return fmt.Errorf("visual: selected mount has fallback reason %q", meta.Truth.FallbackReason)
 	}
@@ -904,12 +911,18 @@ func validateCertifiedCapture(opts PixelEvidenceOptions, capture PixelCaptureEvi
 		failures = append(failures, fmt.Sprintf("%s is not real hardware: %s", capture.Path, capture.HardwareClass))
 	}
 	if capture.Backend == "webgpu" {
+		if !webGPUEvidenceHasAdapterIdentity(capture.WebGPU) {
+			failures = append(failures, fmt.Sprintf("%s WebGPU evidence has no adapter identity", capture.Path))
+		}
 		if capture.WebGPU.Fallback {
 			failures = append(failures, fmt.Sprintf("%s used a WebGPU fallback adapter", capture.Path))
 		}
 		if capture.WebGPU.FallbackReason != "" {
 			failures = append(failures, fmt.Sprintf("%s WebGPU adapter fallback reason: %s", capture.Path, capture.WebGPU.FallbackReason))
 		}
+	}
+	if capture.Backend == "webgl" && !webGLEvidenceHasAdapterIdentity(capture.WebGL) {
+		failures = append(failures, fmt.Sprintf("%s WebGL evidence has no adapter identity", capture.Path))
 	}
 	if opts.Backend != RequireBackendAnyGPU && string(opts.Backend) != capture.Backend {
 		failures = append(failures, fmt.Sprintf("%s backend=%s, want %s", capture.Path, capture.Backend, opts.Backend))
@@ -1896,6 +1909,44 @@ func mergeWebGPU(supplemental WebGPUEvidence, truth sceneTruthEvidence) WebGPUEv
 	return supplemental
 }
 
+func webGPUTruthHasAdapterIdentity(truth sceneTruthEvidence) bool {
+	if strings.TrimSpace(truth.Adapter) != "" {
+		return true
+	}
+	return adapterInfoHasIdentity(truth.AdapterInfo)
+}
+
+func webGLTruthHasAdapterIdentity(truth sceneTruthEvidence) bool {
+	if strings.TrimSpace(truth.Adapter) != "" {
+		return true
+	}
+	return adapterInfoHasIdentity(truth.AdapterInfo)
+}
+
+func webGPUEvidenceHasAdapterIdentity(webgpu WebGPUEvidence) bool {
+	if strings.TrimSpace(webgpu.AdapterName) != "" ||
+		strings.TrimSpace(webgpu.Vendor) != "" ||
+		strings.TrimSpace(webgpu.Architecture) != "" ||
+		strings.TrimSpace(webgpu.Device) != "" ||
+		strings.TrimSpace(webgpu.Description) != "" {
+		return true
+	}
+	return adapterInfoHasIdentity(webgpu.AdapterInfo)
+}
+
+func webGLEvidenceHasAdapterIdentity(webgl WebGLEvidence) bool {
+	return strings.TrimSpace(webgl.Vendor) != "" || strings.TrimSpace(webgl.Renderer) != ""
+}
+
+func adapterInfoHasIdentity(info map[string]interface{}) bool {
+	for _, key := range []string{"vendor", "architecture", "device", "description", "renderer"} {
+		if value, ok := info[key].(string); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func safeName(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -2004,12 +2055,12 @@ const pixelMetadataProbeJS = `(async function() {
   const selector = %s;
   const errors = [];
   const canvases = Array.from(document.querySelectorAll(selector));
-  const allMounts = Array.from(document.querySelectorAll('[data-gosx-scene3d-backend], [data-gosx-scene3d-renderer], [data-gosx-scene3d-mounted]'));
+  const allMounts = Array.from(document.querySelectorAll('[data-gosx-scene3d-backend], [data-gosx-scene3d-renderer], [data-gosx-scene3d-ready], [data-gosx-scene3d-mounted]'));
   let canvas = canvases.length === 1 ? canvases[0] : null;
   if (canvases.length !== 1) errors.push('selector matched ' + canvases.length + ' canvases');
   let mount = null;
   if (canvas) {
-    mount = canvas.closest('[data-gosx-scene3d-backend], [data-gosx-scene3d-renderer], [data-gosx-scene3d-mounted]');
+    mount = canvas.closest('[data-gosx-scene3d-backend], [data-gosx-scene3d-renderer], [data-gosx-scene3d-ready], [data-gosx-scene3d-mounted]');
     if (!mount) {
       mount = allMounts.find((candidate) => candidate.contains(canvas)) || null;
     }
@@ -2027,49 +2078,18 @@ const pixelMetadataProbeJS = `(async function() {
     errors.push('backend truth JSON did not parse');
   }
   const rect = canvas ? canvas.getBoundingClientRect() : { width: 0, height: 0 };
-  const webglCanvas = document.createElement('canvas');
   let webgl = { vendor: '', renderer: '', version: '' };
-  try {
-    const gl = webglCanvas.getContext('webgl2') || webglCanvas.getContext('webgl');
-    if (gl) {
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      webgl = {
-        vendor: ext ? String(gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) || '') : String(gl.getParameter(gl.VENDOR) || ''),
-        renderer: ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '') : String(gl.getParameter(gl.RENDERER) || ''),
-        version: String(gl.getParameter(gl.VERSION) || '')
-      };
-    }
-  } catch (_) {}
   let webgpu = {
     available: !!navigator.gpu,
     adapterName: '',
     vendor: '',
     architecture: '',
     device: '',
-    description: navigator.userAgent || '',
+    description: '',
     fallback: false,
     fallbackReason: '',
     adapterInfo: {}
   };
-  try {
-    if (navigator.gpu && navigator.gpu.requestAdapter) {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (!adapter) {
-        webgpu.fallbackReason = 'request-adapter-null';
-      } else {
-        const info = adapter.info || {};
-        webgpu.adapterName = String(info.description || info.device || info.vendor || '');
-        webgpu.vendor = String(info.vendor || '');
-        webgpu.architecture = String(info.architecture || '');
-        webgpu.device = String(info.device || '');
-        webgpu.description = String(info.description || navigator.userAgent || '');
-        webgpu.fallback = !!adapter.isFallbackAdapter;
-        webgpu.adapterInfo = info;
-      }
-    }
-  } catch (err) {
-    webgpu.fallbackReason = String(err && err.message || err || 'request-adapter-error');
-  }
   const truth = {
     backend: backendTruth.backend || '',
     renderer: attr('data-gosx-scene3d-renderer') || backendTruth.renderer || '',
@@ -2100,6 +2120,23 @@ const pixelMetadataProbeJS = `(async function() {
     },
     parsed: backendTruthParsed
   };
+  if (backendTruthParsed && truth.backend === 'webgpu') {
+    const info = truth.adapterInfo || {};
+    webgpu.adapterName = String(truth.adapter || info.description || info.device || info.vendor || '');
+    webgpu.vendor = String(info.vendor || '');
+    webgpu.architecture = String(info.architecture || '');
+    webgpu.device = String(info.device || '');
+    webgpu.description = String(info.description || '');
+    webgpu.adapterInfo = info;
+  }
+  if (backendTruthParsed && truth.backend === 'webgl') {
+    const info = truth.adapterInfo || {};
+    webgl = {
+      vendor: String(info.vendor || ''),
+      renderer: String(info.description || info.renderer || truth.adapter || ''),
+      version: String(truth.implementation || '')
+    };
+  }
   const renderLoopStateRaw = attr('data-gosx-scene3d-render-loop');
   const renderLoopWantsRaw = attr('data-gosx-scene3d-render-loop-wants-animation');
   const renderLoopReason = attr('data-gosx-scene3d-render-loop-reason');
