@@ -240,6 +240,10 @@ func CollectRuntimeJSONStaticCorpus(ctx context.Context, opts RuntimeJSONProbeOp
 	if err != nil {
 		return nil, err
 	}
+	return collectRuntimeJSONStaticCorpusFromInventory(opts, inv, source)
+}
+
+func collectRuntimeJSONStaticCorpusFromInventory(opts RuntimeJSONProbeOptions, inv *Inventory, source SourceIdentity) (*RuntimeJSONStaticCorpus, error) {
 	files := runtimeJSONSourceFiles(inv)
 	query := RuntimeJSONStaticQuery{
 		ID:               "gosx.ouroboros.o02.runtime-json-static.ast.v2",

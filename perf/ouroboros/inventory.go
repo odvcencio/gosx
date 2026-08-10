@@ -1357,34 +1357,40 @@ func scanFullRuntimeJSONNameSet(ctx context.Context, root string, inv Inventory,
 		return CompatibilityNameSetEvidence{}, err
 	}
 	defer os.RemoveAll(artifactRoot)
-	if inv.OverlayHash != OverlayClean && inv.Overlay.PatchPath == "" {
-		overlayArtifactRoot := filepath.Join(root, "build", "ouroboros", "compat-runtime-json-static")
-		if err := WriteOverlayArtifacts(ctx, root, overlayArtifactRoot, inv.Overlay); err != nil {
+	scanRoot := root
+	scanInv := inv
+	var proof *ReconstructionEvidence
+	if identity.Kind == "current-overlay" {
+		materializedRoot, materializedInv, reconstruction, cleanup, err := materializeCurrentRuntimeJSONScanRoot(ctx, root, inv)
+		if err != nil {
 			return CompatibilityNameSetEvidence{}, err
 		}
-		inv.Overlay.PatchPath = filepath.ToSlash(filepath.Join("build", "ouroboros", "compat-runtime-json-static", "tracked-overlay.patch"))
-		inv.Overlay.ArchivePath = filepath.ToSlash(filepath.Join("build", "ouroboros", "compat-runtime-json-static", "untracked-sources"))
+		defer cleanup()
+		scanRoot = materializedRoot
+		scanInv = materializedInv
+		proof = &reconstruction
+	}
+	if err := refreshRuntimeJSONScanProjection(scanRoot, &scanInv); err != nil {
+		return CompatibilityNameSetEvidence{}, err
 	}
 	invPath := filepath.Join(artifactRoot, "source-inventory.json")
-	if err := WriteJSONFile(invPath, inv); err != nil {
+	if err := WriteJSONFile(invPath, scanInv); err != nil {
 		return CompatibilityNameSetEvidence{}, err
 	}
 	generatedAt := time.Now().UTC()
-	if parsed, err := time.Parse(time.RFC3339, inv.GeneratedAt); err == nil {
+	if parsed, err := time.Parse(time.RFC3339, scanInv.GeneratedAt); err == nil {
 		generatedAt = parsed
 	}
-	scanMode := runtimeJSONInventoryScanCompatibilityCurrent
-	if identity.Kind == "clean-anchor" {
-		scanMode = runtimeJSONInventoryScanCompatibilityAnchorArchive
+	source, err := runtimeJSONSourceIdentityForInventory(artifactRoot, invPath, &scanInv, proof)
+	if err != nil {
+		return CompatibilityNameSetEvidence{}, err
 	}
-	corpus, err := CollectRuntimeJSONStaticCorpus(ctx, RuntimeJSONProbeOptions{
-		RepoRoot:      root,
-		InventoryPath: invPath,
-		ArtifactRoot:  artifactRoot,
-		GeneratedAt:   generatedAt,
-		Git:           false,
-		scanMode:      scanMode,
-	})
+	corpus, err := collectRuntimeJSONStaticCorpusFromInventory(RuntimeJSONProbeOptions{
+		RepoRoot:     scanRoot,
+		ArtifactRoot: artifactRoot,
+		GeneratedAt:  generatedAt,
+		Git:          false,
+	}, &scanInv, source)
 	if err != nil {
 		return CompatibilityNameSetEvidence{}, err
 	}
@@ -1407,6 +1413,287 @@ func scanFullRuntimeJSONNameSet(ctx context.Context, root string, inv Inventory,
 	set.RuntimeJSONGlobalNameHash = corpus.GlobalNames.Hash
 	set.EvidenceHash = compatibilityEvidenceHash(set)
 	return set, nil
+}
+
+type overlaySnapshot struct {
+	Evidence        OverlayEvidence
+	TrackedDiff     string
+	UntrackedBodies map[string][]byte
+}
+
+func materializeCurrentRuntimeJSONScanRoot(ctx context.Context, repoRoot string, inv Inventory) (string, Inventory, ReconstructionEvidence, func(), error) {
+	cleanup := func() {}
+	if !validGitRevision(inv.BaseRevision) {
+		return "", Inventory{}, ReconstructionEvidence{}, cleanup, fmt.Errorf("unsafe base revision %q", inv.BaseRevision)
+	}
+	snapshot, err := snapshotCurrentOverlay(ctx, repoRoot, inv.BaseRevision)
+	if err != nil {
+		return "", Inventory{}, ReconstructionEvidence{}, cleanup, err
+	}
+	if err := verifyCurrentOverlaySnapshot(inv, snapshot.Evidence); err != nil {
+		return "", Inventory{}, ReconstructionEvidence{}, cleanup, err
+	}
+	tempRoot, err := os.MkdirTemp("", "gosx-o02-current-scan-*")
+	if err != nil {
+		return "", Inventory{}, ReconstructionEvidence{}, cleanup, err
+	}
+	cleanup = func() { _ = os.RemoveAll(tempRoot) }
+	cloneRoot := filepath.Join(tempRoot, "repo")
+	if _, err := gitOutput(ctx, "", "git", "clone", "--no-checkout", "--no-local", repoRoot, cloneRoot); err != nil {
+		cleanup()
+		return "", Inventory{}, ReconstructionEvidence{}, func() {}, fmt.Errorf("clone isolated current scan repository: %w", err)
+	}
+	if _, err := gitOutput(ctx, cloneRoot, "git", "checkout", "--detach", inv.BaseRevision); err != nil {
+		cleanup()
+		return "", Inventory{}, ReconstructionEvidence{}, func() {}, fmt.Errorf("checkout current scan base revision: %w", err)
+	}
+	if strings.TrimSpace(snapshot.TrackedDiff) != "" {
+		cmd := exec.CommandContext(ctx, "git", "apply", "--index", "--binary", "-")
+		cmd.Dir = cloneRoot
+		cmd.Stdin = strings.NewReader(snapshot.TrackedDiff)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			cleanup()
+			msg := strings.TrimSpace(stderr.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return "", Inventory{}, ReconstructionEvidence{}, func() {}, fmt.Errorf("apply current scan tracked overlay: %s", msg)
+		}
+	}
+	if err := restoreCurrentScanUntrackedSnapshot(cloneRoot, snapshot); err != nil {
+		cleanup()
+		return "", Inventory{}, ReconstructionEvidence{}, func() {}, err
+	}
+	scanInv := inv
+	scanInv.Overlay = snapshot.Evidence
+	scanInv.OverlayHash = snapshot.Evidence.Hash
+	rebuilt, err := BuildOverlayEvidence(ctx, cloneRoot, scanInv.BaseRevision)
+	if err != nil {
+		cleanup()
+		return "", Inventory{}, ReconstructionEvidence{}, func() {}, fmt.Errorf("build isolated current scan overlay evidence: %w", err)
+	}
+	reconstruction := ReconstructionEvidence{
+		Method:              inventoryReconstructionMethod,
+		BaseRevision:        scanInv.BaseRevision,
+		ObservedOverlayHash: rebuilt.Hash,
+		PatchSHA:            sha256String(snapshot.TrackedDiff),
+		UntrackedCount:      len(rebuilt.UntrackedSources),
+		Isolated:            true,
+		Applied:             true,
+	}
+	if err := verifyReconstructedOverlay(&scanInv, rebuilt); err != nil {
+		cleanup()
+		return "", Inventory{}, ReconstructionEvidence{}, func() {}, err
+	}
+	reconstruction.Verified = true
+	return cloneRoot, scanInv, reconstruction, cleanup, nil
+}
+
+func snapshotCurrentOverlay(ctx context.Context, root, baseRevision string) (overlaySnapshot, error) {
+	status, err := gitOutput(ctx, root, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return overlaySnapshot{}, err
+	}
+	snapshot := overlaySnapshot{
+		Evidence: OverlayEvidence{
+			Status:       "clean",
+			Hash:         OverlayClean,
+			BaseRevision: baseRevision,
+			Recreate:     []string{"git checkout " + baseRevision},
+		},
+		UntrackedBodies: map[string][]byte{},
+	}
+	if status == "" {
+		return snapshot, nil
+	}
+	snapshot.Evidence.Status = "dirty"
+	h := sha256.New()
+	io.WriteString(h, "gosx-ouroboros-overlay-v1\n")
+	trackedDiff, err := gitOutput(ctx, root, "git", trackedOverlayDiffArgs()...)
+	if err != nil {
+		return overlaySnapshot{}, err
+	}
+	snapshot.TrackedDiff = trackedDiff
+	snapshot.Evidence.TrackedDiffHash = sha256String(trackedDiff)
+	snapshot.Evidence.TrackedCachedDiffHash = "not-hashed"
+	io.WriteString(h, trackedDiff)
+	records := parsePorcelainStatus(status)
+	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	for _, rec := range records {
+		if rec.Path == "" {
+			continue
+		}
+		if reason := overlayExclusionReason(rec.Path); reason != "" {
+			snapshot.Evidence.ExcludedPaths = append(snapshot.Evidence.ExcludedPaths, OverlayExcludedPath{Path: rec.Path, Reason: reason})
+			continue
+		}
+		if !strings.Contains(rec.Code, "?") {
+			continue
+		}
+		src, body, err := readUntrackedSource(root, rec.Path)
+		if err != nil {
+			return overlaySnapshot{}, err
+		}
+		snapshot.Evidence.UntrackedSources = append(snapshot.Evidence.UntrackedSources, src)
+		snapshot.UntrackedBodies[src.Path] = append([]byte{}, body...)
+		io.WriteString(h, "\nuntracked:")
+		io.WriteString(h, rec.Path)
+		io.WriteString(h, " ")
+		io.WriteString(h, src.Type)
+		io.WriteString(h, " ")
+		io.WriteString(h, src.Mode)
+		io.WriteString(h, "\n")
+		h.Write(body)
+	}
+	sort.Slice(snapshot.Evidence.UntrackedSources, func(i, j int) bool {
+		return snapshot.Evidence.UntrackedSources[i].Path < snapshot.Evidence.UntrackedSources[j].Path
+	})
+	sort.Slice(snapshot.Evidence.ExcludedPaths, func(i, j int) bool {
+		return snapshot.Evidence.ExcludedPaths[i].Path < snapshot.Evidence.ExcludedPaths[j].Path
+	})
+	snapshot.Evidence.Hash = "sha256:" + hex.EncodeToString(h.Sum(nil))
+	snapshot.Evidence.Recreate = []string{
+		"git checkout " + baseRevision,
+		"git apply --index --binary tracked-overlay.patch",
+		"restore untracked source files listed in overlay.untracked.json by path and sha256",
+	}
+	return snapshot, nil
+}
+
+func verifyCurrentOverlaySnapshot(inv Inventory, got OverlayEvidence) error {
+	if got.Hash != inv.OverlayHash {
+		return fmt.Errorf("current overlay changed after inventory capture: artifact=%s current=%s", inv.OverlayHash, got.Hash)
+	}
+	if inv.Overlay.Hash != "" && got.Hash != inv.Overlay.Hash {
+		return fmt.Errorf("current overlay hash changed after inventory capture: artifact=%s current=%s", inv.Overlay.Hash, got.Hash)
+	}
+	if got.TrackedDiffHash != inv.Overlay.TrackedDiffHash {
+		return fmt.Errorf("current tracked diff changed after inventory capture: artifact=%s current=%s", inv.Overlay.TrackedDiffHash, got.TrackedDiffHash)
+	}
+	if got.TrackedCachedDiffHash != inv.Overlay.TrackedCachedDiffHash {
+		return fmt.Errorf("current cached tracked diff marker changed after inventory capture: artifact=%s current=%s", inv.Overlay.TrackedCachedDiffHash, got.TrackedCachedDiffHash)
+	}
+	if hashUntracked(got.UntrackedSources) != hashUntracked(inv.Overlay.UntrackedSources) {
+		return fmt.Errorf("current untracked sources changed after inventory capture: artifact=%s current=%s", hashUntracked(inv.Overlay.UntrackedSources), hashUntracked(got.UntrackedSources))
+	}
+	return nil
+}
+
+func restoreCurrentScanUntrackedSnapshot(cloneRoot string, snapshot overlaySnapshot) error {
+	for _, src := range snapshot.Evidence.UntrackedSources {
+		body, ok := snapshot.UntrackedBodies[src.Path]
+		if !ok {
+			return fmt.Errorf("missing current scan untracked body for %s", src.Path)
+		}
+		target, err := safeJoin(cloneRoot, src.Path)
+		if err != nil {
+			return err
+		}
+		if err := preflightReconstructionRestoreTarget(cloneRoot, target); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		switch src.Type {
+		case "file":
+			mode, err := parseOverlayFileMode(src)
+			if err != nil {
+				return err
+			}
+			if err := rejectReconstructionFinalSymlink(target); err != nil {
+				return err
+			}
+			if err := os.WriteFile(target, body, mode); err != nil {
+				return err
+			}
+			if err := os.Chmod(target, mode); err != nil {
+				return err
+			}
+		case "symlink":
+			targetText := string(body)
+			if err := validateSafeSymlinkTarget(targetText); err != nil {
+				return err
+			}
+			_ = os.Remove(target)
+			if err := os.Symlink(targetText, target); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported current scan untracked source type %q for %s", src.Type, src.Path)
+		}
+	}
+	return nil
+}
+
+func runtimeJSONSourceIdentityForInventory(artifactRoot, invPath string, inv *Inventory, proof *ReconstructionEvidence) (SourceIdentity, error) {
+	hash, err := fileSHA256(invPath)
+	if err != nil {
+		return SourceIdentity{}, err
+	}
+	source := SourceIdentity{
+		BaseRevision:                inv.BaseRevision,
+		OverlayHash:                 inv.OverlayHash,
+		TrackedDiffHash:             inv.Overlay.TrackedDiffHash,
+		UntrackedIncludedSourceHash: hashUntracked(inv.Overlay.UntrackedSources),
+		InventoryRef:                relTo(artifactRoot, invPath),
+		InventorySHA256:             hash,
+		RejectsModuleCacheMismatch:  true,
+		StrictInventory:             true,
+	}
+	if proof != nil {
+		if !proof.Verified {
+			return SourceIdentity{}, fmt.Errorf("runtime JSON current scan reconstruction did not verify")
+		}
+		source.CurrentOverlayVerified = true
+		source.ReconstructionProof = true
+		source.Reconstruction = proof
+	}
+	return source, nil
+}
+
+func refreshRuntimeJSONScanProjection(root string, inv *Inventory) error {
+	if inv == nil {
+		return fmt.Errorf("runtime JSON scan inventory is nil")
+	}
+	fresh := &Inventory{
+		Files: FileInventory{
+			Included: []SourceFile{},
+			Sidecars: []SourceFile{},
+			Embedded: []SourceFile{},
+			Excluded: []ExcludedFile{},
+			Audit:    []ExcludedFile{},
+		},
+		Totals: Totals{ByExtension: map[string]int{}},
+		Structural: Structural{
+			ImportsExports:   []Location{},
+			FreeGlobalReads:  []string{},
+			FreeGlobalWrites: []string{},
+		},
+		Surface: Surface{
+			GosxNames:               []GosxName{},
+			BroaderBrowserGosxNames: []GosxName{},
+			SerializationSites:      []SerializationSite{},
+		},
+	}
+	if err := collectFiles(root, fresh); err != nil {
+		return err
+	}
+	if err := collectCompatibilitySurface(root, fresh); err != nil {
+		return err
+	}
+	if err := recomputeGosxSurfaceCounts(root, fresh); err != nil {
+		return err
+	}
+	compatibilityAudit := inv.Surface.CompatibilityAudit
+	inv.Files = fresh.Files
+	inv.Totals = fresh.Totals
+	inv.Structural = fresh.Structural
+	inv.Surface = fresh.Surface
+	inv.Surface.CompatibilityAudit = compatibilityAudit
+	return nil
 }
 
 func isSafeRepoRelPath(rel string) bool {

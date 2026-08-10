@@ -716,6 +716,60 @@ func TestCompatibilityAuditFreshHashesAreDeterministic(t *testing.T) {
 	}
 }
 
+func TestScanFullRuntimeJSONNameSetRefreshesPrunedCurrentProjection(t *testing.T) {
+	root := newCompatibilityAuditTestRepo(t)
+	inv, err := Collect(context.Background(), CollectOptions{RepoRoot: root, Git: true, Canopy: false})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	inv.Files = FileInventory{
+		Included: []SourceFile{},
+		Sidecars: []SourceFile{},
+		Embedded: []SourceFile{},
+		Excluded: []ExcludedFile{},
+		Audit:    []ExcludedFile{},
+	}
+	inv.Surface.GosxNames = []GosxName{}
+	inv.Surface.GosxNameCount = 0
+	set, err := scanFullRuntimeJSONNameSet(context.Background(), root, *inv, CompatibilitySourceIdentity{Kind: "current-overlay", Revision: inv.BaseRevision, OverlayHash: inv.OverlayHash})
+	if err != nil {
+		t.Fatalf("scanFullRuntimeJSONNameSet: %v", err)
+	}
+	if set.Count == 0 {
+		t.Fatalf("scanFullRuntimeJSONNameSet returned an empty current set after source projection pruning")
+	}
+	for _, want := range []string{"__gosx_runtime_ready", "__gosx_host_callback"} {
+		if !containsString(set.Names, want) {
+			t.Fatalf("current names missing %s: %+v", want, set.Names)
+		}
+	}
+}
+
+func TestCompatibilityAuditFailClosesPostCaptureRelevantSourceChurn(t *testing.T) {
+	root := newCompatibilityAuditTestRepo(t)
+	inv, err := Collect(context.Background(), CollectOptions{RepoRoot: root, Git: true, Canopy: false})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	writeFile(t, root, "client/js/bootstrap-src/00-runtime.js", "window.__gosx_runtime_ready = true;\nwindow.__gosx_after_capture = true;\n")
+	if err := collectCompatibilityAudit(context.Background(), root, inv); err != nil {
+		t.Fatalf("collectCompatibilityAudit: %v", err)
+	}
+	audit := inv.Surface.CompatibilityAudit
+	if audit.Status != "fail-closed" || audit.ScanStatus != compatibilityScanStatusFailed || audit.CanonicalAvailable {
+		t.Fatalf("compatibility audit did not fail closed after relevant source churn: %+v", audit)
+	}
+	if audit.Current.Count != 0 || len(audit.Reconciliation.RemovedSinceAnchor) == 0 {
+		t.Fatalf("fail-closed current evidence/reconciliation = %+v", audit)
+	}
+	if len(audit.Notes) == 0 || !strings.Contains(audit.Notes[0], "scan current: current overlay changed after inventory capture") {
+		t.Fatalf("fail-closed notes = %+v, want current overlay churn note", audit.Notes)
+	}
+	if _, err := os.Stat(filepath.Join(root, "build", "ouroboros", "compat-runtime-json-static")); !os.IsNotExist(err) {
+		t.Fatalf("compatibility scan wrote shared overlay artifacts, stat err = %v", err)
+	}
+}
+
 func newCompatibilityAuditTestRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
