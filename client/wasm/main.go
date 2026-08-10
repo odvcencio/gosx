@@ -11,6 +11,9 @@ import (
 )
 
 func registerRuntime(b *bridge.Bridge) {
+	b.RegisterIslandHostFactory("browser", func(islandID string) vm.HostReceiver {
+		return newBrowserHostReceiver(islandID)
+	})
 	b.SetSharedSignalCallback(func(name, valueJSON string) {
 		notify := js.Global().Get("__gosx_notify_shared_signal")
 		if notify.Type() == js.TypeFunction {

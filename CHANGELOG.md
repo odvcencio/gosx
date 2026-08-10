@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.38.0 (2026-08-09)
+
+### Island-VM core: capability-scoped browser handlers, computed signals, hub refresh
+
+- **Browser host receiver.** A framework-owned, root-scoped capability
+  surface (`browser` receiver) for island handler effects: microtask-isolated
+  dialogs and focus movement, deferred activation, clipboard access, managed
+  navigation and refresh, deferred form submission, event control, and
+  scrolling. Handlers author against `browser.Activate(...)` and similar
+  calls; the framework lowers each to a host call and resolves it through a
+  registered `HostReceiverFactory` (`client/bridge.RegisterIslandHostFactory`)
+  at hydration, keeping host objects out of serialized island programs.
+- **Typed event payloads.** Compact, typed keyboard, pointer, drag/drop,
+  dataset, and timing payloads reach handlers instead of raw DOM event
+  objects, with lifecycle-safe document/window event conventions.
+- **Manifest-selective delegated listeners.** Hydration manifests select
+  which delegated listeners an island needs, with legacy-manifest
+  compatibility, explicit zero-listener eventless manifests, and ownership
+  boundaries that keep nested islands from claiming a parent's events.
+- **Chained computed signals.** Island programs run reactive computed
+  definitions (`signal.Derive`) that chain across DOM, Scene3D, and Canvas2D
+  surfaces, with shared-signal rebinding, prop invalidation, and
+  hot-reload/disposal cleanup. Dispatch is guarded against reentrancy; reload
+  binds new shared and computed inputs before its single DOM reconcile.
+- **Boolean HTML attributes.** A shared `internal/htmlattr` helper normalizes
+  boolean attribute rendering and hydration (for example `disabled`,
+  `checked`) so island VM state and server-rendered markup agree.
+- **Navigation and hub refresh.** Forced soft-route refresh with mutation
+  revalidation, debounced hub-triggered refresh bindings, and direct JSON
+  storage-to-signal hydration.
+- **Accessible managed forms.** Scoped managed-form result projection,
+  including stale-error cleanup, status announcement on submit, and
+  invalid-field focus.
+
 ## v0.37.0 (2026-08-09)
 
 ### New framework surfaces that retire app-authored scripts

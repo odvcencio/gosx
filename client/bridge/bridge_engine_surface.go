@@ -46,7 +46,6 @@ import (
 	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/engine/surface"
 	"m31labs.dev/gosx/island/program"
-	"m31labs.dev/gosx/signal"
 )
 
 // EngineSurfaceEventKind identifies which handler the dispatcher should
@@ -148,13 +147,6 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 
 	machine := vm.NewVM(prog, nil)
 
-	// Initialize package-level signals from their Init exprs. This is the
-	// equivalent of how vm.NewIsland constructs signals — we keep the
-	// shape narrow (no shared-signal wiring yet) because engine-surface
-	// authors today consume signals as in-VM mutable package vars per
-	// the Y.D / Y.E / Y.F / Y.G lowering convention.
-	initializeEngineSurfaceSignals(machine, prog)
-
 	recv := surface.NewCanvasHostReceiver(machine, canvas)
 	machine.BindHost("c", recv)
 
@@ -166,6 +158,13 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 	// back to the handler's local.
 	ctxRecv := surface.NewContextHostReceiver([]byte(propsJSON))
 	machine.BindHost("ctx", ctxRecv)
+
+	// Initialize mutable and computed definitions after binding the surface
+	// hosts. InitSignals fills every mutable slot directly and constructs the
+	// complete computed graph once; the former per-definition SetSignal loop
+	// never created an initial computed graph and rebuilt repeatedly once one
+	// happened to exist.
+	vm.InitSignals(machine, prog)
 
 	inst := &engineSurfaceInstance{
 		machine:       machine,
@@ -318,11 +317,7 @@ type engineSurfacePropSnapshot struct {
 // surface.PointerEvent / WheelEvent / KeyEvent / ResizeEvent struct
 // fields (see engine/surface/surface.go).
 func stageEngineSurfaceEventProps(machine *vm.VM, kind EngineSurfaceEventKind, floats []float64, payloadStr string) []engineSurfacePropSnapshot {
-	type assignment struct {
-		name  string
-		value vm.Value
-	}
-	var assignments []assignment
+	var assignments []vm.PropMutation
 	switch kind {
 	case EngineSurfaceEventClick,
 		EngineSurfaceEventDblClick,
@@ -331,56 +326,58 @@ func stageEngineSurfaceEventProps(machine *vm.VM, kind EngineSurfaceEventKind, f
 		EngineSurfaceEventPointerUp,
 		EngineSurfaceEventPointerCancel:
 		// [x, y, button, buttons, modifier]
-		assignments = []assignment{
-			{"ev.X", floatAt(floats, 0)},
-			{"ev.Y", floatAt(floats, 1)},
-			{"ev.Button", floatAt(floats, 2)},
-			{"ev.Buttons", floatAt(floats, 3)},
-			{"ev.Modifier", floatAt(floats, 4)},
+		assignments = []vm.PropMutation{
+			{Name: "ev.X", Value: floatAt(floats, 0)},
+			{Name: "ev.Y", Value: floatAt(floats, 1)},
+			{Name: "ev.Button", Value: floatAt(floats, 2)},
+			{Name: "ev.Buttons", Value: floatAt(floats, 3)},
+			{Name: "ev.Modifier", Value: floatAt(floats, 4)},
 		}
 	case EngineSurfaceEventWheel:
 		// [x, y, deltaX, deltaY, modifier]
-		assignments = []assignment{
-			{"ev.X", floatAt(floats, 0)},
-			{"ev.Y", floatAt(floats, 1)},
-			{"ev.DeltaX", floatAt(floats, 2)},
-			{"ev.DeltaY", floatAt(floats, 3)},
-			{"ev.Modifier", floatAt(floats, 4)},
+		assignments = []vm.PropMutation{
+			{Name: "ev.X", Value: floatAt(floats, 0)},
+			{Name: "ev.Y", Value: floatAt(floats, 1)},
+			{Name: "ev.DeltaX", Value: floatAt(floats, 2)},
+			{Name: "ev.DeltaY", Value: floatAt(floats, 3)},
+			{Name: "ev.Modifier", Value: floatAt(floats, 4)},
 		}
 	case EngineSurfaceEventKeyDown, EngineSurfaceEventKeyUp:
 		// [modifier]; payloadStr is "key\tcode"
 		key, code := splitKeyPayload(payloadStr)
-		assignments = []assignment{
-			{"ev.Key", vm.StringVal(key)},
-			{"ev.Code", vm.StringVal(code)},
-			{"ev.Modifier", floatAt(floats, 0)},
+		assignments = []vm.PropMutation{
+			{Name: "ev.Key", Value: vm.StringVal(key)},
+			{Name: "ev.Code", Value: vm.StringVal(code)},
+			{Name: "ev.Modifier", Value: floatAt(floats, 0)},
 		}
 	case EngineSurfaceEventResize:
 		// [width, height, dpr]
-		assignments = []assignment{
-			{"ev.Width", floatAt(floats, 0)},
-			{"ev.Height", floatAt(floats, 1)},
-			{"ev.DPR", floatAt(floats, 2)},
+		assignments = []vm.PropMutation{
+			{Name: "ev.Width", Value: floatAt(floats, 0)},
+			{Name: "ev.Height", Value: floatAt(floats, 1)},
+			{Name: "ev.DPR", Value: floatAt(floats, 2)},
 		}
 	}
 
 	snapshots := make([]engineSurfacePropSnapshot, 0, len(assignments))
 	for _, a := range assignments {
-		prev, ok := machine.GetProp(a.name)
-		snapshots = append(snapshots, engineSurfacePropSnapshot{name: a.name, value: prev, present: ok})
-		machine.SetProp(a.name, a.value)
+		prev, ok := machine.GetProp(a.Name)
+		snapshots = append(snapshots, engineSurfacePropSnapshot{name: a.Name, value: prev, present: ok})
 	}
+	machine.ApplyPropMutations(assignments)
 	return snapshots
 }
 
 func restoreEngineSurfaceProps(machine *vm.VM, snapshots []engineSurfacePropSnapshot) {
-	for _, s := range snapshots {
-		if s.present {
-			machine.SetProp(s.name, s.value)
-			continue
+	mutations := make([]vm.PropMutation, len(snapshots))
+	for i, snapshot := range snapshots {
+		mutations[i] = vm.PropMutation{
+			Name:   snapshot.name,
+			Value:  snapshot.value,
+			Delete: !snapshot.present,
 		}
-		machine.DeleteProp(s.name)
 	}
+	machine.ApplyPropMutations(mutations)
 }
 
 func floatAt(xs []float64, i int) vm.Value {
@@ -397,15 +394,4 @@ func splitKeyPayload(s string) (key, code string) {
 		}
 	}
 	return s, ""
-}
-
-// initializeEngineSurfaceSignals registers each SignalDef as a fresh
-// signal on the VM, seeded with the eval'd Init expression. This is
-// what makes `gName = props.Name` in a Mount handler actually persist
-// across handler invocations.
-func initializeEngineSurfaceSignals(machine *vm.VM, prog *program.Program) {
-	for _, def := range prog.Signals {
-		initVal := machine.Eval(def.Init)
-		machine.SetSignal(def.Name, signal.New(initVal))
-	}
 }

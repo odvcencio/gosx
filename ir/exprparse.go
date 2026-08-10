@@ -15,6 +15,7 @@ type ExprScope struct {
 	Props         map[string]bool   // prop names
 	Handlers      map[string]bool   // handler names
 	EventFields   map[string]bool   // current event payload fields available inside handlers
+	Browser       bool              // reserved browser host receiver is available (handler scope only)
 }
 
 // ParseExpr parses a GoSX island expression into VM opcodes.
@@ -354,6 +355,9 @@ func closuresAllowedFor(method string) bool {
 
 func (p *exprParser) parsePrimary() (program.ExprID, error) {
 	switch tok := p.peek(); tok.kind {
+	case tokenLBracket:
+		return p.parseSliceLiteral()
+
 	case tokenLParen:
 		p.next()
 		exprID, err := p.parseConditional()
@@ -407,6 +411,65 @@ func (p *exprParser) parsePrimary() (program.ExprID, error) {
 	}
 
 	return 0, fmt.Errorf("cannot parse expression: %q", p.source)
+}
+
+// parseSliceLiteral lowers a typed Go slice literal through the same
+// OpComposite representation used by the statement lowerer. Signal
+// initializers are parsed through this smaller expression parser, so without
+// this path a value such as []string{} degraded to its source text.
+func (p *exprParser) parseSliceLiteral() (program.ExprID, error) {
+	p.next() // [
+	if _, err := p.expect(tokenRBracket); err != nil {
+		return 0, err
+	}
+	// The VM's list representation is element-type agnostic. Consume the Go
+	// type spelling, while still rejecting expression operators and an empty
+	// type, until the literal body begins.
+	sawIdent := false
+	for p.peek().kind != tokenLBrace {
+		switch p.peek().kind {
+		case tokenIdent:
+			sawIdent = true
+		case tokenDot, tokenStar, tokenLBracket, tokenRBracket:
+		default:
+			return 0, fmt.Errorf("invalid slice element type in %q", p.source)
+		}
+		p.next()
+	}
+	if !sawIdent {
+		return 0, fmt.Errorf("slice element type required in %q", p.source)
+	}
+	p.next() // {
+
+	var operands []program.ExprID
+	for index := 0; !p.match(tokenRBrace); index++ {
+		valueID, err := p.parseConditional()
+		if err != nil {
+			return 0, err
+		}
+		indexID := p.addExpr(program.Expr{
+			Op:    program.OpLitInt,
+			Value: strconv.Itoa(index),
+			Type:  program.TypeInt,
+		})
+		operands = append(operands, indexID, valueID)
+		if p.match(tokenRBrace) {
+			break
+		}
+		if _, err := p.expect(tokenComma); err != nil {
+			return 0, err
+		}
+		// Go permits a trailing comma in a composite literal.
+		if p.match(tokenRBrace) {
+			break
+		}
+	}
+	return p.addExpr(program.Expr{
+		Op:       program.OpComposite,
+		Value:    "slice",
+		Operands: operands,
+		Type:     program.TypeAny,
+	}), nil
 }
 
 func (p *exprParser) parseArgs(closuresAllowed bool) ([]program.ExprID, error) {
@@ -531,6 +594,9 @@ func (p *exprParser) buildFieldAccess(receiverID program.ExprID, field string) (
 
 func (p *exprParser) buildMethodCall(receiverID program.ExprID, method string, args []program.ExprID) (program.ExprID, error) {
 	normalized := strings.ToLower(method)
+	if p.browserReceiver(receiverID) {
+		return p.buildBrowserMethodCall(method, normalized, args)
+	}
 	if signalName, ok := p.signalReceiver(receiverID); ok {
 		if exprID, handled, err := p.buildSignalMethodCall(signalName, normalized, args); handled {
 			return exprID, err
@@ -549,6 +615,74 @@ func (p *exprParser) buildMethodCall(receiverID program.ExprID, method string, a
 		return exprID, err
 	}
 	return 0, fmt.Errorf("unknown method %q", method)
+}
+
+type browserMethodSpec struct {
+	name       string
+	minArgs    int // required effect args, excluding an optional leading guard
+	maxArgs    int // maximum effect args, excluding an optional leading guard
+	returnType program.ExprType
+}
+
+// browserMethodSpecs is the complete browser capability surface available to
+// legacy .gsx island handlers. Keeping the allowlist beside the parser makes a
+// misspelling a compile error instead of an unbound browser call at runtime.
+// The optional extra argument on effect methods is a leading boolean guard;
+// the WASM receiver also treats empty selectors/URLs as a safe no-op.
+var browserMethodSpecs = map[string]browserMethodSpec{
+	"open":            {name: "Open", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
+	"close":           {name: "Close", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
+	"focus":           {name: "Focus", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
+	"focusmove":       {name: "FocusMove", minArgs: 2, maxArgs: 2, returnType: program.TypeBool},
+	"activate":        {name: "Activate", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
+	"clipboardwrite":  {name: "ClipboardWrite", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
+	"navigate":        {name: "Navigate", minArgs: 1, maxArgs: 3, returnType: program.TypeBool},
+	"refresh":         {name: "Refresh", minArgs: 0, maxArgs: 0, returnType: program.TypeBool},
+	"submit":          {name: "Submit", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
+	"preventdefault":  {name: "PreventDefault", minArgs: 0, maxArgs: 0, returnType: program.TypeBool},
+	"stoppropagation": {name: "StopPropagation", minArgs: 0, maxArgs: 0, returnType: program.TypeBool},
+	"scrollintoview":  {name: "ScrollIntoView", minArgs: 1, maxArgs: 2, returnType: program.TypeBool},
+}
+
+func (p *exprParser) browserReceiver(id program.ExprID) bool {
+	if p.scope == nil || !p.scope.Browser || int(id) >= len(p.exprs) {
+		return false
+	}
+	expr := p.exprs[id]
+	return expr.Op == program.OpPropGet && expr.Value == "browser"
+}
+
+func (p *exprParser) buildBrowserMethodCall(method, normalized string, args []program.ExprID) (program.ExprID, error) {
+	spec, ok := browserMethodSpecs[normalized]
+	if !ok {
+		return 0, fmt.Errorf("unknown browser method %q", method)
+	}
+	argCount := len(args)
+	guarded := false
+	firstType := program.TypeAny
+	if argCount > 0 && int(args[0]) < len(p.exprs) {
+		firstType = p.exprs[args[0]].Type
+	}
+	if argCount > 0 && firstType == program.TypeBool {
+		argCount--
+		guarded = true
+	}
+	// A signal-derived boolean can carry TypeAny in the legacy parser. The one
+	// extra source argument remains admissible and is validated by the runtime
+	// receiver; statically-typed boolean guards get exact compile-time arity.
+	potentialDynamicGuard := !guarded && firstType == program.TypeAny && len(args) == spec.maxArgs+1
+	if (argCount < spec.minArgs || argCount > spec.maxArgs) && !potentialDynamicGuard {
+		if spec.minArgs == spec.maxArgs {
+			return 0, fmt.Errorf("browser.%s requires exactly %d effect arguments after an optional guard", spec.name, spec.minArgs)
+		}
+		return 0, fmt.Errorf("browser.%s requires %d to %d effect arguments after an optional guard", spec.name, spec.minArgs, spec.maxArgs)
+	}
+	return p.addExpr(program.Expr{
+		Op:       program.OpHostCall,
+		Operands: args,
+		Value:    "browser." + spec.name,
+		Type:     spec.returnType,
+	}), nil
 }
 
 func (p *exprParser) buildUnaryMethod(receiverID program.ExprID, args []program.ExprID, method string, op program.OpCode, typ program.ExprType) (program.ExprID, error) {
@@ -701,13 +835,6 @@ func (p *exprParser) resolveIdent(name string) (program.ExprID, error) {
 			Type:  program.TypeAny,
 		}), nil
 	}
-	if p.scope != nil && p.scope.EventFields != nil && p.scope.EventFields[name] {
-		return p.addExpr(program.Expr{
-			Op:    program.OpEventGet,
-			Value: name,
-			Type:  program.TypeAny,
-		}), nil
-	}
 	if p.scope != nil && p.scope.SignalAliases != nil {
 		if signalName, ok := p.scope.SignalAliases[name]; ok && signalName != "" {
 			return p.addExpr(program.Expr{
@@ -731,11 +858,36 @@ func (p *exprParser) resolveIdent(name string) (program.ExprID, error) {
 			Type:  program.TypeAny,
 		}), nil
 	}
+	if p.scope != nil && p.scope.EventFields != nil && p.scope.EventFields[name] {
+		return p.addExpr(program.Expr{
+			Op:    program.OpEventGet,
+			Value: name,
+			Type:  eventFieldType(name),
+		}), nil
+	}
 	return p.addExpr(program.Expr{
 		Op:    program.OpPropGet,
 		Value: name,
 		Type:  program.TypeAny,
 	}), nil
+}
+
+// eventFieldType gives omitted compact event payload fields useful zero
+// values. In particular, missing text fields must remain "" rather than the
+// TypeAny numeric zero ("0") legacy handlers would otherwise render.
+func eventFieldType(name string) program.ExprType {
+	switch name {
+	case "type", "value", "key", "code", "targetID", "currentTargetID", "pointerType", "eventData":
+		return program.TypeString
+	case "checked", "ctrlKey", "metaKey", "altKey", "shiftKey", "repeat", "editable", "isPrimary":
+		return program.TypeBool
+	case "selectedIndex", "pointerID", "button", "buttons":
+		return program.TypeInt
+	case "timeStamp", "clientX", "clientY", "pressure", "width", "height":
+		return program.TypeFloat
+	default:
+		return program.TypeAny
+	}
 }
 
 func (p *exprParser) literalNumber(text string) (program.ExprID, error) {

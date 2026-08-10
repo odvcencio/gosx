@@ -15,7 +15,8 @@
     // Remove delegated listeners from the island root.
     if (record.root && record.listeners) {
       for (const entry of record.listeners) {
-        record.root.removeEventListener(entry.type, entry.listener, entry.capture);
+        const target = entry.target || record.root;
+        target.removeEventListener(entry.type, entry.listener, entry.capture);
       }
     }
 

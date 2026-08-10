@@ -48,7 +48,8 @@ type Island struct {
 	// client produced different output — a potential bug in props or timing.
 	HydrationMismatches []string
 
-	// The two flags sit last so they share one word of padding.
+	// The lifecycle/optimization flags sit last so they share one word of
+	// padding.
 	//
 	// reuseBuilt records that the analysis already ran, so a program that
 	// cannot benefit is analysed once instead of on every reconcile.
@@ -63,6 +64,11 @@ type Island struct {
 	// target drives it as a third arm, because a wrong skip emits no patch
 	// and no op assertion can see it. See nodeSpan.verbatim.
 	skipOff bool
+	// dispatching rejects same-island recursive handler entry. Host receivers
+	// may call arbitrary Go code, including a dispatcher; nesting would replace
+	// the VM's single event/frame slots and reconcile while the outer handler is
+	// still evaluating.
+	dispatching bool
 }
 
 // CheckHydration compares the initial client-side tree against what the server
@@ -89,9 +95,20 @@ func (island *Island) CheckHydration(serverTree *ResolvedTree) []string {
 
 // SetSharedSignal replaces an island-local signal with a shared one from the store.
 func (island *Island) SetSharedSignal(name string, sig *signal.Signal[Value]) {
-	island.vm.SetSignal(name, sig)
+	island.BindSharedSignal(name, sig)
 	// Re-evaluate the initial tree with the shared signal's current value
 	island.prev = island.evalTree()
+}
+
+// BindSharedSignal replaces an island-local signal without changing the
+// retained tree. The bridge uses this during program reload so it can install
+// every shared dependency before one reconcile compares the old DOM snapshot
+// with the final new program state.
+func (island *Island) BindSharedSignal(name string, sig *signal.Signal[Value]) {
+	if island == nil || island.vm == nil {
+		return
+	}
+	island.vm.SetSignal(name, sig)
 }
 
 // ensureReuse runs the subtree-reuse analysis once, on the first reconcile.
@@ -167,6 +184,17 @@ func (island *Island) HasHandler(name string) bool {
 	return ok
 }
 
+// BindHost registers a capability-bearing host receiver for this island's VM.
+// A nil receiver removes the binding. The bridge uses this seam to attach
+// per-island browser capabilities without exposing the VM or making the
+// program wire format aware of individual browser APIs.
+func (island *Island) BindHost(name string, recv HostReceiver) {
+	if island == nil || island.vm == nil {
+		return
+	}
+	island.vm.BindHost(name, recv)
+}
+
 // CurrentTree returns the most recently reconciled tree for inspection.
 //
 // Treat the returned tree as read-only, and read it before the next
@@ -211,8 +239,18 @@ func NewIsland(prog *program.Program, propsJSON string) *Island {
 // a PatchCallback receive the minimal patch set to bring the DOM current
 // without a page reload. Returns the patch ops so the bridge can forward them.
 func (island *Island) SwapProgram(prog *program.Program) []PatchOp {
-	if island == nil || prog == nil {
+	if !island.InstallProgram(prog) {
 		return nil
+	}
+	return island.Reconcile()
+}
+
+// InstallProgram replaces bytecode, handlers, and reuse analysis without
+// reconciling. It is the reload transaction seam: the bridge installs shared
+// signal instances after this call, then invokes Reconcile exactly once.
+func (island *Island) InstallProgram(prog *program.Program) bool {
+	if island == nil || prog == nil {
+		return false
 	}
 	island.vm.SwapProgram(prog)
 	island.program = prog
@@ -223,7 +261,7 @@ func (island *Island) SwapProgram(prog *program.Program) []PatchOp {
 	// evaluates every node.
 	island.reuse = nil
 	island.reuseBuilt = false
-	return island.Reconcile()
+	return true
 }
 
 // ResolveInitialTree evaluates a program with its initial props and signal
@@ -239,10 +277,23 @@ func ResolveInitialTree(prog *program.Program, propsJSON string) *ResolvedTree {
 // Dispatch executes a named handler and returns the resulting patch ops.
 // All signal mutations within the handler body are batched into a single reconcile.
 func (island *Island) Dispatch(handlerName string, eventDataJSON string) []PatchOp {
+	if island == nil || island.vm == nil {
+		return nil
+	}
+	if island.dispatching {
+		island.vm.recordDiagnostic(Diagnostic{
+			Severity: DiagnosticError,
+			Code:     "reentrant_dispatch",
+			Message:  fmt.Sprintf("island handler %q cannot dispatch while another handler is active", handlerName),
+		})
+		return nil
+	}
 	handler, ok := island.handlers[handlerName]
 	if !ok {
 		return nil
 	}
+	island.dispatching = true
+	defer func() { island.dispatching = false }()
 
 	island.vm.SetEventData(parseEventData(eventDataJSON))
 	signal.Batch(func() {
@@ -308,10 +359,12 @@ func (island *Island) verbatimSpans() []nodeSpan {
 
 // Dispose cleans up the island's signals and effects.
 func (island *Island) Dispose() {
-	// Signal cleanup is handled by GC since we don't have persistent subscriptions
-	// in this version. The bridge removes the island from its map.
 	island.prev = nil
 	island.spare = nil
+	if island.vm != nil {
+		island.vm.stopComputeds()
+		island.vm.ClearHosts()
+	}
 }
 
 func minNodeCount(left, right *ResolvedTree) int {
@@ -364,18 +417,25 @@ func parseProps(prog *program.Program, propsJSON string) map[string]Value {
 }
 
 func initSignals(vm *VM, prog *program.Program) {
+	vm.stopComputeds()
 	for _, def := range prog.Signals {
 		initVal := vm.Eval(def.Init)
-		vm.SetSignal(def.Name, signal.New(initVal))
+		vm.signals[def.Name] = signal.New(initVal)
 	}
+	if len(prog.Signals) > 0 {
+		vm.signalGen++
+	}
+	vm.rebuildComputeds()
 }
 
 // InitSignals is the exported wrapper around initSignals for tests and
 // surface bootstraps that don't go through the full Island lifecycle.
 // It evaluates each SignalDef's init expression against the VM and
-// registers a fresh signal.Signal for it. Idempotency is the caller's
-// responsibility; calling InitSignals twice for the same Program
-// re-evaluates the init exprs and replaces the prior signals.
+// registers a fresh signal.Signal for it, then initializes the program's
+// computed definitions against the complete mutable-signal table. Idempotency
+// remains the caller's responsibility: repeated calls replace definitions in
+// prog but do not remove unrelated signal names; use SwapProgram when changing
+// programs so removed names are dropped.
 //
 // Engine-surface handlers that mutate package-level struct/map/slice
 // state via OpFieldSet / OpIndexSet (Slice Y.C) rely on this — without
@@ -393,7 +453,7 @@ func handlerMap(prog *program.Program) map[string]*program.Handler {
 	return handlers
 }
 
-func parseEventData(eventDataJSON string) map[string]string {
+func parseEventData(eventDataJSON string) map[string]Value {
 	// Fast path: the vast majority of handler dispatches come with
 	// "{}" or "" as the event-data payload (counter increments,
 	// plain button clicks, etc.). Skipping json.Unmarshal here
@@ -402,23 +462,30 @@ func parseEventData(eventDataJSON string) map[string]string {
 	if eventDataJSON == "" || eventDataJSON == "{}" {
 		return nil
 	}
-	var eventData map[string]string
-	if err := json.Unmarshal([]byte(eventDataJSON), &eventData); err == nil {
-		return eventData
-	}
-	return parseMixedEventData(eventDataJSON)
-}
-
-func parseMixedEventData(eventDataJSON string) map[string]string {
 	var mixed map[string]any
 	if err := json.Unmarshal([]byte(eventDataJSON), &mixed); err != nil {
 		return nil
 	}
-	eventData := make(map[string]string, len(mixed))
+	eventData := make(map[string]Value, len(mixed))
 	for key, value := range mixed {
-		eventData[key] = fmt.Sprintf("%v", value)
+		eventData[key] = parseEventFieldValue(key, value)
 	}
 	return eventData
+}
+
+func parseEventFieldValue(key string, value any) Value {
+	// These browser fields have a declared floating-point VM type. Decode a
+	// top-level JSON number directly as FloatVal rather than routing an integral
+	// value through IntVal first: production TinyGo wasm uses a 32-bit int, so a
+	// perfectly valid DOMHighResTimeStamp such as 3e9 would otherwise clamp
+	// before OpEventGet could promote it back to float.
+	switch key {
+	case "timeStamp", "clientX", "clientY", "pressure", "width", "height":
+		if number, ok := value.(float64); ok {
+			return FloatVal(number)
+		}
+	}
+	return parseAnyValue(value)
 }
 
 func (island *Island) evalHandlerBody(handler *program.Handler) {
