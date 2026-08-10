@@ -24,6 +24,7 @@ import (
 
 const (
 	OuroborosPixelSchemaVersion   = "gosx.ouroboros.pixels.v1"
+	DefaultPixelCanvasSelector    = "canvas[data-gosx-scene3d-canvas], [data-gosx-scene3d-mounted] canvas"
 	MaxCanonicalPixelThresholdPct = 1.0
 	MaxPixelEvidenceSamples       = 10
 	MaxPixelManifestBytes         = 1 << 20
@@ -317,7 +318,7 @@ func (o *PixelEvidenceOptions) applyDefaults() {
 		o.WaitSelector = "body"
 	}
 	if o.CanvasSelector == "" {
-		o.CanvasSelector = "canvas[data-gosx-scene3d-canvas], [data-gosx-scene3d-mounted] canvas"
+		o.CanvasSelector = DefaultPixelCanvasSelector
 	}
 	if o.Timeout == 0 {
 		o.Timeout = 60 * time.Second

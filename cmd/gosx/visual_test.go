@@ -58,3 +58,9 @@ func TestVisualUsageMentionsSourceIdentityHandoff(t *testing.T) {
 		t.Fatalf("visual usage missing source identity handoff:\n%s", b.String())
 	}
 }
+
+func TestOuroborosCanvasSelectorFlagDefaultDefersToVisualPackage(t *testing.T) {
+	if defaultOuroborosCanvasSelectorFlag != "" {
+		t.Fatalf("defaultOuroborosCanvasSelectorFlag = %q, want empty to use visual default", defaultOuroborosCanvasSelectorFlag)
+	}
+}

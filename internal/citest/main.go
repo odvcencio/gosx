@@ -23,7 +23,10 @@ import (
 	"strings"
 )
 
-const cliRelativePath = "cmd/gosx"
+const (
+	cliRelativePath       = "cmd/gosx"
+	ouroborosRelativePath = "perf/ouroboros"
+)
 
 type raceTarget struct {
 	relativePath string
@@ -85,6 +88,7 @@ type testPlan struct {
 	all        []listedPackage
 	unit       []listedPackage
 	cli        []listedPackage
+	ouroboros  []listedPackage
 	race       []racePackage
 }
 
@@ -97,7 +101,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: citest verify | list <unit|cli|race> | test <unit|race>")
+		return errors.New("usage: citest verify | list <unit|cli|ouroboros|race> | test <unit|ouroboros|race>")
 	}
 
 	goBinary := os.Getenv("GOSX_CI_GO")
@@ -118,7 +122,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "list":
 		if len(args) != 2 {
-			return errors.New("usage: citest list <unit|cli|race>")
+			return errors.New("usage: citest list <unit|cli|ouroboros|race>")
 		}
 		packages, err := selectPackages(plan, args[1])
 		if err != nil {
@@ -129,8 +133,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "test":
-		if len(args) != 2 || (args[1] != "unit" && args[1] != "race") {
-			return errors.New("usage: citest test <unit|race>")
+		if len(args) != 2 || (args[1] != "unit" && args[1] != "ouroboros" && args[1] != "race") {
+			return errors.New("usage: citest test <unit|ouroboros|race>")
 		}
 		printPlan(stderr, plan)
 		packages, err := selectPackages(plan, args[1])
@@ -166,21 +170,14 @@ func buildTestPlan(goBinary string) (testPlan, error) {
 		return testPlan{}, err
 	}
 
-	cliImportPath := modulePath + "/" + cliRelativePath
-	var unit, cli []listedPackage
-	for _, pkg := range packages {
-		if pkg.ImportPath == cliImportPath {
-			cli = append(cli, pkg)
-		} else {
-			unit = append(unit, pkg)
-		}
-	}
-	if len(cli) != 1 {
-		return testPlan{}, fmt.Errorf("CLI partition contains %d packages, want exactly %q", len(cli), cliImportPath)
+	unit, cli, ouroboros, err := partitionTestPackages(modulePath, packages)
+	if err != nil {
+		return testPlan{}, err
 	}
 	if err := validateCoverage(packages, map[string][]listedPackage{
-		"unit": unit,
-		"cli":  cli,
+		"unit":      unit,
+		"cli":       cli,
+		"ouroboros": ouroboros,
 	}); err != nil {
 		return testPlan{}, err
 	}
@@ -194,8 +191,32 @@ func buildTestPlan(goBinary string) (testPlan, error) {
 		all:        packages,
 		unit:       unit,
 		cli:        cli,
+		ouroboros:  ouroboros,
 		race:       race,
 	}, nil
+}
+
+func partitionTestPackages(modulePath string, packages []listedPackage) ([]listedPackage, []listedPackage, []listedPackage, error) {
+	cliImportPath := modulePath + "/" + cliRelativePath
+	ouroborosImportPath := modulePath + "/" + ouroborosRelativePath
+	var unit, cli, ouroboros []listedPackage
+	for _, pkg := range packages {
+		switch pkg.ImportPath {
+		case cliImportPath:
+			cli = append(cli, pkg)
+		case ouroborosImportPath:
+			ouroboros = append(ouroboros, pkg)
+		default:
+			unit = append(unit, pkg)
+		}
+	}
+	if len(cli) != 1 {
+		return nil, nil, nil, fmt.Errorf("CLI partition contains %d packages, want exactly %q", len(cli), cliImportPath)
+	}
+	if len(ouroboros) != 1 {
+		return nil, nil, nil, fmt.Errorf("ouroboros partition contains %d packages, want exactly %q", len(ouroboros), ouroborosImportPath)
+	}
+	return unit, cli, ouroboros, nil
 }
 
 func listPackages(goBinary string) ([]listedPackage, error) {
@@ -380,6 +401,11 @@ func selectPackages(plan testPlan, partition string) ([]string, error) {
 		for _, pkg := range plan.cli {
 			packages = append(packages, pkg.ImportPath)
 		}
+	case "ouroboros":
+		packages = make([]string, 0, len(plan.ouroboros))
+		for _, pkg := range plan.ouroboros {
+			packages = append(packages, pkg.ImportPath)
+		}
 	case "race":
 		packages = make([]string, 0, len(plan.race))
 		for _, pkg := range plan.race {
@@ -394,14 +420,16 @@ func selectPackages(plan testPlan, partition string) ([]string, error) {
 func printPlan(w io.Writer, plan testPlan) {
 	fmt.Fprintf(
 		w,
-		"citest: partition verified module=%s total=%d unit=%d cli=%d pr-race=%d\n",
+		"citest: partition verified module=%s total=%d unit=%d cli=%d ouroboros=%d pr-race=%d\n",
 		plan.modulePath,
 		len(plan.all),
 		len(plan.unit),
 		len(plan.cli),
+		len(plan.ouroboros),
 		len(plan.race),
 	)
 	fmt.Fprintf(w, "citest: cli %s\n", plan.cli[0].ImportPath)
+	fmt.Fprintf(w, "citest: ouroboros %s\n", plan.ouroboros[0].ImportPath)
 	for _, pkg := range plan.race {
 		fmt.Fprintf(
 			w,

@@ -307,6 +307,18 @@ func TestOuroborosPixelRejectsBlankImages(t *testing.T) {
 	}
 }
 
+func TestOuroborosPixelDefaultsUseSceneOwnedCanvasSelector(t *testing.T) {
+	opts := PixelEvidenceOptions{}
+	opts.applyDefaults()
+
+	if opts.CanvasSelector != DefaultPixelCanvasSelector {
+		t.Fatalf("CanvasSelector = %q, want %q", opts.CanvasSelector, DefaultPixelCanvasSelector)
+	}
+	if !strings.Contains(opts.CanvasSelector, "data-gosx-scene3d-canvas") {
+		t.Fatalf("default canvas selector is not Scene3D-owned: %q", opts.CanvasSelector)
+	}
+}
+
 func TestOuroborosPixelComparisonWritesDiffOnFailure(t *testing.T) {
 	dir := t.TempDir()
 	baseline := solidPNG(t, 8, 8, color.RGBA{R: 255, A: 255})

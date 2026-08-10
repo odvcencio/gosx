@@ -30,7 +30,7 @@ DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './bui
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript grammar_subset_tsx
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ouroboros test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -97,16 +97,19 @@ canopy-clean:
 test:
 	$(GO) test ./...
 
-# The production-build integration tests in cmd/gosx require TinyGo and account
-# for nearly all of `go test ./...` wall time. CI runs this exhaustive
-# non-CLI partition beside test-cli. internal/citest discovers the packages,
-# proves the two partitions are disjoint and complete, and prints the exact
-# package counts before it delegates to `go test`.
+# The production-build integration tests in cmd/gosx and the ouroboros perf
+# package dominate `go test ./...` wall time. CI runs this exhaustive unit
+# partition beside test-cli and test-ouroboros. internal/citest discovers the
+# packages, proves the partitions are disjoint and complete, and prints the
+# exact package counts before it delegates to `go test`.
 test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
 test-cli:
 	$(GO) test ./cmd/gosx
+
+test-ouroboros:
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test ouroboros
 
 test-ci-partitions:
 	$(GO) test ./internal/citest

@@ -274,6 +274,70 @@ func TestRunBuildRuntimePublishesCanonicalOutputWithTinyGoShim(t *testing.T) {
 	}
 }
 
+func TestRunBuildRuntimePublishesNestedCanonicalOutputWithoutPrecreatedParent(t *testing.T) {
+	restore := stubRuntimeBuildHooks(t)
+	defer restore()
+	dir := t.TempDir()
+	tinygoPath, _ := writeFakeTinyGoWithShim(t, dir, []byte("nested canonical tinygo shim"))
+	outParent := filepath.Join(dir, "nested", "runtime")
+	outDir := filepath.Join(outParent, "runtime-out")
+	artifactRoot := filepath.Join(dir, "evidence")
+	runtimeResolveWASMCompiler = func() (wasmCompiler, string, error) { return wasmCompilerTinyGo, tinygoPath, nil }
+	runtimeStageTinyGoWASMExec = stageTinyGoWASMExec
+	runtimeBuildTinyGoWASM = func(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+			return err
+		}
+		return os.WriteFile(outputPath, []byte("wasm "+filepath.Base(outputPath)), 0644)
+	}
+
+	if _, err := os.Stat(outParent); !os.IsNotExist(err) {
+		t.Fatalf("test parent precondition failed: %v", err)
+	}
+	if err := RunBuildRuntimeWithOptions(outDir, buildRuntimeOptions{
+		OuroborosOut:  artifactRoot,
+		InventoryPath: filepath.Join(dir, "source-inventory.json"),
+		RepoRoot:      ".",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := filepath.Glob(filepath.Join(outParent, ".runtime-out.ouroboros-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("canonical temp directory remained: %#v", matches)
+	}
+	for _, name := range []string{"gosx-runtime.wasm", "gosx-runtime-islands.wasm", "wasm_exec.js"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			t.Fatalf("published %s missing: %v", name, err)
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(artifactRoot, "wasm", "runtime-artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence ouroboros.RuntimeBuildEvidence
+	if err := json.Unmarshal(body, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.OutputDir != outDir {
+		t.Fatalf("evidence OutputDir = %q, want %q", evidence.OutputDir, outDir)
+	}
+	rows := map[string]ouroboros.RuntimeArtifactVariant{}
+	for _, variant := range evidence.Variants {
+		rows[variant.ID] = variant
+	}
+	for _, id := range []string{"runtime", "islands"} {
+		if rows[id].Status != "measured" {
+			t.Fatalf("%s status = %q, want measured: %#v", id, rows[id].Status, rows[id])
+		}
+		if !strings.HasPrefix(rows[id].SourcePath, outDir+string(filepath.Separator)) {
+			t.Fatalf("%s SourcePath = %q, want published nested path", id, rows[id].SourcePath)
+		}
+	}
+}
+
 func TestRunBuildRuntimeFailsClosedWhenTinyGoShimIsMissing(t *testing.T) {
 	restore := stubRuntimeBuildHooks(t)
 	defer restore()
@@ -528,6 +592,70 @@ func TestRunBuildRuntimeWritesFailureEvidenceWithoutPublishingPartialOutput(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := json.Unmarshal(body, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	rows := map[string]ouroboros.RuntimeArtifactVariant{}
+	for _, variant := range evidence.Variants {
+		rows[variant.ID] = variant
+	}
+	if len(rows) != 6 {
+		t.Fatalf("failure evidence rows = %d, want 6: %#v", len(rows), evidence.Variants)
+	}
+	if rows["runtime"].Generation != "current" || rows["runtime"].Status != "failed" || !strings.Contains(rows["runtime"].MissingReason, "tinygo failed after start") {
+		t.Fatalf("bad runtime failure row: %#v", rows["runtime"])
+	}
+	if rows["islands"].Generation != "current" || rows["islands"].Status != "skipped" {
+		t.Fatalf("bad islands skipped row: %#v", rows["islands"])
+	}
+	if rows["core"].Generation != "future" || rows["core"].Status != "planned" {
+		t.Fatalf("bad future row: %#v", rows["core"])
+	}
+}
+
+func TestRunBuildRuntimeWritesFailureEvidenceForNestedCanonicalOutputWithoutPrecreatedParent(t *testing.T) {
+	restore := stubRuntimeBuildHooks(t)
+	defer restore()
+	dir := t.TempDir()
+	outParent := filepath.Join(dir, "nested", "runtime")
+	outDir := filepath.Join(outParent, "runtime-out")
+	artifactRoot := filepath.Join(dir, "evidence")
+	runtimeBuildTinyGoWASM = func(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
+		if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(outputPath, []byte("partial"), 0644); err != nil {
+			return err
+		}
+		return errors.New("tinygo failed after start")
+	}
+
+	if _, err := os.Stat(outParent); !os.IsNotExist(err) {
+		t.Fatalf("test parent precondition failed: %v", err)
+	}
+	err := RunBuildRuntimeWithOptions(outDir, buildRuntimeOptions{
+		OuroborosOut:  artifactRoot,
+		InventoryPath: filepath.Join(dir, "source-inventory.json"),
+		RepoRoot:      ".",
+	})
+	if err == nil || !strings.Contains(err.Error(), "tinygo failed after start") {
+		t.Fatalf("RunBuildRuntimeWithOptions error = %v, want TinyGo failure", err)
+	}
+	if _, statErr := os.Stat(outDir); !os.IsNotExist(statErr) {
+		t.Fatalf("runtime output was published after failure: %v", statErr)
+	}
+	matches, err := filepath.Glob(filepath.Join(outParent, ".runtime-out.ouroboros-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("partial runtime temp directory was not cleaned: %#v", matches)
+	}
+	body, err := os.ReadFile(filepath.Join(artifactRoot, "wasm", "runtime-artifacts.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence ouroboros.RuntimeBuildEvidence
 	if err := json.Unmarshal(body, &evidence); err != nil {
 		t.Fatal(err)
 	}

@@ -2830,7 +2830,8 @@ func validateCanonicalPixelManifest(path string, manifest visual.PixelEvidenceMa
 		RouteID:        manifest.RouteID,
 		Backend:        backend,
 		ForceWebGL:     backend == visual.RequireBackendWebGL,
-		CanvasSelector: "canvas",
+		CanvasSelector: visual.DefaultPixelCanvasSelector,
+		WarmupFrames:   30,
 		Viewport:       visual.Viewport{Width: opts.ViewportWidth, Height: opts.ViewportHeight, Scale: opts.DPR},
 	})
 	return err

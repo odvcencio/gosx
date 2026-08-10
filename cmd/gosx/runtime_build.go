@@ -87,6 +87,9 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 	cleanupBuildOut := func() {}
 	if opts.OuroborosOut != "" {
 		parent := filepath.Dir(outDir)
+		if err := os.MkdirAll(parent, 0755); err != nil {
+			return fmt.Errorf("create canonical runtime output parent: %w", err)
+		}
 		tmp, err := os.MkdirTemp(parent, "."+filepath.Base(outDir)+".ouroboros-*")
 		if err != nil {
 			return fmt.Errorf("create atomic runtime build directory: %w", err)

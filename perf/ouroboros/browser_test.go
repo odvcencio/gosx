@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -205,6 +208,105 @@ func writeStrictCanonicalPixelManifestRef(t *testing.T, evidenceRoot, routeID, b
 		t.Fatal(err)
 	}
 	return filepath.ToSlash(filepath.Join(strings.ToLower(routeID+"-"+backend), "pixel-evidence.json"))
+}
+
+func writeValidCanonicalPixelManifestForSelector(t *testing.T, root, routeID, backend, selector string, source visual.PixelSourceIdentity) visual.PixelEvidenceManifest {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	forceWebGL := backend == string(visual.RequireBackendWebGL)
+	hook := "gosx-o02-backend-hook"
+	if forceWebGL {
+		hook = "gosx-o02-force-webgl-new-document"
+	}
+	manifest := visual.PixelEvidenceManifest{
+		SchemaVersion:      visual.OuroborosPixelSchemaVersion,
+		RouteID:            routeID,
+		Mode:               string(visual.PixelModeRecordBaseline),
+		ArtifactRoot:       root,
+		Source:             source,
+		BackendRequirement: backend,
+		BackendSelection: visual.PixelBackendSelection{
+			RequestedBackend:       backend,
+			RuntimeObservedBackend: backend,
+			ForceWebGL:             forceWebGL,
+			PreNavigationHook:      hook,
+		},
+		Certified:              true,
+		HardwareClassification: "hardware-" + backend,
+		Viewport:               visual.ViewportEvidence{Width: 1440, Height: 900, DPR: 1},
+		Selected:               visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: selector, CanvasCount: 1, MountCount: 1},
+		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 0.5},
+		SettlePolicy:           visual.PixelSettlePolicy{WarmupFrames: 30, RuntimeRenderLoopRequired: true, StaticStoppedAllowsNoAdvance: true},
+	}
+	renderLoop := visual.RenderLoopEvidence{
+		State:                "active",
+		Reason:               "runtime-program",
+		Active:               true,
+		WantsAnimation:       true,
+		StateParsed:          true,
+		WantsAnimationParsed: true,
+		Valid:                true,
+	}
+	for _, stateName := range []string{"initial", "settled"} {
+		settle := visual.PixelSettleResult{RequiredFrame: 10, ObservedFrame: 10, RenderLoop: renderLoop}
+		if stateName == "settled" {
+			settle.RequiredFrame = 40
+			settle.ObservedFrame = 40
+			settle.AdvanceRequired = true
+		}
+		state := visual.PixelStateEvidence{State: stateName, Settle: settle}
+		for i := 0; i < 3; i++ {
+			data := canonicalPixelPNGForTest(t)
+			path := filepath.Join(root, fmt.Sprintf("%s-%s-%02d.png", routeID, stateName, i))
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sum := sha256.Sum256(data)
+			state.Captures = append(state.Captures, visual.PixelCaptureEvidence{
+				Index:              i,
+				Path:               path,
+				SHA256:             hex.EncodeToString(sum[:]),
+				Bytes:              len(data),
+				Width:              8,
+				Height:             8,
+				Backend:            backend,
+				RuntimeTruthParsed: true,
+				RuntimeGPU:         true,
+				Implementation:     "test-" + backend,
+				HardwareClass:      "hardware-" + backend,
+				FrameSeq:           settle.ObservedFrame + i,
+				RenderLoop:         renderLoop,
+				Selected:           manifest.Selected,
+				Comparison:         &visual.PixelComparison{BaselineThresholdPct: 0.5, EffectiveThresholdPct: 0.5, Passed: true},
+			})
+		}
+		manifest.States = append(manifest.States, state)
+	}
+	body, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pixel-evidence.json"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return manifest
+}
+
+func canonicalPixelPNGForTest(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: uint8(x * 31), G: uint8(y * 29), B: uint8(40 + x*y), A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 func TestLoadFixtureCorpusReadsOuroborosFixtureRoutes(t *testing.T) {
@@ -1296,6 +1398,50 @@ func TestValidateCanonicalPixelManifestRejectsUnboundSourceIdentity(t *testing.T
 	err := validateCanonicalPixelManifest(path, manifest, BrowserBaselineOptions{ViewportWidth: 1440, ViewportHeight: 900, DPR: 1}, source)
 	if err == nil || !strings.Contains(err.Error(), "source") {
 		t.Fatalf("validateCanonicalPixelManifest error = %v", err)
+	}
+}
+
+func TestValidateCanonicalPixelManifestAcceptsDefaultCanvasSelector(t *testing.T) {
+	root := t.TempDir()
+	source := SourceIdentity{
+		BaseRevision:    "abc1234",
+		OverlayHash:     "sha256:clean",
+		InventorySHA256: "sha256:" + strings.Repeat("a", 64),
+	}
+	pixelSource := visual.PixelSourceIdentity{
+		BaseRevision:    source.BaseRevision,
+		OverlayHash:     source.OverlayHash,
+		InventorySHA256: source.InventorySHA256,
+	}
+	manifest := writeValidCanonicalPixelManifestForSelector(t, root, "R08", "webgl", visual.DefaultPixelCanvasSelector, pixelSource)
+	path := filepath.Join(root, "pixel-evidence.json")
+
+	err := validateCanonicalPixelManifest(path, manifest, BrowserBaselineOptions{ViewportWidth: 1440, ViewportHeight: 900, DPR: 1}, source)
+	if err != nil {
+		t.Fatalf("validateCanonicalPixelManifest rejected default selector manifest: %v", err)
+	}
+}
+
+func TestValidateCanonicalPixelBaselineStillAllowsExplicitCanvasSelector(t *testing.T) {
+	root := t.TempDir()
+	source := visual.PixelSourceIdentity{
+		BaseRevision:    "abc1234",
+		OverlayHash:     "sha256:clean",
+		InventorySHA256: "sha256:" + strings.Repeat("a", 64),
+	}
+	writeValidCanonicalPixelManifestForSelector(t, root, "R08", "webgl", "canvas", source)
+
+	_, err := visual.ValidateCanonicalPixelBaselineManifest(filepath.Join(root, "pixel-evidence.json"), source, visual.PixelEvidenceOptions{
+		Mode:           visual.PixelModeRecordBaseline,
+		RouteID:        "R08",
+		Backend:        visual.RequireBackendWebGL,
+		ForceWebGL:     true,
+		CanvasSelector: "canvas",
+		WarmupFrames:   30,
+		Viewport:       visual.Viewport{Width: 1440, Height: 900, Scale: 1},
+	})
+	if err != nil {
+		t.Fatalf("ValidateCanonicalPixelBaselineManifest rejected explicit selector manifest: %v", err)
 	}
 }
 

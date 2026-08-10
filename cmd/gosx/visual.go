@@ -15,6 +15,8 @@ import (
 	"m31labs.dev/gosx/visual"
 )
 
+const defaultOuroborosCanvasSelectorFlag = ""
+
 func cmdVisual() {
 	fs := flag.NewFlagSet("visual", flag.ExitOnError)
 	update := fs.Bool("update", false, "write captured screenshot to baseline (instead of comparing)")
@@ -39,7 +41,7 @@ func cmdVisual() {
 	pixelInitialWait := fs.Duration("ouroboros-initial-wait", 0, "O0.2 wait after first rendered frame before initial capture")
 	pixelSettledWait := fs.Duration("ouroboros-settled-wait", 3*time.Second, "O0.2 settled-state wait before capture")
 	pixelWarmupFrames := fs.Int("ouroboros-warmup-frames", 30, "O0.2 settled-state minimum frame advance after initial readiness")
-	pixelCanvasSelector := fs.String("ouroboros-canvas-selector", "canvas", "canvas selector for O0.2 pixel evidence")
+	pixelCanvasSelector := fs.String("ouroboros-canvas-selector", defaultOuroborosCanvasSelectorFlag, "canvas selector for O0.2 pixel evidence (default: Scene3D-owned canvas)")
 	pixelAllowOverwrite := fs.Bool("ouroboros-allow-overwrite", false, "allow O0.2 record-baseline to write into a non-empty artifact directory")
 	pixelForceWebGL := fs.Bool("ouroboros-force-webgl", false, "set the O0.2 probe-only Scene3D WebGL flag before navigation")
 	pixelSourceIdentity := fs.String("ouroboros-source-identity", "", "O0.2 source identity handoff JSON for pixel evidence")

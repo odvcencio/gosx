@@ -1,9 +1,59 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestPartitionTestPackagesSeparatesUnitCLIAndOuroboros(t *testing.T) {
+	all := fakePackages(
+		"example.test/gosx/auth",
+		"example.test/gosx/cmd/gosx",
+		"example.test/gosx/perf/ouroboros",
+		"example.test/gosx/server",
+	)
+	unit, cli, ouroboros, err := partitionTestPackages("example.test/gosx", all)
+	if err != nil {
+		t.Fatalf("partitionTestPackages() error = %v", err)
+	}
+	if got, want := importPaths(unit), []string{"example.test/gosx/auth", "example.test/gosx/server"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("unit partition = %v, want %v", got, want)
+	}
+	if got, want := importPaths(cli), []string{"example.test/gosx/cmd/gosx"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("cli partition = %v, want %v", got, want)
+	}
+	if got, want := importPaths(ouroboros), []string{"example.test/gosx/perf/ouroboros"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ouroboros partition = %v, want %v", got, want)
+	}
+	if err := validateCoverage(all, map[string][]listedPackage{
+		"unit":      unit,
+		"cli":       cli,
+		"ouroboros": ouroboros,
+	}); err != nil {
+		t.Fatalf("validateCoverage() error = %v", err)
+	}
+}
+
+func TestPartitionTestPackagesRequiresExactCLIAndOuroborosMembership(t *testing.T) {
+	all := fakePackages(
+		"example.test/gosx/auth",
+		"example.test/gosx/cmd/gosx",
+	)
+	_, _, _, err := partitionTestPackages("example.test/gosx", all)
+	if err == nil || !strings.Contains(err.Error(), "ouroboros partition contains 0 packages") {
+		t.Fatalf("partitionTestPackages() error = %v, want missing ouroboros", err)
+	}
+
+	all = fakePackages(
+		"example.test/gosx/auth",
+		"example.test/gosx/perf/ouroboros",
+	)
+	_, _, _, err = partitionTestPackages("example.test/gosx", all)
+	if err == nil || !strings.Contains(err.Error(), "CLI partition contains 0 packages") {
+		t.Fatalf("partitionTestPackages() error = %v, want missing CLI", err)
+	}
+}
 
 func TestValidateCoverageAcceptsExactDisjointPartition(t *testing.T) {
 	all := fakePackages("example/a", "example/b", "example/c")
@@ -13,6 +63,16 @@ func TestValidateCoverageAcceptsExactDisjointPartition(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("validateCoverage() error = %v", err)
+	}
+}
+
+func TestValidateCoverageRejectsDuplicateGoListPackage(t *testing.T) {
+	all := fakePackages("example/a", "example/a")
+	err := validateCoverage(all, map[string][]listedPackage{
+		"unit": {all[0]},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate package") {
+		t.Fatalf("validateCoverage() error = %v, want duplicate package", err)
 	}
 }
 
@@ -87,4 +147,12 @@ func fakePackages(importPaths ...string) []listedPackage {
 		packages[i] = listedPackage{ImportPath: importPath}
 	}
 	return packages
+}
+
+func importPaths(packages []listedPackage) []string {
+	paths := make([]string, len(packages))
+	for i, pkg := range packages {
+		paths[i] = pkg.ImportPath
+	}
+	return paths
 }

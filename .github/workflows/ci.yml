@@ -42,13 +42,13 @@ jobs:
       - name: Release gate
         run: make release-gate
 
-  # go-tests: every root package except cmd/gosx, plus the editor, fuzz and
-  # desktop gates. The production-build CLI suite runs in go-cli-tests beside
-  # this job, so its ~6 minute TinyGo integration tests no longer serialize all
-  # other Go checks. PR117 measured the superseded serial lane at 6m31s for
-  # unit tests plus 10m48s for race tests (BC7 alone took 504.697s), which is
-  # why it temporarily needed 30 minutes. This lane needs neither TinyGo nor
-  # Node and returns to a 15-minute fail-safe.
+  # go-tests: every root package except cmd/gosx and perf/ouroboros, plus the
+  # editor, fuzz and desktop gates. The production-build CLI suite runs in
+  # go-cli-tests, and ouroboros runs in go-ouroboros-tests, so neither heavy
+  # package serializes this lane. PR117 measured the superseded serial lane at
+  # 6m31s for unit tests plus 10m48s for race tests (BC7 alone took 504.697s),
+  # which is why it temporarily needed 30 minutes. This lane needs neither
+  # TinyGo nor Node and returns to a 15-minute fail-safe.
   go-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -141,6 +141,26 @@ jobs:
 
       - name: Build CLI
         run: make build-cli
+
+  # perf/ouroboros has runtime reconstruction and compatibility tests that are
+  # too slow for the desktop lane. Keep it in the partition validator, but run
+  # its package tests as their own Go-only job.
+  go-ouroboros-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Ouroboros package tests
+        run: make test-ouroboros
 
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
@@ -319,6 +339,7 @@ jobs:
     needs:
       - go-tests
       - go-cli-tests
+      - go-ouroboros-tests
       - js-tests
       - wasm-tests
       - browser-tests
@@ -326,7 +347,7 @@ jobs:
 
     steps:
       - name: All test jobs passed
-        run: echo "go-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
+        run: echo "go-tests, go-cli-tests, go-ouroboros-tests, js-tests, wasm-tests, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame
