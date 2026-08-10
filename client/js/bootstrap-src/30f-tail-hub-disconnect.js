@@ -10,6 +10,13 @@
       clearTimeout(record.reconnectTimer);
       record.reconnectTimer = null;
     }
+    if (record.refreshTimer != null) {
+      clearTimeout(record.refreshTimer);
+      record.refreshTimer = null;
+    }
+    record.refreshPreserveScroll = null;
+    record.refreshEvent = null;
+    record.refreshFetchEpoch = null;
     if (record.inputController && typeof record.inputController.dispose === "function") {
       record.inputController.dispose();
       record.inputController = null;
