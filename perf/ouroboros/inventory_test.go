@@ -359,7 +359,7 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		t.Fatalf("anchor/current changed unexpectedly: %+v", audit.Reconciliation)
 	}
 	wantReceiptOnly := []string{"__gosx_", "__gosx_capability_probe__", "__gosx_crdt_apply", "__gosx_handled", "__gosx_motion_mixer_", "__gosx_surface_event", "__gosx_video_prefs_probe__", "__gosx_video_sync_"}
-	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_loaded_scripts", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_html", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
+	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_html", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}
