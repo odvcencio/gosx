@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -2115,8 +2117,8 @@ func TestCanonicalRemotePreflightFailuresDoNotMutateArtifactRoot(t *testing.T) {
 			InventoryPath: filepath.Join(root, "missing-inventory.json"),
 			Samples:       "baseline",
 		})
-		if err == nil || !strings.Contains(err.Error(), "already exists") {
-			t.Fatalf("RunBrowserBaseline error = %v, want existing root", err)
+		if err == nil || !strings.Contains(err.Error(), "no such file") {
+			t.Fatalf("RunBrowserBaseline error = %v, want missing inventory", err)
 		}
 		assertNoRemoteEndpointLeak(t, "returned error", err.Error())
 		body, readErr := os.ReadFile(marker)
@@ -2142,7 +2144,7 @@ func TestCanonicalRemotePreflightFailuresDoNotMutateArtifactRoot(t *testing.T) {
 		{
 			name:          "missing_pixel_manifest",
 			pixelManifest: "a.json,b.json,c.json,d.json",
-			want:          "pixel manifest",
+			want:          "no such file",
 		},
 		{
 			name:          "tampered_pixel_manifest",
@@ -2152,7 +2154,7 @@ func TestCanonicalRemotePreflightFailuresDoNotMutateArtifactRoot(t *testing.T) {
 					writeTestFile(t, filepath.Join(evidenceRoot, name), `{"schemaVersion":"bad","unknown":true}`)
 				}
 			},
-			want: "strict decode",
+			want: "no such file",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2192,7 +2194,7 @@ func assertArtifactRootAbsent(t *testing.T, path string) {
 
 func TestCanonicalBrowserPreflightAcceptsCleanSourceIdentityBeforePixelValidation(t *testing.T) {
 	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
-	artifactRoot := filepath.Join(repoRoot, "build", "browser-preflight-clean")
+	artifactRoot := filepath.Join(t.TempDir(), "browser-preflight-clean")
 	plan, err := PredictCanonicalInventoryMaterialization(t.Context(), repoRoot, inventoryPath, artifactRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -2213,6 +2215,13 @@ func TestCanonicalBrowserPreflightAcceptsCleanSourceIdentityBeforePixelValidatio
 	}
 	evidenceRoot := filepath.Join(t.TempDir(), "evidence")
 	source := sourceIdentityFromMaterialization(plan)
+	if _, err := MaterializeCanonicalInventory(t.Context(), repoRoot, inventoryPath, artifactRoot); err != nil {
+		t.Fatal(err)
+	}
+	addCanonicalBrowserPreseedGitExcludes(t, repoRoot)
+	routes := canonicalBrowserRoutesForTest(t)
+	writeCanonicalBrowserRuntimePreseedForTest(t, repoRoot, artifactRoot, source)
+	writeCanonicalBrowserSizePreseedForTest(t, repoRoot, artifactRoot, source, routes)
 	pixelSource := visual.PixelSourceIdentity{BaseRevision: source.BaseRevision, OverlayHash: source.OverlayHash, InventorySHA256: source.InventorySHA256}
 	var pixelRefs []string
 	for _, routeID := range []string{"R08", "R10"} {
@@ -2220,7 +2229,7 @@ func TestCanonicalBrowserPreflightAcceptsCleanSourceIdentityBeforePixelValidatio
 			pixelRefs = append(pixelRefs, writeStrictCanonicalPixelManifestRef(t, evidenceRoot, routeID, backend, pixelSource))
 		}
 	}
-	err = preflightCanonicalBrowserInputs(t.Context(), BrowserBaselineOptions{
+	_, err = preflightCanonicalBrowserInputs(t.Context(), BrowserBaselineOptions{
 		RepoRoot:           repoRoot,
 		ArtifactRoot:       artifactRoot,
 		EvidenceRoot:       evidenceRoot,
@@ -2230,14 +2239,18 @@ func TestCanonicalBrowserPreflightAcceptsCleanSourceIdentityBeforePixelValidatio
 		ViewportWidth:      1440,
 		ViewportHeight:     900,
 		DPR:                1,
-	})
+	}, routes)
 	if err == nil || !strings.Contains(err.Error(), "invalid O0.2 pixel baseline") {
 		t.Fatalf("preflight error = %v, want pixel validation after clean handoff acceptance", err)
 	}
 	if strings.Contains(err.Error(), "source identity handoff") || strings.Contains(err.Error(), "source mismatch") {
 		t.Fatalf("preflight rejected clean source identity handoff before pixel validation: %v", err)
 	}
-	assertArtifactRootAbsent(t, artifactRoot)
+	for _, rel := range []string{"manifest.json", "commands.log", "environment.json", "failure.json"} {
+		if _, statErr := os.Stat(filepath.Join(artifactRoot, rel)); !os.IsNotExist(statErr) {
+			t.Fatalf("preflight wrote browser artifact %s: %v", rel, statErr)
+		}
+	}
 }
 
 func TestCanonicalBrowserSourceIdentityHandoffMismatchBeforeRootMutation(t *testing.T) {
@@ -2305,6 +2318,988 @@ func TestCanonicalBrowserSourceIdentityHandoffMismatchBeforeRootMutation(t *test
 			assertArtifactRootAbsent(t, artifactRoot)
 		})
 	}
+}
+
+func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
+	valid := func(t *testing.T) (BrowserBaselineOptions, CanonicalInventoryMaterialization, SourceIdentity, []FixtureSpec) {
+		t.Helper()
+		repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+		artifactRoot := filepath.Join(t.TempDir(), "browser-preseed")
+		routes := canonicalBrowserRoutesForTest(t)
+		plan, err := PredictCanonicalInventoryMaterialization(t.Context(), repoRoot, inventoryPath, artifactRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := MaterializeCanonicalInventory(t.Context(), repoRoot, inventoryPath, artifactRoot); err != nil {
+			t.Fatal(err)
+		}
+		addCanonicalBrowserPreseedGitExcludes(t, repoRoot)
+		source := sourceIdentityFromMaterialization(plan)
+		writeCanonicalBrowserRuntimePreseedForTest(t, repoRoot, artifactRoot, source)
+		writeCanonicalBrowserSizePreseedForTest(t, repoRoot, artifactRoot, source, routes)
+		opts := BrowserBaselineOptions{
+			RepoRoot:      repoRoot,
+			ArtifactRoot:  artifactRoot,
+			InventoryPath: inventoryPath,
+			EvidenceRoot:  filepath.Join(t.TempDir(), "evidence"),
+		}
+		return opts, plan, source, routes
+	}
+
+	t.Run("valid_exact_preseed", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		sizeEvidence, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(filepath.ToSlash(sizeEvidence.ExportPath), "canonical-export/dist/export.json") {
+			t.Fatalf("size exportPath = %s, want canonical-export/dist sibling", sizeEvidence.ExportPath)
+		}
+		tempBefore := gosxOuroborosTempDirsForTest(t)
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err != nil || !ok {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want valid preseed", ok, err)
+		}
+		tempAfter := gosxOuroborosTempDirsForTest(t)
+		if !sameStringSlice(tempBefore, tempAfter) {
+			t.Fatalf("preseed replay leaked temp dirs: before=%v after=%v", tempBefore, tempAfter)
+		}
+		for _, rel := range []string{"manifest.json", "commands.log", "environment.json", "failure.json", "perf/raw-samples.jsonl", "summaries/browser-summary.json"} {
+			if _, statErr := os.Stat(filepath.Join(opts.ArtifactRoot, rel)); !os.IsNotExist(statErr) {
+				t.Fatalf("preseed validation wrote browser artifact %s: %v", rel, statErr)
+			}
+		}
+	})
+
+	t.Run("recorded_symlink_alias_to_live_tool", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		aliasDir := t.TempDir()
+		alias := filepath.Join(aliasDir, "go")
+		liveGo, err := exec.LookPath("go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(liveGo, alias); err != nil {
+			t.Fatal(err)
+		}
+		ev.GoVersion.Path = alias
+		writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err != nil || !ok {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want symlink alias accepted", ok, err)
+		}
+	})
+
+	t.Run("final_revalidation_rejects_symlink_swap", func(t *testing.T) {
+		for _, rel := range []string{"source/source-inventory.json", "wasm/runtime-artifacts.json", "size/route-assets.json"} {
+			t.Run(strings.ReplaceAll(rel, "/", "_"), func(t *testing.T) {
+				opts, plan, source, routes := valid(t)
+				if ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes); err != nil || !ok {
+					t.Fatalf("initial validateCanonicalBrowserRootPreseed = %v/%v", ok, err)
+				}
+				target := filepath.Join(opts.ArtifactRoot, filepath.FromSlash(rel))
+				outside := filepath.Join(t.TempDir(), filepath.Base(rel))
+				body, err := os.ReadFile(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(outside, body, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+				err = revalidateCanonicalBrowserPreseedArtifacts(t.Context(), opts, opts.InventoryPath, routes, source)
+				if err == nil || !strings.Contains(err.Error(), "regular file") {
+					t.Fatalf("revalidateCanonicalBrowserPreseedArtifacts error = %v, want regular file rejection", err)
+				}
+			})
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity)
+		want   string
+	}{
+		{
+			name: "unknown_file",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				writeTestFile(t, filepath.Join(opts.ArtifactRoot, "source", "unexpected.txt"), "bad")
+			},
+			want: "unknown file",
+		},
+		{
+			name: "browser_owned_file",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				if err := os.MkdirAll(filepath.Join(opts.ArtifactRoot, "dynamic"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "browser-owned",
+		},
+		{
+			name: "symlink_escape",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				if err := os.Symlink(filepath.Join(t.TempDir(), "outside"), filepath.Join(opts.ArtifactRoot, "source", "escape")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "symlink",
+		},
+		{
+			name: "runtime_evidence_symlink_rejected_before_allowlist_decode",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				target := filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json")
+				outside := filepath.Join(t.TempDir(), "runtime-artifacts.json")
+				body, err := os.ReadFile(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(outside, body, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "symlink",
+		},
+		{
+			name: "size_evidence_symlink_rejected_before_allowlist_decode",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				target := filepath.Join(opts.ArtifactRoot, "size", "route-assets.json")
+				outside := filepath.Join(t.TempDir(), "route-assets.json")
+				body, err := os.ReadFile(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(outside, body, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "symlink",
+		},
+		{
+			name: "tampered_source",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				writeTestFile(t, filepath.Join(opts.ArtifactRoot, "source", "source-inventory.json"), "{}")
+			},
+			want: "source inventory",
+		},
+		{
+			name: "invalid_runtime_rows",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants = ev.Variants[:1]
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "runtime evidence invalid",
+		},
+		{
+			name: "invalid_size_routes",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Routes = ev.Routes[:len(ev.Routes)-1]
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "size evidence invalid",
+		},
+		{
+			name: "runtime_schema_contract",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.SchemaVersion = "bad"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "runtime schemaVersion",
+		},
+		{
+			name: "size_schema_contract",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Contract = "bad"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "size contractVersion",
+		},
+		{
+			name: "size_route_path",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Routes[0].Route = "/wrong"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "routes mismatch",
+		},
+		{
+			name: "runtime_source_mismatch",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Source.InventorySHA256 = "sha256:" + strings.Repeat("f", 64)
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "runtime source mismatch",
+		},
+		{
+			name: "runtime_shim_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[0].Shim.Bytes++
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "shim metrics mismatch",
+		},
+		{
+			name: "runtime_build_input_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.BuildInput.GoSXModuleDir = filepath.Join(opts.RepoRoot, "wrong")
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "runtime build input mismatch",
+		},
+		{
+			name: "runtime_compressed_metric_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[0].GzipBytes++
+				ev.Variants[1].BrotliBytes++
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "metrics mismatch",
+		},
+		{
+			name: "runtime_tool_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[0].TinyGoVersion = "wrong"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "tool version mismatch",
+		},
+		{
+			name: "runtime_tool_unavailable",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.TinyGo.Available = false
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "tinygo tool is unavailable",
+		},
+		{
+			name: "runtime_tool_path_forged",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.GoVersion.Path = filepath.Join(opts.RepoRoot, "build", "tool-bin", "missing-go")
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "go tool path",
+		},
+		{
+			name: "runtime_malicious_recorded_executable",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				malicious := filepath.Join(t.TempDir(), "go")
+				writeExecutableTestFile(t, malicious, "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'go test'; exit 0; fi\nif [ \"$1\" = env ] && [ \"$2\" = GOROOT ]; then echo '"+filepath.ToSlash(filepath.Join(opts.RepoRoot, "build", "goroot"))+"'; exit 0; fi\nif [ \"$1\" = env ] && [ \"$2\" = GOWORK ]; then echo off; exit 0; fi\nexit 1\n")
+				ev.GoVersion.Path = malicious
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "recorded tool path does not match live tool",
+		},
+		{
+			name: "runtime_artifact_root_recorded_tool",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.GoVersion.Path = filepath.Join(opts.ArtifactRoot, "source", "source-inventory.json")
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "artifact root",
+		},
+		{
+			name: "runtime_evidence_root_recorded_tool",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				tool := filepath.Join(opts.EvidenceRoot, "go")
+				writeExecutableTestFile(t, tool, "#!/bin/sh\necho 'go test'\n")
+				ev.GoVersion.Path = tool
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "evidence root",
+		},
+		{
+			name: "runtime_tool_version_forged",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.GoVersion.Version = "wrong"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "go tool status mismatch",
+		},
+		{
+			name: "runtime_tool_root_forged",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.TinyGo.TinyGoRoot = filepath.Join(opts.RepoRoot, "wrong")
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "tinygo tool status mismatch",
+		},
+		{
+			name: "runtime_tool_env_forged",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.GoVersion.Environment["GOWORK"] = "forged"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "go tool status mismatch",
+		},
+		{
+			name: "runtime_build_tags_reorder",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[1].BuildTags = []string{"gosx_tiny_islands_only", "tinygo", "gosx_tiny_runtime"}
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "build tags mismatch",
+		},
+		{
+			name: "runtime_build_tags_extra",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[0].BuildTags = append(ev.Variants[0].BuildTags, "extra")
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "build tags mismatch",
+		},
+		{
+			name: "runtime_build_tags_missing",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[0].BuildTags = []string{"tinygo"}
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "build tags mismatch",
+		},
+		{
+			name: "runtime_build_args_module",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[0].BuildArgs[len(ev.Variants[0].BuildArgs)-1] = "example.invalid/module"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "build args mismatch",
+		},
+		{
+			name: "runtime_build_args_flag",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[0].BuildArgs[1] = "-bad"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "build args mismatch",
+		},
+		{
+			name: "runtime_published_shim_removed",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				if err := os.Remove(filepath.Join(opts.RepoRoot, "build", "run", "tinygo", "current", "wasm_exec.js")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "published shim",
+		},
+		{
+			name: "runtime_published_shim_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				writeTestFile(t, filepath.Join(opts.RepoRoot, "build", "run", "tinygo", "current", "wasm_exec.js"), "changed")
+			},
+			want: "published shim metrics mismatch",
+		},
+		{
+			name: "runtime_published_shim_parent_symlink",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				outputDir := filepath.Join(opts.RepoRoot, "build", "run", "tinygo", "current")
+				if err := os.Remove(filepath.Join(outputDir, "wasm_exec.js")); err != nil {
+					t.Fatal(err)
+				}
+				outside := t.TempDir()
+				writeTestFile(t, filepath.Join(outside, "wasm_exec.js"), "shim")
+				link := filepath.Join(outputDir, "shim-link")
+				if err := os.Symlink(outside, link); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join("shim-link", "wasm_exec.js"), filepath.Join(outputDir, "wasm_exec.js")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "published shim",
+		},
+		{
+			name: "runtime_parent_symlink_escape",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				outside := t.TempDir()
+				writeTestFile(t, filepath.Join(outside, "gosx-runtime.wasm"), string(bytes.Repeat([]byte{1}, 1024)))
+				link := filepath.Join(opts.RepoRoot, "build", "runtime-link")
+				if err := os.Symlink(outside, link); err != nil {
+					t.Fatal(err)
+				}
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.OutputDir = link
+				ev.Variants[0].SourcePath = filepath.Join(link, "gosx-runtime.wasm")
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "runtime outputDir",
+		},
+		{
+			name: "runtime_selected_routes_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[0].PlannedSelectedBy = []string{"R05"}
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "selected routes mismatch",
+		},
+		{
+			name: "runtime_future_routes_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[2].PlannedSelectedBy = []string{"R01"}
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "future runtime variant core selected routes mismatch",
+		},
+		{
+			name: "runtime_future_measured_metadata",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Variants[2].File = "forged.wasm"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+			},
+			want: "must not pretend to have measured binaries",
+		},
+		{
+			name: "size_build_input_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.BuildInput.ManifestSHA256 = "sha256:" + strings.Repeat("f", 64)
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "build input mismatch",
+		},
+		{
+			name: "size_asset_sha_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Assets[0].SHA256 = strings.Repeat("f", 64)
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "assets mismatch",
+		},
+		{
+			name: "size_asset_compressed_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Assets[0].GzipBytes++
+				ev.Assets[0].BrotliBytes++
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "assets mismatch",
+		},
+		{
+			name: "size_route_bytes_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Routes[0].RawBytes++
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "routes mismatch",
+		},
+		{
+			name: "size_totals_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Totals.RawBytes++
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "totals mismatch",
+		},
+		{
+			name: "size_source_path_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Assets[0].SourcePath = filepath.Join(opts.RepoRoot, "build", "canonical-export", "dist", "assets", "runtime", "wrong.wasm")
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "assets mismatch",
+		},
+		{
+			name: "size_manifest_hash_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Assets[0].ManifestHash = "wrong"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "assets mismatch",
+		},
+		{
+			name: "size_asset_bucket_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Assets[0].Bucket = "wrong"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "assets mismatch",
+		},
+		{
+			name: "size_route_file_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.Routes[0].File = "wrong.html"
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "routes mismatch",
+		},
+		{
+			name: "size_missing_html_ref",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var htmlFile string
+				for _, route := range ev.Routes {
+					if route.ID != "R00" {
+						htmlFile = route.File
+						break
+					}
+				}
+				if htmlFile == "" {
+					t.Fatal("missing non-static route")
+				}
+				if err := os.WriteFile(filepath.Join(ev.DistDir, "static", filepath.FromSlash(htmlFile)), []byte("<html></html>"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "HTML attribution replay",
+		},
+		{
+			name: "size_parent_symlink_escape",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				outside := t.TempDir()
+				writeTestFile(t, filepath.Join(outside, "build-manifest.json"), `{"manifest":true}`)
+				link := filepath.Join(opts.RepoRoot, "build", "manifest-link")
+				if err := os.Symlink(outside, link); err != nil {
+					t.Fatal(err)
+				}
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.ManifestPath = filepath.Join(link, "build-manifest.json")
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "path escapes repo root",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, plan, source, routes := valid(t)
+			tc.mutate(t, opts, source)
+			ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || ok {
+				t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want %q", ok, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalBrowserRuntimeBuildArgsMatchCurrentRuntimeVariantShape(t *testing.T) {
+	sourcePath := filepath.Join(t.TempDir(), "build", "run", "tinygo", "current", "gosx-runtime-islands.wasm")
+	variant := RuntimeArtifactVariant{
+		ID:         "islands",
+		File:       "gosx-runtime-islands.wasm",
+		SourcePath: sourcePath,
+		BuildTags:  []string{"tinygo", "gosx_tiny_runtime", "gosx_tiny_islands_only"},
+		BuildArgs: []string{
+			"build",
+			"-target", "wasm",
+			"-tags=tinygo gosx_tiny_runtime gosx_tiny_islands_only",
+			"-no-debug",
+			"-panic=trap",
+			"-o", sourcePath,
+			"m31labs.dev/gosx/client/wasm",
+		},
+	}
+	if err := validateCanonicalBrowserRuntimeBuildContract(variant); err != nil {
+		t.Fatalf("currentRuntimeVariant-shaped args rejected: %v", err)
+	}
+}
+
+func TestCanonicalBrowserPreseedFailureDoesNotWriteBrowserArtifacts(t *testing.T) {
+	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+	artifactRoot := filepath.Join(t.TempDir(), "browser-preseed-fail")
+	plan, err := PredictCanonicalInventoryMaterialization(t.Context(), repoRoot, inventoryPath, artifactRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MaterializeCanonicalInventory(t.Context(), repoRoot, inventoryPath, artifactRoot); err != nil {
+		t.Fatal(err)
+	}
+	source := sourceIdentityFromMaterialization(plan)
+	addCanonicalBrowserPreseedGitExcludes(t, repoRoot)
+	writeCanonicalBrowserRuntimePreseedForTest(t, repoRoot, artifactRoot, source)
+	writeCanonicalBrowserSizePreseedForTest(t, repoRoot, artifactRoot, source, canonicalBrowserRoutesForTest(t))
+	writeTestFile(t, filepath.Join(artifactRoot, "dynamic", "old.json"), "{}")
+	evidenceRoot := filepath.Join(t.TempDir(), "evidence")
+	pixelSource := visual.PixelSourceIdentity{BaseRevision: source.BaseRevision, OverlayHash: source.OverlayHash, InventorySHA256: source.InventorySHA256}
+	var pixelRefs []string
+	for _, routeID := range []string{"R08", "R10"} {
+		for _, backend := range []string{"webgpu", "webgl"} {
+			pixelRefs = append(pixelRefs, writeStrictCanonicalPixelManifestRef(t, evidenceRoot, routeID, backend, pixelSource))
+		}
+	}
+	_, err = RunBrowserBaseline(t.Context(), BrowserBaselineOptions{
+		RepoRoot:      repoRoot,
+		CorpusPath:    filepath.Join("..", "..", "examples", "ouroboros-corpus", "fixtures.v1.json"),
+		ArtifactRoot:  artifactRoot,
+		EvidenceRoot:  evidenceRoot,
+		InventoryPath: inventoryPath,
+		PixelManifest: strings.Join(pixelRefs, ","),
+		Samples:       "baseline",
+	})
+	if err == nil || !strings.Contains(err.Error(), "browser-owned") {
+		t.Fatalf("RunBrowserBaseline error = %v, want browser-owned preflight failure", err)
+	}
+	for _, rel := range []string{"manifest.json", "commands.log", "environment.json", "failure.json", "perf/raw-samples.jsonl", "summaries/browser-summary.json"} {
+		if _, statErr := os.Stat(filepath.Join(artifactRoot, rel)); !os.IsNotExist(statErr) {
+			t.Fatalf("preflight failure wrote %s: %v", rel, statErr)
+		}
+	}
+}
+
+func writeCanonicalBrowserRuntimePreseedForTest(t *testing.T, repoRoot, root string, source SourceIdentity) {
+	t.Helper()
+	runtimeBody := bytes.Repeat([]byte{1}, 1024)
+	islandsBody := bytes.Repeat([]byte{2}, 1024)
+	outputDir := filepath.Join(repoRoot, "build", "run", "tinygo", "current")
+	writeTestFile(t, filepath.Join(outputDir, "gosx-runtime.wasm"), string(runtimeBody))
+	writeTestFile(t, filepath.Join(outputDir, "gosx-runtime-islands.wasm"), string(islandsBody))
+	shimPath := filepath.Join(repoRoot, "build", "tinygo", "targets", "wasm_exec.js")
+	writeTestFile(t, shimPath, "shim")
+	writeTestFile(t, filepath.Join(outputDir, "wasm_exec.js"), "shim")
+	buildInput, err := BuildInputEvidenceForRepo(repoRoot, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := writeCanonicalBrowserRuntimeToolFixtures(t, repoRoot, root, filepath.Join(filepath.Dir(filepath.Dir(shimPath))))
+	writeFixtureJSON(t, filepath.Join(root, "wasm", "runtime-artifacts.json"), canonicalBrowserRuntimePreseedForTest(source, outputDir, shimPath, buildInput, tools))
+}
+
+func canonicalBrowserRuntimePreseedForTest(source SourceIdentity, outputDir, shimPath string, buildInput BuildInputEvidence, tools map[string]ToolStatus) RuntimeBuildEvidence {
+	runtimeMetrics, _ := MetricsForFile(filepath.Join(outputDir, "gosx-runtime.wasm"))
+	islandsMetrics, _ := MetricsForFile(filepath.Join(outputDir, "gosx-runtime-islands.wasm"))
+	runtimeSize := runtimeMetrics.Bytes
+	islandsSize := islandsMetrics.Bytes
+	budget := int64(2048)
+	shimMetrics, _ := MetricsForFile(shimPath)
+	shim := &shimMetrics
+	variants := []RuntimeArtifactVariant{
+		{ID: "runtime", Generation: "current", Status: "measured", SizeBytes: &runtimeSize, BudgetBytes: &budget, File: "gosx-runtime.wasm", SourcePath: filepath.Join(outputDir, "gosx-runtime.wasm"), SHA256: runtimeMetrics.SHA256, Bytes: runtimeMetrics.Bytes, GzipBytes: runtimeMetrics.GzipBytes, BrotliBytes: runtimeMetrics.BrotliBytes, BuildArgs: []string{"build", "-target", "wasm", "-tags=tinygo gosx_tiny_runtime", "-no-debug", "-panic=trap", "-o", filepath.Join(outputDir, "gosx-runtime.wasm"), "m31labs.dev/gosx/client/wasm"}, BuildTags: []string{"tinygo", "gosx_tiny_runtime"}, TinyGoVersion: "tinygo test", GoVersion: "go test", WasmOptVersion: "wasm-opt test", WasmOptAvailable: true, Shim: shim, PlannedSelectedBy: []string{"R05", "R06", "R07", "R08", "R10"}},
+		{ID: "islands", Generation: "current", Status: "measured", SizeBytes: &islandsSize, BudgetBytes: &budget, File: "gosx-runtime-islands.wasm", SourcePath: filepath.Join(outputDir, "gosx-runtime-islands.wasm"), SHA256: islandsMetrics.SHA256, Bytes: islandsMetrics.Bytes, GzipBytes: islandsMetrics.GzipBytes, BrotliBytes: islandsMetrics.BrotliBytes, BuildArgs: []string{"build", "-target", "wasm", "-tags=tinygo gosx_tiny_runtime gosx_tiny_islands_only", "-no-debug", "-panic=trap", "-o", filepath.Join(outputDir, "gosx-runtime-islands.wasm"), "m31labs.dev/gosx/client/wasm"}, BuildTags: []string{"tinygo", "gosx_tiny_runtime", "gosx_tiny_islands_only"}, TinyGoVersion: "tinygo test", GoVersion: "go test", WasmOptVersion: "wasm-opt test", WasmOptAvailable: true, Shim: shim, PlannedSelectedBy: []string{"R02", "R03", "R09A", "R09B"}},
+	}
+	for _, id := range []string{"core", "engine", "collab", "full"} {
+		variants = append(variants, RuntimeArtifactVariant{
+			ID:                id,
+			Generation:        "future",
+			Status:            "planned",
+			PlannedSelectedBy: canonicalBrowserFutureRuntimeSelectedRoutes(id),
+			MissingReason:     "planned O1-O6 bounded TinyGo variant; no artifact exists in O0.2",
+		})
+	}
+	return RuntimeBuildEvidence{
+		SchemaVersion: SchemaVersion,
+		Contract:      ContractO02,
+		Source:        source,
+		BuildInput:    buildInput,
+		OutputDir:     outputDir,
+		GoVersion:     tools["go"],
+		TinyGo:        tools["tinygo"],
+		WasmOpt:       tools["wasm-opt"],
+		Variants:      variants,
+	}
+}
+
+func writeCanonicalBrowserRuntimeToolFixtures(t *testing.T, repoRoot, artifactRoot, tinyRoot string) map[string]ToolStatus {
+	t.Helper()
+	t.Setenv("CANONICAL_BROWSER_SENTINEL", "present")
+	bin := filepath.Join(t.TempDir(), "tool-bin")
+	goPath := filepath.Join(bin, "go")
+	tinygoReal := filepath.Join(bin, "tinygo-real")
+	tinygoPath := filepath.Join(bin, "tinygo")
+	wasmOptPath := filepath.Join(bin, "wasm-opt")
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeExecutableTestFile(t, goPath, "#!/bin/sh\nif [ \"$1\" = version ]; then if [ -n \"$CANONICAL_BROWSER_SENTINEL\" ]; then echo 'ambient leak'; else echo 'go test'; fi; exit 0; fi\nexec '"+filepath.ToSlash(realGo)+"' \"$@\"\n")
+	writeExecutableTestFile(t, tinygoReal, "#!/bin/sh\nif [ -n \"$CANONICAL_BROWSER_SENTINEL\" ]; then echo 'ambient leak'; exit 0; fi\nif [ \"$1\" = version ]; then echo 'tinygo test'; exit 0; fi\nif [ \"$1\" = env ] && [ \"$2\" = TINYGOROOT ]; then echo '"+filepath.ToSlash(tinyRoot)+"'; exit 0; fi\nif [ \"$1\" = env ] && [ \"$2\" = GOROOT ]; then echo '"+filepath.ToSlash(filepath.Join(repoRoot, "build", "tinygo-goroot"))+"'; exit 0; fi\nexit 1\n")
+	if err := os.Symlink("tinygo-real", tinygoPath); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutableTestFile(t, wasmOptPath, "#!/bin/sh\nif [ -n \"$CANONICAL_BROWSER_SENTINEL\" ]; then echo 'ambient leak'; exit 0; fi\nif [ \"$1\" = --version ]; then echo 'wasm-opt test'; exit 0; fi\nexit 1\n")
+	ev := &RuntimeBuildEvidence{
+		GoVersion: ToolStatus{Name: "go", Path: goPath, Available: true},
+		TinyGo:    ToolStatus{Name: "tinygo", Path: tinygoPath, Available: true},
+		WasmOpt:   ToolStatus{Name: "wasm-opt", Path: wasmOptPath, Available: true},
+	}
+	verifier, err := newCanonicalBrowserToolVerifier(BrowserBaselineOptions{
+		RepoRoot:     repoRoot,
+		ArtifactRoot: artifactRoot,
+		EvidenceRoot: filepath.Join(t.TempDir(), "evidence"),
+	}, ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goStatus, err := verifier.status("go", ev.GoVersion, "version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tinyStatus, err := verifier.status("tinygo", ev.TinyGo, "version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wasmStatus, err := verifier.status("wasm-opt", ev.WasmOpt, "--version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]ToolStatus{"go": goStatus, "tinygo": tinyStatus, "wasm-opt": wasmStatus}
+}
+
+func writeExecutableTestFile(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeCanonicalBrowserSizePreseedForTest(t *testing.T, repoRoot, root string, source SourceIdentity, routes []FixtureSpec) {
+	t.Helper()
+	distDir := filepath.Join(repoRoot, "build", "canonical-export", "dist")
+	manifestPath := filepath.Join(distDir, "build.json")
+	writeCanonicalBrowserSizeDistForTest(t, distDir, routes)
+	report, err := BuildSizeEvidenceWithOptions(SizeEvidenceOptions{
+		ManifestPath: manifestPath,
+		DistDir:      distDir,
+		RepoRoot:     repoRoot,
+		Canonical:    false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.Source = source
+	report.Canonical = true
+	for i := range report.Routes {
+		report.Routes[i].ID = canonicalOuroborosRouteID(report.Routes[i].Route)
+	}
+	writeFixtureJSON(t, filepath.Join(root, "size", "route-assets.json"), report)
+}
+
+func writeCanonicalBrowserSizeDistForTest(t *testing.T, distDir string, specs []FixtureSpec) {
+	t.Helper()
+	runtimeBody := "runtime"
+	writeTestFile(t, filepath.Join(distDir, "assets", "runtime", "gosx-runtime.test.wasm"), runtimeBody)
+	writeTestFile(t, filepath.Join(distDir, "build.json"), `{
+  "runtime": {
+    "wasm": {"file": "gosx-runtime.test.wasm", "hash": "runtimehash", "size": 7}
+  },
+  "islands": [],
+  "css": []
+}`)
+	var exportRoutes []string
+	for _, spec := range specs {
+		file := strings.TrimPrefix(spec.Route, "/") + "/index.html"
+		if spec.Route == "/" {
+			file = "index.html"
+		}
+		exportRoutes = append(exportRoutes, fmt.Sprintf(`{"path":%q,"file":%q}`, spec.Route, file))
+		writeTestFile(t, filepath.Join(distDir, "static", filepath.FromSlash(file)), `<script src="/gosx/runtime.wasm"></script>`)
+	}
+	writeTestFile(t, filepath.Join(distDir, "export.json"), `{"routes":[`+strings.Join(exportRoutes, ",")+`]}`)
+}
+
+func canonicalBrowserBuildInputForTest() BuildInputEvidence {
+	return BuildInputEvidence{
+		ManifestSHA256: "sha256:" + strings.Repeat("a", 64),
+		ExportSHA256:   "sha256:" + strings.Repeat("b", 64),
+	}
+}
+
+func addCanonicalBrowserPreseedGitExcludes(t *testing.T, repoRoot string) {
+	t.Helper()
+	excludePath := filepath.Join(repoRoot, ".git", "info", "exclude")
+	f, err := os.OpenFile(excludePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString("\nbuild/\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func gosxOuroborosTempDirsForTest(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), "gosx-ouroboros-source-") {
+			out = append(out, entry.Name())
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func canonicalBrowserRoutesForTest(t *testing.T) []FixtureSpec {
+	t.Helper()
+	corpus, err := LoadFixtureCorpus(filepath.Join("..", "..", "examples", "ouroboros-corpus", "fixtures.v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCanonicalRouteSelection(corpus.Routes, nil); err != nil {
+		t.Fatal(err)
+	}
+	return corpus.Routes
 }
 
 func TestCanonicalRejectsTamperedInventoryBeforeRootMutation(t *testing.T) {

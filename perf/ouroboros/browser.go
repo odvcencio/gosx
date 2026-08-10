@@ -2,6 +2,7 @@ package ouroboros
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 const BrowserBaselineSchemaVersion = "gosx.ouroboros.browser-baseline.v1"
 
 const r10MinimumSampleTimeout = 60 * time.Second
+const canonicalBrowserToolOutputLimit = 64 << 10
 
 type SampleLane string
 
@@ -353,9 +355,6 @@ func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (resul
 		if opts.ArtifactRoot == "" || strings.Contains(filepath.Base(opts.ArtifactRoot), "smoke") {
 			return nil, fmt.Errorf("canonical browser baseline requires an explicit non-smoke artifact root")
 		}
-		if _, err := os.Stat(opts.ArtifactRoot); err == nil {
-			return nil, fmt.Errorf("canonical artifact root already exists: %s", opts.ArtifactRoot)
-		}
 		opts.Trace = true
 		opts.Coverage = true
 		opts.HeapSnapshots = true
@@ -371,10 +370,11 @@ func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (resul
 		if err := validateCanonicalRouteSelection(corpus.Routes, opts.Routes); err != nil {
 			return nil, err
 		}
-		if err := preflightCanonicalBrowserInputs(ctx, opts); err != nil {
+		if _, err := preflightCanonicalBrowserInputs(ctx, opts, corpus.Routes); err != nil {
 			return nil, err
 		}
 	}
+	originalInventoryPath := opts.InventoryPath
 	artifactWriteStarted = true
 	if plan.Canonical {
 		materializedInventory, err := MaterializeCanonicalInventory(ctx, opts.RepoRoot, opts.InventoryPath, opts.ArtifactRoot)
@@ -523,6 +523,11 @@ func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (resul
 		DynamicProbe:  dynamicProbeRef,
 		Validation:    validation,
 		Canonical:     canonical,
+	}
+	if plan.Canonical {
+		if err := revalidateCanonicalBrowserPreseedArtifacts(ctx, opts, originalInventoryPath, corpus.Routes, source); err != nil {
+			return nil, err
+		}
 	}
 	if err := WriteJSONFile(manifestPath, manifest); err != nil {
 		return nil, err
@@ -1330,35 +1335,36 @@ func r10ExternalMissing(external ExternalRouteEvidence) []string {
 	return uniqueStrings(missing)
 }
 
-func preflightCanonicalBrowserInputs(ctx context.Context, opts BrowserBaselineOptions) error {
+func preflightCanonicalBrowserInputs(ctx context.Context, opts BrowserBaselineOptions, routes []FixtureSpec) (bool, error) {
 	if err := validateCanonicalEvidenceRoot(opts); err != nil {
-		return err
-	}
-	if _, err := readCanonicalPixelManifestRefs(opts); err != nil {
-		return err
+		return false, err
 	}
 	root, err := resolveRepoRootForEvidence(opts.RepoRoot)
 	if err != nil {
-		return err
+		return false, err
 	}
 	plan, err := PredictCanonicalInventoryMaterialization(ctx, root, opts.InventoryPath, opts.ArtifactRoot)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if strings.TrimSpace(opts.SourceIdentityPath) != "" {
 		handoff, err := ReadSourceIdentityHandoffStrict(opts.SourceIdentityPath)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := ValidateSourceIdentityHandoffForMaterialization(handoff, plan); err != nil {
-			return err
+			return false, err
 		}
 	}
 	source := sourceIdentityFromMaterialization(plan)
-	if err := validateCanonicalEvidenceRefs(opts, source); err != nil {
-		return err
+	preseed, err := validateCanonicalBrowserRootPreseed(ctx, opts, plan, source, routes)
+	if err != nil {
+		return false, err
 	}
-	return nil
+	if err := validateCanonicalEvidenceRefs(opts, source); err != nil {
+		return false, err
+	}
+	return preseed, nil
 }
 
 func sourceIdentityFromMaterialization(plan CanonicalInventoryMaterialization) SourceIdentity {
@@ -1394,6 +1400,1185 @@ func validateCanonicalEvidenceRoot(opts BrowserBaselineOptions) error {
 		return fmt.Errorf("canonical run requires --evidence-root separate from the output artifact root")
 	}
 	return nil
+}
+
+func revalidateCanonicalBrowserPreseedArtifacts(ctx context.Context, opts BrowserBaselineOptions, inventoryPath string, routes []FixtureSpec, source SourceIdentity) error {
+	root, err := resolveRepoRootForEvidence(opts.RepoRoot)
+	if err != nil {
+		return err
+	}
+	plan, err := PredictCanonicalInventoryMaterialization(ctx, root, inventoryPath, opts.ArtifactRoot)
+	if err != nil {
+		return err
+	}
+	predicted := sourceIdentityFromMaterialization(plan)
+	if !canonicalBrowserSourceIdentityMatches(source, predicted) {
+		return fmt.Errorf("canonical browser preseed revalidation source mismatch")
+	}
+	if err := validateCanonicalBrowserMaterializedInventory(ctx, plan); err != nil {
+		return err
+	}
+	if err := validateCanonicalBrowserRuntimePreseed(opts, filepath.Join(plan.ArtifactRoot, "wasm", "runtime-artifacts.json"), source); err != nil {
+		return err
+	}
+	if err := validateCanonicalBrowserSizePreseed(plan.RepoRoot, filepath.Join(plan.ArtifactRoot, "size", "route-assets.json"), source, routes); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateCanonicalBrowserRootPreseed(ctx context.Context, opts BrowserBaselineOptions, plan CanonicalInventoryMaterialization, source SourceIdentity, routes []FixtureSpec) (bool, error) {
+	root := plan.ArtifactRoot
+	info, err := os.Lstat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, fmt.Errorf("canonical browser preflight requires exact preseed root: %s", root)
+		}
+		return false, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("canonical browser preseed root must not be a symlink: %s", root)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("canonical browser preseed root must be a directory: %s", root)
+	}
+	allowedExact, allowedDirs, err := canonicalBrowserAllowedPreseedPaths(root, plan)
+	if err != nil {
+		return false, err
+	}
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("canonical browser preseed rejects symlink: %s", rel)
+		}
+		if canonicalBrowserOwnedPreseedPath(rel) {
+			return fmt.Errorf("canonical browser preseed contains browser-owned artifact: %s", rel)
+		}
+		if entry.IsDir() {
+			if !allowedDirs[rel] && !underAllowedPreseedDir(rel, allowedDirs) {
+				return fmt.Errorf("canonical browser preseed contains unknown directory: %s", rel)
+			}
+			return nil
+		}
+		if !allowedExact[rel] && !underAllowedPreseedDir(rel, allowedDirs) {
+			return fmt.Errorf("canonical browser preseed contains unknown file: %s", rel)
+		}
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	if err := validateCanonicalBrowserMaterializedInventory(ctx, plan); err != nil {
+		return false, err
+	}
+	if err := validateCanonicalBrowserRuntimePreseed(opts, filepath.Join(root, "wasm", "runtime-artifacts.json"), source); err != nil {
+		return false, err
+	}
+	if err := validateCanonicalBrowserSizePreseed(plan.RepoRoot, filepath.Join(root, "size", "route-assets.json"), source, routes); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func canonicalBrowserAllowedPreseedPaths(root string, plan CanonicalInventoryMaterialization) (map[string]bool, map[string]bool, error) {
+	exact := map[string]bool{
+		"source/source-inventory.json": true,
+		"wasm/runtime-artifacts.json":  true,
+		"size/route-assets.json":       true,
+	}
+	dirs := map[string]bool{
+		"source": true,
+		"wasm":   true,
+		"size":   true,
+	}
+	for _, ref := range []string{plan.Inventory.Overlay.PatchPath, plan.Inventory.Overlay.ArchivePath} {
+		if strings.TrimSpace(ref) == "" {
+			continue
+		}
+		rel, err := canonicalBrowserPreseedRefRel(plan, ref)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !strings.HasPrefix(rel, "source/") {
+			return nil, nil, fmt.Errorf("canonical browser preseed overlay ref must stay under source/: %s", rel)
+		}
+		dirs[filepath.ToSlash(filepath.Dir(rel))] = true
+		if strings.HasSuffix(ref, "untracked-sources") {
+			dirs[rel] = true
+			continue
+		}
+		exact[rel] = true
+	}
+	if runtimeEvidence, err := readCanonicalBrowserRuntimeEvidenceStrict(root, filepath.Join(root, "wasm", "runtime-artifacts.json")); err == nil {
+		for _, variant := range runtimeEvidence.Variants {
+			if variant.Generation != "current" || variant.Status != "measured" {
+				continue
+			}
+			rel, err := canonicalBrowserPreseedFileRel(root, variant.SourcePath)
+			if err != nil {
+				continue
+			}
+			exact[rel] = true
+			dirs[filepath.ToSlash(filepath.Dir(rel))] = true
+		}
+	}
+	if sizeEvidence, err := readCanonicalBrowserSizeEvidenceStrict(root, filepath.Join(root, "size", "route-assets.json")); err == nil {
+		for _, ref := range []string{sizeEvidence.ManifestPath, sizeEvidence.ExportPath} {
+			if strings.TrimSpace(ref) == "" {
+				continue
+			}
+			rel, err := canonicalBrowserPreseedFileRel(root, ref)
+			if err != nil {
+				continue
+			}
+			exact[rel] = true
+			dirs[filepath.ToSlash(filepath.Dir(rel))] = true
+		}
+	}
+	return exact, dirs, nil
+}
+
+func canonicalBrowserPreseedRefRel(plan CanonicalInventoryMaterialization, ref string) (string, error) {
+	path := filepath.FromSlash(ref)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(plan.RepoRoot, path)
+	}
+	rel, err := filepath.Rel(plan.ArtifactRoot, filepath.Clean(path))
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("canonical browser preseed overlay ref escapes artifact root: %s", ref)
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func underAllowedPreseedDir(rel string, dirs map[string]bool) bool {
+	for dir := range dirs {
+		if strings.HasPrefix(rel, dir+"/") && strings.HasPrefix(dir, "source/") {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalBrowserOwnedPreseedPath(rel string) bool {
+	switch rel {
+	case "manifest.json", "commands.log", "environment.json", "failure.json",
+		"perf", "summaries", "traces", "coverage", "heaps", "dynamic":
+		return true
+	}
+	for _, prefix := range []string{"perf/", "summaries/", "traces/", "coverage/", "heaps/", "dynamic/"} {
+		if strings.HasPrefix(rel, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func validateCanonicalBrowserMaterializedInventory(ctx context.Context, plan CanonicalInventoryMaterialization) error {
+	file, err := canonicalBrowserOpenRegularPreseedFile(plan.ArtifactRoot, plan.Path, "source/source-inventory.json")
+	if err != nil {
+		return fmt.Errorf("canonical browser preseed requires source/source-inventory.json: %w", err)
+	}
+	defer file.Close()
+	body, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("canonical browser preseed source inventory read: %w", err)
+	}
+	if !bytes.Equal(body, plan.Bytes) {
+		return fmt.Errorf("canonical browser preseed source inventory differs from predicted materialization")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("canonical browser preseed source inventory invalid: %w", err)
+	}
+	existing, err := DecodeInventoryStrict(file)
+	if err != nil {
+		return fmt.Errorf("canonical browser preseed source inventory invalid: %w", err)
+	}
+	if err := requireInventoryReplay(ctx, plan.RepoRoot, existing); err != nil {
+		return fmt.Errorf("canonical browser preseed source inventory invalid: %w", err)
+	}
+	return nil
+}
+
+func validateCanonicalBrowserRuntimePreseed(opts BrowserBaselineOptions, path string, source SourceIdentity) error {
+	repoRoot := opts.RepoRoot
+	ev, err := readCanonicalBrowserRuntimeEvidenceStrict(opts.ArtifactRoot, path)
+	if err != nil {
+		return fmt.Errorf("canonical browser preseed requires wasm/runtime-artifacts.json: %w", err)
+	}
+	if ev.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("canonical browser preseed runtime schemaVersion = %q, want %q", ev.SchemaVersion, SchemaVersion)
+	}
+	if ev.Contract != ContractO02 {
+		return fmt.Errorf("canonical browser preseed runtime contractVersion = %q, want %q", ev.Contract, ContractO02)
+	}
+	if err := validateRuntimeEvidenceForCompare(ev); err != nil {
+		return fmt.Errorf("canonical browser preseed runtime evidence invalid: %w", err)
+	}
+	if err := validateCanonicalBrowserRuntimeToolStatuses(opts, ev); err != nil {
+		return fmt.Errorf("canonical browser preseed runtime evidence invalid: %w", err)
+	}
+	if err := validateCanonicalBrowserFutureRuntimeRows(ev); err != nil {
+		return fmt.Errorf("canonical browser preseed runtime evidence invalid: %w", err)
+	}
+	recomputedBuildInput, err := BuildInputEvidenceForRepo(repoRoot, "", "")
+	if err != nil {
+		return fmt.Errorf("canonical browser preseed runtime build input recompute: %w", err)
+	}
+	if !canonicalBrowserBuildInputMatches(ev.BuildInput, recomputedBuildInput) {
+		return fmt.Errorf("canonical browser preseed runtime build input mismatch")
+	}
+	if err := validateCanonicalBrowserMeasuredRuntimeRows(repoRoot, ev); err != nil {
+		return fmt.Errorf("canonical browser preseed runtime evidence invalid: %w", err)
+	}
+	if !canonicalBrowserSourceIdentityMatches(ev.Source, source) {
+		return fmt.Errorf("canonical browser preseed runtime source mismatch")
+	}
+	return nil
+}
+
+func readCanonicalBrowserRuntimeEvidenceStrict(root, path string) (*RuntimeBuildEvidence, error) {
+	file, err := canonicalBrowserOpenRegularPreseedFile(root, path, "wasm/runtime-artifacts.json")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var out RuntimeBuildEvidence
+	dec := json.NewDecoder(file)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return nil, fmt.Errorf("read runtime build evidence: %w", err)
+	}
+	if err := rejectTrailingJSON(dec); err != nil {
+		return nil, fmt.Errorf("read runtime build evidence: %w", err)
+	}
+	return &out, nil
+}
+
+func readCanonicalBrowserSizeEvidenceStrict(root, path string) (*SizeEvidence, error) {
+	file, err := canonicalBrowserOpenRegularPreseedFile(root, path, "size/route-assets.json")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	var out SizeEvidence
+	dec := json.NewDecoder(file)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return nil, fmt.Errorf("read size evidence: %w", err)
+	}
+	if err := rejectTrailingJSON(dec); err != nil {
+		return nil, fmt.Errorf("read size evidence: %w", err)
+	}
+	return &out, nil
+}
+
+func canonicalBrowserOpenRegularPreseedFile(root, path, label string) (*os.File, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	cleanPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(rootAbs, cleanPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return nil, fmt.Errorf("%s escapes preseed root", label)
+	}
+	rootInfo, err := os.Lstat(rootAbs)
+	if err != nil {
+		return nil, err
+	}
+	if rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return nil, fmt.Errorf("preseed root must be a real directory")
+	}
+	current := rootAbs
+	parts := strings.Split(rel, string(filepath.Separator))
+	for _, part := range parts[:len(parts)-1] {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return nil, fmt.Errorf("%s parent directory must be real: %s", label, filepath.ToSlash(part))
+		}
+	}
+	info, err := os.Lstat(cleanPath)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular file", label)
+	}
+	file, err := os.Open(cleanPath)
+	if err != nil {
+		return nil, err
+	}
+	openedInfo, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if !os.SameFile(info, openedInfo) {
+		_ = file.Close()
+		return nil, fmt.Errorf("%s changed while opening", label)
+	}
+	return file, nil
+}
+
+type canonicalBrowserToolVerifier struct {
+	paths map[string]canonicalBrowserTrustedTool
+	env   []string
+}
+
+type canonicalBrowserTrustedTool struct {
+	name     string
+	livePath string
+	resolved string
+}
+
+func validateCanonicalBrowserRuntimeToolStatuses(opts BrowserBaselineOptions, ev *RuntimeBuildEvidence) error {
+	verifier, err := newCanonicalBrowserToolVerifier(opts, ev)
+	if err != nil {
+		return err
+	}
+	actualGo, err := verifier.status("go", ev.GoVersion, "version")
+	if err != nil {
+		return err
+	}
+	if !canonicalBrowserToolStatusMatches(ev.GoVersion, actualGo) {
+		return fmt.Errorf("go tool status mismatch")
+	}
+	actualTinyGo, err := verifier.status("tinygo", ev.TinyGo, "version")
+	if err != nil {
+		return err
+	}
+	if !canonicalBrowserToolStatusMatches(ev.TinyGo, actualTinyGo) {
+		return fmt.Errorf("tinygo tool status mismatch")
+	}
+	if ev.WasmOpt.Available {
+		actual, err := verifier.status("wasm-opt", ev.WasmOpt, "--version")
+		if err != nil {
+			return err
+		}
+		if !canonicalBrowserToolStatusMatches(ev.WasmOpt, actual) {
+			return fmt.Errorf("wasm-opt tool status mismatch")
+		}
+		return nil
+	}
+	if ev.WasmOpt.Name != "wasm-opt" || ev.WasmOpt.Path != "" || ev.WasmOpt.Version != "" || ev.WasmOpt.GOROOT != "" || ev.WasmOpt.TinyGoRoot != "" || len(ev.WasmOpt.Environment) != 0 || strings.TrimSpace(ev.WasmOpt.Error) == "" {
+		return fmt.Errorf("unavailable wasm-opt tool status mismatch")
+	}
+	if _, err := exec.LookPath("wasm-opt"); err == nil {
+		return fmt.Errorf("unavailable wasm-opt is present on PATH")
+	}
+	return nil
+}
+
+func newCanonicalBrowserToolVerifier(opts BrowserBaselineOptions, ev *RuntimeBuildEvidence) (*canonicalBrowserToolVerifier, error) {
+	names := []string{"go", "tinygo"}
+	if ev.WasmOpt.Available {
+		names = append(names, "wasm-opt")
+	}
+	paths := map[string]canonicalBrowserTrustedTool{}
+	var dirs []string
+	seenDir := map[string]bool{}
+	for _, name := range names {
+		livePath, err := exec.LookPath(name)
+		if err != nil {
+			return nil, fmt.Errorf("%s live tool lookup: %w", name, err)
+		}
+		live, err := canonicalBrowserResolveTrustedLiveTool(opts, name, livePath)
+		if err != nil {
+			return nil, err
+		}
+		recorded := canonicalBrowserRecordedToolStatus(ev, name)
+		if err := canonicalBrowserRecordedToolMatchesTrusted(opts, name, recorded, live); err != nil {
+			return nil, err
+		}
+		paths[name] = live
+		dir := filepath.Dir(live.resolved)
+		if !seenDir[dir] {
+			seenDir[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	return &canonicalBrowserToolVerifier{
+		paths: paths,
+		env:   canonicalBrowserMinimalToolEnv(dirs),
+	}, nil
+}
+
+func canonicalBrowserRecordedToolStatus(ev *RuntimeBuildEvidence, name string) ToolStatus {
+	switch name {
+	case "go":
+		return ev.GoVersion
+	case "tinygo":
+		return ev.TinyGo
+	case "wasm-opt":
+		return ev.WasmOpt
+	default:
+		return ToolStatus{Name: name}
+	}
+}
+
+func canonicalBrowserResolveTrustedLiveTool(opts BrowserBaselineOptions, name, path string) (canonicalBrowserTrustedTool, error) {
+	resolved, err := canonicalBrowserResolvedExecutablePath(name, path)
+	if err != nil {
+		return canonicalBrowserTrustedTool{}, err
+	}
+	if err := canonicalBrowserRejectToolPathInRoots(opts, name, resolved); err != nil {
+		return canonicalBrowserTrustedTool{}, err
+	}
+	return canonicalBrowserTrustedTool{name: name, livePath: path, resolved: resolved}, nil
+}
+
+func canonicalBrowserRecordedToolMatchesTrusted(opts BrowserBaselineOptions, name string, recorded ToolStatus, live canonicalBrowserTrustedTool) error {
+	if recorded.Name != name {
+		return fmt.Errorf("%s tool name mismatch", name)
+	}
+	if !recorded.Available {
+		return fmt.Errorf("%s tool is unavailable", name)
+	}
+	if strings.TrimSpace(recorded.Path) == "" {
+		return fmt.Errorf("%s tool path is empty", name)
+	}
+	if err := canonicalBrowserRejectToolPathInRoots(opts, name, recorded.Path); err != nil {
+		return err
+	}
+	recordedResolved, err := canonicalBrowserResolvedExecutablePath(name, recorded.Path)
+	if err != nil {
+		return err
+	}
+	if err := canonicalBrowserRejectToolPathInRoots(opts, name, recordedResolved); err != nil {
+		return err
+	}
+	liveInfo, err := os.Stat(live.resolved)
+	if err != nil {
+		return fmt.Errorf("%s live tool stat: %w", name, err)
+	}
+	recordedInfo, err := os.Stat(recordedResolved)
+	if err != nil {
+		return fmt.Errorf("%s recorded tool stat: %w", name, err)
+	}
+	if !os.SameFile(liveInfo, recordedInfo) {
+		return fmt.Errorf("%s recorded tool path does not match live tool", name)
+	}
+	return nil
+}
+
+func canonicalBrowserResolvedExecutablePath(name, ref string) (string, error) {
+	path, err := filepath.Abs(ref)
+	if err != nil {
+		return "", fmt.Errorf("%s tool path: %w", name, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("%s tool path: %w", name, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s tool path must not be a directory", name)
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("%s tool path resolve: %w", name, err)
+	}
+	resolvedInfo, err := os.Lstat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("%s resolved tool path: %w", name, err)
+	}
+	if resolvedInfo.Mode()&os.ModeSymlink != 0 || !resolvedInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("%s resolved tool path must be a regular file", name)
+	}
+	return resolved, nil
+}
+
+func canonicalBrowserRejectToolPathInRoots(opts BrowserBaselineOptions, name, ref string) error {
+	for label, root := range map[string]string{
+		"repo":     opts.RepoRoot,
+		"artifact": opts.ArtifactRoot,
+		"evidence": opts.EvidenceRoot,
+	} {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		inside, err := canonicalBrowserPathInsideRoot(root, ref)
+		if err != nil {
+			return fmt.Errorf("%s tool %s root check: %w", name, label, err)
+		}
+		if inside {
+			return fmt.Errorf("%s tool path must not be under %s root", name, label)
+		}
+	}
+	return nil
+}
+
+func canonicalBrowserPathInsideRoot(root, ref string) (bool, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	refAbs, err := filepath.Abs(ref)
+	if err != nil {
+		return false, err
+	}
+	if canonicalBrowserCleanPathInside(rootAbs, refAbs) {
+		return true, nil
+	}
+	rootEval, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			rootEval = filepath.Clean(rootAbs)
+		} else {
+			return false, err
+		}
+	}
+	refEval, err := filepath.EvalSymlinks(refAbs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			refEval = filepath.Clean(refAbs)
+		} else {
+			return false, err
+		}
+	}
+	return canonicalBrowserCleanPathInside(rootEval, refEval), nil
+}
+
+func canonicalBrowserCleanPathInside(root, ref string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(ref))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel))
+}
+
+func (v *canonicalBrowserToolVerifier) status(name string, recorded ToolStatus, args ...string) (ToolStatus, error) {
+	tool, ok := v.paths[name]
+	if !ok {
+		return ToolStatus{}, fmt.Errorf("%s trusted tool is unavailable", name)
+	}
+	out, err := canonicalBrowserCommandOutput(tool.resolved, filepath.Dir(tool.resolved), v.env, args...)
+	status := ToolStatus{Name: name, Path: recorded.Path, Available: true}
+	if err != nil {
+		status.Available = true
+		status.Error = err.Error()
+		return status, nil
+	}
+	status.Version = out
+	status.Environment = v.environment(name)
+	if name == "go" {
+		status.GOROOT, _ = canonicalBrowserCommandOutput(tool.resolved, filepath.Dir(tool.resolved), v.env, "env", "GOROOT")
+	}
+	if name == "tinygo" {
+		status.TinyGoRoot, _ = canonicalBrowserCommandOutput(tool.resolved, filepath.Dir(tool.resolved), v.env, "env", "TINYGOROOT")
+		status.GOROOT, _ = canonicalBrowserCommandOutput(tool.resolved, filepath.Dir(tool.resolved), v.env, "env", "GOROOT")
+	}
+	return status, nil
+}
+
+func canonicalBrowserCommandOutput(path, dir string, env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Dir = dir
+	cmd.Env = env
+	var out canonicalBrowserCappedBuffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if out.overflow {
+		return "", fmt.Errorf("tool output exceeds %d bytes", canonicalBrowserToolOutputLimit)
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.String()), nil
+}
+
+type canonicalBrowserCappedBuffer struct {
+	buf      bytes.Buffer
+	overflow bool
+}
+
+func (b *canonicalBrowserCappedBuffer) Write(p []byte) (int, error) {
+	if b.buf.Len()+len(p) > canonicalBrowserToolOutputLimit {
+		remaining := canonicalBrowserToolOutputLimit - b.buf.Len()
+		if remaining > 0 {
+			_, _ = b.buf.Write(p[:remaining])
+		}
+		b.overflow = true
+		return len(p), nil
+	}
+	_, _ = b.buf.Write(p)
+	return len(p), nil
+}
+
+func (b *canonicalBrowserCappedBuffer) String() string {
+	return b.buf.String()
+}
+
+func (v *canonicalBrowserToolVerifier) environment(name string) map[string]string {
+	env := map[string]string{}
+	tool, ok := v.paths[name]
+	if !ok {
+		return nil
+	}
+	if name == "go" || name == "tinygo" {
+		if goroot, err := canonicalBrowserCommandOutput(tool.resolved, filepath.Dir(tool.resolved), v.env, "env", "GOROOT"); err == nil && goroot != "" {
+			env["GOROOT"] = goroot
+		}
+		if goTool, ok := v.paths["go"]; ok {
+			if gowork, err := canonicalBrowserCommandOutput(goTool.resolved, filepath.Dir(goTool.resolved), v.env, "env", "GOWORK"); err == nil && gowork != "" {
+				env["GOWORK"] = gowork
+			}
+		}
+	}
+	if name == "tinygo" {
+		if tinyRoot, err := canonicalBrowserCommandOutput(tool.resolved, filepath.Dir(tool.resolved), v.env, "env", "TINYGOROOT"); err == nil && tinyRoot != "" {
+			env["TINYGOROOT"] = tinyRoot
+		}
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
+func canonicalBrowserMinimalToolEnv(dirs []string) []string {
+	cleaned := make([]string, 0, len(dirs))
+	seen := map[string]bool{}
+	for _, dir := range dirs {
+		if dir == "" || seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		cleaned = append(cleaned, dir)
+	}
+	env := []string{"PATH=" + strings.Join(cleaned, string(os.PathListSeparator))}
+	if runtime.GOOS == "windows" {
+		for _, key := range []string{"SystemRoot", "WINDIR"} {
+			if value := os.Getenv(key); value != "" {
+				env = append(env, key+"="+value)
+			}
+		}
+	}
+	return env
+}
+
+func canonicalBrowserToolStatusMatches(got, want ToolStatus) bool {
+	return got.Name == want.Name &&
+		got.Path == want.Path &&
+		got.Version == want.Version &&
+		got.GOROOT == want.GOROOT &&
+		got.TinyGoRoot == want.TinyGoRoot &&
+		got.Available == want.Available &&
+		got.Error == want.Error &&
+		sameStringMap(got.Environment, want.Environment)
+}
+
+func sameStringMap(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		if b[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func validateCanonicalBrowserSizePreseed(repoRoot, path string, source SourceIdentity, routes []FixtureSpec) error {
+	artifactRoot := filepath.Dir(filepath.Dir(path))
+	ev, err := readCanonicalBrowserSizeEvidenceStrict(artifactRoot, path)
+	if err != nil {
+		return fmt.Errorf("canonical browser preseed requires size/route-assets.json: %w", err)
+	}
+	if ev.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("canonical browser preseed size schemaVersion = %q, want %q", ev.SchemaVersion, SchemaVersion)
+	}
+	if ev.Contract != ContractO02 {
+		return fmt.Errorf("canonical browser preseed size contractVersion = %q, want %q", ev.Contract, ContractO02)
+	}
+	if !ev.Canonical {
+		return fmt.Errorf("canonical browser preseed size evidence must be canonical")
+	}
+	if err := validateSizeEvidenceForCompare(ev, routes); err != nil {
+		return fmt.Errorf("canonical browser preseed size evidence invalid: %w", err)
+	}
+	if err := validateCanonicalBrowserSizeEvidenceDetails(repoRoot, ev, routes); err != nil {
+		return fmt.Errorf("canonical browser preseed size evidence invalid: %w", err)
+	}
+	if !canonicalBrowserSourceIdentityMatches(ev.Source, source) {
+		return fmt.Errorf("canonical browser preseed size source mismatch")
+	}
+	return nil
+}
+
+func validateCanonicalBrowserMeasuredRuntimeRows(repoRoot string, ev *RuntimeBuildEvidence) error {
+	outputDir, err := canonicalBrowserContainedRepoPath(repoRoot, ev.OutputDir)
+	if err != nil {
+		return fmt.Errorf("runtime outputDir: %w", err)
+	}
+	for _, variant := range ev.Variants {
+		if variant.Generation != "current" || variant.Status != "measured" {
+			continue
+		}
+		if variant.Bytes <= 0 || variant.GzipBytes <= 0 || variant.BrotliBytes <= 0 {
+			return fmt.Errorf("measured runtime variant %s requires positive byte metrics", variant.ID)
+		}
+		if variant.SizeBytes == nil || *variant.SizeBytes <= 0 || int64(*variant.SizeBytes) != variant.Bytes {
+			return fmt.Errorf("measured runtime variant %s requires coherent sizeBytes", variant.ID)
+		}
+		if variant.File == "" || variant.SHA256 == "" || variant.SourcePath == "" {
+			return fmt.Errorf("measured runtime variant %s requires file, sourcePath, and sha256", variant.ID)
+		}
+		if !canonicalBrowserRuntimeVariantFileMatches(variant.ID, variant.File) {
+			return fmt.Errorf("measured runtime variant %s file = %q does not match canonical target", variant.ID, variant.File)
+		}
+		if !validSourceIdentitySHA256("sha256:" + strings.TrimPrefix(variant.SHA256, "sha256:")) {
+			return fmt.Errorf("measured runtime variant %s has invalid sha256", variant.ID)
+		}
+		if len(variant.BuildArgs) == 0 || len(variant.BuildTags) == 0 || variant.TinyGoVersion == "" || variant.GoVersion == "" {
+			return fmt.Errorf("measured runtime variant %s requires build and tool evidence", variant.ID)
+		}
+		if err := validateCanonicalBrowserRuntimeBuildContract(variant); err != nil {
+			return err
+		}
+		if variant.Shim == nil || variant.Shim.Bytes <= 0 || variant.Shim.SHA256 == "" || variant.Shim.SourcePath == "" {
+			return fmt.Errorf("measured runtime variant %s requires shim evidence", variant.ID)
+		}
+		if err := validateCanonicalBrowserRuntimeToolBinding(ev, variant); err != nil {
+			return err
+		}
+		path, err := canonicalBrowserRuntimeOutputPath(outputDir, variant.SourcePath)
+		if err != nil {
+			return fmt.Errorf("measured runtime variant %s sourcePath: %w", variant.ID, err)
+		}
+		if filepath.Base(path) != variant.File {
+			return fmt.Errorf("measured runtime variant %s file = %q, want basename %q", variant.ID, variant.File, filepath.Base(path))
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("measured runtime variant %s sourcePath: %w", variant.ID, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return fmt.Errorf("measured runtime variant %s sourcePath must be a regular file", variant.ID)
+		}
+		metrics, err := MetricsForFile(path)
+		if err != nil {
+			return fmt.Errorf("measured runtime variant %s sourcePath metrics: %w", variant.ID, err)
+		}
+		if metrics.SHA256 != strings.TrimPrefix(variant.SHA256, "sha256:") ||
+			metrics.Bytes != variant.Bytes ||
+			metrics.GzipBytes != variant.GzipBytes ||
+			metrics.BrotliBytes != variant.BrotliBytes {
+			return fmt.Errorf("measured runtime variant %s metrics mismatch", variant.ID)
+		}
+		if err := validateCanonicalBrowserShimEvidence(ev, variant); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateCanonicalBrowserFutureRuntimeRows(ev *RuntimeBuildEvidence) error {
+	seen := map[string]bool{}
+	for _, variant := range ev.Variants {
+		if variant.Generation != "future" || variant.Status != "planned" {
+			continue
+		}
+		seen[variant.ID] = true
+		if !sameStringSlice(variant.PlannedSelectedBy, canonicalBrowserFutureRuntimeSelectedRoutes(variant.ID)) {
+			return fmt.Errorf("future runtime variant %s selected routes mismatch", variant.ID)
+		}
+		if variant.MissingReason != "planned O1-O6 bounded TinyGo variant; no artifact exists in O0.2" {
+			return fmt.Errorf("future runtime variant %s missingReason mismatch", variant.ID)
+		}
+		if variant.SizeBytes != nil || variant.BudgetBytes != nil || variant.File != "" || variant.SourcePath != "" || variant.SHA256 != "" ||
+			variant.Bytes != 0 || variant.GzipBytes != 0 || variant.BrotliBytes != 0 || len(variant.BuildArgs) != 0 ||
+			len(variant.BuildTags) != 0 || variant.TinyGoVersion != "" || variant.GoVersion != "" || variant.WasmOptVersion != "" ||
+			variant.WasmOptAvailable || variant.Optimized || variant.Shim != nil {
+			return fmt.Errorf("future runtime variant %s must not carry measured metadata", variant.ID)
+		}
+	}
+	for _, id := range []string{"core", "engine", "collab", "full"} {
+		if !seen[id] {
+			return fmt.Errorf("future runtime variant %s missing", id)
+		}
+	}
+	return nil
+}
+
+func canonicalBrowserFutureRuntimeSelectedRoutes(id string) []string {
+	switch id {
+	case "core":
+		return []string{"R01", "R02", "R03", "R04", "R09A", "R09B"}
+	case "engine":
+		return []string{"R05", "R07", "R08", "R10"}
+	case "collab":
+		return []string{"R06"}
+	case "full":
+		return []string{}
+	default:
+		return nil
+	}
+}
+
+func canonicalBrowserRuntimeVariantFileMatches(id, file string) bool {
+	switch id {
+	case "runtime":
+		return file == "gosx-runtime.wasm"
+	case "islands":
+		return file == "gosx-runtime-islands.wasm"
+	default:
+		return false
+	}
+}
+
+func validateCanonicalBrowserRuntimeToolBinding(ev *RuntimeBuildEvidence, variant RuntimeArtifactVariant) error {
+	if ev.TinyGo.Version == "" || ev.GoVersion.Version == "" {
+		return fmt.Errorf("measured runtime variant %s requires top-level tool versions", variant.ID)
+	}
+	if !ev.TinyGo.Available || !ev.GoVersion.Available {
+		return fmt.Errorf("measured runtime variant %s requires available TinyGo and Go tools", variant.ID)
+	}
+	if variant.TinyGoVersion != ev.TinyGo.Version || variant.GoVersion != ev.GoVersion.Version {
+		return fmt.Errorf("measured runtime variant %s tool version mismatch", variant.ID)
+	}
+	if variant.WasmOptVersion != ev.WasmOpt.Version || variant.WasmOptAvailable != ev.WasmOpt.Available {
+		return fmt.Errorf("measured runtime variant %s wasm-opt tool mismatch", variant.ID)
+	}
+	if !sameStringSlice(variant.PlannedSelectedBy, canonicalBrowserRuntimeSelectedRoutes(variant.ID)) {
+		return fmt.Errorf("measured runtime variant %s selected routes mismatch", variant.ID)
+	}
+	return nil
+}
+
+func canonicalBrowserRuntimeSelectedRoutes(id string) []string {
+	switch id {
+	case "runtime":
+		return []string{"R05", "R06", "R07", "R08", "R10"}
+	case "islands":
+		return []string{"R02", "R03", "R09A", "R09B"}
+	default:
+		return nil
+	}
+}
+
+func validateCanonicalBrowserRuntimeBuildContract(variant RuntimeArtifactVariant) error {
+	if !sameStringSlice(variant.BuildTags, canonicalBrowserRuntimeBuildTags(variant.ID)) {
+		return fmt.Errorf("measured runtime variant %s build tags mismatch", variant.ID)
+	}
+	if !sameStringSlice(variant.BuildArgs, canonicalBrowserRuntimeBuildArgs(variant)) {
+		return fmt.Errorf("measured runtime variant %s build args mismatch", variant.ID)
+	}
+	return nil
+}
+
+func canonicalBrowserRuntimeBuildTags(id string) []string {
+	switch id {
+	case "runtime":
+		return []string{"tinygo", "gosx_tiny_runtime"}
+	case "islands":
+		return []string{"tinygo", "gosx_tiny_runtime", "gosx_tiny_islands_only"}
+	default:
+		return nil
+	}
+}
+
+func canonicalBrowserRuntimeBuildArgs(variant RuntimeArtifactVariant) []string {
+	tags := strings.Join(canonicalBrowserRuntimeBuildTags(variant.ID), " ")
+	return []string{
+		"build",
+		"-target", "wasm",
+		"-tags=" + tags,
+		"-no-debug",
+		"-panic=trap",
+		"-o", variant.SourcePath,
+		"m31labs.dev/gosx/client/wasm",
+	}
+}
+
+func validateCanonicalBrowserSizeEvidenceDetails(repoRoot string, ev *SizeEvidence, routes []FixtureSpec) error {
+	if !validSourceIdentitySHA256(ev.BuildInput.ManifestSHA256) ||
+		!validSourceIdentitySHA256(ev.BuildInput.ExportSHA256) {
+		return fmt.Errorf("canonical size evidence requires manifest and export hashes")
+	}
+	if len(ev.Unresolved) > 0 {
+		return fmt.Errorf("canonical size evidence has unresolved refs")
+	}
+	if ev.Totals.RouteCount != len(ev.Routes) || ev.Totals.AssetCount != len(ev.Assets) {
+		return fmt.Errorf("canonical size evidence totals do not match routes/assets")
+	}
+	distDir, err := canonicalBrowserContainedRepoPath(repoRoot, ev.DistDir)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence distDir: %w", err)
+	}
+	info, err := os.Lstat(distDir)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence distDir: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("canonical size evidence distDir must be a real directory")
+	}
+	manifestPath, err := validateCanonicalBrowserBuildInputPath(repoRoot, ev.ManifestPath, "manifestPath")
+	if err != nil {
+		return err
+	}
+	exportPath, err := validateCanonicalBrowserBuildInputPath(repoRoot, ev.ExportPath, "exportPath")
+	if err != nil {
+		return err
+	}
+	if !samePath(manifestPath, filepath.Join(distDir, "build.json")) {
+		return fmt.Errorf("canonical size evidence manifestPath must be DistDir/build.json")
+	}
+	if !samePath(exportPath, filepath.Join(distDir, "export.json")) {
+		return fmt.Errorf("canonical size evidence exportPath must be DistDir/export.json")
+	}
+	recomputed, err := BuildInputEvidenceForRepo(repoRoot, manifestPath, exportPath)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence build input recompute: %w", err)
+	}
+	if !canonicalBrowserBuildInputMatches(ev.BuildInput, recomputed) {
+		return fmt.Errorf("canonical size evidence build input mismatch")
+	}
+	if err := validateCanonicalBrowserSizeReplay(repoRoot, ev, distDir, manifestPath); err != nil {
+		return err
+	}
+	wantPath := map[string]string{}
+	for _, route := range routes {
+		wantPath[route.ID] = route.Route
+	}
+	for _, route := range ev.Routes {
+		if wantPath[route.ID] == "" {
+			return fmt.Errorf("canonical size evidence has unexpected route %s", route.ID)
+		}
+		if route.Route != wantPath[route.ID] {
+			return fmt.Errorf("canonical size route %s path = %q, want %q", route.ID, route.Route, wantPath[route.ID])
+		}
+	}
+	return nil
+}
+
+func validateCanonicalBrowserSizeReplay(repoRoot string, ev *SizeEvidence, distDir, manifestPath string) error {
+	exportManifest, err := loadExportEvidence(filepath.Join(distDir, "export.json"), true)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence export replay: %w", err)
+	}
+	if err := validateExportHTMLAttribution(distDir, exportManifest); err != nil {
+		return fmt.Errorf("canonical size evidence HTML attribution replay: %w", err)
+	}
+	if len(exportManifest.routes) != len(canonicalRouteIDs()) {
+		return fmt.Errorf("canonical size evidence replay route count = %d, want %d", len(exportManifest.routes), len(canonicalRouteIDs()))
+	}
+	replayed, err := BuildSizeEvidenceWithOptions(SizeEvidenceOptions{
+		ManifestPath: manifestPath,
+		DistDir:      distDir,
+		RepoRoot:     repoRoot,
+		ArtifactRoot: distDir,
+		Canonical:    false,
+	})
+	if err != nil {
+		return fmt.Errorf("canonical size evidence replay: %w", err)
+	}
+	for i := range replayed.Routes {
+		replayed.Routes[i].ID = canonicalOuroborosRouteID(replayed.Routes[i].Route)
+	}
+	if len(replayed.Unresolved) > 0 {
+		return fmt.Errorf("canonical size evidence replay has unresolved refs")
+	}
+	if !sameSizeEvidenceAssets(ev.Assets, replayed.Assets) {
+		return fmt.Errorf("canonical size evidence assets mismatch")
+	}
+	if !sameSizeEvidenceRoutes(ev.Routes, replayed.Routes) {
+		return fmt.Errorf("canonical size evidence routes mismatch")
+	}
+	if ev.Totals != replayed.Totals {
+		return fmt.Errorf("canonical size evidence totals mismatch")
+	}
+	return nil
+}
+
+func sameSizeEvidenceAssets(a, b []TransferredAsset) bool {
+	bodyA, errA := json.Marshal(a)
+	bodyB, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(bodyA, bodyB)
+}
+
+func sameSizeEvidenceRoutes(a, b []RouteAssetEvidence) bool {
+	bodyA, errA := json.Marshal(a)
+	bodyB, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(bodyA, bodyB)
+}
+
+func validateCanonicalBrowserShimEvidence(ev *RuntimeBuildEvidence, variant RuntimeArtifactVariant) error {
+	shim := variant.Shim
+	info, err := os.Lstat(shim.SourcePath)
+	if err != nil {
+		return fmt.Errorf("measured runtime variant %s shim: %w", variant.ID, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("measured runtime variant %s shim must be a regular file", variant.ID)
+	}
+	metrics, err := MetricsForFile(shim.SourcePath)
+	if err != nil {
+		return fmt.Errorf("measured runtime variant %s shim metrics: %w", variant.ID, err)
+	}
+	if metrics.SHA256 != shim.SHA256 || metrics.Bytes != shim.Bytes || metrics.GzipBytes != shim.GzipBytes || metrics.BrotliBytes != shim.BrotliBytes {
+		return fmt.Errorf("measured runtime variant %s shim metrics mismatch", variant.ID)
+	}
+	if ev.TinyGo.TinyGoRoot == "" {
+		return fmt.Errorf("measured runtime variant %s shim requires tinygoRoot provenance", variant.ID)
+	}
+	rootEval, err := filepath.EvalSymlinks(ev.TinyGo.TinyGoRoot)
+	if err != nil {
+		return fmt.Errorf("measured runtime variant %s tinygoRoot: %w", variant.ID, err)
+	}
+	shimEval, err := filepath.EvalSymlinks(shim.SourcePath)
+	if err != nil {
+		return fmt.Errorf("measured runtime variant %s shim: %w", variant.ID, err)
+	}
+	rel, err := filepath.Rel(rootEval, shimEval)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("measured runtime variant %s shim is not under tinygoRoot", variant.ID)
+	}
+	publishedPath, err := canonicalBrowserRuntimeOutputPath(ev.OutputDir, "wasm_exec.js")
+	if err != nil {
+		return fmt.Errorf("measured runtime variant %s published shim: %w", variant.ID, err)
+	}
+	publishedInfo, err := os.Lstat(publishedPath)
+	if err != nil {
+		return fmt.Errorf("measured runtime variant %s published shim: %w", variant.ID, err)
+	}
+	if publishedInfo.Mode()&os.ModeSymlink != 0 || !publishedInfo.Mode().IsRegular() {
+		return fmt.Errorf("measured runtime variant %s published shim must be a regular file", variant.ID)
+	}
+	publishedMetrics, err := MetricsForFile(publishedPath)
+	if err != nil {
+		return fmt.Errorf("measured runtime variant %s published shim metrics: %w", variant.ID, err)
+	}
+	if publishedMetrics.SHA256 != metrics.SHA256 ||
+		publishedMetrics.Bytes != metrics.Bytes ||
+		publishedMetrics.GzipBytes != metrics.GzipBytes ||
+		publishedMetrics.BrotliBytes != metrics.BrotliBytes {
+		return fmt.Errorf("measured runtime variant %s published shim metrics mismatch", variant.ID)
+	}
+	return nil
+}
+
+func validateCanonicalBrowserBuildInputPath(repoRoot, ref, label string) (string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return "", fmt.Errorf("canonical size evidence requires %s", label)
+	}
+	path, err := canonicalBrowserContainedRepoPath(repoRoot, ref)
+	if err != nil {
+		return "", fmt.Errorf("canonical size evidence %s: %w", label, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("canonical size evidence %s: %w", label, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("canonical size evidence %s must be a regular file", label)
+	}
+	return path, nil
+}
+
+func canonicalBrowserBuildInputMatches(got, want BuildInputEvidence) bool {
+	return got.GoSXModuleDir == want.GoSXModuleDir &&
+		got.GoSXModuleVersion == want.GoSXModuleVersion &&
+		got.GoWork == want.GoWork &&
+		got.GoWorkSHA256 == want.GoWorkSHA256 &&
+		got.GoModSHA256 == want.GoModSHA256 &&
+		got.GoSumSHA256 == want.GoSumSHA256 &&
+		got.ManifestSHA256 == want.ManifestSHA256 &&
+		got.ExportSHA256 == want.ExportSHA256 &&
+		got.RejectsModuleCacheMismatch == want.RejectsModuleCacheMismatch
+}
+
+func canonicalBrowserRuntimeOutputPath(outputDir, ref string) (string, error) {
+	path := filepath.FromSlash(ref)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(outputDir, path)
+	}
+	outputEval, err := filepath.EvalSymlinks(outputDir)
+	if err != nil {
+		return "", err
+	}
+	pathEval, err := filepath.EvalSymlinks(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(outputEval, pathEval)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path escapes runtime outputDir: %s", ref)
+	}
+	return pathEval, nil
+}
+
+func canonicalBrowserContainedRepoPath(repoRoot, ref string) (string, error) {
+	root, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(ref) == "" {
+		return "", fmt.Errorf("path is empty")
+	}
+	path := filepath.FromSlash(ref)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	rootEval, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	pathEval, err := filepath.EvalSymlinks(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(rootEval, pathEval)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path escapes repo root: %s", ref)
+	}
+	return pathEval, nil
+}
+
+func canonicalBrowserPreseedFileRel(root, ref string) (string, error) {
+	path := filepath.FromSlash(ref)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	rel, err := filepath.Rel(root, filepath.Clean(path))
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path escapes preseed root: %s", ref)
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func canonicalBrowserSourceIdentityMatches(got, want SourceIdentity) bool {
+	return got.BaseRevision == want.BaseRevision &&
+		got.OverlayHash == want.OverlayHash &&
+		got.TrackedDiffHash == want.TrackedDiffHash &&
+		got.UntrackedIncludedSourceHash == want.UntrackedIncludedSourceHash &&
+		got.InventoryRef == want.InventoryRef &&
+		got.InventorySHA256 == want.InventorySHA256 &&
+		got.StrictInventory == want.StrictInventory &&
+		got.CurrentOverlayVerified == want.CurrentOverlayVerified &&
+		got.ReconstructionProof == want.ReconstructionProof
 }
 
 func validateCanonicalEvidenceRefs(opts BrowserBaselineOptions, source SourceIdentity) error {
