@@ -176,6 +176,8 @@ func writeValidPixelManifestForD(t *testing.T, root, routeID, backend string) vi
 				RuntimeGPU:         true,
 				Implementation:     "test-" + backend,
 				HardwareClass:      "hardware-" + backend,
+				WebGPU:             testWebGPUEvidenceForBackend(backend),
+				WebGL:              testWebGLEvidenceForBackend(backend),
 				Comparison:         &visual.PixelComparison{Passed: true},
 				Selected:           manifest.Selected,
 			})
@@ -278,6 +280,8 @@ func writeValidCanonicalPixelManifestForSelector(t *testing.T, root, routeID, ba
 				HardwareClass:      "hardware-" + backend,
 				FrameSeq:           settle.ObservedFrame + i,
 				RenderLoop:         renderLoop,
+				WebGPU:             testWebGPUEvidenceForBackend(backend),
+				WebGL:              testWebGLEvidenceForBackend(backend),
 				Selected:           manifest.Selected,
 				Comparison:         &visual.PixelComparison{BaselineThresholdPct: 0.5, EffectiveThresholdPct: 0.5, Passed: true},
 			})
@@ -292,6 +296,37 @@ func writeValidCanonicalPixelManifestForSelector(t *testing.T, root, routeID, ba
 		t.Fatal(err)
 	}
 	return manifest
+}
+
+func testWebGPUEvidenceForBackend(backend string) visual.WebGPUEvidence {
+	if backend != string(visual.RequireBackendWebGPU) {
+		return visual.WebGPUEvidence{}
+	}
+	return visual.WebGPUEvidence{
+		Available:    true,
+		AdapterName:  "NVIDIA RTX test adapter",
+		Vendor:       "nvidia",
+		Architecture: "discrete-gpu",
+		Device:       "test-device",
+		Description:  "Dawn NVIDIA RTX test adapter",
+		AdapterInfo: map[string]interface{}{
+			"vendor":       "nvidia",
+			"architecture": "discrete-gpu",
+			"device":       "test-device",
+			"description":  "Dawn NVIDIA RTX test adapter",
+		},
+	}
+}
+
+func testWebGLEvidenceForBackend(backend string) visual.WebGLEvidence {
+	if backend != string(visual.RequireBackendWebGL) {
+		return visual.WebGLEvidence{}
+	}
+	return visual.WebGLEvidence{
+		Vendor:   "NVIDIA Corporation",
+		Renderer: "ANGLE (NVIDIA GeForce RTX 4090 Direct3D11 vs_5_0 ps_5_0)",
+		Version:  "WebGL 2.0",
+	}
 }
 
 func canonicalPixelPNGForTest(t *testing.T) []byte {

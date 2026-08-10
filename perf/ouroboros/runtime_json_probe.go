@@ -882,6 +882,10 @@ func runtimeJSONJSSitesForFile(src SourceFile, body []byte, gosxGlobals map[stri
 				gosxGlobals[name] = true
 				sites = append(sites, staticSiteFromNode(src, n, grammar, body, "gosx-write", name, owner))
 			}
+			if name := loadSceneSubFeatureGosxName(n, grammar, body); name != "" {
+				gosxGlobals[name] = true
+				sites = append(sites, staticSiteFromNode(src, n, grammar, body, "gosx-write", name, owner))
+			}
 		}
 		if typ == "assignment_expression" {
 			if left := n.Child(0); left != nil {
@@ -1109,6 +1113,52 @@ func objectDefinePropertyGosxName(n *gotreesitter.Node, lang *gotreesitter.Langu
 		return name
 	}
 	return ""
+}
+
+func loadSceneSubFeatureGosxName(n *gotreesitter.Node, lang *gotreesitter.Language, body []byte) string {
+	if n == nil || n.Type(lang) != "call_expression" || n.ChildCount() < 2 {
+		return ""
+	}
+	callee := n.Child(0)
+	if callee == nil || callee.Text(body) != "loadSceneSubFeature" {
+		return ""
+	}
+	args := n.Child(1)
+	if args == nil || args.Type(lang) != "arguments" {
+		return ""
+	}
+	values := jsArgumentNodes(args, lang)
+	if len(values) < 4 {
+		return ""
+	}
+	if values[3].Type(lang) != "string" {
+		return ""
+	}
+	name := strings.Trim(values[3].Text(body), `"'`)
+	if gosxExactRe.MatchString(name) {
+		return name
+	}
+	return ""
+}
+
+func jsArgumentNodes(args *gotreesitter.Node, lang *gotreesitter.Language) []*gotreesitter.Node {
+	var values []*gotreesitter.Node
+	if args == nil {
+		return values
+	}
+	for i := 0; i < args.ChildCount(); i++ {
+		child := args.Child(i)
+		if child == nil {
+			continue
+		}
+		switch child.Type(lang) {
+		case "(", ")", ",":
+			continue
+		default:
+			values = append(values, child)
+		}
+	}
+	return values
 }
 
 func isJSCallCallee(n *gotreesitter.Node, lang *gotreesitter.Language) bool {

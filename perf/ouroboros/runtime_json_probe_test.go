@@ -488,6 +488,42 @@ func TestRuntimeJSONStaticCorpusCoversAliasAndDefinePropertyExports(t *testing.T
 	}
 }
 
+func TestRuntimeJSONStaticCorpusCoversSceneSubFeaturePromiseKey(t *testing.T) {
+	src := SourceFile{Path: "client/js/bootstrap-src/20b-scene-mount-webgl-chunk.js", SourceKind: "scoreboard", Language: "javascript"}
+	body := []byte(strings.Join([]string{
+		"function ensureWebGLFeatureLoaded(){",
+		"  return loadSceneSubFeature(\"webgl\", \"gosxScene3dWebglUrl\", \"/gosx/bootstrap-feature-scene3d-webgl.js\", \"__gosx_scene3d_webgl_feature_promise\", function(){",
+		"    return window.__gosx_scene3d_webgl_api || null;",
+		"  });",
+		"}",
+		"const ignored = \"__gosx_not_active\";",
+		"const indirect = \"__gosx_indirect_key\";",
+		"loadSceneSubFeature(\"x\", \"dataset\", \"/x.js\", indirect, function(){ return null; });",
+		"loadSceneSubFeature(\"x\", \"dataset\", \"/x.js\", __gosx_not_literal, function(){ return null; });",
+		"",
+	}, "\n"))
+	globals := map[string]bool{}
+	sites, err := runtimeJSONSitesForFile(src, body, globals)
+	if err != nil {
+		t.Fatalf("runtimeJSONSitesForFile: %v", err)
+	}
+	if !hasStaticGlobalSite(sites, "__gosx_scene3d_webgl_feature_promise", "gosx-write") {
+		t.Fatalf("missing scene sub-feature promise key in sites: %+v", sites)
+	}
+	if !globals["__gosx_scene3d_webgl_feature_promise"] {
+		t.Fatalf("scene sub-feature promise key missing from globals: %+v", globals)
+	}
+	if globals["__gosx_not_active"] || containsStaticSiteName(&RuntimeJSONStaticCorpus{Sites: sites}, "__gosx_not_active") {
+		t.Fatalf("inactive string literal was classified as an active global: sites=%+v globals=%+v", sites, globals)
+	}
+	if globals["__gosx_indirect_key"] || containsStaticSiteName(&RuntimeJSONStaticCorpus{Sites: sites}, "__gosx_indirect_key") {
+		t.Fatalf("nonliteral scene sub-feature key was classified as an active global: sites=%+v globals=%+v", sites, globals)
+	}
+	if globals["__gosx_not_literal"] || containsStaticSiteName(&RuntimeJSONStaticCorpus{Sites: sites}, "__gosx_not_literal") {
+		t.Fatalf("bare identifier scene sub-feature key was classified as an active global: sites=%+v globals=%+v", sites, globals)
+	}
+}
+
 func TestRuntimeJSONStaticCorpusCoversProductionStrictSceneIRExport(t *testing.T) {
 	path := filepath.Join("..", "..", "client", "js", "bootstrap-src", "15-scene-ir-schema-strict.js")
 	body, err := os.ReadFile(path)
