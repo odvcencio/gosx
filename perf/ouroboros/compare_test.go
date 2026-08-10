@@ -226,6 +226,168 @@ func TestCompareArtifactLoadFailures(t *testing.T) {
 	})
 }
 
+func TestCompareCanonicalSizeEvidenceRequiresResourceManifestBinding(t *testing.T) {
+	distDir := t.TempDir()
+	writeResourceManifestFixture(t, distDir, nil, nil)
+	_, resourceSHA, err := LoadResourceManifestStrict(filepath.Join(distDir, filepath.FromSlash(CanonicalResourceManifestRef)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := &SizeEvidence{
+		Canonical:            true,
+		DistDir:              distDir,
+		ResourceManifestPath: filepath.Join(distDir, filepath.FromSlash(CanonicalResourceManifestRef)),
+		BuildInput: BuildInputEvidence{
+			ManifestSHA256:         "sha256:" + strings.Repeat("a", 64),
+			ExportSHA256:           "sha256:" + strings.Repeat("b", 64),
+			ResourceManifestSHA256: resourceSHA,
+		},
+		Routes: []RouteAssetEvidence{{ID: "R00", Route: "/"}},
+	}
+	routes := []FixtureSpec{{ID: "R00", Route: "/"}}
+	if err := validateSizeEvidenceForCompare(ev, routes); err != nil {
+		t.Fatalf("valid canonical size evidence rejected: %v", err)
+	}
+	if err := validateCanonicalSizeEvidenceResourceManifestForCompare(ev); err != nil {
+		t.Fatalf("valid canonical resource manifest rejected: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*SizeEvidence)
+		want   string
+	}{
+		{
+			name: "missing_path",
+			mutate: func(candidate *SizeEvidence) {
+				candidate.ResourceManifestPath = ""
+			},
+			want: "requires resourceManifestPath",
+		},
+		{
+			name: "missing_hash",
+			mutate: func(candidate *SizeEvidence) {
+				candidate.BuildInput.ResourceManifestSHA256 = ""
+			},
+			want: "resourceManifestSha256",
+		},
+		{
+			name: "wrong_path",
+			mutate: func(candidate *SizeEvidence) {
+				candidate.ResourceManifestPath = filepath.Join(distDir, "_ouroboros", "wrong.json")
+			},
+			want: "DistDir/_ouroboros/resources.v1.json",
+		},
+		{
+			name: "wrong_hash",
+			mutate: func(candidate *SizeEvidence) {
+				candidate.BuildInput.ResourceManifestSHA256 = "sha256:" + strings.Repeat("f", 64)
+			},
+			want: "hash mismatch",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := *ev
+			tc.mutate(&candidate)
+			err := validateSizeEvidenceForCompare(&candidate, routes)
+			if err == nil {
+				err = validateCanonicalSizeEvidenceResourceManifestForCompare(&candidate)
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("canonical size validation error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCompareCanonicalSizeEvidenceReplaysRecordedBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*testing.T, *SizeEvidence)
+		want   string
+	}{
+		{
+			name: "lower_route_gzip",
+			mutate: func(t *testing.T, ev *SizeEvidence) {
+				for i := range ev.Routes {
+					if ev.Routes[i].GzipBytes > 0 {
+						ev.Routes[i].GzipBytes--
+						return
+					}
+				}
+			},
+			want: "routes mismatch",
+		},
+		{
+			name: "alter_totals",
+			mutate: func(t *testing.T, ev *SizeEvidence) {
+				ev.Totals.GzipBytes++
+			},
+			want: "totals mismatch",
+		},
+		{
+			name: "drop_asset",
+			mutate: func(t *testing.T, ev *SizeEvidence) {
+				ev.Assets = ev.Assets[:len(ev.Assets)-1]
+			},
+			want: "assets mismatch",
+		},
+		{
+			name: "tamper_route_html",
+			mutate: func(t *testing.T, ev *SizeEvidence) {
+				for _, route := range ev.Routes {
+					if route.File == "" {
+						continue
+					}
+					if err := os.WriteFile(filepath.Join(ev.DistDir, filepath.FromSlash(route.File)), []byte("<html>tampered</html>"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
+			},
+			want: "HTML attribution replay",
+		},
+		{
+			name: "tamper_build_input_export_hash",
+			mutate: func(t *testing.T, ev *SizeEvidence) {
+				ev.BuildInput.ExportSHA256 = "sha256:" + strings.Repeat("f", 64)
+			},
+			want: "build input mismatch",
+		},
+		{
+			name: "tamper_export_path",
+			mutate: func(t *testing.T, ev *SizeEvidence) {
+				alternate := filepath.Join(ev.DistDir, "export-copy.json")
+				body, err := os.ReadFile(ev.ExportPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(alternate, body, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				ev.ExportPath = alternate
+			},
+			want: "exportPath must be DistDir/export.json",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, source, routes := writeCanonicalCompareSizeFixture(t)
+			var ev SizeEvidence
+			readFixtureJSON(t, filepath.Join(root, "size", "route-assets.json"), &ev)
+			if len(ev.Assets) == 0 {
+				t.Fatal("fixture has no assets")
+			}
+			tc.mutate(t, &ev)
+			writeFixtureJSON(t, filepath.Join(root, "size", "route-assets.json"), ev)
+			paths := comparePathSet{root: root, rootReal: root}
+			_, _, err := loadOptionalSizeEvidence(paths, source, routes, CompareModeCanonical)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("loadOptionalSizeEvidence error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestComparePolicyCompatibilityFailures(t *testing.T) {
 	t.Run("matrix gap", func(t *testing.T) {
 		base := writeCompareFixture(t, filepath.Join(t.TempDir(), "base"), compareFixtureOptions{})
@@ -528,6 +690,86 @@ func TestCompareNoisyMetricWithoutRerunProofIsInconclusive(t *testing.T) {
 	if report.Status != CompareStatusInconclusive || report.ExitCode != 2 {
 		t.Fatalf("status=%s exit=%d summary=%+v", report.Status, report.ExitCode, report.Summary)
 	}
+}
+
+func writeCanonicalCompareSizeFixture(t *testing.T) (string, SourceIdentity, []FixtureSpec) {
+	t.Helper()
+	repoRoot, err := resolveRepoRootForEvidence(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpRoot := filepath.Join(repoRoot, "tmp")
+	if err := os.MkdirAll(tmpRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(tmpRoot, "compare-canonical-size-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	distDir := filepath.Join(root, "dist")
+	routes := canonicalBrowserRoutesForTest(t)
+	writeCanonicalBrowserSizeDistForTest(t, distDir, routes)
+	writeCanonicalCompareExportHashesForTest(t, distDir, routes)
+	report, err := BuildSizeEvidenceWithOptions(SizeEvidenceOptions{
+		ManifestPath: filepath.Join(distDir, "build.json"),
+		DistDir:      distDir,
+		RepoRoot:     repoRoot,
+		ArtifactRoot: distDir,
+		Canonical:    false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := compareSource("")
+	report.Source = source
+	report.Canonical = true
+	for i := range report.Routes {
+		report.Routes[i].ID = canonicalOuroborosRouteID(report.Routes[i].Route)
+	}
+	writeFixtureJSON(t, filepath.Join(root, "size", "route-assets.json"), report)
+	return root, source, routes
+}
+
+func writeCanonicalCompareExportHashesForTest(t *testing.T, distDir string, routes []FixtureSpec) {
+	t.Helper()
+	type routeRow struct {
+		Path   string `json:"path"`
+		File   string `json:"file"`
+		SHA256 string `json:"sha256"`
+		Bytes  *int64 `json:"bytes"`
+	}
+	raw := struct {
+		Routes           []routeRow `json:"routes"`
+		ResourceManifest string     `json:"resourceManifest"`
+	}{ResourceManifest: CanonicalResourceManifestRef}
+	for _, spec := range routes {
+		file := canonicalOuroborosRouteFile(spec.Route)
+		htmlPath := filepath.Join(distDir, "static", filepath.FromSlash(file))
+		data, err := os.ReadFile(htmlPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		canonicalHTMLPath := filepath.Join(distDir, filepath.FromSlash(file))
+		if err := os.MkdirAll(filepath.Dir(canonicalHTMLPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(canonicalHTMLPath, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		size := int64(len(data))
+		raw.Routes = append(raw.Routes, routeRow{
+			Path:   spec.Route,
+			File:   file,
+			SHA256: sha256String(string(data)),
+			Bytes:  &size,
+		})
+	}
+	writeFixtureJSON(t, filepath.Join(distDir, "export.json"), raw)
 }
 
 func writeCompareFixture(t *testing.T, root string, opts compareFixtureOptions) string {

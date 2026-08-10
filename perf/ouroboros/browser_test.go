@@ -2887,6 +2887,109 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 			want: "build input mismatch",
 		},
 		{
+			name: "size_resource_manifest_hash_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.BuildInput.ResourceManifestSHA256 = "sha256:" + strings.Repeat("f", 64)
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "resource manifest hash mismatch",
+		},
+		{
+			name: "size_resource_manifest_path_missing",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev.ResourceManifestPath = ""
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+			},
+			want: "requires resourceManifestPath",
+		},
+		{
+			name: "size_resource_manifest_removed",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(filepath.Join(ev.DistDir, filepath.FromSlash(CanonicalResourceManifestRef))); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "resourceManifestPath",
+		},
+		{
+			name: "size_resource_file_tamper",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeTestFile(t, filepath.Join(ev.DistDir, "_ouroboros", "framework.js"), "tampered")
+			},
+			want: "resource framework-js metrics mismatch",
+		},
+		{
+			name: "size_resource_extra_file",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeTestFile(t, filepath.Join(ev.DistDir, "_ouroboros", "extra.js"), "extra")
+			},
+			want: "extra resource file",
+		},
+		{
+			name: "size_resource_manifest_symlink",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				target := filepath.Join(ev.DistDir, filepath.FromSlash(CanonicalResourceManifestRef))
+				outside := filepath.Join(t.TempDir(), "resources.v1.json")
+				body, err := os.ReadFile(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(outside, body, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "symlink",
+		},
+		{
+			name: "size_resource_file_symlink",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				target := filepath.Join(ev.DistDir, "_ouroboros", "framework.js")
+				outside := filepath.Join(t.TempDir(), "framework.js")
+				writeTestFile(t, outside, "framework")
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "symlink",
+		},
+		{
 			name: "size_asset_sha_tamper",
 			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
 				ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
@@ -3000,7 +3103,7 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 				if htmlFile == "" {
 					t.Fatal("missing non-static route")
 				}
-				if err := os.WriteFile(filepath.Join(ev.DistDir, "static", filepath.FromSlash(htmlFile)), []byte("<html></html>"), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(ev.DistDir, filepath.FromSlash(htmlFile)), []byte("<html></html>"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -3244,14 +3347,23 @@ func writeCanonicalBrowserSizeDistForTest(t *testing.T, distDir string, specs []
 }`)
 	var exportRoutes []string
 	for _, spec := range specs {
-		file := strings.TrimPrefix(spec.Route, "/") + "/index.html"
-		if spec.Route == "/" {
-			file = "index.html"
-		}
-		exportRoutes = append(exportRoutes, fmt.Sprintf(`{"path":%q,"file":%q}`, spec.Route, file))
-		writeTestFile(t, filepath.Join(distDir, "static", filepath.FromSlash(file)), `<script src="/gosx/runtime.wasm"></script>`)
+		file := canonicalOuroborosRouteFile(spec.Route)
+		body := []byte(`<script src="/gosx/runtime.wasm"></script>`)
+		writeTestFile(t, filepath.Join(distDir, filepath.FromSlash(file)), string(body))
+		writeTestFile(t, filepath.Join(distDir, "static", filepath.FromSlash(file)), string(body))
+		sum := sha256.Sum256(body)
+		exportRoutes = append(exportRoutes, fmt.Sprintf(
+			`{"path":%q,"file":%q,"sha256":%q,"bytes":%d}`,
+			spec.Route,
+			file,
+			"sha256:"+hex.EncodeToString(sum[:]),
+			len(body),
+		))
 	}
-	writeTestFile(t, filepath.Join(distDir, "export.json"), `{"routes":[`+strings.Join(exportRoutes, ",")+`]}`)
+	writeTestFile(t, filepath.Join(distDir, "export.json"), `{"routes":[`+strings.Join(exportRoutes, ",")+`],"resourceManifest":`+fmt.Sprintf("%q", CanonicalResourceManifestRef)+`}`)
+	resource := testResource(t, distDir, "framework-js", "/_ouroboros/framework.js", "_ouroboros/framework.js", "framework")
+	resource.UsedByRoutes = canonicalRouteIDs()
+	writeResourceManifestFixture(t, distDir, []ResourceManifestResource{resource}, nil)
 }
 
 func canonicalBrowserBuildInputForTest() BuildInputEvidence {

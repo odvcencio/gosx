@@ -23,20 +23,21 @@ import (
 )
 
 type SizeEvidence struct {
-	SchemaVersion string               `json:"schemaVersion"`
-	Contract      string               `json:"contractVersion"`
-	GeneratedAt   string               `json:"generatedAt,omitempty"`
-	Source        SourceIdentity       `json:"source"`
-	BuildInput    BuildInputEvidence   `json:"buildInput"`
-	ManifestPath  string               `json:"manifestPath"`
-	DistDir       string               `json:"distDir"`
-	ExportPath    string               `json:"exportPath,omitempty"`
-	Assets        []TransferredAsset   `json:"assets"`
-	Routes        []RouteAssetEvidence `json:"routes"`
-	Unresolved    []UnresolvedAssetRef `json:"unresolvedRefs,omitempty"`
-	Totals        SizeEvidenceTotals   `json:"totals"`
-	Canonical     bool                 `json:"canonical"`
-	Notes         []string             `json:"notes,omitempty"`
+	SchemaVersion        string               `json:"schemaVersion"`
+	Contract             string               `json:"contractVersion"`
+	GeneratedAt          string               `json:"generatedAt,omitempty"`
+	Source               SourceIdentity       `json:"source"`
+	BuildInput           BuildInputEvidence   `json:"buildInput"`
+	ManifestPath         string               `json:"manifestPath"`
+	DistDir              string               `json:"distDir"`
+	ExportPath           string               `json:"exportPath,omitempty"`
+	ResourceManifestPath string               `json:"resourceManifestPath,omitempty"`
+	Assets               []TransferredAsset   `json:"assets"`
+	Routes               []RouteAssetEvidence `json:"routes"`
+	Unresolved           []UnresolvedAssetRef `json:"unresolvedRefs,omitempty"`
+	Totals               SizeEvidenceTotals   `json:"totals"`
+	Canonical            bool                 `json:"canonical"`
+	Notes                []string             `json:"notes,omitempty"`
 }
 
 type TransferredAsset struct {
@@ -151,6 +152,7 @@ type BuildInputEvidence struct {
 	GoSumSHA256                string `json:"goSumSha256,omitempty"`
 	ManifestSHA256             string `json:"manifestSha256,omitempty"`
 	ExportSHA256               string `json:"exportSha256,omitempty"`
+	ResourceManifestSHA256     string `json:"resourceManifestSha256,omitempty"`
 	RejectsModuleCacheMismatch bool   `json:"rejectsModuleCacheMismatch"`
 }
 
@@ -251,6 +253,10 @@ func BuildSizeEvidenceWithOptions(opts SizeEvidenceOptions) (*SizeEvidence, erro
 	if err != nil {
 		return nil, err
 	}
+	resourceManifest, err := LoadAndValidateResourceManifest(absDist, exportManifest.resourceManifest, opts.Canonical)
+	if err != nil {
+		return nil, err
+	}
 	if opts.Canonical {
 		if err := validateExportHTMLAttribution(absDist, exportManifest); err != nil {
 			return nil, err
@@ -276,7 +282,11 @@ func BuildSizeEvidenceWithOptions(opts SizeEvidenceOptions) (*SizeEvidence, erro
 			return nil, err
 		}
 	}
-	buildInput, err := collectBuildInputEvidence(repoRoot, manifestPath, filepath.Join(absDist, "export.json"))
+	resourceManifestPath := ""
+	if resourceManifest != nil {
+		resourceManifestPath = resourceManifest.Path
+	}
+	buildInput, err := collectBuildInputEvidence(repoRoot, manifestPath, filepath.Join(absDist, "export.json"), resourceManifestPath)
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +303,11 @@ func BuildSizeEvidenceWithOptions(opts SizeEvidenceOptions) (*SizeEvidence, erro
 	if exportManifest.path != "" {
 		report.ExportPath = exportManifest.path
 	}
+	if resourceManifest != nil {
+		report.ResourceManifestPath = resourceManifest.Path
+		report.BuildInput.ResourceManifestSHA256 = resourceManifest.SHA256
+		report.Notes = append(report.Notes, resourceManifest.Notes...)
+	}
 	refs := map[string]string{}
 	addManifestRuntimeRefs(refs, manifest)
 	for _, ref := range exportManifest.assetRefs {
@@ -304,7 +319,10 @@ func BuildSizeEvidenceWithOptions(opts SizeEvidenceOptions) (*SizeEvidence, erro
 	}
 	report.Assets = assets
 	report.Unresolved = append(report.Unresolved, unresolved...)
-	if err := attributeRoutes(report, exportManifest, manifest, opts.Canonical); err != nil {
+	if resourceManifest != nil {
+		mergeResourceAssets(report, resourceManifest.Resources)
+	}
+	if err := attributeRoutes(report, exportManifest, manifest, resourceManifest, opts.Canonical); err != nil {
 		return report, err
 	}
 	fillSizeEvidenceTotals(report)
@@ -927,15 +945,18 @@ func BrotliLength(data []byte) int64 {
 }
 
 type exportEvidence struct {
-	path      string
-	routes    []exportEvidenceRoute
-	assetRefs []string
+	path             string
+	routes           []exportEvidenceRoute
+	assetRefs        []string
+	resourceManifest string
 }
 
 type exportEvidenceRoute struct {
 	Path         string `json:"path"`
 	File         string `json:"file"`
 	Capabilities any    `json:"capabilities"`
+	SHA256       string `json:"sha256,omitempty"`
+	Bytes        *int64 `json:"bytes,omitempty"`
 }
 
 func loadExportEvidence(exportPath string, canonical bool) (exportEvidence, error) {
@@ -947,8 +968,9 @@ func loadExportEvidence(exportPath string, canonical bool) (exportEvidence, erro
 		return exportEvidence{}, nil
 	}
 	var raw struct {
-		Routes    []exportEvidenceRoute `json:"routes"`
-		AssetRefs []string              `json:"assetRefs"`
+		Routes           []exportEvidenceRoute `json:"routes"`
+		AssetRefs        []string              `json:"assetRefs"`
+		ResourceManifest string                `json:"resourceManifest,omitempty"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -967,7 +989,14 @@ func loadExportEvidence(exportPath string, canonical bool) (exportEvidence, erro
 	if canonical && len(raw.Routes) == 0 {
 		return exportEvidence{}, fmt.Errorf("canonical size evidence requires routes in export.json")
 	}
-	out := exportEvidence{path: exportPath, routes: raw.Routes}
+	out := exportEvidence{path: exportPath, routes: raw.Routes, resourceManifest: strings.TrimSpace(raw.ResourceManifest)}
+	if !canonical && out.resourceManifest != "" {
+		if normalized, err := normalizeResourceManifestRef(out.resourceManifest); err == nil {
+			out.resourceManifest = normalized
+		} else {
+			out.resourceManifest = ""
+		}
+	}
 	seenRoutes := map[string]bool{}
 	for _, ref := range raw.AssetRefs {
 		if normalized := normalizeGosxRef(ref); normalized != "" {
@@ -998,32 +1027,57 @@ func loadExportEvidence(exportPath string, canonical bool) (exportEvidence, erro
 		if err := validateCanonicalOuroborosRoutes(raw.Routes); err != nil {
 			return exportEvidence{}, err
 		}
+		if out.resourceManifest != CanonicalResourceManifestRef {
+			return exportEvidence{}, fmt.Errorf("export.json resourceManifest = %q, want %q", out.resourceManifest, CanonicalResourceManifestRef)
+		}
 	}
 	sort.Strings(out.assetRefs)
 	return out, nil
 }
 
 func validateCanonicalOuroborosRoutes(routes []exportEvidenceRoute) error {
-	expected := canonicalOuroborosRoutePaths()
-	seen := map[string]bool{}
-	for _, route := range routes {
+	expectedIDs := canonicalRouteIDs()
+	if len(routes) != len(expectedIDs) {
+		return fmt.Errorf("export.json missing canonical Ouroboros routes: route count = %d, want %d", len(routes), len(expectedIDs))
+	}
+	seenFiles := map[string]bool{}
+	for i, route := range routes {
+		wantPath := canonicalOuroborosRoutePath(expectedIDs[i])
 		path := strings.TrimSpace(route.Path)
-		if !expected[path] {
-			return fmt.Errorf("export.json route %s is not in canonical Ouroboros corpus", path)
+		if path != wantPath {
+			return fmt.Errorf("export.json route[%d] = %s, want %s", i, path, wantPath)
 		}
-		seen[path] = true
-	}
-	missing := []string{}
-	for path := range expected {
-		if !seen[path] {
-			missing = append(missing, path)
+		file := strings.TrimSpace(route.File)
+		if seenFiles[file] {
+			return fmt.Errorf("export.json route %s duplicates HTML file %s", path, file)
 		}
-	}
-	sort.Strings(missing)
-	if len(missing) > 0 {
-		return fmt.Errorf("export.json missing canonical Ouroboros routes: %s", strings.Join(missing, ","))
+		seenFiles[file] = true
+		wantFile := canonicalOuroborosRouteFile(wantPath)
+		if file != wantFile {
+			return fmt.Errorf("export.json route %s file = %s, want %s", path, file, wantFile)
+		}
+		if !validSourceIdentitySHA256(route.SHA256) {
+			return fmt.Errorf("export.json route %s sha256 must be sha256:<64 lowercase hex>", path)
+		}
+		if route.Bytes == nil {
+			return fmt.Errorf("export.json route %s bytes is required", path)
+		}
+		if *route.Bytes < 0 {
+			return fmt.Errorf("export.json route %s bytes must be non-negative", path)
+		}
 	}
 	return nil
+}
+
+func canonicalOuroborosRouteFile(routePath string) string {
+	return filepath.ToSlash(buildmanifest.ExportFilePath(routePath))
+}
+
+func normalizeResourceManifestRef(ref string) (string, error) {
+	if err := validateResourceOutputPath(ref); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(path.Clean(ref)), nil
 }
 
 func canonicalOuroborosRoutePaths() map[string]bool {
@@ -1315,13 +1369,48 @@ func stableAssetID(ref, sourcePath string) string {
 	return "asset-" + hex.EncodeToString(sum[:])[:16]
 }
 
-func attributeRoutes(report *SizeEvidence, exportManifest exportEvidence, manifest *buildmanifest.Manifest, canonical bool) error {
+func mergeResourceAssets(report *SizeEvidence, resources []TransferredAsset) {
 	byURL := map[string]int{}
+	byHash := map[string]string{}
 	for i := range report.Assets {
 		byURL[report.Assets[i].URL] = i
+		if report.Assets[i].SHA256 != "" && byHash[report.Assets[i].SHA256] == "" {
+			byHash[report.Assets[i].SHA256] = report.Assets[i].ID
+		}
+	}
+	for _, resource := range resources {
+		if prior, ok := byURL[resource.URL]; ok {
+			report.Unresolved = append(report.Unresolved, UnresolvedAssetRef{Ref: resource.URL, Reason: fmt.Sprintf("resource URL duplicates transferred asset %s", report.Assets[prior].ID)})
+			continue
+		}
+		if prior, ok := byHash[resource.SHA256]; ok && resource.DuplicateOf == "" {
+			resource.DuplicateOf = prior
+		}
+		if byHash[resource.SHA256] == "" {
+			byHash[resource.SHA256] = resource.ID
+		}
+		report.Assets = append(report.Assets, resource)
+		byURL[resource.URL] = len(report.Assets) - 1
+	}
+}
+
+func attributeRoutes(report *SizeEvidence, exportManifest exportEvidence, manifest *buildmanifest.Manifest, resourceManifest *LoadedResourceManifest, canonical bool) error {
+	byURL := map[string]int{}
+	byID := map[string]int{}
+	for i := range report.Assets {
+		byURL[report.Assets[i].URL] = i
+		byID[report.Assets[i].ID] = i
+	}
+	resourceRoutes := map[string]ResourceManifestRoute{}
+	var resourceDoc *ResourceManifest
+	if resourceManifest != nil && resourceManifest.Manifest != nil {
+		resourceDoc = resourceManifest.Manifest
+		for _, route := range resourceDoc.Routes {
+			resourceRoutes[route.ID] = route
+		}
 	}
 	for _, route := range exportManifest.routes {
-		htmlPath, err := routeHTMLPath(report.DistDir, route.File)
+		htmlPath, err := routeHTMLPath(report.DistDir, route.File, canonical)
 		if err != nil {
 			if canonical {
 				return fmt.Errorf("route %s HTML: %w", route.Path, err)
@@ -1392,6 +1481,30 @@ func attributeRoutes(report *SizeEvidence, exportManifest exportEvidence, manife
 			entry.GzipBytes += asset.GzipBytes
 			entry.BrotliBytes += asset.BrotliBytes
 		}
+		if resourceDoc != nil {
+			resourceRoute, ok := resourceRoutes[canonicalOuroborosRouteID(route.Path)]
+			if ok {
+				for _, id := range resourcesForRouteWithChildren(resourceDoc, resourceRoute) {
+					assetIndex, ok := byID[id]
+					if !ok {
+						report.Unresolved = append(report.Unresolved, UnresolvedAssetRef{Ref: id, Route: route.Path, Reason: "resource manifest asset was not loaded"})
+						continue
+					}
+					asset := &report.Assets[assetIndex]
+					if seen[asset.ID] {
+						continue
+					}
+					seen[asset.ID] = true
+					entry.AssetIDs = append(entry.AssetIDs, asset.ID)
+					if !stringSliceContains(asset.UsedByRoutes, route.Path) {
+						asset.UsedByRoutes = append(asset.UsedByRoutes, route.Path)
+					}
+					entry.RawBytes += asset.Bytes
+					entry.GzipBytes += asset.GzipBytes
+					entry.BrotliBytes += asset.BrotliBytes
+				}
+			}
+		}
 		sort.Strings(entry.AssetIDs)
 		if canonical && len(entry.AssetIDs) == 0 && !routeAllowsNoRuntimeAttribution(route.Path) {
 			return fmt.Errorf("route %s has no resolved assets", route.Path)
@@ -1435,8 +1548,11 @@ func attributeRoutes(report *SizeEvidence, exportManifest exportEvidence, manife
 
 func validateExportHTMLAttribution(distDir string, exportManifest exportEvidence) error {
 	for _, route := range exportManifest.routes {
-		htmlPath, err := routeHTMLPath(distDir, route.File)
+		htmlPath, err := routeHTMLPath(distDir, route.File, true)
 		if err != nil {
+			return fmt.Errorf("route %s HTML: %w", route.Path, err)
+		}
+		if err := validateRouteHTMLHashAndBytes(htmlPath, route); err != nil {
 			return fmt.Errorf("route %s HTML: %w", route.Path, err)
 		}
 		if refs := refsFromHTMLFile(htmlPath); len(refs) == 0 && !routeAllowsNoRuntimeAttribution(route.Path) {
@@ -1446,7 +1562,25 @@ func validateExportHTMLAttribution(distDir string, exportManifest exportEvidence
 	return nil
 }
 
-func routeHTMLPath(distDir, routeFile string) (string, error) {
+func validateRouteHTMLHashAndBytes(htmlPath string, route exportEvidenceRoute) error {
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		return err
+	}
+	if route.Bytes == nil {
+		return fmt.Errorf("bytes is required")
+	}
+	if got := int64(len(data)); got != *route.Bytes {
+		return fmt.Errorf("bytes = %d, want %d", got, *route.Bytes)
+	}
+	sum := sha256.Sum256(data)
+	if got := "sha256:" + hex.EncodeToString(sum[:]); got != route.SHA256 {
+		return fmt.Errorf("sha256 = %s, want %s", got, route.SHA256)
+	}
+	return nil
+}
+
+func routeHTMLPath(distDir, routeFile string, canonical bool) (string, error) {
 	if strings.TrimSpace(routeFile) == "" {
 		return "", fmt.Errorf("missing route file")
 	}
@@ -1455,7 +1589,12 @@ func routeHTMLPath(distDir, routeFile string) (string, error) {
 		rel  string
 	}{
 		{root: distDir, rel: filepath.FromSlash(routeFile)},
-		{root: filepath.Join(distDir, "static"), rel: filepath.FromSlash(routeFile)},
+	}
+	if !canonical {
+		candidates = append(candidates, struct {
+			root string
+			rel  string
+		}{root: filepath.Join(distDir, "static"), rel: filepath.FromSlash(routeFile)})
 	}
 	for _, candidate := range candidates {
 		htmlPath, err := containedPath(candidate.root, candidate.rel)
@@ -1587,7 +1726,7 @@ func containedPath(root, rel string) (string, error) {
 	return fullEval, nil
 }
 
-func collectBuildInputEvidence(repoRoot, manifestPath, exportPath string) (BuildInputEvidence, error) {
+func collectBuildInputEvidence(repoRoot, manifestPath, exportPath, resourceManifestPath string) (BuildInputEvidence, error) {
 	root := repoRoot
 	if strings.TrimSpace(root) == "" {
 		root = "."
@@ -1622,11 +1761,14 @@ func collectBuildInputEvidence(repoRoot, manifestPath, exportPath string) (Build
 	if _, err := os.Stat(exportPath); err == nil {
 		out.ExportSHA256, _ = fileSHA256(exportPath)
 	}
+	if resourceManifestPath != "" {
+		out.ResourceManifestSHA256, _ = fileSHA256(resourceManifestPath)
+	}
 	return out, nil
 }
 
 func BuildInputEvidenceForRepo(repoRoot, manifestPath, exportPath string) (BuildInputEvidence, error) {
-	return collectBuildInputEvidence(repoRoot, manifestPath, exportPath)
+	return collectBuildInputEvidence(repoRoot, manifestPath, exportPath, "")
 }
 
 func BuildSourceIdentity(ctx context.Context, repoRoot, inventoryPath, artifactRoot string) (SourceIdentity, error) {
@@ -1962,6 +2104,15 @@ func fillSizeEvidenceTotals(report *SizeEvidence) {
 	for i := range report.Assets {
 		sort.Strings(report.Assets[i].UsedByRoutes)
 	}
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func CopyFile(dst, src string) error {

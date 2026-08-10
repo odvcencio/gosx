@@ -33,13 +33,18 @@ type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
 type BuildOptions struct {
-	Dev               bool
-	Offline           bool
-	MSIX              bool
-	Sign              bool
-	AppInstallerURI   string
-	SceneBudgetPath   string
-	SceneBudgetStrict bool
+	Dev                 bool
+	Offline             bool
+	MSIX                bool
+	Sign                bool
+	AppInstallerURI     string
+	SceneBudgetPath     string
+	SceneBudgetStrict   bool
+	DistDir             string
+	SkipModuleSync      bool
+	ReadonlyModuleDeps  bool
+	SkipBuildHooks      bool
+	SkipStaticPrerender bool
 }
 
 type wasmCompiler string
@@ -185,22 +190,37 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	dir = absDir
+	moduleFlags := opts.goModuleFlags()
 
-	if err := syncModulesPackage(dir); err != nil {
-		return err
+	if !opts.SkipModuleSync {
+		if err := syncModulesPackage(dir); err != nil {
+			return err
+		}
 	}
-	if err := ensureModuleDependencies(dir); err != nil {
+	if opts.ReadonlyModuleDeps {
+		if err := ensureModuleDependenciesWithFlags(dir, moduleFlags); err != nil {
+			return fmt.Errorf("validate module dependencies readonly: %w", err)
+		}
+	} else if err := ensureModuleDependencies(dir); err != nil {
 		return err
 	}
 	cfg, err := loadProjectConfig(dir)
 	if err != nil {
 		return err
 	}
-	if err := runBuildHookCommands(dir, "pre-build", cfg.Build.Hooks.Pre); err != nil {
-		return err
+	if !opts.SkipBuildHooks {
+		if err := runBuildHookCommands(dir, "pre-build", cfg.Build.Hooks.Pre); err != nil {
+			return err
+		}
 	}
 
 	distDir := filepath.Join(dir, "dist")
+	if strings.TrimSpace(opts.DistDir) != "" {
+		distDir, err = filepath.Abs(opts.DistDir)
+		if err != nil {
+			return fmt.Errorf("resolve dist dir %s: %w", opts.DistDir, err)
+		}
+	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
 	islandDir := filepath.Join(distDir, "assets", "islands")
 	cssDir := filepath.Join(distDir, "assets", "css")
@@ -247,7 +267,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// ── Tier 1: Compile .gsx files ──────────────────────────────────────
 
-	islandProgs, gsxFiles, err := collectProjectIslandPrograms(dir)
+	islandProgs, gsxFiles, err := collectProjectIslandProgramsWithModuleFlags(dir, moduleFlags)
 	if err != nil {
 		return err
 	}
@@ -328,11 +348,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Build WASM. Production builds require TinyGo so runtime size is not an
 	// optional best effort; dev builds keep the standard Go toolchain loop.
-	gosxRoot, err := resolveGoSXModuleRoot(dir)
+	gosxRoot, err := resolveGoSXModuleRootWithFlags(dir, moduleFlags)
 	if err != nil {
 		return err
 	}
-	if err := ensureWASMRuntimeDependencies(dir); err != nil {
+	if err := ensureWASMRuntimeDependenciesWithFlags(dir, moduleFlags); err != nil {
 		return err
 	}
 
@@ -365,7 +385,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		tmpPath := filepath.Join(distDir, outputName+".wasm.tmp")
 
 		if compiler == wasmCompilerTinyGo {
-			if err := buildTinyGoWASM(dir, gosxRoot, tmpPath, tinygoPath, extraTags...); err != nil {
+			if err := buildTinyGoWASMWithModuleFlags(dir, gosxRoot, tmpPath, tinygoPath, moduleFlags, extraTags...); err != nil {
 				result.err = err
 				return
 			}
@@ -378,7 +398,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			}
 		} else {
 			cmd := exec.Command("go", goWASMBuildArgs(tmpPath, extraTags...)...)
-			cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS="+goModuleCommandFlags)
+			cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS="+moduleFlags)
 			cmd.Dir = dir
 			cmd.Stderr = os.Stderr
 			if err := cmd.Run(); err != nil {
@@ -578,7 +598,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Build the application binary when the target directory is a runnable app.
 	serverBinaryPath := filepath.Join(distDir, "server", "app"+targetExecutableExt())
-	builtServer, err := buildServerBinaryIfPresent(dir, serverBinaryPath)
+	builtServer, err := buildServerBinaryIfPresentWithModuleFlags(dir, serverBinaryPath, moduleFlags)
 	if err != nil {
 		return fmt.Errorf("build server binary: %w", err)
 	}
@@ -586,7 +606,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return fmt.Errorf("stage deployment bundle: %w", err)
 	}
 	staticPages := 0
-	if !opts.Dev && builtServer {
+	if !opts.Dev && builtServer && !opts.SkipStaticPrerender {
 		exportManifest, err := prerenderStaticBundle(staticExportOptions{
 			AppRoot:    distDir,
 			OutputDir:  filepath.Join(distDir, "static"),
@@ -670,11 +690,27 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
 	}
 
-	if err := runBuildHookCommands(dir, "post-build", cfg.Build.Hooks.Post); err != nil {
-		return err
+	if !opts.SkipBuildHooks {
+		if err := runBuildHookCommands(dir, "post-build", cfg.Build.Hooks.Post); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+func ensureModuleDependenciesReadonly(projectDir string) error {
+	if err := ensureModuleDependenciesWithFlags(projectDir, goModuleCommandFlagsReadonly); err != nil {
+		return fmt.Errorf("validate module dependencies readonly: %w", err)
+	}
+	return nil
+}
+
+func (opts BuildOptions) goModuleFlags() string {
+	if opts.ReadonlyModuleDeps {
+		return goModuleCommandFlagsReadonly
+	}
+	return goModuleCommandFlags
 }
 
 // gzip_c_len returns the best-compression gzip transfer size.
@@ -831,9 +867,13 @@ func getGOROOT() string {
 }
 
 func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
+	return buildServerBinaryIfPresentWithModuleFlags(dir, outputPath, goModuleCommandFlags)
+}
+
+func buildServerBinaryIfPresentWithModuleFlags(dir, outputPath, moduleFlags string) (bool, error) {
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", ".")
 	cmd.Dir = dir
-	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+defaultString(moduleFlags, goModuleCommandFlags), "GOWORK=off")
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -851,7 +891,7 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 
 	buildCmd := exec.Command("go", "build", "-o", outputPath, ".")
 	buildCmd.Dir = dir
-	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
+	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+defaultString(moduleFlags, goModuleCommandFlags), "GOWORK=off")
 	buildCmd.Stderr = os.Stderr
 	if err := buildCmd.Run(); err != nil {
 		return false, err

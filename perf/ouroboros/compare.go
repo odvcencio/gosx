@@ -767,6 +767,14 @@ func loadOptionalSizeEvidence(paths comparePathSet, source SourceIdentity, route
 	if err := validateSizeEvidenceForCompare(ev, routes); err != nil {
 		return nil, "", err
 	}
+	if mode == CompareModeCanonical {
+		if err := validateCanonicalSizeEvidenceResourceManifestForCompare(ev); err != nil {
+			return nil, "", err
+		}
+		if err := validateCanonicalSizeEvidenceReplayForCompare(ev); err != nil {
+			return nil, "", err
+		}
+	}
 	hash, _ := sha256File(path)
 	return ev, hash, nil
 }
@@ -881,8 +889,19 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 	if ev == nil {
 		return fmt.Errorf("size evidence is nil")
 	}
-	if ev.Canonical && !strings.HasPrefix(ev.BuildInput.ManifestSHA256, "sha256:") {
-		return fmt.Errorf("canonical size evidence requires buildInput.manifestSha256")
+	if ev.Canonical {
+		if !validSourceIdentitySHA256(ev.BuildInput.ManifestSHA256) {
+			return fmt.Errorf("canonical size evidence requires buildInput.manifestSha256")
+		}
+		if !validSourceIdentitySHA256(ev.BuildInput.ExportSHA256) {
+			return fmt.Errorf("canonical size evidence requires buildInput.exportSha256")
+		}
+		if !validSourceIdentitySHA256(ev.BuildInput.ResourceManifestSHA256) {
+			return fmt.Errorf("canonical size evidence requires buildInput.resourceManifestSha256")
+		}
+		if strings.TrimSpace(ev.ResourceManifestPath) == "" {
+			return fmt.Errorf("canonical size evidence requires resourceManifestPath")
+		}
 	}
 	seenRoutes := map[string]bool{}
 	for _, route := range ev.Routes {
@@ -945,6 +964,164 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 		}
 	}
 	return nil
+}
+
+func validateCanonicalSizeEvidenceResourceManifestForCompare(ev *SizeEvidence) error {
+	distDir, err := filepath.Abs(ev.DistDir)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence distDir: %w", err)
+	}
+	info, err := os.Lstat(distDir)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence distDir: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("canonical size evidence distDir must be a real directory")
+	}
+	path := filepath.FromSlash(ev.ResourceManifestPath)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(distDir, path)
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence resourceManifestPath: %w", err)
+	}
+	rel, err := filepath.Rel(distDir, absPath)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence resourceManifestPath: %w", err)
+	}
+	if filepath.ToSlash(rel) != CanonicalResourceManifestRef {
+		return fmt.Errorf("canonical size evidence resourceManifestPath must be DistDir/%s", CanonicalResourceManifestRef)
+	}
+	full, err := containedRegularFileNoSymlink(distDir, CanonicalResourceManifestRef)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence resourceManifestPath: %w", err)
+	}
+	if !samePath(absPath, full) {
+		return fmt.Errorf("canonical size evidence resourceManifestPath must be DistDir/%s", CanonicalResourceManifestRef)
+	}
+	loaded, err := LoadAndValidateResourceManifest(distDir, CanonicalResourceManifestRef, true)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence resource manifest: %w", err)
+	}
+	if ev.BuildInput.ResourceManifestSHA256 != loaded.SHA256 {
+		return fmt.Errorf("canonical size evidence resource manifest hash mismatch")
+	}
+	return nil
+}
+
+func validateCanonicalSizeEvidenceReplayForCompare(ev *SizeEvidence) error {
+	repoRoot := strings.TrimSpace(ev.BuildInput.GoSXModuleDir)
+	if repoRoot == "" {
+		return fmt.Errorf("canonical size evidence requires buildInput.gosxModuleDir")
+	}
+	repoRootAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence buildInput.gosxModuleDir: %w", err)
+	}
+	repoRootReal, err := filepath.EvalSymlinks(repoRootAbs)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence buildInput.gosxModuleDir: %w", err)
+	}
+	distDir, err := filepath.Abs(ev.DistDir)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence distDir: %w", err)
+	}
+	distDirReal, err := filepath.EvalSymlinks(distDir)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence distDir: %w", err)
+	}
+	if !pathUnderRoot(repoRootReal, distDirReal) {
+		return fmt.Errorf("canonical size evidence distDir must be under buildInput.gosxModuleDir")
+	}
+	manifestPath, err := filepath.Abs(ev.ManifestPath)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence manifestPath: %w", err)
+	}
+	manifestPathReal, err := filepath.EvalSymlinks(manifestPath)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence manifestPath: %w", err)
+	}
+	if !pathUnderRoot(repoRootReal, manifestPathReal) {
+		return fmt.Errorf("canonical size evidence manifestPath must be under buildInput.gosxModuleDir")
+	}
+	if !samePath(manifestPath, filepath.Join(distDir, "build.json")) {
+		return fmt.Errorf("canonical size evidence manifestPath must be DistDir/build.json")
+	}
+	if strings.TrimSpace(ev.ExportPath) == "" {
+		return fmt.Errorf("canonical size evidence requires exportPath")
+	}
+	exportPath, err := filepath.Abs(ev.ExportPath)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence exportPath: %w", err)
+	}
+	exportPathReal, err := filepath.EvalSymlinks(exportPath)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence exportPath: %w", err)
+	}
+	if !pathUnderRoot(repoRootReal, exportPathReal) {
+		return fmt.Errorf("canonical size evidence exportPath must be under buildInput.gosxModuleDir")
+	}
+	if !samePath(exportPath, filepath.Join(distDir, "export.json")) {
+		return fmt.Errorf("canonical size evidence exportPath must be DistDir/export.json")
+	}
+	exportManifest, err := loadExportEvidence(exportPath, true)
+	if err != nil {
+		return fmt.Errorf("canonical size evidence export replay: %w", err)
+	}
+	if err := validateExportHTMLAttribution(distDir, exportManifest); err != nil {
+		return fmt.Errorf("canonical size evidence HTML attribution replay: %w", err)
+	}
+	replayed, err := BuildSizeEvidenceWithOptions(SizeEvidenceOptions{
+		ManifestPath: manifestPath,
+		DistDir:      distDir,
+		RepoRoot:     repoRootReal,
+		ArtifactRoot: distDir,
+		Canonical:    false,
+	})
+	if err != nil {
+		return fmt.Errorf("canonical size evidence replay: %w", err)
+	}
+	for i := range replayed.Routes {
+		replayed.Routes[i].ID = canonicalOuroborosRouteID(replayed.Routes[i].Route)
+	}
+	if len(replayed.Unresolved) > 0 {
+		return fmt.Errorf("canonical size evidence replay has unresolved refs")
+	}
+	if !canonicalBrowserBuildInputMatches(ev.BuildInput, replayed.BuildInput) {
+		return fmt.Errorf("canonical size evidence build input mismatch")
+	}
+	if !sameSizeEvidenceAssetsForCompare(ev.Assets, replayed.Assets) {
+		return fmt.Errorf("canonical size evidence assets mismatch")
+	}
+	if !sameSizeEvidenceRoutesForCompare(ev.Routes, replayed.Routes) {
+		return fmt.Errorf("canonical size evidence routes mismatch")
+	}
+	if ev.Totals != replayed.Totals {
+		return fmt.Errorf("canonical size evidence totals mismatch")
+	}
+	if !samePath(ev.ResourceManifestPath, replayed.ResourceManifestPath) {
+		return fmt.Errorf("canonical size evidence resource manifest path mismatch")
+	}
+	if ev.BuildInput.ResourceManifestSHA256 != replayed.BuildInput.ResourceManifestSHA256 {
+		return fmt.Errorf("canonical size evidence resource manifest hash mismatch")
+	}
+	if !sameStringSlice(ev.Notes, replayed.Notes) {
+		return fmt.Errorf("canonical size evidence notes mismatch")
+	}
+	return nil
+}
+
+func sameSizeEvidenceAssetsForCompare(a, b []TransferredAsset) bool {
+	bodyA, errA := json.Marshal(a)
+	bodyB, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(bodyA, bodyB)
+}
+
+func sameSizeEvidenceRoutesForCompare(a, b []RouteAssetEvidence) bool {
+	bodyA, errA := json.Marshal(a)
+	bodyB, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(bodyA, bodyB)
 }
 
 func validateRuntimeEvidenceForCompare(ev *RuntimeBuildEvidence) error {

@@ -193,14 +193,17 @@ func TestAttributeRoutesDoesNotStaleAssetPointersAfterDirectAppend(t *testing.T)
 		t.Fatalf("unexpected unresolved assets: %#v", unresolved)
 	}
 	report.Assets = assets
-	writeTestFile(t, filepath.Join(dir, "static", "a", "index.html"), `<script src="/gosx/assets/runtime/direct.2222.js"></script>`)
-	writeTestFile(t, filepath.Join(dir, "static", "b", "index.html"), `<script src="/gosx/bootstrap-runtime.js"></script>`)
-	writeTestFile(t, filepath.Join(dir, "static", "c", "index.html"), `<script src="/gosx/bootstrap-runtime.js"></script>`)
+	htmlA := `<script src="/gosx/assets/runtime/direct.2222.js"></script>`
+	htmlB := `<script src="/gosx/bootstrap-runtime.js"></script>`
+	htmlC := `<script src="/gosx/bootstrap-runtime.js"></script>`
+	writeTestFile(t, filepath.Join(dir, "a", "index.html"), htmlA)
+	writeTestFile(t, filepath.Join(dir, "b", "index.html"), htmlB)
+	writeTestFile(t, filepath.Join(dir, "c", "index.html"), htmlC)
 	err = attributeRoutes(report, exportEvidence{routes: []exportEvidenceRoute{
-		{Path: "/a", File: "a/index.html"},
-		{Path: "/b", File: "b/index.html"},
-		{Path: "/c", File: "c/index.html"},
-	}}, manifest, true)
+		{Path: "/a", File: "a/index.html", SHA256: sha256String(htmlA), Bytes: int64Ptr(int64(len(htmlA)))},
+		{Path: "/b", File: "b/index.html", SHA256: sha256String(htmlB), Bytes: int64Ptr(int64(len(htmlB)))},
+		{Path: "/c", File: "c/index.html", SHA256: sha256String(htmlC), Bytes: int64Ptr(int64(len(htmlC)))},
+	}}, manifest, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,14 +391,177 @@ func TestLoadExportEvidenceStrictRejectsMissingMalformedAndDuplicateRoutes(t *te
 	}
 }
 
+func TestLoadExportEvidenceStrictBindsCanonicalRouteFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeCase := func(name string, mutate func([]exportEvidenceRoute)) string {
+		t.Helper()
+		routes := canonicalExportEvidenceRoutesForTest()
+		mutate(routes)
+		body, err := json.Marshal(struct {
+			Routes           []exportEvidenceRoute `json:"routes"`
+			ResourceManifest string                `json:"resourceManifest"`
+		}{
+			Routes:           routes,
+			ResourceManifest: CanonicalResourceManifestRef,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name+".json")
+		writeTestFile(t, path, string(body))
+		return path
+	}
+
+	swapped := writeCase("swapped", func(routes []exportEvidenceRoute) {
+		routes[0].File, routes[1].File = routes[1].File, routes[0].File
+	})
+	if _, err := loadExportEvidence(swapped, true); err == nil || !strings.Contains(err.Error(), "route /static file") {
+		t.Fatalf("swapped route files error = %v", err)
+	}
+
+	duplicate := writeCase("duplicate", func(routes []exportEvidenceRoute) {
+		routes[1].File = routes[0].File
+	})
+	if _, err := loadExportEvidence(duplicate, true); err == nil || !strings.Contains(err.Error(), "duplicates HTML file") {
+		t.Fatalf("duplicate route file error = %v", err)
+	}
+
+	alternate := writeCase("alternate-contained", func(routes []exportEvidenceRoute) {
+		routes[1].File = "alternate/lite/index.html"
+	})
+	if _, err := loadExportEvidence(alternate, true); err == nil || !strings.Contains(err.Error(), "route /lite file") {
+		t.Fatalf("alternate contained route file error = %v", err)
+	}
+}
+
+func TestLoadExportEvidenceStrictRequiresRouteHTMLIdentity(t *testing.T) {
+	dir := t.TempDir()
+	writeCase := func(name string, mutate func([]exportEvidenceRoute)) string {
+		t.Helper()
+		routes := canonicalExportEvidenceRoutesForTest()
+		mutate(routes)
+		body, err := json.Marshal(struct {
+			Routes           []exportEvidenceRoute `json:"routes"`
+			ResourceManifest string                `json:"resourceManifest"`
+		}{
+			Routes:           routes,
+			ResourceManifest: CanonicalResourceManifestRef,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name+".json")
+		writeTestFile(t, path, string(body))
+		return path
+	}
+
+	missingHash := writeCase("missing-hash", func(routes []exportEvidenceRoute) {
+		routes[0].SHA256 = ""
+	})
+	if _, err := loadExportEvidence(missingHash, true); err == nil || !strings.Contains(err.Error(), "sha256") {
+		t.Fatalf("missing hash error = %v", err)
+	}
+
+	missingBytes := writeCase("missing-bytes", func(routes []exportEvidenceRoute) {
+		routes[0].Bytes = nil
+	})
+	if _, err := loadExportEvidence(missingBytes, true); err == nil || !strings.Contains(err.Error(), "bytes is required") {
+		t.Fatalf("missing bytes error = %v", err)
+	}
+}
+
+func TestValidateExportHTMLAttributionRejectsTamperedCanonicalHTML(t *testing.T) {
+	dir := t.TempDir()
+	original := `A<script src="/gosx/bootstrap-runtime.js"></script>`
+	route := exportEvidenceRoute{
+		Path:   "/lite",
+		File:   "lite/index.html",
+		SHA256: sha256String(original),
+		Bytes:  int64Ptr(int64(len(original))),
+	}
+	writeTestFile(t, filepath.Join(dir, "lite", "index.html"), `B<script src="/gosx/bootstrap-runtime.js"></script>`)
+	err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{route}})
+	if err == nil || !strings.Contains(err.Error(), "sha256") {
+		t.Fatalf("tampered route HTML error = %v", err)
+	}
+}
+
+func TestValidateExportHTMLAttributionRejectsWrongCanonicalHTMLHash(t *testing.T) {
+	dir := t.TempDir()
+	body := `<script src="/gosx/bootstrap-runtime.js"></script>`
+	writeTestFile(t, filepath.Join(dir, "lite", "index.html"), body)
+	err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{
+		Path:   "/lite",
+		File:   "lite/index.html",
+		SHA256: "sha256:" + strings.Repeat("0", 64),
+		Bytes:  int64Ptr(int64(len(body))),
+	}}})
+	if err == nil || !strings.Contains(err.Error(), "sha256") {
+		t.Fatalf("wrong route HTML hash error = %v", err)
+	}
+}
+
+func TestValidateExportHTMLAttributionRejectsCanonicalStaticFallbackOnlyHTML(t *testing.T) {
+	dir := t.TempDir()
+	body := `<script src="/gosx/bootstrap-runtime.js"></script>`
+	writeTestFile(t, filepath.Join(dir, "static", "lite", "index.html"), body)
+	err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{
+		Path:   "/lite",
+		File:   "lite/index.html",
+		SHA256: sha256String(body),
+		Bytes:  int64Ptr(int64(len(body))),
+	}}})
+	if err == nil || !strings.Contains(err.Error(), "missing or unsafe route file") {
+		t.Fatalf("canonical fallback-only route HTML error = %v", err)
+	}
+}
+
+func TestBuildSizeEvidencePreservesNoncanonicalAlternateContainedHTML(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "assets", "runtime", "bootstrap-runtime.1111.js"), "shared-runtime")
+	writeTestFile(t, filepath.Join(dir, "build.json"), `{
+  "runtime": {
+    "bootstrapRuntime": {"file": "bootstrap-runtime.1111.js", "hash": "1111", "size": 14}
+  },
+  "islands": [],
+  "css": []
+}`)
+	writeTestFile(t, filepath.Join(dir, "export.json"), `{
+  "routes": [
+    {"path": "/lite", "file": "alternate/lite/index.html"},
+    {"path": "/also-lite", "file": "alternate/lite/index.html"}
+  ]
+}`)
+	writeTestFile(t, filepath.Join(dir, "static", "alternate", "lite", "index.html"), `<script src="/gosx/bootstrap-runtime.js"></script>`)
+
+	report, err := BuildSizeEvidenceWithOptions(SizeEvidenceOptions{
+		ManifestPath: filepath.Join(dir, "build.json"),
+		DistDir:      dir,
+		RepoRoot:     ".",
+		ArtifactRoot: t.TempDir(),
+		Canonical:    false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Routes) != 2 {
+		t.Fatalf("noncanonical alternate route files were not preserved: %#v", report.Routes)
+	}
+	if got := report.Routes[0].File; got != "alternate/lite/index.html" {
+		t.Fatalf("route file = %q, want alternate/lite/index.html", got)
+	}
+}
+
 func TestValidateExportHTMLAttributionAllowsR00OnlyWithoutRefs(t *testing.T) {
 	dir := t.TempDir()
-	writeTestFile(t, filepath.Join(dir, "static", "index.html"), `<html>SSR only</html>`)
-	if err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{Path: "/static", File: "static/index.html"}}}); err != nil {
+	staticHTML := `<html>SSR only</html>`
+	writeTestFile(t, filepath.Join(dir, "static", "index.html"), staticHTML)
+	if err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{Path: "/static", File: "static/index.html", SHA256: sha256String(staticHTML), Bytes: int64Ptr(int64(len(staticHTML)))}}}); err != nil {
 		t.Fatalf("R00 without runtime refs failed: %v", err)
 	}
-	writeTestFile(t, filepath.Join(dir, "lite", "index.html"), `<html>missing runtime refs</html>`)
-	err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{Path: "/lite", File: "lite/index.html"}}})
+	liteHTML := `<html>missing runtime refs</html>`
+	writeTestFile(t, filepath.Join(dir, "lite", "index.html"), liteHTML)
+	err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{Path: "/lite", File: "lite/index.html", SHA256: sha256String(liteHTML), Bytes: int64Ptr(int64(len(liteHTML)))}}})
 	if err == nil || !strings.Contains(err.Error(), "incomplete asset attribution") {
 		t.Fatalf("non-R00 without runtime refs error = %v", err)
 	}
@@ -404,18 +570,18 @@ func TestValidateExportHTMLAttributionAllowsR00OnlyWithoutRefs(t *testing.T) {
 func TestAttributeRoutesStrictRejectsMissingUnsafeAndIncompleteHTML(t *testing.T) {
 	dir := t.TempDir()
 	report := &SizeEvidence{DistDir: dir}
-	err := attributeRoutes(report, exportEvidence{routes: []exportEvidenceRoute{{Path: "/missing", File: "missing.html"}}}, nil, true)
+	err := attributeRoutes(report, exportEvidence{routes: []exportEvidenceRoute{{Path: "/missing", File: "missing.html"}}}, nil, nil, true)
 	if err == nil || !strings.Contains(err.Error(), "missing or unsafe route file") {
 		t.Fatalf("attributeRoutes missing HTML error = %v", err)
 	}
 	report = &SizeEvidence{DistDir: dir}
-	err = attributeRoutes(report, exportEvidence{routes: []exportEvidenceRoute{{Path: "/unsafe", File: "../outside.html"}}}, nil, true)
+	err = attributeRoutes(report, exportEvidence{routes: []exportEvidenceRoute{{Path: "/unsafe", File: "../outside.html"}}}, nil, nil, true)
 	if err == nil || !strings.Contains(err.Error(), "missing or unsafe route file") {
 		t.Fatalf("attributeRoutes unsafe HTML error = %v", err)
 	}
-	writeTestFile(t, filepath.Join(dir, "static", "empty", "index.html"), `<html></html>`)
+	writeTestFile(t, filepath.Join(dir, "empty", "index.html"), `<html></html>`)
 	report = &SizeEvidence{DistDir: dir}
-	err = attributeRoutes(report, exportEvidence{routes: []exportEvidenceRoute{{Path: "/empty", File: "empty/index.html"}}}, nil, true)
+	err = attributeRoutes(report, exportEvidence{routes: []exportEvidenceRoute{{Path: "/empty", File: "empty/index.html"}}}, nil, nil, true)
 	if err == nil || !strings.Contains(err.Error(), "incomplete asset attribution") {
 		t.Fatalf("attributeRoutes incomplete attribution error = %v", err)
 	}
@@ -908,41 +1074,51 @@ func writeTestFile(t *testing.T, path, data string) {
 
 func writeCanonicalExportSkeleton(t *testing.T, dir string) {
 	t.Helper()
-	paths := []string{
-		"/static",
-		"/lite",
-		"/island/counter",
-		"/islands/kitchen",
-		"/action/form",
-		"/canvas-board",
-		"/hub/echo",
-		"/video-sync",
-		"/scene/basic",
-		"/navigation/a",
-		"/navigation/b",
-		"/demos/water",
-	}
 	type route struct {
-		Path string `json:"path"`
-		File string `json:"file"`
+		Path   string `json:"path"`
+		File   string `json:"file"`
+		SHA256 string `json:"sha256"`
+		Bytes  int64  `json:"bytes"`
 	}
 	raw := struct {
-		Routes []route `json:"routes"`
-	}{}
-	for _, routePath := range paths {
-		file := strings.TrimPrefix(routePath, "/") + "/index.html"
-		raw.Routes = append(raw.Routes, route{Path: routePath, File: file})
+		Routes           []route `json:"routes"`
+		ResourceManifest string  `json:"resourceManifest"`
+	}{ResourceManifest: CanonicalResourceManifestRef}
+	for _, item := range canonicalExportEvidenceRoutesForTest() {
+		routePath := item.Path
+		file := item.File
 		body := `<script src="/gosx/bootstrap-runtime.js"></script>`
 		if routePath == "/static" {
 			body = `<html>SSR only</html>`
 		}
-		writeTestFile(t, filepath.Join(dir, "static", filepath.FromSlash(file)), body)
+		writeTestFile(t, filepath.Join(dir, filepath.FromSlash(file)), body)
+		raw.Routes = append(raw.Routes, route{Path: routePath, File: file, SHA256: sha256String(body), Bytes: int64(len(body))})
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(dir, "export.json"), string(data))
+	writeResourceManifestFixture(t, dir, nil, nil)
+}
+
+func canonicalExportEvidenceRoutesForTest() []exportEvidenceRoute {
+	ids := canonicalRouteIDs()
+	routes := make([]exportEvidenceRoute, 0, len(ids))
+	for _, id := range ids {
+		routePath := canonicalOuroborosRoutePath(id)
+		routes = append(routes, exportEvidenceRoute{
+			Path:   routePath,
+			File:   canonicalOuroborosRouteFile(routePath),
+			SHA256: sha256String(routePath),
+			Bytes:  int64Ptr(int64(len(routePath))),
+		})
+	}
+	return routes
+}
+
+func int64Ptr(value int64) *int64 {
+	return &value
 }
 
 func writeCurrentCanonicalInventory(t *testing.T) (repoRoot, inventoryPath, artifactRoot string) {

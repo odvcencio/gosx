@@ -18,6 +18,10 @@ import (
 )
 
 func collectProjectIslandPrograms(projectDir string) ([]*islandprogram.Program, []string, error) {
+	return collectProjectIslandProgramsWithModuleFlags(projectDir, goModuleCommandFlags)
+}
+
+func collectProjectIslandProgramsWithModuleFlags(projectDir, moduleFlags string) ([]*islandprogram.Program, []string, error) {
 	absProjectDir, err := filepath.Abs(projectDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve project dir: %w", err)
@@ -33,13 +37,13 @@ func collectProjectIslandPrograms(projectDir string) ([]*islandprogram.Program, 
 	if err != nil {
 		return nil, nil, err
 	}
-	qualifiedImportPaths, err := resolveQualifiedComponentImportPaths(projectDir, qualifiedAliases)
+	qualifiedImportPaths, err := resolveQualifiedComponentImportPaths(projectDir, qualifiedAliases, moduleFlags)
 	if err != nil {
 		return nil, nil, err
 	}
 	importedPaths = mergeStringSets(importedPaths, qualifiedImportPaths)
 
-	importedDirs, err := resolveImportedGSXPackageDirs(projectDir, importedPaths)
+	importedDirs, err := resolveImportedGSXPackageDirs(projectDir, importedPaths, moduleFlags)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -161,7 +165,7 @@ func qualifiedComponentAliases(prog *ir.Program) []string {
 	return aliases
 }
 
-func resolveQualifiedComponentImportPaths(projectDir string, aliases []string) ([]string, error) {
+func resolveQualifiedComponentImportPaths(projectDir string, aliases []string, moduleFlags string) ([]string, error) {
 	if len(aliases) == 0 {
 		return nil, nil
 	}
@@ -182,7 +186,7 @@ func resolveQualifiedComponentImportPaths(projectDir string, aliases []string) (
 	}
 	importSet := map[string]struct{}{}
 	for _, file := range goFiles {
-		fileImports, err := matchingGoImportPaths(projectDir, file, aliasSet)
+		fileImports, err := matchingGoImportPaths(projectDir, file, aliasSet, moduleFlags)
 		if err != nil {
 			return nil, err
 		}
@@ -218,7 +222,7 @@ func discoverProjectGoFiles(projectDir string) ([]string, error) {
 	return files, nil
 }
 
-func matchingGoImportPaths(projectDir, file string, aliases map[string]struct{}) ([]string, error) {
+func matchingGoImportPaths(projectDir, file string, aliases map[string]struct{}, moduleFlags string) ([]string, error) {
 	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.ImportsOnly)
 	if err != nil {
 		return nil, fmt.Errorf("parse imports %s: %w", file, err)
@@ -246,7 +250,7 @@ func matchingGoImportPaths(projectDir, file string, aliases map[string]struct{})
 		if !shouldResolveImportedPackage(importPath) {
 			continue
 		}
-		info, err := goListPackage(projectDir, importPath)
+		info, err := goListPackage(projectDir, importPath, moduleFlags)
 		if err != nil {
 			continue
 		}
@@ -275,7 +279,7 @@ func mergeStringSets(values ...[]string) []string {
 	return merged
 }
 
-func resolveImportedGSXPackageDirs(projectDir string, importPaths []string) ([]string, error) {
+func resolveImportedGSXPackageDirs(projectDir string, importPaths []string, moduleFlags string) ([]string, error) {
 	projectDir = filepath.Clean(projectDir)
 	seen := map[string]struct{}{}
 	var dirs []string
@@ -284,7 +288,7 @@ func resolveImportedGSXPackageDirs(projectDir string, importPaths []string) ([]s
 		if !shouldResolveImportedPackage(importPath) {
 			continue
 		}
-		info, err := goListPackage(projectDir, importPath)
+		info, err := goListPackage(projectDir, importPath, moduleFlags)
 		if err != nil {
 			return nil, err
 		}
@@ -333,10 +337,10 @@ type goListPackageInfo struct {
 	Standard   bool
 }
 
-func goListPackage(projectDir, importPath string) (goListPackageInfo, error) {
+func goListPackage(projectDir, importPath, moduleFlags string) (goListPackageInfo, error) {
 	cmd := exec.Command("go", "list", "-json", importPath)
 	cmd.Dir = projectDir
-	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+defaultString(moduleFlags, goModuleCommandFlags), "GOWORK=off")
 	out, err := cmd.Output()
 	if err != nil {
 		return goListPackageInfo{}, fmt.Errorf("resolve imported package %s: %w", importPath, err)

@@ -57,19 +57,23 @@ func resolveWASMCompiler(opts BuildOptions, lookPath func(string) (string, error
 }
 
 func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
+	return buildTinyGoWASMWithModuleFlags(projectDir, gosxRoot, outputPath, tinygoPath, goModuleCommandFlags, extraTags...)
+}
+
+func buildTinyGoWASMWithModuleFlags(projectDir, gosxRoot, outputPath, tinygoPath, moduleFlags string, extraTags ...string) error {
 	tags := tinyGoWASMTags(extraTags...)
-	scratchDir, cleanup, err := prepareTinyGoWASMModule(gosxRoot, tags...)
+	scratchDir, cleanup, err := prepareTinyGoWASMModule(gosxRoot, moduleFlags, tags...)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	envs := tinyGoBuildEnvironments()
+	envs := tinyGoBuildEnvironmentsWithModuleFlags(moduleFlags)
 	var failures []string
 	for _, candidate := range envs {
 		cmd := exec.Command(tinygoPath, tinyGoBuildArgs(outputPath, extraTags...)...)
 		cmd.Dir = scratchDir
-		cmd.Env = setEnv(candidate.env, "GOFLAGS", goModuleCommandFlags)
+		cmd.Env = setEnv(candidate.env, "GOFLAGS", defaultString(moduleFlags, goModuleCommandFlags))
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			if candidate.label != "" {
@@ -159,8 +163,8 @@ func tinyGoFullRuntimeEnabled() bool {
 	}
 }
 
-func prepareTinyGoWASMModule(gosxRoot string, tags ...string) (string, func(), error) {
-	packages, modules, err := tinyGoWASMDependencyClosure(gosxRoot, tags...)
+func prepareTinyGoWASMModule(gosxRoot, moduleFlags string, tags ...string) (string, func(), error) {
+	packages, modules, err := tinyGoWASMDependencyClosureWithModuleFlags(gosxRoot, moduleFlags, tags...)
 	if err != nil {
 		return "", nil, err
 	}
@@ -189,11 +193,36 @@ func prepareTinyGoWASMModule(gosxRoot string, tags ...string) (string, func(), e
 			return "", nil, fmt.Errorf("write tinygo go.sum: %w", err)
 		}
 	}
+	if err := ensureTinyGoScratchModuleCurrent(scratchDir, tags...); err != nil {
+		cleanup()
+		return "", nil, err
+	}
 
 	return scratchDir, cleanup, nil
 }
 
+func ensureTinyGoScratchModuleCurrent(dir string, tags ...string) error {
+	args := []string{"list", "-deps"}
+	goFlags := "-mod=mod -buildvcs=false"
+	if len(tags) > 0 {
+		goFlags += " -tags=" + strings.Join(tags, ",")
+	}
+	args = append(args, gosxModuleImportPath+"/client/wasm")
+	cmd := exec.Command("go", args...)
+	cmd.Dir = dir
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goFlags, "GOOS=js", "GOARCH=wasm", "GOWORK=off")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("prepare tinygo scratch module deps: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func tinyGoWASMDependencyClosure(projectDir string, tags ...string) ([]tinyGoPackage, []tinyGoExternalModule, error) {
+	return tinyGoWASMDependencyClosureWithModuleFlags(projectDir, goModuleCommandFlags, tags...)
+}
+
+func tinyGoWASMDependencyClosureWithModuleFlags(projectDir, moduleFlags string, tags ...string) ([]tinyGoPackage, []tinyGoExternalModule, error) {
 	args := []string{"list", "-deps", "-json"}
 	if len(tags) > 0 {
 		args = append(args, "-tags="+strings.Join(tags, " "))
@@ -201,7 +230,7 @@ func tinyGoWASMDependencyClosure(projectDir string, tags ...string) ([]tinyGoPac
 	args = append(args, gosxModuleImportPath+"/client/wasm")
 	cmd := exec.Command("go", args...)
 	cmd.Dir = projectDir
-	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOOS=js", "GOARCH=wasm", "GOWORK=off")
+	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+defaultString(moduleFlags, goModuleCommandFlags), "GOOS=js", "GOARCH=wasm", "GOWORK=off")
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -342,7 +371,11 @@ func writeTinyGoModuleFile(dir string, modules []tinyGoExternalModule) error {
 }
 
 func tinyGoBuildEnvironments() []tinyGoBuildEnv {
-	base := setEnv(execEnvWithoutGoFlags(), "GOFLAGS", goModuleCommandFlags)
+	return tinyGoBuildEnvironmentsWithModuleFlags(goModuleCommandFlags)
+}
+
+func tinyGoBuildEnvironmentsWithModuleFlags(moduleFlags string) []tinyGoBuildEnv {
+	base := setEnv(execEnvWithoutGoFlags(), "GOFLAGS", defaultString(moduleFlags, goModuleCommandFlags))
 	base = setEnv(base, "GOWORK", "off")
 	envs := []tinyGoBuildEnv{{label: "current Go", env: base}}
 	seenRoots := map[string]bool{}

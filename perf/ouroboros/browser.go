@@ -2315,8 +2315,9 @@ func canonicalBrowserRuntimeBuildArgs(variant RuntimeArtifactVariant) []string {
 
 func validateCanonicalBrowserSizeEvidenceDetails(repoRoot string, ev *SizeEvidence, routes []FixtureSpec) error {
 	if !validSourceIdentitySHA256(ev.BuildInput.ManifestSHA256) ||
-		!validSourceIdentitySHA256(ev.BuildInput.ExportSHA256) {
-		return fmt.Errorf("canonical size evidence requires manifest and export hashes")
+		!validSourceIdentitySHA256(ev.BuildInput.ExportSHA256) ||
+		!validSourceIdentitySHA256(ev.BuildInput.ResourceManifestSHA256) {
+		return fmt.Errorf("canonical size evidence requires manifest, export, and resource manifest hashes")
 	}
 	if len(ev.Unresolved) > 0 {
 		return fmt.Errorf("canonical size evidence has unresolved refs")
@@ -2349,7 +2350,14 @@ func validateCanonicalBrowserSizeEvidenceDetails(repoRoot string, ev *SizeEviden
 	if !samePath(exportPath, filepath.Join(distDir, "export.json")) {
 		return fmt.Errorf("canonical size evidence exportPath must be DistDir/export.json")
 	}
-	recomputed, err := BuildInputEvidenceForRepo(repoRoot, manifestPath, exportPath)
+	resourceManifestPath, resourceManifestSHA, err := validateCanonicalBrowserResourceManifestPath(distDir, ev.ResourceManifestPath)
+	if err != nil {
+		return err
+	}
+	if ev.BuildInput.ResourceManifestSHA256 != resourceManifestSHA {
+		return fmt.Errorf("canonical size evidence resource manifest hash mismatch")
+	}
+	recomputed, err := collectBuildInputEvidence(repoRoot, manifestPath, exportPath, resourceManifestPath)
 	if err != nil {
 		return fmt.Errorf("canonical size evidence build input recompute: %w", err)
 	}
@@ -2372,6 +2380,39 @@ func validateCanonicalBrowserSizeEvidenceDetails(repoRoot string, ev *SizeEviden
 		}
 	}
 	return nil
+}
+
+func validateCanonicalBrowserResourceManifestPath(distDir, ref string) (string, string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return "", "", fmt.Errorf("canonical size evidence requires resourceManifestPath")
+	}
+	path := filepath.FromSlash(ref)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(distDir, path)
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", "", fmt.Errorf("canonical size evidence resourceManifestPath: %w", err)
+	}
+	rel, err := filepath.Rel(distDir, absPath)
+	if err != nil {
+		return "", "", fmt.Errorf("canonical size evidence resourceManifestPath: %w", err)
+	}
+	if filepath.ToSlash(rel) != CanonicalResourceManifestRef {
+		return "", "", fmt.Errorf("canonical size evidence resourceManifestPath must be DistDir/%s", CanonicalResourceManifestRef)
+	}
+	full, err := containedRegularFileNoSymlink(distDir, CanonicalResourceManifestRef)
+	if err != nil {
+		return "", "", fmt.Errorf("canonical size evidence resourceManifestPath: %w", err)
+	}
+	if !samePath(absPath, full) {
+		return "", "", fmt.Errorf("canonical size evidence resourceManifestPath must be DistDir/%s", CanonicalResourceManifestRef)
+	}
+	loaded, err := LoadAndValidateResourceManifest(distDir, CanonicalResourceManifestRef, true)
+	if err != nil {
+		return "", "", fmt.Errorf("canonical size evidence resource manifest: %w", err)
+	}
+	return full, loaded.SHA256, nil
 }
 
 func validateCanonicalBrowserSizeReplay(repoRoot string, ev *SizeEvidence, distDir, manifestPath string) error {
@@ -2409,6 +2450,15 @@ func validateCanonicalBrowserSizeReplay(repoRoot string, ev *SizeEvidence, distD
 	}
 	if ev.Totals != replayed.Totals {
 		return fmt.Errorf("canonical size evidence totals mismatch")
+	}
+	if !samePath(ev.ResourceManifestPath, replayed.ResourceManifestPath) {
+		return fmt.Errorf("canonical size evidence resource manifest path mismatch")
+	}
+	if ev.BuildInput.ResourceManifestSHA256 != replayed.BuildInput.ResourceManifestSHA256 {
+		return fmt.Errorf("canonical size evidence resource manifest hash mismatch")
+	}
+	if !sameStringSlice(ev.Notes, replayed.Notes) {
+		return fmt.Errorf("canonical size evidence notes mismatch")
 	}
 	return nil
 }
@@ -2507,6 +2557,7 @@ func canonicalBrowserBuildInputMatches(got, want BuildInputEvidence) bool {
 		got.GoSumSHA256 == want.GoSumSHA256 &&
 		got.ManifestSHA256 == want.ManifestSHA256 &&
 		got.ExportSHA256 == want.ExportSHA256 &&
+		got.ResourceManifestSHA256 == want.ResourceManifestSHA256 &&
 		got.RejectsModuleCacheMismatch == want.RejectsModuleCacheMismatch
 }
 

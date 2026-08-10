@@ -18,6 +18,12 @@ func cmdOuroboros() {
 		return
 	}
 	switch os.Args[2] {
+	case "export-corpus":
+		if len(os.Args) > 3 && isHelpArg(os.Args[3]) {
+			ouroborosExportCorpusUsage(os.Stdout)
+			return
+		}
+		cmdOuroborosExportCorpus(os.Args[3:])
 	case "inventory":
 		if len(os.Args) > 3 && isHelpArg(os.Args[3]) {
 			ouroborosInventoryUsage(os.Stdout)
@@ -246,11 +252,14 @@ func ouroborosUsage(w interface{ Write([]byte) (int, error) }) {
 	fmt.Fprintf(w, `gosx ouroboros - Ouroboros runtime baseline tools
 
 Usage:
+  gosx ouroboros export-corpus --root <repo> --out <dir> --corpus <fixtures.v1.json> --fixture-app <dir> --docs-app <dir>
   gosx ouroboros inventory [--root <repo>] [--out <file>] [--artifact-root <dir>] [--no-canopy]
   gosx ouroboros source-identity --root <repo> --inventory <file> --artifact-root <future-browser-out> --out <file>
   gosx ouroboros compare --baseline <manifest|root> --candidate <manifest|root> --budget <file> [--out <file>]
 
 Commands:
+  export-corpus
+              Build and publish the strict O0.2 canonical size corpus dist
   inventory   Collect O0.2 source inventory, compatibility surface, drift, and overlay evidence
   source-identity
               Write deterministic canonical source identity handoff for a future browser run
