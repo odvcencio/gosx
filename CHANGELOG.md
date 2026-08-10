@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.38.1 (2026-08-10)
+
+### Patch: TinyGo island-reconciler fix, attribute-value fix, gzip passthrough fix
+
+- **TinyGo subtree-reuse miscompile.** `appendResolvedNode` assigned a
+  resolved node's `Children` through a pre-fetched slice index while the
+  right-hand call could grow and reallocate the same tree's backing array.
+  Standard Go's copy-on-grow keeps the old and new arrays byte-identical at
+  that index, so the stale write still landed correctly; TinyGo does not
+  honour that, and the write landed in the abandoned array instead. The
+  visible symptom: a multi-child island with a reactive `Each` or a
+  signal-driven boolean/empty attribute dropped its first re-render, then
+  appended a duplicate subtree on the next one. Binding the result to a
+  local variable before the indexed assignment removes the stale address.
+  `client/vm/island.go` additionally forces the spare-buffer recycle, the
+  subtree-diff skip, and the subtree-reuse plan itself off under a TinyGo
+  build tag, so production keeps the pre-optimisation evaluation path while
+  native/standard-Go builds keep the fast path the fuzz targets cover.
+- **Attribute-value fix.** `client/js/patch.js` renders an empty attribute
+  value as `setAttribute(name, "")` and never writes the string
+  `"undefined"` into a boolean attribute (`value`, `required`, `hidden`,
+  and the rest of the presence-attribute set now go through one
+  `BOOL_ATTRS` path instead of a narrower property-only list).
+- **Gzip double-encode fix.** `server/gzip.go` now passes pre-encoded
+  upstream responses straight through (`Content-Encoding` already set)
+  instead of compressing them a second time under the gzip writer, for
+  both direct writes and flushed streaming responses.
+
 ## v0.38.0 (2026-08-09)
 
 ### Island-VM core: capability-scoped browser handlers, computed signals, hub refresh

@@ -36,16 +36,33 @@
     "TBODY", "THEAD", "TFOOT", "COLGROUP",
   ]);
 
-  // DOM properties that should be set directly on the element rather than via
-  // setAttribute.  These are boolean-ish or value-holding properties.
-  var PROP_ATTRS = new Set([
-    "value", "checked", "selected", "disabled",
+  // HTML presence attributes. A SetAttr means present regardless of op.text;
+  // a RemoveAttr means absent. String states such as hidden="until-found"
+  // arrive only from SSR; typed island bools reconcile as presence changes.
+  var BOOL_ATTRS = new Set([
+    "allowfullscreen", "alpha", "async", "autofocus", "autoplay",
+    "checked", "controls", "default", "defer", "disabled",
+    "formnovalidate", "headingreset", "hidden", "inert", "ismap",
+    "itemscope", "loop", "multiple", "muted", "nomodule", "novalidate",
+    "open", "playsinline", "readonly", "required", "reversed", "selected",
+    "shadowrootclonable", "shadowrootcustomelementregistry",
+    "shadowrootdelegatesfocus", "shadowrootserializable",
   ]);
-
-  // Boolean properties — their presence is what matters, not their string value.
-  var BOOL_PROPS = new Set([
-    "checked", "selected", "disabled",
-  ]);
+  var BOOL_PROP_NAMES = {
+    allowfullscreen: "allowFullscreen",
+    formnovalidate: "formNoValidate",
+    headingreset: "headingReset",
+    ismap: "isMap",
+    itemscope: "itemScope",
+    nomodule: "noModule",
+    novalidate: "noValidate",
+    playsinline: "playsInline",
+    readonly: "readOnly",
+    shadowrootclonable: "shadowRootClonable",
+    shadowrootcustomelementregistry: "shadowRootCustomElementRegistry",
+    shadowrootdelegatesfocus: "shadowRootDelegatesFocus",
+    shadowrootserializable: "shadowRootSerializable",
+  };
 
   // Missing paths can happen briefly when a high-frequency signal races a DOM
   // subtree replacement. The operation is already safe to skip; warn once per
@@ -619,9 +636,12 @@
 
     target.removeAttribute(name);
 
-    // Also clear the corresponding DOM property for property-backed attrs.
-    if (BOOL_PROPS.has(name)) {
-      target[name] = false;
+    // Also clear the corresponding live DOM property when the element exposes
+    // one (checked/selected/muted and the ordinary reflected booleans).
+    var normalized = String(name).toLowerCase();
+    if (BOOL_ATTRS.has(normalized)) {
+      var prop = BOOL_PROP_NAMES[normalized] || normalized;
+      if (prop in target) target[prop] = false;
     } else if (name === "value") {
       target.value = "";
     }
@@ -765,26 +785,27 @@
   /**
    * Set an attribute or DOM property on an element.
    *
-   * For "property" attributes (value, checked, selected, disabled) we write to
-   * the DOM property directly, because setAttribute("value", ...) only sets the
-   * default — it won't update a dirty input.
+   * The value property is written directly so a dirty input updates. HTML
+   * boolean attributes update both presence and any reflected live property.
    *
    * @param {Element} el
    * @param {string}  name  - Attribute name.
    * @param {string}  value - Attribute value as a string.
    */
   function setAttr(el, name, value) {
-    if (PROP_ATTRS.has(name)) {
-      if (BOOL_PROPS.has(name)) {
-        // Boolean: anything except "false" and "" is truthy.
-        el[name] = value !== "false" && value !== "";
-      } else {
-        // "value" — set as string property.
-        el[name] = value;
-      }
-    } else {
-      el.setAttribute(name, value);
+    var normalized = String(name).toLowerCase();
+    if (normalized === "hidden" && String(value).toLowerCase() === "until-found") {
+      el.setAttribute(name, "until-found");
+      return;
     }
+    if (BOOL_ATTRS.has(normalized)) {
+      el.setAttribute(name, "");
+      var prop = BOOL_PROP_NAMES[normalized] || normalized;
+      if (prop in el) el[prop] = true;
+      return;
+    }
+    if (name === "value") el.value = value;
+    else el.setAttribute(name, value);
   }
 
   // ---------------------------------------------------------------------------

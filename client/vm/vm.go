@@ -1342,7 +1342,24 @@ func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.No
 		tree.Nodes[idx].Text = vm.Eval(node.Expr).String()
 	case program.NodeElement:
 		vm.resolveElementNode(&tree.Nodes[idx], source, node)
-		tree.Nodes[idx].Children = vm.resolveChildren(tree, node.Children)
+		// resolveChildren recurses back into appendNodeRefs for every
+		// descendant, and each one can append to tree.Nodes. An append
+		// past capacity moves the backing array, so tree.Nodes[idx] must
+		// be re-read AFTER that call returns, not indexed once up front
+		// the way `tree.Nodes[idx].Children = vm.resolveChildren(...)`
+		// used to. Go evaluates that index expression before the call on
+		// standard Go too, but standard Go's copy-on-grow keeps the old
+		// and new backing arrays byte-identical at idx, so the stale
+		// address still holds valid data when the store lands. TinyGo
+		// does not honour that: the store through the pre-call address
+		// lands in the abandoned array, so idx's Children silently stays
+		// nil in the live tree — the empty child list this whole
+		// TinyGo-defensive path exists to route around. Binding the
+		// result first and indexing fresh after removes the stale
+		// address entirely, so the fix holds regardless of which array
+		// the compiler decided to grow into.
+		children := vm.resolveChildren(tree, node.Children)
+		tree.Nodes[idx].Children = children
 	}
 
 	// The subtree is complete and contiguous now, so record where it
