@@ -1623,6 +1623,12 @@ func revalidateCanonicalBrowserPreseedArtifacts(ctx context.Context, opts Browse
 	if err := validateCanonicalBrowserSizePreseed(plan.RepoRoot, filepath.Join(plan.ArtifactRoot, "size", "route-assets.json"), source, routes); err != nil {
 		return err
 	}
+	if err := validateCanonicalBrowserStaticPreseedEvidenceBinding(plan.ArtifactRoot); err != nil {
+		return err
+	}
+	if err := validateCanonicalBrowserStaticPreseedFinalBinding(plan.ArtifactRoot, source); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1660,7 +1666,7 @@ func validateCanonicalBrowserRootPreseed(ctx context.Context, opts BrowserBaseli
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("canonical browser preseed rejects symlink: %s", rel)
 		}
-		if canonicalBrowserOwnedPreseedPath(rel) {
+		if canonicalBrowserOwnedPreseedPath(rel) && !canonicalBrowserAllowedBrowserOwnedPreseedPath(rel, allowedExact) {
 			return fmt.Errorf("canonical browser preseed contains browser-owned artifact: %s", rel)
 		}
 		if entry.IsDir() {
@@ -1683,6 +1689,9 @@ func validateCanonicalBrowserRootPreseed(ctx context.Context, opts BrowserBaseli
 		return false, err
 	}
 	if err := validateCanonicalBrowserSizePreseed(plan.RepoRoot, filepath.Join(root, "size", "route-assets.json"), source, routes); err != nil {
+		return false, err
+	}
+	if err := validateCanonicalBrowserStaticPreseedEvidenceBinding(root); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1739,6 +1748,14 @@ func canonicalBrowserAllowedPreseedPaths(root string, plan CanonicalInventoryMat
 		}
 	}
 	if sizeEvidence, err := readCanonicalBrowserSizeEvidenceStrict(root, filepath.Join(root, "size", "route-assets.json")); err == nil {
+		if static := sizeEvidence.Source.RuntimeJSONStatic; static != nil && static.Ref == "perf/runtime-json-static.jsonl" {
+			expectedSource := sourceIdentityFromMaterialization(plan)
+			if err := validateCanonicalBrowserRuntimeJSONStaticPreseed(root, expectedSource, static); err != nil {
+				return nil, nil, fmt.Errorf("canonical browser preseed size runtime JSON static identity invalid: %w", err)
+			}
+			exact[static.Ref] = true
+			dirs["perf"] = true
+		}
 		for _, ref := range []string{sizeEvidence.ManifestPath, sizeEvidence.ExportPath} {
 			if strings.TrimSpace(ref) == "" {
 				continue
@@ -1799,6 +1816,138 @@ func canonicalBrowserOwnedPreseedPath(rel string) bool {
 		}
 	}
 	return false
+}
+
+func canonicalBrowserAllowedBrowserOwnedPreseedPath(rel string, allowedExact map[string]bool) bool {
+	return (rel == "perf" || rel == "perf/runtime-json-static.jsonl") && allowedExact["perf/runtime-json-static.jsonl"]
+}
+
+func validateCanonicalBrowserRuntimeJSONStaticPreseed(root string, expectedSource SourceIdentity, expected *RuntimeJSONStaticIdentity) error {
+	if err := validateRuntimeJSONStaticIdentity(expected); err != nil {
+		return err
+	}
+	if expected.Ref != "perf/runtime-json-static.jsonl" {
+		return fmt.Errorf("runtime JSON static ref = %q, want perf/runtime-json-static.jsonl", expected.Ref)
+	}
+	if got, want := expected.SourceIdentityHash, RuntimeJSONStaticCanonicalSourceIdentityHash(expectedSource); got != want {
+		return fmt.Errorf("runtime JSON static sourceIdentityHash = %q, want %q", got, want)
+	}
+	file, err := canonicalBrowserOpenRegularPreseedFile(root, filepath.Join(root, "perf", "runtime-json-static.jsonl"), "perf/runtime-json-static.jsonl")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	corpus, err := ReadRuntimeJSONStaticCorpusJSONLStrict(file, expectedSource)
+	if err != nil {
+		return err
+	}
+	if corpus.SchemaVersion != expected.SchemaVersion {
+		return fmt.Errorf("runtime JSON static schemaVersion = %q, want %q", corpus.SchemaVersion, expected.SchemaVersion)
+	}
+	if corpus.ScannerVersion != expected.ScannerVersion {
+		return fmt.Errorf("runtime JSON static scannerVersion = %q, want %q", corpus.ScannerVersion, expected.ScannerVersion)
+	}
+	if corpus.Query.ID != expected.QueryID {
+		return fmt.Errorf("runtime JSON static queryID = %q, want %q", corpus.Query.ID, expected.QueryID)
+	}
+	if corpus.Query.PhaseClassifier != expected.PhaseClassifier {
+		return fmt.Errorf("runtime JSON static phaseClassifier = %q, want %q", corpus.Query.PhaseClassifier, expected.PhaseClassifier)
+	}
+	if corpus.CurrentSourceIdentityHash != expected.SourceIdentityHash {
+		return fmt.Errorf("runtime JSON static sourceIdentityHash = %q, want %q", corpus.CurrentSourceIdentityHash, expected.SourceIdentityHash)
+	}
+	if corpus.SemanticHash != expected.SemanticHash {
+		return fmt.Errorf("runtime JSON static semanticHash = %q, want %q", corpus.SemanticHash, expected.SemanticHash)
+	}
+	if corpus.CountsHash != expected.CountsHash {
+		return fmt.Errorf("runtime JSON static countsHash = %q, want %q", corpus.CountsHash, expected.CountsHash)
+	}
+	if corpus.GlobalNames.Hash != expected.GlobalNameHash {
+		return fmt.Errorf("runtime JSON static globalNameHash = %q, want %q", corpus.GlobalNames.Hash, expected.GlobalNameHash)
+	}
+	if err := compareRuntimeJSONStaticCounts(corpus.Counts, expected.Counts); err != nil {
+		return fmt.Errorf("runtime JSON static counts differ from size evidence identity: %w", err)
+	}
+	return nil
+}
+
+func validateCanonicalBrowserStaticPreseedEvidenceBinding(root string) error {
+	sizeEvidence, err := readCanonicalBrowserSizeEvidenceStrict(root, filepath.Join(root, "size", "route-assets.json"))
+	if err != nil {
+		return err
+	}
+	expected := sizeEvidence.Source.RuntimeJSONStatic
+	runtimeEvidence, err := readCanonicalBrowserRuntimeEvidenceStrict(root, filepath.Join(root, "wasm", "runtime-artifacts.json"))
+	if err != nil {
+		return err
+	}
+	got := runtimeEvidence.Source.RuntimeJSONStatic
+	if expected == nil && got == nil {
+		return nil
+	}
+	if expected == nil && got != nil {
+		return fmt.Errorf("canonical browser preseed runtime evidence has static identity missing from size evidence")
+	}
+	if got == nil {
+		return fmt.Errorf("canonical browser preseed runtime evidence missing static identity")
+	}
+	if !sameRuntimeJSONStaticIdentity(got, expected) {
+		return fmt.Errorf("canonical browser preseed runtime static identity differs from size evidence")
+	}
+	return nil
+}
+
+func validateCanonicalBrowserStaticPreseedFinalBinding(root string, source SourceIdentity) error {
+	sizeEvidence, err := readCanonicalBrowserSizeEvidenceStrict(root, filepath.Join(root, "size", "route-assets.json"))
+	if err != nil {
+		return err
+	}
+	runtimeEvidence, err := readCanonicalBrowserRuntimeEvidenceStrict(root, filepath.Join(root, "wasm", "runtime-artifacts.json"))
+	if err != nil {
+		return err
+	}
+	sourceStatic := source.RuntimeJSONStatic
+	runtimeStatic := runtimeEvidence.Source.RuntimeJSONStatic
+	sizeStatic := sizeEvidence.Source.RuntimeJSONStatic
+	if sourceStatic == nil && runtimeStatic == nil && sizeStatic == nil {
+		return nil
+	}
+	if sourceStatic == nil || runtimeStatic == nil || sizeStatic == nil {
+		return fmt.Errorf("canonical browser preseed final static identity must be present in source, runtime, and size evidence")
+	}
+	if !sameRuntimeJSONStaticIdentity(sourceStatic, sizeStatic) {
+		return fmt.Errorf("canonical browser preseed final source static identity differs from size evidence")
+	}
+	if !sameRuntimeJSONStaticIdentity(runtimeStatic, sizeStatic) {
+		return fmt.Errorf("canonical browser preseed final runtime static identity differs from size evidence")
+	}
+	if err := validateCanonicalBrowserRuntimeJSONStaticPreseed(root, source, sizeStatic); err != nil {
+		return fmt.Errorf("canonical browser preseed final runtime JSON static invalid: %w", err)
+	}
+	return nil
+}
+
+func sameRuntimeJSONStaticIdentity(a, b *RuntimeJSONStaticIdentity) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if err := validateRuntimeJSONStaticIdentity(a); err != nil {
+		return false
+	}
+	if err := validateRuntimeJSONStaticIdentity(b); err != nil {
+		return false
+	}
+	return a.Ref == b.Ref &&
+		a.SchemaVersion == b.SchemaVersion &&
+		a.ScannerVersion == b.ScannerVersion &&
+		a.QueryID == b.QueryID &&
+		a.PhaseClassifier == b.PhaseClassifier &&
+		a.SourceIdentityHash == b.SourceIdentityHash &&
+		a.SemanticHash == b.SemanticHash &&
+		a.CountsHash == b.CountsHash &&
+		a.GlobalNameHash == b.GlobalNameHash &&
+		a.Validated == b.Validated &&
+		compareRuntimeJSONStaticCounts(a.Counts, b.Counts) == nil
 }
 
 func validateCanonicalBrowserMaterializedInventory(ctx context.Context, plan CanonicalInventoryMaterialization) error {

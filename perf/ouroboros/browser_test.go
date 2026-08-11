@@ -2797,6 +2797,65 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 		}
 		return opts, plan, source, routes
 	}
+	bindRuntimeJSONStaticPreseed := func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) SourceIdentity {
+		t.Helper()
+		ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		site := RuntimeJSONStaticSite{
+			Path:           "client/js/bootstrap-src/00-runtime.js",
+			Line:           1,
+			Column:         1,
+			SourceFamily:   "browser-js",
+			SourceKind:     "javascript",
+			Operation:      "gosx-read",
+			GlobalName:     "__gosx_hydrate",
+			Phase:          "route-load",
+			PhaseStatus:    "exact",
+			PossiblePhases: []string{"route-load"},
+			PhaseRule:      "R40",
+			PhaseReason:    "test",
+			TextHash:       "sha256:text",
+			ContextHash:    "sha256:context",
+		}
+		corpus := runtimeJSONCorpusForSitesForTest(t, []RuntimeJSONStaticSite{site})
+		corpus.Source = source
+		corpus.CurrentSourceIdentity = source
+		corpus.CurrentSourceIdentityHash = RuntimeJSONStaticCanonicalSourceIdentityHash(source)
+		corpus.Query.ID = "gosx.ouroboros.o02.runtime-json-static.ast.v2"
+		corpus.Query.PhaseClassifier = runtimeJSONPhaseClassifierVersion
+		corpus.SemanticHash = RuntimeJSONStaticCorpusSemanticHash(corpus)
+		if err := ValidateRuntimeJSONStaticCorpus(corpus); err != nil {
+			t.Fatal(err)
+		}
+		static := &RuntimeJSONStaticIdentity{
+			Ref:                "perf/runtime-json-static.jsonl",
+			SchemaVersion:      corpus.SchemaVersion,
+			ScannerVersion:     corpus.ScannerVersion,
+			QueryID:            corpus.Query.ID,
+			PhaseClassifier:    corpus.Query.PhaseClassifier,
+			SourceIdentityHash: corpus.CurrentSourceIdentityHash,
+			SemanticHash:       corpus.SemanticHash,
+			CountsHash:         corpus.CountsHash,
+			GlobalNameHash:     corpus.GlobalNames.Hash,
+			Validated:          true,
+			Counts:             corpus.Counts,
+		}
+		ev.Source.RuntimeJSONStatic = static
+		writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+		runtimeEv, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtimeEv.Source.RuntimeJSONStatic = static
+		writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), runtimeEv)
+		if err := WriteRuntimeJSONStaticCorpusJSONL(filepath.Join(opts.ArtifactRoot, "perf", "runtime-json-static.jsonl"), corpus); err != nil {
+			t.Fatal(err)
+		}
+		source.RuntimeJSONStatic = static
+		return source
+	}
 
 	t.Run("valid_exact_preseed", func(t *testing.T) {
 		opts, plan, source, routes := valid(t)
@@ -2820,6 +2879,178 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 			if _, statErr := os.Stat(filepath.Join(opts.ArtifactRoot, rel)); !os.IsNotExist(statErr) {
 				t.Fatalf("preseed validation wrote browser artifact %s: %v", rel, statErr)
 			}
+		}
+	})
+
+	t.Run("valid_exact_runtime_json_static_preseed", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		allowedExact, allowedDirs, err := canonicalBrowserAllowedPreseedPaths(opts.ArtifactRoot, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !allowedExact["perf/runtime-json-static.jsonl"] || !allowedDirs["perf"] {
+			t.Fatalf("runtime JSON static preseed missing from allowlist: exact=%v dirs=%v", allowedExact, allowedDirs)
+		}
+		if allowedExact["perf/raw-samples.jsonl"] || allowedExact["perf/unknown.jsonl"] {
+			t.Fatalf("canonical preseed allowlist broadly allowed perf files: %v", allowedExact)
+		}
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err != nil || !ok {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want static JSONL accepted", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_arbitrary_perf_file", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		writeTestFile(t, filepath.Join(opts.ArtifactRoot, "perf", "unknown.jsonl"), "bad")
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "browser-owned") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want arbitrary perf rejection", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_raw_samples", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		writeTestFile(t, filepath.Join(opts.ArtifactRoot, "perf", "raw-samples.jsonl"), "bad")
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "browser-owned") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want raw samples rejection", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_missing_file", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		if err := os.Remove(filepath.Join(opts.ArtifactRoot, "perf", "runtime-json-static.jsonl")); err != nil {
+			t.Fatal(err)
+		}
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "perf/runtime-json-static.jsonl") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want missing static JSONL rejection", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_malformed_file", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		writeTestFile(t, filepath.Join(opts.ArtifactRoot, "perf", "runtime-json-static.jsonl"), "{}\n")
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "missing value") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want malformed static JSONL rejection", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_source_hash_mismatch", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		ev, err := ReadSizeEvidenceStrict(filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ev.Source.RuntimeJSONStatic.SourceIdentityHash = "sha256:" + strings.Repeat("f", 64)
+		writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "size", "route-assets.json"), ev)
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "sourceIdentityHash") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want source hash mismatch rejection", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_runtime_size_identity_divergence", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		diverged := *source.RuntimeJSONStatic
+		diverged.SemanticHash = "sha256:" + strings.Repeat("e", 64)
+		ev.Source.RuntimeJSONStatic = &diverged
+		writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "differs from size evidence") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want runtime/size static identity divergence rejection", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_missing_runtime_identity", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ev.Source.RuntimeJSONStatic = nil
+		writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), ev)
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "missing static identity") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want missing runtime static identity rejection", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_file_symlink", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		target := filepath.Join(opts.ArtifactRoot, "perf", "runtime-json-static.jsonl")
+		outside := filepath.Join(t.TempDir(), "runtime-json-static.jsonl")
+		body, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(outside, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(target); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, target); err != nil {
+			t.Fatal(err)
+		}
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want file symlink rejection", ok, err)
+		}
+	})
+
+	t.Run("runtime_json_static_preseed_rejects_parent_symlink", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		source = bindRuntimeJSONStaticPreseed(t, opts, source)
+		perfDir := filepath.Join(opts.ArtifactRoot, "perf")
+		outside := filepath.Join(t.TempDir(), "perf")
+		if err := os.Rename(perfDir, outside); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, perfDir); err != nil {
+			t.Fatal(err)
+		}
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "parent directory must be real") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want parent symlink rejection", ok, err)
+		}
+	})
+
+	t.Run("browser_owned_artifacts_still_rejected", func(t *testing.T) {
+		for _, rel := range []string{
+			"manifest.json",
+			"commands.log",
+			"environment.json",
+			"failure.json",
+			"summaries/browser-summary.json",
+			"traces/R00.trace.zip",
+			"coverage/R00.json",
+			"heaps/R00.heapsnapshot",
+			"dynamic/runtime-json-dynamic.json",
+		} {
+			t.Run(strings.ReplaceAll(rel, "/", "_"), func(t *testing.T) {
+				opts, plan, source, routes := valid(t)
+				writeTestFile(t, filepath.Join(opts.ArtifactRoot, filepath.FromSlash(rel)), "bad")
+				ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+				if err == nil || !strings.Contains(err.Error(), "browser-owned") {
+					t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want browser-owned rejection for %s", ok, err, rel)
+				}
+			})
 		}
 	})
 
@@ -2966,6 +3197,55 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 				err = revalidateCanonicalBrowserPreseedArtifacts(t.Context(), opts, opts.InventoryPath, routes, source)
 				if err == nil || !strings.Contains(err.Error(), "regular file") {
 					t.Fatalf("revalidateCanonicalBrowserPreseedArtifacts error = %v, want regular file rejection", err)
+				}
+			})
+		}
+	})
+
+	t.Run("final_revalidation_rejects_runtime_json_static_post_preflight_swap", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			mutate func(t *testing.T, path string)
+			want   string
+		}{
+			{
+				name: "tamper",
+				mutate: func(t *testing.T, path string) {
+					writeTestFile(t, path, "{}\n")
+				},
+				want: "missing value",
+			},
+			{
+				name: "symlink",
+				mutate: func(t *testing.T, path string) {
+					outside := filepath.Join(t.TempDir(), "runtime-json-static.jsonl")
+					body, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(outside, body, 0o644); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(outside, path); err != nil {
+						t.Fatal(err)
+					}
+				},
+				want: "regular file",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				opts, plan, source, routes := valid(t)
+				source = bindRuntimeJSONStaticPreseed(t, opts, source)
+				if ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes); err != nil || !ok {
+					t.Fatalf("initial validateCanonicalBrowserRootPreseed = %v/%v", ok, err)
+				}
+				tc.mutate(t, filepath.Join(opts.ArtifactRoot, "perf", "runtime-json-static.jsonl"))
+				err := revalidateCanonicalBrowserPreseedArtifacts(t.Context(), opts, opts.InventoryPath, routes, source)
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("revalidateCanonicalBrowserPreseedArtifacts error = %v, want %q", err, tc.want)
 				}
 			})
 		}

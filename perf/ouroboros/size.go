@@ -2000,6 +2000,9 @@ func validateRuntimeJSONStaticIdentity(identity *RuntimeJSONStaticIdentity) erro
 	if identity == nil || !identity.Validated {
 		return fmt.Errorf("runtime JSON static corpus was not validated")
 	}
+	if identity.Ref != "perf/runtime-json-static.jsonl" {
+		return fmt.Errorf("runtime JSON static ref = %q, want perf/runtime-json-static.jsonl", identity.Ref)
+	}
 	if identity.SchemaVersion != RuntimeJSONProbeSchemaVersion {
 		return fmt.Errorf("runtime JSON static schemaVersion = %q, want %q", identity.SchemaVersion, RuntimeJSONProbeSchemaVersion)
 	}

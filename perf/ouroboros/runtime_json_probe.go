@@ -2,6 +2,7 @@ package ouroboros
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -437,6 +438,118 @@ func WriteRuntimeJSONStaticCorpusJSONL(path string, corpus *RuntimeJSONStaticCor
 		}
 	}
 	return nil
+}
+
+func ReadRuntimeJSONStaticCorpusJSONLStrict(r io.Reader, expectedSource SourceIdentity) (*RuntimeJSONStaticCorpus, error) {
+	corpus := &RuntimeJSONStaticCorpus{
+		Source:                    expectedSource,
+		CurrentSourceIdentity:     expectedSource,
+		CurrentSourceIdentityHash: RuntimeJSONStaticCanonicalSourceIdentityHash(expectedSource),
+	}
+	reader := bufio.NewReader(r)
+	seenHeader := false
+	rowCount := 0
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			rowCount++
+			if len(bytes.TrimSpace(line)) == 0 {
+				return nil, fmt.Errorf("runtime JSON static JSONL row %d is empty", rowCount)
+			}
+			var row struct {
+				Kind  string          `json:"kind"`
+				Value json.RawMessage `json:"value"`
+			}
+			dec := json.NewDecoder(bytes.NewReader(line))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&row); err != nil {
+				return nil, fmt.Errorf("runtime JSON static JSONL row %d decode: %w", rowCount, err)
+			}
+			if err := rejectTrailingJSON(dec); err != nil {
+				return nil, fmt.Errorf("runtime JSON static JSONL row %d decode: %w", rowCount, err)
+			}
+			if len(row.Value) == 0 {
+				return nil, fmt.Errorf("runtime JSON static JSONL row %d missing value", rowCount)
+			}
+			switch row.Kind {
+			case "header":
+				if rowCount != 1 || seenHeader {
+					return nil, fmt.Errorf("runtime JSON static JSONL header must be first and unique")
+				}
+				seenHeader = true
+				var header struct {
+					SchemaVersion          string                     `json:"schemaVersion"`
+					Contract               string                     `json:"contract"`
+					GeneratedAt            string                     `json:"generatedAt"`
+					ScannerVersion         string                     `json:"scannerVersion"`
+					PhaseClassifierVersion string                     `json:"phaseClassifierVersion"`
+					SemanticHash           string                     `json:"semanticHash"`
+					CountsHash             string                     `json:"countsHash"`
+					GlobalNames            RuntimeJSONStaticGlobalSet `json:"globalNames"`
+					Query                  RuntimeJSONStaticQuery     `json:"query"`
+					Counts                 RuntimeJSONStaticCounts    `json:"counts"`
+				}
+				if err := decodeRuntimeJSONStaticRowValue(row.Value, &header); err != nil {
+					return nil, fmt.Errorf("runtime JSON static JSONL header decode: %w", err)
+				}
+				corpus.SchemaVersion = header.SchemaVersion
+				corpus.Contract = header.Contract
+				corpus.GeneratedAt = header.GeneratedAt
+				corpus.ScannerVersion = header.ScannerVersion
+				corpus.PhaseClassifierVersion = header.PhaseClassifierVersion
+				corpus.SemanticHash = header.SemanticHash
+				corpus.CountsHash = header.CountsHash
+				corpus.GlobalNames = header.GlobalNames
+				corpus.Query = header.Query
+				corpus.Counts = header.Counts
+			case "source-file":
+				if !seenHeader {
+					return nil, fmt.Errorf("runtime JSON static JSONL source-file before header")
+				}
+				var file RuntimeJSONStaticSourceScope
+				if err := decodeRuntimeJSONStaticRowValue(row.Value, &file); err != nil {
+					return nil, fmt.Errorf("runtime JSON static JSONL source-file decode: %w", err)
+				}
+				corpus.Files = append(corpus.Files, file)
+			case "site":
+				if !seenHeader {
+					return nil, fmt.Errorf("runtime JSON static JSONL site before header")
+				}
+				var site RuntimeJSONStaticSite
+				if err := decodeRuntimeJSONStaticRowValue(row.Value, &site); err != nil {
+					return nil, fmt.Errorf("runtime JSON static JSONL site decode: %w", err)
+				}
+				corpus.Sites = append(corpus.Sites, site)
+			default:
+				return nil, fmt.Errorf("runtime JSON static JSONL row %d has unknown kind %q", rowCount, row.Kind)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("runtime JSON static JSONL read: %w", err)
+		}
+	}
+	if rowCount == 0 {
+		return nil, fmt.Errorf("runtime JSON static JSONL is empty")
+	}
+	if !seenHeader {
+		return nil, fmt.Errorf("runtime JSON static JSONL missing header")
+	}
+	if err := ValidateRuntimeJSONStaticCorpus(corpus); err != nil {
+		return nil, err
+	}
+	return corpus, nil
+}
+
+func decodeRuntimeJSONStaticRowValue(value json.RawMessage, out any) error {
+	dec := json.NewDecoder(bytes.NewReader(value))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(out); err != nil {
+		return err
+	}
+	return rejectTrailingJSON(dec)
 }
 
 func RuntimeJSONProbeScript(gosxNames []string) (string, error) {
@@ -1490,6 +1603,12 @@ func normalizeO02Phase(phase string) string {
 func ValidateRuntimeJSONStaticCorpus(corpus *RuntimeJSONStaticCorpus) error {
 	if corpus == nil {
 		return fmt.Errorf("runtime JSON static corpus is nil")
+	}
+	if corpus.SchemaVersion != RuntimeJSONProbeSchemaVersion {
+		return fmt.Errorf("schema version = %q, want %q", corpus.SchemaVersion, RuntimeJSONProbeSchemaVersion)
+	}
+	if corpus.Contract != ContractO02 {
+		return fmt.Errorf("contract version = %q, want %q", corpus.Contract, ContractO02)
 	}
 	if corpus.ScannerVersion != runtimeJSONStaticScannerVersion {
 		return fmt.Errorf("scanner version = %q, want %q", corpus.ScannerVersion, runtimeJSONStaticScannerVersion)

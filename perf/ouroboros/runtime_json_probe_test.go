@@ -10,6 +10,61 @@ import (
 	"time"
 )
 
+func TestRuntimeJSONStaticJSONLStrictRoundTripRejectsTamper(t *testing.T) {
+	site := RuntimeJSONStaticSite{
+		Path:           "client/js/bootstrap-src/00-runtime.js",
+		Line:           1,
+		Column:         1,
+		SourceFamily:   "browser-js",
+		SourceKind:     "javascript",
+		Operation:      "gosx-read",
+		GlobalName:     "__gosx_hydrate",
+		Phase:          "route-load",
+		PhaseStatus:    "exact",
+		PossiblePhases: []string{"route-load"},
+		PhaseRule:      "R40",
+		PhaseReason:    "test",
+		TextHash:       "sha256:text",
+		ContextHash:    "sha256:context",
+	}
+	corpus := runtimeJSONCorpusForSitesForTest(t, []RuntimeJSONStaticSite{site})
+	corpus.Query.ID = "gosx.ouroboros.o02.runtime-json-static.ast.v2"
+	corpus.SemanticHash = RuntimeJSONStaticCorpusSemanticHash(corpus)
+	path := filepath.Join(t.TempDir(), "runtime-json-static.jsonl")
+	if err := WriteRuntimeJSONStaticCorpusJSONL(path, corpus); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := ReadRuntimeJSONStaticCorpusJSONLStrict(file, corpus.Source)
+	_ = file.Close()
+	if err != nil {
+		t.Fatalf("ReadRuntimeJSONStaticCorpusJSONLStrict round trip: %v", err)
+	}
+	if roundTrip.SemanticHash != corpus.SemanticHash || roundTrip.CountsHash != corpus.CountsHash {
+		t.Fatalf("round trip hashes = %s/%s, want %s/%s", roundTrip.SemanticHash, roundTrip.CountsHash, corpus.SemanticHash, corpus.CountsHash)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := strings.Replace(string(body), corpus.SemanticHash, "sha256:"+strings.Repeat("0", 64), 1)
+	if err := os.WriteFile(path, []byte(tampered), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file, err = os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = ReadRuntimeJSONStaticCorpusJSONLStrict(file, corpus.Source)
+	_ = file.Close()
+	if err == nil || !strings.Contains(err.Error(), "semanticHash") {
+		t.Fatalf("ReadRuntimeJSONStaticCorpusJSONLStrict tamper error = %v, want semanticHash rejection", err)
+	}
+}
+
 func TestRuntimeJSONStaticCorpusIsDeterministic(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "client/js/bootstrap-src/00-runtime.js", strings.Join([]string{
