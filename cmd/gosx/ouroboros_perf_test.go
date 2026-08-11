@@ -33,11 +33,15 @@ func TestSplitCSVTrimsEmptyValues(t *testing.T) {
 	}
 }
 
-func TestPerfOuroborosUsageMentionsCanonicalEvidenceFlags(t *testing.T) {
+func TestPerfOuroborosUsageMentionsCanonicalLiveTransportFlags(t *testing.T) {
 	var buf bytes.Buffer
 	perfOuroborosUsage(&buf)
 	out := buf.String()
-	for _, want := range []string{"--evidence-root", "--pixel-manifest", "--source-identity", "pixel-evidence.json"} {
+	canonical := "gosx perf ouroboros --serve --port 8080 --base-url http://127.0.0.1:8080 --samples baseline"
+	if !strings.Contains(out, canonical) {
+		t.Fatalf("usage missing canonical live baseline command %q:\n%s", canonical, out)
+	}
+	for _, want := range []string{"--evidence-root", "--pixel-manifest", "--source-identity", "pixel-evidence.json", "--chrome-ws-url"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("usage missing %q:\n%s", want, out)
 		}

@@ -95,8 +95,8 @@ func perfOuroborosUsage(w interface{ Write([]byte) (int, error) }) {
 	fmt.Fprintf(w, `gosx perf ouroboros - Run the O0.2 browser baseline sampler
 
 Usage:
+  gosx perf ouroboros --serve --port 8080 --base-url http://127.0.0.1:8080 --samples baseline --out build/ouroboros/o0.2/current --inventory build/ouroboros/o0.2/source/source-inventory.json --source-identity build/ouroboros/o0.2/source-identity.json --evidence-root build/ouroboros/o0.2/evidence --pixel-manifest r08/webgpu/pixel-evidence.json,r08/webgl/pixel-evidence.json,r10/webgpu/pixel-evidence.json,r10/webgl/pixel-evidence.json --chrome-ws-url "$CHROME_WS_URL"
   gosx perf ouroboros --serve --routes R00,R01 --samples smoke --out build/ouroboros/o0.2/browser-smoke
-  gosx perf ouroboros --base-url http://127.0.0.1:8080 --samples baseline --out build/ouroboros/o0.2/current --inventory build/ouroboros/o0.2/source/source-inventory.json --source-identity build/ouroboros/o0.2/source-identity.json --evidence-root build/ouroboros/o0.2/evidence --pixel-manifest r08/webgpu/pixel-evidence.json,r08/webgl/pixel-evidence.json,r10/webgpu/pixel-evidence.json,r10/webgl/pixel-evidence.json --chrome-ws-url "$CHROME_WS_URL"
 
 Notes:
   smoke runs are reduced and can never update the canonical O0.2 baseline.
