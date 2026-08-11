@@ -949,19 +949,27 @@ func MetricsForFile(file string) (AssetMetrics, error) {
 }
 
 func GzipLength(data []byte) int64 {
+	return int64(len(GzipBytes(data)))
+}
+
+func GzipBytes(data []byte) []byte {
 	var buf bytes.Buffer
 	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	_, _ = zw.Write(data)
 	_ = zw.Close()
-	return int64(buf.Len())
+	return buf.Bytes()
 }
 
 func BrotliLength(data []byte) int64 {
+	return int64(len(BrotliBytes(data)))
+}
+
+func BrotliBytes(data []byte) []byte {
 	var buf bytes.Buffer
 	zw := brotli.NewWriterLevel(&buf, brotli.BestCompression)
 	_, _ = zw.Write(data)
 	_ = zw.Close()
-	return int64(buf.Len())
+	return buf.Bytes()
 }
 
 type exportEvidence struct {

@@ -1745,6 +1745,14 @@ func canonicalBrowserAllowedPreseedPaths(root string, plan CanonicalInventoryMat
 			}
 			exact[rel] = true
 			dirs[filepath.ToSlash(filepath.Dir(rel))] = true
+			sidecars, err := canonicalBrowserRuntimeVariantSidecarPreseedRels(root, variant.SourcePath)
+			if err != nil {
+				return nil, nil, err
+			}
+			for _, sidecarRel := range sidecars {
+				exact[sidecarRel] = true
+				dirs[filepath.ToSlash(filepath.Dir(sidecarRel))] = true
+			}
 		}
 	}
 	if sizeEvidence, err := readCanonicalBrowserSizeEvidenceStrict(root, filepath.Join(root, "size", "route-assets.json")); err == nil {
@@ -1781,6 +1789,73 @@ func canonicalBrowserRuntimePreseedRequiresPublishedShim(ev *RuntimeBuildEvidenc
 		}
 	}
 	return false
+}
+
+func canonicalBrowserRuntimeVariantSidecarPreseedRels(root, sourcePath string) ([]string, error) {
+	paths, err := canonicalBrowserRuntimeVariantSidecarPaths(sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, path := range paths {
+		rel, err := canonicalBrowserPreseedFileRel(root, path)
+		if err != nil {
+			return nil, fmt.Errorf("measured runtime variant sidecar %s: %w", filepath.Base(path), err)
+		}
+		out = append(out, rel)
+	}
+	return out, nil
+}
+
+func canonicalBrowserRuntimeVariantSidecarPaths(sourcePath string) ([]string, error) {
+	info, err := os.Lstat(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("measured runtime variant sourcePath sidecars: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("measured runtime variant sourcePath sidecars must read a regular file")
+	}
+	raw, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("measured runtime variant sourcePath sidecars: %w", err)
+	}
+	var out []string
+	for _, sidecar := range []struct {
+		ext  string
+		want []byte
+	}{
+		{ext: ".gz", want: GzipBytes(raw)},
+		{ext: ".br", want: BrotliBytes(raw)},
+	} {
+		path := sourcePath + sidecar.ext
+		if len(sidecar.want) >= len(raw) {
+			if _, err := os.Lstat(path); err == nil {
+				return nil, fmt.Errorf("measured runtime variant sidecar %s must be absent when compression is not smaller", filepath.Base(path))
+			} else if !os.IsNotExist(err) {
+				return nil, fmt.Errorf("measured runtime variant sidecar %s: %w", filepath.Base(path), err)
+			}
+			continue
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, fmt.Errorf("measured runtime variant sidecar %s is required when compression is smaller", filepath.Base(path))
+			}
+			return nil, fmt.Errorf("measured runtime variant sidecar %s: %w", filepath.Base(path), err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("measured runtime variant sidecar %s must be a regular file", filepath.Base(path))
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("measured runtime variant sidecar %s: %w", filepath.Base(path), err)
+		}
+		if !bytes.Equal(got, sidecar.want) {
+			return nil, fmt.Errorf("measured runtime variant sidecar %s compression mismatch", filepath.Base(path))
+		}
+		out = append(out, path)
+	}
+	return out, nil
 }
 
 func canonicalBrowserPreseedRefRel(plan CanonicalInventoryMaterialization, ref string) (string, error) {
@@ -2555,6 +2630,9 @@ func validateCanonicalBrowserMeasuredRuntimeRows(repoRoot string, ev *RuntimeBui
 			metrics.GzipBytes != variant.GzipBytes ||
 			metrics.BrotliBytes != variant.BrotliBytes {
 			return fmt.Errorf("measured runtime variant %s metrics mismatch", variant.ID)
+		}
+		if _, err := canonicalBrowserRuntimeVariantSidecarPaths(path); err != nil {
+			return fmt.Errorf("measured runtime variant %s sidecars: %w", variant.ID, err)
 		}
 		if err := validateCanonicalBrowserShimEvidence(ev, variant); err != nil {
 			return err

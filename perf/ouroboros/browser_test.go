@@ -2856,6 +2856,37 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 		source.RuntimeJSONStatic = static
 		return source
 	}
+	writeRuntimeVariantSidecars := func(t *testing.T, opts BrowserBaselineOptions) RuntimeBuildEvidence {
+		t.Helper()
+		ev, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, variant := range ev.Variants {
+			if variant.Generation != "current" || variant.Status != "measured" {
+				continue
+			}
+			raw, err := os.ReadFile(variant.SourcePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gzipBody := GzipBytes(raw); len(gzipBody) < len(raw) {
+				if err := os.WriteFile(variant.SourcePath+".gz", gzipBody, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(variant.SourcePath + ".gz"); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if brotliBody := BrotliBytes(raw); len(brotliBody) < len(raw) {
+				if err := os.WriteFile(variant.SourcePath+".br", brotliBody, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(variant.SourcePath + ".br"); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+		return *ev
+	}
 
 	t.Run("valid_exact_preseed", func(t *testing.T) {
 		opts, plan, source, routes := valid(t)
@@ -3072,6 +3103,159 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("valid_runtime_output_compressed_sidecars", func(t *testing.T) {
+		opts, plan, source, routes := validWithRuntimeOutputPreseed(t)
+		ev := writeRuntimeVariantSidecars(t, opts)
+		allowedExact, _, err := canonicalBrowserAllowedPreseedPaths(opts.ArtifactRoot, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, variant := range ev.Variants {
+			if variant.Generation != "current" || variant.Status != "measured" {
+				continue
+			}
+			baseRel, err := canonicalBrowserPreseedFileRel(opts.ArtifactRoot, variant.SourcePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ext := range []string{".gz", ".br"} {
+				raw, err := os.ReadFile(variant.SourcePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantAllowed := (ext == ".gz" && len(GzipBytes(raw)) < len(raw)) || (ext == ".br" && len(BrotliBytes(raw)) < len(raw))
+				if wantAllowed && !allowedExact[baseRel+ext] {
+					t.Fatalf("runtime sidecar %s missing from exact allowlist", baseRel+ext)
+				}
+				if !wantAllowed && allowedExact[baseRel+ext] {
+					t.Fatalf("runtime sidecar %s allowed even though compression is not smaller", baseRel+ext)
+				}
+			}
+		}
+		if allowedExact["wasm/runtime-output/unknown.wasm.br"] {
+			t.Fatal("canonical preseed allowlist broadly allowed runtime sidecars")
+		}
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err != nil || !ok {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want runtime sidecars accepted", ok, err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence)
+		want   string
+	}{
+		{
+			name: "runtime_output_sidecar_unknown_file",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence) {
+				writeTestFile(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "unknown.wasm.br"), "bad")
+			},
+			want: "unknown file",
+		},
+		{
+			name: "runtime_output_sidecar_unknown_directory",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence) {
+				writeTestFile(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "nested", "gosx-runtime.wasm.br"), "bad")
+			},
+			want: "unknown directory",
+		},
+		{
+			name: "runtime_output_sidecar_missing_required_brotli",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence) {
+				if err := os.Remove(ev.Variants[0].SourcePath + ".br"); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "is required",
+		},
+		{
+			name: "runtime_output_sidecar_tampered_brotli",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence) {
+				writeTestFile(t, ev.Variants[0].SourcePath+".br", "bad")
+			},
+			want: "compression mismatch",
+		},
+		{
+			name: "runtime_output_sidecar_present_when_not_smaller",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence) {
+				variant := ev.Variants[0]
+				raw := []byte{1}
+				if err := os.WriteFile(variant.SourcePath, raw, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Remove(variant.SourcePath + ".gz"); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				if err := os.Remove(variant.SourcePath + ".br"); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				writeTestFile(t, variant.SourcePath+".br", "bad")
+				runtimeEv, err := ReadRuntimeBuildEvidenceStrict(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				metrics, err := MetricsForFile(variant.SourcePath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range runtimeEv.Variants {
+					if runtimeEv.Variants[i].ID != variant.ID {
+						continue
+					}
+					sizeBytes := metrics.Bytes
+					runtimeEv.Variants[i].SizeBytes = &sizeBytes
+					runtimeEv.Variants[i].Bytes = metrics.Bytes
+					runtimeEv.Variants[i].GzipBytes = metrics.GzipBytes
+					runtimeEv.Variants[i].BrotliBytes = metrics.BrotliBytes
+					runtimeEv.Variants[i].SHA256 = metrics.SHA256
+				}
+				writeFixtureJSON(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-artifacts.json"), runtimeEv)
+			},
+			want: "must be absent",
+		},
+		{
+			name: "runtime_output_raw_wasm_symlink_before_sidecar_read",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence) {
+				target := ev.Variants[0].SourcePath
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				outside := filepath.Join(t.TempDir(), filepath.Base(target))
+				writeTestFile(t, outside, "raw")
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "regular file",
+		},
+		{
+			name: "runtime_output_sidecar_symlink_gzip",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence) {
+				target := ev.Variants[0].SourcePath + ".gz"
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				outside := filepath.Join(t.TempDir(), filepath.Base(target))
+				writeTestFile(t, outside, "bad")
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "regular file",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, plan, source, routes := validWithRuntimeOutputPreseed(t)
+			ev := writeRuntimeVariantSidecars(t, opts)
+			tc.mutate(t, opts, ev)
+			ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || ok {
+				t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want %q", ok, err, tc.want)
+			}
+		})
+	}
+
 	t.Run("copied_runtime_output_shim_rejected_when_evidence_output_dir_is_outside_preseed", func(t *testing.T) {
 		opts, plan, source, routes := valid(t)
 		writeTestFile(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "wasm_exec.js"), "shim")
@@ -3243,6 +3427,58 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 					t.Fatalf("initial validateCanonicalBrowserRootPreseed = %v/%v", ok, err)
 				}
 				tc.mutate(t, filepath.Join(opts.ArtifactRoot, "perf", "runtime-json-static.jsonl"))
+				err := revalidateCanonicalBrowserPreseedArtifacts(t.Context(), opts, opts.InventoryPath, routes, source)
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("revalidateCanonicalBrowserPreseedArtifacts error = %v, want %q", err, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("final_revalidation_rejects_runtime_sidecar_post_preflight_tamper", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			mutate func(t *testing.T, path string)
+			want   string
+		}{
+			{
+				name: "missing",
+				mutate: func(t *testing.T, path string) {
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+				},
+				want: "is required",
+			},
+			{
+				name: "tamper",
+				mutate: func(t *testing.T, path string) {
+					writeTestFile(t, path, "bad")
+				},
+				want: "compression mismatch",
+			},
+			{
+				name: "symlink",
+				mutate: func(t *testing.T, path string) {
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+					outside := filepath.Join(t.TempDir(), filepath.Base(path))
+					writeTestFile(t, outside, "bad")
+					if err := os.Symlink(outside, path); err != nil {
+						t.Fatal(err)
+					}
+				},
+				want: "regular file",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				opts, plan, source, routes := validWithRuntimeOutputPreseed(t)
+				ev := writeRuntimeVariantSidecars(t, opts)
+				if ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes); err != nil || !ok {
+					t.Fatalf("initial validateCanonicalBrowserRootPreseed = %v/%v", ok, err)
+				}
+				tc.mutate(t, ev.Variants[0].SourcePath+".br")
 				err := revalidateCanonicalBrowserPreseedArtifacts(t.Context(), opts, opts.InventoryPath, routes, source)
 				if err == nil || !strings.Contains(err.Error(), tc.want) {
 					t.Fatalf("revalidateCanonicalBrowserPreseedArtifacts error = %v, want %q", err, tc.want)
@@ -4059,6 +4295,23 @@ func writeCanonicalBrowserRuntimePreseedForTestWithOutputDir(t *testing.T, repoR
 	islandsBody := bytes.Repeat([]byte{2}, 1024)
 	writeTestFile(t, filepath.Join(outputDir, "gosx-runtime.wasm"), string(runtimeBody))
 	writeTestFile(t, filepath.Join(outputDir, "gosx-runtime-islands.wasm"), string(islandsBody))
+	for _, name := range []string{"gosx-runtime.wasm", "gosx-runtime-islands.wasm"} {
+		path := filepath.Join(outputDir, name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(GzipBytes(raw)) < len(raw) {
+			if err := os.WriteFile(path+".gz", GzipBytes(raw), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if len(BrotliBytes(raw)) < len(raw) {
+			if err := os.WriteFile(path+".br", BrotliBytes(raw), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	shimPath := filepath.Join(repoRoot, "build", "tinygo", "targets", "wasm_exec.js")
 	writeTestFile(t, shimPath, "shim")
 	writeTestFile(t, filepath.Join(outputDir, "wasm_exec.js"), "shim")
