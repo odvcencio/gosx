@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -1425,6 +1426,30 @@ func TestBrowserDynamicLaneMappingKeepsProbeOverheadDistinct(t *testing.T) {
 		if got != tt.want || ok != tt.ok {
 			t.Fatalf("runtimeJSONDynamicLaneForBrowserSample(%q) = %q, %v; want %q, %v", tt.sample.SampleLane, got, ok, tt.want, tt.ok)
 		}
+	}
+}
+
+func TestOuroborosDriverOptionsPropagateBrowserTimeout(t *testing.T) {
+	const remote = "ws://127.0.0.1:9222/devtools/browser/test"
+	opts := BrowserBaselineOptions{
+		Headless:           false,
+		Timeout:            120 * time.Second,
+		ChromeWebSocketURL: remote,
+	}
+	d := &perf.Driver{}
+	for _, option := range ouroborosDriverOptions(opts) {
+		option(d)
+	}
+
+	driverValue := reflect.ValueOf(d).Elem()
+	if got := time.Duration(driverValue.FieldByName("timeout").Int()); got != opts.Timeout {
+		t.Fatalf("driver timeout = %s, want %s", got, opts.Timeout)
+	}
+	if got := driverValue.FieldByName("headless").Bool(); got != opts.Headless {
+		t.Fatalf("driver headless = %v, want %v", got, opts.Headless)
+	}
+	if got := driverValue.FieldByName("remoteWSURL").String(); got != remote {
+		t.Fatalf("driver remote websocket URL = %q, want %q", got, remote)
 	}
 }
 

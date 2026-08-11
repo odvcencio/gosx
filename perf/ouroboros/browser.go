@@ -1149,7 +1149,7 @@ func runSingleSample(ctx context.Context, opts BrowserBaselineOptions, source So
 }
 
 func newOuroborosDriver(ctx context.Context, opts BrowserBaselineOptions, lane SampleLane) (*perf.Driver, error) {
-	d, err := perf.New(perf.WithHeadless(opts.Headless), perf.WithTimeout(0), perf.WithRemoteWebSocketURL(opts.ChromeWebSocketURL))
+	d, err := perf.New(ouroborosDriverOptions(opts)...)
 	if err != nil {
 		return nil, err
 	}
@@ -1183,6 +1183,14 @@ func newOuroborosDriver(ctx context.Context, opts BrowserBaselineOptions, lane S
 		}
 	}
 	return d, nil
+}
+
+func ouroborosDriverOptions(opts BrowserBaselineOptions) []perf.Option {
+	return []perf.Option{
+		perf.WithHeadless(opts.Headless),
+		perf.WithTimeout(opts.Timeout),
+		perf.WithRemoteWebSocketURL(opts.ChromeWebSocketURL),
+	}
 }
 
 func installWASMMemoryObserver(lane SampleLane) bool {

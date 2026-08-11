@@ -35,7 +35,7 @@ func CaptureCoverage(d *Driver, during func() error) ([]CoverageEntry, error) {
 		return nil, nil
 	}
 
-	op, cancel := d.WithOperationContext(context.Background(), d.operationTimeout())
+	op, cancel := d.coverageOperationContext(context.Background())
 	defer cancel()
 
 	// Build an executor-scoped context. CDP commands with multi-return Do
@@ -153,6 +153,10 @@ func CaptureCoverage(d *Driver, during func() error) ([]CoverageEntry, error) {
 		return out[i].UnusedBytes > out[j].UnusedBytes
 	})
 	return out, cbErr
+}
+
+func (d *Driver) coverageOperationContext(parent context.Context) (*Driver, context.CancelFunc) {
+	return d.WithOperationContext(parent, d.operationTimeout())
 }
 
 // FormatCoverageSummary renders a coverage slice as a table fragment.

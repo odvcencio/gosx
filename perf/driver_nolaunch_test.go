@@ -239,6 +239,45 @@ func TestDriverOperationContextDoesNotExpireWarmBase(t *testing.T) {
 	cancel4()
 }
 
+func TestCoverageOperationContextUsesDriverTimeout(t *testing.T) {
+	baseCtx, baseCancel := context.WithCancel(context.Background())
+	defer baseCancel()
+	d := &Driver{ctx: baseCtx, timeout: 120 * time.Second}
+
+	op, cancel := d.coverageOperationContext(context.Background())
+	defer cancel()
+
+	deadline, ok := op.Context().Deadline()
+	if !ok {
+		t.Fatal("coverage operation context has no deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining < 119*time.Second || remaining > 121*time.Second {
+		t.Fatalf("coverage timeout remaining = %s, want about 120s", remaining)
+	}
+	if remaining < 2*defaultOperationTimeout {
+		t.Fatalf("coverage timeout fell back to default %s: remaining %s", defaultOperationTimeout, remaining)
+	}
+}
+
+func TestCoverageOperationContextZeroTimeoutUsesDefault(t *testing.T) {
+	baseCtx, baseCancel := context.WithCancel(context.Background())
+	defer baseCancel()
+	d := &Driver{ctx: baseCtx}
+
+	op, cancel := d.coverageOperationContext(context.Background())
+	defer cancel()
+
+	deadline, ok := op.Context().Deadline()
+	if !ok {
+		t.Fatal("coverage operation context has no deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining < defaultOperationTimeout-time.Second || remaining > defaultOperationTimeout+time.Second {
+		t.Fatalf("coverage timeout remaining = %s, want about %s", remaining, defaultOperationTimeout)
+	}
+}
+
 func TestDriverLongLivedBaseSurvivesCanceledOperation(t *testing.T) {
 	t.Setenv("CHROME_WS_URL", "")
 	d, err := New(WithHeadless(true), WithTimeout(0))
