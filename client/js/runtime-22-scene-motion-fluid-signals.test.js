@@ -1898,7 +1898,7 @@ test("P1 hub outbound binding: signal publishes to socket and in-binding still w
 });
 
 test("Selena context-class fields resolve to live per-frame scene state on WebGL", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
 
   // The per-frame updater exists and derives every reserved name from real
   // scene state: camera, the
@@ -1933,7 +1933,7 @@ test("Selena context-class fields resolve to live per-frame scene state on WebGL
 // Regression guard: cylinder, cone and pyramid drew as wireframes.
 // scenePrimitiveTriangleMesh (12-scene-geometry.js) had no case for them, so
 // 10-runtime-scene-core.js never set vertices, appendSceneObjectToBundle fell
-// through to sceneObjectSegments, 15-scene-draw-plan.js kept the object on the
+// through to sceneObjectSegments, 15-scene-draw-plan.ts kept the object on the
 // line pass, and the WebGPU backend drew it with topology "line-list". All
 // three are documented primitive kinds. The plane case was broken too: it
 // sliced the first four boxVertices, which all share z = -depth/2, so a solid

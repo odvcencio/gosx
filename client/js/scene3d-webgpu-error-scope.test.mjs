@@ -41,11 +41,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSrc(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  const sourcePath = name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name);
+  return fs.readFileSync(sourcePath, "utf8");
 }
 
-const computeSource = readSrc("16b-scene-compute.js");
-const webgpuSource = readSrc("16a-scene-webgpu.js");
+const computeSource = readSrc("../runtime/scene3d/compute.ts");
+const webgpuSource = readSrc("../runtime/scene3d/webgpu.ts");
 const sharedSource = readSrc("15a-scene-postfx-shared.js");
 
 const GOOD_KERNEL = "@compute @workgroup_size(64) fn simulate() {}";

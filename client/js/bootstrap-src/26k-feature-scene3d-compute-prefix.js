@@ -28,7 +28,7 @@
 
   var sceneApi = window.__gosx_scene3d_api;
 
-  // --- Scalars and colour (10-runtime-primitives.js, 11-scene-math.js).
+  // --- Scalars and colour (10-runtime-primitives.js, 11-scene-math.ts).
   var sceneNumber = sceneApi.sceneNumber || function(value, fallback) {
     var num = Number(value);
     return Number.isFinite(num) ? num : fallback;

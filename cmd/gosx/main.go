@@ -5,7 +5,8 @@
 //	gosx build [--offline|--msix|--sign|--scene-budget file] <dir>
 //	                              Build GoSX application
 //	gosx assets plan [path...]    Plan Scene3D asset optimization work
-//	gosx build-runtime [outdir]   Build TinyGo production WASM runtimes
+//	gosx build-runtime [--ouroboros-out dir] [--inventory file] [--root repo] [outdir]
+//	                              Build TinyGo production WASM runtimes
 //	gosx dev [--scene-inspector] <dir>
 //	                              Start development server with hot reload
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
@@ -18,6 +19,8 @@
 //	gosx lsp                     Start the GoSX language server over stdio
 //	gosx perf [--budget file] <url>
 //	                              Profile browser runtime performance
+//	gosx ouroboros inventory      Collect O0.2 runtime baseline inventory
+//	gosx ouroboros compare        Compare O0.2 browser baseline artifacts
 //	gosx perf budget <report> <budget>
 //	                              Check saved perf output against budgets
 //	gosx release check           Check release metadata consistency
@@ -82,6 +85,8 @@ func main() {
 		cmdLSP()
 	case "perf":
 		cmdPerf()
+	case "ouroboros":
+		cmdOuroboros()
 	case "size", "size-report":
 		cmdSizeReport()
 	case "visual":
@@ -128,7 +133,7 @@ Usage:
 		fmt.Fprintf(w, `gosx build-runtime - Build TinyGo production WASM runtimes
 
 Usage:
-  gosx build-runtime [outdir]
+  gosx build-runtime [--ouroboros-out dir] [--inventory file] [--root repo] [outdir]
 
 `)
 	case "dev":
@@ -195,6 +200,8 @@ Usage:
   gosx perf budget <report.json> <budget.json>
 
 `)
+	case "ouroboros":
+		ouroborosUsage(w)
 	case "size", "size-report":
 		sizeUsage(w)
 	case "visual":
@@ -233,7 +240,7 @@ Commands:
   build [--offline|--msix|--sign] [--appinstaller <uri>] <dir>
                        Build GoSX application
   assets plan [path...] Plan build-time optimization for Scene3D assets
-  build-runtime [outdir]
+  build-runtime [--ouroboros-out dir] [--inventory file] [--root repo] [outdir]
                        Build TinyGo production WASM runtimes
   dev [--scene-inspector] <dir>
                        Start development server with hot reload
@@ -247,6 +254,8 @@ Commands:
   lsp                  Start the GoSX language server
   perf [--budget file] <url>
                        Profile browser runtime performance
+  ouroboros inventory  Collect O0.2 runtime baseline inventory
+  ouroboros compare    Compare O0.2 browser baseline artifacts
   perf budget <report> <budget>
                        Check saved perf output against budgets
   size [--json] <dist|build.json>

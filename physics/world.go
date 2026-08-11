@@ -54,10 +54,13 @@ type World struct {
 	nextBodyIndex     int
 	nextColliderIndex int
 
-	continuousCollision bool
-	warmStart           bool
-	contactCache        map[contactCacheKey]cachedManifold
-	constraints         []Constraint
+	continuousCollision     bool
+	warmStart               bool
+	contactCache            map[contactCacheKey]int
+	contactCacheNext        map[contactCacheKey]int
+	contactCacheStorage     []cachedManifold
+	contactCacheNextStorage []cachedManifold
+	constraints             []Constraint
 
 	// solveState mirrors contacts one to one and holds the per-step solver
 	// scratch. The backing array is reused, so a step allocates nothing here.
@@ -125,7 +128,8 @@ func NewWorld(config WorldConfig) *World {
 		sleepAngularSpeed:   config.SleepAngularSpeed,
 	}
 	if w.warmStart {
-		w.contactCache = make(map[contactCacheKey]cachedManifold)
+		w.contactCache = make(map[contactCacheKey]int)
+		w.contactCacheNext = make(map[contactCacheKey]int)
 	}
 	return w
 }
@@ -451,10 +455,11 @@ func (w *World) warmStartContacts() {
 			continue
 		}
 		key := manifoldCacheKey(m)
-		cached, ok := w.contactCache[key]
-		if !ok {
+		cachedIndex, ok := w.contactCache[key]
+		if !ok || cachedIndex < 0 || cachedIndex >= len(w.contactCacheStorage) {
 			continue
 		}
+		cached := &w.contactCacheStorage[cachedIndex]
 		for pi := 0; pi < state.count; pi++ {
 			p := &m.Points[pi]
 			slot := &state.points[pi]
@@ -489,13 +494,20 @@ func (w *World) warmStartContacts() {
 
 // cacheContactImpulses stores the post-solve normal impulses keyed by
 // collider pair for warm-starting the next frame. Manifolds no longer in
-// contact are pruned naturally because the cache is rebuilt from this
-// frame's manifolds.
+// contact are pruned naturally because the destination cache is cleared
+// before it is rebuilt from this frame's manifolds. The two maps swap roles
+// with compact manifold storage so steady-state steps reuse both their
+// buckets and their values instead of allocating.
 func (w *World) cacheContactImpulses() {
-	if w.contactCache == nil {
-		w.contactCache = make(map[contactCacheKey]cachedManifold)
+	next := w.contactCacheNext
+	if next == nil {
+		next = make(map[contactCacheKey]int, len(w.contacts))
 	}
-	next := make(map[contactCacheKey]cachedManifold, len(w.contacts))
+	nextStorage := w.contactCacheNextStorage[:0]
+	if cap(nextStorage) < len(w.contacts) {
+		nextStorage = make([]cachedManifold, 0, len(w.contacts))
+	}
+	clear(next)
 	for mi := range w.contacts {
 		m := &w.contacts[mi]
 		if m.IsTrigger() || m.PointCount == 0 {
@@ -512,9 +524,11 @@ func (w *World) cacheContactImpulses() {
 			}
 			cm.Count++
 		}
-		next[key] = cm
+		next[key] = len(nextStorage)
+		nextStorage = append(nextStorage, cm)
 	}
-	w.contactCache = next
+	w.contactCache, w.contactCacheNext = next, w.contactCache
+	w.contactCacheStorage, w.contactCacheNextStorage = nextStorage, w.contactCacheStorage
 }
 
 func manifoldCacheKey(m *ContactManifold) contactCacheKey {

@@ -40,11 +40,16 @@ test("bootstrap discovers canvas2d surface-kind placeholders without touching th
   );
 
   // The surface-kind discovery query must exclude the bytecode path so the two
-  // never double-mount the same element.
+  // never double-mount the same element. Manifest kind filtering happens in JS
+  // after this broad query, so authored kinds are never injected into selectors.
   assert.match(
     source,
     /querySelectorAll\("\[data-gosx-surface-kind\]:not\(\[data-gosx-engine-bytecode\]\)"\)/,
   );
+  assert.match(source, /function manifestSurfaceKinds\(manifest\)/);
+  assert.match(source, /declaredKinds\.has\(kind\)/);
+  assert.match(source, /el\.__gosxSurfaceMounting/);
+  assert.match(source, /data-gosx-surface-id/);
 
   // Dispatch goes through the unified 6-arg __gosx_hydrate(surfaceKind, id,
   // componentName, propsJSON, programData, format) with a valid-empty program.
@@ -73,7 +78,7 @@ test("bootstrap engines feature runs canvas2d surface-kind mount on runtime read
   // mountAllEngines' "engine-remounted" telemetry never fires on a first load.
   assert.match(suffix, /mountAllEngines\(manifest, reuseEngineIDs, isNavigationBootstrap\)/);
   assert.match(suffix, /mountAllEngineSurfaces\(\)/);
-  assert.match(suffix, /mountAllSurfaceKinds\(\)/);
+  assert.match(suffix, /mountAllSurfaceKinds\(manifest\)/);
 });
 
 test("bootstrap starts a canvas2d paint loop (tick + render + paint) only for the canvas2d surface kind", () => {
@@ -328,7 +333,7 @@ test("bootstrap Scene3D ortho-2D helpers apply the native defaults (zoom<=0→1,
 
 test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D camera normalizer", () => {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"),
+    path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"),
     "utf8",
   );
   const start = source.indexOf("function uploadFrameUniforms(");

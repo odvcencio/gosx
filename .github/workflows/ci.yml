@@ -266,6 +266,12 @@ jobs:
           GOSX_CHROME_NO_SANDBOX: "1"
         run: make test-perf-browser
 
+      - name: Ouroboros smoke self-compare
+        env:
+          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_CHROME_NO_SANDBOX: "1"
+        run: make test-ouroboros-smoke
+
       - name: Perf budget gate
         env:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}

@@ -1129,6 +1129,63 @@ func TestLoadDefaultBuildManifestOverrideMissingManifestReturnsNil(t *testing.T)
 	}
 }
 
+func TestLoadDefaultBuildManifestSourceRootSkipsStaleDistManifest(t *testing.T) {
+	dir := t.TempDir()
+	writeSourceRuntimeFiles(t, dir, "")
+	writeDistManifest(t, dir)
+
+	SetManifestRoot(dir)
+	t.Cleanup(ResetManifestRoot)
+
+	if manifest := loadDefaultBuildManifest(); manifest != nil {
+		t.Fatalf("expected source root to skip stale dist manifest, got %+v", manifest.Runtime.BootstrapFeatureScene3D)
+	}
+}
+
+func TestLoadDefaultBuildManifestIncompleteSourceRootKeepsDistManifestEligible(t *testing.T) {
+	dir := t.TempDir()
+	writeSourceRuntimeFiles(t, dir, "bootstrap-feature-scene3d-webgl.js")
+	writeDistManifest(t, dir)
+
+	SetManifestRoot(dir)
+	t.Cleanup(ResetManifestRoot)
+
+	manifest := loadDefaultBuildManifest()
+	if manifest == nil {
+		t.Fatalf("expected incomplete source root to fall back to dist manifest")
+	}
+	if got := manifest.Runtime.BootstrapFeatureScene3D.Hash; got != "stale" {
+		t.Fatalf("manifest.Runtime.BootstrapFeatureScene3D.Hash = %q, want stale", got)
+	}
+}
+
+func writeSourceRuntimeFiles(t *testing.T, root, omit string) {
+	t.Helper()
+	for _, name := range manifestRootSourceRuntimeFiles() {
+		if name == omit {
+			continue
+		}
+		target := filepath.Join(root, "client", "js", filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(target), err)
+		}
+		if err := os.WriteFile(target, []byte("source"), 0644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+}
+
+func writeDistManifest(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatalf("mkdir dist: %v", err)
+	}
+	manifestData := []byte(`{"runtime":{"bootstrapFeatureScene3d":{"file":"bootstrap-feature-scene3d.stale.js","hash":"stale","size":100}},"islands":[],"css":[]}`)
+	if err := os.WriteFile(filepath.Join(root, "dist", "build.json"), manifestData, 0644); err != nil {
+		t.Fatalf("write dist build.json: %v", err)
+	}
+}
+
 // TestScene3DScriptCarriesLazyChunkURLs pins that the feature-scene3d script tag
 // advertises the hashed URL of every chunk the browser fetches on demand.
 //

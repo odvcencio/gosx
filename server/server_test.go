@@ -1073,6 +1073,33 @@ func TestAppEmitsNavigationOnlyDocumentContract(t *testing.T) {
 	}
 }
 
+func TestAppEmitsSelfDescribingSurfaceDocumentContractCount(t *testing.T) {
+	app := New()
+	app.Page("GET /board", func(ctx *Context) gosx.Node {
+		return ctx.Runtime().Surface(gosx.CanvasBoard(gosx.CanvasBoardProps{ID: "board"}))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/board", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, snippet := range []string{
+		`id="gosx-document"`,
+		`"runtime":true`,
+		`"manifest":true`,
+		`"selfDescribingSurfaces":1`,
+	} {
+		if !strings.Contains(body, snippet) {
+			t.Fatalf("expected %q in %q", snippet, body)
+		}
+	}
+	if strings.Contains(body, `"engines":1`) {
+		t.Fatalf("self-describing surface must not count as generic engine: %q", body)
+	}
+}
+
 func TestAppSeedsInitialNavigationDocumentState(t *testing.T) {
 	app := New()
 	app.EnableNavigation()

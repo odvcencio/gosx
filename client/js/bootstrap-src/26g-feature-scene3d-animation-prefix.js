@@ -13,7 +13,7 @@
 // that calls window.__gosx_scene3d_animation_api.createMixer().
 //
 // All dependencies on the main scene3d bundle (matrix math helpers in
-// 11-scene-math.js) are resolved via globals that the main bundle
+// 11-scene-math.ts) are resolved via globals that the main bundle
 // publishes before this chunk runs.
 
 (function() {

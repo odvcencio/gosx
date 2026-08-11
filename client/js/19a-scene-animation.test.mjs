@@ -6,7 +6,7 @@
 // resolution and the interpolation at each width.
 //
 // The fragment declares plain top-level functions, so running it in a VM
-// context publishes them as context globals. 11-scene-math.js supplies the
+// context publishes them as context globals. 11-scene-math.ts supplies the
 // shared scratch buffers and the matrix helpers the fragment expects.
 
 import test from "node:test";
@@ -20,7 +20,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  const sourcePath = name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name);
+  return fs.readFileSync(sourcePath, "utf8");
 }
 
 function createMixerContext() {
@@ -39,8 +40,8 @@ function createMixerContext() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox);
-  vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
-  vm.runInContext(readSource("19a-scene-animation.js"), context, { filename: "19a-scene-animation.js" });
+  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  vm.runInContext(readSource("../runtime/scene3d/animation.ts"), context, { filename: "animation.ts" });
   return { context, sandbox };
 }
 

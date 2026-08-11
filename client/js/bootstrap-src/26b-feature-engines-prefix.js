@@ -532,6 +532,23 @@
       } catch (e) { /* tolerate */ }
     }
 
+    function reportSurfaceKindIssue(placeholder, surfaceKind, component, message, fallback) {
+      if (!window.__gosx || typeof window.__gosx.reportIssue !== "function") {
+        return;
+      }
+      try {
+        window.__gosx.reportIssue({
+          scope: "surface",
+          type: "hydrate",
+          component: component,
+          source: surfaceKind,
+          element: placeholder,
+          message: message,
+          fallback: fallback || "server",
+        });
+      } catch (e) { /* tolerate */ }
+    }
+
     // mountAllEngineSurfaces finds every <canvas data-gosx-engine-bytecode>
     // placeholder on the page and hydrates each one.
     async function mountAllEngineSurfaces() {
@@ -596,12 +613,14 @@
       const component = placeholder.getAttribute("data-gosx-engine-component") || "";
       const status = placeholder.getAttribute("data-gosx-engine-status") || "";
       if (!surfaceKind || status === "missing") {
+        reportSurfaceKindIssue(placeholder, surfaceKind, component, "missing self-describing surface kind", "server");
         paintEngineSurfaceMissing(placeholder, component);
         return;
       }
       const hydrateFn = window.__gosx_hydrate;
       if (typeof hydrateFn !== "function") {
         console.error("[gosx] __gosx_hydrate not available — shared WASM not loaded");
+        reportSurfaceKindIssue(placeholder, surfaceKind, component, "__gosx_hydrate not available", "server");
         paintEngineSurfaceMissing(placeholder, component);
         return;
       }
@@ -622,12 +641,14 @@
         if (typeof result === "string" && result !== "") {
           console.error("[gosx] hydrate surface " + component + " (" + surfaceKind + ") failed: " + result);
           surfaceInstances.delete(id);
+          reportSurfaceKindIssue(canvas, surfaceKind, component, result, "server");
           paintEngineSurfaceMissing(canvas, component);
           return;
         }
       } catch (e) {
         console.error("[gosx] hydrate surface " + component + " (" + surfaceKind + ") threw:", e);
         surfaceInstances.delete(id);
+        reportSurfaceKindIssue(canvas, surfaceKind, component, "hydrate surface threw", "server");
         paintEngineSurfaceMissing(canvas, component);
         return;
       }
@@ -1306,16 +1327,46 @@
       }
     }
 
+    function manifestSurfaceKinds(manifest) {
+      const kinds = new Set();
+      const entries = Array.isArray(manifest && manifest.selfDescribingSurfaces)
+        ? manifest.selfDescribingSurfaces
+        : [];
+      for (const entry of entries) {
+        const kind = String((entry && entry.kind) || "").trim();
+        if (kind) {
+          kinds.add(kind);
+        }
+      }
+      return kinds;
+    }
+
     // mountAllSurfaceKinds finds every server-rendered surface primitive that
     // carries data-gosx-surface-kind but NOT data-gosx-engine-bytecode (the
     // latter has its own mount path) and hydrates each one.
-    async function mountAllSurfaceKinds() {
+    async function mountAllSurfaceKinds(manifest) {
+      const declaredKinds = manifestSurfaceKinds(manifest);
+      if (declaredKinds.size === 0) return;
       const placeholders = document.querySelectorAll("[data-gosx-surface-kind]:not([data-gosx-engine-bytecode])");
       if (!placeholders.length) return;
-      const promises = Array.from(placeholders).map(function(el) {
-        return mountSurfaceKind(el).catch(function(e) {
+      const promises = [];
+      for (const el of Array.from(placeholders)) {
+        const kind = String((el && el.getAttribute && el.getAttribute("data-gosx-surface-kind")) || "").trim();
+        if (!declaredKinds.has(kind)) {
+          continue;
+        }
+        if (el.hasAttribute && el.hasAttribute("data-gosx-surface-id")) {
+          continue;
+        }
+        if (el.__gosxSurfaceMounting) {
+          continue;
+        }
+        el.__gosxSurfaceMounting = true;
+        promises.push(mountSurfaceKind(el).catch(function(e) {
           console.error("[gosx] unexpected error mounting surface-kind placeholder:", e);
-        });
-      });
+        }).finally(function() {
+          try { delete el.__gosxSurfaceMounting; } catch (e) { el.__gosxSurfaceMounting = false; }
+        }));
+      }
       await Promise.all(promises);
     }

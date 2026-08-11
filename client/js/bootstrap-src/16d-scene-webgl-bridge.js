@@ -7,7 +7,7 @@
   // window.__gosx_scene3d_api instead.
   //
   // Every other bridge symbol the WebGL chunk needs was already published by
-  // 10-runtime-scene-core.js, 11-scene-math.js, 15c-scene-backend-registry.js,
+  // 10-runtime-scene-core.js, 11-scene-math.ts, 15c-scene-backend-registry.js,
   // 16b-scene-compute.js, 15a-scene-postfx-shared.js or 16b-scene-hdr.js.
   // This file adds only the ones that had no consumer outside the IIFE before.
   //
@@ -22,9 +22,9 @@
       disposeSceneWebGLRenderer: typeof disposeSceneWebGLRenderer === "function" ? disposeSceneWebGLRenderer : undefined,
       renderSceneWebGLWorldBundle: typeof renderSceneWebGLWorldBundle === "function" ? renderSceneWebGLWorldBundle : undefined,
       sceneCanvasAlpha: typeof sceneCanvasAlpha === "function" ? sceneCanvasAlpha : undefined,
-      // 11-scene-math.js — WebGL2 CPU instance cull.
+      // 11-scene-math.ts — WebGL2 CPU instance cull.
       instancePassesCullTest: typeof instancePassesCullTest === "function" ? instancePassesCullTest : undefined,
-      // 13-scene-material.js — material identity for program caching.
+      // 13-scene-material.ts — material identity for program caching.
       normalizeSceneMaterialKind: typeof normalizeSceneMaterialKind === "function" ? normalizeSceneMaterialKind : undefined,
       sceneMaterialProfileKey: typeof sceneMaterialProfileKey === "function" ? sceneMaterialProfileKey : undefined,
       // 15a-scene-postfx-shared.js — scalar guard shared with the post chain.
@@ -38,7 +38,7 @@
       // but this helper stayed here because mesh and animation normalization
       // call it on every backend.
       sceneTypedFloatArray: typeof sceneTypedFloatArray === "function" ? sceneTypedFloatArray : undefined,
-      // 13-scene-material.js and 15-scene-draw-plan.js — the material and
+      // 13-scene-material.ts and 15-scene-draw-plan.ts — the material and
       // draw-pass helpers the legacy renderer reads. They had no consumer
       // outside this IIFE until 16e moved out of the base chunk.
       sceneFallbackMaterialData: typeof sceneFallbackMaterialData === "function" ? sceneFallbackMaterialData : undefined,

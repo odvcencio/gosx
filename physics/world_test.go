@@ -140,7 +140,8 @@ func TestWorldThreeBoxStackWarmStarts(t *testing.T) {
 		t.Fatalf("expected warm-start cache to retain stack contacts, got %d entries", len(world.contactCache))
 	}
 	var nonZero int
-	for _, cm := range world.contactCache {
+	for _, index := range world.contactCache {
+		cm := world.contactCacheStorage[index]
 		for i := 0; i < cm.Count; i++ {
 			if cm.Points[i].NormalImpulse > 0 {
 				nonZero++
@@ -149,6 +150,66 @@ func TestWorldThreeBoxStackWarmStarts(t *testing.T) {
 	}
 	if nonZero == 0 {
 		t.Fatal("expected warm-start cache to carry nonzero normal impulses")
+	}
+}
+
+func buildContactCacheTestWorld(contactCount int) *World {
+	world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: 1.0 / 60.0, SolverIter: 1})
+	base := world.AddCollider(ColliderConfig{Shape: ShapeSphere, Radius: 1})
+	world.contacts = make([]ContactManifold, contactCount)
+	for i := range world.contacts {
+		other := world.AddCollider(ColliderConfig{
+			Shape:  ShapeSphere,
+			Offset: Vec3{X: float64(i + 1)},
+			Radius: 1,
+		})
+		world.contacts[i] = ContactManifold{
+			ColliderA:  base,
+			ColliderB:  other,
+			PointCount: 1,
+			Points: [4]ContactPoint{{
+				LocalA:         Vec3{X: float64(i)},
+				LocalB:         Vec3{X: -float64(i)},
+				NormalImpulse:  float64(i + 1),
+				TangentImpulse: [2]float64{0.25, -0.25},
+			}},
+		}
+	}
+	return world
+}
+
+func TestCacheContactImpulsesSteadyStateAllocations(t *testing.T) {
+	world := buildContactCacheTestWorld(64)
+	// Populate both swap buffers before measuring steady-state cache updates.
+	world.cacheContactImpulses()
+	world.cacheContactImpulses()
+
+	if allocs := testing.AllocsPerRun(100, world.cacheContactImpulses); allocs != 0 {
+		t.Fatalf("cacheContactImpulses steady-state allocations = %v, want 0", allocs)
+	}
+}
+
+func TestCacheContactImpulsesPrunesEndedContacts(t *testing.T) {
+	world := buildContactCacheTestWorld(3)
+	world.cacheContactImpulses()
+
+	retained := world.contacts[0]
+	world.contacts = world.contacts[:1]
+	world.cacheContactImpulses()
+
+	if got := len(world.contactCache); got != 1 {
+		t.Fatalf("cached contacts after pruning = %d, want 1", got)
+	}
+	key := manifoldCacheKey(&retained)
+	index, ok := world.contactCache[key]
+	if !ok {
+		t.Fatalf("retained contact key %+v missing from cache", key)
+	}
+	cached := world.contactCacheStorage[index]
+	if cached.Count != retained.PointCount ||
+		cached.Points[0].NormalImpulse != retained.Points[0].NormalImpulse ||
+		cached.Points[0].TangentImpulse != retained.Points[0].TangentImpulse {
+		t.Fatalf("retained cached manifold = %+v, want impulses from %+v", cached, retained)
 	}
 }
 

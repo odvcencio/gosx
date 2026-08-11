@@ -404,7 +404,9 @@ func TestPartitionedListConvergenceScenarios(t *testing.T) {
 		if strings.Join(leftValues, "|") != strings.Join(rightValues, "|") {
 			return false
 		}
-		return len(leftValues) == leftCount+rightCount
+		if len(leftValues) != leftCount+rightCount {
+			return false
+		}
 		return true
 	}, &quick.Config{MaxCount: 60}); err != nil {
 		t.Fatalf("danmuji:73 property %s failed: %v", "bounded two actor list inserts converge", err)

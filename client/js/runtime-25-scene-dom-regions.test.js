@@ -10,8 +10,11 @@ const assert = require("node:assert/strict");
 
 const {
   bootstrapFeatureScene3DSource,
+  bootstrapRuntimeSource,
+  bootstrapFeatureEnginesSource,
+  bootstrapFeatureScene3DWebGLSource,
+  bootstrapFeatureScene3DWebGPUSource,
   bootstrapScene3DMountSourceFile,
-  bootstrapScene3DDOMRegionsSourceFile,
   FakeElement,
   createContext,
   installManualRAF,
@@ -53,19 +56,14 @@ function createDOMRegionTrackerHarness(options = {}) {
 
   const env = createContext({ elements: [mount].concat(targets) });
   const raf = installManualRAF(env.context);
-  const patches = [];
   const renders = [];
-  env.context.applyScenePostUniformsCommand = function(state, data) {
-    patches.push(JSON.parse(JSON.stringify(data)));
-    const entries = Array.isArray(data && data.effects) ? data.effects : [];
-    for (const entry of entries) {
-      const effect = state.postEffects.find((candidate) => candidate.name === entry.name);
-      if (effect) {
-        effect.uniforms = Object.assign({}, effect.uniforms, entry.uniforms);
-      }
-    }
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureEnginesSource, env.context, "bootstrap-feature-engines.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  const baseWindowListenerCounts = {
+    scroll: (env.windowListeners.get("scroll") || []).length,
+    resize: (env.windowListeners.get("resize") || []).length,
   };
-  runScript(bootstrapScene3DDOMRegionsSourceFile, env.context, "15d-scene-dom-regions.js");
   const defaultPostEffects = [{
       kind: "customPost",
       name: "Glass",
@@ -74,6 +72,7 @@ function createDOMRegionTrackerHarness(options = {}) {
         selector: ".glass-card",
         max: options.max,
         uniforms: options.uniforms || { count: "uCount", aspect: "uAspect", rect: "uRegion%dRect", meta: "uRegion%dMeta" },
+        bounds: options.bounds,
       },
     }];
   const state = {
@@ -94,11 +93,15 @@ function createDOMRegionTrackerHarness(options = {}) {
     set activeCanvas(value) { activeCanvas = value; },
     targets,
     raf,
-    patches,
+    baseWindowListenerCounts,
     renders,
     state,
     tracker,
   };
+}
+
+function windowListenerCount(harness, type) {
+  return (harness.env.windowListeners.get(type) || []).length;
 }
 
 test("CustomPost DOMRegions packs rect/meta uniforms in post UV space", async () => {
@@ -106,7 +109,6 @@ test("CustomPost DOMRegions packs rect/meta uniforms in post UV space", async ()
   harness.raf.flush(16);
   await flushAsyncWork();
 
-  assert.equal(harness.patches.length, 1);
   const uniforms = harness.state.postEffects[0].uniforms;
   assert.equal(uniforms.uCount, 1);
   assert.equal(uniforms.uAspect, 2);
@@ -148,6 +150,46 @@ test("CustomPost DOMRegions normalizes unsafe slot patterns", () => {
   harness.tracker.dispose();
 });
 
+test("CustomPost DOMRegions computes padded clipped union bounds", async () => {
+  const harness = createDOMRegionTrackerHarness({ targetCount: 2, max: 2, bounds: { mode: "union", paddingPx: 20 } });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.state.postEffects[0]._domRegionBounds)), {
+    mode: "union",
+    active: true,
+    left: 0.2,
+    top: 0.15,
+    right: 0.6,
+    bottom: 0.65,
+    paddingPx: 20,
+  });
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-region-bounds"), "1");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-region-bounds-area"), "0.2");
+});
+
+test("CustomPost DOMRegions emits inactive bounds for hidden targets", async () => {
+  const harness = createDOMRegionTrackerHarness({ bounds: { mode: "union", paddingPx: 12 } });
+  harness.targets[0].computedStyle.opacity = "0";
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  assert.equal(harness.state.postEffects[0]._domRegionBounds.mode, "union");
+  assert.equal(harness.state.postEffects[0]._domRegionBounds.active, false);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-region-bounds"), "0");
+});
+
+test("CustomPost DOMRegions source includes runtime bounds merge and backend scissors", () => {
+  assert.match(bootstrapFeatureScene3DSource, /scenePostDOMRegionPixelBounds/);
+  assert.match(bootstrapFeatureScene3DSource, /domRegionBounds/);
+  assert.match(bootstrapFeatureScene3DSource, /_domRegionBounds/);
+  assert.match(bootstrapFeatureScene3DWebGPUSource, /setScissorRect/);
+  assert.match(bootstrapFeatureScene3DWebGLSource, /\.scissor\(/);
+  assert.match(bootstrapFeatureScene3DWebGLSource, /SCISSOR_TEST/);
+  assert.match(bootstrapFeatureScene3DWebGPUSource, /postDOMRegionBoundedSkips/);
+  assert.match(bootstrapFeatureScene3DWebGLSource, /postDOMRegionBoundedSkips/);
+});
+
 test("CustomPost DOMRegions coalesces unchanged keys and disposes listeners", async () => {
   const harness = createDOMRegionTrackerHarness();
   assert.equal(harness.raf.count(), 1);
@@ -156,18 +198,18 @@ test("CustomPost DOMRegions coalesces unchanged keys and disposes listeners", as
 
   harness.raf.flush(16);
   await flushAsyncWork();
-  assert.equal(harness.patches.length, 1);
+  assert.equal(harness.renders.length, 1);
 
   harness.tracker.schedule();
   harness.raf.flush(32);
   await flushAsyncWork();
-  assert.equal(harness.patches.length, 1, "unchanged geometry must not patch again");
+  assert.equal(harness.renders.length, 1, "unchanged geometry must not patch again");
 
-  assert.ok((harness.env.windowListeners.get("scroll") || []).length > 0);
+  assert.equal(windowListenerCount(harness, "scroll"), harness.baseWindowListenerCounts.scroll + 1);
   assert.ok(harness.env.resizeObservers.at(-1).targets.size > 0);
   harness.tracker.dispose();
-  assert.equal((harness.env.windowListeners.get("scroll") || []).length, 0);
-  assert.equal((harness.env.windowListeners.get("resize") || []).length, 0);
+  assert.equal(windowListenerCount(harness, "scroll"), harness.baseWindowListenerCounts.scroll);
+  assert.equal(windowListenerCount(harness, "resize"), harness.baseWindowListenerCounts.resize);
   assert.equal(harness.env.resizeObservers.at(-1).targets.size, 0);
   harness.tracker.schedule();
   assert.equal(harness.raf.count(), 0);
@@ -177,8 +219,8 @@ test("CustomPost DOMRegions stays observer-free until a region config exists", (
   const harness = createDOMRegionTrackerHarness({ postEffects: [] });
   assert.equal(harness.raf.count(), 0);
   assert.equal(harness.env.resizeObservers.length, 0);
-  assert.equal((harness.env.windowListeners.get("scroll") || []).length, 0);
-  assert.equal((harness.env.windowListeners.get("resize") || []).length, 0);
+  assert.equal(windowListenerCount(harness, "scroll"), harness.baseWindowListenerCounts.scroll);
+  assert.equal(windowListenerCount(harness, "resize"), harness.baseWindowListenerCounts.resize);
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions"), "0");
 
   harness.tracker.configure([{
@@ -188,13 +230,13 @@ test("CustomPost DOMRegions stays observer-free until a region config exists", (
   }]);
   assert.equal(harness.raf.count(), 1);
   assert.equal(harness.env.resizeObservers.length, 1);
-  assert.equal((harness.env.windowListeners.get("scroll") || []).length, 1);
-  assert.equal((harness.env.windowListeners.get("resize") || []).length, 1);
+  assert.equal(windowListenerCount(harness, "scroll"), harness.baseWindowListenerCounts.scroll + 1);
+  assert.equal(windowListenerCount(harness, "resize"), harness.baseWindowListenerCounts.resize + 1);
 
   harness.tracker.configure([]);
   assert.equal(harness.raf.count(), 0);
-  assert.equal((harness.env.windowListeners.get("scroll") || []).length, 0);
-  assert.equal((harness.env.windowListeners.get("resize") || []).length, 0);
+  assert.equal(windowListenerCount(harness, "scroll"), harness.baseWindowListenerCounts.scroll);
+  assert.equal(windowListenerCount(harness, "resize"), harness.baseWindowListenerCounts.resize);
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-regions"), "0");
 
   harness.tracker.configure([{
@@ -206,8 +248,8 @@ test("CustomPost DOMRegions stays observer-free until a region config exists", (
   assert.equal(harness.env.resizeObservers.length, 2);
   harness.tracker.dispose();
   assert.equal(harness.raf.count(), 0);
-  assert.equal((harness.env.windowListeners.get("scroll") || []).length, 0);
-  assert.equal((harness.env.windowListeners.get("resize") || []).length, 0);
+  assert.equal(windowListenerCount(harness, "scroll"), harness.baseWindowListenerCounts.scroll);
+  assert.equal(windowListenerCount(harness, "resize"), harness.baseWindowListenerCounts.resize);
 });
 
 test("CustomPost DOMRegions resolves current canvas after replacement", async () => {

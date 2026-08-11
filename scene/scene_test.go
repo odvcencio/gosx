@@ -937,14 +937,17 @@ func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 		PickSignalNamespace: "$scene.pick",
 		Graph: NewGraph(
 			Model{
-				ID:       "runner",
-				Src:      "/models/runner.gosx3d.json",
-				Position: Vec3(1.2, 0.4, -0.8),
-				Rotation: Rotate(0.1, 0.2, -0.3),
-				Scale:    Vec3(1.6, 0.8, 1.2),
-				Bounds:   0.5,
-				Fit:      "contain",
-				FitAlign: "center-min-y",
+				ID:          "runner",
+				Src:         "/models/runner.gosx3d.json",
+				PreviewSrc:  "/models/runner-preview.gosx3d.json",
+				FullSrc:     "/models/runner-full.gosx3d.json",
+				Progressive: true,
+				Position:    Vec3(1.2, 0.4, -0.8),
+				Rotation:    Rotate(0.1, 0.2, -0.3),
+				Scale:       Vec3(1.6, 0.8, 1.2),
+				Bounds:      0.5,
+				Fit:         "contain",
+				FitAlign:    "center-min-y",
 				Material: GlowMaterial{
 					Color:      "#ffd48f",
 					Opacity:    Float(0.78),
@@ -986,6 +989,9 @@ func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 	}
 	if model.Src != "/models/runner.gosx3d.json" {
 		t.Fatalf("expected model src, got %#v", model.Src)
+	}
+	if model.PreviewSrc != "/models/runner-preview.gosx3d.json" || model.FullSrc != "/models/runner-full.gosx3d.json" || !model.Progressive {
+		t.Fatalf("expected model progressive metadata, got preview=%#v full=%#v progressive=%v", model.PreviewSrc, model.FullSrc, model.Progressive)
 	}
 	if math.Abs(model.X-1.2) > 1e-9 || math.Abs(model.Y-0.4) > 1e-9 || math.Abs(model.Z+0.8) > 1e-9 {
 		t.Fatalf("expected model position, got (%#v,%#v,%#v)", model.X, model.Y, model.Z)
@@ -1039,6 +1045,15 @@ func TestPropsSceneIRLowersModelInstancesAndLineGeometry(t *testing.T) {
 	}
 	if got := models[0]["src"]; got != "/models/runner.gosx3d.json" {
 		t.Fatalf("expected model src in legacy props, got %#v", got)
+	}
+	if got := models[0]["previewSrc"]; got != "/models/runner-preview.gosx3d.json" {
+		t.Fatalf("expected model preview source in legacy props, got %#v", got)
+	}
+	if got := models[0]["fullSrc"]; got != "/models/runner-full.gosx3d.json" {
+		t.Fatalf("expected model full source in legacy props, got %#v", got)
+	}
+	if got := models[0]["progressive"]; got != true {
+		t.Fatalf("expected model progressive flag in legacy props, got %#v", got)
 	}
 	if got := models[0]["pickable"]; got != true {
 		t.Fatalf("expected model pickable in legacy props, got %#v", got)

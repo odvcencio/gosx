@@ -1,0 +1,169 @@
+{
+  "schemaVersion": "gosx.ouroboros.baseline.v1",
+  "contractVersion": "O0.2",
+  "initiative": "initiative.gosx-ouroboros-runtime-refactor",
+  "spec": "spec.gosx-ouroboros-runtime.v0.1",
+  "corpusID": "gosx-ouroboros-o0.2-v1",
+  "baseRevision": "__required_at_runtime__",
+  "overlayHash": "sha256:clean",
+  "generatedAt": "1970-01-01T00:00:00Z",
+  "artifactRoot": "build/ouroboros/o0.2",
+  "canonicalTargets": {
+    "javascriptLines": 87086,
+    "javascriptBytes": 3815610,
+    "gosxNameCount": 209,
+    "gosxProductionNameCount": 208,
+    "gosxJavaScriptNameCount": 178,
+    "assignedBrowserRootCount": 121,
+    "assignedWindowCount": 120,
+    "goPublishedABICount": 64,
+    "hostCallbackCount": 6,
+    "serializationSiteCount": 253,
+    "serializationStatus": "undefined"
+  },
+  "scope": {
+    "included": [
+      {
+        "pattern": "client/js/bootstrap-src/**/*.js",
+        "reason": "first-party authored browser runtime source"
+      },
+      {
+        "pattern": "client/js/{patch,relay,stripe-bridge}.js",
+        "reason": "first-party hand-authored browser runtime sidecars, outside the historical line scoreboard"
+      },
+      {
+        "pattern": "//go:embed browser-source patterns (*.js, *.ts, *.tsx)",
+        "reason": "first-party embedded browser runtime source outside client/js"
+      }
+    ],
+    "excluded": [
+      {
+        "pattern": "client/js/bootstrap*.js",
+        "reason": "generated deployment JavaScript bundles"
+      },
+      {
+        "pattern": "client/js/*.js.map, client/js/*.gz, client/js/*.br",
+        "reason": "source maps and compressed sidecars"
+      },
+      {
+        "pattern": "**/*test*.js, **/*.test.mjs, scripts/**/*.mjs",
+        "reason": "benchmark, test, and probe scripts"
+      },
+      {
+        "pattern": "**/wasm_exec.js",
+        "reason": "Go or TinyGo distribution shim"
+      },
+      {
+        "pattern": "vendor JavaScript sidecars",
+        "reason": "third-party browser code such as HLS"
+      },
+      {
+        "pattern": "examples/**/public/**/*.js",
+        "reason": "example application public JavaScript"
+      },
+      {
+        "pattern": "client/runtime/generated/**/*.ts",
+        "reason": "generated O0.1 ABI scaffolding, not runtime authoring source"
+      }
+    ]
+  },
+  "fixtureRoutes": [
+    { "id": "R00", "route": "/static", "fixtureApp": "examples/ouroboros-corpus", "purpose": "SSR only", "expectedRuntime": "none", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "none", "expectedCapabilities": ["ssr"] },
+    { "id": "R01", "route": "/lite", "fixtureApp": "examples/ouroboros-corpus", "purpose": "declarative regions/actions without WASM", "expectedRuntime": "lite", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["regions", "actions"] },
+    { "id": "R02", "route": "/island/counter", "fixtureApp": "examples/ouroboros-corpus", "purpose": "one visual island and one action", "expectedRuntime": "islands", "expectedTinyGoCurrent": "islands", "expectedTinyGoFuture": "core", "expectedCapabilities": ["island", "action"] },
+    { "id": "R03", "route": "/islands/kitchen", "fixtureApp": "examples/ouroboros-corpus", "purpose": "multiple islands and shared signals", "expectedRuntime": "islands", "expectedTinyGoCurrent": "islands", "expectedTinyGoFuture": "core", "expectedCapabilities": ["islands", "signals"] },
+    { "id": "R04", "route": "/action/form", "fixtureApp": "examples/ouroboros-corpus", "purpose": "server action with validation and redirect", "expectedRuntime": "action bridge", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["actions", "redirect"] },
+    { "id": "R05", "route": "/canvas-board", "fixtureApp": "examples/ouroboros-corpus", "purpose": "CanvasBoard engine surface", "expectedRuntime": "engine", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["canvas", "engine"] },
+    { "id": "R06", "route": "/hub/echo", "fixtureApp": "examples/ouroboros-corpus", "purpose": "hub bind, fanout, and shared signal update", "expectedRuntime": "collab", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "collab", "expectedCapabilities": ["hub", "signals"] },
+    { "id": "R07", "route": "/video-sync", "fixtureApp": "examples/ouroboros-corpus", "purpose": "video engine and drift bridge", "expectedRuntime": "video", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["video", "engine"] },
+    { "id": "R08", "route": "/scene/basic", "fixtureApp": "examples/ouroboros-corpus", "purpose": "bounded Scene3D PBR scene", "expectedRuntime": "scene3d", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["scene3d", "webgpu", "webgl"] },
+    { "id": "R09A", "route": "/navigation/a", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation entry route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
+    { "id": "R09B", "route": "/navigation/b", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation target route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
+    { "id": "R10", "route": "/demos/water", "fixtureApp": "examples/gosx-docs", "purpose": "flagship heavy Scene3D route", "expectedRuntime": "water scene3d", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["scene3d", "webgpu", "webgl", "water"] }
+  ],
+  "runtimeVariants": [
+    {
+      "id": "runtime",
+      "generation": "current",
+      "status": "measured",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "sizes/runtime.json",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "wasmArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "wasm/runtime.wasm",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "selectedByRoutes": ["R05", "R06", "R07", "R08", "R10"]
+    },
+    {
+      "id": "islands",
+      "generation": "current",
+      "status": "measured",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "sizes/islands.json",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "wasmArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "wasm/islands.wasm",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "selectedByRoutes": ["R02", "R03"]
+    },
+    {
+      "id": "core",
+      "generation": "future",
+      "status": "planned",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": null,
+      "wasmArtifact": null,
+      "selectedByRoutes": ["R01", "R02", "R03", "R04", "R09A", "R09B"]
+    },
+    {
+      "id": "engine",
+      "generation": "future",
+      "status": "planned",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": null,
+      "wasmArtifact": null,
+      "selectedByRoutes": ["R05", "R07", "R08", "R10"]
+    },
+    {
+      "id": "collab",
+      "generation": "future",
+      "status": "planned",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": null,
+      "wasmArtifact": null,
+      "selectedByRoutes": ["R06"]
+    },
+    {
+      "id": "full",
+      "generation": "future",
+      "status": "planned",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": null,
+      "wasmArtifact": null,
+      "selectedByRoutes": []
+    }
+  ],
+  "metadata": {
+    "note": "Runtime collectors must replace baseRevision, overlayHash, generatedAt, and artifactRoot for each measured run."
+  }
+}

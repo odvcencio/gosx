@@ -1,14 +1,40 @@
 package server
 
 import (
-	_ "embed"
+	"encoding/json"
 	"html"
+	"strings"
 
 	"m31labs.dev/gosx"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 )
 
-//go:embed navigation_runtime.js
-var navigationRuntime string
+// NavigationBeaconOptions describes a navigation lifecycle beacon owned by the
+// GoSX navigation runtime. The runtime sends it after a successful soft
+// navigation and skips repeated pathname+search values.
+type NavigationBeaconOptions struct {
+	Name              string
+	URL               string
+	Method            string
+	Event             string
+	ContentType       string
+	Credentials       string
+	Keepalive         bool
+	PathField         string
+	NavigationIDField string
+}
+
+type navigationBeaconContract struct {
+	Name              string `json:"name,omitempty"`
+	URL               string `json:"url"`
+	Method            string `json:"method,omitempty"`
+	Event             string `json:"event,omitempty"`
+	ContentType       string `json:"contentType,omitempty"`
+	Credentials       string `json:"credentials,omitempty"`
+	Keepalive         bool   `json:"keepalive,omitempty"`
+	PathField         string `json:"pathField,omitempty"`
+	NavigationIDField string `json:"navigationIDField,omitempty"`
+}
 
 // NavigationScript returns the inline GoSX page-navigation runtime.
 func NavigationScript() gosx.Node {
@@ -19,7 +45,42 @@ func NavigationScript() gosx.Node {
 // with a CSP nonce attribute attached. Passing an empty nonce is equivalent to
 // NavigationScript.
 func NavigationScriptWithNonce(nonce string) gosx.Node {
-	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + `>` + navigationRuntime + `</script>`)
+	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + `>` + runtimehost.NavigationRuntime + `</script>`)
+}
+
+// NavigationBeacon renders a typed navigation beacon contract consumed by the
+// GoSX navigation runtime.
+func NavigationBeacon(opts NavigationBeaconOptions) gosx.Node {
+	return NavigationBeaconWithNonce(opts, "")
+}
+
+// NavigationBeaconWithNonce renders a typed navigation beacon contract with a
+// CSP nonce attached to the JSON script when supplied.
+func NavigationBeaconWithNonce(opts NavigationBeaconOptions, nonce string) gosx.Node {
+	contract := navigationBeaconContract{
+		Name:              strings.TrimSpace(opts.Name),
+		URL:               strings.TrimSpace(opts.URL),
+		Method:            strings.TrimSpace(opts.Method),
+		Event:             strings.TrimSpace(opts.Event),
+		ContentType:       strings.TrimSpace(opts.ContentType),
+		Credentials:       strings.TrimSpace(opts.Credentials),
+		Keepalive:         opts.Keepalive,
+		PathField:         strings.TrimSpace(opts.PathField),
+		NavigationIDField: strings.TrimSpace(opts.NavigationIDField),
+	}
+	if contract.URL == "" {
+		return gosx.Text("")
+	}
+	payload, err := json.Marshal(contract)
+	if err != nil {
+		return gosx.Text("")
+	}
+	safe := strings.NewReplacer(
+		"<", "\\u003c",
+		">", "\\u003e",
+		"&", "\\u0026",
+	).Replace(string(payload))
+	return gosx.RawHTML(`<script type="application/json" data-gosx-navigation-beacon` + nonceAttr(nonce) + `>` + safe + `</script>`)
 }
 
 func nonceAttr(nonce string) string {

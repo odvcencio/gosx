@@ -5,7 +5,7 @@
   // base chunk and the WebGPU chunk still need, so they must stay eager.
   //
   // Three groups of callers depend on them:
-  //   1. 15b-scene-planner.js sorts and classifies draw passes with
+  //   1. 15b-scene-planner.ts sorts and classifies draw passes with
   //      scenePBRObjectRenderPass and scenePBRDepthSort.
   //   2. 10-runtime-scene-core.js and 20-scene-mount.js keep light and
   //      environment dirty hashes with hashLightContent and

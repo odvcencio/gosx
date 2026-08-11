@@ -1,4 +1,4 @@
-// Unit tests for bootstrap-src/06-declarative-actions.js — the declarative
+// Unit tests for client/runtime/host/actions.ts — the declarative
 // interaction primitives (data-gosx-action / -submit-on / -set). Runs the module
 // in a node:vm with a minimal DOM stub and asserts the delegated handlers.
 import test from "node:test";
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "06-declarative-actions.js"),
+  path.join(__dirname, "..", "runtime", "host", "actions.ts"),
   "utf8"
 );
 
@@ -59,9 +59,13 @@ function runModule(options = {}) {
   const signals = [];
   const dispatched = [];
   const telemetry = [];
+  const warnings = [];
   const metaToken = options.csrfToken;
+  const testConsole = Object.assign({}, console, {
+    warn: (...args) => { warnings.push(args.map(String).join(" ")); },
+  });
   const ctx = {
-    console,
+    console: testConsole,
     URLSearchParams,
     FormData: class { constructor() {} }, // unused shape; body identity is enough
     fetch: (url, opts) => {
@@ -96,12 +100,14 @@ function runModule(options = {}) {
         options.reportFailure ? { reportFailure: options.reportFailure } : {}
       ),
       __gosx_set_shared_signal: (name, payload) => { signals.push({ name, payload }); },
-      __gosx_emit: (level, category, message, fields) => telemetry.push({ level, category, message, fields }),
       ...(options.replaceRuntimeContent ? {
         __gosx_replace_runtime_content: options.replaceRuntimeContent,
       } : {}),
     },
   };
+  if (!options.omitEmit) {
+    ctx.window.__gosx_emit = (level, category, message, fields) => telemetry.push({ level, category, message, fields });
+  }
   class CustomEvent {
     constructor(type, init = {}) { this.type = type; this.detail = init.detail; }
   }
@@ -109,7 +115,7 @@ function runModule(options = {}) {
   ctx.CustomEvent = CustomEvent;
   vm.createContext(ctx);
   vm.runInContext(moduleSrc, ctx);
-  return { listeners, fetches, signals, dispatched, telemetry, ctx };
+  return { listeners, fetches, signals, dispatched, telemetry, warnings, ctx };
 }
 
 function fire(listener, target) {
@@ -339,6 +345,48 @@ test("action failures delegate diagnostics and telemetry policy to core", async 
     url: "/api/save",
     status: 503,
   }));
+});
+
+test("structured validation action results stay handled on the lite path", async () => {
+  const failures = [];
+  const target = { innerHTML: "<p>idle</p>" };
+  const { listeners, dispatched, warnings } = runModule({
+    omitEmit: true,
+    responseOK: false,
+    responseStatus: 422,
+    responsePayload: {
+      ok: false,
+      message: "name required",
+      data: { html: "<p data-action-state=\"error\">name required</p>" },
+    },
+    targetSelector: "#action-state",
+    target,
+    reportFailure(operation, error, fields) {
+      failures.push({ operation, error, fields });
+    },
+  });
+  const form = makeEl({
+    "data-gosx-action": "POST /action/form/__actions/validate-name",
+    "data-gosx-action-target": "#action-state",
+    method: "POST",
+    action: "/action/form/__actions/validate-name",
+  }, {
+    tag: "form",
+    submitBtn: makeEl({
+      type: "submit",
+      "data-gosx-action-target": "#action-state",
+      "data-gosx-action-signal": "$ouroboros.action.name",
+    }, { tag: "button" }),
+  });
+
+  fire(listeners.submit, form);
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(target.innerHTML, "<p data-action-state=\"error\">name required</p>");
+  assert.equal(failures.length, 0);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(dispatched.map((event) => event.type), ["gosx:action:result", "gosx:action:error"]);
 });
 
 test("data-gosx-action transports response values to signals and HTML to a target", async () => {

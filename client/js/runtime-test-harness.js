@@ -36,12 +36,12 @@ const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
-const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
-const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15d-scene-dom-regions.js"), "utf8");
+const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dom-regions.ts"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
-const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
+const navigationSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "navigation.ts"), "utf8");
 
 function bootstrapSourceMapSource(mapName, sourceName) {
   const sourceMap = JSON.parse(fs.readFileSync(path.join(__dirname, mapName), "utf8"));
@@ -250,6 +250,7 @@ class FakeWebGLContext {
     this.BLEND = 0x0BE2;
     this.DEPTH_TEST = 0x0B71;
     this.CULL_FACE = 0x0B44;
+    this.SCISSOR_TEST = 0x0C11;
     this.LEQUAL = 0x0203;
     this.FRONT = 0x0404;
     this.BACK = 0x0405;
@@ -563,6 +564,10 @@ class FakeWebGLContext {
 
   disable(capability) {
     this.ops.push(["disable", capability]);
+  }
+
+  scissor(x, y, width, height) {
+    this.ops.push(["scissor", x, y, width, height]);
   }
 
   blendFunc(src, dst) {
@@ -3002,6 +3007,8 @@ function loadSceneAdaptiveQualityAPI() {
       createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
       sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,
       sceneEffectivePointQualityGroup, sceneFilterPointsByQualityGroups,
+      sceneQualityLadderActiveRung, sceneQualityLadderComputeBudgetScale, sceneComputeParticlesInstanceCount,
+      sceneScaleComputeParticlesByQualityRung,
       scenePrimeAdaptiveQuality,
     };
   `, context, { filename: "scene-adaptive-quality.js" });
@@ -3383,7 +3390,7 @@ function nodeFillRects(ctx, cssWidth, cssHeight) {
 
 // -----------------------------------------------------------------------------
 // Ortho-2D WebGPU camera math — sceneMat4Ortho2DView/Proj/ViewProj
-// (bootstrap-src/11-scene-math.js, exported through window.__gosx_scene3d_api).
+// (bootstrap-src/11-scene-math.ts, exported through window.__gosx_scene3d_api).
 //
 // sceneMat4Ortho2DViewProj is the JS half of the pinned cross-language golden
 // contract with the native 2D board camera: render/bundle/math.go
@@ -3719,6 +3726,7 @@ function makeFakeGPUDevice(options) {
       pipelines: [],
       bindGroups: [],
       vertexBuffers: [],
+      scissors: [],
       ended: false,
       setPipeline(pipeline) {
         pass.pipelines.push(pipeline);
@@ -3731,6 +3739,9 @@ function makeFakeGPUDevice(options) {
       },
       setIndexBuffer(buffer, format, offset, size) {
         pass.indexBuffers.push({ buffer, format, offset, size });
+      },
+      setScissorRect(x, y, width, height) {
+        pass.scissors.push({ x, y, width, height });
       },
       drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance) {
         pass.drawIndexeds.push({
@@ -3839,7 +3850,7 @@ function makeFakeGPUDevice(options) {
     },
     createRenderPipeline(desc) {
       validateRenderPipelineDesc(desc);
-      const pipeline = { __kind: "renderPipeline", desc };
+      const pipeline = { __kind: "renderPipeline", label: desc && desc.label, desc };
       state.renderPipelines.push(pipeline);
       return pipeline;
     },
@@ -3992,29 +4003,42 @@ function bootstrapChunkSources(bundleName) {
 // it when a test inspects source text that one file no longer holds alone.
 function readBootstrapSrc(...names) {
   return names
-    .map((name) => fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8"))
+    .map((name) => {
+      // chunks.json paths are relative to client/js. Legacy bootstrap-src
+      // entries omit that directory, while migrated browser-host entries use
+      // ../runtime/host/*.ts from the same manifest root.
+      const sourcePath = name.startsWith("../")
+        ? path.join(__dirname, name)
+        : path.join(__dirname, "bootstrap-src", name);
+      return fs.readFileSync(sourcePath, "utf8");
+    })
     .join("\n");
 }
 
-// readSceneMountSrc joins every 20x-scene-mount*.js file in build order. The
-// old single 20-scene-mount.js was 10_127 lines and 43 percent of the base
-// Scene3D chunk; it is now nine files. A source assertion about the mount path
-// must read them all.
+// readSceneMountSrc joins the mount host files in build order. The old single
+// 20-scene-mount.js was 10_127 lines and 43 percent of the base Scene3D chunk;
+// it is now nine files. A source assertion about the mount path must read them
+// all, including the migrated TypeScript hosts.
 function readSceneMountSrc() {
-  const srcDir = path.join(__dirname, "bootstrap-src");
-  const parts = fs.readdirSync(srcDir).filter((n) => /^20[a-z]?-scene-mount.*\.js$/.test(n));
-  // Build order: 20a..20h first, then the engine factory in 20-scene-mount.js.
-  parts.sort();
-  const factory = parts.indexOf("20-scene-mount.js");
-  if (factory !== -1) parts.push(parts.splice(factory, 1)[0]);
-  return parts.map((n) => fs.readFileSync(path.join(srcDir, n), "utf8")).join("\n");
+  const parts = [
+    "../runtime/scene3d/mount-backend.ts",
+    "../runtime/scene3d/mount-webgl.ts",
+    "../runtime/scene3d/mount-quality.ts",
+    "../runtime/scene3d/overlays.ts",
+    "../runtime/scene3d/mount-viewport.ts",
+    "../runtime/scene3d/overlay-dom.ts",
+    "../runtime/scene3d/mount-controls.ts",
+    "../runtime/scene3d/mount-telemetry.ts",
+    "../runtime/scene3d/mount.ts",
+  ];
+  return parts.map((name) => fs.readFileSync(path.join(__dirname, name), "utf8")).join("\n");
 }
 
 // readWebGPUBackendSrc joins the WebGPU backend source files. The Selena
 // uniform packer moved out of createSceneWebGPURenderer into 16a1, so a source
 // assertion about the backend must read both files.
 function readWebGPUBackendSrc() {
-  return readBootstrapSrc("16a-scene-webgpu.js", "16a1-scene-webgpu-selena-uniforms.js");
+  return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.js");
 }
 
 // readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
@@ -4041,7 +4065,7 @@ function freshFeatureBundleSource(name, options) {
   const opts = options || {};
   function read(rel) {
     const source = fs.readFileSync(path.join(clientJS, rel), "utf8");
-    if (rel.endsWith("16-scene-webgl.js") && opts.exportWaterRendererForTest) {
+    if (rel.endsWith("webgl.ts") && opts.exportWaterRendererForTest) {
       return source + "\nwindow.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n";
     }
     return source;
@@ -4651,7 +4675,10 @@ async function createCanvasBoardRoutingHarness(options = {}) {
     renderCalls, setBackendCalls, tickCalls, disposeCalls,
     setRenderJSON(fn) { renderJSONProvider = fn; },
     async mount() {
-      await feature.runtimeReady({});
+      // Surface-kind mounting is manifest-gated: mirror the server manifest
+      // for the placeholder this harness installs instead of exercising the
+      // production "no declared surfaces" fast path.
+      await feature.runtimeReady({ selfDescribingSurfaces: [{ kind: "canvas2d" }] });
       await flushAsyncWork();
     },
     labelLayer() {
@@ -4815,7 +4842,7 @@ async function createComputeParticleHarness(fakeDevice, options) {
   };
 
   const renderer = api.createRenderer(canvas, {});
-  return { env, renderer, warnLog };
+  return { env, renderer, warnLog, mount, canvas };
 }
 
 // Minimal valid Scene3D bundle with one compute particle entry.
@@ -5280,22 +5307,22 @@ function makeInstancedBundle(meshOverrides) {
 // =========================================================================
 
 // Helper: extract and compile extractFrustumPlanesJS + instancePassesCullTest
-// from 11-scene-math.js for headless unit testing.
+// from 11-scene-math.ts for headless unit testing.
 function loadCullFunctions() {
   const mathSrc = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+    path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   // Extract extractFrustumPlanesJS (indented 2 spaces inside the IIFE).
   const extractMatch = mathSrc.match(
     /function extractFrustumPlanesJS\(vp\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(extractMatch, "extractFrustumPlanesJS must be extractable from 11-scene-math.js");
+  assert.ok(extractMatch, "extractFrustumPlanesJS must be extractable from 11-scene-math.ts");
   const extractFn = new Function(
     "return (function extractFrustumPlanesJS(vp) {" + extractMatch[1] + "\n  })")();
 
   // Extract instancePassesCullTest (indented 2 spaces).
   const passMatch = mathSrc.match(
     /function instancePassesCullTest\(transforms, instanceIndex, planes, radius\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(passMatch, "instancePassesCullTest must be extractable from 11-scene-math.js");
+  assert.ok(passMatch, "instancePassesCullTest must be extractable from 11-scene-math.ts");
   const passFn = new Function(
     "return (function instancePassesCullTest(transforms, instanceIndex, planes, radius) {" +
     passMatch[1] + "\n  })")();

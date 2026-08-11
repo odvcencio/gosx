@@ -21,10 +21,14 @@ const {
   FakeElement,
   createContext,
   installManualRAF,
+  makeFakeContext2D,
   runScript,
   flushAsyncWork,
   loadVideoSyncJSEngineFactory,
   readSceneMountSrc,
+  bootstrapChunkSources,
+  readBootstrapSrc,
+  freshFeatureBundleSource,
 } = require("./runtime-test-harness.js");
 
 test("bootstrap decompresses compressedPositions for Scene3D points", async () => {
@@ -104,7 +108,7 @@ test("selective runtime loads islands feature and shared wasm only when islands 
     fetchRoutes: {
       "/runtime.wasm": { bytes: [0, 97, 115, 109] },
       "/counter.json": { text: '{"name":"Counter"}' },
-      "/gosx/bootstrap-feature-islands.js": { text: bootstrapFeatureIslandsSource },
+      "/gosx/bootstrap-feature-islands.js": { text: freshFeatureBundleSource("islands") },
     },
     manifest: {
       runtime: { path: "/runtime.wasm" },
@@ -128,6 +132,93 @@ test("selective runtime loads islands feature and shared wasm only when islands 
   assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), false);
   assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-hubs.js"), false);
   assert.equal(env.context.__gosx.islands.size, 1);
+});
+
+test("selective runtime ignores stale partial exports before hydrating islands", async () => {
+  const wrapper = new FakeElement("div", null);
+  wrapper.id = "gosx-island-stale";
+
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/counter.json": { text: '{"name":"Counter"}' },
+      "/gosx/bootstrap-feature-islands.js": { text: bootstrapFeatureIslandsSource },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        {
+          id: "gosx-island-stale",
+          component: "Counter",
+          props: { initial: 1 },
+          programRef: "/counter.json",
+        },
+      ],
+    },
+  });
+  env.context.__gosx_action = () => 0;
+
+  const freshBootstrapRuntimeSource = readBootstrapSrc(
+    ...bootstrapChunkSources("bootstrap-runtime.js").map((name) => name.replace(/^bootstrap-src\//, "")),
+  );
+  runScript(freshBootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), true);
+  assert.equal(env.hydrateCalls.length, 1);
+  assert.equal(env.context.__gosx.islands.size, 1);
+  assert.deepEqual(env.consoleLogs.error, []);
+});
+
+test("selective island feature waits for hydrate export during cold runtime ready", async () => {
+  const wrapper = new FakeElement("div", null);
+  wrapper.id = "gosx-island-delayed-export";
+
+  const hydrateCalls = [];
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/counter.json": { text: '{"name":"Counter"}' },
+      "/gosx/bootstrap-feature-islands.js": { text: freshFeatureBundleSource("islands") },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        {
+          id: "gosx-island-delayed-export",
+          component: "Counter",
+          props: { initial: 1 },
+          programRef: "/counter.json",
+        },
+      ],
+    },
+  });
+  env.context.Go = function Go() {
+    this.importObject = {};
+    this.run = () => {
+      const ready = env.context.__gosx_runtime_ready;
+      if (typeof ready === "function") ready();
+      setTimeout(() => {
+        env.context.__gosx_hydrate = (...args) => {
+          hydrateCalls.push(args);
+          return null;
+        };
+      }, 12);
+    };
+  };
+
+  const freshBootstrapRuntimeSource = readBootstrapSrc(
+    ...bootstrapChunkSources("bootstrap-runtime.js").map((name) => name.replace(/^bootstrap-src\//, "")),
+  );
+  runScript(freshBootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await flushAsyncWork();
+
+  assert.equal(hydrateCalls.length, 1);
+  assert.equal(env.context.__gosx.islands.size, 1);
+  assert.deepEqual(env.consoleLogs.error, []);
 });
 
 test("selective runtime loads islands feature for compute islands", async () => {
@@ -209,6 +300,70 @@ test("selective runtime mounts native JS engines without loading the shared wasm
   assert.equal(mount.getAttribute("data-disposed"), "true");
 });
 
+test("selective runtime ignores self-describing surfaces in old manifests", async () => {
+  const surface = new FakeElement("canvas", null);
+  surface.setAttribute("data-gosx-surface-kind", "canvas2d");
+
+  const env = createContext({
+    elements: [surface],
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {},
+  });
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/runtime.wasm"), false);
+  assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-engines.js"), false);
+  assert.equal(env.hydrateCalls.length, 0);
+});
+
+test("selective runtime loads engines feature and shared wasm for declared self-describing surfaces", async () => {
+  const surface = new FakeElement("canvas", null);
+  surface.setAttribute("data-gosx-surface-kind", "canvas2d");
+  surface.setAttribute("data-gosx-engine-component", "CanvasBoard");
+  const ctx2d = makeFakeContext2D();
+  surface.getContext = (kind) => kind === "2d" ? ctx2d : null;
+
+  const env = createContext({
+    elements: [surface],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      selfDescribingSurfaces: [
+        { kind: "canvas2d", feature: "engines", runtime: "shared" },
+        { kind: "canvas2d", feature: "engines", runtime: "shared" },
+      ],
+    },
+  });
+
+  env.context.__gosx_render_canvas = () => "";
+  env.context.__gosx_tick_canvas = () => null;
+  env.context.__gosx_canvas_set_backend = () => null;
+  env.context.__gosx_canvas_event = () => null;
+  env.context.__gosx_dispose_canvas = () => null;
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.filter((entry) => entry.url === "/runtime.wasm").length, 1);
+  assert.equal(env.fetchCalls.filter((entry) => entry.url === "/gosx/bootstrap-feature-engines.js").length, 1);
+  assert.equal(env.hydrateCalls.length, 1);
+  assert.equal(env.hydrateCalls[0][0], "canvas2d");
+  assert.equal(surface.hasAttribute("data-gosx-surface-id"), true);
+
+  await env.context.__gosx_bootstrap_page({
+    runtime: { path: "/runtime.wasm" },
+    selfDescribingSurfaces: [{ kind: "canvas2d", feature: "engines", runtime: "shared" }],
+  });
+  await flushAsyncWork();
+  assert.equal(env.hydrateCalls.length, 1);
+});
+
 // Regression test for the split feature-bundle build: bootstrap-feature-engines.js
 // runs in its own IIFE (see 26b-feature-engines-prefix.js), separate from the
 // runtime bundle's closure. normalizeEngineRenderBundle (concatenated in from
@@ -219,7 +374,7 @@ test("selective runtime mounts native JS engines without loading the shared wasm
 // normalizeSceneLabelWhiteSpace, normalizeSceneLabelAlign,
 // normalizeSceneHTMLMode, normalizeSceneHTMLPointerEvents, and clamp01 — all
 // of which live in 00-textlayout.js / 10-runtime-scene-core.js /
-// 11-scene-math.js, none of which bootstrap-feature-engines.js carries.
+// 11-scene-math.ts, none of which bootstrap-feature-engines.js carries.
 //
 // Before the fix, a page whose ONLY shared-runtime engine is a non-Scene3D
 // surface (so bootstrap-feature-scene3d.js never loads — manifestFeatureNames
@@ -854,7 +1009,7 @@ test("Scene3D renderer recovery respects backendCaps fallbacks", () => {
 });
 
 test("Scene3D fallbackSceneRenderer honors window.__gosx_scene3d_require_gpu without touching the WebGL fallback", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "mount.ts"), "utf8");
   // The gate is read once, right where allowCanvasFallback is computed, and
   // only that Canvas2D swap is disallowed -- the WebGL fallback attempt keeps
   // its own, unmodified allowWebGLFallback condition.
@@ -864,7 +1019,7 @@ test("Scene3D fallbackSceneRenderer honors window.__gosx_scene3d_require_gpu wit
 });
 
 test("Scene3D WebGPU water debug gates isolate update and draw stages", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
   assert.match(source, /new URLSearchParams\(window\.location\.search\)\.get\("gosx-water-debug"\)/);
   assert.match(source, /function sceneWebGPUWaterDebugSkipsUpdate\(mode\) \{[\s\S]*no-water[\s\S]*no-update/);
   assert.match(source, /function sceneWebGPUWaterDebugSkipsDraw\(mode\) \{[\s\S]*compute-only[\s\S]*no-draw/);

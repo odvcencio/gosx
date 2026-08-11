@@ -55,10 +55,17 @@ func chunkDeclaredNames(t *testing.T, dir string, entry output) map[string]bool 
 		if err != nil {
 			t.Fatalf("read %s: %v", src.rel, err)
 		}
+		if err := validateTypedSource(src, data); err != nil {
+			t.Fatalf("validate %s: %v", src.rel, err)
+		}
 		b.WriteString(normalizeNewlines(string(data)))
 		b.WriteByte('\n')
 	}
-	ast, err := js.Parse(parse.NewInputString(b.String()), js.Options{})
+	chunkSource, err := transpileTypedChunk(entry, b.String())
+	if err != nil {
+		t.Fatalf("transpile %s: %v", entry.name, err)
+	}
+	ast, err := js.Parse(parse.NewInputString(chunkSource), js.Options{})
 	if err != nil {
 		t.Fatalf("parse %s: %v", entry.name, err)
 	}
@@ -183,7 +190,7 @@ var shippedSymbolPlacements = []symbolPlacement{
 		symbol: "sceneDecompressProps",
 		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-decompress.js"},
 		notIn:  []string{"bootstrap-feature-scene3d.js"},
-		why:    "11a-scene-decompress.js became a gated chunk. createSceneState awaits it before it decodes, and a scene with plain float arrays never fetches it",
+		why:    "11a-scene-decompress.ts became a gated chunk. createSceneState awaits it before it decodes, and a scene with plain float arrays never fetches it",
 	},
 	{
 		symbol: "sceneGeneratePointsArrays",

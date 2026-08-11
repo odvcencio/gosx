@@ -116,7 +116,7 @@ const budgets = [
   // Measured: 902_343 / 244_995 / 198_759 + rounding headroom.
   //
   // Bumped raw 903_000 -> 905_000: Slice 3 WebGL2 CPU-cull fallback —
-  // extractFrustumPlanesJS + instancePassesCullTest hoisted to 11-scene-math.js
+  // extractFrustumPlanesJS + instancePassesCullTest hoisted to 11-scene-math.ts
   // (shared); CPU cull path (hasCullConfig gate + survivor compaction +
   // dynamic VBO upload) added to drawInstancedMeshes in 16-scene-webgl.js.
   // Measured: 903_824 / 245_457 / 198_989 + rounding headroom.
@@ -126,7 +126,7 @@ const budgets = [
   // __gosx_motion_load/refs once, per-frame __gosx_motion_tick + grow/re-tick,
   // packed-float decode loop mapping position/scale/quat-rotation to
   // SET_TRANSFORM commands via applySceneCommands) plus sceneQuatToEulerXYZ in
-  // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm (inert when unset).
+  // 11-scene-math.ts. Flag-gated on window.__gosx_motion_wasm (inert when unset).
   // Measured: 905_554 / 246_098 / 199_456 + rounding headroom.
   //
   // Bumped raw 906_500 -> 911_000, gzip 246_500 -> 247_500, brotli 199_500 ->
@@ -150,8 +150,9 @@ const budgets = [
   // Bumped raw 915_000 -> 1_130_000, gzip 249_000 -> 300_000, brotli 202_000 ->
   // 245_000: the scene3d/water system (16a WaterSystem WGSL passes + water shader
   // modules, landed in checkpoint f6c21364) is the bulk of this (~204K raw);
-  // declarative interaction primitives 06-declarative-actions.js +
-  // 07-declarative-regions.js add ~5K. Measured 1_119_654 / 295_924 / 239_403.
+  // declarative interaction primitives client/runtime/host/actions.ts +
+  // client/runtime/host/regions.ts adds ~5K. Measured 1_119_654 / 295_924 /
+  // 239_403.
   // Trim when the water WIP finalizes its scene-module footprint.
   // Bumped raw 1_130_000 -> 1_180_000, gzip 300_000 -> 312_000, brotli 245_000
   // -> 252_000: water-demo Selena convergence. The hand-written jeantimex-water
@@ -468,7 +469,18 @@ const budgets = [
   // Measured: 1_466_190 / 396_503 / 318_902.
   // Bumped 1_466_190 / 396_503 -> 1_466_535 / 396_585 for post-effect
   // time loop admission. Brotli retains its prior headroom.
-  { file: "bootstrap.js", raw: 1_466_535, gzip: 396_585, brotli: 318_902 },
+  // Bumped to 1_472_360 / 398_287 / 320_111 for DOM-region bounded post
+  // execution and quality-rung compute scaling. This adds the scissor/copy
+  // path that lets customPost effects run only inside measured DOM bounds.
+  // Bumped to exact 1_476_537 / 399_224 / 320_847 for behavioral fake-backend
+  // ROI coverage and mount diagnostics for bounded passes, skips and pixels.
+  // Bumped to exact 1_480_671 / 400_308 / 321_793 for progressive model
+  // lifecycle guards that prevent stale hydration and hidden-page swaps.
+  // Bumped to exact 1_482_728 / 400_769 / 322_414 for the integrated
+  // progressive-model render commit and quality-rung diagnostics.
+  // Bumped raw/gzip to exact 1_482_820 / 400_783 for the typed O1 math and
+  // compressed-array leaves; brotli remains inside its prior ceiling.
+  { file: "bootstrap.js", raw: 1_482_820, gzip: 400_783, brotli: 322_414 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -515,7 +527,9 @@ const budgets = [
   //
   // Observable transport outcomes and queue health are available on every
   // runtime surface. Final measurement: 125_629 / 34_137 / 29_910.
-  { file: "bootstrap-runtime.js", raw: 126_000, gzip: 34_500, brotli: 30_000 },
+  // Bumped to exact 127_614 / 34_641 / 30_369 for the integrated progressive
+  // model lifecycle and quality-rung runtime surfaces.
+  { file: "bootstrap-runtime.js", raw: 127_614, gzip: 34_641, brotli: 30_369 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -547,7 +561,9 @@ const budgets = [
   //
   // The lite surface carries the same audited observable telemetry transport.
   // Final measurement: 98_110 / 26_463 / 23_574.
-  { file: "bootstrap-lite.js", raw: 98_500, gzip: 26_500, brotli: 24_000 },
+  // Bumped to exact 98_709 / 26_623 / 23_698 for the integrated progressive
+  // model lifecycle and quality-rung runtime surfaces.
+  { file: "bootstrap-lite.js", raw: 98_709, gzip: 26_623, brotli: 23_698 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -606,7 +622,7 @@ const budgets = [
   // Measured: 545_325 / 148_714 / 122_349 + rounding headroom.
   //
   // Bumped raw 546_000 -> 548_500: Slice 3 WebGL2 CPU-cull fallback —
-  // instancePassesCullTest in 11-scene-math.js + CPU cull path in
+  // instancePassesCullTest in 11-scene-math.ts + CPU cull path in
   // 16-scene-webgl.js (drawInstancedMeshes: hasCullConfig gate, survivor
   // compaction, dynamic VBO upload). Measured: 547_225 / 149_287 / 122_821.
   //
@@ -616,7 +632,7 @@ const budgets = [
   // grow-and-re-tick on truncation, packed LE-float64 decode loop mapping
   // position/scale/quat-rotation to SET_TRANSFORM commands through
   // applySceneCommands) in 20-scene-mount.js + sceneQuatToEulerXYZ in
-  // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm; inert when unset.
+  // 11-scene-math.ts. Flag-gated on window.__gosx_motion_wasm; inert when unset.
   // Measured: 548_880 / 149_960 / 123_499 + rounding headroom.
   //
   // Bumped raw 550_000 -> 552_500: P4-M3 unified-motion WASM mixer bridge for
@@ -750,7 +766,11 @@ const budgets = [
   // re-set from measurement of the merged bundle: 194_403 / 52_664 / 45_104.
   // Final integrated measurement: 209_702 / 57_564 / 49_044.
   // Authored-points time support exact measurement: 209_726 / 57_632 / 49_102.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 210_000, gzip: 57_632, brotli: 49_200 },
+  // Bumped to measured 210_454 / 57_897 / 49_305 for WebGL bounded customPost
+  // execution. It copies the base frame, converts top-left bounds to WebGL
+  // scissor coordinates, and disables scissor after the draw.
+  // Bumped to exact 211_126 / 58_044 / 49_395 for WebGL ROI counters.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 211_126, gzip: 58_044, brotli: 49_395 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -806,7 +826,15 @@ const budgets = [
   // Measured: 505_058 / 139_828 / 116_000.
   // Post-effect time loop admission exact measurement: 505_397 / 139_905 /
   // 116_116.
-  { file: "bootstrap-feature-scene3d.js", raw: 505_397, gzip: 139_905, brotli: 116_116 },
+  // Bumped to measured 509_707 / 141_045 / 117_171 for DOM-region bounds
+  // measurement, runtime-private bounds merge, and compute-rung scaling.
+  // Bumped to exact 512_892 / 141_791 / 117_722 for real DOM-region core-path
+  // coverage and ROI diagnostic support.
+  // Bumped to exact 517_014 / 142_888 / 118_559 for progressive model
+  // lifecycle guards that prevent stale hydration and hidden-page swaps.
+  // Bumped to exact 517_061 / 142_890 / 118_435 for the integrated quality
+  // telemetry path.
+  { file: "bootstrap-feature-scene3d.js", raw: 517_061, gzip: 142_890, brotli: 118_435 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -964,7 +992,10 @@ const budgets = [
   // 73_252, so only the breached gzip ceiling moves.
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 381_939, gzip: 92_096, brotli: 77_192 },
+  // Bumped to measured 382_873 / 92_416 / 77_434 for WebGPU bounded customPost
+  // execution. It copies the current texture, loads the target, then scissors.
+  // Bumped to exact 383_174 / 92_472 / 77_410 for WebGPU ROI counters.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 383_174, gzip: 92_472, brotli: 77_410 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1097,7 +1128,7 @@ const routeBudgets = [
     // headroom.
     // Bumped raw 183_000 -> 190_000, gzip 52_200 -> 54_000, brotli 46_200 ->
     // 47_500: bootstrap-runtime.js now carries the declarative interaction
-    // primitives 06-declarative-actions.js + 07-declarative-regions.js
+    // primitives client/runtime/host/actions.ts + client/runtime/host/regions.ts
     // (data-gosx-action / -submit-on / -set / -region). Measured 187_357 /
     // 53_135 / 46_874, plus sub-1% rounding headroom.
     // Bumped raw 190_000 -> 191_000, brotli 47_500 -> 47_800 for the
@@ -1105,7 +1136,7 @@ const routeBudgets = [
     // bootstrap-feature-engines.js budget note above). gzip headroom
     // unchanged. Measured: 190_224 / 53_972 / 47_629, plus rounding headroom.
     // Bumped gzip 54_000 -> 54_200 for CSRF token attachment in
-    // 06-declarative-actions.js's actionFetch (gosxCSRFToken() reads
+    // client/runtime/host/actions.ts's actionFetch (gosxCSRFToken() reads
     // <meta name="csrf-token">, attaches X-CSRF-Token on POST/PUT/PATCH/
     // DELETE — see session.Manager.Protect). Measured: 190_508 / 54_077 /
     // 47_753, plus rounding headroom.
@@ -1159,9 +1190,11 @@ const routeBudgets = [
     // (gzip 70_000 -> 70_100). Ceiling re-set from measurement of the merged
     // route.
     // Final observable-telemetry measurement: 229_436 / 65_617 / 57_847.
-    raw: 230_000,
-    gzip: 66_000,
-    brotli: 58_000,
+    // Bumped to exact 232_335 / 66_386 / 58_527 for the integrated
+    // progressive-model lifecycle and quality-rung runtime surfaces.
+    raw: 232_335,
+    gzip: 66_386,
+    brotli: 58_527,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1253,9 +1286,17 @@ const routeBudgets = [
     // Measured: 1_158_756 / 308_319 / 260_670.
     // Bumped to exact 1_159_095 / 308_396 / 260_786 for post-effect time loop
     // admission in the base Scene3D chunk.
-    raw: 1_159_095,
-    gzip: 308_396,
-    brotli: 260_786,
+    // Bumped to exact 1_164_339 / 309_856 / 262_083 for DOM-region bounded
+    // post execution and compute-rung scaling across base Scene3D and WebGPU.
+    // Bumped to exact 1_167_825 / 310_658 / 262_610 for behavioral ROI
+    // diagnostics on the WebGPU route.
+    // Bumped to exact 1_171_947 / 311_755 / 263_447 for progressive model
+    // lifecycle guards in the base Scene3D chunk.
+    // Bumped to exact 1_174_893 / 312_526 / 264_003 for the integrated quality
+    // telemetry path.
+    raw: 1_174_893,
+    gzip: 312_526,
+    brotli: 264_003,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1327,9 +1368,17 @@ const routeBudgets = [
     // Measured: 986_543 / 273_855 / 232_580.
     // Post-effect time loop admission exact measurement: 986_882 / 273_932 /
     // 232_696.
-    raw: 986_882,
-    gzip: 273_932,
-    brotli: 232_696,
+    // Bumped to exact 991_920 / 275_337 / 233_954 for DOM-region bounded post
+    // execution and compute-rung scaling across base Scene3D and WebGL.
+    // Bumped to exact 995_777 / 276_230 / 234_595 for behavioral ROI
+    // diagnostics on the WebGL route.
+    // Bumped to exact 999_899 / 277_327 / 235_432 for progressive model
+    // lifecycle guards in the base Scene3D chunk.
+    // Bumped to exact 1_002_845 / 278_098 / 235_988 for the integrated quality
+    // telemetry path.
+    raw: 1_002_845,
+    gzip: 278_098,
+    brotli: 235_988,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1392,9 +1441,17 @@ const routeBudgets = [
     // Measured: 1_368_482 / 365_951 / 309_772.
     // Post-effect time loop admission exact measurement: 1_368_821 / 366_028 /
     // 309_888.
-    raw: 1_368_821,
-    gzip: 366_028,
-    brotli: 309_888,
+    // Bumped to exact 1_374_793 / 367_753 / 311_388 for DOM-region bounded
+    // post execution and compute-rung scaling across both GPU backends.
+    // Bumped to exact 1_378_951 / 368_702 / 312_005 for behavioral ROI
+    // diagnostics across both GPU backends.
+    // Bumped to exact 1_383_073 / 369_799 / 312_842 for progressive model
+    // lifecycle guards in the base Scene3D chunk.
+    // Bumped to exact 1_386_019 / 370_570 / 313_398 for the integrated quality
+    // telemetry path.
+    raw: 1_386_019,
+    gzip: 370_570,
+    brotli: 313_398,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1408,7 +1465,7 @@ const routeBudgets = [
     // 230_890.
     //
     // The base chunk still dominates this route. 16b-scene-compute.js,
-    // 15b-scene-planner.js and 17-scene-input.js are conditional capability
+    // 15b-scene-planner.ts and 17-scene-input.js are conditional capability
     // that a hero scene never runs, and the server already computes the
     // verdict for each one. Gating them is the next cut.
     name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
@@ -1459,9 +1516,17 @@ const routeBudgets = [
     // Measured: 1_012_626 / 266_061 / 223_102.
     // Post-effect time loop admission exact measurement: 1_012_965 / 266_138 /
     // 223_218.
-    raw: 1_012_965,
-    gzip: 266_138,
-    brotli: 223_218,
+    // Bumped to exact 1_018_209 / 267_598 / 224_515 for DOM-region bounded
+    // post execution and compute-rung scaling across base Scene3D and WebGPU.
+    // Bumped to exact 1_021_695 / 268_400 / 225_042 for behavioral ROI
+    // diagnostics on the minimal WebGPU route.
+    // Bumped to exact 1_025_817 / 269_497 / 225_879 for progressive model
+    // lifecycle guards in the base Scene3D chunk.
+    // Bumped to exact 1_027_849 / 270_003 / 226_214 for the integrated quality
+    // telemetry path.
+    raw: 1_027_849,
+    gzip: 270_003,
+    brotli: 226_214,
   },
 
 ];
@@ -1511,23 +1576,37 @@ test("selective runtime route surfaces stay within first-load budgets", () => {
 // files joined by OR; since mobile Chrome reports deviceMemory<=4 near-
 // universally, that OR throttled capable phones to the low-power GPU.
 test("device-capability gate stays DRY (gosxLowEndHardware, AND-form, no inlined OR drift)", () => {
-  const srcDir = path.join(__dirname, "bootstrap-src");
-  const files = fs.readdirSync(srcDir).filter((f) => f.endsWith(".js"));
+  const sourceFilesUnder = (root) => {
+    const files = [];
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+      const file = path.join(root, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...sourceFilesUnder(file));
+      } else if (/\.(?:js|ts)$/.test(entry.name)) {
+        files.push(file);
+      }
+    }
+    return files;
+  };
+  const files = [
+    ...sourceFilesUnder(path.join(__dirname, "bootstrap-src")),
+    ...sourceFilesUnder(path.join(__dirname, "..", "runtime")),
+  ];
   let definitions = 0;
   let references = 0;
-  for (const f of files) {
-    const body = fs.readFileSync(path.join(srcDir, f), "utf8");
+  for (const file of files) {
+    const body = fs.readFileSync(file, "utf8");
     assert.ok(
       !/deviceMemory\s*<=\s*4\s*\)\s*\|\|\s*\(?\s*hardwareConcurrency/.test(body) &&
         !/hardwareConcurrency\s*<=\s*4\s*\)\s*\|\|\s*\(?\s*deviceMemory/.test(body),
-      `inlined OR-form device-capability predicate found in ${f}; derive it from gosxLowEndHardware instead`,
+      `inlined OR-form device-capability predicate found in ${file}; derive it from gosxLowEndHardware instead`,
     );
     definitions += (body.match(/function\s+gosxLowEndHardware\s*\(/g) || []).length;
     references += (body.match(/gosxLowEndHardware\s*\(/g) || []).length;
   }
   assert.equal(definitions, 1, "gosxLowEndHardware must be defined exactly once (single source of truth)");
-  assert.ok(references >= 3, "gosxLowEndHardware should back both lowPower and constrainedHardware");
-  const env = fs.readFileSync(path.join(srcDir, "05-document-env.js"), "utf8");
+  assert.ok(references >= 2, "gosxLowEndHardware should back the environment and Scene3D capability gates");
+  const env = fs.readFileSync(path.join(__dirname, "bootstrap-src", "05-document-env.js"), "utf8");
   assert.ok(
     /function\s+gosxLowEndHardware[\s\S]{0,200}<=\s*4\s*\)\s*&&\s*\(/.test(env),
     "gosxLowEndHardware must AND the memory and core checks (not OR)",

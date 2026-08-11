@@ -366,6 +366,87 @@ test("Scene3D QualityLadder: Points LayerGroups filter — untagged always drawn
   assert.equal(noFilterNeeded.qualitySkippedCount, 0);
 });
 
+test("Scene3D QualityLadder: ComputeBudgetScale reduces compute particle counts before bundle creation", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const compute = [
+    { id: "elio", count: 220, material: "spark" },
+    { id: "tiny", count: 3, material: "dust" },
+  ];
+  const ladderState = {
+    mode: "ladder",
+    ladder: [{ name: "balanced", computeBudgetScale: 0.55 }],
+    rungIndex: 0,
+  };
+
+  const scaled = api.sceneScaleComputeParticlesByQualityRung(compute, ladderState);
+  assert.notStrictEqual(scaled, compute, "a real count reduction must allocate a scaled entry list");
+  assert.equal(scaled[0].count, 121, "220 * 0.55 must floor to 121");
+  assert.equal(scaled[1].count, 1, "small systems must use the same floor rule");
+  assert.equal(compute[0].count, 220, "the authored scene state must stay unchanged");
+  assert.equal(api.sceneQualityLadderComputeBudgetScale(ladderState), 0.55);
+  assert.equal(api.sceneComputeParticlesInstanceCount(compute), 223);
+  assert.equal(api.sceneComputeParticlesInstanceCount(scaled), 122);
+});
+
+test("Scene3D QualityLadder: ComputeBudgetScale zero omits compute particle systems", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const compute = [{ id: "elio", count: 220 }];
+  const state = api.createSceneAdaptiveQualityState({
+    scene: { qualityLadder: [{ name: "off", computeBudgetScale: 0 }] },
+  }, {}, {});
+  const scaled = api.sceneScaleComputeParticlesByQualityRung(compute, state);
+
+  assert.equal(state.ladder[0].computeBudgetScale, 0, "normalization must preserve explicit computeBudgetScale:0");
+  assert.equal(scaled.length, 0, "zero scale must omit the compute system instead of keeping count:0");
+  assert.equal(api.sceneComputeParticlesInstanceCount(compute), 220);
+  assert.equal(api.sceneComputeParticlesInstanceCount(scaled), 0);
+  assert.equal(compute[0].count, 220, "zero scale must not mutate the source entry");
+});
+
+test("Scene3D QualityLadder: omitted ComputeBudgetScale still defaults to full budget", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const state = api.createSceneAdaptiveQualityState({
+    scene: { qualityLadder: [{ name: "default" }] },
+  }, {}, {});
+  const compute = [{ id: "elio", count: 220 }];
+
+  assert.equal(state.ladder[0].computeBudgetScale, 1);
+  assert.strictEqual(api.sceneScaleComputeParticlesByQualityRung(compute, state), compute,
+    "omitted scale must keep the identity full-budget path");
+  assert.deepEqual(Object.keys(compute), ["0"], "omitted scale must not attach metadata to the authored array");
+});
+
+test("Scene3D QualityLadder: absent active rung keeps compute particle entry identity", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const compute = [{ id: "elio", count: 220 }];
+
+  assert.strictEqual(api.sceneScaleComputeParticlesByQualityRung(compute, null), compute,
+    "no ladder must be the identity path");
+  assert.deepEqual(Object.keys(compute), ["0"], "no ladder must not attach metadata to the authored array");
+  assert.strictEqual(api.sceneScaleComputeParticlesByQualityRung(compute, {
+    mode: "ladder",
+    ladder: [{ name: "raw", computeBudgetScale: 0.55 }],
+    rungIndex: 3,
+  }), compute, "an invalid active rung must keep the authored compute entries");
+  assert.deepEqual(Object.keys(compute), ["0"], "an invalid active rung must not attach metadata to the authored array");
+  assert.equal(api.sceneComputeParticlesInstanceCount(compute), 220);
+});
+
+test("Scene3D QualityLadder: full scale keeps compute particle entry identity without metadata", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const compute = [{ id: "elio", count: 220 }];
+  const ladderState = {
+    mode: "ladder",
+    ladder: [{ name: "full", computeBudgetScale: 1 }],
+    rungIndex: 0,
+  };
+
+  assert.strictEqual(api.sceneScaleComputeParticlesByQualityRung(compute, ladderState), compute,
+    "scale >= 1 must be the identity path");
+  assert.deepEqual(Object.keys(compute), ["0"], "scale >= 1 must not attach metadata to the authored array");
+  assert.equal(api.sceneComputeParticlesInstanceCount(compute), 220);
+});
+
 test("Scene3D QualityLadder: QualityStartRung on a rung with empty/absent LayerGroups admits everything from frame one", () => {
   const { state, api } = createQualityLadderHarness(RAW_TO_GLOW_LADDER, {
     qualityStartRung: 0,

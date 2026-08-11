@@ -18,6 +18,69 @@
     );
   }
 
+  function runtimeExportsReady(names) {
+    for (const name of names) {
+      if (typeof window[name] !== "function") {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function manifestRuntimeReady(manifest) {
+    if (!manifest) {
+      return runtimeReady();
+    }
+
+    const required = [];
+    const add = function(name) {
+      if (required.indexOf(name) < 0) {
+        required.push(name);
+      }
+    };
+    const hasEntries = function(key) {
+      return Boolean(manifest && manifest[key] && manifest[key].length > 0);
+    };
+
+    if (hasEntries("islands")) {
+      add("__gosx_hydrate");
+      add("__gosx_action");
+      add("__gosx_dispose");
+    }
+    if (hasEntries("computeIslands")) {
+      if (typeof window.__gosx_hydrate_compute !== "function" && typeof window.__gosx_hydrate !== "function") {
+        return false;
+      }
+    }
+    if (hasEntries("islands") || hasEntries("computeIslands")) {
+      add("__gosx_set_shared_signal");
+      add("__gosx_set_input_batch");
+    }
+    if (hasEntries("engines")) {
+      for (const entry of manifest.engines) {
+        if (entry && entry.runtime === "shared") {
+          add("__gosx_hydrate_engine");
+          add("__gosx_tick_engine");
+          add("__gosx_render_engine");
+          add("__gosx_engine_dispose");
+          break;
+        }
+      }
+    }
+    const surfaces = Array.isArray(manifest && manifest.selfDescribingSurfaces) ? manifest.selfDescribingSurfaces : [];
+    for (const entry of surfaces) {
+      if (String((entry && entry.runtime) || "shared").trim() === "shared") {
+        add("__gosx_hydrate");
+        break;
+      }
+    }
+
+    if (required.length === 0) {
+      return runtimeReady();
+    }
+    return runtimeExportsReady(required);
+  }
+
   // --------------------------------------------------------------------------
   // Manifest loading
   // --------------------------------------------------------------------------

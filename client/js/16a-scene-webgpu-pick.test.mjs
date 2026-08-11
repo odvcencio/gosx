@@ -2,7 +2,7 @@
 //
 // These tests load three bootstrap fragments into ONE VM context, exactly the
 // way the shipped bundles concatenate them:
-//   - 11-scene-math.js   -> sceneScreenToRay and the ray/triangle helpers
+//   - 11-scene-math.ts   -> sceneScreenToRay and the ray/triangle helpers
 //   - 17-scene-input.js  -> the shared CPU pick contract used by BOTH backends
 //   - 16a-scene-webgpu.js -> the WebGPU renderer and its GPU picker
 //
@@ -26,7 +26,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  const sourcePath = name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name); return fs.readFileSync(sourcePath, "utf8");
 }
 
 // --- Fake WebGPU device -----------------------------------------------------
@@ -282,9 +282,9 @@ function createContext() {
   `;
 
   vm.runInContext(prelude, context, { filename: "prelude.js" });
-  vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
+  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
   vm.runInContext(readSource("17-scene-input.js"), context, { filename: "17-scene-input.js" });
-  vm.runInContext(readSource("16a-scene-webgpu.js"), context, { filename: "16a-scene-webgpu.js" });
+  vm.runInContext(readSource("../runtime/scene3d/webgpu.ts"), context, { filename: "16a-scene-webgpu.js" });
   return { context, sandbox };
 }
 

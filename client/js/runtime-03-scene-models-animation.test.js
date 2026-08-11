@@ -28,6 +28,16 @@ const {
   SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE,
 } = require("./runtime-test-harness.js");
 
+function deferredRoute() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 test("bootstrap loads declarative Scene3D model assets without authored JS", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-model-root";
@@ -180,6 +190,960 @@ test("bootstrap loads declarative Scene3D model assets without authored JS", asy
   assert.equal(modelSprite.firstChild.getAttribute("src"), "http://localhost:3000/paper-card.png");
   const ctx2d = mount.children[0].getContext("2d");
   assert.ok(ctx2d.ops.some((entry) => entry[0] === "lineTo"));
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive models mount preview then swap to full source", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-root";
+  const events = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/hero-preview.gosx3d.json": {
+        text: JSON.stringify({
+          labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }],
+        }),
+      },
+      "/models/hero-full.gosx3d.json": {
+        text: JSON.stringify({
+          labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }],
+        }),
+      },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-progressive-model",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-progressive-model-root",
+          props: {
+            width: 640,
+            height: 360,
+            models: [
+              {
+                id: "hero",
+                src: "/models/hero-full.gosx3d.json",
+                previewSrc: "/models/hero-preview.gosx3d.json",
+                fullSrc: "/models/hero-full.gosx3d.json",
+                progressive: true,
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/hero-preview.gosx3d.json"), true);
+  assert.equal(env.fetchCalls.some((call) => call.url === "/models/hero-full.gosx3d.json"), true);
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-status"), "full-settled");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-preview-src"), "/models/hero-preview.gosx3d.json");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-full-src"), "/models/hero-full.gosx3d.json");
+  const fullLabel = mount.children[1].children.find((child) => child.getAttribute("data-gosx-scene-label") === "hero/full-label");
+  assert.ok(fullLabel);
+  assert.equal(fullLabel.textContent, "Full");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive models report full preload failure and keep preview", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-failure-root";
+  const events = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/failure-preview.gosx3d.json": {
+        text: JSON.stringify({
+          labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }],
+        }),
+      },
+      "/models/failure-full.gosx3d.json": {
+        text: JSON.stringify({ labels: [] }),
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-failure",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-failure-root",
+        props: {
+          width: 640,
+          height: 360,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/failure-preview.gosx3d.json",
+            fullSrc: "/models/failure-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "full-preload-failed"]);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-status"), "full-preload-failed");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-error"), "empty model asset");
+  const previewLabel = mount.children[1].children.find((child) => child.getAttribute("data-gosx-scene-label") === "hero/preview-label");
+  assert.ok(previewLabel);
+  assert.equal(previewLabel.textContent, "Preview");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D SetModels command arms progressive model lifecycle", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-command-root";
+  const events = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/command-preview.gosx3d.json": {
+        text: JSON.stringify({
+          labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }],
+        }),
+      },
+      "/models/command-full.gosx3d.json": {
+        text: JSON.stringify({
+          labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }],
+        }),
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-command",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-command-root",
+        props: {
+          width: 640,
+          height: 360,
+          scene: { objects: [{ id: "baseline", kind: "box" }] },
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const mounted = env.context.__gosx.engines.get("gosx-engine-progressive-model-command");
+  assert.ok(mounted);
+  await mounted.handle.applyCommands([{
+    kind: 10,
+    data: {
+      models: [{
+        id: "hero",
+        previewSrc: "/models/command-preview.gosx3d.json",
+        fullSrc: "/models/command-full.gosx3d.json",
+        progressive: true,
+      }],
+    },
+  }]);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-status"), "full-settled");
+  const fullLabel = mount.children[1].children.find((child) => child.getAttribute("data-gosx-scene-label") === "hero/full-label");
+  assert.ok(fullLabel);
+  assert.equal(fullLabel.textContent, "Full");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D mount command event arms progressive model lifecycle", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-mount-command-root";
+  const events = [];
+  const applied = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+  mount.addEventListener("gosx:scene3d:commands-applied", (event) => applied.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/mount-command-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/mount-command-full.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }] }),
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-mount-command",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-mount-command-root",
+        props: {
+          width: 640,
+          height: 360,
+          scene: { objects: [{ id: "baseline", kind: "box" }] },
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  mount.dispatchEvent(new env.context.CustomEvent("gosx:scene3d:commands", {
+    detail: {
+      revision: 1,
+      commands: [{
+        kind: 10,
+        data: {
+          models: [{
+            id: "hero",
+            previewSrc: "/models/mount-command-preview.gosx3d.json",
+            fullSrc: "/models/mount-command-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  }));
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].revision, 1);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D batched SetModels and SetInstancedGLBMeshes uses current hydration result", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-batched-root";
+  const events = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/batched-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/batched-full.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/batched-instanced.glb": { bytes: buildMinimalGLBBytes() },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-batched",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-batched-root",
+        props: {
+          width: 640,
+          height: 360,
+          scene: { objects: [{ id: "baseline", kind: "box" }] },
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const mounted = env.context.__gosx.engines.get("gosx-engine-progressive-model-batched");
+  assert.ok(mounted);
+  await mounted.handle.applyCommands([
+    {
+      kind: 10,
+      data: {
+        models: [{
+          id: "hero",
+          previewSrc: "/models/batched-preview.gosx3d.json",
+          fullSrc: "/models/batched-full.gosx3d.json",
+          progressive: true,
+        }],
+      },
+    },
+    {
+      kind: 11,
+      data: {
+        instancedGLBMeshes: [{
+          id: "batch",
+          src: "/models/batched-instanced.glb",
+          instances: [{ id: "one", x: 0, y: 0, z: 0 }],
+        }],
+      },
+    },
+  ]);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  assert.equal(mount.__gosxScene3DState._modelHydrationGeneration >= 3, true);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive model lifecycle stops after command supersession", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-superseded-root";
+  const events = [];
+  const fullRoute = deferredRoute();
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/superseded-preview.gosx3d.json": {
+        text: JSON.stringify({
+          labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }],
+        }),
+      },
+      "/models/superseded-full.gosx3d.json": () => fullRoute.promise,
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-superseded",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-superseded-root",
+        props: {
+          width: 640,
+          height: 360,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/superseded-preview.gosx3d.json",
+            fullSrc: "/models/superseded-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready"]);
+  const mounted = env.context.__gosx.engines.get("gosx-engine-progressive-model-superseded");
+  assert.ok(mounted);
+  await mounted.handle.applyCommands([{ kind: 10, data: { models: [] } }]);
+  fullRoute.resolve({
+    text: JSON.stringify({
+      labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }],
+    }),
+  });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(events.some((event) => event.status === "swap-issued"), false);
+  assert.equal(events.some((event) => event.status === "full-settled"), false);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-status"), "preview-ready");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive model lifecycle stops after dispose", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-dispose-root";
+  const events = [];
+  const fullRoute = deferredRoute();
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/dispose-preview.gosx3d.json": {
+        text: JSON.stringify({
+          labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }],
+        }),
+      },
+      "/models/dispose-full.gosx3d.json": () => fullRoute.promise,
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-dispose",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-dispose-root",
+        props: {
+          width: 640,
+          height: 360,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/dispose-preview.gosx3d.json",
+            fullSrc: "/models/dispose-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready"]);
+  env.context.__gosx_dispose_engine("gosx-engine-progressive-model-dispose");
+  fullRoute.resolve({
+    text: JSON.stringify({
+      labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }],
+    }),
+  });
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.equal(events.some((event) => event.status === "swap-issued"), false);
+  assert.equal(events.some((event) => event.status === "full-settled"), false);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-status"), "preview-ready");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive GLB preload uses mounted texture variant scope", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-glb-scope-root";
+  const modelStatuses = [];
+  const events = [];
+  mount.addEventListener("gosx:scene3d:model-status", (event) => modelStatuses.push(event.detail));
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/scope-preview.glb": { bytes: buildMinimalGLBBytes() },
+      "/models/scope-full.glb": { bytes: buildMinimalGLBBytes() },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-glb-scope",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-glb-scope-root",
+        props: {
+          width: 640,
+          height: 360,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/scope-preview.glb",
+            fullSrc: "/models/scope-full.glb",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  const fullLoad = modelStatuses.find((entry) => entry.asset === "/models/scope-full.glb" && entry.stage === "progressive-preload");
+  assert.ok(fullLoad);
+  assert.match(fullLoad.variantScope, /^scene-model-variant-/);
+  assert.equal(fullLoad.variantBackend, "webgl");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive lifecycle survives unrelated command before swap", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-interleave-before-root";
+  const events = [];
+  const fullRoute = deferredRoute();
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/interleave-before-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/interleave-before-full.gosx3d.json": () => fullRoute.promise,
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-interleave-before",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-interleave-before-root",
+        props: {
+          width: 640,
+          height: 360,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/interleave-before-preview.gosx3d.json",
+            fullSrc: "/models/interleave-before-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready"]);
+  const mounted = env.context.__gosx.engines.get("gosx-engine-progressive-model-interleave-before");
+  assert.ok(mounted);
+  await mounted.handle.applyCommands([{ kind: 5, data: { x: 0, y: 0, z: 6 } }]);
+  fullRoute.resolve({
+    text: JSON.stringify({ labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }] }),
+  });
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive lifecycle survives unrelated command after swap-issued", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-interleave-after-root";
+  const events = [];
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/interleave-after-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/interleave-after-full.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }] }),
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-interleave-after",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-interleave-after-root",
+        props: {
+          width: 640,
+          height: 360,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/interleave-after-preview.gosx3d.json",
+            fullSrc: "/models/interleave-after-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+  const raf = installManualRAF(env.context);
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  for (let attempt = 0; attempt < 6 && !events.some((event) => event.status === "swap-issued"); attempt += 1) {
+    await flushAsyncWork();
+  }
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued"]);
+  const mounted = env.context.__gosx.engines.get("gosx-engine-progressive-model-interleave-after");
+  assert.ok(mounted);
+  await mounted.handle.applyCommands([{ kind: 5, data: { x: 0, y: 0, z: 7 } }]);
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued"]);
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive full hydration failure restores preview declaration", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-hydration-failure-root";
+  const events = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/hydration-failure-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/hydration-failure-full.glb": { bytes: buildSkinnedGLBBytes() },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-hydration-failure",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-hydration-failure-root",
+        props: {
+          width: 640,
+          height: 360,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/hydration-failure-preview.gosx3d.json",
+            fullSrc: "/models/hydration-failure-full.glb",
+            progressive: true,
+            animation: "bend",
+          }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const animationAPI = env.context.__gosx_scene3d_animation_api;
+  const originalComputeJointMatrices = animationAPI.computeJointMatrices;
+  animationAPI.computeJointMatrices = function throwingProgressiveSkinStage() {
+    throw new Error("progressive-skin-stage-boom");
+  };
+  try {
+    await flushAsyncWork();
+    await flushAsyncWork();
+    await flushAsyncWork();
+
+    assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-preload-failed"]);
+    assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-error"), "skin");
+    const state = mount.__gosxScene3DState;
+    assert.ok(state);
+    assert.equal(state.models[0].src, "/models/hydration-failure-preview.gosx3d.json");
+    assert.equal(state.models[0].progressive, true);
+    const previewLabel = mount.children[1].children.find((child) => child.getAttribute("data-gosx-scene-label") === "hero/preview-label");
+    assert.ok(previewLabel);
+    assert.equal(previewLabel.textContent, "Preview");
+    assert.equal(events.some((event) => event.status === "full-settled"), false);
+  } finally {
+    animationAPI.computeJointMatrices = originalComputeJointMatrices;
+  }
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive full swap stays pending while page is hidden", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-hidden-root";
+  const events = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    visibilityState: "hidden",
+    fetchRoutes: {
+      "/models/hidden-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/hidden-full.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }] }),
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-hidden",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-hidden-root",
+        props: {
+          width: 640,
+          height: 360,
+          progressiveModelRenderTimeoutMS: 5,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/hidden-preview.gosx3d.json",
+            fullSrc: "/models/hidden-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-pending-render"]);
+  assert.equal(events.some((event) => event.status === "full-settled"), false);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-error"), "render paused");
+  env.document.visibilityState = "visible";
+  env.context.__gosx.environment.refresh("test-visible");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-pending-render", "full-settled"]);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive full swap stays pending while offscreen", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-offscreen-root";
+  const events = [];
+  const fullRoute = deferredRoute();
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/offscreen-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/offscreen-full.gosx3d.json": () => fullRoute.promise,
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-offscreen",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-offscreen-root",
+        props: {
+          width: 640,
+          height: 360,
+          progressiveModelRenderTimeoutMS: 5,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/offscreen-preview.gosx3d.json",
+            fullSrc: "/models/offscreen-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready"]);
+  assert.ok(env.intersectionObservers.length > 0);
+  env.intersectionObservers[0].trigger([{ target: mount, isIntersecting: false, intersectionRatio: 0 }]);
+  fullRoute.resolve({
+    text: JSON.stringify({ labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }] }),
+  });
+  await flushAsyncWork();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-pending-render"]);
+  assert.equal(events.some((event) => event.status === "full-settled"), false);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-error"), "render paused");
+  env.intersectionObservers[0].trigger([{ target: mount, isIntersecting: true, intersectionRatio: 1 }]);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-pending-render", "full-settled"]);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D stale SetModels hydration cannot replace newer progressive token", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-stale-token-root";
+  const events = [];
+  const stalePreview = deferredRoute();
+  const currentFull = deferredRoute();
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/stale-token-old-preview.gosx3d.json": () => stalePreview.promise,
+      "/models/stale-token-old-full.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "old-full-label", text: "Old full", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/stale-token-new-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "new-preview-label", text: "New preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/stale-token-new-full.gosx3d.json": () => currentFull.promise,
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-stale-token",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-stale-token-root",
+        props: {
+          width: 640,
+          height: 360,
+          scene: { objects: [{ id: "baseline", kind: "box" }] },
+        },
+      }],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const mounted = env.context.__gosx.engines.get("gosx-engine-progressive-model-stale-token");
+  assert.ok(mounted);
+  const staleApply = mounted.handle.applyCommands([{
+    kind: 10,
+    data: {
+      models: [{
+        id: "old",
+        previewSrc: "/models/stale-token-old-preview.gosx3d.json",
+        fullSrc: "/models/stale-token-old-full.gosx3d.json",
+        progressive: true,
+      }],
+    },
+  }]);
+  await flushAsyncWork();
+  await mounted.handle.applyCommands([{
+    kind: 10,
+    data: {
+      models: [{
+        id: "new",
+        previewSrc: "/models/stale-token-new-preview.gosx3d.json",
+        fullSrc: "/models/stale-token-new-full.gosx3d.json",
+        progressive: true,
+      }],
+    },
+  }]);
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready"]);
+  assert.equal(events[0].modelID, "new");
+
+  stalePreview.resolve({
+    text: JSON.stringify({ labels: [{ id: "old-preview-label", text: "Old preview", x: 0, y: 0.5, z: 0 }] }),
+  });
+  await staleApply;
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready"]);
+
+  currentFull.resolve({
+    text: JSON.stringify({ labels: [{ id: "new-full-label", text: "New full", x: 0, y: 0.5, z: 0 }] }),
+  });
+  await flushAsyncWork();
+  await flushAsyncWork();
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  assert.equal(events[1].modelID, "new");
+  assert.equal(events[2].modelID, "new");
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D SetInstancedGLBMeshes after progressive swap does not block full-settled", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-instanced-after-swap-root";
+  const events = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/models/instanced-after-swap-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/instanced-after-swap-full.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/instanced-after-swap.glb": { bytes: buildMinimalGLBBytes() },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-instanced-after-swap",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-instanced-after-swap-root",
+        props: {
+          width: 640,
+          height: 360,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/instanced-after-swap-preview.gosx3d.json",
+            fullSrc: "/models/instanced-after-swap-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  for (let attempt = 0; attempt < 6 && !events.some((event) => event.status === "swap-issued"); attempt += 1) {
+    await flushAsyncWork();
+  }
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued"]);
+  const mounted = env.context.__gosx.engines.get("gosx-engine-progressive-model-instanced-after-swap");
+  assert.ok(mounted);
+  await mounted.handle.applyCommands([{
+    kind: 11,
+    data: {
+      instancedGLBMeshes: [{
+        id: "batch",
+        src: "/models/instanced-after-swap.glb",
+        instances: [{ id: "one", x: 0, y: 0, z: 0 }],
+      }],
+    },
+  }]);
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued"]);
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-settled"]);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("Scene3D progressive render wait timeout is terminal and clears token", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-progressive-model-render-timeout-root";
+  const events = [];
+  mount.addEventListener("gosx:scene3d:progressive-model", (event) => events.push(event.detail));
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: {
+      "/models/render-timeout-preview.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "preview-label", text: "Preview", x: 0, y: 0.5, z: 0 }] }),
+      },
+      "/models/render-timeout-full.gosx3d.json": {
+        text: JSON.stringify({ labels: [{ id: "full-label", text: "Full", x: 0, y: 0.5, z: 0 }] }),
+      },
+    },
+    manifest: {
+      engines: [{
+        id: "gosx-engine-progressive-model-render-timeout",
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: "scene-progressive-model-render-timeout-root",
+        props: {
+          width: 640,
+          height: 360,
+          progressiveModelRenderTimeoutMS: 5,
+          models: [{
+            id: "hero",
+            previewSrc: "/models/render-timeout-preview.gosx3d.json",
+            fullSrc: "/models/render-timeout-full.gosx3d.json",
+            progressive: true,
+          }],
+        },
+      }],
+    },
+  });
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await flushAsyncWork();
+
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-render-timeout"]);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-progressive-model-error"), "render wait timed out");
+  assert.equal(mount.__gosxScene3DState._modelProgressiveToken, null);
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+  assert.deepEqual(events.map((event) => event.status), ["preview-ready", "swap-issued", "full-render-timeout"]);
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -974,7 +1938,7 @@ test("bootstrap renders a skinned GLB through the Selena material (default flip 
 });
 
 test("scenePBRSelenaSkinAugmentVertex renames position/normal, injects joint-skin GPU code, and validates as GLSL", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
   const match = webgl.match(/function scenePBRSelenaSkinAugmentVertex\(source\)\s*\{([\s\S]*?)\n  \}/);
   assert.ok(match, "scenePBRSelenaSkinAugmentVertex must be extractable from 16-scene-webgl.js source");
 

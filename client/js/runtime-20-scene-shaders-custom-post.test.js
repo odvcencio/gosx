@@ -1178,6 +1178,84 @@ test("custom post WebGPU: a customPost authored through createSceneState is comp
   assert.deepEqual(failWarns, [], "a valid authored custom pass must not warn");
 });
 
+test("custom post WebGPU: DOM-region bounds copy before scissor and publish counters", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  harness.canvas.width = 320;
+  harness.canvas.height = 180;
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    name: "bounded-glass",
+    fragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(0.2, 0.4, 1.0, 1.0); }",
+    vertexWGSL: "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }",
+  });
+  bundle.postEffects[0]._domRegionBounds = { mode: "union", active: true, left: 0.25, top: 0.2, right: 0.75, bottom: 0.7 };
+
+  harness.renderer.render(bundle, viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  harness.renderer.render(bundle, viewport);
+
+  const passes = mainRenderPasses(fake);
+  const customIndex = passes.findIndex((pass) => {
+    return pass.draws.some((draw) => draw.pipeline && draw.pipeline.label === "gosx-selena-post-bounded-glass");
+  });
+  assert.equal(customIndex >= 1, true, "bounded custom post must draw after a copy pass");
+  assert.deepEqual(passes[customIndex].scissors, [{ x: 80, y: 36, width: 160, height: 90 }]);
+  assert.equal(passes[customIndex - 1].scissors.length, 0, "copy-before-scissor pass must not inherit the ROI");
+  assert.equal(passes[customIndex - 1].draws.some((draw) => draw.pipeline && draw.pipeline.label === "gosx-post"), true,
+    "bounded custom post must preserve the base scene with a blit before scissor");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-passes"), "1");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-skips"), "0");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-pixels"), "14400");
+});
+
+test("custom post WebGPU: inactive DOM-region bounds skip the custom draw", async () => {
+  const fake = makeFakeGPUDeviceForCompute({
+    pipelineAsyncBehavior(desc) {
+      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+    },
+    errorScopeBehavior() { return Promise.resolve(null); },
+  });
+  fake.device.createRenderPipelineAsync = function(desc) {
+    return Promise.resolve({ __kind: "renderPipeline", label: desc && desc.label });
+  };
+
+  const harness = await createComputeParticleHarness(fake.device);
+  harness.canvas.width = 320;
+  harness.canvas.height = 180;
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const bundle = makeBundleWithCustomPost({
+    name: "skipped-glass",
+    fragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0, 0.0, 1.0, 1.0); }",
+    vertexWGSL: "@vertex fn vertexMain(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }",
+  });
+  bundle.postEffects[0]._domRegionBounds = { mode: "union", active: false, left: 0, top: 0, right: 0, bottom: 0 };
+
+  harness.renderer.render(bundle, viewport);
+  await flushAsyncWork();
+  await flushAsyncWork();
+  harness.renderer.render(bundle, viewport);
+
+  const passes = mainRenderPasses(fake);
+  assert.equal(passes.some((pass) => pass.draws.some((draw) => draw.pipeline && draw.pipeline.label === "gosx-selena-post-skipped-glass")), false,
+    "inactive DOM-region bounds must skip the custom post draw");
+  assert.equal(passes.some((pass) => pass.draws.some((draw) => draw.pipeline && draw.pipeline.label === "gosx-post")), true,
+    "the post chain must still blit the base scene to the canvas");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-passes"), "0");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-skips"), "1");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-pixels"), "0");
+});
+
 test("custom post WebGPU: reserved time and patched uniforms reach the post uniform buffer", async () => {
   const fake = makeFakeGPUDeviceForCompute({
     pipelineAsyncBehavior(desc) {
@@ -1580,6 +1658,45 @@ test("custom post WebGL2: a customPost authored through createSceneState is disp
   // reach the canvas: the custom pass's own.
   assert.equal(countDefaultFramebufferDraws(gl), 1,
     "a trailing custom post pass must be the ONLY draw that reaches the canvas — a second one means the scene was blitted over it");
+
+  renderer.dispose();
+});
+
+test("custom post WebGL2: DOM-region bounds convert y, clean scissor, and publish counters", async () => {
+  const { env, renderer, canvas, warnLog } = createWebGLRendererForPost();
+  const mount = new FakeElement("div", null);
+  mount.appendChild(canvas);
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  const validVert = "attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position * 0.5 + 0.5; gl_Position = vec4(a_position, 0.0, 1.0); }";
+  const validFrag = "precision mediump float; varying vec2 v_uv; uniform sampler2D _sceneColor; void main() { gl_FragColor = texture2D(_sceneColor, v_uv); }";
+  const bundle = makeWebGLBundleWithCustomPost({
+    name: "bounded-gl-lens",
+    vertexGLSL: validVert,
+    fragmentGLSL: validFrag,
+  });
+  bundle.postEffects[0]._domRegionBounds = { mode: "union", active: true, left: 0.25, top: 0.2, right: 0.75, bottom: 0.7 };
+
+  renderer.render(bundle, viewport);
+
+  const gl = canvas.getContext("webgl2");
+  const enableIndex = gl.ops.findIndex((op) => op[0] === "enable" && op[1] === gl.SCISSOR_TEST);
+  const scissorIndex = gl.ops.findIndex((op) => op[0] === "scissor");
+  const disableIndex = gl.ops.findIndex((op, index) => index > scissorIndex && op[0] === "disable" && op[1] === gl.SCISSOR_TEST);
+  assert.equal(enableIndex >= 0, true, "bounded custom post must enable scissor");
+  assert.equal(scissorIndex > enableIndex, true, "scissor must be set after enabling SCISSOR_TEST");
+  assert.deepEqual(gl.ops[scissorIndex], ["scissor", 80, 54, 160, 90],
+    "WebGL scissor y must convert top-left ROI coordinates to bottom-left viewport coordinates");
+  assert.equal(disableIndex > scissorIndex, true, "bounded custom post must disable scissor after the draw");
+  assert.equal(countDefaultFramebufferDraws(gl), 2,
+    "bounded final custom pass must first copy the base scene and then draw the ROI to the default framebuffer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-post-dom-region-bounded-passes"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-post-dom-region-bounded-skips"), "0");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-post-dom-region-bounded-pixels"), "14400");
+
+  const warns = warnLog.filter((m) => m.includes("custom post pass") || m.includes("bounded-gl-lens"));
+  assert.deepEqual(warns, [], "a valid bounded custom pass must not warn");
+  assert.equal(typeof env.context.__gosx_scene3d_api, "object");
 
   renderer.dispose();
 });

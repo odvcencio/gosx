@@ -35,8 +35,8 @@ test("Scene3D animation loop supports foreground frame caps", () => {
 
 test("Scene3D resource readiness is canvas-scoped and detach-safe", () => {
   const mount = readSceneMountSrc();
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   assert.match(mount, /target\.addEventListener\("gosx:scene3d:resource-ready", onSceneResourceReady\)/);
   assert.match(mount, /target\.removeEventListener\("gosx:scene3d:resource-ready", onSceneResourceReady\)/);
@@ -46,7 +46,7 @@ test("Scene3D resource readiness is canvas-scoped and detach-safe", () => {
 });
 
 test("Scene3D instanced meshes are WebGPU-native", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
   const mount = readSceneMountSrc();
 
   assert.match(webgpu, /var WGSL_PBR_INSTANCED_VERTEX = \[/);
@@ -63,7 +63,7 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
 });
 
 test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   assert.match(webgpu, /function wgpuCreatePBRPipeline/);
   assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
@@ -74,7 +74,7 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
 });
 
 test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   // getSelenaPipeline's own default stays "back" (unchanged) when the
   // caller passes no cullMode option -- drawPBRObjects is the caller that
@@ -86,7 +86,7 @@ test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none
 });
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
   const mount = readSceneMountSrc();
 
   assert.match(webgpu, /var WGSL_SCENE_WORLD_COLOR_VERTEX = \[/);
@@ -115,7 +115,7 @@ test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
 });
 
 test("Scene3D WebGPU supports tiered MSAA render targets", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
   const mount = readSceneMountSrc();
   const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.js"), "utf8");
 
@@ -270,7 +270,7 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   assert.equal(diagnostics.requiredLimits.maxComputeWorkgroupSizeX, 128);
   assert.equal(diagnostics.requiredLimits.maxTextureDimension2D, 4096);
   assert.equal(typeof env.context.__gosx_scene3d_api.sceneWebGPUDiagnostics, "function");
-  // Regression guard: extractFrustumPlanesJS is hoisted into 11-scene-math.js
+  // Regression guard: extractFrustumPlanesJS is hoisted into 11-scene-math.ts
   // (base scene3d bundle) but USED by the separate scene3d-webgpu chunk's
   // instanced GPU cull. It MUST be exported on __gosx_scene3d_api so the webgpu
   // chunk's prefix can bridge it; otherwise the webgpu render path throws

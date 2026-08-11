@@ -124,7 +124,7 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
     bodyNodes: [nextBody],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   assert.equal(env.context.__gosx.navigation, env.context.__gosx_page_nav);
   assert.equal(typeof env.context.__gosx.navigation.navigate, "function");
   const clickListener = env.document.eventListeners.get("click")[0];
@@ -217,7 +217,9 @@ test("navigation runtime sends typed beacons once per soft navigation path", asy
     bodyNodes: [nextMain],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
+  assert.equal(env.context.__gosx_navigation_beacon_last_path, undefined);
+
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs?tab=runtime");
   await flushAsyncWork();
 
@@ -251,6 +253,12 @@ test("navigation runtime sends typed beacons once per soft navigation path", asy
   await flushAsyncWork();
 
   assert.equal(beaconCalls().length, 1);
+  runScript(navigationSource, env.context, "navigation.ts");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs?tab=runtime");
+  await flushAsyncWork();
+
+  assert.equal(beaconCalls().length, 1);
+  assert.equal(env.context.__gosx_navigation_beacon_last_path, undefined);
 });
 
 test("navigation runtime aborts stale fetches and lets the newest navigation win", async () => {
@@ -314,7 +322,7 @@ test("navigation runtime aborts stale fetches and lets the newest navigation win
   });
   env.context.AbortController = TestAbortController;
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   const slow = env.context.__gosx_page_nav.navigate("http://localhost:3000/slow");
   const fast = env.context.__gosx_page_nav.navigate("http://localhost:3000/fast");
   const results = await Promise.all([slow, fast]);
@@ -340,7 +348,7 @@ test("navigation runtime reports failures through the shared diagnostics policy"
 
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   await assert.rejects(
     env.context.__gosx_page_nav.navigate("http://localhost:3000/broken"),
@@ -423,7 +431,7 @@ test("navigation runtime loads patch, lifecycle, and managed scripts before page
     bodyNodes: [nextBody, managedScript],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/runtime");
   await flushAsyncWork();
 
@@ -494,7 +502,7 @@ test("navigation runtime caches lifecycle scripts across page transitions", asyn
   parsedDocs.set("__DOC_A__", lifecycleDoc("Page A", "page-a"));
   parsedDocs.set("__DOC_B__", lifecycleDoc("Page B", "page-b"));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a");
   await flushAsyncWork();
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/b");
@@ -512,7 +520,7 @@ test("navigation runtime caches lifecycle scripts across page transitions", asyn
 // --- Persistent scene engines across soft navigations (v0.34.0) ---
 //
 // window.__gosx_reusable_engines (client/js/bootstrap-src/30-tail.js) +
-// navigation_runtime.js's replaceBody/adoptOrClone let a soft navigation
+// navigation.ts's replaceBody/adoptOrClone let a soft navigation
 // carry an unchanged engine (same component, mountId, and byte-identical
 // scene props) across the swap instead of disposing and remounting it —
 // the live mount element (and the canvas Scene3D creates inside it) moves
@@ -586,7 +594,7 @@ test("navigation runtime reuses an engine with an identical scene: same canvas e
     events.push({ level, cat, msg, fields: fields || {} });
   };
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/next");
   await flushAsyncWork();
 
@@ -669,7 +677,7 @@ test("navigation runtime reuses an engine when incoming scene still carries shad
     bodyNodes: [nextMountPlaceholder, manifestScript],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/next-postfx");
   await flushAsyncWork();
 
@@ -753,7 +761,7 @@ test("split runtime navigation reuses an identical Scene3D engine and keeps the 
     events.push({ level, cat, msg, fields: fields || {} });
   };
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/split-next");
   await flushAsyncWork();
 
@@ -895,7 +903,7 @@ test("Scene3D public command revisions stay monotonic across navigation reuse", 
     bodyNodes: [nextMountPlaceholder, manifestScript],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/revision-next");
   await flushAsyncWork();
 
@@ -1183,7 +1191,7 @@ test("navigation runtime disposes and remounts an engine when the scene payload 
     events.push({ level, cat, msg, fields: fields || {} });
   };
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/changed");
   await flushAsyncWork();
 
@@ -1289,7 +1297,7 @@ test("navigation runtime reuses an engine while hub subscriptions disconnect and
     bodyNodes: [nextMountPlaceholder, manifestScript],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/hub-next");
   await flushAsyncWork();
 
@@ -1326,7 +1334,7 @@ test("navigation runtime marks current and ancestor links and exposes navigation
   });
   env.context.location.href = "http://localhost:3000/docs/forms";
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await flushAsyncWork();
 
   assert.equal(docsLink.getAttribute("data-gosx-link-current-policy"), "auto");
@@ -1354,7 +1362,7 @@ test("navigation runtime honors explicit link current policy", async () => {
   });
   env.context.location.href = "http://localhost:3000/docs/forms";
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await flushAsyncWork();
 
   assert.equal(link.getAttribute("data-gosx-link-current-policy"), "none");
@@ -1387,7 +1395,7 @@ test("navigation runtime prefetches marked links and reuses cached HTML", async 
     bodyNodes: [new FakeElement("div", null)],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const overListener = env.document.eventListeners.get("mouseover")[0];
   overListener({ type: "mouseover", target: link });
@@ -1439,7 +1447,7 @@ test("navigation runtime eagerly prefetches render-marked links", async () => {
     bodyNodes: [new FakeElement("div", null)],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await flushAsyncWork();
 
   assert.equal(env.fetchCalls.length, 1);
@@ -1459,7 +1467,7 @@ test("navigation runtime skips intent prefetch under reduced-data conditions", a
     },
   });
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const overListener = env.document.eventListeners.get("mouseover")[0];
   overListener({ type: "mouseover", target: link });
@@ -1496,7 +1504,7 @@ test("navigation runtime leaves non-interceptable links to native handling", asy
     elements: [hashLink, externalLink, downloadLink, targetLink, modifiedLink],
   });
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const clickListener = env.document.eventListeners.get("click")[0];
   for (const [link, overrides] of [
@@ -1552,7 +1560,7 @@ test("navigation runtime consumes exact current-page link clicks without soft na
     bootstrapCalls.push("bootstrap");
   };
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const overListener = env.document.eventListeners.get("mouseover")[0];
   overListener({ type: "mouseover", target: link });
@@ -1638,7 +1646,7 @@ test("navigation runtime absolutizes managed asset URLs during navigation", asyn
     bodyNodes: [image, form, video],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/runtime/index.html");
 
   assert.equal(env.document.head.childNodes[1].getAttribute("href"), "http://localhost:3000/docs/runtime/favicon.svg");
@@ -1690,7 +1698,7 @@ test("navigation runtime honors explicit a11y markers and hash targets", async (
     bodyNodes: [main],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a11y#details");
   await flushAsyncWork();
 
@@ -1738,7 +1746,7 @@ test("navigation runtime preserves scroll when requested and still focuses the t
     bodyNodes: [main],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
   await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/a11y#details", {
     preserveScroll: true,
     replace: true,
@@ -1803,7 +1811,7 @@ test("navigation runtime intercepts managed form submissions and forwards action
     bodyNodes: [doneBody],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const submitListener = env.document.eventListeners.get("submit")[0];
   let prevented = false;
@@ -1849,7 +1857,7 @@ test("navigation runtime exposes programmatic managed action submission", async 
     },
   });
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   assert.equal(typeof env.context.__gosx_submit_action, "function");
   assert.equal(typeof env.context.__gosx_page_nav.submitAction, "function");
@@ -1917,7 +1925,7 @@ test("navigation runtime intercepts managed GET forms and navigates with query p
     bodyNodes: [results],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const submitListener = env.document.eventListeners.get("submit")[0];
   let prevented = false;
@@ -1986,7 +1994,7 @@ test("navigation runtime restores prior managed form lifecycle attrs after submi
     bodyNodes: [results],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const submitListener = env.document.eventListeners.get("submit")[0];
   submitListener({
@@ -2050,7 +2058,7 @@ test("navigation runtime honors submitter overrides and falls back with native s
     bodyNodes: [preview],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const submitListener = env.document.eventListeners.get("submit")[0];
   submitListener({
@@ -2118,7 +2126,7 @@ test("navigation runtime ignores default submitter action property when no overr
     },
   });
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const submitListener = env.document.eventListeners.get("submit")[0];
   let prevented = false;
@@ -2184,7 +2192,7 @@ test("navigation runtime honors submitter override attributes without reflected 
     bodyNodes: [preview],
   }));
 
-  runScript(navigationSource, env.context, "navigation_runtime.js");
+  runScript(navigationSource, env.context, "navigation.ts");
 
   const submitListener = env.document.eventListeners.get("submit")[0];
   submitListener({

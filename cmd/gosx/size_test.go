@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"testing"
 )
@@ -43,6 +45,13 @@ func TestBuildSizeReportCountsColdStartRuntimeAssets(t *testing.T) {
 	}
 	if len(report.Assets) != 8 {
 		t.Fatalf("expected eight assets, got %#v", report.Assets)
+	}
+	if report.Assets[0].SHA256 == "" {
+		t.Fatalf("expected full sha256 in size asset: %#v", report.Assets[0])
+	}
+	sum := sha256.Sum256([]byte("wasm"))
+	if report.Assets[0].SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("unexpected sha256 for first asset: %#v", report.Assets[0])
 	}
 	profiles := map[string]sizeProfile{}
 	for _, profile := range report.Profiles {

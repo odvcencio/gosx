@@ -10,7 +10,7 @@
 // the diagnostics.
 //
 // Keep it out of the bundles. If a production path ever needs validation, add
-// the specific check to the lightweight validator in 15-scene-ir-schema.js
+// the specific check to the lightweight validator in 15-scene-ir-schema.ts
 // instead of shipping this whole module.
 
   // Strict SceneIR validation for dev/test/CLI-style browser tooling. This

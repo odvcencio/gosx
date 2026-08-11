@@ -92,8 +92,8 @@ function createContext() {
     context,
     { filename: "prelude.js" },
   );
-  vm.runInContext(fs.readFileSync(path.join(srcDir, "11-scene-math.js"), "utf8"), context, {
-    filename: "11-scene-math.js",
+  vm.runInContext(fs.readFileSync(path.join(srcDir, "11-scene-math.ts"), "utf8"), context, {
+    filename: "11-scene-math.ts",
   });
   vm.runInContext(fs.readFileSync(path.join(srcDir, "17-scene-input.js"), "utf8"), context, {
     filename: "17-scene-input.js",

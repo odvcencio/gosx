@@ -98,6 +98,9 @@ type observedResponseWriter struct {
 }
 
 func (w *observedResponseWriter) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
 }

@@ -1795,9 +1795,7 @@
       state.targetIndex = target.index;
       canvas.style.cursor = "grabbing";
       attachDocumentListeners();
-      if (typeof canvas.setPointerCapture === "function") {
-        canvas.setPointerCapture(event.pointerId);
-      }
+      sceneCapturePointer(canvas, event.pointerId);
       event.preventDefault();
       event.stopPropagation();
       publishSceneDragInteraction(canvas, event, "start", state, dragNamespace, readViewport, initialWidth, initialHeight);

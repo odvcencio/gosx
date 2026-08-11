@@ -106,6 +106,7 @@ type Summary struct {
 	Islands                         int
 	ComputeIslands                  int
 	Engines                         int
+	SelfDescribingSurfaces          int
 	Hubs                            int
 	Controllers                     int
 }
@@ -269,16 +270,55 @@ func loadDefaultBuildManifest() *buildmanifest.Manifest {
 		return nil
 	}
 
-	for _, candidate := range []string{
-		filepath.Join(root, "build.json"),
-		filepath.Join(root, "dist", "build.json"),
-	} {
+	candidates := []string{filepath.Join(root, "build.json")}
+	if !explicit || !manifestRootHasSourceRuntime(root) {
+		candidates = append(candidates, filepath.Join(root, "dist", "build.json"))
+	}
+	for _, candidate := range candidates {
 		manifest := loadCachedBuildManifest(candidate)
 		if manifest != nil {
 			return manifest
 		}
 	}
 	return nil
+}
+
+func manifestRootHasSourceRuntime(root string) bool {
+	if strings.TrimSpace(root) == "" {
+		return false
+	}
+	for _, name := range manifestRootSourceRuntimeFiles() {
+		info, err := os.Stat(filepath.Join(root, "client", "js", name))
+		if err != nil || info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+func manifestRootSourceRuntimeFiles() []string {
+	return []string{
+		"bootstrap.js",
+		"bootstrap-lite.js",
+		"bootstrap-runtime.js",
+		"bootstrap-feature-islands.js",
+		"bootstrap-feature-engines.js",
+		"bootstrap-feature-hubs.js",
+		"bootstrap-feature-controllers.js",
+		"bootstrap-feature-textlayout.js",
+		"bootstrap-feature-scene3d.js",
+		"bootstrap-feature-scene3d-command.js",
+		"bootstrap-feature-scene3d-webgpu.js",
+		"bootstrap-feature-scene3d-webgl.js",
+		"bootstrap-feature-scene3d-gltf.js",
+		"bootstrap-feature-scene3d-animation.js",
+		"bootstrap-feature-scene3d-compute.js",
+		"bootstrap-feature-scene3d-decompress.js",
+		"patch.js",
+		"relay.js",
+		"stripe-bridge.js",
+		"vendor/hls.min.js",
+	}
 }
 
 // buildManifestCacheEntry records one parsed build manifest plus the file
@@ -1100,6 +1140,50 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	return gosx.El("div", args...)
 }
 
+// Surface records a self-describing runtime surface and returns node unchanged.
+//
+// Self-describing surfaces are server-rendered primitives, such as CanvasBoard,
+// that already carry the data-gosx-surface-kind contract consumed by the shared
+// engine bootstrap. They need the full shared WASM runtime and the engines
+// feature chunk, but they do not have a manifest engine entry, programRef, or
+// JavaScript factory.
+func (r *Renderer) Surface(node gosx.Node) gosx.Node {
+	if r == nil {
+		return node
+	}
+	kind, ok := node.Attribute("data-gosx-surface-kind")
+	kind = strings.TrimSpace(kind)
+	if !ok || kind == "" {
+		return node
+	}
+	if r.manifest != nil && strings.TrimSpace(r.manifest.Runtime.Path) == "" {
+		r.SetRuntime("/gosx/runtime.wasm", "", 0)
+	}
+	capabilities := surfaceCapabilitiesFromNode(node)
+	if err := r.manifest.AddSelfDescribingSurface(kind, "engines", string(engine.RuntimeShared), 1, capabilities, nil); err != nil {
+		return node
+	}
+	return node
+}
+
+func surfaceCapabilitiesFromNode(node gosx.Node) []string {
+	raw, ok := node.Attribute("data-gosx-engine-caps")
+	if !ok {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	caps := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			caps = append(caps, part)
+		}
+	}
+	return caps
+}
+
 // BindHub registers a realtime hub connection that can update shared island
 // signals on the client runtime.
 func (r *Renderer) BindHub(name, path string, bindings []hydrate.HubBinding) string {
@@ -1642,15 +1726,16 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	islands := len(r.manifest.Islands)
 	computeIslands := len(r.manifest.ComputeIslands)
 	engines := len(r.manifest.Engines)
+	selfDescribingSurfaces := r.selfDescribingSurfaceCount()
 	hubs := len(r.manifest.Hubs)
 	controllers := len(r.manifest.Controllers)
 	previewRelay := PreviewBootstrapEnabled()
-	bootstrap := r.bootstrapOnly || previewRelay || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0 || controllers > 0
+	bootstrap := r.bootstrapOnly || previewRelay || islands > 0 || computeIslands > 0 || engines > 0 || selfDescribingSurfaces > 0 || hubs > 0 || controllers > 0
 	mode := "none"
 	if bootstrap {
 		mode = "full"
 	}
-	if r.bootstrapOnly && !previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
+	if r.bootstrapOnly && !previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && selfDescribingSurfaces == 0 && hubs == 0 && controllers == 0 {
 		mode = "lite"
 	}
 	// Preview-relay-only pages (no islands, no engines, no hubs, just the
@@ -1658,7 +1743,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	// wasm_exec + the tiny islands runtime + relay.js, but no manifest
 	// (no islands to hydrate yet — the storefront subscriber island is
 	// added by slice 6's downstream consumer).
-	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
+	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && selfDescribingSurfaces == 0 && hubs == 0 && controllers == 0 {
 		mode = "preview"
 	}
 	sharedEngine := r.needsSharedRuntimeEngineBridge()
@@ -1695,6 +1780,7 @@ func (r *Renderer) Summary() Summary {
 		Islands:                len(r.manifest.Islands),
 		ComputeIslands:         len(r.manifest.ComputeIslands),
 		Engines:                len(r.manifest.Engines),
+		SelfDescribingSurfaces: r.selfDescribingSurfaceCount(),
 		Hubs:                   len(r.manifest.Hubs),
 		Controllers:            len(r.manifest.Controllers),
 	}
@@ -1744,7 +1830,7 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 		}
 		return r.bootstrapFeatureIslandsPath
 	case "engines":
-		if len(r.manifest.Engines) == 0 {
+		if len(r.manifest.Engines) == 0 && !r.hasSelfDescribingSurfaceFeature("engines") {
 			return ""
 		}
 		return r.bootstrapFeatureEnginesPath
@@ -1840,7 +1926,7 @@ func (r *Renderer) hasVideoEngines() bool {
 // and a few slice headers, not a full generic decode.
 //
 // The field names match the readers in
-// client/js/bootstrap-src/11a-scene-decompress.js and
+// client/js/bootstrap-src/11a-scene-decompress.ts and
 // 11b-scene-points-generate.js. Add a field here whenever one of those files
 // learns to read a new key, or the page will not advertise the chunk that
 // reads it.
@@ -1979,8 +2065,59 @@ func (r *Renderer) hasSceneEngines() bool {
 }
 
 func (r *Renderer) needsSharedRuntimeEngineBridge() bool {
+	if r != nil && r.hasSharedRuntimeSelfDescribingSurface() {
+		return true
+	}
 	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Runtime), string(engine.RuntimeShared)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Renderer) selfDescribingSurfaceCount() int {
+	if r == nil || r.manifest == nil {
+		return 0
+	}
+	total := 0
+	for _, entry := range r.manifest.SelfDescribingSurfaces {
+		if entry.Count > 0 {
+			total += entry.Count
+		} else {
+			total++
+		}
+	}
+	return total
+}
+
+func (r *Renderer) hasSelfDescribingSurfaceFeature(feature string) bool {
+	if r == nil || r.manifest == nil {
+		return false
+	}
+	feature = strings.TrimSpace(feature)
+	for _, entry := range r.manifest.SelfDescribingSurfaces {
+		got := strings.TrimSpace(entry.Feature)
+		if got == "" {
+			got = "engines"
+		}
+		if got == feature {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Renderer) hasSharedRuntimeSelfDescribingSurface() bool {
+	if r == nil || r.manifest == nil {
+		return false
+	}
+	for _, entry := range r.manifest.SelfDescribingSurfaces {
+		runtime := strings.TrimSpace(entry.Runtime)
+		if runtime == "" {
+			runtime = string(engine.RuntimeShared)
+		}
+		if strings.EqualFold(runtime, string(engine.RuntimeShared)) {
 			return true
 		}
 	}

@@ -558,7 +558,7 @@
       // cylinder, cone and pyramid had no case here, so
       // 10-runtime-scene-core.js never set vertices for them,
       // appendSceneObjectToBundle fell through to sceneObjectSegments, and
-      // 15-scene-draw-plan.js kept the object on the line pass. Three
+      // 15-scene-draw-plan.ts kept the object on the line pass. Three
       // documented primitive kinds drew as wireframes when the author asked
       // for a solid mesh. The solid generators already existed in 16c.
       case "cylinder":

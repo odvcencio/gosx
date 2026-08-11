@@ -33,7 +33,7 @@ type ClientEventsOptions struct {
 	Logger *slog.Logger
 	// MaxBodyBytes bounds the request body. <=0 uses defaultClientEventsMaxBody.
 	MaxBodyBytes int64
-	// RatePerMin is a per-remote-addr limit. <=0 uses defaultClientEventsRate.
+	// RatePerMin is a per-remote-addr event limit. <=0 uses defaultClientEventsRate.
 	RatePerMin int
 	// Enabled is consulted per-request; if it returns false the handler 404s.
 	// When nil, the handler checks the GOSX_TELEMETRY env var — "off"/"false"/"0" disables.
@@ -104,12 +104,6 @@ func ClientEventsHandler(opts ClientEventsOptions) http.Handler {
 			return
 		}
 
-		remote := clientEventsRemoteAddr(r)
-		if !limiter.Allow(remote) {
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
-			return
-		}
-
 		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -130,6 +124,12 @@ func ClientEventsHandler(opts ClientEventsOptions) http.Handler {
 
 		if len(batch.Events) > clientEventsMaxEvents {
 			batch.Events = batch.Events[:clientEventsMaxEvents]
+		}
+
+		remote := clientEventsRemoteAddr(r)
+		if !limiter.AllowN(remote, len(batch.Events)) {
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
 		}
 
 		lg := logger()
@@ -241,8 +241,8 @@ func newClientEventsLimiter(rate int) *clientEventsLimiter {
 	}
 }
 
-func (l *clientEventsLimiter) Allow(key string) bool {
-	if l == nil || l.rate <= 0 {
+func (l *clientEventsLimiter) AllowN(key string, count int) bool {
+	if l == nil || l.rate <= 0 || count <= 0 {
 		return true
 	}
 	now := time.Now()
@@ -250,14 +250,17 @@ func (l *clientEventsLimiter) Allow(key string) bool {
 	defer l.mu.Unlock()
 	b, ok := l.buck[key]
 	if !ok || now.Sub(b.window) >= time.Minute {
-		l.buck[key] = &limiterBucket{window: now, count: 1}
+		if count > l.rate {
+			return false
+		}
+		l.buck[key] = &limiterBucket{window: now, count: count}
 		l.prune(now)
 		return true
 	}
-	if b.count >= l.rate {
+	if count > l.rate-b.count {
 		return false
 	}
-	b.count++
+	b.count += count
 	return true
 }
 

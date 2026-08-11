@@ -1,4 +1,4 @@
-// Unit tests for bootstrap-src/07-declarative-regions.js — declarative
+// Unit tests for client/runtime/host/regions.ts — declarative
 // server-fragment regions (data-gosx-region). Runs the module in a node:vm with
 // a minimal DOM stub and asserts signal-triggered and hub-event-triggered fetch+swap.
 import test from "node:test";
@@ -10,15 +10,15 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "07-declarative-regions.js"),
+  path.join(__dirname, "..", "runtime", "host", "regions.ts"),
   "utf8"
 );
 const scene3dBridgeSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "09-scene3d-command-bridge.js"),
+  path.join(__dirname, "..", "runtime", "scene3d", "command-bridge.ts"),
   "utf8"
 );
 const scene3dCommandRuntimeSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "09a-scene3d-command-runtime.js"),
+  path.join(__dirname, "..", "runtime", "scene3d", "command-runtime.ts"),
   "utf8"
 );
 

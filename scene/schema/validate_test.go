@@ -116,6 +116,55 @@ func TestValidateJSONRejectsNegativeModelBounds(t *testing.T) {
 	}
 }
 
+func TestValidateJSONAcceptsProgressiveModelWithoutSrc(t *testing.T) {
+	report := ValidateJSON([]byte(`{
+		"models":[{
+			"id":"hero",
+			"progressive":true,
+			"previewSrc":"/models/hero-preview.glb",
+			"fullSrc":"/models/hero-full.glb"
+		}]
+	}`), Options{Strict: true})
+	if !report.Valid {
+		t.Fatalf("expected progressive model without src to be valid: %+v", report.Diagnostics)
+	}
+}
+
+func TestValidateJSONRejectsModelWithoutSrcUnlessProgressiveSourcesExist(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "ordinary model",
+			body: `{"models":[{"id":"ordinary"}]}`,
+		},
+		{
+			name: "progressive missing preview",
+			body: `{"models":[{"id":"missing-preview","progressive":true,"fullSrc":"/models/full.glb"}]}`,
+		},
+		{
+			name: "progressive missing full",
+			body: `{"models":[{"id":"missing-full","progressive":true,"previewSrc":"/models/preview.glb"}]}`,
+		},
+		{
+			name: "non-progressive preview pair",
+			body: `{"models":[{"id":"not-progressive","previewSrc":"/models/preview.glb","fullSrc":"/models/full.glb"}]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := ValidateJSON([]byte(tc.body), Options{})
+			if report.Valid {
+				t.Fatalf("expected invalid report")
+			}
+			if !hasCode(report, "scene.asset.missing") {
+				t.Fatalf("expected missing asset diagnostic: %+v", report.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestValidateJSONAcceptsAllMajorRecordsAndUnknownFields(t *testing.T) {
 	report := ValidateJSON([]byte(`{
 		"schema":"`+scene.SceneIRSchema+`",
@@ -247,7 +296,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 			"domRegions":{
 				"selector":"[data-glass]",
 				"max":8,
-				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"region%dRect","meta":"region%dMeta"}
+				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"region%dRect","meta":"region%dMeta"},
+				"bounds":{"mode":"union","paddingPx":96}
 			}
 		}]
 	}`), Options{})
@@ -261,7 +311,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 			"domRegions":{
 				"selector":"",
 				"max":17,
-				"uniforms":{"rect":"bad uniform","meta":"region%d%dMeta"}
+				"uniforms":{"rect":"bad uniform","meta":"region%d%dMeta"},
+				"bounds":{"mode":"clip","paddingPx":4096}
 			}
 		}]
 	}`), Options{})
@@ -272,6 +323,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 		"scene.post_effect.dom_regions.selector",
 		"scene.post_effect.dom_regions.max",
 		"scene.post_effect.dom_regions.uniform",
+		"scene.post_effect.dom_regions.bounds_mode",
+		"scene.post_effect.dom_regions.bounds_padding",
 	} {
 		if !hasCode(invalid, code) {
 			t.Fatalf("expected %s diagnostic: %+v", code, invalid.Diagnostics)

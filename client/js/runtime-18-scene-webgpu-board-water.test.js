@@ -1070,7 +1070,7 @@ test("Scene3D fake WebGPU timing partial allocation failure destroys candidates 
 });
 
 test("Scene3D WebGL water binds the full Selena object contract", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
   assert.match(source, /mvp: mvp, modelMatrix: identity4, normalMatrix: identity3/,
     "direct analytic objects must receive an identity model matrix when their vertices are already world-baked");
   assert.match(source, /name: "causticTexture", target: gl\.TEXTURE_2D, tex: causticTex/,

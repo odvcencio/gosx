@@ -305,7 +305,7 @@ func runDragBurstPhase(ctx context.Context, saveDir string, startX, startY, endX
 // .camera, backed by currentMountedSceneCamera() in 20-scene-mount.js -- the
 // SAME function sceneManagedControlCamera/options.getCamera() calls for hit
 // testing, see 19b-scene-control-forms.js:870-876). Mirrors
-// sceneProjectPoint's exact math (11-scene-math.js:120-181): camera-local
+// sceneProjectPoint's exact math (11-scene-math.ts:120-181): camera-local
 // translate, inverse Z/Y/X rotation, fovY-based perspective divide -- so a
 // coordinate this reports as "on the sphere" is provably where the CURRENT
 // pick camera also believes the sphere to be. It is deliberately NOT an

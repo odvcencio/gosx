@@ -614,7 +614,7 @@ test("Scene3D base chunk keeps the backend-agnostic PBR helpers eager", () => {
   runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
   const api = env.context.__gosx_scene3d_api;
   assert.ok(api, "base chunk must publish __gosx_scene3d_api");
-  // 15b-scene-planner.js, 10-runtime-scene-core.js and the WebGPU chunk read
+  // 15b-scene-planner.ts, 10-runtime-scene-core.js and the WebGPU chunk read
   // these. A WebGPU-only page never loads 16-scene-webgl.js, so a helper that
   // slipped back into the lazy chunk would leave one of them undefined here and
   // break WebGPU rendering with no test coverage short of a real GPU.

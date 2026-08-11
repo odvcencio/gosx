@@ -337,12 +337,16 @@
     }, options));
     const telemetry = window.__gosx && window.__gosx.telemetry;
     if (telemetry && typeof telemetry.emit === "function") {
-      telemetry.emit(
-        "warn",
-        gosxIssueText(options.category) || gosxIssueText(options.scope) || "runtime",
-        message,
-        Object.assign({ operation: phase }, options.telemetry || {})
-      );
+      try {
+        telemetry.emit(
+          "warn",
+          gosxIssueText(options.category) || gosxIssueText(options.scope) || "runtime",
+          message,
+          Object.assign({ operation: phase }, options.telemetry || {})
+        );
+      } catch (_err) {
+        // Diagnostics must not make fallback runtime paths fail.
+      }
     }
     return issue;
   }

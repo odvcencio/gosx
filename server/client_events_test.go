@@ -190,6 +190,95 @@ func TestClientEventsHandlerRateLimit(t *testing.T) {
 	}
 }
 
+func TestClientEventsHandlerRateLimitCountsEventsAtomically(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, nil))
+	handler := ClientEventsHandler(ClientEventsOptions{
+		Logger:       logger,
+		MaxBodyBytes: 64 * 1024,
+		RatePerMin:   3,
+	})
+
+	send := func(body string) int {
+		req := httptest.NewRequest(http.MethodPost, "/_gosx/client-events", strings.NewReader(body))
+		req.RemoteAddr = "192.0.2.1:1234"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	twoEvents := `{"events":[
+		{"lvl":"info","cat":"test","msg":"first"},
+		{"lvl":"info","cat":"test","msg":"second"}
+	]}`
+	oneEvent := `{"events":[{"lvl":"info","cat":"test","msg":"third"}]}`
+
+	if code := send("{not json"); code != http.StatusBadRequest {
+		t.Fatalf("invalid JSON status = %d, want 400", code)
+	}
+	if code := send(twoEvents); code != http.StatusNoContent {
+		t.Fatalf("first two-event batch status = %d", code)
+	}
+	if code := send(twoEvents); code != http.StatusTooManyRequests {
+		t.Fatalf("over-quota two-event batch status = %d, want 429", code)
+	}
+	if lines := decodeClientEventsLogLines(t, buf); len(lines) != 2 {
+		t.Fatalf("rejected batch logged events: got %d lines, want 2", len(lines))
+	}
+	if code := send(oneEvent); code != http.StatusNoContent {
+		t.Fatalf("one-event batch after rejected batch status = %d", code)
+	}
+	if lines := decodeClientEventsLogLines(t, buf); len(lines) != 3 {
+		t.Fatalf("accepted event count = %d log lines, want 3", len(lines))
+	}
+}
+
+func TestClientEventsHandlerRateLimitCountsEventsAfterBatchCap(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, nil))
+	handler := ClientEventsHandler(ClientEventsOptions{
+		Logger:       logger,
+		MaxBodyBytes: 64 * 1024,
+		RatePerMin:   clientEventsMaxEvents,
+	})
+
+	events := make([]clientEvent, clientEventsMaxEvents+1)
+	for i := range events {
+		events[i] = clientEvent{Level: "info", Cat: "test", Msg: "event"}
+	}
+	body, err := json.Marshal(clientEventBatch{Events: events})
+	if err != nil {
+		t.Fatalf("marshal batch: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/_gosx/client-events", bytes.NewReader(body))
+	req.RemoteAddr = "192.0.2.1:1234"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("capped batch status = %d, body = %q", rec.Code, rec.Body.String())
+	}
+	if lines := decodeClientEventsLogLines(t, buf); len(lines) != clientEventsMaxEvents {
+		t.Fatalf("logged capped event count = %d, want %d", len(lines), clientEventsMaxEvents)
+	}
+
+	req = httptest.NewRequest(
+		http.MethodPost,
+		"/_gosx/client-events",
+		strings.NewReader(`{"events":[{"lvl":"info","cat":"test","msg":"over quota"}]}`),
+	)
+	req.RemoteAddr = "192.0.2.1:1234"
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("event after capped batch status = %d, want 429", rec.Code)
+	}
+	if lines := decodeClientEventsLogLines(t, buf); len(lines) != clientEventsMaxEvents {
+		t.Fatalf("rejected event changed log count to %d, want %d", len(lines), clientEventsMaxEvents)
+	}
+}
+
 func TestClientEventsHandlerKillSwitch(t *testing.T) {
 	buf := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(buf, nil))

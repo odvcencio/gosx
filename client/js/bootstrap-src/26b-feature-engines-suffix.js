@@ -4,7 +4,7 @@
         return Promise.all([
           mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap),
           mountAllEngineSurfaces(),
-          mountAllSurfaceKinds(),
+          mountAllSurfaceKinds(manifest),
         ]);
       },
       disposePage(reuseEngineIDs) {

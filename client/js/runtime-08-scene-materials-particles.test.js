@@ -676,7 +676,7 @@ test("bootstrap keeps Scene3D initial point buffers out of entry transitions", a
 });
 
 test("bootstrap keeps Scene3D CSS transition diagnostics opt-in", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.ts"), "utf8");
 
   assert.match(source, /function sceneCSSDebugLog\(\)/);
   assert.match(source, /__gosx_scene3d_css_debug/);

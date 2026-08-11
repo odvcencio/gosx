@@ -7,7 +7,7 @@ import (
 
 // TestComputeOrthoCamera2DMVP_Golden pins the native 2D-board camera math AND
 // is the cross-language contract with the 16a JS renderer: the helper
-// sceneMat4Ortho2DViewProj (client/js/bootstrap-src/11-scene-math.js) must
+// sceneMat4Ortho2DViewProj (client/js/bootstrap-src/11-scene-math.ts) must
 // produce proj*view equal to this native MVP. The JS side was independently
 // node-verified (ORTHO2D_JS_MATH_OK) against these same values; this test
 // guards the native half so the two can never silently diverge.

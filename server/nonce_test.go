@@ -39,6 +39,46 @@ func TestNavigationScriptWithNonceEscapesAttributeValue(t *testing.T) {
 	}
 }
 
+func TestNavigationBeaconRendersTypedJSONContract(t *testing.T) {
+	html := gosx.RenderHTML(NavigationBeaconWithNonce(NavigationBeaconOptions{
+		Name:              "first-party-pageview",
+		URL:               "/__internal/attribution/pageview",
+		Method:            http.MethodPost,
+		Credentials:       "same-origin",
+		Keepalive:         true,
+		PathField:         "path",
+		NavigationIDField: "navigation_id",
+	}, "beacon-nonce"))
+
+	for _, snippet := range []string{
+		`type="application/json"`,
+		`data-gosx-navigation-beacon`,
+		`nonce="beacon-nonce"`,
+		`"url":"/__internal/attribution/pageview"`,
+		`"method":"POST"`,
+		`"credentials":"same-origin"`,
+		`"keepalive":true`,
+		`"pathField":"path"`,
+		`"navigationIDField":"navigation_id"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}
+
+func TestPageRuntimeNavigationBeaconReceivesHeadNonce(t *testing.T) {
+	runtime := NewPageRuntime()
+	runtime.NavigationBeacon(NavigationBeaconOptions{
+		URL: "/__internal/attribution/pageview",
+	})
+
+	html := gosx.RenderHTML(runtime.HeadWithNonce("page-nonce"))
+	if !strings.Contains(html, `data-gosx-navigation-beacon`) || !strings.Contains(html, `nonce="page-nonce"`) {
+		t.Fatalf("expected nonce on runtime navigation beacon, got %q", html)
+	}
+}
+
 func TestNavigationRuntimePropagatesNonceToDynamicManagedScripts(t *testing.T) {
 	html := gosx.RenderHTML(NavigationScriptWithNonce("nav-nonce"))
 

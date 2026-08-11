@@ -113,6 +113,10 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 					Rect:   "shield%dRect",
 					Meta:   "shield%dMeta",
 				},
+				Bounds: CustomPostDOMRegionBounds{
+					Mode:      CustomPostDOMRegionBoundsUnion,
+					PaddingPx: 64,
+				},
 			},
 		},
 		wantIR: CustomPostIR{
@@ -133,6 +137,10 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 					Aspect: "shieldAspect",
 					Rect:   "shield%dRect",
 					Meta:   "shield%dMeta",
+				},
+				Bounds: &CustomPostDOMRegionBoundsIR{
+					Mode:      "union",
+					PaddingPx: 64,
 				},
 			},
 		},

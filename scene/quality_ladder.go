@@ -12,7 +12,7 @@ type QualityRungIR struct {
 	Name                 string   `json:"name,omitempty"`
 	PostEffects          []string `json:"postEffects,omitempty"`
 	LayerGroups          []string `json:"layerGroups,omitempty"`
-	ComputeBudgetScale   float64  `json:"computeBudgetScale,omitempty"`
+	ComputeBudgetScale   *float64 `json:"computeBudgetScale,omitempty"`
 	ExpensivePassCadence int      `json:"expensivePassCadence,omitempty"`
 }
 
@@ -55,18 +55,19 @@ type QualityRung struct {
 	LayerGroups []string
 
 	// ComputeBudgetScale scales particle/compute counts at this rung where
-	// the runtime supports it. Range [0, 1]; 1 = full authored budget,
-	// values are clamped at lowering time.
+	// the runtime supports it. Range [0, 1]; 1 = full authored budget.
+	// Values are clamped at lowering time.
 	//
-	// v1 note: the client governor currently PASSES THIS THROUGH to
-	// data-gosx-scene3d-quality-rung-compute-budget-scale and the rung
-	// telemetry object rather than actually scaling any compute/particle
-	// dispatch — wiring an actual scale into the compute-particle or
-	// instanced-mesh count would touch the WebGL/WebGPU backend dispatch
-	// paths, which is deliberately out of scope for this milestone (see the
-	// G2 report's deferred items). Apps that want real work reduction today
-	// should read the attribute/event and drive their own particle counts.
-	ComputeBudgetScale float64
+	// The zero value keeps the historical omitted-field default: full budget.
+	// Set ComputeBudgetScaleSet true to author an explicit zero budget.
+	// This preserves existing callers while allowing a rung to omit compute
+	// systems entirely.
+	//
+	// The client governor scales compute-particle system counts before
+	// render-bundle creation. It also publishes the active scale and source,
+	// active, and reduced instance counts on the Scene3D mount.
+	ComputeBudgetScale    float64
+	ComputeBudgetScaleSet bool
 
 	// ExpensivePassCadence: 1 = run every frame, N = run every Nth frame.
 	// This is a WORK reduction (allowed by the design law), not a
@@ -89,12 +90,8 @@ func resolveQualityRung(r QualityRung, index int) QualityRungIR {
 	if name == "" {
 		name = "rung-" + intString(index)
 	}
-	// ComputeBudgetScale follows the same "zero means unset, gets the sane
-	// default" idiom used throughout postfx_ir.go (Bloom.Scale, SSAO.Bias,
-	// etc.): a rung author who says nothing gets the full authored budget,
-	// not an accidentally-starved 0.
 	scale := r.ComputeBudgetScale
-	if scale == 0 {
+	if scale == 0 && !r.ComputeBudgetScaleSet {
 		scale = 1
 	} else if scale < 0 {
 		scale = 0
@@ -123,9 +120,13 @@ func resolveQualityRung(r QualityRung, index int) QualityRungIR {
 		Name:                 name,
 		PostEffects:          postEffects,
 		LayerGroups:          layerGroups,
-		ComputeBudgetScale:   scale,
+		ComputeBudgetScale:   qualityFloatPtr(scale),
 		ExpensivePassCadence: cadence,
 	}
+}
+
+func qualityFloatPtr(value float64) *float64 {
+	return &value
 }
 
 // legacyProps mirrors QualityRungIR's json tags for the map-tree
@@ -141,7 +142,7 @@ func (r QualityRungIR) legacyProps() map[string]any {
 	if len(r.LayerGroups) > 0 {
 		out["layerGroups"] = append([]string(nil), r.LayerGroups...)
 	}
-	setNumeric(out, "computeBudgetScale", r.ComputeBudgetScale)
+	setNumericPtr(out, "computeBudgetScale", r.ComputeBudgetScale)
 	setInt(out, "expensivePassCadence", r.ExpensivePassCadence)
 	return out
 }

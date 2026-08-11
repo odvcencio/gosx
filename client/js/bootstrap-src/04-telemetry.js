@@ -328,13 +328,19 @@
       ? window.__gosx.telemetry
       : {};
     telemetry.emit = function (level, category, message, fields) {
+      if (typeof window.__gosx_emit !== "function") return undefined;
       return window.__gosx_emit(level, category, message, fields);
     };
     telemetry.flush = function (options) {
+      if (typeof window.__gosx_telemetry_flush !== "function") return undefined;
       return window.__gosx_telemetry_flush(options);
     };
-    telemetry.session = window.__gosx_telemetry_session;
-    telemetry.snapshot = window.__gosx_telemetry_snapshot;
+    telemetry.session = typeof window.__gosx_telemetry_session === "function"
+      ? window.__gosx_telemetry_session
+      : function () { return ""; };
+    telemetry.snapshot = typeof window.__gosx_telemetry_snapshot === "function"
+      ? window.__gosx_telemetry_snapshot
+      : function () { return Object.freeze({ enabled: false }); };
     telemetry.enabled = !((window.__gosx_telemetry_config || {}).enabled === false);
     window.__gosx.telemetry = telemetry;
   }

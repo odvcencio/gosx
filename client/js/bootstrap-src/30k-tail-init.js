@@ -48,7 +48,7 @@
     window.__gosx.ready = false;
 
     if (manifestNeedsRuntime(manifest)) {
-      if (runtimeReady()) {
+      if (manifestRuntimeReady(manifest)) {
         window.__gosx_runtime_ready();
       } else {
         await loadRuntime(manifest.runtime);

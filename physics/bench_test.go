@@ -89,6 +89,21 @@ func benchmarkStepFixed(b *testing.B, build func(int, bool) *World, count int, d
 	}
 }
 
+func BenchmarkCacheContactImpulses(b *testing.B) {
+	for _, count := range []int{1, 64, 1024} {
+		b.Run(fmt.Sprintf("contacts=%d", count), func(b *testing.B) {
+			world := buildContactCacheTestWorld(count)
+			world.cacheContactImpulses()
+			world.cacheContactImpulses()
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				world.cacheContactImpulses()
+			}
+		})
+	}
+}
+
 func BenchmarkStepFixedSpheresOnPlaneCCDOn(b *testing.B) {
 	for _, count := range benchBodyCounts {
 		b.Run(fmt.Sprintf("n=%d", count), func(b *testing.B) {

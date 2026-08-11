@@ -61,8 +61,8 @@ func TestQualityLadderRoundTrip(t *testing.T) {
 	}
 	// ComputeBudgetScale zero-value idiom: unset means full budget (1.0),
 	// matching Bloom.Scale/SSAO.Bias elsewhere in this package.
-	if raw.ComputeBudgetScale != 1 {
-		t.Errorf("rung[0].ComputeBudgetScale = %v, want 1 (unset -> full budget default)", raw.ComputeBudgetScale)
+	if qualityScale(raw) != 1 {
+		t.Errorf("rung[0].ComputeBudgetScale = %v, want 1 (unset -> full budget default)", qualityScale(raw))
 	}
 
 	glow := ir.QualityLadder[1]
@@ -75,8 +75,8 @@ func TestQualityLadderRoundTrip(t *testing.T) {
 	if len(glow.LayerGroups) != 2 || glow.LayerGroups[0] != "particles" || glow.LayerGroups[1] != "far-decor" {
 		t.Errorf("rung[1].LayerGroups = %v, want [particles far-decor]", glow.LayerGroups)
 	}
-	if glow.ComputeBudgetScale != 0.5 {
-		t.Errorf("rung[1].ComputeBudgetScale = %v, want 0.5", glow.ComputeBudgetScale)
+	if qualityScale(glow) != 0.5 {
+		t.Errorf("rung[1].ComputeBudgetScale = %v, want 0.5", qualityScale(glow))
 	}
 	if glow.ExpensivePassCadence != 2 {
 		t.Errorf("rung[1].ExpensivePassCadence = %v, want 2", glow.ExpensivePassCadence)
@@ -128,18 +128,55 @@ func TestQualityRungClampsOutOfRangeValues(t *testing.T) {
 		{Name: "under", ComputeBudgetScale: -2, ExpensivePassCadence: 0},
 	}}
 	ir := p.SceneIR()
-	if ir.QualityLadder[0].ComputeBudgetScale != 1 {
-		t.Errorf("over-range ComputeBudgetScale = %v, want clamped to 1", ir.QualityLadder[0].ComputeBudgetScale)
+	if qualityScale(ir.QualityLadder[0]) != 1 {
+		t.Errorf("over-range ComputeBudgetScale = %v, want clamped to 1", qualityScale(ir.QualityLadder[0]))
 	}
 	if ir.QualityLadder[0].ExpensivePassCadence != 1 {
 		t.Errorf("negative ExpensivePassCadence = %v, want clamped to 1", ir.QualityLadder[0].ExpensivePassCadence)
 	}
-	if ir.QualityLadder[1].ComputeBudgetScale != 0 {
-		t.Errorf("under-range ComputeBudgetScale = %v, want clamped to 0", ir.QualityLadder[1].ComputeBudgetScale)
+	if qualityScale(ir.QualityLadder[1]) != 0 {
+		t.Errorf("under-range ComputeBudgetScale = %v, want clamped to 0", qualityScale(ir.QualityLadder[1]))
 	}
 	if ir.QualityLadder[1].ExpensivePassCadence != 1 {
 		t.Errorf("zero ExpensivePassCadence = %v, want clamped to 1 (every frame)", ir.QualityLadder[1].ExpensivePassCadence)
 	}
+}
+
+func TestQualityRungExplicitZeroComputeBudgetScaleEmitsZero(t *testing.T) {
+	p := Props{QualityLadder: []QualityRung{{
+		Name:                  "off",
+		ComputeBudgetScale:    0,
+		ComputeBudgetScaleSet: true,
+	}}}
+	ir := p.SceneIR()
+	if len(ir.QualityLadder) != 1 {
+		t.Fatalf("ir.QualityLadder len = %d, want 1", len(ir.QualityLadder))
+	}
+	if qualityScale(ir.QualityLadder[0]) != 0 {
+		t.Fatalf("explicit zero ComputeBudgetScale = %v, want 0", qualityScale(ir.QualityLadder[0]))
+	}
+	payload, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `"computeBudgetScale":0`) {
+		t.Fatalf("expected explicit zero computeBudgetScale in wire JSON: %s", payload)
+	}
+	bundle := ir.legacyProps()
+	rawList, ok := bundle["qualityLadder"].([]map[string]any)
+	if !ok || len(rawList) != 1 {
+		t.Fatalf("legacy qualityLadder = %#v, want one rung", bundle["qualityLadder"])
+	}
+	if rawList[0]["computeBudgetScale"] != float64(0) {
+		t.Fatalf("legacy computeBudgetScale = %#v, want 0", rawList[0]["computeBudgetScale"])
+	}
+}
+
+func qualityScale(r QualityRungIR) float64 {
+	if r.ComputeBudgetScale == nil {
+		return 0
+	}
+	return *r.ComputeBudgetScale
 }
 
 func TestQualityStartRungClampsOutOfRangeAtLowering(t *testing.T) {

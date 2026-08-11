@@ -41,9 +41,10 @@
   var sceneApi = window.__gosx_scene3d_api;
 
   // --- Primitives and scalar helpers (10-runtime-primitives.js,
-  // 10-runtime-scene-core.js, 11-scene-math.js, 15a-scene-postfx-shared.js).
+  // 10-runtime-scene-core.js, 11-scene-math.ts, 15a-scene-postfx-shared.js).
   var sceneBool = sceneApi.sceneBool || function(v, d) { return v == null ? d : !!v; };
   var sceneNumber = sceneApi.sceneNumber || function(v, d) { var n = Number(v); return Number.isFinite(n) ? n : d; };
+  var scenePostDOMRegionPixelBounds = sceneApi.scenePostDOMRegionPixelBounds || function() { return { mode: "off", bounds: null }; };
   var clamp01 = sceneApi.clamp01 || function(v) { return Math.max(0, Math.min(1, Number(v) || 0)); };
   var sceneFiniteNumber = sceneApi.sceneFiniteNumber || function(v, d) {
     return typeof v === "number" && isFinite(v) ? v : d;
@@ -64,15 +65,15 @@
   };
   var sceneCanvasAlpha = sceneApi.sceneCanvasAlpha || function() { return true; };
 
-  // --- Culling (11-scene-math.js). The WebGL2 CPU-cull fallback calls both.
+  // --- Culling (11-scene-math.ts). The WebGL2 CPU-cull fallback calls both.
   var extractFrustumPlanesJS = sceneApi.extractFrustumPlanesJS;
   var instancePassesCullTest = sceneApi.instancePassesCullTest;
 
-  // --- Material identity (13-scene-material.js).
+  // --- Material identity (13-scene-material.ts).
   var normalizeSceneMaterialKind = sceneApi.normalizeSceneMaterialKind;
   var sceneMaterialProfileKey = sceneApi.sceneMaterialProfileKey;
 
-  // --- Draw planning (15b-scene-planner.js).
+  // --- Draw planning (15b-scene-planner.ts).
   var prepareScene = sceneApi.prepareScene || function(ir) { return { ir: ir, pbrPasses: null }; };
   var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence || function() { return []; };
   var sceneCachedBuffer = sceneApi.sceneCachedBuffer;
@@ -95,7 +96,7 @@
   var sceneTypedFloatArray = sceneApi.sceneTypedFloatArray;
 
   // --- Camera helpers (10-runtime-scene-core.js) and draw planning
-  // (15-scene-draw-plan.js, 13-scene-material.js). The legacy renderer in
+  // (15-scene-draw-plan.ts, 13-scene-material.ts). The legacy renderer in
   // 16e reads all of these; they had no consumer outside the base IIFE
   // until 16e moved into this chunk.
   var sceneCameraEquivalent = sceneApi.sceneCameraEquivalent;

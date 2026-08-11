@@ -59,3 +59,23 @@ func TestWorldRemoveBodyPrunesCollidersContactsAndConstraints(t *testing.T) {
 		t.Fatalf("body not detached: world=%+v colliders=%d", bob.world, len(bob.Colliders()))
 	}
 }
+
+func TestWorldRemoveColliderPrunesBothContactCacheBuffers(t *testing.T) {
+	world := buildContactCacheTestWorld(2)
+	world.cacheContactImpulses()
+	world.cacheContactImpulses()
+
+	removed := world.contacts[0].ColliderB
+	removedKey := manifoldCacheKey(&world.contacts[0])
+	world.contacts = nil
+	if !world.RemoveCollider(removed) {
+		t.Fatal("RemoveCollider returned false")
+	}
+
+	if _, ok := world.contactCache[removedKey]; ok {
+		t.Fatalf("removed contact key %+v remains in active cache", removedKey)
+	}
+	if _, ok := world.contactCacheNext[removedKey]; ok {
+		t.Fatalf("removed contact key %+v remains in reusable cache", removedKey)
+	}
+}

@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -44,6 +46,28 @@ func TestJSONRequestObserverWritesStructuredLines(t *testing.T) {
 func TestJSONRequestObserverIgnoresNilWriter(t *testing.T) {
 	observer := NewJSONRequestObserver(nil)
 	observer.Observe(RequestEvent{Status: 200})
+}
+
+func TestObserveHandlerPreservesFirstWrittenStatus(t *testing.T) {
+	var observed RequestEvent
+	handler := ObserveHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(http.StatusInternalServerError)
+	}), []RequestObserver{
+		RequestObserverFunc(func(event RequestEvent) {
+			observed = event
+		}),
+	})
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("response status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	if observed.Status != http.StatusCreated {
+		t.Fatalf("observed status = %d, want %d", observed.Status, http.StatusCreated)
+	}
 }
 
 func TestJSONOperationObserverWritesStructuredLines(t *testing.T) {

@@ -22,6 +22,7 @@ const {
   flushAsyncWork,
   telemetryPostBodies,
   telemetryEvents,
+  readBootstrapSrc,
   resolveSceneViewportForTest,
 } = require("./runtime-test-harness.js");
 
@@ -392,6 +393,29 @@ test("bootstrap installs a client-event telemetry emitter that POSTs to /_gosx/c
 
   const bodies = telemetryPostBodies(env);
   assert.ok(bodies[0].sid && bodies[0].sid.startsWith("s_"), "sid should be generated");
+});
+
+test("source telemetry facade stays safe when a lite page skips emitter install", async () => {
+  const env = createContext({});
+  env.context.__gosx_telemetry_installed = true;
+  const source = readBootstrapSrc("00-textlayout.js", "04-telemetry.js", "05-document-env.js") + "\n})();";
+
+  runScript(source, env.context, "bootstrap-src-lite-telemetry.js");
+  await flushAsyncWork();
+
+  assert.equal(typeof env.context.__gosx_emit, "undefined");
+  assert.equal(typeof env.context.__gosx.telemetry.emit, "function");
+  assert.equal(env.context.__gosx.telemetry.session(), "");
+  assert.deepEqual(Object.assign({}, env.context.__gosx.telemetry.snapshot()), { enabled: false });
+  assert.doesNotThrow(() => env.context.__gosx.telemetry.emit("warn", "action", "validation", {}));
+  assert.doesNotThrow(() => env.context.__gosx.telemetry.flush());
+  assert.doesNotThrow(() => {
+    env.context.__gosx.reportFailure("action response", new Error("action failed"), {
+      scope: "action",
+      telemetry: { status: 422 },
+    });
+  });
+  assert.equal(env.context.__gosx.listIssues().length, 1);
 });
 
 test("bootstrap telemetry flushes on scheduled timer", async () => {

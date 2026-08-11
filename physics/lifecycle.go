@@ -144,21 +144,26 @@ func (w *World) pruneContactState(removed map[*Collider]struct{}) {
 	}
 	w.contacts = contacts
 
-	if len(w.contactCache) > 0 {
+	if len(w.contactCache) > 0 || len(w.contactCacheNext) > 0 {
 		removedIndexes := make(map[int]struct{}, len(removed))
 		for collider := range removed {
 			if collider != nil && collider.index != 0 {
 				removedIndexes[collider.index] = struct{}{}
 			}
 		}
-		for key := range w.contactCache {
-			if _, drop := removedIndexes[key.a]; drop {
-				delete(w.contactCache, key)
-				continue
-			}
-			if _, drop := removedIndexes[key.b]; drop {
-				delete(w.contactCache, key)
-			}
+		pruneContactCache(w.contactCache, removedIndexes)
+		pruneContactCache(w.contactCacheNext, removedIndexes)
+	}
+}
+
+func pruneContactCache(cache map[contactCacheKey]int, removedIndexes map[int]struct{}) {
+	for key := range cache {
+		if _, drop := removedIndexes[key.a]; drop {
+			delete(cache, key)
+			continue
+		}
+		if _, drop := removedIndexes[key.b]; drop {
+			delete(cache, key)
 		}
 	}
 }

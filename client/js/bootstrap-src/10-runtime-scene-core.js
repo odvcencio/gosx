@@ -1204,6 +1204,9 @@
 
   function normalizeSceneModel(item, index) {
     const current = item && typeof item === "object" ? item : {};
+    const previewSrc = typeof current.previewSrc === "string" && current.previewSrc.trim() ? current.previewSrc.trim() : "";
+    const fullSrc = typeof current.fullSrc === "string" && current.fullSrc.trim() ? current.fullSrc.trim() : "";
+    const progressive = Boolean(current.progressive && previewSrc && fullSrc);
     const scaleSource = current.scale && typeof current.scale === "object" ? current.scale : null;
     const hasStatic = Object.prototype.hasOwnProperty.call(current, "static");
     const hasPickable = Object.prototype.hasOwnProperty.call(current, "pickable");
@@ -1260,7 +1263,10 @@
     }
     const model = {
       id: typeof current.id === "string" && current.id.trim() ? current.id.trim() : ("scene-model-" + index),
-      src: typeof current.src === "string" && current.src.trim() ? current.src.trim() : "",
+      src: progressive ? previewSrc : (typeof current.src === "string" && current.src.trim() ? current.src.trim() : ""),
+      previewSrc,
+      fullSrc,
+      progressive,
       material: materialName,
       x: sceneNumber(current.x, 0),
       y: sceneNumber(current.y, 0),
@@ -2377,12 +2383,11 @@
       name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : ("rung-" + index),
       postEffects: postEffects,
       layerGroups: layerGroups,
-      // Zero/unset means the full authored budget (1.0) — the same "zero
-      // means unset, gets the sane default" idiom the Go IR uses (see
-      // resolveQualityRung in scene/quality_ladder.go).
       computeBudgetScale: (function() {
-        const scale = sceneNumber(item.computeBudgetScale, 0);
-        if (scale === 0) return 1;
+        if (!Object.prototype.hasOwnProperty.call(item, "computeBudgetScale") || item.computeBudgetScale == null) {
+          return 1;
+        }
+        const scale = sceneNumber(item.computeBudgetScale, 1);
         return Math.max(0, Math.min(1, scale));
       })(),
       expensivePassCadence: Math.max(1, Math.floor(sceneNumber(item.expensivePassCadence, 1))),
@@ -2650,7 +2655,7 @@
     // Progressive mode: decompress preview now, schedule the full-resolution
     // upgrade after the first frame.
     //
-    // 11a-scene-decompress.js now ships in the lazily fetched decompress
+    // 11a-scene-decompress.ts now ships in the lazily fetched decompress
     // chunk, so resolve through the API object rather than lexically. The
     // mount awaits settleSceneDecompressFeature before it calls this function,
     // so the chunk has landed by now for any scene that needs it. A scene with
@@ -3806,6 +3811,41 @@
     }
   }
 
+  function sceneNormalizePostDOMRegionBounds(raw) {
+    if (!sceneIsPlainObject(raw)) return null;
+    const mode = typeof raw.mode === "string" ? raw.mode.trim().toLowerCase() : "";
+    if (mode !== "union") return null;
+    const left = Math.max(0, Math.min(1, sceneNumber(raw.left, 0)));
+    const top = Math.max(0, Math.min(1, sceneNumber(raw.top, 0)));
+    const right = Math.max(0, Math.min(1, sceneNumber(raw.right, 0)));
+    const bottom = Math.max(0, Math.min(1, sceneNumber(raw.bottom, 0)));
+    return {
+      mode: "union",
+      active: raw.active === true,
+      left: Math.min(left, right),
+      top: Math.min(top, bottom),
+      right: Math.max(left, right),
+      bottom: Math.max(top, bottom),
+      paddingPx: Math.max(0, Math.min(2048, sceneNumber(raw.paddingPx, 0))),
+    };
+  }
+
+  function scenePostDOMRegionPixelBounds(effect, width, height) {
+    const raw = effect && effect._domRegionBounds;
+    if (!raw || raw.mode !== "union") return { mode: "off", bounds: null };
+    if (raw.active !== true) return { mode: "union", bounds: null };
+    const w = Math.max(1, Math.floor(sceneNumber(width, 1)));
+    const h = Math.max(1, Math.floor(sceneNumber(height, 1)));
+    const left = Math.max(0, Math.min(w, Math.floor(sceneNumber(raw.left, 0) * w)));
+    const top = Math.max(0, Math.min(h, Math.floor(sceneNumber(raw.top, 0) * h)));
+    const right = Math.max(0, Math.min(w, Math.ceil(sceneNumber(raw.right, 0) * w)));
+    const bottom = Math.max(0, Math.min(h, Math.ceil(sceneNumber(raw.bottom, 0) * h)));
+    const bw = right - left;
+    const bh = bottom - top;
+    if (bw <= 0 || bh <= 0) return { mode: "union", bounds: null };
+    return { mode: "union", bounds: { x: left, y: top, width: bw, height: bh } };
+  }
+
   // applyScenePostUniformsCommand (SCENE_CMD_SET_POST_UNIFORMS): patches
   // per-frame uniform overrides onto already-installed named CustomPost
   // passes WITHOUT rebuilding the post chain. This exists precisely because
@@ -3854,12 +3894,18 @@
       if (!sceneIsPlainObject(entry)) continue;
       const name = typeof entry.name === "string" ? entry.name.trim() : "";
       const patch = sceneIsPlainObject(entry.uniforms) ? entry.uniforms : null;
-      if (!name || !patch) continue;
+      const ownsBounds = Object.prototype.hasOwnProperty.call(entry, "domRegionBounds");
+      const bounds = ownsBounds && entry.domRegionBounds !== null ? sceneNormalizePostDOMRegionBounds(entry.domRegionBounds) : null;
+      if (!name || (!patch && !ownsBounds)) continue;
       let matched = 0;
       for (let i = 0; i < postEffects.length; i += 1) {
         const pass = postEffects[i];
         if (!pass || typeof pass.name !== "string" || pass.name !== name) continue;
-        pass.uniforms = Object.assign({}, pass.uniforms, patch);
+        if (patch) pass.uniforms = Object.assign({}, pass.uniforms, patch);
+        if (ownsBounds) {
+          if (bounds) pass._domRegionBounds = bounds;
+          else delete pass._domRegionBounds;
+        }
         matched += 1;
       }
       if (matched > 0) {
@@ -4168,7 +4214,7 @@
 
 
   // Dedicated camera scratch for sceneBoundsDepthMetrics. Separate from
-  // _sceneProjectCameraScratch in 11-scene-math.js so back-to-back calls
+  // _sceneProjectCameraScratch in 11-scene-math.ts so back-to-back calls
   // from the bundle builder (projection + bounds) don't clobber each
   // other even though both are single-threaded.
   const _sceneBoundsDepthCameraScratch = {
@@ -5848,7 +5894,7 @@
     sceneBool,
     sceneBoundsDepthMetrics,
     sceneBoundsViewCulled,
-    // Frustum-plane extractor — hoisted to 11-scene-math.js (base scene3d
+    // Frustum-plane extractor — hoisted to 11-scene-math.ts (base scene3d
     // bundle) by the WebGL2 cull slice. It MUST be exported here so the
     // separate scene3d-webgpu chunk (16a instanced GPU cull) can reach it;
     // without the bridge the webgpu render path throws
@@ -5874,16 +5920,17 @@
     sceneNormalizeDirection,
     sceneNowMilliseconds,
     sceneNumber,
+    scenePostDOMRegionPixelBounds,
     sceneWaterAdvanceClock,
     sceneWaterResetClock,
     sceneObjectAnimated,
     scenePointStyleCode,
     scenePrimeInitialTransitions,
     sceneProps,
-    // 11-scene-base64.js. The lazily fetched decompress chunk reads it, and so
+    // 11-scene-base64.ts. The lazily fetched decompress chunk reads it, and so
     // does any caller that needs the raw bytes of a base64 payload.
     sceneBase64Decode: typeof sceneBase64Decode === "function" ? sceneBase64Decode : undefined,
-    // 11a-scene-decompress.js and 11b-scene-points-generate.js ship in the
+    // 11a-scene-decompress.ts and 11b-scene-points-generate.js ship in the
     // lazily fetched decompress chunk. Guard the reads: in the base chunk the
     // names do not exist, and the chunk suffix assigns the real functions here
     // when it lands. bootstrap.js keeps both files inline, so these carry the
@@ -5928,11 +5975,11 @@
     resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,
     resolveShadowSize: typeof resolveShadowSize === "function" ? resolveShadowSize : undefined,
 
-    // Color helper from 11-scene-math.js (already visible, re-exported
+    // Color helper from 11-scene-math.ts (already visible, re-exported
     // explicitly so the webgpu chunk has a stable lookup path).
     sceneColorRGBA: typeof sceneColorRGBA === "function" ? sceneColorRGBA : undefined,
 
-    // Ortho-2D board camera helpers from 11-scene-math.js — the JS half of
+    // Ortho-2D board camera helpers from 11-scene-math.ts — the JS half of
     // the native computeOrthoCamera2DMVP golden contract, consumed by the
     // webgpu chunk's uploadFrameUniforms ortho2d branch.
     sceneMat4Ortho2DView: typeof sceneMat4Ortho2DView === "function" ? sceneMat4Ortho2DView : undefined,

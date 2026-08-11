@@ -211,26 +211,59 @@
 
   function manifestFeatureNames(manifest) {
     const names = [];
+    const seen = Object.create(null);
+    function addFeatureName(name) {
+      const featureName = String(name || "").trim();
+      if (!featureName || seen[featureName]) {
+        return;
+      }
+      seen[featureName] = true;
+      names.push(featureName);
+    }
     if (manifestHasEntries(manifest, "engines")) {
-      names.push("engines");
+      addFeatureName("engines");
       // Check if any engine is GoSXScene3D
       for (var i = 0; i < manifest.engines.length; i++) {
         if (manifest.engines[i].component === "GoSXScene3D") {
-          names.push("scene3d");
+          addFeatureName("scene3d");
           break;
         }
       }
     }
+    for (const entry of manifestSelfDescribingSurfaces(manifest)) {
+      const featureName = manifestSelfDescribingSurfaceFeature(entry);
+      if (featureName) {
+        addFeatureName(featureName);
+      }
+    }
     if (manifestHasEntries(manifest, "hubs")) {
-      names.push("hubs");
+      addFeatureName("hubs");
     }
     if (manifestHasEntries(manifest, "controllers")) {
-      names.push("controllers");
+      addFeatureName("controllers");
     }
     if (manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
-      names.push("islands");
+      addFeatureName("islands");
     }
     return names;
+  }
+
+  function manifestSelfDescribingSurfaces(manifest) {
+    return Array.isArray(manifest && manifest.selfDescribingSurfaces) ? manifest.selfDescribingSurfaces : [];
+  }
+
+  function manifestSelfDescribingSurfaceFeature(entry) {
+    const featureName = String((entry && entry.feature) || "engines").trim();
+    switch (featureName) {
+      case "engines":
+      case "hubs":
+      case "controllers":
+      case "islands":
+      case "scene3d":
+        return featureName;
+      default:
+        return "";
+    }
   }
 
   function manifestHasEntries(manifest, key) {
@@ -238,7 +271,10 @@
   }
 
   function manifestNeedsWASMRuntime(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || manifestNeedsSharedEngineRuntime(manifest);
+    return manifestHasEntries(manifest, "islands") ||
+      manifestHasEntries(manifest, "computeIslands") ||
+      manifestNeedsSharedEngineRuntime(manifest) ||
+      manifestNeedsSharedSelfDescribingSurfaceRuntime(manifest);
   }
 
   function manifestNeedsSharedEngineRuntime(manifest) {
@@ -247,6 +283,12 @@
     }
     return manifest.engines.some(function(entry) {
       return entry && entry.runtime === "shared";
+    });
+  }
+
+  function manifestNeedsSharedSelfDescribingSurfaceRuntime(manifest) {
+    return manifestSelfDescribingSurfaces(manifest).some(function(entry) {
+      return String((entry && entry.runtime) || "shared").trim() === "shared";
     });
   }
 
@@ -486,7 +528,7 @@
         window.__gosx_runtime_ready();
         return;
       }
-      if (runtimeReady()) {
+      if (manifestRuntimeReady(manifest)) {
         window.__gosx_runtime_ready();
         return;
       }

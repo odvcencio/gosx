@@ -29,11 +29,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  const sourcePath = name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name); return fs.readFileSync(sourcePath, "utf8");
 }
 
-const webgpuSource = readSource("16a-scene-webgpu.js");
-const webglSource = readSource("16-scene-webgl.js");
+const webgpuSource = readSource("../runtime/scene3d/webgpu.ts");
+const webglSource = readSource("../runtime/scene3d/webgl.ts");
 
 // --- Bundle-shaped VM context ----------------------------------------------
 
@@ -90,7 +90,7 @@ function createContext() {
     function sceneProjectPoint() { return null; }
   `;
   vm.runInContext(prelude, context, { filename: "prelude.js" });
-  vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
+  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
   vm.runInContext(readSource("17-scene-input.js"), context, { filename: "17-scene-input.js" });
   vm.runInContext(webgpuSource, context, { filename: "16a-scene-webgpu.js" });
   return { context, sandbox };
