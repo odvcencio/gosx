@@ -836,6 +836,41 @@ WebAssembly.instantiate().then(() => {
 	}
 }
 
+func TestWASMMemoryStatsProbeDriverUsesShortChildContext(t *testing.T) {
+	t.Setenv("CHROME_PATH", "/nonexistent/chrome-binary")
+	t.Setenv("CHROME_WS_URL", "")
+	d, err := perf.New(
+		perf.WithRemoteWebSocketURL("ws://127.0.0.1:9222/devtools/browser/test"),
+		perf.WithTimeout(time.Minute),
+	)
+	if err != nil {
+		t.Fatalf("New remote driver: %v", err)
+	}
+	defer d.Close()
+
+	probeDriver, probeCancel := wasmMemoryStatsProbeDriver(d)
+	deadline, ok := probeDriver.Context().Deadline()
+	if !ok {
+		probeCancel()
+		t.Fatal("probe driver context has no deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining < wasmMemoryStatsProbeTimeout-time.Second || remaining > wasmMemoryStatsProbeTimeout+time.Second {
+		probeCancel()
+		t.Fatalf("probe timeout remaining = %s, want about %s", remaining, wasmMemoryStatsProbeTimeout)
+	}
+
+	probeCancel()
+	select {
+	case <-probeDriver.Done():
+	case <-time.After(time.Second):
+		t.Fatal("probe driver did not cancel")
+	}
+	if err := d.Context().Err(); err != nil {
+		t.Fatalf("probe cancellation poisoned parent driver context: %v", err)
+	}
+}
+
 func TestBrowserBaselineSmokeR00(t *testing.T) {
 	if os.Getenv("GOSX_OUROBOROS_BROWSER_SMOKE") != "1" {
 		t.Skip("set GOSX_OUROBOROS_BROWSER_SMOKE=1 to run Chrome fixture smoke")

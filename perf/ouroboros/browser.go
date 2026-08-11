@@ -33,6 +33,7 @@ const BrowserBaselineSchemaVersion = "gosx.ouroboros.browser-baseline.v1"
 
 const r10MinimumSampleTimeout = 60 * time.Second
 const canonicalBrowserToolOutputLimit = 64 << 10
+const wasmMemoryStatsProbeTimeout = 2 * time.Second
 
 type SampleLane string
 
@@ -1316,12 +1317,14 @@ func fillWASMMemoryStats(d *perf.Driver, mem *perf.MemoryStats) {
 	if d == nil || mem == nil {
 		return
 	}
+	probeDriver, probeCancel := wasmMemoryStatsProbeDriver(d)
+	defer probeCancel()
 	var raw struct {
 		Pages   int   `json:"pages"`
 		Bytes   int64 `json:"bytes"`
 		Records int   `json:"records"`
 	}
-	if err := d.Evaluate(`(function(){
+	if err := probeDriver.Evaluate(`(function(){
 		var probe = window.__gosxOuroborosWASMMemory;
 		if (!probe || typeof probe.snapshot !== "function") return {pages:0, bytes:0, records:0};
 		return probe.snapshot();
@@ -1332,6 +1335,10 @@ func fillWASMMemoryStats(d *perf.Driver, mem *perf.MemoryStats) {
 		mem.WASMPages = raw.Pages
 		mem.WASMBytes = raw.Bytes
 	}
+}
+
+func wasmMemoryStatsProbeDriver(d *perf.Driver) (*perf.Driver, context.CancelFunc) {
+	return d.WithOperationContext(context.Background(), wasmMemoryStatsProbeTimeout)
 }
 
 func primeWarmRoute(d *perf.Driver, opts BrowserBaselineOptions, route FixtureSpec) error {
