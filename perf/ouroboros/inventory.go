@@ -1553,6 +1553,15 @@ func snapshotCurrentOverlay(ctx context.Context, root, baseRevision string) (ove
 	sort.Slice(snapshot.Evidence.ExcludedPaths, func(i, j int) bool {
 		return snapshot.Evidence.ExcludedPaths[i].Path < snapshot.Evidence.ExcludedPaths[j].Path
 	})
+	if strings.TrimSpace(trackedDiff) == "" && len(snapshot.Evidence.UntrackedSources) == 0 {
+		snapshot.Evidence.Status = "clean"
+		snapshot.Evidence.Hash = OverlayClean
+		snapshot.Evidence.TrackedDiffHash = ""
+		snapshot.Evidence.TrackedCachedDiffHash = ""
+		snapshot.Evidence.Recreate = []string{"git checkout " + baseRevision}
+		snapshot.TrackedDiff = ""
+		return snapshot, nil
+	}
 	snapshot.Evidence.Hash = "sha256:" + hex.EncodeToString(h.Sum(nil))
 	snapshot.Evidence.Recreate = []string{
 		"git checkout " + baseRevision,
@@ -2522,6 +2531,14 @@ func BuildOverlayEvidence(ctx context.Context, root, baseRevision string) (Overl
 	sort.Slice(evidence.ExcludedPaths, func(i, j int) bool {
 		return evidence.ExcludedPaths[i].Path < evidence.ExcludedPaths[j].Path
 	})
+	if strings.TrimSpace(trackedDiff) == "" && len(evidence.UntrackedSources) == 0 {
+		evidence.Status = "clean"
+		evidence.Hash = OverlayClean
+		evidence.TrackedDiffHash = ""
+		evidence.TrackedCachedDiffHash = ""
+		evidence.Recreate = []string{"git checkout " + baseRevision}
+		return evidence, nil
+	}
 	evidence.Hash = "sha256:" + hex.EncodeToString(h.Sum(nil))
 	evidence.Recreate = []string{
 		"git checkout " + baseRevision,

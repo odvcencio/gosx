@@ -770,6 +770,45 @@ func TestCompatibilityAuditFailClosesPostCaptureRelevantSourceChurn(t *testing.T
 	}
 }
 
+func TestCompatibilityAuditTreatsExcludedOnlyUntrackedOverlayAsClean(t *testing.T) {
+	root := newCompatibilityAuditTestRepo(t)
+	writeFile(t, root, "tmp/build/proof-noise.txt", "excluded noise\n")
+
+	inv, err := Collect(context.Background(), CollectOptions{RepoRoot: root, Git: true, Canopy: false})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if inv.OverlayHash != OverlayClean || inv.Overlay.Hash != OverlayClean || inv.Overlay.Status != "clean" {
+		t.Fatalf("overlay = %s/%s/%s, want clean", inv.OverlayHash, inv.Overlay.Hash, inv.Overlay.Status)
+	}
+	if inv.Overlay.TrackedDiffHash != "" || inv.Overlay.TrackedCachedDiffHash != "" {
+		t.Fatalf("clean overlay has tracked diff markers: %+v", inv.Overlay)
+	}
+	if len(inv.Overlay.UntrackedSources) != 0 {
+		t.Fatalf("clean overlay has included untracked sources: %+v", inv.Overlay.UntrackedSources)
+	}
+	if len(inv.Overlay.ExcludedPaths) == 0 || inv.Overlay.ExcludedPaths[0].Path != "tmp/build/proof-noise.txt" {
+		t.Fatalf("excluded diagnostic path missing: %+v", inv.Overlay.ExcludedPaths)
+	}
+	audit := inv.Surface.CompatibilityAudit
+	if audit.Status != "pass" || audit.ScanStatus != compatibilityScanStatusComplete || !audit.CanonicalAvailable {
+		t.Fatalf("compatibility audit = %s/%s/%v, want pass/complete/available; notes=%+v", audit.Status, audit.ScanStatus, audit.CanonicalAvailable, audit.Notes)
+	}
+	if audit.Current.Count == 0 {
+		t.Fatalf("current compatibility count = 0, want positive")
+	}
+	failClosedSemantic := sha256String("fail-closed:current-overlay:semantic")
+	if audit.Current.RuntimeJSONSemanticHash == failClosedSemantic {
+		t.Fatalf("current semantic hash used synthetic fail-closed hash %s", failClosedSemantic)
+	}
+	if err := ValidateInventory(inv); err != nil {
+		t.Fatalf("ValidateInventory: %v", err)
+	}
+	if err := ValidateInventoryFresh(context.Background(), root, inv); err != nil {
+		t.Fatalf("ValidateInventoryFresh: %v", err)
+	}
+}
+
 func newCompatibilityAuditTestRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
