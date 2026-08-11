@@ -195,12 +195,7 @@ func cmdOuroborosInventory(args []string) {
 	if err := ouroboros.WriteOverlayArtifacts(context.Background(), *root, artifactDir, inv.Overlay); err != nil {
 		fatal("write overlay artifacts: %v", err)
 	}
-	f, err := os.Create(*outPath)
-	if err != nil {
-		fatal("create inventory: %v", err)
-	}
-	defer f.Close()
-	if err := ouroboros.WriteJSON(f, inv); err != nil {
+	if err := ouroboros.WriteCanonicalInventoryFile(*outPath, inv); err != nil {
 		fatal("write inventory: %v", err)
 	}
 }

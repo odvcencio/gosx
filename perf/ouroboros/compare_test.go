@@ -52,6 +52,50 @@ func TestCompareSmokeSelfComparePasses(t *testing.T) {
 	}
 }
 
+func TestCompareRejectsProbeLaneWASMMemoryMetricsForProductBudgets(t *testing.T) {
+	root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{manifestMutator: func(m *BrowserManifest) {
+		m.Corpus.Routes[0].ExpectedTinyGoCurrent = "runtime"
+		m.Corpus.Routes[0].ExpectedCapabilities = []string{"wasm-current"}
+	}})
+	rawPath := filepath.Join(root, "perf", "raw-samples.jsonl")
+	samples, err := ReadBrowserRawSamplesJSONLStrict(rawPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(samples[0].Metrics, "wasmPages")
+	delete(samples[0].Metrics, "wasmBytes")
+	samples[0].Memory.WASMPages = 0
+	samples[0].Memory.WASMBytes = 0
+	probe := samples[0]
+	probe.SampleLane = SampleLaneProbe
+	probe.SampleIndex = 1
+	probe.Metrics = map[string]float64{"wasmPages": 1, "wasmBytes": 65536}
+	probe.Memory.WASMPages = 1
+	probe.Memory.WASMBytes = 65536
+	samples = append(samples, probe)
+	writeRawSamples(t, rawPath, samples)
+	summary := SummarizeBrowserSamples(samples, "smoke", samples[0].Source)
+	summary.GeneratedAt = "2026-08-09T00:00:00Z"
+	writeFixtureJSON(t, filepath.Join(root, "summaries", "browser-summary.json"), summary)
+
+	report := runSmokeCompare(t, root, root)
+	if report.ExitCode != 1 || !reportHasMetricFailure(report, "memory.wasmPages") || !reportHasMetricFailure(report, "memory.wasmBytes") {
+		t.Fatalf("probe wasm metrics were accepted: exit=%d summary=%+v checks=%+v", report.ExitCode, report.Summary, report.Checks)
+	}
+}
+
+func TestCompareAcceptsProductLaneWASMMemoryMetrics(t *testing.T) {
+	root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{manifestMutator: func(m *BrowserManifest) {
+		m.Corpus.Routes[0].ExpectedTinyGoCurrent = "runtime"
+		m.Corpus.Routes[0].ExpectedCapabilities = []string{"wasm-current"}
+	}})
+
+	report := runSmokeCompare(t, root, root)
+	if report.ExitCode != 0 || !reportHasMetricPass(report, "memory.wasmPages") || !reportHasMetricPass(report, "memory.wasmBytes") {
+		t.Fatalf("product wasm metrics did not pass: exit=%d summary=%+v checks=%+v", report.ExitCode, report.Summary, report.Checks)
+	}
+}
+
 func TestCompareLiveR00SmokeSelfCompareWhenPresent(t *testing.T) {
 	root := filepath.Join("..", "..", "build", "ouroboros", "o0.2", "browser-smoke-ci", "20260809T081011Z-3954451")
 	if _, err := os.Stat(filepath.Join(root, "manifest.json")); err != nil {
@@ -100,6 +144,41 @@ func TestComparePixelSelfCompareUsesExternalEvidenceRoot(t *testing.T) {
 	}
 	if report.ExitCode != 0 || !report.SelfCompare || !reportHasMetricPass(report, "pixel.diffPct") {
 		t.Fatalf("pixel self-compare failed: exit=%d self=%v summary=%+v", report.ExitCode, report.SelfCompare, report.Summary)
+	}
+}
+
+func TestComparePixelSelfCompareAcceptsMixedBackendBaselineManifests(t *testing.T) {
+	artifactRoot := writeCompareFixture(t, filepath.Join(t.TempDir(), "browser"), compareFixtureOptions{envMutator: func(env *EnvironmentReport) {
+		env.HardwareClassification = "hardware-webgpu"
+	}, sourceMutator: func(source *SourceIdentity) {
+		source.OverlayHash = "sha256:" + strings.Repeat("a", 64)
+		source.TrackedDiffHash = "sha256:" + strings.Repeat("b", 64)
+		source.UntrackedIncludedSourceHash = "sha256:" + strings.Repeat("c", 64)
+	}})
+	pixelRoot := filepath.Join(t.TempDir(), "pixel-evidence")
+	addPixelRefsToFixture(t, artifactRoot, []string{"pixels/R00/webgpu/pixel-evidence.json", "pixels/R00/webgl/pixel-evidence.json"})
+	var manifest BrowserManifest
+	readFixtureJSON(t, filepath.Join(artifactRoot, "manifest.json"), &manifest)
+	gpuInitial := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "R00-initial-00.png"), true)
+	gpuSettled := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "R00-settled-00.png"), true)
+	writeFixtureJSON(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "pixel-evidence.json"), compareBaselinePixelManifestForBackend(t, manifest.Source, gpuInitial, gpuSettled, "webgpu"))
+	glInitial := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgl", "R00-initial-00.png"), true)
+	glSettled := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgl", "R00-settled-00.png"), true)
+	writeFixtureJSON(t, filepath.Join(pixelRoot, "pixels", "R00", "webgl", "pixel-evidence.json"), compareBaselinePixelManifestForBackend(t, manifest.Source, glInitial, glSettled, "webgl"))
+
+	report, err := CompareOuroborosArtifacts(CompareOptions{
+		BaselineManifest:  filepath.Join(artifactRoot, "manifest.json"),
+		CandidateManifest: filepath.Join(artifactRoot, "manifest.json"),
+		BudgetPath:        compareBudgetPath(t),
+		Mode:              CompareModeSmoke,
+		BaselinePixelRoot: pixelRoot,
+		GeneratedAt:       time.Unix(0, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ExitCode != 0 || !reportHasMetricPass(report, "pixel.diffPct") {
+		t.Fatalf("mixed backend pixel baseline did not pass: exit=%d summary=%+v ratchets=%+v", report.ExitCode, report.Summary, report.Ratchets)
 	}
 }
 
@@ -959,6 +1038,158 @@ func TestCompareNoisyMetricWithoutRerunProofIsInconclusive(t *testing.T) {
 	}
 }
 
+func TestCompareNoisyMetricWithRerunProofPassesAsUnstableNonblocking(t *testing.T) {
+	root := writeNoisyFixture(t, t.TempDir())
+	summaryPath := filepath.Join(root, "summaries", "browser-summary.json")
+	var summary BrowserSummary
+	readFixtureJSON(t, summaryPath, &summary)
+	rawHash, err := sha256File(filepath.Join(root, "perf", "raw-samples.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rerunRawPath := filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
+	writeRawSamples(t, rerunRawPath, rerunSamplesForNoiseProof(t, root))
+	proof, err := BuildNoiseRerunProof(summary, filepath.Join(root, "perf", "raw-samples.jsonl"), rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamplesForNoiseProof(t, root), []string{"startup.dclMs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.BaselineRawSamplesSHA256 != rawHash {
+		t.Fatalf("baseline proof hash = %s, want %s", proof.BaselineRawSamplesSHA256, rawHash)
+	}
+	summary.NoiseRerun = proof
+	writeFixtureJSON(t, summaryPath, summary)
+
+	report := runSmokeCompare(t, root, root)
+	if report.Status != CompareStatusPass || report.ExitCode != 0 || !reportHasMetricStatus(report, "startup.dclMs", "unstable-nonblocking") {
+		t.Fatalf("status=%s exit=%d summary=%+v checks=%+v", report.Status, report.ExitCode, report.Summary, report.Checks)
+	}
+}
+
+func TestCompareNoisyMetricWithOverBudgetRerunProofStaysBlocked(t *testing.T) {
+	root := writeNoisyFixture(t, t.TempDir())
+	summaryPath := filepath.Join(root, "summaries", "browser-summary.json")
+	rawPath := filepath.Join(root, "perf", "raw-samples.jsonl")
+	rerunRawPath := filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
+	rerunSamples := rerunSamplesForNoiseProofWithDCL(t, root, 200)
+	writeRawSamples(t, rerunRawPath, rerunSamples)
+	var summary BrowserSummary
+	readFixtureJSON(t, summaryPath, &summary)
+	proof, err := BuildNoiseRerunProof(summary, rawPath, rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamples, []string{"startup.dclMs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary.NoiseRerun = proof
+	writeFixtureJSON(t, summaryPath, summary)
+
+	report := runSmokeCompare(t, root, root)
+	if report.Status != CompareStatusInconclusive || report.ExitCode != 2 || !reportHasMetricStatus(report, "startup.dclMs", "blocked") {
+		t.Fatalf("over-budget proof was accepted: status=%s exit=%d summary=%+v checks=%+v", report.Status, report.ExitCode, report.Summary, report.Checks)
+	}
+}
+
+func TestCompareCandidateUnstableMetricUsesCandidateRerunProof(t *testing.T) {
+	baselineRoot := writeDCLSeriesFixture(t, filepath.Join(t.TempDir(), "baseline"), []float64{100, 100, 100})
+	candidateRoot := writeNoisyFixture(t, filepath.Join(t.TempDir(), "candidate"))
+	attachNoiseProof(t, candidateRoot, 100)
+
+	report := runSmokeCompare(t, baselineRoot, candidateRoot)
+	if report.Status != CompareStatusPass || report.ExitCode != 0 || !reportHasMetricStatus(report, "startup.dclMs", "unstable-nonblocking") {
+		t.Fatalf("candidate proof was not accepted: status=%s exit=%d summary=%+v checks=%+v", report.Status, report.ExitCode, report.Summary, report.Checks)
+	}
+}
+
+func TestCompareBaselineRerunProofCannotMaskCandidateNoise(t *testing.T) {
+	baselineRoot := writeNoisyFixture(t, filepath.Join(t.TempDir(), "baseline"))
+	attachNoiseProof(t, baselineRoot, 100)
+	candidateRoot := writeNoisyFixture(t, filepath.Join(t.TempDir(), "candidate"))
+
+	report := runSmokeCompare(t, baselineRoot, candidateRoot)
+	if report.Status != CompareStatusInconclusive || report.ExitCode != 2 || !reportHasMetricStatus(report, "startup.dclMs", "blocked") {
+		t.Fatalf("baseline proof masked candidate noise: status=%s exit=%d summary=%+v checks=%+v", report.Status, report.ExitCode, report.Summary, report.Checks)
+	}
+}
+
+func TestCompareInvalidNoiseRerunProofFailsSummaryValidation(t *testing.T) {
+	root := writeNoisyFixture(t, t.TempDir())
+	summaryPath := filepath.Join(root, "summaries", "browser-summary.json")
+	var summary BrowserSummary
+	readFixtureJSON(t, summaryPath, &summary)
+	summary.NoiseRerun = &NoiseRerunProof{
+		SchemaVersion:            BrowserBaselineSchemaVersion,
+		Status:                   "pass",
+		RunMode:                  summary.RunMode,
+		Source:                   summary.Source,
+		BaselineRawSamplesRef:    "perf/raw-samples.jsonl",
+		BaselineRawSamplesSHA256: "sha256:" + strings.Repeat("e", 64),
+		RerunRawSamplesRef:       "perf/raw-samples.jsonl",
+		RerunRawSamplesSHA256:    "sha256:" + strings.Repeat("e", 64),
+		Metrics:                  []NoiseRerunMetricProof{{Group: "R00/cold", Metric: "startup.dclMs", BaselineN: 3, RerunN: 3, BaselineMedian: 100, RerunMedian: 100}},
+	}
+	writeFixtureJSON(t, summaryPath, summary)
+
+	report := runSmokeCompare(t, root, root)
+	if report.ExitCode != 1 || !reportHasMessage(report, "noise rerun proof requires distinct raw sample hashes") {
+		t.Fatalf("invalid proof did not fail: exit=%d summary=%+v checks=%+v", report.ExitCode, report.Summary, report.Checks)
+	}
+}
+
+func TestCompareNoiseRerunProofRejectsHashAndSourceDrift(t *testing.T) {
+	root := writeNoisyFixture(t, t.TempDir())
+	summaryPath := filepath.Join(root, "summaries", "browser-summary.json")
+	rawPath := filepath.Join(root, "perf", "raw-samples.jsonl")
+	rerunRawPath := filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
+	writeRawSamples(t, rerunRawPath, rerunSamplesForNoiseProof(t, root))
+	var summary BrowserSummary
+	readFixtureJSON(t, summaryPath, &summary)
+	proof, err := BuildNoiseRerunProof(summary, rawPath, rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamplesForNoiseProof(t, root), []string{"startup.dclMs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof.RerunRawSamplesSHA256 = "sha256:" + strings.Repeat("f", 64)
+	summary.NoiseRerun = proof
+	writeFixtureJSON(t, summaryPath, summary)
+	report := runSmokeCompare(t, root, root)
+	if report.ExitCode != 1 || !reportHasMessage(report, "noise rerun proof rerun raw samples hash mismatch") {
+		t.Fatalf("hash drift did not fail: exit=%d checks=%+v", report.ExitCode, report.Checks)
+	}
+
+	root = writeNoisyFixture(t, t.TempDir())
+	summaryPath = filepath.Join(root, "summaries", "browser-summary.json")
+	rawPath = filepath.Join(root, "perf", "raw-samples.jsonl")
+	rerunRawPath = filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
+	writeRawSamples(t, rerunRawPath, rerunSamplesForNoiseProof(t, root))
+	readFixtureJSON(t, summaryPath, &summary)
+	proof, err = BuildNoiseRerunProof(summary, rawPath, rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamplesForNoiseProof(t, root), []string{"startup.dclMs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof.Source.BaseRevision = "different"
+	summary.NoiseRerun = proof
+	writeFixtureJSON(t, summaryPath, summary)
+	report = runSmokeCompare(t, root, root)
+	if report.ExitCode != 1 || !reportHasMessage(report, "noise rerun proof source identity mismatch") {
+		t.Fatalf("source drift did not fail: exit=%d checks=%+v", report.ExitCode, report.Checks)
+	}
+
+	root = writeNoisyFixture(t, t.TempDir())
+	summaryPath = filepath.Join(root, "summaries", "browser-summary.json")
+	rawPath = filepath.Join(root, "perf", "raw-samples.jsonl")
+	rerunRawPath = filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
+	writeRawSamples(t, rerunRawPath, rerunSamplesForNoiseProof(t, root))
+	readFixtureJSON(t, summaryPath, &summary)
+	proof, err = BuildNoiseRerunProof(summary, rawPath, rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamplesForNoiseProof(t, root), []string{"startup.dclMs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof.Metrics[0].RerunMedian = 12345
+	summary.NoiseRerun = proof
+	writeFixtureJSON(t, summaryPath, summary)
+	report = runSmokeCompare(t, root, root)
+	if report.ExitCode != 1 || !reportHasMessage(report, "noise rerun proof metrics do not match raw sample recomputation") {
+		t.Fatalf("median drift did not fail: exit=%d checks=%+v", report.ExitCode, report.Checks)
+	}
+}
+
 func writeCanonicalCompareSizeFixture(t *testing.T) (string, SourceIdentity, []FixtureSpec) {
 	t.Helper()
 	repoRoot, err := resolveRepoRootForEvidence(".")
@@ -1111,6 +1342,10 @@ func writeCompareFixture(t *testing.T, root string, opts compareFixtureOptions) 
 }
 
 func writeNoisyFixture(t *testing.T, root string) string {
+	return writeDCLSeriesFixture(t, root, []float64{100, 100, 200})
+}
+
+func writeDCLSeriesFixture(t *testing.T, root string, dcls []float64) string {
 	t.Helper()
 	source := compareSource("")
 	source = writeFixtureInventory(t, root, source, 100)
@@ -1121,7 +1356,7 @@ func writeNoisyFixture(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	var samples []BrowserRawSample
-	for i, dcl := range []float64{100, 100, 200} {
+	for i, dcl := range dcls {
 		metrics := compareMetrics()
 		metrics["dclMs"] = dcl
 		s := compareSample(source, metrics, nil)
@@ -1153,6 +1388,46 @@ func writeNoisyFixture(t *testing.T, root string) string {
 	}
 	writeFixtureJSON(t, filepath.Join(root, "manifest.json"), manifest)
 	return root
+}
+
+func samplesForNoiseProof(t *testing.T, root string) []BrowserRawSample {
+	t.Helper()
+	samples, err := ReadBrowserRawSamplesJSONLStrict(filepath.Join(root, "perf", "raw-samples.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return samples
+}
+
+func rerunSamplesForNoiseProof(t *testing.T, root string) []BrowserRawSample {
+	return rerunSamplesForNoiseProofWithDCL(t, root, 100)
+}
+
+func attachNoiseProof(t *testing.T, root string, rerunDCL float64) {
+	t.Helper()
+	summaryPath := filepath.Join(root, "summaries", "browser-summary.json")
+	rawPath := filepath.Join(root, "perf", "raw-samples.jsonl")
+	rerunRawPath := filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
+	rerunSamples := rerunSamplesForNoiseProofWithDCL(t, root, rerunDCL)
+	writeRawSamples(t, rerunRawPath, rerunSamples)
+	var summary BrowserSummary
+	readFixtureJSON(t, summaryPath, &summary)
+	proof, err := BuildNoiseRerunProof(summary, rawPath, rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamples, []string{"startup.dclMs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary.NoiseRerun = proof
+	writeFixtureJSON(t, summaryPath, summary)
+}
+
+func rerunSamplesForNoiseProofWithDCL(t *testing.T, root string, dcl float64) []BrowserRawSample {
+	t.Helper()
+	samples := samplesForNoiseProof(t, root)
+	for i := range samples {
+		samples[i].Metrics["dclMs"] = dcl
+		samples[i].Page.DCLMs = dcl
+	}
+	return samples
 }
 
 func compareSource(suffix string) SourceIdentity {
@@ -1332,7 +1607,7 @@ func compareSample(source SourceIdentity, metrics map[string]float64, mutator fu
 		},
 		Proofs:  ProofBundle{FirstUsable: ProofPayload{Name: "first", OK: true, AtMs: 100}},
 		Trace:   TraceSampleSummary{TotalsMs: map[string]float64{"EvaluateScript": 1, "CompileScript": 1, "v8.compile": 1, "v8.parseOnBackground": 1, "WebAssembly.Compile": 1, "WebAssembly.Instantiate": 1}},
-		Memory:  perf.MemoryStats{JSHeapUsedMB: metrics["jsHeapUsedMb"], JSHeapTotalMB: metrics["jsHeapTotalMb"], DOMNodeCount: int(metrics["domNodeCount"]), ListenerCount: int(metrics["listenerCount"])},
+		Memory:  perf.MemoryStats{JSHeapUsedMB: metrics["jsHeapUsedMb"], JSHeapTotalMB: metrics["jsHeapTotalMb"], DOMNodeCount: int(metrics["domNodeCount"]), ListenerCount: int(metrics["listenerCount"]), WASMPages: int(metrics["wasmPages"]), WASMBytes: int64(metrics["wasmBytes"])},
 		Network: []NetworkRecord{{RuntimeAssetRole: "runtime", TransferredBytes: 10}},
 		Metrics: metrics,
 	}
@@ -1443,32 +1718,40 @@ func comparePixelManifest(passed bool, baseline, candidate SourceIdentity, initi
 }
 
 func compareBaselinePixelManifest(t *testing.T, source SourceIdentity, initial, settled visual.PixelCaptureEvidence) visual.PixelEvidenceManifest {
+	return compareBaselinePixelManifestForBackend(t, source, initial, settled, "webgpu")
+}
+
+func compareBaselinePixelManifestForBackend(t *testing.T, source SourceIdentity, initial, settled visual.PixelCaptureEvidence, backend string) visual.PixelEvidenceManifest {
 	t.Helper()
-	initial = completeComparePixelCapture(initial, "initial", 0, "webgpu")
-	settled = completeComparePixelCapture(settled, "settled", 0, "webgpu")
+	initial = completeComparePixelCapture(initial, "initial", 0, backend)
+	settled = completeComparePixelCapture(settled, "settled", 0, backend)
 	return visual.PixelEvidenceManifest{
 		SchemaVersion:          visual.OuroborosPixelSchemaVersion,
 		GeneratedAt:            "2026-08-09T00:00:00Z",
 		RouteID:                "R00",
 		Mode:                   string(visual.PixelModeRecordBaseline),
 		Source:                 compareTestPixelSource(source),
-		BackendRequirement:     "webgpu",
-		BackendSelection:       comparePixelBackendSelection("webgpu"),
+		BackendRequirement:     backend,
+		BackendSelection:       comparePixelBackendSelection(backend),
 		Certified:              true,
-		HardwareClassification: "hardware-webgpu",
+		HardwareClassification: "hardware-" + backend,
 		Viewport:               visual.ViewportEvidence{Width: 1280, Height: 720, DPR: 1},
 		Selected:               visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: visual.DefaultPixelCanvasSelector, CanvasCount: 1, MountCount: 1},
 		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 1},
 		SettlePolicy:           comparePixelSettlePolicy(),
 		States: []visual.PixelStateEvidence{
-			{State: "initial", Settle: comparePixelSettle(10, false), Batch: comparePixelBatch("R00-initial-batch", "initial", 10, false), Captures: comparePixelCaptureSeries(t, initial, "initial", 3)},
-			{State: "settled", Settle: comparePixelSettle(40, true), Batch: comparePixelBatch("R00-settled-batch", "settled", 40, true), Captures: comparePixelCaptureSeries(t, settled, "settled", 3)},
+			{State: "initial", Settle: comparePixelSettle(10, false), Batch: comparePixelBatch("R00-initial-batch", "initial", 10, false, backend), Captures: comparePixelCaptureSeries(t, initial, "initial", 3, backend)},
+			{State: "settled", Settle: comparePixelSettle(40, true), Batch: comparePixelBatch("R00-settled-batch", "settled", 40, true, backend), Captures: comparePixelCaptureSeries(t, settled, "settled", 3, backend)},
 		},
 	}
 }
 
 func comparePixelBackendSelection(backend string) visual.PixelBackendSelection {
-	return visual.PixelBackendSelection{RequestedBackend: backend, RuntimeObservedBackend: backend, PreNavigationHook: "gosx-o02-clear-force-webgl-new-document"}
+	hook := "gosx-o02-clear-force-webgl-new-document"
+	if backend == "webgl" {
+		hook = "gosx-o02-force-webgl-new-document"
+	}
+	return visual.PixelBackendSelection{RequestedBackend: backend, RuntimeObservedBackend: backend, ForceWebGL: backend == "webgl", PreNavigationHook: hook}
 }
 
 func compareTestPixelSource(source SourceIdentity) visual.PixelSourceIdentity {
@@ -1495,12 +1778,16 @@ func comparePixelSettle(frame int, settled bool) visual.PixelSettleResult {
 	return visual.PixelSettleResult{RequiredFrame: frame, ObservedFrame: frame, AdvanceRequired: false, StaticAccepted: false, RenderLoop: visual.RenderLoopEvidence{State: "active", Reason: "runtime-program", Active: true, WantsAnimation: true, StateParsed: true, WantsAnimationParsed: true, Valid: true}}
 }
 
-func comparePixelBatch(id, state string, frame int, settled bool) visual.PixelBatchEvidence {
+func comparePixelBatch(id, state string, frame int, settled bool, backend ...string) visual.PixelBatchEvidence {
+	b := "webgpu"
+	if len(backend) > 0 && backend[0] != "" {
+		b = backend[0]
+	}
 	loop := comparePixelSettle(frame, settled).RenderLoop
 	if settled {
 		frame = 10
 	}
-	snapshot := visual.PixelBatchSnapshot{Visible: true, Focused: true, Backend: "webgpu", Renderer: "webgpu", FrameSeq: frame, RuntimeTruthParsed: true, RenderLoopState: loop.State, RenderLoopActive: loop.Active, WantsAnimation: loop.WantsAnimation, Clip: visual.PixelCanvasClipEvidence{Width: 16, Height: 16, Scale: 1, Stable: true}}
+	snapshot := visual.PixelBatchSnapshot{Visible: true, Focused: true, Backend: b, Renderer: b, FrameSeq: frame, RuntimeTruthParsed: true, RenderLoopState: loop.State, RenderLoopActive: loop.Active, WantsAnimation: loop.WantsAnimation, Clip: visual.PixelCanvasClipEvidence{Width: 16, Height: 16, Scale: 1, Stable: true}}
 	return visual.PixelBatchEvidence{ID: id, State: state, Acquired: true, Released: true, ReleaseProved: true, NonceHash: "sha256:" + strings.Repeat("1", 64), GlobalKeyHash: "sha256:" + strings.Repeat("2", 64), DrainTicks: 2, NativeTickCount: 2, QueueAfterDrain: 1, QueueBeforeRelease: 1, Delivered: 1, Restored: true, Cleaned: true, Clip: snapshot.Clip, BeforeAcquire: snapshot, Before: snapshot, After: snapshot}
 }
 
@@ -1517,12 +1804,17 @@ func completeComparePixelCapture(capture visual.PixelCaptureEvidence, state stri
 	capture.RenderLoop = comparePixelSettle(capture.FrameSeq, state == "settled").RenderLoop
 	capture.Selected = visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: visual.DefaultPixelCanvasSelector, CanvasCount: 1, MountCount: 1}
 	capture.WebGPU = visual.WebGPUEvidence{Available: true, AdapterName: "NVIDIA RTX", Vendor: "NVIDIA Corporation", Description: "NVIDIA RTX", AdapterInfo: map[string]interface{}{"vendor": "NVIDIA Corporation", "description": "NVIDIA RTX"}}
+	capture.WebGL = visual.WebGLEvidence{Vendor: "NVIDIA Corporation", Renderer: "NVIDIA RTX", Version: "WebGL 2.0"}
 	capture.Viewport = visual.ViewportEvidence{Width: 1280, Height: 720, DPR: 1, CanvasWidth: 16, CanvasHeight: 16, CanvasCSSWidth: 16, CanvasCSSHeight: 16, EffectiveDPR: 1}
 	return capture
 }
 
-func comparePixelCaptureSeries(t *testing.T, first visual.PixelCaptureEvidence, state string, count int) []visual.PixelCaptureEvidence {
+func comparePixelCaptureSeries(t *testing.T, first visual.PixelCaptureEvidence, state string, count int, backend ...string) []visual.PixelCaptureEvidence {
 	t.Helper()
+	b := "webgpu"
+	if len(backend) > 0 && backend[0] != "" {
+		b = backend[0]
+	}
 	data, err := os.ReadFile(first.Path)
 	if err != nil {
 		t.Fatal(err)
@@ -1544,7 +1836,7 @@ func comparePixelCaptureSeries(t *testing.T, first visual.PixelCaptureEvidence, 
 			capture.SHA256 = strings.TrimPrefix(hash, "sha256:")
 			capture.Bytes = len(data)
 		}
-		capture = completeComparePixelCapture(capture, state, i, "webgpu")
+		capture = completeComparePixelCapture(capture, state, i, b)
 		capture.Comparison = &visual.PixelComparison{BaselinePath: capture.Path, DiffPct: 0, Mismatched: 0, Total: capture.Width * capture.Height, DimensionsMatch: true, Similarity: 1, BaselineThresholdPct: 1, EffectiveThresholdPct: 1, Passed: true}
 		out = append(out, capture)
 	}
@@ -1698,6 +1990,9 @@ func compareBudgetPath(t *testing.T) string {
 
 func writeRawSamples(t *testing.T, path string, samples []BrowserRawSample) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	var buf bytes.Buffer
 	for _, sample := range samples {
 		data, err := json.Marshal(sample)
@@ -1738,6 +2033,10 @@ func readFixtureJSON(t *testing.T, path string, value any) {
 }
 
 func addPixelRefToFixture(t *testing.T, artifactRoot, ref string) {
+	addPixelRefsToFixture(t, artifactRoot, []string{ref})
+}
+
+func addPixelRefsToFixture(t *testing.T, artifactRoot string, refs []string) {
 	t.Helper()
 	rawPath := filepath.Join(artifactRoot, "perf", "raw-samples.jsonl")
 	samples, err := ReadBrowserRawSamplesJSONLStrict(rawPath)
@@ -1745,7 +2044,7 @@ func addPixelRefToFixture(t *testing.T, artifactRoot, ref string) {
 		t.Fatal(err)
 	}
 	for i := range samples {
-		samples[i].Artifacts.PixelManifestRefs = []string{ref}
+		samples[i].Artifacts.PixelManifestRefs = append([]string{}, refs...)
 	}
 	writeRawSamples(t, rawPath, samples)
 	summary := SummarizeBrowserSamples(samples, "smoke", samples[0].Source)
@@ -1799,8 +2098,12 @@ func reportHasMetricPass(report *CompareReport, metric string) bool {
 }
 
 func reportHasMetricWarn(report *CompareReport, metric string) bool {
+	return reportHasMetricStatus(report, metric, "warn")
+}
+
+func reportHasMetricStatus(report *CompareReport, metric, status string) bool {
 	for _, check := range append(append([]CompareCheck{}, report.Checks...), report.Ratchets...) {
-		if check.Metric == metric && check.Status == "warn" {
+		if check.Metric == metric && check.Status == status {
 			return true
 		}
 	}

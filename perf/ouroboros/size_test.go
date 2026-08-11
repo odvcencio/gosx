@@ -792,6 +792,41 @@ func TestMaterializeCanonicalInventoryWritesPredictedBytes(t *testing.T) {
 	}
 }
 
+func TestWriteCanonicalInventoryFileWritesPredictedBytesAndRejectsPrettyDrift(t *testing.T) {
+	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+	materializedRoot := filepath.Join(repoRoot, "build", "canonical-inventory-writer")
+	plan, err := PredictCanonicalInventoryMaterialization(context.Background(), repoRoot, inventoryPath, materializedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteCanonicalInventoryFile(plan.Path, plan.Inventory); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(plan.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, plan.Bytes) {
+		t.Fatalf("canonical inventory writer bytes differ from predicted materialization")
+	}
+	if bytes.Contains(body, []byte("\n  \"")) || bytes.HasSuffix(body, []byte("\n")) {
+		t.Fatalf("canonical inventory writer emitted pretty formatting")
+	}
+	if err := WriteJSONFile(plan.Path, plan.Inventory); err != nil {
+		t.Fatal(err)
+	}
+	pretty, err := os.ReadFile(plan.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(pretty, plan.Bytes) {
+		t.Fatalf("pretty inventory unexpectedly matched canonical bytes")
+	}
+	if err := validateReusableMaterializedInventory(context.Background(), repoRoot, plan.Path, plan.Bytes); err == nil {
+		t.Fatalf("pretty inventory formatting drift was accepted")
+	}
+}
+
 func TestDirtySourceIdentityHandoffPredictsMaterializedOverlayBytes(t *testing.T) {
 	repoRoot, inventoryPath := writeDirtyReplayableCanonicalInventory(t)
 	materializedRoot := filepath.Join(repoRoot, "build", "dirty-materialized-browser-out")

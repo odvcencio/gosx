@@ -583,6 +583,109 @@ func TestValidateCanonicalSampleMatrixRejectsMissingBucketAndUndercount(t *testi
 	}
 }
 
+func TestCanonicalNoiseRerunProofKeepsRawSamplesSeparate(t *testing.T) {
+	plan, err := samplingPlan("baseline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := compareSource("")
+	baseline := canonicalBrowserMatrixSamples(plan)
+	rerun := canonicalBrowserMatrixSamples(plan)
+	for i := range baseline {
+		baseline[i].Source = source
+		rerun[i].Source = source
+		if baseline[i].SampleLane == SampleLaneProduct && baseline[i].RouteID == "R00" && baseline[i].CacheMode == "cold" && !baseline[i].Discarded {
+			if baseline[i].SampleIndex%2 == 0 {
+				baseline[i].Metrics = map[string]float64{"dclMs": 100}
+			} else {
+				baseline[i].Metrics = map[string]float64{"dclMs": 200}
+			}
+			rerun[i].Metrics = map[string]float64{"dclMs": 100}
+		}
+	}
+	if len(baseline) != 484 {
+		t.Fatalf("canonical raw sample count = %d, want 484", len(baseline))
+	}
+	root := t.TempDir()
+	baselineRaw := filepath.Join(root, "perf", "raw-samples.jsonl")
+	rerunRaw := filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
+	writeRawSamples(t, baselineRaw, baseline)
+	writeRawSamples(t, rerunRaw, rerun)
+	summary := SummarizeBrowserSamples(baseline, "baseline", source)
+	proof, err := BuildNoiseRerunProof(summary, baselineRaw, rerunRaw, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", baseline, rerun, []string{"startup.dclMs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proof.BaselineRawSamplesRef != "perf/raw-samples.jsonl" || proof.RerunRawSamplesRef != "noise-rerun/perf/raw-samples.jsonl" {
+		t.Fatalf("proof refs = %#v", proof)
+	}
+	gotBaseline, err := ReadBrowserRawSamplesJSONLStrict(baselineRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotRerun, err := ReadBrowserRawSamplesJSONLStrict(rerunRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotBaseline) != 484 || len(gotRerun) != 484 {
+		t.Fatalf("raw counts baseline=%d rerun=%d", len(gotBaseline), len(gotRerun))
+	}
+	if len(proof.Metrics) != 1 || proof.Metrics[0].Group != "R00/cold" || proof.Metrics[0].Metric != "startup.dclMs" {
+		t.Fatalf("proof metrics = %#v", proof.Metrics)
+	}
+}
+
+func TestCanonicalNoiseRerunOptionsPreserveExternalEvidencePreflight(t *testing.T) {
+	root := t.TempDir()
+	artifactRoot := filepath.Join(root, "artifact")
+	evidenceRoot := filepath.Join(root, "evidence")
+	source := SourceIdentity{
+		BaseRevision:    "0123456789abcdef0123456789abcdef01234567",
+		OverlayHash:     "sha256:" + strings.Repeat("1", 64),
+		InventoryRef:    "source/source-inventory.json",
+		InventorySHA256: "sha256:" + strings.Repeat("2", 64),
+	}
+	pixelSource := visual.PixelSourceIdentity{BaseRevision: source.BaseRevision, OverlayHash: source.OverlayHash, InventorySHA256: source.InventorySHA256}
+	var pixelRefs []string
+	for _, routeID := range []string{"R08", "R10"} {
+		for _, backend := range []string{"webgpu", "webgl"} {
+			pixelRefs = append(pixelRefs, writeStrictCanonicalPixelManifestRef(t, evidenceRoot, routeID, backend, pixelSource))
+		}
+	}
+	opts := BrowserBaselineOptions{
+		ArtifactRoot:  artifactRoot,
+		EvidenceRoot:  evidenceRoot,
+		InventoryPath: filepath.Join(root, "inventory.json"),
+		PixelManifest: strings.Join(pixelRefs, ","),
+	}
+	rerunOpts := canonicalNoiseRerunOptions(opts, opts.InventoryPath)
+	if rerunOpts.ArtifactRoot != filepath.Join(artifactRoot, "noise-rerun") {
+		t.Fatalf("rerun artifact root = %s", rerunOpts.ArtifactRoot)
+	}
+	if rerunOpts.EvidenceRoot != evidenceRoot {
+		t.Fatalf("rerun evidence root = %s, want %s", rerunOpts.EvidenceRoot, evidenceRoot)
+	}
+	if rerunOpts.PixelManifest != opts.PixelManifest {
+		t.Fatalf("rerun pixel refs changed: %q", rerunOpts.PixelManifest)
+	}
+	if !rerunOpts.DisableNoiseRerun {
+		t.Fatal("nested rerun was not disabled")
+	}
+	if err := validateCanonicalEvidenceRoot(rerunOpts); err != nil {
+		t.Fatalf("rerun evidence root preflight failed: %v", err)
+	}
+	manifests, err := readCanonicalPixelManifestRefs(rerunOpts)
+	if err != nil {
+		t.Fatalf("rerun pixel refs did not resolve from external evidence root: %v", err)
+	}
+	if len(manifests) != 4 {
+		t.Fatalf("rerun pixel manifest count = %d", len(manifests))
+	}
+	if samePath(rerunOpts.ArtifactRoot, rerunOpts.EvidenceRoot) {
+		t.Fatal("rerun output root aliases external evidence root")
+	}
+}
+
 func canonicalBrowserMatrixSamples(plan SamplingPlan) []BrowserRawSample {
 	var samples []BrowserRawSample
 	for _, routeID := range canonicalRouteIDs() {
@@ -665,10 +768,70 @@ func TestSampleMetricsPreservesRawTransferAndMemoryValues(t *testing.T) {
 		LongTaskTotalMs:       80,
 		TotalBlockingTimeMs:   30,
 	}
-	mem := perf.MemoryStats{JSHeapUsedMB: 1.5, DOMNodeCount: 42}
+	mem := perf.MemoryStats{JSHeapUsedMB: 1.5, DOMNodeCount: 42, WASMPages: 3, WASMBytes: 196608}
 	metrics := sampleMetrics(page, mem)
 	if metrics["transferBytes"] != 789 || metrics["jsHeapUsedMb"] != 1.5 || metrics["domNodeCount"] != 42 {
 		t.Fatalf("metrics = %#v", metrics)
+	}
+	if metrics["wasmPages"] != 3 || metrics["wasmBytes"] != 196608 {
+		t.Fatalf("wasm metrics = %#v", metrics)
+	}
+	mem.WASMPages = 0
+	mem.WASMBytes = 0
+	metrics = sampleMetrics(page, mem)
+	if _, ok := metrics["wasmPages"]; ok {
+		t.Fatalf("wasmPages present without observed WASM memory: %#v", metrics)
+	}
+}
+
+func TestProductLaneInstallsWASMMemoryObserverOnly(t *testing.T) {
+	if !installWASMMemoryObserver(SampleLaneProduct) {
+		t.Fatal("product lane does not install WASM memory observer")
+	}
+	script := wasmMemoryObserverScript()
+	if !strings.Contains(script, "WebAssembly.instantiate") || !strings.Contains(script, "__gosxOuroborosWASMMemory") {
+		t.Fatalf("WASM memory observer missing expected hooks: %s", script)
+	}
+	if strings.Contains(script, "__gosxOuroborosProbe") || strings.Contains(script, "JSON.stringify") || strings.Contains(script, "JSON.parse") {
+		t.Fatalf("WASM memory observer includes probe or JSON hot-path logic: %s", script)
+	}
+}
+
+func TestWASMMemoryObserverRefreshesGrownMemoryOnSnapshot(t *testing.T) {
+	script := wasmMemoryObserverScript()
+	if !strings.Contains(script, "refreshMemories();") || !strings.Contains(script, "state.memories") {
+		t.Fatalf("WASM memory observer does not refresh tracked memories: %s", script)
+	}
+	if strings.Contains(script, "__gosxOuroborosProbe") || strings.Contains(script, "JSON.stringify") || strings.Contains(script, "JSON.parse") {
+		t.Fatalf("WASM memory observer includes probe or JSON hot-path logic: %s", script)
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node unavailable for WASM observer script execution")
+	}
+	js := `
+global.window = global;
+let bytes = 65536;
+const memory = {};
+Object.defineProperty(memory, "buffer", { get() { return { byteLength: bytes }; } });
+global.WebAssembly = {
+  instantiate() { return Promise.resolve({ instance: { exports: { memory } } }); }
+};
+` + script + `
+WebAssembly.instantiate().then(() => {
+  bytes = 196608;
+  const snap = window.__gosxOuroborosWASMMemory.snapshot();
+  if (snap.pages !== 3 || snap.bytes !== 196608) {
+    console.error("snapshot", snap);
+    process.exit(1);
+  }
+}).catch((err) => {
+  console.error(err && err.stack || err);
+  process.exit(1);
+});
+`
+	cmd := exec.Command("node", "-e", js)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("observer script did not report grown memory: %v\n%s", err, out)
 	}
 }
 
@@ -2767,6 +2930,23 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 				writeTestFile(t, filepath.Join(opts.ArtifactRoot, "source", "source-inventory.json"), "{}")
 			},
 			want: "source inventory",
+		},
+		{
+			name: "pretty_source_inventory_drift",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+				path := filepath.Join(opts.ArtifactRoot, "source", "source-inventory.json")
+				f, err := os.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				inv, err := DecodeInventoryStrict(f)
+				_ = f.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeFixtureJSON(t, path, inv)
+			},
+			want: "differs from predicted materialization",
 		},
 		{
 			name: "invalid_runtime_rows",

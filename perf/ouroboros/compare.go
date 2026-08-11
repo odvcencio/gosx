@@ -519,7 +519,7 @@ func loadCompareArtifact(input, mode, pixelRoot string) (*compareLoadedArtifact,
 	if env.SchemaVersion != BrowserBaselineSchemaVersion && env.SchemaVersion != SchemaVersion {
 		return nil, fmt.Errorf("environment schemaVersion = %q, want %q", env.SchemaVersion, BrowserBaselineSchemaVersion)
 	}
-	if err := requireSummaryParity(*summary, raw, manifest.Sampling.Name, manifest.Source); err != nil {
+	if err := requireSummaryParity(paths, rawPath, *summary, raw, manifest.Sampling.Name, manifest.Source); err != nil {
 		return nil, err
 	}
 	inventory, err := loadSourceInventory(paths, manifest.Source)
@@ -1527,14 +1527,128 @@ func resolveExternalArtifactRoot(root string) (comparePathSet, error) {
 	return comparePathSet{root: realRoot, rootReal: realRoot}, nil
 }
 
-func requireSummaryParity(summary BrowserSummary, samples []BrowserRawSample, runMode string, source SourceIdentity) error {
+func requireSummaryParity(paths comparePathSet, rawPath string, summary BrowserSummary, samples []BrowserRawSample, runMode string, source SourceIdentity) error {
+	if err := validateNoiseRerunProof(paths, rawPath, summary, samples); err != nil {
+		return err
+	}
 	recomputed := SummarizeBrowserSamples(samples, runMode, source)
 	summary.GeneratedAt = ""
 	recomputed.GeneratedAt = ""
+	summary.NoiseRerun = nil
+	recomputed.NoiseRerun = nil
 	sortNoiseFlags(summary.NoiseFlags)
 	sortNoiseFlags(recomputed.NoiseFlags)
 	if !reflect.DeepEqual(summary, recomputed) {
 		return fmt.Errorf("summary does not equal raw sample recomputation")
+	}
+	return nil
+}
+
+func validateNoiseRerunProof(paths comparePathSet, rawPath string, summary BrowserSummary, samples []BrowserRawSample) error {
+	proof := summary.NoiseRerun
+	if proof == nil {
+		return nil
+	}
+	if proof.SchemaVersion != BrowserBaselineSchemaVersion {
+		return fmt.Errorf("noise rerun proof schemaVersion = %q", proof.SchemaVersion)
+	}
+	if proof.Status != "pass" {
+		return fmt.Errorf("noise rerun proof status = %q", proof.Status)
+	}
+	if proof.RunMode != summary.RunMode {
+		return fmt.Errorf("noise rerun proof runMode = %q, want %q", proof.RunMode, summary.RunMode)
+	}
+	if !reflect.DeepEqual(proof.Source, summary.Source) {
+		return fmt.Errorf("noise rerun proof source identity mismatch")
+	}
+	baselineRawPath, err := resolveArtifactRef(paths, proof.BaselineRawSamplesRef)
+	if err != nil {
+		return fmt.Errorf("noise rerun proof baseline raw samples ref: %w", err)
+	}
+	if !samePath(baselineRawPath, rawPath) {
+		return fmt.Errorf("noise rerun proof baseline raw samples ref does not match manifest raw samples")
+	}
+	rerunRawPath, err := resolveArtifactRef(paths, proof.RerunRawSamplesRef)
+	if err != nil {
+		return fmt.Errorf("noise rerun proof rerun raw samples ref: %w", err)
+	}
+	baselineHash, err := sha256File(baselineRawPath)
+	if err != nil {
+		return fmt.Errorf("noise rerun proof baseline raw samples hash: %w", err)
+	}
+	rerunHash, err := sha256File(rerunRawPath)
+	if err != nil {
+		return fmt.Errorf("noise rerun proof rerun raw samples hash: %w", err)
+	}
+	if !compareSHA256Re.MatchString(proof.BaselineRawSamplesSHA256) {
+		return fmt.Errorf("noise rerun proof baseline raw samples hash is invalid")
+	}
+	if !compareSHA256Re.MatchString(proof.RerunRawSamplesSHA256) {
+		return fmt.Errorf("noise rerun proof rerun raw samples hash is invalid")
+	}
+	if proof.BaselineRawSamplesSHA256 == proof.RerunRawSamplesSHA256 {
+		return fmt.Errorf("noise rerun proof requires distinct raw sample hashes")
+	}
+	if proof.BaselineRawSamplesSHA256 != baselineHash {
+		return fmt.Errorf("noise rerun proof baseline raw samples hash mismatch")
+	}
+	if proof.RerunRawSamplesSHA256 != rerunHash {
+		return fmt.Errorf("noise rerun proof rerun raw samples hash mismatch")
+	}
+	rerunSamples, err := ReadBrowserRawSamplesJSONLStrict(rerunRawPath)
+	if err != nil {
+		return fmt.Errorf("noise rerun proof rerun raw samples: %w", err)
+	}
+	for i, sample := range rerunSamples {
+		if !reflect.DeepEqual(sample.Source, summary.Source) {
+			return fmt.Errorf("noise rerun proof rerun raw sample %d source identity mismatch", i)
+		}
+	}
+	if len(proof.Metrics) == 0 {
+		return fmt.Errorf("noise rerun proof requires at least one metric")
+	}
+	for _, metric := range proof.Metrics {
+		if metric.Group == "" || metric.Metric == "" {
+			return fmt.Errorf("noise rerun proof metric identity is incomplete")
+		}
+		if metric.BaselineN <= 0 || metric.RerunN <= 0 {
+			return fmt.Errorf("noise rerun proof metric %s/%s has empty samples", metric.Group, metric.Metric)
+		}
+		if !finiteFloat(metric.BaselineMedian) || !finiteFloat(metric.RerunMedian) {
+			return fmt.Errorf("noise rerun proof metric %s/%s has non-finite median", metric.Group, metric.Metric)
+		}
+	}
+	if err := validateNoiseRerunMetricReplay(*proof, samples, rerunSamples); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateNoiseRerunMetricReplay(proof NoiseRerunProof, baselineSamples, rerunSamples []BrowserRawSample) error {
+	metricSet := map[string]bool{}
+	for _, metric := range proof.Metrics {
+		metricSet[metric.Metric] = true
+	}
+	metricIDs := make([]string, 0, len(metricSet))
+	for metricID := range metricSet {
+		metricIDs = append(metricIDs, metricID)
+	}
+	sort.Strings(metricIDs)
+	recomputed, err := noiseRerunMetricProofs(baselineSamples, rerunSamples, metricIDs)
+	if err != nil {
+		return err
+	}
+	normalize := func(metrics []NoiseRerunMetricProof) []NoiseRerunMetricProof {
+		out := append([]NoiseRerunMetricProof{}, metrics...)
+		sort.Slice(out, func(i, j int) bool {
+			a := out[i].Group + "\x00" + out[i].Metric
+			b := out[j].Group + "\x00" + out[j].Metric
+			return a < b
+		})
+		return out
+	}
+	if !reflect.DeepEqual(normalize(proof.Metrics), normalize(recomputed)) {
+		return fmt.Errorf("noise rerun proof metrics do not match raw sample recomputation")
 	}
 	return nil
 }
@@ -1773,7 +1887,7 @@ func runMetricChecks(report *CompareReport, baseline, candidate *compareLoadedAr
 				report.addMetricCheck(metricID, categoryForMetric(metricID), bucket, metricID, "fail", 0, 0, rule, false, false, message, false)
 				continue
 			}
-			if (bStat.Unstable || cStat.Unstable) && !hasNoiseRerunProof(baseline.summary) && !isDeterministicMetric(metricID) {
+			if !isDeterministicMetric(metricID) && !unstableMetricProofsSatisfied(baseline, candidate, bucket, metricID, rule, bStat, cStat) {
 				report.addMetricCheck(metricID, categoryForMetric(metricID), bucket, metricID, "blocked", bStat.Median, cStat.Median, rule, bStat.Unstable, cStat.Unstable, "required noisy metric lacks rerun proof", false)
 				continue
 			}
@@ -1785,6 +1899,16 @@ func runMetricChecks(report *CompareReport, baseline, candidate *compareLoadedAr
 			report.addMetricCheck(metricID, categoryForMetric(metricID), bucket, metricID, status, bStat.Median, cStat.Median, rule, bStat.Unstable, cStat.Unstable, message, false)
 		}
 	}
+}
+
+func unstableMetricProofsSatisfied(baseline, candidate *compareLoadedArtifact, bucket metricBucket, metricID string, rule BudgetThreshold, bStat, cStat Stats) bool {
+	if bStat.Unstable && !hasNoiseRerunProof(baseline.summary, bucket, metricID, rule) {
+		return false
+	}
+	if cStat.Unstable && !hasNoiseRerunProof(candidate.summary, bucket, metricID, rule) {
+		return false
+	}
+	return true
 }
 
 func runRatchetChecks(report *CompareReport, baseline, candidate *compareLoadedArtifact, budget *CompareBudget, opts CompareOptions) {
@@ -1898,11 +2022,11 @@ func runBaselinePixelSelfCompareCheck(report *CompareReport, baseline, candidate
 	if manifest.Source.BaseRevision != baseline.manifest.Source.BaseRevision || manifest.Source.OverlayHash != baseline.manifest.Source.OverlayHash || manifest.Source.InventorySHA256 != baseline.manifest.Source.InventorySHA256 {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".source", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel source does not match browser source"})
 	}
-	if manifest.HardwareClassification != "" && manifest.HardwareClassification != baseline.environment.HardwareClassification {
-		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".hardware", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel hardware class differs from browser environment"})
-	}
 	if manifest.BackendRequirement == "" {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".backend", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel backend requirement is missing"})
+	}
+	if msg := baselinePixelHardwareMessage(manifest, baseline.environment.HardwareClassification); msg != "" {
+		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".hardware", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: msg})
 	}
 	if !manifest.Certified {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".certified", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel manifest is not certified"})
@@ -2578,11 +2702,53 @@ func isDeterministicMetric(id string) bool {
 	return strings.Contains(id, "Bytes") || strings.HasPrefix(id, "console.") || strings.HasPrefix(id, "json.") || strings.HasPrefix(id, "route.") || strings.HasPrefix(id, "wasm.")
 }
 
-func hasNoiseRerunProof(summary BrowserSummary) bool {
-	// BrowserSummary has no rerun-proof fields in the current producer.
-	// Canonical and smoke comparisons must stay inconclusive for noisy
-	// required metrics until the producer adds explicit proof fields.
+func hasNoiseRerunProof(summary BrowserSummary, bucket metricBucket, metricID string, rule BudgetThreshold) bool {
+	proof := summary.NoiseRerun
+	if proof == nil || proof.SchemaVersion != BrowserBaselineSchemaVersion || proof.Status != "pass" || proof.RunMode != summary.RunMode {
+		return false
+	}
+	if !reflect.DeepEqual(proof.Source, summary.Source) {
+		return false
+	}
+	if !compareSHA256Re.MatchString(proof.BaselineRawSamplesSHA256) || !compareSHA256Re.MatchString(proof.RerunRawSamplesSHA256) || proof.BaselineRawSamplesSHA256 == proof.RerunRawSamplesSHA256 {
+		return false
+	}
+	group := bucket.RouteID + "/" + bucket.CacheMode
+	for _, metric := range proof.Metrics {
+		if metric.Group != group || metric.Metric != metricID {
+			continue
+		}
+		if metric.BaselineN <= 0 || metric.RerunN <= 0 {
+			return false
+		}
+		if !finiteFloat(metric.BaselineMedian) || !finiteFloat(metric.RerunMedian) {
+			return false
+		}
+		status, _ := compareThreshold(metric.BaselineMedian, metric.RerunMedian, rule)
+		return status == "pass"
+	}
 	return false
+}
+
+func finiteFloat(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func baselinePixelHardwareMessage(manifest visual.PixelEvidenceManifest, browserHardware string) string {
+	if manifest.HardwareClassification == "" {
+		return "baseline pixel hardware class is missing"
+	}
+	if manifest.BackendRequirement != string(visual.RequireBackendWebGPU) && manifest.BackendRequirement != string(visual.RequireBackendWebGL) {
+		return "baseline pixel backend requirement is not canonical hardware"
+	}
+	want := "hardware-" + manifest.BackendRequirement
+	if manifest.HardwareClassification != want {
+		return fmt.Sprintf("baseline pixel hardware class %s does not match backend %s", manifest.HardwareClassification, manifest.BackendRequirement)
+	}
+	if browserHardware != "" && browserHardware != "hardware-webgpu" && browserHardware != "hardware-webgl" && browserHardware != "mixed-hardware" {
+		return "browser environment is not certified hardware for pixel self-compare"
+	}
+	return ""
 }
 
 func isHardwareCompare(baseline, candidate *compareLoadedArtifact) bool {

@@ -563,6 +563,14 @@ func canonicalInventoryJSON(inv *Inventory) ([]byte, error) {
 	return json.Marshal(normalized)
 }
 
+func WriteCanonicalInventoryFile(path string, inv *Inventory) error {
+	data, err := canonicalInventoryJSON(inv)
+	if err != nil {
+		return err
+	}
+	return writeJSONBytesFileAtomic(path, data, true)
+}
+
 func rewriteMaterializedOverlayRefs(repoRoot, sourceDir string, inv *Inventory) {
 	if inv == nil {
 		return
@@ -692,13 +700,19 @@ func WriteNewJSONFile(path string, value any) error {
 }
 
 func writeNewJSONBytesFile(path string, data []byte) error {
+	return writeJSONBytesFileAtomic(path, data, false)
+}
+
+func writeJSONBytesFileAtomic(path string, data []byte, overwrite bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(path); err == nil {
-		return fmt.Errorf("refusing to overwrite existing evidence %s", path)
-	} else if !os.IsNotExist(err) {
-		return err
+	if !overwrite {
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("refusing to overwrite existing evidence %s", path)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
@@ -722,7 +736,11 @@ func writeNewJSONBytesFile(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Link(tmpPath, path); err != nil {
+	if overwrite {
+		if err := os.Rename(tmpPath, path); err != nil {
+			return err
+		}
+	} else if err := os.Link(tmpPath, path); err != nil {
 		return err
 	}
 	cleanup = false

@@ -97,6 +97,8 @@ type MemoryStats struct {
 	JSHeapLimitMB float64 `json:"jsHeapLimitMb"`
 	DOMNodeCount  int     `json:"domNodeCount"`
 	ListenerCount int     `json:"listenerCount"`
+	WASMPages     int     `json:"wasmPages"`
+	WASMBytes     int64   `json:"wasmBytes"`
 }
 
 // QueryMemoryStats reads performance.memory + document DOM counts via a

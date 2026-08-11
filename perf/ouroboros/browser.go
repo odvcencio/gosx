@@ -68,6 +68,7 @@ type BrowserBaselineOptions struct {
 	DPR                float64
 	Environment        string
 	RuntimeProbeNames  []string
+	DisableNoiseRerun  bool
 }
 
 type BrowserBaselineResult struct {
@@ -300,6 +301,7 @@ type BrowserSummary struct {
 	SampleCount   int                             `json:"sampleCount"`
 	Discarded     int                             `json:"discardedSampleCount"`
 	NoiseFlags    []NoiseFlag                     `json:"noiseFlags,omitempty"`
+	NoiseRerun    *NoiseRerunProof                `json:"noiseRerunProof,omitempty"`
 }
 
 type BaselineValidation struct {
@@ -330,6 +332,27 @@ type NoiseFlag struct {
 	Metric string  `json:"metric"`
 	Reason string  `json:"reason"`
 	Ratio  float64 `json:"ratio"`
+}
+
+type NoiseRerunProof struct {
+	SchemaVersion            string                  `json:"schemaVersion"`
+	Status                   string                  `json:"status"`
+	RunMode                  string                  `json:"runMode"`
+	Source                   SourceIdentity          `json:"source"`
+	BaselineRawSamplesRef    string                  `json:"baselineRawSamplesRef"`
+	BaselineRawSamplesSHA256 string                  `json:"baselineRawSamplesSHA256"`
+	RerunRawSamplesRef       string                  `json:"rerunRawSamplesRef"`
+	RerunRawSamplesSHA256    string                  `json:"rerunRawSamplesSHA256"`
+	Metrics                  []NoiseRerunMetricProof `json:"metrics"`
+}
+
+type NoiseRerunMetricProof struct {
+	Group          string  `json:"group"`
+	Metric         string  `json:"metric"`
+	BaselineN      int     `json:"baselineN"`
+	RerunN         int     `json:"rerunN"`
+	BaselineMedian float64 `json:"baselineMedian"`
+	RerunMedian    float64 `json:"rerunMedian"`
 }
 
 func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (result *BrowserBaselineResult, err error) {
@@ -500,6 +523,19 @@ func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (resul
 	validation := ValidateBrowserBaseline(plan, samples, source, env, opts)
 	canonical := plan.Canonical && validation.Status == "pass"
 	summary := SummarizeBrowserSamples(samples, opts.Samples, source)
+	if canonical && !opts.DisableNoiseRerun {
+		if err := rawWriter.Flush(); err != nil {
+			return nil, err
+		}
+		if err := rawFile.Sync(); err != nil {
+			return nil, err
+		}
+		proof, err := maybeRunCanonicalNoiseRerun(ctx, opts, originalInventoryPath, summary, samples, rawPath, commandLog)
+		if err != nil {
+			return nil, err
+		}
+		summary.NoiseRerun = proof
+	}
 	if err := WriteJSONFile(summaryPath, summary); err != nil {
 		return nil, err
 	}
@@ -843,6 +879,60 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
 	return out, nil
 }
 
+func maybeRunCanonicalNoiseRerun(ctx context.Context, opts BrowserBaselineOptions, originalInventoryPath string, summary BrowserSummary, samples []BrowserRawSample, rawPath string, log io.Writer) (*NoiseRerunProof, error) {
+	metricIDs := unstableRequiredNoiseMetricIDs(samples)
+	if len(metricIDs) == 0 {
+		return nil, nil
+	}
+	rerunOpts := canonicalNoiseRerunOptions(opts, originalInventoryPath)
+	if log != nil {
+		fmt.Fprintf(log, "noise-rerun start root=%s metrics=%s\n", rerunOpts.ArtifactRoot, strings.Join(metricIDs, ","))
+	}
+	result, err := RunBrowserBaseline(ctx, rerunOpts)
+	if err != nil {
+		return nil, fmt.Errorf("canonical noise rerun failed: %w", err)
+	}
+	rerunSamples, err := ReadBrowserRawSamplesJSONLStrict(result.RawSamplesPath)
+	if err != nil {
+		return nil, fmt.Errorf("canonical noise rerun raw samples: %w", err)
+	}
+	proof, err := BuildNoiseRerunProof(summary, rawPath, result.RawSamplesPath, relTo(opts.ArtifactRoot, rawPath), relTo(opts.ArtifactRoot, result.RawSamplesPath), samples, rerunSamples, metricIDs)
+	if err != nil {
+		return nil, err
+	}
+	if log != nil {
+		fmt.Fprintf(log, "noise-rerun pass root=%s raw=%s\n", rerunOpts.ArtifactRoot, proof.RerunRawSamplesSHA256)
+	}
+	return proof, nil
+}
+
+func canonicalNoiseRerunOptions(opts BrowserBaselineOptions, originalInventoryPath string) BrowserBaselineOptions {
+	rerunOpts := opts
+	rerunOpts.ArtifactRoot = filepath.Join(opts.ArtifactRoot, "noise-rerun")
+	rerunOpts.InventoryPath = originalInventoryPath
+	rerunOpts.DisableNoiseRerun = true
+	return rerunOpts
+}
+
+func unstableRequiredNoiseMetricIDs(samples []BrowserRawSample) []string {
+	stats := buildMetricStats(samples)
+	needed := map[string]bool{}
+	for _, bucketStats := range stats {
+		for _, metricID := range compareRequiredMetricIDs {
+			stat, ok := bucketStats[metricID]
+			if ok && stat.Unstable && !isDeterministicMetric(metricID) {
+				needed[metricID] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(needed))
+	for metricID := range needed {
+		out = append(out, metricID)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func effectiveRouteTimeout(opts BrowserBaselineOptions, route FixtureSpec) time.Duration {
 	timeout := opts.Timeout
 	if timeout == 0 {
@@ -948,6 +1038,7 @@ func runSingleSample(ctx context.Context, opts BrowserBaselineOptions, source So
 		if err != nil {
 			return err
 		}
+		fillWASMMemoryStats(d, &mem)
 		if opts.HeapSnapshots {
 			snap, err := perf.TakeHeapSnapshotAfterGC(d)
 			if err != nil {
@@ -1068,6 +1159,12 @@ func newOuroborosDriver(ctx context.Context, opts BrowserBaselineOptions, lane S
 	}
 	setupDriver, setupCancel := d.WithOperationContext(ctx, opts.Timeout)
 	defer setupCancel()
+	if installWASMMemoryObserver(lane) {
+		if err := injectPreloadScript(setupDriver, wasmMemoryObserverScript()); err != nil {
+			d.Close()
+			return nil, err
+		}
+	}
 	if lane == SampleLaneProbe || lane == SampleLaneProbeOverhead {
 		runtimeJSONProbe, err := RuntimeJSONProbeScript(opts.RuntimeProbeNames)
 		if err != nil {
@@ -1086,6 +1183,15 @@ func newOuroborosDriver(ctx context.Context, opts BrowserBaselineOptions, lane S
 		}
 	}
 	return d, nil
+}
+
+func installWASMMemoryObserver(lane SampleLane) bool {
+	switch lane {
+	case SampleLaneProduct, SampleLaneProbe, SampleLaneProbeOverhead:
+		return true
+	default:
+		return false
+	}
 }
 
 func bindDriverTarget(ctx context.Context, d *perf.Driver, timeout time.Duration) error {
@@ -1125,6 +1231,99 @@ func setProbeRoutePhase(d *perf.Driver, routeID, phase string) error {
 		if (p.setPhase) p.setPhase(%q);
 		if (p.refresh) p.refresh();
 	})()`, routeID, phase), nil)
+}
+
+func wasmMemoryObserverScript() string {
+	return `(function(){
+		if (window.__gosxOuroborosWASMMemory) return;
+		var state = {records: [], memories: [], maxPages: 0, maxBytes: 0};
+		function rememberMemory(memory) {
+			for (var i = 0; i < state.memories.length; i++) {
+				if (state.memories[i] === memory) return;
+			}
+			state.memories.push(memory);
+		}
+		function observeMemory(memory) {
+			try {
+				if (!memory || !memory.buffer || typeof memory.buffer.byteLength !== "number") return;
+				rememberMemory(memory);
+				var bytes = memory.buffer.byteLength;
+				if (!Number.isFinite(bytes) || bytes <= 0) return;
+				var pages = Math.ceil(bytes / 65536);
+				state.records.push({pages: pages, bytes: bytes});
+				if (pages > state.maxPages) state.maxPages = pages;
+				if (bytes > state.maxBytes) state.maxBytes = bytes;
+			} catch (_) {}
+		}
+		function observeExports(exports) {
+			if (!exports || typeof exports !== "object") return;
+			for (var key in exports) {
+				if (Object.prototype.hasOwnProperty.call(exports, key)) observeMemory(exports[key]);
+			}
+		}
+		function observeResult(result) {
+			try {
+				if (result && result.instance) observeExports(result.instance.exports);
+				else if (result && result.exports) observeExports(result.exports);
+			} catch (_) {}
+		}
+		function refreshMemories() {
+			for (var i = 0; i < state.memories.length; i++) observeMemory(state.memories[i]);
+		}
+		Object.defineProperty(window, "__gosxOuroborosWASMMemory", {
+			value: {
+				snapshot: function() {
+					refreshMemories();
+					return {pages: state.maxPages, bytes: state.maxBytes, records: state.records.length};
+				}
+			},
+			configurable: false,
+			enumerable: false,
+			writable: false
+		});
+		if (typeof WebAssembly !== "object" || !WebAssembly) return;
+		if (typeof WebAssembly.instantiate === "function") {
+			var instantiate = WebAssembly.instantiate;
+			WebAssembly.instantiate = function() {
+				var result = instantiate.apply(this, arguments);
+				return Promise.resolve(result).then(function(value) {
+					observeResult(value);
+					return value;
+				});
+			};
+		}
+		if (typeof WebAssembly.instantiateStreaming === "function") {
+			var instantiateStreaming = WebAssembly.instantiateStreaming;
+			WebAssembly.instantiateStreaming = function() {
+				return instantiateStreaming.apply(this, arguments).then(function(value) {
+					observeResult(value);
+					return value;
+				});
+			};
+		}
+	})()`
+}
+
+func fillWASMMemoryStats(d *perf.Driver, mem *perf.MemoryStats) {
+	if d == nil || mem == nil {
+		return
+	}
+	var raw struct {
+		Pages   int   `json:"pages"`
+		Bytes   int64 `json:"bytes"`
+		Records int   `json:"records"`
+	}
+	if err := d.Evaluate(`(function(){
+		var probe = window.__gosxOuroborosWASMMemory;
+		if (!probe || typeof probe.snapshot !== "function") return {pages:0, bytes:0, records:0};
+		return probe.snapshot();
+	})()`, &raw); err != nil {
+		return
+	}
+	if raw.Pages > 0 && raw.Bytes > 0 && raw.Records > 0 {
+		mem.WASMPages = raw.Pages
+		mem.WASMBytes = raw.Bytes
+	}
 }
 
 func primeWarmRoute(d *perf.Driver, opts BrowserBaselineOptions, route FixtureSpec) error {
@@ -4025,6 +4224,10 @@ func sampleMetrics(page *perf.PageReport, mem perf.MemoryStats) map[string]float
 		"totalBlockingTimeMs": page.TotalBlockingTimeMs,
 		"consoleErrorCount":   float64(len(page.ConsoleEntries)),
 	}
+	if mem.WASMPages > 0 && mem.WASMBytes > 0 {
+		m["wasmPages"] = float64(mem.WASMPages)
+		m["wasmBytes"] = float64(mem.WASMBytes)
+	}
 	if page.Scene != nil {
 		m["sceneFrameCount"] = float64(page.Scene.FrameCount)
 		m["sceneCpuP95Ms"] = page.Scene.FrameStats.P95
@@ -4562,6 +4765,104 @@ func SummarizeBrowserSamples(samples []BrowserRawSample, runMode string, source 
 		Discarded:     discarded,
 		NoiseFlags:    flags,
 	}
+}
+
+func BuildNoiseRerunProof(summary BrowserSummary, baselineRawPath, rerunRawPath, baselineRawRef, rerunRawRef string, baselineSamples, rerunSamples []BrowserRawSample, metricIDs []string) (*NoiseRerunProof, error) {
+	baselineRawSHA256, err := sha256File(baselineRawPath)
+	if err != nil {
+		return nil, fmt.Errorf("noise rerun proof baseline raw samples hash: %w", err)
+	}
+	rerunRawSHA256, err := sha256File(rerunRawPath)
+	if err != nil {
+		return nil, fmt.Errorf("noise rerun proof rerun raw samples hash: %w", err)
+	}
+	metrics, err := noiseRerunMetricProofs(baselineSamples, rerunSamples, metricIDs)
+	if err != nil {
+		return nil, err
+	}
+	proof := &NoiseRerunProof{
+		SchemaVersion:            BrowserBaselineSchemaVersion,
+		Status:                   "pass",
+		RunMode:                  summary.RunMode,
+		Source:                   summary.Source,
+		BaselineRawSamplesRef:    baselineRawRef,
+		BaselineRawSamplesSHA256: baselineRawSHA256,
+		RerunRawSamplesRef:       rerunRawRef,
+		RerunRawSamplesSHA256:    rerunRawSHA256,
+		Metrics:                  metrics,
+	}
+	return validateConstructedNoiseRerunProof(proof)
+}
+
+func noiseRerunMetricProofs(baselineSamples, rerunSamples []BrowserRawSample, metricIDs []string) ([]NoiseRerunMetricProof, error) {
+	baselineStats := buildMetricStats(baselineSamples)
+	rerunStats := buildMetricStats(rerunSamples)
+	var metrics []NoiseRerunMetricProof
+	for _, bucket := range metricBucketsForProof(baselineStats, rerunStats) {
+		group := bucket.RouteID + "/" + bucket.CacheMode
+		for _, metricID := range metricIDs {
+			baseline, ok := baselineStats[bucket][metricID]
+			if !ok {
+				continue
+			}
+			if !baseline.Unstable {
+				continue
+			}
+			rerun, ok := rerunStats[bucket][metricID]
+			if !ok {
+				return nil, fmt.Errorf("noise rerun proof missing rerun metric %s/%s", group, metricID)
+			}
+			metrics = append(metrics, NoiseRerunMetricProof{
+				Group:          group,
+				Metric:         metricID,
+				BaselineN:      baseline.N,
+				RerunN:         rerun.N,
+				BaselineMedian: baseline.Median,
+				RerunMedian:    rerun.Median,
+			})
+		}
+	}
+	if len(metrics) == 0 {
+		return nil, fmt.Errorf("noise rerun proof requires at least one unstable required metric")
+	}
+	return metrics, nil
+}
+
+func metricBucketsForProof(a, b map[metricBucket]map[string]Stats) []metricBucket {
+	return allMetricBuckets(a, b)
+}
+
+func validateConstructedNoiseRerunProof(proof *NoiseRerunProof) (*NoiseRerunProof, error) {
+	if proof == nil {
+		return nil, nil
+	}
+	if !compareSHA256Re.MatchString(proof.BaselineRawSamplesSHA256) {
+		return nil, fmt.Errorf("noise rerun proof baseline raw samples hash is invalid")
+	}
+	if !compareSHA256Re.MatchString(proof.RerunRawSamplesSHA256) {
+		return nil, fmt.Errorf("noise rerun proof rerun raw samples hash is invalid")
+	}
+	if proof.BaselineRawSamplesSHA256 == proof.RerunRawSamplesSHA256 {
+		return nil, fmt.Errorf("noise rerun proof requires distinct raw sample hashes")
+	}
+	if strings.TrimSpace(proof.BaselineRawSamplesRef) == "" || strings.TrimSpace(proof.RerunRawSamplesRef) == "" {
+		return nil, fmt.Errorf("noise rerun proof requires raw sample refs")
+	}
+	if len(proof.Metrics) == 0 {
+		return nil, fmt.Errorf("noise rerun proof requires at least one metric")
+	}
+	for _, metric := range proof.Metrics {
+		if metric.Group == "" || metric.Metric == "" {
+			return nil, fmt.Errorf("noise rerun proof metric identity is incomplete")
+		}
+		if metric.BaselineN <= 0 || metric.RerunN <= 0 {
+			return nil, fmt.Errorf("noise rerun proof metric %s/%s has empty samples", metric.Group, metric.Metric)
+		}
+		if math.IsNaN(metric.BaselineMedian) || math.IsInf(metric.BaselineMedian, 0) || math.IsNaN(metric.RerunMedian) || math.IsInf(metric.RerunMedian, 0) {
+			return nil, fmt.Errorf("noise rerun proof metric %s/%s has non-finite median", metric.Group, metric.Metric)
+		}
+	}
+	return proof, nil
 }
 
 func ComputeStats(values []float64) Stats {
