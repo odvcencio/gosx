@@ -3141,6 +3141,23 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 		}
 	})
 
+	t.Run("runtime_output_parent_symlink_rejected_before_sidecar_allowlist", func(t *testing.T) {
+		opts, plan, _, _ := validWithRuntimeOutputPreseed(t)
+		writeRuntimeVariantSidecars(t, opts)
+		outputDir := filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output")
+		outside := filepath.Join(t.TempDir(), "runtime-output")
+		if err := os.Rename(outputDir, outside); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, outputDir); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := canonicalBrowserAllowedPreseedPaths(opts.ArtifactRoot, plan)
+		if err == nil || !strings.Contains(err.Error(), "parent directory must be real") {
+			t.Fatalf("canonicalBrowserAllowedPreseedPaths error = %v, want parent symlink rejection", err)
+		}
+	})
+
 	for _, tc := range []struct {
 		name   string
 		mutate func(t *testing.T, opts BrowserBaselineOptions, ev RuntimeBuildEvidence)

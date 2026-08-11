@@ -1792,7 +1792,7 @@ func canonicalBrowserRuntimePreseedRequiresPublishedShim(ev *RuntimeBuildEvidenc
 }
 
 func canonicalBrowserRuntimeVariantSidecarPreseedRels(root, sourcePath string) ([]string, error) {
-	paths, err := canonicalBrowserRuntimeVariantSidecarPaths(sourcePath)
+	paths, err := canonicalBrowserRuntimeVariantSidecarPaths(root, sourcePath)
 	if err != nil {
 		return nil, err
 	}
@@ -1807,15 +1807,13 @@ func canonicalBrowserRuntimeVariantSidecarPreseedRels(root, sourcePath string) (
 	return out, nil
 }
 
-func canonicalBrowserRuntimeVariantSidecarPaths(sourcePath string) ([]string, error) {
-	info, err := os.Lstat(sourcePath)
+func canonicalBrowserRuntimeVariantSidecarPaths(root, sourcePath string) ([]string, error) {
+	rawFile, err := canonicalBrowserOpenRegularPreseedFile(root, sourcePath, "measured runtime variant sourcePath sidecars")
 	if err != nil {
-		return nil, fmt.Errorf("measured runtime variant sourcePath sidecars: %w", err)
+		return nil, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("measured runtime variant sourcePath sidecars must read a regular file")
-	}
-	raw, err := os.ReadFile(sourcePath)
+	raw, err := io.ReadAll(rawFile)
+	_ = rawFile.Close()
 	if err != nil {
 		return nil, fmt.Errorf("measured runtime variant sourcePath sidecars: %w", err)
 	}
@@ -1829,24 +1827,23 @@ func canonicalBrowserRuntimeVariantSidecarPaths(sourcePath string) ([]string, er
 	} {
 		path := sourcePath + sidecar.ext
 		if len(sidecar.want) >= len(raw) {
-			if _, err := os.Lstat(path); err == nil {
+			if file, err := canonicalBrowserOpenRegularPreseedFile(root, path, filepath.Base(path)); err == nil {
+				_ = file.Close()
 				return nil, fmt.Errorf("measured runtime variant sidecar %s must be absent when compression is not smaller", filepath.Base(path))
 			} else if !os.IsNotExist(err) {
 				return nil, fmt.Errorf("measured runtime variant sidecar %s: %w", filepath.Base(path), err)
 			}
 			continue
 		}
-		info, err := os.Lstat(path)
+		file, err := canonicalBrowserOpenRegularPreseedFile(root, path, filepath.Base(path))
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil, fmt.Errorf("measured runtime variant sidecar %s is required when compression is smaller", filepath.Base(path))
 			}
 			return nil, fmt.Errorf("measured runtime variant sidecar %s: %w", filepath.Base(path), err)
 		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("measured runtime variant sidecar %s must be a regular file", filepath.Base(path))
-		}
-		got, err := os.ReadFile(path)
+		got, err := io.ReadAll(file)
+		_ = file.Close()
 		if err != nil {
 			return nil, fmt.Errorf("measured runtime variant sidecar %s: %w", filepath.Base(path), err)
 		}
@@ -2079,7 +2076,7 @@ func validateCanonicalBrowserRuntimePreseed(opts BrowserBaselineOptions, path st
 	if !canonicalBrowserBuildInputMatches(ev.BuildInput, recomputedBuildInput) {
 		return fmt.Errorf("canonical browser preseed runtime build input mismatch")
 	}
-	if err := validateCanonicalBrowserMeasuredRuntimeRows(repoRoot, ev); err != nil {
+	if err := validateCanonicalBrowserMeasuredRuntimeRows(repoRoot, opts.ArtifactRoot, ev); err != nil {
 		return fmt.Errorf("canonical browser preseed runtime evidence invalid: %w", err)
 	}
 	if !canonicalBrowserSourceIdentityMatches(ev.Source, source) {
@@ -2571,7 +2568,7 @@ func validateCanonicalBrowserSizePreseed(repoRoot, path string, source SourceIde
 	return nil
 }
 
-func validateCanonicalBrowserMeasuredRuntimeRows(repoRoot string, ev *RuntimeBuildEvidence) error {
+func validateCanonicalBrowserMeasuredRuntimeRows(repoRoot, artifactRoot string, ev *RuntimeBuildEvidence) error {
 	outputDir, err := canonicalBrowserContainedRepoPath(repoRoot, ev.OutputDir)
 	if err != nil {
 		return fmt.Errorf("runtime outputDir: %w", err)
@@ -2631,8 +2628,10 @@ func validateCanonicalBrowserMeasuredRuntimeRows(repoRoot string, ev *RuntimeBui
 			metrics.BrotliBytes != variant.BrotliBytes {
 			return fmt.Errorf("measured runtime variant %s metrics mismatch", variant.ID)
 		}
-		if _, err := canonicalBrowserRuntimeVariantSidecarPaths(path); err != nil {
-			return fmt.Errorf("measured runtime variant %s sidecars: %w", variant.ID, err)
+		if _, err := canonicalBrowserPreseedFileRel(artifactRoot, path); err == nil {
+			if _, err := canonicalBrowserRuntimeVariantSidecarPaths(artifactRoot, path); err != nil {
+				return fmt.Errorf("measured runtime variant %s sidecars: %w", variant.ID, err)
+			}
 		}
 		if err := validateCanonicalBrowserShimEvidence(ev, variant); err != nil {
 			return err
