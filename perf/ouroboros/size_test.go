@@ -766,6 +766,42 @@ func TestSourceIdentityHandoffPredictsMaterializedInventoryWithoutCreatingRoot(t
 	}
 }
 
+func TestPredictCanonicalInventoryMaterializationClearsCleanArchivePath(t *testing.T) {
+	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+	f, err := os.Open(inventoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := DecodeInventoryStrict(f)
+	_ = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.Overlay.UntrackedSources) != 0 {
+		t.Fatalf("fixture inventory is not clean: %#v", inv.Overlay.UntrackedSources)
+	}
+	inv.Overlay.ArchivePath = filepath.ToSlash(filepath.Join("perf", "ouroboros", "untracked-sources"))
+	if err := WriteJSONFile(inventoryPath, inv); err != nil {
+		t.Fatal(err)
+	}
+
+	materializedRoot := filepath.Join(repoRoot, "build", "clean-materialized-browser-out")
+	plan, err := PredictCanonicalInventoryMaterialization(context.Background(), repoRoot, inventoryPath, materializedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Inventory.Overlay.ArchivePath != "" {
+		t.Fatalf("clean materialized archivePath = %q, want empty", plan.Inventory.Overlay.ArchivePath)
+	}
+	_, dirs, err := canonicalBrowserAllowedPreseedPaths(materializedRoot, plan)
+	if err != nil {
+		t.Fatalf("clean preseed allow-list rejected materialized inventory: %v", err)
+	}
+	if dirs["source/untracked-sources"] {
+		t.Fatalf("clean preseed allow-list admitted stale untracked archive dir")
+	}
+}
+
 func TestMaterializeCanonicalInventoryWritesPredictedBytes(t *testing.T) {
 	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
 	materializedRoot := filepath.Join(repoRoot, "build", "materialized-browser-out")

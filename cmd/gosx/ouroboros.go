@@ -188,7 +188,11 @@ func cmdOuroborosInventory(args []string) {
 	}
 	artifactDir := filepath.Dir(*outPath)
 	inv.Overlay.PatchPath = filepath.ToSlash(filepath.Join(artifactDir, "tracked-overlay.patch"))
-	inv.Overlay.ArchivePath = filepath.ToSlash(filepath.Join(artifactDir, "untracked-sources"))
+	if len(inv.Overlay.UntrackedSources) > 0 {
+		inv.Overlay.ArchivePath = filepath.ToSlash(filepath.Join(artifactDir, "untracked-sources"))
+	} else {
+		inv.Overlay.ArchivePath = ""
+	}
 	if err := ouroboros.ValidateInventory(inv); err != nil {
 		fatal("validate inventory: %v", err)
 	}

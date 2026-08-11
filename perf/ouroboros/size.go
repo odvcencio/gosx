@@ -580,6 +580,8 @@ func rewriteMaterializedOverlayRefs(repoRoot, sourceDir string, inv *Inventory) 
 	}
 	if len(inv.Overlay.UntrackedSources) > 0 {
 		inv.Overlay.ArchivePath = relTo(repoRoot, filepath.Join(sourceDir, "untracked-sources"))
+	} else {
+		inv.Overlay.ArchivePath = ""
 	}
 }
 

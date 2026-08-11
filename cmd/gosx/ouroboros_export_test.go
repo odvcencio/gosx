@@ -18,6 +18,7 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/perf/ouroboros"
 	"m31labs.dev/gosx/server"
 )
 
@@ -88,6 +89,51 @@ func TestRunOuroborosExportCorpusRejectsOutOutsideRepo(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "inside repo root") {
 		t.Fatalf("expected out containment rejection, got %v", err)
+	}
+}
+
+func TestOuroborosInventoryOmitsCleanArchivePath(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/clean\n\ngo 1.23\n")
+	mustWriteFile(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() {}\n")
+	mustWriteFile(t, filepath.Join(root, "client", "js", "bootstrap-src", "00-runtime.js"), "window.__gosx_runtime_ready = true;\n")
+	runGitCommandForTest(t, root, "init")
+	runGitCommandForTest(t, root, "config", "user.email", "test@example.invalid")
+	runGitCommandForTest(t, root, "config", "user.name", "test")
+	runGitCommandForTest(t, root, "add", ".")
+	runGitCommandForTest(t, root, "commit", "-m", "base")
+
+	out := filepath.Join(root, "build", "ouroboros", "source-inventory.json")
+	cmdOuroborosInventory([]string{
+		"--root", root,
+		"--out", out,
+		"--artifact-root", filepath.Join(root, "build", "canonical-browser"),
+		"--no-canopy",
+	})
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := ouroboros.DecodeInventoryStrict(f)
+	_ = f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.Overlay.UntrackedSources) != 0 {
+		t.Fatalf("clean inventory recorded untracked sources: %#v", inv.Overlay.UntrackedSources)
+	}
+	if inv.Overlay.ArchivePath != "" {
+		t.Fatalf("clean inventory archivePath = %q, want empty", inv.Overlay.ArchivePath)
+	}
+}
+
+func runGitCommandForTest(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
 
