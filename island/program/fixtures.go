@@ -860,7 +860,7 @@ func DerivedProgram() *Program {
 func CounterProgram() *Program {
 	// Expressions:
 	//   0: SignalGet "count"       — reads current count (for display)
-	//   1: LitInt "0"              — initial value for count signal
+	//   1: PropGet "initial"       — initial value for count signal
 	//   2: SignalSet "count" <- [4] — decrement: count = count - 1
 	//   3: SignalSet "count" <- [5] — increment: count = count + 1
 	//   4: Sub [6, 7]              — count - 1
@@ -871,7 +871,7 @@ func CounterProgram() *Program {
 	//   9: LitInt "1"              — literal 1 (for add)
 	exprs := []Expr{
 		{Op: OpSignalGet, Value: "count", Type: TypeInt},                        // 0
-		{Op: OpLitInt, Value: "0", Type: TypeInt},                               // 1
+		{Op: OpPropGet, Value: "initial", Type: TypeInt},                        // 1
 		{Op: OpSignalSet, Operands: []ExprID{4}, Value: "count", Type: TypeInt}, // 2
 		{Op: OpSignalSet, Operands: []ExprID{5}, Value: "count", Type: TypeInt}, // 3
 		{Op: OpSub, Operands: []ExprID{6, 7}, Type: TypeInt},                    // 4
@@ -933,6 +933,9 @@ func CounterProgram() *Program {
 		Nodes: nodes,
 		Root:  0,
 		Exprs: exprs,
+		Props: []PropDef{
+			{Name: "initial", Type: TypeInt},
+		},
 		Signals: []SignalDef{
 			{Name: "count", Type: TypeInt, Init: ExprID(1)},
 		},

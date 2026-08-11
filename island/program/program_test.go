@@ -297,12 +297,12 @@ func TestCounterProgram(t *testing.T) {
 		t.Errorf("Exprs[0].Op = %d, want OpSignalGet", p.Exprs[0].Op)
 	}
 
-	// expr[1]: LitInt 0 (init value)
-	if p.Exprs[1].Op != OpLitInt {
-		t.Errorf("Exprs[1].Op = %d, want OpLitInt", p.Exprs[1].Op)
+	// expr[1]: PropGet initial (init value)
+	if p.Exprs[1].Op != OpPropGet {
+		t.Errorf("Exprs[1].Op = %d, want OpPropGet", p.Exprs[1].Op)
 	}
-	if p.Exprs[1].Value != "0" {
-		t.Errorf("Exprs[1].Value = %q, want %q", p.Exprs[1].Value, "0")
+	if p.Exprs[1].Value != "initial" {
+		t.Errorf("Exprs[1].Value = %q, want %q", p.Exprs[1].Value, "initial")
 	}
 
 	// expr[2]: SignalSet (decrement result)
@@ -313,6 +313,17 @@ func TestCounterProgram(t *testing.T) {
 	// expr[3]: SignalSet (increment result)
 	if p.Exprs[3].Op != OpSignalSet {
 		t.Errorf("Exprs[3].Op = %d, want OpSignalSet", p.Exprs[3].Op)
+	}
+
+	// 1 prop: initial
+	if len(p.Props) != 1 {
+		t.Fatalf("len(Props) = %d, want 1", len(p.Props))
+	}
+	if p.Props[0].Name != "initial" {
+		t.Errorf("Props[0].Name = %q, want %q", p.Props[0].Name, "initial")
+	}
+	if p.Props[0].Type != TypeInt {
+		t.Errorf("Props[0].Type = %d, want TypeInt(%d)", p.Props[0].Type, TypeInt)
 	}
 
 	// 1 signal: count

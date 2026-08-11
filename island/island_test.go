@@ -9,6 +9,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	islandvm "m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/island/program"
@@ -1059,6 +1060,47 @@ func TestRenderIslandFromProgramRendersInitialExpressions(t *testing.T) {
 	}
 	if !strings.Contains(html, ">0<") {
 		t.Fatalf("expected initial count render, got %s", html)
+	}
+}
+
+func TestRenderIslandFromProgramCounterInitialProp(t *testing.T) {
+	tests := []struct {
+		name  string
+		props any
+		want  string
+	}{
+		{name: "nil", props: nil, want: "0"},
+		{name: "missing", props: map[string]int{}, want: "0"},
+		{name: "initial", props: map[string]int{"initial": 2}, want: "2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewRenderer("main")
+			r.SetBundle("main", "/gosx/runtime.wasm")
+			r.SetProgramDir("/gosx/islands")
+
+			node := r.RenderIslandFromProgram(program.CounterProgram(), tt.props)
+			html := gosx.RenderHTML(node)
+
+			if !strings.Contains(html, ">"+tt.want+"<") {
+				t.Fatalf("counter render = %s, want count %s", html, tt.want)
+			}
+		})
+	}
+}
+
+func TestCounterProgramInitialPropIncrementRendersNextValue(t *testing.T) {
+	prog := program.CounterProgram()
+	island := islandvm.NewIsland(prog, `{"initial":2}`)
+
+	patches := island.Dispatch("increment", "{}")
+	html := RenderResolvedHTML(prog, island.CurrentTree())
+
+	if !strings.Contains(html, ">3<") {
+		t.Fatalf("counter render after increment = %s, want count 3", html)
+	}
+	if len(patches) != 1 || patches[0].Kind != islandvm.PatchSetText || patches[0].Text != "3" {
+		t.Fatalf("increment patches = %#v, want one SetText(\"3\")", patches)
 	}
 }
 
