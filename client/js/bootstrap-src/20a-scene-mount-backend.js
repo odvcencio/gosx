@@ -449,32 +449,36 @@
     if (!mount || typeof mount.setAttribute !== "function") return;
     const systems = Array.isArray(sceneState && sceneState.waterSystems) ? sceneState.waterSystems : [];
     if (!systems.length) return;
-    const active = Boolean(renderer && (renderer.kind === "webgpu" || renderer.kind === "webgl"));
+    const active = !!(renderer && (renderer.kind === "webgpu" || renderer.kind === "webgl"));
     setAttrValue(mount, "data-gosx-scene3d-water-renderer", active ? "active" : "unsupported");
     const unsupportedReason = active ? "" : (reason || "water-renderer-unavailable");
     setAttrValue(mount, "data-gosx-scene3d-water-unsupported-reason", unsupportedReason);
   }
 
-  function recordSceneWaterFrame(mount, bundle) {
-    if (!mount || typeof mount.setAttribute !== "function" || !bundle ||
-        !Array.isArray(bundle.waterSystems) || bundle.waterSystems.length === 0) return;
-    const current = Number(mount.__gosxScene3DWaterFrameSeq);
-    const next = (Number.isFinite(current) ? current : 0) + 1;
+  function recordSceneWaterFrame(mount, bundle, renderer) {
+    if (!mount) return;
+    if (renderer && renderer.kind === "webgl") {
+      setAttrValue(mount, "data-gosx-scene3d-webgl-frame-seq",
+        renderer.frameSeq = sceneNumber(renderer.frameSeq, 0) + 1);
+      setAttrValue(mount, "data-gosx-scene3d-webgl-frame-at",
+        renderer.frameAt = Math.max(Date.now(), sceneNumber(renderer.frameAt, 0) + 1));
+    }
+    if (!bundle || !Array.isArray(bundle.waterSystems) || !bundle.waterSystems.length) return;
+    const next = sceneNumber(mount.__gosxScene3DWaterFrameSeq, 0) + 1;
     mount.__gosxScene3DWaterFrameSeq = next;
     // Keep the exact counter in JS for probes while publishing to DOM at 4 Hz
     // on a 60 FPS scene. This preserves a monotonic liveness signal without a
     // style/MutationObserver-visible attribute write on every frame.
-    if (next === 1 || next % 15 === 0) {
+    if (next < 2 || next % 15 === 0) {
       setAttrValue(mount, "data-gosx-scene3d-water-frame-seq", String(next));
     }
     const advancesSimulation = bundle.waterSystems.some(function(system) {
       return !sceneBool(system && system.paused, false);
     });
     if (!advancesSimulation) return;
-    const simulationCurrent = Number(mount.__gosxScene3DWaterSimulationSeq);
-    const simulationNext = (Number.isFinite(simulationCurrent) ? simulationCurrent : 0) + 1;
+    const simulationNext = sceneNumber(mount.__gosxScene3DWaterSimulationSeq, 0) + 1;
     mount.__gosxScene3DWaterSimulationSeq = simulationNext;
-    if (simulationNext === 1 || simulationNext % 15 === 0) {
+    if (simulationNext < 2 || simulationNext % 15 === 0) {
       setAttrValue(mount, "data-gosx-scene3d-water-simulation-seq", String(simulationNext));
     }
   }
@@ -771,9 +775,9 @@
     if (typeof window === "undefined" || typeof document === "undefined" || !document || typeof document.createElement !== "function") {
       return { available: false, software: false, vendor: "", renderer: "" };
     }
-    window.__gosx = window.__gosx || {};
-    if (window.__gosx.scene3dWebGLProbe) {
-      return window.__gosx.scene3dWebGLProbe;
+    const gosx = window.__gosx || (window.__gosx = {});
+    if (gosx.scene3dWebGLProbe) {
+      return gosx.scene3dWebGLProbe;
     }
     const probeCanvas = document.createElement("canvas");
     let gl = null;
@@ -791,16 +795,16 @@
           probeCanvas.getContext("experimental-webgl", probeOptions);
       }
       const metadata = sceneReadWebGLRendererMetadata(gl);
-      window.__gosx.scene3dWebGLProbe = {
-        available: Boolean(gl),
+      gosx.scene3dWebGLProbe = {
+        available: !!gl,
         software: sceneWebGLRendererLooksSoftware(metadata),
         vendor: metadata.vendor,
         renderer: metadata.renderer,
       };
     } catch (_error) {
-      window.__gosx.scene3dWebGLProbe = { available: false, software: false, vendor: "", renderer: "" };
+      gosx.scene3dWebGLProbe = { available: false, software: false, vendor: "", renderer: "" };
     }
-    return window.__gosx.scene3dWebGLProbe;
+    return gosx.scene3dWebGLProbe;
   }
 
   function sceneRequiresWebGL(props) {
@@ -971,7 +975,7 @@
 
   function chooseSceneBackend(backendCaps, prefs, availability) {
     const avail = availability && typeof availability === "object" ? availability : {};
-    const webgpuAvail = Boolean(avail.webgpu);
+    const webgpuAvail = !!avail.webgpu;
     const webglAvail = avail.webgl !== false;
     if (prefs && (prefs.requireWebGL || prefs.forceWebGL)) { return { backend: "webgl", fallbackReason: "", degraded: [] }; }
     if (prefs && prefs.preferCanvas) { return { backend: "canvas2d", fallbackReason: "", degraded: [] }; }

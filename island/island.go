@@ -79,6 +79,7 @@ type Renderer struct {
 	islandRuntime                  hydrate.RuntimeRef
 	runtimeAssets                  buildmanifest.RuntimeAssets
 	bootstrapOnly                  bool
+	textLayoutDemand               bool
 }
 
 type programAsset struct {
@@ -101,6 +102,7 @@ type Summary struct {
 	BootstrapFeatureEnginesPath     string
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
+	BootstrapFeatureTextLayoutPath  string
 	BootstrapFeatureScene3DPath     string
 	HLSPath                         string
 	Islands                         int
@@ -1722,6 +1724,15 @@ func (r *Renderer) EnableBootstrap() {
 	r.bootstrapOnly = true
 }
 
+// RequireTextLayout records that this page can demand-load the text-layout
+// engine after bootstrap starts.
+func (r *Renderer) RequireTextLayout() {
+	if r == nil {
+		return
+	}
+	r.textLayoutDemand = true
+}
+
 // Checksum computes a content hash for cache invalidation.
 func Checksum(data []byte) string {
 	h := sha256.Sum256(data)
@@ -1823,6 +1834,9 @@ func (r *Renderer) Summary() Summary {
 		summary.BootstrapFeatureControllersPath = r.selectedBootstrapFeaturePath("controllers")
 		summary.BootstrapFeatureScene3DPath = r.selectedBootstrapFeaturePath("scene3d")
 	}
+	if plan.Bootstrap && r.needsTextLayoutFeature() {
+		summary.BootstrapFeatureTextLayoutPath = r.bootstrapFeatureTextlayoutPath
+	}
 	if plan.Mode == "lite" {
 		summary.PatchPath = ""
 		summary.HLSPath = ""
@@ -1870,6 +1884,8 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 			return ""
 		}
 		return r.bootstrapFeatureControllersPath
+	case "textlayout":
+		return r.bootstrapFeatureTextlayoutPath
 	case "scene3d":
 		if !r.hasSceneEngines() {
 			return ""
@@ -2082,12 +2098,80 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 }
 
 func (r *Renderer) hasSceneEngines() bool {
+	if r == nil || r.manifest == nil {
+		return false
+	}
 	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
 			return true
 		}
 	}
 	return false
+}
+
+func (r *Renderer) needsTextLayoutFeature() bool {
+	if r == nil {
+		return false
+	}
+	return r.textLayoutDemand || r.hasScene3DLabelTextLayoutDemand()
+}
+
+func (r *Renderer) hasScene3DLabelTextLayoutDemand() bool {
+	if r == nil || r.manifest == nil {
+		return false
+	}
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		if scene3DPropsNeedTextLayout(entry.Props) {
+			return true
+		}
+	}
+	return false
+}
+
+func scene3DPropsNeedTextLayout(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	if rawJSONIsNull(raw) {
+		return false
+	}
+	var props map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &props); err != nil {
+		return true
+	}
+	if rawLabelsNeedTextLayout(props["labels"]) {
+		return true
+	}
+	sceneRaw := props["scene"]
+	if len(sceneRaw) == 0 || rawJSONIsNull(sceneRaw) {
+		return false
+	}
+	var sceneProps map[string]json.RawMessage
+	if err := json.Unmarshal(sceneRaw, &sceneProps); err != nil {
+		return true
+	}
+	return rawLabelsNeedTextLayout(sceneProps["labels"])
+}
+
+func rawLabelsNeedTextLayout(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	if rawJSONIsNull(raw) {
+		return false
+	}
+	var labels []json.RawMessage
+	if err := json.Unmarshal(raw, &labels); err != nil {
+		return true
+	}
+	return len(labels) > 0
+}
+
+func rawJSONIsNull(raw json.RawMessage) bool {
+	return strings.EqualFold(strings.TrimSpace(string(raw)), "null")
 }
 
 func (r *Renderer) needsSharedRuntimeEngineBridge() bool {

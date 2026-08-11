@@ -30,6 +30,23 @@ const {
   freshFeatureBundleSource,
 } = require("./runtime-test-harness.js");
 
+function sceneWebGLFrameSeq(mount) {
+  return Number(mount.getAttribute("data-gosx-scene3d-webgl-frame-seq") || 0);
+}
+
+function sceneWebGLFrameAt(mount) {
+  return Number(mount.getAttribute("data-gosx-scene3d-webgl-frame-at") || 0);
+}
+
+function webGLDrawCount(canvas) {
+  const gl = canvas && typeof canvas.getContext === "function"
+    ? canvas.getContext("webgl2") || canvas.getContext("webgl")
+    : null;
+  return gl && Array.isArray(gl.ops)
+    ? gl.ops.filter((entry) => entry[0] === "drawArrays" || entry[0] === "drawElements").length
+    : 0;
+}
+
 test("bootstrap registers and selects Scene3D backends through registry", async () => {
   const env = createContext({});
   runScript(bootstrapSource, env.context, "bootstrap.js");
@@ -430,6 +447,8 @@ test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", a
   assert.equal(firstCanvas.getAttribute("data-gosx-scene3d-canvas"), "true");
   assert.equal(env.context.__testWebGPUCreateCount, 1);
   assert.equal(env.context.__testWebGPURenderCount, 1);
+  mount.setAttribute("data-gosx-scene3d-webgpu-frame-seq", "99");
+  mount.setAttribute("data-gosx-scene3d-webgpu-frame-at", "99");
 
   env.context.__testWebGPUDeviceLost = true;
   now = 4000;
@@ -437,12 +456,21 @@ test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", a
   await flushAsyncWork();
 
   const replacementCanvas = mount.children[0];
+  assert.notEqual(replacementCanvas, firstCanvas);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-frame-seq"), null, "renderer swap must clear stale WebGPU frame sequence");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-frame-at"), null, "renderer swap must clear stale WebGPU frame timestamp");
+  assert.equal(sceneWebGLFrameSeq(mount), 1, "WebGL replay must publish WebGL frame sequence");
+  assert.ok(sceneWebGLFrameAt(mount) > 0, "WebGL replay must publish WebGL frame timestamp");
+  const replayDrawCount = webGLDrawCount(replacementCanvas);
+  assert.ok(replayDrawCount > 0, "WebGL latest-bundle replay must execute GL draw operations");
   raf.flush(64);
   await flushAsyncWork();
-  assert.notEqual(replacementCanvas, firstCanvas);
   assert.equal(firstCanvas.parentNode, null);
   assert.equal(replacementCanvas.getAttribute("data-gosx-scene3d-canvas"), "true");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.ok(sceneWebGLFrameSeq(mount) >= 1, "scheduled post-fallback render must not roll back the WebGL frame sequence");
+  assert.ok(webGLDrawCount(replacementCanvas) >= replayDrawCount, "scheduled post-fallback render must not lose GL draw evidence");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-device-lost");
   assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "recovering");
   assert.equal(mount.getAttribute("data-gosx-scene3d-render-watchdog-reason"), "webgpu-device-lost");
@@ -492,6 +520,20 @@ test("Scene3D WebGL page fetches the lazy WebGL chunk and draws with WebGL", asy
   assert.equal(typeof env.context.__gosx_scene3d_webgl_api.createSceneWaterRendererWebGL, "function");
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   assert.ok((mount.children[0].contextCalls || []).some((call) => call.kind === "webgl2" || call.kind === "webgl"));
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-frame-seq"), "1", "lazy WebGL first render must publish the WebGL frame sequence");
+  assert.ok(sceneWebGLFrameAt(mount) > 0, "lazy WebGL first render must publish the WebGL frame timestamp");
+  const firstFrameAt = sceneWebGLFrameAt(mount);
+  const firstDrawCount = webGLDrawCount(mount.children[0]);
+  assert.ok(firstDrawCount > 0, "lazy WebGL first render must execute GL draw operations");
+
+  const mounted = env.context.__gosx.engines.get("gosx-engine-scene-webgl-lazy");
+  mounted.handle.updateSceneProps({ background: "#091827" });
+  await flushAsyncWork();
+  raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-frame-seq"), "2", "WebGL frame sequence must advance monotonically on a later render");
+  assert.ok(sceneWebGLFrameAt(mount) > firstFrameAt, "WebGL frame timestamp must advance on a later render");
+  assert.ok(webGLDrawCount(mount.children[0]) > firstDrawCount, "later render must execute another GL draw");
 });
 
 test("Scene3D forceWebGL fetches the WebGL chunk and never fetches the WebGPU chunk", async () => {
@@ -528,6 +570,73 @@ test("Scene3D forceWebGL fetches the WebGL chunk and never fetches the WebGPU ch
     "forceWebGL must skip WebGPU",
   );
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-frame-seq"), "1", "forced WebGL first render must publish the WebGL frame sequence");
+  assert.ok(sceneWebGLFrameAt(mount) > 0, "forced WebGL first render must publish the WebGL frame timestamp");
+  assert.ok(webGLDrawCount(mount.children[0]) > 0, "forced WebGL first render must execute GL draw operations");
+});
+
+test("Scene3D forceWebGL water keeps an empty fallback reason and publishes WebGL frame truth", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-water-webgl-forced";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    enableWebGPU: true,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({ lost: new Promise(() => {}), features: new Set(), limits: {} }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgl.js": { text: sceneWaterWebGLStubSource() },
+    },
+    manifest: scene3dWebGLSplitManifest("scene-water-webgl-forced", sceneWaterWebGLProps({ forceWebGL: true })),
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  assert.equal(sceneBackendTruth(mount).fallbackReason, "");
+  assert.equal(env.context.__gosx_test_water_webgl_entries.length, 1);
+  assert.equal(env.context.__gosx_test_water_webgl_entries[0], "water-main");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-frame-seq"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-water-frame-seq"), "1");
+  assert.ok(sceneWebGLFrameAt(mount) > 0);
+  assert.ok(webGLDrawCount(mount.children[0]) > 0);
+});
+
+test("Scene3D water auto WebGL fallback preserves WebGPU unavailable reason", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-water-webgpu-unavailable";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-scene3d-webgl.js": { text: sceneWaterWebGLStubSource() },
+    },
+    manifest: scene3dWebGLSplitManifest("scene-water-webgpu-unavailable", sceneWaterWebGLProps()),
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-unavailable");
+  assert.equal(sceneBackendTruth(mount).fallbackReason, "webgpu-unavailable");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-frame-seq"), "1");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-water-frame-seq"), "1");
+  assert.ok(webGLDrawCount(mount.children[0]) > 0);
 });
 
 test("Scene3D WebGPU page does not fetch the WebGL chunk at mount", async () => {
@@ -630,6 +739,48 @@ function sceneWebGPUStubSource() {
       }
     };
   `;
+}
+
+function sceneWaterWebGLStubSource() {
+  return `
+    window.__gosx_test_water_webgl_entries = [];
+    window.__gosx_test_water_webgl_render_count = 0;
+    window.__gosx_scene3d_webgl_api = {
+      createSceneWaterRendererWebGL: function(gl, canvas, entry) {
+        window.__gosx_test_water_webgl_entries.push(entry && entry.id || "");
+        return {
+          kind: "webgl",
+          supportsRetainedGeometry: false,
+          render: function() {
+            window.__gosx_test_water_webgl_render_count += 1;
+            gl.drawArrays(gl.TRIANGLES, 0, 3);
+          },
+          getStats: function() {
+            return { waterFrames: window.__gosx_test_water_webgl_render_count };
+          },
+          dispose: function() {}
+        };
+      }
+    };
+  `;
+}
+
+function sceneWaterWebGLProps(overrides = {}) {
+  return Object.assign({
+    preferWebGPU: true,
+    scene: {
+      backendCaps: {
+        capable: ["webgpu", "webgl", "canvas2d"],
+        degraded: {},
+        reasons: [],
+      },
+      waterSystems: [{ id: "water-main", paused: false }],
+    },
+  }, overrides);
+}
+
+function sceneBackendTruth(mount) {
+  return JSON.parse(mount.getAttribute("data-gosx-scene3d-render-backend-truth") || "{}");
 }
 
 function sceneCanvasOwner(canvas) {

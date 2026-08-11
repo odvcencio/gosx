@@ -1413,7 +1413,7 @@
       recordScenePerfCounter("render:" + (reason || "restore"));
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(null));
-      recordSceneWaterFrame(ctx.mount, latestBundle);
+      recordSceneWaterFrame(ctx.mount, latestBundle, renderer);
       emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
@@ -2645,7 +2645,7 @@
           }
           syncSceneNodeSentinels(effectiveBundle);
           renderer.render(effectiveBundle, viewport, createSceneRenderFrameMeta(now));
-          recordSceneWaterFrame(ctx.mount, effectiveBundle);
+          recordSceneWaterFrame(ctx.mount, effectiveBundle, renderer);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
@@ -2747,7 +2747,7 @@
       }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(now));
-      recordSceneWaterFrame(ctx.mount, latestBundle);
+      recordSceneWaterFrame(ctx.mount, latestBundle, renderer);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);

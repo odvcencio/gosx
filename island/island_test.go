@@ -1191,6 +1191,7 @@ func TestTextlayoutChunkIsNeverEmittedEagerly(t *testing.T) {
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
 	}
+	r.RequireTextLayout()
 	r.RenderIsland("Counter", nil, gosx.Text(""))
 	scripts := gosx.RenderHTML(r.BootstrapScript())
 	hints := gosx.RenderHTML(r.PreloadHints())
@@ -1205,6 +1206,146 @@ func TestTextlayoutChunkIsNeverEmittedEagerly(t *testing.T) {
 	if got := r.BootstrapFeatureTextlayoutPath(); got != "/gosx/assets/runtime/bootstrap-feature-textlayout.js" {
 		t.Errorf("text-layout chunk URL not resolved from the manifest: %q", got)
 	}
+	if got := r.Summary().BootstrapFeatureTextLayoutPath; got != "/gosx/assets/runtime/bootstrap-feature-textlayout.js" {
+		t.Errorf("text-layout chunk URL not propagated through summary: %q", got)
+	}
+}
+
+func TestUnrelatedSelectivePageOmitsTextlayoutSummary(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                  buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:           buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureIslands:    buildmanifest.HashedAsset{File: "bootstrap-feature-islands.js", Hash: "islands"},
+		BootstrapFeatureTextlayout: buildmanifest.HashedAsset{File: "bootstrap-feature-textlayout.js", Hash: "textlayout"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderIsland("Counter", nil, gosx.Text(""))
+
+	if got := r.Summary().BootstrapFeatureTextLayoutPath; got != "" {
+		t.Fatalf("unrelated island page advertised text-layout chunk: %q", got)
+	}
+}
+
+func TestScene3DOverlayLabelsAdvertiseTextlayoutSummary(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		props json.RawMessage
+	}{
+		{name: "nested scene labels", props: json.RawMessage(`{"scene":{"labels":[{"id":"caption","text":"R08 overlay"}]},"width":640,"height":360}`)},
+		{name: "top level labels", props: json.RawMessage(`{"labels":[{"id":"caption","text":"R08 overlay"}],"width":640,"height":360}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newTextlayoutScene3DRenderer(t)
+			r.RenderEngine(engine.Config{
+				Name:  "GoSXScene3D",
+				Kind:  engine.KindSurface,
+				Props: tc.props,
+			}, gosx.Text(""))
+
+			if got := r.Summary().BootstrapFeatureTextLayoutPath; got != "/gosx/assets/runtime/bootstrap-feature-textlayout.js" {
+				t.Fatalf("Scene3D overlay label page did not advertise text-layout chunk: %q", got)
+			}
+			scripts := gosx.RenderHTML(r.BootstrapScript())
+			hints := gosx.RenderHTML(r.PreloadHints())
+			if strings.Contains(scripts, `src="/gosx/assets/runtime/bootstrap-feature-textlayout.js"`) {
+				t.Fatalf("Scene3D overlay label page eagerly loaded text-layout chunk: %s", scripts)
+			}
+			if strings.Contains(hints, "bootstrap-feature-textlayout") {
+				t.Fatalf("Scene3D overlay label page preloaded text-layout chunk: %s", hints)
+			}
+		})
+	}
+}
+
+func TestScene3DAriaLabelOmitsTextlayoutSummary(t *testing.T) {
+	r := newTextlayoutScene3DRenderer(t)
+	r.RenderEngine(engine.Config{
+		Name:  "GoSXScene3D",
+		Kind:  engine.KindSurface,
+		Props: json.RawMessage(`{"label":"ARIA label","width":640,"height":360}`),
+	}, gosx.Text(""))
+
+	if got := r.Summary().BootstrapFeatureTextLayoutPath; got != "" {
+		t.Fatalf("ARIA-only Scene3D page advertised text-layout chunk: %q", got)
+	}
+}
+
+func TestScene3DWithoutOverlayLabelsOmitsTextlayoutSummary(t *testing.T) {
+	r := newTextlayoutScene3DRenderer(t)
+	r.RenderEngine(engine.Config{
+		Name:  "GoSXScene3D",
+		Kind:  engine.KindSurface,
+		Props: json.RawMessage(`{"width":640,"height":360}`),
+	}, gosx.Text(""))
+
+	if got := r.Summary().BootstrapFeatureTextLayoutPath; got != "" {
+		t.Fatalf("label-free Scene3D page advertised text-layout chunk: %q", got)
+	}
+}
+
+func TestScene3DPropsNeedTextLayoutParity(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  json.RawMessage
+		want bool
+	}{
+		{name: "absent", raw: nil, want: false},
+		{name: "null", raw: json.RawMessage(`null`), want: false},
+		{name: "non object", raw: json.RawMessage(`"aria"`), want: true},
+		{name: "array", raw: json.RawMessage(`[]`), want: true},
+		{name: "labels absent", raw: json.RawMessage(`{"width":640}`), want: false},
+		{name: "labels null", raw: json.RawMessage(`{"labels":null}`), want: false},
+		{name: "labels empty", raw: json.RawMessage(`{"labels":[]}`), want: false},
+		{name: "labels malformed", raw: json.RawMessage(`{"labels":{"id":"caption"}}`), want: true},
+		{name: "labels nonempty", raw: json.RawMessage(`{"labels":[{"id":"caption","text":"Overlay"}]}`), want: true},
+		{name: "scene null", raw: json.RawMessage(`{"scene":null}`), want: false},
+		{name: "scene non object", raw: json.RawMessage(`{"scene":"bad"}`), want: true},
+		{name: "scene labels null", raw: json.RawMessage(`{"scene":{"labels":null}}`), want: false},
+		{name: "scene labels empty", raw: json.RawMessage(`{"scene":{"labels":[]}}`), want: false},
+		{name: "scene labels malformed", raw: json.RawMessage(`{"scene":{"labels":{"id":"caption"}}}`), want: true},
+		{name: "scene labels nonempty", raw: json.RawMessage(`{"scene":{"labels":[{"id":"caption","text":"Overlay"}]}}`), want: true},
+		{name: "aria label only", raw: json.RawMessage(`{"label":"Accessible scene"}`), want: false},
+		{name: "unrelated nested labels", raw: json.RawMessage(`{"metadata":{"labels":[{"text":"Nope"}]}}`), want: false},
+		{name: "invalid props", raw: json.RawMessage(`{"labels":`), want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := scene3DPropsNeedTextLayout(tc.raw); got != tc.want {
+				t.Fatalf("scene3DPropsNeedTextLayout() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNonScene3DLabelsDoNotDemandTextlayout(t *testing.T) {
+	r := newTextlayoutScene3DRenderer(t)
+	r.RenderEngine(engine.Config{
+		Name:  "CustomEngine",
+		Kind:  engine.KindSurface,
+		Props: json.RawMessage(`{"labels":[{"id":"caption","text":"Overlay"}]}`),
+	}, gosx.Text(""))
+
+	if got := r.Summary().BootstrapFeatureTextLayoutPath; got != "" {
+		t.Fatalf("non-Scene3D engine labels advertised text-layout chunk: %q", got)
+	}
+}
+
+func newTextlayoutScene3DRenderer(t *testing.T) *Renderer {
+	t.Helper()
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                  buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:           buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:    buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureTextlayout: buildmanifest.HashedAsset{File: "bootstrap-feature-textlayout.js", Hash: "textlayout"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	return r
 }
 
 // scene3DChunkGateRenderer builds a renderer with every Scene3D chunk resolved

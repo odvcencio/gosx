@@ -14,7 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/server"
 )
 
 func TestLoadStrictOuroborosCorpusAcceptsFixtureManifest(t *testing.T) {
@@ -138,6 +142,238 @@ func TestCopyStrictOuroborosAssetsCopiesManifestBoundAssets(t *testing.T) {
 			t.Fatalf("expected copied %s: %v", rel, err)
 		}
 	}
+}
+
+func TestCopyStrictOuroborosAssetsCopiesTextlayoutAsset(t *testing.T) {
+	dist := t.TempDir()
+	output := t.TempDir()
+	data := "textlayout runtime"
+	hash := contentHash([]byte(data))
+	file := "bootstrap-feature-textlayout." + hash + ".js"
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", file), data)
+	manifest := &buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			BootstrapFeatureTextlayout: buildmanifest.HashedAsset{File: file, Hash: hash, Size: int64(len(data))},
+		},
+	}
+	app := &ouroborosExportBuiltApp{Name: "fixture", DistDir: dist, Manifest: manifest}
+	refs := map[string]*ouroborosAssetBinding{}
+	ref := "/gosx/assets/runtime/" + file
+	if err := addOuroborosAssetBinding(refs, ref, "fixture", app); err != nil {
+		t.Fatal(err)
+	}
+	assets, filtered, err := copyStrictOuroborosAssets(output, refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) != 1 || assets[0].Ref != ref || assets[0].Bucket != "runtime" {
+		t.Fatalf("unexpected copied textlayout assets: %#v", assets)
+	}
+	if filtered.Runtime.BootstrapFeatureTextlayout.File != file {
+		t.Fatalf("filtered manifest missed textlayout: %#v", filtered.Runtime.BootstrapFeatureTextlayout)
+	}
+	if _, err := os.Stat(filepath.Join(output, "assets", "runtime", file)); err != nil {
+		t.Fatalf("expected canonical textlayout asset: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "gosx", "assets", "runtime", file)); err != nil {
+		t.Fatalf("expected served textlayout asset: %v", err)
+	}
+}
+
+func TestStrictOuroborosScene3DOverlayLabelsDiscoverTextlayoutAssetFromContract(t *testing.T) {
+	dist := t.TempDir()
+	output := t.TempDir()
+	textlayoutData := "textlayout runtime"
+	textlayoutHash := contentHash([]byte(textlayoutData))
+	textlayoutFile := "bootstrap-feature-textlayout." + textlayoutHash + ".js"
+	sceneData := "scene runtime"
+	sceneHash := contentHash([]byte(sceneData))
+	sceneFile := "bootstrap-feature-scene3d." + sceneHash + ".js"
+	enginesData := "engines runtime"
+	enginesHash := contentHash([]byte(enginesData))
+	enginesFile := "bootstrap-feature-engines." + enginesHash + ".js"
+	bootstrapRuntimeData := "bootstrap runtime"
+	bootstrapRuntimeHash := contentHash([]byte(bootstrapRuntimeData))
+	bootstrapRuntimeFile := "bootstrap-runtime." + bootstrapRuntimeHash + ".js"
+	commandData := "scene command runtime"
+	commandHash := contentHash([]byte(commandData))
+	commandFile := "bootstrap-feature-scene3d-command." + commandHash + ".js"
+	webgpuData := "scene webgpu runtime"
+	webgpuHash := contentHash([]byte(webgpuData))
+	webgpuFile := "bootstrap-feature-scene3d-webgpu." + webgpuHash + ".js"
+	webglData := "scene webgl runtime"
+	webglHash := contentHash([]byte(webglData))
+	webglFile := "bootstrap-feature-scene3d-webgl." + webglHash + ".js"
+	gltfData := "scene gltf runtime"
+	gltfHash := contentHash([]byte(gltfData))
+	gltfFile := "bootstrap-feature-scene3d-gltf." + gltfHash + ".js"
+	animationData := "scene animation runtime"
+	animationHash := contentHash([]byte(animationData))
+	animationFile := "bootstrap-feature-scene3d-animation." + animationHash + ".js"
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", textlayoutFile), textlayoutData)
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", sceneFile), sceneData)
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", enginesFile), enginesData)
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", bootstrapRuntimeFile), bootstrapRuntimeData)
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", commandFile), commandData)
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", webgpuFile), webgpuData)
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", webglFile), webglData)
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", gltfFile), gltfData)
+	mustWriteFile(t, filepath.Join(dist, "assets", "runtime", animationFile), animationData)
+	manifest := &buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			BootstrapRuntime:                 buildmanifest.HashedAsset{File: bootstrapRuntimeFile, Hash: bootstrapRuntimeHash, Size: int64(len(bootstrapRuntimeData))},
+			BootstrapFeatureEngines:          buildmanifest.HashedAsset{File: enginesFile, Hash: enginesHash, Size: int64(len(enginesData))},
+			BootstrapFeatureTextlayout:       buildmanifest.HashedAsset{File: textlayoutFile, Hash: textlayoutHash, Size: int64(len(textlayoutData))},
+			BootstrapFeatureScene3D:          buildmanifest.HashedAsset{File: sceneFile, Hash: sceneHash, Size: int64(len(sceneData))},
+			BootstrapFeatureScene3DCommand:   buildmanifest.HashedAsset{File: commandFile, Hash: commandHash, Size: int64(len(commandData))},
+			BootstrapFeatureScene3DWebGPU:    buildmanifest.HashedAsset{File: webgpuFile, Hash: webgpuHash, Size: int64(len(webgpuData))},
+			BootstrapFeatureScene3DWebGL:     buildmanifest.HashedAsset{File: webglFile, Hash: webglHash, Size: int64(len(webglData))},
+			BootstrapFeatureScene3DGLTF:      buildmanifest.HashedAsset{File: gltfFile, Hash: gltfHash, Size: int64(len(gltfData))},
+			BootstrapFeatureScene3DAnimation: buildmanifest.HashedAsset{File: animationFile, Hash: animationHash, Size: int64(len(animationData))},
+		},
+	}
+	if err := writeJSONFile(filepath.Join(dist, "build.json"), manifest); err != nil {
+		t.Fatal(err)
+	}
+	island.ResetBuildManifestCache()
+	t.Cleanup(island.ResetManifestRoot)
+	app := &ouroborosExportBuiltApp{Name: "fixture", DistDir: dist, Manifest: manifest}
+	textlayoutRef := "/gosx/assets/runtime/" + textlayoutFile
+
+	webApp := server.New()
+	webApp.SetRuntimeRoot(dist)
+	webApp.Page("GET /scene/basic", func(ctx *server.Context) gosx.Node {
+		return ctx.Engine(engine.Config{
+			Name:  "GoSXScene3D",
+			Kind:  engine.KindSurface,
+			Props: json.RawMessage(`{"scene":{"labels":[{"id":"caption","text":"R08 overlay"}]},"width":640,"height":360}`),
+		}, gosx.El("p", gosx.Text("Loading scene")))
+	})
+	req := httptest.NewRequest(http.MethodGet, "/scene/basic", nil)
+	w := httptest.NewRecorder()
+	webApp.Build().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("render R08 route: got HTTP %d", w.Code)
+	}
+	html := w.Body.String()
+
+	if !strings.Contains(html, `"bootstrapFeatureTextLayoutPath":"`+textlayoutRef+`"`) {
+		t.Fatalf("R08 HTML missed exact textlayout contract key: %s", html)
+	}
+	if strings.Contains(html, `<script src="`+textlayoutRef+`"`) ||
+		strings.Contains(html, `<script defer src="`+textlayoutRef+`"`) ||
+		strings.Contains(html, `rel="preload" href="`+textlayoutRef+`"`) {
+		t.Fatalf("R08 HTML eagerly loads textlayout chunk: %s", html)
+	}
+
+	routeRefs := map[string]struct{}{}
+	addExportRuntimeAssetRefs(routeRefs, html)
+	if _, ok := routeRefs[textlayoutRef]; !ok {
+		t.Fatalf("R08 discovery missed textlayout ref; got %#v", sortedExportRuntimeAssetRefs(routeRefs))
+	}
+	assetRefs := map[string]*ouroborosAssetBinding{}
+	for ref := range routeRefs {
+		if err := addOuroborosAssetBinding(assetRefs, ref, "fixture", app); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	assets, filtered, err := copyStrictOuroborosAssets(output, assetRefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filtered.Runtime.BootstrapFeatureTextlayout.File != textlayoutFile {
+		t.Fatalf("filtered build manifest missed textlayout: %#v", filtered.Runtime.BootstrapFeatureTextlayout)
+	}
+	if err := writeJSONFile(filepath.Join(output, "build.json"), filtered); err != nil {
+		t.Fatal(err)
+	}
+	provenance := ouroborosExportProvenance{
+		SchemaVersion:   ouroborosExportSchemaVersion,
+		ContractVersion: "O0.2",
+		CorpusID:        "gosx-ouroboros-o0.2-v1",
+		Routes: []ouroborosExportRoute{{
+			ID:       "R08",
+			Path:     "/scene/basic",
+			File:     "scene/basic/index.html",
+			Producer: "fixture",
+		}},
+		AssetRefs: assets,
+	}
+	if err := writeJSONFile(filepath.Join(output, "_ouroboros", "export-corpus.json"), provenance); err != nil {
+		t.Fatal(err)
+	}
+
+	var persisted ouroborosExportProvenance
+	mustDecodeJSONFileForTest(t, filepath.Join(output, "_ouroboros", "export-corpus.json"), &persisted)
+	if !ouroborosAssetRefsInclude(persisted.AssetRefs, textlayoutRef) {
+		t.Fatalf("export-corpus.json missed textlayout ref: %#v", persisted.AssetRefs)
+	}
+	var persistedBuild buildmanifest.Manifest
+	mustDecodeJSONFileForTest(t, filepath.Join(output, "build.json"), &persistedBuild)
+	if persistedBuild.Runtime.BootstrapFeatureTextlayout.File != textlayoutFile {
+		t.Fatalf("build.json missed textlayout asset: %#v", persistedBuild.Runtime.BootstrapFeatureTextlayout)
+	}
+	for _, rel := range []string{
+		filepath.Join("assets", "runtime", textlayoutFile),
+		filepath.Join("gosx", "assets", "runtime", textlayoutFile),
+	} {
+		if _, err := os.Stat(filepath.Join(output, rel)); err != nil {
+			t.Fatalf("expected copied textlayout output %s: %v", rel, err)
+		}
+	}
+}
+
+func TestStrictOuroborosR08AriaLabelDoesNotAdvertiseTextlayout(t *testing.T) {
+	webApp := server.New()
+	webApp.Page("GET /scene/basic", func(ctx *server.Context) gosx.Node {
+		return ctx.Engine(engine.Config{
+			Name:  "GoSXScene3D",
+			Kind:  engine.KindSurface,
+			Props: json.RawMessage(`{"label":"Ouroboros basic Scene3D","width":640,"height":360}`),
+		}, gosx.El("p", gosx.Text("Loading scene")))
+	})
+	req := httptest.NewRequest(http.MethodGet, "/scene/basic", nil)
+	w := httptest.NewRecorder()
+	webApp.Build().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("render canonical R08 shape: got HTTP %d", w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "bootstrapFeatureTextLayoutPath") {
+		t.Fatalf("ARIA-only canonical R08 shape advertised textlayout: %s", body)
+	}
+	refs := map[string]struct{}{}
+	addExportRuntimeAssetRefs(refs, body)
+	if _, ok := refs["/gosx/bootstrap-feature-textlayout.js"]; ok {
+		t.Fatalf("ARIA-only canonical R08 shape exported textlayout ref: %#v", sortedExportRuntimeAssetRefs(refs))
+	}
+}
+
+func TestAddOuroborosAssetBindingRejectsMissingTextlayoutAsset(t *testing.T) {
+	dist := t.TempDir()
+	data := "textlayout runtime"
+	hash := contentHash([]byte(data))
+	file := "bootstrap-feature-textlayout." + hash + ".js"
+	manifest := &buildmanifest.Manifest{
+		Runtime: buildmanifest.RuntimeAssets{
+			BootstrapFeatureTextlayout: buildmanifest.HashedAsset{File: file, Hash: hash, Size: int64(len(data))},
+		},
+	}
+	app := &ouroborosExportBuiltApp{Name: "fixture", DistDir: dist, Manifest: manifest}
+	err := addOuroborosAssetBinding(map[string]*ouroborosAssetBinding{}, "/gosx/assets/runtime/"+file, "fixture", app)
+	if err == nil {
+		t.Fatal("expected missing textlayout asset rejection")
+	}
+}
+
+func ouroborosAssetRefsInclude(refs []ouroborosExportAssetRef, want string) bool {
+	for _, ref := range refs {
+		if ref.Ref == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCopyStrictOuroborosAssetsRejectsSymlink(t *testing.T) {

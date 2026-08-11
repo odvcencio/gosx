@@ -479,7 +479,7 @@
       "additionalProperties": false,
       "required": ["schemaVersion", "manifestPath", "initial", "settled"],
       "properties": {
-        "schemaVersion": { "const": "gosx.ouroboros.pixels.v1" },
+        "schemaVersion": { "const": "gosx.ouroboros.pixels.v2" },
         "manifestPath": { "type": "string", "minLength": 1 },
         "initial": { "type": "array", "items": { "$ref": "#/$defs/pixelCapture" } },
         "settled": { "type": "array", "items": { "$ref": "#/$defs/pixelCapture" } }

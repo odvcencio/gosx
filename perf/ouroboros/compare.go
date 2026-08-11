@@ -157,6 +157,7 @@ type compareLoadedArtifact struct {
 	inventory       *Inventory
 	pixels          []visual.PixelEvidenceManifest
 	pixelRefs       map[string]string
+	pixelRoot       comparePathSet
 	metricStats     map[metricBucket]map[string]Stats
 	runtimeTransfer map[metricBucket]float64
 	consoleCount    map[metricBucket]float64
@@ -537,7 +538,7 @@ func loadCompareArtifact(input, mode, pixelRoot string) (*compareLoadedArtifact,
 	if err != nil {
 		return nil, err
 	}
-	pixels, pixelRefs, err := loadManifestPixelRefs(paths, raw, mode, pixelRoot)
+	pixels, pixelRefs, loadedPixelRoot, err := loadManifestPixelRefs(paths, raw, manifest.Source, *env, mode, pixelRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -577,6 +578,7 @@ func loadCompareArtifact(input, mode, pixelRoot string) (*compareLoadedArtifact,
 		inventory:       inventory,
 		pixels:          pixels,
 		pixelRefs:       pixelRefs,
+		pixelRoot:       loadedPixelRoot,
 		metricStats:     buildMetricStats(raw),
 		runtimeTransfer: runtimeTransferByBucket(raw),
 		consoleCount:    consoleCountByBucket(raw),
@@ -841,48 +843,93 @@ func loadOptionalDynamicEvidence(paths comparePathSet, manifest *BrowserManifest
 	return ev, hash, nil
 }
 
-func loadManifestPixelRefs(paths comparePathSet, raw []BrowserRawSample, mode, pixelRoot string) ([]visual.PixelEvidenceManifest, map[string]string, error) {
+func loadManifestPixelRefs(paths comparePathSet, raw []BrowserRawSample, source SourceIdentity, env EnvironmentReport, mode, pixelRoot string) ([]visual.PixelEvidenceManifest, map[string]string, comparePathSet, error) {
 	refs := map[string]bool{}
 	for _, sample := range raw {
 		for _, ref := range sample.Artifacts.PixelManifestRefs {
 			refs[ref] = true
 			if len(refs) > maxComparePixelManifestRefs {
-				return nil, nil, fmt.Errorf("pixel manifest ref count exceeds limit %d", maxComparePixelManifestRefs)
+				return nil, nil, comparePathSet{}, fmt.Errorf("pixel manifest ref count exceeds limit %d", maxComparePixelManifestRefs)
 			}
 		}
 	}
 	if len(refs) == 0 {
-		return nil, nil, nil
+		return nil, nil, comparePathSet{}, nil
 	}
 	refRoot := paths
 	if strings.TrimSpace(pixelRoot) != "" {
 		externalRoot, err := resolveExternalArtifactRoot(pixelRoot)
 		if err != nil {
-			return nil, nil, fmt.Errorf("pixel evidence root: %w", err)
+			return nil, nil, comparePathSet{}, fmt.Errorf("pixel evidence root: %w", err)
 		}
 		refRoot = externalRoot
 	}
 	out := make([]visual.PixelEvidenceManifest, 0, len(refs))
 	pathsByRef := map[string]string{}
+	manifestsByRef := map[string]visual.PixelEvidenceManifest{}
 	for ref := range refs {
 		path, err := resolveArtifactRef(refRoot, ref)
 		if err != nil {
-			return nil, nil, fmt.Errorf("pixel manifest %s: %w", ref, err)
+			return nil, nil, comparePathSet{}, fmt.Errorf("pixel manifest %s: %w", ref, err)
 		}
 		var manifest visual.PixelEvidenceManifest
 		if err := readJSONStrictFile(path, &manifest); err != nil {
-			return nil, nil, fmt.Errorf("read pixel manifest %s: %w", ref, err)
+			return nil, nil, comparePathSet{}, fmt.Errorf("read pixel manifest %s: %w", ref, err)
 		}
-		if manifest.SchemaVersion != visual.OuroborosPixelSchemaVersion {
-			return nil, nil, fmt.Errorf("pixel manifest %s schemaVersion = %q", ref, manifest.SchemaVersion)
-		}
-		if err := validatePixelManifestFilesForCompare(refRoot, manifest); err != nil {
-			return nil, nil, fmt.Errorf("pixel manifest %s: %w", ref, err)
+		if err := validatePixelManifestForCompare(refRoot, path, manifest, source, env); err != nil {
+			return nil, nil, comparePathSet{}, fmt.Errorf("pixel manifest %s: %w", ref, err)
 		}
 		out = append(out, manifest)
 		pathsByRef[ref] = path
+		manifestsByRef[ref] = manifest
 	}
-	return out, pathsByRef, nil
+	if err := validateLoadedPixelRefsForSamples(raw, manifestsByRef, mode); err != nil {
+		return nil, nil, comparePathSet{}, err
+	}
+	return out, pathsByRef, refRoot, nil
+}
+
+func validateLoadedPixelRefsForSamples(raw []BrowserRawSample, manifestsByRef map[string]visual.PixelEvidenceManifest, mode string) error {
+	if mode != CompareModeCanonical {
+		return nil
+	}
+	for _, sample := range raw {
+		if sample.SampleLane != SampleLaneProduct || sample.Discarded || (sample.RouteID != "R08" && sample.RouteID != "R10") {
+			continue
+		}
+		if len(sample.Artifacts.PixelManifestRefs) != 2 {
+			return fmt.Errorf("canonical %s product sample pixel refs=%d want 2", sample.RouteID, len(sample.Artifacts.PixelManifestRefs))
+		}
+		seenRef := map[string]bool{}
+		seenBackend := map[string]bool{"webgpu": false, "webgl": false}
+		for _, ref := range sample.Artifacts.PixelManifestRefs {
+			if seenRef[ref] {
+				return fmt.Errorf("canonical %s product sample duplicate pixel ref %s", sample.RouteID, ref)
+			}
+			seenRef[ref] = true
+			manifest, ok := manifestsByRef[ref]
+			if !ok {
+				return fmt.Errorf("canonical %s product sample pixel ref %s was not loaded", sample.RouteID, ref)
+			}
+			if manifest.RouteID != sample.RouteID {
+				return fmt.Errorf("canonical %s product sample pixel ref %s routeID=%s", sample.RouteID, ref, manifest.RouteID)
+			}
+			backend := manifest.BackendRequirement
+			if _, ok := seenBackend[backend]; !ok {
+				return fmt.Errorf("canonical %s product sample pixel ref %s backend=%s", sample.RouteID, ref, backend)
+			}
+			if seenBackend[backend] {
+				return fmt.Errorf("canonical %s product sample duplicate pixel backend %s", sample.RouteID, backend)
+			}
+			seenBackend[backend] = true
+		}
+		for _, backend := range []string{"webgpu", "webgl"} {
+			if !seenBackend[backend] {
+				return fmt.Errorf("canonical %s product sample missing pixel backend %s", sample.RouteID, backend)
+			}
+		}
+	}
+	return nil
 }
 
 func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) error {
@@ -1230,6 +1277,99 @@ func validatePixelManifestFilesForCompare(root comparePathSet, manifest visual.P
 		}
 	}
 	return nil
+}
+
+func validatePixelManifestForCompare(root comparePathSet, path string, manifest visual.PixelEvidenceManifest, source SourceIdentity, env EnvironmentReport) error {
+	if manifest.SchemaVersion != visual.OuroborosPixelSchemaVersion {
+		return fmt.Errorf("schemaVersion = %q", manifest.SchemaVersion)
+	}
+	switch manifest.Mode {
+	case string(visual.PixelModeRecordBaseline):
+		return validateCanonicalPixelManifestForCompare(path, manifest, source, env)
+	case string(visual.PixelModeCandidateComparison):
+		expected := comparePixelSourceIdentity(source)
+		if manifest.Source.BaseRevision != expected.BaseRevision || manifest.Source.OverlayHash != expected.OverlayHash || manifest.Source.InventorySHA256 != expected.InventorySHA256 {
+			return fmt.Errorf("candidate source does not match browser artifact source")
+		}
+		return validatePixelManifestFilesForCompare(root, manifest)
+	default:
+		return fmt.Errorf("mode = %q", manifest.Mode)
+	}
+}
+
+func validateCanonicalPixelManifestForCompare(path string, manifest visual.PixelEvidenceManifest, source SourceIdentity, env EnvironmentReport) error {
+	backend := visual.RequireBackend(manifest.BackendRequirement)
+	if backend != visual.RequireBackendWebGPU && backend != visual.RequireBackendWebGL {
+		return fmt.Errorf("backendRequirement = %q, want webgpu or webgl", manifest.BackendRequirement)
+	}
+	expectedSource := comparePixelSourceIdentity(source)
+	_, err := visual.ValidateCanonicalPixelBaselineManifest(path, expectedSource, visual.PixelEvidenceOptions{
+		Mode:           visual.PixelModeRecordBaseline,
+		RouteID:        manifest.RouteID,
+		Backend:        backend,
+		ForceWebGL:     backend == visual.RequireBackendWebGL,
+		CanvasSelector: visual.DefaultPixelCanvasSelector,
+		WarmupFrames:   30,
+		Viewport:       compareEnvironmentViewport(env),
+	})
+	return err
+}
+
+func comparePixelSourceIdentity(source SourceIdentity) visual.PixelSourceIdentity {
+	overlay := source.OverlayHash
+	if overlay == "clean" {
+		overlay = "sha256:clean"
+	}
+	return visual.PixelSourceIdentity{BaseRevision: source.BaseRevision, OverlayHash: overlay, InventorySHA256: source.InventorySHA256}
+}
+
+func compareEnvironmentViewport(env EnvironmentReport) visual.Viewport {
+	return visual.Viewport{
+		Width:  compareIntFromAny(env.Viewport["width"]),
+		Height: compareIntFromAny(env.Viewport["height"]),
+		Scale:  compareFloatFromAny(env.Viewport["deviceScaleFactor"], env.Viewport["dpr"]),
+	}
+}
+
+func compareIntFromAny(value any) int {
+	switch v := value.(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case json.Number:
+		n, _ := v.Int64()
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+func compareFloatFromAny(values ...any) float64 {
+	for _, value := range values {
+		switch v := value.(type) {
+		case float64:
+			if v != 0 {
+				return v
+			}
+		case int:
+			if v != 0 {
+				return float64(v)
+			}
+		case int64:
+			if v != 0 {
+				return float64(v)
+			}
+		case json.Number:
+			n, _ := v.Float64()
+			if n != 0 {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 func validatePixelStateSet(manifest visual.PixelEvidenceManifest) error {
@@ -1726,7 +1866,7 @@ func runPixelChecks(report *CompareReport, baseline, candidate *compareLoadedArt
 			runBaselinePixelSelfCompareCheck(report, baseline, candidate, manifest, i)
 			continue
 		}
-		runCandidatePixelCheck(report, baseline, candidate, manifest, fmt.Sprintf("ratchet.pixel.%d", i))
+		runCandidatePixelCheck(report, baseline, candidate, manifest, candidate.pixelRoot, fmt.Sprintf("ratchet.pixel.%d", i))
 	}
 	explicitOffset := len(candidate.pixels)
 	for _, ref := range opts.CandidatePixelManifest {
@@ -1748,7 +1888,7 @@ func runPixelChecks(report *CompareReport, baseline, candidate *compareLoadedArt
 			report.Ratchets = append(report.Ratchets, CompareCheck{ID: "ratchet.pixel.load", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: err.Error()})
 			continue
 		}
-		runCandidatePixelCheck(report, baseline, candidate, manifest, fmt.Sprintf("ratchet.pixel.%d", explicitOffset))
+		runCandidatePixelCheck(report, baseline, candidate, manifest, pixelRoot, fmt.Sprintf("ratchet.pixel.%d", explicitOffset))
 		explicitOffset++
 	}
 }
@@ -1783,14 +1923,37 @@ func runBaselinePixelSelfCompareCheck(report *CompareReport, baseline, candidate
 	}
 }
 
-func runCandidatePixelCheck(report *CompareReport, baseline, candidate *compareLoadedArtifact, manifest visual.PixelEvidenceManifest, id string) {
+func runCandidatePixelCheck(report *CompareReport, baseline, candidate *compareLoadedArtifact, manifest visual.PixelEvidenceManifest, candidatePixelRoot comparePathSet, id string) {
 	if manifest.Mode != string(visual.PixelModeCandidateComparison) {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".mode", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "candidate pixel manifest must use mode=candidate"})
 	}
-	if manifest.BaselineSource == nil || manifest.BaselineSource.BaseRevision != baseline.manifest.Source.BaseRevision || manifest.BaselineSource.OverlayHash != baseline.manifest.Source.OverlayHash || manifest.BaselineSource.InventorySHA256 != baseline.manifest.Source.InventorySHA256 {
+	baselinePixel, ok := findCompareBaselinePixelManifest(baseline.pixels, manifest.RouteID, manifest.BackendRequirement)
+	if !ok {
+		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".baseline-pixel", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "matching baseline pixel manifest is missing"})
+	} else {
+		for _, failure := range validateCandidatePixelThresholdForCompare(manifest, baselinePixel) {
+			report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".threshold", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: failure})
+		}
+		backend := visual.RequireBackend(manifest.BackendRequirement)
+		opts := visual.PixelEvidenceOptions{
+			Mode:           visual.PixelModeCandidateComparison,
+			RouteID:        manifest.RouteID,
+			Backend:        backend,
+			ForceWebGL:     backend == visual.RequireBackendWebGL,
+			CanvasSelector: manifest.Selected.CanvasSelector,
+			WarmupFrames:   manifest.SettlePolicy.WarmupFrames,
+			Viewport:       visual.Viewport{Width: manifest.Viewport.Width, Height: manifest.Viewport.Height, Scale: manifest.Viewport.DPR},
+		}
+		for _, failure := range visual.ValidateCandidatePixelManifestAgainstBaseline(opts, manifest, baselinePixel) {
+			report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".semantic", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: failure})
+		}
+	}
+	baselineSource := comparePixelSourceIdentity(baseline.manifest.Source)
+	candidateSource := comparePixelSourceIdentity(candidate.manifest.Source)
+	if manifest.BaselineSource == nil || manifest.BaselineSource.BaseRevision != baselineSource.BaseRevision || manifest.BaselineSource.OverlayHash != baselineSource.OverlayHash || manifest.BaselineSource.InventorySHA256 != baselineSource.InventorySHA256 {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".baseline-source", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "candidate pixel baselineSource does not match baseline source"})
 	}
-	if manifest.Source.BaseRevision != candidate.manifest.Source.BaseRevision || manifest.Source.OverlayHash != candidate.manifest.Source.OverlayHash || manifest.Source.InventorySHA256 != candidate.manifest.Source.InventorySHA256 {
+	if manifest.Source.BaseRevision != candidateSource.BaseRevision || manifest.Source.OverlayHash != candidateSource.OverlayHash || manifest.Source.InventorySHA256 != candidateSource.InventorySHA256 {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".source", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "candidate pixel source does not match candidate source"})
 	}
 	if manifest.HardwareClassification != "" && manifest.HardwareClassification != candidate.environment.HardwareClassification {
@@ -1804,17 +1967,24 @@ func runCandidatePixelCheck(report *CompareReport, baseline, candidate *compareL
 			status := "pass"
 			msg := ""
 			value := 0.0
-			allowed := manifest.Threshold.EffectivePct
-			if capture.Comparison == nil {
+			allowed := baselinePixel.Threshold.EffectivePct
+			replayed, replayErr := replayCandidatePixelComparison(baseline, baselinePixel, candidatePixelRoot, state.State, capture)
+			if replayErr != nil {
 				status = "fail"
-				msg = "pixel capture lacks comparison"
+				msg = replayErr.Error()
 			} else {
-				value = capture.Comparison.DiffPct
-				allowed = capture.Comparison.EffectiveThresholdPct
-				if !capture.Comparison.DimensionsMatch {
+				value = replayed.DiffPct
+				allowed = replayed.EffectiveThresholdPct
+				if capture.Comparison == nil {
+					status = "fail"
+					msg = "pixel capture lacks comparison"
+				} else if !sameStoredPixelComparison(*capture.Comparison, replayed) {
+					status = "fail"
+					msg = "stored pixel comparison does not match replay"
+				} else if !replayed.DimensionsMatch {
 					status = "fail"
 					msg = "pixel comparison dimensions differ"
-				} else if capture.Comparison.DiffPct > capture.Comparison.EffectiveThresholdPct {
+				} else if replayed.DiffPct > replayed.EffectiveThresholdPct {
 					status = "fail"
 					msg = "pixel comparison failed"
 				}
@@ -1822,6 +1992,83 @@ func runCandidatePixelCheck(report *CompareReport, baseline, candidate *compareL
 			report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + "." + state.State + "." + strconv.Itoa(capture.Index), Category: "pixel", RouteID: manifest.RouteID, Metric: "pixel.diffPct", Baseline: 0, Candidate: value, AllowedAbs: allowed, Status: status, Message: msg})
 		}
 	}
+}
+
+func validateCandidatePixelThresholdForCompare(candidate, baseline visual.PixelEvidenceManifest) []string {
+	var failures []string
+	if math.IsNaN(candidate.Threshold.EffectivePct) || math.IsInf(candidate.Threshold.EffectivePct, 0) || candidate.Threshold.EffectivePct < 0 || candidate.Threshold.EffectivePct > visual.MaxCanonicalPixelThresholdPct {
+		failures = append(failures, fmt.Sprintf("candidate pixel threshold %.6f is outside canonical bounds", candidate.Threshold.EffectivePct))
+	}
+	if math.IsNaN(baseline.Threshold.EffectivePct) || math.IsInf(baseline.Threshold.EffectivePct, 0) || baseline.Threshold.EffectivePct < 0 || baseline.Threshold.EffectivePct > visual.MaxCanonicalPixelThresholdPct {
+		failures = append(failures, fmt.Sprintf("baseline pixel threshold %.6f is outside canonical bounds", baseline.Threshold.EffectivePct))
+	}
+	if candidate.Threshold.EffectivePct > baseline.Threshold.EffectivePct {
+		failures = append(failures, fmt.Sprintf("candidate pixel threshold %.6f exceeds baseline %.6f", candidate.Threshold.EffectivePct, baseline.Threshold.EffectivePct))
+	}
+	return failures
+}
+
+func findCompareBaselinePixelManifest(manifests []visual.PixelEvidenceManifest, routeID, backend string) (visual.PixelEvidenceManifest, bool) {
+	for _, manifest := range manifests {
+		if manifest.RouteID == routeID && manifest.BackendRequirement == backend && manifest.Mode == string(visual.PixelModeRecordBaseline) {
+			return manifest, true
+		}
+	}
+	return visual.PixelEvidenceManifest{}, false
+}
+
+func replayCandidatePixelComparison(baseline *compareLoadedArtifact, baselineManifest visual.PixelEvidenceManifest, candidateRoot comparePathSet, stateName string, capture visual.PixelCaptureEvidence) (visual.PixelComparison, error) {
+	if baselineManifest.RouteID == "" {
+		return visual.PixelComparison{}, fmt.Errorf("matching baseline pixel manifest is missing")
+	}
+	baselineCapture, ok := findComparePixelCapture(baselineManifest, stateName, capture.Index)
+	if !ok {
+		return visual.PixelComparison{}, fmt.Errorf("baseline pixel capture %s/%d is missing", stateName, capture.Index)
+	}
+	baselinePath, err := resolvePixelCapturePath(baseline.pixelRoot, baselineCapture.Path)
+	if err != nil {
+		return visual.PixelComparison{}, fmt.Errorf("baseline pixel path: %w", err)
+	}
+	candidatePath, err := resolvePixelCapturePath(candidateRoot, capture.Path)
+	if err != nil {
+		return visual.PixelComparison{}, fmt.Errorf("candidate pixel path: %w", err)
+	}
+	baselineData, err := os.ReadFile(baselinePath)
+	if err != nil {
+		return visual.PixelComparison{}, fmt.Errorf("read baseline pixel: %w", err)
+	}
+	candidateData, err := os.ReadFile(candidatePath)
+	if err != nil {
+		return visual.PixelComparison{}, fmt.Errorf("read candidate pixel: %w", err)
+	}
+	return visual.ComparePixelEvidenceWithThresholdsReadOnly(baselineData, candidateData, baselinePath, candidatePath, baselineManifest.Threshold.EffectivePct, baselineManifest.Threshold.EffectivePct)
+}
+
+func findComparePixelCapture(manifest visual.PixelEvidenceManifest, stateName string, index int) (visual.PixelCaptureEvidence, bool) {
+	for _, state := range manifest.States {
+		if state.State != stateName {
+			continue
+		}
+		for _, capture := range state.Captures {
+			if capture.Index == index {
+				return capture, true
+			}
+		}
+	}
+	return visual.PixelCaptureEvidence{}, false
+}
+
+func sameStoredPixelComparison(stored, replayed visual.PixelComparison) bool {
+	return stored.BaselinePath == replayed.BaselinePath &&
+		stored.DiffPath == replayed.DiffPath &&
+		stored.Mismatched == replayed.Mismatched &&
+		stored.Total == replayed.Total &&
+		stored.DimensionsMatch == replayed.DimensionsMatch &&
+		stored.Similarity == replayed.Similarity &&
+		stored.Passed == replayed.Passed &&
+		stored.DiffPct == replayed.DiffPct &&
+		stored.BaselineThresholdPct == replayed.BaselineThresholdPct &&
+		stored.EffectiveThresholdPct == replayed.EffectiveThresholdPct
 }
 
 func buildMetricStats(samples []BrowserRawSample) map[metricBucket]map[string]Stats {

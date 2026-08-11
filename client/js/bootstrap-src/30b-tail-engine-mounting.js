@@ -9,23 +9,12 @@
   // --------------------------------------------------------------------------
 
   function resolveEngineFactory(entry) {
-    const builtin = resolveBuiltinEngineFactory(entry);
-    if (builtin) {
-      return builtin;
+    if (entry && entry.kind === "video") {
+      return createBuiltInVideoEngine;
     }
     const exportName = engineExportName(entry);
     if (!exportName) return null;
     return engineFactories[exportName] || null;
-  }
-
-  function resolveBuiltinEngineFactory(entry) {
-    if (!entry || !engineKindUsesBuiltinFactory(entry.kind)) {
-      return null;
-    }
-    if (entry.kind === "video") {
-      return createBuiltInVideoEngine;
-    }
-    return null;
   }
 
   function engineExportName(entry) {
@@ -115,14 +104,6 @@
     }
     return true;
   };
-
-  function goWASMEngineFactoryTimeoutMS() {
-    const configured = Number(window.__gosx_go_wasm_factory_timeout_ms);
-    if (Number.isFinite(configured) && configured > 0) {
-      return Math.min(60000, Math.max(1, Math.floor(configured)));
-    }
-    return 10000;
-  }
 
   async function instantiateGoWASMEngine(response, importObject) {
     if (typeof WebAssembly.instantiateStreaming === "function") {
@@ -257,13 +238,16 @@
       record.resolveReady = resolve;
       record.rejectReady = reject;
     });
+    const configuredFactoryTimeout = Number(window.__gosx_go_wasm_factory_timeout_ms);
     record.timeout = setTimeout(function() {
       record.rejectReady(goWASMEngineError(
         "go-wasm-factory-timeout",
         "timed out waiting for Go-WASM engine factory registration",
         { programRef: programRef },
       ));
-    }, goWASMEngineFactoryTimeoutMS());
+    }, Number.isFinite(configuredFactoryTimeout) && configuredFactoryTimeout > 0
+      ? Math.min(60000, Math.max(1, Math.floor(configuredFactoryTimeout)))
+      : 10000);
 
     record.state = "registering";
     goWASMEngineRegistrationTokens.set(record.token, record);
@@ -392,7 +376,7 @@
     return { factory, moduleRecord: record };
   }
 
-  function validateGoWASMEngineEntry(entry, seenIDs) {
+  function validateGoWASMEngineEntry(entry) {
     if (!engineUsesGoWASMRuntime(entry)) return null;
     if (!entry || typeof entry !== "object") {
       return goWASMEngineError("go-wasm-manifest-entry-invalid", "Go-WASM engine manifest entry must be an object", entry);
@@ -403,9 +387,6 @@
     const kind = String(entry.kind || "").trim();
     if (!engineID) {
       return goWASMEngineError("go-wasm-engine-id-missing", "Go-WASM engine requires an id", entry);
-    }
-    if (seenIDs && seenIDs.has(engineID)) {
-      return goWASMEngineError("go-wasm-engine-id-duplicate", "Go-WASM engine id is duplicated: " + engineID, entry);
     }
     if (!component) {
       return goWASMEngineError("go-wasm-component-missing", "Go-WASM engine requires a component", entry);
@@ -419,7 +400,6 @@
     if (engineKindNeedsMount(kind) && !String(entry.mountId || entry.id || "").trim()) {
       return goWASMEngineError("go-wasm-mount-id-missing", "Go-WASM engine kind " + kind + " requires a mount id", entry);
     }
-    if (seenIDs) seenIDs.add(engineID);
     return null;
   }
 
@@ -1091,10 +1071,6 @@
     return kind === "surface" || kind === "video";
   }
 
-  function engineKindUsesBuiltinFactory(kind) {
-    return kind === "video";
-  }
-
   function videoPropValue(props, names, fallback) {
     const source = props && typeof props === "object" ? props : {};
     const list = Array.isArray(names) ? names : [names];
@@ -1649,15 +1625,6 @@
     return payload;
   }
 
-  function videoFirstFallbackNode(children, tagName) {
-    for (const child of children || []) {
-      if (child && child.nodeType === 1 && child.tagName === tagName) {
-        return child;
-      }
-    }
-    return null;
-  }
-
   function videoCanUseSourceNatively(video, source) {
     if (!source || typeof source !== "object") {
       return false;
@@ -2004,7 +1971,9 @@
     const audioSourceOptions = videoAudioSourceOptions(props);
     const fullscreenOptions = videoFullscreenOptions(props);
     const telemetryOptions = videoTelemetryOptions(props);
-    const video = videoFirstFallbackNode(fallbackChildren, "VIDEO") || document.createElement("video");
+    const video = fallbackChildren.find(function(child) {
+      return child && child.nodeType === 1 && child.tagName === "VIDEO";
+    }) || document.createElement("video");
     const unsubscribers = [];
     const eventListeners = [];
     const subtitleState = {
@@ -4539,7 +4508,9 @@
     let factory;
     let moduleRecord = null;
     try {
-      const resolved = await resolveMountedEngineFactory(entry, pending);
+      const resolved = await (engineUsesGoWASMRuntime(entry)
+        ? resolveGoWASMEngineFactory(entry, pending)
+        : { factory: resolveEngineFactory(entry), moduleRecord: null });
       factory = resolved.factory;
       moduleRecord = resolved.moduleRecord;
     } catch (e) {
@@ -4659,13 +4630,6 @@
     return mount;
   }
 
-  async function resolveMountedEngineFactory(entry, pending) {
-    if (engineUsesGoWASMRuntime(entry)) {
-      return resolveGoWASMEngineFactory(entry, pending);
-    }
-    return { factory: resolveEngineFactory(entry), moduleRecord: null };
-  }
-
   async function runEngineFactory(factory, ctx) {
     let result = factory(ctx);
     if (result && typeof result.then === "function") {
@@ -4759,7 +4723,7 @@
         continue;
       }
       if (engineID) seenIDs.add(engineID);
-      const validationError = validateGoWASMEngineEntry(entry, null);
+      const validationError = validateGoWASMEngineEntry(entry);
       if (validationError) invalidEntries.set(entry, validationError);
     }
 

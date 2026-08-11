@@ -141,6 +141,11 @@ func testValidBrowserSample(source SourceIdentity) BrowserRawSample {
 
 func writeValidPixelManifestForD(t *testing.T, root, routeID, backend string) visual.PixelEvidenceManifest {
 	t.Helper()
+	forceWebGL := backend == string(visual.RequireBackendWebGL)
+	hook := "gosx-o02-clear-force-webgl-new-document"
+	if forceWebGL {
+		hook = "gosx-o02-force-webgl-new-document"
+	}
 	manifest := visual.PixelEvidenceManifest{
 		SchemaVersion:      visual.OuroborosPixelSchemaVersion,
 		RouteID:            routeID,
@@ -150,16 +155,26 @@ func writeValidPixelManifestForD(t *testing.T, root, routeID, backend string) vi
 		BackendSelection: visual.PixelBackendSelection{
 			RequestedBackend:       backend,
 			RuntimeObservedBackend: backend,
-			ForceWebGL:             backend == "webgl",
-			PreNavigationHook:      "gosx-o02-backend-hook",
+			ForceWebGL:             forceWebGL,
+			PreNavigationHook:      hook,
 		},
 		Certified:              true,
 		HardwareClassification: "hardware-" + backend,
 		Selected:               visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: "canvas", CanvasCount: 1, MountCount: 1},
 		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 0.5},
+		SettlePolicy:           validPixelSettlePolicyForTest(),
 	}
 	for _, stateName := range []string{"initial", "settled"} {
-		state := visual.PixelStateEvidence{State: stateName}
+		renderLoop := validPixelRenderLoopForTest()
+		frame := 10
+		if stateName == "settled" {
+			frame = 40
+		}
+		state := visual.PixelStateEvidence{
+			State:  stateName,
+			Settle: visual.PixelSettleResult{RequiredFrame: frame, ObservedFrame: frame, AdvanceRequired: stateName == "settled", RenderLoop: renderLoop},
+			Batch:  validPixelBatchForPerfTest(routeID+"-"+stateName+"-batch", stateName, backend, frame, renderLoop),
+		}
 		for i := 0; i < 3; i++ {
 			body := []byte{byte(i + 1), byte(len(stateName)), 3, 4}
 			path := filepath.Join(root, routeID+"-"+stateName+"-"+string(rune('0'+i))+".png")
@@ -172,10 +187,14 @@ func writeValidPixelManifestForD(t *testing.T, root, routeID, backend string) vi
 				Path:               path,
 				SHA256:             hex.EncodeToString(sum[:]),
 				Backend:            backend,
+				Renderer:           backend,
 				RuntimeTruthParsed: true,
 				RuntimeGPU:         true,
 				Implementation:     "test-" + backend,
 				HardwareClass:      "hardware-" + backend,
+				FrameSeq:           frame,
+				BatchID:            state.Batch.ID,
+				RenderLoop:         renderLoop,
 				WebGPU:             testWebGPUEvidenceForBackend(backend),
 				WebGL:              testWebGLEvidenceForBackend(backend),
 				Comparison:         &visual.PixelComparison{Passed: true},
@@ -218,7 +237,7 @@ func writeValidCanonicalPixelManifestForSelector(t *testing.T, root, routeID, ba
 		t.Fatal(err)
 	}
 	forceWebGL := backend == string(visual.RequireBackendWebGL)
-	hook := "gosx-o02-backend-hook"
+	hook := "gosx-o02-clear-force-webgl-new-document"
 	if forceWebGL {
 		hook = "gosx-o02-force-webgl-new-document"
 	}
@@ -240,17 +259,9 @@ func writeValidCanonicalPixelManifestForSelector(t *testing.T, root, routeID, ba
 		Viewport:               visual.ViewportEvidence{Width: 1440, Height: 900, DPR: 1},
 		Selected:               visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: selector, CanvasCount: 1, MountCount: 1},
 		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 0.5},
-		SettlePolicy:           visual.PixelSettlePolicy{WarmupFrames: 30, RuntimeRenderLoopRequired: true, StaticStoppedAllowsNoAdvance: true},
+		SettlePolicy:           validPixelSettlePolicyForTest(),
 	}
-	renderLoop := visual.RenderLoopEvidence{
-		State:                "active",
-		Reason:               "runtime-program",
-		Active:               true,
-		WantsAnimation:       true,
-		StateParsed:          true,
-		WantsAnimationParsed: true,
-		Valid:                true,
-	}
+	renderLoop := validPixelRenderLoopForTest()
 	for _, stateName := range []string{"initial", "settled"} {
 		settle := visual.PixelSettleResult{RequiredFrame: 10, ObservedFrame: 10, RenderLoop: renderLoop}
 		if stateName == "settled" {
@@ -258,7 +269,7 @@ func writeValidCanonicalPixelManifestForSelector(t *testing.T, root, routeID, ba
 			settle.ObservedFrame = 40
 			settle.AdvanceRequired = true
 		}
-		state := visual.PixelStateEvidence{State: stateName, Settle: settle}
+		state := visual.PixelStateEvidence{State: stateName, Settle: settle, Batch: validPixelBatchForPerfTest(routeID+"-"+stateName+"-batch", stateName, backend, settle.ObservedFrame, renderLoop)}
 		for i := 0; i < 3; i++ {
 			data := canonicalPixelPNGForTest(t)
 			path := filepath.Join(root, fmt.Sprintf("%s-%s-%02d.png", routeID, stateName, i))
@@ -274,11 +285,13 @@ func writeValidCanonicalPixelManifestForSelector(t *testing.T, root, routeID, ba
 				Width:              8,
 				Height:             8,
 				Backend:            backend,
+				Renderer:           backend,
 				RuntimeTruthParsed: true,
 				RuntimeGPU:         true,
 				Implementation:     "test-" + backend,
 				HardwareClass:      "hardware-" + backend,
-				FrameSeq:           settle.ObservedFrame + i,
+				FrameSeq:           settle.ObservedFrame,
+				BatchID:            state.Batch.ID,
 				RenderLoop:         renderLoop,
 				WebGPU:             testWebGPUEvidenceForBackend(backend),
 				WebGL:              testWebGLEvidenceForBackend(backend),
@@ -326,6 +339,77 @@ func testWebGLEvidenceForBackend(backend string) visual.WebGLEvidence {
 		Vendor:   "NVIDIA Corporation",
 		Renderer: "ANGLE (NVIDIA GeForce RTX 4090 Direct3D11 vs_5_0 ps_5_0)",
 		Version:  "WebGL 2.0",
+	}
+}
+
+func validPixelSettlePolicyForTest() visual.PixelSettlePolicy {
+	return visual.PixelSettlePolicy{
+		WarmupFrames:                 30,
+		WarmupAnchor:                 "initial-observed-frame",
+		RuntimeRenderLoopRequired:    true,
+		StaticStoppedAllowsNoAdvance: true,
+		RAFGate: visual.PixelRAFGatePolicy{
+			SchemaVersion:                 "gosx.ouroboros.raf-gate.v1",
+			Strategy:                      "raf-batch-gate",
+			Enabled:                       true,
+			DrainTicks:                    2,
+			TemporaryGlobal:               true,
+			NonceKeyed:                    true,
+			NonEnumerable:                 true,
+			NegativeSyntheticIDs:          true,
+			NativeTimestampResume:         true,
+			CapturesUseStableClip:         true,
+			FailClosedRestore:             true,
+			ResumeBeforeNextReadinessWait: true,
+		},
+	}
+}
+
+func validPixelRenderLoopForTest() visual.RenderLoopEvidence {
+	return visual.RenderLoopEvidence{
+		State:                "active",
+		Reason:               "runtime-program",
+		Active:               true,
+		WantsAnimation:       true,
+		StateParsed:          true,
+		WantsAnimationParsed: true,
+		Valid:                true,
+	}
+}
+
+func validPixelBatchForPerfTest(id, state, backend string, frame int, loop visual.RenderLoopEvidence) visual.PixelBatchEvidence {
+	clip := visual.PixelCanvasClipEvidence{Width: 8, Height: 8, Scale: 1, Stable: true}
+	snapshot := visual.PixelBatchSnapshot{
+		Visible:            true,
+		Focused:            true,
+		Backend:            backend,
+		Renderer:           backend,
+		FrameSeq:           frame,
+		RuntimeTruthParsed: true,
+		RenderLoopState:    loop.State,
+		RenderLoopActive:   loop.Active,
+		WantsAnimation:     loop.WantsAnimation,
+		Clip:               clip,
+	}
+	return visual.PixelBatchEvidence{
+		ID:                 id,
+		State:              state,
+		Acquired:           true,
+		Released:           true,
+		ReleaseProved:      true,
+		NonceHash:          "sha256:" + strings.Repeat("1", 64),
+		GlobalKeyHash:      "sha256:" + strings.Repeat("2", 64),
+		DrainTicks:         2,
+		NativeTickCount:    2,
+		QueueAfterDrain:    1,
+		QueueBeforeRelease: 1,
+		Delivered:          1,
+		Restored:           true,
+		Cleaned:            true,
+		Clip:               clip,
+		BeforeAcquire:      snapshot,
+		Before:             snapshot,
+		After:              snapshot,
 	}
 }
 

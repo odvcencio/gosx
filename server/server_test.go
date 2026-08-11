@@ -700,10 +700,60 @@ func TestAppInjectsRuntimeHeadForEnginePages(t *testing.T) {
 	for _, snippet := range []string{
 		`/gosx/runtime.wasm`,
 		`data-gosx-script="wasm-exec"`,
+		`bootstrapFeatureTextLayoutPath`,
 	} {
 		if strings.Contains(body, snippet) {
 			t.Fatalf("did not expect %q in scene bootstrap page body %q", snippet, body)
 		}
+	}
+}
+
+func TestAppInjectsTextlayoutPathForScene3DOverlayLabelPages(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		return ctx.Engine(engine.Config{
+			Name:  "GoSXScene3D",
+			Kind:  engine.KindSurface,
+			Props: json.RawMessage(`{"scene":{"labels":[{"id":"caption","text":"R08 overlay"}]},"width":640,"height":360}`),
+		}, gosx.El("p", gosx.Text("Loading scene")))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, `"bootstrapFeatureTextLayoutPath":"/gosx/bootstrap-feature-textlayout.js"`) {
+		t.Fatalf("expected Scene3D label page to advertise text-layout chunk: %q", body)
+	}
+	for _, snippet := range []string{
+		`<script src="/gosx/bootstrap-feature-textlayout.js"`,
+		`rel="preload" href="/gosx/bootstrap-feature-textlayout.js"`,
+	} {
+		if strings.Contains(body, snippet) {
+			t.Fatalf("did not expect %q in Scene3D label page body %q", snippet, body)
+		}
+	}
+}
+
+func TestAppOmitsTextlayoutPathForScene3DAriaLabelPages(t *testing.T) {
+	app := New()
+	app.Page("GET /", func(ctx *Context) gosx.Node {
+		return ctx.Engine(engine.Config{
+			Name:  "GoSXScene3D",
+			Kind:  engine.KindSurface,
+			Props: json.RawMessage(`{"label":"ARIA label","width":640,"height":360}`),
+		}, gosx.El("p", gosx.Text("Loading scene")))
+	})
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if body := w.Body.String(); strings.Contains(body, `bootstrapFeatureTextLayoutPath`) {
+		t.Fatalf("did not expect ARIA-only Scene3D page to advertise text-layout chunk: %q", body)
 	}
 }
 
@@ -883,6 +933,7 @@ func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 		`data-gosx-text-layout-height-hint="`,
 		`/gosx/bootstrap-lite.js`,
 		`data-gosx-bootstrap-mode="lite"`,
+		`"bootstrapFeatureTextLayoutPath":"/gosx/bootstrap-feature-textlayout.js"`,
 	} {
 		if !strings.Contains(body, snippet) {
 			t.Fatalf("expected %q in text layout page body %q", snippet, body)
@@ -893,6 +944,8 @@ func TestAppInjectsBootstrapHeadForTextBlockPages(t *testing.T) {
 		`data-gosx-script="wasm-exec"`,
 		`/gosx/patch.js`,
 		`/gosx/bootstrap.js`,
+		`<script src="/gosx/bootstrap-feature-textlayout.js"`,
+		`rel="preload" href="/gosx/bootstrap-feature-textlayout.js"`,
 	} {
 		if strings.Contains(body, snippet) {
 			t.Fatalf("did not expect %q in bootstrap-only text layout page body %q", snippet, body)
@@ -938,6 +991,7 @@ func TestAppKeepsNativeTextBlockPagesOffBootstrapHead(t *testing.T) {
 		`data-gosx-script="wasm-exec"`,
 		`/gosx/bootstrap.js`,
 		`/gosx/patch.js`,
+		`bootstrapFeatureTextLayoutPath`,
 	} {
 		if strings.Contains(body, snippet) {
 			t.Fatalf("did not expect %q in native text layout page body %q", snippet, body)

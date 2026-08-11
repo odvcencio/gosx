@@ -1691,6 +1691,7 @@
       bootstrapFeatureIslandsPath: String(assets.bootstrapFeatureIslandsPath || ""),
       bootstrapFeatureEnginesPath: String(assets.bootstrapFeatureEnginesPath || ""),
       bootstrapFeatureHubsPath: String(assets.bootstrapFeatureHubsPath || ""),
+      bootstrapFeatureTextLayoutPath: String(assets.bootstrapFeatureTextLayoutPath || ""),
       hlsPath: String(assets.hlsPath || ""),
       islands: Math.max(0, gosxNumber(assets.islands, 0)),
       engines: Math.max(0, gosxNumber(assets.engines, 0)),

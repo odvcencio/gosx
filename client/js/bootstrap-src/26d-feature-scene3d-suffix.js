@@ -10,4 +10,4 @@
   if (typeof window.__gosx_scene3d_loaded === "function") {
     window.__gosx_scene3d_loaded();
   }
-})();
+})(this);

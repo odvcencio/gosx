@@ -56,4 +56,4 @@
   } else {
     bootstrapLitePage();
   }
-})();
+})(window, document);

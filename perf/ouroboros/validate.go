@@ -112,8 +112,8 @@ func ValidateInventory(inv *Inventory) error {
 		return err
 	}
 	if inv.Pixels != nil {
-		if inv.Pixels.SchemaVersion != "gosx.ouroboros.pixels.v1" {
-			return fmt.Errorf("pixels schemaVersion = %q, want gosx.ouroboros.pixels.v1", inv.Pixels.SchemaVersion)
+		if inv.Pixels.SchemaVersion != "gosx.ouroboros.pixels.v2" {
+			return fmt.Errorf("pixels schemaVersion = %q, want gosx.ouroboros.pixels.v2", inv.Pixels.SchemaVersion)
 		}
 		if inv.Pixels.ManifestPath == "" || inv.Pixels.Initial == nil || inv.Pixels.Settled == nil {
 			return fmt.Errorf("pixels manifestPath, initial, and settled are required")

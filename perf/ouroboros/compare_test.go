@@ -3,6 +3,7 @@ package ouroboros
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -66,14 +67,20 @@ func TestCompareLiveR00SmokeSelfCompareWhenPresent(t *testing.T) {
 }
 
 func TestComparePixelSelfCompareUsesExternalEvidenceRoot(t *testing.T) {
-	artifactRoot := writeCompareFixture(t, filepath.Join(t.TempDir(), "browser"), compareFixtureOptions{})
+	artifactRoot := writeCompareFixture(t, filepath.Join(t.TempDir(), "browser"), compareFixtureOptions{envMutator: func(env *EnvironmentReport) {
+		env.HardwareClassification = "hardware-webgpu"
+	}, sourceMutator: func(source *SourceIdentity) {
+		source.OverlayHash = "sha256:" + strings.Repeat("a", 64)
+		source.TrackedDiffHash = "sha256:" + strings.Repeat("b", 64)
+		source.UntrackedIncludedSourceHash = "sha256:" + strings.Repeat("c", 64)
+	}})
 	pixelRoot := filepath.Join(t.TempDir(), "pixel-evidence")
-	addPixelRefToFixture(t, artifactRoot, "pixels/r00.json")
+	addPixelRefToFixture(t, artifactRoot, "pixels/R00/webgpu/pixel-evidence.json")
 	var manifest BrowserManifest
 	readFixtureJSON(t, filepath.Join(artifactRoot, "manifest.json"), &manifest)
-	initial := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "r00-initial.png"), true)
-	settled := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "r00-settled.png"), true)
-	writeFixtureJSON(t, filepath.Join(pixelRoot, "pixels", "r00.json"), compareBaselinePixelManifest(manifest.Source, initial, settled))
+	initial := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "R00-initial-00.png"), true)
+	settled := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "R00-settled-00.png"), true)
+	writeFixtureJSON(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "pixel-evidence.json"), compareBaselinePixelManifest(t, manifest.Source, initial, settled))
 
 	withoutRoot := runSmokeCompare(t, artifactRoot, artifactRoot)
 	if withoutRoot.ExitCode != 1 || !reportHasMessage(withoutRoot, "pixel manifest") {
@@ -93,6 +100,266 @@ func TestComparePixelSelfCompareUsesExternalEvidenceRoot(t *testing.T) {
 	}
 	if report.ExitCode != 0 || !report.SelfCompare || !reportHasMetricPass(report, "pixel.diffPct") {
 		t.Fatalf("pixel self-compare failed: exit=%d self=%v summary=%+v", report.ExitCode, report.SelfCompare, report.Summary)
+	}
+}
+
+func TestCompareCandidatePixelReplayAcceptsValidEvidence(t *testing.T) {
+	source := compareSource("")
+	source.OverlayHash = "sha256:" + strings.Repeat("a", 64)
+	source.TrackedDiffHash = "sha256:" + strings.Repeat("b", 64)
+	source.UntrackedIncludedSourceHash = "sha256:" + strings.Repeat("c", 64)
+	source.InventorySHA256 = "sha256:" + strings.Repeat("e", 64)
+	candidateSource := source
+	candidateSource.BaseRevision = "1123456789abcdef0123456789abcdef01234567"
+	candidateSource.OverlayHash = "sha256:" + strings.Repeat("d", 64)
+	candidateSource.InventorySHA256 = "sha256:" + strings.Repeat("f", 64)
+	basePixelRoot := mustComparePathSet(t, t.TempDir())
+	candidatePixelRoot := mustComparePathSet(t, t.TempDir())
+	baseInitial := writeTestPNG(t, filepath.Join(basePixelRoot.root, "pixels", "R00-initial-00.png"), true)
+	baseSettled := writeTestPNG(t, filepath.Join(basePixelRoot.root, "pixels", "R00-settled-00.png"), true)
+	baselineManifest := compareBaselinePixelManifest(t, source, baseInitial, baseSettled)
+	candidateInitial := writeTestPNG(t, filepath.Join(candidatePixelRoot.root, "pixels", "R00-initial-00.png"), true)
+	candidateSettled := writeTestPNG(t, filepath.Join(candidatePixelRoot.root, "pixels", "R00-settled-00.png"), true)
+	candidateManifest := comparePixelManifest(true, source, candidateSource, candidateInitial, candidateSettled)
+	for stateIndex := range candidateManifest.States {
+		state := &candidateManifest.States[stateIndex]
+		for captureIndex := range state.Captures {
+			capture := &state.Captures[captureIndex]
+			baselineCapture, ok := findComparePixelCapture(baselineManifest, state.State, capture.Index)
+			if !ok {
+				t.Fatalf("missing baseline capture %s/%d", state.State, capture.Index)
+			}
+			basePath, err := resolvePixelCapturePath(basePixelRoot, baselineCapture.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candPath, err := resolvePixelCapturePath(candidatePixelRoot, capture.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseData, err := os.ReadFile(basePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candData, err := os.ReadFile(candPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			comparison, err := visual.ComparePixelEvidenceWithThresholds(baseData, candData, basePath, candPath, 1, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			capture.Comparison = &comparison
+		}
+	}
+	report := &CompareReport{}
+	baseline := &compareLoadedArtifact{manifest: BrowserManifest{Source: source}, environment: EnvironmentReport{HardwareClassification: "hardware-webgpu"}, pixels: []visual.PixelEvidenceManifest{baselineManifest}, pixelRoot: basePixelRoot}
+	candidate := &compareLoadedArtifact{manifest: BrowserManifest{Source: candidateSource}, environment: EnvironmentReport{HardwareClassification: "hardware-webgpu"}}
+	runCandidatePixelCheck(report, baseline, candidate, candidateManifest, candidatePixelRoot, "ratchet.pixel.valid")
+	if len(report.Ratchets) != 2 {
+		t.Fatalf("ratchets = %d, want two pass checks: %+v", len(report.Ratchets), report.Ratchets)
+	}
+	for _, check := range report.Ratchets {
+		if check.Status != "pass" {
+			t.Fatalf("candidate replay check failed: %+v", check)
+		}
+	}
+}
+
+func TestCompareCandidatePixelReplayRejectsLoosenedThreshold(t *testing.T) {
+	source := compareSource("")
+	source.OverlayHash = "sha256:" + strings.Repeat("a", 64)
+	source.TrackedDiffHash = "sha256:" + strings.Repeat("b", 64)
+	source.UntrackedIncludedSourceHash = "sha256:" + strings.Repeat("c", 64)
+	source.InventorySHA256 = "sha256:" + strings.Repeat("e", 64)
+	candidateSource := source
+	candidateSource.BaseRevision = "1123456789abcdef0123456789abcdef01234567"
+	candidateSource.OverlayHash = "sha256:" + strings.Repeat("d", 64)
+	candidateSource.InventorySHA256 = "sha256:" + strings.Repeat("f", 64)
+	basePixelRoot := mustComparePathSet(t, t.TempDir())
+	candidatePixelRoot := mustComparePathSet(t, t.TempDir())
+	baseInitial := writeTestPNG(t, filepath.Join(basePixelRoot.root, "pixels", "R00-initial-00.png"), true)
+	baseSettled := writeTestPNG(t, filepath.Join(basePixelRoot.root, "pixels", "R00-settled-00.png"), true)
+	baselineManifest := compareBaselinePixelManifest(t, source, baseInitial, baseSettled)
+	baselineManifest.Threshold.EffectivePct = 0.1
+	candidateInitial := writeOnePixelChangedTestPNG(t, filepath.Join(candidatePixelRoot.root, "pixels", "R00-initial-00.png"), true)
+	candidateSettled := writeOnePixelChangedTestPNG(t, filepath.Join(candidatePixelRoot.root, "pixels", "R00-settled-00.png"), true)
+	candidateManifest := comparePixelManifest(true, source, candidateSource, candidateInitial, candidateSettled)
+	candidateManifest.Threshold.EffectivePct = 1
+	for stateIndex := range candidateManifest.States {
+		state := &candidateManifest.States[stateIndex]
+		for captureIndex := range state.Captures {
+			capture := &state.Captures[captureIndex]
+			baselineCapture, ok := findComparePixelCapture(baselineManifest, state.State, capture.Index)
+			if !ok {
+				t.Fatalf("missing baseline capture %s/%d", state.State, capture.Index)
+			}
+			basePath, err := resolvePixelCapturePath(basePixelRoot, baselineCapture.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candPath, err := resolvePixelCapturePath(candidatePixelRoot, capture.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseData, err := os.ReadFile(basePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candData, err := os.ReadFile(candPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			forged, err := visual.ComparePixelEvidenceWithThresholds(baseData, candData, basePath, candPath, baselineManifest.Threshold.EffectivePct, candidateManifest.Threshold.EffectivePct)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !forged.Passed {
+				t.Fatalf("forged comparison did not pass with loosened threshold: %+v", forged)
+			}
+			capture.Comparison = &forged
+		}
+	}
+	report := &CompareReport{}
+	baseline := &compareLoadedArtifact{manifest: BrowserManifest{Source: source}, environment: EnvironmentReport{HardwareClassification: "hardware-webgpu"}, pixels: []visual.PixelEvidenceManifest{baselineManifest}, pixelRoot: basePixelRoot}
+	candidate := &compareLoadedArtifact{manifest: BrowserManifest{Source: candidateSource}, environment: EnvironmentReport{HardwareClassification: "hardware-webgpu"}}
+	runCandidatePixelCheck(report, baseline, candidate, candidateManifest, candidatePixelRoot, "ratchet.pixel.loosen")
+	if !reportHasMessage(report, "exceeds baseline") {
+		t.Fatalf("missing threshold loosening failure: %+v", report.Ratchets)
+	}
+	if !reportHasMessage(report, "stored pixel comparison does not match replay") {
+		t.Fatalf("missing replay mismatch failure: %+v", report.Ratchets)
+	}
+}
+
+func TestCompareCandidatePixelReplayIsReadOnlyOnRegression(t *testing.T) {
+	source := compareSource("")
+	source.OverlayHash = "sha256:" + strings.Repeat("a", 64)
+	source.TrackedDiffHash = "sha256:" + strings.Repeat("b", 64)
+	source.UntrackedIncludedSourceHash = "sha256:" + strings.Repeat("c", 64)
+	source.InventorySHA256 = "sha256:" + strings.Repeat("e", 64)
+	candidateSource := source
+	candidateSource.BaseRevision = "1123456789abcdef0123456789abcdef01234567"
+	candidateSource.OverlayHash = "sha256:" + strings.Repeat("d", 64)
+	candidateSource.InventorySHA256 = "sha256:" + strings.Repeat("f", 64)
+
+	basePixelRoot := mustComparePathSet(t, t.TempDir())
+	candidatePixelRoot := mustComparePathSet(t, t.TempDir())
+	baseInitial := writeTestPNG(t, filepath.Join(basePixelRoot.root, "pixels", "R00-initial-00.png"), true)
+	baseSettled := writeTestPNG(t, filepath.Join(basePixelRoot.root, "pixels", "R00-settled-00.png"), true)
+	baselineManifest := compareBaselinePixelManifest(t, source, baseInitial, baseSettled)
+	baselineManifest.Threshold.EffectivePct = 0
+	candidateInitial := writeOnePixelChangedTestPNG(t, filepath.Join(candidatePixelRoot.root, "pixels", "R00-initial-00.png"), true)
+	candidateSettled := writeOnePixelChangedTestPNG(t, filepath.Join(candidatePixelRoot.root, "pixels", "R00-settled-00.png"), true)
+	candidateManifest := comparePixelManifest(false, source, candidateSource, candidateInitial, candidateSettled)
+	candidateManifest.Threshold.EffectivePct = 0
+
+	for stateIndex := range candidateManifest.States {
+		state := &candidateManifest.States[stateIndex]
+		for captureIndex := range state.Captures {
+			capture := &state.Captures[captureIndex]
+			baselineCapture, ok := findComparePixelCapture(baselineManifest, state.State, capture.Index)
+			if !ok {
+				t.Fatalf("missing baseline capture %s/%d", state.State, capture.Index)
+			}
+			basePath, err := resolvePixelCapturePath(basePixelRoot, baselineCapture.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candPath, err := resolvePixelCapturePath(candidatePixelRoot, capture.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseData, err := os.ReadFile(basePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candData, err := os.ReadFile(candPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			comparison, err := visual.ComparePixelEvidenceWithThresholdsReadOnly(baseData, candData, basePath, candPath, baselineManifest.Threshold.EffectivePct, baselineManifest.Threshold.EffectivePct)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if comparison.Passed || comparison.DiffPath == "" {
+				t.Fatalf("comparison = %+v, want failing comparison with diff path", comparison)
+			}
+			capture.Comparison = &comparison
+		}
+	}
+	assertNoCompareDiffPNGs(t, basePixelRoot.root, candidatePixelRoot.root)
+	chmodCompareTree(t, basePixelRoot.root, 0o555, 0o444)
+	defer chmodCompareTree(t, basePixelRoot.root, 0o755, 0o644)
+	chmodCompareTree(t, candidatePixelRoot.root, 0o555, 0o444)
+	defer chmodCompareTree(t, candidatePixelRoot.root, 0o755, 0o644)
+
+	report := &CompareReport{}
+	baseline := &compareLoadedArtifact{manifest: BrowserManifest{Source: source}, environment: EnvironmentReport{HardwareClassification: "hardware-webgpu"}, pixels: []visual.PixelEvidenceManifest{baselineManifest}, pixelRoot: basePixelRoot}
+	candidate := &compareLoadedArtifact{manifest: BrowserManifest{Source: candidateSource}, environment: EnvironmentReport{HardwareClassification: "hardware-webgpu"}}
+	runCandidatePixelCheck(report, baseline, candidate, candidateManifest, candidatePixelRoot, "ratchet.pixel.readonly")
+	if len(report.Ratchets) != 2 {
+		t.Fatalf("ratchets = %d, want two checks: %+v", len(report.Ratchets), report.Ratchets)
+	}
+	for _, check := range report.Ratchets {
+		if check.Status != "fail" || check.Message != "pixel comparison failed" || check.Candidate <= 0 || check.AllowedAbs != 0 {
+			t.Fatalf("unexpected replay check: %+v", check)
+		}
+	}
+	assertNoCompareDiffPNGs(t, basePixelRoot.root, candidatePixelRoot.root)
+}
+
+func TestCompareCanonicalPixelIngressRejectsMalformedV2Evidence(t *testing.T) {
+	source := compareSource("")
+	source.OverlayHash = "sha256:" + strings.Repeat("a", 64)
+	source.TrackedDiffHash = "sha256:" + strings.Repeat("b", 64)
+	source.UntrackedIncludedSourceHash = "sha256:" + strings.Repeat("c", 64)
+	source.InventorySHA256 = "sha256:" + strings.Repeat("e", 64)
+	env := compareEnvironmentFixture()
+	env.Viewport = map[string]any{"width": 1280, "height": 720, "dpr": 1}
+	for _, tc := range []struct {
+		name string
+		edit func(*visual.PixelEvidenceManifest)
+	}{
+		{name: "missing batch", edit: func(m *visual.PixelEvidenceManifest) { m.States[0].Batch = visual.PixelBatchEvidence{} }},
+		{name: "duplicate batch ID", edit: func(m *visual.PixelEvidenceManifest) { m.States[1].Batch.ID = m.States[0].Batch.ID }},
+		{name: "frame drift", edit: func(m *visual.PixelEvidenceManifest) { m.States[0].Captures[0].FrameSeq++ }},
+		{name: "policy mismatch", edit: func(m *visual.PixelEvidenceManifest) { m.SettlePolicy.RAFGate.DrainTicks = 1 }},
+		{name: "v1 schema", edit: func(m *visual.PixelEvidenceManifest) { m.SchemaVersion = "gosx.ouroboros.pixels.v1" }},
+		{name: "malformed linkage", edit: func(m *visual.PixelEvidenceManifest) { m.States[0].Captures[0].BatchID = "other" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := mustComparePathSet(t, t.TempDir())
+			initial := writeTestPNG(t, filepath.Join(root.root, "pixels", "R00-initial-00.png"), true)
+			settled := writeTestPNG(t, filepath.Join(root.root, "pixels", "R00-settled-00.png"), true)
+			manifest := compareBaselinePixelManifest(t, source, initial, settled)
+			tc.edit(&manifest)
+			path := filepath.Join(root.root, "pixel-evidence.json")
+			writeFixtureJSON(t, path, manifest)
+			if err := validatePixelManifestForCompare(root, path, manifest, source, env); err == nil {
+				t.Fatalf("validatePixelManifestForCompare accepted %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestCompareCanonicalPixelSampleRefsBindRouteAndBackends(t *testing.T) {
+	raw := []BrowserRawSample{{
+		RouteID:     "R10",
+		SampleLane:  SampleLaneProduct,
+		Artifacts:   SampleArtifacts{PixelManifestRefs: []string{"r08-webgpu.json", "r10-webgl.json"}},
+		SampleIndex: 0,
+	}}
+	manifests := map[string]visual.PixelEvidenceManifest{
+		"r08-webgpu.json": {RouteID: "R08", BackendRequirement: "webgpu"},
+		"r10-webgl.json":  {RouteID: "R10", BackendRequirement: "webgl"},
+	}
+	if err := validateLoadedPixelRefsForSamples(raw, manifests, CompareModeCanonical); err == nil || !strings.Contains(err.Error(), "routeID=R08") {
+		t.Fatalf("route substitution error = %v", err)
+	}
+	manifests["r08-webgpu.json"] = visual.PixelEvidenceManifest{RouteID: "R10", BackendRequirement: "webgpu"}
+	if err := validateLoadedPixelRefsForSamples(raw, manifests, CompareModeCanonical); err != nil {
+		t.Fatalf("valid route/backend pair failed: %v", err)
 	}
 }
 
@@ -1149,6 +1416,8 @@ func dynamicProductEvent(routeID string) ProbeEvent {
 }
 
 func comparePixelManifest(passed bool, baseline, candidate SourceIdentity, initial, settled visual.PixelCaptureEvidence) visual.PixelEvidenceManifest {
+	initial = completeComparePixelCapture(initial, "initial", 0, "webgpu")
+	settled = completeComparePixelCapture(settled, "settled", 0, "webgpu")
 	initial.Comparison = &visual.PixelComparison{DiffPct: 2, EffectiveThresholdPct: 1, DimensionsMatch: true, Passed: passed}
 	settled.Comparison = &visual.PixelComparison{DiffPct: 2, EffectiveThresholdPct: 1, DimensionsMatch: true, Passed: passed}
 	return visual.PixelEvidenceManifest{
@@ -1156,34 +1425,130 @@ func comparePixelManifest(passed bool, baseline, candidate SourceIdentity, initi
 		GeneratedAt:            "2026-08-09T00:00:00Z",
 		RouteID:                "R00",
 		Mode:                   string(visual.PixelModeCandidateComparison),
-		Source:                 visual.PixelSourceIdentity{BaseRevision: candidate.BaseRevision, OverlayHash: candidate.OverlayHash, InventorySHA256: candidate.InventorySHA256},
-		BaselineSource:         &visual.PixelSourceIdentity{BaseRevision: baseline.BaseRevision, OverlayHash: baseline.OverlayHash, InventorySHA256: baseline.InventorySHA256},
+		Source:                 compareTestPixelSource(candidate),
+		BaselineSource:         ptrCompareTestPixelSource(baseline),
+		SourceRelation:         "candidate-compared-to-baseline",
 		BackendRequirement:     "webgpu",
-		HardwareClassification: "headless-logic",
+		BackendSelection:       comparePixelBackendSelection("webgpu"),
+		HardwareClassification: "hardware-webgpu",
+		Viewport:               visual.ViewportEvidence{Width: 1280, Height: 720, DPR: 1},
+		Selected:               visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: visual.DefaultPixelCanvasSelector, CanvasCount: 1, MountCount: 1},
 		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 1},
+		SettlePolicy:           comparePixelSettlePolicy(),
 		States: []visual.PixelStateEvidence{
-			{State: "initial", Captures: []visual.PixelCaptureEvidence{initial}},
-			{State: "settled", Captures: []visual.PixelCaptureEvidence{settled}},
+			{State: "initial", Settle: comparePixelSettle(10, false), Batch: comparePixelBatch("R00-initial-batch", "initial", 10, false), Captures: []visual.PixelCaptureEvidence{initial}},
+			{State: "settled", Settle: comparePixelSettle(40, true), Batch: comparePixelBatch("R00-settled-batch", "settled", 40, true), Captures: []visual.PixelCaptureEvidence{settled}},
 		},
 	}
 }
 
-func compareBaselinePixelManifest(source SourceIdentity, initial, settled visual.PixelCaptureEvidence) visual.PixelEvidenceManifest {
+func compareBaselinePixelManifest(t *testing.T, source SourceIdentity, initial, settled visual.PixelCaptureEvidence) visual.PixelEvidenceManifest {
+	t.Helper()
+	initial = completeComparePixelCapture(initial, "initial", 0, "webgpu")
+	settled = completeComparePixelCapture(settled, "settled", 0, "webgpu")
 	return visual.PixelEvidenceManifest{
 		SchemaVersion:          visual.OuroborosPixelSchemaVersion,
 		GeneratedAt:            "2026-08-09T00:00:00Z",
 		RouteID:                "R00",
 		Mode:                   string(visual.PixelModeRecordBaseline),
-		Source:                 visual.PixelSourceIdentity{BaseRevision: source.BaseRevision, OverlayHash: source.OverlayHash, InventorySHA256: source.InventorySHA256},
+		Source:                 compareTestPixelSource(source),
 		BackendRequirement:     "webgpu",
+		BackendSelection:       comparePixelBackendSelection("webgpu"),
 		Certified:              true,
-		HardwareClassification: "headless-logic",
+		HardwareClassification: "hardware-webgpu",
+		Viewport:               visual.ViewportEvidence{Width: 1280, Height: 720, DPR: 1},
+		Selected:               visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: visual.DefaultPixelCanvasSelector, CanvasCount: 1, MountCount: 1},
 		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 1},
+		SettlePolicy:           comparePixelSettlePolicy(),
 		States: []visual.PixelStateEvidence{
-			{State: "initial", Captures: []visual.PixelCaptureEvidence{initial}},
-			{State: "settled", Captures: []visual.PixelCaptureEvidence{settled}},
+			{State: "initial", Settle: comparePixelSettle(10, false), Batch: comparePixelBatch("R00-initial-batch", "initial", 10, false), Captures: comparePixelCaptureSeries(t, initial, "initial", 3)},
+			{State: "settled", Settle: comparePixelSettle(40, true), Batch: comparePixelBatch("R00-settled-batch", "settled", 40, true), Captures: comparePixelCaptureSeries(t, settled, "settled", 3)},
 		},
 	}
+}
+
+func comparePixelBackendSelection(backend string) visual.PixelBackendSelection {
+	return visual.PixelBackendSelection{RequestedBackend: backend, RuntimeObservedBackend: backend, PreNavigationHook: "gosx-o02-clear-force-webgl-new-document"}
+}
+
+func compareTestPixelSource(source SourceIdentity) visual.PixelSourceIdentity {
+	overlay := source.OverlayHash
+	if overlay == "clean" {
+		overlay = "sha256:clean"
+	}
+	return visual.PixelSourceIdentity{BaseRevision: source.BaseRevision, OverlayHash: overlay, InventorySHA256: source.InventorySHA256}
+}
+
+func ptrCompareTestPixelSource(source SourceIdentity) *visual.PixelSourceIdentity {
+	out := compareTestPixelSource(source)
+	return &out
+}
+
+func comparePixelSettlePolicy() visual.PixelSettlePolicy {
+	return visual.PixelSettlePolicy{WarmupFrames: 30, WarmupAnchor: "initial-observed-frame", RuntimeRenderLoopRequired: true, StaticStoppedAllowsNoAdvance: true, RAFGate: visual.PixelRAFGatePolicy{SchemaVersion: "gosx.ouroboros.raf-gate.v1", Strategy: "raf-batch-gate", Enabled: true, DrainTicks: 2, TemporaryGlobal: true, NonceKeyed: true, NonEnumerable: true, NegativeSyntheticIDs: true, NativeTimestampResume: true, CapturesUseStableClip: true, FailClosedRestore: true, ResumeBeforeNextReadinessWait: true}}
+}
+
+func comparePixelSettle(frame int, settled bool) visual.PixelSettleResult {
+	if settled {
+		return visual.PixelSettleResult{RequiredFrame: 40, ObservedFrame: 10, AdvanceRequired: false, StaticAccepted: true, RenderLoop: visual.RenderLoopEvidence{State: "stopped", Reason: "static", Active: false, WantsAnimation: false, StateParsed: true, WantsAnimationParsed: true, Valid: true}}
+	}
+	return visual.PixelSettleResult{RequiredFrame: frame, ObservedFrame: frame, AdvanceRequired: false, StaticAccepted: false, RenderLoop: visual.RenderLoopEvidence{State: "active", Reason: "runtime-program", Active: true, WantsAnimation: true, StateParsed: true, WantsAnimationParsed: true, Valid: true}}
+}
+
+func comparePixelBatch(id, state string, frame int, settled bool) visual.PixelBatchEvidence {
+	loop := comparePixelSettle(frame, settled).RenderLoop
+	if settled {
+		frame = 10
+	}
+	snapshot := visual.PixelBatchSnapshot{Visible: true, Focused: true, Backend: "webgpu", Renderer: "webgpu", FrameSeq: frame, RuntimeTruthParsed: true, RenderLoopState: loop.State, RenderLoopActive: loop.Active, WantsAnimation: loop.WantsAnimation, Clip: visual.PixelCanvasClipEvidence{Width: 16, Height: 16, Scale: 1, Stable: true}}
+	return visual.PixelBatchEvidence{ID: id, State: state, Acquired: true, Released: true, ReleaseProved: true, NonceHash: "sha256:" + strings.Repeat("1", 64), GlobalKeyHash: "sha256:" + strings.Repeat("2", 64), DrainTicks: 2, NativeTickCount: 2, QueueAfterDrain: 1, QueueBeforeRelease: 1, Delivered: 1, Restored: true, Cleaned: true, Clip: snapshot.Clip, BeforeAcquire: snapshot, Before: snapshot, After: snapshot}
+}
+
+func completeComparePixelCapture(capture visual.PixelCaptureEvidence, state string, index int, backend string) visual.PixelCaptureEvidence {
+	capture.Index = index
+	capture.Backend = backend
+	capture.Renderer = backend
+	capture.RuntimeTruthParsed = true
+	capture.RuntimeGPU = true
+	capture.Implementation = backend
+	capture.HardwareClass = "hardware-" + backend
+	capture.FrameSeq = 10
+	capture.BatchID = "R00-" + state + "-batch"
+	capture.RenderLoop = comparePixelSettle(capture.FrameSeq, state == "settled").RenderLoop
+	capture.Selected = visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: visual.DefaultPixelCanvasSelector, CanvasCount: 1, MountCount: 1}
+	capture.WebGPU = visual.WebGPUEvidence{Available: true, AdapterName: "NVIDIA RTX", Vendor: "NVIDIA Corporation", Description: "NVIDIA RTX", AdapterInfo: map[string]interface{}{"vendor": "NVIDIA Corporation", "description": "NVIDIA RTX"}}
+	capture.Viewport = visual.ViewportEvidence{Width: 1280, Height: 720, DPR: 1, CanvasWidth: 16, CanvasHeight: 16, CanvasCSSWidth: 16, CanvasCSSHeight: 16, EffectiveDPR: 1}
+	return capture
+}
+
+func comparePixelCaptureSeries(t *testing.T, first visual.PixelCaptureEvidence, state string, count int) []visual.PixelCaptureEvidence {
+	t.Helper()
+	data, err := os.ReadFile(first.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]visual.PixelCaptureEvidence, 0, count)
+	for i := 0; i < count; i++ {
+		capture := first
+		capture.Index = i
+		if i > 0 {
+			path := strings.Replace(first.Path, "-00.png", fmt.Sprintf("-%02d.png", i), 1)
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			hash, err := sha256File(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			capture.Path = path
+			capture.SHA256 = strings.TrimPrefix(hash, "sha256:")
+			capture.Bytes = len(data)
+		}
+		capture = completeComparePixelCapture(capture, state, i, "webgpu")
+		capture.Comparison = &visual.PixelComparison{BaselinePath: capture.Path, DiffPct: 0, Mismatched: 0, Total: capture.Width * capture.Height, DimensionsMatch: true, Similarity: 1, BaselineThresholdPct: 1, EffectiveThresholdPct: 1, Passed: true}
+		out = append(out, capture)
+	}
+	return out
 }
 
 func writeTestPNG(t *testing.T, path string, producerStyle bool) visual.PixelCaptureEvidence {
@@ -1191,9 +1556,12 @@ func writeTestPNG(t *testing.T, path string, producerStyle bool) visual.PixelCap
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
-	img.Set(0, 0, color.RGBA{R: 255, A: 255})
-	img.Set(1, 0, color.RGBA{B: 255, A: 255})
+	img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(20 + x*11), G: uint8(30 + y*13), B: uint8(60 + x*y), A: 255})
+		}
+	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatal(err)
@@ -1215,7 +1583,43 @@ func writeTestPNG(t *testing.T, path string, producerStyle bool) visual.PixelCap
 		hashValue = strings.TrimPrefix(hashValue, "sha256:")
 		capturePath = path
 	}
-	return visual.PixelCaptureEvidence{Index: 0, Path: capturePath, SHA256: hashValue, Bytes: buf.Len(), Width: 2, Height: 1}
+	return visual.PixelCaptureEvidence{Index: 0, Path: capturePath, SHA256: hashValue, Bytes: buf.Len(), Width: 16, Height: 16}
+}
+
+func writeOnePixelChangedTestPNG(t *testing.T, path string, producerStyle bool) visual.PixelCaptureEvidence {
+	capture := writeTestPNG(t, path, producerStyle)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rgba := image.NewRGBA(img.Bounds())
+	for y := img.Bounds().Min.Y; y < img.Bounds().Max.Y; y++ {
+		for x := img.Bounds().Min.X; x < img.Bounds().Max.X; x++ {
+			rgba.Set(x, y, img.At(x, y))
+		}
+	}
+	rgba.SetRGBA(0, 0, color.RGBA{R: 255, G: 255, B: 255, A: 255})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, rgba); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := sha256File(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture.SHA256 = hash
+	if producerStyle {
+		capture.SHA256 = strings.TrimPrefix(hash, "sha256:")
+	}
+	capture.Bytes = buf.Len()
+	return capture
 }
 
 func runSmokeCompare(t *testing.T, baselineRoot, candidateRoot string) *CompareReport {
@@ -1231,6 +1635,56 @@ func runSmokeCompare(t *testing.T, baselineRoot, candidateRoot string) *CompareR
 		t.Fatal(err)
 	}
 	return report
+}
+
+func mustComparePathSet(t *testing.T, root string) comparePathSet {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return comparePathSet{root: abs, rootReal: real}
+}
+
+func assertNoCompareDiffPNGs(t *testing.T, roots ...string) {
+	t.Helper()
+	for _, root := range roots {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() && strings.HasSuffix(path, ".diff.png") {
+				t.Fatalf("unexpected diff artifact under %s: %s", root, path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", root, err)
+		}
+	}
+}
+
+func chmodCompareTree(t *testing.T, root string, dirMode, fileMode os.FileMode) {
+	t.Helper()
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		mode := fileMode
+		if info.IsDir() {
+			mode = dirMode
+		}
+		return os.Chmod(path, mode)
+	}); err != nil {
+		t.Fatalf("chmod tree %s: %v", root, err)
+	}
 }
 
 func compareBudgetPath(t *testing.T) string {

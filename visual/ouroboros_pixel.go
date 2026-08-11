@@ -3,6 +3,7 @@ package visual
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,7 +24,8 @@ import (
 )
 
 const (
-	OuroborosPixelSchemaVersion   = "gosx.ouroboros.pixels.v1"
+	OuroborosPixelSchemaVersion   = "gosx.ouroboros.pixels.v2"
+	ouroborosPixelLegacySchemaV1  = "gosx.ouroboros.pixels.v1"
 	DefaultPixelCanvasSelector    = "canvas[data-gosx-scene3d-canvas], [data-gosx-scene3d-ready] canvas, [data-gosx-scene3d-mounted] canvas"
 	MaxCanonicalPixelThresholdPct = 1.0
 	MaxPixelEvidenceSamples       = 10
@@ -135,6 +137,7 @@ type ViewportEvidence struct {
 type PixelStateEvidence struct {
 	State    string                 `json:"state"`
 	Settle   PixelSettleResult      `json:"settle"`
+	Batch    PixelBatchEvidence     `json:"batch"`
 	Captures []PixelCaptureEvidence `json:"captures"`
 }
 
@@ -158,6 +161,7 @@ type PixelCaptureEvidence struct {
 	SoftwareRaster     bool                      `json:"softwareRaster"`
 	HardwareClass      string                    `json:"hardwareClass"`
 	FrameSeq           int                       `json:"frameSeq"`
+	BatchID            string                    `json:"batchID"`
 	RenderLoop         RenderLoopEvidence        `json:"renderLoop"`
 	Post               PostEvidence              `json:"post"`
 	ShaderDiagnostics  ShaderDiagnosticsEvidence `json:"shaderDiagnostics"`
@@ -217,9 +221,26 @@ type PixelThresholdEvidence struct {
 }
 
 type PixelSettlePolicy struct {
-	WarmupFrames                 int  `json:"warmupFrames"`
-	RuntimeRenderLoopRequired    bool `json:"runtimeRenderLoopRequired"`
-	StaticStoppedAllowsNoAdvance bool `json:"staticStoppedAllowsNoAdvance"`
+	WarmupFrames                 int                `json:"warmupFrames"`
+	WarmupAnchor                 string             `json:"warmupAnchor"`
+	RuntimeRenderLoopRequired    bool               `json:"runtimeRenderLoopRequired"`
+	StaticStoppedAllowsNoAdvance bool               `json:"staticStoppedAllowsNoAdvance"`
+	RAFGate                      PixelRAFGatePolicy `json:"rafGate"`
+}
+
+type PixelRAFGatePolicy struct {
+	SchemaVersion                 string `json:"schemaVersion"`
+	Strategy                      string `json:"strategy"`
+	Enabled                       bool   `json:"enabled"`
+	DrainTicks                    int    `json:"drainTicks"`
+	TemporaryGlobal               bool   `json:"temporaryGlobal"`
+	NonceKeyed                    bool   `json:"nonceKeyed"`
+	NonEnumerable                 bool   `json:"nonEnumerable"`
+	NegativeSyntheticIDs          bool   `json:"negativeSyntheticIDs"`
+	NativeTimestampResume         bool   `json:"nativeTimestampResume"`
+	CapturesUseStableClip         bool   `json:"capturesUseStableClip"`
+	FailClosedRestore             bool   `json:"failClosedRestore"`
+	ResumeBeforeNextReadinessWait bool   `json:"resumeBeforeNextReadinessWait"`
 }
 
 type PixelSettleResult struct {
@@ -240,18 +261,68 @@ type RenderLoopEvidence struct {
 	Valid                bool   `json:"valid"`
 }
 
+type PixelBatchEvidence struct {
+	ID                 string                  `json:"id"`
+	State              string                  `json:"state"`
+	Acquired           bool                    `json:"acquired"`
+	Released           bool                    `json:"released"`
+	ReleaseProved      bool                    `json:"releaseProved"`
+	NonceHash          string                  `json:"nonceHash"`
+	GlobalKeyHash      string                  `json:"globalKeyHash"`
+	GlobalEnumerable   bool                    `json:"globalEnumerable"`
+	DrainTicks         int                     `json:"drainTicks"`
+	NativeTickCount    int                     `json:"nativeTickCount"`
+	QueueBefore        int                     `json:"queueBefore"`
+	QueueAfterDrain    int                     `json:"queueAfterDrain"`
+	QueueBeforeRelease int                     `json:"queueBeforeRelease"`
+	Cancelled          int                     `json:"cancelled"`
+	CancelDelivered    bool                    `json:"cancelDelivered"`
+	Delivered          int                     `json:"delivered"`
+	Restored           bool                    `json:"restored"`
+	Cleaned            bool                    `json:"cleaned"`
+	Clip               PixelCanvasClipEvidence `json:"clip"`
+	BeforeAcquire      PixelBatchSnapshot      `json:"beforeAcquire"`
+	Before             PixelBatchSnapshot      `json:"before"`
+	After              PixelBatchSnapshot      `json:"after"`
+	Errors             []string                `json:"errors,omitempty"`
+	globalKey          string
+}
+
+type PixelCanvasClipEvidence struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+	Scale  float64 `json:"scale"`
+	Stable bool    `json:"stable"`
+}
+
+type PixelBatchSnapshot struct {
+	Visible            bool                    `json:"visible"`
+	Focused            bool                    `json:"focused"`
+	Backend            string                  `json:"backend"`
+	Renderer           string                  `json:"renderer"`
+	FrameSeq           int                     `json:"frameSeq"`
+	RuntimeTruthParsed bool                    `json:"runtimeTruthParsed"`
+	RenderLoopState    string                  `json:"renderLoopState"`
+	RenderLoopActive   bool                    `json:"renderLoopActive"`
+	WantsAnimation     bool                    `json:"wantsAnimation"`
+	Clip               PixelCanvasClipEvidence `json:"clip"`
+}
+
 type pagePixelMetadata struct {
-	DevicePixelRatio float64               `json:"devicePixelRatio"`
-	EffectiveDPR     float64               `json:"effectiveDPR"`
-	Canvas           ViewportEvidence      `json:"canvas"`
-	Selected         SelectedSceneEvidence `json:"selected"`
-	Mount            sceneMountBackend     `json:"mount"`
-	Truth            sceneTruthEvidence    `json:"truth"`
-	RenderLoop       RenderLoopEvidence    `json:"renderLoop"`
-	WebGPU           WebGPUEvidence        `json:"webgpu"`
-	WebGL            WebGLEvidence         `json:"webgl"`
-	UserAgent        string                `json:"userAgent"`
-	Errors           []string              `json:"errors"`
+	DevicePixelRatio float64                 `json:"devicePixelRatio"`
+	EffectiveDPR     float64                 `json:"effectiveDPR"`
+	Clip             PixelCanvasClipEvidence `json:"clip"`
+	Canvas           ViewportEvidence        `json:"canvas"`
+	Selected         SelectedSceneEvidence   `json:"selected"`
+	Mount            sceneMountBackend       `json:"mount"`
+	Truth            sceneTruthEvidence      `json:"truth"`
+	RenderLoop       RenderLoopEvidence      `json:"renderLoop"`
+	WebGPU           WebGPUEvidence          `json:"webgpu"`
+	WebGL            WebGLEvidence           `json:"webgl"`
+	UserAgent        string                  `json:"userAgent"`
+	Errors           []string                `json:"errors"`
 }
 
 type sceneTruthEvidence struct {
@@ -397,17 +468,30 @@ func CapturePixelEvidence(ctx context.Context, url string, opts PixelEvidenceOpt
 	if err != nil {
 		return writePixelManifestWithError(manifest, runOpts, err)
 	}
-	initialFrame := initialSettle.ObservedFrame
-	for _, state := range []struct {
-		name            string
-		wait            time.Duration
-		minFrame        int
-		allowStatic     bool
-		advanceRequired bool
-	}{
-		{name: "initial", wait: opts.InitialWait, minFrame: initialFrame},
-		{name: "settled", wait: opts.SettledWait, minFrame: initialFrame + opts.WarmupFrames, allowStatic: true, advanceRequired: true},
-	} {
+	manifest.SettlePolicy.WarmupAnchor = "initial-observed-frame"
+	var recordedInitialState *PixelStateEvidence
+	for _, stateName := range []string{"initial", "settled"} {
+		state := struct {
+			name            string
+			wait            time.Duration
+			minFrame        int
+			allowStatic     bool
+			advanceRequired bool
+		}{name: stateName}
+		switch stateName {
+		case "initial":
+			state.wait = opts.InitialWait
+			state.minFrame = initialSettle.ObservedFrame
+		case "settled":
+			settledMinFrame, err := pixelSettledMinFrameFromInitial(recordedInitialState, opts.WarmupFrames)
+			if err != nil {
+				return writePixelManifestWithError(manifest, runOpts, err)
+			}
+			state.wait = opts.SettledWait
+			state.minFrame = settledMinFrame
+			state.allowStatic = true
+			state.advanceRequired = true
+		}
 		if state.wait > 0 {
 			if err := chromedp.Run(runCtx, chromedp.Sleep(state.wait)); err != nil {
 				return writePixelManifestWithError(manifest, runOpts, fmt.Errorf("visual: wait %s: %w", state.name, err))
@@ -417,12 +501,34 @@ func CapturePixelEvidence(ctx context.Context, url string, opts PixelEvidenceOpt
 		if err != nil {
 			return writePixelManifestWithError(manifest, runOpts, fmt.Errorf("visual: %s readiness: %w", state.name, err))
 		}
-		stateEvidence := PixelStateEvidence{State: state.name, Settle: settle}
+		batch, err := acquirePixelBatch(runCtx, runOpts, state.name)
+		if err != nil {
+			if batch.globalKey != "" {
+				releaseCtx, cancel := context.WithTimeout(browserCtx, 2*time.Second)
+				_, _ = releasePixelBatch(releaseCtx, batch)
+				cancel()
+			}
+			return writePixelManifestWithError(manifest, runOpts, fmt.Errorf("visual: acquire %s rAF gate: %w", state.name, err))
+		}
+		released := false
+		releaseBatch := func(_ error) (PixelBatchEvidence, error) {
+			releaseCtx, cancel := context.WithTimeout(browserCtx, 2*time.Second)
+			defer cancel()
+			next, releaseErr := releasePixelBatch(releaseCtx, batch)
+			released = true
+			if releaseErr != nil {
+				next.Errors = append(next.Errors, releaseErr.Error())
+			}
+			return next, releaseErr
+		}
+		stateEvidence := PixelStateEvidence{State: state.name, Settle: settle, Batch: batch}
 		var withinRunBaseline []byte
 		var withinRunBaselinePath string
 		for i := 0; i < opts.Samples; i++ {
-			capture, pngBytes, err := capturePixelEvidenceSample(runCtx, runOpts, &manifest, state.name, i)
+			capture, pngBytes, err := capturePixelEvidenceSample(runCtx, runOpts, &manifest, state.name, i, batch)
 			if err != nil {
+				stateEvidence.Batch, _ = releaseBatch(err)
+				manifest.States = append(manifest.States, stateEvidence)
 				return writePixelManifestWithError(manifest, runOpts, err)
 			}
 			manifest.Selected = captureSelectedFromMeta(capture, manifest.Selected)
@@ -437,6 +543,8 @@ func CapturePixelEvidence(ctx context.Context, url string, opts PixelEvidenceOpt
 			if opts.Mode == PixelModeCandidateComparison {
 				comparison, err := compareAgainstStoredBaseline(*baseline, state.name, i, pngBytes, capture.Path, opts.ThresholdPct)
 				if err != nil {
+					stateEvidence.Batch, _ = releaseBatch(err)
+					manifest.States = append(manifest.States, stateEvidence)
 					return writePixelManifestWithError(manifest, runOpts, err)
 				}
 				capture.Comparison = &comparison
@@ -450,6 +558,8 @@ func CapturePixelEvidence(ctx context.Context, url string, opts PixelEvidenceOpt
 			} else {
 				comparison, err := ComparePixelEvidence(withinRunBaseline, pngBytes, withinRunBaselinePath, capture.Path, opts.ThresholdPct)
 				if err != nil {
+					stateEvidence.Batch, _ = releaseBatch(err)
+					manifest.States = append(manifest.States, stateEvidence)
 					return writePixelManifestWithError(manifest, runOpts, err)
 				}
 				capture.Comparison = &comparison
@@ -459,7 +569,18 @@ func CapturePixelEvidence(ctx context.Context, url string, opts PixelEvidenceOpt
 			}
 			stateEvidence.Captures = append(stateEvidence.Captures, capture)
 		}
+		stateEvidence.Batch, err = releaseBatch(nil)
+		if err != nil {
+			manifest.States = append(manifest.States, stateEvidence)
+			return writePixelManifestWithError(manifest, runOpts, fmt.Errorf("visual: release %s rAF gate: %w", state.name, err))
+		}
+		if !released {
+			stateEvidence.Batch.Errors = append(stateEvidence.Batch.Errors, "rAF gate release was not attempted")
+		}
 		manifest.States = append(manifest.States, stateEvidence)
+		if state.name == "initial" {
+			recordedInitialState = &manifest.States[len(manifest.States)-1]
+		}
 	}
 	manifest.Failures = append(manifest.Failures, validateManifestCertification(opts, manifest)...)
 	if opts.Mode == PixelModeCandidateComparison && baseline != nil {
@@ -502,8 +623,23 @@ func newPixelManifest(url string, opts PixelEvidenceOptions) PixelEvidenceManife
 		},
 		SettlePolicy: PixelSettlePolicy{
 			WarmupFrames:                 opts.WarmupFrames,
+			WarmupAnchor:                 "initial-observed-frame",
 			RuntimeRenderLoopRequired:    true,
 			StaticStoppedAllowsNoAdvance: true,
+			RAFGate: PixelRAFGatePolicy{
+				SchemaVersion:                 "gosx.ouroboros.raf-gate.v1",
+				Strategy:                      "raf-batch-gate",
+				Enabled:                       true,
+				DrainTicks:                    2,
+				TemporaryGlobal:               true,
+				NonceKeyed:                    true,
+				NonEnumerable:                 true,
+				NegativeSyntheticIDs:          true,
+				NativeTimestampResume:         true,
+				CapturesUseStableClip:         true,
+				FailClosedRestore:             true,
+				ResumeBeforeNextReadinessWait: true,
+			},
 		},
 		States: []PixelStateEvidence{},
 		Selected: SelectedSceneEvidence{
@@ -714,6 +850,13 @@ func waitForSceneReady(ctx context.Context, opts PixelEvidenceOptions, manifest 
 	return PixelSettleResult{}, fmt.Errorf("visual: scene did not reach frame %d for selector %q; last frame=%d renderLoop=%s/%s wantsAnimation=%v errors=%v", target.MinFrame, opts.CanvasSelector, last.Truth.FrameSeq, last.RenderLoop.State, last.RenderLoop.Reason, last.RenderLoop.WantsAnimation, last.Errors)
 }
 
+func pixelSettledMinFrameFromInitial(initial *PixelStateEvidence, warmupFrames int) (int, error) {
+	if initial == nil || initial.State != "initial" || initial.Settle.ObservedFrame <= 0 {
+		return 0, fmt.Errorf("visual: initial state was not recorded before settled planning")
+	}
+	return initial.Settle.ObservedFrame + warmupFrames, nil
+}
+
 func renderLoopIsStaticStopped(loop RenderLoopEvidence) bool {
 	return len(validateRenderLoopEvidence(loop)) == 0 && !loop.Active && !loop.WantsAnimation && loop.State == "stopped" && loop.Reason == "static"
 }
@@ -746,7 +889,68 @@ func readPixelMetadata(ctx context.Context, opts PixelEvidenceOptions) (pagePixe
 	return meta, nil
 }
 
-func capturePixelEvidenceSample(ctx context.Context, opts PixelEvidenceOptions, manifest *PixelEvidenceManifest, state string, index int) (PixelCaptureEvidence, []byte, error) {
+func acquirePixelBatch(ctx context.Context, opts PixelEvidenceOptions, state string) (PixelBatchEvidence, error) {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return PixelBatchEvidence{}, fmt.Errorf("nonce: %w", err)
+	}
+	nonceHex := hex.EncodeToString(nonce[:])
+	batchID := safeName(opts.RouteID) + "-" + state + "-" + nonceHex[:12]
+	globalKey := "__gosx_pixel_raf_gate_" + nonceHex
+	nonceHash := sha256.Sum256([]byte(nonceHex))
+	keyHash := sha256.Sum256([]byte(globalKey))
+	batch := PixelBatchEvidence{
+		ID:            batchID,
+		State:         state,
+		NonceHash:     "sha256:" + hex.EncodeToString(nonceHash[:]),
+		GlobalKeyHash: "sha256:" + hex.EncodeToString(keyHash[:]),
+		globalKey:     globalKey,
+	}
+	expr := fmt.Sprintf(pixelRAFGateAcquireJS, jsLiteral(opts.CanvasSelector), jsLiteral(state), jsLiteral(batchID), jsLiteral(nonceHex), jsLiteral(globalKey))
+	var acquired PixelBatchEvidence
+	if err := chromedp.Run(ctx, chromedp.Evaluate(expr, &acquired, func(p *cdpRuntime.EvaluateParams) *cdpRuntime.EvaluateParams {
+		return p.WithAwaitPromise(true)
+	})); err != nil {
+		return batch, err
+	}
+	batch = acquired
+	batch.globalKey = globalKey
+	if !batch.Acquired {
+		return batch, fmt.Errorf("gate did not acquire: %s", strings.Join(batch.Errors, "; "))
+	}
+	return batch, nil
+}
+
+func releasePixelBatch(ctx context.Context, batch PixelBatchEvidence) (PixelBatchEvidence, error) {
+	if batch.globalKey == "" || batch.GlobalKeyHash == "" {
+		batch.Errors = append(batch.Errors, "missing rAF gate lease")
+		return batch, fmt.Errorf("missing rAF gate lease")
+	}
+	var released PixelBatchEvidence
+	expr := fmt.Sprintf(pixelRAFGateReleaseJS, jsLiteral(batch.ID), jsLiteral(batch.GlobalKeyHash), jsLiteral(batch.globalKey))
+	if err := chromedp.Run(ctx, chromedp.Evaluate(expr, &released, func(p *cdpRuntime.EvaluateParams) *cdpRuntime.EvaluateParams {
+		return p.WithAwaitPromise(true)
+	})); err != nil {
+		batch.Errors = append(batch.Errors, err.Error())
+		return batch, err
+	}
+	batch.Released = released.Released
+	batch.ReleaseProved = released.ReleaseProved
+	batch.QueueBeforeRelease = released.QueueBeforeRelease
+	batch.Cancelled = released.Cancelled
+	batch.CancelDelivered = released.CancelDelivered
+	batch.Delivered = released.Delivered
+	batch.Restored = released.Restored
+	batch.Cleaned = released.Cleaned
+	batch.After = released.After
+	batch.Errors = append(batch.Errors, released.Errors...)
+	if !batch.ReleaseProved {
+		return batch, fmt.Errorf("gate release did not prove restore and cleanup: %s", strings.Join(batch.Errors, "; "))
+	}
+	return batch, nil
+}
+
+func capturePixelEvidenceSample(ctx context.Context, opts PixelEvidenceOptions, manifest *PixelEvidenceManifest, state string, index int, batch PixelBatchEvidence) (PixelCaptureEvidence, []byte, error) {
 	meta, err := readPixelMetadata(ctx, opts)
 	if err != nil {
 		return PixelCaptureEvidence{}, nil, fmt.Errorf("visual: metadata %s sample %d: %w", state, index, err)
@@ -758,8 +962,11 @@ func capturePixelEvidenceSample(ctx context.Context, opts PixelEvidenceOptions, 
 	if err := validateSelectedMeta(opts, meta); err != nil {
 		return PixelCaptureEvidence{}, nil, err
 	}
+	if err := validateBatchCaptureMeta(batch, meta); err != nil {
+		return PixelCaptureEvidence{}, nil, fmt.Errorf("visual: %s sample %d rAF gate: %w", state, index, err)
+	}
 	var pngBytes []byte
-	if err := chromedp.Run(ctx, chromedp.Screenshot(opts.CanvasSelector, &pngBytes, chromedp.NodeVisible, chromedp.ByQuery)); err != nil {
+	if err := capturePixelClip(ctx, batch.Clip, &pngBytes); err != nil {
 		return PixelCaptureEvidence{}, nil, fmt.Errorf("visual: capture %s sample %d: %w", state, index, err)
 	}
 	if len(pngBytes) == 0 {
@@ -814,6 +1021,7 @@ func capturePixelEvidenceSample(ctx context.Context, opts PixelEvidenceOptions, 
 		SoftwareRaster:     software,
 		HardwareClass:      class,
 		FrameSeq:           meta.Truth.FrameSeq,
+		BatchID:            batch.ID,
 		RenderLoop:         meta.RenderLoop,
 		Post:               meta.Truth.Post,
 		ShaderDiagnostics:  meta.Truth.ShaderDiagnostics,
@@ -863,6 +1071,61 @@ func validateSelectedMeta(opts PixelEvidenceOptions, meta pagePixelMetadata) err
 	return checkBackendRequirement("O0.2 pixel capture", opts.Backend, []sceneMountBackend{meta.Mount})
 }
 
+func validateBatchCaptureMeta(batch PixelBatchEvidence, meta pagePixelMetadata) error {
+	if batch.ID == "" || !batch.Acquired {
+		return fmt.Errorf("batch is not acquired")
+	}
+	if !batch.Before.Visible || !batch.Before.Focused {
+		return fmt.Errorf("batch was acquired while hidden or unfocused")
+	}
+	if !meta.Truth.Parsed {
+		return fmt.Errorf("runtime truth is not parsed")
+	}
+	if meta.Truth.Backend != batch.Before.Backend {
+		return fmt.Errorf("backend flipped from %s to %s", batch.Before.Backend, meta.Truth.Backend)
+	}
+	if meta.Truth.Renderer != batch.Before.Renderer {
+		return fmt.Errorf("renderer flipped from %s to %s", batch.Before.Renderer, meta.Truth.Renderer)
+	}
+	if meta.Truth.FrameSeq != batch.Before.FrameSeq {
+		return fmt.Errorf("frame drifted from %d to %d", batch.Before.FrameSeq, meta.Truth.FrameSeq)
+	}
+	if err := validateStablePixelClip(batch.Clip, "batch"); err != nil {
+		return err
+	}
+	if !samePixelClip(batch.Clip, meta.Clip) {
+		return fmt.Errorf("canvas clip shifted from batch %.6f/%.6f %.6fx%.6f scale %.6f to %.6f/%.6f %.6fx%.6f scale %.6f", batch.Clip.X, batch.Clip.Y, batch.Clip.Width, batch.Clip.Height, batch.Clip.Scale, meta.Clip.X, meta.Clip.Y, meta.Clip.Width, meta.Clip.Height, meta.Clip.Scale)
+	}
+	return nil
+}
+
+func capturePixelClip(ctx context.Context, clip PixelCanvasClipEvidence, out *[]byte) error {
+	if err := validateStablePixelClip(clip, "stable canvas"); err != nil {
+		return err
+	}
+	var data []byte
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		buf, err := page.CaptureScreenshot().
+			WithFormat(page.CaptureScreenshotFormatPng).
+			WithClip(&page.Viewport{
+				X:      clip.X,
+				Y:      clip.Y,
+				Width:  clip.Width,
+				Height: clip.Height,
+				Scale:  clip.Scale,
+			}).Do(ctx)
+		if err != nil {
+			return err
+		}
+		data = buf
+		return nil
+	})); err != nil {
+		return err
+	}
+	*out = data
+	return nil
+}
+
 func validateCapture(opts PixelEvidenceOptions, capture PixelCaptureEvidence) []string {
 	var failures []string
 	failures = append(failures, validateCertifiedCapture(opts, capture)...)
@@ -870,6 +1133,14 @@ func validateCapture(opts PixelEvidenceOptions, capture PixelCaptureEvidence) []
 }
 
 func validateCertifiedCapture(opts PixelEvidenceOptions, capture PixelCaptureEvidence) []string {
+	failures := validateCertifiedCaptureFacts(opts, capture)
+	if _, err := os.Stat(capture.Path); err != nil {
+		failures = append(failures, fmt.Sprintf("%s is missing: %v", capture.Path, err))
+	}
+	return failures
+}
+
+func validateCertifiedCaptureFacts(opts PixelEvidenceOptions, capture PixelCaptureEvidence) []string {
 	var failures []string
 	if capture.SHA256 == "" || len(capture.SHA256) != 64 {
 		failures = append(failures, fmt.Sprintf("%s sample %d has invalid SHA-256", capture.Path, capture.Index))
@@ -879,9 +1150,6 @@ func validateCertifiedCapture(opts PixelEvidenceOptions, capture PixelCaptureEvi
 	}
 	if err := validatePixelImageBounds(capture.Width, capture.Height); err != nil {
 		failures = append(failures, fmt.Sprintf("%s manifest dimensions are outside canonical bounds: %v", capture.Path, err))
-	}
-	if _, err := os.Stat(capture.Path); err != nil {
-		failures = append(failures, fmt.Sprintf("%s is missing: %v", capture.Path, err))
 	}
 	if capture.Placeholder || capture.Blank {
 		failures = append(failures, fmt.Sprintf("%s is blank or near-uniform", capture.Path))
@@ -910,6 +1178,12 @@ func validateCertifiedCapture(opts PixelEvidenceOptions, capture PixelCaptureEvi
 	if capture.SoftwareRaster || capture.HardwareClass == "software-raster" || capture.HardwareClass == "headless-logic" {
 		failures = append(failures, fmt.Sprintf("%s is not real hardware: %s", capture.Path, capture.HardwareClass))
 	}
+	if capture.Backend == "webgpu" || capture.Backend == "webgl" {
+		wantHardware := "hardware-" + capture.Backend
+		if capture.HardwareClass != wantHardware {
+			failures = append(failures, fmt.Sprintf("%s hardwareClass=%s, want %s", capture.Path, capture.HardwareClass, wantHardware))
+		}
+	}
 	if capture.Backend == "webgpu" {
 		if !webGPUEvidenceHasAdapterIdentity(capture.WebGPU) {
 			failures = append(failures, fmt.Sprintf("%s WebGPU evidence has no adapter identity", capture.Path))
@@ -932,6 +1206,9 @@ func validateCertifiedCapture(opts PixelEvidenceOptions, capture PixelCaptureEvi
 	}
 	if capture.FrameSeq <= 0 {
 		failures = append(failures, fmt.Sprintf("%s has no rendered frame sequence", capture.Path))
+	}
+	if capture.BatchID == "" {
+		failures = append(failures, fmt.Sprintf("%s has no rAF gate batch ID", capture.Path))
 	}
 	if !capture.RenderLoop.Valid {
 		failures = append(failures, fmt.Sprintf("%s has missing or malformed render-loop telemetry", capture.Path))
@@ -966,8 +1243,8 @@ func validateManifestCertification(opts PixelEvidenceOptions, manifest PixelEvid
 	}
 	failures = append(failures, validateSettlePolicy(opts, manifest)...)
 	failures = append(failures, validateManifestSettleRelations(opts, manifest)...)
-	if manifest.HardwareClassification != "hardware-webgpu" && manifest.HardwareClassification != "hardware-webgl" && manifest.HardwareClassification != "mixed-hardware" {
-		failures = append(failures, "record-baseline did not run on certified hardware")
+	if manifest.HardwareClassification != "hardware-"+manifest.BackendRequirement {
+		failures = append(failures, fmt.Sprintf("record-baseline hardwareClassification=%s, want hardware-%s", manifest.HardwareClassification, manifest.BackendRequirement))
 	}
 	if opts.Backend == RequireBackendNone {
 		failures = append(failures, "record-baseline requires explicit backend")
@@ -999,11 +1276,28 @@ func validateSettlePolicy(opts PixelEvidenceOptions, manifest PixelEvidenceManif
 	if manifest.SettlePolicy.WarmupFrames != opts.WarmupFrames {
 		failures = append(failures, fmt.Sprintf("settlePolicy warmupFrames=%d, want %d", manifest.SettlePolicy.WarmupFrames, opts.WarmupFrames))
 	}
+	if manifest.SettlePolicy.WarmupAnchor != "initial-observed-frame" {
+		failures = append(failures, "settlePolicy warmupAnchor must be initial-observed-frame")
+	}
 	if !manifest.SettlePolicy.RuntimeRenderLoopRequired {
 		failures = append(failures, "settlePolicy must require runtime render-loop telemetry")
 	}
 	if !manifest.SettlePolicy.StaticStoppedAllowsNoAdvance {
 		failures = append(failures, "settlePolicy must record static stopped no-advance support")
+	}
+	if manifest.SettlePolicy.RAFGate.SchemaVersion != "gosx.ouroboros.raf-gate.v1" ||
+		manifest.SettlePolicy.RAFGate.Strategy != "raf-batch-gate" ||
+		!manifest.SettlePolicy.RAFGate.Enabled ||
+		manifest.SettlePolicy.RAFGate.DrainTicks != 2 ||
+		!manifest.SettlePolicy.RAFGate.TemporaryGlobal ||
+		!manifest.SettlePolicy.RAFGate.NonceKeyed ||
+		!manifest.SettlePolicy.RAFGate.NonEnumerable ||
+		!manifest.SettlePolicy.RAFGate.NegativeSyntheticIDs ||
+		!manifest.SettlePolicy.RAFGate.NativeTimestampResume ||
+		!manifest.SettlePolicy.RAFGate.CapturesUseStableClip ||
+		!manifest.SettlePolicy.RAFGate.FailClosedRestore ||
+		!manifest.SettlePolicy.RAFGate.ResumeBeforeNextReadinessWait {
+		failures = append(failures, "settlePolicy rafGate is incompatible")
 	}
 	return failures
 }
@@ -1088,14 +1382,27 @@ func validateManifestSettleRelations(opts PixelEvidenceOptions, manifest PixelEv
 	if initial.Settle.AdvanceRequired {
 		failures = append(failures, "initial settle must not require frame advance")
 	}
-	wantSettledRequired := initial.Settle.RequiredFrame + opts.WarmupFrames
+	wantSettledRequired := initial.Settle.ObservedFrame + opts.WarmupFrames
 	if settled.Settle.RequiredFrame != wantSettledRequired {
-		failures = append(failures, fmt.Sprintf("settled settle requiredFrame=%d, want initial requiredFrame %d + warmupFrames %d = %d", settled.Settle.RequiredFrame, initial.Settle.RequiredFrame, opts.WarmupFrames, wantSettledRequired))
+		failures = append(failures, fmt.Sprintf("settled settle requiredFrame=%d, want initial observedFrame %d + warmupFrames %d = %d", settled.Settle.RequiredFrame, initial.Settle.ObservedFrame, opts.WarmupFrames, wantSettledRequired))
 	}
 	for _, state := range []PixelStateEvidence{*initial, *settled} {
+		failures = append(failures, validatePixelStateBatch(state)...)
 		for _, capture := range state.Captures {
 			if capture.FrameSeq < state.Settle.ObservedFrame {
 				failures = append(failures, fmt.Sprintf("%s capture %d frameSeq=%d below settle observedFrame=%d", state.State, capture.Index, capture.FrameSeq, state.Settle.ObservedFrame))
+			}
+			if capture.BatchID != state.Batch.ID {
+				failures = append(failures, fmt.Sprintf("%s capture %d batchID=%q does not match state batch %q", state.State, capture.Index, capture.BatchID, state.Batch.ID))
+			}
+			if capture.Backend != state.Batch.Before.Backend {
+				failures = append(failures, fmt.Sprintf("%s capture %d backend flipped from batch", state.State, capture.Index))
+			}
+			if capture.Renderer != state.Batch.Before.Renderer {
+				failures = append(failures, fmt.Sprintf("%s capture %d renderer flipped from batch", state.State, capture.Index))
+			}
+			if capture.FrameSeq != state.Batch.Before.FrameSeq {
+				failures = append(failures, fmt.Sprintf("%s capture %d frame drifted from batch", state.State, capture.Index))
 			}
 			if state.State == "settled" && state.Settle.StaticAccepted && !renderLoopIsStaticStopped(capture.RenderLoop) {
 				failures = append(failures, fmt.Sprintf("settled capture %d does not carry exact static stopped telemetry", capture.Index))
@@ -1103,6 +1410,108 @@ func validateManifestSettleRelations(opts PixelEvidenceOptions, manifest PixelEv
 		}
 	}
 	return failures
+}
+
+func validatePixelStateBatch(state PixelStateEvidence) []string {
+	var failures []string
+	batch := state.Batch
+	if batch.ID == "" {
+		return []string{state.State + " batch id is empty"}
+	}
+	if batch.State != state.State {
+		failures = append(failures, state.State+" batch state does not match")
+	}
+	if !batch.Acquired {
+		failures = append(failures, state.State+" batch was not acquired")
+	}
+	if !batch.Released || !batch.ReleaseProved || !batch.Restored || !batch.Cleaned {
+		failures = append(failures, state.State+" batch did not prove restore and cleanup")
+	}
+	if !validSHA256Ref(batch.NonceHash) || !validSHA256Ref(batch.GlobalKeyHash) {
+		failures = append(failures, state.State+" batch nonce or global key hash is invalid")
+	}
+	if batch.GlobalEnumerable {
+		failures = append(failures, state.State+" batch temporary global was enumerable")
+	}
+	if batch.DrainTicks != 2 || batch.NativeTickCount != 2 {
+		failures = append(failures, state.State+" batch did not drain exactly two native rAF ticks")
+	}
+	if !batch.Before.Visible || !batch.Before.Focused || !batch.After.Visible || !batch.After.Focused {
+		failures = append(failures, state.State+" batch ran hidden or unfocused")
+	}
+	if !batch.BeforeAcquire.Visible || !batch.BeforeAcquire.Focused {
+		failures = append(failures, state.State+" batch acquire ran hidden or unfocused")
+	}
+	if !batch.Before.RuntimeTruthParsed || !batch.After.RuntimeTruthParsed {
+		failures = append(failures, state.State+" batch lacks parsed backend truth")
+	}
+	if !batch.BeforeAcquire.RuntimeTruthParsed {
+		failures = append(failures, state.State+" batch acquire lacks parsed backend truth")
+	}
+	if batch.Before.Backend == "" || batch.Before.Renderer == "" {
+		failures = append(failures, state.State+" batch backend or renderer is empty")
+	}
+	if batch.BeforeAcquire.Backend != "" && batch.BeforeAcquire.Backend != batch.Before.Backend {
+		failures = append(failures, state.State+" batch backend changed during drain")
+	}
+	if batch.BeforeAcquire.Renderer != "" && batch.BeforeAcquire.Renderer != batch.Before.Renderer {
+		failures = append(failures, state.State+" batch renderer changed during drain")
+	}
+	if batch.After.Backend != "" && batch.After.Backend != batch.Before.Backend {
+		failures = append(failures, state.State+" batch backend flipped")
+	}
+	if batch.After.Renderer != "" && batch.After.Renderer != batch.Before.Renderer {
+		failures = append(failures, state.State+" batch renderer flipped")
+	}
+	if err := validateStablePixelClip(batch.BeforeAcquire.Clip, state.State+" before-acquire batch"); err != nil {
+		failures = append(failures, err.Error())
+	}
+	if err := validateStablePixelClip(batch.Before.Clip, state.State+" after-drain batch"); err != nil {
+		failures = append(failures, err.Error())
+	}
+	if err := validateStablePixelClip(batch.Clip, state.State+" batch"); err != nil {
+		failures = append(failures, err.Error())
+	}
+	if !samePixelClip(batch.BeforeAcquire.Clip, batch.Before.Clip) || !samePixelClip(batch.Before.Clip, batch.Clip) {
+		failures = append(failures, state.State+" batch clip changed during drain")
+	}
+	if len(batch.Errors) > 0 {
+		failures = append(failures, state.State+" batch recorded errors: "+strings.Join(batch.Errors, "; "))
+	}
+	if batch.CancelDelivered {
+		failures = append(failures, state.State+" batch delivered a cancelled callback")
+	}
+	if batch.Before.RenderLoopActive && batch.Before.WantsAnimation && batch.QueueAfterDrain == 0 {
+		failures = append(failures, state.State+" active animated batch queued zero callbacks")
+	}
+	return failures
+}
+
+func validateStablePixelClip(clip PixelCanvasClipEvidence, label string) error {
+	if !clip.Stable {
+		return fmt.Errorf("%s clip is not stable", label)
+	}
+	if !pixelFinitePositive(clip.Width) || !pixelFinitePositive(clip.Height) || !pixelFinitePositive(clip.Scale) || !pixelFinite(clip.X) || !pixelFinite(clip.Y) {
+		return fmt.Errorf("%s clip has non-finite or non-positive dimensions", label)
+	}
+	return nil
+}
+
+func samePixelClip(a, b PixelCanvasClipEvidence) bool {
+	return a.Stable && b.Stable &&
+		a.X == b.X &&
+		a.Y == b.Y &&
+		a.Width == b.Width &&
+		a.Height == b.Height &&
+		a.Scale == b.Scale
+}
+
+func pixelFinite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func pixelFinitePositive(value float64) bool {
+	return value > 0 && pixelFinite(value)
 }
 
 func compareAgainstStoredBaseline(baseline ValidatedPixelBaseline, state string, index int, current []byte, currentPath string, effectiveThreshold float64) (PixelComparison, error) {
@@ -1225,6 +1634,19 @@ func ValidateCanonicalPixelBaselineManifest(manifestPath string, expectedSource 
 	return validated, nil
 }
 
+func ValidateCandidatePixelManifestAgainstBaseline(opts PixelEvidenceOptions, candidate PixelEvidenceManifest, baseline PixelEvidenceManifest) []string {
+	failures := validateCandidateAgainstBaseline(opts, candidate, baseline)
+	if candidate.HardwareClassification != "hardware-"+candidate.BackendRequirement {
+		failures = append(failures, fmt.Sprintf("candidate hardwareClassification=%s, want hardware-%s", candidate.HardwareClassification, candidate.BackendRequirement))
+	}
+	for _, state := range candidate.States {
+		for _, capture := range state.Captures {
+			failures = append(failures, validateCertifiedCaptureFacts(opts, capture)...)
+		}
+	}
+	return failures
+}
+
 func loadAndValidateBaselineManifest(root string, opts PixelEvidenceOptions) (ValidatedPixelBaseline, error) {
 	path, err := containedBaselineManifestPath(root, pixelManifestPath(root))
 	if err != nil {
@@ -1278,7 +1700,9 @@ func validateCanonicalBaselineManifest(root string, opts PixelEvidenceOptions, m
 		Paths:        map[baselineCaptureKey]string{},
 		ThresholdPct: manifest.Threshold.EffectivePct,
 	}
-	if manifest.SchemaVersion != OuroborosPixelSchemaVersion {
+	if manifest.SchemaVersion == ouroborosPixelLegacySchemaV1 {
+		failures = append(failures, "schemaVersion v1 is not accepted; want "+OuroborosPixelSchemaVersion)
+	} else if manifest.SchemaVersion != OuroborosPixelSchemaVersion {
 		failures = append(failures, "schemaVersion is not "+OuroborosPixelSchemaVersion)
 	}
 	if manifest.Mode != string(PixelModeRecordBaseline) {
@@ -1399,6 +1823,16 @@ func validateCanonicalBaselineManifest(root string, opts PixelEvidenceOptions, m
 		}
 		failures = append(failures, validateStoredStateDrift(stateName, manifest.Threshold.EffectivePct, validated.Paths)...)
 	}
+	seenBatch := map[string]string{}
+	for _, state := range manifest.States {
+		if state.Batch.ID == "" {
+			continue
+		}
+		if prior, ok := seenBatch[state.Batch.ID]; ok {
+			failures = append(failures, fmt.Sprintf("duplicate rAF gate batch ID %s for %s and %s", state.Batch.ID, prior, state.State))
+		}
+		seenBatch[state.Batch.ID] = state.State
+	}
 	if duplicate := duplicateBaselinePath(validated.Paths); duplicate != "" {
 		failures = append(failures, "baseline duplicate PNG path "+duplicate)
 	}
@@ -1458,6 +1892,9 @@ func validateCandidateAgainstBaseline(opts PixelEvidenceOptions, candidate Pixel
 	}
 	if candidate.SettlePolicy != baseline.SettlePolicy {
 		failures = append(failures, "candidate settle policy does not match baseline")
+	}
+	if candidate.SchemaVersion != baseline.SchemaVersion {
+		failures = append(failures, "candidate pixel schema does not match baseline")
 	}
 	for _, stateName := range []string{"initial", "settled"} {
 		candidateState := findPixelState(candidate, stateName)
@@ -1626,6 +2063,16 @@ func ComparePixelEvidence(baseline, current []byte, baselinePath, currentPath st
 }
 
 func ComparePixelEvidenceWithThresholds(baseline, current []byte, baselinePath, currentPath string, baselineThresholdPct, effectiveThresholdPct float64) (PixelComparison, error) {
+	return comparePixelEvidenceWithThresholds(baseline, current, baselinePath, currentPath, baselineThresholdPct, effectiveThresholdPct, true)
+}
+
+// ComparePixelEvidenceWithThresholdsReadOnly computes the same comparison
+// result without writing the diagnostic diff PNG on failure.
+func ComparePixelEvidenceWithThresholdsReadOnly(baseline, current []byte, baselinePath, currentPath string, baselineThresholdPct, effectiveThresholdPct float64) (PixelComparison, error) {
+	return comparePixelEvidenceWithThresholds(baseline, current, baselinePath, currentPath, baselineThresholdPct, effectiveThresholdPct, false)
+}
+
+func comparePixelEvidenceWithThresholds(baseline, current []byte, baselinePath, currentPath string, baselineThresholdPct, effectiveThresholdPct float64, writeDiff bool) (PixelComparison, error) {
 	if len(baseline) > MaxPixelPNGBytes {
 		return PixelComparison{}, fmt.Errorf("visual: baseline PNG exceeds %d bytes", MaxPixelPNGBytes)
 	}
@@ -1650,8 +2097,10 @@ func ComparePixelEvidenceWithThresholds(baseline, current []byte, baselinePath, 
 	}
 	if !passed {
 		comparison.DiffPath = strings.TrimSuffix(currentPath, ".png") + ".diff.png"
-		if err := writePNG(comparison.DiffPath, result.Diff); err != nil {
-			return PixelComparison{}, fmt.Errorf("visual: write evidence diff: %w", err)
+		if writeDiff {
+			if err := writePNG(comparison.DiffPath, result.Diff); err != nil {
+				return PixelComparison{}, fmt.Errorf("visual: write evidence diff: %w", err)
+			}
 		}
 	}
 	return comparison, nil
@@ -2051,6 +2500,261 @@ func jsLiteral(value string) string {
 	return string(body)
 }
 
+const pixelRAFGateAcquireJS = `(async function() {
+  const selector = %s;
+  const state = %s;
+  const batchID = %s;
+  const nonce = %s;
+  const key = %s;
+  const errors = [];
+  const enc = new TextEncoder();
+  const hex = function(bytes) {
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+  };
+  const digest = async function(value) {
+    const hash = await crypto.subtle.digest("SHA-256", enc.encode(value));
+    return "sha256:" + hex(new Uint8Array(hash));
+  };
+  const finite = function(value) {
+    return Number.isFinite(value);
+  };
+  const stableClip = function(canvas, rect) {
+    const scale = canvas && rect.width ? canvas.width / rect.width : 0;
+    const clip = {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      scale,
+      stable: false
+    };
+    clip.stable = !!canvas && finite(clip.x) && finite(clip.y) && finite(clip.width) && finite(clip.height) && finite(clip.scale) && clip.width > 0 && clip.height > 0 && clip.scale > 0;
+    return clip;
+  };
+  const sameClip = function(a, b) {
+    return !!a && !!b && a.stable && b.stable && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height && a.scale === b.scale;
+  };
+  const snapshot = function() {
+    const canvases = Array.from(document.querySelectorAll(selector));
+    const canvas = canvases.length === 1 ? canvases[0] : null;
+    const mount = canvas ? canvas.closest("[data-gosx-scene3d-backend], [data-gosx-scene3d-renderer], [data-gosx-scene3d-ready], [data-gosx-scene3d-mounted]") : null;
+    const attr = (name) => mount ? String(mount.getAttribute(name) || "") : "";
+    let truth = {};
+    let parsed = false;
+    try {
+      const raw = attr("data-gosx-scene3d-render-backend-truth");
+      truth = raw ? JSON.parse(raw) : {};
+      parsed = !!raw;
+    } catch (_err) {}
+    const backend = String(truth.backend || "");
+    const frameAttr = backend === "webgpu" ? "data-gosx-scene3d-webgpu-frame-seq" : (backend === "webgl" ? "data-gosx-scene3d-webgl-frame-seq" : "");
+    const rect = canvas ? canvas.getBoundingClientRect() : {x:0,y:0,width:0,height:0};
+    return {
+      visible: document.visibilityState === "visible" && !document.hidden,
+      focused: document.hasFocus(),
+      backend,
+      renderer: String(attr("data-gosx-scene3d-renderer") || truth.renderer || ""),
+      frameSeq: frameAttr ? Number(attr(frameAttr) || 0) : 0,
+      runtimeTruthParsed: parsed,
+      renderLoopState: attr("data-gosx-scene3d-render-loop"),
+      renderLoopActive: attr("data-gosx-scene3d-render-loop") === "active",
+      wantsAnimation: attr("data-gosx-scene3d-render-loop-wants-animation") === "true",
+      clip: stableClip(canvas, rect)
+    };
+  };
+  const beforeAcquire = snapshot();
+  if (!beforeAcquire.visible) errors.push("document is hidden");
+  if (!beforeAcquire.focused) errors.push("document is unfocused");
+  if (!beforeAcquire.runtimeTruthParsed) errors.push("backend truth is not parsed");
+  if (!beforeAcquire.backend || !beforeAcquire.renderer || beforeAcquire.frameSeq <= 0) errors.push("backend renderer or frame is incomplete");
+  if (!beforeAcquire.clip.stable) errors.push("canvas clip is unstable");
+  if (Object.prototype.propertyIsEnumerable.call(window, key)) errors.push("temporary global key is enumerable before install");
+  if (window[key]) errors.push("temporary global key already exists");
+  const nativeRAF = window.requestAnimationFrame;
+  const nativeCancel = window.cancelAnimationFrame;
+  const gate = {
+    id: batchID,
+    selector,
+    key,
+    keyHash: await digest(key),
+    nonceHash: await digest(nonce),
+    nativeRAF,
+    nativeCancel,
+    nextID: -1,
+    queue: [],
+    cancelled: 0,
+    delivered: 0,
+    active: true,
+    errors: []
+  };
+  if (errors.length === 0) {
+    Object.defineProperty(window, key, {value: gate, enumerable: false, configurable: true});
+    window.requestAnimationFrame = function(cb) {
+      const id = gate.nextID--;
+      gate.queue.push({id, cb, cancelled: false, order: gate.queue.length});
+      return id;
+    };
+    window.cancelAnimationFrame = function(id) {
+      if (id < 0) {
+        if (gate.resumeMap && gate.resumeMap[id]) {
+          const mapped = gate.resumeMap[id];
+          gate.nativeCancel.call(window, mapped.nativeID);
+          delete gate.resumeMap[id];
+          gate.cancelled++;
+          if (mapped.resolve) mapped.resolve();
+          return;
+        }
+        for (const item of gate.queue) {
+          if (item.id === id && !item.cancelled) {
+            item.cancelled = true;
+            gate.cancelled++;
+            return;
+          }
+        }
+        return;
+      }
+      return nativeCancel.call(window, id);
+    };
+  }
+  const ticks = [];
+  if (errors.length === 0) {
+    await new Promise((resolve) => nativeRAF.call(window, (ts) => { ticks.push(ts); resolve(); }));
+    await new Promise((resolve) => nativeRAF.call(window, (ts) => { ticks.push(ts); resolve(); }));
+  }
+  const stable = snapshot();
+  if (errors.length === 0) {
+    if (!stable.visible) errors.push("document is hidden after drain");
+    if (!stable.focused) errors.push("document is unfocused after drain");
+    if (!stable.runtimeTruthParsed) errors.push("backend truth is not parsed after drain");
+    if (!stable.backend || !stable.renderer || stable.frameSeq <= 0) errors.push("backend renderer or frame is incomplete after drain");
+    if (!stable.clip.stable) errors.push("canvas clip is unstable after drain");
+    if (!sameClip(beforeAcquire.clip, stable.clip)) errors.push("canvas clip changed during drain");
+  }
+  const enumerable = Object.prototype.propertyIsEnumerable.call(window, key);
+  return {
+    id: batchID,
+    state,
+    acquired: errors.length === 0,
+    released: false,
+    releaseProved: false,
+    nonceHash: gate.nonceHash || "",
+    globalKeyHash: gate.keyHash || "",
+    globalEnumerable: enumerable,
+    drainTicks: 2,
+    nativeTickCount: ticks.length,
+    queueBefore: 0,
+    queueAfterDrain: gate.queue ? gate.queue.length : 0,
+    queueBeforeRelease: 0,
+    cancelled: gate.cancelled || 0,
+    delivered: 0,
+    restored: false,
+    cleaned: false,
+    clip: stable.clip,
+    beforeAcquire,
+    before: stable,
+    after: {},
+    errors
+  };
+})()`
+
+const pixelRAFGateReleaseJS = `(async function() {
+  const batchID = %s;
+  const keyHash = %s;
+  const key = %s;
+  const errors = [];
+  const snapshot = function(selector) {
+    const canvas = document.querySelector(selector);
+    const mount = canvas ? canvas.closest("[data-gosx-scene3d-backend], [data-gosx-scene3d-renderer], [data-gosx-scene3d-ready], [data-gosx-scene3d-mounted]") : null;
+    const attr = (name) => mount ? String(mount.getAttribute(name) || "") : "";
+    let truth = {};
+    let parsed = false;
+    try {
+      const raw = attr("data-gosx-scene3d-render-backend-truth");
+      truth = raw ? JSON.parse(raw) : {};
+      parsed = !!raw;
+    } catch (_err) {}
+    const backend = String(truth.backend || "");
+    const frameAttr = backend === "webgpu" ? "data-gosx-scene3d-webgpu-frame-seq" : (backend === "webgl" ? "data-gosx-scene3d-webgl-frame-seq" : "");
+    return {
+      visible: document.visibilityState === "visible" && !document.hidden,
+      focused: document.hasFocus(),
+      backend,
+      renderer: String(attr("data-gosx-scene3d-renderer") || truth.renderer || ""),
+      frameSeq: frameAttr ? Number(attr(frameAttr) || 0) : 0,
+      runtimeTruthParsed: parsed,
+      renderLoopState: attr("data-gosx-scene3d-render-loop"),
+      renderLoopActive: attr("data-gosx-scene3d-render-loop") === "active",
+      wantsAnimation: attr("data-gosx-scene3d-render-loop-wants-animation") === "true"
+    };
+  };
+  const gate = window[key] || null;
+  if (!gate) {
+    return {id: batchID, released: false, releaseProved: false, errors: ["gate not found"]};
+  }
+  if (gate.id !== batchID || gate.keyHash !== keyHash) errors.push("gate identity mismatch");
+  const queued = gate.queue.slice().sort((a, b) => a.order - b.order);
+  gate.resumeMap = {};
+  window.requestAnimationFrame = gate.nativeRAF;
+  window.cancelAnimationFrame = function(id) {
+    if (id < 0 && gate.resumeMap && gate.resumeMap[id]) {
+      const mapped = gate.resumeMap[id];
+      gate.nativeCancel.call(window, mapped.nativeID);
+      delete gate.resumeMap[id];
+      gate.cancelled++;
+      mapped.resolve();
+      return;
+    }
+    if (id < 0) return;
+    return gate.nativeCancel.call(window, id);
+  };
+  let delivered = 0;
+  const waits = [];
+  for (const item of queued) {
+    if (item.cancelled) continue;
+    waits.push(new Promise((resolve) => {
+      const nativeID = gate.nativeRAF.call(window, (ts) => {
+        const mapped = gate.resumeMap[item.id];
+        if (mapped && mapped.done) return;
+        delete gate.resumeMap[item.id];
+        try {
+          item.cb(ts);
+          delivered++;
+        } catch (err) {
+          errors.push("queued callback failed: " + (err && err.message || String(err)));
+        }
+        resolve();
+      });
+      gate.resumeMap[item.id] = {nativeID, resolve, done: false};
+    }));
+  }
+  await Promise.all(waits);
+  await new Promise((resolve) => gate.nativeRAF.call(window, () => resolve()));
+  gate.delivered = delivered;
+  window.cancelAnimationFrame = gate.nativeCancel;
+  const after = snapshot(gate.selector);
+  const restored = window.requestAnimationFrame === gate.nativeRAF && window.cancelAnimationFrame === gate.nativeCancel;
+  let cleaned = false;
+  try {
+    delete window[key];
+    cleaned = typeof window[key] === "undefined";
+  } catch (err) {
+    errors.push("delete failed: " + (err && err.message || String(err)));
+  }
+  return {
+    id: batchID,
+    released: true,
+    releaseProved: restored && cleaned && errors.length === 0,
+    queueBeforeRelease: queued.length,
+    cancelled: gate.cancelled || 0,
+    cancelDelivered: window.__cancelDelivered === true,
+    delivered,
+    restored,
+    cleaned,
+    after,
+    errors
+  };
+})()`
+
 const pixelMetadataProbeJS = `(async function() {
   const selector = %s;
   const errors = [];
@@ -2077,7 +2781,21 @@ const pixelMetadataProbeJS = `(async function() {
   } catch (_err) {
     errors.push('backend truth JSON did not parse');
   }
-  const rect = canvas ? canvas.getBoundingClientRect() : { width: 0, height: 0 };
+  const truthFrameSeq = function(backend) {
+    if (backend === 'webgpu') return num('data-gosx-scene3d-webgpu-frame-seq');
+    if (backend === 'webgl') return num('data-gosx-scene3d-webgl-frame-seq');
+    return 0;
+  };
+  const rect = canvas ? canvas.getBoundingClientRect() : { x: 0, y: 0, width: 0, height: 0 };
+  const clipScale = canvas && rect.width ? canvas.width / rect.width : 0;
+  const clip = {
+    x: canvas ? rect.x : 0,
+    y: canvas ? rect.y : 0,
+    width: canvas ? rect.width : 0,
+    height: canvas ? rect.height : 0,
+    scale: clipScale,
+    stable: !!canvas && Number.isFinite(rect.x) && Number.isFinite(rect.y) && Number.isFinite(rect.width) && Number.isFinite(rect.height) && Number.isFinite(clipScale) && rect.width > 0 && rect.height > 0 && clipScale > 0
+  };
   let webgl = { vendor: '', renderer: '', version: '' };
   let webgpu = {
     available: !!navigator.gpu,
@@ -2101,7 +2819,7 @@ const pixelMetadataProbeJS = `(async function() {
     adapterInfo: backendTruth.adapterInfo || {},
     initError: backendTruth.initError || '',
     lastError: backendTruth.lastError || '',
-    frameSeq: num('data-gosx-scene3d-webgpu-frame-seq') || num('data-gosx-scene3d-webgl-frame-seq') || num('data-gosx-scene3d-frame-seq'),
+    frameSeq: truthFrameSeq(backendTruth.backend || ''),
     shaderErrors: Number((backendTruth.shaderDiagnostics && backendTruth.shaderDiagnostics.errors) || 0),
     shaderDiagnostics: {
       messages: Number((backendTruth.shaderDiagnostics && backendTruth.shaderDiagnostics.messages) || 0),
@@ -2153,7 +2871,8 @@ const pixelMetadataProbeJS = `(async function() {
   };
   return {
     devicePixelRatio: window.devicePixelRatio || 1,
-    effectiveDPR: canvas && rect.width ? canvas.width / rect.width : 0,
+    effectiveDPR: clipScale,
+    clip,
     canvas: {
       canvasWidth: canvas ? canvas.width : 0,
       canvasHeight: canvas ? canvas.height : 0,

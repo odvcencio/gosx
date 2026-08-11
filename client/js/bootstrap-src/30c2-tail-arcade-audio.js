@@ -87,6 +87,10 @@
     };
   }
 
+  function arcadeDelayedOptions(opts, delayMS) {
+    return Object.assign({}, opts, { delayMS: opts.delayMS + delayMS });
+  }
+
   function playArcadeSFX(kind, options) {
     const audio = unlockArcadeAudio();
     if (!audio) return;
@@ -95,94 +99,95 @@
     const heavy = Math.max(0.65, opts.intensity);
     if (cue === "confirm") {
       arcadeTone(audio, 220, 0.055, 0.08, "square", opts);
-      arcadeTone(audio, 880, 0.09, 0.08, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 18 }));
+      arcadeTone(audio, 880, 0.09, 0.08, "square", arcadeDelayedOptions(opts, 18));
       return;
     }
     if (cue === "round") {
       arcadeTone(audio, 196, 0.12, 0.075, "square", opts);
-      arcadeTone(audio, 294, 0.12, 0.055, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 46 }));
-      arcadeTone(audio, 392, 0.16, 0.05, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 92 }));
+      arcadeTone(audio, 294, 0.12, 0.055, "triangle", arcadeDelayedOptions(opts, 46));
+      arcadeTone(audio, 392, 0.16, 0.05, "square", arcadeDelayedOptions(opts, 92));
       return;
     }
     if (cue === "fight") {
       arcadeTone(audio, 330, 0.06, 0.075, "square", opts);
-      arcadeTone(audio, 660, 0.075, 0.075, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 42 }));
-      arcadeNoise(audio, 0.055, 0.04, "highpass", 1500, Object.assign({}, opts, { delayMS: opts.delayMS + 22 }));
+      arcadeTone(audio, 660, 0.075, 0.075, "square", arcadeDelayedOptions(opts, 42));
+      arcadeNoise(audio, 0.055, 0.04, "highpass", 1500, arcadeDelayedOptions(opts, 22));
       return;
     }
     if (cue === "ko" || cue === "match") {
       arcadeNoise(audio, 0.16, 0.095, "lowpass", 720, opts);
       arcadeSweep(audio, 190, 62, 0.32, 0.07, "sawtooth", opts);
-      arcadeTone(audio, 82, 0.18, 0.08, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 65 }));
+      arcadeTone(audio, 82, 0.18, 0.08, "square", arcadeDelayedOptions(opts, 65));
       return;
     }
     if (cue === "hit_light" || cue === "hit") {
       arcadeNoise(audio, 0.052, 0.075 * opts.intensity, "bandpass", 1900, opts);
       arcadeTone(audio, 118, 0.035, 0.05 * opts.intensity, "square", opts);
-      arcadeTone(audio, 720, 0.026, 0.038 * opts.intensity, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 7 }));
+      arcadeTone(audio, 720, 0.026, 0.038 * opts.intensity, "triangle", arcadeDelayedOptions(opts, 7));
       return;
     }
     if (cue === "hit_heavy") {
       arcadeNoise(audio, 0.082, 0.1 * heavy, "lowpass", 1100, opts);
       arcadeTone(audio, 74, 0.055, 0.075 * heavy, "square", opts);
-      arcadeTone(audio, 540, 0.04, 0.054 * heavy, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
-      arcadeTone(audio, 1260, 0.024, 0.034 * heavy, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 22 }));
+      arcadeTone(audio, 540, 0.04, 0.054 * heavy, "triangle", arcadeDelayedOptions(opts, 10));
+      arcadeTone(audio, 1260, 0.024, 0.034 * heavy, "square", arcadeDelayedOptions(opts, 22));
       return;
     }
     if (cue === "counter" || cue === "punish") {
       playArcadeSFX("hit_heavy", Object.assign({}, opts, { intensity: Math.min(1.25, opts.intensity + 0.12) }));
-      arcadeTone(audio, cue === "punish" ? 990 : 1180, 0.075, 0.052, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 42 }));
-      arcadeTone(audio, cue === "punish" ? 1320 : 1480, 0.05, 0.04, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 74 }));
+      arcadeTone(audio, cue === "punish" ? 990 : 1180, 0.075, 0.052, "square", arcadeDelayedOptions(opts, 42));
+      arcadeTone(audio, cue === "punish" ? 1320 : 1480, 0.05, 0.04, "triangle", arcadeDelayedOptions(opts, 74));
       return;
     }
     if (cue === "launcher") {
       arcadeNoise(audio, 0.06, 0.07 * heavy, "highpass", 1100, opts);
       arcadeSweep(audio, 240, 980, 0.16, 0.06 * heavy, "sawtooth", opts);
-      arcadeTone(audio, 1560, 0.04, 0.035, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 80 }));
+      arcadeTone(audio, 1560, 0.04, 0.035, "square", arcadeDelayedOptions(opts, 80));
       return;
     }
     if (cue === "block") {
       arcadeNoise(audio, 0.045, 0.058 * opts.intensity, "bandpass", 820, opts);
       arcadeTone(audio, 150, 0.035, 0.055 * opts.intensity, "square", opts);
-      arcadeTone(audio, 270, 0.04, 0.035 * opts.intensity, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
+      arcadeTone(audio, 270, 0.04, 0.035 * opts.intensity, "triangle", arcadeDelayedOptions(opts, 10));
       return;
     }
     if (cue === "guard" || cue === "just_guard") {
       arcadeTone(audio, 420, 0.04, 0.05 * opts.intensity, "triangle", opts);
-      arcadeTone(audio, 980, 0.035, 0.045 * opts.intensity, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 14 }));
-      arcadeTone(audio, 1540, 0.04, 0.03, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 34 }));
+      arcadeTone(audio, 980, 0.035, 0.045 * opts.intensity, "square", arcadeDelayedOptions(opts, 14));
+      arcadeTone(audio, 1540, 0.04, 0.03, "triangle", arcadeDelayedOptions(opts, 34));
       return;
     }
     if (cue === "guard_cancel") {
       playArcadeSFX("just_guard", opts);
-      arcadeSweep(audio, 520, 1120, 0.12, 0.045, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 44 }));
+      arcadeSweep(audio, 520, 1120, 0.12, 0.045, "square", arcadeDelayedOptions(opts, 44));
       return;
     }
     if (cue === "armor") {
       arcadeNoise(audio, 0.09, 0.07 * heavy, "lowpass", 420, opts);
       arcadeTone(audio, 72, 0.08, 0.075 * heavy, "square", opts);
-      arcadeTone(audio, 144, 0.06, 0.05 * heavy, "sawtooth", Object.assign({}, opts, { delayMS: opts.delayMS + 18 }));
+      arcadeTone(audio, 144, 0.06, 0.05 * heavy, "sawtooth", arcadeDelayedOptions(opts, 18));
       return;
     }
     if (cue === "throw") {
       arcadeNoise(audio, 0.075, 0.06 * heavy, "bandpass", 620, opts);
       arcadeSweep(audio, 420, 120, 0.11, 0.052 * heavy, "sawtooth", opts);
-      arcadeTone(audio, 110, 0.065, 0.08 * heavy, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 24 }));
+      arcadeTone(audio, 110, 0.065, 0.08 * heavy, "square", arcadeDelayedOptions(opts, 24));
       return;
     }
     if (cue === "throw_tech") {
       arcadeTone(audio, 560, 0.035, 0.055, "square", opts);
-      arcadeTone(audio, 1120, 0.05, 0.05, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 20 }));
-      arcadeNoise(audio, 0.035, 0.045, "highpass", 1800, Object.assign({}, opts, { delayMS: opts.delayMS + 10 }));
+      arcadeTone(audio, 1120, 0.05, 0.05, "triangle", arcadeDelayedOptions(opts, 20));
+      arcadeNoise(audio, 0.035, 0.045, "highpass", 1800, arcadeDelayedOptions(opts, 10));
       return;
     }
     if (cue === "surge" || cue === "surge_ready") {
-      arcadeSweep(audio, cue === "surge" ? 160 : 320, cue === "surge" ? 920 : 1280, cue === "surge" ? 0.34 : 0.12, cue === "surge" ? 0.07 : 0.045, "sawtooth", opts);
-      arcadeTone(audio, cue === "surge" ? 80 : 640, cue === "surge" ? 0.24 : 0.06, cue === "surge" ? 0.055 : 0.035, "square", Object.assign({}, opts, { delayMS: opts.delayMS + 38 }));
+      const surge = cue === "surge";
+      arcadeSweep(audio, surge ? 160 : 320, surge ? 920 : 1280, surge ? 0.34 : 0.12, surge ? 0.07 : 0.045, "sawtooth", opts);
+      arcadeTone(audio, surge ? 80 : 640, surge ? 0.24 : 0.06, surge ? 0.055 : 0.035, "square", arcadeDelayedOptions(opts, 38));
       return;
     }
     arcadeTone(audio, 440, 0.035, 0.045, "square", opts);
-    arcadeTone(audio, 660, 0.04, 0.035, "triangle", Object.assign({}, opts, { delayMS: opts.delayMS + 12 }));
+    arcadeTone(audio, 660, 0.04, 0.035, "triangle", arcadeDelayedOptions(opts, 12));
   }
 
   function arcadeConnectToOutput(audio, node, opts, nodes) {
@@ -227,9 +232,10 @@
   }
 
   function arcadeTrackVoice(record) {
-    arcadeAudioState.active.push(record);
-    while (arcadeAudioState.active.length > arcadeAudioState.voiceLimit) {
-      releaseArcadeAudio(arcadeAudioState.active[0], true);
+    const active = arcadeAudioState.active;
+    active.push(record);
+    while (active.length > arcadeAudioState.voiceLimit) {
+      releaseArcadeAudio(active[0], true);
     }
   }
 

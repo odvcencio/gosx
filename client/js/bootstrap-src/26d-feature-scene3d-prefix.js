@@ -8,7 +8,7 @@
 // runtime utility extraction) are needed by the scene code. These are bridged
 // from window.__gosx_runtime_api.
 
-(function() {
+(function(window) {
   "use strict";
 
   // Bridge runtime utilities that live in the runtime's IIFE scope.

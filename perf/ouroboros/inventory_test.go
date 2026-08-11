@@ -595,7 +595,7 @@ func TestFullRuntimeArchivePathspecsStayBounded(t *testing.T) {
 func TestValidateInventoryPixelsReference(t *testing.T) {
 	inv := minimalValidInventory()
 	inv.Pixels = &PixelArtifactRef{
-		SchemaVersion: "gosx.ouroboros.pixels.v1",
+		SchemaVersion: "gosx.ouroboros.pixels.v2",
 		ManifestPath:  "pixels/manifest.json",
 		Initial:       []PixelCaptureRef{{RouteID: "R08", Backend: "webgpu", Path: "pixels/r08-initial.png"}},
 		Settled:       []PixelCaptureRef{{RouteID: "R08", Backend: "webgpu", Path: "pixels/r08-settled.png"}},

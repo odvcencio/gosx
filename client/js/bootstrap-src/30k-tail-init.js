@@ -133,4 +133,4 @@
   } else {
     bootstrapPage();
   }
-})();
+})(window, document);

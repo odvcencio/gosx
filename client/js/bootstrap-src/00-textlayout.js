@@ -8,7 +8,7 @@
 //   - WASM exports: __gosx_hydrate, __gosx_action, __gosx_dispose
 //   - WASM calls window.__gosx_runtime_ready() when Go runtime is initialized
 
-(function() {
+(function(window, document) {
   "use strict";
 
   const GOSX_VERSION = "0.11.0";

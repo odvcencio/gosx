@@ -348,6 +348,30 @@ func TestOuroborosPixelComparisonWritesDiffOnFailure(t *testing.T) {
 	}
 }
 
+func TestOuroborosPixelComparisonReadOnlyDoesNotWriteDiff(t *testing.T) {
+	dir := t.TempDir()
+	baseline := solidPNG(t, 8, 8, color.RGBA{R: 255, A: 255})
+	current := solidPNG(t, 8, 8, color.RGBA{B: 255, A: 255})
+	currentPath := filepath.Join(dir, "R08-settled-01.png")
+	if err := os.WriteFile(currentPath, current, 0o644); err != nil {
+		t.Fatalf("write current: %v", err)
+	}
+
+	comparison, err := ComparePixelEvidenceWithThresholdsReadOnly(baseline, current, filepath.Join(dir, "R08-settled-00.png"), currentPath, 0, 0)
+	if err != nil {
+		t.Fatalf("ComparePixelEvidenceWithThresholdsReadOnly: %v", err)
+	}
+	if comparison.Passed {
+		t.Fatalf("comparison passed, want threshold failure")
+	}
+	if comparison.DiffPath == "" {
+		t.Fatalf("DiffPath is empty")
+	}
+	if _, err := os.Stat(comparison.DiffPath); !os.IsNotExist(err) {
+		t.Fatalf("readonly comparison wrote diff or returned wrong stat error: %v", err)
+	}
+}
+
 func TestOuroborosHardwareClassification(t *testing.T) {
 	if got := classifyHardware("webgpu", false, true, true); got != "hardware-webgpu" {
 		t.Fatalf("webgpu hardware class = %q", got)
@@ -688,6 +712,7 @@ func TestOuroborosWebGLRuntimeGPUFalseFails(t *testing.T) {
 		Path:               path,
 		SHA256:             strings.Repeat("a", 64),
 		Backend:            "webgl",
+		Renderer:           "webgl",
 		RuntimeTruthParsed: true,
 		RuntimeGPU:         false,
 		Implementation:     "angle-webgl",
@@ -717,6 +742,7 @@ func TestOuroborosWebGLTruthSoftwareAndHardwareCertification(t *testing.T) {
 		Implementation:     "webgl2",
 		HardwareClass:      "hardware-webgl",
 		FrameSeq:           1,
+		BatchID:            "unit-batch",
 		RenderLoop:         validRenderLoop("active", "runtime-program", true),
 		WebGL:              WebGLEvidence{Vendor: "NVIDIA Corporation", Renderer: "ANGLE (NVIDIA GeForce RTX 4090 Direct3D11 vs_5_0 ps_5_0)", Version: "webgl2"},
 	}
@@ -1006,6 +1032,21 @@ func TestOuroborosInitialSettleAllowsFastFirstFrameWithoutAdvance(t *testing.T) 
 	}
 }
 
+func TestOuroborosSettledTargetAnchorsToRecordedInitialState(t *testing.T) {
+	preflight := PixelSettleResult{RequiredFrame: 1, ObservedFrame: 2}
+	initial := PixelStateEvidence{State: "initial", Settle: PixelSettleResult{RequiredFrame: preflight.ObservedFrame, ObservedFrame: 4}}
+	got, err := pixelSettledMinFrameFromInitial(&initial, 30)
+	if err != nil {
+		t.Fatalf("pixelSettledMinFrameFromInitial: %v", err)
+	}
+	if got != 34 {
+		t.Fatalf("settled min frame = %d, want recorded initial observed frame 4 + warmup 30", got)
+	}
+	if got == preflight.ObservedFrame+30 {
+		t.Fatalf("settled min frame anchored to preflight frame %d", preflight.ObservedFrame)
+	}
+}
+
 func TestOuroborosCandidateBaselineLoadRejectsManifestSymlinkEscape(t *testing.T) {
 	opts := PixelEvidenceOptions{Mode: PixelModeCandidateComparison, RouteID: "R08", Backend: RequireBackendWebGL, ForceWebGL: true, CanvasSelector: "canvas", Viewport: Viewport{Width: 1440, Height: 900, Scale: 1}, Source: testPixelSource()}
 	dir := t.TempDir()
@@ -1055,6 +1096,7 @@ func TestOuroborosCanonicalBaselineManifestAdversarial(t *testing.T) {
 		edit func(*PixelEvidenceManifest)
 	}{
 		{name: "wrong schema", edit: func(m *PixelEvidenceManifest) { m.SchemaVersion = "wrong" }},
+		{name: "legacy schema v1", edit: func(m *PixelEvidenceManifest) { m.SchemaVersion = ouroborosPixelLegacySchemaV1 }},
 		{name: "wrong mode", edit: func(m *PixelEvidenceManifest) { m.Mode = string(PixelModeCandidateComparison) }},
 		{name: "uncertified", edit: func(m *PixelEvidenceManifest) { m.Certified = false }},
 		{name: "wrong route", edit: func(m *PixelEvidenceManifest) { m.RouteID = "R10" }},
@@ -1104,6 +1146,18 @@ func TestOuroborosCanonicalBaselineManifestAdversarial(t *testing.T) {
 		{name: "runtime gpu false", edit: func(m *PixelEvidenceManifest) { m.States[0].Captures[0].RuntimeGPU = false }},
 		{name: "empty implementation", edit: func(m *PixelEvidenceManifest) { m.States[0].Captures[0].Implementation = "" }},
 		{name: "frame zero", edit: func(m *PixelEvidenceManifest) { m.States[0].Captures[0].FrameSeq = 0 }},
+		{name: "missing batch id", edit: func(m *PixelEvidenceManifest) { m.States[0].Captures[0].BatchID = "" }},
+		{name: "capture batch mismatch", edit: func(m *PixelEvidenceManifest) { m.States[0].Captures[0].BatchID = "other" }},
+		{name: "duplicate batch id", edit: func(m *PixelEvidenceManifest) { m.States[1].Batch.ID = m.States[0].Batch.ID }},
+		{name: "bad nonce hash", edit: func(m *PixelEvidenceManifest) { m.States[0].Batch.NonceHash = "bad" }},
+		{name: "hidden batch", edit: func(m *PixelEvidenceManifest) { m.States[0].Batch.Before.Visible = false }},
+		{name: "unfocused batch", edit: func(m *PixelEvidenceManifest) { m.States[0].Batch.After.Focused = false }},
+		{name: "batch backend flip", edit: func(m *PixelEvidenceManifest) { m.States[0].Batch.After.Backend = "webgpu" }},
+		{name: "batch renderer flip", edit: func(m *PixelEvidenceManifest) { m.States[0].Batch.After.Renderer = "webgpu" }},
+		{name: "capture frame drift from batch", edit: func(m *PixelEvidenceManifest) { m.States[0].Captures[0].FrameSeq++ }},
+		{name: "batch restore failed", edit: func(m *PixelEvidenceManifest) { m.States[0].Batch.Restored = false }},
+		{name: "batch cleanup failed", edit: func(m *PixelEvidenceManifest) { m.States[0].Batch.Cleaned = false }},
+		{name: "active loop queued zero callbacks", edit: func(m *PixelEvidenceManifest) { m.States[0].Batch.QueueAfterDrain = 0 }},
 		{name: "blank placeholder", edit: func(m *PixelEvidenceManifest) { m.States[0].Captures[0].Placeholder = true }},
 		{name: "actual blank png with false flags", edit: func(m *PixelEvidenceManifest) {
 			path := m.States[0].Captures[0].Path
@@ -1603,7 +1657,26 @@ func writeValidPixelBaseline(t *testing.T, root string, edit func(*PixelEvidence
 		Viewport:               ViewportEvidence{Width: 1440, Height: 900, DPR: 1},
 		Selected:               SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: "canvas", CanvasCount: 1, MountCount: 1},
 		Threshold:              PixelThresholdEvidence{EffectivePct: 0.5},
-		SettlePolicy:           PixelSettlePolicy{WarmupFrames: 30, RuntimeRenderLoopRequired: true, StaticStoppedAllowsNoAdvance: true},
+		SettlePolicy: PixelSettlePolicy{
+			WarmupFrames:                 30,
+			WarmupAnchor:                 "initial-observed-frame",
+			RuntimeRenderLoopRequired:    true,
+			StaticStoppedAllowsNoAdvance: true,
+			RAFGate: PixelRAFGatePolicy{
+				SchemaVersion:                 "gosx.ouroboros.raf-gate.v1",
+				Strategy:                      "raf-batch-gate",
+				Enabled:                       true,
+				DrainTicks:                    2,
+				TemporaryGlobal:               true,
+				NonceKeyed:                    true,
+				NonEnumerable:                 true,
+				NegativeSyntheticIDs:          true,
+				NativeTimestampResume:         true,
+				CapturesUseStableClip:         true,
+				FailClosedRestore:             true,
+				ResumeBeforeNextReadinessWait: true,
+			},
+		},
 	}
 	for _, stateName := range []string{"initial", "settled"} {
 		settle := PixelSettleResult{
@@ -1617,7 +1690,7 @@ func writeValidPixelBaseline(t *testing.T, root string, edit func(*PixelEvidence
 			settle.ObservedFrame = 40
 			settle.AdvanceRequired = true
 		}
-		state := PixelStateEvidence{State: stateName, Settle: settle}
+		state := PixelStateEvidence{State: stateName, Settle: settle, Batch: validPixelBatchForTest("R08-"+stateName+"-batch", stateName, settle.ObservedFrame, settle.RenderLoop)}
 		for i := 0; i < 3; i++ {
 			data := variedPNG(t, 8, 8, 0)
 			path := filepath.Join(root, fmt.Sprintf("R08-%s-%02d.png", stateName, i))
@@ -1633,11 +1706,13 @@ func writeValidPixelBaseline(t *testing.T, root string, edit func(*PixelEvidence
 				Width:              8,
 				Height:             8,
 				Backend:            "webgl",
+				Renderer:           "webgl",
 				RuntimeTruthParsed: true,
 				RuntimeGPU:         true,
 				Implementation:     "angle-webgl",
 				HardwareClass:      "hardware-webgl",
-				FrameSeq:           settle.ObservedFrame + i,
+				FrameSeq:           settle.ObservedFrame,
+				BatchID:            state.Batch.ID,
 				RenderLoop:         settle.RenderLoop,
 				WebGL:              WebGLEvidence{Vendor: "NVIDIA Corporation", Renderer: "ANGLE RTX", Version: "webgl"},
 				Selected:           manifest.Selected,
@@ -1668,6 +1743,45 @@ func validRenderLoop(state, reason string, wantsAnimation bool) RenderLoopEviden
 		StateParsed:          true,
 		WantsAnimationParsed: true,
 		Valid:                true,
+	}
+}
+
+func validPixelBatchForTest(id, state string, frame int, loop RenderLoopEvidence) PixelBatchEvidence {
+	snapshot := PixelBatchSnapshot{
+		Visible:            true,
+		Focused:            true,
+		Backend:            "webgl",
+		Renderer:           "webgl",
+		FrameSeq:           frame,
+		RuntimeTruthParsed: true,
+		RenderLoopState:    loop.State,
+		RenderLoopActive:   loop.Active,
+		WantsAnimation:     loop.WantsAnimation,
+		Clip:               PixelCanvasClipEvidence{Width: 8, Height: 8, Scale: 1, Stable: true},
+	}
+	queued := 1
+	if renderLoopIsStaticStopped(loop) {
+		queued = 0
+	}
+	return PixelBatchEvidence{
+		ID:                 id,
+		State:              state,
+		Acquired:           true,
+		Released:           true,
+		ReleaseProved:      true,
+		NonceHash:          "sha256:" + strings.Repeat("1", 64),
+		GlobalKeyHash:      "sha256:" + strings.Repeat("2", 64),
+		DrainTicks:         2,
+		NativeTickCount:    2,
+		QueueAfterDrain:    queued,
+		QueueBeforeRelease: queued,
+		Delivered:          queued,
+		Restored:           true,
+		Cleaned:            true,
+		Clip:               snapshot.Clip,
+		BeforeAcquire:      snapshot,
+		Before:             snapshot,
+		After:              snapshot,
 	}
 }
 

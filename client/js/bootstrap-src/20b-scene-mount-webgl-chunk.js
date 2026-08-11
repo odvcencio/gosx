@@ -178,9 +178,10 @@
     if (verdict.backend === "webgpu" && webgpuAvail) return null;
     // Only intercept when WebGL2 is the active backend for this water scene.
     if (verdict.backend !== "webgl") return null;
-    return createSceneWaterWebGLResult(canvas, props, capability, verdict.fallbackReason || "webgpu-unavailable") || {
+    var fallbackReason = verdict.fallbackReason || "";
+    return createSceneWaterWebGLResult(canvas, props, capability, fallbackReason) || {
       renderer: null,
-      fallbackReason: verdict.fallbackReason || "webgpu-unavailable",
+      fallbackReason: fallbackReason,
       unsupportedReason: "water-webgl2-unavailable",
     };
   }
@@ -3483,15 +3484,6 @@
     }).filter(Boolean).join(",");
   }
 
-  // sceneRenderTruthAPI resolves the shared render-truth helpers. Returns null
-  // when 15a-scene-postfx-shared.js is absent, and every caller null-checks.
-  function sceneRenderTruthAPI() {
-    if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
-      return window.__gosx_scene3d_render_truth_api;
-    }
-    return null;
-  }
-
   // sceneRenderBackendTruth builds the SINGLE machine-readable record of which
   // backend actually runs and why anything else was rejected.
   //
@@ -3504,10 +3496,10 @@
   // (Dawn/Tint versus wgpu/naga), the fallback reason and the transition
   // journal is what a probe or a deploy gate can actually assert against.
   function sceneRenderBackendTruth(mount, renderer, fallbackReason, degraded) {
-    const api = sceneRenderTruthAPI();
+    const api = window.__gosx_scene3d_render_truth_api;
     const kind = renderer && renderer.kind ? renderer.kind : "";
     const diag = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
-    const adapterInfo = diag && diag.adapterInfo ? diag.adapterInfo : kind === "webgl" && window.__gosx && window.__gosx.scene3dWebGLProbe || {};
+    const adapterInfo = diag && diag.adapterInfo || kind === "webgl" && window.__gosx && window.__gosx.scene3dWebGLProbe || {};
     const truth = {
       backend: kind,
       // gpu is the assertion a deploy gate wants: did a shader run at all?
@@ -3516,28 +3508,26 @@
       gpu: kind === "webgpu" || kind === "webgl",
       fallbackReason: fallbackReason || "",
       dropped: Array.isArray(degraded) ? degraded.slice() : [],
-      implementation: diag && diag.implementation ? diag.implementation : (kind === "webgl" ? "webgl" : (api ? api.implementation(adapterInfo) : "")),
-      browserEngine: api && typeof api.browserEngine === "function" ? api.browserEngine() : "",
-      adapter: api && typeof api.adapterLabel === "function" ? api.adapterLabel(adapterInfo) : "",
+      implementation: diag && diag.implementation || (kind === "webgl" ? "webgl" : api.implementation(adapterInfo)),
+      browserEngine: api.browserEngine(),
+      adapter: api.adapterLabel(adapterInfo),
       adapterInfo: adapterInfo,
       deviceLost: !!(diag && diag.deviceLost),
       initError: (diag && diag.initError) || "",
       lastError: (diag && diag.lastError) || "",
       shaderDiagnostics: (diag && diag.shaderDiagnostics) || { messages: 0, errors: 0 },
-      events: api && typeof api.events === "function" ? api.events() : [],
+      events: api.events(),
     };
-    if (mount && typeof mount.setAttribute === "function") {
-      let encoded = "";
-      try {
-        encoded = JSON.stringify(truth);
-      } catch (_err) {
-        encoded = "";
-      }
-      setAttrValue(mount, "data-gosx-scene3d-render-backend-truth", encoded);
-      setAttrValue(mount, "data-gosx-scene3d-render-gpu", truth.gpu ? "true" : "false");
-      setAttrValue(mount, "data-gosx-scene3d-render-implementation", truth.implementation);
-      mount.__gosxScene3DRenderBackendTruth = truth;
+    let encoded = "";
+    try {
+      encoded = JSON.stringify(truth);
+    } catch (_err) {
+      encoded = "";
     }
+    setAttrValue(mount, "data-gosx-scene3d-render-backend-truth", encoded);
+    setAttrValue(mount, "data-gosx-scene3d-render-gpu", truth.gpu ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-render-implementation", truth.implementation);
+    mount.__gosxScene3DRenderBackendTruth = truth;
     return truth;
   }
 
@@ -3546,6 +3536,10 @@
       return;
     }
     const chosenBackend = renderer && renderer.kind ? renderer.kind : "";
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-frame-seq", "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-frame-at", "");
+    setAttrValue(mount, "data-gosx-scene3d-webgl-frame-seq", "");
+    setAttrValue(mount, "data-gosx-scene3d-webgl-frame-at", "");
     setAttrValue(mount, "data-gosx-scene3d-renderer", chosenBackend);
     setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
     // data-gosx-scene3d-backend mirrors the renderer kind (canonical chosen backend name).
@@ -3554,10 +3548,7 @@
     // attribute cannot describe "mounted on WebGPU, device died at t=8.2s,
     // continued on WebGL"; an ordered log can, and that sequence is the shape
     // of the intermittent, environment-specific defects that cost the most time.
-    const truthAPI = sceneRenderTruthAPI();
-    if (truthAPI && typeof truthAPI.record === "function") {
-      truthAPI.record("backend", chosenBackend + (fallbackReason ? " fallback=" + fallbackReason : ""));
-    }
+    window.__gosx_scene3d_render_truth_api.record("backend", chosenBackend + (fallbackReason ? " fallback=" + fallbackReason : ""));
     sceneRenderBackendTruth(mount, renderer, fallbackReason, degraded);
     // data-gosx-scene3d-dropped lists features skipped per the backendCaps degraded verdict.
     setAttrValue(mount, "data-gosx-scene3d-dropped",

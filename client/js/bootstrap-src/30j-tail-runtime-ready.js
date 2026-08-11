@@ -14,19 +14,18 @@
     refreshGosxDocumentState("ready");
   }
 
+  function adoptRuntimeTextLayoutGlobal(name, current, adopt) {
+    const value = window[name];
+    if (typeof value === "function" && value !== current) {
+      adopt(value);
+      window[name] = current;
+    }
+  }
+
   window.__gosx_runtime_ready = function() {
-    if (typeof window.__gosx_text_layout === "function" && window.__gosx_text_layout !== gosxTextLayout) {
-      adoptTextLayoutImpl(window.__gosx_text_layout);
-      window.__gosx_text_layout = gosxTextLayout;
-    }
-    if (typeof window.__gosx_text_layout_metrics === "function" && window.__gosx_text_layout_metrics !== gosxTextLayoutMetrics) {
-      adoptTextLayoutMetricsImpl(window.__gosx_text_layout_metrics);
-      window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
-    }
-    if (typeof window.__gosx_text_layout_ranges === "function" && window.__gosx_text_layout_ranges !== gosxTextLayoutRanges) {
-      adoptTextLayoutRangesImpl(window.__gosx_text_layout_ranges);
-      window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
-    }
+    adoptRuntimeTextLayoutGlobal("__gosx_text_layout", gosxTextLayout, adoptTextLayoutImpl);
+    adoptRuntimeTextLayoutGlobal("__gosx_text_layout_metrics", gosxTextLayoutMetrics, adoptTextLayoutMetricsImpl);
+    adoptRuntimeTextLayoutGlobal("__gosx_text_layout_ranges", gosxTextLayoutRanges, adoptTextLayoutRangesImpl);
     refreshManagedTextLayouts();
     refreshGosxDocumentState("runtime-ready");
     refreshGosxEnvironmentState("runtime-ready");

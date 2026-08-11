@@ -4,7 +4,7 @@
         return connectAllHubs(manifest);
       },
       disposePage() {
-        for (const hubID of Array.from(window.__gosx.hubs.keys())) {
+        for (const hubID of window.__gosx.hubs.keys()) {
           window.__gosx_disconnect_hub(hubID);
         }
       },

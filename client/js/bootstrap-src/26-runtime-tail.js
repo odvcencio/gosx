@@ -184,27 +184,35 @@
     return window.__gosx_document_has_text_layout(document);
   }
 
-  // manifestNeedsTextLayoutFeature answers for Scene3D. A Scene3D Label lays out
-  // through layoutBrowserText, so a scene that ships a label needs the engine
-  // before its first frame. A scene with no label — a galaxy, a particle field,
-  // a CSS-driven scene — must not pay 42.7 KB for typography it never calls.
-  //
-  // The test scans the raw manifest text rather than walking the parsed props.
-  // Scene props reach megabytes on compressed geometry, and a substring test on
-  // a string the page already holds allocates nothing. A false positive costs
-  // one extra fetch, never a wrong frame.
-  //
-  // A label that arrives after mount, through applyCommands, does not appear in
-  // this text. The forwarders in 00-textlayout.js cover that case: the first
-  // layout call starts the fetch, and the invalidation listener in
-  // 20-scene-mount.js lays the label out again once the engine registers.
-  function manifestNeedsTextLayoutFeature(featureNames) {
-    if (featureNames.indexOf("scene3d") < 0) {
+  // manifestNeedsTextLayoutFeature answers for Scene3D overlay labels. A
+  // Scene3D label lays out through layoutBrowserText, so a scene that ships a
+  // label needs the text-layout engine before its first frame. A scene with
+  // only an accessibility "label" property must not fetch typography.
+  function manifestNeedsTextLayoutFeature(featureNames, manifest) {
+    if (featureNames.indexOf("scene3d") < 0 || !manifestHasEntries(manifest, "engines")) {
       return false;
     }
-    const node = typeof document.getElementById === "function" ? document.getElementById("gosx-manifest") : null;
-    const raw = node ? String(node.textContent || "") : "";
-    return raw.indexOf('"label"') >= 0;
+    for (const entry of manifest.engines) {
+      if (entry && entry.component === "GoSXScene3D" && scene3DPropsNeedTextLayout(entry.props, false)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function scene3DPropsNeedTextLayout(props, nested) {
+    if (props == null) {
+      return false;
+    }
+    if (typeof props !== "object" || Array.isArray(props)) {
+      return true;
+    }
+    return labelsNeedTextLayout(props.labels)
+      || (!nested && scene3DPropsNeedTextLayout(props.scene, true));
+  }
+
+  function labelsNeedTextLayout(labels) {
+    return labels != null && (!Array.isArray(labels) || labels.length);
   }
 
   function manifestFeatureNames(manifest) {
@@ -277,7 +285,7 @@
 
   function ensureManifestFeatures(manifest) {
     const names = manifestFeatureNames(manifest);
-    if (manifestNeedsTextLayoutFeature(names)) {
+    if (manifestNeedsTextLayoutFeature(names, manifest)) {
       names.push("textlayout");
     }
     return Promise.all(names.map(ensureBootstrapFeature));
@@ -499,4 +507,4 @@
   } else {
     bootstrapPage();
   }
-})();
+})(window, document);

@@ -35,6 +35,26 @@ func TestDocumentContextDefaultsWithoutRequest(t *testing.T) {
 	}
 }
 
+func TestDocumentContractIncludesTextLayoutFeaturePath(t *testing.T) {
+	doc := &DocumentContext{
+		Runtime: PageRuntimeSummary{
+			BootstrapMode:                  "full",
+			Manifest:                       true,
+			BootstrapFeatureTextLayoutPath: "/gosx/assets/runtime/bootstrap-feature-textlayout.abcd1234.js",
+		},
+	}
+
+	rendered := gosx.RenderHTML(documentContractNode(doc))
+	for _, want := range []string{
+		`"bootstrapFeatureTextLayoutPath":"/gosx/assets/runtime/bootstrap-feature-textlayout.abcd1234.js"`,
+		`"bootstrapMode":"full"`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected document contract to contain %s, got %q", want, rendered)
+		}
+	}
+}
+
 func TestDocumentContextUsesRequestURIForPathAndPageID(t *testing.T) {
 	ctx := newContext(httptest.NewRequest(http.MethodGet, "/docs/forms?tab=posting", nil))
 	ctx.SetMetadata(Metadata{Title: Title{Absolute: "Forms"}})

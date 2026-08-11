@@ -30,6 +30,10 @@ const {
 test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-runtime-root";
+  mount.setAttribute("data-gosx-scene3d-webgpu-frame-seq", "77");
+  mount.setAttribute("data-gosx-scene3d-webgpu-frame-at", "77");
+  mount.setAttribute("data-gosx-scene3d-webgl-frame-seq", "77");
+  mount.setAttribute("data-gosx-scene3d-webgl-frame-at", "77");
 
   const env = createContext({
     elements: [mount],
@@ -150,6 +154,10 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[2] === 3));
   assert.ok(gl.ops.some((entry) => entry[0] === "vertexAttribPointer" && entry[1] === 2 && entry[2] === 3));
   assert.ok(gl.ops.filter((entry) => entry[0] === "drawArrays").length >= 2);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-frame-seq"), null);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-frame-at"), null);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgl-frame-seq"), "1");
+  assert.ok(Number(mount.getAttribute("data-gosx-scene3d-webgl-frame-at")) > 0);
   assert.ok(gl.ops.some((entry) => entry[0] === "enable" && entry[1] === gl.BLEND));
   assert.ok(gl.ops.some((entry) => entry[0] === "enable" && entry[1] === gl.DEPTH_TEST));
   assert.ok(gl.ops.some((entry) => entry[0] === "clear" && entry[1] === (gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)));

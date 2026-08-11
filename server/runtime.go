@@ -34,6 +34,7 @@ type PageRuntimeSummary struct {
 	BootstrapFeatureEnginesPath     string
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
+	BootstrapFeatureTextLayoutPath  string
 	BootstrapFeatureScene3DPath     string
 	HLSPath                         string
 	Islands                         int
@@ -187,6 +188,9 @@ func (r *PageRuntime) ClientIdentity(config hydrate.ClientIdentityConfig) {
 func (r *PageRuntime) TextBlock(props TextBlockProps, args ...any) gosx.Node {
 	if r != nil && TextBlockRequiresBootstrap(props) {
 		r.EnableBootstrap()
+		if r.renderer != nil {
+			r.renderer.RequireTextLayout()
+		}
 	}
 	return TextBlock(props, args...)
 }
@@ -306,6 +310,7 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		BootstrapFeatureEnginesPath:     summary.BootstrapFeatureEnginesPath,
 		BootstrapFeatureHubsPath:        summary.BootstrapFeatureHubsPath,
 		BootstrapFeatureControllersPath: summary.BootstrapFeatureControllersPath,
+		BootstrapFeatureTextLayoutPath:  summary.BootstrapFeatureTextLayoutPath,
 		BootstrapFeatureScene3DPath:     summary.BootstrapFeatureScene3DPath,
 		HLSPath:                         summary.HLSPath,
 		Islands:                         summary.Islands,

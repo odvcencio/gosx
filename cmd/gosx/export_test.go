@@ -2,12 +2,17 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/server"
 )
 
 func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
@@ -227,7 +232,7 @@ func TestExportRuntimeAssetRefsCollectAttrsAndContracts(t *testing.T) {
 	refs := map[string]struct{}{}
 	addExportRuntimeAssetRefs(refs, `<!DOCTYPE html><html><head>
 <script src="/gosx/assets/runtime/bootstrap-runtime.1234.js?v=1234"></script>
-<script id="gosx-document" type="application/json">{"assets":{"bootstrapFeatureEnginesPath":"/gosx/assets/runtime/bootstrap-feature-engines.5678.js"}}</script>
+<script id="gosx-document" type="application/json">{"assets":{"bootstrapFeatureEnginesPath":"/gosx/assets/runtime/bootstrap-feature-engines.5678.js","bootstrapFeatureTextLayoutPath":"/gosx/assets/runtime/bootstrap-feature-textlayout.9999.js"}}</script>
 <script id="gosx-manifest" type="application/json">{"runtime":{"path":"/gosx/assets/runtime/runtime.abcd.wasm"}}</script>
 <script src="/analytics.js"></script>
 </head></html>`)
@@ -235,12 +240,58 @@ func TestExportRuntimeAssetRefsCollectAttrsAndContracts(t *testing.T) {
 	got := sortedExportRuntimeAssetRefs(refs)
 	want := []string{
 		"/gosx/assets/runtime/bootstrap-feature-engines.5678.js",
+		"/gosx/assets/runtime/bootstrap-feature-textlayout.9999.js",
 		"/gosx/assets/runtime/bootstrap-runtime.1234.js",
 		"/gosx/assets/runtime/runtime.abcd.wasm",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("runtime refs = %#v, want %#v", got, want)
 	}
+}
+
+func TestExportRuntimeAssetRefsIncludeRealLiteTextBlockContract(t *testing.T) {
+	app := server.New()
+	app.Page("GET /", func(ctx *server.Context) gosx.Node {
+		return ctx.TextBlock(server.TextBlockProps{Text: "hello text"})
+	})
+	body := renderServerHTMLForExportTest(t, app, "/")
+	refs := map[string]struct{}{}
+	addExportRuntimeAssetRefs(refs, body)
+
+	if _, ok := refs["/gosx/bootstrap-feature-textlayout.js"]; !ok {
+		t.Fatalf("real TextBlock export refs missed textlayout chunk: %#v", sortedExportRuntimeAssetRefs(refs))
+	}
+	if strings.Contains(body, `<script src="/gosx/bootstrap-feature-textlayout.js"`) || strings.Contains(body, `rel="preload" href="/gosx/bootstrap-feature-textlayout.js"`) {
+		t.Fatalf("real TextBlock HTML eagerly loaded textlayout chunk: %s", body)
+	}
+}
+
+func TestExportRuntimeAssetRefsOmitNativeTextBlockContract(t *testing.T) {
+	app := server.New()
+	app.Page("GET /", func(ctx *server.Context) gosx.Node {
+		return ctx.TextBlock(server.TextBlockProps{Mode: server.TextBlockModeNative, Text: "hello text"})
+	})
+	body := renderServerHTMLForExportTest(t, app, "/")
+	refs := map[string]struct{}{}
+	addExportRuntimeAssetRefs(refs, body)
+
+	if _, ok := refs["/gosx/bootstrap-feature-textlayout.js"]; ok {
+		t.Fatalf("native TextBlock export refs included textlayout chunk: %#v", sortedExportRuntimeAssetRefs(refs))
+	}
+	if strings.Contains(body, "bootstrapFeatureTextLayoutPath") {
+		t.Fatalf("native TextBlock HTML advertised textlayout chunk: %s", body)
+	}
+}
+
+func renderServerHTMLForExportTest(t *testing.T, app *server.App, path string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("render %s: got HTTP %d", path, w.Code)
+	}
+	return w.Body.String()
 }
 
 func TestStaticExportPagesSkipsPrerenderDisabledScopes(t *testing.T) {

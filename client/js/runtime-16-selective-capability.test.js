@@ -17,6 +17,8 @@ const {
   bootstrapFeatureIslandsSource,
   bootstrapFeatureEnginesSource,
   bootstrapFeatureHubsSource,
+  bootstrapFeatureScene3DSource,
+  bootstrapFeatureTextLayoutSource,
   FakeTextNode,
   FakeElement,
   createContext,
@@ -312,6 +314,65 @@ test("selective runtime mounts native JS engines without loading the shared wasm
 
   await env.context.__gosx_dispose_page();
   assert.equal(mount.getAttribute("data-disposed"), "true");
+});
+
+test("selective runtime textlayout demand matches Scene3D overlay label parity", async (t) => {
+  const sceneEngine = (props) => ({
+    id: "gosx-engine-scene",
+    component: "GoSXScene3D",
+    kind: "surface",
+    mountId: "scene-root",
+    props,
+  });
+  const customEngine = (props) => ({
+    id: "custom-engine",
+    component: "CustomEngine",
+    kind: "surface",
+    mountId: "scene-root",
+    props,
+  });
+  const cases = [
+    { name: "props absent", manifest: { engines: [sceneEngine(undefined)] }, want: false },
+    { name: "props null", manifest: { engines: [sceneEngine(null)] }, want: false },
+    { name: "props non object", manifest: { engines: [sceneEngine("aria")] }, want: true },
+    { name: "props array", manifest: { engines: [sceneEngine([])] }, want: true },
+    { name: "labels absent", manifest: { engines: [sceneEngine({ width: 640 })] }, want: false },
+    { name: "labels null", manifest: { engines: [sceneEngine({ labels: null })] }, want: false },
+    { name: "labels empty", manifest: { engines: [sceneEngine({ labels: [] })] }, want: false },
+    { name: "labels malformed", manifest: { engines: [sceneEngine({ labels: { id: "caption" } })] }, want: true },
+    { name: "labels nonempty", manifest: { engines: [sceneEngine({ labels: [{ id: "caption", text: "Overlay" }] })] }, want: true },
+    { name: "scene null", manifest: { engines: [sceneEngine({ scene: null })] }, want: false },
+    { name: "scene non object", manifest: { engines: [sceneEngine({ scene: "bad" })] }, want: true },
+    { name: "scene labels null", manifest: { engines: [sceneEngine({ scene: { labels: null } })] }, want: false },
+    { name: "scene labels empty", manifest: { engines: [sceneEngine({ scene: { labels: [] } })] }, want: false },
+    { name: "scene labels malformed", manifest: { engines: [sceneEngine({ scene: { labels: { id: "caption" } } })] }, want: true },
+    { name: "scene labels nonempty", manifest: { engines: [sceneEngine({ scene: { labels: [{ id: "caption", text: "Overlay" }] } })] }, want: true },
+    { name: "aria label only", manifest: { engines: [sceneEngine({ label: "Accessible scene name" })] }, want: false },
+    { name: "unrelated manifest labels", manifest: { labels: [{ text: "Nope" }], engines: [sceneEngine({ width: 640 })] }, want: false },
+    { name: "unrelated engine labels", manifest: { engines: [customEngine({ labels: [{ text: "Nope" }] })] }, want: false },
+  ];
+
+  for (const tc of cases) {
+    await t.test(tc.name, async () => {
+      const mount = new FakeElement("div", null);
+      mount.id = "scene-root";
+      const env = createContext({
+        elements: [mount],
+        fetchRoutes: {
+          "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+          "/gosx/bootstrap-feature-scene3d.js": { text: bootstrapFeatureScene3DSource },
+          "/gosx/bootstrap-feature-textlayout.js": { text: bootstrapFeatureTextLayoutSource },
+        },
+        manifest: tc.manifest,
+      });
+
+      runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+      await flushAsyncWork();
+      await flushAsyncWork();
+
+      assert.equal(env.fetchCalls.some((entry) => entry.url === "/gosx/bootstrap-feature-textlayout.js"), tc.want);
+    });
+  }
 });
 
 // Regression test for the split feature-bundle build: bootstrap-feature-engines.js
