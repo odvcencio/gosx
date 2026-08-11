@@ -1718,6 +1718,14 @@ func canonicalBrowserAllowedPreseedPaths(root string, plan CanonicalInventoryMat
 		exact[rel] = true
 	}
 	if runtimeEvidence, err := readCanonicalBrowserRuntimeEvidenceStrict(root, filepath.Join(root, "wasm", "runtime-artifacts.json")); err == nil {
+		if canonicalBrowserRuntimePreseedRequiresPublishedShim(runtimeEvidence) {
+			if path, err := canonicalBrowserRuntimeOutputPath(runtimeEvidence.OutputDir, "wasm_exec.js"); err == nil {
+				if rel, err := canonicalBrowserPreseedFileRel(root, path); err == nil {
+					exact[rel] = true
+					dirs[filepath.ToSlash(filepath.Dir(rel))] = true
+				}
+			}
+		}
 		for _, variant := range runtimeEvidence.Variants {
 			if variant.Generation != "current" || variant.Status != "measured" {
 				continue
@@ -1744,6 +1752,18 @@ func canonicalBrowserAllowedPreseedPaths(root string, plan CanonicalInventoryMat
 		}
 	}
 	return exact, dirs, nil
+}
+
+func canonicalBrowserRuntimePreseedRequiresPublishedShim(ev *RuntimeBuildEvidence) bool {
+	if ev == nil {
+		return false
+	}
+	for _, variant := range ev.Variants {
+		if variant.Generation == "current" && variant.Status == "measured" && variant.Shim != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func canonicalBrowserPreseedRefRel(plan CanonicalInventoryMaterialization, ref string) (string, error) {

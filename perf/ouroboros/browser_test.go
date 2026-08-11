@@ -2773,6 +2773,30 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 		}
 		return opts, plan, source, routes
 	}
+	validWithRuntimeOutputPreseed := func(t *testing.T) (BrowserBaselineOptions, CanonicalInventoryMaterialization, SourceIdentity, []FixtureSpec) {
+		t.Helper()
+		repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
+		artifactRoot := filepath.Join(repoRoot, "build", "browser-preseed")
+		routes := canonicalBrowserRoutesForTest(t)
+		plan, err := PredictCanonicalInventoryMaterialization(t.Context(), repoRoot, inventoryPath, artifactRoot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := MaterializeCanonicalInventory(t.Context(), repoRoot, inventoryPath, artifactRoot); err != nil {
+			t.Fatal(err)
+		}
+		addCanonicalBrowserPreseedGitExcludes(t, repoRoot)
+		source := sourceIdentityFromMaterialization(plan)
+		writeCanonicalBrowserRuntimePreseedForTestWithOutputDir(t, repoRoot, artifactRoot, source, filepath.Join(artifactRoot, "wasm", "runtime-output"))
+		writeCanonicalBrowserSizePreseedForTest(t, repoRoot, artifactRoot, source, routes)
+		opts := BrowserBaselineOptions{
+			RepoRoot:      repoRoot,
+			ArtifactRoot:  artifactRoot,
+			InventoryPath: inventoryPath,
+			EvidenceRoot:  filepath.Join(t.TempDir(), "evidence"),
+		}
+		return opts, plan, source, routes
+	}
 
 	t.Run("valid_exact_preseed", func(t *testing.T) {
 		opts, plan, source, routes := valid(t)
@@ -2798,6 +2822,101 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("valid_runtime_output_published_shim", func(t *testing.T) {
+		opts, plan, source, routes := validWithRuntimeOutputPreseed(t)
+		allowedExact, _, err := canonicalBrowserAllowedPreseedPaths(opts.ArtifactRoot, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !allowedExact["wasm/runtime-output/wasm_exec.js"] {
+			t.Fatal("published TinyGo shim missing from exact canonical preseed allowlist")
+		}
+		if allowedExact["wasm/runtime-output/unknown.js"] {
+			t.Fatal("canonical preseed allowlist broadly allowed runtime-output files")
+		}
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err != nil || !ok {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want published shim accepted", ok, err)
+		}
+	})
+
+	t.Run("copied_runtime_output_shim_rejected_when_evidence_output_dir_is_outside_preseed", func(t *testing.T) {
+		opts, plan, source, routes := valid(t)
+		writeTestFile(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "wasm_exec.js"), "shim")
+		allowedExact, _, err := canonicalBrowserAllowedPreseedPaths(opts.ArtifactRoot, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if allowedExact["wasm/runtime-output/wasm_exec.js"] {
+			t.Fatal("canonical preseed allowlist admitted copied shim without matching runtime OutputDir")
+		}
+		ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+		if err == nil || !strings.Contains(err.Error(), "unknown directory") {
+			t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want copied shim rejection", ok, err)
+		}
+	})
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(t *testing.T, opts BrowserBaselineOptions)
+		want   string
+	}{
+		{
+			name: "runtime_output_unknown_file",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions) {
+				writeTestFile(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "unknown.js"), "bad")
+			},
+			want: "unknown file",
+		},
+		{
+			name: "runtime_output_unknown_directory",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions) {
+				writeTestFile(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "nested", "unknown.js"), "bad")
+			},
+			want: "unknown directory",
+		},
+		{
+			name: "runtime_output_missing_published_shim",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions) {
+				if err := os.Remove(filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "wasm_exec.js")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "published shim",
+		},
+		{
+			name: "runtime_output_tampered_published_shim",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions) {
+				writeTestFile(t, filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "wasm_exec.js"), "changed")
+			},
+			want: "published shim metrics mismatch",
+		},
+		{
+			name: "runtime_output_symlink_published_shim",
+			mutate: func(t *testing.T, opts BrowserBaselineOptions) {
+				target := filepath.Join(opts.ArtifactRoot, "wasm", "runtime-output", "wasm_exec.js")
+				if err := os.Remove(target); err != nil {
+					t.Fatal(err)
+				}
+				outside := filepath.Join(t.TempDir(), "wasm_exec.js")
+				writeTestFile(t, outside, "shim")
+				if err := os.Symlink(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "symlink",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts, plan, source, routes := validWithRuntimeOutputPreseed(t)
+			tc.mutate(t, opts)
+			ok, err := validateCanonicalBrowserRootPreseed(t.Context(), opts, plan, source, routes)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateCanonicalBrowserRootPreseed = %v/%v, want %q", ok, err, tc.want)
+			}
+		})
+	}
 
 	t.Run("recorded_symlink_alias_to_live_tool", func(t *testing.T) {
 		opts, plan, source, routes := valid(t)
@@ -3650,9 +3769,14 @@ func TestCanonicalBrowserPreseedFailureDoesNotWriteBrowserArtifacts(t *testing.T
 
 func writeCanonicalBrowserRuntimePreseedForTest(t *testing.T, repoRoot, root string, source SourceIdentity) {
 	t.Helper()
+	outputDir := filepath.Join(repoRoot, "build", "run", "tinygo", "current")
+	writeCanonicalBrowserRuntimePreseedForTestWithOutputDir(t, repoRoot, root, source, outputDir)
+}
+
+func writeCanonicalBrowserRuntimePreseedForTestWithOutputDir(t *testing.T, repoRoot, root string, source SourceIdentity, outputDir string) {
+	t.Helper()
 	runtimeBody := bytes.Repeat([]byte{1}, 1024)
 	islandsBody := bytes.Repeat([]byte{2}, 1024)
-	outputDir := filepath.Join(repoRoot, "build", "run", "tinygo", "current")
 	writeTestFile(t, filepath.Join(outputDir, "gosx-runtime.wasm"), string(runtimeBody))
 	writeTestFile(t, filepath.Join(outputDir, "gosx-runtime-islands.wasm"), string(islandsBody))
 	shimPath := filepath.Join(repoRoot, "build", "tinygo", "targets", "wasm_exec.js")
