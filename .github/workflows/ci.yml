@@ -45,13 +45,13 @@ jobs:
   # go-tests: every root package except cmd/gosx, plus the editor, fuzz and
   # desktop gates. The production-build CLI suite runs in go-cli-tests beside
   # this job, so its ~6 minute TinyGo integration tests no longer serialize all
-  # other Go checks. PR117 measured the superseded serial lane at 6m31s for
-  # unit tests plus 10m48s for race tests (BC7 alone took 504.697s), which is
-  # why it temporarily needed 30 minutes. This lane needs neither TinyGo nor
-  # Node and returns to a 15-minute fail-safe.
+  # other Go checks. This lane needs neither TinyGo nor Node. The pull-request
+  # path runs the focused test-race-pr suite and fits a 15-minute fail-safe.
+  # The push path also runs the full test-race suite (about 11 minutes) on top
+  # of the unit lane (about 6.5 minutes), so it needs a 25-minute fail-safe.
   go-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
