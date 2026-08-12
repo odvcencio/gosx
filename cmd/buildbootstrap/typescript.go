@@ -13,12 +13,16 @@ import (
 // sourceLanguage describes the syntax accepted by one concatenated output.
 // Existing all-JavaScript outputs keep LoaderJS. One typed source promotes the
 // output to TypeScript, which also accepts the JavaScript sources beside it.
+//
+// TSX is not a supported extension yet. The bootstrap runtime configures no
+// JSX factory, so an esbuild TSX transform would emit React.createElement
+// calls into a bundle that ships no React. TSX support returns once a JSX
+// factory is configured for the bootstrap runtime.
 type sourceLanguage uint8
 
 const (
 	sourceJavaScript sourceLanguage = iota
 	sourceTypeScript
-	sourceTSX
 )
 
 func languageForSource(src source) (sourceLanguage, error) {
@@ -27,8 +31,6 @@ func languageForSource(src source) (sourceLanguage, error) {
 		return sourceJavaScript, nil
 	case ".ts", ".mts", ".cts":
 		return sourceTypeScript, nil
-	case ".tsx":
-		return sourceTSX, nil
 	default:
 		return sourceJavaScript, fmt.Errorf("source %s has an unsupported browser source extension", src.rel)
 	}
@@ -49,14 +51,10 @@ func languageForOutput(entry output) (sourceLanguage, error) {
 }
 
 func (language sourceLanguage) esbuildLoader() esbuild.Loader {
-	switch language {
-	case sourceTypeScript:
+	if language == sourceTypeScript {
 		return esbuild.LoaderTS
-	case sourceTSX:
-		return esbuild.LoaderTSX
-	default:
-		return esbuild.LoaderJS
 	}
+	return esbuild.LoaderJS
 }
 
 func esbuildLoaderForOutput(entry output) (esbuild.Loader, error) {
@@ -80,12 +78,7 @@ func validateTypedSource(src source, body []byte) error {
 		return nil
 	}
 
-	var grammar *gotreesitter.Language
-	if language == sourceTSX {
-		grammar = grammars.TsxLanguage()
-	} else {
-		grammar = grammars.TypescriptLanguage()
-	}
+	grammar := grammars.TypescriptLanguage()
 	if grammar == nil {
 		return fmt.Errorf("parse %s: gotreesitter TypeScript grammar is unavailable", src.rel)
 	}

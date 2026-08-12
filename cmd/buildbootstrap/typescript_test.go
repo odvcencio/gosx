@@ -17,7 +17,6 @@ func TestESBuildLoaderFollowsSourceExtensions(t *testing.T) {
 		{name: "javascript", entry: chunk("runtime.js", "bootstrap-src/runtime.js"), want: esbuild.LoaderJS},
 		{name: "typescript", entry: chunk("runtime.js", "bootstrap-src/runtime.ts"), want: esbuild.LoaderTS},
 		{name: "mixed", entry: chunk("runtime.js", "bootstrap-src/head.js", "bootstrap-src/runtime.ts"), want: esbuild.LoaderTS},
-		{name: "tsx", entry: chunk("runtime.js", "bootstrap-src/view.tsx"), want: esbuild.LoaderTSX},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -31,8 +30,12 @@ func TestESBuildLoaderFollowsSourceExtensions(t *testing.T) {
 		})
 	}
 
-	if _, err := esbuildLoaderForOutput(chunk("runtime.js", "bootstrap-src/runtime.jsx")); err == nil {
-		t.Fatal("esbuildLoaderForOutput accepted an unsupported extension")
+	// TSX is not a supported extension yet, so it fails the same as any
+	// other unrecognized extension. See the sourceLanguage doc comment.
+	for _, rel := range []string{"bootstrap-src/runtime.jsx", "bootstrap-src/view.tsx"} {
+		if _, err := esbuildLoaderForOutput(chunk("runtime.js", rel)); err == nil {
+			t.Fatalf("esbuildLoaderForOutput(%s) accepted an unsupported extension", rel)
+		}
 	}
 }
 
