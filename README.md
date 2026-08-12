@@ -226,7 +226,10 @@ count    // local to the declaring island
 
 **Content and Components** — `content` uses mdpp as the canonical Markdown++ content-source layer for `.md`, `.mdx`, and `.mdpp` collections, with typed frontmatter, diagnostics, renderer hooks, and slug indexes. `components` provides a registry for reusable server component libraries and file-route bindings, and `ui` seeds GoSX UI: layout, typography, form, card, tab, table, badge, and stylesheet primitives users can copy from or compose directly.
 
-**Text Layout** — `TextBlock` supports both server-measured native rendering with no JavaScript and bootstrap-managed browser refinement. Font, width, line-height, locale, clamping, and ellipsis stay in one framework-level contract.
+**Text Layout** — `TextBlock` supports a deterministic approximate server
+layout and bootstrap-managed refinement with browser font metrics. Font,
+width, line-height, locale, clamping, and ellipsis stay in one framework-level
+contract without pretending the approximate first pass is exact.
 
 **Managed Video** — `server.Video`, `ctx.Video`, and the `.gsx` `<Video />` builtin render a real server `<video>` baseline with `<source>` and `<track>` children, then the built-in video engine can layer in HLS fallback (with fatal-error recovery and muted-autoplay retry), selectable audio tracks, text and bitmap subtitle cues, sync, and shared `$video.*` signals when the page needs them.
 
@@ -352,7 +355,7 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 
 The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
 
-- **On the web**, two hand-written JavaScript backends consume the IR: a WebGPU renderer and a WebGL2 renderer. Each ships as a separately fetched chunk, so a WebGPU-capable browser never downloads the WebGL renderer and the reverse also holds.
+- **On the web**, two authored TypeScript backends consume the IR: a WebGPU renderer and a WebGL2 renderer. Each ships as a separately fetched chunk, so a WebGPU-capable browser never downloads the WebGL renderer and the reverse also holds.
 - **On the desktop**, and for headless rendering, a pure-Go WebGPU pipeline (`render/gpu` + `render/bundle`, with hand-written WGSL) consumes the same IR. It also backs `scene/preview`, which renders to PNG with no browser and no GPU.
 
 Typed Scene3D surfaces declare WebGPU as a default capability, so a capable browser takes the WebGPU path first and falls back through WebGL2 to canvas when the device or the scene needs it. The server computes a per-backend fidelity verdict and ships it with the scene, so a backend that cannot render a scene faithfully is diverted rather than allowed to draw the wrong image. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
@@ -444,7 +447,7 @@ scene.Props{
 - **Shared IR across backends** — the JS WebGPU and WebGL2 browser backends, the pure-Go desktop WebGPU pipeline, and the headless software rasterizer all consume the same SceneIR, with feature parity gated by what each target surface actually supports and reported through the capability verdict
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
 
-The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. You can hold the whole thing in your head, and when something goes wrong you read Go and JavaScript — not a black box.
+The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. When something goes wrong, the implementation is Go and authored TypeScript rather than a black box.
 
 ## Hubs
 
@@ -741,11 +744,11 @@ Three tiers:
 | `engine` | Worker/surface model with capability declarations |
 | `engine/wasm` | Standard-Go WASM engine registration, browser context, and instance lifecycle |
 | `editor` | Go-native text editor building blocks (textmodel, input, highlight, toolbar, vscode shim) |
-| `highlight` | Syntax highlighting for Go, GSX, JavaScript, JSON, and Bash |
+| `highlight` | Syntax highlighting for Go, GSX, JavaScript/TypeScript, JSON, and Bash |
 | `client/vm` | Expression VM, tree reconciler, patch generation |
 | `client/bridge` | WASM bridge for island/engine lifecycle |
 | `client/wasm` | WASM entry point |
-| `client/js` | Browser runtime: bootstrap (lite/runtime/full), patch applier, feature chunks (islands, hubs, engines, Scene3D WebGL/WebGPU/glTF/animation) |
+| `client/js` | Authored TypeScript browser runtime and generated bundles: bootstrap, patch applier, and feature chunks (islands, hubs, engines, Scene3D WebGL/WebGPU/glTF/animation) |
 | `render` | Server-side HTML rendering from IR |
 | `css` | Component-scoped CSS with `:where()` selectors |
 | `textlayout` | Text measurement, line breaking, ellipsis |
@@ -773,7 +776,7 @@ make test-desktop  # Desktop package tests plus Windows cross-compile guards
 make test-desktop-macos # macOS desktop/cmd cross-compile guardrails
 make build-desktop-windows  # Windows desktop-capable CLI binaries
 make build-desktop-macos    # macOS CLI binaries; native backend still unsupported
-make build-runtime # TinyGo production full + island-only WASM runtime builds
+make build-runtime # TinyGo production capability-profile WASM runtime builds
 make canopy-index  # Memory-bounded structural index in .canopy/index.json
 make canopy-stats  # Inspect the cached structural index
 make ci            # All of the above + build verification
