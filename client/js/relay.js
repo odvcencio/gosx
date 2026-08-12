@@ -21,8 +21,8 @@
 //     via window.__gosx.relay.registerPeer(target, origin).
 //
 // Origin validation: configs are pushed via window.__gosx.relay.configure([
-//   {prefix, allowedOrigin}, ...]) by the wasm-side at startup. "*" allows
-//   any origin (dev mode) and emits a console warning.
+//   {prefix, allowedOrigin}, ...]) by the wasm-side at startup. Missing origins
+//   are rejected; an explicit "*" remains available for audited dev mode.
 
 (function() {
   "use strict";
@@ -63,7 +63,10 @@
       if (!cfg || typeof cfg.prefix !== "string" || cfg.prefix === "") {
         continue;
       }
-      const allowedOrigin = typeof cfg.allowedOrigin === "string" ? cfg.allowedOrigin : "*";
+      const allowedOrigin = typeof cfg.allowedOrigin === "string" ? cfg.allowedOrigin.trim() : "";
+      if (allowedOrigin === "") {
+        continue;
+      }
       const existing = state.configs.find((c) => c.prefix === cfg.prefix && c.allowedOrigin === allowedOrigin);
       if (existing) {
         continue;
@@ -107,6 +110,18 @@
       return true;
     }
     return cfg.allowedOrigin === origin;
+  }
+
+  function registeredSource(state, source, origin) {
+    if (!source) {
+      return false;
+    }
+    for (const peer of state.peers) {
+      if (peer.target === source && (!peer.origin || peer.origin === origin)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function autoRegisterPeers(state) {
@@ -174,9 +189,12 @@
       valueJSON: typeof valueJSON === "string" ? valueJSON : "null",
       origin: (window.location && window.location.origin) || "",
     };
-    const targetOrigin = cfg.allowedOrigin || "*";
     for (const peer of state.peers) {
       try {
+        if (cfg.allowedOrigin !== "*" && peer.origin && peer.origin !== cfg.allowedOrigin) {
+          continue;
+        }
+        const targetOrigin = peer.origin || cfg.allowedOrigin;
         peer.target.postMessage(message, targetOrigin);
       } catch (err) {
         try {
@@ -201,7 +219,7 @@
       }
       const name = event.data.name;
       const valueJSON = event.data.valueJSON;
-      const originatingOrigin = event.origin || event.data.origin || "";
+      const originatingOrigin = event.origin || "";
       const cfg = matchPrefix(state, name);
       if (!cfg) {
         // Unknown prefix — drop silently (could be a different gosx app).
@@ -215,6 +233,14 @@
             "for signal",
             name,
           );
+        } catch (_e) {
+          // console-less hosts.
+        }
+        return;
+      }
+      if (!registeredSource(state, event.source, originatingOrigin)) {
+        try {
+          console.warn("[gosx/relay] dropped message from unregistered frame source", originatingOrigin);
         } catch (_e) {
           // console-less hosts.
         }

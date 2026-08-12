@@ -98,8 +98,7 @@ func relayDispatchInboundFunc(b *bridge.Bridge) js.Func {
 //
 // Query parameter contract:
 //   - gosx-preview=1 → enable relay for the default $preview. prefix.
-//   - gosx-preview-origin=<editor-origin> → expected peer origin. Falls
-//     back to "*" (dev-mode wildcard) when absent.
+//   - gosx-preview-origin=<editor-origin> → required expected peer origin.
 //
 // Storefronts that need finer control (multiple prefixes, explicit
 // per-iframe origin pinning) can call __gosx_enable_cross_frame_relay

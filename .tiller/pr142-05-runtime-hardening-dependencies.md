@@ -20,7 +20,8 @@ The cherry-pick boundary is therefore:
 
 1. Land Stack 03/04 through `f9bfb35` (or its converged equivalents).
 2. Cherry-pick `1e5b784`.
-3. Cherry-pick `24a5b26`.
+3. Cherry-pick the relay-hardening commit following this dependency record
+   (or the equivalent original `24a5b26` after the TypeScript host lands).
 
 Attempting to cherry-pick the hardening commit directly on Stack 02 produces
 modify/delete conflicts for the generated ABI and build contract, plus missing
@@ -29,7 +30,11 @@ variant manifest, and TypeScript relay. Resolving those conflicts by adding
 the missing files would silently fold Stack 03/04's product feature into the
 hardening stack and destroy the intended stack boundaries.
 
-The source hardening commits have focused passing evidence recorded on
+The relay hardening is re-expressed on this Stack 02 branch against the
+current `client/js/relay.js` source; its Go parser and 11 Node relay tests pass
+here. Stack 04 should carry the same logic into its authored TypeScript source.
+
+The ABI source hardening commit has focused passing evidence recorded on
 `codex/o6-runtime-hardening`: Go runtime/manifest/selector tests,
 build-bootstrap generated-contract/source-order tests, and 18 Node loader and
 relay adversarial tests.

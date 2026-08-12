@@ -7,8 +7,8 @@ import (
 
 // parsePreviewModeQuery extracts the preview-mode prefix + origin from a URL
 // query string. Returns (prefix, origin, true) when the page should activate
-// the cross-frame relay. Defaults: prefix="$preview.", origin="*" (dev-mode
-// wildcard fallback).
+// the cross-frame relay. The prefix defaults to "$preview.". The peer origin
+// is mandatory so URL-driven preview mode never silently enables a wildcard.
 //
 // Query parameter contract — see ADR 0009 + plan section C of
 // plans/2026-05-26-iframe-cross-frame-signal-transport.md:
@@ -27,7 +27,7 @@ func parsePreviewModeQuery(search string) (string, string, bool) {
 	}
 	active := false
 	prefix := "$preview."
-	origin := "*"
+	origin := ""
 	for _, part := range strings.Split(search, "&") {
 		key, value := splitQueryPair(part)
 		switch key {
@@ -51,7 +51,7 @@ func parsePreviewModeQuery(search string) (string, string, bool) {
 			}
 		}
 	}
-	if !active {
+	if !active || strings.TrimSpace(origin) == "" || origin == "*" {
 		return "", "", false
 	}
 	return prefix, origin, true
