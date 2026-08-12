@@ -49,16 +49,15 @@ func (d *declaredNames) Exit(js.INode) {}
 // chunkDeclaredNames parses one chunk and returns every name it declares.
 func chunkDeclaredNames(t *testing.T, dir string, entry output) map[string]bool {
 	t.Helper()
-	var b strings.Builder
+	bodies := make([]string, 0, len(entry.sources))
 	for _, src := range entry.sources {
 		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
 		if err != nil {
 			t.Fatalf("read %s: %v", src.rel, err)
 		}
-		b.WriteString(normalizeNewlines(string(data)))
-		b.WriteByte('\n')
+		bodies = append(bodies, normalizeNewlines(string(data)))
 	}
-	chunkSource, err := transpileTypedChunk(entry, b.String())
+	chunkSource, err := transpileTypedChunk(entry, bodies)
 	if err != nil {
 		t.Fatalf("transpile %s: %v", entry.name, err)
 	}
