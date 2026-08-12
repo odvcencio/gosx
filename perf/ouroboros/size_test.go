@@ -1,6 +1,7 @@
 package ouroboros
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -395,6 +396,29 @@ func TestMaterializeOverlayInputsRewritesReplayableContainedRefs(t *testing.T) {
 	}
 	if _, err := ReplayInventoryReconstruction(context.Background(), root, inv); err != nil {
 		t.Fatalf("materialized inventory is not replayable: %v", err)
+	}
+}
+
+func TestNormalizePortableInventoryMetadataRemovesHostRootIdentity(t *testing.T) {
+	left := minimalValidInventory()
+	right := minimalValidInventory()
+	left.ArtifactRoot = "/home/runner/work/gosx/evidence"
+	left.Manifest.ArtifactRoot = left.ArtifactRoot
+	right.ArtifactRoot = `C:\\work\\gosx\\evidence`
+	right.Manifest.ArtifactRoot = right.ArtifactRoot
+
+	normalizePortableInventoryMetadata(left)
+	normalizePortableInventoryMetadata(right)
+	leftBody, err := canonicalInventoryJSON(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightBody, err := canonicalInventoryJSON(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(leftBody, rightBody) {
+		t.Fatalf("portable inventory identity still depends on host root\nleft: %s\nright: %s", leftBody, rightBody)
 	}
 }
 

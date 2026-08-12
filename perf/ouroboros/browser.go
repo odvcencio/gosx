@@ -584,7 +584,7 @@ func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (resul
 		Spec:          Spec,
 		CorpusID:      CorpusID,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
-		ArtifactRoot:  opts.ArtifactRoot,
+		ArtifactRoot:  portableArtifactRoot,
 		Source:        source,
 		Corpus:        corpus,
 		Sampling:      plan,

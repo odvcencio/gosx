@@ -34,9 +34,14 @@ const (
 	Spec            = "spec.gosx-ouroboros-runtime.v0.1"
 	CorpusID        = "gosx-ouroboros-o0.2-v1"
 	OverlayClean    = "sha256:clean"
-	canonicalLines  = 87086
-	canonicalGosx   = 209
-	canonicalJSON   = 253
+	// portableArtifactRoot is the serialized root for self-contained evidence
+	// bundles. The physical collection directory is an execution detail; refs
+	// inside an inventory are either repository-relative reconstruction refs or
+	// bundle-relative evidence refs.
+	portableArtifactRoot = "."
+	canonicalLines       = 87086
+	canonicalGosx        = 209
+	canonicalJSON        = 253
 
 	compatibilityAuditSchemaVersion = "gosx.ouroboros.compatibility-audit.v1"
 	compatibilityAuditScope         = "client/js/bootstrap-src/**/*.js + client/wasm/**/*.go"
@@ -426,7 +431,7 @@ func Collect(ctx context.Context, opts CollectOptions) (*Inventory, error) {
 		Spec:          Spec,
 		CorpusID:      CorpusID,
 		GeneratedAt:   generatedAt.UTC().Format(time.RFC3339),
-		ArtifactRoot:  opts.ArtifactRoot,
+		ArtifactRoot:  portableArtifactRoot,
 		Scope:         DefaultScope(),
 		Totals: Totals{
 			ByExtension: map[string]int{},
@@ -441,7 +446,7 @@ func Collect(ctx context.Context, opts CollectOptions) (*Inventory, error) {
 		Manifest: DefaultCorpusManifest(),
 	}
 	inv.Manifest.GeneratedAt = inv.GeneratedAt
-	inv.Manifest.ArtifactRoot = opts.ArtifactRoot
+	inv.Manifest.ArtifactRoot = portableArtifactRoot
 
 	if opts.Git {
 		base, err := gitOutput(ctx, absRoot, "git", "rev-parse", "HEAD")

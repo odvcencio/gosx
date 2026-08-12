@@ -51,6 +51,9 @@ func TestCollectRecordsScopeRatchetsAndOverlayEvidence(t *testing.T) {
 	if err := ValidateInventoryFresh(context.Background(), root, inv); err != nil {
 		t.Fatalf("ValidateInventoryFresh: %v", err)
 	}
+	if inv.ArtifactRoot != portableArtifactRoot || inv.Manifest.ArtifactRoot != portableArtifactRoot {
+		t.Fatalf("artifact roots = %q/%q, want portable %q", inv.ArtifactRoot, inv.Manifest.ArtifactRoot, portableArtifactRoot)
+	}
 	if inv.BaseRevision == "" || inv.BaseRevision == "unknown" {
 		t.Fatalf("base revision not recorded: %q", inv.BaseRevision)
 	}
@@ -127,6 +130,36 @@ func TestCollectRecordsScopeRatchetsAndOverlayEvidence(t *testing.T) {
 	}
 	if staged.Hash != inv.OverlayHash {
 		t.Fatalf("staged overlay hash = %s, want %s", staged.Hash, inv.OverlayHash)
+	}
+}
+
+func TestCollectInventoryIdentityIgnoresArtifactRoot(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/js/bootstrap-src/00-runtime.js", "window.__gosx_runtime_ready = true;\n")
+	runGit(t, root, "init")
+	runGit(t, root, "config", "user.email", "test@example.invalid")
+	runGit(t, root, "config", "user.name", "test")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "base")
+	generatedAt := time.Unix(0, 0).UTC()
+
+	first, err := Collect(context.Background(), CollectOptions{RepoRoot: root, ArtifactRoot: filepath.Join(t.TempDir(), "linux", "capture"), GeneratedAt: generatedAt, Git: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Collect(context.Background(), CollectOptions{RepoRoot: root, ArtifactRoot: `C:\\runner\\capture`, GeneratedAt: generatedAt, Git: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstBody, secondBody bytes.Buffer
+	if err := WriteJSON(&firstBody, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteJSON(&secondBody, second); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstBody.Bytes(), secondBody.Bytes()) {
+		t.Fatalf("inventory identity depends on collection root\nfirst: %s\nsecond: %s", firstBody.Bytes(), secondBody.Bytes())
 	}
 }
 

@@ -54,6 +54,26 @@ func TestCompareSmokeSelfComparePasses(t *testing.T) {
 	}
 }
 
+func TestComparePortableManifestSurvivesArtifactRelocation(t *testing.T) {
+	parent := t.TempDir()
+	original := writeCompareFixture(t, filepath.Join(parent, "captured"), compareFixtureOptions{
+		manifestMutator: func(manifest *BrowserManifest) {
+			manifest.ArtifactRoot = portableArtifactRoot
+		},
+	})
+	moved := filepath.Join(parent, "committed", "baseline")
+	if err := os.MkdirAll(filepath.Dir(moved), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(original, moved); err != nil {
+		t.Fatal(err)
+	}
+	report := runSmokeCompare(t, moved, moved)
+	if report.Status != CompareStatusPass || report.ExitCode != 0 {
+		t.Fatalf("relocated baseline status=%s exit=%d checks=%+v", report.Status, report.ExitCode, report.Checks)
+	}
+}
+
 func TestCompareRejectsSelfCompareWhenUsedAsGate(t *testing.T) {
 	root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{})
 	report, err := CompareOuroborosArtifacts(CompareOptions{
@@ -149,6 +169,41 @@ func TestComparePixelSelfCompareUsesExternalEvidenceRoot(t *testing.T) {
 	}
 	if report.ExitCode != 0 || !report.SelfCompare || !reportHasMetricPass(report, "pixel.diffPct") {
 		t.Fatalf("pixel self-compare failed: exit=%d self=%v summary=%+v", report.ExitCode, report.SelfCompare, report.Summary)
+	}
+}
+
+func TestComparePortablePixelBundleSurvivesRelocation(t *testing.T) {
+	artifactRoot := writeCompareFixture(t, filepath.Join(t.TempDir(), "browser"), compareFixtureOptions{})
+	addPixelRefToFixture(t, artifactRoot, "pixels/r00.json")
+	var browserManifest BrowserManifest
+	readFixtureJSON(t, filepath.Join(artifactRoot, "manifest.json"), &browserManifest)
+
+	parent := t.TempDir()
+	original := filepath.Join(parent, "hardware-capture")
+	initial := writeTestPNG(t, filepath.Join(original, "pixels", "r00-initial.png"), false)
+	settled := writeTestPNG(t, filepath.Join(original, "pixels", "r00-settled.png"), false)
+	writeFixtureJSON(t, filepath.Join(original, "pixels", "r00.json"), compareBaselinePixelManifest(browserManifest.Source, initial, settled))
+	moved := filepath.Join(parent, "committed", "pixel-baseline")
+	if err := os.MkdirAll(filepath.Dir(moved), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(original, moved); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := CompareOuroborosArtifacts(CompareOptions{
+		BaselineManifest:  artifactRoot,
+		CandidateManifest: artifactRoot,
+		BudgetPath:        compareBudgetPath(t),
+		Mode:              CompareModeSmoke,
+		BaselinePixelRoot: moved,
+		GeneratedAt:       time.Unix(0, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ExitCode != 0 || !reportHasMetricPass(report, "pixel.diffPct") {
+		t.Fatalf("relocated pixel bundle failed: exit=%d checks=%+v ratchets=%+v", report.ExitCode, report.Checks, report.Ratchets)
 	}
 }
 

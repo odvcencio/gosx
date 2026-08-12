@@ -513,10 +513,8 @@ func loadCompareArtifact(input, mode, pixelRoot string) (*compareLoadedArtifact,
 	if manifest.Contract != ContractO02 {
 		return nil, fmt.Errorf("manifest contractVersion = %q, want %q", manifest.Contract, ContractO02)
 	}
-	if manifestRoot, err := filepath.EvalSymlinks(manifest.ArtifactRoot); err != nil {
-		return nil, fmt.Errorf("manifest artifactRoot %q cannot be resolved: %w", manifest.ArtifactRoot, err)
-	} else if manifestRoot != paths.root {
-		return nil, fmt.Errorf("manifest artifactRoot resolves to %s, want %s", manifestRoot, paths.root)
+	if err := validateManifestArtifactRoot(paths, manifest.ArtifactRoot); err != nil {
+		return nil, err
 	}
 	rawPath, err := resolveArtifactRef(paths, manifest.RawSamples)
 	if err != nil {
@@ -623,6 +621,25 @@ func loadCompareArtifact(input, mode, pixelRoot string) (*compareLoadedArtifact,
 		consoleCount:    consoleCountByBucket(raw),
 	}
 	return loaded, nil
+}
+
+func validateManifestArtifactRoot(paths comparePathSet, recorded string) error {
+	if recorded == portableArtifactRoot {
+		return nil
+	}
+	if strings.TrimSpace(recorded) == "" {
+		return fmt.Errorf("manifest artifactRoot is empty")
+	}
+	// Keep reading pre-portability artifacts when they remain in their original
+	// location. New writers always use the evidence-local "." marker.
+	manifestRoot, err := filepath.EvalSymlinks(recorded)
+	if err != nil {
+		return fmt.Errorf("manifest artifactRoot %q cannot be resolved: %w", recorded, err)
+	}
+	if manifestRoot != paths.root {
+		return fmt.Errorf("manifest artifactRoot resolves to %s, want %s", manifestRoot, paths.root)
+	}
+	return nil
 }
 
 func loadSourceInventory(paths comparePathSet, source SourceIdentity) (*Inventory, error) {

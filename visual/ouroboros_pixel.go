@@ -26,6 +26,7 @@ import (
 const (
 	OuroborosPixelSchemaVersion   = "gosx.ouroboros.pixels.v1"
 	MaxCanonicalPixelThresholdPct = 1.0
+	portablePixelArtifactRoot     = "."
 )
 
 type PixelEvidenceMode string
@@ -415,6 +416,10 @@ func CapturePixelEvidence(ctx context.Context, url string, opts PixelEvidenceOpt
 		manifest.Failures = append(manifest.Failures, validateCandidateAgainstBaseline(manifest, baseline.Manifest)...)
 	}
 	manifest.Certified = len(manifest.Failures) == 0 && opts.Mode == PixelModeRecordBaseline
+	manifest, err = portablePixelManifest(manifest, opts)
+	if err != nil {
+		return manifest, err
+	}
 	if err := writePixelManifest(manifest, opts); err != nil {
 		return manifest, err
 	}
@@ -1452,8 +1457,79 @@ func imageStats(img image.Image) pixelStats {
 
 func writePixelManifestWithError(manifest PixelEvidenceManifest, opts PixelEvidenceOptions, err error) (PixelEvidenceManifest, error) {
 	manifest.Failures = append(manifest.Failures, err.Error())
+	portable, portableErr := portablePixelManifest(manifest, opts)
+	if portableErr != nil {
+		manifest.Failures = append(manifest.Failures, portableErr.Error())
+		manifest.ArtifactRoot = portablePixelArtifactRoot
+		manifest.BaselineRoot = ""
+	} else {
+		manifest = portable
+	}
 	_ = writePixelManifest(manifest, opts)
 	return manifest, err
+}
+
+func portablePixelManifest(manifest PixelEvidenceManifest, opts PixelEvidenceOptions) (PixelEvidenceManifest, error) {
+	manifest.ArtifactRoot = portablePixelArtifactRoot
+	manifest.BaselineRoot = ""
+	for stateIndex := range manifest.States {
+		for captureIndex := range manifest.States[stateIndex].Captures {
+			capture := &manifest.States[stateIndex].Captures[captureIndex]
+			ref, err := portablePixelFileRef(opts.ArtifactRoot, capture.Path, ".png", "pixel capture path")
+			if err != nil {
+				return manifest, err
+			}
+			capture.Path = ref
+			if capture.Comparison == nil {
+				continue
+			}
+			baselineRoot := opts.ArtifactRoot
+			if opts.Mode == PixelModeCandidateComparison {
+				baselineRoot = opts.BaselineRoot
+			}
+			if capture.Comparison.BaselinePath != "" {
+				ref, err := portablePixelFileRef(baselineRoot, capture.Comparison.BaselinePath, ".png", "pixel comparison baseline path")
+				if err != nil {
+					return manifest, err
+				}
+				capture.Comparison.BaselinePath = ref
+			}
+			if capture.Comparison.DiffPath != "" {
+				ref, err := portablePixelFileRef(opts.ArtifactRoot, capture.Comparison.DiffPath, ".png", "pixel comparison diff path")
+				if err != nil {
+					return manifest, err
+				}
+				capture.Comparison.DiffPath = ref
+			}
+		}
+	}
+	return manifest, nil
+}
+
+func portablePixelFileRef(root, recorded, ext, label string) (string, error) {
+	if strings.TrimSpace(root) == "" {
+		return "", fmt.Errorf("%s root is empty", label)
+	}
+	path, err := containedBaselineFilePath(root, recorded, ext, label)
+	if err != nil {
+		return "", err
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(realRoot, path)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("%s escapes root: %s", label, recorded)
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 func writePixelManifest(manifest PixelEvidenceManifest, opts PixelEvidenceOptions) error {

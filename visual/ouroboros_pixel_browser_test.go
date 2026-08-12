@@ -48,9 +48,10 @@ setInterval(() => {
 	}))
 	defer server.Close()
 
+	artifactRoot := filepath.Join(t.TempDir(), "pixels")
 	manifest, err := CapturePixelEvidence(context.Background(), server.URL, PixelEvidenceOptions{
 		RouteID:        "R08-smoke",
-		ArtifactRoot:   filepath.Join(t.TempDir(), "pixels"),
+		ArtifactRoot:   artifactRoot,
 		Source:         testPixelSource(),
 		Backend:        RequireBackendWebGL,
 		Samples:        3,
@@ -74,11 +75,11 @@ setInterval(() => {
 		if capture.Blank || capture.Placeholder {
 			t.Fatalf("%s capture was rejected as blank", state.State)
 		}
-		if _, err := os.Stat(capture.Path); err != nil {
+		if _, err := os.Stat(filepath.Join(artifactRoot, filepath.FromSlash(capture.Path))); err != nil {
 			t.Fatalf("stat %s: %v", capture.Path, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(manifest.ArtifactRoot, "pixel-evidence.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(artifactRoot, "pixel-evidence.json")); err != nil {
 		t.Fatalf("stat manifest: %v", err)
 	}
 	if len(manifest.Failures) == 0 {
@@ -319,7 +320,7 @@ func testPixelSource() PixelSourceIdentity {
 	return PixelSourceIdentity{
 		BaseRevision:    "abc1234",
 		OverlayHash:     "sha256:clean",
-		InventorySHA256: "sha256:inventory",
+		InventorySHA256: "sha256:" + strings.Repeat("a", 64),
 	}
 }
 

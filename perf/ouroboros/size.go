@@ -375,6 +375,7 @@ func MaterializeCanonicalInventory(ctx context.Context, repoRoot, inventoryPath,
 	if err != nil {
 		return "", err
 	}
+	normalizePortableInventoryMetadata(candidate)
 	rewriteMaterializedOverlayRefs(root, sourceDir, candidate)
 	if _, err := os.Lstat(materializedPath); err == nil {
 		return materializedPath, validateReusableMaterializedInventory(ctx, root, materializedPath, candidate)
@@ -384,11 +385,20 @@ func MaterializeCanonicalInventory(ctx context.Context, repoRoot, inventoryPath,
 	if err := materializeOverlayInputs(root, sourceDir, inv); err != nil {
 		return "", err
 	}
+	normalizePortableInventoryMetadata(inv)
 	rewriteMaterializedOverlayRefs(root, sourceDir, inv)
 	if err := WriteNewJSONFile(materializedPath, inv); err != nil {
 		return "", err
 	}
 	return materializedPath, nil
+}
+
+func normalizePortableInventoryMetadata(inv *Inventory) {
+	if inv == nil {
+		return
+	}
+	inv.ArtifactRoot = portableArtifactRoot
+	inv.Manifest.ArtifactRoot = portableArtifactRoot
 }
 
 func validateReusableMaterializedInventory(ctx context.Context, repoRoot, materializedPath string, candidate *Inventory) error {
