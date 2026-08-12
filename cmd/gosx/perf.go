@@ -23,6 +23,10 @@ func cmdPerf() {
 		cmdPerfBudget()
 		return
 	}
+	if len(os.Args) > 2 && os.Args[2] == "ouroboros" {
+		cmdPerfOuroboros(os.Args[3:])
+		return
+	}
 
 	fs := flag.NewFlagSet("perf", flag.ExitOnError)
 	frames := fs.Int("frames", 120, "scene3D frames to sample")
