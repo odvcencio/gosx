@@ -226,16 +226,45 @@ func TestLoadExportEvidenceStrictRejectsMissingMalformedAndDuplicateRoutes(t *te
 	}
 }
 
-func TestValidateExportHTMLAttributionAllowsR00OnlyWithoutRefs(t *testing.T) {
+func TestValidateExportHTMLAttributionAllowsMeasuredZeroR00AndR05WithoutRefs(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "static", "index.html"), `<html>SSR only</html>`)
-	if err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{Path: "/static", File: "static/index.html"}}}); err != nil {
+	zero := &ExportCapabilities{}
+	if err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{Path: "/static", File: "static/index.html", Capabilities: zero}}}); err != nil {
 		t.Fatalf("R00 without runtime refs failed: %v", err)
 	}
+	writeTestFile(t, filepath.Join(dir, "canvas-board", "index.html"), `<html>measured static placeholder</html>`)
+	r05 := exportEvidenceRoute{Path: "/canvas-board", File: "canvas-board/index.html", Capabilities: zero}
+	if err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{r05}}); err != nil {
+		t.Fatalf("measured all-zero R05 without runtime refs failed: %v", err)
+	}
+	report := &SizeEvidence{DistDir: dir}
+	if err := attributeRoutes(report, exportEvidence{routes: []exportEvidenceRoute{r05}}, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Routes) != 1 || len(report.Routes[0].AssetIDs) != 0 || report.Routes[0].RawBytes != 0 || report.Routes[0].GzipBytes != 0 || report.Routes[0].BrotliBytes != 0 {
+		t.Fatalf("R05 all-zero evidence fabricated assets or bytes: %+v", report.Routes)
+	}
+
+	for _, test := range []struct {
+		name  string
+		route exportEvidenceRoute
+	}{
+		{name: "missing measurement", route: exportEvidenceRoute{Path: "/canvas-board", File: "canvas-board/index.html"}},
+		{name: "nonzero measurement", route: exportEvidenceRoute{Path: "/canvas-board", File: "canvas-board/index.html", Capabilities: &ExportCapabilities{Engines: 1}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{test.route}})
+			if err == nil || !strings.Contains(err.Error(), "incomplete asset attribution") {
+				t.Fatalf("invalid R05 measurement error = %v", err)
+			}
+		})
+	}
+
 	writeTestFile(t, filepath.Join(dir, "lite", "index.html"), `<html>missing runtime refs</html>`)
-	err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{Path: "/lite", File: "lite/index.html"}}})
+	err := validateExportHTMLAttribution(dir, exportEvidence{routes: []exportEvidenceRoute{{Path: "/lite", File: "lite/index.html", Capabilities: zero}}})
 	if err == nil || !strings.Contains(err.Error(), "incomplete asset attribution") {
-		t.Fatalf("non-R00 without runtime refs error = %v", err)
+		t.Fatalf("non-R00/R05 without runtime refs error = %v", err)
 	}
 }
 
@@ -315,6 +344,75 @@ func TestBuildSizeEvidenceRecordsNoncanonicalSymlinkEscapedAsset(t *testing.T) {
 	}
 	if report == nil || len(report.Unresolved) == 0 {
 		t.Fatalf("expected unresolved symlink evidence, got %#v", report)
+	}
+}
+
+func TestCanonicalR10CombinerFiltersFullDocsSiteAndOwnsOnlySelectedTransfers(t *testing.T) {
+	dir := t.TempDir()
+	runtimeDir := filepath.Join(dir, "assets", "runtime")
+	writeTestFile(t, filepath.Join(runtimeDir, "water.js"), "water-runtime")
+	writeTestFile(t, filepath.Join(runtimeDir, "docs.js"), "unrelated-docs-runtime")
+	writeTestFile(t, filepath.Join(dir, "build.json"), `{
+  "runtime": {
+    "bootstrapFeatureScene3d": {"file":"water.js","hash":"water-hash","size":13},
+    "bootstrapLite": {"file":"docs.js","hash":"docs-hash","size":22}
+  },
+  "islands": [],
+  "css": []
+}`)
+	writeTestFile(t, filepath.Join(dir, "export.json"), `{
+  "routes": [
+    {"path":"/docs/intro","file":"docs/intro/index.html","capabilities":{"navigation":false,"bootstrap":true,"wasm":false}},
+    {"path":"/demos/water","file":"demos/water/index.html","capabilities":{"navigation":false,"bootstrap":true,"wasm":false,"engines":1,"scene3d":true}},
+    {"path":"/docs/api","file":"docs/api/index.html","capabilities":{"navigation":false,"bootstrap":true,"wasm":false}}
+  ],
+  "assetRefs": ["/gosx/bootstrap-lite.js"]
+}`)
+	writeTestFile(t, filepath.Join(dir, "static", "docs", "intro", "index.html"), `<script src="/gosx/bootstrap-lite.js"></script>`)
+	writeTestFile(t, filepath.Join(dir, "static", "docs", "api", "index.html"), `<script src="/gosx/bootstrap-lite.js"></script>`)
+	writeTestFile(t, filepath.Join(dir, "static", "demos", "water", "index.html"), `<script src="/gosx/bootstrap-feature-scene3d.js"></script>`)
+
+	source, err := prepareCanonicalR10SizeEvidenceSource(filepath.Join(dir, "build.json"), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(source.export.routes) != 1 || source.export.routes[0].Path != "/demos/water" || len(source.export.assetRefs) != 0 {
+		t.Fatalf("full-site R10 filter = %+v", source.export)
+	}
+	primaryBytes := int64(len("primary-content"))
+	report := &SizeEvidence{
+		Assets: []TransferredAsset{{
+			ID:           stableAssetID("/gosx/bootstrap-feature-scene3d.js", shaHex("primary-content")),
+			URL:          "/gosx/bootstrap-feature-scene3d.js",
+			SourcePath:   "primary/assets/runtime/water.js",
+			SHA256:       shaHex("primary-content"),
+			Bytes:        primaryBytes,
+			GzipBytes:    1,
+			BrotliBytes:  1,
+			UsedByRoutes: []string{"/scene/basic"},
+		}},
+		Routes: []RouteAssetEvidence{},
+	}
+	if err := appendSizeEvidenceSource(report, source, true, "r10"); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Routes) != 1 || report.Routes[0].ID != "R10" {
+		t.Fatalf("combined R10 routes = %+v", report.Routes)
+	}
+	if len(report.Assets) != 2 || report.Assets[1].URL != "/gosx/bootstrap-feature-scene3d.js" {
+		t.Fatalf("combined R10 assets included unrelated docs transfers: %+v", report.Assets)
+	}
+	if report.Routes[0].RawBytes == primaryBytes || len(report.Routes[0].AssetIDs) != 1 || report.Routes[0].AssetIDs[0] != report.Assets[1].ID {
+		t.Fatalf("same-URL R10 route selected primary content: route=%+v assets=%+v", report.Routes[0], report.Assets)
+	}
+	if got := report.Assets[1].UsedByRoutes; len(got) != 1 || got[0] != "/demos/water" {
+		t.Fatalf("R10 asset route ownership = %v", got)
+	}
+	if got := report.Assets[0].UsedByRoutes; len(got) != 1 || got[0] != "/scene/basic" {
+		t.Fatalf("primary same-URL ownership was rewritten: %v", got)
+	}
+	if !strings.HasPrefix(report.Assets[1].SourcePath, "r10/") {
+		t.Fatalf("R10 source path is not portable: %q", report.Assets[1].SourcePath)
 	}
 }
 
@@ -449,18 +547,21 @@ func writeCanonicalExportSkeleton(t *testing.T, dir string) {
 		"/demos/water",
 	}
 	type route struct {
-		Path string `json:"path"`
-		File string `json:"file"`
+		Path         string              `json:"path"`
+		File         string              `json:"file"`
+		Capabilities *ExportCapabilities `json:"capabilities"`
 	}
 	raw := struct {
 		Routes []route `json:"routes"`
 	}{}
 	for _, routePath := range paths {
 		file := strings.TrimPrefix(routePath, "/") + "/index.html"
-		raw.Routes = append(raw.Routes, route{Path: routePath, File: file})
+		capabilities := &ExportCapabilities{Bootstrap: true}
+		raw.Routes = append(raw.Routes, route{Path: routePath, File: file, Capabilities: capabilities})
 		body := `<script src="/gosx/bootstrap-runtime.js"></script>`
-		if routePath == "/static" {
-			body = `<html>SSR only</html>`
+		if routePath == "/static" || routePath == "/canvas-board" {
+			body = `<html>measured zero runtime</html>`
+			capabilities.Bootstrap = false
 		}
 		writeTestFile(t, filepath.Join(dir, "static", filepath.FromSlash(file)), body)
 	}

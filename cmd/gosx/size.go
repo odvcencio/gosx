@@ -59,6 +59,7 @@ func cmdSizeReport() {
 	ouroborosOut := ""
 	inventoryPath := ""
 	repoRoot := "."
+	canonicalR10Target := ""
 	target := ""
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
@@ -87,6 +88,13 @@ func cmdSizeReport() {
 				os.Exit(1)
 			}
 			repoRoot = args[i]
+		case "--canonical-r10":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --canonical-r10 requires a dist directory or build.json")
+				os.Exit(1)
+			}
+			canonicalR10Target = args[i]
 		default:
 			if strings.HasPrefix(arg, "--") {
 				fmt.Fprintf(os.Stderr, "size error: unknown flag %s\n", arg)
@@ -97,6 +105,10 @@ func cmdSizeReport() {
 	}
 	if target == "" {
 		fmt.Fprintln(os.Stderr, "size error: missing dist directory or build.json")
+		os.Exit(1)
+	}
+	if canonicalR10Target != "" && ouroborosOut == "" {
+		fmt.Fprintln(os.Stderr, "size error: --canonical-r10 requires --ouroboros-out")
 		os.Exit(1)
 	}
 	if ouroborosOut != "" {
@@ -122,7 +134,7 @@ func cmdSizeReport() {
 		printSizeReport(report)
 	}
 	if ouroborosOut != "" {
-		evidence, err := buildSizeEvidence(target, ouroborosOut, inventoryPath, repoRoot)
+		evidence, err := buildSizeEvidence(target, canonicalR10Target, ouroborosOut, inventoryPath, repoRoot)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "size error: build Ouroboros evidence: %v\n", err)
 			os.Exit(1)
@@ -140,24 +152,37 @@ func sizeUsage(w io.Writer) {
 	fmt.Fprintf(w, `gosx size - Report runtime bundle sizes
 
 Usage:
-  gosx size [--json] [--ouroboros-out dir] [--inventory file] [--root repo] <dist|build.json>
+  gosx size [--json] [--ouroboros-out dir] [--inventory file] [--root repo] [--canonical-r10 dist|build.json] <dist|build.json>
+
+  --canonical-r10 combines the external examples/gosx-docs R10 export with
+  the primary Ouroboros corpus export. It is valid only with canonical evidence.
 
 `)
 }
 
-func buildSizeEvidence(target, artifactRoot, inventoryPath, repoRoot string) (*ouroboros.SizeEvidence, error) {
+func buildSizeEvidence(target, canonicalR10Target, artifactRoot, inventoryPath, repoRoot string) (*ouroboros.SizeEvidence, error) {
 	manifestPath, distDir, err := resolveSizeReportTarget(target)
 	if err != nil {
 		return nil, err
 	}
+	r10ManifestPath := ""
+	r10DistDir := ""
+	if strings.TrimSpace(canonicalR10Target) != "" {
+		r10ManifestPath, r10DistDir, err = resolveSizeReportTarget(canonicalR10Target)
+		if err != nil {
+			return nil, fmt.Errorf("resolve canonical R10 target: %w", err)
+		}
+	}
 	return ouroboros.BuildSizeEvidenceWithOptions(ouroboros.SizeEvidenceOptions{
-		ManifestPath:  manifestPath,
-		DistDir:       distDir,
-		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
-		RepoRoot:      repoRoot,
-		ArtifactRoot:  artifactRoot,
-		InventoryPath: inventoryPath,
-		Canonical:     true,
+		ManifestPath:    manifestPath,
+		DistDir:         distDir,
+		GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
+		RepoRoot:        repoRoot,
+		ArtifactRoot:    artifactRoot,
+		InventoryPath:   inventoryPath,
+		R10ManifestPath: r10ManifestPath,
+		R10DistDir:      r10DistDir,
+		Canonical:       true,
 	})
 }
 

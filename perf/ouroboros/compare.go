@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -947,6 +948,7 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 		return fmt.Errorf("canonical size evidence requires buildInput.manifestSha256")
 	}
 	seenRoutes := map[string]bool{}
+	hasR10 := false
 	for _, route := range ev.Routes {
 		id := route.ID
 		if id == "" {
@@ -959,6 +961,9 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 			return fmt.Errorf("size evidence has duplicate route %s", id)
 		}
 		seenRoutes[id] = true
+		if id == "R10" {
+			hasR10 = true
+		}
 		for name, value := range map[string]int64{
 			"rawBytes":          route.RawBytes,
 			"gzipBytes":         route.GzipBytes,
@@ -974,6 +979,9 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 				return fmt.Errorf("size route %s has negative %s", id, name)
 			}
 		}
+	}
+	if err := validateCanonicalR10SizeProvenance(ev, hasR10); err != nil {
+		return err
 	}
 	wantRoutes := routeIDs(routes)
 	gotRoutes := make([]string, 0, len(seenRoutes))
@@ -1005,6 +1013,48 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 		if ev.Canonical && strings.TrimSpace(asset.ManifestHash) == "" && (strings.Contains(asset.Role, "direct") || strings.Contains(asset.Bucket, "direct")) {
 			return fmt.Errorf("canonical size asset %s is an unmanifested direct asset", asset.ID)
 		}
+	}
+	return nil
+}
+
+func validateCanonicalR10SizeProvenance(ev *SizeEvidence, hasR10 bool) error {
+	if ev == nil {
+		return fmt.Errorf("size evidence is nil")
+	}
+	hasMarkers := ev.R10BuildInput != nil || strings.TrimSpace(ev.R10ManifestPath) != "" || strings.TrimSpace(ev.R10DistDir) != "" || strings.TrimSpace(ev.R10ExportPath) != ""
+	if hasMarkers && !hasR10 {
+		return fmt.Errorf("size evidence has R10 provenance without an R10 route")
+	}
+	if !ev.Canonical || !hasR10 {
+		return nil
+	}
+	if ev.R10BuildInput == nil {
+		return fmt.Errorf("canonical R10 size evidence requires r10BuildInput")
+	}
+	if ev.R10ManifestPath != "r10/build.json" || ev.R10DistDir != "r10" || ev.R10ExportPath != "r10/export.json" {
+		return fmt.Errorf("canonical R10 size evidence has invalid portable path markers")
+	}
+	if ev.ManifestPath != "primary/build.json" || ev.DistDir != "primary" || ev.ExportPath != "primary/export.json" {
+		return fmt.Errorf("canonical combined size evidence has invalid primary path markers")
+	}
+	if !slices.Contains(ev.Notes, portableCombinedSizeInputLabelsNote) {
+		return fmt.Errorf("canonical combined size evidence does not declare portable path fields as identity labels")
+	}
+	primary := ev.BuildInput
+	r10 := *ev.R10BuildInput
+	for label, input := range map[string]BuildInputEvidence{"primary": primary, "R10": r10} {
+		if input.GoSXModuleDir != "." || !input.RejectsModuleCacheMismatch {
+			return fmt.Errorf("canonical %s size build input is not source-bound", label)
+		}
+		if !strings.HasPrefix(input.ManifestSHA256, "sha256:") || !strings.HasPrefix(input.ExportSHA256, "sha256:") {
+			return fmt.Errorf("canonical %s size build input requires manifest/export hashes", label)
+		}
+		if !strings.HasPrefix(input.GoModSHA256, "sha256:") || !strings.HasPrefix(input.GoSumSHA256, "sha256:") {
+			return fmt.Errorf("canonical %s size build input requires Go module hashes", label)
+		}
+	}
+	if primary.GoModSHA256 != r10.GoModSHA256 || primary.GoSumSHA256 != r10.GoSumSHA256 || primary.GoSXModuleVersion != r10.GoSXModuleVersion || primary.GoWorkSHA256 != r10.GoWorkSHA256 {
+		return fmt.Errorf("canonical R10 build input does not share the primary GoSX source identity")
 	}
 	return nil
 }

@@ -108,6 +108,44 @@ func measuredRuntimeEvidenceFixture() *RuntimeBuildEvidence {
 	return evidence
 }
 
+func TestValidateCanonicalR10SizeProvenanceBindsBothBuilds(t *testing.T) {
+	input := BuildInputEvidence{
+		GoSXModuleDir:              ".",
+		GoSXModuleVersion:          "v0.39.0",
+		GoModSHA256:                "sha256:" + strings.Repeat("a", 64),
+		GoSumSHA256:                "sha256:" + strings.Repeat("b", 64),
+		ManifestSHA256:             "sha256:" + strings.Repeat("c", 64),
+		ExportSHA256:               "sha256:" + strings.Repeat("d", 64),
+		RejectsModuleCacheMismatch: true,
+	}
+	r10Input := input
+	r10Input.ManifestSHA256 = "sha256:" + strings.Repeat("e", 64)
+	r10Input.ExportSHA256 = "sha256:" + strings.Repeat("f", 64)
+	evidence := &SizeEvidence{
+		Canonical:       true,
+		BuildInput:      input,
+		ManifestPath:    "primary/build.json",
+		DistDir:         "primary",
+		ExportPath:      "primary/export.json",
+		R10BuildInput:   &r10Input,
+		R10ManifestPath: "r10/build.json",
+		R10DistDir:      "r10",
+		R10ExportPath:   "r10/export.json",
+		Notes:           []string{portableCombinedSizeInputLabelsNote},
+	}
+	if err := validateCanonicalR10SizeProvenance(evidence, true); err != nil {
+		t.Fatalf("valid combined provenance rejected: %v", err)
+	}
+	evidence.R10BuildInput.GoModSHA256 = "sha256:" + strings.Repeat("0", 64)
+	if err := validateCanonicalR10SizeProvenance(evidence, true); err == nil || !strings.Contains(err.Error(), "does not share") {
+		t.Fatalf("mismatched R10 source error = %v", err)
+	}
+	evidence.R10BuildInput = nil
+	if err := validateCanonicalR10SizeProvenance(evidence, true); err == nil || !strings.Contains(err.Error(), "r10BuildInput") {
+		t.Fatalf("missing R10 build input error = %v", err)
+	}
+}
+
 func TestComparePortableManifestSurvivesArtifactRelocation(t *testing.T) {
 	parent := t.TempDir()
 	original := writeCompareFixture(t, filepath.Join(parent, "captured"), compareFixtureOptions{
