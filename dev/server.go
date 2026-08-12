@@ -58,6 +58,7 @@ type Server struct {
 	clients     map[chan sseEvent]struct{}
 	lastBuild   time.Time
 	lastError   string
+	quarantined bool
 	proxyTarget string
 	server      *http.Server
 	stopWatch   chan struct{}

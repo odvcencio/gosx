@@ -48,11 +48,28 @@ type islandProgram struct {
 func (s *Server) emitChange(paths []string) {
 	if err := s.runPreflightChange(paths); err != nil {
 		s.recordBuildError(err)
+		s.setQuarantined(true)
 		s.logf("change preflight failed: %v", err)
 		s.broadcast("build-error", map[string]any{
 			"error": err.Error(),
 			"time":  time.Now().Format(time.RFC3339Nano),
 		})
+		return
+	}
+	if s.isQuarantined() {
+		if err := s.runOnChange(); err != nil {
+			s.recordBuildError(err)
+			s.logf("quarantined change recovery failed: %v", err)
+			s.broadcast("build-error", map[string]any{
+				"error": err.Error(),
+				"time":  time.Now().Format(time.RFC3339Nano),
+			})
+			return
+		}
+		s.setQuarantined(false)
+		s.markBuilt()
+		s.logf("strict source recovered, restarting app and reloading clients")
+		s.broadcastReload("strict_recovered")
 		return
 	}
 	programs, fullReload, compileErr := s.classifyChange(paths)
@@ -107,6 +124,18 @@ func (s *Server) runPreflightChange(paths []string) error {
 		return nil
 	}
 	return s.PreflightChange(append([]string(nil), paths...))
+}
+
+func (s *Server) setQuarantined(quarantined bool) {
+	s.mu.Lock()
+	s.quarantined = quarantined
+	s.mu.Unlock()
+}
+
+func (s *Server) isQuarantined() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.quarantined
 }
 
 // restageIslandProgram rewrites the staged build/islands/<Component>.json so the

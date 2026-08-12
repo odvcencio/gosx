@@ -152,6 +152,50 @@ func TestHotSwapRunsPreflightBeforeIslandClassification(t *testing.T) {
 	}
 }
 
+func TestHotSwapValidIslandAfterPreflightFailureRestartsQuarantinedApp(t *testing.T) {
+	dir := t.TempDir()
+	gsxPath := filepath.Join(dir, "counter.gsx")
+	writeTestFile(t, gsxPath, []byte(islandGSX))
+
+	valid := false
+	restarts := 0
+	s := &Server{
+		Dir: dir,
+		PreflightChange: func([]string) error {
+			if !valid {
+				return fmt.Errorf("strict package invalid")
+			}
+			return nil
+		},
+		OnChange: func() error {
+			restarts++
+			return nil
+		},
+	}
+	events := captureEvents(t, s)
+	s.emitChange([]string{gsxPath})
+	if !s.isQuarantined() {
+		t.Fatal("failed strict preflight did not quarantine the dev server")
+	}
+	_ = drainEvents(events)
+
+	valid = true
+	s.emitChange([]string{gsxPath})
+	got := drainEvents(events)
+	if restarts != 1 {
+		t.Fatalf("restarts = %d, want 1", restarts)
+	}
+	if s.isQuarantined() {
+		t.Fatal("successful recovery restart did not clear quarantine")
+	}
+	if _, ok := got["reload"]; !ok {
+		t.Fatalf("recovery did not reload clients: %v", keys(got))
+	}
+	if _, ok := got["program"]; ok {
+		t.Fatalf("recovery incorrectly hot-swapped into a stopped upstream: %v", keys(got))
+	}
+}
+
 // TestHotSwapProgramEventReachesSSEClient is the end-to-end headless check the
 // Track B verify-reality calls for: stand the dev server up, connect to
 // /gosx/dev/events, trigger an island change, and assert a "program" SSE frame
