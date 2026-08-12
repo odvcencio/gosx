@@ -694,6 +694,9 @@ func collectFiles(root string, inv *Inventory) error {
 	if err := collectRuntimeHostSources(root, inv); err != nil {
 		return err
 	}
+	if err := collectRuntimeSceneSources(root, inv); err != nil {
+		return err
+	}
 	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -966,6 +969,75 @@ func collectRuntimeHostFile(root, path string, inv *Inventory) error {
 		Language:    languageForPath(rel),
 		SourceKind:  "runtime-host",
 		Reason:      "first-party typed-authority browser host source, embedded on its own migration schedule",
+		Lines:       lines,
+		Bytes:       int64(len(body)),
+		GzipBytes:   compressedSize(body, "gzip"),
+		BrotliBytes: compressedSize(body, "brotli"),
+	}
+	if err := parseJavaScript(body); err != nil {
+		src.ParseError = err.Error()
+	} else {
+		src.ParseOK = true
+	}
+	inv.Files.Sidecars = append(inv.Files.Sidecars, src)
+	inv.Totals.SidecarJavaScriptLines += lines
+	inv.Totals.SidecarBytes += int64(len(body))
+	collectTextEvidence(rel, string(body), inv)
+	return nil
+}
+
+// collectRuntimeSceneSources scans client/runtime/scene3d, the O3 slice
+// destination for the scene3d mount, backend-selection, and WebGL/WebGPU
+// modules that used to live under client/js/bootstrap-src (compare
+// collectRuntimeHostSources, which does the same job for the O2 host move).
+// Unlike the host directory, every *.ts file under client/runtime/scene3d is
+// a cmd/buildbootstrap production source (see the sourceFile("../runtime/
+// scene3d/...") calls in cmd/buildbootstrap/main.go), so a directory scan
+// tracks the bundler's file set without a hand-maintained allowlist that
+// would need editing on every new scene3d module. This is a scan-
+// completeness fix, not a receipt or classifier version change: it does not
+// alter canonicalGosx, compatibilityReceiptHash, or any governance-gated
+// denominator.
+func collectRuntimeSceneSources(root string, inv *Inventory) error {
+	sceneRoot := filepath.Join(root, "client", "runtime", "scene3d")
+	if _, err := os.Stat(sceneRoot); os.IsNotExist(err) {
+		return nil
+	}
+	return filepath.WalkDir(sceneRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".ts" {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if isCollectedSource(rel, inv) {
+			return nil
+		}
+		if _, excluded := classifyExcluded(rel); excluded {
+			return nil
+		}
+		return collectRuntimeSceneFile(root, path, inv)
+	})
+}
+
+func collectRuntimeSceneFile(root, path string, inv *Inventory) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	rel, _ := filepath.Rel(root, path)
+	rel = filepath.ToSlash(rel)
+	lines := countLines(body)
+	src := SourceFile{
+		Path:        rel,
+		Language:    languageForPath(rel),
+		SourceKind:  "runtime-scene3d",
+		Reason:      "first-party typed-authority scene3d browser runtime source, bundled by cmd/buildbootstrap",
 		Lines:       lines,
 		Bytes:       int64(len(body)),
 		GzipBytes:   compressedSize(body, "gzip"),
