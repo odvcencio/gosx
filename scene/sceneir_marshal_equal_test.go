@@ -43,6 +43,16 @@ import (
 // EVIDENCE THE DELTA IS EXACTLY THAT: deleting every "environment-map" substring
 // and every reason record naming it, from the NEW bytes of all 400 cases,
 // reproduces the OLD digest in every case. Residual: zero.
+//
+// REGENERATED again for the Scene3D parity cluster A lighting-environment
+// work. Matrix[ibl][webgpu] and Matrix[environment-map][webgpu] both flipped
+// to true (the WebGPU renderer now consumes IBL products unconditionally and
+// reads the equirect environment map). The same 178 cases moved again: each
+// authors a non-empty Environment.EnvMap, which collectFeatures still pairs
+// with FeatureIBL, and both features now report clean on WebGPU, so their
+// degraded entries and reason records dropped out of the verdict. WebGL2
+// still gates ibl on fragment texture units, so its degraded entry for ibl
+// stays. See scene/capability/capability.go for both row rewrites.
 const sceneIRGoldenPath = "testdata/sceneir_marshal_golden.json"
 
 // sceneIRGoldenCases is the number of generated scenes in the corpus.

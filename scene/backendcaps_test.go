@@ -24,8 +24,16 @@ func degradedContains(features []capability.Feature, want capability.Feature) bo
 	return false
 }
 
-// Test 1: an IBL scene degrades on webgpu+canvas2d but all backends stay
-// capable (ibl is not a hard-gate feature in DefaultPolicy).
+// Test 1: an EnvironmentMap-authored scene degrades on webgl+canvas2d but all
+// backends stay capable (neither ibl nor environment-map is a hard-gate
+// feature in DefaultPolicy).
+//
+// collectFeatures raises FeatureIBL alongside FeatureEnvironmentMap for any
+// non-empty EnvMap (scene_ir.go), so this scene carries both features even
+// though it authors no EnvironmentIBL descriptor. WebGPU now consumes both
+// unconditionally (scene/capability/capability.go), so it reports no
+// degradation at all. WebGL2 consumes environment-map but gates ibl behind
+// the 18-fragment-texture-unit check, so it still degrades on ibl alone.
 func TestSceneIRBackendCapsIBL(t *testing.T) {
 	props := Props{Environment: Environment{EnvironmentMap: "env.hdr"}}
 	ir := props.SceneIR()
@@ -38,8 +46,13 @@ func TestSceneIRBackendCapsIBL(t *testing.T) {
 			t.Fatalf("expected %q to be capable, got Capable=%v", want, ir.BackendCaps.Capable)
 		}
 	}
-	if !degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGPU], capability.FeatureIBL) {
-		t.Fatalf("expected Degraded[webgpu] to contain ibl, got %v", ir.BackendCaps.Degraded)
+	if degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGPU], capability.FeatureIBL) {
+		t.Fatalf("expected Degraded[webgpu] to NOT contain ibl (WebGPU consumes IBL products unconditionally), got %v",
+			ir.BackendCaps.Degraded)
+	}
+	if !degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGL], capability.FeatureIBL) {
+		t.Fatalf("expected Degraded[webgl] to contain ibl (gated on >= 18 fragment texture units), got %v",
+			ir.BackendCaps.Degraded)
 	}
 }
 

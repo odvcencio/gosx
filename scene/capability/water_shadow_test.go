@@ -144,19 +144,26 @@ func TestWaterSimAndTexturePassStayTrueOnWebGL(t *testing.T) {
 	}
 }
 
-// TestIBLIsFalseOnBothBackends pins the intentionally staged capability cell.
+// TestIBLTruthMatchesRuntimeConsumers pins the split capability cell: WebGPU
+// consumes the prefiltered products unconditionally, WebGL2 consumes the same
+// products but only above the 18-fragment-texture-unit gate.
 //
-// Both renderers now consume assetpipe's radiance cube, irradiance cube and
-// split-sum BRDF LUT. The matrix remains false until that path is universally
-// available on both backends: WebGL2 must compile a bounded legacy variant on
-// the spec-minimum 16-fragment-sampler devices because the full material + CSM
-// + IBL layout needs 18. Claiming the feature at the matrix level would hide
-// that deterministic degradation.
-func TestIBLIsFalseOnBothBackends(t *testing.T) {
-	for _, b := range []Backend{BackendWebGPU, BackendWebGL} {
-		if Matrix[FeatureIBL][b] {
-			t.Errorf("the ibl cell for %s must be false until a renderer consumes the prefiltered products", b)
-		}
+// Both renderers consume assetpipe's radiance cube, irradiance cube and
+// split-sum BRDF LUT. WebGPU has no texture-unit budget to negotiate — RGBA16F
+// cube sampling is unconditional in core WebGPU — so its cell is true. WebGL2
+// must compile a bounded legacy variant on the spec-minimum 16-fragment-sampler
+// devices because the full material + CSM + IBL layout needs 18, so its cell
+// stays false: claiming the feature at the matrix level would hide that
+// deterministic degradation. See ibl_test.go for the same reasoning read as
+// two independent corroboration tests.
+func TestIBLTruthMatchesRuntimeConsumers(t *testing.T) {
+	if !Matrix[FeatureIBL][BackendWebGPU] {
+		t.Error("the ibl cell for webgpu must be true: syncEnvironmentIBL consumes the prefiltered " +
+			"products unconditionally, with no texture-unit budget to negotiate")
+	}
+	if Matrix[FeatureIBL][BackendWebGL] {
+		t.Error("the ibl cell for webgl must stay false: the consumer only activates at " +
+			">= 18 fragment texture units")
 	}
 
 	webgl := readRenderer(t, webglWaterShadowPath)
