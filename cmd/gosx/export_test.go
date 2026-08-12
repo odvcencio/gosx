@@ -75,6 +75,19 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	}
 }
 
+func TestRunExportStrictGateRunsBeforeAssetOrDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "export-strict-gate")
+	err := RunExport(dir)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("RunExport error = %v", err)
+	}
+	for _, output := range []string{"build", "dist"} {
+		if _, statErr := os.Stat(filepath.Join(dir, output)); !os.IsNotExist(statErr) {
+			t.Fatalf("strict gate wrote %s before failing: %v", output, statErr)
+		}
+	}
+}
+
 func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 	buildDir := t.TempDir()
 	outputDir := t.TempDir()

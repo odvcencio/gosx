@@ -557,6 +557,17 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	}
 }
 
+func TestRunBuildStrictGateRunsBeforeDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "build-strict-gate")
+	err := RunBuild(dir, false)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("RunBuild error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {
+		t.Fatalf("strict gate wrote dist before failing: %v", statErr)
+	}
+}
+
 func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
@@ -673,4 +684,27 @@ func mustWriteFile(t *testing.T, path string, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func newInvalidStrictStarter(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := RunInit(dir, "example.com/"+name, ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, dir)
+	tidyModule(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "page.gsx"), `package app
+
+type CardProps struct { Label string }
+
+component Card(props: CardProps) {
+	return <p>{props.Label}</p>
+}
+
+component Page() {
+	return <Card label={42} />
+}
+`)
+	return dir
 }

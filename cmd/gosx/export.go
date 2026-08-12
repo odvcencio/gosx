@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path"
@@ -33,6 +34,9 @@ func RunExport(dir string) error {
 
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
+	}
+	if err := checkStrictProject(context.Background(), absDir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
 	}
 	if err := prepareDevAssets(absDir); err != nil {
 		return err

@@ -32,6 +32,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -42,6 +43,7 @@ import (
 	"m31labs.dev/gosx/format"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/strictcheck"
 	"m31labs.dev/gosx/transpile"
 )
 
@@ -404,6 +406,9 @@ func runCheck(file string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := strictcheck.CheckFile(context.Background(), file); err != nil {
+		return err
+	}
 	for i, component := range prog.Components {
 		if !component.IsIsland {
 			continue
@@ -425,23 +430,34 @@ func runCheck(file string, stderr io.Writer) error {
 
 func cmdRender() {
 	file := requireArg(2, "render")
+	componentName := ""
+	if len(os.Args) > 3 {
+		componentName = os.Args[3]
+	}
+	if err := runRender(file, componentName, os.Stdout); err != nil {
+		fatal("render: %v", err)
+	}
+}
+
+func runRender(file, componentName string, stdout io.Writer) error {
+	if err := strictcheck.CheckFile(context.Background(), file); err != nil {
+		return err
+	}
 	source, err := os.ReadFile(file)
 	if err != nil {
-		fatal("read %s: %v", file, err)
+		return fmt.Errorf("read %s: %w", file, err)
 	}
 
 	prog, err := gosx.Compile(source)
 	if err != nil {
-		fatal("compile: %v", err)
+		return fmt.Errorf("compile: %w", err)
 	}
 
-	componentName := ""
-	if len(os.Args) > 3 {
-		componentName = os.Args[3]
-	} else if len(prog.Components) > 0 {
+	if componentName == "" && len(prog.Components) > 0 {
 		componentName = prog.Components[0].Name
-	} else {
-		fatal("no components found")
+	}
+	if componentName == "" {
+		return fmt.Errorf("no components found")
 	}
 
 	// route.RenderProgramComponent is the single server-side IR renderer. The
@@ -449,9 +465,10 @@ func cmdRender() {
 	// removed. Output is compact instead of indented.
 	html, err := route.RenderProgramComponent(prog, componentName, route.ProgramRenderEnv{})
 	if err != nil {
-		fatal("render: %v", err)
+		return err
 	}
-	fmt.Println(html)
+	_, err = fmt.Fprintln(stdout, html)
+	return err
 }
 
 func cmdFmt() {

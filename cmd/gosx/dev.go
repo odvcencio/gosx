@@ -57,6 +57,9 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
 	}
+	if err := checkStrictProject(context.Background(), absDir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
 	if err := prepareDevAssets(absDir); err != nil {
 		return err
 	}
@@ -91,16 +94,7 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 		},
 		OnChange: func() error {
 			fmt.Fprintln(os.Stderr, "gosx dev: change detected, rebuilding assets and restarting app")
-			if err := prepareDevAssets(absDir); err != nil {
-				return fmt.Errorf("build assets: %w", err)
-			}
-			if err := runner.restart(internalPort); err != nil {
-				return fmt.Errorf("restart app: %w", err)
-			}
-			if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
-				return fmt.Errorf("wait for app ready: %w", err)
-			}
-			return nil
+			return rebuildChangedDevApp(context.Background(), absDir, runner, internalPort, internalBaseURL)
 		},
 	}
 
@@ -131,6 +125,22 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 		}
 		return nil
 	}
+}
+
+func rebuildChangedDevApp(ctx context.Context, dir string, runner *devRunner, internalPort, internalBaseURL string) error {
+	if err := checkStrictProject(ctx, dir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	if err := prepareDevAssets(dir); err != nil {
+		return fmt.Errorf("build assets: %w", err)
+	}
+	if err := runner.restart(internalPort); err != nil {
+		return fmt.Errorf("restart app: %w", err)
+	}
+	if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
+		return fmt.Errorf("wait for app ready: %w", err)
+	}
+	return nil
 }
 
 func prepareDevAssets(dir string) error {
