@@ -116,7 +116,11 @@ func chunkFreeIdentifiers(dir string, entry output) ([]string, error) {
 		b.WriteString(normalizeNewlines(string(data)))
 		b.WriteByte('\n')
 	}
-	ast, err := js.Parse(parse.NewInputString(b.String()), js.Options{})
+	chunkSource, err := transpileTypedChunk(entry, b.String())
+	if err != nil {
+		return nil, err
+	}
+	ast, err := js.Parse(parse.NewInputString(chunkSource), js.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", entry.name, err)
 	}

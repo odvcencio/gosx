@@ -58,7 +58,11 @@ func chunkDeclaredNames(t *testing.T, dir string, entry output) map[string]bool 
 		b.WriteString(normalizeNewlines(string(data)))
 		b.WriteByte('\n')
 	}
-	ast, err := js.Parse(parse.NewInputString(b.String()), js.Options{})
+	chunkSource, err := transpileTypedChunk(entry, b.String())
+	if err != nil {
+		t.Fatalf("transpile %s: %v", entry.name, err)
+	}
+	ast, err := js.Parse(parse.NewInputString(chunkSource), js.Options{})
 	if err != nil {
 		t.Fatalf("parse %s: %v", entry.name, err)
 	}
