@@ -1342,7 +1342,13 @@ func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.No
 		tree.Nodes[idx].Text = vm.Eval(node.Expr).String()
 	case program.NodeElement:
 		vm.resolveElementNode(&tree.Nodes[idx], source, node)
-		tree.Nodes[idx].Children = vm.resolveChildren(tree, node.Children)
+		// resolveChildren recurses back into appendNodeRefs for every
+		// descendant, and each one can append to tree.Nodes. An append
+		// past capacity moves the backing array, so tree.Nodes[idx] must
+		// be re-read after that call returns. Binding the result first
+		// avoids storing through a stale pre-growth address under TinyGo.
+		children := vm.resolveChildren(tree, node.Children)
+		tree.Nodes[idx].Children = children
 	}
 
 	// The subtree is complete and contiguous now, so record where it

@@ -126,12 +126,23 @@
    * @property {string} [groundColor]
    * @property {number} [groundIntensity]
    * @property {string} [envMap]
+   * @property {SceneSky} [sky]
    * @property {number} [envIntensity]
    * @property {number} [envRotation]
    * @property {number} [exposure]
    * @property {string} [toneMapping]
    * @property {string} [fogColor]
    * @property {number} [fogDensity]
+   */
+
+  /**
+   * @typedef {object} SceneSky
+   * @property {"gradient"|"environment"|string} [mode]
+   * @property {string} [topColor]
+   * @property {string} [horizonColor]
+   * @property {string} [bottomColor]
+   * @property {number} [blur]
+   * @property {number} [intensity]
    */
 
   /**
