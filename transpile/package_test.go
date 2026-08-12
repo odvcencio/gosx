@@ -121,3 +121,48 @@ component Page() {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestTranspilePackageStrictOwnerCannotBeHiddenByLegacyPeer(t *testing.T) {
+	files := []PackageFile{
+		packageTestFile(t, "/project/a_strict.gsx", `package app
+component Badge() {
+	return <strong>strict</strong>
+}
+`),
+		packageTestFile(t, "/project/b_legacy.gsx", `package app
+func Badge() Node {
+	return <span>legacy</span>
+}
+`),
+		packageTestFile(t, "/project/c_page.gsx", `package app
+component Page() {
+	return <Badge />
+}
+`),
+	}
+	_, err := TranspilePackage(files)
+	if err == nil || !strings.Contains(err.Error(), "cross-file strict component call") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTranspilePackageLocalLegacyComponentShadowsStrictPeer(t *testing.T) {
+	files := []PackageFile{
+		packageTestFile(t, "/project/a_strict.gsx", `package app
+component Badge() {
+	return <strong>strict</strong>
+}
+`),
+		packageTestFile(t, "/project/b_page.gsx", `package app
+func Badge() Node {
+	return <span>legacy</span>
+}
+func Page() Node {
+	return <Badge />
+}
+`),
+	}
+	if _, err := TranspilePackage(files); err != nil {
+		t.Fatalf("TranspilePackage: %v", err)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/transpile"
 )
 
@@ -40,7 +41,7 @@ func CheckFileWithOptions(ctx context.Context, path string, opts Options) error 
 	return checkPackage(ctx, files, opts)
 }
 
-// CheckPackage checks the first .gsx package found directly in dir.
+// CheckPackage checks every distinct .gsx package found directly in dir.
 func CheckPackage(ctx context.Context, dir string) error {
 	return CheckPackageWithOptions(ctx, dir, Options{})
 }
@@ -63,7 +64,14 @@ func CheckPackageWithOptions(ctx context.Context, dir string, opts Options) erro
 }
 
 func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Options) error {
-	generated, err := transpile.TranspilePackage(files)
+	if !packageHasStrict(files) {
+		return nil
+	}
+	importNames, err := resolveImportNames(ctx, files, opts)
+	if err != nil {
+		return err
+	}
+	generated, err := transpile.TranspilePackageWithImportNames(files, importNames)
 	if err != nil {
 		return err
 	}
@@ -71,6 +79,53 @@ func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Optio
 		return nil
 	}
 	return goCheck(ctx, files, generated, opts)
+}
+
+func packageHasStrict(files []transpile.PackageFile) bool {
+	for _, file := range files {
+		if file.Program == nil {
+			continue
+		}
+		for _, component := range file.Program.Components {
+			if component.Syntax == ir.ComponentSyntaxStrict {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func resolveImportNames(ctx context.Context, files []transpile.PackageFile, opts Options) (map[string]string, error) {
+	imports := transpile.UnaliasedImportPaths(files)
+	if len(imports) == 0 || len(files) == 0 {
+		return nil, nil
+	}
+	args := []string{"list", "-e", "-find", "-buildvcs=false", "-f={{if not .Error}}{{.ImportPath}}{{\"\\t\"}}{{.Name}}{{end}}"}
+	if !hasModuleMode(opts.GOFLAGS) {
+		args = append(args, "-mod=readonly")
+	}
+	args = append(args, imports...)
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = filepath.Dir(files[0].Path)
+	cmd.Env = commandEnv(opts)
+	out, err := cmd.Output()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		// With -e, unresolved legacy-only imports produce empty template output
+		// rather than failing. Any remaining process failure is environmental and
+		// should not be hidden behind a later undefined-selector diagnostic.
+		return nil, fmt.Errorf("resolve strict import names: %w", err)
+	}
+	names := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.SplitN(strings.TrimSpace(line), "\t", 2)
+		if len(fields) == 2 && fields[0] != "" && fields[1] != "" {
+			names[fields[0]] = fields[1]
+		}
+	}
+	return names, nil
 }
 
 func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[string]string, opts Options) error {

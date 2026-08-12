@@ -2,9 +2,12 @@ package transpile
 
 import (
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"m31labs.dev/gosx"
@@ -99,15 +102,62 @@ func sourcePackageName(source []byte) (string, bool) {
 // and strict calls remain visible to one another. Legacy funcs and top-level
 // route/data/request DSL declarations never enter the projection.
 func StrictProjection(file PackageFile) (string, bool, error) {
+	return StrictProjectionWithImportNames(file, nil)
+}
+
+// StrictProjectionWithImportNames projects a file using Go-resolved default
+// package identifiers. Import paths do not always encode the package name
+// (for example github.com/redis/go-redis/v9 declares package redis).
+func StrictProjectionWithImportNames(file PackageFile, importNames map[string]string) (string, bool, error) {
 	hasStrict := fileHasStrict(file)
 	generated, err := Transpile(file.Source, Options{
 		SourceFile:       file.Path,
 		strictProjection: true,
+		importNames:      importNames,
 	})
 	if err != nil {
 		return "", false, err
 	}
 	return generated, hasStrict, nil
+}
+
+// UnaliasedImportPaths returns stable-sorted imports whose package identifier
+// must be resolved by Go rather than supplied explicitly in source.
+func UnaliasedImportPaths(files []PackageFile) []string {
+	paths := make(map[string]struct{})
+	for _, packageFile := range files {
+		tree, lang, err := gosx.Parse(packageFile.Source)
+		if err != nil {
+			continue
+		}
+		root := tree.RootNode()
+		for i := 0; i < int(root.NamedChildCount()); i++ {
+			child := root.NamedChild(i)
+			if child.Type(lang) != "import_declaration" {
+				continue
+			}
+			text := string(packageFile.Source[child.StartByte():child.EndByte()])
+			parsed, err := parser.ParseFile(token.NewFileSet(), packageFile.Path, "package gosximports\n"+text, parser.ImportsOnly)
+			if err != nil {
+				continue
+			}
+			for _, spec := range parsed.Imports {
+				if spec.Name != nil {
+					continue
+				}
+				importPath, err := strconv.Unquote(spec.Path.Value)
+				if err == nil {
+					paths[importPath] = struct{}{}
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(paths))
+	for importPath := range paths {
+		out = append(out, importPath)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func fileHasStrict(file PackageFile) bool {
@@ -126,18 +176,20 @@ func fileHasStrict(file PackageFile) bool {
 // files. The Go projection can type-check such calls, but the current file
 // renderer compiles one .gsx file at a time and therefore cannot execute them.
 func ValidateStrictPackageBoundaries(files []PackageFile) error {
-	type owner struct {
-		path   string
-		strict bool
-	}
-	owners := make(map[string]owner)
+	strictOwners := make(map[string][]string)
+	localNames := make(map[string]map[string]struct{}, len(files))
 	for _, file := range files {
 		if file.Program == nil {
 			continue
 		}
+		local := make(map[string]struct{}, len(file.Program.Components))
 		for _, comp := range file.Program.Components {
-			owners[comp.Name] = owner{path: file.Path, strict: comp.Syntax == ir.ComponentSyntaxStrict}
+			local[comp.Name] = struct{}{}
+			if comp.Syntax == ir.ComponentSyntaxStrict {
+				strictOwners[comp.Name] = append(strictOwners[comp.Name], file.Path)
+			}
 		}
+		localNames[file.Path] = local
 	}
 	for _, file := range files {
 		if file.Program == nil {
@@ -147,11 +199,18 @@ func ValidateStrictPackageBoundaries(files []PackageFile) error {
 			if node.Kind != ir.NodeComponent {
 				continue
 			}
-			callee, ok := owners[node.Tag]
-			if !ok || !callee.strict || samePackageFile(callee.path, file.Path) {
+			// The file renderer resolves a local definition first. A same-file
+			// legacy component therefore legitimately shadows an identically named
+			// strict peer in another file.
+			if _, local := localNames[file.Path][node.Tag]; local {
 				continue
 			}
-			return fmt.Errorf("%s: cross-file strict component call <%s> is not supported by the file renderer; keep caller and callee in one .gsx file", file.Path, node.Tag)
+			for _, strictOwner := range strictOwners[node.Tag] {
+				if samePackageFile(strictOwner, file.Path) {
+					continue
+				}
+				return fmt.Errorf("%s: cross-file strict component call <%s> is not supported by the file renderer; keep caller and callee in one .gsx file", file.Path, node.Tag)
+			}
 		}
 	}
 	return nil
@@ -168,6 +227,12 @@ func samePackageFile(a, b string) bool {
 // strict component, every same-package file contributes its retained type
 // declarations so prop types can live beside legacy templates.
 func TranspilePackage(files []PackageFile) (map[string]string, error) {
+	return TranspilePackageWithImportNames(files, nil)
+}
+
+// TranspilePackageWithImportNames projects a package using package identifiers
+// resolved by the Go tool in the target module/workspace.
+func TranspilePackageWithImportNames(files []PackageFile, importNames map[string]string) (map[string]string, error) {
 	if err := ValidateStrictPackageBoundaries(files); err != nil {
 		return nil, err
 	}
@@ -181,7 +246,7 @@ func TranspilePackage(files []PackageFile) (map[string]string, error) {
 
 	out := make(map[string]string, len(files))
 	for _, file := range files {
-		generated, _, err := StrictProjection(file)
+		generated, _, err := StrictProjectionWithImportNames(file, importNames)
 		if err != nil {
 			return nil, fmt.Errorf("transpile %s: %w", file.Path, err)
 		}

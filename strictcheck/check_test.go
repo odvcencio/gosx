@@ -238,6 +238,33 @@ component Page() {
 	}
 }
 
+func TestCheckFileResolvesVersionedImportPackageName(t *testing.T) {
+	dir := newTestModule(t)
+	dependency := filepath.Join(dir, "redisstub")
+	mustWrite(t, filepath.Join(dependency, "go.mod"), "module example.test/go-redis/v9\n\ngo 1.26\n")
+	mustWrite(t, filepath.Join(dependency, "redis.go"), "package redis\ntype Client struct{}\n")
+	goMod := filepath.Join(dir, "go.mod")
+	data, err := os.ReadFile(goMod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, []byte("\nrequire example.test/go-redis/v9 v9.0.0\nreplace example.test/go-redis/v9 => "+filepath.ToSlash(dependency)+"\n")...)
+	if err := os.WriteFile(goMod, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+import "example.test/go-redis/v9"
+type Props struct { Client *redis.Client }
+component Page(props: Props) {
+	return <main>{props.Client}</main>
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
 func TestCheckTreeSkipsGeneratedHiddenAndNestedGitButChecksUnderscoreRoutes(t *testing.T) {
 	invalid := strictFixture(`<Link label={123} />`)
 	valid := strictFixture(`<Link label="ok" />`)

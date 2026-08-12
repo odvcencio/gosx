@@ -34,6 +34,7 @@ type Options struct {
 	// that the strict renderer can execute. It intentionally remains internal:
 	// ordinary callers should transpile the complete source file.
 	strictProjection bool
+	importNames      map[string]string
 }
 
 // Transpile converts GoSX source into valid Go code that uses the gosx/node package.
@@ -60,6 +61,7 @@ func Transpile(source []byte, opts Options) (string, error) {
 		sourceFile:       opts.SourceFile,
 		imports:          make(map[string]string),
 		strictProjection: opts.strictProjection,
+		importNames:      opts.importNames,
 	}
 
 	result := t.emit(root)
@@ -93,6 +95,7 @@ type transpiler struct {
 	gosxAlias        string
 	injectGosx       bool
 	strictProjection bool
+	importNames      map[string]string
 }
 
 func (t *transpiler) text(n *gotreesitter.Node) string {
@@ -242,7 +245,7 @@ func (t *transpiler) strictProjectionImports(n *gotreesitter.Node, body string) 
 			if err != nil {
 				continue
 			}
-			alias := path.Base(importPath)
+			alias := t.defaultImportName(importPath)
 			explicit := false
 			if spec.Name != nil {
 				alias = spec.Name.Name
@@ -272,6 +275,13 @@ func (t *transpiler) strictProjectionImports(n *gotreesitter.Node, body string) 
 		}
 	}
 	return imports
+}
+
+func (t *transpiler) defaultImportName(importPath string) string {
+	if name := strings.TrimSpace(t.importNames[importPath]); name != "" {
+		return name
+	}
+	return path.Base(importPath)
 }
 
 // projectionIdentifiers returns package aliases used as selector roots and
@@ -487,7 +497,7 @@ func (t *transpiler) collectImports(n *gotreesitter.Node) {
 			if spec.Name != nil {
 				alias = spec.Name.Name
 			} else {
-				alias = path.Base(importPath)
+				alias = t.defaultImportName(importPath)
 			}
 			if alias != "" {
 				t.imports[alias] = importPath
