@@ -102,7 +102,11 @@ func (idx *sourceIndex) indexComponents() {
 	}
 	for _, comp := range idx.program.Components {
 		fullRange := rangeFromSpan(comp.Span)
-		selectionRange := idx.nameRangeInSpan(comp.Span, comp.Name, "func ")
+		prefix := "func "
+		if comp.Syntax == ir.ComponentSyntaxStrict {
+			prefix = "component "
+		}
+		selectionRange := idx.nameRangeInSpan(comp.Span, comp.Name, prefix)
 		sym := componentSymbol{
 			name:           comp.Name,
 			detail:         componentSignature(comp),
@@ -212,6 +216,12 @@ func componentHover(sym componentSymbol) *Hover {
 }
 
 func componentSignature(comp ir.Component) string {
+	if comp.Syntax == ir.ComponentSyntaxStrict {
+		if comp.PropsType == "" {
+			return "component " + comp.Name + "()"
+		}
+		return "component " + comp.Name + "(props: " + comp.PropsType + ")"
+	}
 	if comp.PropsType == "" {
 		return "func " + comp.Name + "() Node"
 	}
@@ -226,6 +236,8 @@ func componentDescription(comp ir.Component) string {
 		return "GoSX engine component"
 	case comp.IsIsland:
 		return "GoSX island component"
+	case comp.Syntax == ir.ComponentSyntaxStrict:
+		return "Strict GoSX server component"
 	default:
 		return "GoSX component"
 	}

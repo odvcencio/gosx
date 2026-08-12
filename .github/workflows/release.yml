@@ -64,7 +64,13 @@ jobs:
       - name: Test, vet, and build
         run: |
           set -euo pipefail
-          go test ./...
+          # Keep release verification aligned with the CI package partition.
+          # cmd/gosx runs real TinyGo production builds and needs the explicit
+          # 15-minute Go timeout carried by test-cli; a plain `go test ./...`
+          # silently restores Go's 10-minute package timeout.
+          make test-ci-partitions
+          make test-unit
+          make test-cli
           # Generated Danmuji test cases run under go test; vet production files only.
           while IFS= read -r pkg; do
             dir="$(GOFLAGS=-buildvcs=false go list -f '{{.Dir}}' "${pkg}")"
@@ -101,14 +107,15 @@ jobs:
           set -euo pipefail
           ext=""
           if [[ "${GOOS}" = "windows" ]]; then ext=".exe"; fi
+          mkdir -p release-artifacts
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
-            -o "gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
+            -o "release-artifacts/gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
 
       - uses: actions/upload-artifact@v4
         with:
           name: gosx-${{ matrix.goos }}-${{ matrix.goarch }}
           retention-days: 7
-          path: gosx-*
+          path: release-artifacts/
 
   publish:
     needs: build
@@ -126,15 +133,33 @@ jobs:
 
       - name: Generate checksums
         run: |
+          set -euo pipefail
           cd artifacts
-          sha256sum gosx-* > checksums.txt
+          expected=(
+            gosx-linux-amd64
+            gosx-linux-arm64
+            gosx-darwin-amd64
+            gosx-darwin-arm64
+            gosx-windows-amd64.exe
+            gosx-windows-arm64.exe
+          )
+          for artifact in "${expected[@]}"; do
+            test -f "${artifact}"
+          done
+          test "$(find . -maxdepth 1 -type f -name 'gosx-*' | wc -l)" -eq "${#expected[@]}"
+          sha256sum "${expected[@]}" > checksums.txt
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: |
-            artifacts/gosx-*
+            artifacts/gosx-linux-amd64
+            artifacts/gosx-linux-arm64
+            artifacts/gosx-darwin-amd64
+            artifacts/gosx-darwin-arm64
+            artifacts/gosx-windows-amd64.exe
+            artifacts/gosx-windows-arm64.exe
             artifacts/checksums.txt
           generate_release_notes: true
 

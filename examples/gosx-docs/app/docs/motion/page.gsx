@@ -1,7 +1,7 @@
 package docs
 
 func Page() Node {
-	return <div>
+	return <article class="prose">
 		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
 			<div id={docScene.SurfaceID} class="doc-scene__surface">
 				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
@@ -10,9 +10,7 @@ func Page() Node {
 			</div>
 			<div class="doc-scene__teaching">
 				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
-					{docScene.Title}
-				</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
 				<p class="doc-scene__summary">{docScene.Summary}</p>
 				<dl class="doc-scene__facts">
 					<div>
@@ -24,194 +22,72 @@ func Page() Node {
 						<dd>{docScene.InteractionHint}</dd>
 					</div>
 				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
-					{docScene.DemoLabel}
-				</a>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
 			</div>
 		</section>
-		<section id="motion-presets">
-			<h2>Motion Presets</h2>
-			<p>
-				GoSX exposes entrance animation as a server-authored primitive. Use
-				<span class="inline-code">&lt;Motion /&gt;</span>
-				in a
-				<span class="inline-code">.gsx</span>
-				template or
-				<span class="inline-code">server.Motion()</span>
-				in Go to apply a named preset. The element renders as ordinary HTML on the server first, then the shared bootstrap runtime upgrades it into a managed entrance animation when JavaScript is available.
+		<div class="page-topper">
+			<span class="eyebrow">Progressive DOM motion</span>
+			<p class="lede">
+				The server motion primitive emits semantic HTML and a small set of bootstrap-managed transition attributes. Reduced-motion respect is the default.
 			</p>
-			<p>Available presets:</p>
-			<ul>
-				<li>
-					<span class="inline-code">fade</span>
-					— opacity 0 to 1.
-				</li>
-				<li>
-					<span class="inline-code">slide-up</span>
-					— translates from below and fades in.
-				</li>
-				<li>
-					<span class="inline-code">slide-down</span>
-					— translates from above and fades in.
-				</li>
-				<li>
-					<span class="inline-code">slide-left</span>
-					— translates from the right and fades in.
-				</li>
-				<li>
-					<span class="inline-code">slide-right</span>
-					— translates from the left and fades in.
-				</li>
-				<li>
-					<span class="inline-code">zoom-in</span>
-					— scales from slightly below 1 and fades in.
-				</li>
-			</ul>
-			{CodeBlock("gosx", `func Page() Node {
-	    return <Motion as="section" preset="slide-up" trigger="view">
-	        <h2>Section heading</h2>
-	        <p>This content slides into view when the user scrolls to it.</p>
-	    </Motion>
-	}`)}
-			{CodeBlock("go", `server.Motion(server.MotionProps{
-	    Tag:    "section",
-	    Preset: server.MotionPresetSlideUp,
-	    Trigger: server.MotionTriggerView,
-	}, gosx.El("h2", gosx.Text("Section heading")),
-	   gosx.El("p", gosx.Text("This content slides into view when the user scrolls to it.")))`)}
-			<p>
-				Both authoring paths produce identical HTML output. The
-				<span class="inline-code">.gsx</span>
-				path is ergonomic for page authors; the Go path is useful when motion props are computed or conditional.
-			</p>
-		</section>
-		<section id="viewport-triggers">
-			<h2>Viewport Triggers</h2>
-			<p>
-				The
-				<span class="inline-code">trigger</span>
-				prop controls when the animation fires:
-			</p>
-			<ul>
-				<li>
-					<span class="inline-code">load</span>
-					— runs immediately when the page bootstrap executes, suitable for hero elements and above-the-fold content.
-				</li>
-				<li>
-					<span class="inline-code">view</span>
-					— defers the animation until the element enters the viewport via
-					<span class="inline-code">IntersectionObserver</span>
-					, suitable for content that appears as the user scrolls.
-				</li>
-			</ul>
-			{CodeBlock("gosx", `<Motion preset="fade" trigger="load">
-	    Above the fold, fades in on page entry.
-	</Motion>
-
-	<Motion preset="slide-up" trigger="view">
-	    Below the fold, animates when scrolled into view.
-	</Motion>`)}
-			<p>
-				Elements with
-				<span class="inline-code">trigger="view"</span>
-				are held invisible until the observer fires. If JavaScript is unavailable, the element renders as visible plain HTML with no hidden state. The motion is enhancement, not a rendering gate.
-			</p>
-		</section>
-		<section id="reduced-motion">
-			<h2>Reduced Motion</h2>
-			<p>
-				The bootstrap runtime checks
-				<span class="inline-code">prefers-reduced-motion: reduce</span>
-				before applying any animation. When the media query matches, all Motion elements are resolved immediately without animating — the content becomes visible instantly.
-			</p>
-			<p>
-				This behavior is on by default. You can opt a specific element out of the policy only when the motion is essential feedback rather than decoration:
-			</p>
-			{CodeBlock("gosx", `<Motion preset="fade" trigger="load" respectReducedMotion={true}>
-	    Respects the user's reduced-motion preference. Default.
-	</Motion>
-
-	<Motion preset="fade" trigger="load" respectReducedMotion={false}>
-	    Always animates, even if the user prefers reduced motion.
-	    Only use for motion that communicates state, not aesthetics.
-	</Motion>`)}
-			<section class="callout">
-				<strong>Accessibility policy</strong>
-				<p>
-					WCAG 2.1 Success Criterion 2.3.3 (AAA) recommends honoring
-					<span class="inline-code">prefers-reduced-motion</span>
-					. GoSX makes the accessible path the default. Setting
-					<span class="inline-code">
-						respectReducedMotion=
-						{false}
-					</span>
-					is an explicit opt-out that should be reserved for progress indicators or other motion that carries meaning.
-				</p>
-			</section>
-		</section>
-		<section id="custom-timing">
-			<h2>Custom Timing</h2>
-			<p>
-				All timing parameters are optional. Omitting them falls back to sensible preset defaults. Override when the design requires precise control:
-			</p>
-			<ul>
-				<li>
-					<span class="inline-code">duration</span>
-					— animation duration in milliseconds. Defaults vary by preset (200–400ms).
-				</li>
-				<li>
-					<span class="inline-code">delay</span>
-					— delay before the animation starts, in milliseconds. Useful for staggering sibling elements.
-				</li>
-				<li>
-					<span class="inline-code">easing</span>
-					— a CSS easing function string:
-					<span class="inline-code">ease</span>
-					,
-					<span class="inline-code">ease-out</span>
-					,
-					<span class="inline-code">linear</span>
-					, or any
-					<span class="inline-code">cubic-bezier(...)</span>
-					value.
-				</li>
-				<li>
-					<span class="inline-code">distance</span>
-					— translation distance in pixels for slide presets. Defaults to 24px.
-				</li>
-			</ul>
-			{CodeBlock("gosx", `<Motion
-	    preset="slide-up"
-	    trigger="view"
-	    duration={360}
-	    delay={80}
-	    easing="ease-out"
-	    distance={32}
-	>
-	    Custom timing applied to this element.
-	</Motion>`)}
-			{CodeBlock("go", `server.Motion(server.MotionProps{
-	    Tag:      "div",
-	    Preset:   server.MotionPresetSlideUp,
-	    Trigger:  server.MotionTriggerView,
-	    Duration: 360,
-	    Delay:    80,
-	    Easing:   "ease-out",
-	    Distance: 32,
-	}, content)`)}
-			<p>
-				Stagger a group of sibling cards by incrementing
-				<span class="inline-code">delay</span>
-				by a fixed step (40–80ms is a common value) on each item. The viewport trigger means they will begin their stagger only when the section scrolls into view, not immediately on page load.
-			</p>
-			{CodeBlock("go", `for i, card := range cards {
-	    nodes = append(nodes, server.Motion(server.MotionProps{
-	        Tag:     "article",
-	        Preset:  server.MotionPresetSlideUp,
-	        Trigger: server.MotionTriggerView,
-	        Delay:   i * 60,
-	    }, renderCard(card)))
-	}`)}
-		</section>
-	</div>
+		</div>
+		<h1 id="dom-motion">DOM motion</h1>
+		<CodeBlock lang="go" source={data.motionSample} />
+		<p>
+			Use
+			<span class="inline-code">ctx.Motion</span>
+			,
+			<span class="inline-code">ctx.Runtime().Motion</span>
+			, or the page-state helper so the document bootstrap is enabled. The package-level
+			<span class="inline-code">server.Motion</span>
+			only creates the element and attributes; it cannot activate page assets by itself.
+		</p>
+		<h2 id="presets">Presets</h2>
+		<p>
+			The DOM presets are
+			<span class="inline-code">fade</span>
+			,
+			<span class="inline-code">slide-up</span>
+			,
+			<span class="inline-code">slide-down</span>
+			,
+			<span class="inline-code">slide-left</span>
+			,
+			<span class="inline-code">slide-right</span>
+			, and
+			<span class="inline-code">zoom-in</span>
+			. Unknown values normalize to fade.
+		</p>
+		<h2 id="triggers">Load and viewport triggers</h2>
+		<p>
+			<span class="inline-code">MotionTriggerLoad</span>
+			is the default and starts when the bootstrap initializes the element.
+			<span class="inline-code">MotionTriggerView</span>
+			waits for the framework's viewport observation. The server HTML remains the fallback when scripting is unavailable.
+		</p>
+		<h2 id="reduced-motion">Reduced motion</h2>
+		<p>
+			<span class="inline-code">RespectReducedMotion</span>
+			is a pointer because omission means true. The bootstrap consults the user's reduced-motion preference and suppresses the authored transition when respect is enabled.
+		</p>
+		<CodeBlock lang="go" source={data.reducedSample} />
+		<p>
+			Opting out is possible for an essential transition, but it should be deliberate and rare. The GSX
+			<span class="inline-code">respectReducedMotion</span>
+			property maps to the same contract.
+		</p>
+		<h2 id="timing">Timing defaults</h2>
+		<p>
+			Duration defaults to 220 milliseconds, delay to zero, distance to 18 pixels, and easing to
+			<span class="inline-code">cubic-bezier(0.16, 1, 0.3, 1)</span>
+			. Non-positive duration or distance selects the default; negative delay becomes zero.
+		</p>
+		<h2 id="bootstrap">Boundary with the motion package</h2>
+		<p>
+			<span class="inline-code">server.Motion</span>
+			is the declarative DOM helper described here. The separate
+			<span class="inline-code">motion</span>
+			package contains clips, curves, mixing, springs, targets, and runtime evaluation for authored animation systems; those APIs are not automatically activated by adding a DOM preset.
+		</p>
+	</article>
 }

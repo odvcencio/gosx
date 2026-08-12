@@ -21,7 +21,9 @@ and applies the DOM mutation locally.
 
 Reach for the relay when:
 
-- Two frames share an origin and need to exchange shared-signal state.
+- Two frames need to exchange shared-signal state and can name the peer origin
+  explicitly. Same-origin and deliberately trusted cross-origin peers both use
+  the same allow-list contract.
 - The signal namespace is well-scoped (e.g. `$preview.*`) — relaying
   every signal would defeat frame-local semantics elsewhere.
 - The peer frame can mount the gosx WASM runtime (it needs a Bridge to
@@ -33,7 +35,7 @@ Do NOT reach for the relay when:
   origin contract.
 - The state needs ordering / acknowledgement guarantees (postMessage
   delivery is fire-and-forget; revisit ADR 0009's triggers).
-- The pages live in the same document. A `signal.Signal` over the local
+- The components live in the same document. A `signal.Signal` over the local
   store is faster and simpler.
 
 ---
@@ -85,17 +87,16 @@ local development and warns when it is used. URL auto-bootstrap never does.
 
 ---
 
-## Performance
+## Runtime cost
 
-- Same-origin `postMessage` round-trips are typically <1 ms on modern
-  browsers — well under the 5 ms budget ADR 0008 specified.
 - Each relayed signal write costs one `postMessage` per registered
   peer. Editors with one iframe peer pay one extra message per write.
 - The relay never echoes inbound writes back to the peer (depth
   counter in `Bridge.DispatchInboundSignal` suppresses the outbound
   observer). Loops are not a concern.
-- The WASM-size cost of the relay is bounded: ~150 KB across the full
-  + tiny WASM builds, comfortably within Phase 1d's 8500/6200 KB budget.
+- Transport latency and artifact bytes are measured properties, not API
+  constants. Use the current build manifest and Ouroboros receipt for the
+  release you deploy instead of a historical size estimate.
 
 ---
 
@@ -154,8 +155,8 @@ func (b *Bridge) EnableCrossFrameRelay(prefix, allowedOrigin string)
 // Inspect registered relay configurations.
 func (b *Bridge) CrossFrameRelays() []CrossFrameRelayConfig
 
-// Register the outbound relay callback (wasm-side wires this to
-// window.__gosx_relay_send so postMessage fires for matching writes).
+// Register the outbound relay callback (the wasm-side adapter wires this to
+// the browser relay facade so postMessage fires for matching writes).
 func (b *Bridge) SetCrossFrameRelaySendCallback(fn func(name, valueJSON string))
 
 // Route an inbound peer message into the local store.
@@ -179,20 +180,24 @@ func island.PreviewBootstrapEnabled() bool
 
 ```js
 // Push relay configurations (called by the wasm-side at startup).
-window.__gosx_relay_configure([
+window.__gosx.relay.configure([
   {prefix: "$preview.", allowedOrigin: "https://editor.example.com"},
 ])
 
 // Register an explicit peer target.
-window.__gosx_relay_register_peer(targetWindow, originString)
+window.__gosx.relay.registerPeer(targetWindow, originString)
 
 // Outbound send (called by the wasm-side bridge callback).
-window.__gosx_relay_send(name, valueJSON)
+window.__gosx.relay.send(name, valueJSON)
 
-// Flush any buffered inbound messages (called after the wasm-side
-// registers __gosx_relay_dispatch_inbound).
-window.__gosx_relay_flush_inbound()
+// Flush messages that arrived before the wasm-side inbound bridge was ready.
+window.__gosx.relay.flushInboundBuffer()
 ```
+
+The host lifecycle has a separate internal adapter at
+`window.__gosx.host.relay.flushInbound()`. It delegates to the same buffer
+flush but is named for host-module use. Application and integration code should
+use `window.__gosx.relay.flushInboundBuffer()`.
 
 ---
 
@@ -208,14 +213,14 @@ EDITOR FRAME                                     IFRAME (STOREFRONT)
        ↓
 [notifySharedSignal → relaySharedSignal]
        ↓ (prefix matches, not inbound depth)
-[relaySendFn → __gosx_relay_send]
+[relaySendFn → window.__gosx.relay.send]
        ↓
 [postMessage {type:"gosx:shared-signal", name, valueJSON, origin}]
                   ─────────────postMessage─────────────→
                                                             ↓
                                                   [window.addEventListener("message")]
                                                             ↓ (type + origin + prefix valid)
-                                                  [__gosx_relay_dispatch_inbound]
+                                                  [WASM inbound bridge callback]
                                                             ↓
                                                   [Bridge.DispatchInboundSignal]
                                                             ↓ (relayInboundDepth++)

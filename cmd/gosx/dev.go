@@ -57,6 +57,9 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
 	}
+	if err := checkStrictProject(context.Background(), absDir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
 	if err := prepareDevAssets(absDir); err != nil {
 		return err
 	}
@@ -89,18 +92,12 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "gosx dev: "+format+"\n", args...)
 		},
+		PreflightChange: func(_ []string) error {
+			return preflightChangedDevApp(context.Background(), absDir, runner)
+		},
 		OnChange: func() error {
 			fmt.Fprintln(os.Stderr, "gosx dev: change detected, rebuilding assets and restarting app")
-			if err := prepareDevAssets(absDir); err != nil {
-				return fmt.Errorf("build assets: %w", err)
-			}
-			if err := runner.restart(internalPort); err != nil {
-				return fmt.Errorf("restart app: %w", err)
-			}
-			if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
-				return fmt.Errorf("wait for app ready: %w", err)
-			}
-			return nil
+			return rebuildChangedDevApp(context.Background(), absDir, runner, internalPort, internalBaseURL)
 		},
 	}
 
@@ -131,6 +128,41 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 		}
 		return nil
 	}
+}
+
+type devProcessStopper interface {
+	stop() error
+}
+
+// preflightChangedDevApp validates every watched batch, including island-only
+// hot swaps. When source is invalid it stops the old app process so the proxy
+// cannot keep serving newly mutated files through a previously valid binary.
+func preflightChangedDevApp(ctx context.Context, dir string, runner devProcessStopper) error {
+	if err := checkStrictProject(ctx, dir); err != nil {
+		if runner != nil {
+			if stopErr := runner.stop(); stopErr != nil {
+				return fmt.Errorf("check strict components: %w (also stop invalid app: %v)", err, stopErr)
+			}
+		}
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	return nil
+}
+
+func rebuildChangedDevApp(ctx context.Context, dir string, runner *devRunner, internalPort, internalBaseURL string) error {
+	if err := checkStrictProject(ctx, dir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	if err := prepareDevAssets(dir); err != nil {
+		return fmt.Errorf("build assets: %w", err)
+	}
+	if err := runner.restart(internalPort); err != nil {
+		return fmt.Errorf("restart app: %w", err)
+	}
+	if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
+		return fmt.Errorf("wait for app ready: %w", err)
+	}
+	return nil
 }
 
 func prepareDevAssets(dir string) error {

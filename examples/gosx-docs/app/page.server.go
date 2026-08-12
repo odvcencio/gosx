@@ -20,7 +20,7 @@ func init() {
 						{"num": "05", "name": "Hub", "purpose": "Presence, fanout, CRDT documents, and shared realtime state.", "cost": "Browser cost: WebSocket"},
 					},
 					"paths": []map[string]string{
-						{"num": "01", "title": "Web applications", "body": "Ship fast HTML first, then add typed mutations, sessions, auth, streaming, and caching where needed.", "tools": "Server · Action", "href": "/docs/getting-started"},
+						{"num": "01", "title": "Web applications", "body": "Ship server HTML with strict typed components or flexible legacy routes, then add actions, sessions, auth, streaming, and caching where needed.", "tools": "Component · Server · Action", "href": "/docs/components"},
 						{"num": "02", "title": "Interactive interfaces", "body": "Hydrate only the reactive regions. Signals and islands keep ordinary content out of the client runtime.", "tools": "Island · Signal", "href": "/docs/islands"},
 						{"num": "03", "title": "Realtime workspaces", "body": "Coordinate users and agents through hubs, presence, shared state, and conflict-free documents.", "tools": "Hub · CRDT", "href": "/docs/hubs"},
 						{"num": "04", "title": "Visual computing", "body": "Author 3D scenes, materials, simulations, and GPU workloads in Go with managed backend fallback.", "tools": "Engine · Scene3D · Selena", "href": "/docs/scene3d"},

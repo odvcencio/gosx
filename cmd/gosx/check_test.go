@@ -57,6 +57,126 @@ func TestRunCheckReportsReadError(t *testing.T) {
 	}
 }
 
+func TestRunCheckAndRenderRejectStrictGoTypeErrors(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "check-render-strict-gate")
+	path := filepath.Join(dir, "app", "page.gsx")
+	for _, check := range []struct {
+		name string
+		fn   func() error
+	}{
+		{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
+		{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			err := check.fn()
+			if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestRunCheckAndRenderRejectStrictSemanticDivergence(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "check-render-strict-semantics")
+	path := filepath.Join(dir, "app", "page.gsx")
+	mustWriteFile(t, path, `package app
+type Props struct { A int; B int }
+component Page(props: Props) {
+	return <main>{props.A / props.B}</main>
+}
+`)
+	for _, check := range []struct {
+		name string
+		fn   func() error
+	}{
+		{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
+		{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			err := check.fn()
+			if err == nil || !strings.Contains(err.Error(), `binary operator "/" is not supported`) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestRunCheckAndRenderRejectPropsBearingStrictEntry(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "check-render-root-props-gate")
+	path := filepath.Join(dir, "app", "page.gsx")
+	mustWriteFile(t, path, `package app
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`)
+	for _, check := range []struct {
+		name string
+		fn   func() error
+	}{
+		{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
+		{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			err := check.fn()
+			if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestRunCheckAndRenderRejectStrictClientDirectiveComponents(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		directive string
+		want      string
+	}{
+		{name: "island", directive: "//gosx:island", want: "strict island declarations are not supported"},
+		{name: "engine", directive: "//gosx:engine surface", want: "strict engine declarations are not supported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newInvalidStrictStarter(t, "check-render-strict-"+tc.name)
+			path := filepath.Join(dir, "app", "page.gsx")
+			mustWriteFile(t, path, "package app\n"+tc.directive+"\ncomponent Page() {\nreturn <canvas />\n}\n")
+			for _, check := range []struct {
+				name string
+				fn   func() error
+			}{
+				{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
+				{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
+			} {
+				t.Run(check.name, func(t *testing.T) {
+					err := check.fn()
+					if err == nil || !strings.Contains(err.Error(), tc.want) {
+						t.Fatalf("error = %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestRunCheckRejectsLegacyCallerIntoStrictCalleeBeforePropTyping(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "check-cross-style-gate")
+	path := filepath.Join(dir, "app", "page.gsx")
+	for _, call := range []string{`<Badge label={42} />`, `<Badge mystery="x" />`} {
+		mustWriteFile(t, path, `package app
+type BadgeProps struct { Label string }
+component Badge(props: BadgeProps) {
+	return <strong>{props.Label}</strong>
+}
+func Page() Node {
+	return `+call+`
+}
+`)
+		err := runCheck(path, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "legacy component cannot call strict component Badge") {
+			t.Fatalf("call %s: error = %v", call, err)
+		}
+	}
+}
+
 func TestRunCheckAcceptsDocsAppPages(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "examples", "gosx-docs", "app"))
 	if err != nil {

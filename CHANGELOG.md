@@ -1,5 +1,85 @@
 # Changelog
 
+## v0.39.0 (2026-08-12)
+
+### Typed GoSX grammar and fail-closed browser runtime contracts
+
+- **Strict typed components, alongside the original style.** `.gsx` files can
+  declare `component Name(props: GoType) { ... }`. The prop contract is an
+  ordinary Go type and the declaration has an implicit `Node` result, while
+  the body still uses an explicit `return`. Strict server components currently
+  use one top-level GSX return and a deliberately small renderer-safe
+  expression surface: quoted strings, `true`/`false`, ungrouped non-negative
+  base-10 integers in the `int64` range, finite ungrouped decimal floats, or
+  one direct, parity-safe built-in scalar field on `props`;
+  unsupported Go control flow, locals, helpers, and cross-file component calls
+  fail closed instead of type-checking one program and rendering another.
+  `gosx check`, build, dev, export, and render ask the Go compiler to reject
+  unknown fields and incompatible values. Existing
+  `func Name(props GoType) Node` components remain supported, and both styles
+  can coexist in a file; component calls stay within one declaration style in
+  v0.39 so legacy dynamic calls cannot bypass the strict prop contract.
+  Same-file strict calls accept exact Go field names or unambiguous TSX-like
+  lower-camel aliases, and explicitly require every rendered prop even when
+  its value is `0`, `false`, or `""`. Islands, engines, renderer builtins,
+  element spreads, and nested Node composition retain the legacy declaration
+  style in this release.
+- **Ouroboros O0.2 evidence infrastructure.** Runtime inventory, browser,
+  comparison, and pixel evidence now carries source identity, uses portable
+  artifact references, and fails closed on missing or mismatched receipts.
+  Monotonic ceilings and pixel tolerances are policy-owned rather than trusted
+  from a self-reported result. A canonical hardware/browser baseline and the
+  final CI evidence gate remain deliberately deferred; this release does not
+  claim that either one is committed.
+- **Typed browser runtime authorities.** Hand-written TypeScript sources own
+  the browser build and host lifecycle, with generated bundles checked for
+  source and diagnostic parity. Framework internals are grouped beneath
+  `window.__gosx.host` and `window.__gosx.runtime` instead of adding new
+  ambient `window.__gosx_*` names.
+- **Versioned WASM boundary and capability-linked profiles.** The browser
+  validates ABI version 2, mailbox version 1, manifest identity, feature mask,
+  and runtime variant before hydration. Production manifests publish `core`,
+  `engine`, `collab`, and `full` artifacts; `islands` remains a read-compatible
+  alias for older manifests, not a fifth advertised profile.
+- **Breaking relay hardening.** URL-driven preview relay no longer defaults to
+  a wildcard origin. `?gosx-preview=1` must be paired with a canonical absolute
+  HTTP(S) `gosx-preview-origin`. The programmatic Bridge API still accepts an
+  explicitly requested `"*"` for local development and warns when it is used.
+- **Scene3D browser migration and rendering additions.** Scene3D host authority
+  moved into the TypeScript browser pipeline, with source-owned WebGPU/WebGL
+  environment handling, water taps, embers, FXAA, and compatibility evidence.
+- **Boolean-attribute and reconciliation hardening.** Browser patching keeps
+  HTML presence semantics (including `hidden="until-found"` and value-bearing
+  attributes), while TinyGo reconciliation retains its compiler-safe path.
+
+## v0.38.1 (2026-08-10)
+
+### Patch: TinyGo island-reconciler fix, attribute-value fix, gzip passthrough fix
+
+- **TinyGo subtree-reuse miscompile.** `appendResolvedNode` assigned a
+  resolved node's `Children` through a pre-fetched slice index while the
+  right-hand call could grow and reallocate the same tree's backing array.
+  Standard Go's copy-on-grow keeps the old and new arrays byte-identical at
+  that index, so the stale write still landed correctly; TinyGo does not
+  honour that, and the write landed in the abandoned array instead. The
+  visible symptom: a multi-child island with a reactive `Each` or a
+  signal-driven boolean/empty attribute dropped its first re-render, then
+  appended a duplicate subtree on the next one. Binding the result to a
+  local variable before the indexed assignment removes the stale address.
+  `client/vm/island.go` additionally forces the spare-buffer recycle, the
+  subtree-diff skip, and the subtree-reuse plan itself off under a TinyGo
+  build tag, so production keeps the pre-optimisation evaluation path while
+  native/standard-Go builds keep the fast path the fuzz targets cover.
+- **Attribute-value fix.** `client/js/patch.js` renders an empty attribute
+  value as `setAttribute(name, "")` and never writes the string
+  `"undefined"` into a boolean attribute (`value`, `required`, `hidden`,
+  and the rest of the presence-attribute set now go through one
+  `BOOL_ATTRS` path instead of a narrower property-only list).
+- **Gzip double-encode fix.** `server/gzip.go` now passes pre-encoded
+  upstream responses straight through (`Content-Encoding` already set)
+  instead of compressing them a second time under the gzip writer, for
+  both direct writes and flushed streaming responses.
+
 ## v0.38.0 (2026-08-09)
 
 ### Island-VM core: capability-scoped browser handlers, computed signals, hub refresh
@@ -33,6 +113,18 @@
 - **Accessible managed forms.** Scoped managed-form result projection,
   including stale-error cleanup, status announcement on submit, and
   invalid-field focus.
+
+## v0.37.1 (2026-08-09)
+
+### Patch: grammar-blob authority and parser diagnostics
+
+- **Grammar override integrity.** Compilation refuses an override grammar blob
+  that is not byte-identical to GoSX's embedded grammar, closing the stale
+  parse-table mismatch that caused issue #139.
+- **Self-closing SVG parsing.** Regression coverage preserves nested and
+  self-closing SVG markup through the corrected grammar path.
+- **Parse diagnostics.** Invalid source now reports a useful parser failure
+  even when the syntax tree contains no explicit error node.
 
 ## v0.37.0 (2026-08-09)
 

@@ -30,10 +30,12 @@ import (
 	"fmt"
 	"html"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
+	"m31labs.dev/gosx/internal/strictcomponent"
 )
 
 // Lower converts a parsed GoSX CST into the component IR.
@@ -62,6 +64,14 @@ type lowerer struct {
 	errs          []Diagnostic
 	signalImports map[string]struct{}
 	signalDot     bool
+	strict        bool
+	strictNames   map[string]struct{}
+	legacyNames   map[string]struct{}
+	strictProps   map[string]string
+	strictReads   map[string]map[string]struct{}
+	structFields  map[string]map[string]string
+	structTypes   map[string]map[string]string
+	strictServer  bool
 }
 
 // text returns the source text covered by node n. It substrings the
@@ -920,6 +930,7 @@ func isArrayLiteral(expr string) bool {
 
 // lowerSourceFile processes the root source_file node.
 func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
+	l.collectStrictSchemas(root)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
 		switch l.nodeType(child) {
@@ -929,6 +940,301 @@ func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 			l.lowerImportDecl(child)
 		case "function_declaration":
 			l.lowerFunctionDecl(child)
+		case "gosx_component_declaration":
+			l.lowerStrictComponentDecl(child)
+		}
+	}
+}
+
+func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
+	l.strictNames = make(map[string]struct{})
+	l.legacyNames = make(map[string]struct{})
+	l.strictProps = make(map[string]string)
+	l.strictReads = make(map[string]map[string]struct{})
+	l.structFields = make(map[string]map[string]string)
+	l.structTypes = make(map[string]map[string]string)
+	for i := 0; i < int(root.NamedChildCount()); i++ {
+		child := root.NamedChild(i)
+		switch l.nodeType(child) {
+		case "function_declaration":
+			name := l.childByField(child, "name")
+			body := l.childByField(child, "body")
+			if name != nil && body != nil && l.findGSXReturn(body) != nil {
+				l.legacyNames[l.text(name)] = struct{}{}
+			}
+		case "gosx_component_declaration":
+			name := l.childByField(child, "name")
+			_, propsType := l.extractStrictProps(child)
+			if name != nil {
+				componentName := l.text(name)
+				l.strictNames[componentName] = struct{}{}
+				if propsType != "" {
+					l.strictProps[componentName] = propsType
+					l.strictReads[componentName] = l.collectStrictPropReads(child)
+				}
+			}
+		case "type_declaration":
+			l.collectStructSchemas(child)
+		}
+	}
+}
+
+// collectStrictPropReads records the top-level props fields whose values the
+// file renderer must observe. Local strict calls must provide these fields
+// explicitly: generated Go composite literals otherwise synthesize typed zero
+// values while the map-backed renderer would observe a missing key as nil.
+func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct{} {
+	reads := make(map[string]struct{})
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		if l.nodeType(node) == "selector_expression" {
+			if field, ok := strictcomponent.ServerPropField(l.text(node)); ok {
+				reads[field] = struct{}{}
+			}
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(n)
+	return reads
+}
+
+func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		if l.nodeType(node) == "type_spec" {
+			nameNode := l.childByField(node, "name")
+			typeNode := l.childByField(node, "type")
+			if nameNode == nil || typeNode == nil || l.nodeType(typeNode) != "struct_type" {
+				return
+			}
+			fields := make(map[string]string)
+			fieldTypes := make(map[string]string)
+			var collectFields func(*gotreesitter.Node)
+			collectFields = func(current *gotreesitter.Node) {
+				if current == nil {
+					return
+				}
+				if l.nodeType(current) == "field_declaration" {
+					fieldType := ""
+					if fieldTypeNode := l.childByField(current, "type"); fieldTypeNode != nil {
+						fieldType = strings.TrimSpace(l.text(fieldTypeNode))
+					}
+					for i := 0; i < int(current.NamedChildCount()); i++ {
+						fieldNode := current.NamedChild(i)
+						if l.nodeType(fieldNode) != "field_identifier" {
+							continue
+						}
+						field := l.text(fieldNode)
+						if field == "" || field[0] < 'A' || field[0] > 'Z' {
+							continue
+						}
+						fields[field] = field
+						fieldTypes[field] = fieldType
+						alias := lowerCamelInitialism(field)
+						if existing, ok := fields[alias]; ok && existing != field {
+							fields[alias] = ""
+						} else if !ok {
+							fields[alias] = field
+						}
+					}
+					return
+				}
+				for i := 0; i < int(current.NamedChildCount()); i++ {
+					collectFields(current.NamedChild(i))
+				}
+			}
+			collectFields(typeNode)
+			if len(fields) > 0 {
+				name := l.text(nameNode)
+				l.structFields[name] = fields
+				l.structTypes[name] = fieldTypes
+			}
+			return
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(n)
+}
+
+func strictRendererScalarType(typeName string) bool {
+	switch strings.TrimSpace(typeName) {
+	case "string", "bool",
+		"int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"byte", "rune", "float32", "float64":
+		return true
+	default:
+		return false
+	}
+}
+
+func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentName, propsType string) {
+	reads := l.strictReads[componentName]
+	if len(reads) == 0 {
+		return
+	}
+	baseType := propsBaseType(propsType)
+	fieldTypes, declared := l.structTypes[baseType]
+	fields := make([]string, 0, len(reads))
+	for field := range reads {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	if !declared {
+		l.errorf(n, "strict component %s renders props fields from %s, whose struct schema is not declared in this .gsx file; declare the renderer-visible props struct beside the component", componentName, propsType)
+		return
+	}
+	for _, field := range fields {
+		fieldType, ok := fieldTypes[field]
+		if !ok {
+			// The package checker supplies the precise unknown/unexported-field
+			// diagnostic; this guard only owns known renderer schema types.
+			continue
+		}
+		if !strictRendererScalarType(fieldType) {
+			l.errorf(n, "strict component %s cannot render props.%s of type %s; renderer-visible props fields must use exact string, bool, integer, or floating-point builtins", componentName, field, fieldType)
+		}
+	}
+}
+
+func lowerCamelInitialism(value string) string {
+	if value == "" || value[0] < 'A' || value[0] > 'Z' {
+		return value
+	}
+	end := 1
+	for end < len(value) && value[end] >= 'A' && value[end] <= 'Z' {
+		if end+1 < len(value) && value[end+1] >= 'a' && value[end+1] <= 'z' {
+			break
+		}
+		end++
+	}
+	return strings.ToLower(value[:end]) + value[end:]
+}
+
+func propsBaseType(propsType string) string {
+	propsType = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(propsType), "*"))
+	if idx := strings.LastIndex(propsType, "."); idx >= 0 {
+		propsType = propsType[idx+1:]
+	}
+	if idx := strings.Index(propsType, "["); idx >= 0 {
+		propsType = propsType[:idx]
+	}
+	return propsType
+}
+
+func (l *lowerer) normalizeStrictComponentAttrs(tag string, attrs []Attr) {
+	propsType := l.strictProps[tag]
+	if propsType == "" {
+		return
+	}
+	aliases := l.structFields[propsBaseType(propsType)]
+	for i := range attrs {
+		field, known := aliases[attrs[i].Name]
+		if known && field == "" {
+			l.errs = append(l.errs, Diagnostic{
+				Span:    Span{},
+				Message: fmt.Sprintf("strict prop %q is ambiguous for %s", attrs[i].Name, propsType),
+				Hint:    "use the exact exported Go field spelling",
+			})
+			continue
+		}
+		if field != "" {
+			attrs[i].Name = field
+		}
+	}
+}
+
+// validateStrictComponentCall keeps the file-local strict component contract
+// fail-closed in the IR compiler. Component styles may coexist in a file, but
+// calls must remain within one style so legacy bodies cannot bypass strict prop
+// checking and strict bodies cannot depend on legacy renderer semantics.
+func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, attrs []Attr, children []NodeID) {
+	_, strictCallee := l.strictNames[tag]
+	_, legacyCallee := l.legacyNames[tag]
+	if l.strict && legacyCallee {
+		l.errorf(n, "strict component cannot call legacy component %s; component styles may coexist but calls must stay within one style", tag)
+		return
+	}
+	if !l.strict && strictCallee {
+		l.errorf(n, "legacy component cannot call strict component %s; component styles may coexist but calls must stay within one style", tag)
+		return
+	}
+	if l.strictServer && IsComponent(tag) && !strictCallee {
+		l.errorf(n, "strict server component %s is not renderable; v0.39 strict server components may call only same-file strict components", tag)
+		return
+	}
+	if !strictCallee {
+		return
+	}
+	for _, attr := range attrs {
+		if attr.Kind == AttrSpread {
+			l.errorf(n, "spread attributes are not supported for strict component %s", tag)
+		}
+	}
+	if _, acceptsProps := l.strictProps[tag]; !acceptsProps && len(attrs) > 0 {
+		l.errorf(n, "strict component %s does not accept props", tag)
+	}
+	if required := l.strictReads[tag]; len(required) > 0 {
+		supplied := make(map[string]struct{}, len(attrs))
+		aliases := l.structFields[propsBaseType(l.strictProps[tag])]
+		hasUnknownSameFileAttr := false
+		for _, attr := range attrs {
+			name := attr.Name
+			if len(aliases) > 0 {
+				field, known := aliases[name]
+				if !known || field == "" {
+					hasUnknownSameFileAttr = true
+					continue
+				}
+				name = field
+			}
+			supplied[name] = struct{}{}
+		}
+		// Let the package checker produce the authoritative unknown-field
+		// diagnostic before checking omissions in a same-file schema.
+		if !hasUnknownSameFileAttr {
+			fields := make([]string, 0, len(required))
+			for field := range required {
+				fields = append(fields, field)
+			}
+			sort.Strings(fields)
+			for _, field := range fields {
+				// Companion Go structs are intentionally exact at the package-check
+				// boundary, but accepting the schema alias here avoids masking that
+				// more useful Go diagnostic as a zero-value omission.
+				if len(aliases) == 0 {
+					if _, ok := supplied[lowerCamelInitialism(field)]; ok {
+						continue
+					}
+				}
+				if _, ok := supplied[field]; !ok {
+					l.errorf(n, "strict component %s requires prop %s because its renderer reads props.%s; provide it explicitly to preserve Go zero-value semantics", tag, field, field)
+				}
+			}
+		}
+	}
+	if len(children) > 0 {
+		l.errorf(n, "strict component %s does not accept positional children", tag)
+	}
+}
+
+func (l *lowerer) validateStrictHTMLElement(n *gotreesitter.Node, tag string, attrs []Attr) {
+	if !l.strictServer || IsComponent(tag) {
+		return
+	}
+	for _, attr := range attrs {
+		if attr.Kind == AttrSpread {
+			l.errorf(n, "spread attributes are not supported on strict server HTML elements; map and slice expansion cannot preserve generated Go rendering semantics")
 		}
 	}
 }
@@ -1025,7 +1331,7 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	}
 
 	// Extract props type from parameters
-	propsType := l.extractPropsType(n)
+	propsName, propsType := l.extractProps(n)
 
 	// Lower the GSX tree
 	rootID := l.lowerGSXNode(gsxRoot)
@@ -1041,6 +1347,8 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	comp := Component{
 		Name:      name,
 		PropsType: propsType,
+		PropsName: propsName,
+		Syntax:    ComponentSyntaxLegacy,
 		Root:      rootID,
 		IsIsland:  l.hasIslandDirective(n),
 		Scope:     scope,
@@ -1060,6 +1368,185 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	}
 
 	l.prog.Components = append(l.prog.Components, comp)
+}
+
+// lowerStrictComponentDecl lowers the TSX-like component spelling while
+// enforcing the narrower semantics the IR renderer can execute faithfully.
+// In particular, arbitrary Go statements are rejected instead of being
+// type-checked and then silently ignored by the renderer.
+func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
+	nameNode := l.childByField(n, "name")
+	bodyNode := l.childByField(n, "body")
+	if nameNode == nil || bodyNode == nil {
+		l.errorf(n, "strict component declaration is incomplete")
+		return
+	}
+
+	l.checkDirectiveTypos(n)
+	isIsland := l.hasIslandDirective(n)
+	engineKind, isEngine := l.parseEngineDirective(n)
+	if isIsland {
+		l.errorf(n, "strict island declarations are not supported in v0.39; island VM semantics do not yet preserve typed server-component behavior")
+		l.hintLast("declare this island with the legacy func Name(...) Node style")
+		return
+	}
+	if isEngine {
+		l.errorf(n, "strict engine declarations are not supported in v0.39; the file renderer cannot execute typed engine components faithfully")
+		l.hintLast("declare this engine with the legacy func Name(...) Node style")
+		return
+	}
+	propsName, propsType := l.extractStrictProps(n)
+	componentName := l.text(nameNode)
+	if propsType != "" && propsName != "props" {
+		l.errorf(n, "strict component props parameter must be named props; got %q", propsName)
+		l.hintLast("use component " + componentName + "(props: " + propsType + ")")
+	}
+	l.validateStrictRenderedProps(n, componentName, propsType)
+
+	gsxRoot := l.strictComponentGSXRoot(bodyNode, isIsland || isEngine)
+	if gsxRoot == nil {
+		return
+	}
+
+	wasStrict := l.strict
+	wasStrictServer := l.strictServer
+	l.strict = true
+	l.strictServer = !isIsland && !isEngine
+	rootID := l.lowerGSXNode(gsxRoot)
+	l.strict = wasStrict
+	l.strictServer = wasStrictServer
+	scope := l.analyzeBody(bodyNode)
+	comp := Component{
+		Name:        componentName,
+		PropsType:   propsType,
+		PropsName:   propsName,
+		PropsFields: copyStrictPropTypes(l.structTypes[propsBaseType(propsType)], l.strictReads[componentName]),
+		Syntax:      ComponentSyntaxStrict,
+		Root:        rootID,
+		IsIsland:    isIsland,
+		Scope:       scope,
+		Span:        l.span(n),
+	}
+	if isEngine {
+		comp.IsEngine = true
+		comp.EngineKind = engineKind
+		comp.EngineCapabilities = engineDirectiveCapabilities(engineKind, l.parseCapabilities(n))
+		if engineKind == "surface" {
+			l.lowerEngineSurface(&comp)
+		}
+	}
+
+	if !isIsland && !isEngine {
+		l.validateStrictServerExpressions(comp.Root)
+	}
+	l.prog.Components = append(l.prog.Components, comp)
+}
+
+func copyStrictPropTypes(fields map[string]string, reads map[string]struct{}) map[string]string {
+	if len(fields) == 0 || len(reads) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(reads))
+	for name := range reads {
+		if fieldType, ok := fields[name]; ok {
+			out[name] = fieldType
+		}
+	}
+	return out
+}
+
+func (l *lowerer) strictComponentGSXRoot(body *gotreesitter.Node, allowIslandDecls bool) *gotreesitter.Node {
+	statements := l.statementListNode(body)
+	if statements == nil {
+		statements = body
+	}
+	count := int(statements.NamedChildCount())
+	if count == 0 {
+		l.errorf(body, "strict component body must end with exactly one top-level GSX return")
+		return nil
+	}
+
+	for i := 0; i < count-1; i++ {
+		stmt := statements.NamedChild(i)
+		if allowIslandDecls && l.nodeType(stmt) == "short_var_declaration" && l.isSupportedStrictIslandDeclaration(stmt) {
+			continue
+		}
+		l.errorf(stmt, "strict component body contains a statement the IR renderer cannot execute")
+		if allowIslandDecls {
+			l.hintLast("only signal/computed/handler short declarations may precede the final GSX return in strict islands")
+		} else {
+			l.hintLast("strict server components require exactly one top-level GSX return")
+		}
+	}
+
+	last := statements.NamedChild(count - 1)
+	if l.nodeType(last) != "return_statement" {
+		l.errorf(last, "strict component body must end with exactly one top-level GSX return")
+		return nil
+	}
+	exprs := l.returnExprNodes(last)
+	if len(exprs) != 1 || !l.isGSXNode(exprs[0]) {
+		l.errorf(last, "strict component return must contain exactly one GSX element or fragment")
+		return nil
+	}
+	if !allowIslandDecls && count != 1 {
+		return nil
+	}
+	return exprs[0]
+}
+
+func (l *lowerer) isSupportedStrictIslandDeclaration(n *gotreesitter.Node) bool {
+	scope := &ComponentScope{Locals: make(map[string]string)}
+	before := len(l.errs)
+	l.analyzeShortVarDecl(n, scope)
+	if len(l.errs) != before {
+		return true // the declaration was recognized; its own diagnostic is clearer
+	}
+	namesNode := l.childByField(n, "left")
+	names := l.extractAssignedNames(namesNode)
+	if len(names) == 0 {
+		return false
+	}
+	for _, name := range names {
+		if _, ok := scope.Locals[name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (l *lowerer) validateStrictServerExpressions(root NodeID) {
+	seen := make(map[NodeID]bool)
+	var visit func(NodeID)
+	visit = func(id NodeID) {
+		if seen[id] || int(id) >= len(l.prog.Nodes) {
+			return
+		}
+		seen[id] = true
+		node := &l.prog.Nodes[id]
+		if node.Kind == NodeExpr {
+			l.validateStrictServerExpression(node.Span, node.Text)
+		}
+		for _, attr := range node.Attrs {
+			if attr.Kind == AttrExpr || attr.Kind == AttrSpread {
+				l.validateStrictServerExpression(node.Span, attr.Expr)
+			}
+		}
+		for _, child := range node.Children {
+			visit(child)
+		}
+	}
+	visit(root)
+}
+
+func (l *lowerer) validateStrictServerExpression(span Span, source string) {
+	if err := strictcomponent.ValidateServerExpression(source); err != nil {
+		l.errs = append(l.errs, Diagnostic{
+			Span:    span,
+			Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
+			Hint:    "use literals or props field selection; compute, index, and call methods before rendering",
+		})
+	}
 }
 
 // surfaceAllowedHandlers is the exhaustive set of on* event names permitted on
@@ -1184,21 +1671,46 @@ func (l *lowerer) isGSXNode(n *gotreesitter.Node) bool {
 		typ == "jsx_self_closing_element" || typ == "jsx_fragment"
 }
 
-func (l *lowerer) extractPropsType(funcDecl *gotreesitter.Node) string {
+func (l *lowerer) extractProps(funcDecl *gotreesitter.Node) (string, string) {
 	params := l.childByField(funcDecl, "parameters")
 	if params == nil {
-		return ""
+		return "", ""
 	}
 	for i := 0; i < int(params.NamedChildCount()); i++ {
 		param := params.NamedChild(i)
 		if l.nodeType(param) == "parameter_declaration" {
+			nameNode := l.childByField(param, "name")
 			typeNode := l.childByField(param, "type")
 			if typeNode != nil {
-				return l.text(typeNode)
+				name := ""
+				if nameNode != nil {
+					name = l.text(nameNode)
+				}
+				return name, l.text(typeNode)
 			}
 		}
 	}
-	return ""
+	return "", ""
+}
+
+func (l *lowerer) extractStrictProps(componentDecl *gotreesitter.Node) (string, string) {
+	params := l.childByField(componentDecl, "parameters")
+	if params == nil {
+		return "", ""
+	}
+	for i := 0; i < int(params.NamedChildCount()); i++ {
+		param := params.NamedChild(i)
+		if l.nodeType(param) != "gosx_component_parameter" {
+			continue
+		}
+		nameNode := l.childByField(param, "name")
+		typeNode := l.childByField(param, "type")
+		if nameNode == nil || typeNode == nil {
+			return "", ""
+		}
+		return l.text(nameNode), strings.TrimSpace(l.text(typeNode))
+	}
+	return "", ""
 }
 
 // lowerGSXNode converts a GSX CST node into IR nodes.
@@ -1236,6 +1748,13 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 	tag := l.extractTagName(openNode)
 	attrs := l.extractAttrs(openNode)
 	children := l.extractChildren(n)
+	l.validateStrictComponentCall(n, tag, attrs, children)
+	l.validateStrictHTMLElement(n, tag, attrs)
+	if l.strict && !IsComponent(tag) {
+		normalizeStrictHTMLAttrs(attrs)
+	} else if IsComponent(tag) {
+		l.normalizeStrictComponentAttrs(tag, attrs)
+	}
 
 	// <script> and <style> contain raw text, not HTML-parsed content.
 	// Convert any text children to NodeRawHTML so the renderer won't escape
@@ -1277,6 +1796,9 @@ func (l *lowerer) lowerRawTextElement(n *gotreesitter.Node) NodeID {
 
 	tag := strings.TrimPrefix(l.text(l.childByField(open, "name")), "<")
 	attrs := l.extractAttrs(open)
+	if l.strict {
+		normalizeStrictHTMLAttrs(attrs)
+	}
 
 	var children []NodeID
 	if bodyNode := l.childByField(n, "children"); bodyNode != nil {
@@ -1315,6 +1837,13 @@ func trimRawTextCloseTag(raw string) string {
 func (l *lowerer) lowerSelfClosing(n *gotreesitter.Node) NodeID {
 	tag := l.extractTagName(n)
 	attrs := l.extractAttrs(n)
+	l.validateStrictComponentCall(n, tag, attrs, nil)
+	l.validateStrictHTMLElement(n, tag, attrs)
+	if l.strict && !IsComponent(tag) {
+		normalizeStrictHTMLAttrs(attrs)
+	} else if IsComponent(tag) {
+		l.normalizeStrictComponentAttrs(tag, attrs)
+	}
 
 	kind := NodeElement
 	if IsComponent(tag) {
@@ -1329,6 +1858,17 @@ func (l *lowerer) lowerSelfClosing(n *gotreesitter.Node) NodeID {
 		Span:     l.span(n),
 	}
 	return l.prog.AddNode(node)
+}
+
+func normalizeStrictHTMLAttrs(attrs []Attr) {
+	for i := range attrs {
+		switch attrs[i].Name {
+		case "className":
+			attrs[i].Name = "class"
+		case "htmlFor":
+			attrs[i].Name = "for"
+		}
+	}
 }
 
 func (l *lowerer) lowerFragment(n *gotreesitter.Node) NodeID {

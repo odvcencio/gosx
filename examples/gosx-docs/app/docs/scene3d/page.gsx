@@ -154,7 +154,7 @@ func Page() Node {
 				</li>
 				<li>
 					<span class="inline-code">WebGL2 (JavaScript)</span>
-					— the fallback browser path. It owns image-based lighting (IBL) and dashed lines, which the WebGPU path still lacks.
+					— the lazily loaded GPU fallback. The server verdict can select it first when it is the faithful available backend.
 				</li>
 				<li>
 					<span class="inline-code">canvas2d (JavaScript)</span>
@@ -167,10 +167,10 @@ func Page() Node {
 			</ul>
 			<h3>The WebGL chunk loads on demand</h3>
 			<p>
-				The WebGL backend now ships as a separate chunk. A WebGPU-capable browser never fetches it. A Chromium Scene3D page dropped 151,301 raw bytes, 41,829 gzip bytes, and 33,803 brotli bytes when the split landed.
+				The WebGL backend ships as a separate feature chunk. A page that settles on WebGPU does not need to fetch it during the initial mount. Read the build manifest and current Ouroboros receipt for byte totals; the documentation does not pin a historical bundle measurement.
 			</p>
 			<p>
-				The fallback ladder still works with the chunk absent at start: WebGPU, then device loss, then WebGL, then canvas2d. The runtime fetches the WebGL chunk at the moment it needs it.
+				The runtime fetches the WebGL chunk when the capability verdict, author preference, or a WebGPU failure needs it. Canvas2D remains available only when the scene verdict permits that approximation.
 			</p>
 			<h3>The server computes the verdict</h3>
 			<p>
@@ -198,6 +198,7 @@ func Page() Node {
 							<th scope="col">Feature</th>
 							<th scope="col">WebGPU</th>
 							<th scope="col">WebGL2</th>
+							<th scope="col">Canvas2D</th>
 							<th scope="col">Required</th>
 						</tr>
 					</thead>
@@ -206,35 +207,41 @@ func Page() Node {
 							<th scope="row">skinning</th>
 							<td>yes</td>
 							<td>yes</td>
+							<td>no</td>
 							<td>yes</td>
 						</tr>
 						<tr>
 							<th scope="row">gpu-picking</th>
 							<td>yes</td>
 							<td>yes</td>
+							<td>no</td>
 							<td>yes</td>
 						</tr>
 						<tr>
 							<th scope="row">water-simulation</th>
 							<td>yes</td>
 							<td>yes</td>
+							<td>no</td>
 							<td>yes</td>
 						</tr>
 						<tr>
 							<th scope="row">water-object-texture-pass</th>
 							<td>yes</td>
 							<td>yes</td>
+							<td>no</td>
 							<td>yes</td>
 						</tr>
 						<tr>
 							<th scope="row">water-object-mesh-shadow-pass</th>
 							<td>yes</td>
-							<td>yes</td>
-							<td>yes</td>
+							<td>no</td>
+							<td>no</td>
+							<td>no</td>
 						</tr>
 						<tr>
 							<th scope="row">compute-particles</th>
 							<td>yes</td>
+							<td>no</td>
 							<td>no</td>
 							<td>no</td>
 						</tr>
@@ -243,17 +250,34 @@ func Page() Node {
 							<td>yes</td>
 							<td>no</td>
 							<td>no</td>
+							<td>no</td>
+						</tr>
+						<tr>
+							<th scope="row">environment-map</th>
+							<td>yes</td>
+							<td>yes</td>
+							<td>no</td>
+							<td>no</td>
 						</tr>
 						<tr>
 							<th scope="row">ibl</th>
-							<td>no</td>
 							<td>yes</td>
+							<td>no</td>
+							<td>no</td>
 							<td>no</td>
 						</tr>
 						<tr>
 							<th scope="row">line-dashed</th>
 							<td>no</td>
+							<td>no</td>
 							<td>yes</td>
+							<td>no</td>
+						</tr>
+						<tr>
+							<th scope="row">sky-environment</th>
+							<td>no</td>
+							<td>no</td>
+							<td>no</td>
 							<td>no</td>
 						</tr>
 						<tr>
@@ -261,9 +285,11 @@ func Page() Node {
 							<td>yes</td>
 							<td>no</td>
 							<td>no</td>
+							<td>no</td>
 						</tr>
 						<tr>
 							<th scope="row">rect-area-specular</th>
+							<td>no</td>
 							<td>no</td>
 							<td>no</td>
 							<td>no</td>
@@ -273,12 +299,13 @@ func Page() Node {
 							<td>no</td>
 							<td>no</td>
 							<td>no</td>
+							<td>no</td>
 						</tr>
 					</tbody>
 				</table>
 			</div>
 			<p>
-				Read the table plainly. A scene with an environment map degrades on WebGPU, because the WebGPU path does not evaluate IBL yet. A scene with compute particles degrades on WebGL2. A scene with skinning, water, or a pickable object excludes canvas2d outright.
+				Read the table plainly. The legacy environment-map path is present on both GPU backends. Prepared split-sum IBL is faithful on WebGPU, while the WebGL2 path is capability-gated and therefore remains a degradation in the unconditional matrix. Compute particles degrade to a CPU mirror on WebGL2. Dashed-line styling is not faithful on either GPU backend; Canvas2D is the backend that implements the dash pattern. Skinning, water simulation, and GPU picking exclude Canvas2D.
 			</p>
 			<h3>Gate a scene to WebGPU on purpose</h3>
 			<p>
@@ -303,16 +330,26 @@ func Page() Node {
 	  webgpuColorSpace="display-p3"
 	/>`)}
 			<p>
+				<span class="inline-code">Capabilities</span>
+				describes the surface capability set used for runtime planning;
+				<span class="inline-code">RequiredCapabilities</span>
+				is the fail-closed browser gate. Do not use the broader set as a substitute for requirements.
+			</p>
+			<p>
 				<span class="inline-code">PreferWebGPU</span>
 				,
 				<span class="inline-code">PreferWebGL</span>
 				,
 				<span class="inline-code">ForceWebGL</span>
-				,
-				<span class="inline-code">RequireWebGL</span>
 				, and
 				<span class="inline-code">PreferCanvas</span>
-				steer the ladder without gating it. Use them to reproduce a fallback path in development.
+				steer backend selection. Use them to reproduce a path in development.
+				<span class="inline-code">RequireWebGL</span>
+				is different: it contributes hard
+				<span class="inline-code">canvas</span>
+				and
+				<span class="inline-code">webgl</span>
+				requirements and removes Canvas2D fallback.
 			</p>
 		</section>
 		<section id="camera-controls">
@@ -593,7 +630,7 @@ func Page() Node {
 				<span class="inline-code">LineDashedMaterial</span>
 				embed
 				<span class="inline-code">MaterialStyle</span>
-				, so a composite literal needs the embedded field by name. Dashed lines draw on WebGL2 only; the WebGPU path reports the gap through the capability verdict.
+				, so a composite literal needs the embedded field by name. The capability verdict reports that neither GPU backend faithfully renders dashed-line styling; Canvas2D owns the actual dash pattern.
 			</p>
 			{CodeBlock("go", `scene.LineBasicMaterial{
 	    MaterialStyle: scene.MaterialStyle{Color: "#8ecfff"},

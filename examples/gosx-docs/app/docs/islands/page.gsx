@@ -1,7 +1,7 @@
 package docs
 
 func Page() Node {
-	return <div>
+	return <article class="prose">
 		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
 			<div id={docScene.SurfaceID} class="doc-scene__surface">
 				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
@@ -10,9 +10,7 @@ func Page() Node {
 			</div>
 			<div class="doc-scene__teaching">
 				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
-					{docScene.Title}
-				</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
 				<p class="doc-scene__summary">{docScene.Summary}</p>
 				<dl class="doc-scene__facts">
 					<div>
@@ -24,227 +22,94 @@ func Page() Node {
 						<dd>{docScene.InteractionHint}</dd>
 					</div>
 				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
-					{docScene.DemoLabel}
-				</a>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
 			</div>
 		</section>
-		<section id="what-are-islands">
-			<h2 class="chrome-text">What Are Islands</h2>
-			<p>
-				An island is a reactive DOM region. The server renders the full HTML document — including the island's initial markup — and ships it as static HTML. When the page boots, the shared WASM runtime discovers each island by its
-				<span class="inline-code">data-island</span>
-				attribute and hydrates it with a compiled expression program.
+		<div class="page-topper">
+			<span class="eyebrow">Selective interaction</span>
+			<p class="lede">
+				An island is a named GSX component whose supported state, expressions, handlers, and markup are compiled into a program for GoSX's shared browser VM.
 			</p>
+		</div>
+		<h1 id="island-model">Island model</h1>
+		<p>
+			Server rendering remains responsible for the page and its ordinary HTML. Islands opt specific regions into client behavior. They do not grant arbitrary DOM access or a general Go runtime; engines are the unrestricted client-computation tier.
+		</p>
+		<p>
+			The build emits a manifest and browser-loadable program assets. At runtime, GoSX associates a mount with its component, props, and program reference, then evaluates the island tree and patches that mount.
+		</p>
+		<h2 id="authoring">Authoring an island</h2>
+		<CodeBlock lang="gosx" source={data.counterSample} />
+		<p>
+			Place
+			<span class="inline-code">//gosx:island</span>
+			immediately before the component. The compiler recognizes local
+			<span class="inline-code">signal.New</span>
+			declarations and handler functions, then lowers the returned markup. Event properties such as
+			<span class="inline-code">onClick</span>
+			can reference a recognized handler.
+		</p>
+		<p>
+			Use
+			<span class="inline-code">gosx check</span>
+			for isolated diagnostics and
+			<span class="inline-code">gosx build</span>
+			or
+			<span class="inline-code">gosx dev</span>
+			to produce and serve application assets.
+		</p>
+		<h2 id="vm-subset">Expression VM subset</h2>
+		<p>
+			The island VM implements a constrained expression and statement language for signal reads and writes, literals, supported operators, property/index access, conditionals, and known handlers. The compiler rejects constructs it cannot encode.
+		</p>
+		<section class="callout">
+			<strong>Compilation is the contract</strong>
 			<p>
-				Islands are opt-in. Pages with no reactive requirements ship as pure HTML with zero JavaScript. Only pages that declare islands pull in the shared runtime, and that runtime is loaded once and reused across every navigation.
-			</p>
-			<div class="islands-arch glass-panel">
-				<div class="islands-arch__col">
-					<strong>Server</strong>
-					<p>
-						Renders HTML, compiles island programs to opcodes, embeds both in the document.
-					</p>
-				</div>
-				<div class="islands-arch__divider" aria-hidden="true">&#8594;</div>
-				<div class="islands-arch__col">
-					<strong>Browser</strong>
-					<p>
-						Boots the shared WASM VM, deserialises opcode programs, binds signals to DOM nodes.
-					</p>
-				</div>
-			</div>
-			<p>
-				The architecture ensures that the page is always readable — the server HTML is the real content, not a placeholder. Islands add reactivity without owning the render.
-			</p>
-		</section>
-		<section id="island-programs">
-			<h2 class="chrome-text">Island Programs</h2>
-			<p>
-				Each island boundary in a
-				<span class="inline-code">.gsx</span>
-				template is compiled into a program — a compact array of opcodes that the browser VM executes to keep the DOM in sync with signal values. The opcodes are serialised into a binary format and embedded as a
-				<span class="inline-code">data-island</span>
-				attribute on the island root element.
-			</p>
-			{CodeBlock("gosx", `func Counter() Node {
-	    return <Island>
-	        <button
-	            class={if data.active { "btn btn--active" } else { "btn" }}
-	            data-on-click="count++"
-	        >
-	            {data.count}
-	        </button>
-	    </Island>
-	}`)}
-			<p>
-				The compiler validates that every expression inside an
-				<span class="inline-code">Island</span>
-				boundary uses only the island expression subset — no arbitrary Go, only signal-aware paths, comparisons, string concatenation, and conditional forms. Violations are caught at compile time, not at runtime.
-			</p>
-			{CodeBlock("go", `// Island VM opcodes (simplified).
-	const (
-	    IslandOpPushSignal   = 0x01 // push named signal value onto stack
-	    IslandOpPushLiteral  = 0x02 // push string literal onto stack
-	    IslandOpCondStr      = 0x10 // conditional: pop cond, push one of two strings
-	    IslandOpConcat       = 0x11 // pop two strings, push concatenated result
-	    IslandOpEq           = 0x30 // pop two values, push bool
-	    IslandOpSetAttr      = 0x40 // pop value, set attribute on bound DOM node
-	    IslandOpSetText      = 0x41 // pop value, set text content of bound DOM node
-	)`)}
-		</section>
-		<section id="expression-vm">
-			<h2 class="chrome-text">Expression VM</h2>
-			<p>
-				The browser VM is a stack machine implemented in WASM and compiled from Go. It holds a single evaluation stack, a signal table, and a DOM binding map. On each signal change the VM re-evaluates only the programs that reference the changed signal — there is no virtual DOM diffing, no framework reconciler, and no JavaScript source shipped to the browser.
-			</p>
-			<div class="feature-grid">
-				<div class="card">
-					<strong>Stack machine</strong>
-					<p>
-						Simple push/pop opcodes — no heap allocations per update cycle.
-					</p>
-				</div>
-				<div class="card">
-					<strong>Signal-scoped re-evaluation</strong>
-					<p>
-						Only programs with a dependency on the changed signal are re-run.
-					</p>
-				</div>
-				<div class="card">
-					<strong>Direct DOM writes</strong>
-					<p>
-						Opcode results are written directly to DOM nodes — no intermediate VDOM.
-					</p>
-				</div>
-				<div class="card">
-					<strong>No JS source in the wire</strong>
-					<p>
-						Opcodes are binary. The browser receives data, not executable JavaScript.
-					</p>
-				</div>
-			</div>
-			<p>
-				The VM is shared across all islands on a page. A single WASM instance handles every island program; there is no per-island JS bundle. The signal table is also shared, which is what makes cross-island synchronisation possible without any additional wiring.
+				A construct that is valid ordinary Go is not automatically valid in an island. Keep filesystem, network, reflection, package APIs, and unrestricted browser work on the server or in an engine.
 			</p>
 		</section>
-		<section id="shared-signals">
-			<h2 class="chrome-text">Shared Signals</h2>
-			<p>
-				Signals are reactive state cells. Each signal has a typed value and a subscriber list. When the value changes, all subscribers are notified and re-evaluate their programs. In Go, the
-				<span class="inline-code">signal</span>
-				package provides the signal types:
-			</p>
-			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
-
-	// A writable signal with an initial value.
-	count := signal.New(0)
-
-	// Read the current value.
-	n := count.Get()
-
-	// Write a new value — notifies all subscribers.
-	count.Set(n + 1)
-
-	// A read-only view of a signal.
-	var ro signal.ReadOnly[int] = count.ReadOnly()`)}
-			<p>
-				Signals declared with a
-				<span class="inline-code">$</span>
-				prefix in island markup are promoted to the shared signal table. Any island on the same page that references the same name reads from the same cell, so a write in one island is immediately visible to all others.
-			</p>
-			{CodeBlock("gosx", `// Both islands reference the same shared signal "$theme".
-	func ThemeToggle() Node {
-	    return <Island>
-	        <button data-on-click="$theme = $theme == 'dark' ? 'light' : 'dark'">
-	            Toggle theme
-	        </button>
-	    </Island>
-	}
-
-	func ThemeLabel() Node {
-	    return <Island>
-	        <span class={if $theme == "dark" { "label label--dark" } else { "label" }}>
-	            {$theme}
-	        </span>
-	    </Island>
-	}`)}
-		</section>
-		<section id="cross-island-sync">
-			<h2 class="chrome-text">Cross-Island Sync</h2>
-			<p>
-				Because all island programs run in the same WASM VM instance with the same shared signal table, cross-island reactivity is automatic. No event bus, no global store, no prop drilling. A signal write in one island propagates to every other island that reads the same signal within the same microtask.
-			</p>
-			<p>
-				Computed signals derive their value from one or more source signals. They are re-evaluated lazily when any dependency changes:
-			</p>
-			{CodeBlock("go", `import "m31labs.dev/gosx/signal"
-
-	items  := signal.New([]string{"apple", "banana", "cherry"})
-	filter := signal.New("")
-
-	// Computed re-runs whenever items or filter changes.
-	visible := signal.Computed(func() []string {
-	    f := filter.Get()
-	    if f == "" {
-	        return items.Get()
-	    }
-	    var out []string
-	    for _, item := range items.Get() {
-	        if strings.Contains(item, f) {
-	            out = append(out, item)
-	        }
-	    }
-	    return out
-	})`)}
-			<p>
-				Computed signals are also shareable across islands. Declare the computed in the route loader, pass it to the template data, and reference it by name in island markup. The VM will subscribe to the computed's output, not to its inputs directly.
-			</p>
-		</section>
-		<section id="hydration">
-			<h2 class="chrome-text">Hydration</h2>
-			<p>
-				Island hydration is the process of attaching the WASM VM to a server-rendered DOM. It does not re-render. The server has already produced the correct initial HTML. Hydration only:
-			</p>
-			<ul>
-				<li>
-					Deserialises the opcode program from the
-					<span class="inline-code">data-island</span>
-					attribute.
-				</li>
-				<li>
-					Walks the island's DOM to locate nodes that programs write to.
-				</li>
-				<li>
-					Registers signal subscriptions so future writes trigger re-evaluation.
-				</li>
-				<li>
-					Registers event handlers declared with
-					<span class="inline-code">data-on-*</span>
-					attributes.
-				</li>
-			</ul>
-			<p>
-				Hydration is batched into the shared bootstrap hook that runs once after the page shell is ready. Islands that are below the fold are hydrated progressively as the user scrolls, using
-				<span class="inline-code">IntersectionObserver</span>
-				to defer work until needed.
-			</p>
-			{CodeBlock("go", `// Route loader: attach signal values to template data.
-	func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    count := signal.New(0)
-	    theme := signal.New("dark")
-
-	    return map[string]any{
-	        "count": count,
-	        "theme": theme,
-	    }, nil
-	}`)}
-			<section class="callout">
-				<strong>No hydration mismatch</strong>
-				<p>
-					Because the server and VM use the same expression compiler, the initial HTML always matches what the VM would produce for the same signal values. There is no hydration mismatch class of bug in GoSX islands.
-				</p>
-			</section>
-		</section>
-	</div>
+		<h2 id="shared-signals">Shared signals</h2>
+		<CodeBlock lang="gosx" source={data.sharedSample} />
+		<p>
+			<span class="inline-code">signal.NewShared</span>
+			normalizes its key to a
+			<span class="inline-code">$</span>
+			signal name in the document runtime. Islands that use the same name can observe the same store entry. This sharing is browser-runtime state; it is not a Go
+			<span class="inline-code">signal.Signal</span>
+			returned by a route loader.
+		</p>
+		<p>
+			Cross-frame synchronization is an additional relay layer with explicit peer and origin configuration. It is not implied by using a shared name.
+		</p>
+		<h2 id="program-assets">Program assets</h2>
+		<CodeBlock lang="go" source={data.assetSample} />
+		<p>
+			File-based builds wire compiled islands automatically. Programmatic integrations can use
+			<span class="inline-code">Island</span>
+			or
+			<span class="inline-code">IslandWithProgramAsset</span>
+			on the page runtime. The latter records the exact asset reference, format, and optional hash that the browser should load.
+		</p>
+		<p>
+			Program formats are runtime assets, not Go source embedded for browser evaluation. If an asset is missing or invalid, treat that as a build or deployment error rather than relying on undocumented recovery.
+		</p>
+		<h2 id="choosing">When to choose an island</h2>
+		<ul>
+			<li>
+				Use a server component when HTML and request-time data are sufficient.
+			</li>
+			<li>
+				Use an action for a mutation that can submit and return server state.
+			</li>
+			<li>
+				Use an island for focused reactive DOM interaction in the supported VM subset.
+			</li>
+			<li>
+				Use an engine for canvas, GPU, workers, media, or unrestricted client APIs.
+			</li>
+			<li>
+				Use a hub when multiple clients need long-lived server coordination.
+			</li>
+		</ul>
+	</article>
 }

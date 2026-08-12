@@ -42,9 +42,20 @@ func (v *validator) errorf(span Span, format string, args ...any) {
 }
 
 func (v *validator) validate() {
+	componentNames := make(map[string]Span, len(v.prog.Components))
 	// Validate each component
 	for i := range v.prog.Components {
-		v.validateComponent(&v.prog.Components[i])
+		component := &v.prog.Components[i]
+		if first, exists := componentNames[component.Name]; exists {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    component.Span,
+				Message: fmt.Sprintf("duplicate component name %q", component.Name),
+				Hint:    fmt.Sprintf("the first declaration is at %d:%d; component names must be unique within a .gsx file", first.StartLine, first.StartCol),
+			})
+		} else {
+			componentNames[component.Name] = component.Span
+		}
+		v.validateComponent(component)
 	}
 
 	// Validate all nodes

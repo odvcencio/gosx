@@ -102,12 +102,14 @@ jobs:
   # go-race-tests: the race detector gates split out of go-tests so they run
   # in parallel instead of serializing after the unit lane. This lane needs
   # neither TinyGo nor Node. The pull-request path runs the focused
-  # test-race-pr suite within a 15-minute fail-safe. The push path instead
-  # runs the full test-race suite, about 11 minutes over every package,
-  # including the BC7 and vector-search kernels the PR lane omits.
+  # test-race-pr suite within the shared job ceiling. The push path instead
+  # runs the full test-race suite over every package, including the BC7 and
+  # vector-search kernels the PR lane omits. Main has exceeded 15 minutes on
+  # a cold runner, so the job ceiling leaves explicit headroom for that wider
+  # protected-branch gate.
   go-race-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository

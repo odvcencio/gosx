@@ -3,6 +3,9 @@ package route
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/constant"
+	"go/parser"
 	"html"
 	"math"
 	"net/http"
@@ -38,6 +41,9 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 	comp, ok := renderer.components[component]
 	if !ok {
 		return "", false, fmt.Errorf("component %q not found", component)
+	}
+	if comp.Syntax == ir.ComponentSyntaxStrict && strings.TrimSpace(comp.PropsType) != "" {
+		return "", false, fmt.Errorf("strict render entry %s accepts props %s, but the file renderer has no root props binding; use a zero-props Page/Layout entry", comp.Name, comp.PropsType)
 	}
 	// One builder carries the whole document. The renderer used to allocate a
 	// fresh strings.Builder per element and let the parent copy the child's
@@ -141,6 +147,15 @@ func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, en
 }
 
 func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
+	// Strict calls are type-checked as calls to the same-file declaration. Keep
+	// that declaration authoritative even when its name collides with a layout
+	// replacement or one of the legacy renderer builtins; otherwise generated Go
+	// and file rendering would execute different components.
+	if comp, ok := r.components[node.Tag]; ok && comp.Syntax == ir.ComponentSyntaxStrict {
+		r.writeLocalComponent(b, comp, node, env)
+		return
+	}
+
 	if replacement, ok := r.opts.ComponentReplacements[node.Tag]; ok {
 		r.replaced = true
 		if replacement != "" {
@@ -995,7 +1010,11 @@ func (r *fileProgramRenderer) writeLocalComponent(b *strings.Builder, comp *ir.C
 	// Children render into their own string because the component body may
 	// reference them through the `children` binding.
 	childrenNode := gosx.RawHTML(r.renderChildren(node.Children, env))
-	props := componentProps(node.Attrs, env, childrenNode)
+	props, err := localComponentProps(comp, node.Attrs, env, childrenNode)
+	if err != nil {
+		r.err = fmt.Errorf("render strict component %s: %w", comp.Name, err)
+		return
+	}
 	scope := env.withValue("props", props)
 	scope = scope.withValue("children", childrenNode)
 	r.writeNode(b, comp.Root, scope)
@@ -1015,6 +1034,14 @@ func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env 
 	}
 
 	props := r.componentAttrMap(node.Attrs, env)
+	if comp := r.components[name]; comp != nil && comp.Syntax == ir.ComponentSyntaxStrict {
+		converted, err := localComponentProps(comp, node.Attrs, env, gosx.Node{})
+		if err != nil {
+			r.err = fmt.Errorf("render strict island %s: %w", name, err)
+			return ""
+		}
+		props = converted
+	}
 	return gosx.RenderHTML(env.island(prog, props))
 }
 
@@ -1298,6 +1325,203 @@ func componentProps(attrs []ir.Attr, env fileRenderEnv, children gosx.Node) map[
 		setComponentProp(props, "Children", children)
 	}
 	return props
+}
+
+func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv, children gosx.Node) (map[string]any, error) {
+	if comp == nil || comp.Syntax != ir.ComponentSyntaxStrict || len(comp.PropsFields) == 0 {
+		return componentProps(attrs, env, children), nil
+	}
+	props := make(map[string]any, len(attrs)+4)
+	for _, attr := range attrs {
+		fieldType, rendered := comp.PropsFields[attr.Name]
+		var value any
+		if rendered {
+			converted, err := strictComponentAttrValue(attr, env, fieldType)
+			if err != nil {
+				return nil, fmt.Errorf("prop %s (%s): %w", attr.Name, fieldType, err)
+			}
+			value = converted
+		} else {
+			value = attrValue([]ir.Attr{attr}, env, attr.Name)
+		}
+		setComponentProp(props, attr.Name, value)
+	}
+	if !children.IsZero() {
+		setComponentProp(props, "children", children)
+		setComponentProp(props, "Children", children)
+	}
+	return props, nil
+}
+
+func strictComponentAttrValue(attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	var value any
+	switch attr.Kind {
+	case ir.AttrStatic:
+		value = attr.Value
+	case ir.AttrBool:
+		value = true
+	case ir.AttrExpr:
+		if literal, ok := strictGoConstant(attr.Expr); ok {
+			return convertStrictConstant(literal, fieldType)
+		}
+		value = evalFileExpr(attr.Expr, env)
+	case ir.AttrSpread:
+		return nil, fmt.Errorf("spread attributes are not supported")
+	}
+	return requireStrictScalarType(value, fieldType)
+}
+
+func strictGoConstant(source string) (constant.Value, bool) {
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return nil, false
+	}
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expr = paren.X
+	}
+	switch node := expr.(type) {
+	case *ast.BasicLit:
+		value := constant.MakeFromLiteral(node.Value, node.Kind, 0)
+		return value, value.Kind() != constant.Unknown
+	case *ast.Ident:
+		switch node.Name {
+		case "true":
+			return constant.MakeBool(true), true
+		case "false":
+			return constant.MakeBool(false), true
+		}
+	}
+	return nil, false
+}
+
+func convertStrictConstant(value constant.Value, fieldType string) (any, error) {
+	switch fieldType {
+	case "string":
+		if value.Kind() != constant.String {
+			return nil, fmt.Errorf("constant is %s, not string", value.Kind())
+		}
+		return constant.StringVal(value), nil
+	case "bool":
+		if value.Kind() != constant.Bool {
+			return nil, fmt.Errorf("constant is %s, not bool", value.Kind())
+		}
+		return constant.BoolVal(value), nil
+	case "float32":
+		if value.Kind() != constant.Int && value.Kind() != constant.Float {
+			return nil, fmt.Errorf("constant is %s, not numeric", value.Kind())
+		}
+		converted, _ := constant.Float32Val(value)
+		if math.IsInf(float64(converted), 0) {
+			return nil, fmt.Errorf("constant overflows float32")
+		}
+		return converted, nil
+	case "float64":
+		if value.Kind() != constant.Int && value.Kind() != constant.Float {
+			return nil, fmt.Errorf("constant is %s, not numeric", value.Kind())
+		}
+		converted, _ := constant.Float64Val(value)
+		if math.IsInf(converted, 0) {
+			return nil, fmt.Errorf("constant overflows float64")
+		}
+		return converted, nil
+	}
+
+	integer := constant.ToInt(value)
+	if integer.Kind() == constant.Unknown {
+		return nil, fmt.Errorf("constant is not an exact integer")
+	}
+	switch fieldType {
+	case "int":
+		value, ok := constant.Int64Val(integer)
+		if !ok || (strconv.IntSize == 32 && (value < math.MinInt32 || value > math.MaxInt32)) {
+			return nil, fmt.Errorf("constant overflows int")
+		}
+		return int(value), nil
+	case "int8":
+		value, ok := constant.Int64Val(integer)
+		if !ok || value < math.MinInt8 || value > math.MaxInt8 {
+			return nil, fmt.Errorf("constant overflows int8")
+		}
+		return int8(value), nil
+	case "int16":
+		value, ok := constant.Int64Val(integer)
+		if !ok || value < math.MinInt16 || value > math.MaxInt16 {
+			return nil, fmt.Errorf("constant overflows int16")
+		}
+		return int16(value), nil
+	case "int32", "rune":
+		value, ok := constant.Int64Val(integer)
+		if !ok || value < math.MinInt32 || value > math.MaxInt32 {
+			return nil, fmt.Errorf("constant overflows %s", fieldType)
+		}
+		return int32(value), nil
+	case "int64":
+		value, ok := constant.Int64Val(integer)
+		if !ok {
+			return nil, fmt.Errorf("constant overflows int64")
+		}
+		return value, nil
+	case "uint":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || (strconv.IntSize == 32 && value > math.MaxUint32) {
+			return nil, fmt.Errorf("constant overflows uint")
+		}
+		return uint(value), nil
+	case "uint8", "byte":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || value > math.MaxUint8 {
+			return nil, fmt.Errorf("constant overflows %s", fieldType)
+		}
+		return uint8(value), nil
+	case "uint16":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || value > math.MaxUint16 {
+			return nil, fmt.Errorf("constant overflows uint16")
+		}
+		return uint16(value), nil
+	case "uint32":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || value > math.MaxUint32 {
+			return nil, fmt.Errorf("constant overflows uint32")
+		}
+		return uint32(value), nil
+	case "uint64":
+		value, ok := constant.Uint64Val(integer)
+		if !ok {
+			return nil, fmt.Errorf("constant overflows uint64")
+		}
+		return value, nil
+	case "uintptr":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || (strconv.IntSize == 32 && value > math.MaxUint32) {
+			return nil, fmt.Errorf("constant overflows uintptr")
+		}
+		return uintptr(value), nil
+	default:
+		return nil, fmt.Errorf("type %s is not renderer-safe", fieldType)
+	}
+}
+
+func requireStrictScalarType(value any, fieldType string) (any, error) {
+	want := fieldType
+	switch want {
+	case "byte":
+		want = "uint8"
+	case "rune":
+		want = "int32"
+	}
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	actual := reflect.TypeOf(value)
+	if actual.PkgPath() != "" || actual.Name() != want {
+		return nil, fmt.Errorf("runtime value has type %s, want exact %s", actual, fieldType)
+	}
+	return value, nil
 }
 
 func componentCallArgs(attrs []ir.Attr, env fileRenderEnv) []any {

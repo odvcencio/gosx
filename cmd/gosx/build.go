@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/island/program"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
+	"m31labs.dev/gosx/strictcheck"
 )
 
 // BuildManifest describes all build outputs for deployment.
@@ -199,6 +201,9 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 	if err := runBuildHookCommands(dir, "pre-build", cfg.Build.Hooks.Pre); err != nil {
 		return err
+	}
+	if err := checkStrictProject(context.Background(), dir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
 	}
 
 	distDir := filepath.Join(dir, "dist")
@@ -699,6 +704,14 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	return nil
 }
 
+func checkStrictProject(ctx context.Context, dir string) error {
+	return strictcheck.CheckTreeWithOptions(ctx, dir, strictcheck.Options{
+		Env:     execEnvWithoutGoFlags(),
+		GOWORK:  "off",
+		GOFLAGS: goModuleCommandFlags,
+	})
+}
+
 func countRuntimeVariantAssets(variants map[string]buildmanifest.RuntimeVariantAsset) int {
 	count := 0
 	for _, asset := range variants {
@@ -732,6 +745,15 @@ func runtimeVariantAsset(variant string, asset HashedAsset) buildmanifest.Runtim
 }
 
 func publishedRuntimeVariantAssets(core, engine, collab, full HashedAsset) map[string]buildmanifest.RuntimeVariantAsset {
+	// GOSX_TINYGO_FULL_RUNTIME predates capability-linked profiles. Preserve
+	// its original meaning for callers that use it as a compatibility escape
+	// hatch: the manifest may only advertise the full runtime, so route-level
+	// selection cannot silently choose a slim artifact.
+	if tinyGoFullRuntimeEnabled() {
+		return map[string]buildmanifest.RuntimeVariantAsset{
+			string(runtimewasm.VariantFull): runtimeVariantAsset(string(runtimewasm.VariantFull), full),
+		}
+	}
 	return map[string]buildmanifest.RuntimeVariantAsset{
 		string(runtimewasm.VariantCore):   runtimeVariantAsset(string(runtimewasm.VariantCore), core),
 		string(runtimewasm.VariantEngine): runtimeVariantAsset(string(runtimewasm.VariantEngine), engine),

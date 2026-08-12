@@ -32,9 +32,11 @@ func Page() Node {
 		<section id="overview" class="docs-section-block">
 			<h2>Overview</h2>
 			<p>
-				GoSX is a Go-native web platform. You write Go, and the framework takes care of server rendering, routing, forms, auth, and real-time sync. There is no JavaScript build step and no second language. One
-				<span class="inline-code">go build</span>
-				produces a deployable binary with everything included.
+				GoSX is a Go-native web platform for server rendering, routing, forms, auth, interactive islands, realtime hubs, and managed graphics. GSX adds HTML-shaped markup to Go packages; the browser runtime is generated and managed by the framework, so an application does not need a JavaScript app toolchain.
+				<span class="inline-code">gosx build --prod .</span>
+				stages the server, file-route inputs, public content, hashed browser assets, and deployment metadata together in
+				<span class="inline-code">dist/</span>
+				.
 			</p>
 		</section>
 		<section id="install" class="docs-section-block">
@@ -47,7 +49,7 @@ func Page() Node {
 			{CodeBlock("bash", "go install m31labs.dev/gosx/cmd/gosx@latest")}
 			<p>
 				Verify the installation by running
-				<span class="inline-code">gosx --version</span>
+				<span class="inline-code">gosx version</span>
 				.
 			</p>
 		</section>
@@ -89,6 +91,20 @@ func Page() Node {
 			{CodeBlock("go", "// app/page.server.go\npackage app\n\nimport (\n\t\"log\"\n\n\t\"m31labs.dev/gosx/route\"\n)\n\nfunc init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\treturn map[string]any{\n\t\t\t\t\"greeting\": \"Hello from the server\",\n\t\t\t}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
 			{CodeBlock("gsx", "// app/page.gsx\npackage app\n\nfunc Page() Node {\n\treturn <div>\n\t\t<h1>{data.greeting}</h1>\n\t</div>\n}")}
 		</section>
+		<section id="authoring-styles" class="docs-section-block">
+			<h2>Choose an Authoring Style</h2>
+			<p>
+				GoSX supports strict typed components and the established Go-function form side by side. Keep route pages that read loader
+				<span class="inline-code">data</span>
+				in the legacy form shown above. Use the TSX-like strict form for small same-file components with explicit Go prop types.
+			</p>
+			{CodeBlock("gsx", "package app\n\ntype BadgeProps struct {\n\tLabel string\n\tCount int\n}\n\ncomponent Badge(props: BadgeProps) {\n\treturn <span className=\"badge\">\n\t\t{props.Label}: {props.Count}\n\t</span>\n}\n\ncomponent Page() {\n\treturn <main><Badge label=\"Inbox\" count={0} /></main>\n}")}
+			<p>
+				Strict server components deliberately allow one top-level GSX return and narrow renderer-safe expressions. Calls use exact or unambiguous lower-camel prop names and explicitly pass every field the callee renders, even zero values. Use the legacy form for local statements, structural control flow, helpers, renderer builtins, client directives, or dynamic route bindings. See
+				<a href="/docs/components" data-gosx-link="true">Components</a>
+				for the exact boundary.
+			</p>
+		</section>
 		<section id="dev-server" class="docs-section-block">
 			<h2>Dev Server</h2>
 			<p>
@@ -102,7 +118,7 @@ func Page() Node {
 			</p>
 			{CodeBlock("bash", "gosx dev")}
 			<p>
-				Template changes reload the affected page without a full compile. Go source changes trigger a fast incremental rebuild. The browser tab reconnects automatically when the server is ready.
+				The command watches project source, rebuilds when needed, and refreshes connected browser tabs after a successful change. Compiler diagnostics remain in the terminal when a change is invalid.
 			</p>
 		</section>
 		<section id="next-steps" class="docs-section-block">
@@ -111,6 +127,10 @@ func Page() Node {
 				Now that the dev server is running, explore what GoSX can do.
 			</p>
 			<ul>
+				<li>
+					<a href="/docs/components" data-gosx-link="true">Components</a>
+					— Strict typed and legacy authoring styles, props, and renderer boundaries.
+				</li>
 				<li>
 					<a href="/docs/routing" data-gosx-link="true">Routing</a>
 					— File-based routing, dynamic params, and nested layouts.

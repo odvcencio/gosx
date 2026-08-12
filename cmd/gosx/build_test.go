@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"m31labs.dev/gosx"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/island"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
 
@@ -27,6 +29,7 @@ func TestRuntimeVariantAssetCarriesContractIdentity(t *testing.T) {
 }
 
 func TestPublishedRuntimeVariantAssetsAreExactlyTheFourProfiles(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
 	assets := publishedRuntimeVariantAssets(
 		HashedAsset{File: "core.wasm"},
 		HashedAsset{File: "engine.wasm"},
@@ -47,6 +50,49 @@ func TestPublishedRuntimeVariantAssetsAreExactlyTheFourProfiles(t *testing.T) {
 		if asset.Variant != string(variant) || asset.FeatureMask != uint32(runtimewasm.FeatureMaskForVariant(variant)) {
 			t.Fatalf("published %s contract = %+v", variant, asset)
 		}
+	}
+}
+
+func TestFullRuntimeCompatibilityModeOnlyAdvertisesFullProfile(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "1")
+	assets := publishedRuntimeVariantAssets(
+		HashedAsset{File: "core.wasm"},
+		HashedAsset{File: "engine.wasm"},
+		HashedAsset{File: "collab.wasm"},
+		HashedAsset{File: "full.wasm"},
+	)
+	if len(assets) != 1 {
+		t.Fatalf("full-runtime compatibility assets = %v, want one full profile", assets)
+	}
+	full, ok := assets[string(runtimewasm.VariantFull)]
+	if !ok {
+		t.Fatalf("full-runtime compatibility assets omitted full: %v", assets)
+	}
+	if full.File != "full.wasm" || full.Variant != string(runtimewasm.VariantFull) {
+		t.Fatalf("full-runtime compatibility asset = %+v", full)
+	}
+}
+
+func TestFullRuntimeCompatibilityManifestMakesIslandRouteSelectFull(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "1")
+	full := HashedAsset{File: "gosx-runtime-full.wasm", Hash: "full", Size: 40}
+	manifest := &BuildManifest{Runtime: RuntimeAssets{
+		WASM:        full,
+		WASMIslands: HashedAsset{File: "gosx-runtime-islands.wasm", Hash: "islands", Size: 5},
+		WASMVariants: publishedRuntimeVariantAssets(
+			HashedAsset{File: "gosx-runtime-core.wasm", Hash: "core", Size: 10},
+			HashedAsset{File: "gosx-runtime-engine.wasm", Hash: "engine", Size: 25},
+			HashedAsset{File: "gosx-runtime-collab.wasm", Hash: "collab", Size: 28},
+			full,
+		),
+	}}
+	renderer := island.NewRenderer("compatibility-route")
+	if err := renderer.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	renderer.RenderIsland("Counter", nil, gosx.Text("counter"))
+	if got := renderer.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-full.wasm" {
+		t.Fatalf("full-runtime compatibility island selected %q, want full artifact", got)
 	}
 }
 
@@ -511,6 +557,34 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	}
 }
 
+func TestRunBuildStrictGateRunsBeforeDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "build-strict-gate")
+	err := RunBuild(dir, false)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("RunBuild error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {
+		t.Fatalf("strict gate wrote dist before failing: %v", statErr)
+	}
+}
+
+func TestRunBuildRejectsPropsBearingStrictEntryBeforeDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "build-root-props-gate")
+	mustWriteFile(t, filepath.Join(dir, "app", "page.gsx"), `package app
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`)
+	err := RunBuild(dir, false)
+	if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+		t.Fatalf("RunBuild error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {
+		t.Fatalf("root-props gate wrote dist before failing: %v", statErr)
+	}
+}
+
 func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
@@ -627,4 +701,27 @@ func mustWriteFile(t *testing.T, path string, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func newInvalidStrictStarter(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := RunInit(dir, "example.com/"+name, ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, dir)
+	tidyModule(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "page.gsx"), `package app
+
+type CardProps struct { Label string }
+
+component Card(props: CardProps) {
+	return <p>{props.Label}</p>
+}
+
+component Page() {
+	return <Card label={42} />
+}
+`)
+	return dir
 }

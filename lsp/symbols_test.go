@@ -35,6 +35,27 @@ func TestDocumentSymbolsReturnsComponents(t *testing.T) {
 	}
 }
 
+func TestDocumentSymbolsDescribeStrictComponents(t *testing.T) {
+	source := `package app
+type CardProps struct { Title string }
+
+component Card(props: *CardProps) {
+	return <article>{props.Title}</article>
+}
+`
+	symbols := DocumentSymbols("card.gsx", []byte(source))
+	if len(symbols) != 1 {
+		t.Fatalf("symbols = %#v", symbols)
+	}
+	if symbols[0].Detail != "component Card(props: *CardProps)" {
+		t.Fatalf("detail = %q", symbols[0].Detail)
+	}
+	want := testPositionIn(source, "Card(props", 1)
+	if symbols[0].SelectionRange.Start.Line != want.Line || symbols[0].SelectionRange.Start.Character != want.Character-1 {
+		t.Fatalf("selection = %#v, want name at %#v", symbols[0].SelectionRange, want)
+	}
+}
+
 func TestHoverAtComponentDefinition(t *testing.T) {
 	pos := testPositionIn(lspComponentSource, "Page() Node", 1)
 	hover := HoverAt("page.gsx", []byte(lspComponentSource), pos)

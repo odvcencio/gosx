@@ -19,8 +19,8 @@ func Page() Node {
 					</div>
 					<ul class="hero__facts" aria-label="Platform summary">
 						<li>Server HTML</li>
+						<li>Typed + legacy GSX</li>
 						<li>Go/WASM islands</li>
-						<li>WebGPU + WebGL2</li>
 					</ul>
 				</div>
 			</div>
