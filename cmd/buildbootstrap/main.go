@@ -800,6 +800,16 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 		if err != nil {
 			return builtBundle{}, err
 		}
+
+		// Validate a typed source against its own file before the chunk
+		// swallows a syntax error into one offset in the concatenated
+		// bundle: a tree-sitter diagnostic here still names src.rel and the
+		// exact line and column the author sees in the editor, instead of
+		// an offset into the whole compiled chunk.
+		if err := validateTypedSource(src, data); err != nil {
+			return builtBundle{}, err
+		}
+
 		body := string(data)
 		sections = append(sections, section{
 			label:     src.label,
