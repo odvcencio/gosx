@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"html"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -67,6 +68,7 @@ type lowerer struct {
 	strictNames   map[string]struct{}
 	legacyNames   map[string]struct{}
 	strictProps   map[string]string
+	strictReads   map[string]map[string]struct{}
 	structFields  map[string]map[string]string
 }
 
@@ -946,6 +948,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictNames = make(map[string]struct{})
 	l.legacyNames = make(map[string]struct{})
 	l.strictProps = make(map[string]string)
+	l.strictReads = make(map[string]map[string]struct{})
 	l.structFields = make(map[string]map[string]string)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
@@ -964,12 +967,41 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 				l.strictNames[componentName] = struct{}{}
 				if propsType != "" {
 					l.strictProps[componentName] = propsType
+					l.strictReads[componentName] = l.collectStrictPropReads(child)
 				}
 			}
 		case "type_declaration":
 			l.collectStructSchemas(child)
 		}
 	}
+}
+
+// collectStrictPropReads records the top-level props fields whose values the
+// file renderer must observe. Local strict calls must provide these fields
+// explicitly: generated Go composite literals otherwise synthesize typed zero
+// values while the map-backed renderer would observe a missing key as nil.
+func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct{} {
+	reads := make(map[string]struct{})
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		if l.nodeType(node) == "selector_expression" && node.NamedChildCount() >= 2 {
+			receiver := node.NamedChild(0)
+			field := node.NamedChild(1)
+			if l.nodeType(receiver) == "identifier" && l.text(receiver) == "props" {
+				if name := l.text(field); name != "" {
+					reads[name] = struct{}{}
+				}
+			}
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(n)
+	return reads
 }
 
 func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
@@ -1099,6 +1131,45 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 	}
 	if _, acceptsProps := l.strictProps[tag]; !acceptsProps && len(attrs) > 0 {
 		l.errorf(n, "strict component %s does not accept props", tag)
+	}
+	if required := l.strictReads[tag]; len(required) > 0 {
+		supplied := make(map[string]struct{}, len(attrs))
+		aliases := l.structFields[propsBaseType(l.strictProps[tag])]
+		hasUnknownSameFileAttr := false
+		for _, attr := range attrs {
+			name := attr.Name
+			if len(aliases) > 0 {
+				field, known := aliases[name]
+				if !known || field == "" {
+					hasUnknownSameFileAttr = true
+					continue
+				}
+				name = field
+			}
+			supplied[name] = struct{}{}
+		}
+		// Let the package checker produce the authoritative unknown-field
+		// diagnostic before checking omissions in a same-file schema.
+		if !hasUnknownSameFileAttr {
+			fields := make([]string, 0, len(required))
+			for field := range required {
+				fields = append(fields, field)
+			}
+			sort.Strings(fields)
+			for _, field := range fields {
+				// Companion Go structs are intentionally exact at the package-check
+				// boundary, but accepting the schema alias here avoids masking that
+				// more useful Go diagnostic as a zero-value omission.
+				if len(aliases) == 0 {
+					if _, ok := supplied[lowerCamelInitialism(field)]; ok {
+						continue
+					}
+				}
+				if _, ok := supplied[field]; !ok {
+					l.errorf(n, "strict component %s requires prop %s because its renderer reads props.%s; provide it explicitly to preserve Go zero-value semantics", tag, field, field)
+				}
+			}
+		}
 	}
 	if len(children) > 0 {
 		l.errorf(n, "strict component %s does not accept positional children", tag)

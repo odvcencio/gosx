@@ -150,7 +150,7 @@ func TestCompileStrictServerRejectsTypeDivergentExpressions(t *testing.T) {
 }
 
 func TestCompileStrictServerRejectsLiteralSpellingsWithoutRuntimeParity(t *testing.T) {
-	for _, literal := range []string{"'x'", "0xff", "0b10", "0o10", "01", "1_000", "1i", "0x1p2", "1_0.5"} {
+	for _, literal := range []string{"'x'", "0xff", "0b10", "0o10", "01", "1_000", "1i", "0x1p2", "1_0.5", "nil"} {
 		t.Run(literal, func(t *testing.T) {
 			source := []byte("package app\ncomponent Page() {\nreturn <main>{" + literal + "}</main>\n}\n")
 			_, err := Compile(source)
@@ -162,7 +162,7 @@ func TestCompileStrictServerRejectsLiteralSpellingsWithoutRuntimeParity(t *testi
 }
 
 func TestCompileStrictServerAcceptsParitySafeLiterals(t *testing.T) {
-	for _, literal := range []string{`"text"`, "0", "42", "1.5", ".5", "1e3", "true", "false", "nil"} {
+	for _, literal := range []string{`"text"`, "0", "42", "1.5", ".5", "1e3", "true", "false"} {
 		source := []byte("package app\ncomponent Page() {\nreturn <main>{" + literal + "}</main>\n}\n")
 		if _, err := Compile(source); err != nil {
 			t.Fatalf("literal %s: %v", literal, err)

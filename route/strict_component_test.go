@@ -114,7 +114,7 @@ component Page(props: Props) {
 func TestRenderProgramComponentStrictSafeLiteralParity(t *testing.T) {
 	prog, err := gosx.Compile([]byte(`package app
 component Page() {
-	return <main>{"text"}{42}{1.5}{true}</main>
+	return <main>{"text"}{42}{1.5}{true}{false}</main>
 }
 `))
 	if err != nil {
@@ -124,7 +124,73 @@ component Page() {
 	if err != nil {
 		t.Fatalf("RenderProgramComponent: %v", err)
 	}
-	if html != "<main>text421.5true</main>" {
+	if html != "<main>text421.5truefalse</main>" {
+		t.Fatalf("html = %q", html)
+	}
+}
+
+func TestStrictServerExpressionRejectsNilInTextAndAttrs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "text", body: `<main>{nil}</main>`},
+		{name: "attribute", body: `<main data-value={nil}>text</main>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := gosx.Compile([]byte("package app\ncomponent Page() {\nreturn " + tc.body + "\n}\n"))
+			if err == nil || !strings.Contains(err.Error(), "nil is not supported") {
+				t.Fatalf("Compile error = %v", err)
+			}
+		})
+	}
+}
+
+func TestStrictLocalCallRequiresEveryRenderedProp(t *testing.T) {
+	_, err := gosx.Compile([]byte(`package app
+type BadgeProps struct {
+	Count int
+	Enabled bool
+	Unused string
+}
+component Badge(props: BadgeProps) {
+	return <p>{props.Count}:{props.Enabled}</p>
+}
+component Page() {
+	return <Badge />
+}
+`))
+	if err == nil {
+		t.Fatal("Compile unexpectedly accepted omitted rendered props")
+	}
+	for _, want := range []string{"requires prop Count", "requires prop Enabled"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Compile error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestStrictLocalCallExplicitZeroValuesMatchGeneratedGo(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+type BadgeProps struct {
+	Count int
+	Enabled bool
+}
+component Badge(props: BadgeProps) {
+	return <p>{props.Count}:{props.Enabled}</p>
+}
+component Page() {
+	return <Badge count={0} enabled={false} />
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	if html != "<p>0:false</p>" {
 		t.Fatalf("html = %q", html)
 	}
 }

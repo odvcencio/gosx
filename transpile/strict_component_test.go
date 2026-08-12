@@ -126,3 +126,25 @@ component Page() {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestTranspileStrictExplicitZeroPropsMatchFileRendererContract(t *testing.T) {
+	source := []byte(`package app
+type BadgeProps struct {
+	Count int
+	Enabled bool
+}
+component Badge(props: BadgeProps) {
+	return <p>{props.Count}:{props.Enabled}</p>
+}
+component Page() {
+	return <Badge count={0} enabled={false} />
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if want := `Badge(BadgeProps{Count: 0, Enabled: false})`; !strings.Contains(out, want) {
+		t.Fatalf("generated Go is missing %q:\n%s", want, out)
+	}
+}

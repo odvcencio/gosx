@@ -38,8 +38,10 @@ func validate(expr ast.Expr) error {
 		return validateLiteral(node)
 	case *ast.Ident:
 		switch node.Name {
-		case "true", "false", "nil":
+		case "true", "false":
 			return nil
+		case "nil":
+			return fmt.Errorf("nil is not supported because GoSX expression and file renderers serialize it differently")
 		case "props":
 			return fmt.Errorf("bare props is not supported; select a props field")
 		default:
