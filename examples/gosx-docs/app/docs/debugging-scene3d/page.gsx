@@ -175,20 +175,14 @@ func Page() Node {
 			<p>
 				For a serialized scene file, check feature use, fallbacks, and backend capability with the CLI instead of a running page:
 			</p>
-			{CodeBlock("bash", `gosx scene inspect scene.json --cert
-	gosx scene inspect scene.json --json --strict --budget budget.json
-	gosx scene certify --backend webgpu scene.json --strict`)}
+			{CodeBlock("bash", `gosx scene check --strict --assets public --budget budget.json scene.json
+	gosx scene inspect --json --strict --budget budget.json --assets public scene.json
+	gosx scene validate --strict scene.json`)}
 			<p>
+				<span class="inline-code">gosx scene check</span>
+				is the combined browser-free gate: validation, inspection and cost, asset reachability, CPU rendering, optional repeat determinism, and optional golden comparison produce one verdict.
 				<span class="inline-code">gosx scene inspect</span>
-				reports backend intent, estimated draw calls and uploads, GPU memory estimate, feature use, declared fallbacks, and budget results.
-				<span class="inline-code">
-					gosx scene certify --backend webgpu|webgl|canvas2d
-				</span>
-				reads the
-				<span class="inline-code">backendCaps</span>
-				verdict embedded in a serialized scene and reports whether the named backend is capable, what it degrades, and why — with
-				<span class="inline-code">--strict</span>
-				exiting non-zero when it is not.
+				reports feature use, backend capability and degradation, estimated costs, asset reachability, and budget results without inventing a separate certification command.
 			</p>
 		</section>
 		<section id="model-hydration-diagnostics" class="docs-section-block">

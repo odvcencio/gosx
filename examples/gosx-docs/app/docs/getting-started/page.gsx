@@ -32,9 +32,11 @@ func Page() Node {
 		<section id="overview" class="docs-section-block">
 			<h2>Overview</h2>
 			<p>
-				GoSX is a Go-native web platform for server rendering, routing, forms, auth, interactive islands, realtime hubs, and managed graphics. GSX adds HTML-shaped markup to Go packages; the browser runtime is generated and managed by the framework, so an application does not need a JavaScript app toolchain. One
-				<span class="inline-code">go build</span>
-				produces a deployable binary with everything included.
+				GoSX is a Go-native web platform for server rendering, routing, forms, auth, interactive islands, realtime hubs, and managed graphics. GSX adds HTML-shaped markup to Go packages; the browser runtime is generated and managed by the framework, so an application does not need a JavaScript app toolchain.
+				<span class="inline-code">gosx build --prod .</span>
+				stages the server, file-route inputs, public content, hashed browser assets, and deployment metadata together in
+				<span class="inline-code">dist/</span>
+				.
 			</p>
 		</section>
 		<section id="install" class="docs-section-block">
@@ -47,7 +49,7 @@ func Page() Node {
 			{CodeBlock("bash", "go install m31labs.dev/gosx/cmd/gosx@latest")}
 			<p>
 				Verify the installation by running
-				<span class="inline-code">gosx --version</span>
+				<span class="inline-code">gosx version</span>
 				.
 			</p>
 		</section>

@@ -76,9 +76,12 @@ func Page() Node {
 		</p>
 		<h2 id="attributes">Elements and attributes</h2>
 		<p>
-			Lowercase tags create HTML elements; capitalized tags call GoSX components or builtins. Static quoted attributes, boolean attributes, expression attributes, expression children, fragments, and spread attributes are available in both styles when the target renderer supports the value.
+			Lowercase tags create HTML elements; capitalized tags call GoSX components or builtins. Static quoted attributes, boolean attributes, expression attributes, expression children, fragments, and element spread attributes are available in both styles when the target renderer supports the value.
 		</p>
 		<CodeBlock lang="gosx" source={data.attributesSample} />
+		<p>
+			A strict component call is intentionally narrower than an HTML element: pass named attributes that match the props struct. Strict component calls reject spread props and positional child content; model child content as a named prop when the component contract needs it.
+		</p>
 		<p>
 			Strict markup also accepts the familiar aliases
 			<span class="inline-code">className</span>
@@ -104,6 +107,8 @@ func Page() Node {
 			<span class="inline-code">gosx dev</span>
 			, and
 			<span class="inline-code">gosx render</span>
+			, and
+			<span class="inline-code">gosx export</span>
 			as the executable source of truth for strict diagnostics.
 		</p>
 		<h2 id="choosing">Choosing a style</h2>

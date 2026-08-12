@@ -97,6 +97,132 @@ func TestAPIDocsUseCurrentPublicSurfaces(t *testing.T) {
 	}
 }
 
+func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	docsRoot := filepath.Join(filepath.Dir(thisFile), "app", "docs")
+
+	tests := []struct {
+		page      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			page:     "getting-started",
+			required: []string{"gosx version"},
+			forbidden: []string{
+				"gosx --version",
+				"produces a deployable binary with everything included",
+			},
+		},
+		{
+			page: "components",
+			required: []string{
+				"Strict component calls reject spread props and positional child content",
+				"gosx export .",
+			},
+		},
+		{
+			page: "runtime",
+			required: []string{
+				"window.__gosx.navigation.navigate",
+				"data-gosx-prefetch=\"render\"",
+				"gosx-page-cache",
+				"ManagedScriptRoleManaged",
+			},
+			forbidden: []string{
+				"window.__gosx_page_nav",
+				"window.__gosx_dispose_page",
+				"window.__gosx_bootstrap_page",
+				"data-gosx-lifecycle-script",
+				"export function dispose",
+				"300 ms",
+			},
+		},
+		{
+			page: "deployment",
+			required: []string{
+				"dist/server/app",
+				"dist/edge/worker.js",
+				"GOSX_ORIGIN",
+				"redis.NewISRStore",
+				"gosx build --prod --offline .",
+			},
+			forbidden: []string{
+				"--target edge",
+				"--out ./edge",
+				"_gosx/css",
+				"ctx.NoCache()",
+				"wasi_snapshot_preview1",
+				"No external files are required",
+			},
+		},
+		{
+			page: "debugging-scene3d",
+			required: []string{
+				"gosx scene check --strict",
+				"gosx scene inspect --json --strict",
+				"gosx scene validate --strict",
+			},
+			forbidden: []string{"gosx scene certify", "--cert"},
+		},
+		{
+			page: "scene3d",
+			required: []string{
+				"RequiredCapabilities",
+				"scene.RequireWebGPU",
+				"environment-map",
+				"Prepared split-sum IBL is faithful on WebGPU",
+			},
+			forbidden: []string{
+				"environment map degrades on WebGPU",
+				"Dashed lines draw on WebGL2 only",
+				"151,301 raw bytes",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.page, func(t *testing.T) {
+			body := readDocsPagePair(t, docsRoot, test.page)
+			assertDocsContract(t, body, test.required, test.forbidden)
+		})
+	}
+
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+	relayPath := filepath.Join(repoRoot, "docs", "cross-frame-signals.md")
+	relay, err := os.ReadFile(relayPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", relayPath, err)
+	}
+	assertDocsContract(t, string(relay), []string{
+		"window.__gosx.relay.configure",
+		"window.__gosx.relay.registerPeer",
+		"window.__gosx.relay.send",
+		"window.__gosx.relay.flushInboundBuffer",
+		"window.__gosx.host.relay.flushInbound",
+	}, []string{
+		"window.__gosx_relay_configure",
+		"window.__gosx_relay_register_peer",
+		"window.__gosx_relay_send",
+		"window.__gosx_relay_flush_inbound",
+		"~150 KB",
+	})
+}
+
+func assertDocsContract(t *testing.T, body string, required, forbidden []string) {
+	t.Helper()
+	for _, value := range required {
+		if !strings.Contains(body, value) {
+			t.Errorf("documentation is missing current contract %q", value)
+		}
+	}
+	for _, value := range forbidden {
+		if strings.Contains(body, value) {
+			t.Errorf("documentation retains stale contract %q", value)
+		}
+	}
+}
+
 func readDocsPagePair(t *testing.T, root, page string) string {
 	t.Helper()
 	var joined strings.Builder

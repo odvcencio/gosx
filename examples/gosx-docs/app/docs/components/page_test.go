@@ -78,3 +78,38 @@ component Card(props: Props) {
 		t.Fatal("strict component accepted a free helper call that the server renderer cannot execute")
 	}
 }
+
+func TestStrictComponentCallsRejectSpreadPropsAndPositionalChildren(t *testing.T) {
+	tests := map[string]string{
+		"spread props": `package profile
+
+type BadgeProps struct { Label string }
+
+component Badge(props: BadgeProps) {
+	return <span>{props.Label}</span>
+}
+
+component Page(props: BadgeProps) {
+	return <Badge {...props} />
+}`,
+		"positional children": `package profile
+
+type BadgeProps struct { Label string }
+
+component Badge(props: BadgeProps) {
+	return <span>{props.Label}</span>
+}
+
+component Page() {
+	return <Badge Label="Inbox">unbound child</Badge>
+}`,
+	}
+
+	for name, source := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := gosx.Compile([]byte(source)); err == nil {
+				t.Fatalf("strict component call accepted %s", name)
+			}
+		})
+	}
+}

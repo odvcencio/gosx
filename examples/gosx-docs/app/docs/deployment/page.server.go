@@ -6,151 +6,91 @@ import (
 )
 
 func init() {
-	docs.RegisterDocsPage("Deployment", "Build, export, and deploy GoSX applications as single binaries, static sites, or edge bundles.", route.FileModuleOptions{
+	docs.RegisterDocsPage("Deployment", "Build, export, and operate the staged GoSX deployment bundle.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
 				"mode":        "light",
 				"title":       "Deployment",
-				"description": "Build, export, and deploy GoSX applications as single binaries, static sites, or edge bundles.",
-				"tags":        []string{"build", "deploy", "static", "ssr", "isr", "edge"},
+				"description": "Build, export, and operate the staged GoSX deployment bundle.",
+				"tags":        []string{"build", "deploy", "static", "ssr", "isr", "edge", "offline"},
 				"toc": []map[string]string{
-					{"href": "#build-modes", "label": "Build Modes"},
-					{"href": "#static-export", "label": "Static Export"},
-					{"href": "#github-pages", "label": "GitHub Pages"},
-					{"href": "#server-deployment", "label": "Server Deployment"},
+					{"href": "#build-output", "label": "Build output"},
+					{"href": "#static-export", "label": "Static export"},
+					{"href": "#edge-output", "label": "Edge output"},
+					{"href": "#server-deployment", "label": "Server deployment"},
 					{"href": "#isr", "label": "ISR"},
-					{"href": "#edge-bundles", "label": "Edge Bundles"},
-					{"href": "#docker", "label": "Docker"},
+					{"href": "#offline-windows", "label": "Offline & Windows"},
+					{"href": "#docker", "label": "Containers"},
 				},
-				"sampleBuildModes": `# SSR binary (default)
-gosx build --prod
+				"sampleBuildModes": `# Fast development assets (the default)
+gosx build --dev .
 
-# Static export
-gosx export
+# Production assets, server, static export, and edge/platform metadata
+gosx build --prod .
 
-# Edge bundle
-gosx build --prod`,
-				"sampleExport": `# Development-style static export
-gosx export
+# Add an offline bundle
+gosx build --prod --offline .
 
-# Production bundle with hashed runtime assets
-gosx build --prod
+# Package a Windows release on a Windows target/host
+gosx build --prod --msix .`,
+				"sampleOutput": `dist/
+  assets/              # content-hashed browser assets
+  app/                 # staged file routes
+  content/             # staged content collections, when present
+  public/              # staged public files, when present
+  server/app           # runnable Go server, when package main
+  run.sh               # sets GOSX_APP_ROOT and starts server/app
+  build.json           # asset manifest
+  static/              # production prerender output
+  export.json          # exported route metadata
+  edge/worker.js       # static-first worker with origin fallback
+  platform/            # deployment descriptors`,
+				"sampleExport": `gosx export .
 
-# Output structure
-dist/
-  static/
-    index.html
-    docs/
-      compiler/
-        index.html
-      deployment/
-        index.html
-    404.html
-    gosx/
-      assets/
-      islands/
-      css/
-  export.json`,
-				"sampleGitHubPages": `name: Deploy GoSX site to GitHub Pages
+# Publish this directory as the static site root:
+dist/static/`,
+				"sampleEdge": `gosx build --prod .
 
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+# Deploy dist/static through the worker's ASSETS binding.
+# Configure the dynamic fallback in the worker environment:
+GOSX_ORIGIN=https://app.example.com`,
+				"sampleServerRun": `gosx build --prod .
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+cd dist
+PORT=8080 ./run.sh
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: Install TinyGo
-        run: |
-          curl -fsSL -o tinygo.deb https://github.com/tinygo-org/tinygo/releases/download/v0.40.1/tinygo_0.40.1_amd64.deb
-          sudo dpkg -i tinygo.deb
-      - uses: actions/configure-pages@v5
-      - name: Build static site
-        run: go run m31labs.dev/gosx/cmd/gosx build --prod .
-      - name: Disable Jekyll
-        run: touch dist/static/.nojekyll
-      - uses: actions/upload-pages-artifact@v4
-        with:
-          path: dist/static
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4`,
-				"sampleServerBuild": `go build -o gosx-app ./cmd/server
-
-# Binary contains everything — templates, assets, WASM.
-ls -lh gosx-app
-# -rwxr-xr-x  1 user  staff  14M gosx-app
-
-PORT=8080 ./gosx-app`,
-				"sampleServerMain": `func main() {
-	app := gosx.New(gosx.Config{
-		Port:     os.Getenv("PORT"),
-		// Optional: external ISR cache.
-		ISRCache: redis.NewISRAdapter(redisClient),
-	})
-	app.Mount(modules.All())
-	app.ListenAndServe()
+# Equivalent direct launch from the bundle root:
+GOSX_APP_ROOT="$PWD" PORT=8080 ./server/app`,
+				"sampleISRConfig": `{
+  "cache": {
+    "public": true,
+    "maxAge": "60s",
+    "staleWhileRevalidate": "5m"
+  },
+  "cacheTags": ["products"]
 }`,
-				"sampleISR": `func init() {
-	docs.RegisterDocsPage("Products", "Product catalogue.", route.FileModuleOptions{
-		ISR: &route.ISROptions{
-			// Revalidate every 60 seconds in the background.
-			RevalidateSeconds: 60,
-		},
-		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
-			products, err := db.ListProducts(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{"products": products}, nil
-		},
-	})
-}`,
-				"sampleEdge": `gosx build --prod --target edge --out ./edge-dist
+				"sampleISRApp": `app := server.New()
+app.EnableISR()
 
-# Output
-edge-dist/
-  handler.wasm    # 3.2 MB — all routes + templates
-  manifest.json   # route table for the edge adapter`,
-				"sampleDockerfile": `# Dockerfile.runtime
-FROM golang:1.23-alpine AS builder
+// Optional shared store for multiple server instances:
+app.SetISRStore(redis.NewISRStore(redisClient, redis.Options{
+    Prefix: "shop:gosx",
+}))`,
+				"sampleOffline": `gosx build --prod --offline .
+gosx desktop --bundle dist/offline`,
+				"sampleDockerfile": `FROM golang:1.26-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN gosx build --prod && go build -o /bin/app ./cmd/server
+RUN go run m31labs.dev/gosx/cmd/gosx build --prod .
 
-FROM gcr.io/distroless/static
-COPY --from=builder /bin/app /app
+FROM debian:bookworm-slim
+WORKDIR /app
+COPY --from=build /src/dist/ ./
+ENV PORT=8080
 EXPOSE 8080
-ENTRYPOINT ["/app"]`,
-				"sampleDockerDeploy": `docker build -f Dockerfile.runtime -t harbor.example.com/myapp:v1.0.0 .
-docker push harbor.example.com/myapp:v1.0.0
-
-kubectl set image deployment/myapp app=harbor.example.com/myapp:v1.0.0`,
+ENTRYPOINT ["/app/run.sh"]`,
 			}, nil
 		},
 	})

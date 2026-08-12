@@ -8,13 +8,13 @@ func Page() Node {
 				three.js is a browser rendering library. Scene3D is the 3D layer of a Go web framework. That difference explains most of what follows, in both directions.
 			</p>
 			<p>
-				If you want the short answer: three.js covers far more of 3D rendering than Scene3D does, and Scene3D covers things three.js structurally cannot. Scene3D also costs more bytes per rendering feature. All three statements are true at once.
+				If you want the short answer: three.js covers far more of browser 3D rendering, while Scene3D integrates a typed scene model with server rendering, routing, signals, hubs, capability verdicts, and browser-free tooling. Compare bytes from the exact applications you would ship.
 			</p>
 			<div class="vs-stat-row">
-				{StatCard("~90%", "of Scene3D features have a three.js counterpart")}
-				{StatCard("~35%", "of the three.js surface is covered by Scene3D")}
-				{StatCard("313 KB", "gzip, a Chromium Scene3D page")}
-				{StatCard("~170 KB", "gzip, three.js core for a comparable app")}
+				{StatCard("Typed Go", "scene authoring and lowering")}
+				{StatCard("3", "browser rendering backends")}
+				{StatCard("glTF 2.0", "the focused model-loader contract")}
+				{StatCard("Per route", "manifest-backed byte accounting")}
 			</div>
 		</section>
 		<section id="overlap">
@@ -131,24 +131,20 @@ func Page() Node {
 		<section id="bytes">
 			<h2>The Byte Comparison</h2>
 			<p>
-				A Chromium Scene3D page now ships about
-				<strong>313 KB gzip</strong>
-				. That covers the runtime, the scene core, the WebGPU backend, the glTF loader, animation, and text layout. The WebGL backend is a lazily fetched chunk. A WebGPU-capable browser skips it and saves 151,301 raw bytes, 41,829 gzip bytes, and 33,803 brotli bytes.
+				Scene3D is delivered as capability-selected runtime chunks. The core mount, selected renderer, glTF, animation, compute, decompression, and WebGL fallback do not all have to arrive on every route or every browser.
 			</p>
 			<p>
-				three.js core is roughly
-				<strong>170 KB gzip</strong>
-				for a comparable application, before you add a loader, a control scheme, and a post-processing chain.
+				For a release comparison, measure the exact GoSX route with the build manifest and Ouroboros receipt, then compare it with the exact three.js imports and application features you would ship. Historical headline gzip numbers are not a durable API contract.
 			</p>
 			<p>
-				So Scene3D still costs more per rendering feature. Do not read the lazy WebGL chunk as leanness. It removed a regression; it did not win the comparison.
+				The useful distinction is architectural: a Scene3D route includes framework runtime responsibilities as well as rendering, while a three.js measurement normally starts with the rendering library and adds an application framework separately.
 			</p>
 			<p>
-				Two honest qualifiers, both of which cut in Scene3D's favour without closing the gap.
+				Two qualifiers keep that measurement comparable:
 			</p>
 			<ul>
 				<li>
-					The Scene3D figure is a whole page runtime, not a rendering library. It includes routing, islands, signals, hubs, forms, and text layout. A three.js application adds its own framework on top of the 170 KB.
+					Measure the whole shipped route on both sides. Scene3D may include routing, islands, signals, hubs, forms, and text layout; a three.js application adds its chosen framework separately.
 				</li>
 				<li>
 					Scene declaration itself ships no JavaScript. The scene is data on the wire, so a bigger scene does not grow the bundle. In a three.js application, scene construction is code.
