@@ -492,7 +492,13 @@ const budgets = [
   // brotli 323_723 -> 325_342 for the island-VM core (hub connect/disconnect,
   // island dispose, hydration, and event-delegation tails; shared namespace
   // init guard). Exact measurement: 1_492_950 / 404_688 / 325_342.
-  { file: "bootstrap.js", raw: 1_492_950, gzip: 404_688, brotli: 325_342 },
+  //
+  // Merged the Scene3D parity cluster A WebGPU environment-map work (see
+  // the bootstrap-feature-scene3d-webgpu.js note below; the monolith
+  // carries the same source) with v0.38.0's island-VM core budgets.
+  // Measured: 1_494_714 / 405_094 / 325_346.
+  { file: "bootstrap.js", raw: 1_498_000, gzip: 406_000, brotli: 326_000 },
+
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1014,7 +1020,15 @@ const budgets = [
   // createBindGroup churn and the ~13 KB per-frame pipeline cache-key
   // rebuild across the point layers. Costs 1_566 raw in this chunk.
   // Exact merged measurement: 383_752 / 92_793 / 77_621.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 383_752, gzip: 92_793, brotli: 77_621 },
+  //
+  // Merged the Scene3D parity cluster A lighting-environment work: the
+  // envEquirectUV WGSL port, the envMapTex/envMapSampler bindings 13/14, the
+  // dedicated repeat/clamp-to-edge sampler, and the hasEnvMap EnvUniforms lane
+  // (with its three pad words) that let the WebGPU renderer read
+  // Environment.EnvironmentMap for the first time. Combined with the 16a
+  // memoization above. Measured: 385_516 / 93_168 / 77_942.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 386_500, gzip: 93_500, brotli: 78_100 },
+
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1327,9 +1341,15 @@ const routeBudgets = [
     // the island-VM core shared namespace init guard carried by
     // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
     // 1_177_437 / 313_914 / 265_097.
-    raw: 1_177_437,
-    gzip: 313_914,
-    brotli: 265_101,
+    //
+    // Merged the Scene3D parity cluster A WebGPU environment-map work (see
+    // bootstrap-feature-scene3d-webgpu.js above; this route carries that
+    // chunk) with v0.38.0's island-VM core budgets. Measured: 1_179_201 /
+    // 314_289 / 265_418.
+    raw: 1_182_000,
+    gzip: 315_000,
+    brotli: 266_000,
+
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1479,9 +1499,15 @@ const routeBudgets = [
     // the island-VM core shared namespace init guard carried by
     // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
     // 1_389_406 / 372_309 / 314_766.
-    raw: 1_389_406,
-    gzip: 372_309,
-    brotli: 314_770,
+    //
+    // Merged the Scene3D parity cluster A WebGPU environment-map work (see
+    // bootstrap-feature-scene3d-webgpu.js above; this route carries that
+    // chunk) with v0.38.0's island-VM core budgets. Measured: 1_391_170 /
+    // 372_684 / 315_087.
+    raw: 1_394_000,
+    gzip: 373_500,
+    brotli: 315_800,
+
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1555,9 +1581,15 @@ const routeBudgets = [
     // the island-VM core shared namespace init guard carried by
     // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
     // 1_030_734 / 271_495 / 227_408.
-    raw: 1_030_734,
-    gzip: 271_495,
-    brotli: 227_412,
+    //
+    // Merged the Scene3D parity cluster A WebGPU environment-map work (see
+    // bootstrap-feature-scene3d-webgpu.js above; this route carries that
+    // chunk) with v0.38.0's island-VM core budgets. Measured: 1_032_498 /
+    // 271_870 / 227_729.
+    raw: 1_035_000,
+    gzip: 272_500,
+    brotli: 228_200,
+
   },
 
 ];
