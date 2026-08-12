@@ -8,12 +8,22 @@
   declare `component Name(props: GoType) { ... }`. The prop contract is an
   ordinary Go type and the declaration has an implicit `Node` result, while
   the body still uses an explicit `return`. Strict server components currently
-  use one top-level GSX return and the renderer-supported expression surface;
+  use one top-level GSX return and a deliberately small renderer-safe
+  expression surface: quoted strings, `true`/`false`, ungrouped non-negative
+  base-10 integers in the `int64` range, finite ungrouped decimal floats, or
+  one direct, parity-safe built-in scalar field on `props`;
   unsupported Go control flow, locals, helpers, and cross-file component calls
   fail closed instead of type-checking one program and rendering another.
-  `gosx check`, build, dev, and render ask the Go compiler to reject unknown
-  fields and incompatible values. Existing `func Name(props GoType) Node`
-  components remain supported, and both styles can coexist.
+  `gosx check`, build, dev, export, and render ask the Go compiler to reject
+  unknown fields and incompatible values. Existing
+  `func Name(props GoType) Node` components remain supported, and both styles
+  can coexist in a file; component calls stay within one declaration style in
+  v0.39 so legacy dynamic calls cannot bypass the strict prop contract.
+  Same-file strict calls accept exact Go field names or unambiguous TSX-like
+  lower-camel aliases, and explicitly require every rendered prop even when
+  its value is `0`, `false`, or `""`. Islands, engines, renderer builtins,
+  element spreads, and nested Node composition retain the legacy declaration
+  style in this release.
 - **Ouroboros O0.2 evidence infrastructure.** Runtime inventory, browser,
   comparison, and pixel evidence now carries source identity, uses portable
   artifact references, and fails closed on missing or mismatched receipts.
@@ -103,6 +113,18 @@
 - **Accessible managed forms.** Scoped managed-form result projection,
   including stale-error cleanup, status announcement on submit, and
   invalid-field focus.
+
+## v0.37.1 (2026-08-09)
+
+### Patch: grammar-blob authority and parser diagnostics
+
+- **Grammar override integrity.** Compilation refuses an override grammar blob
+  that is not byte-identical to GoSX's embedded grammar, closing the stale
+  parse-table mismatch that caused issue #139.
+- **Self-closing SVG parsing.** Regression coverage preserves nested and
+  self-closing SVG markup through the corrected grammar path.
+- **Parse diagnostics.** Invalid source now reports a useful parser failure
+  even when the syntax tree contains no explicit error node.
 
 ## v0.37.0 (2026-08-09)
 

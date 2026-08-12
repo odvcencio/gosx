@@ -17,12 +17,26 @@ GoSX starts from a simple premise: the browser is a render target, not a runtime
 ```gsx
 package app
 
+import "m31labs.dev/gosx/signal"
+
+type GreetingProps struct {
+    Name string
+}
+
+type CounterProps struct {
+    Initial int
+}
+
 // Strict typed server component: renders to HTML, zero JavaScript.
 component Greeting(props: GreetingProps) {
     return <div class="greeting">
         <h1>Hello, {props.Name}!</h1>
         <p>Welcome to GoSX.</p>
     </div>
+}
+
+component WelcomePage() {
+    return <main><Greeting name="GoSX" /></main>
 }
 
 // Legacy Go-function style: still supported, here as an island.
@@ -40,19 +54,31 @@ func Counter(props CounterProps) Node {
 }
 ```
 
-Both component styles can live in the same file. The strict
+Both component styles can live in the same file. In v0.39, component calls
+stay within their declaration style; this keeps legacy dynamic composition
+from bypassing strict prop checks. The strict
 `component Name(props: GoType) { ... }` form uses an ordinary Go type as its
 prop contract, so the package check catches unknown fields and incompatible
 values. `component` supplies the `Node` result type; it does not make returns
 implicit. Strict server bodies currently contain one top-level GSX return and
-use the renderer-supported expression surface. The original
+use a deliberately small renderer-safe expression surface. Each expression is
+either a quoted string, `true` or `false`, an ungrouped non-negative base-10
+integer in the `int64` range, a finite ungrouped decimal float, or one direct
+field on `props` whose same-file type is an exact built-in scalar. The original
 `func Name(props GoType) Node { ... }` form remains supported for existing and
 dynamic components.
 
-The `//gosx:island` directive marks either style for client-side hydration. The
-compiler extracts signals, computed values, and handlers from the Go source,
-compiles expressions to VM instructions, and serializes an island program.
-Server components emit static HTML with no client-side cost.
+Strict same-file calls accept an exported Go field name or its TSX-like
+lower-camel alias (`Label`/`label`, `HTMLFor`/`htmlFor`, `URL`/`url`);
+ambiguous aliases must use exact Go spelling. Every field the callee renders
+must be supplied explicitly, including `0`, `false`, and `""`, so generated Go
+and server rendering observe the same zero values.
+
+In v0.39, islands and engines continue to use the legacy Go-function spelling.
+The `//gosx:island` directive marks a legacy component for client-side
+hydration. The compiler extracts signals, computed values, and handlers from
+the Go source, compiles expressions to VM instructions, and serializes an
+island program. Server components emit static HTML with no client-side cost.
 
 ## Philosophy
 
@@ -544,11 +570,11 @@ gosx desktop --url <url>              # Direct native desktop host smoke
 gosx desktop --bundle dist/offline    # Run a packaged app://gosx bundle
 gosx desktop --url <url> --native-bridge
                                       # Direct trusted host with built-in desktop APIs
-gosx build [--prod] [app]             # Build with hashed assets, optional static prerender
-gosx build --offline [app]            # Stage a versioned offline asset bundle
-gosx build --msix [app]               # Stage and package Windows MSIX output
-gosx build --sign --msix [app]        # Sign MSIX via signtool
-gosx build --appinstaller <uri> [app] # Emit AppInstaller update feed XML
+gosx build [--prod] <app>              # Build with hashed assets, optional static prerender
+gosx build --offline <app>             # Stage a versioned offline asset bundle
+gosx build --msix <app>                # Stage and package Windows MSIX output
+gosx build --sign --msix <app>         # Sign MSIX via signtool
+gosx build --appinstaller <uri> <app>  # Emit AppInstaller update feed XML
 gosx assets plan [path...]            # Inspect 3D/game assets and planned build optimizations
 gosx scene render --out image.png <scene-file>
                                       # Render a typed scene natively to PNG (no browser or GPU)
@@ -560,13 +586,13 @@ gosx scene validate [--strict] <file-or-dir>...
                                       # Structured schema diagnostics for scene documents
 gosx scene schema [--out path]        # Emit the SceneIR JSON schema
 gosx export [app]                     # Pre-render static pages to dist/static/
-gosx compile [file.gsx]               # Compile .gsx to Go
-gosx check [file.gsx]                 # Parse, validate, and check strict props with Go
-gosx render [file.gsx]                # Render component to HTML
-gosx fmt [file.gsx]                   # Format source
+gosx compile <file.gsx>                # Compile .gsx to Go
+gosx check <file.gsx>                  # Parse, validate, and check strict props with Go
+gosx render <file.gsx> [component]     # Render component to HTML
+gosx fmt <file.gsx|dir>                # Format source
 gosx lsp                              # Language server for editor integration
-gosx perf --json [url...]             # Profile browser runtime performance
-gosx perf --budget perf-budget.json [url...]
+gosx perf --json <url>...              # Profile browser runtime performance
+gosx perf --budget perf-budget.json <url>...
                                       # Profile and fail when a route exceeds budgets
 gosx perf compare base.json next.json # Fail on perf regressions
 gosx perf budget perf.json budget.json # Check a saved report

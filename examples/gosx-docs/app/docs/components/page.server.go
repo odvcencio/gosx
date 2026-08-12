@@ -19,7 +19,7 @@ component Badge(props: BadgeProps) {
 }
 
 component Page() {
-	return <main><Badge Label="Inbox" Count={3} /></main>
+	return <main><Badge label="Inbox" count={0} /></main>
 }`
 
 const legacyComponentSample = `package profile

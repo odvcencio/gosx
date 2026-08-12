@@ -44,7 +44,7 @@ func Page() Node {
 		<CodeBlock lang="gosx" source={data.strictSample} />
 		<CodeBlock lang="gosx" source={data.legacySample} />
 		<p>
-			The two spellings lower into the same component and node representation. Existing legacy source remains valid; adopting strict components is opt-in and local.
+			The two spellings lower into the same component and node representation. Existing legacy source remains valid; adopting strict components is opt-in and local. Calls stay within one declaration style in v0.39, keeping dynamic legacy attributes from bypassing strict Go prop checks.
 		</p>
 		<h2 id="strict-validation">Strict validation</h2>
 		<p>
@@ -53,7 +53,13 @@ func Page() Node {
 			, then exactly one top-level GSX return. This shape keeps what the checker accepts aligned with what the server renderer can execute.
 		</p>
 		<p>
-			Expression holes and attributes may use props selectors and indexes, literals, supported unary and binary operators, and method calls rooted in props. Local declarations, ordinary
+			Each expression hole or expression attribute may use a quoted string,
+			<span class="inline-code">true</span>
+			or
+			<span class="inline-code">false</span>
+			, an ungrouped non-negative base-10 integer in the
+			<span class="inline-code">int64</span>
+			range, a finite ungrouped decimal float, or one direct, parity-safe built-in scalar field on props. Nested selectors, indexing, calls, unary and binary operators, local declarations, ordinary
 			<span class="inline-code">if</span>
 			statements, helper or package calls, and cross-file component calls are rejected for strict server components in v0.39.
 		</p>
@@ -103,7 +109,7 @@ func Page() Node {
 		<p>
 			An island is marked by
 			<span class="inline-code">//gosx:island</span>
-			. Its recognized signal, computed, and handler declarations are lowered with the returned markup into a compact program for the shared browser VM.
+			. In v0.39, island and engine directives use the legacy Go-function component style. Their recognized signal, computed, and handler declarations are lowered with the returned markup into a compact program for the shared browser VM; applying a client directive to a strict declaration fails closed.
 		</p>
 		<CodeBlock lang="gosx" source={data.islandSample} />
 		<p>
@@ -129,6 +135,10 @@ func Page() Node {
 				and
 				<span class="inline-code">dev</span>
 				validate the application in project context.
+			</li>
+			<li>
+				<span class="inline-code">export</span>
+				validates strict packages before writing static output.
 			</li>
 		</ul>
 		<p>

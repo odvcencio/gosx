@@ -32,7 +32,7 @@ type CardProps struct {
 component Card(props: CardProps) {
 	return <article className="card">
 		<h2>{props.Title}</h2>
-		<span>{props.Count + 1}</span>
+		<span>{props.Count}</span>
 	</article>
 }
 

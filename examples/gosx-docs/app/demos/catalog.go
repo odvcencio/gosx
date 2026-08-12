@@ -54,7 +54,7 @@ var demoCatalog = []DemoDefinition{
 	{
 		Slug: "playground", Title: "GoSX Playground", Tag: "compile .gsx live",
 		Promise: "Edit a GoSX component and see the compiled result hydrate beside the source.",
-		Lesson:  "GoSX can compile a typed .gsx component on demand and hydrate its binary program as an island.",
+		Lesson:  "GoSX can compile a legacy Go-function .gsx island on demand and hydrate its binary program in the shared browser VM.",
 		Accent:  "#9fffa5", Facets: []string{"Compiler", "Island", "Action"},
 		SourcePath: "examples/gosx-docs/app/demos/playground/page.gsx", Packages: []string{"gosx", "hydrate", "action"},
 		Status: "live", RenderMode: "SSR + hydrated preview island",

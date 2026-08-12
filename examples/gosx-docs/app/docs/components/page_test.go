@@ -27,7 +27,7 @@ func TestDocumentedStrictComponentCompilesAndRenders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render documented strict component: %v", err)
 	}
-	for _, want := range []string{`<main>`, `class="badge"`, `Inbox`, `3`, `</main>`} {
+	for _, want := range []string{`<main>`, `class="badge"`, `Inbox`, `0`, `</main>`} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("rendered HTML %q does not contain %q", html, want)
 		}
@@ -102,6 +102,13 @@ component Badge(props: BadgeProps) {
 
 component Page() {
 	return <Badge Label="Inbox">unbound child</Badge>
+}`,
+		"element spread": `package profile
+
+type PageProps struct { Attrs map[string]any }
+
+component Page(props: PageProps) {
+	return <div {...props.Attrs}>content</div>
 }`,
 	}
 

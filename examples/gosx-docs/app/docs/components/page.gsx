@@ -42,9 +42,15 @@ func Page() Node {
 		</p>
 		<CodeBlock lang="gosx" source={data.strictSample} />
 		<p>
-			The server renderer intentionally accepts a fail-closed expression subset: props paths, indexes, literals, supported unary and binary operators, and method calls rooted in
+			The server renderer intentionally accepts a fail-closed expression subset. Each expression may be a quoted string,
+			<span class="inline-code">true</span>
+			or
+			<span class="inline-code">false</span>
+			, an ungrouped non-negative base-10 integer in the
+			<span class="inline-code">int64</span>
+			range, a finite ungrouped decimal float, or one direct field on
 			<span class="inline-code">props</span>
-			. Ordinary local declarations,
+			whose type is a parity-safe built-in scalar declared in the same file. Nested selectors, indexing, calls, unary and binary operators, ordinary local declarations,
 			<span class="inline-code">if</span>
 			statements, free helper calls, imported function calls, and cross-file component calls are outside the v0.39 strict contract.
 		</p>
@@ -55,14 +61,36 @@ func Page() Node {
 				<span class="inline-code">.gsx</span>
 				file. A zero-props
 				<span class="inline-code">Page()</span>
-				can compose it with literal or supported expression attributes. Typed route-loader binding is not part of this release; route data continues to use the legacy page form.
+				can compose it with attributes that match the strict field contract below. Typed route-loader binding is not part of this release; route data continues to use the legacy page form.
 			</p>
 		</section>
+		<p>
+			Same-file calls accept exact exported Go field spelling or an unambiguous TSX-like lower-camel alias, such as
+			<span class="inline-code">Label</span>
+			/
+			<span class="inline-code">label</span>
+			,
+			<span class="inline-code">HTMLFor</span>
+			/
+			<span class="inline-code">htmlFor</span>
+			, and
+			<span class="inline-code">URL</span>
+			/
+			<span class="inline-code">url</span>
+			. Ambiguous aliases must use exact Go spelling. Every field the callee directly renders must be passed explicitly, including
+			<span class="inline-code">0</span>
+			,
+			<span class="inline-code">false</span>
+			, and an empty string; omission is rejected so Go and the server renderer observe the same zero values.
+		</p>
 		<h2 id="legacy-components">Legacy components</h2>
 		<p>
 			The Go-function spelling remains fully supported and is the compatibility path for existing source. It is also the documented route form when a loader exposes the dynamic
 			<span class="inline-code">data</span>
 			binding.
+		</p>
+		<p>
+			Both declaration styles may coexist in one file, but v0.39 keeps component calls within the same style. This prevents a dynamic legacy call from bypassing a strict component's typed prop contract.
 		</p>
 		<CodeBlock lang="gosx" source={data.legacySample} />
 		<p>
@@ -72,15 +100,15 @@ func Page() Node {
 			<span class="inline-code">If</span>
 			, and
 			<span class="inline-code">Slot</span>
-			structural builtins. Islands also use this form when they declare signals and handlers before their single returned tree.
+			structural builtins. Islands and engines also use this form in v0.39; strict client directives fail closed until their browser and server paths can preserve the typed contract.
 		</p>
 		<h2 id="attributes">Elements and attributes</h2>
 		<p>
-			Lowercase tags create HTML elements; capitalized tags call GoSX components or builtins. Static quoted attributes, boolean attributes, expression attributes, expression children, fragments, and element spread attributes are available in both styles when the target renderer supports the value.
+			Lowercase tags create HTML elements. Static quoted attributes, boolean attributes, expression attributes, expression children, and fragments are available in both styles within their validation contracts. Strict capitalized tags resolve only to same-file strict components; renderer builtins and element spread attributes remain legacy-only in v0.39.
 		</p>
 		<CodeBlock lang="gosx" source={data.attributesSample} />
 		<p>
-			A strict component call is intentionally narrower than an HTML element: pass named attributes that match the props struct. Strict component calls reject spread props and positional child content; model child content as a named prop when the component contract needs it.
+			A strict component call is intentionally narrower than an HTML element: pass named attributes that match the props struct. Strict component calls reject spread props and positional child content; use a legacy caller-and-callee chain when component composition needs nested Node content in v0.39.
 		</p>
 		<p>
 			Strict markup also accepts the familiar aliases
@@ -106,9 +134,9 @@ func Page() Node {
 			,
 			<span class="inline-code">gosx dev</span>
 			, and
-			<span class="inline-code">gosx render</span>
-			, and
 			<span class="inline-code">gosx export</span>
+			, and
+			<span class="inline-code">gosx render</span>
 			as the executable source of truth for strict diagnostics.
 		</p>
 		<h2 id="choosing">Choosing a style</h2>

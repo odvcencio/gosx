@@ -98,9 +98,9 @@ func Page() Node {
 				<span class="inline-code">data</span>
 				in the legacy form shown above. Use the TSX-like strict form for small same-file components with explicit Go prop types.
 			</p>
-			{CodeBlock("gsx", "package app\n\ntype BadgeProps struct {\n\tLabel string\n\tCount int\n}\n\ncomponent Badge(props: BadgeProps) {\n\treturn <span className=\"badge\">\n\t\t{props.Label}: {props.Count}\n\t</span>\n}\n\ncomponent Page() {\n\treturn <main><Badge Label=\"Inbox\" Count={3} /></main>\n}")}
+			{CodeBlock("gsx", "package app\n\ntype BadgeProps struct {\n\tLabel string\n\tCount int\n}\n\ncomponent Badge(props: BadgeProps) {\n\treturn <span className=\"badge\">\n\t\t{props.Label}: {props.Count}\n\t</span>\n}\n\ncomponent Page() {\n\treturn <main><Badge label=\"Inbox\" count={0} /></main>\n}")}
 			<p>
-				Strict server components deliberately allow one top-level GSX return and renderer-supported props expressions. Use the legacy form for local statements, structural control flow, helpers, or dynamic route bindings. See
+				Strict server components deliberately allow one top-level GSX return and narrow renderer-safe expressions. Calls use exact or unambiguous lower-camel prop names and explicitly pass every field the callee renders, even zero values. Use the legacy form for local statements, structural control flow, helpers, renderer builtins, client directives, or dynamic route bindings. See
 				<a href="/docs/components" data-gosx-link="true">Components</a>
 				for the exact boundary.
 			</p>
