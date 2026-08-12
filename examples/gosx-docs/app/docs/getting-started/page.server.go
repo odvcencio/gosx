@@ -18,6 +18,7 @@ func init() {
 					{"href": "#install", "label": "Install"},
 					{"href": "#create-a-project", "label": "Create a Project"},
 					{"href": "#project-structure", "label": "Project Structure"},
+					{"href": "#authoring-styles", "label": "Authoring Styles"},
 					{"href": "#dev-server", "label": "Dev Server"},
 					{"href": "#next-steps", "label": "Next Steps"},
 				},

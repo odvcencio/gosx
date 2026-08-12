@@ -43,6 +43,12 @@ func Layout() Node {
 						data-gosx-disclosure-close="#nav-overlay"
 						class="nav-link"
 					>Getting Started</a>
+					<a
+						href="/docs/components"
+						data-gosx-link="true"
+						data-gosx-disclosure-close="#nav-overlay"
+						class="nav-link"
+					>Components</a>
 				</div>
 				<div class="nav-group">
 					<span class="nav-group__label">Reference</span>
