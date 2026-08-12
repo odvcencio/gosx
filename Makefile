@@ -112,7 +112,7 @@ test-ci-partitions:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify
 
 test-race:
-	$(GO) test -race ./...
+	$(GO) test -race -timeout 40m ./...
 
 # Pull requests exercise the reviewed shared-state surfaces without rerunning
 # CPU-heavy codec and vector kernels under the race detector. Protected-branch

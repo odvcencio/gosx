@@ -105,11 +105,13 @@ jobs:
   # test-race-pr suite within the shared job ceiling. The push path instead
   # runs the full test-race suite over every package, including the BC7 and
   # vector-search kernels the PR lane omits. Main has exceeded 15 minutes on
-  # a cold runner, so the job ceiling leaves explicit headroom for that wider
-  # protected-branch gate.
+  # a cold runner, and perf/ouroboros exceeds Go's default 10-minute
+  # per-package timeout under race instrumentation. The Make target carries a
+  # 40-minute package timeout inside this 50-minute job ceiling, leaving room
+  # for race-instrumented compilation and the remaining packages.
   go-race-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 50
 
     steps:
       - name: Check out repository
