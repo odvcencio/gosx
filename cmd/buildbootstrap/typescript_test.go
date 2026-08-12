@@ -1216,7 +1216,7 @@ func TestShippedRuntimeWASMLeavesAreTypedAndBuildInTheirOwners(t *testing.T) {
 		marker string
 		global string
 	}{
-		{rel: "../runtime/wasm/abi.ts", marker: "function featureMaskForVariant", global: "__gosx_runtime_abi_support"},
+		{rel: "../runtime/wasm/abi.ts", marker: "function selectVariant", global: "__gosx_runtime_abi_support"},
 		{rel: "../runtime/wasm/mailbox.ts", marker: "function decodePatchMailbox", global: "__gosx_runtime_mailbox"},
 		{rel: "../runtime/wasm/loader.ts", marker: "async function load", global: "__gosx_runtime_wasm_loader"},
 	}

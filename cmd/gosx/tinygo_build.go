@@ -109,7 +109,7 @@ func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 
 func tinyGoWASMTags(extraTags ...string) []string {
 	tags := []string{"tinygo"}
-	if !tinyGoFullRuntimeEnabled() {
+	if !tinyGoFullRuntimeEnabled() && !runtimeVariantNeedsFullRuntime(extraTags...) {
 		tags = append(tags, "gosx_tiny_runtime")
 	}
 	tags = append(tags, extraTags...)
@@ -125,6 +125,16 @@ func tinyGoWASMTags(extraTags ...string) []string {
 		out = append(out, tag)
 	}
 	return out
+}
+
+func runtimeVariantNeedsFullRuntime(tags ...string) bool {
+	for _, tag := range normalizeBuildTags(tags...) {
+		switch tag {
+		case "gosx_runtime_collab", "gosx_runtime_full":
+			return true
+		}
+	}
+	return false
 }
 
 func writeTinyGoWASMExec(tinygoPath, runtimeDir string) (HashedAsset, error) {

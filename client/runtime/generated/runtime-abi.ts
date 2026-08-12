@@ -64,6 +64,14 @@ export interface GoSXRuntimeDirectExports {
   mailbox(request: Uint8Array | ArrayBuffer): Uint8Array;
 }
 
+export interface GoSXRuntimeVariantAsset {
+  readonly file: string;
+  readonly hash: string;
+  readonly size: number;
+  readonly variant: GoSXRuntimeVariant;
+  readonly featureMask: GoSXFeatureMask;
+}
+
 export interface GoSXRuntimeManifestV2 {
   readonly abiVersion: typeof GOSX_RUNTIME_ABI_VERSION;
   readonly featureMask: GoSXFeatureMask;
@@ -71,4 +79,5 @@ export interface GoSXRuntimeManifestV2 {
   readonly mailboxVersion: typeof GOSX_RUNTIME_MAILBOX_VERSION;
   readonly manifestHash: string;
   readonly wasmURL: string;
+  readonly wasmVariants?: Readonly<Record<GoSXRuntimeVariant, GoSXRuntimeVariantAsset>>;
 }

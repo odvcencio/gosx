@@ -368,7 +368,7 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		t.Fatalf("anchor/current changed unexpectedly: %+v", audit.Reconciliation)
 	}
 	wantReceiptOnly := []string{"__gosx_", "__gosx_capability_probe__", "__gosx_crdt_apply", "__gosx_handled", "__gosx_motion_mixer_", "__gosx_surface_event", "__gosx_video_prefs_probe__", "__gosx_video_sync_"}
-	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_loaded_scripts", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
+	wantFullOnly := []string{"__gosx_apply_patch_mailbox", "__gosx_bench_exports", "__gosx_loaded_scripts", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_runtime_abi", "__gosx_runtime_abi_support", "__gosx_runtime_exports", "__gosx_runtime_mailbox", "__gosx_runtime_wasm_loader", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}
@@ -718,15 +718,14 @@ func TestCorpusTinyGoCurrentAndFutureRows(t *testing.T) {
 	if _, ok := future["R09"]; ok {
 		t.Fatal("stale canonical R09 route survived")
 	}
-	for _, id := range []string{"R04", "R09A", "R09B"} {
-		if current[id] != "none" || future[id] != "core" {
-			t.Fatalf("%s TinyGo = current %q future %q, want none/core", id, current[id], future[id])
+	for _, id := range []string{"R01", "R02", "R03", "R04", "R09A", "R09B"} {
+		if current[id] != "core" || future[id] != "core" {
+			t.Fatalf("%s TinyGo = current %q future %q, want core/core", id, current[id], future[id])
 		}
 	}
-	if future["R01"] != "core" || future["R06"] != "collab" || future["R10"] != "engine" {
-		t.Fatalf("future variants not assigned as expected: R06=%q R10=%q", future["R06"], future["R10"])
+	if current["R06"] != "collab" || current["R10"] != "engine" || future["R06"] != "collab" || future["R10"] != "engine" {
+		t.Fatalf("variants not assigned as expected: R06=%q/%q R10=%q/%q", current["R06"], future["R06"], current["R10"], future["R10"])
 	}
-	planned := map[string]int{}
 	currentVariants := map[string]int{}
 	for _, variant := range manifest.Variants {
 		switch variant.Generation {
@@ -735,25 +734,15 @@ func TestCorpusTinyGoCurrentAndFutureRows(t *testing.T) {
 			if variant.Status != "measured" || variant.SizeArtifact == nil || variant.WASMArtifact == nil {
 				t.Fatalf("current variant %s is not measured with artifacts", variant.ID)
 			}
-		case "future":
-			planned[variant.ID] = len(variant.SelectedByRoutes)
-			if variant.Status != "planned" || variant.SizeBytes != nil || variant.BudgetBytes != nil {
-				t.Fatalf("future variant %s is not planned with null sizes", variant.ID)
-			}
 		}
 	}
-	for _, id := range []string{"runtime", "islands"} {
+	for _, id := range []string{"core", "engine", "collab"} {
 		if currentVariants[id] == 0 {
 			t.Fatalf("current variant %s has no selected routes", id)
 		}
 	}
-	for _, id := range []string{"core", "engine", "collab"} {
-		if planned[id] == 0 {
-			t.Fatalf("planned variant %s has no selected routes", id)
-		}
-	}
-	if planned["full"] != 0 {
-		t.Fatalf("planned full variant has selected routes: %d", planned["full"])
+	if currentVariants["full"] != 0 || currentVariants["islands"] != 0 {
+		t.Fatalf("fallback variants unexpectedly selected routes: full=%d islands=%d", currentVariants["full"], currentVariants["islands"])
 	}
 	manifest.Variants = append(manifest.Variants, RuntimeVariant{ID: "future-full", Generation: "future", Status: "planned", SelectedByRoutes: []string{}})
 	inv := minimalValidInventory()

@@ -25,13 +25,24 @@
   /** @param {string} variant */
   function featureMaskForVariant(variant) {
     switch (String(variant || "")) {
-      case "core": return FEATURE_CORE;
+      case "core": return FEATURE_CORE | FEATURE_ISLANDS;
       case "engine": return FEATURE_CORE | FEATURE_ENGINE | FEATURE_SCENE3D;
       case "collab": return FEATURE_CORE | FEATURE_COLLAB | FEATURE_ISLANDS;
       case "islands": return FEATURE_CORE | FEATURE_ISLANDS;
       case "full": return FEATURE_CORE | FEATURE_ENGINE | FEATURE_COLLAB | FEATURE_SCENE3D | FEATURE_ISLANDS;
       default: return 0;
     }
+  }
+
+  /** @param {number} required */
+  function selectVariant(required) {
+    const mask = Number(required || 0) >>> 0;
+    const candidates = ["core", "islands", "engine", "collab", "full"];
+    for (const variant of candidates) {
+      const features = featureMaskForVariant(variant);
+      if ((features & mask) === mask) return variant;
+    }
+    return "";
   }
 
   /**
@@ -50,6 +61,7 @@
     abiVersion: ABI_VERSION,
     mailboxVersion: MAILBOX_VERSION,
     featureMaskForVariant: featureMaskForVariant,
+    selectVariant: selectVariant,
     validateHandshake: validateHandshake,
     requiredFeatureMask: function(required) { return Number(required || 0) >>> 0; },
   };

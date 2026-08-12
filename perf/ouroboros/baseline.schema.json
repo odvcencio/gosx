@@ -311,7 +311,7 @@
       "required": ["sourceIdentity", "scope", "methodVersion", "classifierVersion", "names", "count", "nameSetHash", "evidenceHash"],
       "properties": {
         "sourceIdentity": { "$ref": "#/$defs/compatibilitySourceIdentity" },
-        "scope": { "enum": ["client/js/bootstrap-src/**/*.js + client/wasm/**/*.go", "inventory.files.included + inventory.files.sidecars + inventory.files.embedded + client/wasm/**/*.go production owners"] },
+        "scope": { "enum": ["client/js/bootstrap-src/**/*.js + client/wasm/**/*.go", "client/js/bootstrap-src/**/*.{js,ts} + client/runtime/**/*.ts + client/wasm/**/*.go", "inventory.files.included + inventory.files.sidecars + inventory.files.embedded + client/wasm/**/*.go production owners", "inventory.files.included + inventory.files.sidecars + inventory.files.embedded + client/js/bootstrap-src/**/*.ts + client/runtime/**/*.ts + client/wasm/**/*.go production owners"] },
         "methodVersion": { "enum": ["gosx.ouroboros.compatibility-receipt.raw-name.v1", "gosx.ouroboros.runtime-json-static.scanner.v3"] },
         "classifierVersion": { "enum": ["none", "gosx.ouroboros.static-phase.v1"] },
         "names": { "type": "array", "items": { "type": "string", "pattern": "^__gosx_[A-Za-z0-9_]*$" } },

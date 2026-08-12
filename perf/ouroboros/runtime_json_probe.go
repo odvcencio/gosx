@@ -229,12 +229,15 @@ func CollectRuntimeJSONStaticCorpus(ctx context.Context, opts RuntimeJSONProbeOp
 	if err != nil {
 		return nil, err
 	}
-	files := runtimeJSONSourceFiles(inv)
+	files, err := runtimeJSONSourceFiles(opts.RepoRoot, inv)
+	if err != nil {
+		return nil, err
+	}
 	query := RuntimeJSONStaticQuery{
 		ID:               "gosx.ouroboros.o02.runtime-json-static.ast.v2",
 		Version:          "2",
 		Engine:           "gotreesitter-js-and-go-ast",
-		SourceScopes:     []string{"inventory.files.included", "inventory.files.sidecars", "inventory.files.embedded", "client/wasm/**/*.go production owners"},
+		SourceScopes:     []string{"inventory.files.included", "inventory.files.sidecars", "inventory.files.embedded", "client/js/bootstrap-src/**/*.ts", "client/runtime/**/*.ts", "client/wasm/**/*.go production owners"},
 		Operations:       []string{"json-parse", "json-stringify", "props-json", "patch-json", "value-json"},
 		BridgeOperations: []string{"gosx-read", "gosx-write", "gosx-call"},
 		PhaseClassifier:  runtimeJSONPhaseClassifierVersion,
@@ -637,12 +640,46 @@ func loadRuntimeJSONInventory(ctx context.Context, opts RuntimeJSONProbeOptions)
 	return &inv, source, nil
 }
 
-func runtimeJSONSourceFiles(inv *Inventory) []SourceFile {
+func runtimeJSONSourceFiles(root string, inv *Inventory) ([]SourceFile, error) {
 	var out []SourceFile
 	out = append(out, inv.Files.Included...)
 	out = append(out, inv.Files.Sidecars...)
 	out = append(out, inv.Files.Embedded...)
 	seen := map[string]bool{}
+	for _, src := range out {
+		seen[src.Path] = true
+	}
+	for _, sourceRoot := range []string{
+		filepath.Join(root, "client", "js", "bootstrap-src"),
+		filepath.Join(root, "client", "runtime"),
+	} {
+		runtimeFiles, err := sourceFiles(sourceRoot, ".ts", true)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range runtimeFiles {
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return nil, err
+			}
+			rel = filepath.ToSlash(rel)
+			if seen[rel] {
+				continue
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			seen[rel] = true
+			out = append(out, SourceFile{
+				Path:       rel,
+				Language:   "typescript",
+				SourceKind: "typed-runtime",
+				Lines:      countLines(body),
+				Bytes:      int64(len(body)),
+			})
+		}
+	}
 	for _, name := range inv.Surface.GosxNames {
 		for _, owner := range name.Owners {
 			if strings.HasPrefix(owner, "client/wasm/") && strings.HasSuffix(owner, ".go") && !seen[owner] {
@@ -655,7 +692,7 @@ func runtimeJSONSourceFiles(inv *Inventory) []SourceFile {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out
+	return out, nil
 }
 
 func runtimeJSONSitesForFile(src SourceFile, body []byte, gosxGlobals map[string]bool) ([]RuntimeJSONStaticSite, error) {

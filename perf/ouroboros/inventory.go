@@ -38,8 +38,10 @@ const (
 	canonicalJSON  = 253
 
 	compatibilityAuditSchemaVersion = "gosx.ouroboros.compatibility-audit.v1"
-	compatibilityAuditScope         = "client/js/bootstrap-src/**/*.js + client/wasm/**/*.go"
-	compatibilityFullRuntimeScope   = "inventory.files.included + inventory.files.sidecars + inventory.files.embedded + client/wasm/**/*.go production owners"
+	compatibilityAuditScope         = "client/js/bootstrap-src/**/*.{js,ts} + client/runtime/**/*.ts + client/wasm/**/*.go"
+	compatibilityFullRuntimeScope   = "inventory.files.included + inventory.files.sidecars + inventory.files.embedded + client/js/bootstrap-src/**/*.ts + client/runtime/**/*.ts + client/wasm/**/*.go production owners"
+	compatibilityLegacyAuditScope   = "client/js/bootstrap-src/**/*.js + client/wasm/**/*.go"
+	compatibilityLegacyFullScope    = "inventory.files.included + inventory.files.sidecars + inventory.files.embedded + client/wasm/**/*.go production owners"
 	compatibilityReceiptMethod      = "gosx.ouroboros.compatibility-receipt.raw-name.v1"
 	compatibilityReceiptClassifier  = "none"
 	compatibilityFullMethod         = runtimeJSONStaticScannerVersion
@@ -386,7 +388,8 @@ type ArtifactRef struct {
 func DefaultScope() Scope {
 	return Scope{
 		Included: []ScopeRule{
-			{Pattern: "client/js/bootstrap-src/**/*.js", Reason: "first-party authored browser runtime source"},
+			{Pattern: "client/js/bootstrap-src/**/*.{js,ts}", Reason: "first-party authored browser runtime source"},
+			{Pattern: "client/runtime/**/*.ts", Reason: "first-party typed browser runtime source"},
 			{Pattern: "client/js/{patch,relay,stripe-bridge}.js", Reason: "first-party hand-authored browser runtime sidecars, outside the historical line scoreboard"},
 			{Pattern: "//go:embed browser-source patterns (*.js, *.ts, *.tsx)", Reason: "first-party embedded browser runtime source outside client/js"},
 		},
@@ -511,25 +514,24 @@ func DefaultCorpusManifest() CorpusManifest {
 		Scope: DefaultScope(),
 		FixtureRoutes: []FixtureRoute{
 			{ID: "R00", Route: "/static", FixtureApp: "examples/ouroboros-corpus", Purpose: "SSR only", ExpectedRuntime: "none", ExpectedTinyGoCurrent: "none", ExpectedTinyGoFuture: "none", Capabilities: []string{"ssr"}},
-			{ID: "R01", Route: "/lite", FixtureApp: "examples/ouroboros-corpus", Purpose: "declarative regions/actions without WASM", ExpectedRuntime: "lite", ExpectedTinyGoCurrent: "none", ExpectedTinyGoFuture: "core", Capabilities: []string{"regions", "actions"}},
-			{ID: "R02", Route: "/island/counter", FixtureApp: "examples/ouroboros-corpus", Purpose: "one visual island and one action", ExpectedRuntime: "islands", ExpectedTinyGoCurrent: "islands", ExpectedTinyGoFuture: "core", Capabilities: []string{"island", "action"}},
-			{ID: "R03", Route: "/islands/kitchen", FixtureApp: "examples/ouroboros-corpus", Purpose: "multiple islands and shared signals", ExpectedRuntime: "islands", ExpectedTinyGoCurrent: "islands", ExpectedTinyGoFuture: "core", Capabilities: []string{"islands", "signals"}},
-			{ID: "R04", Route: "/action/form", FixtureApp: "examples/ouroboros-corpus", Purpose: "server action validation and redirect", ExpectedRuntime: "action bridge", ExpectedTinyGoCurrent: "none", ExpectedTinyGoFuture: "core", Capabilities: []string{"actions", "redirect"}},
-			{ID: "R05", Route: "/canvas-board", FixtureApp: "examples/ouroboros-corpus", Purpose: "CanvasBoard engine surface", ExpectedRuntime: "engine", ExpectedTinyGoCurrent: "runtime", ExpectedTinyGoFuture: "engine", Capabilities: []string{"canvas", "engine"}},
-			{ID: "R06", Route: "/hub/echo", FixtureApp: "examples/ouroboros-corpus", Purpose: "hub bind, fanout, and shared signal update", ExpectedRuntime: "collab", ExpectedTinyGoCurrent: "runtime", ExpectedTinyGoFuture: "collab", Capabilities: []string{"hub", "signals"}},
-			{ID: "R07", Route: "/video-sync", FixtureApp: "examples/ouroboros-corpus", Purpose: "video engine and drift bridge", ExpectedRuntime: "video", ExpectedTinyGoCurrent: "runtime", ExpectedTinyGoFuture: "engine", Capabilities: []string{"video", "engine"}},
-			{ID: "R08", Route: "/scene/basic", FixtureApp: "examples/ouroboros-corpus", Purpose: "bounded Scene3D PBR scene", ExpectedRuntime: "scene3d", ExpectedTinyGoCurrent: "runtime", ExpectedTinyGoFuture: "engine", Capabilities: []string{"scene3d", "webgpu", "webgl"}},
-			{ID: "R09A", Route: "/navigation/a", FixtureApp: "examples/ouroboros-corpus", Purpose: "client navigation entry route", ExpectedRuntime: "navigation", ExpectedTinyGoCurrent: "none", ExpectedTinyGoFuture: "core", Capabilities: []string{"navigation", "dispose"}},
-			{ID: "R09B", Route: "/navigation/b", FixtureApp: "examples/ouroboros-corpus", Purpose: "client navigation target route", ExpectedRuntime: "navigation", ExpectedTinyGoCurrent: "none", ExpectedTinyGoFuture: "core", Capabilities: []string{"navigation", "dispose"}},
-			{ID: "R10", Route: "/demos/water", FixtureApp: "examples/gosx-docs", Purpose: "flagship heavy Scene3D route", ExpectedRuntime: "water scene3d", ExpectedTinyGoCurrent: "runtime", ExpectedTinyGoFuture: "engine", Capabilities: []string{"scene3d", "webgpu", "webgl", "water"}},
+			{ID: "R01", Route: "/lite", FixtureApp: "examples/ouroboros-corpus", Purpose: "declarative regions/actions without WASM", ExpectedRuntime: "lite", ExpectedTinyGoCurrent: "core", ExpectedTinyGoFuture: "core", Capabilities: []string{"regions", "actions"}},
+			{ID: "R02", Route: "/island/counter", FixtureApp: "examples/ouroboros-corpus", Purpose: "one visual island and one action", ExpectedRuntime: "islands", ExpectedTinyGoCurrent: "core", ExpectedTinyGoFuture: "core", Capabilities: []string{"island", "action"}},
+			{ID: "R03", Route: "/islands/kitchen", FixtureApp: "examples/ouroboros-corpus", Purpose: "multiple islands and shared signals", ExpectedRuntime: "islands", ExpectedTinyGoCurrent: "core", ExpectedTinyGoFuture: "core", Capabilities: []string{"islands", "signals"}},
+			{ID: "R04", Route: "/action/form", FixtureApp: "examples/ouroboros-corpus", Purpose: "server action validation and redirect", ExpectedRuntime: "action bridge", ExpectedTinyGoCurrent: "core", ExpectedTinyGoFuture: "core", Capabilities: []string{"actions", "redirect"}},
+			{ID: "R05", Route: "/canvas-board", FixtureApp: "examples/ouroboros-corpus", Purpose: "CanvasBoard engine surface", ExpectedRuntime: "engine", ExpectedTinyGoCurrent: "engine", ExpectedTinyGoFuture: "engine", Capabilities: []string{"canvas", "engine"}},
+			{ID: "R06", Route: "/hub/echo", FixtureApp: "examples/ouroboros-corpus", Purpose: "hub bind, fanout, and shared signal update", ExpectedRuntime: "collab", ExpectedTinyGoCurrent: "collab", ExpectedTinyGoFuture: "collab", Capabilities: []string{"hub", "signals"}},
+			{ID: "R07", Route: "/video-sync", FixtureApp: "examples/ouroboros-corpus", Purpose: "video engine and drift bridge", ExpectedRuntime: "engine", ExpectedTinyGoCurrent: "engine", ExpectedTinyGoFuture: "engine", Capabilities: []string{"video", "engine"}},
+			{ID: "R08", Route: "/scene/basic", FixtureApp: "examples/ouroboros-corpus", Purpose: "bounded Scene3D PBR scene", ExpectedRuntime: "engine", ExpectedTinyGoCurrent: "engine", ExpectedTinyGoFuture: "engine", Capabilities: []string{"scene3d", "webgpu", "webgl"}},
+			{ID: "R09A", Route: "/navigation/a", FixtureApp: "examples/ouroboros-corpus", Purpose: "client navigation entry route", ExpectedRuntime: "navigation", ExpectedTinyGoCurrent: "core", ExpectedTinyGoFuture: "core", Capabilities: []string{"navigation", "dispose"}},
+			{ID: "R09B", Route: "/navigation/b", FixtureApp: "examples/ouroboros-corpus", Purpose: "client navigation target route", ExpectedRuntime: "navigation", ExpectedTinyGoCurrent: "core", ExpectedTinyGoFuture: "core", Capabilities: []string{"navigation", "dispose"}},
+			{ID: "R10", Route: "/demos/water", FixtureApp: "examples/gosx-docs", Purpose: "flagship heavy Scene3D route", ExpectedRuntime: "engine", ExpectedTinyGoCurrent: "engine", ExpectedTinyGoFuture: "engine", Capabilities: []string{"scene3d", "webgpu", "webgl", "water"}},
 		},
 		Variants: []RuntimeVariant{
-			{ID: "runtime", Generation: "current", Status: "measured", SizeArtifact: variantArtifact("sizes/runtime.json"), WASMArtifact: variantArtifact("wasm/runtime.wasm"), SelectedByRoutes: []string{"R05", "R06", "R07", "R08", "R10"}},
-			{ID: "islands", Generation: "current", Status: "measured", SizeArtifact: variantArtifact("sizes/islands.json"), WASMArtifact: variantArtifact("wasm/islands.wasm"), SelectedByRoutes: []string{"R02", "R03"}},
-			{ID: "core", Generation: "future", Status: "planned", SelectedByRoutes: []string{"R01", "R02", "R03", "R04", "R09A", "R09B"}},
-			{ID: "engine", Generation: "future", Status: "planned", SelectedByRoutes: []string{"R05", "R07", "R08", "R10"}},
-			{ID: "collab", Generation: "future", Status: "planned", SelectedByRoutes: []string{"R06"}},
-			{ID: "full", Generation: "future", Status: "planned", SelectedByRoutes: []string{}},
+			{ID: "core", Generation: "current", Status: "measured", SizeArtifact: variantArtifact("sizes/core.json"), WASMArtifact: variantArtifact("wasm/core.wasm"), SelectedByRoutes: []string{"R01", "R02", "R03", "R04", "R09A", "R09B"}},
+			{ID: "engine", Generation: "current", Status: "measured", SizeArtifact: variantArtifact("sizes/engine.json"), WASMArtifact: variantArtifact("wasm/engine.wasm"), SelectedByRoutes: []string{"R05", "R07", "R08", "R10"}},
+			{ID: "collab", Generation: "current", Status: "measured", SizeArtifact: variantArtifact("sizes/collab.json"), WASMArtifact: variantArtifact("wasm/collab.wasm"), SelectedByRoutes: []string{"R06"}},
+			{ID: "full", Generation: "current", Status: "measured", SizeArtifact: variantArtifact("sizes/full.json"), WASMArtifact: variantArtifact("wasm/full.wasm"), SelectedByRoutes: []string{}},
+			{ID: "islands", Generation: "current", Status: "measured", SizeArtifact: variantArtifact("sizes/islands.json"), WASMArtifact: variantArtifact("wasm/islands.wasm"), SelectedByRoutes: []string{}},
 		},
 	}
 }
@@ -1245,7 +1247,7 @@ func scanCompatibilityNameSetAtRevision(ctx context.Context, repoRoot, revision 
 	if !validGitRevision(revision) {
 		return CompatibilityNameSetEvidence{}, fmt.Errorf("unsafe revision %q", revision)
 	}
-	out, err := gitOutput(ctx, repoRoot, "git", "ls-tree", "-r", "--name-only", revision, "--", "client/js/bootstrap-src", "client/wasm")
+	out, err := gitOutput(ctx, repoRoot, "git", "ls-tree", "-r", "--name-only", revision, "--", "client/js/bootstrap-src", "client/runtime", "client/wasm")
 	if err != nil {
 		return CompatibilityNameSetEvidence{}, err
 	}
@@ -1256,8 +1258,10 @@ func scanCompatibilityNameSetAtRevision(ctx context.Context, repoRoot, revision 
 			continue
 		}
 		switch {
-		case strings.HasPrefix(rel, "client/js/bootstrap-src/") && strings.HasSuffix(rel, ".js"):
-			files = append(files, SourceFile{Path: rel, Language: "javascript", SourceKind: "compatibility-bootstrap"})
+		case strings.HasPrefix(rel, "client/js/bootstrap-src/") && (strings.HasSuffix(rel, ".js") || strings.HasSuffix(rel, ".ts")):
+			files = append(files, SourceFile{Path: rel, Language: languageForPath(rel), SourceKind: "compatibility-bootstrap"})
+		case strings.HasPrefix(rel, "client/runtime/") && strings.HasSuffix(rel, ".ts"):
+			files = append(files, SourceFile{Path: rel, Language: "typescript", SourceKind: "compatibility-runtime"})
 		case strings.HasPrefix(rel, "client/wasm/") && strings.HasSuffix(rel, ".go"):
 			files = append(files, SourceFile{Path: rel, Language: "go", SourceKind: "compatibility-wasm"})
 		}
@@ -1372,13 +1376,29 @@ func isSafeRepoRelPath(rel string) bool {
 
 func compatibilityAuditSourceFiles(root string) ([]SourceFile, error) {
 	var out []SourceFile
-	jsFiles, err := sourceFiles(filepath.Join(root, "client", "js", "bootstrap-src"), ".js", false)
-	if err != nil {
-		return nil, err
+	bootstrapRoot := filepath.Join(root, "client", "js", "bootstrap-src")
+	for _, ext := range []string{".js", ".ts"} {
+		files, err := sourceFiles(bootstrapRoot, ext, false)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range files {
+			rel, _ := filepath.Rel(root, path)
+			out = append(out, SourceFile{Path: filepath.ToSlash(rel), Language: languageForPath(rel), SourceKind: "compatibility-bootstrap"})
+		}
 	}
-	for _, path := range jsFiles {
-		rel, _ := filepath.Rel(root, path)
-		out = append(out, SourceFile{Path: filepath.ToSlash(rel), Language: "javascript", SourceKind: "compatibility-bootstrap"})
+	runtimeRoot := filepath.Join(root, "client", "runtime")
+	if _, statErr := os.Stat(runtimeRoot); statErr == nil {
+		typedFiles, err := sourceFiles(runtimeRoot, ".ts", true)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range typedFiles {
+			rel, _ := filepath.Rel(root, path)
+			out = append(out, SourceFile{Path: filepath.ToSlash(rel), Language: "typescript", SourceKind: "compatibility-runtime"})
+		}
+	} else if !os.IsNotExist(statErr) {
+		return nil, statErr
 	}
 	goFiles, err := sourceFiles(filepath.Join(root, "client", "wasm"), ".go", true)
 	if err != nil {
@@ -1614,7 +1634,7 @@ func archiveRevisionToTempDirWithPathspecs(ctx context.Context, repoRoot, revisi
 
 func archiveCompatibilityPathspecs(ctx context.Context, repoRoot, revision string) ([]string, error) {
 	var out []string
-	for _, path := range []string{"client/js/bootstrap-src", "client/wasm"} {
+	for _, path := range []string{"client/js/bootstrap-src", "client/runtime", "client/wasm"} {
 		cmd := exec.CommandContext(ctx, "git", "cat-file", "-e", revision+":"+path)
 		cmd.Dir = repoRoot
 		if err := cmd.Run(); err == nil {

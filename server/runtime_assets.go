@@ -247,6 +247,9 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 	candidates := map[string]string{
 		"runtime.wasm":                         filepath.Join(buildDir, "gosx-runtime.wasm"),
 		"runtime-islands.wasm":                 filepath.Join(buildDir, "gosx-runtime-islands.wasm"),
+		"runtime-core.wasm":                    filepath.Join(buildDir, "gosx-runtime-core.wasm"),
+		"runtime-engine.wasm":                  filepath.Join(buildDir, "gosx-runtime-engine.wasm"),
+		"runtime-collab.wasm":                  filepath.Join(buildDir, "gosx-runtime-collab.wasm"),
 		"wasm_exec.js":                         filepath.Join(buildDir, "wasm_exec.js"),
 		"standard-go-wasm_exec.js":             filepath.Join(buildDir, "standard-go-wasm_exec.js"),
 		"bootstrap.js":                         filepath.Join(buildDir, "bootstrap.js"),
@@ -321,6 +324,12 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 			return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASM.File)
 		}
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMIslands.File)
+	case "runtime-core.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "core")
+	case "runtime-engine.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "engine")
+	case "runtime-collab.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "collab")
 	case "wasm_exec.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMExec.File)
 	case "standard-go-wasm_exec.js":
@@ -388,6 +397,17 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func runtimeManifestVariantAssetPath(assetsDir string, manifest *buildmanifest.Manifest, variant string) (string, bool) {
+	if manifest == nil {
+		return "", false
+	}
+	asset, ok := manifest.Runtime.WASMVariants[strings.TrimSpace(variant)]
+	if !ok {
+		return "", false
+	}
+	return runtimeManifestAssetPath(assetsDir, "runtime", asset.File)
 }
 
 func runtimeManifestAssetPath(assetsDir, bucket, file string) (string, bool) {

@@ -1304,9 +1304,10 @@ const routeBudgets = [
     // Bumped to exact 1_174_893 / 312_526 / 264_003 for the integrated quality
     // telemetry path.
     // O4's executable loader is carried by bootstrap-runtime.js. Measured:
-    // 1_179_442 / 313_962 / 265_181.
+    // 1_179_442 / 313_962 / 265_181. O5's typed smallest-variant selector
+    // adds 55 gzip bytes to the shared runtime route.
     raw: 1_180_000,
-    gzip: 314_000,
+    gzip: 315_000,
     brotli: 266_000,
   },
   {

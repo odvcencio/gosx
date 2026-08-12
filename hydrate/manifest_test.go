@@ -142,9 +142,11 @@ func TestMultipleIslands(t *testing.T) {
 func TestManifestRuntimeRef(t *testing.T) {
 	m := NewManifest()
 	m.Runtime = RuntimeRef{
-		Path: "/gosx/runtime.wasm",
-		Hash: "abc123",
-		Size: 2500000,
+		Path:        "/gosx/runtime.wasm",
+		Hash:        "abc123",
+		Size:        2500000,
+		Variant:     "full",
+		FeatureMask: 31,
 	}
 	data, err := m.Marshal()
 	if err != nil {
@@ -162,6 +164,9 @@ func TestManifestRuntimeRef(t *testing.T) {
 	}
 	if decoded.Runtime.Size != 2500000 {
 		t.Fatalf("runtime size: expected 2500000, got %d", decoded.Runtime.Size)
+	}
+	if decoded.Runtime.Variant != "full" || decoded.Runtime.FeatureMask != 31 {
+		t.Fatalf("runtime capability metadata: variant=%q mask=%d", decoded.Runtime.Variant, decoded.Runtime.FeatureMask)
 	}
 }
 

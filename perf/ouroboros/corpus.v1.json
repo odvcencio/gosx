@@ -24,8 +24,12 @@
   "scope": {
     "included": [
       {
-        "pattern": "client/js/bootstrap-src/**/*.js",
+        "pattern": "client/js/bootstrap-src/**/*.{js,ts}",
         "reason": "first-party authored browser runtime source"
+      },
+      {
+        "pattern": "client/runtime/**/*.ts",
+        "reason": "first-party typed browser runtime source"
       },
       {
         "pattern": "client/js/{patch,relay,stripe-bridge}.js",
@@ -69,38 +73,98 @@
   },
   "fixtureRoutes": [
     { "id": "R00", "route": "/static", "fixtureApp": "examples/ouroboros-corpus", "purpose": "SSR only", "expectedRuntime": "none", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "none", "expectedCapabilities": ["ssr"] },
-    { "id": "R01", "route": "/lite", "fixtureApp": "examples/ouroboros-corpus", "purpose": "declarative regions/actions without WASM", "expectedRuntime": "lite", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["regions", "actions"] },
-    { "id": "R02", "route": "/island/counter", "fixtureApp": "examples/ouroboros-corpus", "purpose": "one visual island and one action", "expectedRuntime": "islands", "expectedTinyGoCurrent": "islands", "expectedTinyGoFuture": "core", "expectedCapabilities": ["island", "action"] },
-    { "id": "R03", "route": "/islands/kitchen", "fixtureApp": "examples/ouroboros-corpus", "purpose": "multiple islands and shared signals", "expectedRuntime": "islands", "expectedTinyGoCurrent": "islands", "expectedTinyGoFuture": "core", "expectedCapabilities": ["islands", "signals"] },
-    { "id": "R04", "route": "/action/form", "fixtureApp": "examples/ouroboros-corpus", "purpose": "server action with validation and redirect", "expectedRuntime": "action bridge", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["actions", "redirect"] },
-    { "id": "R05", "route": "/canvas-board", "fixtureApp": "examples/ouroboros-corpus", "purpose": "CanvasBoard engine surface", "expectedRuntime": "engine", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["canvas", "engine"] },
-    { "id": "R06", "route": "/hub/echo", "fixtureApp": "examples/ouroboros-corpus", "purpose": "hub bind, fanout, and shared signal update", "expectedRuntime": "collab", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "collab", "expectedCapabilities": ["hub", "signals"] },
-    { "id": "R07", "route": "/video-sync", "fixtureApp": "examples/ouroboros-corpus", "purpose": "video engine and drift bridge", "expectedRuntime": "video", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["video", "engine"] },
-    { "id": "R08", "route": "/scene/basic", "fixtureApp": "examples/ouroboros-corpus", "purpose": "bounded Scene3D PBR scene", "expectedRuntime": "scene3d", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["scene3d", "webgpu", "webgl"] },
-    { "id": "R09A", "route": "/navigation/a", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation entry route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
-    { "id": "R09B", "route": "/navigation/b", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation target route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "none", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
-    { "id": "R10", "route": "/demos/water", "fixtureApp": "examples/gosx-docs", "purpose": "flagship heavy Scene3D route", "expectedRuntime": "water scene3d", "expectedTinyGoCurrent": "runtime", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["scene3d", "webgpu", "webgl", "water"] }
+    { "id": "R01", "route": "/lite", "fixtureApp": "examples/ouroboros-corpus", "purpose": "declarative regions/actions without WASM", "expectedRuntime": "lite", "expectedTinyGoCurrent": "core", "expectedTinyGoFuture": "core", "expectedCapabilities": ["regions", "actions"] },
+    { "id": "R02", "route": "/island/counter", "fixtureApp": "examples/ouroboros-corpus", "purpose": "one visual island and one action", "expectedRuntime": "islands", "expectedTinyGoCurrent": "core", "expectedTinyGoFuture": "core", "expectedCapabilities": ["island", "action"] },
+    { "id": "R03", "route": "/islands/kitchen", "fixtureApp": "examples/ouroboros-corpus", "purpose": "multiple islands and shared signals", "expectedRuntime": "islands", "expectedTinyGoCurrent": "core", "expectedTinyGoFuture": "core", "expectedCapabilities": ["islands", "signals"] },
+    { "id": "R04", "route": "/action/form", "fixtureApp": "examples/ouroboros-corpus", "purpose": "server action with validation and redirect", "expectedRuntime": "action bridge", "expectedTinyGoCurrent": "core", "expectedTinyGoFuture": "core", "expectedCapabilities": ["actions", "redirect"] },
+    { "id": "R05", "route": "/canvas-board", "fixtureApp": "examples/ouroboros-corpus", "purpose": "CanvasBoard engine surface", "expectedRuntime": "engine", "expectedTinyGoCurrent": "engine", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["canvas", "engine"] },
+    { "id": "R06", "route": "/hub/echo", "fixtureApp": "examples/ouroboros-corpus", "purpose": "hub bind, fanout, and shared signal update", "expectedRuntime": "collab", "expectedTinyGoCurrent": "collab", "expectedTinyGoFuture": "collab", "expectedCapabilities": ["hub", "signals"] },
+    { "id": "R07", "route": "/video-sync", "fixtureApp": "examples/ouroboros-corpus", "purpose": "video engine and drift bridge", "expectedRuntime": "engine", "expectedTinyGoCurrent": "engine", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["video", "engine"] },
+    { "id": "R08", "route": "/scene/basic", "fixtureApp": "examples/ouroboros-corpus", "purpose": "bounded Scene3D PBR scene", "expectedRuntime": "engine", "expectedTinyGoCurrent": "engine", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["scene3d", "webgpu", "webgl"] },
+    { "id": "R09A", "route": "/navigation/a", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation entry route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "core", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
+    { "id": "R09B", "route": "/navigation/b", "fixtureApp": "examples/ouroboros-corpus", "purpose": "client navigation target route", "expectedRuntime": "navigation", "expectedTinyGoCurrent": "core", "expectedTinyGoFuture": "core", "expectedCapabilities": ["navigation", "dispose"] },
+    { "id": "R10", "route": "/demos/water", "fixtureApp": "examples/gosx-docs", "purpose": "flagship heavy Scene3D route", "expectedRuntime": "engine", "expectedTinyGoCurrent": "engine", "expectedTinyGoFuture": "engine", "expectedCapabilities": ["scene3d", "webgpu", "webgl", "water"] }
   ],
   "runtimeVariants": [
     {
-      "id": "runtime",
+      "id": "core",
       "generation": "current",
       "status": "measured",
       "sizeBytes": null,
       "budgetBytes": null,
       "sizeArtifact": {
         "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
-        "path": "sizes/runtime.json",
+        "path": "sizes/core.json",
         "baseRevision": "__required_at_runtime__",
         "overlayHash": "sha256:clean"
       },
       "wasmArtifact": {
         "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
-        "path": "wasm/runtime.wasm",
+        "path": "wasm/core.wasm",
         "baseRevision": "__required_at_runtime__",
         "overlayHash": "sha256:clean"
       },
-      "selectedByRoutes": ["R05", "R06", "R07", "R08", "R10"]
+      "selectedByRoutes": ["R01", "R02", "R03", "R04", "R09A", "R09B"]
+    },
+    {
+      "id": "engine",
+      "generation": "current",
+      "status": "measured",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "sizes/engine.json",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "wasmArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "wasm/engine.wasm",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "selectedByRoutes": ["R05", "R07", "R08", "R10"]
+    },
+    {
+      "id": "collab",
+      "generation": "current",
+      "status": "measured",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "sizes/collab.json",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "wasmArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "wasm/collab.wasm",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "selectedByRoutes": ["R06"]
+    },
+    {
+      "id": "full",
+      "generation": "current",
+      "status": "measured",
+      "sizeBytes": null,
+      "budgetBytes": null,
+      "sizeArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "sizes/full.json",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "wasmArtifact": {
+        "schemaVersion": "gosx.ouroboros.artifact-ref.v1",
+        "path": "wasm/full.wasm",
+        "baseRevision": "__required_at_runtime__",
+        "overlayHash": "sha256:clean"
+      },
+      "selectedByRoutes": []
     },
     {
       "id": "islands",
@@ -120,46 +184,6 @@
         "baseRevision": "__required_at_runtime__",
         "overlayHash": "sha256:clean"
       },
-      "selectedByRoutes": ["R02", "R03"]
-    },
-    {
-      "id": "core",
-      "generation": "future",
-      "status": "planned",
-      "sizeBytes": null,
-      "budgetBytes": null,
-      "sizeArtifact": null,
-      "wasmArtifact": null,
-      "selectedByRoutes": ["R01", "R02", "R03", "R04", "R09A", "R09B"]
-    },
-    {
-      "id": "engine",
-      "generation": "future",
-      "status": "planned",
-      "sizeBytes": null,
-      "budgetBytes": null,
-      "sizeArtifact": null,
-      "wasmArtifact": null,
-      "selectedByRoutes": ["R05", "R07", "R08", "R10"]
-    },
-    {
-      "id": "collab",
-      "generation": "future",
-      "status": "planned",
-      "sizeBytes": null,
-      "budgetBytes": null,
-      "sizeArtifact": null,
-      "wasmArtifact": null,
-      "selectedByRoutes": ["R06"]
-    },
-    {
-      "id": "full",
-      "generation": "future",
-      "status": "planned",
-      "sizeBytes": null,
-      "budgetBytes": null,
-      "sizeArtifact": null,
-      "wasmArtifact": null,
       "selectedByRoutes": []
     }
   ],

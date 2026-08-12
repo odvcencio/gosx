@@ -177,7 +177,7 @@ func validateCompatibilityAudit(inv *Inventory) error {
 }
 
 func validateCompatibilityNameSet(field string, set CompatibilityNameSetEvidence, scope, method, classifier string, requireRuntimeJSONHashes bool) error {
-	if set.SourceIdentity.Kind == "" || set.Scope != scope || set.MethodVersion != method || set.ClassifierVersion != classifier || set.Names == nil || set.NameSetHash == "" || set.EvidenceHash == "" {
+	if set.SourceIdentity.Kind == "" || !compatibilityScopeMatches(field, set.Scope, scope) || set.MethodVersion != method || set.ClassifierVersion != classifier || set.Names == nil || set.NameSetHash == "" || set.EvidenceHash == "" {
 		return fmt.Errorf("malformed compatibilityAudit %s set", field)
 	}
 	if set.Count != len(set.Names) {
@@ -217,6 +217,23 @@ func validateCompatibilityNameSet(field string, set CompatibilityNameSetEvidence
 		return fmt.Errorf("compatibilityAudit %s evidenceHash mismatch", field)
 	}
 	return nil
+}
+
+func compatibilityScopeMatches(field, got, want string) bool {
+	if got == want {
+		return true
+	}
+	// O0.2 artifacts predate the O1 typed-runtime source scope. Continue to
+	// validate those immutable evidence bundles while newly collected audits
+	// use the expanded scope above.
+	switch field {
+	case "receipt":
+		return want == compatibilityAuditScope && got == compatibilityLegacyAuditScope
+	case "anchor", "current":
+		return want == compatibilityFullRuntimeScope && got == compatibilityLegacyFullScope
+	default:
+		return false
+	}
 }
 
 func equalStrings(a, b []string) bool {
@@ -266,9 +283,9 @@ func validateSerializationSites(sites []SerializationSite) error {
 }
 
 func validateManifestVariants(inv *Inventory) error {
-	currentIDs := map[string]bool{"runtime": true, "islands": true}
+	currentIDs := map[string]bool{"runtime": true, "core": true, "engine": true, "collab": true, "full": true, "islands": true}
 	futureIDs := map[string]bool{"core": true, "engine": true, "collab": true, "full": true}
-	currentRouteValues := map[string]bool{"runtime": true, "islands": true, "none": true}
+	currentRouteValues := map[string]bool{"runtime": true, "core": true, "engine": true, "collab": true, "full": true, "islands": true, "none": true}
 	futureRouteValues := map[string]bool{"core": true, "engine": true, "collab": true, "full": true, "none": true}
 	for _, route := range inv.Manifest.FixtureRoutes {
 		if route.ID == "" || route.Route == "" || route.FixtureApp == "" {
@@ -282,6 +299,8 @@ func validateManifestVariants(inv *Inventory) error {
 		}
 	}
 	seen := map[string]bool{}
+	hasO5Current := false
+	hasFuture := false
 	for _, variant := range inv.Manifest.Variants {
 		if variant.ID == "" || variant.Generation == "" || variant.Status == "" || variant.SelectedByRoutes == nil {
 			return fmt.Errorf("malformed runtime variant: %+v", variant)
@@ -292,6 +311,9 @@ func validateManifestVariants(inv *Inventory) error {
 		seen[variant.ID] = true
 		switch variant.Generation {
 		case "current":
+			if variant.ID == "core" || variant.ID == "engine" || variant.ID == "collab" || variant.ID == "full" {
+				hasO5Current = true
+			}
 			if !currentIDs[variant.ID] {
 				return fmt.Errorf("invalid current runtime variant %q", variant.ID)
 			}
@@ -308,6 +330,7 @@ func validateManifestVariants(inv *Inventory) error {
 				return err
 			}
 		case "future":
+			hasFuture = true
 			if !futureIDs[variant.ID] {
 				return fmt.Errorf("invalid future runtime variant %q", variant.ID)
 			}
@@ -324,14 +347,20 @@ func validateManifestVariants(inv *Inventory) error {
 			return fmt.Errorf("runtime variant %s has invalid generation %q", variant.ID, variant.Generation)
 		}
 	}
-	for id := range currentIDs {
+	requiredCurrentIDs := map[string]bool{"runtime": true, "islands": true}
+	if hasO5Current {
+		requiredCurrentIDs = map[string]bool{"core": true, "engine": true, "collab": true, "full": true}
+	}
+	for id := range requiredCurrentIDs {
 		if !seen[id] {
 			return fmt.Errorf("missing current runtime variant %s", id)
 		}
 	}
-	for id := range futureIDs {
-		if !seen[id] {
-			return fmt.Errorf("missing future runtime variant %s", id)
+	if hasFuture {
+		for id := range futureIDs {
+			if !seen[id] {
+				return fmt.Errorf("missing future runtime variant %s", id)
+			}
 		}
 	}
 	if seen["future-full"] {

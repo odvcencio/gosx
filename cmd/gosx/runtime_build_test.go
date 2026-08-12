@@ -11,33 +11,39 @@ import (
 
 func TestRuntimeBuildTargetsRecordCurrentVariants(t *testing.T) {
 	targets := runtimeBuildTargets()
-	if len(targets) != 2 {
+	if len(targets) != 5 {
 		t.Fatalf("target count = %d", len(targets))
 	}
-	if targets[0].id != "runtime" || targets[0].file != "gosx-runtime.wasm" {
-		t.Fatalf("unexpected full target: %#v", targets[0])
+	want := []struct {
+		id   string
+		file string
+		tag  string
+	}{
+		{id: "core", file: "gosx-runtime-core.wasm", tag: "gosx_runtime_core"},
+		{id: "engine", file: "gosx-runtime-engine.wasm", tag: "gosx_runtime_engine"},
+		{id: "collab", file: "gosx-runtime-collab.wasm", tag: "gosx_runtime_collab"},
+		{id: "full", file: "gosx-runtime.wasm", tag: "gosx_runtime_full"},
+		{id: "islands", file: "gosx-runtime-islands.wasm", tag: "gosx_tiny_islands_only"},
 	}
-	if targets[1].id != "islands" || targets[1].file != "gosx-runtime-islands.wasm" {
-		t.Fatalf("unexpected islands target: %#v", targets[1])
-	}
-	if !stringSliceContains(targets[1].tags, "gosx_tiny_islands_only") {
-		t.Fatalf("islands target tags = %#v", targets[1].tags)
+	for i, want := range want {
+		if targets[i].id != want.id || targets[i].file != want.file {
+			t.Fatalf("target %d = %#v, want id=%q file=%q", i, targets[i], want.id, want.file)
+		}
+		if !stringSliceContains(targets[i].tags, want.tag) {
+			t.Fatalf("target %q tags = %#v", want.id, targets[i].tags)
+		}
 	}
 }
 
-func TestPlannedRuntimeVariantIsExplicitlyMissing(t *testing.T) {
-	variant := plannedRuntimeVariant("core", []string{"R01"})
-	if variant.Status != "planned" || variant.MissingReason == "" {
-		t.Fatalf("unexpected planned variant: %#v", variant)
+func TestRuntimeTargetsCarryCapabilityRoutes(t *testing.T) {
+	targets := runtimeBuildTargets()
+	for _, target := range targets[:4] {
+		if len(target.selectedRoutes) == 0 && target.id != "full" {
+			t.Fatalf("variant %q has no selected routes", target.id)
+		}
 	}
-	if variant.Generation != "future" {
-		t.Fatalf("planned generation = %q", variant.Generation)
-	}
-	if variant.SizeBytes != nil || variant.BudgetBytes != nil {
-		t.Fatalf("planned size/budget must stay null: %#v", variant)
-	}
-	if len(variant.PlannedSelectedBy) != 1 || variant.PlannedSelectedBy[0] != "R01" {
-		t.Fatalf("unexpected planned routes: %#v", variant.PlannedSelectedBy)
+	if len(targets[0].selectedRoutes) != 6 || targets[0].selectedRoutes[0] != "R01" {
+		t.Fatalf("core selected routes = %#v", targets[0].selectedRoutes)
 	}
 }
 
@@ -87,8 +93,9 @@ func TestRunBuildRuntimePreflightsExistingOutputBeforeArtifactMutation(t *testin
 
 func TestCurrentRuntimeVariantBindsPublishedPath(t *testing.T) {
 	target := runtimeBuildTarget{
-		id:             "runtime",
+		id:             "full",
 		file:           "gosx-runtime.wasm",
+		tags:           []string{"gosx_runtime_full"},
 		selectedRoutes: []string{"R05"},
 	}
 	tmpPath := filepath.Join(t.TempDir(), ".runtime.ouroboros-123", target.file)
@@ -109,6 +116,9 @@ func TestCurrentRuntimeVariantBindsPublishedPath(t *testing.T) {
 	variant := currentRuntimeVariant(target, metrics, metrics.Bytes, publishedPath, evidence, true, nil)
 	if variant.Status != "measured" {
 		t.Fatalf("Status = %q, want measured", variant.Status)
+	}
+	if variant.Generation != "current" || variant.Variant != "full" || variant.FeatureMask == 0 {
+		t.Fatalf("capability metadata = %#v", variant)
 	}
 	if variant.SourcePath != publishedPath {
 		t.Fatalf("SourcePath = %q, want %q", variant.SourcePath, publishedPath)
@@ -165,11 +175,10 @@ func TestPublishRuntimeBuildOutputRefusesExistingDestination(t *testing.T) {
 }
 
 func TestReservedRuntimeVariantIDs(t *testing.T) {
-	got := []string{
-		plannedRuntimeVariant("core", nil).ID,
-		plannedRuntimeVariant("engine", nil).ID,
-		plannedRuntimeVariant("collab", nil).ID,
-		plannedRuntimeVariant("full", nil).ID,
+	targets := runtimeBuildTargets()
+	got := make([]string, 0, 4)
+	for _, target := range targets[:4] {
+		got = append(got, target.id)
 	}
 	want := []string{"core", "engine", "collab", "full"}
 	for i := range want {

@@ -70,7 +70,7 @@ func NewHandshake(variant Variant, manifestHash string) Handshake {
 func FeatureMaskForVariant(variant Variant) FeatureMask {
 	switch variant {
 	case VariantCore:
-		return FeatureCore
+		return FeatureCore | FeatureIslands
 	case VariantEngine:
 		return FeatureCore | FeatureEngine | FeatureScene3D
 	case VariantCollab:
@@ -82,6 +82,37 @@ func FeatureMaskForVariant(variant Variant) FeatureMask {
 	default:
 		return 0
 	}
+}
+
+// SelectVariant returns the smallest published runtime that satisfies the
+// requested capabilities. The ordering is intentional: core is the narrow
+// DOM bridge, islands adds island hydration, engine adds shared engine and
+// Scene3D support, collab adds collaboration, and full combines the two
+// independent capability families.
+func SelectVariant(required FeatureMask) (Variant, bool) {
+	if required == 0 {
+		return VariantCore, true
+	}
+	for _, variant := range []Variant{
+		VariantCore,
+		VariantIslands,
+		VariantEngine,
+		VariantCollab,
+		VariantFull,
+	} {
+		features := FeatureMaskForVariant(variant)
+		if features&required == required {
+			return variant, true
+		}
+	}
+	return "", false
+}
+
+// RequiredFeaturesForVariant returns the capability declaration carried by a
+// published variant. Keeping this helper beside SelectVariant makes route
+// metadata independent from artifact filenames.
+func RequiredFeaturesForVariant(variant Variant) FeatureMask {
+	return FeatureMaskForVariant(variant)
 }
 
 // Validate checks the compatibility boundary before any runtime operation.

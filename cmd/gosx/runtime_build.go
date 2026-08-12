@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/perf/ouroboros"
 )
 
@@ -96,7 +97,7 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 		outputPath := filepath.Join(buildOutDir, target.file)
 		publishedPath := filepath.Join(outDir, target.file)
 		if err := buildTinyGoWASM(gosxRoot, gosxRoot, outputPath, tinygoPath, target.tags...); err != nil {
-			targetEvidence := plannedRuntimeVariant(target.id, target.selectedRoutes)
+			targetEvidence := failedRuntimeVariant(target)
 			targetEvidence.Status = "failed"
 			targetEvidence.MissingReason = err.Error()
 			evidence.Variants = append(evidence.Variants, targetEvidence)
@@ -128,12 +129,6 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 		evidence.Variants = append(evidence.Variants, currentRuntimeVariant(target, metrics, sizeBytes, publishedPath, evidence, optimized, shimPtr))
 		fmt.Printf("%s (%d bytes)\n", target.file, len(data))
 	}
-	evidence.Variants = append(evidence.Variants,
-		plannedRuntimeVariant("core", []string{"R01", "R02", "R03", "R04", "R09A", "R09B"}),
-		plannedRuntimeVariant("engine", []string{"R05", "R07", "R08", "R10"}),
-		plannedRuntimeVariant("collab", []string{"R06"}),
-		plannedRuntimeVariant("full", []string{}),
-	)
 	if opts.OuroborosOut != "" {
 		if err := publishRuntimeBuildOutput(buildOutDir, outDir); err != nil {
 			return err
@@ -144,6 +139,17 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 		return err
 	}
 	return nil
+}
+
+func failedRuntimeVariant(target runtimeBuildTarget) ouroboros.RuntimeArtifactVariant {
+	return ouroboros.RuntimeArtifactVariant{
+		ID:                target.id,
+		Variant:           target.id,
+		FeatureMask:       uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(target.id))),
+		Generation:        "current",
+		Status:            "failed",
+		PlannedSelectedBy: target.selectedRoutes,
+	}
 }
 
 func cmdBuildRuntime() {
@@ -197,8 +203,11 @@ type runtimeBuildTarget struct {
 
 func runtimeBuildTargets() []runtimeBuildTarget {
 	return []runtimeBuildTarget{
-		{id: "runtime", label: "runtime", file: "gosx-runtime.wasm", selectedRoutes: []string{"R05", "R06", "R07", "R08", "R10"}},
-		{id: "islands", label: "islands", file: "gosx-runtime-islands.wasm", tags: islandOnlyWASMTags(wasmCompilerTinyGo), selectedRoutes: []string{"R02", "R03"}},
+		{id: "core", label: "core", file: "gosx-runtime-core.wasm", tags: []string{"gosx_runtime_core"}, selectedRoutes: []string{"R01", "R02", "R03", "R04", "R09A", "R09B"}},
+		{id: "engine", label: "engine", file: "gosx-runtime-engine.wasm", tags: []string{"gosx_runtime_engine"}, selectedRoutes: []string{"R05", "R07", "R08", "R10"}},
+		{id: "collab", label: "collab", file: "gosx-runtime-collab.wasm", tags: []string{"gosx_runtime_collab"}, selectedRoutes: []string{"R06"}},
+		{id: "full", label: "full", file: "gosx-runtime.wasm", tags: []string{"gosx_runtime_full"}, selectedRoutes: []string{}},
+		{id: "islands", label: "islands", file: "gosx-runtime-islands.wasm", tags: islandOnlyWASMTags(wasmCompilerTinyGo), selectedRoutes: []string{}},
 	}
 }
 
@@ -218,19 +227,10 @@ func maybeWriteRuntimeBuildEvidence(root string, evidence *ouroboros.RuntimeBuil
 	return ouroboros.WriteNewJSONFile(filepath.Join(root, "wasm", "runtime-artifacts.json"), evidence)
 }
 
-func plannedRuntimeVariant(id string, selectedRoutes []string) ouroboros.RuntimeArtifactVariant {
-	return ouroboros.RuntimeArtifactVariant{
-		ID:                id,
-		Generation:        "future",
-		Status:            "planned",
-		PlannedSelectedBy: selectedRoutes,
-		MissingReason:     "planned O1-O6 bounded TinyGo variant; no artifact exists in O0.2",
-	}
-}
-
 func currentRuntimeVariant(target runtimeBuildTarget, metrics ouroboros.AssetMetrics, sizeBytes int64, publishedPath string, evidence *ouroboros.RuntimeBuildEvidence, optimized bool, shim *ouroboros.AssetMetrics) ouroboros.RuntimeArtifactVariant {
 	return ouroboros.RuntimeArtifactVariant{
 		ID:                target.id,
+		Generation:        "current",
 		Status:            "measured",
 		SizeBytes:         &sizeBytes,
 		File:              filepath.Base(publishedPath),
@@ -248,6 +248,8 @@ func currentRuntimeVariant(target runtimeBuildTarget, metrics ouroboros.AssetMet
 		Optimized:         optimized,
 		Shim:              shim,
 		PlannedSelectedBy: target.selectedRoutes,
+		Variant:           string(runtimewasm.Variant(target.id)),
+		FeatureMask:       uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(target.id))),
 	}
 }
 
