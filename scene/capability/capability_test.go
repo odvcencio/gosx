@@ -16,23 +16,21 @@ func TestVerdict(t *testing.T) {
 			[]Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D}, nil},
 		{"skinning supports webgpu and webgl", []Feature{FeatureSkinning},
 			[]Backend{BackendWebGPU, BackendWebGL}, nil},
-		// ibl is droppable and false on EVERY backend, so every backend stays
-		// capable and every backend carries the gap. The cell used to read true
-		// for WebGL2 while that renderer only tone mapped an equirectangular
-		// texture. See TestIBLIsFalseOnBothBackends in water_shadow_test.go.
-		{"ibl droppable: every backend stays, every backend degraded", []Feature{FeatureIBL},
+		// ibl is droppable. WebGPU consumes the products unconditionally, so it
+		// stays capable with no gap; WebGL2 and Canvas2D stay capable with the
+		// gap listed. See TestIBLTruthMatchesRuntimeConsumers in
+		// water_shadow_test.go and ibl_test.go.
+		{"ibl droppable: every backend stays, webgpu clean, webgl+canvas2d degraded", []Feature{FeatureIBL},
 			[]Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D},
 			map[Backend][]Feature{
-				BackendWebGPU:   {FeatureIBL},
 				BackendWebGL:    {FeatureIBL},
 				BackendCanvas2D: {FeatureIBL},
 			}},
-		{"skinning+ibl: canvas2d excluded by skinning, both GPU backends degraded by ibl",
+		{"skinning+ibl: canvas2d excluded by skinning, webgl degraded by ibl, webgpu clean",
 			[]Feature{FeatureSkinning, FeatureIBL},
 			[]Backend{BackendWebGPU, BackendWebGL},
 			map[Backend][]Feature{
-				BackendWebGPU: {FeatureIBL},
-				BackendWebGL:  {FeatureIBL},
+				BackendWebGL: {FeatureIBL},
 			}},
 		{"water simulation supports webgpu and webgl", []Feature{FeatureWaterSim},
 			[]Backend{BackendWebGPU, BackendWebGL}, nil},
