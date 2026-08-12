@@ -130,10 +130,22 @@
         if (record.disposed || (controller && controller.signal.aborted) || data == null) return;
         var html = record.field ? data[record.field] : data;
         if (typeof html !== "string") return;
-        var replaced = gosxHost.dom && typeof gosxHost.dom.replace === "function"
-          ? gosxHost.dom.replace(el, html)
-          : false;
-        if (replaced === false) {
+        // gosxHost.dom.replace is a forwarding shim compatibility.ts installs
+        // unconditionally, so it is always a function; probe the ambient
+        // name it forwards to instead of the shim to tell "dom.ts never
+        // loaded" (run the unmanaged fallback below, as before) apart from
+        // "dom.ts loaded and replaceRuntimeContent failed" (see dom.ts:
+        // on failure it already disposed the old subtree and may have
+        // partially written the new one, so re-running the unmanaged
+        // dispose/innerHTML/mount fallback would double-apply on top of
+        // that). The latter throws instead, so the catch below reports the
+        // failure and sets the region to the error state, matching the
+        // pre-migration behavior.
+        if (typeof gosxHostCompatibility.read("__gosx_replace_runtime_content") === "function") {
+          if (gosxHost.dom.replace(el, html) === false) {
+            throw new Error("runtime content replacement failed");
+          }
+        } else {
           if (gosxHost.surfaces && typeof gosxHost.surfaces.dispose === "function") {
             gosxHost.surfaces.dispose(el);
           }

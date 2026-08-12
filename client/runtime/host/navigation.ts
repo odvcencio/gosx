@@ -1327,7 +1327,13 @@
 
   async function loadManagedScript(role, src, load) {
     if (!src) return false;
-    if (role === "bootstrap" && gosxHost.lifecycle && typeof gosxHost.lifecycle.bootstrapPage === "function") {
+    // gosxHost.lifecycle.bootstrapPage is a forwarding shim installed by
+    // compatibility.ts on every page (see compatibility.ts), so it is always
+    // a function — probing it can never detect whether the real bootstrap
+    // bundle already ran. Probe the ambient name directly instead: it stays
+    // absent until the bootstrap bundle installs it, matching the pre-typed
+    // behavior this guard restores.
+    if (role === "bootstrap" && typeof gosxHostCompatibility.read("__gosx_bootstrap_page") === "function") {
       return false;
     }
     const effectiveLoad = load === "dom" || currentDocumentNonce() ? "dom" : "eval";
@@ -1393,15 +1399,23 @@
     return bootstrapLoadedNow;
   }
 
+  // Both hooks resolve through the ambient compatibility name AT CALL TIME,
+  // not through gosxHost.lifecycle.disposePage/bootstrapPage directly. Once
+  // page-disposal.ts and 30k-tail-init.js run, they bind gosxHost.lifecycle
+  // to their own concrete closures (Object.assign), which freezes those two
+  // properties to whatever ran first. A later installer of the ambient name
+  // — stripe-bridge.ts wraps __gosx_bootstrap_page/__gosx_dispose_page to
+  // add its own mount/dispose step, and origin/main's navigation runtime
+  // always read window.__gosx_bootstrap_page/__gosx_dispose_page live at
+  // call time — would then be silently skipped. Forwarding through
+  // gosxHostCompatibility keeps every later installer live, matching main.
   async function disposeCurrentPage(reuseIDs) {
-    if (gosxHost.lifecycle && typeof gosxHost.lifecycle.disposePage === "function") {
-      await gosxHost.lifecycle.disposePage(reuseIDs);
-    }
+    await gosxHostCompatibility.forward("__gosx_dispose_page", [reuseIDs]);
   }
 
   async function bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs) {
-    if (!bootstrapLoadedNow && gosxHost.lifecycle && typeof gosxHost.lifecycle.bootstrapPage === "function") {
-      await gosxHost.lifecycle.bootstrapPage(reuseIDs);
+    if (!bootstrapLoadedNow) {
+      await gosxHostCompatibility.forward("__gosx_bootstrap_page", [reuseIDs]);
     }
   }
 

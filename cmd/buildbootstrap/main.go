@@ -845,11 +845,62 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 		if err != nil {
 			return builtBundle{}, err
 		}
-		body := string(data)
+
+		language, err := languageForSource(src)
+		if err != nil {
+			return builtBundle{}, err
+		}
+
+		raw := normalizeNewlines(string(data))
+		bodyForCompaction := raw
+		var lineOrigins []int
+		if language == sourceTypeScript {
+			// Validate against the original file before the chunk swallows a
+			// syntax error into one offset in the concatenated bundle: a
+			// tree-sitter diagnostic here still names src.rel and the exact
+			// line and column the author sees in the editor.
+			if err := validateTypedSource(src, data); err != nil {
+				return builtBundle{}, err
+			}
+
+			// Erase this source's own types with its own esbuild loader, never
+			// the whole chunk's. A .js source beside a .ts source must never
+			// reach the TypeScript parser: reparsing `a < b > (c)` as a
+			// generic-argument call silently drops the comparison against b.
+			erased, mappings, err := transpileSource(src, raw)
+			if err != nil {
+				return builtBundle{}, err
+			}
+			origins, err := firstOriginalLinePerGeneratedLine(mappings)
+			if err != nil {
+				return builtBundle{}, fmt.Errorf("decode transpile map for %s: %w", src.rel, err)
+			}
+			bodyForCompaction = erased
+			lineOrigins = origins
+		}
+
+		compactedSection := compactSource(bodyForCompaction)
+		if lineOrigins != nil {
+			// compactedSection.lineMap holds rows in the erased text. Type
+			// erasure can remove whole lines (an erased interface, for
+			// example), so translate each row through the real esbuild map
+			// back to the original .ts row before the section's line map
+			// joins the hand-rolled, line-only compacted map below. A row
+			// esbuild names no source position for (an inserted blank line)
+			// keeps the closest earlier mapped row.
+			lastKnown := 0
+			for i, erasedLine := range compactedSection.lineMap {
+				if erasedLine >= 0 && erasedLine < len(lineOrigins) && lineOrigins[erasedLine] >= 0 {
+					lastKnown = lineOrigins[erasedLine]
+				}
+				compactedSection.lineMap[i] = lastKnown
+			}
+		}
+
 		sections = append(sections, section{
 			label:     src.label,
-			raw:       normalizeNewlines(body),
-			compacted: compactSource(body),
+			raw:       raw,
+			compacted: compactedSection,
 		})
 	}
 
@@ -885,17 +936,20 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 // source map into the final map exactly like the retired mjs pipeline: the
 // compacted map rides in as an inline sourceMappingURL data URL, and esbuild
 // emits the composed external map.
+//
+// built.code is already plain JavaScript: buildCompactedBundle erases every
+// typed source's types on its own, before the chunk is assembled, so this
+// step always reads with the JavaScript loader. It never re-promotes the
+// whole chunk to the TypeScript parser, which used to reparse a neighboring
+// .js source's `a < b > (c)` as a generic-argument call and silently drop
+// the comparison against b.
 func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
-	loader, err := esbuildLoaderForOutput(entry)
-	if err != nil {
-		return builtBundle{}, err
-	}
 	dataURL := "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(built.m))
 	input := built.code + "\n//# sourceMappingURL=" + dataURL
 	result := esbuild.Transform(input, esbuild.TransformOptions{
 		Charset:           esbuild.CharsetUTF8,
 		LegalComments:     esbuild.LegalCommentsNone,
-		Loader:            loader,
+		Loader:            esbuild.LoaderJS,
 		MinifyWhitespace:  true,
 		MinifyIdentifiers: true,
 		MinifySyntax:      true,
@@ -986,19 +1040,21 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 			m:    minified.m,
 		}, nil
 	case "tdewolff":
-		code, err := transpileTypedChunk(entry, built.code)
-		if err != nil {
-			return builtBundle{}, err
-		}
-		minified, err := minifyTdewolff(code)
+		// built.code is already plain JavaScript: buildCompactedBundle erases
+		// every typed source's types on its own before it assembles the
+		// chunk, so tdewolff never needs a second, whole-chunk erasure pass.
+		minified, err := minifyTdewolff(built.code)
 		if err != nil {
 			return builtBundle{}, fmt.Errorf("minify %s: %w", entry.name, err)
 		}
 		return builtBundle{
 			code: normalizeGeneratedCode(minified, entry.name+".map", debugSourcemaps),
-			// tdewolff cannot compose source maps. The pre-minify map keeps
-			// source names and contents. Typed mappings stop before type
-			// erasure, so the esbuild path remains the release default.
+			// tdewolff cannot compose source maps, so the shipped map still
+			// stops before minification: it is the pre-minify compacted map,
+			// which now accounts for type erasure (buildCompactedBundle
+			// erases each typed source before it builds this map), but not
+			// for tdewolff's own line and column shifts. The esbuild path
+			// remains the release default for that reason.
 			m: built.m,
 		}, nil
 	default:
@@ -1054,6 +1110,18 @@ var deferredHostCutoverArtifacts = map[string]bool{
 	"patch.js":                         true,
 	"relay.js":                         true,
 	"stripe-bridge.js":                 true,
+
+	// The 7 Scene3D bundles below are deferred for the same reason: their
+	// sources moved from client/js/bootstrap-src to client/runtime/scene3d
+	// as typed host authorities in Stack 03, and stay stale until the O6
+	// cutover regenerates the complete Scene3D bundle set.
+	"bootstrap-feature-scene3d.js":           true,
+	"bootstrap-feature-scene3d-webgl.js":     true,
+	"bootstrap-feature-scene3d-command.js":   true,
+	"bootstrap-feature-scene3d-webgpu.js":    true,
+	"bootstrap-feature-scene3d-compute.js":   true,
+	"bootstrap-feature-scene3d-gltf.js":      true,
+	"bootstrap-feature-scene3d-animation.js": true,
 }
 
 // chunksManifestJSON renders the outputs table as stable, indented JSON. The

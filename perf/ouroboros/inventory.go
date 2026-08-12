@@ -691,6 +691,9 @@ func collectFiles(root string, inv *Inventory) error {
 	if err := collectEmbeddedBrowserSources(root, inv); err != nil {
 		return err
 	}
+	if err := collectRuntimeHostSources(root, inv); err != nil {
+		return err
+	}
 	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -901,6 +904,83 @@ func skipAuditDir(name string) bool {
 	default:
 		return false
 	}
+}
+
+// runtimeHostSourceScanAllowlist names the client/runtime/host typed-authority
+// modules the O2 static scan pulls in directly, ahead of their own
+// navigation_asset.go-style go:embed graduation (compare navigation_asset.go,
+// which already embeds compatibility.ts and navigation.ts). Each entry here
+// owns at least one ambient name that gosxHostCompatibility.install(...)
+// publishes and that has no other still-scanned source (legacy sidecar under
+// client/js/, or a client/wasm/*.go caller) keeping it visible. Growing this
+// list is a scan-completeness fix, not a receipt or classifier version
+// change: it does not alter canonicalGosx, compatibilityReceiptHash, or any
+// governance-gated denominator.
+var runtimeHostSourceScanAllowlist = map[string]bool{
+	"client/runtime/host/actions.ts":         true,
+	"client/runtime/host/dom.ts":             true,
+	"client/runtime/host/engine-disposal.ts": true,
+	"client/runtime/host/events.ts":          true,
+	"client/runtime/host/facade.ts":          true,
+	"client/runtime/host/regions.ts":         true,
+	"client/runtime/host/stream.ts":          true,
+}
+
+func collectRuntimeHostSources(root string, inv *Inventory) error {
+	hostRoot := filepath.Join(root, "client", "runtime", "host")
+	if _, err := os.Stat(hostRoot); os.IsNotExist(err) {
+		return nil
+	}
+	return filepath.WalkDir(hostRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		if !runtimeHostSourceScanAllowlist[rel] {
+			return nil
+		}
+		if isCollectedSource(rel, inv) {
+			return nil
+		}
+		if _, excluded := classifyExcluded(rel); excluded {
+			return nil
+		}
+		return collectRuntimeHostFile(root, path, inv)
+	})
+}
+
+func collectRuntimeHostFile(root, path string, inv *Inventory) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	rel, _ := filepath.Rel(root, path)
+	rel = filepath.ToSlash(rel)
+	lines := countLines(body)
+	src := SourceFile{
+		Path:        rel,
+		Language:    languageForPath(rel),
+		SourceKind:  "runtime-host",
+		Reason:      "first-party typed-authority browser host source, embedded on its own migration schedule",
+		Lines:       lines,
+		Bytes:       int64(len(body)),
+		GzipBytes:   compressedSize(body, "gzip"),
+		BrotliBytes: compressedSize(body, "brotli"),
+	}
+	if err := parseJavaScript(body); err != nil {
+		src.ParseError = err.Error()
+	} else {
+		src.ParseOK = true
+	}
+	inv.Files.Sidecars = append(inv.Files.Sidecars, src)
+	inv.Totals.SidecarJavaScriptLines += lines
+	inv.Totals.SidecarBytes += int64(len(body))
+	collectTextEvidence(rel, string(body), inv)
+	return nil
 }
 
 func collectIncludedFile(root, path string, inv *Inventory) error {

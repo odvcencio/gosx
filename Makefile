@@ -137,7 +137,7 @@ test-fuzz-smoke:
 # budget: nesting it keeps those requires out of the library's go.mod and out of
 # every consumer's module graph. It is invoked from its own directory for the
 # same reason.
-BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript grammar_subset_tsx
+BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript
 
 build-bootstrap:
 	cd cmd/buildbootstrap && $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' .
