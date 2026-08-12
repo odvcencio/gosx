@@ -1075,10 +1075,9 @@ func (l *lowerer) normalizeStrictComponentAttrs(tag string, attrs []Attr) {
 }
 
 // validateStrictComponentCall keeps the file-local strict component contract
-// fail-closed in the IR compiler. This is deliberately based on the callee,
-// not the caller's declaration style: legacy components may call strict
-// components, but strict calls still cannot smuggle dynamic props or children
-// past the package checker/runtime renderer.
+// fail-closed in the IR compiler. Component styles may coexist in a file, but
+// calls must remain within one style so legacy bodies cannot bypass strict prop
+// checking and strict bodies cannot depend on legacy renderer semantics.
 func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, attrs []Attr, children []NodeID) {
 	_, strictCallee := l.strictNames[tag]
 	_, legacyCallee := l.legacyNames[tag]
