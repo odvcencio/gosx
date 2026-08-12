@@ -714,6 +714,10 @@ func runtimeJSONJSSitesForFile(src SourceFile, body []byte, gosxGlobals map[stri
 				gosxGlobals[name] = true
 				sites = append(sites, staticSiteFromNode(src, n, grammar, body, "gosx-write", name, owner))
 			}
+			if name := compatibilityInstallGosxName(n, grammar, body); name != "" {
+				gosxGlobals[name] = true
+				sites = append(sites, staticSiteFromNode(src, n, grammar, body, "gosx-write", name, owner))
+			}
 		}
 		if typ == "assignment_expression" {
 			if left := n.Child(0); left != nil {
@@ -937,6 +941,47 @@ func objectDefinePropertyGosxName(n *gotreesitter.Node, lang *gotreesitter.Langu
 		return ""
 	}
 	name := strings.Trim(values[1].Text(body), `"'`)
+	if gosxExactRe.MatchString(name) {
+		return name
+	}
+	return ""
+}
+
+// compatibilityInstallGosxName recognizes the host compatibility adapter's
+// install idiom (client/runtime/host/compatibility.ts): a call expression
+// whose callee ends in ".install" — gosxHostCompatibility.install(...) or
+// gosxHost.compatibility.install(...) — with a string literal first argument
+// matching the __gosx_ ambient name prefix. This idiom publishes the name
+// onto window without an ordinary member-expression write, so the alias-based
+// classifiers above cannot see it.
+func compatibilityInstallGosxName(n *gotreesitter.Node, lang *gotreesitter.Language, body []byte) string {
+	if n == nil || n.Type(lang) != "call_expression" || n.ChildCount() < 2 {
+		return ""
+	}
+	callee := n.Child(0)
+	if callee == nil || callee.Type(lang) != "member_expression" || !strings.HasSuffix(callee.Text(body), ".install") {
+		return ""
+	}
+	args := n.Child(1)
+	if args == nil || args.Type(lang) != "arguments" {
+		return ""
+	}
+	var values []*gotreesitter.Node
+	for i := 0; i < args.ChildCount(); i++ {
+		child := args.Child(i)
+		if child == nil {
+			continue
+		}
+		typ := child.Type(lang)
+		if typ == "(" || typ == ")" || typ == "," {
+			continue
+		}
+		values = append(values, child)
+	}
+	if len(values) < 1 {
+		return ""
+	}
+	name := strings.Trim(values[0].Text(body), `"'`)
 	if gosxExactRe.MatchString(name) {
 		return name
 	}
