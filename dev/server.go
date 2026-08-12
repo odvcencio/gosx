@@ -40,17 +40,19 @@ type sseEvent struct {
 // Server fronts a running GoSX app process during development.
 //
 // It owns three dev-only concerns:
-// - serves staged runtime assets from BuildDir under stable /gosx/* paths
-// - proxies application traffic to ProxyTarget and injects the reload runtime
-// - watches Dir for source changes and triggers OnChange before notifying clients
+//   - serves staged runtime assets from BuildDir under stable /gosx/* paths
+//   - proxies application traffic to ProxyTarget and injects the reload runtime
+//   - watches Dir for source changes, runs PreflightChange for every batch, and
+//     triggers OnChange for batches that require a full restart
 type Server struct {
-	Dir            string
-	BuildDir       string
-	ProxyTarget    string
-	OnChange       func() error
-	PollInterval   time.Duration
-	SceneInspector bool
-	Logf           func(format string, args ...any)
+	Dir             string
+	BuildDir        string
+	ProxyTarget     string
+	PreflightChange func([]string) error
+	OnChange        func() error
+	PollInterval    time.Duration
+	SceneInspector  bool
+	Logf            func(format string, args ...any)
 
 	mu          sync.RWMutex
 	clients     map[chan sseEvent]struct{}

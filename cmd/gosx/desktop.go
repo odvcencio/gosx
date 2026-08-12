@@ -118,16 +118,7 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	if !isMain {
 		return fmt.Errorf("gosx desktop requires a runnable app directory (package main): %s", absDir)
 	}
-	if err := syncModulesPackage(absDir); err != nil {
-		return err
-	}
-	if err := ensureModuleDependencies(absDir); err != nil {
-		return err
-	}
-	if err := env.LoadDir(absDir, ""); err != nil {
-		return fmt.Errorf("load env: %w", err)
-	}
-	if err := prepareDevAssets(absDir); err != nil {
+	if err := prepareDesktopDevProject(context.Background(), absDir); err != nil {
 		return err
 	}
 
@@ -174,16 +165,13 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "gosx desktop: "+format+"\n", args...)
 		},
+		PreflightChange: func(_ []string) error {
+			return preflightChangedDesktopApp(context.Background(), absDir, runner)
+		},
 		OnChange: func() error {
 			fmt.Fprintln(os.Stderr, "gosx desktop: change detected, rebuilding assets and restarting app")
-			if err := prepareDevAssets(absDir); err != nil {
-				return fmt.Errorf("build assets: %w", err)
-			}
-			if err := runner.restart(internalPort); err != nil {
-				return fmt.Errorf("restart app: %w", err)
-			}
-			if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
-				return fmt.Errorf("wait for app ready: %w", err)
+			if err := rebuildChangedDevApp(context.Background(), absDir, runner, internalPort, internalBaseURL); err != nil {
+				return err
 			}
 			if err := emitDesktopDevReload(getDesktopApp(), "file_change"); err != nil {
 				fmt.Fprintf(os.Stderr, "gosx desktop: host reload notification failed: %v\n", err)
@@ -270,6 +258,29 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	default:
 	}
 	return appErr
+}
+
+func prepareDesktopDevProject(ctx context.Context, dir string) error {
+	if err := syncModulesPackage(dir); err != nil {
+		return err
+	}
+	if err := ensureModuleDependencies(dir); err != nil {
+		return err
+	}
+	if err := env.LoadDir(dir, ""); err != nil {
+		return fmt.Errorf("load env: %w", err)
+	}
+	if err := checkStrictProject(ctx, dir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	if err := prepareDevAssets(dir); err != nil {
+		return err
+	}
+	return nil
+}
+
+func preflightChangedDesktopApp(ctx context.Context, dir string, runner devProcessStopper) error {
+	return preflightChangedDevApp(ctx, dir, runner)
 }
 
 func runDesktopHost(options DesktopRunOptions) error {

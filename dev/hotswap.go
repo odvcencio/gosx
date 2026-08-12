@@ -46,6 +46,15 @@ type islandProgram struct {
 // -> component). A fully-general changed-file -> runtime-islandID mapping (and a
 // paired "patch"-only path) is broader than the Phase-0 seam and is deferred.
 func (s *Server) emitChange(paths []string) {
+	if err := s.runPreflightChange(paths); err != nil {
+		s.recordBuildError(err)
+		s.logf("change preflight failed: %v", err)
+		s.broadcast("build-error", map[string]any{
+			"error": err.Error(),
+			"time":  time.Now().Format(time.RFC3339Nano),
+		})
+		return
+	}
 	programs, fullReload, compileErr := s.classifyChange(paths)
 
 	if compileErr != nil {
@@ -91,6 +100,13 @@ func (s *Server) emitChange(paths []string) {
 			"time":      time.Now().Format(time.RFC3339Nano),
 		})
 	}
+}
+
+func (s *Server) runPreflightChange(paths []string) error {
+	if s.PreflightChange == nil {
+		return nil
+	}
+	return s.PreflightChange(append([]string(nil), paths...))
 }
 
 // restageIslandProgram rewrites the staged build/islands/<Component>.json so the

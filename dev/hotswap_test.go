@@ -3,6 +3,7 @@ package dev
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -110,6 +111,44 @@ func TestHotSwapIslandChangeEmitsProgramNotReload(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(payload.Program), &island); err != nil || island.Name != "Counter" {
 		t.Fatalf("expected island program for Counter, got name=%q err=%v", island.Name, err)
+	}
+}
+
+func TestHotSwapRunsPreflightBeforeIslandClassification(t *testing.T) {
+	dir := t.TempDir()
+	gsxPath := filepath.Join(dir, "counter.gsx")
+	writeTestFile(t, gsxPath, []byte(islandGSX))
+
+	preflightCalls := 0
+	onChangeCalls := 0
+	s := &Server{
+		Dir: dir,
+		PreflightChange: func(paths []string) error {
+			preflightCalls++
+			if len(paths) != 1 || paths[0] != gsxPath {
+				t.Fatalf("preflight paths = %v", paths)
+			}
+			return fmt.Errorf("strict package invalid")
+		},
+		OnChange: func() error {
+			onChangeCalls++
+			return nil
+		},
+	}
+	events := captureEvents(t, s)
+	s.emitChange([]string{gsxPath})
+
+	if preflightCalls != 1 || onChangeCalls != 0 {
+		t.Fatalf("preflight calls = %d, OnChange calls = %d", preflightCalls, onChangeCalls)
+	}
+	got := drainEvents(events)
+	if _, ok := got["build-error"]; !ok {
+		t.Fatalf("invalid hot swap did not emit build-error: %v", keys(got))
+	}
+	for _, forbidden := range []string{"program", "reload"} {
+		if _, ok := got[forbidden]; ok {
+			t.Fatalf("invalid hot swap emitted %s: %v", forbidden, keys(got))
+		}
 	}
 }
 

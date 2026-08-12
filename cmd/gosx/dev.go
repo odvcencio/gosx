@@ -92,6 +92,9 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "gosx dev: "+format+"\n", args...)
 		},
+		PreflightChange: func(_ []string) error {
+			return preflightChangedDevApp(context.Background(), absDir, runner)
+		},
 		OnChange: func() error {
 			fmt.Fprintln(os.Stderr, "gosx dev: change detected, rebuilding assets and restarting app")
 			return rebuildChangedDevApp(context.Background(), absDir, runner, internalPort, internalBaseURL)
@@ -125,6 +128,25 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 		}
 		return nil
 	}
+}
+
+type devProcessStopper interface {
+	stop() error
+}
+
+// preflightChangedDevApp validates every watched batch, including island-only
+// hot swaps. When source is invalid it stops the old app process so the proxy
+// cannot keep serving newly mutated files through a previously valid binary.
+func preflightChangedDevApp(ctx context.Context, dir string, runner devProcessStopper) error {
+	if err := checkStrictProject(ctx, dir); err != nil {
+		if runner != nil {
+			if stopErr := runner.stop(); stopErr != nil {
+				return fmt.Errorf("check strict components: %w (also stop invalid app: %v)", err, stopErr)
+			}
+		}
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	return nil
 }
 
 func rebuildChangedDevApp(ctx context.Context, dir string, runner *devRunner, internalPort, internalBaseURL string) error {
