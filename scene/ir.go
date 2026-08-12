@@ -1202,12 +1202,18 @@ func transformFromLabelIR(label LabelIR) IRTransform {
 
 func transformFromHTMLIR(html HTMLIR) IRTransform {
 	return IRTransform{
-		X:      html.X,
-		Y:      html.Y,
-		Z:      html.Z,
-		ScaleX: 1,
-		ScaleY: 1,
-		ScaleZ: 1,
+		X:         html.X,
+		Y:         html.Y,
+		Z:         html.Z,
+		RotationX: html.RotationX,
+		RotationY: html.RotationY,
+		RotationZ: html.RotationZ,
+		SpinX:     html.SpinX,
+		SpinY:     html.SpinY,
+		SpinZ:     html.SpinZ,
+		ScaleX:    1,
+		ScaleY:    1,
+		ScaleZ:    1,
 	}
 }
 

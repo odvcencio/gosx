@@ -1,0 +1,155 @@
+.beacon {
+	position: relative;
+	min-height: 100%;
+	min-width: 0;
+	overflow: hidden;
+	background: var(--demo-bg);
+}
+
+.beacon__canvas {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+}
+
+.beacon__canvas canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.beacon__overlay {
+	position: absolute;
+	z-index: 1;
+	top: var(--space-lg);
+	left: var(--space-lg);
+	width: min(31rem, calc(100% - 2 * var(--space-lg)));
+	padding: var(--space-md);
+	border: 1px solid var(--color-border-strong);
+	border-left: 3px solid var(--demo-accent);
+	background: color-mix(in srgb, var(--color-canvas) 90%, transparent);
+	box-shadow: 0 1rem 3rem var(--color-backdrop);
+	pointer-events: none;
+}
+
+.beacon__eyebrow,
+.beacon__runtime,
+.beacon__controls,
+.beacon__budgets {
+	margin: 0;
+	font-family: var(--font-mono);
+	font-size: var(--type-xs);
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+.beacon__eyebrow,
+.beacon__runtime output,
+.beacon__controls {
+	color: var(--demo-accent);
+}
+
+.beacon h1 {
+	margin: var(--space-xs) 0;
+	color: var(--demo-fg);
+	font-family: var(--font-display);
+	font-size: var(--type-2xl);
+	line-height: 0.98;
+	letter-spacing: -0.035em;
+}
+
+.beacon h1 span {
+	display: block;
+	color: var(--color-text-secondary);
+	font-size: var(--type-lg);
+	letter-spacing: 0;
+}
+
+.beacon__copy {
+	margin: 0 0 var(--space-sm);
+	color: var(--color-text-secondary);
+	font-family: var(--font-body);
+	font-size: var(--type-sm);
+	line-height: 1.5;
+}
+
+.beacon__runtime {
+	display: flex;
+	gap: var(--space-xs);
+	color: var(--demo-muted);
+}
+
+.beacon__runtime output + output {
+	margin-left: calc(-1 * var(--space-2xs));
+}
+
+.beacon__budgets {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-xs);
+	margin: var(--space-sm) 0;
+	padding: var(--space-sm) 0;
+	border-top: 1px solid var(--color-border);
+	border-bottom: 1px solid var(--color-border);
+	color: var(--color-text-secondary);
+	list-style: none;
+}
+
+.beacon__budgets li:not(:last-child)::after {
+	content: "·";
+	margin-left: var(--space-xs);
+	color: var(--demo-accent);
+}
+
+.beacon__controls {
+	opacity: 0.78;
+}
+
+@media (max-width: 700px) {
+	.beacon__overlay {
+		top: auto;
+		right: var(--space-md);
+		bottom: var(--space-md);
+		left: var(--space-md);
+		width: auto;
+		padding: var(--space-sm);
+	}
+
+	.beacon h1 {
+		font-size: var(--type-xl);
+	}
+
+	.beacon__copy {
+		font-size: var(--type-xs);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.beacon *,
+	.beacon *::before,
+	.beacon *::after {
+		scroll-behavior: auto;
+		transition-duration: 0s;
+		animation-duration: 0s;
+	}
+}
+
+.beacon__quality {
+	display: flex;
+	gap: var(--space-xs);
+	margin: 0;
+	color: var(--demo-muted);
+	font-family: var(--font-mono);
+	font-size: var(--type-xs);
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+.beacon__quality output {
+	color: var(--demo-accent);
+}
+.beacon__telemetry {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-sm);
+}

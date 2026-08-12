@@ -2842,6 +2842,56 @@ func TestAppRedirectInterpolatesPathValues(t *testing.T) {
 	}
 }
 
+func TestAppRedirectTrailingSlashDoesNotCaptureDescendants(t *testing.T) {
+	app := New()
+	app.Redirect("GET /docs/", "/docs/getting-started", http.StatusTemporaryRedirect)
+	app.Page("GET /docs/getting-started", func(ctx *Context) gosx.Node {
+		return gosx.Text("docs-home")
+	})
+
+	handler := app.Build()
+
+	redirectReq := httptest.NewRequest("GET", "/docs/", nil)
+	redirectWriter := httptest.NewRecorder()
+	handler.ServeHTTP(redirectWriter, redirectReq)
+	if redirectWriter.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("expected /docs/ to redirect with 307, got %d", redirectWriter.Code)
+	}
+	if got := redirectWriter.Header().Get("Location"); got != "/docs/getting-started" {
+		t.Fatalf("unexpected redirect location %q", got)
+	}
+
+	pageReq := httptest.NewRequest("GET", "/docs/getting-started", nil)
+	pageWriter := httptest.NewRecorder()
+	handler.ServeHTTP(pageWriter, pageReq)
+	if pageWriter.Code != http.StatusOK {
+		t.Fatalf("expected descendant page to render with 200, got %d", pageWriter.Code)
+	}
+	if got := pageWriter.Header().Get("Location"); got != "" {
+		t.Fatalf("expected descendant page not to redirect, got Location %q", got)
+	}
+	if body := pageWriter.Body.String(); !strings.Contains(body, "docs-home") {
+		t.Fatalf("unexpected descendant page body %q", body)
+	}
+}
+
+func TestAppRedirectInterpolatesVariadicPathValues(t *testing.T) {
+	app := New()
+	app.Redirect("GET /legacy/{path...}", "/docs/{path}", http.StatusMovedPermanently)
+
+	handler := app.Build()
+	req := httptest.NewRequest("GET", "/legacy/guides/install", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMovedPermanently {
+		t.Fatalf("expected 301, got %d", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != "/docs/guides/install" {
+		t.Fatalf("unexpected location %q", got)
+	}
+}
+
 func TestAppRewriteInternallyDispatchesTargetRoute(t *testing.T) {
 	app := New()
 	app.Rewrite("GET /latest", "/docs/getting-started")

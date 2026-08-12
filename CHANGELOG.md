@@ -1,5 +1,98 @@
 # Changelog
 
+## v0.38.0 (2026-08-09)
+
+### Island-VM core: capability-scoped browser handlers, computed signals, hub refresh
+
+- **Browser host receiver.** A framework-owned, root-scoped capability
+  surface (`browser` receiver) for island handler effects: microtask-isolated
+  dialogs and focus movement, deferred activation, clipboard access, managed
+  navigation and refresh, deferred form submission, event control, and
+  scrolling. Handlers author against `browser.Activate(...)` and similar
+  calls; the framework lowers each to a host call and resolves it through a
+  registered `HostReceiverFactory` (`client/bridge.RegisterIslandHostFactory`)
+  at hydration, keeping host objects out of serialized island programs.
+- **Typed event payloads.** Compact, typed keyboard, pointer, drag/drop,
+  dataset, and timing payloads reach handlers instead of raw DOM event
+  objects, with lifecycle-safe document/window event conventions.
+- **Manifest-selective delegated listeners.** Hydration manifests select
+  which delegated listeners an island needs, with legacy-manifest
+  compatibility, explicit zero-listener eventless manifests, and ownership
+  boundaries that keep nested islands from claiming a parent's events.
+- **Chained computed signals.** Island programs run reactive computed
+  definitions (`signal.Derive`) that chain across DOM, Scene3D, and Canvas2D
+  surfaces, with shared-signal rebinding, prop invalidation, and
+  hot-reload/disposal cleanup. Dispatch is guarded against reentrancy; reload
+  binds new shared and computed inputs before its single DOM reconcile.
+- **Boolean HTML attributes.** A shared `internal/htmlattr` helper normalizes
+  boolean attribute rendering and hydration (for example `disabled`,
+  `checked`) so island VM state and server-rendered markup agree.
+- **Navigation and hub refresh.** Forced soft-route refresh with mutation
+  revalidation, debounced hub-triggered refresh bindings, and direct JSON
+  storage-to-signal hydration.
+- **Accessible managed forms.** Scoped managed-form result projection,
+  including stale-error cleanup, status announcement on submit, and
+  invalid-field focus.
+
+## v0.37.0 (2026-08-09)
+
+### New framework surfaces that retire app-authored scripts
+
+Three features moved out of the first consumer (m31labs.dev) and into the
+framework, so any GoSX app gets them declaratively:
+
+- **Scene3D first-content reveal.** An opt-in
+  `data-gosx-scene3d-reveal-class` mount attribute names a CSS class. After
+  the first frame with drawable content, the mount stamps
+  `data-gosx-scene3d-revealed="true"` and the runtime adds the class to the
+  document element; dispose removes it. Apps fade a static boot placeholder
+  with pure CSS instead of a hand-written readiness watcher.
+- **Lantern Scene3D inspector.** A read-only dev inspector served embedded
+  at `/gosx/devtools-lantern.js` (`server.DevtoolsLanternPath`). Shift+D
+  toggles a panel with truthful render FPS, backend and adaptive-quality
+  state, live node-type counts, draw calls, and camera state — all read
+  from the debug registry the production bundle already ships.
+- **YouTube audio bridge.** A declarative background-audio bridge served
+  embedded at `/gosx/youtube-audio.js` (`server.YouTubeAudioBridgePath`).
+  Elements with `data-gosx-youtube-audio="<url>"` toggle one shared hidden
+  player; the active element carries
+  `data-gosx-youtube-audio-state="playing"` for CSS styling.
+
+Embedded runtime assets resolve before the runtime asset root, so they work
+in bare `go run` development with no build step.
+
+### Editor
+
+- Fixed blank-area clicks in the native editor: clicking below the last
+  line focuses the end of the document. It no longer appends newlines or
+  dispatches a synthetic input event, which corrupted autosave state in
+  consumer apps. The source textarea also gained a configurable accessible
+  name (`Options.Label`, falling back to `Title`, then "Editor").
+
+### Since v0.36.0, grouped
+
+This release also rolls up the main-line work merged since v0.36.0:
+
+- **Scene3D rendering** — retained geometry, HDR IBL, native lighting and
+  post FX additions, DOM region bindings for custom post effects,
+  HTML-texture surfaces gated on confirmed uploads, hardened WebGL
+  instanced draws with point budget scaling, WebGPU bind-group and
+  pipeline-key memoization, and per-feature chunk splitting with
+  re-measured size ceilings.
+- **Runtime and navigation** — late engine factory registration, stable
+  engine IDs with a page cache TTL, soft-navigation replay of opted-in
+  inline scripts, declarative submit-action preservation, and Scene3D
+  scroll and device lifecycle stabilization.
+- **Water** — quality profiles and workload telemetry.
+- **Server** — trailing-slash redirects no longer capture descendant
+  paths.
+- **Parser** — nested GoSX parsing fixed on forward GoTreeSitter (v0.47
+  line), which lets consumers drop their gotreesitter downgrade pins.
+- **CI** — Go CI split into parallel unit and CLI lanes with a focused PR
+  race lane.
+- **Showcase** — the Blackglass Beacon demo became the Coast world with
+  headless render evidence.
+
 ## v0.36.0 (2026-07-26)
 
 ### Checkable cross-file claims (`internal/claimcheck`)
@@ -2351,7 +2444,7 @@ Scene3D CSS transition diagnostics are now opt-in behind `window.__gosx_scene3d_
 
 Scene3D live palette/material swap fix.
 
-`scenePlannerHashMaterial` in `15b-scene-planner.ts` short-circuited to `key`-only when a material had a stable `key`, excluding `color`, `opacity`, `emissive`, `roughness`, `metalness`, `texture`, and `blendMode` from the hash. Downstream, `scenePreparedSignature` consumed that hash to detect whether the prepared scene could be reused, so CSS-var-resolved color rewrites on keyed materials (m31labs's `Material name="stars" color="var(--galaxy-star-color)"` pattern that drives the hourly/half-hourly palette shift) produced a new IR with new colors — but the signature matched the previous frame, `lastPrepared.passes` was reused with the previous bucket's baked colors, and the canvas never repainted. The mutation observer, CSS revision bump, fresh CSS resolve, and `scheduleRender` all fired correctly; the invalidation died at the signature check.
+`scenePlannerHashMaterial` in `15b-scene-planner.js` short-circuited to `key`-only when a material had a stable `key`, excluding `color`, `opacity`, `emissive`, `roughness`, `metalness`, `texture`, and `blendMode` from the hash. Downstream, `scenePreparedSignature` consumed that hash to detect whether the prepared scene could be reused, so CSS-var-resolved color rewrites on keyed materials (m31labs's `Material name="stars" color="var(--galaxy-star-color)"` pattern that drives the hourly/half-hourly palette shift) produced a new IR with new colors — but the signature matched the previous frame, `lastPrepared.passes` was reused with the previous bucket's baked colors, and the canvas never repainted. The mutation observer, CSS revision bump, fresh CSS resolve, and `scheduleRender` all fired correctly; the invalidation died at the signature check.
 
 `scenePlannerHashMaterial` now hashes identity (`key`) AND resolved appearance (`color`, `opacity`, `emissive`, etc.) together, so palette-swap cache invalidation propagates through the prepared-scene signature into the pass list, forcing a fresh upload on the next frame.
 
@@ -2881,7 +2974,7 @@ b.WriteString("\x3c/script>")
 
 ### Probe used `powerPreference: "high-performance"`
 
-The module-level adapter probe in `16z-scene-webgpu-probe.ts` requested an adapter with `{ powerPreference: "high-performance" }`. On some headless / server Chromium backends (notably SwiftShader and certain Linux Mesa / ANGLE builds) that hint causes `requestAdapter()` to return null where the unbounded request succeeds — there's no discrete GPU to match the preference against and Chromium won't fall back to the integrated path automatically.
+The module-level adapter probe in `16z-scene-webgpu-probe.js` requested an adapter with `{ powerPreference: "high-performance" }`. On some headless / server Chromium backends (notably SwiftShader and certain Linux Mesa / ANGLE builds) that hint causes `requestAdapter()` to return null where the unbounded request succeeds — there's no discrete GPU to match the preference against and Chromium won't fall back to the integrated path automatically.
 
 Dropped the hint. We don't have a discrete-vs-integrated selection need here; any working device is better than none. Also added `console.warn` diagnostics to the probe's `null`-adapter, `null`-device, and `catch` branches so probe failures surface in the `gosx perf` console-capture section instead of silently disabling WebGPU.
 
@@ -2906,7 +2999,7 @@ The pre-v0.17.17 probe only verified `requestAdapter()`; it never attempted `req
 
 ### Fix: full-lifecycle probe + synchronous factory
 
-**`16z-scene-webgpu-probe.ts`** now chains `requestAdapter().then(a => a.requestDevice()).then(d => { ... })` and only flips `_webgpuAdapterReady = true` when the full chain succeeds. Partial implementations (adapter OK, device fails) are detected at probe time, so `sceneWebGPUAvailable()` returns false and the canvas is never touched. The probe caches the device and exposes it through `window.__gosx_scene3d_webgpu_probe()`:
+**`16z-scene-webgpu-probe.js`** now chains `requestAdapter().then(a => a.requestDevice()).then(d => { ... })` and only flips `_webgpuAdapterReady = true` when the full chain succeeds. Partial implementations (adapter OK, device fails) are detected at probe time, so `sceneWebGPUAvailable()` returns false and the canvas is never touched. The probe caches the device and exposes it through `window.__gosx_scene3d_webgpu_probe()`:
 
 ```js
 window.__gosx_scene3d_webgpu_probe = function() {
@@ -2956,9 +3049,9 @@ Structural changes:
 
 - **`10-runtime-scene-core.js`** extends `window.__gosx_scene3d_api` with the PBR/shadow/post-fx helpers the webgpu renderer needs (`scenePBRDepthSort`, `scenePBRObjectRenderPass`, `scenePBRProjectionMatrix`, `scenePBRViewMatrix`, `sceneShadowLightSpaceMatrix`, `sceneShadowComputeBounds`, `resolvePostFXFactor`, `resolveShadowSize`, `sceneColorRGBA`). These are function declarations in files 11-16 of the main scene3d bundle, hoisted into the IIFE scope, so the `__gosx_scene3d_api` literal in file 10 captures them via `typeof X === "function" ? X : undefined` guards.
 
-- **`16z-scene-webgpu-probe.ts`** (new, stays in main scene3d bundle) owns the `navigator.gpu.requestAdapter()` probe and the `sceneWebGPUAvailable()` / `createSceneWebGPURendererOrFallback()` stubs. The stubs dispatch to `window.__gosx_scene3d_webgpu_api.createRenderer(canvas)` if and only if the sub-chunk has loaded AND the adapter probe succeeded. (This file is reworked in v0.17.17 to also verify device creation.)
+- **`16z-scene-webgpu-probe.js`** (new, stays in main scene3d bundle) owns the `navigator.gpu.requestAdapter()` probe and the `sceneWebGPUAvailable()` / `createSceneWebGPURendererOrFallback()` stubs. The stubs dispatch to `window.__gosx_scene3d_webgpu_api.createRenderer(canvas)` if and only if the sub-chunk has loaded AND the adapter probe succeeded. (This file is reworked in v0.17.17 to also verify device creation.)
 
-- **`26e-feature-scene3d-webgpu-prefix.ts` / `26e-feature-scene3d-webgpu-suffix.ts`** (new) wrap the sub-chunk as its own IIFE. The prefix destructures all shared helpers from `window.__gosx_scene3d_api`. The suffix publishes the renderer factory to `window.__gosx_scene3d_webgpu_api`.
+- **`26e-feature-scene3d-webgpu-prefix.js` / `26e-feature-scene3d-webgpu-suffix.js`** (new) wrap the sub-chunk as its own IIFE. The prefix destructures all shared helpers from `window.__gosx_scene3d_api`. The suffix publishes the renderer factory to `window.__gosx_scene3d_webgpu_api`.
 
 - **`16a-scene-webgpu.js`** drops its inline adapter probe (now owned by 16z) and reads the shared probe via `_externalProbe()`.
 
@@ -3223,7 +3316,7 @@ Fixed by removing `emit` from the runtime API export. Nothing in the scene3d chu
 
 ## v0.17.7
 
-Bridge the runtime API for scene3d chunk cross-IIFE access: introduces `window.__gosx_runtime_api` as the formal contract between the runtime bundle and the scene3d feature chunk. `00-textlayout.js` exports `setAttrValue`, `setStyleValue`, `gosxSubscribeSharedSignal`, `setSharedSignalValue`, `gosxTextLayoutRevision`, `normalizeTextLayoutOverflow`, `layoutBrowserText`, `applyTextLayoutPresentation`, and `onTextLayoutInvalidated` onto the namespace. The scene3d chunk's prefix (`26d-feature-scene3d-prefix.ts`) destructures from it with fallbacks, so a missing runtime API degrades to a no-op rather than a hard reference error.
+Bridge the runtime API for scene3d chunk cross-IIFE access: introduces `window.__gosx_runtime_api` as the formal contract between the runtime bundle and the scene3d feature chunk. `00-textlayout.js` exports `setAttrValue`, `setStyleValue`, `gosxSubscribeSharedSignal`, `setSharedSignalValue`, `gosxTextLayoutRevision`, `normalizeTextLayoutOverflow`, `layoutBrowserText`, `applyTextLayoutPresentation`, and `onTextLayoutInvalidated` onto the namespace. The scene3d chunk's prefix (`26d-feature-scene3d-prefix.js`) destructures from it with fallbacks, so a missing runtime API degrades to a no-op rather than a hard reference error.
 
 ## v0.17.6
 
@@ -3257,7 +3350,7 @@ Structural wiring:
 
 - **`client/js/build-bootstrap.mjs`** now emits four bundles: `bootstrap.js` (monolith for pages without feature chunks), `bootstrap-lite.js`, `bootstrap-runtime.js` (runtime + islands + engines + hubs), and `bootstrap-feature-scene3d.js` (files 10–20, the scene graph pipeline).
 
-- **`client/js/bootstrap-src/26d-feature-scene3d-prefix.ts` / `...-suffix.js`** (new) wrap the scene3d chunk as its own IIFE. The prefix declares the symbols the IIFE needs from the runtime's scope (file 00's text layout state, file 10's registries).
+- **`client/js/bootstrap-src/26d-feature-scene3d-prefix.js` / `...-suffix.js`** (new) wrap the scene3d chunk as its own IIFE. The prefix declares the symbols the IIFE needs from the runtime's scope (file 00's text layout state, file 10's registries).
 
 - **`client/js/bootstrap-src/10-runtime-scene-core.js`** exposes scene utilities on `window.__gosx_scene3d_api` for future cross-IIFE access — the foundation the v0.17.16 WebGPU split builds on.
 

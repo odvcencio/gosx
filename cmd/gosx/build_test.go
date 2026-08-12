@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -194,6 +195,49 @@ func TestWriteHashedWithoutCompressedSidecarsSkipsDevRuntimeSidecars(t *testing.
 		if _, err := os.Stat(filepath.Join(dir, devAsset.File+ext)); !os.IsNotExist(err) {
 			t.Fatalf("expected no dev runtime %s sidecar, stat err=%v", ext, err)
 		}
+	}
+}
+
+func TestDiscoverProjectGSXFilesSkipsHiddenScratchAndNestedWorktrees(t *testing.T) {
+	projectDir := t.TempDir()
+	mustWriteFile(t, filepath.Join(projectDir, "app", "page.gsx"), "package app\n")
+	mustWriteFile(t, filepath.Join(projectDir, "components", "card.gsx"), "package components\n")
+	mustWriteFile(t, filepath.Join(projectDir, ".tiller", "scratch", "codex", "work", "app", "bad.gsx"), "package scratch\n")
+	mustWriteFile(t, filepath.Join(projectDir, ".cache", "app", "bad.gsx"), "package cache\n")
+	mustWriteFile(t, filepath.Join(projectDir, "dist", "app", "bad.gsx"), "package dist\n")
+	mustWriteFile(t, filepath.Join(projectDir, "node_modules", "pkg", "bad.gsx"), "package node\n")
+	mustWriteFile(t, filepath.Join(projectDir, "nested-worktree", ".git"), "gitdir: ../.git/worktrees/nested\n")
+	mustWriteFile(t, filepath.Join(projectDir, "nested-worktree", "app", "bad.gsx"), "package nested\n")
+
+	files, err := discoverProjectGSXFiles(projectDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relFiles := make([]string, 0, len(files))
+	for _, file := range files {
+		rel, err := filepath.Rel(projectDir, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		relFiles = append(relFiles, filepath.ToSlash(rel))
+	}
+	want := []string{"app/page.gsx", "components/card.gsx"}
+	if !slices.Equal(relFiles, want) {
+		t.Fatalf("discovered GSX files = %#v, want %#v", relFiles, want)
+	}
+}
+
+func TestDiscoverProjectGSXFilesKeepsExplicitHiddenRoot(t *testing.T) {
+	projectDir := t.TempDir()
+	hiddenRoot := filepath.Join(projectDir, ".fixtures")
+	mustWriteFile(t, filepath.Join(hiddenRoot, "app", "page.gsx"), "package app\n")
+
+	files, err := discoverProjectGSXFiles(hiddenRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || filepath.ToSlash(files[0]) != filepath.ToSlash(filepath.Join(hiddenRoot, "app", "page.gsx")) {
+		t.Fatalf("discovered GSX files = %#v", files)
 	}
 }
 

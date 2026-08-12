@@ -103,6 +103,67 @@ func TestNativeEditorAssetProvidesMultiCursorEditing(t *testing.T) {
 	}
 }
 
+func TestNativeEditorAssetKeepsBlankAreaClicksInputFree(t *testing.T) {
+	asset, err := embeddedAssets.ReadFile("assets/native-editor.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(asset)
+	start := strings.Index(source, "const focusBlankVisualRow =")
+	if start < 0 {
+		t.Fatal("native editor asset is missing blank-area click handling")
+	}
+	end := strings.Index(source[start:], "    const syncScroll =")
+	if end < 0 {
+		t.Fatal("native editor asset is missing the end of blank-area click handling")
+	}
+	handler := source[start : start+end]
+	for _, forbidden := range []string{
+		`textarea.value +=`,
+		`textarea.dispatchEvent(new Event("input"`,
+	} {
+		if strings.Contains(handler, forbidden) {
+			t.Fatalf("blank-area click handling must not mutate editor content or emit input: found %q", forbidden)
+		}
+	}
+	for _, want := range []string{
+		`textarea.focus()`,
+		`textarea.setSelectionRange(textarea.value.length, textarea.value.length)`,
+	} {
+		if !strings.Contains(handler, want) {
+			t.Fatalf("blank-area click handling missing %q", want)
+		}
+	}
+}
+
+func TestNativeSourceTextareaUsesConfigurableAccessibleName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts Options
+		want string
+	}{
+		{name: "label", opts: Options{Label: "Source code"}, want: "Source code"},
+		{name: "title fallback", opts: Options{Title: "main.go"}, want: "main.go"},
+		{name: "default", opts: Options{}, want: "Editor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html := gosx.RenderHTML(New("editor", tc.opts).Render())
+			textareaStart := strings.Index(html, `<textarea id="editor-content"`)
+			if textareaStart < 0 {
+				t.Fatalf("source textarea missing from %s", html)
+			}
+			tagEnd := strings.Index(html[textareaStart:], ">")
+			if tagEnd < 0 {
+				t.Fatalf("source textarea tag is unterminated in %s", html)
+			}
+			sourceTextarea := html[textareaStart : textareaStart+tagEnd+1]
+			if !strings.Contains(sourceTextarea, `aria-label="`+tc.want+`"`) {
+				t.Fatalf("source textarea accessible name = %q, want %q", sourceTextarea, tc.want)
+			}
+		})
+	}
+}
+
 func TestNativeEditorAssetProvidesCodeEditingChecklist(t *testing.T) {
 	asset, err := embeddedAssets.ReadFile("assets/native-editor.ts")
 	if err != nil {

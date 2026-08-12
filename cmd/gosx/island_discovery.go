@@ -74,7 +74,7 @@ func discoverProjectGSXFiles(projectDir string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() && shouldSkipProjectDir(info.Name()) {
+		if shouldSkipProjectWalkDir(projectDir, path, info) {
 			return filepath.SkipDir
 		}
 		if strings.HasSuffix(path, ".gsx") {
@@ -204,7 +204,7 @@ func discoverProjectGoFiles(projectDir string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() && shouldSkipProjectDir(info.Name()) {
+		if shouldSkipProjectWalkDir(projectDir, path, info) {
 			return filepath.SkipDir
 		}
 		if !info.IsDir() && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {

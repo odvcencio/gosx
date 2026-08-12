@@ -500,8 +500,25 @@ func sceneObjectHasTexturedSurface(object sceneObject, material rootengine.Rende
 	return object.Kind == "plane" && strings.TrimSpace(material.Texture) != ""
 }
 
+// planeQuadIndices walks the XZ ring in boxVertices. At height zero the first
+// four box vertices collapse onto one edge, yielding a zero-area plane.
+var planeQuadIndices = [4]int{0, 1, 5, 4}
+
+func planeQuadVertices(width, depth float64) []point3 {
+	vertices := cachedBoxVertices(width, 0, depth)
+	if len(vertices) < 8 {
+		return nil
+	}
+	return []point3{
+		vertices[planeQuadIndices[0]],
+		vertices[planeQuadIndices[1]],
+		vertices[planeQuadIndices[2]],
+		vertices[planeQuadIndices[3]],
+	}
+}
+
 func scenePlaneSurfaceCorners(object sceneObject, spinQ motion.Quat, clip clipTRS, timeSeconds float64) []point3 {
-	vertices := cachedBoxVertices(object.Width, 0, object.Depth)
+	vertices := planeQuadVertices(object.Width, object.Depth)
 	if len(vertices) < 4 {
 		return nil
 	}
@@ -1723,8 +1740,11 @@ func boxSegments(object sceneObject) [][2]point3 {
 }
 
 func planeSegments(object sceneObject) [][2]point3 {
-	vertices := cachedBoxVertices(object.Width, 0, object.Depth)
-	return indexSegments(vertices[:4], [][2]int{
+	vertices := planeQuadVertices(object.Width, object.Depth)
+	if len(vertices) < 4 {
+		return nil
+	}
+	return indexSegments(vertices, [][2]int{
 		{0, 1}, {1, 2}, {2, 3}, {3, 0},
 	})
 }

@@ -39,6 +39,7 @@ func TestQualityLadderRoundTrip(t *testing.T) {
 				PostEffects:          []string{"bloom", "toneMapping"},
 				LayerGroups:          []string{"particles", "far-decor"},
 				ComputeBudgetScale:   0.5,
+				PointBudgetScale:     0.625,
 				ExpensivePassCadence: 2,
 			},
 		},
@@ -64,6 +65,9 @@ func TestQualityLadderRoundTrip(t *testing.T) {
 	if qualityScale(raw) != 1 {
 		t.Errorf("rung[0].ComputeBudgetScale = %v, want 1 (unset -> full budget default)", qualityScale(raw))
 	}
+	if raw.PointBudgetScale != 1 {
+		t.Errorf("rung[0].PointBudgetScale = %v, want 1 (unset -> full budget default)", raw.PointBudgetScale)
+	}
 
 	glow := ir.QualityLadder[1]
 	if glow.Name != "glow" {
@@ -77,6 +81,9 @@ func TestQualityLadderRoundTrip(t *testing.T) {
 	}
 	if qualityScale(glow) != 0.5 {
 		t.Errorf("rung[1].ComputeBudgetScale = %v, want 0.5", qualityScale(glow))
+	}
+	if glow.PointBudgetScale != 0.625 {
+		t.Errorf("rung[1].PointBudgetScale = %v, want 0.625", glow.PointBudgetScale)
 	}
 	if glow.ExpensivePassCadence != 2 {
 		t.Errorf("rung[1].ExpensivePassCadence = %v, want 2", glow.ExpensivePassCadence)
@@ -93,6 +100,9 @@ func TestQualityLadderRoundTrip(t *testing.T) {
 	if !strings.Contains(string(payload), `"qualityStartRung":1`) {
 		t.Fatalf("expected qualityStartRung:1 in wire JSON: %s", payload)
 	}
+	if !strings.Contains(string(payload), `"pointBudgetScale":0.625`) {
+		t.Fatalf("expected pointBudgetScale in wire JSON: %s", payload)
+	}
 
 	// legacyProps map-tree path must stay in sync with the JSON path.
 	bundle := ir.legacyProps()
@@ -105,6 +115,9 @@ func TestQualityLadderRoundTrip(t *testing.T) {
 	}
 	if rawList[1]["name"] != "glow" {
 		t.Errorf(`legacy qualityLadder[1].name = %v, want "glow"`, rawList[1]["name"])
+	}
+	if rawList[1]["pointBudgetScale"] != 0.625 {
+		t.Errorf("legacy qualityLadder[1].pointBudgetScale = %v, want 0.625", rawList[1]["pointBudgetScale"])
 	}
 	if bundle["qualityStartRung"] != 1 {
 		t.Errorf("legacy qualityStartRung = %v, want 1", bundle["qualityStartRung"])
@@ -124,18 +137,24 @@ func TestQualityRungBlankNameGetsIndexFallback(t *testing.T) {
 
 func TestQualityRungClampsOutOfRangeValues(t *testing.T) {
 	p := Props{QualityLadder: []QualityRung{
-		{Name: "over", ComputeBudgetScale: 4, ExpensivePassCadence: -3},
-		{Name: "under", ComputeBudgetScale: -2, ExpensivePassCadence: 0},
+		{Name: "over", ComputeBudgetScale: 4, PointBudgetScale: 4, ExpensivePassCadence: -3},
+		{Name: "under", ComputeBudgetScale: -2, PointBudgetScale: -2, ExpensivePassCadence: 0},
 	}}
 	ir := p.SceneIR()
 	if qualityScale(ir.QualityLadder[0]) != 1 {
 		t.Errorf("over-range ComputeBudgetScale = %v, want clamped to 1", qualityScale(ir.QualityLadder[0]))
+	}
+	if ir.QualityLadder[0].PointBudgetScale != 1 {
+		t.Errorf("over-range PointBudgetScale = %v, want clamped to 1", ir.QualityLadder[0].PointBudgetScale)
 	}
 	if ir.QualityLadder[0].ExpensivePassCadence != 1 {
 		t.Errorf("negative ExpensivePassCadence = %v, want clamped to 1", ir.QualityLadder[0].ExpensivePassCadence)
 	}
 	if qualityScale(ir.QualityLadder[1]) != 0 {
 		t.Errorf("under-range ComputeBudgetScale = %v, want clamped to 0", qualityScale(ir.QualityLadder[1]))
+	}
+	if ir.QualityLadder[1].PointBudgetScale != 0 {
+		t.Errorf("under-range PointBudgetScale = %v, want clamped to 0", ir.QualityLadder[1].PointBudgetScale)
 	}
 	if ir.QualityLadder[1].ExpensivePassCadence != 1 {
 		t.Errorf("zero ExpensivePassCadence = %v, want clamped to 1 (every frame)", ir.QualityLadder[1].ExpensivePassCadence)
@@ -221,7 +240,7 @@ func TestQualityLadderWarningsCombinedWithAdaptiveQuality(t *testing.T) {
 }
 
 func TestQualityLadderWarningsCleanWhenAdaptiveQualityAbsent(t *testing.T) {
-	p := Props{QualityLadder: []QualityRung{{Name: "a", ComputeBudgetScale: 0.5, ExpensivePassCadence: 1}}}
+	p := Props{QualityLadder: []QualityRung{{Name: "a", ComputeBudgetScale: 0.5, PointBudgetScale: 0.75, ExpensivePassCadence: 1}}}
 	if warnings := p.QualityLadderWarnings(); len(warnings) != 0 {
 		t.Errorf("expected no warnings, got %v", warnings)
 	}
@@ -230,13 +249,13 @@ func TestQualityLadderWarningsCleanWhenAdaptiveQualityAbsent(t *testing.T) {
 func TestQualityLadderWarningsFlagOutOfRangeValues(t *testing.T) {
 	p := Props{
 		QualityLadder: []QualityRung{
-			{Name: "a", ComputeBudgetScale: 2, ExpensivePassCadence: 0},
+			{Name: "a", ComputeBudgetScale: 2, PointBudgetScale: 2, ExpensivePassCadence: 0},
 		},
 		QualityStartRung: 5,
 	}
 	warnings := p.QualityLadderWarnings()
-	if len(warnings) < 3 {
-		t.Fatalf("expected warnings for ComputeBudgetScale, ExpensivePassCadence, and QualityStartRung, got %v", warnings)
+	if len(warnings) < 4 {
+		t.Fatalf("expected warnings for ComputeBudgetScale, PointBudgetScale, ExpensivePassCadence, and QualityStartRung, got %v", warnings)
 	}
 }
 

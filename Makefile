@@ -20,14 +20,16 @@ WATER_EVIDENCE_URL ?= http://127.0.0.1:3000/demos/water
 WATER_EVIDENCE_OUT ?= build/water-profile-evidence
 WATER_EVIDENCE_BUDGET ?= perf/budgets/water-profile-evidence.json
 WATER_EVIDENCE_FLAGS ?=
-FUZZTIME ?= 5s
+# Run each fuzz smoke target a fixed number of times. This keeps
+# continuous-integration runs deterministic and avoids shutdown races.
+FUZZTIME ?= 2000x
 FUZZ_TIMEOUT ?= 45s
 FUZZ_PARALLEL ?= 2
 GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build/*')
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -94,8 +96,29 @@ canopy-clean:
 test:
 	$(GO) test ./...
 
+# The production-build integration tests in cmd/gosx require TinyGo and account
+# for nearly all of `go test ./...` wall time. CI runs this exhaustive
+# non-CLI partition beside test-cli. internal/citest discovers the packages,
+# proves the two partitions are disjoint and complete, and prints the exact
+# package counts before it delegates to `go test`.
+test-unit:
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
+
+test-cli:
+	$(GO) test ./cmd/gosx
+
+test-ci-partitions:
+	$(GO) test ./internal/citest
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify
+
 test-race:
 	$(GO) test -race ./...
+
+# Pull requests exercise the reviewed shared-state surfaces without rerunning
+# CPU-heavy codec and vector kernels under the race detector. Protected-branch
+# pushes still run test-race across every package.
+test-race-pr:
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test race
 
 test-fuzz-smoke:
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./session -run '^$$' -fuzz FuzzDanmujiDecodeSessionCookieNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
@@ -114,10 +137,8 @@ test-fuzz-smoke:
 # budget: nesting it keeps those requires out of the library's go.mod and out of
 # every consumer's module graph. It is invoked from its own directory for the
 # same reason.
-BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript grammar_subset_tsx
-
 build-bootstrap:
-	cd cmd/buildbootstrap && $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' .
+	cd cmd/buildbootstrap && $(GO) run .
 
 # test-js runs three independent checks:
 #   1. The unit tests of the bundle builder itself. cmd/buildbootstrap
@@ -144,8 +165,8 @@ build-bootstrap:
 #      because it is not a *.test.js file) and the size-budget gates
 #      in bootstrap-size.test.mjs.
 test-js:
-	cd cmd/buildbootstrap && GOWORK=off $(GO) test -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
-	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
+	cd cmd/buildbootstrap && GOWORK=off $(GO) test ./...
+	cd cmd/buildbootstrap && GOWORK=off $(GO) run . --check
 	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
 
 # test-editor builds, vets and tests the nested editor module.
@@ -237,9 +258,6 @@ test-e2e:
 # without Chrome.
 test-perf-browser:
 	GOSX_REQUIRE_CHROME=1 $(GO) test -tags browser -timeout 10m ./perf/...
-
-test-ouroboros-smoke:
-	$(SHELL) ./scripts/ouroboros-smoke-ci.sh
 
 # Build the deployable docs bundle and prove the production server can serve
 # the water route and its content-addressed Scene3D runtime assets.

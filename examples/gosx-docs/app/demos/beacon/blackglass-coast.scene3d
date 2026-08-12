@@ -1,0 +1,878 @@
+{
+  "schema": "gosx.scene3d.document/v1",
+  "id": "blackglass-coast",
+  "name": "Blackglass Coast",
+  "revision": 1,
+  "rootIds": [
+    "blackglass-coast-root"
+  ],
+  "entities": {
+    "arrival-marker": {
+      "id": "arrival-marker",
+      "name": "Arrival Beach",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": -1.8,
+          "y": 0.2,
+          "z": 9.2
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "sphere",
+          "radius": 0.46,
+          "segments": 20
+        },
+        "material": "arrival-marker",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "beacon-fire": {
+      "id": "beacon-fire",
+      "name": "Beacon Fire",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "light": {
+        "kind": "point",
+        "color": "#ff8a48",
+        "intensity": 18,
+        "direction": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "position": {
+          "x": 8,
+          "y": 7.5,
+          "z": -4
+        },
+        "range": 26,
+        "castShadow": true
+      },
+      "visible": true
+    },
+    "beacon-lens": {
+      "id": "beacon-lens",
+      "name": "Beacon Lens",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 8,
+          "y": 8.1,
+          "z": -4
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "sphere",
+          "radius": 0.72,
+          "segments": 24
+        },
+        "material": "beacon-glow",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "beacon-plinth": {
+      "id": "beacon-plinth",
+      "name": "Beacon Plinth",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 8,
+          "y": 0.8,
+          "z": -4
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "cylinder",
+          "height": 1.6,
+          "radiusTop": 2.2,
+          "radiusBottom": 2.7,
+          "radialSegments": 32
+        },
+        "material": "ruin-stone",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "blackglass-beacon": {
+      "id": "blackglass-beacon",
+      "name": "Blackglass Beacon",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 8,
+          "y": 4.7,
+          "z": -4
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "cylinder",
+          "height": 6.4,
+          "radiusTop": 0.55,
+          "radiusBottom": 1.25,
+          "radialSegments": 24
+        },
+        "material": "beacon-metal",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "blackglass-coast-root": {
+      "id": "blackglass-coast-root",
+      "name": "Blackglass Coast",
+      "children": [
+        "coast-cliff-overlook",
+        "coast-sun",
+        "coast-sky",
+        "beacon-fire",
+        "coast-sand",
+        "cove-water-proxy",
+        "coast-cliff-west",
+        "coast-cliff-east",
+        "beacon-plinth",
+        "blackglass-beacon",
+        "beacon-lens",
+        "ruin-arch-left",
+        "ruin-arch-right",
+        "ruin-arch-lintel",
+        "arrival-marker"
+      ],
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "visible": true
+    },
+    "coast-cliff-east": {
+      "id": "coast-cliff-east",
+      "name": "East Basalt Shelf",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 12,
+          "y": 3.4,
+          "z": -8
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 7,
+          "y": 5,
+          "z": 4
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "sphere",
+          "radius": 1,
+          "segments": 28
+        },
+        "material": "basalt",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "coast-cliff-overlook": {
+      "id": "coast-cliff-overlook",
+      "name": "Overlook Cliff",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 4,
+          "y": 5,
+          "z": 11
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 9,
+          "y": 7,
+          "z": 4
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "sphere",
+          "radius": 1,
+          "segments": 28
+        },
+        "material": "basalt",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "coast-cliff-west": {
+      "id": "coast-cliff-west",
+      "name": "West Basalt Shelf",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": -18,
+          "y": 4.1,
+          "z": -2
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 8,
+          "y": 6,
+          "z": 5
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "sphere",
+          "radius": 1,
+          "segments": 28
+        },
+        "material": "basalt",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "coast-sand": {
+      "id": "coast-sand",
+      "name": "Sunlit Shore",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": -5,
+          "y": -0.35,
+          "z": 5
+        },
+        "quaternion": {
+          "x": -0.7071067811865475,
+          "y": 0,
+          "z": 0,
+          "w": 0.7071067811865476
+        },
+        "rotation": {
+          "x": -1.5707963267948966,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "plane",
+          "width": 50,
+          "height": 36
+        },
+        "material": "sand",
+        "pickable": false,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "coast-sky": {
+      "id": "coast-sky",
+      "name": "Sky Fill",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "light": {
+        "kind": "ambient",
+        "color": "#b9d8e8",
+        "intensity": 0.48,
+        "direction": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      },
+      "visible": true
+    },
+    "coast-sun": {
+      "id": "coast-sun",
+      "name": "Volcanic Sun",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "light": {
+        "kind": "directional",
+        "color": "#fff0d0",
+        "intensity": 2.1,
+        "direction": {
+          "x": -0.55,
+          "y": -0.82,
+          "z": -0.24
+        },
+        "position": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "castShadow": true
+      },
+      "visible": true
+    },
+    "cove-water-proxy": {
+      "id": "cove-water-proxy",
+      "name": "Blackglass Cove Water",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": -12,
+          "y": 0,
+          "z": -6
+        },
+        "quaternion": {
+          "x": -0.7071067811865475,
+          "y": 0,
+          "z": 0,
+          "w": 0.7071067811865476
+        },
+        "rotation": {
+          "x": -1.5707963267948966,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "plane",
+          "width": 34,
+          "height": 24
+        },
+        "material": "water-proxy",
+        "pickable": false,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "ruin-arch-left": {
+      "id": "ruin-arch-left",
+      "name": "Ruin Arch Left",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 2.6,
+          "y": 1.8,
+          "z": 5.3
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.8,
+          "y": 3.6,
+          "z": 0.8
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "box",
+          "width": 1,
+          "height": 1,
+          "depth": 1
+        },
+        "material": "ruin-stone",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "ruin-arch-lintel": {
+      "id": "ruin-arch-lintel",
+      "name": "Ruin Arch Lintel",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 4.5,
+          "y": 4.7,
+          "z": 5.3
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 2.7,
+          "y": 0.65,
+          "z": 0.8
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "box",
+          "width": 1,
+          "height": 1,
+          "depth": 1
+        },
+        "material": "ruin-stone",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    },
+    "ruin-arch-right": {
+      "id": "ruin-arch-right",
+      "name": "Ruin Arch Right",
+      "parent": "blackglass-coast-root",
+      "transform": {
+        "position": {
+          "x": 6.4,
+          "y": 1.8,
+          "z": 5.3
+        },
+        "quaternion": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 1
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 0.8,
+          "y": 3.6,
+          "z": 0.8
+        }
+      },
+      "mesh": {
+        "geometry": {
+          "kind": "box",
+          "width": 1,
+          "height": 1,
+          "depth": 1
+        },
+        "material": "ruin-stone",
+        "pickable": true,
+        "castShadow": true,
+        "receiveShadow": true
+      },
+      "visible": true
+    }
+  },
+  "materials": {
+    "arrival-marker": {
+      "id": "arrival-marker",
+      "name": "Arrival Marker",
+      "color": "#e7bd6b",
+      "roughness": 0.4,
+      "metalness": 0.3
+    },
+    "basalt": {
+      "id": "basalt",
+      "name": "Wet Basalt",
+      "color": "#1f2428",
+      "roughness": 0.42,
+      "metalness": 0.08,
+      "clearcoat": 0.18
+    },
+    "beacon-glow": {
+      "id": "beacon-glow",
+      "name": "Beacon Ember",
+      "color": "#ff9c4e",
+      "roughness": 0.2,
+      "metalness": 0.12,
+      "emissive": 1.25,
+      "selena": {
+        "material": "BeaconEmber",
+        "source": "material BeaconEmber {\n  param tint : color = rgb(1.0, 0.46, 0.16)\n  surface(geo) -\u003e color { return vec4f(tint.rgb, 1.0) }\n}"
+      }
+    },
+    "beacon-metal": {
+      "id": "beacon-metal",
+      "name": "Blackglass Alloy",
+      "color": "#131b21",
+      "roughness": 0.24,
+      "metalness": 0.78,
+      "clearcoat": 0.55
+    },
+    "ruin-stone": {
+      "id": "ruin-stone",
+      "name": "Weathered Ruin Stone",
+      "color": "#716450",
+      "roughness": 0.76,
+      "metalness": 0
+    },
+    "sand": {
+      "id": "sand",
+      "name": "Sunlit Sand",
+      "color": "#d9af70",
+      "roughness": 0.9,
+      "metalness": 0
+    },
+    "water-proxy": {
+      "id": "water-proxy",
+      "name": "Cove Water Proxy",
+      "color": "#167b95",
+      "roughness": 0.12,
+      "metalness": 0.18,
+      "clearcoat": 0.65,
+      "transmission": 0.24
+    }
+  },
+  "world": {
+    "waterZones": {
+      "blackglass-cove": {
+        "id": "blackglass-cove",
+        "name": "Blackglass Cove",
+        "center": {
+          "x": -12,
+          "y": -3,
+          "z": -6
+        },
+        "size": {
+          "x": 34,
+          "y": 10,
+          "z": 24
+        },
+        "surfaceY": 0,
+        "current": {
+          "x": 0.16,
+          "y": 0,
+          "z": -0.05
+        },
+        "buoyancyScale": 1.15,
+        "linearDrag": 0.35,
+        "runtimeProfile": "blackglass-coast"
+      }
+    },
+    "markers": {
+      "arrival": {
+        "id": "arrival",
+        "name": "Arrival Beach",
+        "kind": "player-spawn",
+        "entity": "arrival-marker",
+        "position": {
+          "x": -1.8,
+          "y": 0.2,
+          "z": 9.2
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 0
+        }
+      },
+      "beacon-lens": {
+        "id": "beacon-lens",
+        "name": "Beacon Lens",
+        "kind": "interactable",
+        "entity": "beacon-lens",
+        "position": {
+          "x": 8,
+          "y": 8.1,
+          "z": -4
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 0
+        }
+      },
+      "beacon-terrace": {
+        "id": "beacon-terrace",
+        "name": "Beacon Terrace",
+        "kind": "checkpoint",
+        "entity": "beacon-plinth",
+        "position": {
+          "x": 8,
+          "y": 1.6,
+          "z": -1.5
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 0
+        }
+      },
+      "cinematic-beacon": {
+        "id": "cinematic-beacon",
+        "name": "Beacon Hero Frame",
+        "kind": "cinematic-target",
+        "entity": "blackglass-beacon",
+        "position": {
+          "x": 8,
+          "y": 4.7,
+          "z": -4
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 0
+        }
+      },
+      "opening-camera": {
+        "id": "opening-camera",
+        "name": "Opening Overlook",
+        "kind": "camera-start",
+        "entity": "coast-cliff-overlook",
+        "position": {
+          "x": -2,
+          "y": 7.2,
+          "z": 22
+        },
+        "rotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "w": 0
+        }
+      }
+    }
+  },
+  "camera": {
+    "position": {
+      "x": -2,
+      "y": 7.2,
+      "z": 22
+    },
+    "rotation": {
+      "x": -0.2,
+      "y": -0.18,
+      "z": 0
+    },
+    "fov": 48,
+    "near": 0.1,
+    "far": 140
+  },
+  "environment": {
+    "background": "#77b6cf",
+    "ambientColor": "#c2e2ea",
+    "ambientIntensity": 0.5,
+    "exposure": 1.1,
+    "toneMapping": "aces"
+  },
+  "metadata": {
+    "art-direction": "sunlit volcanic naturalism",
+    "runtime-owner": "gosx Blackglass Coast showcase"
+  }
+}

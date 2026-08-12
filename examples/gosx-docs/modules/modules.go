@@ -4,10 +4,12 @@ package modules
 import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/beacon"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/cms"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/html-surface"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/playground"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/scene3d"

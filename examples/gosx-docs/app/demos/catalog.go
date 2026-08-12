@@ -32,6 +32,16 @@ var demoCatalog = []DemoDefinition{
 		ShowcaseRank: 3,
 	},
 	{
+		Slug: "beacon", Title: "Blackglass Coast", Tag: "Studio-authored water world",
+		Promise: "Orbit a sunlit volcanic cove with a live water surface, basalt shelves, ruins, and an ember beacon—authored as a world, not a prop.",
+		Lesson:  "A typed Studio world contract carries water-volume and gameplay anchors into a bounded GoSX Scene3D runtime with truthful backend fallback and frame-quality telemetry.",
+		Accent:  "#e7bd6b", Facets: []string{"Scene3D", "Studio", "WaterSystem", "PBR", "WebGPU", "WebGL2"},
+		SourcePath: "examples/gosx-docs/app/demos/beacon/program.go", Packages: []string{"scene", "route"},
+		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
+		Limitations:  "This first vertical slice binds the authored cove and its water semantics, but it is an orbitable world showcase—not yet a third-person game. WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2 or its bounded primitive fallback. The scene caps rendering at 60 frames per second (FPS), a device pixel ratio (DPR) of 1.5, and a 720p render surface.",
+		ShowcaseRank: 1,
+	},
+	{
 		Slug: "water", Title: "Water", Tag: "flagship real-time optics",
 		Promise: "Disturb a physically responsive pool with dielectric Fresnel, depth absorption, live caustics, buoyant objects, and bounded quality profiles.",
 		Lesson:  "A typed GoSX WaterSystem drives one Selena-authored optical model through native WebGPU and WebGL2 backends.",
@@ -39,7 +49,7 @@ var demoCatalog = []DemoDefinition{
 		SourcePath: "examples/gosx-docs/app/demos/water/page.gsx", Packages: []string{"scene", "selena", "route"},
 		Status: "featured", RenderMode: "SSR + Scene3D GPU runtime",
 		Limitations:  "WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2. Hero targets discrete GPUs; the new optical ALU still needs Apple/Metal hardware certification.",
-		ShowcaseRank: 1,
+		ShowcaseRank: 2,
 	},
 	{
 		Slug: "playground", Title: "GoSX Playground", Tag: "compile .gsx live",
@@ -84,8 +94,7 @@ var demoCatalog = []DemoDefinition{
 		Accent:  "#5fb4ff", Facets: []string{"Scene3D", "PBR", "PostFX"},
 		SourcePath: "examples/gosx-docs/app/demos/scene3d/page.gsx", Packages: []string{"scene", "route"},
 		Status: "live", RenderMode: "SSR + Scene3D GPU runtime",
-		Limitations:  "Rendering capability and backend depend on the browser GPU stack.",
-		ShowcaseRank: 2,
+		Limitations: "Rendering capability and backend depend on the browser GPU stack.",
 	},
 	{
 		Slug: "scene3d-bench", Title: "Scene3D Bench", Tag: "renderer diagnostics",
@@ -96,6 +105,15 @@ var demoCatalog = []DemoDefinition{
 		Status: "lab", RenderMode: "SSR + instrumented Scene3D runtime",
 		Limitations:  "Measurements reflect the current machine and browser; they are not cross-device benchmarks.",
 		ShowcaseRank: 4,
+	},
+	{
+		Slug: "html-surface", Title: "Diegetic Panels", Tag: "HTML textured onto 3D geometry",
+		Promise: "Read three Hypertext Markup Language (HTML) panels that the runtime renders as textures on scene geometry. One faces forward, one turns 36 degrees, and one lies flat while rotating.",
+		Lesson:  "A texture-mode scene.HTML is a quad in the scene graph. Page Cascading Style Sheets (CSS), layout, and web fonts render with rotation, occlusion, and depth like a mesh.",
+		Accent:  "#35d6ff", Facets: []string{"Scene3D", "HTML surface", "WebGPU", "WebGL2"},
+		SourcePath: "examples/gosx-docs/app/demos/html-surface/program.go", Packages: []string{"scene", "route"},
+		Status: "lab", RenderMode: "SSR + Scene3D GPU runtime",
+		Limitations: "Pointer hits expose CSS-pixel surface coordinates. The runtime does not synthesize Document Object Model (DOM) events for descendants. Rasterization responds to authored markup, size, device pixel ratio, stylesheet revisions, and explicit invalidation. It does not observe arbitrary DOM mutations. The runtime reports cross-origin stylesheets as blocked.",
 	},
 	{
 		Slug: "cms", Title: "CMS Editor", Tag: "block-editor with live preview",

@@ -40,6 +40,15 @@
         "gpu_total_p95? <= 20"
       ]
     },
+    "docs-scene3d-ci": {
+      "description": "Documentation route with an intentional Scene3D teaching surface under CI software rasterization. Gates the shipped JavaScript, including the valid lazy WebGL fallback path when WebGPU is unavailable, and total network payload, plus bounded load and blocking time; long-task count is intentionally ungated because shader compilation on llvmpipe/SwiftShader crosses the 50ms boundary.",
+      "assertions": [
+        "js_total_kb <= 1450",
+        "network_kb <= 1500",
+        "lcp <= 18000",
+        "tbt <= 15000"
+      ]
+    },
     "water-ci": {
       "description": "Water route under CI software rasterization. Gates load, payload, and total blocking time; long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary. Real-GPU cadence is certified separately.",
       "assertions": [
@@ -53,6 +62,10 @@
     {
       "url": "/",
       "profile": "basic-island"
+    },
+    {
+      "url": "/docs/getting-started",
+      "profile": "docs-scene3d-ci"
     },
     {
       "url": "/demos/water",

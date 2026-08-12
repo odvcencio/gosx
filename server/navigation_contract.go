@@ -21,9 +21,10 @@ const (
 	NavigationLinkPrefetchStateAttr  = "data-gosx-prefetch-state"
 	NavigationLinkManagedCurrentAttr = "data-gosx-aria-current-managed"
 
-	NavigationFormAttr      = gosx.ManagedFormAttr
-	NavigationFormModeAttr  = gosx.ManagedFormModeAttr
-	NavigationFormStateAttr = gosx.ManagedFormStateAttr
+	NavigationFormAttr        = gosx.ManagedFormAttr
+	NavigationFormModeAttr    = gosx.ManagedFormModeAttr
+	NavigationFormStateAttr   = gosx.ManagedFormStateAttr
+	NavigationFormProjectAttr = gosx.ManagedFormProjectAttr
 )
 
 // NormalizeNavigationLinkCurrentPolicy normalizes the declarative "current"

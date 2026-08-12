@@ -109,7 +109,13 @@
     return fetch(url, fallback);
   }
 
-  function actionFetch(el, method, url, body) {
+  var SUBMITTER_ATTRS = {
+    formAction: "formaction",
+    formMethod: "formmethod",
+  };
+
+  function actionFetch(el, method, url, body, contractEl) {
+    var actionEl = contractEl || el;
     var opts = { method: method, headers: { Accept: "application/json" } };
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
@@ -124,9 +130,10 @@
         // (accept/dismiss) are replaced anyway, so re-enabling is harmless.
         if (el && "disabled" in el) el.disabled = false;
         return responsePayload(r).then(function (result) {
-          applyActionResult(el, result);
+          applyActionResult(actionEl, result, el);
           var detail = {
             element: el,
+            actionElement: actionEl,
             method: method,
             url: url,
             ok: !!r.ok,
@@ -135,8 +142,8 @@
             result: result,
           };
           dispatchActionEvent("gosx:action:result", detail);
-          if (el && typeof el.getAttribute === "function") {
-            var eventName = el.getAttribute("data-gosx-action-event");
+          if (actionEl && typeof actionEl.getAttribute === "function") {
+            var eventName = actionEl.getAttribute("data-gosx-action-event");
             if (eventName) dispatchActionEvent(eventName, detail);
           }
           if (!r.ok) dispatchActionEvent("gosx:action:error", detail);
@@ -256,7 +263,27 @@
     return "";
   }
 
-  function applyActionResult(el, result) {
+  function focusAfterAction(target, trigger) {
+    if (!target || !trigger) return;
+    if (trigger.isConnected && typeof trigger.focus === "function") {
+      try {
+        trigger.focus({ preventScroll: true });
+      } catch (_) {
+        trigger.focus();
+      }
+      return;
+    }
+    if (typeof target.querySelector !== "function") return;
+    var next = target.querySelector('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    if (!next || typeof next.focus !== "function") return;
+    try {
+      next.focus({ preventScroll: true });
+    } catch (_) {
+      next.focus();
+    }
+  }
+
+  function applyActionResult(el, result, trigger) {
     if (!el || !result) return;
     var signal = typeof el.getAttribute === "function" ? el.getAttribute("data-gosx-action-signal") : "";
     var value = actionResultValue(result);
@@ -269,6 +296,7 @@
     if (!target) return;
     if (typeof window.__gosx_replace_runtime_content === "function") {
       window.__gosx_replace_runtime_content(target, html);
+      focusAfterAction(target, trigger);
       return;
     }
     if (typeof window.__gosx_dispose_runtime_surfaces === "function") {
@@ -284,6 +312,70 @@
     if (typeof window.__gosx_mount_declarative_regions === "function") {
       window.__gosx_mount_declarative_regions(target);
     }
+    focusAfterAction(target, trigger);
+  }
+
+  function submitterAttribute(submitter, name) {
+    if (!submitter) return "";
+    var attrName = SUBMITTER_ATTRS[name] || String(name || "").toLowerCase();
+    if (!submitter.hasAttribute || !submitter.hasAttribute(attrName)) return "";
+    var property = submitter[name];
+    if (typeof property === "string" && property) return property;
+    return typeof submitter.getAttribute === "function" ? String(submitter.getAttribute(attrName) || "") : "";
+  }
+
+  function formActionSpec(form, submitter) {
+    var spec = (form.getAttribute("data-gosx-action") || "").trim();
+    if (spec) return parseAction(spec, submitterAttribute(submitter, "formMethod") || form.getAttribute("method") || "POST");
+    return {
+      method: (submitterAttribute(submitter, "formMethod") || form.getAttribute("method") || "POST").toUpperCase(),
+      url: submitterAttribute(submitter, "formAction") || form.getAttribute("action") || "",
+    };
+  }
+
+  function formBody(form, submitter) {
+    var formData = new FormData(form);
+    var name = submitter && (submitter.name || (submitter.getAttribute && submitter.getAttribute("name")));
+    if (name && (!formData.has || !formData.has(name))) {
+      var value = submitter.value || (submitter.getAttribute && submitter.getAttribute("value")) || "";
+      if (typeof formData.append === "function") formData.append(name, value);
+    }
+    return new URLSearchParams(formData);
+  }
+
+  function captureFormState(form) {
+    if (!form || !form.getAttribute) return { pending: null, state: null };
+    return {
+      pending: form.getAttribute("data-gosx-pending"),
+      state: form.getAttribute("data-gosx-form-state"),
+    };
+  }
+
+  function setFormPending(form) {
+    if (!form || !form.setAttribute) return;
+    form.setAttribute("data-gosx-pending", "true");
+    form.setAttribute("data-gosx-form-state", "pending");
+  }
+
+  function restoreFormState(form, snapshot) {
+    if (!form || !form.setAttribute) return;
+    var previous = snapshot || { pending: null, state: null };
+    if (previous.pending == null) {
+      if (form.removeAttribute) form.removeAttribute("data-gosx-pending");
+    } else {
+      form.setAttribute("data-gosx-pending", previous.pending);
+    }
+    form.setAttribute("data-gosx-form-state", previous.state == null ? "idle" : previous.state);
+  }
+
+  function formContractElement(form, submitter) {
+    if (!submitter || !submitter.hasAttribute) return form;
+    if (submitter.hasAttribute("data-gosx-action-target") ||
+      submitter.hasAttribute("data-gosx-action-event") ||
+      submitter.hasAttribute("data-gosx-action-signal")) {
+      return submitter;
+    }
+    return form;
   }
 
   function targetFor(selector) {
@@ -456,18 +548,19 @@
       var f = e.target;
       if (!f || !f.matches || !f.matches("form[data-gosx-action]")) return;
       e.preventDefault();
-      var spec = (f.getAttribute("data-gosx-action") || "").trim();
-      var a = spec
-        ? parseAction(spec, f.getAttribute("method") || "POST")
-        : { method: (f.getAttribute("method") || "POST").toUpperCase(), url: f.getAttribute("action") || "" };
+      var submit = e.submitter || f.querySelector("[type=submit]");
+      var a = formActionSpec(f, submit);
       if (!a.url) return;
-      var submit = f.querySelector("[type=submit]");
-      actionFetch(submit, a.method, a.url, new URLSearchParams(new FormData(f))).then(function (r) {
+      var previous = captureFormState(f);
+      setFormPending(f);
+      actionFetch(submit, a.method, a.url, formBody(f, submit), formContractElement(f, submit)).then(function (r) {
         if (r && r.ok && f.hasAttribute("data-gosx-reset")) {
           f.querySelectorAll("input[type=text]").forEach(function (i) {
             i.value = "";
           });
         }
+      }).finally(function () {
+        restoreFormState(f, previous);
       });
     },
     true

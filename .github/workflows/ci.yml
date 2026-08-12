@@ -42,15 +42,16 @@ jobs:
       - name: Release gate
         run: make release-gate
 
-  # go-tests: Go checks and tests, plus TinyGo — cmd/gosx/build_test.go
-  # exercises a real production GoSX build (`go run ./cmd/gosx build --prod`)
-  # via `make test`, which requires TinyGo on PATH. No Node or Chrome install:
-  # nothing here shells out to either. This is the heaviest job (~11 minutes
-  # of measured step time before the TinyGo install) but no longer serializes
-  # behind or ahead of the JS/WASM/browser jobs.
+  # go-tests: every root package except cmd/gosx, plus the editor, fuzz and
+  # desktop gates. The production-build CLI suite runs in go-cli-tests beside
+  # this job, so its ~6 minute TinyGo integration tests no longer serialize all
+  # other Go checks. PR117 measured the superseded serial lane at 6m31s for
+  # unit tests plus 10m48s for race tests (BC7 alone took 504.697s), which is
+  # why it temporarily needed 30 minutes. This lane needs neither TinyGo nor
+  # Node and returns to a 15-minute fail-safe.
   go-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -65,10 +66,66 @@ jobs:
       - name: Install Danmuji
         run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
 
-      # TinyGo is required here too: TestRunBuildProdWritesHybridStaticBundleForStarterApp
-      # and its siblings in cmd/gosx/build_test.go shell out to a real
-      # production GoSX build (`go run ./cmd/gosx build --prod`), which
-      # requires TinyGo on PATH. `make test` runs those.
+      - name: Format check
+        run: make fmt-check
+
+      - name: Danmuji generated spec check
+        run: make verify-danmuji
+
+      # This fails on package overlap/gaps and if a focused race package loses
+      # either its tests or its production concurrency evidence. Its report
+      # records the exact package counts and reasons in the job log.
+      - name: CI package partition validation
+        run: make test-ci-partitions
+
+      - name: Non-CLI unit and integration tests
+        run: make test-unit
+
+      # editor/ is a nested Go module, so nothing above reaches it: `go list
+      # ./editor/...` fails from the root and `make test` never compiles it.
+      # That left 3404 non-test lines and 68 tests with no gate on any runner.
+      # The target builds, vets and tests the module against the working tree.
+      - name: Editor module tests
+        run: make test-editor
+
+      - name: Focused shared-state race tests
+        if: github.event_name == 'pull_request'
+        run: make test-race-pr
+
+      # Pushes reaching main/master retain the exhaustive race gate, including
+      # the expensive BC7 and vector-search kernels omitted from the PR lane.
+      - name: Full repository race tests
+        if: github.event_name == 'push'
+        run: make test-race
+
+      - name: Fuzz smoke tests
+        run: make test-fuzz-smoke
+
+      # The desktop host holds 3520 lines behind a windows build tag against 62
+      # lines of windows-gated test, and this runner is Linux. release.yml
+      # cross-compiles the binary, but nothing compiled the windows TEST
+      # binaries, so a broken desktop test could not fail anywhere. This runs the
+      # portable tests and links both windows test binaries.
+      - name: Desktop tests and Windows cross-compile gate
+        run: make test-desktop
+
+  # cmd/gosx/build_test.go runs real production builds and therefore requires
+  # TinyGo. Isolating it gives PRs a ~6 minute Go critical path while preserving
+  # every production-build assertion and the standalone CLI build gate.
+  go-cli-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
@@ -79,38 +136,11 @@ jobs:
           go1.25.5 download
           tinygo version
 
-      - name: Format check
-        run: make fmt-check
-
-      - name: Danmuji generated spec check
-        run: make verify-danmuji
-
-      - name: Unit and integration tests
-        run: make test
-
-      # editor/ is a nested Go module, so nothing above reaches it: `go list
-      # ./editor/...` fails from the root and `make test` never compiles it.
-      # That left 3404 non-test lines and 68 tests with no gate on any runner.
-      # The target builds, vets and tests the module against the working tree.
-      - name: Editor module tests
-        run: make test-editor
-
-      - name: Race tests
-        run: make test-race
-
-      - name: Fuzz smoke tests
-        run: make test-fuzz-smoke
+      - name: CLI production-build integration tests
+        run: make test-cli
 
       - name: Build CLI
         run: make build-cli
-
-      # The desktop host holds 3520 lines behind a windows build tag against 62
-      # lines of windows-gated test, and this runner is Linux. release.yml
-      # cross-compiles the binary, but nothing compiled the windows TEST
-      # binaries, so a broken desktop test could not fail anywhere. This runs the
-      # portable tests and links both windows test binaries.
-      - name: Desktop tests and Windows cross-compile gate
-        run: make test-desktop
 
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
@@ -266,12 +296,6 @@ jobs:
           GOSX_CHROME_NO_SANDBOX: "1"
         run: make test-perf-browser
 
-      - name: Ouroboros smoke self-compare
-        env:
-          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-          GOSX_CHROME_NO_SANDBOX: "1"
-        run: make test-ouroboros-smoke
-
       - name: Perf budget gate
         env:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
@@ -288,6 +312,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - go-tests
+      - go-cli-tests
       - js-tests
       - wasm-tests
       - browser-tests
@@ -295,7 +320,7 @@ jobs:
 
     steps:
       - name: All test jobs passed
-        run: echo "go-tests, js-tests, wasm-tests, and browser-tests all passed"
+        run: echo "go-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame

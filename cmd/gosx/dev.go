@@ -292,7 +292,7 @@ func stageSidecarCSS(dir, cssDir string) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() && shouldSkipProjectDir(info.Name()) {
+		if shouldSkipProjectWalkDir(dir, path, info) {
 			return filepath.SkipDir
 		}
 		if !strings.HasSuffix(path, ".css") || strings.HasPrefix(filepath.Base(path), ".") {
@@ -339,15 +339,6 @@ func copyFile(dst, src string) error {
 		return err
 	}
 	return os.WriteFile(dst, data, 0644)
-}
-
-func shouldSkipProjectDir(name string) bool {
-	switch name {
-	case ".git", "build", "dist", "node_modules":
-		return true
-	default:
-		return strings.HasPrefix(name, ".tmp")
-	}
 }
 
 type devRunner struct {

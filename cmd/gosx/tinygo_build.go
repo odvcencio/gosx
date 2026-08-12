@@ -58,7 +58,7 @@ func resolveWASMCompiler(opts BuildOptions, lookPath func(string) (string, error
 
 func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraTags ...string) error {
 	tags := tinyGoWASMTags(extraTags...)
-	scratchDir, cleanup, err := prepareTinyGoWASMModule(projectDir, gosxRoot, tags...)
+	scratchDir, cleanup, err := prepareTinyGoWASMModule(gosxRoot, tags...)
 	if err != nil {
 		return err
 	}
@@ -169,8 +169,8 @@ func tinyGoFullRuntimeEnabled() bool {
 	}
 }
 
-func prepareTinyGoWASMModule(projectDir, gosxRoot string, tags ...string) (string, func(), error) {
-	packages, modules, err := tinyGoWASMDependencyClosure(projectDir, tags...)
+func prepareTinyGoWASMModule(gosxRoot string, tags ...string) (string, func(), error) {
+	packages, modules, err := tinyGoWASMDependencyClosure(gosxRoot, tags...)
 	if err != nil {
 		return "", nil, err
 	}

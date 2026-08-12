@@ -258,6 +258,9 @@ func (e *Editor) renderNativePanelSegments() []gosx.Node {
 }
 
 func (e *Editor) renderNativeBody() gosx.Node {
+	sourceAttrs := e.nativeTextareaAttrs("editor-content", "content", "editor-source", e.Options.Placeholder, 0)
+	sourceAttrs = append(sourceAttrs, gosx.Attr("aria-label", e.ariaLabel()))
+
 	return gosx.El(
 		"section",
 		gosx.Attrs(
@@ -286,7 +289,7 @@ func (e *Editor) renderNativeBody() gosx.Node {
 				),
 				gosx.El(
 					"textarea",
-					e.nativeTextareaAttrs("editor-content", "content", "editor-source", e.Options.Placeholder, 0),
+					sourceAttrs,
 					gosx.Text(e.doc.Content()),
 				),
 			),
