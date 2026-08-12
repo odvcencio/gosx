@@ -131,10 +131,13 @@ jobs:
 
   # cmd/gosx/build_test.go runs real production builds and therefore requires
   # TinyGo. Isolating it gives PRs a ~6 minute Go critical path while preserving
-  # every production-build assertion and the standalone CLI build gate.
+  # every production-build assertion and the standalone CLI build gate. A cold
+  # merged-main run reached Go's default 10-minute package timeout in the final
+  # generated-docs fixture, so the suite has a 15-minute Go timeout inside this
+  # 20-minute job ceiling.
   go-cli-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository

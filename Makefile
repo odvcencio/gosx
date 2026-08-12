@@ -105,7 +105,7 @@ test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
 test-cli:
-	$(GO) test ./cmd/gosx
+	$(GO) test -timeout 15m ./cmd/gosx
 
 test-ci-partitions:
 	$(GO) test ./internal/citest
