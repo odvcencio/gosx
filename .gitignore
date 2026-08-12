@@ -29,3 +29,8 @@ go.work.sum
 # cmd/gosx source directory.
 /gosx
 /gosx.exe
+
+# Compiled binary from 'go build ./examples/ouroboros-corpus' run at the
+# repository root. Anchored with a leading slash to keep the source
+# directory examples/ouroboros-corpus/ tracked.
+/ouroboros-corpus
