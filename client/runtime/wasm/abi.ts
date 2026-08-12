@@ -23,7 +23,8 @@
 
   /** @param {string} variant */
   function featureMaskForVariant(variant) {
-    return Number(contract.variants[String(variant || "")] || 0) >>> 0;
+    const name = String(variant || "");
+    return Number(contract.variants[name] || (contract.compatibilityVariants && contract.compatibilityVariants[name]) || 0) >>> 0;
   }
 
   /**
@@ -32,7 +33,7 @@
    */
   function selectVariant(required, published) {
     const mask = Number(required || 0) >>> 0;
-    const candidates = ["core", "islands", "engine", "collab", "full"].filter(function(variant) {
+    const candidates = Object.keys(contract.variants).filter(function(variant) {
       const features = featureMaskForVariant(variant);
       return (features & mask) === mask && (!published || published[variant]);
     });

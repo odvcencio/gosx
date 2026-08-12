@@ -36,7 +36,7 @@ function makeEnvironment(options) {
     const contract = window.__gosx_runtime_contract;
     const handshake = Object.assign({
       abiVersion: contract.abiVersion,
-      featureMask: contract.variants.islands,
+      featureMask: contract.compatibilityVariants.islands,
       variant: "islands",
       mailboxVersion: contract.mailboxVersion,
       manifestHash: contract.manifestHash,
@@ -76,7 +76,7 @@ function makeEnvironment(options) {
       hash: hash,
       manifestHash: contract.manifestHash,
       variant: "islands",
-      featureMask: contract.variants.islands,
+      featureMask: contract.compatibilityVariants.islands,
     },
     runtime: window.__gosx.runtime,
     hydrationReady: function() { return hydrationReady; },
@@ -94,11 +94,10 @@ test("verified loader forwards readiness only after exact handshake validation",
 test("browser selector chooses the smallest published compatible artifact", () => {
   const env = makeEnvironment();
   const selected = env.runtime.support.selectVariant(17, {
-    core: { size: 10 },
-    islands: { size: 5 },
+    core: { size: 5 },
     full: { size: 40 },
   });
-  assert.equal(selected, "islands");
+  assert.equal(selected, "core");
 });
 
 test("loader rejects an artifact hash mismatch before execution", async () => {

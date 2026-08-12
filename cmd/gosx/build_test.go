@@ -26,6 +26,30 @@ func TestRuntimeVariantAssetCarriesContractIdentity(t *testing.T) {
 	}
 }
 
+func TestPublishedRuntimeVariantAssetsAreExactlyTheFourProfiles(t *testing.T) {
+	assets := publishedRuntimeVariantAssets(
+		HashedAsset{File: "core.wasm"},
+		HashedAsset{File: "engine.wasm"},
+		HashedAsset{File: "collab.wasm"},
+		HashedAsset{File: "full.wasm"},
+	)
+	if len(assets) != 4 {
+		t.Fatalf("published runtime assets = %v, want four profiles", assets)
+	}
+	if _, ok := assets[string(runtimewasm.VariantIslands)]; ok {
+		t.Fatal("legacy islands alias was advertised as a capability profile")
+	}
+	for _, variant := range runtimewasm.PublishedVariants() {
+		asset, ok := assets[string(variant)]
+		if !ok {
+			t.Fatalf("published runtime assets omitted %q", variant)
+		}
+		if asset.Variant != string(variant) || asset.FeatureMask != uint32(runtimewasm.FeatureMaskForVariant(variant)) {
+			t.Fatalf("published %s contract = %+v", variant, asset)
+		}
+	}
+}
+
 func TestRuntimeJSAssetDataStripsMissingHLSMapTrailer(t *testing.T) {
 	raw := []byte("window.Hls = function() {};\n//# sourceMappingURL=hls.min.js.map\n")
 	got := string(runtimeJSAssetData("hls.min", raw))

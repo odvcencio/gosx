@@ -33,15 +33,12 @@ func runtimeContractTypeScript() string {
 		runtimewasm.FeatureScene3D, runtimewasm.FeatureIslands)
 	b.WriteString("    }),\n")
 	b.WriteString("    variants: Object.freeze({\n")
-	for _, variant := range []runtimewasm.Variant{
-		runtimewasm.VariantCore,
-		runtimewasm.VariantIslands,
-		runtimewasm.VariantEngine,
-		runtimewasm.VariantCollab,
-		runtimewasm.VariantFull,
-	} {
+	for _, variant := range runtimewasm.PublishedVariants() {
 		fmt.Fprintf(&b, "      %s: %d,\n", variant, runtimewasm.FeatureMaskForVariant(variant))
 	}
+	b.WriteString("    }),\n")
+	b.WriteString("    compatibilityVariants: Object.freeze({\n")
+	fmt.Fprintf(&b, "      %s: %d,\n", runtimewasm.VariantIslands, runtimewasm.FeatureMaskForVariant(runtimewasm.VariantIslands))
 	b.WriteString("    }),\n")
 	b.WriteString("    opcodes: Object.freeze({\n")
 	fmt.Fprintf(&b, "      handshake: %d, ping: %d, patches: %d,\n",

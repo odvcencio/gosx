@@ -7,7 +7,7 @@
   window.__gosx_runtime_contract = Object.freeze({
     abiVersion: 2,
     mailboxVersion: 1,
-    manifestHash: "850ff5e72dc872437bf568a7486f0ed08ad0fa046dfaa5f8956243b70182bc10",
+    manifestHash: "3cfd6ca5dbfac82427f048ed3e8962b789854730294b36cb547d19e595ba90b7",
     mailboxMagic: 1297634119,
     mailboxHeaderBytes: 24,
     mailboxMaxPayload: 67108864,
@@ -18,10 +18,12 @@
     }),
     variants: Object.freeze({
       core: 17,
-      islands: 17,
-      engine: 11,
+      engine: 27,
       collab: 21,
       full: 31,
+    }),
+    compatibilityVariants: Object.freeze({
+      islands: 17,
     }),
     opcodes: Object.freeze({
       handshake: 1, ping: 2, patches: 3,

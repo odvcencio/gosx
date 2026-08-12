@@ -714,6 +714,12 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 			FeatureMask:  mask,
 		})
 	}
+	// WASMIslands remains a compatibility artifact for manifests that predate
+	// capability-linked profiles. Once a manifest advertises variants, the
+	// alias must not compete with core as an independent fifth profile.
+	if len(manifest.Runtime.WASMVariants) > 0 {
+		delete(r.runtimeVariants, string(runtimewasm.VariantIslands))
+	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
 	r.SetStandardGoWASMExecPath(runtime.StandardGoWASMExec)
 	r.SetBootstrapLitePath(runtime.BootstrapLite)

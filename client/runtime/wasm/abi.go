@@ -45,6 +45,22 @@ const (
 	VariantIslands Variant = "islands"
 )
 
+var publishedVariants = [...]Variant{
+	VariantCore,
+	VariantEngine,
+	VariantCollab,
+	VariantFull,
+}
+
+// PublishedVariants returns the capability-linked variants emitted in new
+// build manifests. VariantIslands remains a read-compatible alias for older
+// manifests, but is not a fifth advertised profile.
+func PublishedVariants() []Variant {
+	variants := make([]Variant, len(publishedVariants))
+	copy(variants, publishedVariants[:])
+	return variants
+}
+
 // Handshake is returned by the direct runtime export before the host selects a
 // mailbox path. ManifestHash identifies the complete generated runtime
 // contract, rather than a page or a particular compiled artifact.
@@ -73,13 +89,13 @@ func NewHandshake(variant Variant) Handshake {
 func ManifestIdentity() string {
 	descriptor := fmt.Sprintf(
 		"abi=%d;mailbox=%d;magic=%08x;header=%d;response=%d;status_ok=%d;"+
-			"features=%d,%d,%d,%d,%d;variants=core:%d,islands:%d,engine:%d,collab:%d,full:%d;"+
+			"features=%d,%d,%d,%d,%d;variants=core:%d,engine:%d,collab:%d,full:%d;compatibility_variants=islands:%d;"+
 			"direct_opcodes=%d,%d;outbound_opcodes=%d",
 		ABIVersion, MailboxVersion, MailboxMagic, MailboxHeaderSize, MailboxFlagResponse, MailboxStatusOK,
 		FeatureCore, FeatureEngine, FeatureCollab, FeatureScene3D, FeatureIslands,
-		FeatureMaskForVariant(VariantCore), FeatureMaskForVariant(VariantIslands),
-		FeatureMaskForVariant(VariantEngine), FeatureMaskForVariant(VariantCollab),
-		FeatureMaskForVariant(VariantFull), MailboxOpcodeHandshake, MailboxOpcodePing,
+		FeatureMaskForVariant(VariantCore), FeatureMaskForVariant(VariantEngine),
+		FeatureMaskForVariant(VariantCollab), FeatureMaskForVariant(VariantFull),
+		FeatureMaskForVariant(VariantIslands), MailboxOpcodeHandshake, MailboxOpcodePing,
 		MailboxOpcodePatches,
 	)
 	digest := sha256.Sum256([]byte(descriptor))
@@ -93,7 +109,7 @@ func FeatureMaskForVariant(variant Variant) FeatureMask {
 	case VariantCore:
 		return FeatureCore | FeatureIslands
 	case VariantEngine:
-		return FeatureCore | FeatureEngine | FeatureScene3D
+		return FeatureCore | FeatureEngine | FeatureScene3D | FeatureIslands
 	case VariantCollab:
 		return FeatureCore | FeatureCollab | FeatureIslands
 	case VariantIslands:
@@ -107,20 +123,14 @@ func FeatureMaskForVariant(variant Variant) FeatureMask {
 
 // SelectVariant returns the smallest published runtime that satisfies the
 // requested capabilities. The ordering is intentional: core is the narrow
-// DOM bridge, islands adds island hydration, engine adds shared engine and
-// Scene3D support, collab adds collaboration, and full combines the two
-// independent capability families.
+// DOM/island bridge, engine adds shared engine and Scene3D support, collab adds
+// collaboration, and full combines the two independent capability families.
+// The legacy islands alias is accepted by handshakes but never selected.
 func SelectVariant(required FeatureMask) (Variant, bool) {
 	if required == 0 {
 		return VariantCore, true
 	}
-	for _, variant := range []Variant{
-		VariantCore,
-		VariantIslands,
-		VariantEngine,
-		VariantCollab,
-		VariantFull,
-	} {
+	for _, variant := range publishedVariants {
 		features := FeatureMaskForVariant(variant)
 		if features&required == required {
 			return variant, true

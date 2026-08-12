@@ -13,6 +13,19 @@ func TestFeatureMasksAreClosedAndComposable(t *testing.T) {
 	if FeatureMaskForVariant("unknown") != 0 {
 		t.Fatal("unknown variant unexpectedly exposed features")
 	}
+	if got := FeatureMaskForVariant(VariantEngine); got != FeatureCore|FeatureEngine|FeatureScene3D|FeatureIslands {
+		t.Fatalf("engine mask = 0x%x", got)
+	}
+	wantPublished := []Variant{VariantCore, VariantEngine, VariantCollab, VariantFull}
+	if got := PublishedVariants(); len(got) != len(wantPublished) {
+		t.Fatalf("published variants = %v, want %v", got, wantPublished)
+	} else {
+		for index := range got {
+			if got[index] != wantPublished[index] {
+				t.Fatalf("published variants = %v, want %v", got, wantPublished)
+			}
+		}
+	}
 }
 
 func TestHandshakeValidatesABIAndRequiredFeatures(t *testing.T) {
@@ -39,6 +52,7 @@ func TestSelectVariantChoosesSmallestCapabilitySet(t *testing.T) {
 		{name: "core", required: FeatureCore, want: VariantCore},
 		{name: "islands", required: FeatureCore | FeatureIslands, want: VariantCore},
 		{name: "engine", required: FeatureCore | FeatureEngine, want: VariantEngine},
+		{name: "island plus engine", required: FeatureCore | FeatureIslands | FeatureEngine, want: VariantEngine},
 		{name: "scene", required: FeatureCore | FeatureScene3D, want: VariantEngine},
 		{name: "collab", required: FeatureCore | FeatureCollab, want: VariantCollab},
 		{name: "full", required: FeatureCore | FeatureEngine | FeatureCollab, want: VariantFull},

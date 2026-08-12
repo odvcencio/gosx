@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 )
 
 func RunBuildRuntime(outDir string) error {
@@ -36,7 +38,10 @@ func RunBuildRuntime(outDir string) error {
 		file  string
 		tags  []string
 	}{
-		{label: "runtime", file: "gosx-runtime.wasm"},
+		{label: "core", file: "gosx-runtime-core.wasm", tags: runtimeVariantBuildTags(runtimewasm.VariantCore)},
+		{label: "engine", file: "gosx-runtime-engine.wasm", tags: runtimeVariantBuildTags(runtimewasm.VariantEngine)},
+		{label: "collab", file: "gosx-runtime-collab.wasm", tags: runtimeVariantBuildTags(runtimewasm.VariantCollab)},
+		{label: "full", file: "gosx-runtime.wasm", tags: runtimeVariantBuildTags(runtimewasm.VariantFull)},
 		{label: "islands", file: "gosx-runtime-islands.wasm", tags: islandOnlyWASMTags(wasmCompilerTinyGo)},
 	} {
 		outputPath := filepath.Join(outDir, target.file)
