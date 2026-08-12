@@ -28,6 +28,14 @@ import (
 const CompareSchemaVersion = "gosx.ouroboros.compare.v1"
 
 const (
+	budgetSourceJavaScriptLines = "source.includedJavaScriptLines"
+	budgetSourceIncludedBytes   = "source.includedBytes"
+	budgetGlobalCurrentCount    = "global.current.count"
+	budgetGlobalAddedNames      = "global.addedNames"
+	budgetPixelDiffPct          = "pixel.diffPct"
+)
+
+const (
 	CompareModeCanonical = "canonical"
 	CompareModeSmoke     = "smoke"
 )
@@ -279,7 +287,7 @@ func CompareOuroborosArtifacts(opts CompareOptions) (*CompareReport, error) {
 	runCompatibilityChecks(report, baseline, candidate, opts)
 	runMetricChecks(report, baseline, candidate, budget, opts)
 	runRatchetChecks(report, baseline, candidate, budget, opts)
-	runPixelChecks(report, baseline, candidate, opts)
+	runPixelChecks(report, baseline, candidate, budget, opts)
 	finalizeCompareReport(report)
 	if opts.OutPath != "" {
 		if err := writeCompareReport(opts.OutPath, report); err != nil {
@@ -433,6 +441,35 @@ func validateCompareBudget(budget CompareBudget) error {
 				return fmt.Errorf("budget %s.%s has unsupported stat %q", scope, id, threshold.Stat)
 			}
 		}
+	}
+	for _, id := range []string{
+		budgetSourceJavaScriptLines,
+		budgetSourceIncludedBytes,
+		budgetGlobalCurrentCount,
+		budgetGlobalAddedNames,
+		budgetPixelDiffPct,
+	} {
+		if _, ok := budget.Defaults[id]; !ok {
+			return fmt.Errorf("budget defaults.%s is required governance policy", id)
+		}
+	}
+	for _, id := range []string{
+		budgetSourceJavaScriptLines,
+		budgetSourceIncludedBytes,
+		budgetGlobalCurrentCount,
+		budgetGlobalAddedNames,
+	} {
+		threshold := budget.Defaults[id]
+		if threshold.Direction != "lower" || threshold.Stat != "value" || !threshold.Exact || threshold.AllowedAbs != 0 || threshold.AllowedPct != 0 {
+			return fmt.Errorf("budget defaults.%s must be an explicit monotonic no-growth value policy", id)
+		}
+	}
+	pixel := budget.Defaults[budgetPixelDiffPct]
+	if pixel.Direction != "lower" || pixel.Stat != "value" || pixel.Exact || pixel.AllowedPct != 0 {
+		return fmt.Errorf("budget defaults.%s must use direction=lower, stat=value, exact=false, and allowedPct=0", budgetPixelDiffPct)
+	}
+	if pixel.AllowedAbs > visual.MaxCanonicalPixelThresholdPct {
+		return fmt.Errorf("budget defaults.%s allowedAbs %.3f exceeds hard maximum %.3f", budgetPixelDiffPct, pixel.AllowedAbs, visual.MaxCanonicalPixelThresholdPct)
 	}
 	return nil
 }
@@ -621,6 +658,9 @@ func loadSourceInventory(paths comparePathSet, source SourceIdentity) (*Inventor
 	}
 	if got := recomputeIncludedJavaScriptLines(inv); got != inv.Totals.IncludedJavaScriptLines {
 		return nil, fmt.Errorf("source inventory includedJavaScriptLines = %d, recomputed %d", inv.Totals.IncludedJavaScriptLines, got)
+	}
+	if got := recomputeIncludedBytes(inv); got != inv.Totals.IncludedBytes {
+		return nil, fmt.Errorf("source inventory includedBytes = %d, recomputed %d", inv.Totals.IncludedBytes, got)
 	}
 	return &inv, nil
 }
@@ -1474,7 +1514,8 @@ func runRatchetChecks(report *CompareReport, baseline, candidate *compareLoadedA
 	} else if msg := sourceLinePrerequisite(candidate); msg != "" {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: "ratchet.source.includedJavaScriptLines", Category: "source", Status: "fail", Message: "candidate " + msg, PrerequisiteMissing: true})
 	} else {
-		addValueRatchet(report, "ratchet.source.includedJavaScriptLines", "source", float64(sourceLines(baseline)), float64(sourceLines(candidate)), BudgetThreshold{AllowedAbs: 0, AllowedPct: 0})
+		addValueRatchet(report, "ratchet.source.includedJavaScriptLines", "source", float64(sourceLines(baseline)), float64(sourceLines(candidate)), thresholdFor(budget, budgetSourceJavaScriptLines))
+		addValueRatchet(report, "ratchet.source.includedBytes", "source", float64(sourceBytes(baseline)), float64(sourceBytes(candidate)), thresholdFor(budget, budgetSourceIncludedBytes))
 	}
 	for _, routeID := range commonManifestRoutes(baseline.manifest.Corpus.Routes, candidate.manifest.Corpus.Routes) {
 		bCaps := capabilitiesForRoute(baseline.manifest.Corpus.Routes, routeID)
@@ -1513,12 +1554,19 @@ func runRatchetChecks(report *CompareReport, baseline, candidate *compareLoadedA
 		if cAudit.Receipt.Count != canonicalGosx || cAudit.Receipt.NameSetHash != compatibilityReceiptHash {
 			report.Ratchets = append(report.Ratchets, CompareCheck{ID: "ratchet.global.receipt", Category: "global", Status: "fail", Message: "candidate receipt differs from pinned 209-name receipt"})
 		}
-		addValueRatchet(report, "ratchet.global.current.count", "global", float64(bAudit.Current.Count), float64(cAudit.Current.Count), BudgetThreshold{AllowedAbs: 0, AllowedPct: 0})
-		if bAudit.Current.NameSetHash != "" && cAudit.Current.NameSetHash != "" && bAudit.Current.NameSetHash != cAudit.Current.NameSetHash {
-			report.Ratchets = append(report.Ratchets, CompareCheck{ID: "ratchet.global.current.hash", Category: "global", Status: "fail", Message: "current __gosx_* name hash changed"})
-		}
-		if cAudit.Reconciliation.AddedSinceAnchorCount > 0 {
-			report.Ratchets = append(report.Ratchets, CompareCheck{ID: "ratchet.global.added", Category: "global", Status: "fail", Candidate: float64(cAudit.Reconciliation.AddedSinceAnchorCount), Message: "new __gosx_* names appeared"})
+		addValueRatchet(report, "ratchet.global.current.count", "global", float64(bAudit.Current.Count), float64(cAudit.Current.Count), thresholdFor(budget, budgetGlobalCurrentCount))
+		addValueRatchet(report, "ratchet.global.added", "global", 0, float64(cAudit.Reconciliation.AddedSinceAnchorCount), thresholdFor(budget, budgetGlobalAddedNames))
+		added := differenceStrings(candidate.inventory.Surface.CompatibilityAudit.Current.Names, baseline.inventory.Surface.CompatibilityAudit.Current.Names)
+		addValueRatchet(report, "ratchet.global.added-names", "global", 0, float64(len(added)), thresholdFor(budget, budgetGlobalAddedNames))
+		if len(added) > 0 {
+			last := &report.Ratchets[len(report.Ratchets)-1]
+			last.Message = "candidate ambient surface added: " + strings.Join(added, ", ")
+		} else if cAudit.Reconciliation.AddedSinceAnchorCount == 0 && cAudit.Current.Count < bAudit.Current.Count {
+			removed := differenceStrings(baseline.inventory.Surface.CompatibilityAudit.Current.Names, candidate.inventory.Surface.CompatibilityAudit.Current.Names)
+			if len(removed) > 0 {
+				last := &report.Ratchets[len(report.Ratchets)-1]
+				last.Message = "candidate ambient surface reduced: " + strings.Join(removed, ", ")
+			}
 		}
 	}
 	if baseline.manifest.Source.RuntimeJSONStatic != nil && candidate.manifest.Source.RuntimeJSONStatic != nil {
@@ -1541,13 +1589,14 @@ func runRatchetChecks(report *CompareReport, baseline, candidate *compareLoadedA
 	}
 }
 
-func runPixelChecks(report *CompareReport, baseline, candidate *compareLoadedArtifact, opts CompareOptions) {
+func runPixelChecks(report *CompareReport, baseline, candidate *compareLoadedArtifact, budget *CompareBudget, opts CompareOptions) {
+	policy := thresholdFor(budget, budgetPixelDiffPct).AllowedAbs
 	for i, manifest := range candidate.pixels {
 		if report.SelfCompare && manifest.Mode == string(visual.PixelModeRecordBaseline) {
-			runBaselinePixelSelfCompareCheck(report, baseline, candidate, manifest, i)
+			runBaselinePixelSelfCompareCheck(report, baseline, candidate, manifest, i, policy)
 			continue
 		}
-		runCandidatePixelCheck(report, baseline, candidate, manifest, fmt.Sprintf("ratchet.pixel.%d", i))
+		runCandidatePixelCheck(report, baseline, candidate, manifest, fmt.Sprintf("ratchet.pixel.%d", i), policy)
 	}
 	explicitOffset := len(candidate.pixels)
 	for _, ref := range opts.CandidatePixelManifest {
@@ -1565,13 +1614,20 @@ func runPixelChecks(report *CompareReport, baseline, candidate *compareLoadedArt
 			report.Ratchets = append(report.Ratchets, CompareCheck{ID: "ratchet.pixel.load", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: err.Error()})
 			continue
 		}
-		runCandidatePixelCheck(report, baseline, candidate, manifest, fmt.Sprintf("ratchet.pixel.%d", explicitOffset))
+		runCandidatePixelCheck(report, baseline, candidate, manifest, fmt.Sprintf("ratchet.pixel.%d", explicitOffset), policy)
 		explicitOffset++
 	}
 }
 
-func runBaselinePixelSelfCompareCheck(report *CompareReport, baseline, candidate *compareLoadedArtifact, manifest visual.PixelEvidenceManifest, index int) {
+func runBaselinePixelSelfCompareCheck(report *CompareReport, baseline, candidate *compareLoadedArtifact, manifest visual.PixelEvidenceManifest, index int, policy float64) {
 	id := fmt.Sprintf("ratchet.pixel.%d", index)
+	thresholdStatus := "pass"
+	thresholdMessage := ""
+	if manifest.Threshold.BaselinePct != policy || manifest.Threshold.RequestedPct != policy || manifest.Threshold.EffectivePct != policy {
+		thresholdStatus = "fail"
+		thresholdMessage = fmt.Sprintf("baseline pixel threshold must equal reviewed policy %.3f%%", policy)
+	}
+	report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".threshold-policy", Category: "pixel", RouteID: manifest.RouteID, Metric: budgetPixelDiffPct, Candidate: manifest.Threshold.EffectivePct, AllowedAbs: policy, ThresholdFormula: "baselinePct == requestedPct == effectivePct == reviewed policy", Status: thresholdStatus, Message: thresholdMessage})
 	if manifest.Source.BaseRevision != baseline.manifest.Source.BaseRevision || manifest.Source.OverlayHash != baseline.manifest.Source.OverlayHash || manifest.Source.InventorySHA256 != baseline.manifest.Source.InventorySHA256 {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".source", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel source does not match browser source"})
 	}
@@ -1595,12 +1651,35 @@ func runBaselinePixelSelfCompareCheck(report *CompareReport, baseline, candidate
 				status = "fail"
 				msg = "baseline pixel capture is not valid canonical evidence"
 			}
-			report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + "." + state.State + "." + strconv.Itoa(capture.Index), Category: "pixel", RouteID: manifest.RouteID, Metric: "pixel.diffPct", Baseline: 0, Candidate: 0, AllowedAbs: manifest.Threshold.EffectivePct, Status: status, Message: msg})
+			if capture.Comparison != nil {
+				expectedPass := capture.Comparison.DimensionsMatch && capture.Comparison.DiffPct <= policy
+				if capture.Comparison.BaselineThresholdPct != policy || capture.Comparison.EffectiveThresholdPct != policy || capture.Comparison.Passed != expectedPass {
+					status = "fail"
+					msg = "baseline pixel comparison does not match reviewed policy"
+				}
+			}
+			report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + "." + state.State + "." + strconv.Itoa(capture.Index), Category: "pixel", RouteID: manifest.RouteID, Metric: budgetPixelDiffPct, Baseline: 0, Candidate: 0, AllowedAbs: policy, ThresholdFormula: "diffPct <= reviewed policy", Status: status, Message: msg})
 		}
 	}
 }
 
-func runCandidatePixelCheck(report *CompareReport, baseline, candidate *compareLoadedArtifact, manifest visual.PixelEvidenceManifest, id string) {
+func runCandidatePixelCheck(report *CompareReport, baseline, candidate *compareLoadedArtifact, manifest visual.PixelEvidenceManifest, id string, policy float64) {
+	effective := manifest.Threshold.EffectivePct
+	thresholdStatus := "pass"
+	thresholdMessages := []string{}
+	if manifest.Threshold.BaselinePct != policy {
+		thresholdMessages = append(thresholdMessages, fmt.Sprintf("baselinePct must equal reviewed policy %.3f%%", policy))
+	}
+	if manifest.Threshold.RequestedPct < 0 || manifest.Threshold.RequestedPct > policy {
+		thresholdMessages = append(thresholdMessages, "candidate requestedPct may only tighten reviewed policy")
+	}
+	if effective < 0 || effective > policy || effective != manifest.Threshold.RequestedPct {
+		thresholdMessages = append(thresholdMessages, "candidate effectivePct must equal its requested tightening and may not exceed reviewed policy")
+	}
+	if len(thresholdMessages) > 0 {
+		thresholdStatus = "fail"
+	}
+	report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".threshold-policy", Category: "pixel", RouteID: manifest.RouteID, Metric: budgetPixelDiffPct, Candidate: effective, AllowedAbs: policy, ThresholdFormula: "baselinePct == reviewed policy; effectivePct == requestedPct <= reviewed policy", Status: thresholdStatus, Message: strings.Join(thresholdMessages, "; ")})
 	if manifest.Mode != string(visual.PixelModeCandidateComparison) {
 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".mode", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "candidate pixel manifest must use mode=candidate"})
 	}
@@ -1621,22 +1700,27 @@ func runCandidatePixelCheck(report *CompareReport, baseline, candidate *compareL
 			status := "pass"
 			msg := ""
 			value := 0.0
-			allowed := manifest.Threshold.EffectivePct
+			allowed := effective
 			if capture.Comparison == nil {
 				status = "fail"
 				msg = "pixel capture lacks comparison"
 			} else {
 				value = capture.Comparison.DiffPct
-				allowed = capture.Comparison.EffectiveThresholdPct
 				if !capture.Comparison.DimensionsMatch {
 					status = "fail"
 					msg = "pixel comparison dimensions differ"
-				} else if capture.Comparison.DiffPct > capture.Comparison.EffectiveThresholdPct {
+				} else if capture.Comparison.BaselineThresholdPct != policy || capture.Comparison.EffectiveThresholdPct != effective {
+					status = "fail"
+					msg = "pixel comparison thresholds do not match reviewed policy"
+				} else if capture.Comparison.DiffPct > effective {
 					status = "fail"
 					msg = "pixel comparison failed"
+				} else if !capture.Comparison.Passed {
+					status = "fail"
+					msg = "stored pixel comparison result contradicts reviewed-policy recomputation"
 				}
 			}
-			report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + "." + state.State + "." + strconv.Itoa(capture.Index), Category: "pixel", RouteID: manifest.RouteID, Metric: "pixel.diffPct", Baseline: 0, Candidate: value, AllowedAbs: allowed, Status: status, Message: msg})
+			report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + "." + state.State + "." + strconv.Itoa(capture.Index), Category: "pixel", RouteID: manifest.RouteID, Metric: budgetPixelDiffPct, Baseline: 0, Candidate: value, AllowedAbs: allowed, ThresholdFormula: "diffPct <= candidate tightening <= reviewed policy", Status: status, Message: msg})
 		}
 	}
 }
@@ -1793,7 +1877,7 @@ func thresholdFor(budget *CompareBudget, id string) BudgetThreshold {
 func defaultThreshold(id string) BudgetThreshold {
 	t := BudgetThreshold{Direction: "lower", Stat: "median"}
 	switch id {
-	case "browser.transferBytes", "runtime.transferBytes", "console.entryCount", "route.runtime.gzipBytes", "route.runtime.brotliBytes", "wasm.variant.bytes", "wasm.variant.gzipBytes", "json.static.serializationSites", "json.static.hotPossible", "json.static.hotConfirmed", "json.dynamic.hotProduct":
+	case "browser.transferBytes", "runtime.transferBytes", "console.entryCount", "route.runtime.gzipBytes", "route.runtime.brotliBytes", "wasm.variant.bytes", "wasm.variant.gzipBytes", "json.static.serializationSites", "json.static.hotPossible", "json.static.hotConfirmed", "json.dynamic.hotProduct", budgetSourceJavaScriptLines, budgetSourceIncludedBytes, budgetGlobalCurrentCount, budgetGlobalAddedNames:
 		t.Exact = true
 	case "startup.ttfbMs", "startup.dclMs", "startup.fullyLoadedMs", "startup.firstUsableMs":
 		t.AllowedPct, t.AllowedAbs = 5, 10
@@ -1804,8 +1888,9 @@ func defaultThreshold(id string) BudgetThreshold {
 	case "scene.cpuSubmitP95Ms", "scene.rafP95Ms", "scene.gpuTotalP95Ms":
 		t.AllowedPct, t.AllowedAbs = 10, 2
 		t.RequiresHardware = id != "scene.cpuSubmitP95Ms"
-	case "pixel.diffPct":
-		t.AllowedPct = visual.MaxCanonicalPixelThresholdPct
+	case budgetPixelDiffPct:
+		t.AllowedAbs = visual.MaxCanonicalPixelThresholdPct
+		t.Stat = "value"
 	case "memory.wasmPages", "memory.wasmBytes":
 		t.Exact = true
 	}
@@ -1853,11 +1938,18 @@ func addValueRatchet(report *CompareReport, id, category string, baseline, candi
 		DeltaPct:         percentDelta(baseline, candidate),
 		AllowedAbs:       threshold.AllowedAbs,
 		AllowedPct:       threshold.AllowedPct,
-		ThresholdFormula: "deltaAbs > allowedAbs && deltaPct > allowedPct",
+		ThresholdFormula: thresholdFormula(threshold),
 		Status:           status,
 		Message:          message,
 	}
 	report.Ratchets = append(report.Ratchets, check)
+}
+
+func thresholdFormula(threshold BudgetThreshold) string {
+	if threshold.Exact {
+		return "candidate <= baseline (monotonic no-growth)"
+	}
+	return "deltaAbs > allowedAbs && deltaPct > allowedPct"
 }
 
 func (r *CompareReport) addMetricCheck(id, category string, bucket metricBucket, metric string, status string, baseline, candidate float64, threshold BudgetThreshold, bUnstable, cUnstable bool, message string, hardwareBlocked bool) {
@@ -2196,6 +2288,13 @@ func sourceLines(artifact *compareLoadedArtifact) int {
 	return recomputeIncludedJavaScriptLines(*artifact.inventory)
 }
 
+func sourceBytes(artifact *compareLoadedArtifact) int64 {
+	if artifact == nil || artifact.inventory == nil {
+		return 0
+	}
+	return recomputeIncludedBytes(*artifact.inventory)
+}
+
 func sourceLinePrerequisite(artifact *compareLoadedArtifact) string {
 	if artifact == nil || artifact.inventory == nil {
 		return "source inventory is unavailable"
@@ -2212,6 +2311,14 @@ func recomputeIncludedJavaScriptLines(inv Inventory) int {
 		if file.Language == "javascript" || strings.HasSuffix(file.Path, ".js") || strings.HasSuffix(file.Path, ".mjs") {
 			total += file.Lines
 		}
+	}
+	return total
+}
+
+func recomputeIncludedBytes(inv Inventory) int64 {
+	var total int64
+	for _, file := range inv.Files.Included {
+		total += file.Bytes
 	}
 	return total
 }
