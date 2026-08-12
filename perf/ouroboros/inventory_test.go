@@ -717,6 +717,42 @@ func TestSchemaAndCorpusRequireGitAnchor(t *testing.T) {
 	}
 }
 
+func TestHistoricalDriftRatchetsAreMonotonicCeilings(t *testing.T) {
+	inv := minimalValidInventory()
+	inv.Totals.IncludedJavaScriptLines = canonicalLines - 1
+	inv.Totals.IncludedBytes = 3815610 - 1
+	inv.Surface.GosxNameCount = canonicalGosx - 1
+	inv.Surface.GosxProductionNameCount = 207
+	inv.Surface.GosxJavaScriptNameCount = 177
+	inv.Surface.AssignedBrowserRootCount = 120
+	inv.Surface.AssignedWindowCount = 119
+	inv.Surface.GoPublishedABICount = 63
+	inv.Surface.HostCallbackCount = 5
+	inv.Surface.SerializationSiteCount = canonicalJSON
+	fillDrift(inv)
+	for _, id := range []string{
+		"js-source-lines",
+		"js-source-bytes",
+		"compat-gosx-raw-all",
+		"compat-gosx-production-raw",
+		"compat-gosx-js-raw",
+		"compat-assigned-browser-root",
+		"compat-assigned-window",
+		"compat-go-published-abi",
+		"compat-host-callbacks",
+	} {
+		if got := ratchetStatus(inv, id); got != "pass" {
+			t.Fatalf("reduction ratchet %s = %q, want pass", id, got)
+		}
+	}
+
+	inv.Totals.IncludedJavaScriptLines = canonicalLines + 1
+	fillDrift(inv)
+	if got := ratchetStatus(inv, "js-source-lines"); got != "fail-closed" {
+		t.Fatalf("source growth ratchet = %q, want fail-closed", got)
+	}
+}
+
 func TestSchemaClosesCompatibilityMetadataEnums(t *testing.T) {
 	body, err := os.ReadFile("baseline.schema.json")
 	if err != nil {
