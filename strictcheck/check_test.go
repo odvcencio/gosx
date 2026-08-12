@@ -18,6 +18,7 @@ func newTestModule(t *testing.T) string {
 	mustWrite(t, filepath.Join(stub, "node.go"), `package gosx
 type Node struct{}
 type AttrValue struct{}
+type AttrList []AttrValue
 func El(string, ...any) Node { return Node{} }
 func Text(string) Node { return Node{} }
 func Expr(any) Node { return Node{} }
@@ -25,7 +26,7 @@ func RawHTML(string) Node { return Node{} }
 func Fragment(...Node) Node { return Node{} }
 func Attr(string, any) AttrValue { return AttrValue{} }
 func Attrs(...AttrValue) any { return nil }
-func Props(...AttrValue) any { return nil }
+func Props(values ...AttrValue) AttrList { return values }
 func Spread(any) AttrValue { return AttrValue{} }
 `)
 	mustWrite(t, filepath.Join(dir, "go.mod"), "module example.test/app\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => "+filepath.ToSlash(stub)+"\n")
@@ -236,7 +237,7 @@ component Page() {
 }
 `)
 	err := CheckFile(context.Background(), page)
-	if err == nil || !strings.Contains(err.Error(), "cross-file strict component call") {
+	if err == nil || (!strings.Contains(err.Error(), "cross-file strict component call") && !strings.Contains(err.Error(), "may call only same-file strict components")) {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -304,6 +305,46 @@ component Page(props: PageProps) {
 	}
 }
 
+func TestCheckFileRejectsStrictServerComponentsOutsideFileRenderer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		companion string
+		source    string
+	}{
+		{
+			name:      "companion Go AttrList",
+			companion: "package main\nimport gosx \"m31labs.dev/gosx\"\nfunc External(attrs gosx.AttrList) gosx.Node { return gosx.Node{} }\n",
+			source: `package main
+component Page() {
+	return <External label="x" />
+}
+`,
+		},
+		{
+			name: "imported dotted component",
+			source: `package main
+import ui "example.test/ui"
+component Page() {
+	return <ui.Button />
+}
+`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newTestModule(t)
+			if tc.companion != "" {
+				mustWrite(t, filepath.Join(dir, "companion.go"), tc.companion)
+			}
+			path := filepath.Join(dir, "page.gsx")
+			mustWrite(t, path, tc.source)
+			err := CheckFile(context.Background(), path)
+			if err == nil || !strings.Contains(err.Error(), "not renderable") {
+				t.Fatalf("CheckFile error = %v", err)
+			}
+		})
+	}
+}
+
 func TestCheckTreeAllowsPropsBearingNonRouteComponentsAndIslands(t *testing.T) {
 	dir := newTestModule(t)
 	mustWrite(t, filepath.Join(dir, "gosxstub", "signal", "signal.go"), `package signal
@@ -321,13 +362,34 @@ component Player(props: PlayerProps) {
 import "m31labs.dev/gosx/signal"
 type CounterProps struct { Initial int }
 //gosx:island
-component Counter(props: CounterProps) {
+func Counter(props CounterProps) Node {
 	count := signal.New(props.Initial)
 	return <button>{count.Get()}</button>
 }
 `)
 	if err := CheckTree(context.Background(), dir); err != nil {
 		t.Fatalf("CheckTree: %v", err)
+	}
+}
+
+func TestCheckFileRejectsStrictClientDirectiveComponents(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		directive string
+		want      string
+	}{
+		{name: "island", directive: "//gosx:island", want: "strict island declarations are not supported"},
+		{name: "engine", directive: "//gosx:engine surface", want: "strict engine declarations are not supported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newTestModule(t)
+			path := filepath.Join(dir, "client.gsx")
+			mustWrite(t, path, "package main\n"+tc.directive+"\ncomponent Client() {\nreturn <canvas />\n}\n")
+			err := CheckFile(context.Background(), path)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CheckFile error = %v", err)
+			}
+		})
 	}
 }
 

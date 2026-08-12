@@ -169,6 +169,30 @@ func TestCompileStrictServerAcceptsExactScalarPropFieldTypes(t *testing.T) {
 	}
 }
 
+func TestCompileStrictServerRejectsUnresolvedComponentTags(t *testing.T) {
+	for _, tag := range []string{"External", "ui.Button"} {
+		t.Run(tag, func(t *testing.T) {
+			source := []byte("package app\ncomponent Page() {\nreturn <" + tag + " />\n}\n")
+			_, err := Compile(source)
+			if err == nil || !strings.Contains(err.Error(), "not renderable") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCompileStrictServerRejectsHTMLElementSpread(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Props struct { Attrs map[string]any }
+component Page(props: Props) {
+	return <div {...props.Attrs}>text</div>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "spread attributes are not supported on strict server HTML elements") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestCompileStrictServerRejectsTypeDivergentExpressions(t *testing.T) {
 	for _, expression := range []string{
 		"props.A / props.B",
@@ -354,34 +378,22 @@ component Page(input: Props) {
 	}
 }
 
-func TestCompileStrictIslandAllowsOnlyRecognizedDeclarations(t *testing.T) {
-	valid := []byte(`package app
-import "m31labs.dev/gosx/signal"
-
-//gosx:island
-component Counter(props: Props) {
-	count := signal.New(0)
-	increment := func() { count.Set(count.Get() + 1) }
-	return <button onClick={increment}>{count.Get()}</button>
-}
-`)
-	prog, err := Compile(valid)
-	if err != nil {
-		t.Fatalf("Compile valid island: %v", err)
-	}
-	if !prog.Components[0].IsIsland || prog.Components[0].Scope == nil {
-		t.Fatalf("island metadata missing: %#v", prog.Components[0])
-	}
-
-	invalid := []byte(`package app
-//gosx:island
-component Counter(props: Props) {
-	label := props.Label
-	return <button>{label}</button>
-}
-`)
-	_, err = Compile(invalid)
-	if err == nil || !strings.Contains(err.Error(), "only signal/computed/handler short declarations") {
-		t.Fatalf("error = %v", err)
+func TestCompileRejectsStrictClientDirectiveComponents(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		directive string
+		root      string
+		want      string
+	}{
+		{name: "island", directive: "//gosx:island", root: `<button>count</button>`, want: "strict island declarations are not supported"},
+		{name: "engine", directive: "//gosx:engine surface", root: `<canvas />`, want: "strict engine declarations are not supported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := []byte("package app\n" + tc.directive + "\ncomponent Client() {\nreturn " + tc.root + "\n}\n")
+			_, err := Compile(source)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v", err)
+			}
+		})
 	}
 }

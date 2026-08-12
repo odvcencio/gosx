@@ -54,7 +54,7 @@ func TestDefaultFileRendererNormalizesStrictInitialismSchema(t *testing.T) {
 	}
 }
 
-func TestDefaultFileRendererDoesNotShellOutForCrossFileStrictComponent(t *testing.T) {
+func TestDefaultFileRendererRejectsCrossFileStrictComponentWithoutShellingOut(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "badge.gsx"), []byte(`package app
 component Badge() {
@@ -71,12 +71,9 @@ component Page() {
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	node, err := DefaultFileRenderer(nil, FilePage{FilePath: path, Pattern: "/"})
-	if err != nil {
-		t.Fatalf("DefaultFileRenderer performs only context-free IR validation: %v", err)
-	}
-	if html := gosx.RenderHTML(node); !strings.Contains(html, `data-gosx-component="Badge"`) {
-		t.Fatalf("unbound cross-file component should fail soft at runtime, got %q", html)
+	_, err := DefaultFileRenderer(nil, FilePage{FilePath: path, Pattern: "/"})
+	if err == nil || !strings.Contains(err.Error(), "may call only same-file strict components") {
+		t.Fatalf("DefaultFileRenderer error = %v", err)
 	}
 }
 

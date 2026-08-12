@@ -71,6 +71,7 @@ type lowerer struct {
 	strictReads   map[string]map[string]struct{}
 	structFields  map[string]map[string]string
 	structTypes   map[string]map[string]string
+	strictServer  bool
 }
 
 // text returns the source text covered by node n. It substrings the
@@ -1168,6 +1169,10 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 		l.errorf(n, "legacy component cannot call strict component %s; component styles may coexist but calls must stay within one style", tag)
 		return
 	}
+	if l.strictServer && IsComponent(tag) && !strictCallee {
+		l.errorf(n, "strict server component %s is not renderable; v0.39 strict server components may call only same-file strict components", tag)
+		return
+	}
 	if !strictCallee {
 		return
 	}
@@ -1220,6 +1225,17 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 	}
 	if len(children) > 0 {
 		l.errorf(n, "strict component %s does not accept positional children", tag)
+	}
+}
+
+func (l *lowerer) validateStrictHTMLElement(n *gotreesitter.Node, tag string, attrs []Attr) {
+	if !l.strictServer || IsComponent(tag) {
+		return
+	}
+	for _, attr := range attrs {
+		if attr.Kind == AttrSpread {
+			l.errorf(n, "spread attributes are not supported on strict server HTML elements; map and slice expansion cannot preserve generated Go rendering semantics")
+		}
 	}
 }
 
@@ -1369,6 +1385,16 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	l.checkDirectiveTypos(n)
 	isIsland := l.hasIslandDirective(n)
 	engineKind, isEngine := l.parseEngineDirective(n)
+	if isIsland {
+		l.errorf(n, "strict island declarations are not supported in v0.39; island VM semantics do not yet preserve typed server-component behavior")
+		l.hintLast("declare this island with the legacy func Name(...) Node style")
+		return
+	}
+	if isEngine {
+		l.errorf(n, "strict engine declarations are not supported in v0.39; the file renderer cannot execute typed engine components faithfully")
+		l.hintLast("declare this engine with the legacy func Name(...) Node style")
+		return
+	}
 	propsName, propsType := l.extractStrictProps(n)
 	componentName := l.text(nameNode)
 	if propsType != "" && propsName != "props" {
@@ -1383,9 +1409,12 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	}
 
 	wasStrict := l.strict
+	wasStrictServer := l.strictServer
 	l.strict = true
+	l.strictServer = !isIsland && !isEngine
 	rootID := l.lowerGSXNode(gsxRoot)
 	l.strict = wasStrict
+	l.strictServer = wasStrictServer
 	scope := l.analyzeBody(bodyNode)
 	comp := Component{
 		Name:        componentName,
@@ -1720,6 +1749,7 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 	attrs := l.extractAttrs(openNode)
 	children := l.extractChildren(n)
 	l.validateStrictComponentCall(n, tag, attrs, children)
+	l.validateStrictHTMLElement(n, tag, attrs)
 	if l.strict && !IsComponent(tag) {
 		normalizeStrictHTMLAttrs(attrs)
 	} else if IsComponent(tag) {
@@ -1808,6 +1838,7 @@ func (l *lowerer) lowerSelfClosing(n *gotreesitter.Node) NodeID {
 	tag := l.extractTagName(n)
 	attrs := l.extractAttrs(n)
 	l.validateStrictComponentCall(n, tag, attrs, nil)
+	l.validateStrictHTMLElement(n, tag, attrs)
 	if l.strict && !IsComponent(tag) {
 		normalizeStrictHTMLAttrs(attrs)
 	} else if IsComponent(tag) {

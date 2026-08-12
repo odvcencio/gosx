@@ -126,6 +126,37 @@ component Page(props: PageProps) {
 	}
 }
 
+func TestRunCheckAndRenderRejectStrictClientDirectiveComponents(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		directive string
+		want      string
+	}{
+		{name: "island", directive: "//gosx:island", want: "strict island declarations are not supported"},
+		{name: "engine", directive: "//gosx:engine surface", want: "strict engine declarations are not supported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newInvalidStrictStarter(t, "check-render-strict-"+tc.name)
+			path := filepath.Join(dir, "app", "page.gsx")
+			mustWriteFile(t, path, "package app\n"+tc.directive+"\ncomponent Page() {\nreturn <canvas />\n}\n")
+			for _, check := range []struct {
+				name string
+				fn   func() error
+			}{
+				{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
+				{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
+			} {
+				t.Run(check.name, func(t *testing.T) {
+					err := check.fn()
+					if err == nil || !strings.Contains(err.Error(), tc.want) {
+						t.Fatalf("error = %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestRunCheckRejectsLegacyCallerIntoStrictCalleeBeforePropTyping(t *testing.T) {
 	dir := newInvalidStrictStarter(t, "check-cross-style-gate")
 	path := filepath.Join(dir, "app", "page.gsx")

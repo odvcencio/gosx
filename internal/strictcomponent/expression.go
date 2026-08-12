@@ -18,7 +18,7 @@ var (
 
 // ValidateServerExpression accepts exactly the expression shapes implemented
 // by the file renderer for strict server components. The v0.39 contract is
-// intentionally small: literals and props selector chains (with parentheses).
+// intentionally small: literals and one direct props field (with parentheses).
 // Operators, indexing, and calls need static Go type/method information that
 // the map-backed file renderer does not retain, so they fail closed.
 func ValidateServerExpression(source string) error {

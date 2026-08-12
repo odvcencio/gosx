@@ -106,21 +106,13 @@ func TestLoadPackageUsesTargetPackageBeforeAlphabeticalSibling(t *testing.T) {
 	}
 }
 
-func TestTranspilePackageRejectsCrossFileStrictCall(t *testing.T) {
-	files := []PackageFile{
-		packageTestFile(t, "/project/badge.gsx", `package app
-component Badge() {
-	return <span />
-}
-`),
-		packageTestFile(t, "/project/page.gsx", `package app
+func TestCompileRejectsCrossFileStrictCallBeforePackageProjection(t *testing.T) {
+	_, err := gosx.Compile([]byte(`package app
 component Page() {
 	return <Badge />
 }
-`),
-	}
-	_, err := TranspilePackage(files)
-	if err == nil || !strings.Contains(err.Error(), "cross-file strict component call") {
+`))
+	if err == nil || !strings.Contains(err.Error(), "may call only same-file strict components") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -138,13 +130,13 @@ func Badge() Node {
 }
 `),
 		packageTestFile(t, "/project/c_page.gsx", `package app
-component Page() {
+func Page() Node {
 	return <Badge />
 }
 `),
 	}
 	_, err := TranspilePackage(files)
-	if err == nil || !strings.Contains(err.Error(), "cross-file strict component call") {
+	if err == nil || (!strings.Contains(err.Error(), "cross-file strict component call") && !strings.Contains(err.Error(), "may call only same-file strict components")) {
 		t.Fatalf("error = %v", err)
 	}
 }
