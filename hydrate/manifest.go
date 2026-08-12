@@ -266,6 +266,9 @@ type RuntimeRef struct {
 	// Hash for cache busting.
 	Hash string `json:"hash,omitempty"`
 
+	// ManifestHash identifies the exact browser/WASM ABI contract.
+	ManifestHash string `json:"manifestHash,omitempty"`
+
 	// Size in bytes (compressed).
 	Size int64 `json:"size,omitempty"`
 

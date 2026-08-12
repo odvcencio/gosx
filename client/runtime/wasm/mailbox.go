@@ -31,12 +31,13 @@ const (
 type Opcode uint16
 
 const (
+	// MailboxOpcodeHandshake and MailboxOpcodePing are the only request
+	// operations accepted by the direct runtime mailbox.
 	MailboxOpcodeHandshake Opcode = iota + 1
 	MailboxOpcodePing
+	// MailboxOpcodePatches is emitted from the runtime to the host. It is not a
+	// direct mailbox request opcode.
 	MailboxOpcodePatches
-	MailboxOpcodeAction
-	MailboxOpcodeInputBatch
-	MailboxOpcodeEngineFrame
 )
 
 // MailboxHeader is serialized little-endian in exactly MailboxHeaderSize

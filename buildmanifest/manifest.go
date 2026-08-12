@@ -52,8 +52,9 @@ type RuntimeAssets struct {
 // browser must validate after loading the artifact.
 type RuntimeVariantAsset struct {
 	HashedAsset
-	Variant     string `json:"variant"`
-	FeatureMask uint32 `json:"featureMask"`
+	Variant      string `json:"variant"`
+	FeatureMask  uint32 `json:"featureMask"`
+	ManifestHash string `json:"manifestHash"`
 }
 
 type IslandAsset struct {

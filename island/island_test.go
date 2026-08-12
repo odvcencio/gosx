@@ -552,20 +552,24 @@ func TestRendererSelectsSmallestPublishedRuntimeVariant(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		WASM:        buildmanifest.HashedAsset{File: "gosx-runtime.full.wasm", Hash: "full", Size: 40},
-		WASMIslands: buildmanifest.HashedAsset{File: "gosx-runtime-islands.wasm", Hash: "islands", Size: 20},
+		WASMIslands: buildmanifest.HashedAsset{File: "gosx-runtime-islands.wasm", Hash: "islands", Size: 5},
 		WASMVariants: map[string]buildmanifest.RuntimeVariantAsset{
-			"core":   {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-core.wasm", Hash: "core", Size: 10}, Variant: "core", FeatureMask: 17},
-			"engine": {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-engine.wasm", Hash: "engine", Size: 25}, Variant: "engine", FeatureMask: 11},
-			"collab": {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-collab.wasm", Hash: "collab", Size: 28}, Variant: "collab", FeatureMask: 21},
-			"full":   {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-full.wasm", Hash: "full", Size: 40}, Variant: "full", FeatureMask: 31},
+			"core":    {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-core.wasm", Hash: "core", Size: 10}, Variant: "core", FeatureMask: 17},
+			"islands": {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-islands.wasm", Hash: "islands", Size: 5}, Variant: "islands", FeatureMask: 17},
+			"engine":  {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-engine.wasm", Hash: "engine", Size: 25}, Variant: "engine", FeatureMask: 11},
+			"collab":  {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-collab.wasm", Hash: "collab", Size: 28}, Variant: "collab", FeatureMask: 21},
+			"full":    {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-full.wasm", Hash: "full", Size: 40}, Variant: "full", FeatureMask: 31},
 		},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
 	}
 	r.RenderIsland("Counter", nil, gosx.Text("counter"))
-	if got := r.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-core.wasm" {
-		t.Fatalf("island runtime = %q, want core", got)
+	if got := r.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-islands.wasm" {
+		t.Fatalf("island runtime = %q, want islands", got)
+	}
+	if got := r.selectedRuntimeRef().ManifestHash; got == "" {
+		t.Fatal("selected runtime omitted manifest identity")
 	}
 
 	engineNode := r.RenderEngine(engine.Config{Name: "Board", Kind: engine.KindSurface, Runtime: engine.RuntimeShared}, gosx.Node{})

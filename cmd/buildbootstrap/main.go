@@ -87,6 +87,7 @@ const (
 	videoSyncFallbackFile    = "bootstrap-src/28-video-sync-fallback.ts"
 	scene3DCommandBridgeFile = "../runtime/scene3d/command-bridge.ts"
 	controllersFile          = "../runtime/host/controllers.ts"
+	runtimeContractFile      = "../runtime/generated/runtime-abi.ts"
 	runtimeABISupportFile    = "../runtime/wasm/abi.ts"
 	runtimeMailboxFile       = "../runtime/wasm/mailbox.ts"
 	runtimeLoaderFile        = "../runtime/wasm/loader.ts"
@@ -121,6 +122,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile(runtimeContractFile),
 			sourceFile(runtimeABISupportFile),
 			sourceFile(runtimeMailboxFile),
 			sourceFile(runtimeLoaderFile),
@@ -238,6 +240,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/00-textlayout.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile(runtimeContractFile),
 			sourceFile(runtimeABISupportFile),
 			sourceFile(runtimeMailboxFile),
 			sourceFile(runtimeLoaderFile),

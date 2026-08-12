@@ -16,7 +16,7 @@ import (
 // globals. The browser can inspect this object before choosing a feature
 // route, while the old names remain available until O6 removes their shim.
 func registerRuntimeABI(b *bridge.Bridge) {
-	handshake := runtimewasm.NewHandshake(runtimeVariant(), "")
+	handshake := runtimewasm.NewHandshake(runtimeVariant())
 	handshakeFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		return handshakeJSValue(handshake)
 	})
@@ -105,7 +105,7 @@ func runtimeMailboxFunc(this js.Value, args []js.Value) any {
 		if len(payload) == 4 {
 			required = runtimewasm.FeatureMask(binary.LittleEndian.Uint32(payload))
 		}
-		handshake := runtimewasm.NewHandshake(runtimeVariant(), "")
+		handshake := runtimewasm.NewHandshake(runtimeVariant())
 		if !handshake.Supports(required) {
 			status = -1
 			responsePayload = []byte("runtime does not expose the requested feature mask")

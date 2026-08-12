@@ -29,7 +29,7 @@ func TestMailboxHeaderRoundTrip(t *testing.T) {
 }
 
 func TestHandshakePayloadRoundTrip(t *testing.T) {
-	want := NewHandshake(VariantFull, "abc123")
+	want := NewHandshake(VariantFull)
 	payload, err := EncodeHandshakePayload(want)
 	if err != nil {
 		t.Fatal(err)

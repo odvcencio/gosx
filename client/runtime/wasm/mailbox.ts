@@ -21,13 +21,15 @@
   "use strict";
   if (typeof window === "undefined") return;
 
-  const MAGIC = 0x4d585347;
-  const VERSION = 1;
-  const HEADER_BYTES = 24;
-  const FLAG_RESPONSE = 1;
-  const STATUS_OK = 0;
-  const OPCODE_PATCHES = 3;
-  const MAX_PAYLOAD = 64 * 1024 * 1024;
+  const contract = window.__gosx_runtime_contract;
+  if (!contract) throw new Error("generated runtime ABI contract is missing");
+  const MAGIC = contract.mailboxMagic;
+  const VERSION = contract.mailboxVersion;
+  const HEADER_BYTES = contract.mailboxHeaderBytes;
+  const FLAG_RESPONSE = contract.mailboxFlagResponse;
+  const STATUS_OK = contract.mailboxStatusOK;
+  const OPCODE_PATCHES = contract.opcodes.patches;
+  const MAX_PAYLOAD = contract.mailboxMaxPayload;
 
   function asBytes(value) {
     if (value instanceof Uint8Array) return value;

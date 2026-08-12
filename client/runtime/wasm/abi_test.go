@@ -16,7 +16,7 @@ func TestFeatureMasksAreClosedAndComposable(t *testing.T) {
 }
 
 func TestHandshakeValidatesABIAndRequiredFeatures(t *testing.T) {
-	h := NewHandshake(VariantFull, "manifest-sha")
+	h := NewHandshake(VariantFull)
 	if err := h.Validate(FeatureEngine | FeatureCollab); err != nil {
 		t.Fatalf("full handshake rejected: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestHandshakeValidatesABIAndRequiredFeatures(t *testing.T) {
 	if err := h.Validate(FeatureCore); err == nil {
 		t.Fatal("ABI mismatch was accepted")
 	}
-	h = NewHandshake(VariantCore, "")
+	h = NewHandshake(VariantCore)
 	if err := h.Validate(FeatureEngine); err == nil {
 		t.Fatal("missing feature was accepted")
 	}
@@ -49,12 +49,28 @@ func TestSelectVariantChoosesSmallestCapabilitySet(t *testing.T) {
 			if !ok || got != tc.want {
 				t.Fatalf("SelectVariant(0x%x) = %q, %v; want %q, true", uint32(tc.required), got, ok, tc.want)
 			}
-			if err := NewHandshake(got, "").Validate(tc.required); err != nil {
+			if err := NewHandshake(got).Validate(tc.required); err != nil {
 				t.Fatalf("selected variant does not validate: %v", err)
 			}
 		})
 	}
 	if got, ok := SelectVariant(FeatureMask(1 << 20)); ok || got != "" {
 		t.Fatalf("unknown feature selected variant %q, %v", got, ok)
+	}
+}
+
+func TestHandshakeRejectsContractAndVariantDrift(t *testing.T) {
+	h := NewHandshake(VariantIslands)
+	if h.ManifestHash == "" {
+		t.Fatal("manifest identity is empty")
+	}
+	h.FeatureMask = FeatureCore
+	if err := h.Validate(FeatureCore); err == nil {
+		t.Fatal("variant feature-mask drift was accepted")
+	}
+	h = NewHandshake(VariantIslands)
+	h.ManifestHash = "stale"
+	if err := h.Validate(FeatureCore); err == nil {
+		t.Fatal("stale manifest identity was accepted")
 	}
 }

@@ -412,11 +412,12 @@ func (r *Renderer) SetRuntime(path string, hash string, size int64) {
 	}
 	path = r.versionCompatRuntimePath(path, hash)
 	r.manifest.Runtime = hydrate.RuntimeRef{
-		Path:        path,
-		Hash:        hash,
-		Size:        size,
-		Variant:     string(runtimewasm.VariantFull),
-		FeatureMask: uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantFull)),
+		Path:         path,
+		Hash:         hash,
+		ManifestHash: runtimewasm.ManifestIdentity(),
+		Size:         size,
+		Variant:      string(runtimewasm.VariantFull),
+		FeatureMask:  uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantFull)),
 	}
 	r.setRuntimeVariant(r.manifest.Runtime)
 }
@@ -432,11 +433,12 @@ func (r *Renderer) SetIslandRuntime(path string, hash string, size int64) {
 	}
 	path = r.versionCompatRuntimePath(path, hash)
 	r.islandRuntime = hydrate.RuntimeRef{
-		Path:        path,
-		Hash:        hash,
-		Size:        size,
-		Variant:     string(runtimewasm.VariantIslands),
-		FeatureMask: uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantIslands)),
+		Path:         path,
+		Hash:         hash,
+		ManifestHash: runtimewasm.ManifestIdentity(),
+		Size:         size,
+		Variant:      string(runtimewasm.VariantIslands),
+		FeatureMask:  uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantIslands)),
 	}
 	r.setRuntimeVariant(r.islandRuntime)
 }
@@ -744,11 +746,12 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 			mask = uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant)))
 		}
 		r.setRuntimeVariant(hydrate.RuntimeRef{
-			Path:        path,
-			Hash:        asset.Hash,
-			Size:        asset.Size,
-			Variant:     variant,
-			FeatureMask: mask,
+			Path:         path,
+			Hash:         asset.Hash,
+			ManifestHash: firstNonEmptyRuntimeManifestHash(asset.ManifestHash),
+			Size:         asset.Size,
+			Variant:      variant,
+			FeatureMask:  mask,
 		})
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
@@ -773,6 +776,13 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 
 	return nil
+}
+
+func firstNonEmptyRuntimeManifestHash(value string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return runtimewasm.ManifestIdentity()
 }
 
 // LoadBuildManifest reads a build manifest from disk and applies its asset URLs.
@@ -1920,18 +1930,47 @@ func (r *Renderer) selectedRuntimeRef() hydrate.RuntimeRef {
 		return hydrate.RuntimeRef{}
 	}
 	if required := r.requiredRuntimeFeatures(); required != 0 {
-		if variant, ok := runtimewasm.SelectVariant(required); ok {
-			if ref, exists := r.runtimeVariants[string(variant)]; exists && strings.TrimSpace(ref.Path) != "" {
-				if ref.FeatureMask == 0 || runtimewasm.FeatureMask(ref.FeatureMask)&required == required {
-					return ref
-				}
-			}
+		if ref, ok := r.smallestCompatibleRuntimeRef(required); ok {
+			return ref
 		}
 	}
 	if (len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0) && !r.needsSharedRuntimeEngineBridge() && strings.TrimSpace(r.islandRuntime.Path) != "" {
 		return r.islandRuntime
 	}
 	return r.manifest.Runtime
+}
+
+func (r *Renderer) smallestCompatibleRuntimeRef(required runtimewasm.FeatureMask) (hydrate.RuntimeRef, bool) {
+	var best hydrate.RuntimeRef
+	for _, ref := range r.runtimeVariants {
+		if strings.TrimSpace(ref.Path) == "" {
+			continue
+		}
+		features := runtimewasm.FeatureMask(ref.FeatureMask)
+		if features == 0 {
+			features = runtimewasm.FeatureMaskForVariant(runtimewasm.Variant(ref.Variant))
+		}
+		if features&required != required {
+			continue
+		}
+		if strings.TrimSpace(best.Path) == "" || runtimeRefIsSmaller(ref, best) {
+			best = ref
+		}
+	}
+	return best, strings.TrimSpace(best.Path) != ""
+}
+
+func runtimeRefIsSmaller(candidate, current hydrate.RuntimeRef) bool {
+	if candidate.Size > 0 && current.Size <= 0 {
+		return true
+	}
+	if candidate.Size <= 0 {
+		return false
+	}
+	if candidate.Size != current.Size {
+		return candidate.Size < current.Size
+	}
+	return candidate.Path < current.Path
 }
 
 func (r *Renderer) requiredRuntimeFeatures() runtimewasm.FeatureMask {

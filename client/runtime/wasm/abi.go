@@ -7,6 +7,8 @@
 package wasm
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 )
@@ -44,25 +46,44 @@ const (
 )
 
 // Handshake is returned by the direct runtime export before the host selects a
-// mailbox path.  ManifestHash is optional for development builds and required
-// by canonical production evidence.
+// mailbox path. ManifestHash identifies the complete generated runtime
+// contract, rather than a page or a particular compiled artifact.
 type Handshake struct {
 	ABIVersion     uint32      `json:"abiVersion"`
 	FeatureMask    FeatureMask `json:"featureMask"`
 	Variant        Variant     `json:"variant"`
 	MailboxVersion uint16      `json:"mailboxVersion"`
-	ManifestHash   string      `json:"manifestHash,omitempty"`
+	ManifestHash   string      `json:"manifestHash"`
 }
 
 // NewHandshake creates the runtime declaration for a compiled variant.
-func NewHandshake(variant Variant, manifestHash string) Handshake {
+func NewHandshake(variant Variant) Handshake {
 	return Handshake{
 		ABIVersion:     ABIVersion,
 		FeatureMask:    FeatureMaskForVariant(variant),
 		Variant:        variant,
 		MailboxVersion: MailboxVersion,
-		ManifestHash:   strings.TrimSpace(manifestHash),
+		ManifestHash:   ManifestIdentity(),
 	}
+}
+
+// ManifestIdentity returns a stable digest of every value that affects the
+// browser/WASM boundary. The generated browser contract embeds this value and
+// the loader requires the manifest reference and runtime handshake to agree.
+func ManifestIdentity() string {
+	descriptor := fmt.Sprintf(
+		"abi=%d;mailbox=%d;magic=%08x;header=%d;response=%d;status_ok=%d;"+
+			"features=%d,%d,%d,%d,%d;variants=core:%d,islands:%d,engine:%d,collab:%d,full:%d;"+
+			"direct_opcodes=%d,%d;outbound_opcodes=%d",
+		ABIVersion, MailboxVersion, MailboxMagic, MailboxHeaderSize, MailboxFlagResponse, MailboxStatusOK,
+		FeatureCore, FeatureEngine, FeatureCollab, FeatureScene3D, FeatureIslands,
+		FeatureMaskForVariant(VariantCore), FeatureMaskForVariant(VariantIslands),
+		FeatureMaskForVariant(VariantEngine), FeatureMaskForVariant(VariantCollab),
+		FeatureMaskForVariant(VariantFull), MailboxOpcodeHandshake, MailboxOpcodePing,
+		MailboxOpcodePatches,
+	)
+	digest := sha256.Sum256([]byte(descriptor))
+	return hex.EncodeToString(digest[:])
 }
 
 // FeatureMaskForVariant returns the closed capability set for a variant.
@@ -125,6 +146,12 @@ func (h Handshake) Validate(required FeatureMask) error {
 	}
 	if h.Variant == "" || FeatureMaskForVariant(h.Variant) == 0 {
 		return fmt.Errorf("runtime handshake has unknown variant %q", h.Variant)
+	}
+	if expected := FeatureMaskForVariant(h.Variant); h.FeatureMask != expected {
+		return fmt.Errorf("runtime %q feature mask mismatch: got 0x%x, want 0x%x", h.Variant, uint32(h.FeatureMask), uint32(expected))
+	}
+	if strings.TrimSpace(h.ManifestHash) != ManifestIdentity() {
+		return fmt.Errorf("runtime manifest identity mismatch")
 	}
 	if h.FeatureMask&required != required {
 		return fmt.Errorf("runtime %q is missing feature mask 0x%x", h.Variant, uint32(required&^h.FeatureMask))

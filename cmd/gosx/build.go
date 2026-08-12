@@ -724,9 +724,10 @@ func goWASMBuildArgs(outputPath string, extraTags ...string) []string {
 
 func runtimeVariantAsset(variant string, asset HashedAsset) buildmanifest.RuntimeVariantAsset {
 	return buildmanifest.RuntimeVariantAsset{
-		HashedAsset: asset,
-		Variant:     variant,
-		FeatureMask: uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant))),
+		HashedAsset:  asset,
+		Variant:      variant,
+		FeatureMask:  uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant))),
+		ManifestHash: runtimewasm.ManifestIdentity(),
 	}
 }
 
