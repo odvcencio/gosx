@@ -737,7 +737,7 @@ func (r *Renderer) RenderIslandWithEvents(componentName string, props any, event
 
 	// Add events and program ref to the last island entry
 	lastIdx := len(r.manifest.Islands) - 1
-	r.manifest.Islands[lastIdx].Events = events
+	r.manifest.Islands[lastIdx].Events = append([]hydrate.EventSlot{}, events...)
 	r.applyProgramRef(&r.manifest.Islands[lastIdx], componentName)
 
 	r.counter++
@@ -1221,10 +1221,10 @@ func (r *Renderer) RenderIslandFromProgram(prog *program.Program, props any) gos
 // Each slot gets a stable path-derived ID and selector relative to the island root.
 func extractEventSlots(prog *program.Program) []hydrate.EventSlot {
 	if len(prog.Nodes) == 0 {
-		return nil
+		return []hydrate.EventSlot{}
 	}
 
-	var slots []hydrate.EventSlot
+	slots := make([]hydrate.EventSlot, 0)
 
 	var walk func(nodeID program.NodeID, path string)
 	walk = func(nodeID program.NodeID, path string) {
@@ -1273,10 +1273,36 @@ func eventNameToType(name string) string {
 		return "focus"
 	case "onBlur":
 		return "blur"
+	case "onDragStart":
+		return "dragstart"
+	case "onDragEnd":
+		return "dragend"
+	case "onDragOver":
+		return "dragover"
+	case "onDragLeave":
+		return "dragleave"
+	case "onDrop":
+		return "drop"
+	case "onPointerDown":
+		return "pointerdown"
+	case "onPointerMove":
+		return "pointermove"
+	case "onPointerUp":
+		return "pointerup"
+	case "onPointerCancel":
+		return "pointercancel"
+	case "onDocumentKeyDown":
+		return "document-keydown"
+	case "onDocumentKeyUp":
+		return "document-keyup"
+	case "onWindowResize":
+		return "window-resize"
 	default:
-		// Strip "on" prefix and lowercase
+		// DOM event names are case-insensitive but addEventListener strings are
+		// conventionally lowercase. Lower the entire suffix so multiword event
+		// names do not leak source spelling such as pointerDown into the manifest.
 		if len(name) > 2 && name[:2] == "on" {
-			return strings.ToLower(name[2:3]) + name[3:]
+			return strings.ToLower(name[2:])
 		}
 		return name
 	}

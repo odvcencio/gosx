@@ -957,6 +957,17 @@ class FakeElement {
       }
     }
 
+    if (
+      node.nodeType === ELEMENT_NODE &&
+      node.tagName === "SCRIPT" &&
+      this.ownerDocument &&
+      typeof this.ownerDocument.inlineScriptLoader === "function" &&
+      !node.getAttribute("src") &&
+      node.getAttribute("data-gosx-navigation-replayed") === "true"
+    ) {
+      this.ownerDocument.inlineScriptLoader(node);
+    }
+
     return node;
   }
 
@@ -989,6 +1000,16 @@ class FakeElement {
     this.childNodes.splice(idx, 0, node);
     if (node.nodeType === ELEMENT_NODE && this.ownerDocument) {
       this.ownerDocument.indexNode(node);
+    }
+    if (
+      node.nodeType === ELEMENT_NODE &&
+      node.tagName === "SCRIPT" &&
+      this.ownerDocument &&
+      typeof this.ownerDocument.inlineScriptLoader === "function" &&
+      !node.getAttribute("src") &&
+      node.getAttribute("data-gosx-navigation-replayed") === "true"
+    ) {
+      this.ownerDocument.inlineScriptLoader(node);
     }
     return node;
   }
@@ -2525,6 +2546,28 @@ function installManualTimers(context) {
         timer.callback(...timer.args);
       }
       return entries.length;
+    },
+  };
+}
+
+// installManualClock replaces context.Date with a minimal double exposing
+// only Date.now() — the one clock entry point server/navigation_runtime.js
+// reads (see PAGE_CACHE_TTL_MS). A test advances it explicitly instead of
+// waiting on the real clock.
+function installManualClock(context, startAt) {
+  let current = typeof startAt === "number" ? startAt : Date.now();
+  context.Date = {
+    now() {
+      return current;
+    },
+  };
+  return {
+    now() {
+      return current;
+    },
+    advance(ms) {
+      current += Number(ms) || 0;
+      return current;
     },
   };
 }
@@ -5350,6 +5393,7 @@ module.exports = {
   installManualRAF,
   flushSceneInitialFrameBoundary,
   installManualTimers,
+  installManualClock,
   runScript,
   flushAsyncWork,
   sharedSignalValue,

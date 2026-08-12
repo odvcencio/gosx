@@ -86,7 +86,12 @@ func DescribeParseError(root *gotreesitter.Node, source []byte, lang *gotreesitt
 
 	node := firstParseProblem(root)
 	if node == nil {
-		return fmt.Errorf("parse error in source")
+		// The tree reports an error but holds no reachable ERROR or MISSING
+		// node. Healthy parse tables do not produce this shape; tables from a
+		// mismatched grammar blob do (gosx#139). Say so, because a bare
+		// "parse error in source" sends people bisecting their markup when
+		// the source is fine.
+		return fmt.Errorf("parse error in source (no error node found — if a grammar blob override is staged, it may not match this gosx version)")
 	}
 
 	point := node.StartPoint()

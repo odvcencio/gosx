@@ -3,6 +3,7 @@ package ir
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"m31labs.dev/gosx/island/program"
 )
@@ -117,6 +118,7 @@ func cloneExprScope(scope *ExprScope) *ExprScope {
 		Props:         make(map[string]bool, len(scope.Props)),
 		Handlers:      make(map[string]bool, len(scope.Handlers)),
 		EventFields:   make(map[string]bool, len(scope.EventFields)),
+		Browser:       scope.Browser,
 	}
 	for key, value := range scope.Signals {
 		next.Signals[key] = value
@@ -167,7 +169,9 @@ func (l *islandLowerer) emitComponentScope(scope *ComponentScope) error {
 		return nil
 	}
 	l.emitSignalDefs(scope.Signals)
-	l.emitComputedDefs(scope.Computeds)
+	if err := l.emitComputedDefs(scope.Computeds); err != nil {
+		return err
+	}
 	return l.emitHandlerDefs(scope.Handlers)
 }
 
@@ -186,19 +190,36 @@ func (l *islandLowerer) emitSignalDefs(signals []SignalInfo) {
 	}
 }
 
-func (l *islandLowerer) emitComputedDefs(computeds []ComputedInfo) {
+func (l *islandLowerer) emitComputedDefs(computeds []ComputedInfo) error {
+	// Render expressions and handlers may refer to any declaration because
+	// they execute after component initialization, so l.scope intentionally
+	// contains every computed name. A computed initializer is different: Go
+	// lexical rules only make earlier declarations visible. Build a private,
+	// sequential scope and publish each name only after its body parses.
+	computedScope := cloneExprScope(l.scope)
 	for _, computed := range computeds {
-		bodyID := l.parseExprOrFallback(computed.BodyExpr, l.scope, program.Expr{
-			Op:    program.OpPropGet,
-			Value: computed.BodyExpr,
-			Type:  program.TypeAny,
-		})
+		delete(computedScope.Signals, computed.Name)
+		delete(computedScope.SignalAliases, computed.Name)
+	}
+
+	for _, computed := range computeds {
+		bodySource := strings.TrimSpace(computed.BodyExpr)
+		if bodySource == "" {
+			return fmt.Errorf("parse computed %s: body must contain exactly one return expression", computed.Name)
+		}
+		exprs, rootID, err := ParseExpr(bodySource, computedScope)
+		if err != nil {
+			return fmt.Errorf("parse computed %s expression %q: %w", computed.Name, bodySource, err)
+		}
+		bodyID := l.appendExprs(exprs, rootID)
 		l.dst.Computeds = append(l.dst.Computeds, program.ComputedDef{
 			Name: computed.Name,
 			Type: program.TypeAny,
 			Expr: bodyID,
 		})
+		computedScope.Signals[computed.Name] = true
 	}
+	return nil
 }
 
 func (l *islandLowerer) emitHandlerDefs(handlers []HandlerInfo) error {
@@ -219,11 +240,27 @@ func (l *islandLowerer) emitHandlerDefs(handlers []HandlerInfo) error {
 
 func handlerExprScope(scope *ExprScope) *ExprScope {
 	handlerScope := cloneExprScope(scope)
-	handlerScope.EventFields["value"] = true
-	handlerScope.EventFields["checked"] = true
-	handlerScope.EventFields["key"] = true
-	handlerScope.EventFields["selectedIndex"] = true
+	handlerScope.Browser = true
+	for _, field := range islandEventFields {
+		if handlerScope.SignalAliases[field] != "" || handlerScope.Signals[field] ||
+			handlerScope.Props[field] || handlerScope.Handlers[field] {
+			continue
+		}
+		handlerScope.EventFields[field] = true
+	}
 	return handlerScope
+}
+
+// islandEventFields mirrors the compact payload produced by the delegated
+// browser runtime. Both data (the handler element's dataset object) and
+// eventData (data-gosx-event-value / drag transfer text) remain structured VM
+// values rather than being flattened to diagnostic strings.
+var islandEventFields = []string{
+	"type", "value", "checked", "selectedIndex", "key", "code",
+	"ctrlKey", "metaKey", "altKey", "shiftKey", "repeat", "timeStamp", "editable",
+	"targetID", "currentTargetID", "pointerID", "pointerType", "isPrimary",
+	"clientX", "clientY", "button", "buttons", "pressure", "width", "height",
+	"data", "eventData",
 }
 
 func (l *islandLowerer) parseExprOrFallback(source string, scope *ExprScope, fallback program.Expr) program.ExprID {

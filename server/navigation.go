@@ -10,7 +10,9 @@ import (
 //go:embed navigation_runtime.js
 var navigationRuntime string
 
-// NavigationScript returns the inline GoSX page-navigation runtime.
+// NavigationScript returns the inline GoSX page-navigation runtime. Its public
+// navigate method soft-fetches only same-origin HTTP(S), hard-navigates safe
+// cross-origin HTTP(S), and rejects other schemes.
 func NavigationScript() gosx.Node {
 	return NavigationScriptWithNonce("")
 }

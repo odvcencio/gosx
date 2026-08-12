@@ -24,15 +24,37 @@
     engineFactories[name] = factory;
   };
 
-  // Lock down factory registration after DOM content loaded
+  // After DOMContentLoaded, FIRST-TIME registrations stay open: a feature
+  // chunk on a cold cache can lose the load race against init (observed in
+  // production: bootstrap-feature-scene3d arrived ~2s after init on a cold
+  // first load, its factory registration was rejected, and the page's
+  // Scene3D engines never mounted until a refresh). A late factory now
+  // registers and mounts its pending engines through the hook the engine
+  // runtime publishes. What stays closed is OVERRIDING a name that already
+  // has a factory — the tamper resistance the old full lockdown provided.
   document.addEventListener("DOMContentLoaded", function() {
-    window.__gosx_register_engine_factory = function(name) {
-      console.error("[gosx] engine factory registration is closed after init:", name);
+    window.__gosx_register_engine_factory = function(name, factory) {
+      if (!name || typeof factory !== "function") {
+        console.error("[gosx] invalid engine factory registration");
+        return;
+      }
+      if (Object.prototype.hasOwnProperty.call(engineFactories, name)) {
+        console.error("[gosx] engine factory already registered; late override rejected:", name);
+        return;
+      }
+      engineFactories[name] = factory;
+      if (typeof window.__gosx_mount_late_engine_factory === "function") {
+        window.__gosx_mount_late_engine_factory(name);
+      }
     };
-    Object.freeze(engineFactories);
   });
 
-  window.__gosx = {
+  const gosxNamespace = window.__gosx || {};
+  window.__gosx = gosxNamespace;
+  if (!gosxNamespace.navigation && window.__gosx_page_nav) {
+    gosxNamespace.navigation = window.__gosx_page_nav;
+  }
+  Object.assign(gosxNamespace, {
     version: GOSX_VERSION,
     islands: new Map(),   // islandID -> { component, listeners, root }
     computeIslands: new Map(), // compute island ID -> { component }
@@ -51,7 +73,7 @@
       providers: Object.create(null),
     },
     ready: false,
-  };
+  });
 
   function gosxSharedSignalStore() {
     const current = window.__gosx && window.__gosx.sharedSignals;

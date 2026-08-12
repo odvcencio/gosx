@@ -124,6 +124,30 @@ func eventMarkerAttr(eventType string) string {
 		return "data-gosx-on-focus"
 	case "blur":
 		return "data-gosx-on-blur"
+	case "dragstart":
+		return "data-gosx-on-dragstart"
+	case "dragend":
+		return "data-gosx-on-dragend"
+	case "dragover":
+		return "data-gosx-on-dragover"
+	case "dragleave":
+		return "data-gosx-on-dragleave"
+	case "drop":
+		return "data-gosx-on-drop"
+	case "pointerdown":
+		return "data-gosx-on-pointerdown"
+	case "pointermove":
+		return "data-gosx-on-pointermove"
+	case "pointerup":
+		return "data-gosx-on-pointerup"
+	case "pointercancel":
+		return "data-gosx-on-pointercancel"
+	case "document-keydown":
+		return "data-gosx-on-document-keydown"
+	case "document-keyup":
+		return "data-gosx-on-document-keyup"
+	case "window-resize":
+		return "data-gosx-on-window-resize"
 	default:
 		return "data-gosx-on-" + eventType
 	}
@@ -147,6 +171,30 @@ func eventAttrType(name string) string {
 		return "focus"
 	case "onBlur":
 		return "blur"
+	case "onDragStart":
+		return "dragstart"
+	case "onDragEnd":
+		return "dragend"
+	case "onDragOver":
+		return "dragover"
+	case "onDragLeave":
+		return "dragleave"
+	case "onDrop":
+		return "drop"
+	case "onPointerDown":
+		return "pointerdown"
+	case "onPointerMove":
+		return "pointermove"
+	case "onPointerUp":
+		return "pointerup"
+	case "onPointerCancel":
+		return "pointercancel"
+	case "onDocumentKeyDown":
+		return "document-keydown"
+	case "onDocumentKeyUp":
+		return "document-keyup"
+	case "onWindowResize":
+		return "window-resize"
 	default:
 		if len(name) > 2 && name[:2] == "on" {
 			return strings.ToLower(name[2:3]) + name[3:]

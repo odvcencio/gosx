@@ -14,6 +14,7 @@ import (
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/internal/htmlattr"
 	"m31labs.dev/gosx/ir"
 	islandprogram "m31labs.dev/gosx/island/program"
 	gosxscene "m31labs.dev/gosx/scene"
@@ -287,7 +288,7 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 		case ir.AttrStatic:
 			writeFileAttrPair(b, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(attr.Value))
 		case ir.AttrExpr:
-			renderFileEvaluatedAttr(b, html.EscapeString(normalizeFileAttrName(attr.Name)), evalFileExpr(attr.Expr, env))
+			renderFileEvaluatedAttr(b, normalizeFileAttrName(attr.Name), evalFileExpr(attr.Expr, env))
 		case ir.AttrBool:
 			writeFileAttrName(b, html.EscapeString(normalizeFileAttrName(attr.Name)))
 		case ir.AttrSpread:
@@ -298,7 +299,7 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 				if normalized == "" || linkReservedAttr(normalized) {
 					continue
 				}
-				renderFileEvaluatedAttr(b, html.EscapeString(normalized), value)
+				renderFileEvaluatedAttr(b, normalized, value)
 			}
 		}
 	}
@@ -1100,7 +1101,7 @@ func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv) {
 	case ir.AttrStatic:
 		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
 	case ir.AttrExpr:
-		renderFileEvaluatedAttr(b, name, evalFileExpr(attr.Expr, env))
+		renderFileEvaluatedAttr(b, attr.Name, evalFileExpr(attr.Expr, env))
 	case ir.AttrBool:
 		writeFileAttrName(b, name)
 	case ir.AttrSpread:
@@ -1114,7 +1115,7 @@ func renderFileSpreadAttrs(b *strings.Builder, value any) {
 		if normalized == "" {
 			continue
 		}
-		renderFileEvaluatedAttr(b, html.EscapeString(normalized), entry.Value)
+		renderFileEvaluatedAttr(b, normalized, entry.Value)
 	}
 }
 
@@ -1198,21 +1199,26 @@ func plainTextFileEvaluatedExpr(value any) string {
 }
 
 func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
+	safeName := html.EscapeString(name)
 	switch v := value.(type) {
 	case nil:
 		return
 	case bool:
-		if v {
-			writeFileAttrName(b, name)
-		}
-	case fmt.Stringer:
-		writeFileAttrPair(b, name, html.EscapeString(v.String()))
-	default:
-		if text, ok := fileScalarText(value); ok {
-			writeFileAttrPair(b, name, html.EscapeString(text))
+		if htmlattr.IsBoolean(name) {
+			if v {
+				writeFileAttrName(b, safeName)
+			}
 			return
 		}
-		writeFileAttrPair(b, name, html.EscapeString(fmt.Sprint(v)))
+		writeFileAttrPair(b, safeName, strconv.FormatBool(v))
+	case fmt.Stringer:
+		writeFileAttrPair(b, safeName, html.EscapeString(v.String()))
+	default:
+		if text, ok := fileScalarText(value); ok {
+			writeFileAttrPair(b, safeName, html.EscapeString(text))
+			return
+		}
+		writeFileAttrPair(b, safeName, html.EscapeString(fmt.Sprint(v)))
 	}
 }
 
@@ -1724,10 +1730,13 @@ func fileNodeAttr(name string, value any) (any, bool) {
 	case nil:
 		return nil, false
 	case bool:
-		if !v {
-			return nil, false
+		if htmlattr.IsBoolean(name) {
+			if !v {
+				return nil, false
+			}
+			return gosx.BoolAttr(name), true
 		}
-		return gosx.BoolAttr(name), true
+		return gosx.Attr(name, v), true
 	default:
 		return gosx.Attr(name, value), true
 	}
@@ -1777,7 +1786,7 @@ func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attr
 			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(attr.Name), html.EscapeString(attr.Value))
 		case ir.AttrExpr:
 			value := evalFileExpr(attr.Expr, env)
-			renderFileEvaluatedAttr(b, html.EscapeString(attr.Name), value)
+			renderFileEvaluatedAttr(b, attr.Name, value)
 		case ir.AttrBool:
 			fmt.Fprintf(b, " %s", html.EscapeString(attr.Name))
 		}

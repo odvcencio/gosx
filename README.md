@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.36.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.38.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -221,6 +221,8 @@ count    // local to the declaring island
 
 **Managed Motion** — `server.Motion`, `ctx.Motion`, and the `.gsx` `<Motion />` builtin expose server-authored motion presets that run on the shared bootstrap layer. Preset, trigger, duration, delay, easing, reduced-motion policy, and distance all stay in one declarative contract.
 
+**Managed Background Audio (YouTube)** — a declarative bridge served at `/gosx/youtube-audio.js` (`server.YouTubeAudioBridgePath`, tag helper `server.YouTubeAudioBridgeScriptTag()`). Any element with `data-gosx-youtube-audio="<youtube url>"` becomes a play/pause toggle for one shared hidden player, and the active element carries `data-gosx-youtube-audio-state="playing"` for CSS styling. The bridge lazy-loads the YouTube IFrame API on first activation, so pages without audio toggles load nothing.
+
 **Runtime Surfaces** — `gosx.RuntimeSurface`, `gosx.Action`, and `gosx.Region` describe progressive-enhancement contracts in server HTML (`data-gosx-runtime-surface`), and the shared bootstrap owns discovery, navigation remounting, scoped DOM/query/fetch/listen access, stream-template consumption, and disposal — so rich pages register framework-managed behavior instead of shipping bespoke script tags.
 
 ## Engines
@@ -418,6 +420,8 @@ scene.Props{
 - **Water** — `WaterSystem` GPU heightfield simulation with box/rounded pool shapes, caustics, reflection, refraction, projected object optics, drop/orbit/object-drag interaction, independent surface mesh topology, and adaptive quality profiles — WebGPU-first with a WebGL path rendered from the same authored Selena sources
 - **Environment** — ambient, hemisphere, sky/ground, cubemap IBL, exposure, fog, tonemapping
 - **WebGPU presentation** — tier-aware 4x MSAA render targets with resolve-to-canvas/post-FX targets, adapter feature/limit negotiation for timestamp queries, shader-f16, indirect first-instance, compressed textures, subgroups, manifest-driven `requiredFeatures` / `requiredLimits` negotiation, opt-in adapter `powerPreference`, opt-in canvas `alphaMode` / `colorSpace` / `toneMapping`, and diagnostics exposed for tooling through `data-gosx-scene3d-webgpu-*` mount attributes, plus shared SceneIR parity across WebGPU, WebGL2, and headless backends
+- **First-content reveal** — an opt-in `data-gosx-scene3d-reveal-class` mount attribute names a CSS class. After the first frame with drawable content, the runtime stamps `data-gosx-scene3d-revealed="true"` on the mount and adds the class to the document element; dispose removes the class again. Pure CSS can fade a static boot placeholder — no app-authored watcher script
+- **Lantern inspector** — a read-only Scene3D dev inspector served at `/gosx/devtools-lantern.js` (`server.DevtoolsLanternPath`, tag helper `server.DevtoolsLanternScriptTag()`). Apps include the tag only when devtools are enabled; Shift+D toggles a panel with truthful render FPS, backend and adaptive-quality state, live node-type counts, draw calls, and camera state — all read from the debug registry the production bundle already exposes
 - **Post-processing** — `SSAO`, `DOF`, `Bloom`, `Tonemap` (ACES / Reinhard / Filmic), `Vignette`, `ColorGrade`, FXAA 3.11, RGB9E5/HDR intermediate selection, HDR10 presentation when supported, composable chain, with backend-specific passes skipped gracefully when unavailable
 - **Editor/debug surfaces** — `AxesHelper`, `GridHelper`, `BoxHelper`, `BoundingBoxHelper`, `SkeletonHelper`, visual `TransformControls`, selected mesh outline styling, dashed/solid line materials, and opt-in `Stats` overlay
 - **Native preview & certification** — `scene/preview` renders typed scenes to PNG with no browser or GPU (thumbnails, docs images, deterministic visual tests), and `scene/harness` certifies contract evidence — frame hashes, coverage, Selena artifact hashes, and BVH-accelerated ray/drag traces that are exact for every analytic primitive and every triangle mesh, use a pick radius for points, sprites and line strokes, fall back to a bounds box only for glTF models Go never loads, and name the method behind each hit — into schema-versioned JSON reports suitable for agent-operated authoring workflows
@@ -800,7 +804,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.36.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.38.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

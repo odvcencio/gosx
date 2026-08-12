@@ -532,13 +532,10 @@
         return true;
       }
 
-      const missingRows = visualRow - visualRowToLine.length + 1;
-      if (missingRows <= 0) return false;
+      if (visualRow < visualRowToLine.length) return false;
       event.preventDefault();
       textarea.focus();
-      textarea.value += "\n".repeat(missingRows);
       textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
       return true;
     };
 

@@ -29,12 +29,14 @@ type Bridge struct {
 	// it is a DOM island or a scene engine. Surface-specific dispatch
 	// (Hydrate*, Dispatch*, Tick*, Render*) still goes through the typed
 	// maps — collapsing those is Phase 1d work.
-	reconcilers map[string]vm.Reconciler
-	store       *Store
-	patchFn     func(islandID, patchJSON string) // callback to push patches to JS
-	signalFn    func(name, valueJSON string)     // callback to notify JS of shared signal changes
-	dispatching string                           // ID of the island currently dispatching
-	unsubs      map[string][]func()              // per-island unsubscribe handles for shared signals
+	reconcilers   map[string]vm.Reconciler
+	store         *Store
+	patchFn       func(islandID, patchJSON string)      // callback to push patches to JS
+	signalFn      func(name, valueJSON string)          // callback to notify JS of shared signal changes
+	dispatching   map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
+	unsubs        map[string][]func()                   // per-island unsubscribe handles for shared signals
+	hostFactories map[string]HostReceiverFactory        // receiver name -> per-island capability factory
+	hostReceivers map[string]map[string]vm.HostReceiver // island id -> live receiver bindings
 
 	// engineSurfaces holds live engine-surface VM+canvas+receiver
 	// triples keyed by mount id. Populated by HydrateEngineSurface
@@ -171,6 +173,8 @@ func New() *Bridge {
 		engineSurfaces: make(map[string]any),
 		store:          NewStore(),
 		unsubs:         make(map[string][]func()),
+		hostFactories:  make(map[string]HostReceiverFactory),
+		hostReceivers:  make(map[string]map[string]vm.HostReceiver),
 	}
 	b.store.SetObserver(func(name string, value vm.Value) {
 		b.notifySharedSignal(name, value)
@@ -250,8 +254,17 @@ func (b *Bridge) hydrateIsland(id, componentName, propsJSON string, programData 
 	}
 
 	island := vm.NewIsland(prog, propsJSON)
+	b.bindIslandHosts(id, island, prog)
 	defs := sharedSignalDefs(prog)
-	b.connectSharedSignals(island, defs)
+	var hydrationPatches []vm.PatchOp
+	if len(defs) > 0 {
+		// Keep NewIsland's local-init tree as the SSR/DOM baseline, bind every
+		// live store instance, then reconcile once against the final shared and
+		// computed values. Overwriting prev during binding would make an
+		// existing store value invisible to the browser until a later write.
+		b.bindSharedSignals(island, defs)
+		hydrationPatches = island.Reconcile()
+	}
 	b.unsubs[id] = b.subscribeSharedSignals(id, defs)
 
 	b.islands[id] = island
@@ -261,6 +274,7 @@ func (b *Bridge) hydrateIsland(id, componentName, propsJSON string, programData 
 	} else {
 		delete(b.computeIslands, id)
 	}
+	b.pushPatches(id, hydrationPatches)
 	return nil
 }
 
@@ -294,11 +308,19 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 	if !ok {
 		return nil, fmt.Errorf("island %q not found", islandID)
 	}
+	if b.dispatching[islandID] > 0 {
+		return nil, fmt.Errorf("island %q is already dispatching", islandID)
+	}
+	if b.dispatching == nil {
+		b.dispatching = make(map[string]uint32)
+	}
 
-	b.dispatching = islandID
+	b.dispatching[islandID]++
 	defer func() {
-		if b.dispatching == islandID {
-			b.dispatching = ""
+		if b.dispatching[islandID] <= 1 {
+			delete(b.dispatching, islandID)
+		} else {
+			b.dispatching[islandID]--
 		}
 	}()
 
@@ -394,6 +416,7 @@ func (b *Bridge) DisposeIsland(id string) {
 	}
 
 	if island, ok := b.islands[id]; ok {
+		b.disposeIslandHosts(id, island)
 		island.Dispose()
 		delete(b.islands, id)
 	}
@@ -502,11 +525,11 @@ func isSharedSignal(name string) bool {
 	return len(name) > 0 && name[0] == '$'
 }
 
-func (b *Bridge) connectSharedSignals(island *vm.Island, defs []program.SignalDef) {
+func (b *Bridge) bindSharedSignals(island *vm.Island, defs []program.SignalDef) {
 	for _, def := range defs {
 		initVal := island.EvalExpr(def.Init)
 		sharedSig := b.store.Signal(def.Name, initVal)
-		island.SetSharedSignal(def.Name, sharedSig)
+		island.BindSharedSignal(def.Name, sharedSig)
 	}
 }
 
@@ -526,7 +549,7 @@ func (b *Bridge) subscribeSharedSignal(islandID string, def program.SignalDef) f
 }
 
 func (b *Bridge) reconcileSharedIsland(islandID string) {
-	if b.dispatching == islandID {
+	if b.dispatching[islandID] > 0 {
 		return
 	}
 	island, ok := b.islands[islandID]

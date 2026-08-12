@@ -466,7 +466,14 @@ func (r *islandReuse) watchSampleAt(vm *VM, i int, key watchKey) watchSample {
 	}
 	sig := r.watchSigs[i]
 	if sig == nil {
-		return watchSample{}
+		computed, ok := vm.computeds[key.name]
+		if !ok || computed == nil {
+			return watchSample{}
+		}
+		// Computed values do not expose a mutable write revision. Sampling
+		// invokes their lazy refresh and lets the ordinary scalar comparison
+		// decide whether this subtree can be copied verbatim.
+		return sampleValue(computed.Get(), true)
 	}
 	return sampleValue(sig.Get(), true)
 }
@@ -525,10 +532,14 @@ func (vm *VM) currentWatchSample(key watchKey) watchSample {
 	switch key.kind {
 	case watchSignal:
 		sig, ok := vm.signals[key.name]
-		if !ok || sig == nil {
+		if ok && sig != nil {
+			return sampleValue(sig.Get(), true)
+		}
+		computed, ok := vm.computeds[key.name]
+		if !ok || computed == nil {
 			return watchSample{}
 		}
-		return sampleValue(sig.Get(), true)
+		return sampleValue(computed.Get(), true)
 	default:
 		v, ok := vm.props[key.name]
 		return sampleValue(v, ok)
