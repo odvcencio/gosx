@@ -32,10 +32,6 @@
         "reason": "first-party typed browser runtime source"
       },
       {
-        "pattern": "client/js/{patch,relay,stripe-bridge}.js",
-        "reason": "first-party hand-authored browser runtime sidecars, outside the historical line scoreboard"
-      },
-      {
         "pattern": "//go:embed browser-source patterns (*.js, *.ts, *.tsx)",
         "reason": "first-party embedded browser runtime source outside client/js"
       }
@@ -44,6 +40,10 @@
       {
         "pattern": "client/js/bootstrap*.js",
         "reason": "generated deployment JavaScript bundles"
+      },
+      {
+        "pattern": "client/js/{patch,relay,stripe-bridge}.js",
+        "reason": "generated deployment sidecars emitted from typed client/runtime/host sources"
       },
       {
         "pattern": "client/js/*.js.map, client/js/*.gz, client/js/*.br",

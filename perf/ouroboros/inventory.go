@@ -317,9 +317,9 @@ type Canonical struct {
 type ScopeRatchet struct {
 	ID         string `json:"id"`
 	Scope      string `json:"scope"`
-	Target     int64  `json:"target,omitempty"`
-	Measured   int64  `json:"measured,omitempty"`
-	Delta      int64  `json:"delta,omitempty"`
+	Target     int64  `json:"target"`
+	Measured   int64  `json:"measured"`
+	Delta      int64  `json:"delta"`
 	Status     string `json:"status"`
 	Definition string `json:"definition"`
 }
@@ -390,11 +390,11 @@ func DefaultScope() Scope {
 		Included: []ScopeRule{
 			{Pattern: "client/js/bootstrap-src/**/*.{js,ts}", Reason: "first-party authored browser runtime source"},
 			{Pattern: "client/runtime/**/*.ts", Reason: "first-party typed browser runtime source"},
-			{Pattern: "client/js/{patch,relay,stripe-bridge}.js", Reason: "first-party hand-authored browser runtime sidecars, outside the historical line scoreboard"},
 			{Pattern: "//go:embed browser-source patterns (*.js, *.ts, *.tsx)", Reason: "first-party embedded browser runtime source outside client/js"},
 		},
 		Excluded: []ScopeRule{
 			{Pattern: "client/js/bootstrap*.js", Reason: "generated deployment JavaScript bundles"},
+			{Pattern: "client/js/{patch,relay,stripe-bridge}.js", Reason: "generated deployment sidecars emitted from typed client/runtime/host sources"},
 			{Pattern: "client/js/*.js.map, client/js/*.gz, client/js/*.br", Reason: "source maps and compressed sidecars"},
 			{Pattern: "**/*test*.js, **/*.test.mjs, scripts/**/*.mjs", Reason: "benchmark, test, and probe scripts"},
 			{Pattern: "**/wasm_exec.js", Reason: "Go or TinyGo distribution shim"},
@@ -658,12 +658,34 @@ func collectFiles(root string, inv *Inventory) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || filepath.Ext(path) != ".js" {
+		ext := strings.ToLower(filepath.Ext(path))
+		if d.IsDir() || (ext != ".js" && ext != ".ts") {
 			return nil
 		}
 		return collectIncludedFile(root, path, inv)
 	}); err != nil {
 		return err
+	}
+	runtimeRoot := filepath.Join(root, "client", "runtime")
+	if _, statErr := os.Stat(runtimeRoot); statErr == nil {
+		if err := filepath.WalkDir(runtimeRoot, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || filepath.Ext(path) != ".ts" {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, path)
+			rel = filepath.ToSlash(rel)
+			if strings.HasPrefix(rel, "client/runtime/generated/") {
+				return nil
+			}
+			return collectIncludedFile(root, path, inv)
+		}); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
 	}
 	sidecarRoot := filepath.Join(root, "client", "js")
 	if err := filepath.WalkDir(sidecarRoot, func(path string, d os.DirEntry, err error) error {
@@ -681,7 +703,7 @@ func collectFiles(root string, inv *Inventory) error {
 		}
 		rel, _ := filepath.Rel(root, path)
 		rel = filepath.ToSlash(rel)
-		if isFirstPartySidecar(rel) {
+		if isFirstPartySidecar(rel) && !isGeneratedRuntimeSidecar(root, rel) {
 			return collectSidecarFile(root, path, inv)
 		}
 		return nil
@@ -710,7 +732,12 @@ func collectFiles(root string, inv *Inventory) error {
 		if isCollectedSource(rel, inv) {
 			return nil
 		}
-		if ex, ok := classifyExcluded(rel); ok {
+		ex, ok := classifyExcluded(rel)
+		if isGeneratedRuntimeSidecar(root, rel) {
+			ex = generatedRuntimeSidecarExclusion(rel)
+			ok = true
+		}
+		if ok {
 			info, statErr := d.Info()
 			if statErr == nil {
 				ex.Bytes = info.Size()
@@ -766,7 +793,6 @@ func collectFiles(root string, inv *Inventory) error {
 	inv.Totals.BroaderBrowserFiles = inv.Totals.IncludedFiles + inv.Totals.SidecarFiles + inv.Totals.EmbeddedFiles
 	inv.Totals.BroaderBrowserJavaScriptLines = inv.Totals.IncludedJavaScriptLines + inv.Totals.SidecarJavaScriptLines + inv.Totals.EmbeddedJavaScriptLines
 	inv.Totals.BroaderBrowserBytes = inv.Totals.IncludedBytes + inv.Totals.SidecarBytes + inv.Totals.EmbeddedBytes
-	inv.Totals.RuntimeTypeScriptFiles = 0
 	sort.Strings(inv.Totals.RuntimeTypeScriptExclusions)
 	return nil
 }
@@ -867,16 +893,21 @@ func collectEmbeddedFile(root, path string, inv *Inventory) error {
 		GzipBytes:   compressedSize(body, "gzip"),
 		BrotliBytes: compressedSize(body, "brotli"),
 	}
-	if strings.HasSuffix(rel, ".js") {
-		if err := parseJavaScript(body); err != nil {
+	if isBrowserSourceExt(rel) {
+		if err := parseBrowserSource(rel, body); err != nil {
 			src.ParseError = err.Error()
 		} else {
 			src.ParseOK = true
 		}
 	}
 	inv.Files.Embedded = append(inv.Files.Embedded, src)
-	inv.Totals.EmbeddedJavaScriptLines += lines
+	if src.Language == "javascript" {
+		inv.Totals.EmbeddedJavaScriptLines += lines
+	}
 	inv.Totals.EmbeddedBytes += int64(len(body))
+	if src.Language == "typescript" || src.Language == "tsx" {
+		inv.Totals.RuntimeTypeScriptFiles++
+	}
 	collectTextEvidence(rel, string(body), inv)
 	return nil
 }
@@ -913,15 +944,15 @@ func collectIncludedFile(root, path string, inv *Inventory) error {
 	lines := countLines(body)
 	src := SourceFile{
 		Path:        rel,
-		Language:    "javascript",
+		Language:    languageForPath(rel),
 		SourceKind:  "scoreboard",
-		Reason:      "historical first-party authored browser runtime source scoreboard",
+		Reason:      "first-party authored browser runtime source scoreboard",
 		Lines:       lines,
 		Bytes:       int64(len(body)),
 		GzipBytes:   compressedSize(body, "gzip"),
 		BrotliBytes: compressedSize(body, "brotli"),
 	}
-	if err := parseJavaScript(body); err != nil {
+	if err := parseBrowserSource(rel, body); err != nil {
 		src.ParseError = err.Error()
 		inv.Structural.Gotreesitter.Failed++
 		inv.Structural.Gotreesitter.Failures = append(inv.Structural.Gotreesitter.Failures, Location{Path: rel, Line: 0, Text: err.Error()})
@@ -929,13 +960,18 @@ func collectIncludedFile(root, path string, inv *Inventory) error {
 		src.ParseOK = true
 		inv.Structural.Gotreesitter.Parsed++
 	}
-	inv.Structural.Gotreesitter.Language = "javascript"
+	inv.Structural.Gotreesitter.Language = "javascript/typescript"
 	inv.Files.Included = append(inv.Files.Included, src)
-	inv.Totals.IncludedJavaScriptLines += lines
-	inv.Totals.IncludedBytes += int64(len(body))
-	inv.Totals.IncludedGzipBytes += src.GzipBytes
-	inv.Totals.IncludedBrotliBytes += src.BrotliBytes
-	inv.Totals.ByExtension[".js"]++
+	if src.Language == "javascript" {
+		inv.Totals.IncludedJavaScriptLines += lines
+		inv.Totals.IncludedBytes += int64(len(body))
+		inv.Totals.IncludedGzipBytes += src.GzipBytes
+		inv.Totals.IncludedBrotliBytes += src.BrotliBytes
+	}
+	inv.Totals.ByExtension[strings.ToLower(filepath.Ext(rel))]++
+	if src.Language == "typescript" || src.Language == "tsx" {
+		inv.Totals.RuntimeTypeScriptFiles++
+	}
 	collectTextEvidence(rel, string(body), inv)
 	return nil
 }
@@ -1908,7 +1944,10 @@ func classifyExcluded(rel string) (ExcludedFile, bool) {
 }
 
 func isIncludedRuntimeSource(rel string) bool {
-	return strings.HasPrefix(rel, "client/js/bootstrap-src/") && strings.HasSuffix(rel, ".js")
+	if strings.HasPrefix(rel, "client/js/bootstrap-src/") && (strings.HasSuffix(rel, ".js") || strings.HasSuffix(rel, ".ts")) {
+		return true
+	}
+	return strings.HasPrefix(rel, "client/runtime/") && strings.HasSuffix(rel, ".ts") && !strings.HasPrefix(rel, "client/runtime/generated/")
 }
 
 func isCollectedSource(rel string, inv *Inventory) bool {
@@ -1955,6 +1994,39 @@ func isFirstPartySidecar(rel string) bool {
 	return true
 }
 
+func isGeneratedRuntimeSidecar(root, rel string) bool {
+	sources, ok := map[string][]string{
+		"client/js/patch.js": {
+			"client/runtime/wasm/mailbox.ts",
+			"client/runtime/host/patch.ts",
+		},
+		"client/js/relay.js": {
+			"client/runtime/host/relay.ts",
+		},
+		"client/js/stripe-bridge.js": {
+			"client/runtime/host/stripe-bridge.ts",
+		},
+	}[rel]
+	if !ok {
+		return false
+	}
+	for _, source := range sources {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(source))); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func generatedRuntimeSidecarExclusion(rel string) ExcludedFile {
+	return ExcludedFile{
+		Path:     rel,
+		Kind:     "generated",
+		Language: "javascript",
+		Reason:   "generated deployment sidecar emitted from typed browser runtime source",
+	}
+}
+
 func fillCanopy(ctx context.Context, root string, inv *Inventory) {
 	if version, err := gitOutput(ctx, root, "canopy", "--version"); err == nil {
 		inv.Structural.CanopyVersion = strings.TrimSpace(version)
@@ -1986,6 +2058,7 @@ func fillCanopy(ctx context.Context, root string, inv *Inventory) {
 }
 
 func fillDrift(inv *Inventory) {
+	authoredRuntimeJavaScriptLines := inv.Totals.IncludedJavaScriptLines + inv.Totals.SidecarJavaScriptLines + inv.Totals.EmbeddedJavaScriptLines
 	measured := Canonical{
 		JavaScriptLines:          inv.Totals.IncludedJavaScriptLines,
 		JavaScriptBytes:          inv.Totals.IncludedBytes,
@@ -2031,8 +2104,8 @@ func fillDrift(inv *Inventory) {
 		notes = append(notes, "Current inventory does not reproduce canonical O0.2 scoreboard targets.")
 		notes = append(notes, "Do not rewrite canonical denominators without an accepted Hyphae decision.")
 	}
-	notes = append(notes, "Canonical clean HEAD source ratchet is 87,086 lines and 3,815,610 bytes over client/js/bootstrap-src/**/*.js.")
-	notes = append(notes, "Current dirty overlay source ratchet is expected to drift by +623 lines and +29,174 bytes when the nine Scene3D edits are present.")
+	notes = append(notes, "Historical O0.2 source ratchet is 87,086 lines and 3,815,610 bytes over client/js/bootstrap-src/**/*.js; O6 tracks the typed source tree separately.")
+	notes = append(notes, fmt.Sprintf("O6 authored-runtime-JavaScript deletion gate measures %d lines across included, embedded, and hand-authored sidecar source files; generated deployment outputs are excluded.", authoredRuntimeJavaScriptLines))
 	notes = append(notes, "The 209 compatibility ratchet is raw distinct __gosx_* over bootstrap-src plus all client/wasm, including tests.")
 	notes = append(notes, "Production compatibility raw target is 208 over bootstrap-src plus non-test client/wasm.")
 	notes = append(notes, "The 253 serialization denominator lacks a reproducible exact query and JSONL corpus; this collector fails it closed.")
@@ -2062,6 +2135,15 @@ func fillDrift(inv *Inventory) {
 			Delta:      deltas.JavaScriptBytes,
 			Status:     passFail(deltas.JavaScriptBytes == 0),
 			Definition: "Raw byte count over first-party authored browser runtime JavaScript source.",
+		},
+		{
+			ID:         "o6-authored-runtime-javascript-lines",
+			Scope:      "first-party authored browser runtime JavaScript excluding generated, vendor, probe, and test assets",
+			Target:     0,
+			Measured:   int64(authoredRuntimeJavaScriptLines),
+			Delta:      int64(authoredRuntimeJavaScriptLines),
+			Status:     passFail(authoredRuntimeJavaScriptLines == 0),
+			Definition: "O6 deletion gate: no first-party authored browser-runtime JavaScript remains; generated deployment output, vendor assets, and wasm_exec.js are excluded.",
 		},
 		{
 			ID:         "compat-gosx-raw-all",
@@ -2412,9 +2494,29 @@ func gitOutput(ctx context.Context, dir string, command string, args ...string) 
 }
 
 func parseJavaScript(body []byte) error {
-	grammar := grammars.JavascriptLanguage()
+	return parseWithGrammar(grammars.JavascriptLanguage(), body, "JavaScript")
+}
+
+func parseBrowserSource(path string, body []byte) error {
+	var grammar *gotreesitter.Language
+	var language string
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".ts":
+		grammar = grammars.TypescriptLanguage()
+		language = "TypeScript"
+	case ".tsx":
+		grammar = grammars.TsxLanguage()
+		language = "TSX"
+	default:
+		grammar = grammars.JavascriptLanguage()
+		language = "JavaScript"
+	}
+	return parseWithGrammar(grammar, body, language)
+}
+
+func parseWithGrammar(grammar *gotreesitter.Language, body []byte, language string) error {
 	if grammar == nil {
-		return errors.New("gotreesitter JavaScript grammar is unavailable")
+		return fmt.Errorf("gotreesitter %s grammar is unavailable", language)
 	}
 	tree, err := gotreesitter.NewParser(grammar).Parse(body)
 	if err != nil {

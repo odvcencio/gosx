@@ -135,10 +135,10 @@ func TestCollectEmbeddedBrowserSources(t *testing.T) {
 	writeFile(t, root, "client/js/bootstrap-src/00-runtime.js", "window.__gosx_runtime_ready = true;\n")
 	writeFile(t, root, "server/navigation.go", "package server\nimport _ \"embed\"\n//go:embed navigation_runtime.js\nvar navigationRuntime string\n")
 	writeFile(t, root, "server/navigation_runtime.js", "window.__gosx_navigation_runtime = true;\nJSON.stringify({ok:true});\n")
-	writeFile(t, root, "auth/webauthn_script.go", "package auth\nimport _ \"embed\"\n//go:embed webauthn_runtime.js\nvar webAuthnRuntime string\n")
-	writeFile(t, root, "auth/webauthn_runtime.js", "window.GoSXWebAuthn = {};\n")
-	writeFile(t, root, "engine/surface/runtime_handler.go", "package surface\nimport _ \"embed\"\n//go:embed runtime/bootstrap.js\nvar bootstrapJS []byte\n")
-	writeFile(t, root, "engine/surface/runtime/bootstrap.js", "window.__gosx_surface_event = function(){};\n")
+	writeFile(t, root, "auth/webauthn_script.go", "package auth\nimport _ \"embed\"\n//go:embed webauthn_runtime.ts\nvar webAuthnRuntime string\n")
+	writeFile(t, root, "auth/webauthn_runtime.ts", "window.GoSXWebAuthn = {};\n")
+	writeFile(t, root, "engine/surface/runtime_handler.go", "package surface\nimport _ \"embed\"\n//go:embed runtime/bootstrap.ts\nvar bootstrapJS []byte\n")
+	writeFile(t, root, "engine/surface/runtime/bootstrap.ts", "window.__gosx_surface_event = function(){};\n")
 	runGit(t, root, "init")
 	runGit(t, root, "config", "user.email", "test@example.invalid")
 	runGit(t, root, "config", "user.name", "test")
@@ -153,7 +153,7 @@ func TestCollectEmbeddedBrowserSources(t *testing.T) {
 	for _, src := range inv.Files.Embedded {
 		got[src.Path] = true
 	}
-	for _, want := range []string{"server/navigation_runtime.js", "auth/webauthn_runtime.js", "engine/surface/runtime/bootstrap.js"} {
+	for _, want := range []string{"server/navigation_runtime.js", "auth/webauthn_runtime.ts", "engine/surface/runtime/bootstrap.ts"} {
 		if !got[want] {
 			t.Fatalf("embedded source %s missing from %+v", want, inv.Files.Embedded)
 		}

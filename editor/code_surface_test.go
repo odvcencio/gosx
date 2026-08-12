@@ -59,7 +59,7 @@ func TestCodeSurfaceRendersDeclarativeCollaborationBinding(t *testing.T) {
 }
 
 func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
-	asset, err := embeddedAssets.ReadFile("assets/collaborative-editor.js")
+	asset, err := embeddedAssets.ReadFile("assets/collaborative-editor.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestCollaborationRuntimeProtectsUnacknowledgedLocalInput(t *testing.T) {
 }
 
 func TestCodeIntelligenceForwardsHostCapabilityField(t *testing.T) {
-	asset, err := embeddedAssets.ReadFile("assets/code-intelligence.js")
+	asset, err := embeddedAssets.ReadFile("assets/code-intelligence.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestCodeIntelligenceForwardsHostCapabilityField(t *testing.T) {
 }
 
 func TestNativeEditorAssetProvidesMultiCursorEditing(t *testing.T) {
-	asset, err := embeddedAssets.ReadFile("assets/native-editor.js")
+	asset, err := embeddedAssets.ReadFile("assets/native-editor.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestNativeEditorAssetProvidesMultiCursorEditing(t *testing.T) {
 }
 
 func TestNativeEditorAssetProvidesCodeEditingChecklist(t *testing.T) {
-	asset, err := embeddedAssets.ReadFile("assets/native-editor.js")
+	asset, err := embeddedAssets.ReadFile("assets/native-editor.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestCodeSurfaceRendersCallerSuppliedHighlightSpans(t *testing.T) {
 }
 
 func TestCodeIntelligenceAssetProvidesStructuralNavigation(t *testing.T) {
-	asset, err := embeddedAssets.ReadFile("assets/code-intelligence.js")
+	asset, err := embeddedAssets.ReadFile("assets/code-intelligence.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
