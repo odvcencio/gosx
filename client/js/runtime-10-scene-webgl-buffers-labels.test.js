@@ -2048,7 +2048,7 @@ test("WebGL customPost receives reserved auto-uniforms: time is nonzero and adva
 });
 
 test("WebGL post processor is constructed with the Selena uniform resolver injected", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
   // The injection is what supplies reserved auto-uniforms to custom post
   // passes; without it applyCustomPost silently falls back to author values
   // only. Mirrors the WebGPU side's wgpuCreatePostProcessor(..., sceneSelenaUniformData).

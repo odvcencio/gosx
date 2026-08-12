@@ -44,6 +44,7 @@
   // 10-runtime-scene-core.js, 11-scene-math.js, 15a-scene-postfx-shared.js).
   var sceneBool = sceneApi.sceneBool || function(v, d) { return v == null ? d : !!v; };
   var sceneNumber = sceneApi.sceneNumber || function(v, d) { var n = Number(v); return Number.isFinite(n) ? n : d; };
+  var scenePostDOMRegionPixelBounds = sceneApi.scenePostDOMRegionPixelBounds || function() { return { mode: "off", bounds: null }; };
   var clamp01 = sceneApi.clamp01 || function(v) { return Math.max(0, Math.min(1, Number(v) || 0)); };
   var sceneFiniteNumber = sceneApi.sceneFiniteNumber || function(v, d) {
     return typeof v === "number" && isFinite(v) ? v : d;

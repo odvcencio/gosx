@@ -1,9 +1,16 @@
-  // WebGPU rendering backend for GoSX Scene3D.
+  // webgpu.ts — WebGPU rendering backend for GoSX Scene3D.
+  // @ts-check
   //
   // Parallel implementation of the PBR WebGL2 renderer (16-scene-webgl.js)
   // using the WebGPU API. Provides Cook-Torrance BRDF with per-pixel
   // lighting, shadow maps, fog, and post-processing. Points are rendered
   // as instanced camera-facing quads since WebGPU has no gl_PointSize.
+
+  /**
+   * @typedef {object} GoSXSceneWebGPURenderer
+   * @property {(bundle: object, frame?: number) => void} render
+   * @property {() => void} dispose
+   */
 
   // renderTruth resolves the shared render-truth helpers published by
   // 15a-scene-postfx-shared.js. This chunk (bootstrap-feature-scene3d-webgpu.js)
@@ -2937,7 +2944,7 @@
   // Frustum Plane Extraction (browser-side parity with native cull.go)
   // -----------------------------------------------------------------------
   // extractFrustumPlanesJS + instancePassesCullTest are defined in
-  // 11-scene-math.js (shared by both this WebGPU renderer and 16-scene-webgl.js).
+  // 11-scene-math.ts (shared by both this WebGPU renderer and 16-scene-webgl.js).
   //
   // This renderer passes scratchSelenaViewProjection (post-depth-remap, WebGPU
   // [0,1] clip convention) so the near=R2 half-depth formula is correct for
@@ -4259,24 +4266,39 @@
       pingPongHeight = h;
     }
 
-    function fullscreenPass(encoder, pipeline, bindGroup, targetView) {
+    function fullscreenPass(encoder, pipeline, bindGroup, targetView, options) {
+      var opts = options && typeof options === "object" ? options : {};
       var pass = encoder.beginRenderPass({
         colorAttachments: [{
           view: targetView,
-          loadOp: "clear",
+          loadOp: opts.loadOp === "load" ? "load" : "clear",
           storeOp: "store",
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          clearValue: opts.clearValue || { r: 0, g: 0, b: 0, a: 1 },
         }],
       });
+      if (opts.scissor && opts.scissor.width > 0 && opts.scissor.height > 0 && typeof pass.setScissorRect === "function") {
+        pass.setScissorRect(opts.scissor.x, opts.scissor.y, opts.scissor.width, opts.scissor.height);
+      }
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, bindGroup);
       pass.draw(4);
       pass.end();
       // Render truth: this is a real, encoded, submitted draw -- the only
       // point in the post chain where "the pixels were written" becomes true.
-      if (activePostChain && activePostIndex >= 0) {
+      if (opts.markTruth !== false && activePostChain && activePostIndex >= 0) {
         renderTruth().mark(activePostChain, activePostIndex, "ok", 1);
       }
+    }
+
+    function copyPostTexture(encoder, pipeline, inputView, outputView) {
+      var blitBG = device.createBindGroup({
+        layout: getPostBlitLayout(),
+        entries: [
+          { binding: 0, resource: inputView },
+          { binding: 1, resource: linearSampler },
+        ],
+      });
+      fullscreenPass(encoder, pipeline, blitBG, outputView, { markTruth: false });
     }
 
     return {
@@ -4303,13 +4325,24 @@
         var truth = renderTruth();
         var postTruthOn = truth.enabled();
         var postChain = postTruthOn ? truth.chain(effects) : null;
-        var stats = { postEffects: effects.length, postSSAOPasses: 0, postDOFPasses: 0, postPrecision: postPrecisionMode, postChain: postChain };
+        var stats = {
+          postEffects: effects.length,
+          postSSAOPasses: 0,
+          postDOFPasses: 0,
+          postDOMRegionBoundedPasses: 0,
+          postDOMRegionBoundedSkips: 0,
+          postDOMRegionBoundedPixels: 0,
+          postPrecision: postPrecisionMode,
+          postChain: postChain,
+        };
         activePostChain = postChain;
 
         for (var i = 0; i < effects.length; i++) {
           var effect = effects[i];
           var isLast = (i === effects.length - 1);
           var outputView = isLast ? finalView : (currentTexView === sceneTexView ? auxTexView : sceneTexView);
+          var passW = isLast ? canvasW : scaledW;
+          var passH = isLast ? canvasH : scaledH;
           activePostIndex = i;
 
           switch (effect.kind) {
@@ -4540,6 +4573,12 @@
                 break;
               }
               var cpUniformBuf = ensureCustomPostUniformBuffer(effect);
+              var roi = scenePostDOMRegionPixelBounds(effect, passW, passH);
+              if (roi.mode === "union" && !roi.bounds) {
+                stats.postDOMRegionBoundedSkips += 1;
+                if (postChain) truth.mark(postChain, i, "skipped", 0);
+                break;
+              }
               var cpBG = postCachedBindGroup(postEffectBindGroupOwner(effect), cpRes.bgl, [
                 { binding: 0, resource: currentTexView },
                 { binding: 1, resource: linearSampler },
@@ -4547,7 +4586,14 @@
                 { binding: 3, resource: getDepthSampler() },
                 { binding: 4, resource: { buffer: cpUniformBuf } },
               ]);
-              fullscreenPass(encoder, cpRes.pipeline, cpBG, outputView);
+              if (roi.mode === "union") {
+                copyPostTexture(encoder, blitPipeline, currentTexView, outputView);
+                fullscreenPass(encoder, cpRes.pipeline, cpBG, outputView, { loadOp: "load", scissor: roi.bounds });
+                stats.postDOMRegionBoundedPasses += 1;
+                stats.postDOMRegionBoundedPixels += roi.bounds.width * roi.bounds.height;
+              } else {
+                fullscreenPass(encoder, cpRes.pipeline, cpBG, outputView);
+              }
               currentTexView = outputView;
               break;
             }
@@ -12277,7 +12323,7 @@
     // through the surface, matching the reported near-black regression. Mirror
     // WebGL2's createWaterRenderBindGroup-equivalent call site
     // (16-scene-webgl.js's `sceneWaterRenderHexColor(entry.shallowColor, ...)`)
-    // using the shared sceneColorRGBA helper (11-scene-math.js) both renderers
+    // using the shared sceneColorRGBA helper (11-scene-math.ts) both renderers
     // already use elsewhere (see sceneWaterUniformData's `shallow` derivation
     // above), so both backends tint the underwater refraction from the SAME
     // entry.shallowColor config.
@@ -16396,6 +16442,9 @@
       // Which precision the post chain compiled with. "f16" means the device
       // negotiated shader-f16 and the blur and FXAA stages run half precision.
       setEssentialAttribute("data-gosx-scene3d-webgpu-post-precision", String(published.postPrecision || "none"));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-passes", String(published.postDOMRegionBoundedPasses || 0));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-skips", String(published.postDOMRegionBoundedSkips || 0));
+      setEssentialAttribute("data-gosx-scene3d-webgpu-post-dom-region-bounded-pixels", String(published.postDOMRegionBoundedPixels || 0));
       if (published.lastError) {
         setEssentialAttribute("data-gosx-scene3d-webgpu-last-error", String(published.lastError));
       } else if (webGPUEssentialAttributeCache["data-gosx-scene3d-webgpu-last-error"] !== null) {

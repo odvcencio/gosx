@@ -1,4 +1,5 @@
-// 20a — Scene3D backend selection.
+// mount-backend.ts — Scene3D backend selection.
+// @ts-check
 //
 // Reads the scene bundle plus the browser capability profile and decides which
 // GPU backend to try first. 20b resolves the renderer factory that decision
@@ -6,6 +7,12 @@
 //
 // Depends on 15c-scene-backend-registry.js and the runtime capability helpers
 // 26d-feature-scene3d-prefix.js bridges. Nothing here touches a GPU object.
+
+/**
+ * @typedef {object} GoSXSceneBackendSelection
+ * @property {string} backend
+ * @property {string[]} degradedFeatures
+ */
   function gosxSceneEmit(level, msg, fields) {
     try {
       if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {

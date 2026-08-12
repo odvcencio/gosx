@@ -1,15 +1,24 @@
-// 20e — viewport, motion and lifecycle observers.
+// mount-viewport.ts — viewport, motion and lifecycle observers.
+// @ts-check
 //
 // Resolves the device pixel ratio and the canvas size, watches the mount for
 // resize, watches the reduced-motion preference, and pauses a scene that
 // scrolls out of view. Every scene needs this.
-  function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio) {
+/**
+ * @typedef {object} GoSXSceneViewportState
+ * @property {number} cssWidth
+ * @property {number} cssHeight
+ * @property {number} drawWidth
+ * @property {number} drawHeight
+ */
+  function sceneViewportDevicePixelRatio(props, maxDevicePixelRatio, minDevicePixelRatio) {
     const environment = sceneEnvironmentState();
     const preferred = sceneNumber(
       props && (props.devicePixelRatio || props.pixelRatio),
       sceneNumber(window && window.devicePixelRatio, sceneNumber(environment && environment.devicePixelRatio, 1)),
     );
-    return Math.max(1, Math.min(Math.max(1, maxDevicePixelRatio || 1), preferred));
+    const cap = Math.max(1, sceneNumber(maxDevicePixelRatio, 1));
+    return Math.max(Math.max(1, Math.min(cap, sceneNumber(minDevicePixelRatio, 1))), Math.min(cap, preferred));
   }
 
   function sceneViewportFromMount(mount, props, base, canvas, capability, adaptiveQuality) {
@@ -42,6 +51,10 @@
     cssWidth = Math.max(1, Math.round(cssWidth));
     cssHeight = Math.max(1, Math.round(cssHeight));
     const capabilityMaxDevicePixelRatio = defaultSceneMaxDevicePixelRatio(capability);
+    const minDevicePixelRatio = Math.max(1, Math.min(2, sceneNumber(
+      props && (props.minDevicePixelRatio != null ? props.minDevicePixelRatio : props.minPixelRatio),
+      1,
+    )));
     let maxDevicePixelRatio = Math.max(
       1,
       base.explicitMaxDevicePixelRatio > 0
@@ -53,6 +66,10 @@
         1,
         Math.min(maxDevicePixelRatio, adaptiveQuality.currentMaxDevicePixelRatio),
       );
+    }
+    maxDevicePixelRatio = Math.max(maxDevicePixelRatio, minDevicePixelRatio);
+    if (base.explicitMaxDevicePixelRatio > 0) {
+      maxDevicePixelRatio = Math.min(maxDevicePixelRatio, base.explicitMaxDevicePixelRatio);
     }
     // maxPixels caps the render target by TOTAL backing pixels, which
     // maxDevicePixelRatio cannot: a ratio knows nothing about how large the
@@ -67,13 +84,23 @@
       const budgetRatio = Math.sqrt(maxPixels / cssPixels);
       maxDevicePixelRatio = Math.max(1, Math.min(maxDevicePixelRatio, budgetRatio));
     }
-    const devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio);
+    let devicePixelRatio = sceneViewportDevicePixelRatio(props, maxDevicePixelRatio, minDevicePixelRatio);
+    let pixelWidth = Math.max(1, Math.round(cssWidth * devicePixelRatio));
+    let pixelHeight = Math.max(1, Math.round(cssHeight * devicePixelRatio));
+    if (maxPixels > 0 && pixelWidth * pixelHeight > maxPixels) {
+      const budgetRatio = Math.sqrt(maxPixels / Math.max(1, cssWidth * cssHeight));
+      if (budgetRatio >= 1) {
+        devicePixelRatio = Math.max(1, Math.min(devicePixelRatio, budgetRatio));
+        pixelWidth = Math.max(1, Math.floor(cssWidth * devicePixelRatio));
+        pixelHeight = Math.max(1, Math.floor(cssHeight * devicePixelRatio));
+      }
+    }
     return {
       cssWidth,
       cssHeight,
       devicePixelRatio,
-      pixelWidth: Math.max(1, Math.round(cssWidth * devicePixelRatio)),
-      pixelHeight: Math.max(1, Math.round(cssHeight * devicePixelRatio)),
+      pixelWidth,
+      pixelHeight,
     };
   }
 

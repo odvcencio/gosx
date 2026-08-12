@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	webglRendererPath  = "../../client/js/bootstrap-src/16-scene-webgl.js"
-	webgpuRendererPath = "../../client/js/bootstrap-src/16a-scene-webgpu.js"
+	webglRendererPath  = "../../client/runtime/scene3d/webgl.ts"
+	webgpuRendererPath = "../../client/runtime/scene3d/webgpu.ts"
 )
 
 func readRenderer(t *testing.T, path string) string {

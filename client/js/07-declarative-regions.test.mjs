@@ -14,11 +14,11 @@ const moduleSrc = [
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "regions.ts"), "utf8"),
 ].join("\n");
 const scene3dBridgeSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "09-scene3d-command-bridge.js"),
+  path.join(__dirname, "..", "runtime", "scene3d", "command-bridge.ts"),
   "utf8"
 );
 const scene3dCommandRuntimeSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "09a-scene3d-command-runtime.js"),
+  path.join(__dirname, "..", "runtime", "scene3d", "command-runtime.ts"),
   "utf8"
 );
 

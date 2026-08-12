@@ -29,11 +29,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const webgpuSource = readSource("16a-scene-webgpu.js");
-const computeSource = readSource("16b-scene-compute.js");
+const webgpuSource = readSource("../runtime/scene3d/webgpu.ts");
+const computeSource = readSource("../runtime/scene3d/compute.ts");
 const computeBridgeSource = readSource("26e1-feature-scene3d-webgpu-compute-bridge.js");
 
 test("pipeline validation helpers cross the gated WebGPU chunk boundary", () => {

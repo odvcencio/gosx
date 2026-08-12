@@ -1,4 +1,5 @@
-// 20 — the GoSXScene3D engine factory.
+// mount.ts — the GoSXScene3D engine factory.
+// @ts-check
 //
 // This is the mount closure: it builds the canvas, drives the render loop,
 // applies live scene updates, and disposes everything on teardown. It reads
@@ -10,6 +11,13 @@
 // observers (20e), the DOM overlay (20f), the camera controls (20g) and the
 // telemetry globals (20h) are now files. Four of them are gate candidates:
 // the server already knows whether a scene needs them.
+
+/**
+ * @typedef {object} GoSXSceneEngineMountContext
+ * @property {HTMLElement} mount
+ * @property {object} props
+ * @property {() => void} [dispose]
+ */
   window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
     if (!ctx.mount || typeof document.createElement !== "function") {
       console.warn("[gosx] Scene3D requires a mount element");
@@ -1935,17 +1943,14 @@
 	      const commands = Array.isArray(detail.commands) ? detail.commands : null;
 	      if (!Number.isSafeInteger(revision) || revision <= 0 || revision <= lastMountCommandRevision || !commands) return;
 	      lastMountCommandRevision = revision;
-	      const result = applySceneCommands(sceneState, commands);
-	      notifySceneRendererLifecycle("mount-commands", false, false);
-	      scheduleRender("mount-commands");
+	      const result = applyMountedSceneCommands(commands, "mount-commands");
 	      if (result && typeof result.then === "function") {
 	        result.then(function() {
-	          scheduleRender("mount-commands-async");
 	          emitMountCommandsApplied(revision, commands.length);
 	        });
-	      } else {
-	        emitMountCommandsApplied(revision, commands.length);
+	        return;
 	      }
+	        emitMountCommandsApplied(revision, commands.length);
 	    }
 	    if (ctx.mount && typeof ctx.mount.addEventListener === "function") {
 	      ctx.mount.addEventListener("gosx:scene3d:commands", onMountCommands);
@@ -2649,6 +2654,7 @@
           }
           publishReady();
           publishRevealed(effectiveBundle);
+          notifySceneProgressiveModelRenderCommitted(sceneState);
           scheduleNextAnimationFrame();
           return;
         }
@@ -2689,6 +2695,10 @@
         sceneFilterPointsByQualityGroups(sceneStatePointsWithMaterials(sceneState), pointQualityGroups, sceneState.pointQualityGroups),
         pointBudgetScale,
       );
+      const qualityScaledComputeParticles = sceneScaleComputeParticlesByQualityRung(sceneState.computeParticles, adaptiveQuality);
+      const computeQualityScale = sceneQualityLadderComputeBudgetScale(adaptiveQuality);
+      const computeQualitySourceInstances = sceneComputeParticlesInstanceCount(sceneState.computeParticles);
+      const computeQualityActiveInstances = sceneComputeParticlesInstanceCount(qualityScaledComputeParticles);
       latestBundle = createSceneRenderBundle(
         viewport.cssWidth,
         viewport.cssHeight,
@@ -2703,7 +2713,7 @@
         timeSeconds,
         budgetedPoints,
         sceneStateInstancedMeshesWithMaterials(sceneState),
-        sceneState.computeParticles,
+        qualityScaledComputeParticles,
         sceneState.waterSystems,
         sceneState.postEffects,
         sceneState.postFXMaxPixels,
@@ -2723,6 +2733,11 @@
       setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
       setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
       setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
+      setAttrValue(ctx.mount, "data-gosx-scene3d-compute-quality-scale", String(computeQualityScale));
+      setAttrValue(ctx.mount, "data-gosx-scene3d-compute-quality-source-instances", String(computeQualitySourceInstances));
+      setAttrValue(ctx.mount, "data-gosx-scene3d-compute-quality-active-instances", String(computeQualityActiveInstances));
+      setAttrValue(ctx.mount, "data-gosx-scene3d-compute-quality-reduced-instances",
+        String(Math.max(0, computeQualitySourceInstances - computeQualityActiveInstances)));
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
         performance.measure("scene3d-bundle", "scene3d-bundle-start", "scene3d-bundle-end");
@@ -2752,6 +2767,7 @@
       }
       publishReady();
       publishRevealed(latestBundle);
+      notifySceneProgressiveModelRenderCommitted(sceneState);
       scheduleNextAnimationFrame();
     }
 
@@ -2941,29 +2957,89 @@
       sceneAdvanceScrollCamera(sceneState._scrollCamera);
     }
 
+    function applyProgressiveSceneModels(models) {
+      const result = applySceneCommands(sceneState, [{ kind: 10, data: { models } }]);
+      applyScenePostFXState(ctx.mount, sceneState);
+      if (domRegionTracker) {
+        domRegionTracker.configure(sceneState.postEffects);
+      }
+      publishSceneWaterStateSnapshot(ctx.mount, sceneState);
+      publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+      notifySceneRendererLifecycle("progressive-models", false, false);
+      if (result && typeof result.then === "function") {
+        scheduleRender("progressive-models");
+        return result.then(function(outcome) {
+          scheduleRender("progressive-models-hydrated");
+          return sceneModelHydrationOutcomeDetail(outcome) || outcome;
+        });
+      }
+      scheduleRender("progressive-models");
+      return Promise.resolve({
+        generation: Math.max(0, Math.floor(sceneNumber(sceneState && sceneState._modelHydrationGeneration, 0))),
+        committed: true,
+        stale: false,
+      });
+    }
+
+    function sceneCommandsSetModels(commands) {
+      if (!Array.isArray(commands)) return false;
+      for (let index = 0; index < commands.length; index += 1) {
+        const command = commands[index];
+        if (!command || typeof command !== "object") continue;
+        if (command.kind === 10) return true;
+      }
+      return false;
+    }
+
+    function scheduleMountedProgressiveModelLifecycle(initialHydration) {
+      return scheduleSceneProgressiveModelLifecycle(sceneState, ctx.mount, initialHydration, applyProgressiveSceneModels, {
+        canRender: sceneCanRender,
+        renderTimeoutMS: sceneNumber(props && props.progressiveModelRenderTimeoutMS, 2000),
+        restorePreview(models) {
+          sceneState.models = models;
+          applySceneCommands(sceneState, [{ kind: 10, data: { models } }]);
+          scheduleRender("progressive-models-restore-preview");
+        },
+      });
+    }
+
+    function applyMountedSceneCommands(commands, reason) {
+      const setModelsCommands = sceneCommandsSetModels(commands);
+      if (setModelsCommands) {
+        cancelSceneProgressiveModelLifecycle(sceneState);
+      }
+      const result = applySceneCommands(sceneState, commands);
+      applyScenePostFXState(ctx.mount, sceneState);
+      if (domRegionTracker) {
+        domRegionTracker.configure(sceneState.postEffects);
+      }
+      publishSceneWaterStateSnapshot(ctx.mount, sceneState);
+      publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+      notifySceneRendererLifecycle(reason || "commands", false, false);
+      if (result && typeof result.then === "function") {
+        scheduleRender(reason || "commands");
+        return result.then(function() {
+          scheduleRender((reason || "commands") + "-async");
+          if (setModelsCommands) {
+            scheduleMountedProgressiveModelLifecycle(result);
+          }
+          return { applied: true };
+        });
+      }
+      scheduleRender(reason || "commands");
+      if (setModelsCommands) {
+        scheduleMountedProgressiveModelLifecycle(Promise.resolve({
+          generation: Math.max(0, Math.floor(sceneNumber(sceneState && sceneState._modelHydrationGeneration, 0))),
+          committed: true,
+          stale: false,
+        }));
+      }
+      return Promise.resolve({ applied: true });
+    }
+
     const handle = {
       applyCommands(commands) {
-        const result = applySceneCommands(sceneState, commands);
-        // Commands can change the post-FX chain (CommandSetPostEffects). Without
-        // this the data-gosx-scene3d-postfx attribute keeps reporting the state
-        // at mount time, so a scene whose post-FX was restored by a progressive
-        // upgrade still reads "none" — a diagnostic that actively misleads.
-        applyScenePostFXState(ctx.mount, sceneState);
-        if (domRegionTracker) {
-          domRegionTracker.configure(sceneState.postEffects);
-        }
-        publishSceneWaterStateSnapshot(ctx.mount, sceneState);
-        publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
-        notifySceneRendererLifecycle("commands", false, false);
-        if (result && typeof result.then === "function") {
-          scheduleRender("commands");
-          return result.then(function() {
-            scheduleRender("commands-models");
-            return { applied: true };
-          });
-        }
-        scheduleRender("commands");
-        return Promise.resolve({ applied: true });
+        return applyMountedSceneCommands(commands, "commands");
       },
       getCamera() {
         return currentMountedSceneCamera();
@@ -3052,6 +3128,7 @@
         if (revealSent && revealClass && document.documentElement) {
           document.documentElement.classList.remove(revealClass);
         }
+        cancelSceneProgressiveModelLifecycle(sceneState);
         // Supersede any SetModels/initial staging still waiting on I/O before
         // releasing committed records. Its terminal generation check will
         // dispose staged mixers and refuse all late status/scene mutation.
@@ -3172,5 +3249,6 @@
     if (typeof ctx.mount.setAttribute === "function") {
       ctx.mount.setAttribute("data-gosx-scene3d-command-ready", "true");
     }
+    scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
     return handle;
   });

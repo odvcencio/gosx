@@ -273,8 +273,8 @@ test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
 });
 
 test("bootstrap Scene3D WebGL and WebGPU consume shared PBR view matrix", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   assert.match(webgl, /scenePBRViewMatrix\(cam, scratchViewMatrix\)/);
   assert.match(webgl, /gl\.uniformMatrix4fv\(uniforms\.viewMatrix, false, viewMatrix\)/);
@@ -284,8 +284,8 @@ test("bootstrap Scene3D WebGL and WebGPU consume shared PBR view matrix", () => 
 });
 
 test("bootstrap Scene3D PBR cameraPos uniforms use world eye position", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   assert.match(webgl, /vec3 V = normalize\(u_cameraPosition - v_worldPosition\);/);
   assert.match(webgl, /gl\.uniform3f\(uniforms\.cameraPosition, cam\.x, cam\.y, cam\.z\)/);

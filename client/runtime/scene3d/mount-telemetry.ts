@@ -1,8 +1,16 @@
-// 20h — the backend and telemetry globals.
+// mount-telemetry.ts — the backend and telemetry globals.
+// @ts-check
 //
 // Publishes window.__gosx_choose_scene_backend,
 // window.__gosx_scene_backend_caps_of and window.__gosx_scene3d_telemetry.
 // The telemetry snapshot aggregates every mounted scene.
+
+/**
+ * @typedef {object} GoSXSceneMountTelemetry
+ * @property {string} backend
+ * @property {number} frame
+ * @property {object} [diagnostics]
+ */
   window.__gosx_choose_scene_backend = chooseSceneBackend;
   window.__gosx_scene_backend_caps_of = sceneBackendCapsOf;
 

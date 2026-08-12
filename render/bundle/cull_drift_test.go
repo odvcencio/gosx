@@ -26,7 +26,7 @@ import (
 
 // jsSceneComputeFile is the browser compute-system source, relative to this
 // package directory.
-var jsSceneComputeFile = filepath.Join("..", "..", "client", "js", "bootstrap-src", "16b-scene-compute.js")
+var jsSceneComputeFile = filepath.Join("..", "..", "client", "runtime", "scene3d", "compute.ts")
 
 const (
 	cullJSKernelName = "SCENE_INSTANCED_CULL_BUILTIN_WGSL"

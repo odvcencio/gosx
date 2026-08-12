@@ -257,7 +257,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read managed water controls runtime: %v", err)
 	}
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
+	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/runtime/scene3d/webgpu.ts"))
 	if err != nil {
 		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
 	}
@@ -838,7 +838,7 @@ func readWaterWebGPURuntimeSource(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	dir := filepath.Dir(file)
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
+	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/runtime/scene3d/webgpu.ts"))
 	if err != nil {
 		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
 	}

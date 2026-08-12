@@ -1,10 +1,17 @@
-// 20d — the stats and inspector overlays.
+// overlays.ts — the Scene3D stats and inspector overlays.
+// @ts-check
 //
 // Both are development aids. createSceneStatsOverlay draws the frame counter
 // and createSceneInspectorOverlay draws the scene-graph inspector. Each stays
 // inert unless the scene props enable it.
 //
 // This file is a gate candidate: a production scene enables neither.
+
+/**
+ * @typedef {object} GoSXSceneOverlayController
+ * @property {HTMLElement} element
+ * @property {(bundle: object, frameStart: number, renderer: object, viewport: object) => void} update
+ */
   function createSceneStatsOverlay(mount, enabled) {
     if (!mount || !enabled || typeof document.createElement !== "function") {
       return null;

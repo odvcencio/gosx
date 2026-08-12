@@ -1,3 +1,14 @@
+// dom-regions.ts — Scene3D DOM-region overlay host.
+// @ts-check
+
+/**
+ * @typedef {object} GoSXSceneDOMRegionConfig
+ * @property {string} name
+ * @property {string} selector
+ * @property {number} max
+ * @property {object} uniforms
+ */
+
 (function() {
   "use strict";
 
@@ -49,6 +60,7 @@
     var selector = raw && typeof raw.selector === "string" ? raw.selector.trim() : "";
     if (!selector || !effect || typeof effect.name !== "string" || !effect.name.trim()) return null;
     var uniforms = raw.uniforms && typeof raw.uniforms === "object" ? raw.uniforms : {};
+    var bounds = sceneDOMRegionBoundsConfig(raw.bounds);
     return {
       name: effect.name.trim(),
       selector: selector,
@@ -59,6 +71,17 @@
         rect: sceneDOMRegionUniformPattern(uniforms.rect, "region%dRect"),
         meta: sceneDOMRegionUniformPattern(uniforms.meta, "region%dMeta"),
       },
+      bounds: bounds,
+    };
+  }
+
+  function sceneDOMRegionBoundsConfig(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    var mode = typeof raw.mode === "string" ? raw.mode.trim().toLowerCase() : "";
+    if (mode !== "union") return null;
+    return {
+      mode: "union",
+      paddingPx: Math.max(0, Math.min(2048, sceneDOMRegionNumber(raw.paddingPx, 0))),
     };
   }
 
@@ -136,7 +159,7 @@
     return Math.max(0, Math.min(1, area / targetArea));
   }
 
-  function sceneDOMRegionMeasure(canvas, targets, max) {
+  function sceneDOMRegionMeasure(canvas, targets, max, boundsConfig) {
     var viewport = sceneDOMRegionRect(canvas);
     var width = Math.max(1, viewport.width);
     var height = Math.max(1, viewport.height);
@@ -145,11 +168,22 @@
     var rects = new Array(limit * 4).fill(0);
     var meta = new Array(limit * 4).fill(0);
     var count = 0;
+    var hasUnion = boundsConfig && boundsConfig.mode === "union";
+    var unionLeft = Infinity;
+    var unionTop = Infinity;
+    var unionRight = -Infinity;
+    var unionBottom = -Infinity;
     var list = Array.isArray(targets) ? targets : [];
     for (var i = 0; i < list.length && count < limit; i += 1) {
       var element = list[i];
       var rect = sceneDOMRegionRect(element);
       var presence = sceneDOMRegionHidden(element, rect) ? 0 : sceneDOMRegionOverlapPresence(rect, viewport);
+      if (hasUnion && presence > 0) {
+        unionLeft = Math.min(unionLeft, Math.max(rect.left, viewport.left));
+        unionTop = Math.min(unionTop, Math.max(rect.top, viewport.top));
+        unionRight = Math.max(unionRight, Math.min(rect.right, viewport.right));
+        unionBottom = Math.max(unionBottom, Math.min(rect.bottom, viewport.bottom));
+      }
       var centerX = ((rect.left + rect.right) * 0.5 - viewport.left) / width;
       var centerY = ((rect.top + rect.bottom) * 0.5 - viewport.top) / height;
       var base = count * 4;
@@ -163,11 +197,30 @@
       meta[base + 3] = 0;
       count += 1;
     }
+    var bounds = null;
+    if (hasUnion) {
+      var padding = Math.max(0, Math.min(2048, sceneDOMRegionNumber(boundsConfig.paddingPx, 0)));
+      var active = unionRight > unionLeft && unionBottom > unionTop;
+      var leftPx = active ? Math.max(viewport.left, unionLeft - padding) : viewport.left;
+      var topPx = active ? Math.max(viewport.top, unionTop - padding) : viewport.top;
+      var rightPx = active ? Math.min(viewport.right, unionRight + padding) : viewport.left;
+      var bottomPx = active ? Math.min(viewport.bottom, unionBottom + padding) : viewport.top;
+      bounds = {
+        mode: "union",
+        active: active && rightPx > leftPx && bottomPx > topPx,
+        left: active ? Math.max(0, Math.min(1, (leftPx - viewport.left) / width)) : 0,
+        top: active ? Math.max(0, Math.min(1, (topPx - viewport.top) / height)) : 0,
+        right: active ? Math.max(0, Math.min(1, (rightPx - viewport.left) / width)) : 0,
+        bottom: active ? Math.max(0, Math.min(1, (bottomPx - viewport.top) / height)) : 0,
+        paddingPx: padding,
+      };
+    }
     return {
       count: count,
       aspect: width / height,
       rects: rects,
       meta: meta,
+      bounds: bounds,
     };
   }
 
@@ -190,7 +243,21 @@
         measurement.meta[base + 3] || 0,
       ];
     }
-    return { name: config.name, uniforms: uniforms };
+    var patch = { name: config.name, uniforms: uniforms };
+    if (config.bounds && config.bounds.mode === "union") {
+      patch.domRegionBounds = measurement && measurement.bounds ? measurement.bounds : {
+        mode: "union",
+        active: false,
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        paddingPx: config.bounds.paddingPx || 0,
+      };
+    } else {
+      patch.domRegionBounds = null;
+    }
+    return patch;
   }
 
   function createSceneCustomPostDOMRegionTracker(mount, canvas, state, scheduleRender) {
@@ -275,7 +342,7 @@
         var targets = queryTargets(config.selector);
         allTargets = allTargets.concat(targets.slice(0, config.max));
         targetKeyParts.push(config.name + ":" + config.selector + ":" + targets.length);
-        entries.push(sceneDOMRegionPatch(config, sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max)));
+        entries.push(sceneDOMRegionPatch(config, sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max, config.bounds)));
       }
       observeTargets(allTargets);
       var patchKey = JSON.stringify(entries);
@@ -288,6 +355,16 @@
       if (mount && typeof mount.setAttribute === "function") {
         mount.setAttribute("data-gosx-scene3d-dom-regions", String(entries.length));
         mount.setAttribute("data-gosx-scene3d-dom-region-targets", targetKeyParts.join("|"));
+        var activeBounds = entries.reduce(function(sum, entry) {
+          return sum + (entry && entry.domRegionBounds && entry.domRegionBounds.active ? 1 : 0);
+        }, 0);
+        var area = entries.reduce(function(sum, entry) {
+          var b = entry && entry.domRegionBounds;
+          if (!b || !b.active) return sum;
+          return sum + Math.max(0, b.right - b.left) * Math.max(0, b.bottom - b.top);
+        }, 0);
+        mount.setAttribute("data-gosx-scene3d-dom-region-bounds", String(activeBounds));
+        mount.setAttribute("data-gosx-scene3d-dom-region-bounds-area", String(Math.round(area * 1000000) / 1000000));
       }
     }
 
@@ -349,6 +426,8 @@
         if (mount && typeof mount.setAttribute === "function") {
           mount.setAttribute("data-gosx-scene3d-dom-regions", "0");
           mount.setAttribute("data-gosx-scene3d-dom-region-targets", "");
+          mount.setAttribute("data-gosx-scene3d-dom-region-bounds", "0");
+          mount.setAttribute("data-gosx-scene3d-dom-region-bounds-area", "0");
         }
         return;
       }

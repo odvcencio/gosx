@@ -10,6 +10,12 @@ import (
 func readBrowserSceneSource(t *testing.T, name string) string {
 	t.Helper()
 	path := filepath.Join("..", "..", "client", "js", "bootstrap-src", name)
+	switch name {
+	case "16-scene-webgl.js":
+		path = filepath.Join("..", "..", "client", "runtime", "scene3d", "webgl.ts")
+	case "16a-scene-webgpu.js":
+		path = filepath.Join("..", "..", "client", "runtime", "scene3d", "webgpu.ts")
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read browser Scene3D source %s: %v", path, err)

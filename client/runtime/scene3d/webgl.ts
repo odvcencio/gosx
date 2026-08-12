@@ -1,4 +1,5 @@
-  // PBR WebGL2 rendering backend for GoSX Scene3D.
+  // webgl.ts — PBR WebGL2 rendering backend for GoSX Scene3D.
+  // @ts-check
   //
   // Provides Cook-Torrance BRDF with per-pixel lighting, replacing
   // the legacy vertex-color renderer for WebGL2-capable browsers.
@@ -9,6 +10,12 @@
   // fallback ladder down to WebGL. See 26j-feature-scene3d-webgl-prefix.js
   // for the symbols the base chunk bridges in, and 16c-scene-shared-pbr.js
   // for the backend-agnostic helpers that stayed eager.
+
+  /**
+   * @typedef {object} GoSXSceneWebGLRenderer
+   * @property {(bundle: object, frame?: number) => void} render
+   * @property {() => void} dispose
+   */
 
   // --- PBR Shader Sources ---
 
@@ -4244,12 +4251,26 @@
       return targetFBO ? targetFBO.colorTex : null;
     }
 
+    function withScenePostScissor(w, h, bounds, draw) {
+      if (!bounds) {
+        draw();
+        return;
+      }
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(bounds.x, Math.max(0, h - bounds.y - bounds.height), bounds.width, bounds.height);
+      try {
+        draw();
+      } finally {
+        gl.disable(gl.SCISSOR_TEST);
+      }
+    }
+
     // applyCustomPost: runs a Selena-emitted GLSL post pass.
     // Selena post contract (WebGL2 variant):
     //   vertex: attribute vec2 a_position (Selena-emitted vert); v_uv = a_position*0.5+0.5
     //   fragment: uniform sampler2D _sceneColor, sampler2D _sceneDepth + user params by name
     // On compile/link failure: skip once-warned, identity passthrough.
-    function applyCustomPost(inputTex, depthTex, effect, targetFBO, w, h) {
+    function applyCustomPost(inputTex, depthTex, effect, targetFBO, w, h, bounds) {
       var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
       if (customPostFailed[name]) return inputTex; // already failed → skip
 
@@ -4316,7 +4337,9 @@
         sceneSelenaUploadUniform(gl, loc, field.type, val);
       }
 
-      drawSceneFullscreenQuad(gl, quad.vao);
+      withScenePostScissor(w, h, bounds, function() {
+        drawSceneFullscreenQuad(gl, quad.vao);
+      });
       return targetFBO ? targetFBO.colorTex : null;
     }
 
@@ -4546,6 +4569,11 @@
         var truthApi = postProcessorRenderTruth();
         var postChain = truthApi.enabled() ? truthApi.chain(effects) : null;
         var currentTexture = sceneFBO.colorTex;
+        var stats = {
+          postDOMRegionBoundedPasses: 0,
+          postDOMRegionBoundedSkips: 0,
+          postDOMRegionBoundedPixels: 0,
+        };
 
         // Multi-effect chains need an auxiliary full-res FBO for intermediate
         // results. Allocated at SCALED dims, not canvas dims.
@@ -4574,6 +4602,8 @@
           var passW = isLast ? canvasW : scaledW;
           var passH = isLast ? canvasH : scaledH;
           var inputTexture = currentTexture;
+          var forcedPipelineState = "";
+          var forcedDispatch = null;
 
           switch (effect.kind) {
             case SCENE_POST_TONE_MAPPING:
@@ -4615,7 +4645,30 @@
               // trailing custom pass therefore produced zero visible pixels even
               // when it compiled, bound and drew correctly.
               var depthTex = sceneFBO && sceneFBO.depthTex ? sceneFBO.depthTex : null;
-              currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
+              var roi = scenePostDOMRegionPixelBounds(effect, passW, passH);
+              if (roi.mode === "union" && !roi.bounds) {
+                stats.postDOMRegionBoundedSkips += 1;
+                forcedPipelineState = "skipped";
+                forcedDispatch = 0;
+                break;
+              }
+              if (roi.mode === "union") {
+                if (!blitProg) {
+                  blitProg = createScenePostProgram(gl, SCENE_POST_BLIT_SOURCE);
+                }
+                if (blitProg) {
+                  if (targetFBO) {
+                    postPass(blitProg, currentTexture, targetFBO, passW, passH);
+                  } else {
+                    blitToScreen(currentTexture, passW, passH);
+                  }
+                }
+                currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH, roi.bounds);
+                stats.postDOMRegionBoundedPasses += 1;
+                stats.postDOMRegionBoundedPixels += roi.bounds.width * roi.bounds.height;
+              } else {
+                currentTexture = applyCustomPost(currentTexture, depthTex, effect, targetFBO, passW, passH);
+              }
               break;
             }
             default:
@@ -4632,8 +4685,8 @@
             truthApi.mark(
               postChain,
               i,
-              drew ? truthApi.PIPELINE_OK : postEffectPipelineState(effect),
-              drew ? 1 : 0
+              forcedPipelineState || (drew ? truthApi.PIPELINE_OK : postEffectPipelineState(effect)),
+              forcedDispatch !== null ? forcedDispatch : (drew ? 1 : 0)
             );
           }
 
@@ -4647,7 +4700,7 @@
         }
 
         gl.enable(gl.DEPTH_TEST);
-        return { postChain: postChain };
+        return Object.assign({ postChain: postChain }, stats);
       },
 
       // Release all post-processing GPU resources.
@@ -6412,6 +6465,9 @@
       pointInstancesSubmitted: 0,
       pointInstancesDrawn: 0,
       postChain: null,
+      postDOMRegionBoundedPasses: 0,
+      postDOMRegionBoundedSkips: 0,
+      postDOMRegionBoundedPixels: 0,
     };
 
     function resetWebGLRenderTruthStats() {
@@ -6425,6 +6481,9 @@
       webglRenderTruthStats.pointInstancesSubmitted = 0;
       webglRenderTruthStats.pointInstancesDrawn = 0;
       webglRenderTruthStats.postChain = null;
+      webglRenderTruthStats.postDOMRegionBoundedPasses = 0;
+      webglRenderTruthStats.postDOMRegionBoundedSkips = 0;
+      webglRenderTruthStats.postDOMRegionBoundedPixels = 0;
     }
 
     // Material keys already reported this renderer's lifetime. A substitution is
@@ -6520,6 +6579,9 @@
       setTelemetryAttribute("data-gosx-scene3d-bundle-build-cpu-ms", String(sceneNumber(bundle && bundle.bundleBuildCPUms, 0)));
       setTelemetryAttribute("data-gosx-scene3d-planner-cpu-ms", String(sceneNumber(bundle && bundle.plannerTelemetry && bundle.plannerTelemetry.lastPlannerCPUms, 0)));
       setTelemetryAttribute("data-gosx-scene3d-planner-full-vertex-hash-scans", String(sceneNumber(bundle && bundle.plannerTelemetry && bundle.plannerTelemetry.fullVertexHashScans, 0)));
+      setTelemetryAttribute("data-gosx-scene3d-webgl-post-dom-region-bounded-passes", String(webglRenderTruthStats.postDOMRegionBoundedPasses || 0));
+      setTelemetryAttribute("data-gosx-scene3d-webgl-post-dom-region-bounded-skips", String(webglRenderTruthStats.postDOMRegionBoundedSkips || 0));
+      setTelemetryAttribute("data-gosx-scene3d-webgl-post-dom-region-bounded-pixels", String(webglRenderTruthStats.postDOMRegionBoundedPixels || 0));
       var api = webglRenderTruth();
       if (!api.enabled()) return;
       var meshObjects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects.length : 0;
@@ -7316,6 +7378,11 @@
         var postResult = postProcessor.apply(postEffects, renderW, renderH, canvas.width, canvas.height, bundle.camera);
         if (postResult && postResult.postChain) {
           webglRenderTruthStats.postChain = postResult.postChain;
+        }
+        if (postResult) {
+          webglRenderTruthStats.postDOMRegionBoundedPasses = sceneNumber(postResult.postDOMRegionBoundedPasses, 0);
+          webglRenderTruthStats.postDOMRegionBoundedSkips = sceneNumber(postResult.postDOMRegionBoundedSkips, 0);
+          webglRenderTruthStats.postDOMRegionBoundedPixels = sceneNumber(postResult.postDOMRegionBoundedPixels, 0);
         }
         // Re-activate the PBR program for the next frame since post-processing
         // switches to its own shader programs.
@@ -8691,7 +8758,7 @@
         // CPU frustum cull (WebGL2 path — gpu-cull capability absent).
         // When a mesh carries a cull kernel (cullKernelWGSL present), run a
         // per-instance sphere-vs-frustum test using extractFrustumPlanesJS +
-        // instancePassesCullTest (both defined in 11-scene-math.js).
+        // instancePassesCullTest (both defined in 11-scene-math.ts).
         // Survivors are compacted into scratch Float32Arrays; instanceCount is
         // reduced to the survivor count. The compacted data is uploaded to
         // dedicated dynamic VBOs (_cpuCullTransformVBO/_cpuCullColorVBO) owned

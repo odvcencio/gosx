@@ -1,10 +1,18 @@
-  // Scene3D animation mixer — keyframe interpolation, clip playback,
+  // animation.ts — Scene3D animation mixer — keyframe interpolation, clip playback,
+  // @ts-check
   // crossfading, and quaternion slerp for skeletal and transform animation.
   //
   // Matrix math (SCENE_IDENTITY_MAT4, sceneMat4Multiply, sceneMat4MultiplyInto,
   // sceneTRSToMat4, sceneTRSToMat4Into) and scratch buffers (_sceneMat4ScratchA,
   // _sceneMat4ScratchB, _animScratch3, _animScratch4) are defined in
-  // 11-scene-math.js.
+  // 11-scene-math.ts.
+
+  /**
+   * @typedef {object} GoSXSceneAnimationClip
+   * @property {string} [name]
+   * @property {number} duration
+   * @property {Array<object>} channels
+   */
 
   // ---------------------------------------------------------------------------
   // Cached containers for node-transform traversal (avoid per-frame alloc)

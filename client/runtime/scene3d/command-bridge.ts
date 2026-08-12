@@ -1,3 +1,12 @@
+// command-bridge.ts — Scene3D browser command loading and recovery host.
+// @ts-check
+
+/**
+ * @typedef {object} GoSXScene3DCommandBridge
+ * @property {(target: unknown, commands: unknown[], options?: object) => Promise<unknown>} dispatchCommands
+ * @property {(root: ParentNode) => unknown} applyCommandScripts
+ */
+
 (function() {
   if (typeof window === "undefined" || window.__gosxScene3DBridge) return;
   window.__gosxScene3DBridge = true;

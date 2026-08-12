@@ -312,6 +312,10 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 				Rect:   "uRegion%dRect",
 				Meta:   "uRegionMeta",
 			},
+			Bounds: CustomPostDOMRegionBounds{
+				Mode:      CustomPostDOMRegionBoundsUnion,
+				PaddingPx: 96,
+			},
 		},
 	}}}
 	irs := pfx.sceneIR()
@@ -343,6 +347,15 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 	if cp.DOMRegions.Uniforms.Meta != "region%dMeta" {
 		t.Errorf("Meta uniform = %q, want fallback", cp.DOMRegions.Uniforms.Meta)
 	}
+	if cp.DOMRegions.Bounds == nil {
+		t.Fatal("Bounds = nil")
+	}
+	if cp.DOMRegions.Bounds.Mode != "union" {
+		t.Errorf("Bounds.Mode = %q, want union", cp.DOMRegions.Bounds.Mode)
+	}
+	if cp.DOMRegions.Bounds.PaddingPx != 96 {
+		t.Errorf("Bounds.PaddingPx = %v, want 96", cp.DOMRegions.Bounds.PaddingPx)
+	}
 }
 
 func TestCustomPostDOMRegionsJSONDefaults(t *testing.T) {
@@ -373,12 +386,37 @@ func TestCustomPostDOMRegionsJSONDefaults(t *testing.T) {
 	if rawDOM["max"] != float64(8) {
 		t.Errorf("max = %v, want 8", rawDOM["max"])
 	}
+	if _, ok := rawDOM["bounds"]; ok {
+		t.Fatalf("bounds present for zero-value bounds: %#v", rawDOM["bounds"])
+	}
 	rawUniforms, ok := rawDOM["uniforms"].(map[string]any)
 	if !ok {
 		t.Fatalf("uniforms = %T", rawDOM["uniforms"])
 	}
 	if rawUniforms["rect"] != "region%dRect" || rawUniforms["meta"] != "region%dMeta" {
 		t.Errorf("uniforms = %#v", rawUniforms)
+	}
+}
+
+func TestCustomPostDOMRegionBoundsClamp(t *testing.T) {
+	mat := &CustomMaterial{FragmentWGSL: "fn fragmentMain() {}"}
+	pfx := PostFX{Effects: []PostEffect{CustomPost{
+		Name:     "Glass",
+		Material: mat,
+		DOMRegions: CustomPostDOMRegions{
+			Selector: "[data-glass]",
+			Bounds: CustomPostDOMRegionBounds{
+				Mode:      CustomPostDOMRegionBoundsUnion,
+				PaddingPx: 4096,
+			},
+		},
+	}}}
+	cp := pfx.sceneIR()[0].(CustomPostIR)
+	if cp.DOMRegions == nil || cp.DOMRegions.Bounds == nil {
+		t.Fatal("Bounds = nil")
+	}
+	if cp.DOMRegions.Bounds.PaddingPx != 2048 {
+		t.Errorf("PaddingPx = %v, want 2048", cp.DOMRegions.Bounds.PaddingPx)
 	}
 }
 

@@ -29,11 +29,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const webgpuSource = readSource("16a-scene-webgpu.js");
-const webglSource = readSource("16-scene-webgl.js");
+const webgpuSource = readSource("../runtime/scene3d/webgpu.ts");
+const webglSource = readSource("../runtime/scene3d/webgl.ts");
 
 // --- Bundle-shaped VM context ----------------------------------------------
 

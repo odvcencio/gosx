@@ -1,3 +1,12 @@
+// command-runtime.ts — Scene3D command application host.
+// @ts-check
+
+/**
+ * @typedef {object} GoSXScene3DCommandRecord
+ * @property {object} handle
+ * @property {Element|null} mount
+ */
+
 (function() {
   if (typeof window === "undefined" || window.__gosx_scene3d_command_bridge) return;
   var revision = 0;

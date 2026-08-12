@@ -1,6 +1,13 @@
-  // GPU compute particle system for GoSX Scene3D.
+  // compute.ts — GPU compute particle system for GoSX Scene3D.
+  // @ts-check
   // WGSL compute shaders for particle simulation + JS CPU fallback.
   // Shared IIFE scope: sceneNumber, sceneColorRGBA available from scene-math.js.
+
+  /**
+   * @typedef {object} GoSXSceneComputeSystem
+   * @property {(deltaTime?: number) => unknown} update
+   * @property {() => void} dispose
+   */
 
   // --- WGSL Compute Shader Source ---
 

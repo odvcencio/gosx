@@ -1,4 +1,5 @@
-// 20f — the DOM overlay: labels, sprites, HTML elements and HTML textures.
+// overlay-dom.ts — the Scene3D DOM overlay: labels, sprites, HTML elements and HTML textures.
+// @ts-check
 //
 // Projects scene-space anchors to screen space, lays out label text through
 // the text-layout engine, resolves overlap by priority, and writes real DOM
@@ -7,6 +8,12 @@
 //
 // This file is a gate candidate: the server knows whether the scene declares
 // any labels, sprites or html entries.
+
+/**
+ * @typedef {object} GoSXSceneDOMOverlayController
+ * @property {HTMLElement|null} root
+ * @property {() => void} dispose
+ */
   function sceneLabelLayoutKey(label) {
     return [
       gosxTextLayoutRevision(),

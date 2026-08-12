@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
-const webgpuSource = fs.readFileSync(path.join(srcDir, "16a-scene-webgpu.js"), "utf8");
+const webgpuSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
 // loadShaderVariants evaluates the preamble helper and the two shader bodies out
 // of the shipped source, then builds all four variants exactly as the renderer

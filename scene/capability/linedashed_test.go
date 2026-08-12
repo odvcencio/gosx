@@ -12,7 +12,7 @@ const canvasRendererPath = "../../client/js/bootstrap-src/18-scene-canvas.js"
 // mountBackendPath owns the runtime backend choice. It matters here because the
 // runtime already knew that dashed lines need WebGL2 or Canvas2D, and the wrong
 // Matrix cell overrode that knowledge.
-const mountBackendPath = "../../client/js/bootstrap-src/20a-scene-mount-backend.js"
+const mountBackendPath = "../../client/runtime/scene3d/mount-backend.ts"
 
 // TestLineDashedWasTrueOnTheWrongBackend corroborates all three cells of the
 // corrected row.

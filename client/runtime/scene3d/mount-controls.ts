@@ -1,4 +1,5 @@
-// 20g — the built-in camera controls: orbit, fly, pointer lock and inertia.
+// mount-controls.ts — the built-in camera controls: orbit, fly, pointer lock and inertia.
+// @ts-check
 //
 // setupSceneBuiltInControls attaches the pointer, wheel and key listeners and
 // returns a handle. The handle is the ONLY way outside code reaches this
@@ -7,6 +8,13 @@
 // ReferenceError because those are locals of setupSceneBuiltInControls.
 //
 // This file is a gate candidate: a scene with Controls "none" runs none of it.
+
+/**
+ * @typedef {object} GoSXSceneControlState
+ * @property {string} mode
+ * @property {boolean} active
+ * @property {() => void} dispose
+ */
   function normalizeSceneControlsMode(value) {
     switch (String(value || "").trim().toLowerCase()) {
       case "orbit":
@@ -511,8 +519,10 @@
     controls.lastY = point.y;
     canvas.style.cursor = "grabbing";
     attachDocumentListeners();
-    if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
-      canvas.setPointerCapture(event.pointerId);
+    if (event.isTrusted === true && event.pointerType !== "" && typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch (_) {}
     }
     if (typeof event.preventDefault === "function") {
       event.preventDefault();
@@ -647,8 +657,10 @@
       sceneRequestPointerLock(canvas);
       controls.pointerLocked = scenePointerLockActive(canvas);
     }
-    if (typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
-      canvas.setPointerCapture(event.pointerId);
+    if (event.isTrusted === true && event.pointerType !== "" && typeof canvas.setPointerCapture === "function" && event.pointerId != null) {
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch (_) {}
     }
     if (typeof event.preventDefault === "function") {
       event.preventDefault();

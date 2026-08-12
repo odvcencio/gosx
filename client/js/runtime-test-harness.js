@@ -36,10 +36,10 @@ const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
-const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
-const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15d-scene-dom-regions.js"), "utf8");
+const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dom-regions.ts"), "utf8");
 const hostCompatibilitySource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8");
 const patchSource = [
   hostCompatibilitySource,
@@ -3075,6 +3075,80 @@ function loadSceneAdaptiveQualityAPI() {
   return { api: context.adaptiveAPI, clock };
 }
 
+function loadSceneViewportAPI(options = {}) {
+  const mountSource = readSceneMountSrc();
+  const start = mountSource.indexOf("function sceneViewportDevicePixelRatio");
+  const end = mountSource.indexOf("function observeSceneViewport", start);
+  assert.notEqual(start, -1, "viewport start anchor missing");
+  assert.notEqual(end, -1, "viewport end anchor missing");
+  const baseStart = mountSource.indexOf("function sceneViewportBase");
+  const baseEnd = mountSource.indexOf("function scheduleSceneIdleTask", baseStart);
+  assert.notEqual(baseStart, -1, "viewport base start anchor missing");
+  assert.notEqual(baseEnd, -1, "viewport base end anchor missing");
+  const devicePixelRatio = Number.isFinite(Number(options.devicePixelRatio))
+    ? Number(options.devicePixelRatio)
+    : 1;
+  const environment = Object.assign({ devicePixelRatio }, options.environment || {});
+  const context = {
+    window: { devicePixelRatio },
+    __environment: environment,
+  };
+  vm.runInNewContext(`
+    function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+    function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
+    function sceneEnvironmentState() { return __environment; }
+    function defaultSceneMaxDevicePixelRatio(capability) {
+      if (capability && (capability.reducedData || capability.lowPower)) {
+        switch (capability.tier) {
+          case "constrained": return 1.25;
+          case "balanced": return 1.5;
+          default: return 1.75;
+        }
+      }
+      switch (capability && capability.tier) {
+        case "constrained": return 1.5;
+        case "balanced": return 1.75;
+        default: return 2;
+      }
+    }
+  ` + mountSource.slice(baseStart, baseEnd) + mountSource.slice(start, end) + `
+    globalThis.viewportAPI = {
+      sceneViewportBase,
+      sceneViewportDevicePixelRatio,
+      sceneViewportFromMount,
+    };
+  `, context, { filename: "scene-viewport.js" });
+  return context.viewportAPI;
+}
+
+function resolveSceneViewportForTest(props, options = {}) {
+  const api = loadSceneViewportAPI(options);
+  const width = Number.isFinite(Number(options.measuredWidth))
+    ? Number(options.measuredWidth)
+    : sceneNumberForTest(props && props.width, 390);
+  const height = Number.isFinite(Number(options.measuredHeight))
+    ? Number(options.measuredHeight)
+    : sceneNumberForTest(props && props.height, 844);
+  const base = api.sceneViewportBase(Object.assign({ responsive: false }, props || {}));
+  if (options.base) Object.assign(base, options.base);
+  const rect = { width, height, left: 0, top: 0 };
+  const mount = { getBoundingClientRect() { return rect; } };
+  const canvas = { getBoundingClientRect() { return rect; } };
+  return api.sceneViewportFromMount(
+    mount,
+    Object.assign({ responsive: false }, props || {}),
+    base,
+    canvas,
+    options.capability || { tier: "full" },
+    options.adaptiveQuality || null,
+  );
+}
+
+function sceneNumberForTest(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function createAdaptiveQualityHarness(extraProps) {
   const loaded = loadSceneAdaptiveQualityAPI();
   const props = Object.assign({
@@ -3985,7 +4059,10 @@ function bootstrapChunkSources(bundleName) {
 // it when a test inspects source text that one file no longer holds alone.
 function readBootstrapSrc(...names) {
   return names
-    .map((name) => fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8"))
+    .map((name) => fs.readFileSync(
+      name.startsWith("../") ? path.join(__dirname, name) : path.join(__dirname, "bootstrap-src", name),
+      "utf8",
+    ))
     .join("\n");
 }
 
@@ -3994,20 +4071,24 @@ function readBootstrapSrc(...names) {
 // Scene3D chunk; it is now nine files. A source assertion about the mount path
 // must read them all.
 function readSceneMountSrc() {
-  const srcDir = path.join(__dirname, "bootstrap-src");
-  const parts = fs.readdirSync(srcDir).filter((n) => /^20[a-z]?-scene-mount.*\.js$/.test(n));
-  // Build order: 20a..20h first, then the engine factory in 20-scene-mount.js.
-  parts.sort();
-  const factory = parts.indexOf("20-scene-mount.js");
-  if (factory !== -1) parts.push(parts.splice(factory, 1)[0]);
-  return parts.map((n) => fs.readFileSync(path.join(srcDir, n), "utf8")).join("\n");
+  return readBootstrapSrc(
+    "../runtime/scene3d/mount-backend.ts",
+    "../runtime/scene3d/mount-webgl.ts",
+    "../runtime/scene3d/mount-quality.ts",
+    "../runtime/scene3d/overlays.ts",
+    "../runtime/scene3d/mount-viewport.ts",
+    "../runtime/scene3d/overlay-dom.ts",
+    "../runtime/scene3d/mount-controls.ts",
+    "../runtime/scene3d/mount-telemetry.ts",
+    "../runtime/scene3d/mount.ts",
+  );
 }
 
 // readWebGPUBackendSrc joins the WebGPU backend source files. The Selena
 // uniform packer moved out of createSceneWebGPURenderer into 16a1, so a source
 // assertion about the backend must read both files.
 function readWebGPUBackendSrc() {
-  return readBootstrapSrc("16a-scene-webgpu.js", "16a1-scene-webgpu-selena-uniforms.js");
+  return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.js");
 }
 
 // readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
@@ -4034,7 +4115,7 @@ function freshFeatureBundleSource(name, options) {
   const opts = options || {};
   function read(rel) {
     const source = fs.readFileSync(path.join(clientJS, rel), "utf8");
-    if (rel.endsWith("16-scene-webgl.js") && opts.exportWaterRendererForTest) {
+    if (rel.endsWith("webgl.ts") && opts.exportWaterRendererForTest) {
       return source + "\nwindow.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n";
     }
     return source;
@@ -5422,6 +5503,8 @@ module.exports = {
   CUSTOM_POST_TIME_LAYOUT_FIXTURE,
   sceneCoreSourceRange,
   loadSceneAdaptiveQualityAPI,
+  loadSceneViewportAPI,
+  resolveSceneViewportForTest,
   createAdaptiveQualityHarness,
   createQualityLadderHarness,
   THREE_RUNG_LADDER,

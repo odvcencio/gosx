@@ -241,6 +241,9 @@ type IRTransform struct {
 type IRMeshNode struct {
 	Kind               string      `json:"kind,omitempty"`
 	Src                string      `json:"src,omitempty"`
+	PreviewSrc         string      `json:"previewSrc,omitempty"`
+	FullSrc            string      `json:"fullSrc,omitempty"`
+	Progressive        bool        `json:"progressive,omitempty"`
 	Bounds             float64     `json:"bounds,omitempty"`
 	Fit                string      `json:"fit,omitempty"`
 	FitAlign           string      `json:"fitAlign,omitempty"`
@@ -972,6 +975,9 @@ func modelToIRNode(model ModelIR, materialIndex int) IRNode {
 	node.Transform.ScaleY = model.ScaleY
 	node.Transform.ScaleZ = model.ScaleZ
 	node.Mesh.Src = model.Src
+	node.Mesh.PreviewSrc = model.PreviewSrc
+	node.Mesh.FullSrc = model.FullSrc
+	node.Mesh.Progressive = model.Progressive
 	node.Mesh.Bounds = model.Bounds
 	node.Mesh.Fit = model.Fit
 	node.Mesh.FitAlign = model.FitAlign

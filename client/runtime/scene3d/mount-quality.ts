@@ -1,4 +1,5 @@
-// 20c — the G2 QualityLadder governor: bidirectional work-based adaptive
+// mount-quality.ts — the G2 QualityLadder governor: bidirectional work-based adaptive
+// @ts-check
 // quality.
 //
 // Raises and lowers the render rung from measured frame work, filters objects
@@ -8,6 +9,13 @@
 // A scene that declares no AdaptiveQuality never leaves rung zero. This file
 // is a gate candidate: the server knows at lowering time whether the scene
 // declares a ladder.
+
+/**
+ * @typedef {object} GoSXSceneQualityState
+ * @property {string} mode
+ * @property {number} rung
+ * @property {boolean} enabled
+ */
   // --------------------------------------------------------------------------
   // G2 QualityLadder governor — bidirectional work-based ABR.
   //
@@ -500,6 +508,64 @@
     return activeUntil > 0 && activeUntil + 1500 >= nowMS;
   }
 
+  function sceneQualityLadderActiveRung(adaptiveQuality) {
+    if (!adaptiveQuality || adaptiveQuality.mode !== "ladder" || !Array.isArray(adaptiveQuality.ladder)) {
+      return null;
+    }
+    return adaptiveQuality.ladder[adaptiveQuality.rungIndex] || null;
+  }
+
+  function sceneQualityLadderComputeBudgetScale(adaptiveQuality) {
+    const rung = sceneQualityLadderActiveRung(adaptiveQuality);
+    if (!rung) {
+      return 1;
+    }
+    return Math.max(0, Math.min(1, sceneNumber(rung.computeBudgetScale, 1)));
+  }
+
+  function sceneComputeParticlesInstanceCount(computeParticles) {
+    if (!Array.isArray(computeParticles) || computeParticles.length === 0) {
+      return 0;
+    }
+    let count = 0;
+    for (let i = 0; i < computeParticles.length; i += 1) {
+      count += Math.max(0, Math.floor(sceneNumber(computeParticles[i] && computeParticles[i].count, 0)));
+    }
+    return count;
+  }
+
+  function sceneScaleComputeParticlesByQualityRung(computeParticles, adaptiveQuality) {
+    if (!Array.isArray(computeParticles) || computeParticles.length === 0) {
+      return computeParticles;
+    }
+    const rung = sceneQualityLadderActiveRung(adaptiveQuality);
+    if (!rung) {
+      return computeParticles;
+    }
+    const scale = sceneQualityLadderComputeBudgetScale(adaptiveQuality);
+    if (scale >= 1) {
+      return computeParticles;
+    }
+    const scaled = [];
+    let changed = false;
+    for (let i = 0; i < computeParticles.length; i += 1) {
+      const entry = computeParticles[i];
+      const authoredCount = Math.max(0, Math.floor(sceneNumber(entry && entry.count, 0)));
+      const nextCount = Math.max(0, Math.floor(authoredCount * scale));
+      if (nextCount <= 0) {
+        changed = true;
+        continue;
+      }
+      if (nextCount !== authoredCount) {
+        scaled.push(Object.assign({}, entry, { count: nextCount }));
+        changed = true;
+      } else {
+        scaled.push(entry);
+      }
+    }
+    return changed ? scaled : computeParticles;
+  }
+
   // applySceneQualityLadderState is applySceneAdaptiveQualityState's ladder
   // counterpart — same publish-throttle shape (force / 250ms / revision-
   // changed gate via lastPublishedAtMS/lastPublishedRevision, reused
@@ -552,10 +618,8 @@
     setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-ewma-ms", state.ewmaFrameMS > 0 ? state.ewmaFrameMS.toFixed(2) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-p95-ms", state.p95FrameMS > 0 ? state.p95FrameMS.toFixed(2) : "");
-    // ComputeBudgetScale / ExpensivePassCadence: v1 pass-through only (see
-    // QualityRung's doc comment in scene/quality_ladder.go) — not wired into
-    // any actual compute/cadence dispatch, just published for apps that want
-    // to drive their own reduction off these values.
+    // ExpensivePassCadence remains published-only. ComputeBudgetScale also
+    // drives compute-particle count scaling before bundle creation.
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-compute-budget-scale", rung ? String(rung.computeBudgetScale) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-point-budget-scale", rung ? String(rung.pointBudgetScale) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-rung-cadence", rung ? String(rung.expensivePassCadence) : "");

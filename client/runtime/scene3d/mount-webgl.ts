@@ -1,4 +1,5 @@
-// 20b — WebGL renderer factory resolution and the lazy WebGL chunk loader.
+// mount-webgl.ts — WebGL renderer factory resolution and the lazy WebGL chunk loader.
+// @ts-check
 //
 // A WebGPU-capable browser never runs the loader. It fetches
 // bootstrap-feature-scene3d-webgl.js when the selection order in 20a puts
@@ -6,6 +7,12 @@
 // after a device loss.
 //
 // Depends on 20a for the selection verdict.
+
+/**
+ * @typedef {object} GoSXSceneWebGLMountHost
+ * @property {(canvas: HTMLCanvasElement, props: object, capability: object) => object|null} create
+ * @property {() => Promise<object|null>} load
+ */
   // --------------------------------------------------------------------------
   // WebGL renderer factory resolution
   // --------------------------------------------------------------------------
@@ -1962,7 +1969,7 @@
 
   // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
   // animation-channel record carries something only the decompress chunk can
-  // read. The field names match the writers in 11a-scene-decompress.js.
+  // read. The field names match the writers in 11a-scene-decompress.ts.
   function sceneEntryNeedsDecompress(entry) {
     if (!entry || typeof entry !== "object") return false;
     return Boolean(entry.generator
@@ -2108,6 +2115,284 @@
     if (typeof CustomEvent === "function" && typeof mount.dispatchEvent === "function") {
       mount.dispatchEvent(new CustomEvent("gosx:scene3d:model-hydration-status", { detail: eventDetail, bubbles: true }));
     }
+  }
+
+  function publishSceneProgressiveModelStatus(mount, status, detail) {
+    if (!mount) return;
+    const source = detail && typeof detail === "object" ? detail : {};
+    const eventDetail = {
+      status: String(status || ""),
+      modelID: String(source.modelID || ""),
+      modelIndex: Math.max(0, Math.floor(sceneNumber(source.modelIndex, 0))),
+      previewSrc: String(source.previewSrc || ""),
+      fullSrc: String(source.fullSrc || ""),
+      error: source.error ? String(source.error) : "",
+    };
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-status", eventDetail.status);
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-id", eventDetail.modelID);
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-preview-src", eventDetail.previewSrc);
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-full-src", eventDetail.fullSrc);
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-error", eventDetail.error);
+    if (typeof CustomEvent === "function" && typeof mount.dispatchEvent === "function") {
+      mount.dispatchEvent(new CustomEvent("gosx:scene3d:progressive-model", { detail: eventDetail, bubbles: true }));
+    }
+  }
+
+  function sceneProgressiveModelEntries(models) {
+    const entries = [];
+    const source = Array.isArray(models) ? models : [];
+    for (let index = 0; index < source.length; index += 1) {
+      const model = source[index];
+      if (!model || model.progressive !== true || !model.previewSrc || !model.fullSrc) {
+        continue;
+      }
+      entries.push({ model, index });
+    }
+    return entries;
+  }
+
+  function sceneFullModelFromProgressive(model) {
+    const next = Object.assign({}, model);
+    next.src = String(model.fullSrc || "").trim();
+    next.progressive = false;
+    return next;
+  }
+
+  function sceneModelAssetHasContent(asset) {
+    if (!asset || typeof asset !== "object") return false;
+    return (Array.isArray(asset.objects) && asset.objects.length > 0)
+      || (Array.isArray(asset.points) && asset.points.length > 0)
+      || (Array.isArray(asset.labels) && asset.labels.length > 0)
+      || (Array.isArray(asset.sprites) && asset.sprites.length > 0)
+      || (Array.isArray(asset.html) && asset.html.length > 0)
+      || (Array.isArray(asset.lights) && asset.lights.length > 0)
+      || (Array.isArray(asset.animations) && asset.animations.length > 0)
+      || (Array.isArray(asset.skins) && asset.skins.length > 0)
+      || (Array.isArray(asset.nodes) && asset.nodes.length > 0);
+  }
+
+  function sceneModelHydrationOutcomeDetail(outcome, expectedGeneration) {
+    if (Array.isArray(outcome)) {
+      const entries = outcome.filter(function(entry) { return entry && typeof entry === "object"; });
+      const expected = Math.max(0, Math.floor(sceneNumber(expectedGeneration, 0)));
+      const committed = entries.filter(function(entry) {
+        return entry.committed === true && entry.stale !== true && (expected <= 0 || Number(entry.generation) === expected);
+      });
+      const source = committed.length ? committed : entries;
+      return source.sort(function(a, b) {
+        return Math.max(0, Math.floor(sceneNumber(b.generation, 0))) - Math.max(0, Math.floor(sceneNumber(a.generation, 0)));
+      })[0] || null;
+    }
+    return outcome && typeof outcome === "object" ? outcome : null;
+  }
+
+  function sceneCreateProgressiveModelToken(state, models, previewGeneration) {
+    if (!state) return null;
+    const token = {
+      id: Math.max(0, Math.floor(sceneNumber(state._modelProgressiveTokenID, 0))) + 1,
+      models,
+      previewGeneration: Math.max(0, Math.floor(sceneNumber(previewGeneration, state._modelHydrationGeneration))),
+      fullGeneration: 0,
+      cancelled: false,
+      resolveRender: null,
+      renderTimeout: null,
+    };
+    state._modelProgressiveTokenID = token.id;
+    state._modelProgressiveToken = token;
+    return token;
+  }
+
+  function sceneProgressiveModelTokenCurrent(state, token) {
+    return Boolean(state && token && state._modelProgressiveToken === token && token.cancelled !== true);
+  }
+
+  function cancelSceneProgressiveModelLifecycle(state) {
+    if (!state || !state._modelProgressiveToken) return;
+    state._modelProgressiveToken.cancelled = true;
+    if (typeof state._modelProgressiveToken.resolveRender === "function") {
+      state._modelProgressiveToken.resolveRender(false);
+    }
+    if (state._modelProgressiveToken.renderTimeout != null) {
+      clearTimeout(state._modelProgressiveToken.renderTimeout);
+      state._modelProgressiveToken.renderTimeout = null;
+    }
+    state._modelProgressiveToken = null;
+  }
+
+  function notifySceneProgressiveModelRenderCommitted(state) {
+    const token = state && state._modelProgressiveToken;
+    if (!token || typeof token.resolveRender !== "function") return;
+    const resolve = token.resolveRender;
+    token.resolveRender = null;
+    if (token.renderTimeout != null) {
+      clearTimeout(token.renderTimeout);
+      token.renderTimeout = null;
+    }
+    resolve(sceneProgressiveModelTokenCurrent(state, token));
+  }
+
+  function sceneProgressiveModelWaitForRender(state, token, mount, entry, canRender, timeoutMS) {
+    return new Promise(function(resolve) {
+      if (!sceneProgressiveModelTokenCurrent(state, token)) {
+        resolve(false);
+        return;
+      }
+      token.resolveRender = resolve;
+      if (typeof canRender === "function" && !canRender()) {
+        publishSceneProgressiveModelStatus(mount, "full-pending-render", {
+          modelID: entry && entry.model ? entry.model.id : "",
+          modelIndex: entry ? entry.index : 0,
+          previewSrc: entry && entry.model ? entry.model.previewSrc : "",
+          fullSrc: entry && entry.model ? entry.model.fullSrc : "",
+          error: "render paused",
+        });
+        return;
+      }
+      token.renderTimeout = setTimeout(function() {
+        if (token.resolveRender !== resolve) return;
+        token.renderTimeout = null;
+        token.resolveRender = null;
+        if (state && state._modelProgressiveToken === token) {
+          state._modelProgressiveToken = null;
+        }
+        token.cancelled = true;
+        publishSceneProgressiveModelStatus(mount, "full-render-timeout", {
+          modelID: entry && entry.model ? entry.model.id : "",
+          modelIndex: entry ? entry.index : 0,
+          previewSrc: entry && entry.model ? entry.model.previewSrc : "",
+          fullSrc: entry && entry.model ? entry.model.fullSrc : "",
+          error: "render wait timed out",
+        });
+      }, Math.max(1, Math.floor(sceneNumber(timeoutMS, 2000))));
+    });
+  }
+
+  function scheduleSceneProgressiveModelLifecycle(state, mount, initialHydration, applyModels, options) {
+    if (!state || typeof applyModels !== "function") return null;
+    const opts = options && typeof options === "object" ? options : {};
+    const canRender = typeof opts.canRender === "function" ? opts.canRender : null;
+    const renderTimeoutMS = Math.max(1, Math.floor(sceneNumber(opts.renderTimeoutMS, 2000)));
+    const restorePreview = typeof opts.restorePreview === "function" ? opts.restorePreview : null;
+    const models = Array.isArray(opts.models) ? opts.models : (Array.isArray(state.models) ? state.models : []);
+    const entries = sceneProgressiveModelEntries(models);
+    if (!entries.length) return null;
+    const previewGeneration = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
+    const variantScope = state._modelTextureVariantScope;
+    let token = null;
+    const lifecycle = Promise.resolve(initialHydration).then(function(outcome) {
+      const hydration = sceneModelHydrationOutcomeDetail(outcome, previewGeneration);
+      if (!hydration || hydration.committed !== true || hydration.stale === true || Number(hydration.generation) !== previewGeneration || state.models !== models) {
+        return null;
+      }
+      token = sceneCreateProgressiveModelToken(state, models, previewGeneration);
+      if (!sceneProgressiveModelTokenCurrent(state, token)) {
+        return null;
+      }
+      entries.forEach(function(entry) {
+        publishSceneProgressiveModelStatus(mount, "preview-ready", {
+          modelID: entry.model.id,
+          modelIndex: entry.index,
+          previewSrc: entry.model.previewSrc,
+          fullSrc: entry.model.fullSrc,
+        });
+      });
+      return Promise.all(entries.map(function(entry) {
+        return loadSceneModelAsset(entry.model.fullSrc, mount, {
+          state,
+          generation: previewGeneration,
+          modelID: entry.model.id || "",
+          modelIndex: entry.index,
+          stage: "progressive-preload",
+          variantScope,
+        }).then(function(asset) {
+          if (!sceneModelAssetHasContent(asset)) {
+            publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
+              modelID: entry.model.id,
+              modelIndex: entry.index,
+              previewSrc: entry.model.previewSrc,
+              fullSrc: entry.model.fullSrc,
+              error: "empty model asset",
+            });
+            return { ok: false, entry, error: "empty model asset" };
+          }
+          return { ok: true, entry, asset };
+        }, function(error) {
+          publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
+            modelID: entry.model.id,
+            modelIndex: entry.index,
+            previewSrc: entry.model.previewSrc,
+            fullSrc: entry.model.fullSrc,
+            error: error && error.message ? error.message : error,
+          });
+          return { ok: false, entry, error };
+        });
+      }));
+    }).then(function(results) {
+      if (!sceneProgressiveModelTokenCurrent(state, token) || !Array.isArray(results) || !results.some(function(result) { return result && result.ok; })) {
+        return null;
+      }
+      const nextModels = models.map(function(model, index) {
+        const matched = results.find(function(result) {
+          return result && result.ok && result.entry && result.entry.index === index;
+        });
+        return matched ? sceneFullModelFromProgressive(model) : model;
+      });
+      const firstOK = results.find(function(result) { return result && result.ok; });
+      publishSceneProgressiveModelStatus(mount, "swap-issued", {
+        modelID: firstOK.entry.model.id,
+        modelIndex: firstOK.entry.index,
+        previewSrc: firstOK.entry.model.previewSrc,
+        fullSrc: firstOK.entry.model.fullSrc,
+      });
+      if (!sceneProgressiveModelTokenCurrent(state, token) || state.models !== models) {
+        return null;
+      }
+      const swapResult = applyModels(nextModels);
+      token.fullGeneration = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
+      return Promise.resolve(swapResult).then(function(outcome) {
+        const hydration = sceneModelHydrationOutcomeDetail(outcome, token.fullGeneration);
+        if (!sceneProgressiveModelTokenCurrent(state, token) || !hydration || hydration.committed !== true || hydration.stale === true || Number(hydration.generation) !== Number(token.fullGeneration)) {
+          if (restorePreview) {
+            restorePreview(models);
+          }
+          publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
+            modelID: firstOK.entry.model.id,
+            modelIndex: firstOK.entry.index,
+            previewSrc: firstOK.entry.model.previewSrc,
+            fullSrc: firstOK.entry.model.fullSrc,
+            error: hydration && hydration.failureStage ? hydration.failureStage : "full hydration failed",
+          });
+          return null;
+        }
+        return sceneProgressiveModelWaitForRender(state, token, mount, firstOK.entry, canRender, renderTimeoutMS).then(function(rendered) {
+          if (!rendered || !sceneProgressiveModelTokenCurrent(state, token)) {
+            return null;
+          }
+          const settled = firstOK;
+          state._modelProgressiveToken = null;
+          state._modelProgressiveLastSettledGeneration = token.fullGeneration;
+          token.cancelled = true;
+          token.resolveRender = null;
+          return settled;
+        });
+      }).then(function(settled) {
+        if (!settled) return null;
+        publishSceneProgressiveModelStatus(mount, "full-settled", {
+          modelID: settled.entry.model.id,
+          modelIndex: settled.entry.index,
+          previewSrc: settled.entry.model.previewSrc,
+          fullSrc: settled.entry.model.fullSrc,
+        });
+        return null;
+      });
+    }).catch(function(error) {
+      if (sceneProgressiveModelTokenCurrent(state, token)) {
+        publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
+          error: error && error.message ? error.message : error,
+        });
+      }
+    });
+    return lifecycle;
   }
 
   async function loadSceneModelAsset(src, mount, hydrationMeta) {

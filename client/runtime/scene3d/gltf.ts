@@ -1,8 +1,15 @@
-  // Scene3D glTF/GLB loader — parses glTF 2.0 binary and JSON formats into
+  // gltf.ts — Scene3D glTF/GLB loader — parses glTF 2.0 binary and JSON formats into
+  // @ts-check
   // the scene model asset structure consumed by 20-scene-mount.js.
   //
   // This file is concatenated into the bootstrap IIFE alongside all other
   // bootstrap-src/*.js files. No imports or exports.
+
+  /**
+   * @typedef {object} GoSXSceneModelAsset
+   * @property {object} json
+   * @property {ArrayBuffer|null} [binaryBuffer]
+   */
 
   // ---------------------------------------------------------------------------
   // GLB binary parser
@@ -693,7 +700,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // 4x4 matrix helpers — delegates to shared functions in 11-scene-math.js
+  // 4x4 matrix helpers — delegates to shared functions in 11-scene-math.ts
   // (SCENE_IDENTITY_MAT4, sceneMat4Multiply, sceneTRSToMat4)
   // ---------------------------------------------------------------------------
 

@@ -13,6 +13,7 @@ const path = require("node:path");
 
 const {
   bootstrapSource,
+  bootstrapScene3DMountSourceFile,
   FakeWebGLContext,
   FakeElement,
   buildMinimalGLBBytes,
@@ -26,7 +27,20 @@ const {
   SELENA_SKINNABLE_VERTEX_GLSL_FIXTURE,
   SELENA_SKINNABLE_FRAGMENT_GLSL_FIXTURE,
   SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE,
+  readBootstrapSrc,
 } = require("./runtime-test-harness.js");
+
+test("typed Scene3D host stages progressive model previews and publishes terminal lifecycle states", () => {
+  const coreSource = readBootstrapSrc("10-runtime-scene-core.js");
+
+  assert.match(coreSource, /const progressive = Boolean\(current\.progressive && previewSrc && fullSrc\)/);
+  assert.match(coreSource, /src: progressive \? previewSrc/);
+  assert.match(bootstrapScene3DMountSourceFile, /function scheduleSceneProgressiveModelLifecycle/);
+  assert.match(bootstrapScene3DMountSourceFile, /"preview-ready"/);
+  assert.match(bootstrapScene3DMountSourceFile, /"full-preload-failed"/);
+  assert.match(bootstrapScene3DMountSourceFile, /"full-settled"/);
+  assert.match(bootstrapScene3DMountSourceFile, /cancelSceneProgressiveModelLifecycle/);
+});
 
 test("bootstrap loads declarative Scene3D model assets without authored JS", async () => {
   const mount = new FakeElement("div", null);
@@ -974,7 +988,7 @@ test("bootstrap renders a skinned GLB through the Selena material (default flip 
 });
 
 test("scenePBRSelenaSkinAugmentVertex renames position/normal, injects joint-skin GPU code, and validates as GLSL", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
   const match = webgl.match(/function scenePBRSelenaSkinAugmentVertex\(source\)\s*\{([\s\S]*?)\n  \}/);
   assert.ok(match, "scenePBRSelenaSkinAugmentVertex must be extractable from 16-scene-webgl.js source");
 
