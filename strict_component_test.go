@@ -102,8 +102,8 @@ func TestCompileStrictServerBodyFailsClosed(t *testing.T) {
 		return <p>wrong</p>
 	}
 	return <p>{props.Label}</p>`, "statement the IR renderer cannot execute"},
-		{"helper-call", `return <p>{strings.ToUpper(props.Label)}</p>`, "call target must be rooted in props"},
-		{"free-helper", `return <p>{format(props.Label)}</p>`, "call target must be rooted in props"},
+		{"helper-call", `return <p>{strings.ToUpper(props.Label)}</p>`, "calls are not supported"},
+		{"free-helper", `return <p>{format(props.Label)}</p>`, "calls are not supported"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,11 +119,54 @@ func TestCompileStrictServerBodyFailsClosed(t *testing.T) {
 func TestCompileStrictServerAllowsRendererSupportedPropsExpressions(t *testing.T) {
 	source := []byte(`package app
 component Page(props: Props) {
-	return <main title={props.Title} data-first={props.Items[0]}>{props.Formatter(props.Title) + "!"}</main>
+	return <main title={props.Title}>{(props.Subtitle)}</main>
 }
 `)
 	if _, err := Compile(source); err != nil {
 		t.Fatalf("Compile: %v", err)
+	}
+}
+
+func TestCompileStrictServerRejectsTypeDivergentExpressions(t *testing.T) {
+	for _, expression := range []string{
+		"props.A / props.B",
+		"props.OK && props.SideEffect()",
+		"props.OK || props.SideEffect()",
+		"props.A + props.B",
+		"-props.A",
+		"!props.OK",
+		"props.Items[0]",
+		"props.Formatter(props.Title)",
+		"props.Normalize()",
+	} {
+		t.Run(expression, func(t *testing.T) {
+			source := []byte("package app\ncomponent Page(props: Props) {\nreturn <main>{" + expression + "}</main>\n}\n")
+			_, err := Compile(source)
+			if err == nil || !strings.Contains(err.Error(), "not supported by the strict server renderer") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCompileStrictServerRejectsLiteralSpellingsWithoutRuntimeParity(t *testing.T) {
+	for _, literal := range []string{"'x'", "0xff", "0b10", "0o10", "01", "1_000", "1i", "0x1p2", "1_0.5"} {
+		t.Run(literal, func(t *testing.T) {
+			source := []byte("package app\ncomponent Page() {\nreturn <main>{" + literal + "}</main>\n}\n")
+			_, err := Compile(source)
+			if err == nil || !strings.Contains(err.Error(), "not supported") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCompileStrictServerAcceptsParitySafeLiterals(t *testing.T) {
+	for _, literal := range []string{`"text"`, "0", "42", "1.5", ".5", "1e3", "true", "false", "nil"} {
+		source := []byte("package app\ncomponent Page() {\nreturn <main>{" + literal + "}</main>\n}\n")
+		if _, err := Compile(source); err != nil {
+			t.Fatalf("literal %s: %v", literal, err)
+		}
 	}
 }
 
@@ -181,7 +224,7 @@ func TestCompileStrictCalleeRejectsDynamicCallShape(t *testing.T) {
 component Badge() {
 	return <span>badge</span>
 }
-func Page(props Props) Node {
+component Page(props: Props) {
 	return ` + test.call + `
 }
 `
@@ -198,7 +241,7 @@ func TestCompileStrictCalleeAcceptsEmptyCall(t *testing.T) {
 component Badge() {
 	return <span>badge</span>
 }
-func Page() Node {
+component Page() {
 	return <Badge />
 }
 `))
@@ -207,17 +250,54 @@ func Page() Node {
 	}
 }
 
-func TestCompileLegacyCalleeKeepsDynamicCallShape(t *testing.T) {
-	_, err := Compile([]byte(`package app
+func TestCompileRejectsCrossStyleComponentCalls(t *testing.T) {
+	for _, source := range []string{`package app
 func Badge(attrs AttrList) Node {
 	return <span>badge</span>
 }
 component Page() {
 	return <Badge bogus="x">child</Badge>
 }
-`))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
+	`, `package app
+component Badge() {
+	return <span>badge</span>
+}
+func Page() Node {
+	return <Badge />
+}
+`} {
+		_, err := Compile([]byte(source))
+		if err == nil || !strings.Contains(err.Error(), "calls must stay within one style") {
+			t.Fatalf("error = %v", err)
+		}
+	}
+}
+
+func TestCompileRejectsDuplicateComponentNamesAcrossStyles(t *testing.T) {
+	for _, declarations := range []string{
+		`component Badge() {
+	return <strong>strict</strong>
+}
+func Badge() Node {
+	return <span>legacy</span>
+}`,
+		`func Badge() Node {
+	return <span>legacy</span>
+}
+component Badge() {
+	return <strong>strict</strong>
+}`,
+		`component Badge() {
+	return <strong>one</strong>
+}
+component Badge() {
+	return <strong>two</strong>
+}`,
+	} {
+		_, err := Compile([]byte("package app\n" + declarations + "\n"))
+		if err == nil || !strings.Contains(err.Error(), `duplicate component name "Badge"`) {
+			t.Fatalf("error = %v", err)
+		}
 	}
 }
 

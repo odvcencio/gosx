@@ -177,7 +177,7 @@ func (t *transpiler) emitStrictSourceFile(n *gotreesitter.Node) string {
 		switch t.nodeType(child) {
 		case "package_clause":
 			packageClause = t.text(child)
-		case "type_declaration":
+		case "const_declaration", "type_declaration":
 			declaration := t.emitDefault(child)
 			if t.sourceFile != "" {
 				declaration = fmt.Sprintf("//line %s:%d\n%s", filepathForLineDirective(t.sourceFile), child.StartPoint().Row+1, declaration)

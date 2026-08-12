@@ -215,7 +215,7 @@ func Legacy() Node {
 	page := filepath.Join(dir, "page.gsx")
 	mustWrite(t, page, `package main
 component Page(props: PageProps) {
-	return <time>{props.When.String()}</time>
+	return <time data-value={props.When}>{props.When}</time>
 }
 `)
 	if err := CheckFile(context.Background(), page); err != nil {
@@ -265,6 +265,21 @@ component Page(props: Props) {
 	}
 }
 
+func TestCheckFileRetainsConstantsUsedByPropTypes(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+const ItemCount = 3
+type Props struct { Values [ItemCount]string }
+component Page(props: Props) {
+	return <main>{props.Values}</main>
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
 func TestCheckTreeSkipsGeneratedHiddenAndNestedGitButChecksUnderscoreRoutes(t *testing.T) {
 	invalid := strictFixture(`<Link label={123} />`)
 	valid := strictFixture(`<Link label="ok" />`)
@@ -273,8 +288,7 @@ func TestCheckTreeSkipsGeneratedHiddenAndNestedGitButChecksUnderscoreRoutes(t *t
 		dir := newTestModule(t)
 		mustWrite(t, filepath.Join(dir, "page.gsx"), valid)
 		for _, rel := range []string{
-			"build/page.gsx", "vendor/page.gsx", "node_modules/page.gsx", "testdata/page.gsx",
-			".cache/page.gsx", "nested/page.gsx",
+			"build/page.gsx", "vendor/page.gsx", "node_modules/page.gsx", "testdata/page.gsx", ".cache/page.gsx", "nested/page.gsx",
 		} {
 			mustWrite(t, filepath.Join(dir, rel), invalid)
 		}
@@ -289,6 +303,20 @@ func TestCheckTreeSkipsGeneratedHiddenAndNestedGitButChecksUnderscoreRoutes(t *t
 			dir := newTestModule(t)
 			path := filepath.Join(dir, route, "page.gsx")
 			mustWrite(t, path, invalid)
+			err := CheckTree(context.Background(), dir)
+			if err == nil || !strings.Contains(err.Error(), "page.gsx:14:") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckTreeChecksRoutableNestedNamedDirectories(t *testing.T) {
+	for _, name := range []string{"build", "dist", "vendor", "testdata"} {
+		t.Run(name, func(t *testing.T) {
+			dir := newTestModule(t)
+			path := filepath.Join(dir, "app", name, "page.gsx")
+			mustWrite(t, path, strictFixture(`<Link label={123} />`))
 			err := CheckTree(context.Background(), dir)
 			if err == nil || !strings.Contains(err.Error(), "page.gsx:14:") {
 				t.Fatalf("error = %v", err)

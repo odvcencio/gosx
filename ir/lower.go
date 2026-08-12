@@ -65,6 +65,7 @@ type lowerer struct {
 	signalDot     bool
 	strict        bool
 	strictNames   map[string]struct{}
+	legacyNames   map[string]struct{}
 	strictProps   map[string]string
 	structFields  map[string]map[string]string
 }
@@ -943,11 +944,18 @@ func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 
 func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictNames = make(map[string]struct{})
+	l.legacyNames = make(map[string]struct{})
 	l.strictProps = make(map[string]string)
 	l.structFields = make(map[string]map[string]string)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
 		switch l.nodeType(child) {
+		case "function_declaration":
+			name := l.childByField(child, "name")
+			body := l.childByField(child, "body")
+			if name != nil && body != nil && l.findGSXReturn(body) != nil {
+				l.legacyNames[l.text(name)] = struct{}{}
+			}
 		case "gosx_component_declaration":
 			name := l.childByField(child, "name")
 			_, propsType := l.extractStrictProps(child)
@@ -1072,7 +1080,17 @@ func (l *lowerer) normalizeStrictComponentAttrs(tag string, attrs []Attr) {
 // components, but strict calls still cannot smuggle dynamic props or children
 // past the package checker/runtime renderer.
 func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, attrs []Attr, children []NodeID) {
-	if _, strict := l.strictNames[tag]; !strict {
+	_, strictCallee := l.strictNames[tag]
+	_, legacyCallee := l.legacyNames[tag]
+	if l.strict && legacyCallee {
+		l.errorf(n, "strict component cannot call legacy component %s; component styles may coexist but calls must stay within one style", tag)
+		return
+	}
+	if !l.strict && strictCallee {
+		l.errorf(n, "legacy component cannot call strict component %s; component styles may coexist but calls must stay within one style", tag)
+		return
+	}
+	if !strictCallee {
 		return
 	}
 	for _, attr := range attrs {
@@ -1364,7 +1382,7 @@ func (l *lowerer) validateStrictServerExpression(span Span, source string) {
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
 			Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
-			Hint:    "use props fields, literals, supported operators/indexes, or calls rooted in props",
+			Hint:    "use literals or props field selection; compute, index, and call methods before rendering",
 		})
 	}
 }

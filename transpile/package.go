@@ -100,7 +100,9 @@ func sourcePackageName(source []byte) (string, bool) {
 // StrictProjection emits one coherent strict-only Go file. The full original
 // file is collected before emission so same-file prop schemas, import aliases,
 // and strict calls remain visible to one another. Legacy funcs and top-level
-// route/data/request DSL declarations never enter the projection.
+// route/data/request DSL declarations never enter the projection. Top-level
+// constants are retained because Go types may depend on array lengths and
+// other compile-time values; dynamic variables remain excluded.
 func StrictProjection(file PackageFile) (string, bool, error) {
 	return StrictProjectionWithImportNames(file, nil)
 }

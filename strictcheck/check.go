@@ -295,8 +295,15 @@ func shouldSkipDir(root, path, name string) bool {
 	if filepath.Clean(root) == filepath.Clean(path) {
 		return false
 	}
+	rel, relErr := filepath.Rel(root, path)
+	if relErr == nil && filepath.Dir(rel) == "." {
+		switch name {
+		case "build", "dist", "node_modules", "vendor", "testdata":
+			return true
+		}
+	}
 	switch name {
-	case "build", "dist", "node_modules", "vendor", "testdata", ".git", ".tiller":
+	case ".git", ".tiller", "node_modules":
 		return true
 	}
 	if strings.HasPrefix(name, ".") {

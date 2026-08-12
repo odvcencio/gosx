@@ -32,12 +32,14 @@ type BadgeProps struct {
 	When clock.Time
 }
 
+const BadgeLimit = 3
+
 func Legacy() Node {
 	return <p>{legacy.Route(data.missing)}{ToUpper(request.name)}</p>
 }
 
 component Badge(props: BadgeProps) {
-	return <span>{props.Label}{props.When.String()}</span>
+	return <span data-when={props.When}>{props.Label}</span>
 }
 
 component Page() {
@@ -56,6 +58,7 @@ component Page() {
 		`gx "m31labs.dev/gosx"`,
 		`func Badge(props BadgeProps) gx.Node`,
 		`Badge(BadgeProps{Label: "ready"})`,
+		`const BadgeLimit = 3`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("projection missing %q:\n%s", want, got)
