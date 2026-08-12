@@ -14,8 +14,8 @@ func ValidateInventory(inv *Inventory) error {
 	if inv == nil {
 		return fmt.Errorf("inventory is nil")
 	}
-	if inv.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("schemaVersion = %q, want %q", inv.SchemaVersion, SchemaVersion)
+	if inv.SchemaVersion != SchemaVersion && inv.SchemaVersion != SchemaVersionV1 {
+		return fmt.Errorf("schemaVersion = %q, want %q or %q", inv.SchemaVersion, SchemaVersion, SchemaVersionV1)
 	}
 	if inv.BaseRevision == "" || inv.BaseRevision == "unknown" {
 		return fmt.Errorf("baseRevision is required")
@@ -62,7 +62,7 @@ func ValidateInventory(inv *Inventory) error {
 	if inv.Totals.AuditFiles != len(inv.Files.Audit) {
 		return fmt.Errorf("audit file total mismatch")
 	}
-	if inv.Totals.RuntimeSemanticGate == "" || inv.Totals.RuntimeAmbientFacade == "" {
+	if inv.SchemaVersion != SchemaVersionV1 && (inv.Totals.RuntimeSemanticGate == "" || inv.Totals.RuntimeAmbientFacade == "") {
 		return fmt.Errorf("runtime semantic/type-check and ambient facade evidence are required; TypeScript extension counts are not an O6 gate")
 	}
 	if inv.Structural.Gotreesitter.Language == "" {

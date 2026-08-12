@@ -657,7 +657,7 @@ func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, inc
 		Scope:         Scope{Included: []ScopeRule{{Pattern: "client/js/bootstrap-src/**/*.js", Reason: "fixture"}}, Excluded: []ScopeRule{}},
 		Overlay:       OverlayEvidence{Status: "clean", Hash: source.OverlayHash, BaseRevision: source.BaseRevision, TrackedDiffHash: source.TrackedDiffHash, TrackedCachedDiffHash: source.TrackedDiffHash, UntrackedSources: []UntrackedSourceHash{}, Recreate: []string{}},
 		Files:         FileInventory{Included: []SourceFile{included}, Sidecars: []SourceFile{}, Embedded: []SourceFile{}, Excluded: []ExcludedFile{}, Audit: []ExcludedFile{}},
-		Totals:        Totals{IncludedFiles: 1, IncludedJavaScriptLines: includedLines, IncludedBytes: 10, IncludedGzipBytes: 10, IncludedBrotliBytes: 10, ByExtension: map[string]int{".js": 1}},
+		Totals:        Totals{IncludedFiles: 1, IncludedJavaScriptLines: includedLines, IncludedBytes: 10, IncludedGzipBytes: 10, IncludedBrotliBytes: 10, ByExtension: map[string]int{".js": 1}, RuntimeSemanticGate: "cmd/buildbootstrap + make test-runtime-types", RuntimeAmbientFacade: "client/runtime/host/compatibility.ts"},
 		Structural:    Structural{Gotreesitter: ParseSummary{Language: "javascript", Parsed: 1}, ImportsExports: []Location{}, FreeGlobalReads: []string{}, FreeGlobalWrites: []string{}},
 		Drift:         DriftReport{Status: "pass"},
 		Surface: Surface{

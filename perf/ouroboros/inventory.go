@@ -27,15 +27,16 @@ import (
 )
 
 const (
-	SchemaVersion  = "gosx.ouroboros.baseline.v1"
-	ContractO02    = "O0.2"
-	Initiative     = "initiative.gosx-ouroboros-runtime-refactor"
-	Spec           = "spec.gosx-ouroboros-runtime.v0.1"
-	CorpusID       = "gosx-ouroboros-o0.2-v1"
-	OverlayClean   = "sha256:clean"
-	canonicalLines = 87086
-	canonicalGosx  = 209
-	canonicalJSON  = 253
+	SchemaVersion   = "gosx.ouroboros.baseline.v2"
+	SchemaVersionV1 = "gosx.ouroboros.baseline.v1"
+	ContractO02     = "O0.2"
+	Initiative      = "initiative.gosx-ouroboros-runtime-refactor"
+	Spec            = "spec.gosx-ouroboros-runtime.v0.1"
+	CorpusID        = "gosx-ouroboros-o0.2-v1"
+	OverlayClean    = "sha256:clean"
+	canonicalLines  = 87086
+	canonicalGosx   = 209
+	canonicalJSON   = 253
 
 	compatibilityAuditSchemaVersion = "gosx.ouroboros.compatibility-audit.v1"
 	compatibilityAuditScope         = "client/js/bootstrap-src/**/*.js + client/wasm/**/*.go"
