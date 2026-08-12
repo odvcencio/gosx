@@ -7,6 +7,8 @@ package gosx
 //
 // Supported syntax:
 //
+//	component Card(props: CardProps) { return <article>{props.Title}</article> }
+//	                                      -> strict, typed component declaration
 //	<div class="counter">...</div>       -> element tags
 //	<Counter count={n} />                -> component tags (capitalized)
 //	{expression}                         -> expression holes
@@ -272,6 +274,31 @@ func GosxGrammar() *Grammar {
 		// ---------------------------------------------------------------
 		// Hook into Go grammar
 		// ---------------------------------------------------------------
+
+		// Strict components provide the TSX-like spelling while deliberately
+		// reusing Go's type grammar and block grammar. The result type is implicit
+		// (always gosx.Node); the legacy `func Name(props Props) Node` form remains
+		// a first-class alternative in the same file.
+		g.Define("gosx_component_parameter",
+			Seq(
+				Field("name", Sym("identifier")),
+				Str(":"),
+				Field("type", Sym("_type")),
+			))
+		g.Define("gosx_component_parameters",
+			Seq(
+				Str("("),
+				Choice(Sym("gosx_component_parameter"), Blank()),
+				Str(")"),
+			))
+		g.Define("gosx_component_declaration",
+			PrecRight(1, Seq(
+				Str("component"),
+				Field("name", Sym("identifier")),
+				Field("parameters", Sym("gosx_component_parameters")),
+				Field("body", Sym("block")),
+			)))
+		AppendChoice(g, "_top_level_declaration", Sym("gosx_component_declaration"))
 
 		// GSX tags are valid Go expressions
 		AppendChoice(g, "_expression", Choice(

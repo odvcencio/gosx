@@ -46,6 +46,16 @@ type Import struct {
 	Path  string
 }
 
+// ComponentSyntax records which source spelling declared a component. The
+// zero value is the legacy Go function form for backward compatibility with
+// programs serialized before strict components existed.
+type ComponentSyntax uint8
+
+const (
+	ComponentSyntaxLegacy ComponentSyntax = iota
+	ComponentSyntaxStrict
+)
+
 // Component represents a GoSX component function.
 type Component struct {
 	// Name of the component function.
@@ -53,6 +63,14 @@ type Component struct {
 
 	// PropsType is the Go type name for the props parameter (empty if none).
 	PropsType string
+
+	// PropsName is the declared props parameter name. Strict components require
+	// the exact name "props" because the file renderer binds that identifier.
+	PropsName string
+
+	// Syntax distinguishes legacy `func` components from strict
+	// `component Name(props: Type)` declarations.
+	Syntax ComponentSyntax
 
 	// Root is the index of the root node in Program.Nodes.
 	Root NodeID

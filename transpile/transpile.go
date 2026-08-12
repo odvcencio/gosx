@@ -15,6 +15,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"m31labs.dev/gosx"
@@ -36,6 +38,12 @@ func Transpile(source []byte, opts Options) (string, error) {
 	root := tree.RootNode()
 	if root.HasError() {
 		return "", gosx.DescribeParseError(root, source, lang)
+	}
+	// Transpilation must apply the same semantic gate as the IR renderer. In
+	// particular, strict components may not contain Go statements that would
+	// survive in generated Go but be ignored by file-routed IR rendering.
+	if _, err := gosx.Compile(source); err != nil {
+		return "", err
 	}
 
 	t := &transpiler{
@@ -64,12 +72,17 @@ func Transpile(source []byte, opts Options) (string, error) {
 }
 
 type transpiler struct {
-	src        []byte
-	lang       *gotreesitter.Language
-	sourceFile string
-	imports    map[string]string // alias -> path
-	propsTypes map[string]string
-	errs       []string
+	src         []byte
+	lang        *gotreesitter.Language
+	sourceFile  string
+	imports     map[string]string // alias -> path
+	propsTypes  map[string]string
+	propsFields map[string]map[string]string
+	errs        []string
+	hasStrict   bool
+	strict      int
+	gosxAlias   string
+	injectGosx  bool
 }
 
 func (t *transpiler) text(n *gotreesitter.Node) string {
@@ -95,6 +108,8 @@ func (t *transpiler) emit(n *gotreesitter.Node) string {
 	switch t.nodeType(n) {
 	case "source_file":
 		return t.emitSourceFile(n)
+	case "gosx_component_declaration":
+		return t.emitStrictComponent(n)
 	case "jsx_element":
 		return t.emitGSXElement(n)
 	case "jsx_raw_text_element":
@@ -115,15 +130,108 @@ func (t *transpiler) emit(n *gotreesitter.Node) string {
 func (t *transpiler) emitSourceFile(n *gotreesitter.Node) string {
 	var b strings.Builder
 	t.collectImports(n)
+	t.collectStructFields(n)
 	t.collectComponentProps(n)
+	t.resolveGoSXQualifier()
 
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
 		b.WriteString(t.emit(child))
 		b.WriteByte('\n')
+		if t.nodeType(child) == "package_clause" && t.hasStrict && t.injectGosx {
+			fmt.Fprintf(&b, "import %s %q\n", t.gosxAlias, "m31labs.dev/gosx")
+		}
 	}
 
 	return b.String()
+}
+
+func (t *transpiler) collectStructFields(n *gotreesitter.Node) {
+	if t.propsFields == nil {
+		t.propsFields = make(map[string]map[string]string)
+	}
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		decl := n.NamedChild(i)
+		if t.nodeType(decl) != "type_declaration" {
+			continue
+		}
+		t.collectStructFieldsFromTypeDecl(decl)
+	}
+}
+
+func (t *transpiler) collectStructFieldsFromTypeDecl(n *gotreesitter.Node) {
+	var specs []*gotreesitter.Node
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		if t.nodeType(node) == "type_spec" {
+			specs = append(specs, node)
+			return
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(n)
+	for _, spec := range specs {
+		nameNode := t.childByField(spec, "name")
+		typeNode := t.childByField(spec, "type")
+		if nameNode == nil || typeNode == nil || t.nodeType(typeNode) != "struct_type" {
+			continue
+		}
+		fields := make(map[string]string)
+		var collect func(*gotreesitter.Node)
+		collect = func(node *gotreesitter.Node) {
+			if node == nil {
+				return
+			}
+			if t.nodeType(node) == "field_declaration" {
+				for i := 0; i < int(node.NamedChildCount()); i++ {
+					child := node.NamedChild(i)
+					if t.nodeType(child) != "field_identifier" {
+						continue
+					}
+					field := t.text(child)
+					first, _ := utf8.DecodeRuneInString(field)
+					if !unicode.IsUpper(first) {
+						continue
+					}
+					fields[field] = field
+					fields[lowerCamelField(field)] = field
+				}
+				return
+			}
+			for i := 0; i < int(node.NamedChildCount()); i++ {
+				collect(node.NamedChild(i))
+			}
+		}
+		collect(typeNode)
+		if len(fields) > 0 {
+			t.propsFields[t.text(nameNode)] = fields
+		}
+	}
+}
+
+func lowerCamelField(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 || !unicode.IsUpper(runes[0]) {
+		return value
+	}
+	// Lower the leading acronym, stopping before the final uppercase rune when
+	// it begins the following word: HTMLFor -> htmlFor, URLValue -> urlValue.
+	end := 1
+	for end < len(runes) && unicode.IsUpper(runes[end]) {
+		if end+1 < len(runes) && unicode.IsLower(runes[end+1]) {
+			break
+		}
+		end++
+	}
+	for i := 0; i < end; i++ {
+		runes[i] = unicode.ToLower(runes[i])
+	}
+	return string(runes)
 }
 
 func (t *transpiler) collectImports(n *gotreesitter.Node) {
@@ -147,9 +255,6 @@ func (t *transpiler) collectImports(n *gotreesitter.Node) {
 			alias := ""
 			if spec.Name != nil {
 				alias = spec.Name.Name
-				if alias == "." || alias == "_" {
-					continue
-				}
 			} else {
 				alias = path.Base(importPath)
 			}
@@ -160,14 +265,59 @@ func (t *transpiler) collectImports(n *gotreesitter.Node) {
 	}
 }
 
+func (t *transpiler) resolveGoSXQualifier() {
+	if !t.hasStrict {
+		// Preserve legacy output byte-for-byte. Legacy source commonly imports
+		// gosx with a dot while the historical transpiler intentionally emits the
+		// qualified spelling for a later build step to own.
+		t.gosxAlias = "gosx"
+		return
+	}
+	for alias, importPath := range t.imports {
+		if importPath != "m31labs.dev/gosx" || alias == "_" {
+			continue
+		}
+		t.gosxAlias = alias
+		return
+	}
+
+	alias := "gosx"
+	if _, exists := t.imports[alias]; exists {
+		for n := 1; ; n++ {
+			candidate := "gosxgen" + strconv.Itoa(n)
+			if _, exists := t.imports[candidate]; !exists {
+				alias = candidate
+				break
+			}
+		}
+	}
+	t.gosxAlias = alias
+	t.injectGosx = t.hasStrict
+}
+
+func (t *transpiler) gosxRef(name string) string {
+	if t.gosxAlias == "." {
+		return name
+	}
+	alias := t.gosxAlias
+	if alias == "" {
+		alias = "gosx"
+	}
+	return alias + "." + name
+}
+
 func (t *transpiler) collectComponentProps(n *gotreesitter.Node) {
 	if t.propsTypes == nil {
 		t.propsTypes = make(map[string]string)
 	}
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
-		if t.nodeType(child) != "function_declaration" {
+		typ := t.nodeType(child)
+		if typ != "function_declaration" && typ != "gosx_component_declaration" {
 			continue
+		}
+		if typ == "gosx_component_declaration" {
+			t.hasStrict = true
 		}
 		nameNode := t.childByField(child, "name")
 		if nameNode == nil {
@@ -183,6 +333,35 @@ func (t *transpiler) collectComponentProps(n *gotreesitter.Node) {
 	}
 }
 
+func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
+	nameNode := t.childByField(n, "name")
+	bodyNode := t.childByField(n, "body")
+	if nameNode == nil || bodyNode == nil {
+		t.errorf(n, "strict component declaration is incomplete")
+		return ""
+	}
+
+	params := ""
+	if paramsNode := t.childByField(n, "parameters"); paramsNode != nil {
+		for i := 0; i < int(paramsNode.NamedChildCount()); i++ {
+			param := paramsNode.NamedChild(i)
+			if t.nodeType(param) != "gosx_component_parameter" {
+				continue
+			}
+			paramName := t.childByField(param, "name")
+			paramType := t.childByField(param, "type")
+			if paramName != nil && paramType != nil {
+				params = t.text(paramName) + " " + t.text(paramType)
+			}
+		}
+	}
+
+	t.strict++
+	body := t.emitDefault(bodyNode)
+	t.strict--
+	return "func " + t.text(nameNode) + "(" + params + ") " + t.gosxRef("Node") + " " + body
+}
+
 func (t *transpiler) extractPropsType(funcDecl *gotreesitter.Node) string {
 	params := t.childByField(funcDecl, "parameters")
 	if params == nil {
@@ -190,7 +369,8 @@ func (t *transpiler) extractPropsType(funcDecl *gotreesitter.Node) string {
 	}
 	for i := 0; i < int(params.NamedChildCount()); i++ {
 		param := params.NamedChild(i)
-		if t.nodeType(param) != "parameter_declaration" {
+		typ := t.nodeType(param)
+		if typ != "parameter_declaration" && typ != "gosx_component_parameter" {
 			continue
 		}
 		typeNode := t.childByField(param, "type")
@@ -253,7 +433,7 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 		}
 		return t.emitComponentCall(tag, t.emitAttrs(openNode), children)
 	}
-	return t.emitElementCall(tag, t.emitAttrs(openNode), children)
+	return t.emitElementCall(tag, t.emitHTMLAttrs(openNode), children)
 }
 
 // emitRawTextElement emits <script>/<style>. Their bodies are script or
@@ -282,11 +462,11 @@ func (t *transpiler) emitRawTextElement(n *gotreesitter.Node) string {
 			children = append(children, t.emit(body))
 		default:
 			if raw := rawTextBody(t.text(body)); raw != "" {
-				children = append(children, "gosx.RawHTML("+strconv.Quote(raw)+")")
+				children = append(children, t.gosxRef("RawHTML")+"("+strconv.Quote(raw)+")")
 			}
 		}
 	}
-	return t.emitElementCall(tag, t.emitAttrs(openNode), children)
+	return t.emitElementCall(tag, t.emitHTMLAttrs(openNode), children)
 }
 
 // rawTextTagName turns the combined start-tag token (`<script`) into the tag
@@ -321,13 +501,13 @@ func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 		}
 		return t.emitComponentCall(tag, t.emitAttrs(n), nil)
 	}
-	return t.emitElementCall(tag, t.emitAttrs(n), nil)
+	return t.emitElementCall(tag, t.emitHTMLAttrs(n), nil)
 }
 
 func (t *transpiler) emitFragment(n *gotreesitter.Node) string {
 	children := t.emitChildren(n)
 	var b strings.Builder
-	b.WriteString("gosx.Fragment(")
+	b.WriteString(t.gosxRef("Fragment") + "(")
 	for i, child := range children {
 		if i > 0 {
 			b.WriteString(", ")
@@ -350,7 +530,7 @@ func (t *transpiler) emitExprContainer(n *gotreesitter.Node) string {
 		return t.emit(exprNode)
 	}
 
-	return fmt.Sprintf("gosx.Expr(%s)", t.text(exprNode))
+	return fmt.Sprintf("%s(%s)", t.gosxRef("Expr"), t.text(exprNode))
 }
 
 func (t *transpiler) emitGSXText(n *gotreesitter.Node) string {
@@ -359,15 +539,15 @@ func (t *transpiler) emitGSXText(n *gotreesitter.Node) string {
 	if trimmed == "" {
 		return ""
 	}
-	return fmt.Sprintf("gosx.Text(%q)", text)
+	return fmt.Sprintf("%s(%q)", t.gosxRef("Text"), text)
 }
 
 func (t *transpiler) emitElementCall(tag string, attrs []string, children []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "gosx.El(%q", tag)
+	fmt.Fprintf(&b, "%s(%q", t.gosxRef("El"), tag)
 
 	if len(attrs) > 0 {
-		b.WriteString(", gosx.Attrs(")
+		b.WriteString(", " + t.gosxRef("Attrs") + "(")
 		b.WriteString(strings.Join(attrs, ", "))
 		b.WriteByte(')')
 	}
@@ -388,7 +568,7 @@ func (t *transpiler) emitComponentCall(tag string, attrs []string, children []st
 	fmt.Fprintf(&b, "%s(", tag)
 
 	if len(attrs) > 0 || len(children) > 0 {
-		b.WriteString("gosx.Props(")
+		b.WriteString(t.gosxRef("Props") + "(")
 		b.WriteString(strings.Join(attrs, ", "))
 		b.WriteByte(')')
 	}
@@ -426,7 +606,14 @@ func (t *transpiler) gosxUIPropsType(tag string) (string, bool) {
 
 func (t *transpiler) emitTypedComponentCall(tag, propsType string, attrs []string, children []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s(%s{", tag, propsType)
+	literalType, pointer := typedPropsLiteralType(propsType)
+	b.WriteString(tag)
+	b.WriteByte('(')
+	if pointer {
+		b.WriteByte('&')
+	}
+	b.WriteString(literalType)
+	b.WriteByte('{')
 	for i, attr := range attrs {
 		if i > 0 {
 			b.WriteString(", ")
@@ -446,19 +633,82 @@ func (t *transpiler) emitTypedComponentCall(tag, propsType string, attrs []strin
 	return b.String()
 }
 
+func typedPropsLiteralType(propsType string) (string, bool) {
+	propsType = strings.TrimSpace(propsType)
+	if strings.HasPrefix(propsType, "*") {
+		return strings.TrimSpace(strings.TrimPrefix(propsType, "*")), true
+	}
+	return propsType, false
+}
+
 func (t *transpiler) emitAttrs(n *gotreesitter.Node) []string {
-	return t.emitAttrsWithMode(n, false)
+	return t.emitAttrsWithMode(n, false, false)
 }
 
 func (t *transpiler) emitTypedAttrs(n *gotreesitter.Node) []string {
-	return t.emitAttrsWithMode(n, true)
+	return t.emitAttrsWithMode(n, true, false)
+}
+
+func (t *transpiler) emitHTMLAttrs(n *gotreesitter.Node) []string {
+	return t.emitAttrsWithMode(n, false, true)
 }
 
 func (t *transpiler) emitTypedAttrsForTag(tag string, n *gotreesitter.Node) []string {
 	if t.isGoSXUITag(tag) {
 		return t.emitGoSXUIAttrs(tag, n)
 	}
-	return t.emitTypedAttrs(n)
+	return t.emitTypedAttrsForType(t.propsTypes[tag], n)
+}
+
+func (t *transpiler) emitTypedAttrsForType(propsType string, n *gotreesitter.Node) []string {
+	baseType, _ := typedPropsLiteralType(propsType)
+	if idx := strings.LastIndex(baseType, "."); idx >= 0 {
+		baseType = baseType[idx+1:]
+	}
+	if idx := strings.Index(baseType, "["); idx >= 0 {
+		baseType = baseType[:idx]
+	}
+	aliases := t.propsFields[baseType]
+	var attrs []string
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		switch t.nodeType(child) {
+		case "jsx_spread_attribute":
+			t.errorf(child, "spread attributes are not supported for typed component props")
+		case "jsx_attribute":
+			nameNode := t.childByField(child, "name")
+			if nameNode == nil {
+				continue
+			}
+			name := t.text(nameNode)
+			field := name
+			if resolved := aliases[name]; resolved != "" {
+				field = resolved
+			} else if isLowerASCII(name) {
+				field = upperFirst(name)
+			}
+			value, boolAttr, ok := t.emitAttrValue(child)
+			if !ok {
+				continue
+			}
+			if boolAttr {
+				value = "true"
+			}
+			attrs = append(attrs, field+": "+value)
+		}
+	}
+	return attrs
+}
+
+func isLowerASCII(value string) bool {
+	return value != "" && value[0] >= 'a' && value[0] <= 'z'
+}
+
+func upperFirst(value string) string {
+	if !isLowerASCII(value) {
+		return value
+	}
+	return string(value[0]-'a'+'A') + value[1:]
 }
 
 func (t *transpiler) isGoSXUITag(tag string) bool {
@@ -498,14 +748,14 @@ func (t *transpiler) emitGoSXUIAttrs(tag string, n *gotreesitter.Node) []string 
 				baseFields = append(baseFields, fmt.Sprintf("%s: %s", field, value))
 				continue
 			}
-			extraAttrs = append(extraAttrs, fmt.Sprintf("gosx.Attr(%q, %s)", name, value))
+			extraAttrs = append(extraAttrs, fmt.Sprintf("%s(%q, %s)", t.gosxRef("Attr"), name, value))
 		case "jsx_spread_attribute":
 			t.errorf(child, "spread attributes are not supported for typed component props")
 		}
 	}
 
 	if len(extraAttrs) > 0 {
-		baseFields = append(baseFields, fmt.Sprintf("Attrs: gosx.Attrs(%s)", strings.Join(extraAttrs, ", ")))
+		baseFields = append(baseFields, fmt.Sprintf("Attrs: %s(%s)", t.gosxRef("Attrs"), strings.Join(extraAttrs, ", ")))
 	}
 	if gosxUIUsesNestedInputProps(component) {
 		inputLiteral := t.emitGoSXUIInputProps(alias, baseFields, inputFields)
@@ -532,13 +782,13 @@ func (t *transpiler) emitGoSXUIInputProps(alias string, baseFields []string, inp
 	return fmt.Sprintf("InputProps: %s.InputProps{%s}", alias, strings.Join(fields, ", "))
 }
 
-func (t *transpiler) emitAttrsWithMode(n *gotreesitter.Node, typed bool) []string {
+func (t *transpiler) emitAttrsWithMode(n *gotreesitter.Node, typed, htmlElement bool) []string {
 	var attrs []string
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
 		switch t.nodeType(child) {
 		case "jsx_attribute":
-			attr := t.emitAttrWithMode(child, typed)
+			attr := t.emitAttrWithMode(child, typed, htmlElement)
 			if attr != "" {
 				attrs = append(attrs, attr)
 			}
@@ -549,7 +799,7 @@ func (t *transpiler) emitAttrsWithMode(n *gotreesitter.Node, typed bool) []strin
 			}
 			exprNode := t.childByField(child, "expression")
 			if exprNode != nil {
-				attrs = append(attrs, fmt.Sprintf("gosx.Spread(%s)", t.text(exprNode)))
+				attrs = append(attrs, fmt.Sprintf("%s(%s)", t.gosxRef("Spread"), t.text(exprNode)))
 			}
 		}
 	}
@@ -557,15 +807,23 @@ func (t *transpiler) emitAttrsWithMode(n *gotreesitter.Node, typed bool) []strin
 }
 
 func (t *transpiler) emitAttr(n *gotreesitter.Node) string {
-	return t.emitAttrWithMode(n, false)
+	return t.emitAttrWithMode(n, false, false)
 }
 
-func (t *transpiler) emitAttrWithMode(n *gotreesitter.Node, typed bool) string {
+func (t *transpiler) emitAttrWithMode(n *gotreesitter.Node, typed, htmlElement bool) string {
 	nameNode := t.childByField(n, "name")
 	if nameNode == nil {
 		return ""
 	}
 	name := t.text(nameNode)
+	if htmlElement && t.strict > 0 {
+		switch name {
+		case "className":
+			name = "class"
+		case "htmlFor":
+			name = "for"
+		}
+	}
 
 	value, boolAttr, ok := t.emitAttrValue(n)
 	if !ok {
@@ -575,12 +833,12 @@ func (t *transpiler) emitAttrWithMode(n *gotreesitter.Node, typed bool) string {
 		if typed {
 			return fmt.Sprintf("%s: true", name)
 		}
-		return fmt.Sprintf("gosx.BoolAttr(%q)", name)
+		return fmt.Sprintf("%s(%q)", t.gosxRef("BoolAttr"), name)
 	}
 	if typed {
 		return fmt.Sprintf("%s: %s", name, value)
 	}
-	return fmt.Sprintf("gosx.Attr(%q, %s)", name, value)
+	return fmt.Sprintf("%s(%q, %s)", t.gosxRef("Attr"), name, value)
 }
 
 func (t *transpiler) emitAttrValue(n *gotreesitter.Node) (string, bool, bool) {
