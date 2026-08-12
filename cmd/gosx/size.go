@@ -140,7 +140,7 @@ func cmdSizeReport() {
 			os.Exit(1)
 		}
 		outPath := filepath.Join(ouroborosOut, "size", "route-assets.json")
-		if err := ouroboros.WriteNewJSONFile(outPath, evidence); err != nil {
+		if err := ouroboros.WriteNewCanonicalSizeEvidence(outPath, evidence); err != nil {
 			fmt.Fprintf(os.Stderr, "size error: write Ouroboros evidence: %v\n", err)
 			os.Exit(1)
 		}

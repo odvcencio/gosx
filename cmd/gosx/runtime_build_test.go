@@ -95,7 +95,11 @@ func TestCanonicalRuntimeBuildRollsBackOutputWhenReceiptWriteFails(t *testing.T)
 	outDir := filepath.Join(t.TempDir(), "runtime")
 	evidenceRoot := filepath.Join(t.TempDir(), "evidence")
 	stubSuccessfulRuntimeBuild(t, repoRoot)
-	runtimeWriteBuildEvidence = func(string, *ouroboros.RuntimeBuildEvidence) error {
+	runtimeWriteBuildEvidence = func(root string, _ *ouroboros.RuntimeBuildEvidence) error {
+		path := filepath.Join(root, "wasm", "runtime-artifacts.json")
+		if err := os.WriteFile(path, []byte("partial receipt"), 0o644); err != nil {
+			return err
+		}
 		return errors.New("receipt disk full")
 	}
 
@@ -109,6 +113,60 @@ func TestCanonicalRuntimeBuildRollsBackOutputWhenReceiptWriteFails(t *testing.T)
 	}
 	if _, statErr := os.Lstat(outDir); !os.IsNotExist(statErr) {
 		t.Fatalf("runtime output survived failed receipt publication: %v", statErr)
+	}
+	for _, path := range []string{
+		filepath.Join(evidenceRoot, "wasm", "runtime-artifacts.json"),
+		filepath.Join(evidenceRoot, filepath.FromSlash(canonicalRuntimeBundleRoot)),
+	} {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("runtime evidence survived failed receipt publication at %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestCanonicalRuntimeBuildRejectsOutputOverlappingEvidenceBundle(t *testing.T) {
+	restore := saveRuntimeBuildHooks()
+	defer restore()
+
+	repoRoot := t.TempDir()
+	evidenceRoot := filepath.Join(t.TempDir(), "evidence")
+	outDir := filepath.Join(evidenceRoot, filepath.FromSlash(canonicalRuntimeBundleRoot), "output")
+	runtimeResolveGoSXModuleRoot = func(string) (string, error) {
+		t.Fatal("runtime resolution ran after publication overlap")
+		return "", nil
+	}
+	err := RunBuildRuntimeWithOptions(outDir, buildRuntimeOptions{
+		OuroborosOut: evidenceRoot,
+		RepoRoot:     repoRoot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "overlaps evidence bundle") {
+		t.Fatalf("publication overlap error = %v", err)
+	}
+}
+
+func TestCanonicalRuntimeBuildRefusesExistingEvidenceBundle(t *testing.T) {
+	restore := saveRuntimeBuildHooks()
+	defer restore()
+
+	repoRoot := t.TempDir()
+	evidenceRoot := filepath.Join(t.TempDir(), "evidence")
+	bundlePath := filepath.Join(evidenceRoot, filepath.FromSlash(canonicalRuntimeBundleRoot))
+	if err := os.MkdirAll(bundlePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(bundlePath, "owned")
+	if err := os.WriteFile(marker, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := RunBuildRuntimeWithOptions(filepath.Join(t.TempDir(), "runtime"), buildRuntimeOptions{
+		OuroborosOut: evidenceRoot,
+		RepoRoot:     repoRoot,
+	})
+	if err == nil || !strings.Contains(err.Error(), "bundle already exists") {
+		t.Fatalf("existing bundle error = %v", err)
+	}
+	if data, readErr := os.ReadFile(marker); readErr != nil || string(data) != "keep" {
+		t.Fatalf("existing bundle was mutated: data=%q err=%v", data, readErr)
 	}
 }
 
@@ -157,6 +215,17 @@ func TestCanonicalRuntimeBuildWritesPortableMeasuredEvidence(t *testing.T) {
 		}
 		if variant.PlannedSelectedBy == nil || len(variant.PlannedSelectedBy) != 0 {
 			t.Fatalf("variant %s route receipt = %#v", variant.ID, variant.PlannedSelectedBy)
+		}
+		wantSource := canonicalRuntimeBundleRoot + "/" + variant.File
+		if variant.SourcePath != wantSource || variant.Shim == nil || variant.Shim.SourcePath != canonicalRuntimeBundleRoot+"/wasm_exec.js" {
+			t.Fatalf("variant %s is not bound to the canonical bundle: %+v", variant.ID, variant)
+		}
+		bundled, err := ouroboros.MetricsForFile(filepath.Join(evidenceRoot, filepath.FromSlash(variant.SourcePath)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bundled.SHA256 != variant.SHA256 || bundled.Bytes != variant.Bytes || bundled.GzipBytes != variant.GzipBytes || bundled.BrotliBytes != variant.BrotliBytes {
+			t.Fatalf("variant %s receipt does not match bundle: receipt=%+v bundle=%+v", variant.ID, variant, bundled)
 		}
 	}
 }

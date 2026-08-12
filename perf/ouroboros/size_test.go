@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -110,6 +112,52 @@ func TestBuildSizeEvidenceResolvesHashedURLsWithQuery(t *testing.T) {
 	}
 	if asset := findAssetByURL(report.Assets, "/gosx/assets/runtime/bootstrap-runtime.abcd.js"); asset == nil || asset.ManifestHash != "abcd" {
 		t.Fatalf("hashed asset not resolved through manifest: %#v", report.Assets)
+	}
+}
+
+func TestBuildSizeEvidenceResolvesCapabilityRuntimeVariants(t *testing.T) {
+	dir := t.TempDir()
+	runtimeDir := filepath.Join(dir, "assets", "runtime")
+	body := "core-runtime"
+	writeTestFile(t, filepath.Join(runtimeDir, "gosx-runtime-core.abcd.wasm"), body)
+	hash := shaHex(body)
+	writeTestFile(t, filepath.Join(dir, "build.json"), fmt.Sprintf(`{
+  "runtime": {"wasmVariants":{"core":{"file":"gosx-runtime-core.abcd.wasm","hash":"%s","size":%d,"variant":"core","featureMask":17,"manifestHash":"abi"}}},
+  "islands": [], "css": []
+}`, hash[:16], len(body)))
+	writeTestFile(t, filepath.Join(dir, "export.json"), `{"pages":["/a"],"routes":[{"path":"/a","file":"a/index.html","capabilities":{"wasm":true}}]}`)
+	writeTestFile(t, filepath.Join(dir, "static", "a", "index.html"), `<script src="/gosx/runtime-core.wasm"></script>`)
+
+	report, err := BuildSizeEvidenceWithOptions(SizeEvidenceOptions{
+		ManifestPath: filepath.Join(dir, "build.json"),
+		DistDir:      dir,
+		RepoRoot:     ".",
+		ArtifactRoot: t.TempDir(),
+		Canonical:    false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := findAssetByURL(report.Assets, "/gosx/runtime-core.wasm")
+	if asset == nil || asset.SHA256 != hash || len(report.Routes) != 1 || !slices.Contains(report.Routes[0].AssetIDs, asset.ID) {
+		t.Fatalf("capability runtime variant was not attributed: report=%+v", report)
+	}
+}
+
+func TestMergeTransferredAssetsPointsDuplicatesToFirstContent(t *testing.T) {
+	first := TransferredAsset{ID: "first", SHA256: strings.Repeat("a", 64)}
+	report := &SizeEvidence{Assets: []TransferredAsset{first}}
+	mergeTransferredAssets(report, []TransferredAsset{
+		{ID: "second", SHA256: first.SHA256},
+		{ID: "third", SHA256: first.SHA256, DuplicateOf: "second"},
+	})
+	if len(report.Assets) != 3 {
+		t.Fatalf("asset count = %d, want 3", len(report.Assets))
+	}
+	for _, asset := range report.Assets[1:] {
+		if asset.DuplicateOf != first.ID {
+			t.Fatalf("asset %s duplicateOf = %q, want first asset %q", asset.ID, asset.DuplicateOf, first.ID)
+		}
 	}
 }
 
@@ -224,6 +272,47 @@ func TestLoadExportEvidenceStrictRejectsMissingMalformedAndDuplicateRoutes(t *te
 	if _, err := loadExportEvidence(missingCanonical, true); err == nil || !strings.Contains(err.Error(), "missing canonical Ouroboros routes") {
 		t.Fatalf("loadExportEvidence missing canonical routes error = %v", err)
 	}
+}
+
+func TestLoadExportEvidenceAcceptsRealPrerenderSchema(t *testing.T) {
+	t.Run("primary", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "export.json")
+		writeTestFile(t, path, `{
+  "pages": ["/static"],
+  "routes": [{
+    "path": "/static",
+    "file": "static/index.html",
+    "revalidateSeconds": 60,
+    "tags": ["docs", "release"],
+    "capabilities": {"navigation": false, "bootstrap": false, "wasm": false}
+  }]
+}`)
+		evidence, err := loadExportEvidenceForRoutes(path, true, map[string]bool{"/static": true})
+		if err != nil {
+			t.Fatalf("real primary export schema rejected: %v", err)
+		}
+		if len(evidence.routes) != 1 || evidence.routes[0].RevalidateSeconds != 60 || len(evidence.routes[0].Tags) != 2 {
+			t.Fatalf("real primary export route was not decoded: %+v", evidence.routes)
+		}
+	})
+
+	t.Run("external R10", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "export.json")
+		writeTestFile(t, path, `{
+  "pages": ["/docs/intro", "/demos/water"],
+  "routes": [
+    {"path":"/docs/intro","file":"docs/intro/index.html","revalidateSeconds":300,"tags":["docs"],"capabilities":{"bootstrap":true}},
+    {"path":"/demos/water","file":"demos/water/index.html","tags":["demo"],"capabilities":{"bootstrap":true,"engines":1,"scene3d":true}}
+  ]
+}`)
+		evidence, err := loadCanonicalR10ExportEvidence(path)
+		if err != nil {
+			t.Fatalf("real R10 export schema rejected: %v", err)
+		}
+		if len(evidence.routes) != 1 || evidence.routes[0].Path != "/demos/water" || len(evidence.routes[0].Tags) != 1 {
+			t.Fatalf("real R10 export route was not selected: %+v", evidence.routes)
+		}
+	})
 }
 
 func TestValidateExportHTMLAttributionAllowsMeasuredZeroR00AndR05WithoutRefs(t *testing.T) {
@@ -433,6 +522,23 @@ func TestWriteNewJSONFileRefusesOverwrite(t *testing.T) {
 	}
 }
 
+func TestWriteNewCanonicalSizeEvidenceRollsBackBundleOnReceiptFailure(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "size", "input")
+	writeTestFile(t, filepath.Join(bundle, "primary", "build.json"), `{}`)
+	receipt := filepath.Join(root, "size", "route-assets.json")
+	if err := os.MkdirAll(receipt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteNewCanonicalSizeEvidence(receipt, &SizeEvidence{Canonical: true, BundleRoot: "size/input"})
+	if err == nil {
+		t.Fatal("expected receipt creation failure")
+	}
+	if _, statErr := os.Stat(bundle); !os.IsNotExist(statErr) {
+		t.Fatalf("failed canonical receipt left input bundle behind: %v", statErr)
+	}
+}
+
 func TestBuildSizeEvidenceRejectsInventoryOverlayMismatch(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "build.json"), `{"runtime":{},"islands":[],"css":[]}`)
@@ -552,9 +658,11 @@ func writeCanonicalExportSkeleton(t *testing.T, dir string) {
 		Capabilities *ExportCapabilities `json:"capabilities"`
 	}
 	raw := struct {
-		Routes []route `json:"routes"`
+		Pages  []string `json:"pages"`
+		Routes []route  `json:"routes"`
 	}{}
 	for _, routePath := range paths {
+		raw.Pages = append(raw.Pages, routePath)
 		file := strings.TrimPrefix(routePath, "/") + "/index.html"
 		capabilities := &ExportCapabilities{Bootstrap: true}
 		raw.Routes = append(raw.Routes, route{Path: routePath, File: file, Capabilities: capabilities})

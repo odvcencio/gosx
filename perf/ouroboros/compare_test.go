@@ -2,7 +2,10 @@ package ouroboros
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -86,6 +89,14 @@ func measuredRuntimeEvidenceFixture() *RuntimeBuildEvidence {
 		{"full", "full", 31},
 		{"islands", "islands", 17},
 	}
+	shim := &AssetMetrics{
+		File:        "wasm_exec.js",
+		SourcePath:  "wasm_exec.js",
+		SHA256:      strings.Repeat("b", 64),
+		Bytes:       50,
+		GzipBytes:   40,
+		BrotliBytes: 35,
+	}
 	evidence := &RuntimeBuildEvidence{Variants: make([]RuntimeArtifactVariant, 0, len(ids))}
 	for _, item := range ids {
 		size := int64(100)
@@ -102,10 +113,172 @@ func measuredRuntimeEvidenceFixture() *RuntimeBuildEvidence {
 			Bytes:             size,
 			GzipBytes:         80,
 			BrotliBytes:       70,
+			Shim:              shim,
 			PlannedSelectedBy: []string{},
 		})
 	}
 	return evidence
+}
+
+func TestValidateCanonicalRuntimeEvidenceBundleRecomputesBundledBytes(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, filepath.Join(root, "manifest.json"), []byte(`{}`))
+	paths, err := resolveCompareManifestPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := writeCanonicalRuntimeBundleFixture(t, root)
+	if err := validateRuntimeEvidenceForCompare(evidence); err != nil {
+		t.Fatalf("valid runtime receipt rejected structurally: %v", err)
+	}
+	if err := validateCanonicalRuntimeEvidenceBundle(paths, evidence); err != nil {
+		t.Fatalf("valid runtime bundle rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*RuntimeBuildEvidence)
+		want   string
+	}{
+		{
+			name: "fabricated coherent metrics",
+			mutate: func(ev *RuntimeBuildEvidence) {
+				body := []byte("fabricated-smaller-runtime")
+				sum := sha256.Sum256(body)
+				variant := &ev.Variants[0]
+				variant.SHA256 = hex.EncodeToString(sum[:])
+				variant.Bytes = int64(len(body))
+				variant.GzipBytes = GzipLength(body)
+				variant.BrotliBytes = BrotliLength(body)
+				variant.SizeBytes = int64Pointer(int64(len(body)))
+			},
+			want: "does not match bundled bytes",
+		},
+		{
+			name: "artifact escape",
+			mutate: func(ev *RuntimeBuildEvidence) {
+				ev.Variants[0].SourcePath = "../../outside.wasm"
+			},
+			want: "artifact path",
+		},
+		{
+			name: "mutated shim receipt",
+			mutate: func(ev *RuntimeBuildEvidence) {
+				for i := range ev.Variants {
+					shim := *ev.Variants[i].Shim
+					shim.Bytes++
+					ev.Variants[i].Shim = &shim
+				}
+			},
+			want: "wasm_exec.js receipt does not match bundled bytes",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			copyEvidence := cloneRuntimeEvidence(t, evidence)
+			test.mutate(copyEvidence)
+			err := validateCanonicalRuntimeEvidenceBundle(paths, copyEvidence)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("mutation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestCanonicalRuntimeLoaderRejectsMutableReceiptMetrics(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, filepath.Join(root, "manifest.json"), []byte(`{}`))
+	paths, err := resolveCompareManifestPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := writeCanonicalRuntimeBundleFixture(t, root)
+	source := compareSource("-runtime-bundle")
+	evidence.SchemaVersion = SchemaVersion
+	evidence.Contract = ContractO02
+	evidence.Source = source
+	evidence.Variants[0].Bytes++
+	evidence.Variants[0].SizeBytes = int64Pointer(evidence.Variants[0].Bytes)
+	writeFixtureJSON(t, filepath.Join(root, "wasm", "runtime-artifacts.json"), evidence)
+
+	_, _, err = loadOptionalRuntimeEvidence(paths, source, CompareModeCanonical)
+	if err == nil || !strings.Contains(err.Error(), "does not match bundled bytes") {
+		t.Fatalf("mutable runtime receipt error = %v", err)
+	}
+}
+
+func TestSmokeRuntimeLoaderRejectsMutableReceiptMetrics(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, filepath.Join(root, "manifest.json"), []byte(`{}`))
+	paths, err := resolveCompareManifestPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := writeCanonicalRuntimeBundleFixture(t, root)
+	source := compareSource("-smoke-runtime-bundle")
+	evidence.SchemaVersion = SchemaVersion
+	evidence.Contract = ContractO02
+	evidence.Source = source
+	evidence.Variants[0].GzipBytes++
+	writeFixtureJSON(t, filepath.Join(root, "wasm", "runtime-artifacts.json"), evidence)
+
+	_, _, err = loadOptionalRuntimeEvidence(paths, source, CompareModeSmoke)
+	if err == nil || !strings.Contains(err.Error(), "does not match bundled bytes") {
+		t.Fatalf("smoke mutable runtime receipt error = %v", err)
+	}
+}
+
+func writeCanonicalRuntimeBundleFixture(t *testing.T, root string) *RuntimeBuildEvidence {
+	t.Helper()
+	evidence := measuredRuntimeEvidenceFixture()
+	evidence.BundleRoot = canonicalRuntimeEvidenceBundleRoot
+	evidence.OutputDir = "."
+	wantFiles := map[string]string{
+		"core": "gosx-runtime-core.wasm", "engine": "gosx-runtime-engine.wasm",
+		"collab": "gosx-runtime-collab.wasm", "full": "gosx-runtime.wasm",
+		"islands": "gosx-runtime-islands.wasm",
+	}
+	for i := range evidence.Variants {
+		variant := &evidence.Variants[i]
+		variant.File = wantFiles[variant.ID]
+		variant.SourcePath = canonicalRuntimeEvidenceBundleRoot + "/" + variant.File
+		body := []byte("runtime-bundle:" + variant.ID)
+		writeFixtureFile(t, filepath.Join(root, filepath.FromSlash(variant.SourcePath)), body)
+		metrics, err := MetricsForFile(filepath.Join(root, filepath.FromSlash(variant.SourcePath)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		variant.SHA256 = metrics.SHA256
+		variant.Bytes = metrics.Bytes
+		variant.GzipBytes = metrics.GzipBytes
+		variant.BrotliBytes = metrics.BrotliBytes
+		variant.SizeBytes = int64Pointer(metrics.Bytes)
+	}
+	shimRef := canonicalRuntimeEvidenceBundleRoot + "/wasm_exec.js"
+	writeFixtureFile(t, filepath.Join(root, filepath.FromSlash(shimRef)), []byte("runtime-shim-bundle"))
+	shim, err := MetricsForFile(filepath.Join(root, filepath.FromSlash(shimRef)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shim.SourcePath = shimRef
+	for i := range evidence.Variants {
+		shimCopy := shim
+		evidence.Variants[i].Shim = &shimCopy
+	}
+	return evidence
+}
+
+func cloneRuntimeEvidence(t *testing.T, evidence *RuntimeBuildEvidence) *RuntimeBuildEvidence {
+	t.Helper()
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone RuntimeBuildEvidence
+	if err := json.Unmarshal(data, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return &clone
 }
 
 func TestValidateCanonicalR10SizeProvenanceBindsBothBuilds(t *testing.T) {
@@ -144,6 +317,395 @@ func TestValidateCanonicalR10SizeProvenanceBindsBothBuilds(t *testing.T) {
 	if err := validateCanonicalR10SizeProvenance(evidence, true); err == nil || !strings.Contains(err.Error(), "r10BuildInput") {
 		t.Fatalf("missing R10 build input error = %v", err)
 	}
+}
+
+func TestValidateSizeEvidenceReconcilesAssetsRoutesAndTotals(t *testing.T) {
+	routes := []FixtureSpec{
+		{ID: "R00", Route: "/static"},
+		{ID: "R01", Route: "/lite"},
+		{ID: "R02", Route: "/island/counter"},
+	}
+	if err := validateSizeEvidenceForCompare(validReconciledSizeEvidence(), routes); err != nil {
+		t.Fatalf("valid evidence, including measured-zero R00, rejected: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*SizeEvidence)
+		message string
+	}{
+		{
+			name:    "asset id is content-bound",
+			mutate:  func(ev *SizeEvidence) { ev.Assets[0].ID = "asset-tampered" },
+			message: "does not bind url and sha256",
+		},
+		{
+			name:    "asset sha is valid",
+			mutate:  func(ev *SizeEvidence) { ev.Assets[0].SHA256 = "not-a-sha" },
+			message: "invalid sha256",
+		},
+		{
+			name: "asset ids are unique",
+			mutate: func(ev *SizeEvidence) {
+				ev.Assets[1] = ev.Assets[0]
+			},
+			message: "duplicate asset",
+		},
+		{
+			name: "same content has consistent metrics",
+			mutate: func(ev *SizeEvidence) {
+				ev.Assets[1].SHA256 = ev.Assets[0].SHA256
+				ev.Assets[1].ID = stableAssetID(ev.Assets[1].URL, ev.Assets[1].SHA256)
+			},
+			message: "inconsistent transfer metrics",
+		},
+		{
+			name:    "duplicate linkage is acyclic and content-bound",
+			mutate:  func(ev *SizeEvidence) { ev.Assets[1].DuplicateOf = ev.Assets[1].ID },
+			message: "duplicateOf",
+		},
+		{
+			name: "duplicate linkage names first same-content asset",
+			mutate: func(ev *SizeEvidence) {
+				ev.Assets[1].SHA256 = ev.Assets[0].SHA256
+				ev.Assets[1].ID = stableAssetID(ev.Assets[1].URL, ev.Assets[1].SHA256)
+				ev.Assets[1].Bytes = ev.Assets[0].Bytes
+				ev.Assets[1].GzipBytes = ev.Assets[0].GzipBytes
+				ev.Assets[1].BrotliBytes = ev.Assets[0].BrotliBytes
+				ev.Assets[1].DuplicateOf = ""
+			},
+			message: "want first same-content asset",
+		},
+		{
+			name:    "route asset exists",
+			mutate:  func(ev *SizeEvidence) { ev.Routes[1].AssetIDs[0] = "asset-missing" },
+			message: "references unknown asset",
+		},
+		{
+			name: "route asset is unique",
+			mutate: func(ev *SizeEvidence) {
+				ev.Routes[1].AssetIDs = append(ev.Routes[1].AssetIDs, ev.Routes[1].AssetIDs[0])
+			},
+			message: "duplicate asset id",
+		},
+		{
+			name:    "route totals cannot be zeroed",
+			mutate:  func(ev *SizeEvidence) { ev.Routes[1].RawBytes = 0 },
+			message: "rawBytes",
+		},
+		{
+			name:    "shared attribution cannot be zeroed",
+			mutate:  func(ev *SizeEvidence) { ev.Routes[1].SharedGzipBytes = 0 },
+			message: "sharedGzipBytes",
+		},
+		{
+			name:    "unique attribution cannot be zeroed",
+			mutate:  func(ev *SizeEvidence) { ev.Routes[1].UniqueBrotliBytes = 0 },
+			message: "uniqueBrotliBytes",
+		},
+		{
+			name:    "asset route ownership is reconciled",
+			mutate:  func(ev *SizeEvidence) { ev.Assets[0].UsedByRoutes = nil },
+			message: "usedByRoutes",
+		},
+		{
+			name:    "shared attribution comment is reconciled",
+			mutate:  func(ev *SizeEvidence) { ev.Routes[1].AttributionComment = "mutable claim" },
+			message: "attributionComment",
+		},
+		{
+			name:    "global totals cannot be zeroed",
+			mutate:  func(ev *SizeEvidence) { ev.Totals = SizeEvidenceTotals{} },
+			message: "recomputed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evidence := validReconciledSizeEvidence()
+			test.mutate(evidence)
+			err := validateSizeEvidenceForCompare(evidence, routes)
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("validation error = %v, want %q", err, test.message)
+			}
+		})
+	}
+}
+
+func TestCanonicalCompareRejectsNoncanonicalZeroSizeReceipt(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "size"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := compareSource("-noncanonical-size")
+	writeFixtureJSON(t, filepath.Join(root, "size", "route-assets.json"), SizeEvidence{
+		SchemaVersion: SchemaVersion,
+		Contract:      ContractO02,
+		Source:        source,
+		Canonical:     false,
+		Assets:        []TransferredAsset{},
+		Routes: []RouteAssetEvidence{{
+			ID:       "R00",
+			Route:    "/static",
+			AssetIDs: nil,
+		}},
+		Totals: SizeEvidenceTotals{RouteCount: 1},
+	})
+	_, _, err := loadOptionalSizeEvidence(
+		comparePathSet{root: root, rootReal: root},
+		source,
+		[]FixtureSpec{{ID: "R00", Route: "/static"}},
+		CompareModeCanonical,
+	)
+	if err == nil || !strings.Contains(err.Error(), "requires canonical size evidence") {
+		t.Fatalf("canonical size downgrade error = %v", err)
+	}
+}
+
+func TestCompareRejectsManifestSamplingDowngrade(t *testing.T) {
+	root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{})
+	var manifest BrowserManifest
+	readFixtureJSON(t, filepath.Join(root, "manifest.json"), &manifest)
+	manifest.Canonical = true
+	manifest.Sampling.Canonical = false
+	writeFixtureJSON(t, filepath.Join(root, "manifest.json"), manifest)
+	_, err := loadCompareArtifact(filepath.Join(root, "manifest.json"), CompareModeCanonical, "")
+	if err == nil || !strings.Contains(err.Error(), "sampling canonical") {
+		t.Fatalf("manifest sampling downgrade error = %v", err)
+	}
+}
+
+func TestCompareRejectsMutableSmokeSamplingPlan(t *testing.T) {
+	root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{})
+	var manifest BrowserManifest
+	readFixtureJSON(t, filepath.Join(root, "manifest.json"), &manifest)
+	manifest.Sampling.PilotsDiscarded = 99
+	writeFixtureJSON(t, filepath.Join(root, "manifest.json"), manifest)
+	_, err := loadCompareArtifact(filepath.Join(root, "manifest.json"), CompareModeSmoke, "")
+	if err == nil || !strings.Contains(err.Error(), "sampling plan") {
+		t.Fatalf("mutable smoke sampling plan error = %v", err)
+	}
+}
+
+func TestCanonicalSizeBundleRejectsCoherentFabricatedMetrics(t *testing.T) {
+	root := t.TempDir()
+	inputDir := filepath.Join(root, "size", "input", "primary")
+	runtimeDir := filepath.Join(inputDir, "assets", "runtime")
+	writeFixtureFile(t, filepath.Join(runtimeDir, "bootstrap-runtime.js"), []byte("real-runtime"))
+	buildJSON := []byte(`{"runtime":{"bootstrapRuntime":{"file":"bootstrap-runtime.js","hash":"manifest-hash","size":12}},"islands":[],"css":[]}`)
+	exportJSON := []byte(`{"pages":["/lite"],"routes":[{"path":"/lite","file":"static/lite/index.html","capabilities":{"bootstrap":true}}]}`)
+	writeFixtureFile(t, filepath.Join(inputDir, "build.json"), buildJSON)
+	writeFixtureFile(t, filepath.Join(inputDir, "export.json"), exportJSON)
+	writeFixtureFile(t, filepath.Join(inputDir, "static", "lite", "index.html"), []byte(`<script src="/gosx/bootstrap-runtime.js"></script>`))
+	fabricatedSHA := strings.Repeat("f", 64)
+	fabricatedID := stableAssetID("/gosx/bootstrap-runtime.js", fabricatedSHA)
+	evidence := &SizeEvidence{
+		Canonical:  true,
+		BundleRoot: "size/input",
+		BuildInput: BuildInputEvidence{
+			ManifestSHA256: hashFixtureBytes(buildJSON),
+			ExportSHA256:   hashFixtureBytes(exportJSON),
+		},
+		Assets: []TransferredAsset{{
+			ID:           fabricatedID,
+			URL:          "/gosx/bootstrap-runtime.js",
+			SourcePath:   "primary/assets/runtime/bootstrap-runtime.js",
+			EvidencePath: "size/input/primary/assets/runtime/bootstrap-runtime.js",
+			ManifestHash: "manifest-hash",
+			SHA256:       fabricatedSHA,
+			Bytes:        1,
+			GzipBytes:    1,
+			BrotliBytes:  1,
+			UsedByRoutes: []string{"/lite"},
+		}},
+		Routes: []RouteAssetEvidence{{
+			ID:                "R01",
+			Route:             "/lite",
+			File:              "static/lite/index.html",
+			Capabilities:      &ExportCapabilities{Bootstrap: true},
+			AssetIDs:          []string{fabricatedID},
+			RawBytes:          1,
+			GzipBytes:         1,
+			BrotliBytes:       1,
+			UniqueRawBytes:    1,
+			UniqueGzipBytes:   1,
+			UniqueBrotliBytes: 1,
+		}},
+	}
+	fillSizeEvidenceTotals(evidence)
+	paths, err := resolveCompareManifestPath(writeMinimalCompareManifest(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateCanonicalSizeEvidenceBundle(paths, evidence)
+	if err == nil || !(strings.Contains(err.Error(), "build manifest hash/size") || strings.Contains(err.Error(), "metrics do not match bundled bytes")) {
+		t.Fatalf("coherent fabricated metrics error = %v", err)
+	}
+}
+
+func TestCanonicalSizeBundleRejectsManifestHashNotBoundToBytes(t *testing.T) {
+	root := t.TempDir()
+	inputDir := filepath.Join(root, "size", "input", "primary")
+	runtimeBody := []byte("real-runtime")
+	runtimeSHA := sha256.Sum256(runtimeBody)
+	runtimeHex := hex.EncodeToString(runtimeSHA[:])
+	runtimeDir := filepath.Join(inputDir, "assets", "runtime")
+	writeFixtureFile(t, filepath.Join(runtimeDir, "bootstrap-runtime.js"), runtimeBody)
+	buildJSON := []byte(`{"runtime":{"bootstrapRuntime":{"file":"bootstrap-runtime.js","hash":"wrong-manifest-hash","size":12}},"islands":[],"css":[]}`)
+	exportJSON := []byte(`{"pages":["/lite"],"routes":[{"path":"/lite","file":"static/lite/index.html","capabilities":{"bootstrap":true}}]}`)
+	writeFixtureFile(t, filepath.Join(inputDir, "build.json"), buildJSON)
+	writeFixtureFile(t, filepath.Join(inputDir, "export.json"), exportJSON)
+	writeFixtureFile(t, filepath.Join(inputDir, "static", "lite", "index.html"), []byte(`<script src="/gosx/bootstrap-runtime.js"></script>`))
+	id := stableAssetID("/gosx/bootstrap-runtime.js", runtimeHex)
+	evidence := &SizeEvidence{
+		Canonical:  true,
+		BundleRoot: "size/input",
+		BuildInput: BuildInputEvidence{ManifestSHA256: hashFixtureBytes(buildJSON), ExportSHA256: hashFixtureBytes(exportJSON)},
+		Assets: []TransferredAsset{{
+			ID: id, URL: "/gosx/bootstrap-runtime.js", SourcePath: "primary/assets/runtime/bootstrap-runtime.js",
+			EvidencePath: "size/input/primary/assets/runtime/bootstrap-runtime.js", ManifestHash: "wrong-manifest-hash",
+			SHA256: runtimeHex, Bytes: int64(len(runtimeBody)), GzipBytes: GzipLength(runtimeBody), BrotliBytes: BrotliLength(runtimeBody), UsedByRoutes: []string{"/lite"},
+		}},
+		Routes: []RouteAssetEvidence{{
+			ID: "R01", Route: "/lite", File: "static/lite/index.html", Capabilities: &ExportCapabilities{Bootstrap: true}, AssetIDs: []string{id},
+			RawBytes: int64(len(runtimeBody)), GzipBytes: GzipLength(runtimeBody), BrotliBytes: BrotliLength(runtimeBody),
+			UniqueRawBytes: int64(len(runtimeBody)), UniqueGzipBytes: GzipLength(runtimeBody), UniqueBrotliBytes: BrotliLength(runtimeBody),
+		}},
+	}
+	fillSizeEvidenceTotals(evidence)
+	paths, err := resolveCompareManifestPath(writeMinimalCompareManifest(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = validateCanonicalSizeEvidenceBundle(paths, evidence)
+	if err == nil || !strings.Contains(err.Error(), "manifest hash does not bind bundled bytes") {
+		t.Fatalf("unbound manifest hash error = %v", err)
+	}
+}
+
+func TestCanonicalSizeBundleAcceptsManifestBoundInputs(t *testing.T) {
+	root := t.TempDir()
+	inputDir := filepath.Join(root, "size", "input", "primary")
+	runtimeBody := []byte("real-runtime")
+	runtimeSHA := sha256.Sum256(runtimeBody)
+	runtimeHex := hex.EncodeToString(runtimeSHA[:])
+	runtimeDir := filepath.Join(inputDir, "assets", "runtime")
+	writeFixtureFile(t, filepath.Join(runtimeDir, "bootstrap-runtime.js"), runtimeBody)
+	buildJSON := []byte(fmt.Sprintf(`{"runtime":{"bootstrapRuntime":{"file":"bootstrap-runtime.js","hash":"%s","size":12}},"islands":[],"css":[]}`, runtimeHex[:16]))
+	exportJSON := []byte(`{"pages":["/lite"],"routes":[{"path":"/lite","file":"static/lite/index.html","capabilities":{"bootstrap":true}}]}`)
+	writeFixtureFile(t, filepath.Join(inputDir, "build.json"), buildJSON)
+	writeFixtureFile(t, filepath.Join(inputDir, "export.json"), exportJSON)
+	writeFixtureFile(t, filepath.Join(inputDir, "static", "lite", "index.html"), []byte(`<script src="/gosx/bootstrap-runtime.js"></script>`))
+	id := stableAssetID("/gosx/bootstrap-runtime.js", runtimeHex)
+	evidence := &SizeEvidence{
+		Canonical:  true,
+		BundleRoot: "size/input",
+		BuildInput: BuildInputEvidence{ManifestSHA256: hashFixtureBytes(buildJSON), ExportSHA256: hashFixtureBytes(exportJSON)},
+		Assets: []TransferredAsset{{
+			ID: id, URL: "/gosx/bootstrap-runtime.js", SourcePath: "primary/assets/runtime/bootstrap-runtime.js",
+			EvidencePath: "size/input/primary/assets/runtime/bootstrap-runtime.js", ManifestHash: runtimeHex[:16],
+			SHA256: runtimeHex, Bytes: int64(len(runtimeBody)), GzipBytes: GzipLength(runtimeBody), BrotliBytes: BrotliLength(runtimeBody), UsedByRoutes: []string{"/lite"},
+		}},
+		Routes: []RouteAssetEvidence{{
+			ID: "R01", Route: "/lite", File: "static/lite/index.html", Capabilities: &ExportCapabilities{Bootstrap: true}, AssetIDs: []string{id},
+			RawBytes: int64(len(runtimeBody)), GzipBytes: GzipLength(runtimeBody), BrotliBytes: BrotliLength(runtimeBody),
+			UniqueRawBytes: int64(len(runtimeBody)), UniqueGzipBytes: GzipLength(runtimeBody), UniqueBrotliBytes: BrotliLength(runtimeBody),
+		}},
+	}
+	fillSizeEvidenceTotals(evidence)
+	paths, err := resolveCompareManifestPath(writeMinimalCompareManifest(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCanonicalSizeEvidenceBundle(paths, evidence); err != nil {
+		t.Fatalf("manifest-bound canonical size bundle rejected: %v", err)
+	}
+}
+
+func hashFixtureBytes(body []byte) string {
+	sum := sha256.Sum256(body)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func writeFixtureFile(t *testing.T, path string, body []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeMinimalCompareManifest(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "manifest.json")
+	writeFixtureJSON(t, path, map[string]string{"artifact": "root"})
+	return path
+}
+
+func validReconciledSizeEvidence() *SizeEvidence {
+	sharedSHA := strings.Repeat("a", 64)
+	uniqueSHA := strings.Repeat("b", 64)
+	sharedID := stableAssetID("/gosx/bootstrap-runtime.js", sharedSHA)
+	uniqueID := stableAssetID("/gosx/runtime.wasm", uniqueSHA)
+	evidence := &SizeEvidence{
+		Canonical:  true,
+		BuildInput: BuildInputEvidence{ManifestSHA256: "sha256:" + strings.Repeat("c", 64)},
+		Assets: []TransferredAsset{
+			{
+				ID:           sharedID,
+				URL:          "/gosx/bootstrap-runtime.js",
+				SHA256:       sharedSHA,
+				Bytes:        100,
+				GzipBytes:    70,
+				BrotliBytes:  60,
+				UsedByRoutes: []string{"/island/counter", "/lite"},
+			},
+			{
+				ID:           uniqueID,
+				URL:          "/gosx/runtime.wasm",
+				SHA256:       uniqueSHA,
+				Bytes:        50,
+				GzipBytes:    40,
+				BrotliBytes:  30,
+				UsedByRoutes: []string{"/lite"},
+			},
+		},
+		Routes: []RouteAssetEvidence{
+			{ID: "R00", Route: "/static", Capabilities: &ExportCapabilities{}, AssetIDs: nil},
+			{
+				ID:                 "R01",
+				Route:              "/lite",
+				Capabilities:       &ExportCapabilities{Bootstrap: true},
+				AssetIDs:           []string{sharedID, uniqueID},
+				RawBytes:           150,
+				GzipBytes:          110,
+				BrotliBytes:        90,
+				SharedRawBytes:     100,
+				SharedGzipBytes:    70,
+				SharedBrotliBytes:  60,
+				UniqueRawBytes:     50,
+				UniqueGzipBytes:    40,
+				UniqueBrotliBytes:  30,
+				AttributionComment: sharedRouteAttributionComment,
+			},
+			{
+				ID:                 "R02",
+				Route:              "/island/counter",
+				Capabilities:       &ExportCapabilities{Islands: 1},
+				AssetIDs:           []string{sharedID},
+				RawBytes:           100,
+				GzipBytes:          70,
+				BrotliBytes:        60,
+				SharedRawBytes:     100,
+				SharedGzipBytes:    70,
+				SharedBrotliBytes:  60,
+				AttributionComment: sharedRouteAttributionComment,
+			},
+		},
+	}
+	fillSizeEvidenceTotals(evidence)
+	return evidence
 }
 
 func TestComparePortableManifestSurvivesArtifactRelocation(t *testing.T) {
@@ -487,7 +1049,7 @@ func TestComparePolicyCompatibilityFailures(t *testing.T) {
 	t.Run("smoke rejects canonical", func(t *testing.T) {
 		root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{canonical: true})
 		report := runSmokeCompare(t, root, root)
-		if report.ExitCode != 1 || !reportHasMessage(report, "smoke mode rejects canonical") {
+		if report.ExitCode != 1 || !reportHasMessage(report, "manifest canonical") {
 			t.Fatalf("missing smoke canonical rejection: %+v", report.Summary)
 		}
 	})
@@ -870,7 +1432,7 @@ func writeCompareFixture(t *testing.T, root string, opts compareFixtureOptions) 
 			FixtureApp:    "fixtures",
 			Routes:        []FixtureSpec{{ID: "R00", Route: "/", FixtureApp: "fixtures", ExpectedCapabilities: []string{"server"}}},
 		},
-		Sampling:    SamplingPlan{Name: "smoke", Canonical: false, ColdSamples: 1, WarmSamples: 1, CanUpdateBaseline: false},
+		Sampling:    mustSamplingPlan(t, "smoke"),
 		Environment: "environment.json",
 		RawSamples:  "perf/raw-samples.jsonl",
 		Summary:     "summaries/browser-summary.json",
@@ -891,6 +1453,15 @@ func writeCompareFixture(t *testing.T, root string, opts compareFixtureOptions) 
 	}
 	writeFixtureJSON(t, filepath.Join(root, "manifest.json"), manifest)
 	return root
+}
+
+func mustSamplingPlan(t *testing.T, name string) SamplingPlan {
+	t.Helper()
+	plan, err := samplingPlan(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
 }
 
 func writeNoisyFixture(t *testing.T, root string) string {
@@ -927,7 +1498,7 @@ func writeNoisyFixture(t *testing.T, root string) string {
 		ArtifactRoot:  root,
 		Source:        source,
 		Corpus:        FixtureCorpus{SchemaVersion: "gosx.ouroboros.fixtures.v1", Contract: ContractO02, CorpusID: CorpusID, FixtureApp: "fixtures", Routes: []FixtureSpec{{ID: "R00", Route: "/", FixtureApp: "fixtures", ExpectedCapabilities: []string{"server"}}}},
-		Sampling:      SamplingPlan{Name: "smoke", Canonical: false, ColdSamples: 3, WarmSamples: 1, CanUpdateBaseline: false},
+		Sampling:      mustSamplingPlan(t, "smoke"),
 		Environment:   "environment.json",
 		RawSamples:    "perf/raw-samples.jsonl",
 		Summary:       "summaries/browser-summary.json",

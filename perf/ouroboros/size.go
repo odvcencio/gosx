@@ -21,7 +21,10 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 )
 
-const portableCombinedSizeInputLabelsNote = "primary/... and r10/... path fields are portable source identity labels, not artifact-bundle file references; buildInput manifest/export hashes bind the measured files."
+const (
+	portableCombinedSizeInputLabelsNote = "primary/... and r10/... path fields are portable source identity labels, not artifact-bundle file references; buildInput manifest/export hashes bind the measured files."
+	sharedRouteAttributionComment       = "Shared route assets are counted in route totals and de-duplicated in report totals."
+)
 
 type SizeEvidence struct {
 	SchemaVersion   string               `json:"schemaVersion"`
@@ -36,6 +39,7 @@ type SizeEvidence struct {
 	R10ManifestPath string               `json:"r10ManifestPath,omitempty"`
 	R10DistDir      string               `json:"r10DistDir,omitempty"`
 	R10ExportPath   string               `json:"r10ExportPath,omitempty"`
+	BundleRoot      string               `json:"bundleRoot,omitempty"`
 	Assets          []TransferredAsset   `json:"assets"`
 	Routes          []RouteAssetEvidence `json:"routes"`
 	Unresolved      []UnresolvedAssetRef `json:"unresolvedRefs,omitempty"`
@@ -51,6 +55,7 @@ type TransferredAsset struct {
 	File           string   `json:"file"`
 	Role           string   `json:"role"`
 	SourcePath     string   `json:"sourcePath"`
+	EvidencePath   string   `json:"evidencePath,omitempty"`
 	ManifestHash   string   `json:"manifestHash,omitempty"`
 	SHA256         string   `json:"sha256"`
 	Bytes          int64    `json:"bytes"`
@@ -105,6 +110,7 @@ type RuntimeBuildEvidence struct {
 	Source        SourceIdentity           `json:"source"`
 	BuildInput    BuildInputEvidence       `json:"buildInput"`
 	OutputDir     string                   `json:"outputDir"`
+	BundleRoot    string                   `json:"bundleRoot,omitempty"`
 	GoVersion     ToolStatus               `json:"goVersion"`
 	TinyGo        ToolStatus               `json:"tinygo"`
 	WasmOpt       ToolStatus               `json:"wasmOpt"`
@@ -317,6 +323,12 @@ func BuildSizeEvidenceWithOptions(opts SizeEvidenceOptions) (*SizeEvidence, erro
 			return report, fmt.Errorf("unresolved route asset refs: %d", len(report.Unresolved))
 		}
 	}
+	if opts.Canonical {
+		report.BundleRoot = "size/input"
+		if err := materializeCanonicalSizeInputs(report, artifactRoot, primary, r10); err != nil {
+			return report, err
+		}
+	}
 	return report, nil
 }
 
@@ -401,6 +413,125 @@ func portableSizeBuildInput(input BuildInputEvidence) BuildInputEvidence {
 	return input
 }
 
+func materializeCanonicalSizeInputs(report *SizeEvidence, artifactRoot string, primary sizeEvidenceBuildSource, r10 *sizeEvidenceBuildSource) error {
+	if report == nil {
+		return fmt.Errorf("canonical size evidence is nil")
+	}
+	root, err := filepath.Abs(artifactRoot)
+	if err != nil {
+		return err
+	}
+	bundleRoot := filepath.Join(root, "size", "input")
+	if _, err := os.Lstat(bundleRoot); err == nil {
+		return fmt.Errorf("refusing to overwrite canonical size input bundle %s", bundleRoot)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	tmp, err := os.MkdirTemp(filepath.Join(root, "size"), ".input.tmp-*")
+	if err != nil {
+		if os.IsNotExist(err) {
+			if mkdirErr := os.MkdirAll(filepath.Join(root, "size"), 0o755); mkdirErr != nil {
+				return mkdirErr
+			}
+			tmp, err = os.MkdirTemp(filepath.Join(root, "size"), ".input.tmp-*")
+		}
+		if err != nil {
+			return err
+		}
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+	copySource := func(label string, source sizeEvidenceBuildSource) error {
+		for _, input := range []struct {
+			name string
+			path string
+		}{
+			{"build.json", source.manifestPath},
+			{"export.json", source.export.path},
+		} {
+			if err := CopyFile(filepath.Join(tmp, label, input.name), input.path); err != nil {
+				return fmt.Errorf("bundle canonical %s %s: %w", label, input.name, err)
+			}
+		}
+		for _, route := range source.export.routes {
+			htmlPath, err := routeHTMLPath(source.distDir, route.File)
+			if err != nil {
+				return fmt.Errorf("bundle canonical route %s HTML: %w", route.Path, err)
+			}
+			rel, err := filepath.Rel(source.distDir, htmlPath)
+			if err != nil {
+				return fmt.Errorf("bundle canonical route %s HTML path: %w", route.Path, err)
+			}
+			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+				return fmt.Errorf("bundle canonical route %s HTML escapes dist", route.Path)
+			}
+			if err := CopyFile(filepath.Join(tmp, label, rel), htmlPath); err != nil {
+				return fmt.Errorf("bundle canonical route %s HTML: %w", route.Path, err)
+			}
+			for _, ref := range refsFromHTMLFile(htmlPath) {
+				assetPath, _, ok := manifestRefSource(source.distDir, source.manifest, ref)
+				if !ok {
+					return fmt.Errorf("bundle canonical route %s asset %s is not in build manifest", route.Path, ref)
+				}
+				assetRel, err := filepath.Rel(source.distDir, assetPath)
+				if err != nil || assetRel == ".." || strings.HasPrefix(assetRel, ".."+string(filepath.Separator)) || filepath.IsAbs(assetRel) {
+					return fmt.Errorf("bundle canonical route %s asset %s escapes dist", route.Path, ref)
+				}
+				if err := CopyFile(filepath.Join(tmp, label, assetRel), assetPath); err != nil {
+					return fmt.Errorf("bundle canonical route %s asset %s: %w", route.Path, ref, err)
+				}
+			}
+		}
+		return nil
+	}
+	if err := copySource("primary", primary); err != nil {
+		return err
+	}
+	if r10 != nil {
+		if err := copySource("r10", *r10); err != nil {
+			return err
+		}
+	}
+	for i := range report.Assets {
+		asset := &report.Assets[i]
+		sourcePath := asset.SourcePath
+		label := "primary"
+		if strings.HasPrefix(sourcePath, "r10/") {
+			label = "r10"
+		}
+		var source sizeEvidenceBuildSource
+		if label == "r10" {
+			if r10 == nil {
+				return fmt.Errorf("canonical size asset %s claims missing R10 source", asset.ID)
+			}
+			source = *r10
+		} else {
+			source = primary
+		}
+		actual, _, ok := manifestRefSource(source.distDir, source.manifest, asset.URL)
+		if !ok {
+			return fmt.Errorf("canonical size asset %s cannot be resolved for bundling", asset.ID)
+		}
+		rel, err := filepath.Rel(source.distDir, actual)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return fmt.Errorf("canonical size asset %s path escapes dist", asset.ID)
+		}
+		if err := CopyFile(filepath.Join(tmp, label, rel), actual); err != nil {
+			return fmt.Errorf("bundle canonical size asset %s: %w", asset.ID, err)
+		}
+		asset.EvidencePath = filepath.ToSlash(filepath.Join(report.BundleRoot, label, rel))
+	}
+	if err := os.Rename(tmp, bundleRoot); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
 func EnsureNewJSONFilePath(path string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("missing evidence path")
@@ -408,6 +539,23 @@ func EnsureNewJSONFilePath(path string) error {
 	if _, err := os.Lstat(path); err == nil {
 		return fmt.Errorf("refusing to overwrite existing evidence %s", path)
 	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+// WriteNewCanonicalSizeEvidence commits the receipt after its input bundle.
+// If the receipt cannot be created, the just-built bundle is rolled back so a
+// retry is not poisoned by a partial canonical evidence transaction.
+func WriteNewCanonicalSizeEvidence(path string, evidence *SizeEvidence) error {
+	if evidence == nil || !evidence.Canonical || evidence.BundleRoot != "size/input" {
+		return fmt.Errorf("canonical size evidence and size/input bundle are required")
+	}
+	bundlePath := filepath.Join(filepath.Dir(path), "input")
+	if err := WriteNewJSONFile(path, evidence); err != nil {
+		if rollbackErr := os.RemoveAll(bundlePath); rollbackErr != nil {
+			return fmt.Errorf("write canonical size evidence: %v; rollback input bundle: %w", err, rollbackErr)
+		}
 		return err
 	}
 	return nil
@@ -804,10 +952,21 @@ type exportEvidence struct {
 	assetRefs []string
 }
 
+// exportEvidenceDocument mirrors the JSON schema emitted by cmd/gosx export.
+// AssetRefs remains accepted for compatibility with older evidence producers;
+// the current exporter uses it only while staging assets and omits it from JSON.
+type exportEvidenceDocument struct {
+	Pages     []string              `json:"pages"`
+	Routes    []exportEvidenceRoute `json:"routes"`
+	AssetRefs []string              `json:"assetRefs"`
+}
+
 type exportEvidenceRoute struct {
-	Path         string              `json:"path"`
-	File         string              `json:"file"`
-	Capabilities *ExportCapabilities `json:"capabilities"`
+	Path              string              `json:"path"`
+	File              string              `json:"file"`
+	RevalidateSeconds int64               `json:"revalidateSeconds,omitempty"`
+	Tags              []string            `json:"tags,omitempty"`
+	Capabilities      *ExportCapabilities `json:"capabilities"`
 }
 
 // ExportCapabilities is the measured enhancement surface written by
@@ -853,10 +1012,7 @@ func loadExportEvidenceForRoutes(exportPath string, canonical bool, expectedRout
 		}
 		return exportEvidence{}, nil
 	}
-	var raw struct {
-		Routes    []exportEvidenceRoute `json:"routes"`
-		AssetRefs []string              `json:"assetRefs"`
-	}
+	var raw exportEvidenceDocument
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&raw); err != nil {
@@ -915,10 +1071,7 @@ func loadCanonicalR10ExportEvidence(exportPath string) (exportEvidence, error) {
 	if err != nil {
 		return exportEvidence{}, fmt.Errorf("canonical R10 size evidence requires full-site export.json: %w", err)
 	}
-	var raw struct {
-		Routes    []exportEvidenceRoute `json:"routes"`
-		AssetRefs []string              `json:"assetRefs"`
-	}
+	var raw exportEvidenceDocument
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&raw); err != nil {
@@ -1077,6 +1230,11 @@ func addManifestRuntimeRefs(refs map[string]string, manifest *buildmanifest.Mani
 			refs[item.ref] = "manifest-runtime"
 		}
 	}
+	for _, variant := range []string{"core", "engine", "collab"} {
+		if asset, ok := manifest.Runtime.WASMVariants[variant]; ok && strings.TrimSpace(asset.File) != "" {
+			refs["/gosx/runtime-"+variant+".wasm"] = "manifest-runtime"
+		}
+	}
 	for _, asset := range manifest.Islands {
 		ext := ".gxi"
 		if asset.Format == "json" {
@@ -1148,12 +1306,22 @@ func mergeTransferredAssets(report *SizeEvidence, assets []TransferredAsset) {
 		return
 	}
 	seen := make(map[string]bool, len(report.Assets))
+	firstByHash := make(map[string]string, len(report.Assets))
 	for _, asset := range report.Assets {
 		seen[asset.ID] = true
+		if _, ok := firstByHash[asset.SHA256]; !ok {
+			firstByHash[asset.SHA256] = asset.ID
+		}
 	}
 	for _, asset := range assets {
 		if seen[asset.ID] {
 			continue
+		}
+		if first, ok := firstByHash[asset.SHA256]; ok {
+			asset.DuplicateOf = first
+		} else {
+			asset.DuplicateOf = ""
+			firstByHash[asset.SHA256] = asset.ID
 		}
 		seen[asset.ID] = true
 		report.Assets = append(report.Assets, asset)
@@ -1185,6 +1353,12 @@ func manifestRefSource(distDir string, manifest *buildmanifest.Manifest, ref str
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.WASM)
 	case "/gosx/runtime-islands.wasm":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.WASMIslands)
+	case "/gosx/runtime-core.wasm":
+		return runtimeVariantAssetSource(runtimeDir, manifest, "core")
+	case "/gosx/runtime-engine.wasm":
+		return runtimeVariantAssetSource(runtimeDir, manifest, "engine")
+	case "/gosx/runtime-collab.wasm":
+		return runtimeVariantAssetSource(runtimeDir, manifest, "collab")
 	case "/gosx/wasm_exec.js":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.WASMExec)
 	case "/gosx/standard-go-wasm_exec.js":
@@ -1266,6 +1440,17 @@ func runtimeAssetSource(runtimeDir string, asset buildmanifest.HashedAsset) (str
 		return "", buildmanifest.HashedAsset{}, false
 	}
 	return full, asset, true
+}
+
+func runtimeVariantAssetSource(runtimeDir string, manifest *buildmanifest.Manifest, variant string) (string, buildmanifest.HashedAsset, bool) {
+	if manifest == nil {
+		return "", buildmanifest.HashedAsset{}, false
+	}
+	asset, ok := manifest.Runtime.WASMVariants[strings.TrimSpace(variant)]
+	if !ok {
+		return "", buildmanifest.HashedAsset{}, false
+	}
+	return runtimeAssetSource(runtimeDir, asset.HashedAsset)
 }
 
 func normalizeGosxRef(ref string) string {
@@ -1431,7 +1616,7 @@ func attributeRoutesFromSource(report *SizeEvidence, distDir string, exportManif
 			}
 		}
 		if route.SharedRawBytes > 0 {
-			route.AttributionComment = "Shared route assets are counted in route totals and de-duplicated in report totals."
+			route.AttributionComment = sharedRouteAttributionComment
 		}
 	}
 	return nil
@@ -1537,6 +1722,9 @@ func allManifestAssets(manifest *buildmanifest.Manifest) []buildmanifest.HashedA
 		rt.BootstrapFeatureScene3DGLTF, rt.BootstrapFeatureScene3DAnimation,
 		rt.BootstrapFeatureScene3DCompute, rt.BootstrapFeatureScene3DDecompress,
 		rt.Patch, rt.VideoHLS, rt.StripeBridge, rt.Relay,
+	}
+	for _, asset := range manifest.Runtime.WASMVariants {
+		out = append(out, asset.HashedAsset)
 	}
 	for _, asset := range manifest.Islands {
 		out = append(out, asset.HashedAsset)
@@ -1655,29 +1843,35 @@ func isAssetURLByte(ch byte) bool {
 }
 
 func fillSizeEvidenceTotals(report *SizeEvidence) {
-	seen := map[string]bool{}
-	for _, asset := range report.Assets {
-		report.Totals.AssetCount++
-		report.Totals.RawBytes += asset.Bytes
-		report.Totals.GzipBytes += asset.GzipBytes
-		report.Totals.BrotliBytes += asset.BrotliBytes
-		if !seen[asset.SHA256] {
-			seen[asset.SHA256] = true
-			report.Totals.DistinctContentCount++
-			report.Totals.DistinctRawBytes += asset.Bytes
-			report.Totals.DistinctGzipBytes += asset.GzipBytes
-			report.Totals.DistinctBrotliBytes += asset.BrotliBytes
-		}
-	}
-	report.Totals.RouteCount = len(report.Routes)
-	for _, route := range report.Routes {
-		if len(route.AssetIDs) > 0 {
-			report.Totals.RoutesWithExplicitRefs++
-		}
-	}
+	report.Totals = computeSizeEvidenceTotals(report.Assets, report.Routes)
 	for i := range report.Assets {
 		sort.Strings(report.Assets[i].UsedByRoutes)
 	}
+}
+
+func computeSizeEvidenceTotals(assets []TransferredAsset, routes []RouteAssetEvidence) SizeEvidenceTotals {
+	var totals SizeEvidenceTotals
+	seen := map[string]bool{}
+	for _, asset := range assets {
+		totals.AssetCount++
+		totals.RawBytes += asset.Bytes
+		totals.GzipBytes += asset.GzipBytes
+		totals.BrotliBytes += asset.BrotliBytes
+		if !seen[asset.SHA256] {
+			seen[asset.SHA256] = true
+			totals.DistinctContentCount++
+			totals.DistinctRawBytes += asset.Bytes
+			totals.DistinctGzipBytes += asset.GzipBytes
+			totals.DistinctBrotliBytes += asset.BrotliBytes
+		}
+	}
+	totals.RouteCount = len(routes)
+	for _, route := range routes {
+		if len(route.AssetIDs) > 0 {
+			totals.RoutesWithExplicitRefs++
+		}
+	}
+	return totals
 }
 
 func CopyFile(dst, src string) error {

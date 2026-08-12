@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"m31labs.dev/gosx/buildmanifest"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/visual"
 )
@@ -41,6 +42,8 @@ const (
 	CompareModeCanonical = "canonical"
 	CompareModeSmoke     = "smoke"
 )
+
+const canonicalRuntimeEvidenceBundleRoot = "wasm/artifacts"
 
 const (
 	CompareStatusPass         = "pass"
@@ -518,6 +521,23 @@ func loadCompareArtifact(input, mode, pixelRoot string) (*compareLoadedArtifact,
 	if err := validateManifestArtifactRoot(paths, manifest.ArtifactRoot); err != nil {
 		return nil, err
 	}
+	wantSamplingName := "smoke"
+	if mode == CompareModeCanonical {
+		wantSamplingName = "baseline"
+	}
+	wantSampling, err := samplingPlan(wantSamplingName)
+	if err != nil {
+		return nil, err
+	}
+	if manifest.Canonical != manifest.Sampling.Canonical {
+		return nil, fmt.Errorf("manifest canonical = %t but sampling canonical = %t", manifest.Canonical, manifest.Sampling.Canonical)
+	}
+	if manifest.Canonical != (mode == CompareModeCanonical) {
+		return nil, fmt.Errorf("%s compare requires canonical=%t manifest and sampling plan", mode, mode == CompareModeCanonical)
+	}
+	if manifest.Sampling != wantSampling {
+		return nil, fmt.Errorf("%s compare sampling plan = %+v, want %+v", mode, manifest.Sampling, wantSampling)
+	}
 	rawPath, err := resolveArtifactRef(paths, manifest.RawSamples)
 	if err != nil {
 		return nil, fmt.Errorf("rawSamplesRef: %w", err)
@@ -827,8 +847,16 @@ func loadOptionalSizeEvidence(paths comparePathSet, source SourceIdentity, route
 	if !sourceCoreEqual(ev.Source, source) {
 		return nil, "", fmt.Errorf("size evidence source does not match browser source")
 	}
+	if mode == CompareModeCanonical && !ev.Canonical {
+		return nil, "", fmt.Errorf("canonical compare requires canonical size evidence")
+	}
 	if err := validateSizeEvidenceForCompare(ev, routes); err != nil {
 		return nil, "", err
+	}
+	if ev.Canonical {
+		if err := validateCanonicalSizeEvidenceBundle(paths, ev); err != nil {
+			return nil, "", err
+		}
 	}
 	hash, _ := sha256File(path)
 	return ev, hash, nil
@@ -853,6 +881,12 @@ func loadOptionalRuntimeEvidence(paths comparePathSet, source SourceIdentity, mo
 		return nil, "", fmt.Errorf("runtime build evidence source does not match browser source")
 	}
 	if err := validateRuntimeEvidenceForCompare(ev); err != nil {
+		return nil, "", err
+	}
+	// Runtime receipts feed the WASM ratchets in both modes. The producer only
+	// emits them for evidence builds, so an optional smoke receipt must meet the
+	// same contained-byte trust boundary as a required canonical receipt.
+	if err := validateCanonicalRuntimeEvidenceBundle(paths, ev); err != nil {
 		return nil, "", err
 	}
 	hash, _ := sha256File(path)
@@ -947,7 +981,64 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 	if ev.Canonical && !strings.HasPrefix(ev.BuildInput.ManifestSHA256, "sha256:") {
 		return fmt.Errorf("canonical size evidence requires buildInput.manifestSha256")
 	}
+
+	assetsByID := make(map[string]TransferredAsset, len(ev.Assets))
+	contentMetrics := make(map[string]sizeTransferMetrics, len(ev.Assets))
+	for _, asset := range ev.Assets {
+		if strings.TrimSpace(asset.ID) == "" {
+			return fmt.Errorf("size evidence asset has empty id")
+		}
+		if _, exists := assetsByID[asset.ID]; exists {
+			return fmt.Errorf("size evidence has duplicate asset %s", asset.ID)
+		}
+		if asset.URL == "" || asset.URL != strings.TrimSpace(asset.URL) {
+			return fmt.Errorf("size evidence asset %s has invalid url", asset.ID)
+		}
+		sha := strings.ToLower(strings.TrimSpace(asset.SHA256))
+		decoded, err := hex.DecodeString(sha)
+		if err != nil || len(decoded) != sha256.Size || asset.SHA256 != sha {
+			return fmt.Errorf("size evidence asset %s has invalid sha256", asset.ID)
+		}
+		if want := stableAssetID(asset.URL, sha); asset.ID != want {
+			return fmt.Errorf("size evidence asset %s id does not bind url and sha256 (want %s)", asset.ID, want)
+		}
+		for name, value := range map[string]int64{
+			"bytes":       asset.Bytes,
+			"gzipBytes":   asset.GzipBytes,
+			"brotliBytes": asset.BrotliBytes,
+		} {
+			if value < 0 {
+				return fmt.Errorf("size asset %s has negative %s", asset.ID, name)
+			}
+		}
+		metrics := sizeTransferMetrics{Raw: asset.Bytes, Gzip: asset.GzipBytes, Brotli: asset.BrotliBytes}
+		if prior, ok := contentMetrics[sha]; ok && prior != metrics {
+			return fmt.Errorf("size evidence content %s has inconsistent transfer metrics", sha)
+		}
+		contentMetrics[sha] = metrics
+		assetsByID[asset.ID] = asset
+		if ev.Canonical && strings.TrimSpace(asset.ManifestHash) == "" && (strings.Contains(asset.Role, "direct") || strings.Contains(asset.Bucket, "direct")) {
+			return fmt.Errorf("canonical size asset %s is an unmanifested direct asset", asset.ID)
+		}
+	}
+	firstByContent := make(map[string]string, len(ev.Assets))
+	for _, asset := range ev.Assets {
+		first, duplicate := firstByContent[asset.SHA256]
+		if !duplicate {
+			if asset.DuplicateOf != "" {
+				return fmt.Errorf("size evidence first asset %s for content has duplicateOf %s", asset.ID, asset.DuplicateOf)
+			}
+			firstByContent[asset.SHA256] = asset.ID
+			continue
+		}
+		if asset.DuplicateOf != first {
+			return fmt.Errorf("size evidence asset %s duplicateOf = %q, want first same-content asset %s", asset.ID, asset.DuplicateOf, first)
+		}
+	}
+
 	seenRoutes := map[string]bool{}
+	seenRoutePaths := map[string]bool{}
+	usedByRoutes := make(map[string][]string, len(ev.Assets))
 	hasR10 := false
 	for _, route := range ev.Routes {
 		id := route.ID
@@ -961,6 +1052,13 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 			return fmt.Errorf("size evidence has duplicate route %s", id)
 		}
 		seenRoutes[id] = true
+		if strings.TrimSpace(route.Route) == "" {
+			return fmt.Errorf("size evidence route %s has empty path", id)
+		}
+		if seenRoutePaths[route.Route] {
+			return fmt.Errorf("size evidence has duplicate route path %s", route.Route)
+		}
+		seenRoutePaths[route.Route] = true
 		if id == "R10" {
 			hasR10 = true
 		}
@@ -979,11 +1077,29 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 				return fmt.Errorf("size route %s has negative %s", id, name)
 			}
 		}
+		seenRouteAssets := make(map[string]bool, len(route.AssetIDs))
+		for _, assetID := range route.AssetIDs {
+			if seenRouteAssets[assetID] {
+				return fmt.Errorf("size route %s has duplicate asset id %s", id, assetID)
+			}
+			seenRouteAssets[assetID] = true
+			if _, ok := assetsByID[assetID]; !ok {
+				return fmt.Errorf("size route %s references unknown asset %s", id, assetID)
+			}
+			usedByRoutes[assetID] = append(usedByRoutes[assetID], route.Route)
+		}
+		if ev.Canonical && len(route.AssetIDs) == 0 && !routeAllowsNoRuntimeAttribution(exportEvidenceRoute{Path: route.Route, Capabilities: route.Capabilities}) {
+			return fmt.Errorf("canonical size route %s has no resolved assets", id)
+		}
 	}
 	if err := validateCanonicalR10SizeProvenance(ev, hasR10); err != nil {
 		return err
 	}
 	wantRoutes := routeIDs(routes)
+	wantRoutePaths := make(map[string]string, len(routes))
+	for _, route := range routes {
+		wantRoutePaths[route.ID] = route.Route
+	}
 	gotRoutes := make([]string, 0, len(seenRoutes))
 	for id := range seenRoutes {
 		gotRoutes = append(gotRoutes, id)
@@ -992,27 +1108,303 @@ func validateSizeEvidenceForCompare(ev *SizeEvidence, routes []FixtureSpec) erro
 	if !reflect.DeepEqual(gotRoutes, wantRoutes) {
 		return fmt.Errorf("size evidence route IDs = %v, want selected browser routes %v", gotRoutes, wantRoutes)
 	}
-	seenAssets := map[string]bool{}
+	for _, route := range ev.Routes {
+		if want := wantRoutePaths[route.ID]; route.Route != want {
+			return fmt.Errorf("size evidence route %s path = %q, want %q", route.ID, route.Route, want)
+		}
+	}
+
 	for _, asset := range ev.Assets {
-		if asset.ID == "" {
-			return fmt.Errorf("size evidence asset has empty id")
-		}
-		if seenAssets[asset.ID] {
-			return fmt.Errorf("size evidence has duplicate asset %s", asset.ID)
-		}
-		seenAssets[asset.ID] = true
-		for name, value := range map[string]int64{
-			"bytes":       asset.Bytes,
-			"gzipBytes":   asset.GzipBytes,
-			"brotliBytes": asset.BrotliBytes,
-		} {
-			if value < 0 {
-				return fmt.Errorf("size asset %s has negative %s", asset.ID, name)
+		want := append([]string(nil), usedByRoutes[asset.ID]...)
+		got := append([]string(nil), asset.UsedByRoutes...)
+		sort.Strings(want)
+		sort.Strings(got)
+		for i := 1; i < len(got); i++ {
+			if got[i] == got[i-1] {
+				return fmt.Errorf("size evidence asset %s has duplicate usedByRoutes entry %s", asset.ID, got[i])
 			}
 		}
-		if ev.Canonical && strings.TrimSpace(asset.ManifestHash) == "" && (strings.Contains(asset.Role, "direct") || strings.Contains(asset.Bucket, "direct")) {
-			return fmt.Errorf("canonical size asset %s is an unmanifested direct asset", asset.ID)
+		if !slices.Equal(got, want) {
+			return fmt.Errorf("size evidence asset %s usedByRoutes = %v, recomputed %v", asset.ID, got, want)
 		}
+	}
+
+	for _, route := range ev.Routes {
+		var total, shared, unique sizeTransferMetrics
+		for _, assetID := range route.AssetIDs {
+			asset := assetsByID[assetID]
+			if err := total.add(asset); err != nil {
+				return fmt.Errorf("size route %s totals: %w", route.ID, err)
+			}
+			bucket := &unique
+			if len(usedByRoutes[assetID]) > 1 {
+				bucket = &shared
+			}
+			if err := bucket.add(asset); err != nil {
+				return fmt.Errorf("size route %s attribution: %w", route.ID, err)
+			}
+		}
+		for _, metric := range []struct {
+			name string
+			got  int64
+			want int64
+		}{
+			{"rawBytes", route.RawBytes, total.Raw},
+			{"gzipBytes", route.GzipBytes, total.Gzip},
+			{"brotliBytes", route.BrotliBytes, total.Brotli},
+			{"sharedRawBytes", route.SharedRawBytes, shared.Raw},
+			{"sharedGzipBytes", route.SharedGzipBytes, shared.Gzip},
+			{"sharedBrotliBytes", route.SharedBrotliBytes, shared.Brotli},
+			{"uniqueRawBytes", route.UniqueRawBytes, unique.Raw},
+			{"uniqueGzipBytes", route.UniqueGzipBytes, unique.Gzip},
+			{"uniqueBrotliBytes", route.UniqueBrotliBytes, unique.Brotli},
+		} {
+			if metric.got != metric.want {
+				return fmt.Errorf("size route %s %s = %d, recomputed %d", route.ID, metric.name, metric.got, metric.want)
+			}
+		}
+		wantComment := ""
+		if shared.Raw > 0 {
+			wantComment = sharedRouteAttributionComment
+		}
+		if route.AttributionComment != wantComment {
+			return fmt.Errorf("size route %s attributionComment = %q, recomputed %q", route.ID, route.AttributionComment, wantComment)
+		}
+	}
+
+	var allMetrics, distinctMetrics sizeTransferMetrics
+	seenContent := make(map[string]bool, len(ev.Assets))
+	for _, asset := range ev.Assets {
+		if err := allMetrics.add(asset); err != nil {
+			return fmt.Errorf("size evidence totals: %w", err)
+		}
+		if !seenContent[asset.SHA256] {
+			seenContent[asset.SHA256] = true
+			if err := distinctMetrics.add(asset); err != nil {
+				return fmt.Errorf("size evidence distinct totals: %w", err)
+			}
+		}
+	}
+	wantTotals := computeSizeEvidenceTotals(ev.Assets, ev.Routes)
+	if wantTotals.RawBytes != allMetrics.Raw || wantTotals.GzipBytes != allMetrics.Gzip || wantTotals.BrotliBytes != allMetrics.Brotli ||
+		wantTotals.DistinctRawBytes != distinctMetrics.Raw || wantTotals.DistinctGzipBytes != distinctMetrics.Gzip || wantTotals.DistinctBrotliBytes != distinctMetrics.Brotli {
+		return fmt.Errorf("size evidence total recomputation overflowed")
+	}
+	if ev.Totals != wantTotals {
+		return fmt.Errorf("size evidence totals = %+v, recomputed %+v", ev.Totals, wantTotals)
+	}
+	return nil
+}
+
+type sizeTransferMetrics struct {
+	Raw    int64
+	Gzip   int64
+	Brotli int64
+}
+
+func validateCanonicalSizeEvidenceBundle(paths comparePathSet, ev *SizeEvidence) error {
+	if ev == nil || !ev.Canonical {
+		return fmt.Errorf("canonical size evidence bundle requires canonical receipt")
+	}
+	if ev.BundleRoot != "size/input" {
+		return fmt.Errorf("canonical size evidence bundleRoot = %q, want size/input", ev.BundleRoot)
+	}
+	readBundled := func(ref string) ([]byte, error) {
+		path, err := resolveArtifactRef(paths, ref)
+		if err != nil {
+			return nil, err
+		}
+		return os.ReadFile(path)
+	}
+	type bundledSource struct {
+		label    string
+		dir      string
+		manifest *buildmanifest.Manifest
+		export   exportEvidence
+	}
+	sources := map[string]bundledSource{}
+	loadSource := func(label string, input BuildInputEvidence, r10 bool) error {
+		dirRef := filepath.ToSlash(filepath.Join("size/input", label))
+		buildRef := filepath.ToSlash(filepath.Join(dirRef, "build.json"))
+		exportRef := filepath.ToSlash(filepath.Join(dirRef, "export.json"))
+		for _, file := range []struct {
+			name string
+			ref  string
+			want string
+		}{
+			{"build manifest", buildRef, input.ManifestSHA256},
+			{"export manifest", exportRef, input.ExportSHA256},
+		} {
+			data, err := readBundled(file.ref)
+			if err != nil {
+				return fmt.Errorf("canonical %s %s: %w", label, file.name, err)
+			}
+			if err := requireBundledSHA256(label+" "+file.name, data, file.want); err != nil {
+				return err
+			}
+		}
+		buildPath, err := resolveArtifactRef(paths, buildRef)
+		if err != nil {
+			return err
+		}
+		manifest, err := buildmanifest.Load(buildPath)
+		if err != nil {
+			return fmt.Errorf("canonical %s build manifest: %w", label, err)
+		}
+		exportPath, err := resolveArtifactRef(paths, exportRef)
+		if err != nil {
+			return err
+		}
+		var exported exportEvidence
+		if r10 {
+			exported, err = loadCanonicalR10ExportEvidence(exportPath)
+		} else {
+			expected := map[string]bool{}
+			for _, route := range ev.Routes {
+				if route.ID != "R10" {
+					expected[route.Route] = true
+				}
+			}
+			exported, err = loadExportEvidenceForRoutes(exportPath, true, expected)
+		}
+		if err != nil {
+			return fmt.Errorf("canonical %s export manifest: %w", label, err)
+		}
+		dir, err := resolveArtifactRef(paths, dirRef)
+		if err != nil {
+			return err
+		}
+		sources[label] = bundledSource{label: label, dir: dir, manifest: manifest, export: exported}
+		return nil
+	}
+	if err := loadSource("primary", ev.BuildInput, false); err != nil {
+		return err
+	}
+	if ev.R10BuildInput != nil {
+		if err := loadSource("r10", *ev.R10BuildInput, true); err != nil {
+			return err
+		}
+	}
+	for _, asset := range ev.Assets {
+		label := "primary"
+		if strings.HasPrefix(asset.SourcePath, "r10/") {
+			label = "r10"
+		}
+		source, ok := sources[label]
+		if !ok {
+			return fmt.Errorf("canonical size asset %s references missing %s bundle", asset.ID, label)
+		}
+		wantPrefix := filepath.ToSlash(filepath.Join("size/input", label)) + "/"
+		if !strings.HasPrefix(asset.EvidencePath, wantPrefix) {
+			return fmt.Errorf("canonical size asset %s has invalid evidencePath %q", asset.ID, asset.EvidencePath)
+		}
+		actual, hashed, ok := manifestRefSource(source.dir, source.manifest, asset.URL)
+		if !ok {
+			return fmt.Errorf("canonical size asset %s is not declared by bundled build manifest", asset.ID)
+		}
+		path, err := resolveArtifactRef(paths, asset.EvidencePath)
+		if err != nil {
+			return fmt.Errorf("canonical size asset %s: %w", asset.ID, err)
+		}
+		if actual != path {
+			return fmt.Errorf("canonical size asset %s evidencePath does not match bundled build manifest", asset.ID)
+		}
+		if hashed.Hash != asset.ManifestHash || hashed.Size != asset.Bytes {
+			return fmt.Errorf("canonical size asset %s does not match bundled build manifest hash/size", asset.ID)
+		}
+		metrics, err := MetricsForFile(path)
+		if err != nil {
+			return fmt.Errorf("canonical size asset %s: %w", asset.ID, err)
+		}
+		if metrics.SHA256 != asset.SHA256 || metrics.Bytes != asset.Bytes || metrics.GzipBytes != asset.GzipBytes || metrics.BrotliBytes != asset.BrotliBytes {
+			return fmt.Errorf("canonical size asset %s metrics do not match bundled bytes", asset.ID)
+		}
+		if len(metrics.SHA256) < 16 || hashed.Hash != metrics.SHA256[:16] {
+			return fmt.Errorf("canonical size asset %s manifest hash does not bind bundled bytes", asset.ID)
+		}
+	}
+	for _, route := range ev.Routes {
+		label := "primary"
+		if route.ID == "R10" && ev.R10BuildInput != nil {
+			label = "r10"
+		}
+		source, ok := sources[label]
+		if !ok {
+			return fmt.Errorf("canonical size route %s references missing %s bundle", route.ID, label)
+		}
+		var exported *exportEvidenceRoute
+		for i := range source.export.routes {
+			if canonicalOuroborosRouteID(source.export.routes[i].Path) == route.ID {
+				exported = &source.export.routes[i]
+				break
+			}
+		}
+		if exported == nil || exported.Path != route.Route || exported.File != route.File || !reflect.DeepEqual(exported.Capabilities, route.Capabilities) {
+			return fmt.Errorf("canonical size route %s does not match bundled export manifest", route.ID)
+		}
+		path, err := routeHTMLPath(source.dir, exported.File)
+		if err != nil {
+			return fmt.Errorf("canonical size route %s HTML: %w", route.ID, err)
+		}
+		refs := refsFromHTMLFile(path)
+		ids := make([]string, 0, len(refs))
+		for _, ref := range refs {
+			actual, _, ok := manifestRefSource(source.dir, source.manifest, ref)
+			if !ok {
+				return fmt.Errorf("canonical size route %s ref %s is not declared by bundled build manifest", route.ID, ref)
+			}
+			metrics, err := MetricsForFile(actual)
+			if err != nil {
+				return fmt.Errorf("canonical size route %s ref %s: %w", route.ID, ref, err)
+			}
+			matches := []string{}
+			for _, asset := range ev.Assets {
+				if asset.URL == ref && asset.SHA256 == metrics.SHA256 && asset.Bytes == metrics.Bytes && asset.GzipBytes == metrics.GzipBytes && asset.BrotliBytes == metrics.BrotliBytes {
+					matches = append(matches, asset.ID)
+				}
+			}
+			if len(matches) != 1 {
+				return fmt.Errorf("canonical size route %s ref %s resolves to %d bundled assets", route.ID, ref, len(matches))
+			}
+			ids = append(ids, matches[0])
+		}
+		sort.Strings(ids)
+		want := append([]string(nil), route.AssetIDs...)
+		sort.Strings(want)
+		if !slices.Equal(ids, want) {
+			return fmt.Errorf("canonical size route %s assetIds = %v, bundled HTML recomputed %v", route.ID, want, ids)
+		}
+	}
+	return nil
+}
+
+func requireBundledSHA256(label string, data []byte, want string) error {
+	normalized, err := normalizeCompareSHA256(want)
+	if err != nil {
+		return fmt.Errorf("canonical %s: %w", label, err)
+	}
+	sum := sha256.Sum256(data)
+	got := "sha256:" + hex.EncodeToString(sum[:])
+	if got != normalized {
+		return fmt.Errorf("canonical %s sha256 = %s, want %s", label, got, normalized)
+	}
+	return nil
+}
+
+func (m *sizeTransferMetrics) add(asset TransferredAsset) error {
+	for _, field := range []struct {
+		name  string
+		total *int64
+		value int64
+	}{
+		{"rawBytes", &m.Raw, asset.Bytes},
+		{"gzipBytes", &m.Gzip, asset.GzipBytes},
+		{"brotliBytes", &m.Brotli, asset.BrotliBytes},
+	} {
+		if field.value < 0 || *field.total > math.MaxInt64-field.value {
+			return fmt.Errorf("%s overflow", field.name)
+		}
+		*field.total += field.value
 	}
 	return nil
 }
@@ -1077,6 +1469,7 @@ func validateRuntimeEvidenceForCompare(ev *RuntimeBuildEvidence) error {
 		"islands": {runtimewasm.VariantIslands, uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantIslands))},
 	}
 	seen := map[string]bool{}
+	var sharedShim *AssetMetrics
 	for _, variant := range ev.Variants {
 		if variant.ID == "" {
 			return fmt.Errorf("runtime evidence variant has empty id")
@@ -1114,6 +1507,25 @@ func validateRuntimeEvidenceForCompare(ev *RuntimeBuildEvidence) error {
 		if len(variant.PlannedSelectedBy) != 0 {
 			return fmt.Errorf("runtime variant %s fabricates route selection: %s", variant.ID, strings.Join(variant.PlannedSelectedBy, ","))
 		}
+		if variant.Shim == nil {
+			return fmt.Errorf("runtime variant %s has no wasm_exec.js receipt", variant.ID)
+		}
+		if variant.Shim.File != "wasm_exec.js" || strings.TrimSpace(variant.Shim.SourcePath) == "" {
+			return fmt.Errorf("runtime variant %s has invalid wasm_exec.js path", variant.ID)
+		}
+		shimSHA, err := hex.DecodeString(variant.Shim.SHA256)
+		if err != nil || len(shimSHA) != sha256.Size {
+			return fmt.Errorf("runtime variant %s has invalid wasm_exec.js sha256", variant.ID)
+		}
+		if variant.Shim.Bytes <= 0 || variant.Shim.GzipBytes <= 0 || variant.Shim.BrotliBytes <= 0 {
+			return fmt.Errorf("runtime variant %s has unmeasured wasm_exec.js bytes", variant.ID)
+		}
+		if sharedShim == nil {
+			shim := *variant.Shim
+			sharedShim = &shim
+		} else if !runtimeAssetMetricsEqual(*sharedShim, *variant.Shim) {
+			return fmt.Errorf("runtime variant %s does not bind the shared wasm_exec.js receipt", variant.ID)
+		}
 	}
 	for id := range want {
 		if !seen[id] {
@@ -1121,6 +1533,68 @@ func validateRuntimeEvidenceForCompare(ev *RuntimeBuildEvidence) error {
 		}
 	}
 	return nil
+}
+
+func validateCanonicalRuntimeEvidenceBundle(paths comparePathSet, ev *RuntimeBuildEvidence) error {
+	if ev.BundleRoot != canonicalRuntimeEvidenceBundleRoot {
+		return fmt.Errorf("canonical runtime evidence bundleRoot = %q, want %q", ev.BundleRoot, canonicalRuntimeEvidenceBundleRoot)
+	}
+	if ev.OutputDir != "." {
+		return fmt.Errorf("canonical runtime evidence outputDir = %q, want portable root", ev.OutputDir)
+	}
+	wantFiles := map[string]string{
+		"core":    "gosx-runtime-core.wasm",
+		"engine":  "gosx-runtime-engine.wasm",
+		"collab":  "gosx-runtime-collab.wasm",
+		"full":    "gosx-runtime.wasm",
+		"islands": "gosx-runtime-islands.wasm",
+	}
+	for _, variant := range ev.Variants {
+		wantFile := wantFiles[variant.ID]
+		wantRef := canonicalRuntimeEvidenceBundleRoot + "/" + wantFile
+		if variant.File != wantFile || variant.SourcePath != wantRef {
+			return fmt.Errorf("canonical runtime variant %s artifact path = %q/%q, want %q/%q", variant.ID, variant.File, variant.SourcePath, wantFile, wantRef)
+		}
+		path, err := resolveArtifactRef(paths, variant.SourcePath)
+		if err != nil {
+			return fmt.Errorf("canonical runtime variant %s artifact: %w", variant.ID, err)
+		}
+		actual, err := MetricsForFile(path)
+		if err != nil {
+			return fmt.Errorf("measure canonical runtime variant %s artifact: %w", variant.ID, err)
+		}
+		if variant.SHA256 != actual.SHA256 || variant.Bytes != actual.Bytes || variant.GzipBytes != actual.GzipBytes || variant.BrotliBytes != actual.BrotliBytes {
+			return fmt.Errorf("canonical runtime variant %s receipt does not match bundled bytes", variant.ID)
+		}
+		if variant.SizeBytes == nil || *variant.SizeBytes != actual.Bytes {
+			return fmt.Errorf("canonical runtime variant %s sizeBytes does not match bundled bytes", variant.ID)
+		}
+	}
+	shimRef := canonicalRuntimeEvidenceBundleRoot + "/wasm_exec.js"
+	shimPath, err := resolveArtifactRef(paths, shimRef)
+	if err != nil {
+		return fmt.Errorf("canonical runtime wasm_exec.js artifact: %w", err)
+	}
+	actualShim, err := MetricsForFile(shimPath)
+	if err != nil {
+		return fmt.Errorf("measure canonical runtime wasm_exec.js artifact: %w", err)
+	}
+	actualShim.SourcePath = shimRef
+	for _, variant := range ev.Variants {
+		if variant.Shim == nil || variant.Shim.SourcePath != shimRef || !runtimeAssetMetricsEqual(*variant.Shim, actualShim) {
+			return fmt.Errorf("canonical runtime variant %s wasm_exec.js receipt does not match bundled bytes", variant.ID)
+		}
+	}
+	return nil
+}
+
+func runtimeAssetMetricsEqual(a, b AssetMetrics) bool {
+	return a.File == b.File &&
+		a.SourcePath == b.SourcePath &&
+		a.SHA256 == b.SHA256 &&
+		a.Bytes == b.Bytes &&
+		a.GzipBytes == b.GzipBytes &&
+		a.BrotliBytes == b.BrotliBytes
 }
 
 func dynamicSourceMatches(dynamic RuntimeJSONDynamicSourceBinding, source SourceIdentity) bool {

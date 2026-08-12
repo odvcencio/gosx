@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,6 +28,8 @@ type runtimeBuildTarget struct {
 	tags          []string
 	compatibility bool
 }
+
+const canonicalRuntimeBundleRoot = "wasm/artifacts"
 
 var (
 	runtimeBuildTinyGoWASM              = buildTinyGoWASM
@@ -64,9 +67,22 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 	}
 	evidencePath := ""
 	if canonical {
+		opts.OuroborosOut, err = filepath.Abs(opts.OuroborosOut)
+		if err != nil {
+			return fmt.Errorf("resolve canonical runtime evidence root: %w", err)
+		}
 		evidencePath = filepath.Join(opts.OuroborosOut, "wasm", "runtime-artifacts.json")
 		if err := ouroboros.EnsureNewJSONFilePath(evidencePath); err != nil {
 			return err
+		}
+		bundlePath := filepath.Join(opts.OuroborosOut, filepath.FromSlash(canonicalRuntimeBundleRoot))
+		if runtimePublicationPathsOverlap(outDir, bundlePath) {
+			return fmt.Errorf("canonical runtime output %s overlaps evidence bundle %s", outDir, bundlePath)
+		}
+		if _, err := os.Lstat(bundlePath); err == nil {
+			return fmt.Errorf("canonical runtime evidence bundle already exists: %s", bundlePath)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect canonical runtime evidence bundle: %w", err)
 		}
 		if _, err := os.Lstat(outDir); err == nil {
 			return fmt.Errorf("canonical runtime output already exists: %s", outDir)
@@ -154,20 +170,15 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 		outputPath := filepath.Join(buildOutDir, target.file)
 		if err := runtimeBuildTinyGoWASM(gosxRoot, gosxRoot, outputPath, tinygoPath, target.tags...); err != nil {
 			recordRuntimeBuildFailure(evidence, targets, targetIndex, target, err, canonical, buildOutDir, outDir, gosxRoot)
-			if writeErr := maybeWriteRuntimeBuildEvidence(opts.OuroborosOut, evidence); writeErr != nil {
-				return fmt.Errorf("build %s runtime with TinyGo: %v; write failure evidence: %w", target.label, err, writeErr)
-			}
 			return fmt.Errorf("build %s runtime with TinyGo: %w", target.label, err)
 		}
 		if err := validateTinyGoWASMExec(shim, buildOutDir); err != nil {
 			recordRuntimeBuildFailure(evidence, targets, targetIndex, target, err, canonical, buildOutDir, outDir, gosxRoot)
-			_ = maybeWriteRuntimeBuildEvidence(opts.OuroborosOut, evidence)
 			return fmt.Errorf("validate TinyGo wasm_exec.js after %s build: %w", target.label, err)
 		}
 		optimized, err := runtimeOptimizeWASMWithWasmOpt(outputPath)
 		if err != nil {
 			recordRuntimeBuildFailure(evidence, targets, targetIndex, target, err, canonical, buildOutDir, outDir, gosxRoot)
-			_ = maybeWriteRuntimeBuildEvidence(opts.OuroborosOut, evidence)
 			return fmt.Errorf("optimize %s runtime: %w", target.label, err)
 		}
 		if optimized {
@@ -176,18 +187,15 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 		data, err := os.ReadFile(outputPath)
 		if err != nil {
 			recordRuntimeBuildFailure(evidence, targets, targetIndex, target, err, canonical, buildOutDir, outDir, gosxRoot)
-			_ = maybeWriteRuntimeBuildEvidence(opts.OuroborosOut, evidence)
 			return fmt.Errorf("read %s runtime: %w", target.label, err)
 		}
 		if err := writeCompressedSidecarsIfSmaller(outputPath, data); err != nil {
 			recordRuntimeBuildFailure(evidence, targets, targetIndex, target, err, canonical, buildOutDir, outDir, gosxRoot)
-			_ = maybeWriteRuntimeBuildEvidence(opts.OuroborosOut, evidence)
 			return fmt.Errorf("write %s runtime compression sidecars: %w", target.label, err)
 		}
 		metrics, err := runtimeMetricsForFile(outputPath)
 		if err != nil {
 			recordRuntimeBuildFailure(evidence, targets, targetIndex, target, err, canonical, buildOutDir, outDir, gosxRoot)
-			_ = maybeWriteRuntimeBuildEvidence(opts.OuroborosOut, evidence)
 			return fmt.Errorf("measure %s runtime: %w", target.label, err)
 		}
 		evidence.Variants = append(evidence.Variants, measuredRuntimeVariant(target, metrics, evidence, optimized, shim, canonical))
@@ -201,10 +209,17 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 		if err := publishRuntimeBuildOutput(buildOutDir, outDir); err != nil {
 			return err
 		}
-		if err := maybeWriteRuntimeBuildEvidence(opts.OuroborosOut, evidence); err != nil {
+		if err := publishRuntimeEvidenceBundle(outDir, opts.OuroborosOut); err != nil {
 			rollbackErr := os.Rename(outDir, tempBuildDir)
 			if rollbackErr != nil {
-				return fmt.Errorf("write runtime build evidence: %v; rollback published runtime output: %w", err, rollbackErr)
+				return fmt.Errorf("publish runtime evidence bundle: %v; rollback published runtime output: %w", err, rollbackErr)
+			}
+			return fmt.Errorf("publish runtime evidence bundle: %w (published output rolled back)", err)
+		}
+		if err := maybeWriteRuntimeBuildEvidence(opts.OuroborosOut, evidence); err != nil {
+			rollbackErr := rollbackRuntimePublication(outDir, tempBuildDir, opts.OuroborosOut)
+			if rollbackErr != nil {
+				return fmt.Errorf("write runtime build evidence: %v; rollback runtime publication: %w", err, rollbackErr)
 			}
 			return fmt.Errorf("write runtime build evidence: %w (published output rolled back)", err)
 		}
@@ -218,7 +233,7 @@ func newRuntimeBuildEvidence(outDir string, canonical bool) *ouroboros.RuntimeBu
 	if canonical {
 		outDir = "."
 	}
-	return &ouroboros.RuntimeBuildEvidence{
+	evidence := &ouroboros.RuntimeBuildEvidence{
 		SchemaVersion: ouroboros.SchemaVersion,
 		Contract:      ouroboros.ContractO02,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
@@ -229,6 +244,10 @@ func newRuntimeBuildEvidence(outDir string, canonical bool) *ouroboros.RuntimeBu
 			"The islands artifact is retained for manifest compatibility and is not an independently advertised profile.",
 		},
 	}
+	if canonical {
+		evidence.BundleRoot = canonicalRuntimeBundleRoot
+	}
+	return evidence
 }
 
 func maybeWriteRuntimeBuildEvidence(root string, evidence *ouroboros.RuntimeBuildEvidence) error {
@@ -243,11 +262,13 @@ func measuredRuntimeVariant(target runtimeBuildTarget, metrics ouroboros.AssetMe
 	shimMetrics := shim.Source
 	if canonical {
 		shimMetrics.File = "wasm_exec.js"
-		shimMetrics.SourcePath = "wasm_exec.js"
+		shimMetrics.SourcePath = canonicalRuntimeBundleRoot + "/wasm_exec.js"
 	}
 	sourcePath := target.file
 	if !canonical {
 		sourcePath = metrics.SourcePath
+	} else {
+		sourcePath = canonicalRuntimeBundleRoot + "/" + target.file
 	}
 	return ouroboros.RuntimeArtifactVariant{
 		ID:                target.id,
@@ -498,6 +519,87 @@ func publishRuntimeBuildOutput(srcDir, dstDir string) error {
 		return fmt.Errorf("publish runtime artifact directory: %w", err)
 	}
 	return nil
+}
+
+func publishRuntimeEvidenceBundle(runtimeDir, evidenceRoot string) error {
+	wasmDir := filepath.Join(evidenceRoot, "wasm")
+	finalDir := filepath.Join(evidenceRoot, filepath.FromSlash(canonicalRuntimeBundleRoot))
+	if _, err := os.Lstat(finalDir); err == nil {
+		return fmt.Errorf("runtime evidence bundle already exists: %s", finalDir)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect runtime evidence bundle: %w", err)
+	}
+	if err := os.MkdirAll(wasmDir, 0o755); err != nil {
+		return fmt.Errorf("create runtime evidence directory: %w", err)
+	}
+	tempDir, err := os.MkdirTemp(wasmDir, ".artifacts.tmp-*")
+	if err != nil {
+		return fmt.Errorf("create runtime evidence bundle: %w", err)
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+	files := []string{"wasm_exec.js"}
+	for _, target := range runtimeBuildTargets() {
+		files = append(files, target.file)
+	}
+	for _, name := range files {
+		if err := ouroboros.CopyFile(filepath.Join(tempDir, name), filepath.Join(runtimeDir, name)); err != nil {
+			return fmt.Errorf("bundle runtime artifact %s: %w", name, err)
+		}
+	}
+	if err := os.Rename(tempDir, finalDir); err != nil {
+		return fmt.Errorf("publish runtime evidence bundle: %w", err)
+	}
+	cleanup = false
+	return nil
+}
+
+func removeRuntimeEvidenceBundle(evidenceRoot string) error {
+	path := filepath.Join(evidenceRoot, filepath.FromSlash(canonicalRuntimeBundleRoot))
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	return nil
+}
+
+func removeRuntimeBuildReceipt(evidenceRoot string) error {
+	path := filepath.Join(evidenceRoot, "wasm", "runtime-artifacts.json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func rollbackRuntimePublication(outDir, tempBuildDir, evidenceRoot string) error {
+	var errs []error
+	if err := removeRuntimeBuildReceipt(evidenceRoot); err != nil {
+		errs = append(errs, fmt.Errorf("remove receipt: %w", err))
+	}
+	if err := removeRuntimeEvidenceBundle(evidenceRoot); err != nil {
+		errs = append(errs, fmt.Errorf("remove bundle: %w", err))
+	}
+	if err := os.Rename(outDir, tempBuildDir); err != nil {
+		errs = append(errs, fmt.Errorf("restore output: %w", err))
+	}
+	return errors.Join(errs...)
+}
+
+func runtimePublicationPathsOverlap(a, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	return runtimePathContains(a, b) || runtimePathContains(b, a)
+}
+
+func runtimePathContains(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }
 
 func toolEnvironment(path, name string) map[string]string {
