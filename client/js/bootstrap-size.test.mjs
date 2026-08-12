@@ -498,7 +498,10 @@ const budgets = [
   // (Stack 04's dual navigation dispatch/guard plus the widened DRY-gate
   // scan folded in with Stack 05's mailbox work). gzip and brotli headroom
   // widened. Measured: 1_522_287 / 412_442 / 330_930.
-  { file: "bootstrap.js", raw: 1_522_287, gzip: 412_462, brotli: 331_219 },
+  // Final integration adds main's environment-map/beacon sources, the typed
+  // ABI facade, and restored boolean-attribute semantics. Regenerated exactly:
+  // 1_526_695 / 413_606 / 332_200.
+  { file: "bootstrap.js", raw: 1_526_695, gzip: 413_606, brotli: 332_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -554,7 +557,7 @@ const budgets = [
   // 33_519 for the O-series propagation merge (Stack 04's dual navigation
   // dispatch/guard folded in with Stack 05's mailbox work). Measured:
   // 141_682 / 38_310 / 33_519.
-  { file: "bootstrap-runtime.js", raw: 141_682, gzip: 38_310, brotli: 33_519 },
+  { file: "bootstrap-runtime.js", raw: 141_682, gzip: 38_323, brotli: 33_519 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -869,7 +872,8 @@ const budgets = [
   // 119_406.
   // Bumped brotli 121_831 -> 121_832 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 531_047 / 147_078 / 121_832.
-  { file: "bootstrap-feature-scene3d.js", raw: 531_119, gzip: 147_079, brotli: 121_832 },
+  // Final main + O-series authority build: 533_809 / 147_802 / 122_610.
+  { file: "bootstrap-feature-scene3d.js", raw: 533_809, gzip: 147_802, brotli: 122_610 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1034,7 +1038,9 @@ const budgets = [
   // Exact merged measurement: 383_752 / 92_793 / 77_621.
   // Bumped brotli 77_881 -> 77_915 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 384_977 / 93_123 / 77_915.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 384_977, gzip: 93_134, brotli: 77_915 },
+  // Final build includes the environment-map bindings: 386_741 / 93_538 /
+  // 78_254.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 386_741, gzip: 93_538, brotli: 78_254 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1133,17 +1139,17 @@ const budgets = [
   // Bumped raw 96_000 -> 105_000, gzip 29_500 -> 32_000, and brotli 26_000 ->
   // 28_500 for the video parity additions carried by the engines feature
   // chunk. Measured: 103_662 / 31_450 / 27_897.
-  { file: "bootstrap-feature-engines.js", raw: 109_873, gzip: 32_518, brotli: 28_815 },
+  { file: "bootstrap-feature-engines.js", raw: 109_873, gzip: 32_527, brotli: 28_827 },
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
-  { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_021, brotli: 3_591 },
+  { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  { file: "bootstrap-feature-hubs.js", raw: 44_189, gzip: 13_740, brotli: 12_333 },
+  { file: "bootstrap-feature-hubs.js", raw: 44_189, gzip: 13_741, brotli: 12_347 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
   // measurement: 12_963 / 3_560 / 3_184.
-  { file: "bootstrap-feature-islands.js", raw: 18_835, gzip: 4_474, brotli: 4_003 },
+  { file: "bootstrap-feature-islands.js", raw: 18_835, gzip: 4_475, brotli: 4_005 },
 ];
 
 const routeBudgets = [
@@ -1250,7 +1256,7 @@ const routeBudgets = [
     // dispatch/guard folded in with Stack 05's mailbox work). Measured:
     // 251_555 / 70_828 / 62_334.
     raw: 251_555,
-    gzip: 70_828,
+    gzip: 70_850,
     brotli: 62_334,
     maxMonolithFraction: 0.25,
   },
@@ -1360,8 +1366,8 @@ const routeBudgets = [
     // Bumped raw 1_210_036 -> 1_210_050 for the O-series propagation merge.
     // gzip and brotli headroom widened. Measured: 1_210_050 / 321_836 /
     // 271_743.
-    raw: 1_210_050,
-    gzip: 322_331,
+    raw: 1_214_379,
+    gzip: 322_997,
     brotli: 272_806,
   },
   {
@@ -1443,9 +1449,9 @@ const routeBudgets = [
     // Bumped raw 1_038_427 -> 1_038_441 for the O-series propagation merge.
     // gzip and brotli headroom widened. Measured: 1_038_441 / 287_478 /
     // 243_846.
-    raw: 1_038_441,
-    gzip: 287_989,
-    brotli: 244_090,
+    raw: 1_041_006,
+    gzip: 288_224,
+    brotli: 244_554,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1520,9 +1526,9 @@ const routeBudgets = [
     // Bumped raw 1_423_404 -> 1_423_418 for the O-series propagation merge.
     // gzip and brotli headroom widened. Measured: 1_423_418 / 380_601 /
     // 321_761.
-    raw: 1_423_418,
-    gzip: 381_096,
-    brotli: 322_789,
+    raw: 1_427_747,
+    gzip: 381_762,
+    brotli: 322_808,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1601,9 +1607,9 @@ const routeBudgets = [
     // 233_174 -> 233_266 for the O-series propagation merge (Stack 04's dual
     // navigation dispatch/guard folded in with Stack 05's mailbox work).
     // Measured: 1_057_706 / 278_511 / 233_266.
-    raw: 1_057_706,
-    gzip: 278_511,
-    brotli: 233_266,
+    raw: 1_062_102,
+    gzip: 279_663,
+    brotli: 234_301,
   },
 
 ];

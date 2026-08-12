@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+type previewModeQuery struct {
+	prefix     string
+	origin     string
+	enabled    bool
+	diagnostic string
+}
+
 // parsePreviewModeQuery extracts the preview-mode prefix + origin from a URL
 // query string. Returns (prefix, origin, true) when the page should activate
 // the cross-frame relay. The prefix defaults to "$preview.". The peer origin
@@ -21,13 +28,19 @@ import (
 // parser without needing a js+wasm runtime. cross_frame.go's runtime
 // integration consumes the result.
 func parsePreviewModeQuery(search string) (string, string, bool) {
+	query := inspectPreviewModeQuery(search)
+	return query.prefix, query.origin, query.enabled
+}
+
+func inspectPreviewModeQuery(search string) previewModeQuery {
 	search = strings.TrimPrefix(search, "?")
 	if search == "" {
-		return "", "", false
+		return previewModeQuery{}
 	}
 	active := false
 	prefix := "$preview."
 	origin := ""
+	originDiagnostic := ""
 	for _, part := range strings.Split(search, "&") {
 		key, value := splitQueryPair(part)
 		switch key {
@@ -36,12 +49,17 @@ func parsePreviewModeQuery(search string) (string, string, bool) {
 				active = true
 			}
 		case "gosx-preview-origin":
-			if value != "" {
-				decoded, err := decodeQueryComponent(value)
-				if err == nil && decoded != "" {
-					origin = decoded
-				}
+			origin = ""
+			originDiagnostic = ""
+			if value == "" {
+				continue
 			}
+			decoded, err := decodeQueryComponent(value)
+			if err != nil {
+				originDiagnostic = "gosx-preview-origin is malformed"
+				continue
+			}
+			origin = decoded
 		case "gosx-preview-prefix":
 			if value != "" {
 				decoded, err := decodeQueryComponent(value)
@@ -51,10 +69,66 @@ func parsePreviewModeQuery(search string) (string, string, bool) {
 			}
 		}
 	}
-	if !active || strings.TrimSpace(origin) == "" || origin == "*" {
-		return "", "", false
+	if !active {
+		return previewModeQuery{}
 	}
-	return prefix, origin, true
+	if originDiagnostic != "" {
+		return previewModeQuery{diagnostic: originDiagnostic}
+	}
+	if strings.TrimSpace(origin) == "" {
+		return previewModeQuery{diagnostic: "gosx-preview-origin is required"}
+	}
+	if origin == "*" {
+		return previewModeQuery{diagnostic: "gosx-preview-origin must not use the wildcard origin"}
+	}
+	if !validPreviewOrigin(origin) {
+		return previewModeQuery{diagnostic: "gosx-preview-origin must be an absolute http(s) origin without a path"}
+	}
+	return previewModeQuery{prefix: prefix, origin: origin, enabled: true}
+}
+
+func validPreviewOrigin(origin string) bool {
+	if origin == "" || origin != strings.TrimSpace(origin) {
+		return false
+	}
+	schemeEnd := strings.Index(origin, "://")
+	if schemeEnd < 0 {
+		return false
+	}
+	scheme := origin[:schemeEnd]
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	authority := origin[schemeEnd+3:]
+	if authority == "" || strings.ContainsAny(authority, "/?#@ \t\r\n") {
+		return false
+	}
+	if authority[0] == '[' {
+		closeBracket := strings.IndexByte(authority, ']')
+		if closeBracket <= 1 {
+			return false
+		}
+		return closeBracket == len(authority)-1 || validPreviewPort(authority[closeBracket+1:])
+	}
+	if strings.Count(authority, ":") > 1 {
+		return false
+	}
+	if portAt := strings.LastIndexByte(authority, ':'); portAt >= 0 {
+		return portAt > 0 && validPreviewPort(authority[portAt:])
+	}
+	return true
+}
+
+func validPreviewPort(s string) bool {
+	if len(s) < 2 || s[0] != ':' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func splitQueryPair(part string) (string, string) {

@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,16 +18,18 @@ import (
 )
 
 type compareFixtureOptions struct {
-	canonical       bool
-	sourceSuffix    string
-	sourceMutator   func(*SourceIdentity)
-	inventoryLines  int
-	metricMutator   func(map[string]float64)
-	sampleMutator   func(*BrowserRawSample)
-	manifestMutator func(*BrowserManifest)
-	envMutator      func(*EnvironmentReport)
-	dynamic         *RuntimeJSONDynamicEvidenceManifest
-	dynamicBuilder  func(SourceIdentity) *RuntimeJSONDynamicEvidenceManifest
+	canonical            bool
+	sourceSuffix         string
+	sourceMutator        func(*SourceIdentity)
+	inventoryLines       int
+	inventoryBytes       int64
+	inventoryNameMutator func([]string) []string
+	metricMutator        func(map[string]float64)
+	sampleMutator        func(*BrowserRawSample)
+	manifestMutator      func(*BrowserManifest)
+	envMutator           func(*EnvironmentReport)
+	dynamic              *RuntimeJSONDynamicEvidenceManifest
+	dynamicBuilder       func(SourceIdentity) *RuntimeJSONDynamicEvidenceManifest
 }
 
 func TestCompareSmokeSelfComparePasses(t *testing.T) {
@@ -183,6 +186,50 @@ func TestCompareBudgetRejectsUnsupportedDirection(t *testing.T) {
 	if _, err := ReadCompareBudgetStrict(path); err == nil || !strings.Contains(err.Error(), "unsupported direction") {
 		t.Fatalf("unsupported direction error = %v", err)
 	}
+}
+
+func TestCompareBudgetRequiresGovernanceRules(t *testing.T) {
+	for _, missing := range []string{
+		budgetSourceJavaScriptLines,
+		budgetSourceIncludedBytes,
+		budgetGlobalCurrentCount,
+		budgetGlobalAddedNames,
+		budgetPixelDiffPct,
+	} {
+		t.Run(missing, func(t *testing.T) {
+			budget := compareCanonicalBudget(t)
+			delete(budget.Defaults, missing)
+			path := filepath.Join(t.TempDir(), "budget.json")
+			writeFixtureJSON(t, path, budget)
+			if _, err := ReadCompareBudgetStrict(path); err == nil || !strings.Contains(err.Error(), "required governance policy") {
+				t.Fatalf("missing policy error = %v", err)
+			}
+		})
+	}
+
+	t.Run("source policy must be monotonic", func(t *testing.T) {
+		budget := compareCanonicalBudget(t)
+		rule := budget.Defaults[budgetSourceJavaScriptLines]
+		rule.AllowedAbs = 1
+		budget.Defaults[budgetSourceJavaScriptLines] = rule
+		path := filepath.Join(t.TempDir(), "budget.json")
+		writeFixtureJSON(t, path, budget)
+		if _, err := ReadCompareBudgetStrict(path); err == nil || !strings.Contains(err.Error(), "monotonic no-growth") {
+			t.Fatalf("non-monotonic policy error = %v", err)
+		}
+	})
+
+	t.Run("pixel policy retains hard maximum", func(t *testing.T) {
+		budget := compareCanonicalBudget(t)
+		rule := budget.Defaults[budgetPixelDiffPct]
+		rule.AllowedAbs = visual.MaxCanonicalPixelThresholdPct + 0.01
+		budget.Defaults[budgetPixelDiffPct] = rule
+		path := filepath.Join(t.TempDir(), "budget.json")
+		writeFixtureJSON(t, path, budget)
+		if _, err := ReadCompareBudgetStrict(path); err == nil || !strings.Contains(err.Error(), "hard maximum") {
+			t.Fatalf("pixel hard maximum error = %v", err)
+		}
+	})
 }
 
 func TestCompareZeroBaselineDeltaPctIsFinite(t *testing.T) {
@@ -397,18 +444,51 @@ func TestCompareRatchetFailures(t *testing.T) {
 			t.Fatalf("missing inventory line ratchet: %+v", report.Summary)
 		}
 	})
+	t.Run("inventory bytes grow", func(t *testing.T) {
+		base := writeCompareFixture(t, filepath.Join(t.TempDir(), "base"), compareFixtureOptions{inventoryBytes: 100})
+		cand := writeCompareFixture(t, filepath.Join(t.TempDir(), "cand"), compareFixtureOptions{inventoryBytes: 101})
+		report := runSmokeCompare(t, base, cand)
+		if report.ExitCode != 1 || !reportHasRatchet(report, "ratchet.source.includedBytes", "fail") {
+			t.Fatalf("missing inventory byte ratchet: %+v", report.Summary)
+		}
+	})
+	t.Run("source reductions pass monotonic budgets", func(t *testing.T) {
+		base := writeCompareFixture(t, filepath.Join(t.TempDir(), "base"), compareFixtureOptions{inventoryLines: 101, inventoryBytes: 101})
+		cand := writeCompareFixture(t, filepath.Join(t.TempDir(), "cand"), compareFixtureOptions{inventoryLines: 100, inventoryBytes: 100})
+		report := runSmokeCompare(t, base, cand)
+		if report.ExitCode != 0 || !reportHasRatchet(report, "ratchet.source.includedJavaScriptLines", "pass") || !reportHasRatchet(report, "ratchet.source.includedBytes", "pass") {
+			t.Fatalf("source reduction did not pass: exit=%d ratchets=%+v", report.ExitCode, report.Ratchets)
+		}
+	})
+	t.Run("source equality passes monotonic budgets", func(t *testing.T) {
+		root := writeCompareFixture(t, filepath.Join(t.TempDir(), "equal"), compareFixtureOptions{inventoryLines: 100, inventoryBytes: 100})
+		report := runSmokeCompare(t, root, root)
+		if report.ExitCode != 0 || !reportHasRatchet(report, "ratchet.source.includedJavaScriptLines", "pass") || !reportHasRatchet(report, "ratchet.source.includedBytes", "pass") {
+			t.Fatalf("source equality did not pass: exit=%d ratchets=%+v", report.ExitCode, report.Ratchets)
+		}
+	})
 	t.Run("global growth", func(t *testing.T) {
 		base := writeCompareFixture(t, filepath.Join(t.TempDir(), "base"), compareFixtureOptions{})
 		cand := writeCompareFixture(t, filepath.Join(t.TempDir(), "cand"), compareFixtureOptions{
-			sourceSuffix: "-global",
-			sourceMutator: func(s *SourceIdentity) {
-				s.CompatibilityAudit.Current.Count++
-				s.CompatibilityAudit.Reconciliation.AddedSinceAnchorCount = 1
+			inventoryNameMutator: func(names []string) []string {
+				return append(names, "__gosx_added_after_anchor")
 			},
 		})
 		report := runSmokeCompare(t, base, cand)
 		if report.ExitCode != 1 || !reportHasRatchet(report, "ratchet.global.added", "fail") {
 			t.Fatalf("missing global growth ratchet: %+v", report.Summary)
+		}
+	})
+	t.Run("ambient replacement cannot evade equal count", func(t *testing.T) {
+		base := writeCompareFixture(t, filepath.Join(t.TempDir(), "base"), compareFixtureOptions{})
+		cand := writeCompareFixture(t, filepath.Join(t.TempDir(), "cand"), compareFixtureOptions{
+			inventoryNameMutator: func(names []string) []string {
+				return append(names[1:], "__gosx_replacement_name")
+			},
+		})
+		report := runSmokeCompare(t, base, cand)
+		if report.ExitCode != 1 || !reportHasRatchet(report, "ratchet.global.current.count", "pass") || !reportHasRatchet(report, "ratchet.global.added-names", "fail") || !reportHasMessage(report, "__gosx_replacement_name") {
+			t.Fatalf("ambient replacement escaped set ratchet: exit=%d ratchets=%+v", report.ExitCode, report.Ratchets)
 		}
 	})
 	t.Run("static JSON grows", func(t *testing.T) {
@@ -472,6 +552,121 @@ func TestCompareRatchetFailures(t *testing.T) {
 	})
 }
 
+func TestComparePixelThresholdPolicy(t *testing.T) {
+	base := writeCompareFixture(t, filepath.Join(t.TempDir(), "base"), compareFixtureOptions{})
+	cand := writeCompareFixture(t, filepath.Join(t.TempDir(), "cand"), compareFixtureOptions{})
+	var baseManifest, candManifest BrowserManifest
+	readFixtureJSON(t, filepath.Join(base, "manifest.json"), &baseManifest)
+	readFixtureJSON(t, filepath.Join(cand, "manifest.json"), &candManifest)
+
+	writeCandidate := func(t *testing.T, manifest visual.PixelEvidenceManifest) *CompareReport {
+		t.Helper()
+		return writeCandidateWithComparisonMutation(t, base, cand, baseManifest.Source, candManifest.Source, manifest, nil)
+	}
+
+	baseCandidate := func(threshold visual.PixelThresholdEvidence) visual.PixelEvidenceManifest {
+		return visual.PixelEvidenceManifest{
+			SchemaVersion:          visual.OuroborosPixelSchemaVersion,
+			GeneratedAt:            "2026-08-09T00:00:00Z",
+			RouteID:                "R00",
+			Mode:                   string(visual.PixelModeCandidateComparison),
+			BackendRequirement:     "webgpu",
+			HardwareClassification: "headless-logic",
+			Threshold:              threshold,
+		}
+	}
+
+	t.Run("candidate may tighten", func(t *testing.T) {
+		report := writeCandidate(t, baseCandidate(visual.PixelThresholdEvidence{BaselinePct: 1, RequestedPct: 0.5, EffectivePct: 0.5}))
+		if report.ExitCode != 0 || !reportHasRatchet(report, "ratchet.pixel.0.threshold-policy", "pass") {
+			t.Fatalf("candidate tightening did not pass: exit=%d ratchets=%+v", report.ExitCode, report.Ratchets)
+		}
+	})
+	t.Run("candidate may not loosen", func(t *testing.T) {
+		report := writeCandidate(t, baseCandidate(visual.PixelThresholdEvidence{BaselinePct: 1, RequestedPct: 2, EffectivePct: 2}))
+		if report.ExitCode != 1 || !reportHasRatchet(report, "ratchet.pixel.0.threshold-policy", "fail") {
+			t.Fatalf("candidate loosening did not fail: exit=%d ratchets=%+v", report.ExitCode, report.Ratchets)
+		}
+	})
+	t.Run("stored passed contradiction fails", func(t *testing.T) {
+		manifest := baseCandidate(visual.PixelThresholdEvidence{BaselinePct: 1, RequestedPct: 0.5, EffectivePct: 0.5})
+		report := writeCandidateWithComparisonMutation(t, base, cand, baseManifest.Source, candManifest.Source, manifest, func(c *visual.PixelComparison) {
+			c.Passed = false
+		})
+		if report.ExitCode != 1 || !reportHasMessage(report, "contradicts") {
+			t.Fatalf("stored result contradiction did not fail: exit=%d ratchets=%+v", report.ExitCode, report.Ratchets)
+		}
+	})
+}
+
+func TestCompareBaselinePixelThresholdMustEqualPolicy(t *testing.T) {
+	artifactRoot := writeCompareFixture(t, filepath.Join(t.TempDir(), "browser"), compareFixtureOptions{})
+	pixelRoot := filepath.Join(t.TempDir(), "pixel-evidence")
+	addPixelRefToFixture(t, artifactRoot, "pixels/r00.json")
+	var manifest BrowserManifest
+	readFixtureJSON(t, filepath.Join(artifactRoot, "manifest.json"), &manifest)
+	initial := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "r00-initial.png"), true)
+	settled := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "r00-settled.png"), true)
+	pixelManifest := compareBaselinePixelManifest(manifest.Source, initial, settled)
+	pixelManifest.Threshold = visual.PixelThresholdEvidence{BaselinePct: 0.5, RequestedPct: 0.5, EffectivePct: 0.5}
+	writeFixtureJSON(t, filepath.Join(pixelRoot, "pixels", "r00.json"), pixelManifest)
+
+	report, err := CompareOuroborosArtifacts(CompareOptions{
+		BaselineManifest:  filepath.Join(artifactRoot, "manifest.json"),
+		CandidateManifest: filepath.Join(artifactRoot, "manifest.json"),
+		BudgetPath:        compareBudgetPath(t),
+		Mode:              CompareModeSmoke,
+		BaselinePixelRoot: pixelRoot,
+		GeneratedAt:       time.Unix(0, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ExitCode != 1 || !reportHasRatchet(report, "ratchet.pixel.0.threshold-policy", "fail") {
+		t.Fatalf("baseline self-report escaped policy: exit=%d ratchets=%+v", report.ExitCode, report.Ratchets)
+	}
+}
+
+func writeCandidateWithComparisonMutation(t *testing.T, baselineRoot, candidateRoot string, baseline, candidate SourceIdentity, manifest visual.PixelEvidenceManifest, mutate func(*visual.PixelComparison)) *CompareReport {
+	t.Helper()
+	pixelRoot := t.TempDir()
+	initial := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "candidate-initial.png"), true)
+	settled := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "candidate-settled.png"), true)
+	manifest.Source = visual.PixelSourceIdentity{BaseRevision: candidate.BaseRevision, OverlayHash: candidate.OverlayHash, InventorySHA256: candidate.InventorySHA256}
+	manifest.BaselineSource = &visual.PixelSourceIdentity{BaseRevision: baseline.BaseRevision, OverlayHash: baseline.OverlayHash, InventorySHA256: baseline.InventorySHA256}
+	manifest.States = []visual.PixelStateEvidence{
+		{State: "initial", Captures: []visual.PixelCaptureEvidence{initial}},
+		{State: "settled", Captures: []visual.PixelCaptureEvidence{settled}},
+	}
+	for i := range manifest.States {
+		comparison := &visual.PixelComparison{
+			DiffPct:               0.25,
+			DimensionsMatch:       true,
+			BaselineThresholdPct:  manifest.Threshold.BaselinePct,
+			EffectiveThresholdPct: manifest.Threshold.EffectivePct,
+			Passed:                true,
+		}
+		if mutate != nil {
+			mutate(comparison)
+		}
+		manifest.States[i].Captures[0].Comparison = comparison
+	}
+	path := filepath.Join(pixelRoot, "candidate.json")
+	writeFixtureJSON(t, path, manifest)
+	report, err := CompareOuroborosArtifacts(CompareOptions{
+		BaselineManifest:       filepath.Join(baselineRoot, "manifest.json"),
+		CandidateManifest:      filepath.Join(candidateRoot, "manifest.json"),
+		BudgetPath:             compareBudgetPath(t),
+		Mode:                   CompareModeSmoke,
+		CandidatePixelManifest: []string{path},
+		GeneratedAt:            time.Unix(0, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
 func TestCompareNoisyMetricWithoutRerunProofIsInconclusive(t *testing.T) {
 	root := writeNoisyFixture(t, t.TempDir())
 	report := runSmokeCompare(t, root, root)
@@ -496,7 +691,7 @@ func writeCompareFixture(t *testing.T, root string, opts compareFixtureOptions) 
 	if inventoryLines == 0 {
 		inventoryLines = 100
 	}
-	source = writeFixtureInventory(t, root, source, inventoryLines)
+	source = writeFixtureInventory(t, root, source, inventoryLines, opts.inventoryBytes, opts.inventoryNameMutator)
 	metrics := compareMetrics()
 	if opts.metricMutator != nil {
 		opts.metricMutator(metrics)
@@ -554,7 +749,7 @@ func writeCompareFixture(t *testing.T, root string, opts compareFixtureOptions) 
 func writeNoisyFixture(t *testing.T, root string) string {
 	t.Helper()
 	source := compareSource("")
-	source = writeFixtureInventory(t, root, source, 100)
+	source = writeFixtureInventory(t, root, source, 100, 0, nil)
 	if err := os.MkdirAll(filepath.Join(root, "perf"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -624,7 +819,7 @@ func compareSource(suffix string) SourceIdentity {
 	}
 }
 
-func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, includedLines int) SourceIdentity {
+func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, includedLines int, includedBytes int64, nameMutator func([]string) []string) SourceIdentity {
 	t.Helper()
 	receipt, err := loadCompatibilityReceipt()
 	if err != nil {
@@ -632,7 +827,12 @@ func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, inc
 	}
 	receiptSet := compatibilityReceiptEvidenceFromNames(receipt.Names, CompatibilitySourceIdentity{Kind: "pinned-receipt", ArtifactPath: "perf/ouroboros/compatibility_receipt.v1.json"})
 	anchorSet := compatibilityEvidenceFromNamesWithEvidenceAndScope(receipt.Names, CompatibilitySourceIdentity{Kind: "clean-anchor", Revision: source.BaseRevision, OverlayHash: OverlayClean}, compatibilityFullRuntimeScope, nil)
-	currentSet := compatibilityEvidenceFromNamesWithEvidenceAndScope(receipt.Names, CompatibilitySourceIdentity{Kind: "current-overlay", Revision: source.BaseRevision, OverlayHash: source.OverlayHash}, compatibilityFullRuntimeScope, nil)
+	currentNames := append([]string{}, receipt.Names...)
+	if nameMutator != nil {
+		currentNames = nameMutator(currentNames)
+		sort.Strings(currentNames)
+	}
+	currentSet := compatibilityEvidenceFromNamesWithEvidenceAndScope(currentNames, CompatibilitySourceIdentity{Kind: "current-overlay", Revision: source.BaseRevision, OverlayHash: source.OverlayHash}, compatibilityFullRuntimeScope, nil)
 	for _, set := range []*CompatibilityNameSetEvidence{&anchorSet, &currentSet} {
 		set.RuntimeJSONSourceIdentityHash = "sha256:source"
 		set.RuntimeJSONSemanticHash = "sha256:semantic"
@@ -640,7 +840,10 @@ func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, inc
 		set.RuntimeJSONGlobalNameHash = RuntimeJSONStaticGlobalNameHash(set.Names)
 		set.EvidenceHash = compatibilityEvidenceHash(*set)
 	}
-	included := SourceFile{Path: "client/js/bootstrap-src/fixture.js", Language: "javascript", SourceKind: "bootstrap", Lines: includedLines, Bytes: 10, GzipBytes: 10, BrotliBytes: 10, ParseOK: true}
+	if includedBytes == 0 {
+		includedBytes = 10
+	}
+	included := SourceFile{Path: "client/js/bootstrap-src/fixture.js", Language: "javascript", SourceKind: "bootstrap", Lines: includedLines, Bytes: includedBytes, GzipBytes: 10, BrotliBytes: 10, ParseOK: true}
 	artifactRef := func(kind, id string) *ArtifactRef {
 		return &ArtifactRef{SchemaVersion: "gosx.ouroboros.artifact-ref.v1", Path: kind + "/" + id + ".json", BaseRevision: source.BaseRevision, OverlayHash: source.OverlayHash, SHA256: "sha256:" + kind + id}
 	}
@@ -657,14 +860,27 @@ func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, inc
 		Scope:         Scope{Included: []ScopeRule{{Pattern: "client/js/bootstrap-src/**/*.js", Reason: "fixture"}}, Excluded: []ScopeRule{}},
 		Overlay:       OverlayEvidence{Status: "clean", Hash: source.OverlayHash, BaseRevision: source.BaseRevision, TrackedDiffHash: source.TrackedDiffHash, TrackedCachedDiffHash: source.TrackedDiffHash, UntrackedSources: []UntrackedSourceHash{}, Recreate: []string{}},
 		Files:         FileInventory{Included: []SourceFile{included}, Sidecars: []SourceFile{}, Embedded: []SourceFile{}, Excluded: []ExcludedFile{}, Audit: []ExcludedFile{}},
-		Totals:        Totals{IncludedFiles: 1, IncludedJavaScriptLines: includedLines, IncludedBytes: 10, IncludedGzipBytes: 10, IncludedBrotliBytes: 10, ByExtension: map[string]int{".js": 1}, RuntimeSemanticGate: "cmd/buildbootstrap + make test-runtime-types", RuntimeAmbientFacade: "client/runtime/host/compatibility.ts"},
+		Totals:        Totals{IncludedFiles: 1, IncludedJavaScriptLines: includedLines, IncludedBytes: includedBytes, IncludedGzipBytes: 10, IncludedBrotliBytes: 10, ByExtension: map[string]int{".js": 1}, RuntimeSemanticGate: "cmd/buildbootstrap + make test-runtime-types", RuntimeAmbientFacade: "client/runtime/host/compatibility.ts"},
 		Structural:    Structural{Gotreesitter: ParseSummary{Language: "javascript", Parsed: 1}, ImportsExports: []Location{}, FreeGlobalReads: []string{}, FreeGlobalWrites: []string{}},
 		Drift:         DriftReport{Status: "pass"},
 		Surface: Surface{
-			GosxNames:                     []GosxName{},
-			BroaderBrowserGosxNames:       []GosxName{},
-			SerializationSites:            []SerializationSite{},
-			CompatibilityAudit:            CompatibilityAudit{SchemaVersion: compatibilityAuditSchemaVersion, Status: "pass", CanonicalAvailable: true, Receipt: receiptSet, Anchor: anchorSet, Current: currentSet, Reconciliation: CompatibilityReconciliation{RecoveredPreexisting: []string{}, AddedSinceAnchor: []string{}, RemovedSinceAnchor: []string{}, MissingFromAnchor: []string{}}},
+			GosxNames:               []GosxName{},
+			BroaderBrowserGosxNames: []GosxName{},
+			SerializationSites:      []SerializationSite{},
+			CompatibilityAudit: CompatibilityAudit{
+				SchemaVersion:      compatibilityAuditSchemaVersion,
+				Status:             passFailCompatibilitySets(anchorSet.Names, currentSet.Names),
+				CanonicalAvailable: equalStrings(anchorSet.Names, currentSet.Names),
+				Receipt:            receiptSet,
+				Anchor:             anchorSet,
+				Current:            currentSet,
+				Reconciliation: CompatibilityReconciliation{
+					RecoveredPreexisting: differenceStrings(anchorSet.Names, receiptSet.Names),
+					AddedSinceAnchor:     differenceStrings(currentSet.Names, anchorSet.Names),
+					RemovedSinceAnchor:   differenceStrings(anchorSet.Names, currentSet.Names),
+					MissingFromAnchor:    differenceStrings(receiptSet.Names, anchorSet.Names),
+				},
+			},
 			BroaderSerializationSiteCount: 0,
 		},
 		Ratchets: []ScopeRatchet{{ID: "fixture", Scope: "fixture", Status: "pass", Definition: "fixture"}},
@@ -697,6 +913,7 @@ func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, inc
 	}
 	source.InventoryRef = "inventory.json"
 	source.InventorySHA256 = hash
+	source.CompatibilityAudit = compatibilityAuditIdentityFromInventory(inv.Surface.CompatibilityAudit)
 	if source.RuntimeJSONStatic != nil {
 		binding := DynamicSourceBindingFromSourceIdentity(source)
 		source.RuntimeJSONStatic.SourceIdentityHash = runtimeJSONDynamicSourceBindingHash(binding)
@@ -705,6 +922,13 @@ func writeFixtureInventory(t *testing.T, root string, source SourceIdentity, inc
 		source.RuntimeJSONStatic.GlobalNameHash = RuntimeJSONStaticGlobalNameHash([]string{"__gosx_canvas_event"})
 	}
 	return source
+}
+
+func passFailCompatibilitySets(anchor, current []string) string {
+	if equalStrings(anchor, current) {
+		return "pass"
+	}
+	return "fail-closed"
 }
 
 func writeFixtureSizeEvidence(t *testing.T, root string, source SourceIdentity, routes []RouteAssetEvidence) {
@@ -851,8 +1075,8 @@ func dynamicProductEvent(routeID string) ProbeEvent {
 }
 
 func comparePixelManifest(passed bool, baseline, candidate SourceIdentity, initial, settled visual.PixelCaptureEvidence) visual.PixelEvidenceManifest {
-	initial.Comparison = &visual.PixelComparison{DiffPct: 2, EffectiveThresholdPct: 1, DimensionsMatch: true, Passed: passed}
-	settled.Comparison = &visual.PixelComparison{DiffPct: 2, EffectiveThresholdPct: 1, DimensionsMatch: true, Passed: passed}
+	initial.Comparison = &visual.PixelComparison{DiffPct: 2, BaselineThresholdPct: 1, EffectiveThresholdPct: 1, DimensionsMatch: true, Passed: passed}
+	settled.Comparison = &visual.PixelComparison{DiffPct: 2, BaselineThresholdPct: 1, EffectiveThresholdPct: 1, DimensionsMatch: true, Passed: passed}
 	return visual.PixelEvidenceManifest{
 		SchemaVersion:          visual.OuroborosPixelSchemaVersion,
 		GeneratedAt:            "2026-08-09T00:00:00Z",
@@ -862,7 +1086,7 @@ func comparePixelManifest(passed bool, baseline, candidate SourceIdentity, initi
 		BaselineSource:         &visual.PixelSourceIdentity{BaseRevision: baseline.BaseRevision, OverlayHash: baseline.OverlayHash, InventorySHA256: baseline.InventorySHA256},
 		BackendRequirement:     "webgpu",
 		HardwareClassification: "headless-logic",
-		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 1},
+		Threshold:              visual.PixelThresholdEvidence{BaselinePct: 1, RequestedPct: 1, EffectivePct: 1},
 		States: []visual.PixelStateEvidence{
 			{State: "initial", Captures: []visual.PixelCaptureEvidence{initial}},
 			{State: "settled", Captures: []visual.PixelCaptureEvidence{settled}},
@@ -880,7 +1104,7 @@ func compareBaselinePixelManifest(source SourceIdentity, initial, settled visual
 		BackendRequirement:     "webgpu",
 		Certified:              true,
 		HardwareClassification: "headless-logic",
-		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 1},
+		Threshold:              visual.PixelThresholdEvidence{BaselinePct: 1, RequestedPct: 1, EffectivePct: 1},
 		States: []visual.PixelStateEvidence{
 			{State: "initial", Captures: []visual.PixelCaptureEvidence{initial}},
 			{State: "settled", Captures: []visual.PixelCaptureEvidence{settled}},
@@ -942,6 +1166,15 @@ func compareBudgetPath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func compareCanonicalBudget(t *testing.T) CompareBudget {
+	t.Helper()
+	budget, err := ReadCompareBudgetStrict(compareBudgetPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *budget
 }
 
 func writeRawSamples(t *testing.T, path string, samples []BrowserRawSample) {

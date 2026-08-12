@@ -1113,6 +1113,125 @@ test("Scene3D managed fluid interactions stop camera inertia before consuming wa
   assert.equal(form.__gosxScene3DFluidObjectState.pointerMode, "AddDrops");
 });
 
+function loadWaterTapAPI(overrides) {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const document = { documentElement: { setAttribute() {} }, querySelector() { return null; } };
+  const context = vm.createContext(Object.assign({
+    Date,
+    JSON,
+    Math,
+    Number,
+    Array,
+    Object,
+    String,
+    document,
+    performance: { now: () => 0 },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    SCENE_CMD_SET_PARTICLES: 6,
+    window: { document },
+  }, overrides || {}));
+  vm.runInContext(
+    controlsSource + "\nwindow.__waterTapTest = { dropCenter: sceneManagedPoolTapDropCenter, bind: sceneManagedPoolTapBind };",
+    context,
+    { filename: "19b-scene-control-forms.js" },
+  );
+  return context.window.__waterTapTest;
+}
+
+function fakeCanvasMount() {
+  const listeners = new Map();
+  return {
+    tagName: "canvas",
+    getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; },
+    addEventListener(type, handler) { listeners.set(type, handler); },
+    removeEventListener(type) { listeners.delete(type); },
+    dispatch(type, event) {
+      const handler = listeners.get(type);
+      if (handler) handler(event);
+    },
+  };
+}
+
+test("water-tap: sceneManagedPoolTapDropCenter normalizes by the WaterSystem's own pool half-extents, not a fixed 1x1 lab pool", () => {
+  const api = loadWaterTapAPI();
+  const system = { id: "blackglass-cove", poolWidth: 34, poolLength: 24 };
+  const inside = api.dropCenter({ x: 8.5, z: -6 }, system);
+  assert.ok(inside, "hit well inside a 34x24 pool must register");
+  assert.ok(Math.abs(inside.x - 0.25) < 1e-9, "dropX = " + inside.x);
+  assert.ok(Math.abs(inside.z + 0.25) < 1e-9, "dropZ = " + inside.z);
+  const outside = api.dropCenter({ x: 40, z: 0 }, system);
+  assert.equal(outside, null, "a hit past the declared pool width must not register");
+});
+
+test("water-tap: a pointer hit inside the pool patches only the matching WaterSystem's drop fields and leaves points/computeParticles/other systems untouched", () => {
+  const api = loadWaterTapAPI({
+    sceneScreenToRay() { return { origin: { x: 0, y: 5, z: 10 }, dir: { x: 0, y: -1, z: -1 } }; },
+    sceneRayIntersectYPlane() { return { x: 5, y: 0, z: -3 }; },
+  });
+  const otherSystem = { id: "other-pool", poolWidth: 1, poolLength: 1 };
+  const targetSystem = { id: "blackglass-cove", poolWidth: 34, poolLength: 24, dropEventID: 2, seedDrops: 18 };
+  const points = [{ id: "p1" }];
+  const computeParticles = [{ id: "embers" }];
+  const sceneState = { camera: { x: 0, y: 5, z: 10 }, waterSystems: [targetSystem, otherSystem], points, computeParticles };
+  const form = {
+    getAttribute(name) {
+      return name === "data-gosx-scene3d-control-subject" ? "blackglass-cove" : null;
+    },
+  };
+  const mount = fakeCanvasMount();
+  const calls = [];
+  const binding = api.bind(form, mount, sceneState, function(commands) { calls.push(commands); }, {});
+  assert.ok(binding, "bind must succeed against an unscoped control-target");
+  let prevented = false;
+  mount.dispatch("pointerdown", {
+    clientX: 50, clientY: 50, pointerType: "mouse", button: 0,
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+  assert.equal(calls.length, 1, "a pool hit must dispatch exactly one command batch");
+  assert.ok(prevented, "a pool hit must not also let native orbit rotate the camera");
+  const command = calls[0][0];
+  assert.equal(command.kind, 6);
+  assert.equal(command.data.points, points, "points must pass through unchanged");
+  assert.equal(command.data.computeParticles, computeParticles, "computeParticles must pass through unchanged");
+  const [patched, untouched] = command.data.waterSystems;
+  assert.equal(patched.id, "blackglass-cove");
+  assert.equal(patched.dropEventID, 3, "dropEventID must increment from the live system, not reset");
+  assert.ok(Math.abs(patched.dropX - 5 / 34) < 1e-9);
+  assert.ok(Math.abs(patched.dropZ - -3 / 24) < 1e-9);
+  assert.equal(patched.seedDrops, 18, "unrelated WaterSystem fields must survive the patch");
+  assert.equal(untouched, otherSystem, "a non-matching WaterSystem must pass through by reference, unmodified");
+  binding.dispose();
+});
+
+test("water-tap: a pointer hit outside the pool dispatches nothing and leaves the event for native orbit controls", () => {
+  const api = loadWaterTapAPI({
+    sceneScreenToRay() { return { origin: { x: 0, y: 5, z: 10 }, dir: { x: 0, y: -1, z: -1 } }; },
+    sceneRayIntersectYPlane() { return { x: 100, y: 0, z: 0 }; },
+  });
+  const targetSystem = { id: "blackglass-cove", poolWidth: 34, poolLength: 24, dropEventID: 2 };
+  const sceneState = { camera: { x: 0, y: 5, z: 10 }, waterSystems: [targetSystem] };
+  const form = {
+    getAttribute(name) {
+      return name === "data-gosx-scene3d-control-subject" ? "blackglass-cove" : null;
+    },
+  };
+  const mount = fakeCanvasMount();
+  const calls = [];
+  const binding = api.bind(form, mount, sceneState, function(commands) { calls.push(commands); }, {});
+  let prevented = false;
+  mount.dispatch("pointerdown", {
+    clientX: 99, clientY: 99, pointerType: "mouse", button: 0,
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+  assert.equal(calls.length, 0, "a miss outside the pool must not queue a drop");
+  assert.equal(prevented, false, "a miss must leave the pointer event alone for native orbit controls");
+  binding.dispose();
+});
 
 test("Scene3D managed fluid L key light direction points toward camera like upstream", () => {
   const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");

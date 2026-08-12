@@ -2,6 +2,10 @@
   "schemaVersion": "gosx.ouroboros.compare-budget.v1",
   "contractVersion": "O0.2",
   "defaults": {
+    "source.includedJavaScriptLines": { "allowedAbs": 0, "allowedPct": 0, "direction": "lower", "stat": "value", "exact": true },
+    "source.includedBytes": { "allowedAbs": 0, "allowedPct": 0, "direction": "lower", "stat": "value", "exact": true },
+    "global.current.count": { "allowedAbs": 0, "allowedPct": 0, "direction": "lower", "stat": "value", "exact": true },
+    "global.addedNames": { "allowedAbs": 0, "allowedPct": 0, "direction": "lower", "stat": "value", "exact": true },
     "browser.transferBytes": { "allowedAbs": 0, "allowedPct": 0, "exact": true },
     "runtime.transferBytes": { "allowedAbs": 0, "allowedPct": 0, "exact": true },
     "route.runtime.gzipBytes": { "allowedAbs": 0, "allowedPct": 2 },
@@ -33,6 +37,6 @@
     "json.static.hotConfirmed": { "allowedAbs": 0, "allowedPct": 0, "exact": true },
     "json.dynamic.hotProduct": { "allowedAbs": 0, "allowedPct": 0, "exact": true },
     "json.dynamic.hotUnknown": { "allowedAbs": 0, "allowedPct": 0, "exact": true },
-    "pixel.diffPct": { "allowedAbs": 1, "allowedPct": 0 }
+    "pixel.diffPct": { "allowedAbs": 1, "allowedPct": 0, "direction": "lower", "stat": "value" }
   }
 }

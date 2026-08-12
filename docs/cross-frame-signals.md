@@ -62,6 +62,27 @@ b.EnableCrossFrameRelay("$preview.", "https://studio.example.com")
 
 with the editor's expected origin. Never deploy the `"*"` wildcard.
 
+### URL bootstrap compatibility
+
+URL-driven preview mode fails closed. `?gosx-preview=1` no longer implies a
+wildcard peer: the URL must also carry a canonical, absolute HTTP(S) origin in
+`gosx-preview-origin`. Paths, non-web schemes, malformed escapes, an empty
+value, and `*` all leave the relay disabled. The runtime emits a
+`[gosx/relay] preview relay disabled` console warning for an active preview URL
+that fails this check, so a stale editor integration is visible instead of
+silently losing preview updates.
+
+This is a breaking security hardening for editor integrations that previously
+sent only `?gosx-preview=1`. Update those iframe URLs to include the editor
+origin, for example:
+
+```text
+?gosx-preview=1&gosx-preview-origin=https%3A%2F%2Feditor.example.com
+```
+
+The programmatic Bridge API still accepts an explicitly requested `"*"` for
+local development and warns when it is used. URL auto-bootstrap never does.
+
 ---
 
 ## Performance
@@ -108,8 +129,8 @@ func init() {
 `EnablePreviewBootstrap` is a process-level idempotent flag. When set,
 the storefront Renderer emits a minimal WASM bootstrap (islands runtime
 + relay.js) on every page, so the iframe has a Bridge to receive into.
-The flag is gated by the `?gosx-preview=1` query param — public
-storefront traffic never sees the preview-mode WASM.
+The relay activation is gated by `?gosx-preview=1` plus an explicit valid
+`gosx-preview-origin` — public storefront traffic never activates it.
 
 ## Sample — editor builds the iframe URL
 
@@ -158,7 +179,9 @@ func island.PreviewBootstrapEnabled() bool
 
 ```js
 // Push relay configurations (called by the wasm-side at startup).
-window.__gosx_relay_configure([{prefix: "$preview.", allowedOrigin: "*"}])
+window.__gosx_relay_configure([
+  {prefix: "$preview.", allowedOrigin: "https://editor.example.com"},
+])
 
 // Register an explicit peer target.
 window.__gosx_relay_register_peer(targetWindow, originString)

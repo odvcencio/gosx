@@ -312,7 +312,17 @@ func applyLegacyPatches(islandID, patchJSON string) {
 }
 
 func applyPatchMailbox(islandID string, mailbox []byte) {
-	apply := js.Global().Get("__gosx_apply_patch_mailbox")
+	apply := js.Undefined()
+	facade := js.Global().Get("__gosx")
+	if facade.Type() == js.TypeObject {
+		host := facade.Get("host")
+		if host.Type() == js.TypeObject {
+			patch := host.Get("patch")
+			if patch.Type() == js.TypeObject {
+				apply = patch.Get("applyMailbox")
+			}
+		}
+	}
 	if apply.Type() == js.TypeFunction {
 		apply.Invoke(islandID, bytesToUint8Array(mailbox))
 		return

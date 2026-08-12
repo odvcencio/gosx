@@ -9,7 +9,7 @@ import (
 )
 
 // TestUint8ArrayBytesRejectsNonObjectInputsWithoutPanicking covers B2: a
-// browser caller can invoke __gosx_runtime_abi.mailbox with any JS value.
+// browser caller can invoke the facade ABI mailbox with any JS value.
 // value.Get and js.CopyBytesToGo both panic on non-object inputs, so
 // uint8ArrayBytes must reject those inputs with an error instead of letting
 // the panic reach the caller and kill the runtime.
@@ -72,15 +72,15 @@ func TestUint8ArrayBytesAcceptsUint8ArrayAndArrayBuffer(t *testing.T) {
 }
 
 // TestRuntimeMailboxRejectsMalformedInputWithoutPanicking exercises the
-// registered __gosx_runtime_abi.mailbox export end to end: calling it with a
+// registered facade ABI mailbox export end to end: calling it with a
 // bare number or a plain object shaped like an array must return the ABI's
 // string error encoding, not panic and kill the runtime.
 func TestRuntimeMailboxRejectsMalformedInputWithoutPanicking(t *testing.T) {
 	registerRuntimeABI(nil)
 
-	mailbox := js.Global().Get("__gosx_runtime_abi").Get("mailbox")
+	mailbox := runtimeFacade().Get("abi").Get("mailbox")
 	if mailbox.Type() != js.TypeFunction {
-		t.Fatal("expected __gosx_runtime_abi.mailbox to be registered")
+		t.Fatal("expected the facade ABI mailbox to be registered")
 	}
 
 	malformed := []struct {

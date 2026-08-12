@@ -116,7 +116,7 @@
     };
   }
 
-  window.__gosx_runtime_mailbox = {
+  gosxRuntime.mailbox = {
     magic: MAGIC,
     version: VERSION,
     headerBytes: HEADER_BYTES,

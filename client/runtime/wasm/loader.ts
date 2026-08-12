@@ -18,7 +18,7 @@
 
 (function() {
   "use strict";
-  if (typeof window === "undefined" || window.__gosx_runtime_wasm_loader) return;
+  if (typeof window === "undefined" || gosxRuntime.loader) return;
 
   let activeLoad = null;
 
@@ -38,7 +38,7 @@
   }
 
   function referenceError(runtimeRef) {
-    const support = window.__gosx_runtime_abi_support;
+    const support = gosxRuntime.support;
     if (!support || typeof support.referenceError !== "function") return "generated runtime ABI support is missing";
     return support.referenceError(runtimeRef);
   }
@@ -121,7 +121,7 @@
       await Promise.race([readySignal, runFailure, timeout]);
 
       const current = handshake();
-      const support = window.__gosx_runtime_abi_support;
+      const support = gosxRuntime.support;
       const validationError = support && typeof support.validationError === "function"
         ? support.validationError(current, runtimeRef)
         : "generated runtime ABI support is missing";
@@ -134,7 +134,7 @@
   }
 
   function handshake() {
-    const abi = window.__gosx_runtime_abi;
+    const abi = gosxRuntime.abi;
     if (!abi || typeof abi.handshake !== "function") return null;
     return abi.handshake();
   }
@@ -142,10 +142,10 @@
   /** @param {number} [requiredMask] */
   function supports(requiredMask) {
     const current = handshake();
-    const support = window.__gosx_runtime_abi_support;
+    const support = gosxRuntime.support;
     return !!(support && typeof support.validateHandshake === "function" && support.validateHandshake(current, requiredMask || 0));
   }
 
   /** @type {GoSXRuntimeLoader} */
-  window.__gosx_runtime_wasm_loader = { load: load, handshake: handshake, supports: supports };
+  gosxRuntime.loader = { load: load, handshake: handshake, supports: supports };
 })();

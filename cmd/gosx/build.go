@@ -361,7 +361,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	coreResult := wasmResult{label: "core"}
 	engineResult := wasmResult{label: "engine"}
 	collabResult := wasmResult{label: "collab"}
-	runtimeResult := wasmResult{label: "runtime"}
+	runtimeResult := wasmResult{label: "full"}
 	islandsResult := wasmResult{label: "islands"}
 
 	buildOneWASM := func(result *wasmResult, compiler wasmCompiler, name, outputName string, extraTags ...string) {
@@ -423,10 +423,10 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// parallel. The full artifact keeps the compatibility filename while the
 	// core/engine/collab artifacts are selected from page requirements.
 	wg.Add(4)
-	go buildOneWASM(&coreResult, compiler, "core", "gosx-runtime-core", "gosx_runtime_core")
-	go buildOneWASM(&engineResult, compiler, "engine", "gosx-runtime-engine", "gosx_runtime_engine")
-	go buildOneWASM(&collabResult, compiler, "collab", "gosx-runtime-collab", "gosx_runtime_collab")
-	go buildOneWASM(&runtimeResult, compiler, "full", "gosx-runtime", "gosx_runtime_full")
+	go buildOneWASM(&coreResult, compiler, "core", "gosx-runtime-core", runtimeVariantBuildTags(runtimewasm.VariantCore)...)
+	go buildOneWASM(&engineResult, compiler, "engine", "gosx-runtime-engine", runtimeVariantBuildTags(runtimewasm.VariantEngine)...)
+	go buildOneWASM(&collabResult, compiler, "collab", "gosx-runtime-collab", runtimeVariantBuildTags(runtimewasm.VariantCollab)...)
+	go buildOneWASM(&runtimeResult, compiler, "full", "gosx-runtime", runtimeVariantBuildTags(runtimewasm.VariantFull)...)
 
 	// Islands-only runtime — parallel with shared runtime.
 	buildIslands := !tinyGoFullRuntimeEnabled()
@@ -447,11 +447,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 	manifest.Runtime.WASM = runtimeResult.asset
-	manifest.Runtime.WASMVariants = map[string]buildmanifest.RuntimeVariantAsset{
-		"core":   runtimeVariantAsset(string(runtimewasm.VariantCore), coreResult.asset),
-		"engine": runtimeVariantAsset(string(runtimewasm.VariantEngine), engineResult.asset),
-		"collab": runtimeVariantAsset(string(runtimewasm.VariantCollab), collabResult.asset),
-	}
+	manifest.Runtime.WASMVariants = publishedRuntimeVariantAssets(
+		coreResult.asset,
+		engineResult.asset,
+		collabResult.asset,
+		runtimeResult.asset,
+	)
 	gzEst := gzip_c_len(runtimeResult.data)
 	fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", runtimeResult.asset.File, runtimeResult.asset.Size, gzEst/1024, runtimeResult.compiler)
 	for _, result := range []*wasmResult{&coreResult, &engineResult, &collabResult} {
@@ -465,7 +466,6 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			return fmt.Errorf("wasm islands-only runtime build with %s: %w", compiler, islandsResult.err)
 		} else {
 			manifest.Runtime.WASMIslands = islandsResult.asset
-			manifest.Runtime.WASMVariants[string(runtimewasm.VariantIslands)] = runtimeVariantAsset(string(runtimewasm.VariantIslands), islandsResult.asset)
 			gzEst := gzip_c_len(islandsResult.data)
 			fmt.Printf("    %s (%d bytes, %dKB gz, built with %s, islands-only)\n", islandsResult.asset.File, islandsResult.asset.Size, gzEst/1024, islandsResult.compiler)
 		}
@@ -728,6 +728,34 @@ func runtimeVariantAsset(variant string, asset HashedAsset) buildmanifest.Runtim
 		Variant:      variant,
 		FeatureMask:  uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant))),
 		ManifestHash: runtimewasm.ManifestIdentity(),
+	}
+}
+
+func publishedRuntimeVariantAssets(core, engine, collab, full HashedAsset) map[string]buildmanifest.RuntimeVariantAsset {
+	return map[string]buildmanifest.RuntimeVariantAsset{
+		string(runtimewasm.VariantCore):   runtimeVariantAsset(string(runtimewasm.VariantCore), core),
+		string(runtimewasm.VariantEngine): runtimeVariantAsset(string(runtimewasm.VariantEngine), engine),
+		string(runtimewasm.VariantCollab): runtimeVariantAsset(string(runtimewasm.VariantCollab), collab),
+		string(runtimewasm.VariantFull):   runtimeVariantAsset(string(runtimewasm.VariantFull), full),
+	}
+}
+
+// runtimeVariantBuildTags makes each advertised profile select the same source
+// family under TinyGo and standard Go. Core and engine deliberately use the
+// slim implementations for collaboration, highlighting, and text layout;
+// collab and full retain the corresponding full implementations.
+func runtimeVariantBuildTags(variant runtimewasm.Variant) []string {
+	switch variant {
+	case runtimewasm.VariantCore:
+		return []string{"gosx_tiny_runtime", "gosx_runtime_core"}
+	case runtimewasm.VariantEngine:
+		return []string{"gosx_tiny_runtime", "gosx_runtime_engine"}
+	case runtimewasm.VariantCollab:
+		return []string{"gosx_runtime_collab"}
+	case runtimewasm.VariantFull:
+		return []string{"gosx_runtime_full"}
+	default:
+		return nil
 	}
 }
 

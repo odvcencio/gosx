@@ -49,6 +49,9 @@ func TestGeneratedRuntimeContractCompilesAndErasesTypes(t *testing.T) {
 	if !strings.Contains(built.code, "mailboxHeaderBytes") {
 		t.Fatal("built contract lost its mailbox header size")
 	}
+	if !strings.Contains(built.code, "compatibilityVariants") {
+		t.Fatal("built contract lost its non-advertised compatibility variants")
+	}
 
 	free, err := chunkFreeIdentifiers(f.dir, chunk("runtime-abi.js", rel))
 	if err != nil {

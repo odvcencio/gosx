@@ -41,6 +41,10 @@ const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, ".
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
 const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dom-regions.ts"), "utf8");
+const runtimeContractSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "generated", "runtime-abi.ts"), "utf8");
+const runtimeManifestHashMatch = runtimeContractSource.match(/manifestHash:\s*"([a-f0-9]{64})"/);
+assert.ok(runtimeManifestHashMatch, "generated runtime ABI must publish a manifest hash");
+const runtimeManifestHash = runtimeManifestHashMatch[1];
 const hostCompatibilitySource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8");
 const patchSource = [
   hostCompatibilitySource,
@@ -2411,7 +2415,7 @@ function createContext(options) {
   }
 
   context.window = context;
-  context.__gosx_runtime_abi = {
+  const runtimeABI = {
     handshake() {
       const contract = context.__gosx_runtime_contract;
       return contract ? {
@@ -2423,6 +2427,7 @@ function createContext(options) {
       } : null;
     },
   };
+  context.__gosx = { runtime: { abi: runtimeABI } };
   context.__gosx_engine_factories = Object.assign({}, options.engineFactories || {});
   context.__engineMounts = engineMounts;
   context.__engineDisposals = engineDisposals;
@@ -2459,7 +2464,7 @@ function createContext(options) {
     const runtime = options.manifest.runtime;
     if (runtime && runtime.path && !runtime.hash) {
       runtime.hash = runtimeAssetHashForRoute(routes.get(runtime.path));
-      runtime.manifestHash = "850ff5e72dc872437bf568a7486f0ed08ad0fa046dfaa5f8956243b70182bc10";
+      runtime.manifestHash = runtimeManifestHash;
       runtime.variant = "core";
       runtime.featureMask = 17;
     }
