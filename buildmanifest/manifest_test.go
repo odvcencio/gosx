@@ -13,6 +13,10 @@ func TestLoadAndURLs(t *testing.T) {
   "runtime": {
     "wasm": {"file": "gosx-runtime.11111111.wasm", "hash": "11111111", "size": 10},
     "wasmIslands": {"file": "gosx-runtime-islands.99999999.wasm", "hash": "99999999", "size": 9},
+	"wasmVariants": {
+	  "core": {"file": "gosx-runtime-core.aaaaaaa1.wasm", "hash": "aaaaaaa1", "size": 8, "variant": "core", "featureMask": 17},
+	  "engine": {"file": "gosx-runtime-engine.bbbbbbb2.wasm", "hash": "bbbbbbb2", "size": 12, "variant": "engine", "featureMask": 11}
+	},
 	    "wasmExec": {"file": "wasm_exec.22222222.js", "hash": "22222222", "size": 20},
 	    "standardGoWasmExec": {"file": "standard-go-wasm_exec.2a2a2a2a.js", "hash": "2a2a2a2a", "size": 21},
     "bootstrap": {"file": "bootstrap.33333333.js", "hash": "33333333", "size": 30},
@@ -42,6 +46,9 @@ func TestLoadAndURLs(t *testing.T) {
 	}
 	if runtime.WASMIslands != "/gosx/assets/runtime/gosx-runtime-islands.99999999.wasm" {
 		t.Fatalf("unexpected islands wasm url: %s", runtime.WASMIslands)
+	}
+	if runtime.WASMVariants["core"] != "/gosx/assets/runtime/gosx-runtime-core.aaaaaaa1.wasm" {
+		t.Fatalf("unexpected core wasm url: %s", runtime.WASMVariants["core"])
 	}
 	if runtime.Bootstrap != "/gosx/assets/runtime/bootstrap.33333333.js" {
 		t.Fatalf("unexpected bootstrap url: %s", runtime.Bootstrap)
