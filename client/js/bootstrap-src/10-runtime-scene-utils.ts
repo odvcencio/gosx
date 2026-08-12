@@ -3,10 +3,10 @@
 // and the small numeric and CSS-variable helpers.
 //
 // Chunks: bootstrap.js, bootstrap-runtime.js, bootstrap-feature-scene3d.js.
-// This file used to be the first 1162 lines of 10-runtime-scene-core.js, and
+// This file used to be the first 1162 lines of 10-runtime-scene-core.ts, and
 // the build cut it out with two literal source markers. It is now a file, so
 // a re-indent cannot change what the selective runtime ships.
-// 10-runtime-scene-core.js reads these helpers and must load after it.
+// 10-runtime-scene-core.ts reads these helpers and must load after it.
   // Pending manifest reference, set during init, consumed when runtime is ready.
   let pendingManifest = null;
 

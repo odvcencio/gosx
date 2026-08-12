@@ -113,7 +113,7 @@ test("Scene3D WebGPU pool pass routes through the generic Selena render path wit
 
   // Drive the entry through the SAME normalization the production runtime
   // uses (createSceneState -> sceneWaterSystems -> normalizeSceneWaterSystemEntry
-  // in 10-runtime-scene-core.js), proving the poolSelenaWGSL/shaderDescriptors
+  // in 10-runtime-scene-core.ts), proving the poolSelenaWGSL/shaderDescriptors
   // plumbing survives that layer, not just a hand-built bundle.
   const sceneState = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
   assert.equal(sceneState.waterSystems.length, 1);
@@ -162,7 +162,7 @@ test("Scene3D WebGPU pool pass routes through the generic Selena render path wit
 
 test("normalizeSceneWaterSystemEntry passes every migrated pass's Selena WGSL slot + descriptor key through", async () => {
   // {fresh: true} -- this test exercises the NEW bootstrap-src edits
-  // (10-runtime-scene-core.js's normalizeSceneWaterSystemEntry whitelist)
+  // (10-runtime-scene-core.ts's normalizeSceneWaterSystemEntry whitelist)
   // directly; the committed bootstrap.js bundle predates them (see the pool
   // test's {fresh:true} comment above for why).
   const harness = await createBoardWebGPUHarness({ fresh: true });
@@ -877,7 +877,7 @@ test("Scene3D fake WebGPU water drains an ENTIRE queued dropEvents burst in one 
 
   // Simulate a fast drag: 5 drops queued between two rendered frames, the
   // shape sceneManagedFluidObjectQueueDrop's bounded controlState.dropEvents
-  // array produces (19b-scene-control-forms.js). Before Fix 1 this would
+  // array produces (19b-scene-control-forms.ts). Before Fix 1 this would
   // have coalesced to a single scalar dropEventID/dropX/dropZ and only the
   // LAST drop would ever reach the simulation.
   entry.dropEvents = [
@@ -895,7 +895,7 @@ test("Scene3D fake WebGPU water drains an ENTIRE queued dropEvents burst in one 
   // A second frame with no new events must be a no-op: already-consumed ids
   // must not redispatch (the array is re-supplied unchanged every command,
   // per normalizeSceneWaterOneShotEvents's fallback -- see
-  // 10-runtime-scene-core.js).
+  // 10-runtime-scene-core.ts).
   const stats2 = renderAt(34);
   assert.equal(stats2.waterDropDispatches, 0, "already-consumed ids must not redispatch");
   assert.equal(stats2.waterLastDropEventID, 5);
@@ -1284,7 +1284,7 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
 
   // water-parity/p6 Fix 1: a fast drag queues MULTIPLE drops between two
   // rendered frames (entry.dropEvents, see sceneManagedFluidObjectQueueDrop
-  // in 19b-scene-control-forms.js) -- the WebGL queueWaterEvents/
+  // in 19b-scene-control-forms.ts) -- the WebGL queueWaterEvents/
   // drainWaterEvents Map-based drain (16-scene-webgl.js) must consume every
   // one of them in the same tick, not just entry.dropEventID's scalar
   // latest. Appended at the end (a fresh, later nowMS not reused anywhere
@@ -1471,7 +1471,7 @@ test("[perf-shape] Scene3D WebGPU wgpuStablePBRAttributeBuffer still re-uploads 
   // Correctness guard for wgpuStablePBRAttributeBuffer's content-compare skip
   // (16a-scene-webgpu.js): a spinning object's worldMeshPositions are CPU-
   // baked fresh every frame from object.spinX * timeSeconds (see
-  // translateScenePointInto in 10-runtime-scene-core.js), so they genuinely
+  // translateScenePointInto in 10-runtime-scene-core.ts), so they genuinely
   // differ frame to frame -- unlike the water demo's static float-* objects,
   // this must NOT hit the "unchanged content" fast path.
   const harness = await createBoardWebGPUHarness({ fresh: true });
@@ -1598,7 +1598,7 @@ test("Scene3D WebGPU water compute kernels route through the generic Selena feed
 
   // Drive the entry through the SAME normalization the production runtime
   // uses (createSceneState -> sceneWaterSystems -> normalizeSceneWaterSystemEntry
-  // in 10-runtime-scene-core.js), proving the 5 new *SelenaWGSL slots survive
+  // in 10-runtime-scene-core.ts), proving the 5 new *SelenaWGSL slots survive
   // that layer, not just a hand-built bundle.
   const sceneState = api.createSceneState({ scene: { waterSystems: [waterEntry] } });
   assert.equal(sceneState.waterSystems.length, 1);

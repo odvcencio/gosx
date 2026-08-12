@@ -2035,7 +2035,7 @@
     let syncBrainAvailable = typeof window !== "undefined" && typeof window.__gosx_video_sync_new === "function";
     let syncBrainWarned = false;
     // JS fallback drift engine — the brain-absent, parity-locked port of the
-    // Go videosync engine (28-video-sync-fallback.js). Used on the default
+    // Go videosync engine (28-video-sync-fallback.ts). Used on the default
     // "nudge" path when the WASM brain is unavailable. One instance per
     // follow session, created lazily.
     const jsBrainAvailable = typeof window !== "undefined" && typeof window.__gosx_video_sync_js_create === "function";
@@ -3389,7 +3389,7 @@
     // -------------------------------------------------------------------------
     // JS fallback drift engine (brain-absent "nudge" path).
     // Mirrors the WASM brain's ingest/tick/rtt/playback-start surface, but the
-    // engine itself is the pure-JS port installed by 28-video-sync-fallback.js
+    // engine itself is the pure-JS port installed by 28-video-sync-fallback.ts
     // (parity-locked to the Go videosync engine). Time is injected via nowPerf().
     // -------------------------------------------------------------------------
     function useJSBrain() {

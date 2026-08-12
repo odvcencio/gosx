@@ -4,7 +4,7 @@
 //
 //   1. 11a-scene-decompress.ts — the quantized-array decoder, the progressive
 //      and level-of-detail ladders, and the index unpacker.
-//   2. 11b-scene-points-generate.js — the procedural point generators, with
+//   2. 11b-scene-points-generate.ts — the procedural point generators, with
 //      the bit-exact sin, log, exp and pow the Go side uses so a generated
 //      cloud matches the server-rendered oracle.
 //
@@ -31,12 +31,12 @@
 
   var sceneApi = window.__gosx_scene3d_api;
 
-  // --- Scalars (10-runtime-primitives.js, 11-scene-math.ts).
+  // --- Scalars (10-runtime-primitives.ts, 11-scene-math.ts).
   var sceneNumber = sceneApi.sceneNumber || function(value, fallback) {
     var num = Number(value);
     return Number.isFinite(num) ? num : fallback;
   };
-  // --- Props reader (10-runtime-scene-core.js). sceneDecompressProps walks
+  // --- Props reader (10-runtime-scene-core.ts). sceneDecompressProps walks
   // either props.scene or the flat props shape through it.
   var sceneProps = sceneApi.sceneProps || function(props) {
     return props && props.scene && typeof props.scene === "object" ? props.scene : null;

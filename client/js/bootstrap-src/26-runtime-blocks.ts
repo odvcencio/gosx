@@ -1,4 +1,4 @@
-// 26-runtime-blocks.js — generic keyed HTML stream reconciliation.
+// 26-runtime-blocks.ts — generic keyed HTML stream reconciliation.
 //
 // The algorithm is framework-owned; optional surfaces can provide a signature
 // hook when a subtree has domain-specific enhancement state. gosx/editor uses

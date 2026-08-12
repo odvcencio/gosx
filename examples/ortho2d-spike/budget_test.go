@@ -4,7 +4,7 @@
 // FINDING (2026-06-09): the canvas board has NO GPU render path today. bundle2d
 // emits the board's rects into RenderBundle's 2D-painter display list
 // ("objects": {kind,vertexCount,bounds,materialIndex}) — the format the
-// 2D-context painter 26b1-canvas2d-painter.js consumes. The GPU scene renderer
+// 2D-context painter 26b1-canvas2d-painter.ts consumes. The GPU scene renderer
 // (render/bundle) and 16a draw InstancedMeshes / Surfaces / Lines, NOT "objects",
 // so they render the canvas2d bundle as BACKGROUND ONLY. OrthoCamera2D +
 // computeOrthoCamera2DMVP exist in render/bundle but nothing feeds them

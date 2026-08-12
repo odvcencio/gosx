@@ -6,7 +6,7 @@
 // lines, and sprites; text stays in the DOM.
 //
 // The screen transform mirrors render/bundle.OrthoCamera2D exactly (the same
-// formula as 26b1-canvas2d-painter.js's canvasBoardScreenTransform):
+// formula as 26b1-canvas2d-painter.ts's canvasBoardScreenTransform):
 //
 //     screenX = (worldX - panX) * zoom + cssWidth / 2
 //     screenY = (cssHeight / 2) - (worldY - panY) * zoom
@@ -29,7 +29,7 @@
 (function() {
   "use strict";
 
-  // DEFAULT_FONT and DEFAULT_COLOR match 26b1-canvas2d-painter.js's label path
+  // DEFAULT_FONT and DEFAULT_COLOR match 26b1-canvas2d-painter.ts's label path
   // (ctx.font is not explicitly set, so the context default "10px sans-serif"
   // would apply, but the label branch only sets font when label.font is present;
   // color falls back to "#e6edf3" when label.color is absent — see 26b1 lines
@@ -112,13 +112,13 @@
   // context so overlay layers with inset:0 cover the canvas.
   //
   // Host position: the canvas2d mount path (_ensureSurfaceCanvas in
-  // 26b-feature-engines-prefix.js) replaces a placeholder with a <canvas> in
+  // 26b-feature-engines-prefix.ts) replaces a placeholder with a <canvas> in
   // the same parent — it does NOT guarantee position:relative on the parent.
   // The marquee overlay uses canvas.offsetLeft/offsetTop relative to the
   // positioned ancestor, which could be any ancestor — not the direct parent.
   // For board overlay layers we need them to cover the canvas precisely, so
   // we must ensure the direct parent is the positioned container. We guard the
-  // set with the same pattern as 10-runtime-scene-core.js line 735:
+  // set with the same pattern as 10-runtime-scene-core.ts line 735:
   //   if (!mount.style.position || mount.style.position === "static") { ... }
   function ensureBoardOverlayHost(host) {
     try {
@@ -266,7 +266,7 @@
       var color = typeof label.color === "string" && label.color !== "" ? label.color : DEFAULT_COLOR;
       var text = String(label.text == null ? "" : label.text);
 
-      // OrthoCamera2D screen transform (parity with 26b1-canvas2d-painter.js):
+      // OrthoCamera2D screen transform (parity with 26b1-canvas2d-painter.ts):
       //   screenX = (worldX - panX) * zoom + halfW
       //   screenY = halfH - (worldY - panY) * zoom
       var screenX = (worldX - panX) * zoom + halfW;

@@ -253,7 +253,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read page.css: %v", err)
 	}
-	runtimeBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/19b-scene-control-forms.js"))
+	runtimeBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/19b-scene-control-forms.ts"))
 	if err != nil {
 		t.Fatalf("read managed water controls runtime: %v", err)
 	}

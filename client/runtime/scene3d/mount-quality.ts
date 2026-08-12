@@ -484,7 +484,7 @@
     setAttrValue(mount, "data-gosx-scene3d-postfx-max-pixels", String(Math.max(0, Math.floor(sceneNumber(state.postFXMaxPixels, 0)))));
     // post-uniform-patches / post-uniform-patch-misses: cumulative counts
     // from SCENE_CMD_SET_POST_UNIFORMS (see applyScenePostUniformsCommand in
-    // 10-runtime-scene-core.js) — how many named-pass uniform patches have
+    // 10-runtime-scene-core.ts) — how many named-pass uniform patches have
     // applied vs. targeted a name with no matching CustomPost pass.
     setAttrValue(mount, "data-gosx-scene3d-post-uniform-patches", String(Math.max(0, Math.floor(sceneNumber(state.postUniformPatches, 0)))));
     setAttrValue(mount, "data-gosx-scene3d-post-uniform-patch-misses", String(Math.max(0, Math.floor(sceneNumber(state.postUniformPatchMisses, 0)))));

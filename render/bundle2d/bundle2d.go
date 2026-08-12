@@ -6,7 +6,7 @@
 // browser path constructs a vm.CanvasBoardAdapter and calls RenderBundle, a
 // server (or any non-wasm Go) calls ComputeCanvasBundle to produce the IDENTICAL
 // bundle, then MarshalCanvasBundle to emit the exact JSON the JS canvas2d
-// painter (client/js .../26b1-canvas2d-painter.js) consumes. Emitting that JSON
+// painter (client/js .../26b1-canvas2d-painter.ts) consumes. Emitting that JSON
 // inline on the canvas placeholder lets a client paint the board with no WASM.
 //
 // Byte-identity with the WASM path is the contract (see the parity test): both

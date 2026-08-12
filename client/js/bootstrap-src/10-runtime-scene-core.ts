@@ -545,7 +545,7 @@
   }
 
   // sceneTypedFloatArray stays in the base chunk even though the legacy
-  // vertex-colour renderer (16e-scene-webgl-legacy.js) also calls it. Mesh
+  // vertex-colour renderer (16e-scene-webgl-legacy.ts) also calls it. Mesh
   // normalization and animation-channel normalization run on every Scene3D
   // page, backend and all, so this helper is not WebGL-only.
   function sceneTypedFloatArray(values) {
@@ -5576,7 +5576,7 @@
       className: sprite.className,
       position: { x: projected.x, y: projected.y },
       // world and scale exist for the ray pick. sceneRaycastPickPoints in
-      // 17-scene-input.js tests a sprite as a sphere at its world point, scaled
+      // 17-scene-input.ts tests a sprite as a sphere at its world point, scaled
       // like spriteRadiusScale does in scene/raycast.go. `position` above is
       // already projected to screen pixels, so it cannot serve. `point` is the
       // object sceneSpritePoint just returned, so this stores it rather than
@@ -5805,9 +5805,9 @@
     // Engine render-bundle normalizers (camera/label/html), consumed by
     // normalizeEngineRenderBundle in 30-tail.js's "engine mounting" section.
     // That function ships in bootstrap-feature-engines.js (see
-    // 26b-feature-engines-prefix.js's registerFeature("engines", ...)), which
+    // 26b-feature-engines-prefix.ts's registerFeature("engines", ...)), which
     // does NOT include this file — these live beyond the RUNTIME_UTILS
-    // extraction bootstrap-runtime.js pulls from 10-runtime-scene-core.js (see
+    // extraction bootstrap-runtime.js pulls from 10-runtime-scene-core.ts (see
     // build-bootstrap.mjs). Bridged here so any page that already loaded a
     // chunk containing this file (monolithic bootstrap.js, or the Scene3D
     // feature chunk before "engines" reads runtimeApi) shares the canonical
@@ -5859,7 +5859,7 @@
     sceneStatePointsWithMaterials,
     sceneStateInstancedMeshesWithMaterials,
     sceneResolveMaterialUniforms,
-    // The legacy vertex-colour renderer moved to 16e-scene-webgl-legacy.js,
+    // The legacy vertex-colour renderer moved to 16e-scene-webgl-legacy.ts,
     // which ships only in bootstrap.js and in the WebGL chunk. Guard the read:
     // in the split base scene3d chunk the name does not exist, and an
     // unguarded shorthand would throw ReferenceError while this object builds.
@@ -5930,7 +5930,7 @@
     // 11-scene-base64.ts. The lazily fetched decompress chunk reads it, and so
     // does any caller that needs the raw bytes of a base64 payload.
     sceneBase64Decode: typeof sceneBase64Decode === "function" ? sceneBase64Decode : undefined,
-    // 11a-scene-decompress.ts and 11b-scene-points-generate.js ship in the
+    // 11a-scene-decompress.ts and 11b-scene-points-generate.ts ship in the
     // lazily fetched decompress chunk. Guard the reads: in the base chunk the
     // names do not exist, and the chunk suffix assigns the real functions here
     // when it lands. bootstrap.js keeps both files inline, so these carry the
@@ -5971,7 +5971,7 @@
     generateInstancedGeometry: typeof generateInstancedGeometry === "function" ? generateInstancedGeometry : undefined,
     normalizeInstancedGeometryKind: typeof normalizeInstancedGeometryKind === "function" ? normalizeInstancedGeometryKind : undefined,
 
-    // Post-fx helpers from 15a-scene-postfx-shared.js.
+    // Post-fx helpers from 15a-scene-postfx-shared.ts.
     resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,
     resolveShadowSize: typeof resolveShadowSize === "function" ? resolveShadowSize : undefined,
 

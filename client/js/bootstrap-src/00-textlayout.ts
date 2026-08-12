@@ -541,7 +541,7 @@
   // mode and ellipsis clamping. It cost 42_751 of the 157_086 minified bytes in
   // bootstrap-runtime.js and 42_738 of the 131_137 in bootstrap-lite.js, and it
   // loaded on every page, even a page that holds no text block. The engine now
-  // ships as bootstrap-src/01-textlayout-engine.js. The monolithic bootstrap.js
+  // ships as bootstrap-src/01-textlayout-engine.ts. The monolithic bootstrap.js
   // still carries it inline. The selective bundles fetch it as
   // bootstrap-feature-textlayout.js when the document holds a
   // data-gosx-text-layout element, or when the manifest mounts a Scene3D
@@ -838,7 +838,7 @@
     applyTextLayoutPresentation,
     onTextLayoutInvalidated,
     sceneLabelLayoutCacheLimit,
-    // gosxLowEndHardware lives in 05-document-env.js. The lazily fetched
+    // gosxLowEndHardware lives in 05-document-env.ts. The lazily fetched
     // scene3d chunk does not carry that file, so 20-scene-mount.js read the
     // name across an IIFE boundary and threw ReferenceError whenever the
     // environment snapshot carried no lowEndHardware flag.
@@ -860,14 +860,14 @@
   // --------------------------------------------------------------------------
   //
   // bootstrap-runtime.js routes the chunk through
-  // ensureBootstrapFeature("textlayout") in 26-runtime-tail.js, which owns the
+  // ensureBootstrapFeature("textlayout") in 26-runtime-tail.ts, which owns the
   // feature host. bootstrap-lite.js has no host, so core loads the chunk here.
   // bootstrap.js carries the engine inline and never reaches this code.
 
   let textLayoutEngineLoad = null;
 
   // gosxBootstrapScriptNonce copies the CSP nonce off a GoSX script tag so the
-  // injected chunk passes a strict-CSP page. 10-runtime-scene-core.js holds the
+  // injected chunk passes a strict-CSP page. 10-runtime-scene-core.ts holds the
   // same lookup for the bundles that carry it; bootstrap-lite.js does not, so
   // core keeps this copy.
   function gosxBootstrapScriptNonce() {

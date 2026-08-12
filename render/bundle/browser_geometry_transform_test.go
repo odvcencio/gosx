@@ -25,7 +25,7 @@ func readBrowserSceneSource(t *testing.T, name string) string {
 // numeric result; this guard prevents a backend from silently bypassing those
 // corrected positions, normals, tangents, or triangle order later.
 func TestBrowserWorldBakeTransformContract(t *testing.T) {
-	core := readBrowserSceneSource(t, "10-runtime-scene-core.js")
+	core := readBrowserSceneSource(t, "10-runtime-scene-core.ts")
 	for _, needle := range []string{
 		"const determinant = a * c00 + b * c01 + c * c02;",
 		"const orientation = determinant < -1e-12 ? -1 : 1;",
@@ -65,7 +65,7 @@ func TestBrowserWorldBakeTransformContract(t *testing.T) {
 		},
 		{
 			name: "legacy WebGL",
-			file: "16e-scene-webgl-legacy.js",
+			file: "16e-scene-webgl-legacy.ts",
 			needles: []string{
 				"sceneSliceFloatArray(bundle.worldMeshPositions",
 				"gl.drawArrays(resources.trianglesMode",
@@ -73,7 +73,7 @@ func TestBrowserWorldBakeTransformContract(t *testing.T) {
 		},
 		{
 			name: "CPU picking",
-			file: "17-scene-input.js",
+			file: "17-scene-input.ts",
 			needles: []string{
 				"sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions",
 				"sceneRayIntersectsTriangle(ray.origin, ray.dir, v0, v1, v2)",

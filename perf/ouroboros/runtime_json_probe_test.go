@@ -334,12 +334,12 @@ func TestRuntimeJSONStaticCorpusCoversAliasAndDefinePropertyExports(t *testing.T
 }
 
 func TestRuntimeJSONStaticCorpusCoversProductionStrictSceneIRExport(t *testing.T) {
-	path := filepath.Join("..", "..", "client", "js", "bootstrap-src", "15-scene-ir-schema-strict.js")
+	path := filepath.Join("..", "..", "client", "js", "bootstrap-src", "15-scene-ir-schema-strict.ts")
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read production strict SceneIR schema: %v", err)
 	}
-	src := SourceFile{Path: "client/js/bootstrap-src/15-scene-ir-schema-strict.js", SourceKind: "scoreboard", Language: "javascript"}
+	src := SourceFile{Path: "client/js/bootstrap-src/15-scene-ir-schema-strict.ts", SourceKind: "scoreboard", Language: "javascript"}
 	sites, err := runtimeJSONSitesForFile(src, body, map[string]bool{})
 	if err != nil {
 		t.Fatalf("runtimeJSONSitesForFile: %v", err)
@@ -449,7 +449,7 @@ func TestRuntimeJSONStaticPhaseClassifierExamples(t *testing.T) {
 		},
 		{
 			name:        "text layout shared value",
-			src:         SourceFile{Path: "client/js/bootstrap-src/00-textlayout.js", SourceKind: "scoreboard", Language: "javascript"},
+			src:         SourceFile{Path: "client/js/bootstrap-src/00-textlayout.ts", SourceKind: "scoreboard", Language: "javascript"},
 			body:        `function parseSharedSignalJSON(valueJSON){ return JSON.parse(valueJSON); }`,
 			op:          "value-json",
 			status:      "ambiguous",

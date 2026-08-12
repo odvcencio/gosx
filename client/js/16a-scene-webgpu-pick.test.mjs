@@ -3,7 +3,7 @@
 // These tests load three bootstrap fragments into ONE VM context, exactly the
 // way the shipped bundles concatenate them:
 //   - 11-scene-math.ts   -> sceneScreenToRay and the ray/triangle helpers
-//   - 17-scene-input.js  -> the shared CPU pick contract used by BOTH backends
+//   - 17-scene-input.ts  -> the shared CPU pick contract used by BOTH backends
 //   - 16a-scene-webgpu.js -> the WebGPU renderer and its GPU picker
 //
 // The point of the suite is parity. The WebGPU picker resolves identity on the
@@ -229,7 +229,7 @@ function createContext() {
 
   // Helpers the fragments expect from earlier files in the bundle. Kept minimal
   // and faithful: sceneRenderCamera and sceneOrthographicBounds are copied from
-  // 10-runtime-scene-core.js so sceneScreenToRay produces production rays.
+  // 10-runtime-scene-core.ts so sceneScreenToRay produces production rays.
   const prelude = `
     function sceneNumber(value, fallback) {
       var n = Number(value);
@@ -283,7 +283,7 @@ function createContext() {
 
   vm.runInContext(prelude, context, { filename: "prelude.js" });
   vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
-  vm.runInContext(readSource("17-scene-input.js"), context, { filename: "17-scene-input.js" });
+  vm.runInContext(readSource("17-scene-input.ts"), context, { filename: "17-scene-input.ts" });
   vm.runInContext(readSource("../runtime/scene3d/webgpu.ts"), context, { filename: "16a-scene-webgpu.js" });
   return { context, sandbox };
 }

@@ -118,7 +118,7 @@
   // functions in isolation without standing up the full DOM mount surface.
   if (window.__gosx_bench_exports === true) {
     window.__gosx_bench = {
-      // 10-runtime-scene-core.js
+      // 10-runtime-scene-core.ts
       sceneRenderCamera: sceneRenderCamera,
       translateScenePointInto: translateScenePointInto,
       createSceneThickLineScratch: createSceneThickLineScratch,

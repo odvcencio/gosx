@@ -1,7 +1,7 @@
 // Scene3D texture-unit allocation, IBL profile maths and the shared
 // texture-memory budget.
 //
-// This slice left 15a-scene-postfx-shared.js, which every Scene3D page
+// This slice left 15a-scene-postfx-shared.ts, which every Scene3D page
 // downloads. Only 16-scene-webgl.js calls sceneAllocateTextureUnits and
 // sceneResolveIBLRenderTargetMode, and that renderer ships in the lazily
 // fetched WebGL chunk. A WebGPU page therefore paid for a WebGL2 sampler
@@ -9,7 +9,7 @@
 //
 // The file ships in bootstrap.js and in bootstrap-feature-scene3d-webgl.js.
 // It reads sceneFiniteNumber and sceneClampInteger, which stayed in
-// 15a-scene-postfx-shared.js because the scene core and the WebGPU renderer
+// 15a-scene-postfx-shared.ts because the scene core and the WebGPU renderer
 // read them too.
 
 var SCENE_TEXTURE_UNIT_MATERIALS = {

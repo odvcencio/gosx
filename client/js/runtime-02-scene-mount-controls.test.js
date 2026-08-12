@@ -371,9 +371,9 @@ test("Scene3D disposal cancels pending initial render before frame two", async (
 });
 
 // Regression test for the split feature-bundle build: bootstrap-feature-scene3d.js
-// runs in its own IIFE (see 26d-feature-scene3d-prefix.js), separate from the
+// runs in its own IIFE (see 26d-feature-scene3d-prefix.ts), separate from the
 // runtime bundle's closure that declares `sceneLabelLayoutCacheLimit`
-// (00-textlayout.js). Before the fix, layoutSceneLabel() in 20-scene-mount.js
+// (00-textlayout.ts). Before the fix, layoutSceneLabel() in 20-scene-mount.js
 // threw "ReferenceError: sceneLabelLayoutCacheLimit is not defined" the first
 // time ANY scene with a Label node laid out text under this bundle
 // combination — silently breaking every comment pin / scene label in

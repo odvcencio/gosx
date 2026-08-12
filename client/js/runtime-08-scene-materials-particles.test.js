@@ -704,7 +704,7 @@ test("bootstrap gates Scene3D viewport refreshes to viewport-shaped environment 
 });
 
 test("bootstrap skips redundant runtime style and attribute writes", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "00-textlayout.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "00-textlayout.ts"), "utf8");
 
   assert.match(source, /style\.getPropertyValue\(name\) === next/);
   assert.match(source, /style\.setProperty\(name,\s*next\)/);
@@ -714,26 +714,26 @@ test("bootstrap skips redundant runtime style and attribute writes", () => {
 
 test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
   const builder = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
-  const utils = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-utils.js"), "utf8");
-  const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
+  const utils = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-utils.ts"), "utf8");
+  const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.ts"), "utf8");
 
   // The selective runtime bundle carries the runtime-utils head as a real
   // file. The build used to cut it out of the scene core with two literal
   // source markers, so a rename or a re-indent changed what shipped.
   assert.deepEqual(
     bootstrapChunkSources("bootstrap-runtime.js").filter((s) => s.includes("10-runtime-scene")),
-    ["bootstrap-src/10-runtime-scene-utils.js"],
+    ["bootstrap-src/10-runtime-scene-utils.ts"],
   );
   // The scene3d chunk carries no copy of the utils file. It bridges the ten
   // names it reads from window.__gosx_runtime_api instead, so the Chromium
   // Scene3D route downloads those helpers once, not twice.
   assert.deepEqual(
     bootstrapChunkSources("bootstrap-feature-scene3d.js").filter((s) => s.includes("10-runtime-scene")),
-    ["bootstrap-src/10-runtime-scene-core.js"],
+    ["bootstrap-src/10-runtime-scene-core.ts"],
   );
   const scene3dPrefix = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26d-feature-scene3d-prefix.js"), "utf8",
+    path.join(__dirname, "bootstrap-src", "26d-feature-scene3d-prefix.ts"), "utf8",
   );
   for (const name of [
     "browserCapabilitySupported", "cancelEngineFrame", "engineCapabilityStatus", "engineFrame",
@@ -748,11 +748,11 @@ test("bootstrap derives selective runtime utilities from the Scene3D core source
   assert.match(primitives, /function sceneBool\(/);
   assert.match(primitives, /function clearChildren\(/);
   assert.equal(
-    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function sceneSegmentResolution\(/g) || []).length,
     1,
   );
   assert.equal(
-    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function sceneSegmentResolution\(/g) || []).length,
     1,
   );
 });

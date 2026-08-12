@@ -7,7 +7,7 @@ import (
 
 // canvasRendererPath is the Canvas 2D fallback renderer. It is the only backend
 // that draws a dash pattern, which is why the line-dashed row needed correcting.
-const canvasRendererPath = "../../client/js/bootstrap-src/18-scene-canvas.js"
+const canvasRendererPath = "../../client/js/bootstrap-src/18-scene-canvas.ts"
 
 // mountBackendPath owns the runtime backend choice. It matters here because the
 // runtime already knew that dashed lines need WebGL2 or Canvas2D, and the wrong
@@ -34,7 +34,7 @@ const mountBackendPath = "../../client/js/bootstrap-src/20a-scene-mount-backend.
 //	16-scene-webgl.js       "dash" appears 0 times, case-insensitive
 //	16a-scene-webgpu.js     "lineDash" appears 3 times, all inside
 //	                        webGPUUnsupportedLineStyles, which REFUSES the draw
-//	18-scene-canvas.js      "dash" appears 16 times, and one of them is
+//	18-scene-canvas.ts      "dash" appears 16 times, and one of them is
 //	                        ctx2d.setLineDash([dashSize, gapSize])
 //
 // So the true cell belonged to Canvas2D, and it sat on WebGL2 instead.
@@ -71,7 +71,7 @@ func TestLineDashedWasTrueOnTheWrongBackend(t *testing.T) {
 
 	// The one true cell. Canvas2D draws the dashes.
 	if !Matrix[FeatureLineDashed][BackendCanvas2D] {
-		t.Fatal("the Canvas2D line-dashed cell must stay true: 18-scene-canvas.js calls setLineDash")
+		t.Fatal("the Canvas2D line-dashed cell must stay true: 18-scene-canvas.ts calls setLineDash")
 	}
 	for _, symbol := range []string{
 		"function createSceneCanvasLineBatch(ctx2d) {",

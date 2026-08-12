@@ -45,7 +45,7 @@
 //   </script>
 //
 // — the same command array shape GoSXScene3D's public handle.applyCommands()
-// already accepts (10-runtime-scene-core.js: applySceneCommands /
+// already accepts (10-runtime-scene-core.ts: applySceneCommands /
 // applySceneCreateCommand). After every region swap, and once for whatever
 // such payloads are present at initial load, this file parses each tag and
 // broadcasts its commands to every mounted GoSXScene3D engine — no bespoke

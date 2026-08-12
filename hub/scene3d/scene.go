@@ -696,7 +696,7 @@ func (d *Doc) slotValue(slot string) (string, bool) {
 //
 // A create always arrives as a removal followed by a create. The browser
 // runtime MERGES a create payload into the record it already holds (see
-// applySceneCreateCommand in client/js/bootstrap-src/10-runtime-scene-core.js),
+// applySceneCreateCommand in client/js/bootstrap-src/10-runtime-scene-core.ts),
 // so a field the new record omits would keep its old value. The leading
 // removal clears the record first. Removing an object the peer never had is a
 // no-op in the runtime, which deletes from five maps by key.

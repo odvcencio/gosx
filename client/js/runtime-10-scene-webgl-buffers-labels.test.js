@@ -2199,7 +2199,7 @@ test("Scene3D SCENE_CMD_SET_POST_UNIFORMS patches named CustomPost uniforms non-
   assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patches"), "0");
   assert.equal(mount.getAttribute("data-gosx-scene3d-post-uniform-patch-misses"), "0");
 
-  // Kind 14: SCENE_CMD_SET_POST_UNIFORMS (see the const in 10-runtime-scene-core.js —
+  // Kind 14: SCENE_CMD_SET_POST_UNIFORMS (see the const in 10-runtime-scene-core.ts —
   // 11 is already SCENE_CMD_SET_INSTANCED_GLB_MESHES so this new command could
   // not reuse it without colliding with the existing wire protocol).
   const SCENE_CMD_SET_POST_UNIFORMS = 14;

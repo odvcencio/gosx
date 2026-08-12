@@ -1,4 +1,4 @@
-// Winding gate for the browser solid-mesh generators in 12-scene-geometry.js.
+// Winding gate for the browser solid-mesh generators in 12-scene-geometry.ts.
 //
 // The MAIN colour pass reads no winding: the WebGL main pass calls
 // gl.disable(gl.CULL_FACE), the WebGPU PBR pipeline sets cullMode "none", and
@@ -32,9 +32,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
-// loadGeometryModule loads 12-scene-geometry.js on its own, with
+// loadGeometryModule loads 12-scene-geometry.ts on its own, with
 // generateInstancedGeometry stubbed out. Use it to measure a generator this file
-// owns. Pass true to load 16c-scene-shared-pbr.js first, which makes the real
+// owns. Pass true to load 16c-scene-shared-pbr.ts first, which makes the real
 // instanced generators reachable and lets one test compare the two paths.
 function loadGeometryModule(withSharedPBR) {
   const sandbox = {
@@ -52,7 +52,7 @@ function loadGeometryModule(withSharedPBR) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox);
-  // The helpers earlier bundle files declare. Copied from 10-runtime-scene-core.js
+  // The helpers earlier bundle files declare. Copied from 10-runtime-scene-core.ts
   // so the generators run exactly as they do in a page.
   vm.runInContext(
     `function sceneNumber(value, fallback) {
@@ -68,12 +68,12 @@ function loadGeometryModule(withSharedPBR) {
     { filename: "prelude.js" },
   );
   if (withSharedPBR) {
-    vm.runInContext(fs.readFileSync(path.join(srcDir, "16c-scene-shared-pbr.js"), "utf8"), context, {
-      filename: "16c-scene-shared-pbr.js",
+    vm.runInContext(fs.readFileSync(path.join(srcDir, "16c-scene-shared-pbr.ts"), "utf8"), context, {
+      filename: "16c-scene-shared-pbr.ts",
     });
   }
-  vm.runInContext(fs.readFileSync(path.join(srcDir, "12-scene-geometry.js"), "utf8"), context, {
-    filename: "12-scene-geometry.js",
+  vm.runInContext(fs.readFileSync(path.join(srcDir, "12-scene-geometry.ts"), "utf8"), context, {
+    filename: "12-scene-geometry.ts",
   });
   return context;
 }
@@ -134,7 +134,7 @@ function measureWinding(mesh) {
   return { triangles, degenerate, reversed, worst, mean: total / triangles };
 }
 
-// Every solid-mesh generator 12-scene-geometry.js declares, with the parameters
+// Every solid-mesh generator 12-scene-geometry.ts declares, with the parameters
 // to build it and the figures the three producers now report.
 //
 // mean and worst are the measured dot products, rounded to six places. Go reports
@@ -245,11 +245,11 @@ test("every solid-mesh generator winds with its own stored normals", () => {
 
 // The divergence is closed. box, plane, sphere and torus used to wind the other
 // way in this file, at -1.000000, -1.000000, -0.999170 and -0.997526 against
-// their own normals, while generateInstancedGeometry in 16c-scene-shared-pbr.js
+// their own normals, while generateInstancedGeometry in 16c-scene-shared-pbr.ts
 // and scene/geom in Go reported the same figures positive. One authored box
 // therefore had opposite winding depending only on whether the renderer instanced
 // it. This test now asserts the opposite of what it once pinned: no generator in
-// 12-scene-geometry.js may wind negatively.
+// 12-scene-geometry.ts may wind negatively.
 //
 // The test also refuses to pass when someone adds a generator and skips the
 // table. It reads the function declarations out of the source and requires a case
@@ -257,13 +257,13 @@ test("every solid-mesh generator winds with its own stored normals", () => {
 //
 // Two names stay out of the table on purpose:
 //   - scenePrimitiveTriangleMesh only dispatches on object.kind;
-//   - sceneInstancedTriangleMesh only forwards to 16c-scene-shared-pbr.js, which
+//   - sceneInstancedTriangleMesh only forwards to 16c-scene-shared-pbr.ts, which
 //     the cross-file test below measures directly.
 //
 // scenePlaneSurfacePositions stays out too. It emits a textured-surface quad with
 // no normals, so this formula cannot read it. The test below it pins its sign.
-test("no generator in 12-scene-geometry.js winds against its own normals", () => {
-  const source = fs.readFileSync(path.join(srcDir, "12-scene-geometry.js"), "utf8");
+test("no generator in 12-scene-geometry.ts winds against its own normals", () => {
+  const source = fs.readFileSync(path.join(srcDir, "12-scene-geometry.ts"), "utf8");
   const declared = new Set(
     Array.from(source.matchAll(/function\s+(\w*TriangleMesh)\s*\(/g), (match) => match[1]),
   );
@@ -274,7 +274,7 @@ test("no generator in 12-scene-geometry.js winds against its own normals", () =>
     assert.ok(covered.has(name), `${name} has no case in generatorCases; add one and record its dot product`);
   }
   for (const name of covered) {
-    assert.ok(declared.has(name), `generatorCases names ${name}, which 12-scene-geometry.js no longer declares`);
+    assert.ok(declared.has(name), `generatorCases names ${name}, which 12-scene-geometry.ts no longer declares`);
   }
 
   const context = loadGeometryModule(false);
@@ -334,8 +334,8 @@ test("scenePlaneSurfacePositions keeps its recorded triangle order", () => {
 // The invariant the two-convention split broke: one authored shape must wind the
 // same way whichever browser path builds it.
 //
-// 12-scene-geometry.js builds a non-instanced object. generateInstancedGeometry
-// in 16c-scene-shared-pbr.js builds an instanced one. A reader cannot infer this
+// 12-scene-geometry.ts builds a non-instanced object. generateInstancedGeometry
+// in 16c-scene-shared-pbr.ts builds an instanced one. A reader cannot infer this
 // from two separate per-file tests, because each file can be self-consistent and
 // still disagree with the other. That is exactly the state this closed. So build
 // both here and compare the signs directly.
@@ -365,7 +365,7 @@ test("both browser geometry paths wind the same shape the same way", () => {
       `generateInstancedGeometry(${JSON.stringify(kind)}, ${JSON.stringify(dims)})`,
       context,
     );
-    assert.ok(direct, `${kind}: 12-scene-geometry.js built no mesh`);
+    assert.ok(direct, `${kind}: 12-scene-geometry.ts built no mesh`);
     assert.ok(instanced, `${kind}: generateInstancedGeometry built no mesh`);
 
     const directMeasured = measureWinding(direct);

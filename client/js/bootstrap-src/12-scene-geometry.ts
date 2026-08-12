@@ -216,7 +216,7 @@
   // Three producers build the same primitive kinds, and one authored shape can
   // reach the screen through any of them:
   //   - this file, when the renderer draws the object on its own;
-  //   - generateInstancedGeometry in 16c-scene-shared-pbr.js, when the renderer
+  //   - generateInstancedGeometry in 16c-scene-shared-pbr.ts, when the renderer
   //     instances the object;
   //   - scene/geom in Go, for the native renderer and the headless oracle.
   //
@@ -297,7 +297,7 @@
     // The four corners run clockwise about the +y normal, so the fan runs 0, 2, 1
     // and 0, 3, 2. That winds both triangles counter-clockwise seen from above,
     // which is where the +y normal points. generateInstancedPlaneGeometry in
-    // 16c-scene-shared-pbr.js measures +1.000000 for the same quad.
+    // 16c-scene-shared-pbr.ts measures +1.000000 for the same quad.
     const box = boxVertices(object.width, 0, object.depth);
     const vertices = [box[0], box[1], box[5], box[4]];
     const out = scenePrimitiveMeshBuilder();
@@ -383,7 +383,7 @@
         // i sweeps the major ring and j sweeps the tube cross-section, so the quad
         // a, b, c, d reads clockwise from outside the tube. Fan it a, c, b and
         // a, d, c to wind both triangles with the outward normals.
-        // generateInstancedTorusGeometry in 16c-scene-shared-pbr.js measures
+        // generateInstancedTorusGeometry in 16c-scene-shared-pbr.ts measures
         // +0.997526 for the same default torus.
         scenePushMeshVertex(out, a.position, a.normal, a.uv);
         scenePushMeshVertex(out, c.position, c.normal, c.uv);
@@ -519,7 +519,7 @@
   }
 
   // sceneInstancedTriangleMesh borrows a solid mesh from the instanced
-  // geometry generators in 16c-scene-shared-pbr.js. Both files sit in the same
+  // geometry generators in 16c-scene-shared-pbr.ts. Both files sit in the same
   // IIFE and function declarations hoist, so the call resolves lexically.
   //
   // The two families return the same shape and differ only in the count key:
@@ -556,7 +556,7 @@
       case "torusknot":
         return torusKnotTriangleMesh(object);
       // cylinder, cone and pyramid had no case here, so
-      // 10-runtime-scene-core.js never set vertices for them,
+      // 10-runtime-scene-core.ts never set vertices for them,
       // appendSceneObjectToBundle fell through to sceneObjectSegments, and
       // 15-scene-draw-plan.ts kept the object on the line pass. Three
       // documented primitive kinds drew as wireframes when the author asked
@@ -641,7 +641,7 @@
 
   // Module-level scratch for scenePlaneSurfaceCorners. Four stable corner
   // objects wrapped in a stable array — the two callers in
-  // 10-runtime-scene-core.js (appendSceneObjectToBundle bounds expansion
+  // 10-runtime-scene-core.ts (appendSceneObjectToBundle bounds expansion
   // and appendSceneSurfaceToBundle positions serialization) consume the
   // returned corners immediately inside a for loop without retaining the
   // individual refs, so it's safe to share. Previously each call

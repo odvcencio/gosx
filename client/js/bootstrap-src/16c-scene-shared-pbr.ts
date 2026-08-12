@@ -7,13 +7,13 @@
   // Three groups of callers depend on them:
   //   1. 15b-scene-planner.ts sorts and classifies draw passes with
   //      scenePBRObjectRenderPass and scenePBRDepthSort.
-  //   2. 10-runtime-scene-core.js and 20-scene-mount.js keep light and
+  //   2. 10-runtime-scene-core.ts and 20-scene-mount.js keep light and
   //      environment dirty hashes with hashLightContent and
   //      hashEnvironmentContent.
-  //   3. 10-runtime-scene-core.js publishes the camera matrices, the shadow
+  //   3. 10-runtime-scene-core.ts publishes the camera matrices, the shadow
   //      bounds and the instanced geometry generators on
   //      window.__gosx_scene3d_api. The WebGPU chunk reads them there through
-  //      26e-feature-scene3d-webgpu-prefix.js.
+  //      26e-feature-scene3d-webgpu-prefix.ts.
   //
   // Every function here is pure math or plain object work. None of them
   // touches a WebGLRenderingContext. Keep it that way: a `gl.` call in this
@@ -698,7 +698,7 @@
 
   // hashLightContent computes the per-light sub-hash the frame-level
   // scenePBRLightsHash combines. Called from normalizeSceneLight (in
-  // 10-runtime-scene-core.js) whenever a light is created or patched,
+  // 10-runtime-scene-core.ts) whenever a light is created or patched,
   // so the expensive string/number walk runs at mutation time — rare —
   // instead of per-frame. The result is stamped onto the light object
   // as `_lightHash` and read by scenePBRLightsHash without rehashing.

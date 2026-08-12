@@ -13,7 +13,7 @@
    */
 
   // renderTruth resolves the shared render-truth helpers published by
-  // 15a-scene-postfx-shared.js. This chunk (bootstrap-feature-scene3d-webgpu.js)
+  // 15a-scene-postfx-shared.ts. This chunk (bootstrap-feature-scene3d-webgpu.js)
   // is a SEPARATE <script> whose IIFE does not concatenate 15a, so the only
   // link is the global. Resolved per call rather than cached at chunk-load
   // time because the main scene3d bundle and this chunk race on slow networks.
@@ -2963,7 +2963,7 @@
 
   // KTX2 block-texture path.
   //
-  // 19a-scene-ktx2.js publishes window.__gosx_scene3d_ktx2 and ships in the
+  // 19a-scene-ktx2.ts publishes window.__gosx_scene3d_ktx2 and ships in the
   // lazily fetched glTF chunk, because only a model asset carries a .ktx2
   // texture. This renderer therefore resolves the reader at call time and
   // falls back to the image path when the chunk is absent.
@@ -3634,7 +3634,7 @@
   }
 
   // Both shadow pipelines set cullMode "front" and set no frontFace, so the
-  // WebGPU default "ccw" stands. 12-scene-geometry.js and 16c-scene-shared-pbr.js
+  // WebGPU default "ccw" stands. 12-scene-geometry.ts and 16c-scene-shared-pbr.ts
   // wind their solids counter-clockwise as seen from outside, so the lit face is
   // front-facing and gets discarded. The map therefore records the far wall of a
   // caster, which pushes the stored depth a caster thickness past the receiver
@@ -4628,7 +4628,7 @@
   //
   // Parity rule: the ID only resolves IDENTITY. Every geometric field
   // (triangleIndex, uv, localPosition, worldPosition, depth, distance) comes
-  // from the SAME shared CPU raycast helpers that 17-scene-input.js runs on
+  // from the SAME shared CPU raycast helpers that 17-scene-input.ts runs on
   // WebGL2 (sceneRaycastPickGroup / sceneRaycastPickInstancedMeshes, exported
   // on window.__gosx_scene3d_api). Both backends therefore return the same hit
   // record shape with the same numbers. See sceneWebGPUPickResolve.
@@ -4646,7 +4646,7 @@
   // space. Instanced meshes cost one slot per MESH, not per instance, so real
   // scenes stay far below this.
   var SCENE_WEBGPU_PICK_MAX_SLOTS = 4096;
-  // Mirror of SCENE_PICK_MIN_EXTENT_X / _Y in 17-scene-input.js. Keep the two
+  // Mirror of SCENE_PICK_MIN_EXTENT_X / _Y in 17-scene-input.ts. Keep the two
   // in sync; sceneWebGPUPickAllowsObject must accept exactly the objects that
   // sceneObjectAllowsPointerPick accepts, or the pick pass can hide a pickable
   // object behind a non-pickable one.
@@ -4746,7 +4746,7 @@
     return typeof fn === "function" ? fn : null;
   }
 
-  // Port of sceneBoundsSize in 17-scene-input.js: absolute extents, largest
+  // Port of sceneBoundsSize in 17-scene-input.ts: absolute extents, largest
   // first.
   function sceneWebGPUPickBoundsExtents(bounds) {
     if (!bounds || typeof bounds !== "object") return [0, 0, 0];
@@ -4757,7 +4757,7 @@
     ].sort(function(a, b) { return b - a; });
   }
 
-  // Port of sceneObjectAllowsPointerPick in 17-scene-input.js. The pick pass
+  // Port of sceneObjectAllowsPointerPick in 17-scene-input.ts. The pick pass
   // must draw exactly the set that file picks, so a non-pickable object never
   // occludes a pickable one in the ID buffer.
   function sceneWebGPUPickAllowsObject(object) {
@@ -4772,7 +4772,7 @@
   // for background, so the first target gets ID 1 — the same convention as
   // buildInstancedPickTargets(meshes, 1) in render/bundle/pick.go.
   //
-  // Group order matches sceneRaycastPick in 17-scene-input.js: mesh objects
+  // Group order matches sceneRaycastPick in 17-scene-input.ts: mesh objects
   // first, then instanced meshes. Each entry records the group, the index
   // within that group, and the instance span, so a returned ID maps back to one
   // exact draw.
@@ -4850,7 +4850,7 @@
     return clone;
   }
 
-  // Port of sceneNearestRaycastHit in 17-scene-input.js.
+  // Port of sceneNearestRaycastHit in 17-scene-input.ts.
   function sceneWebGPUPickNearestHit(current, candidate) {
     if (!candidate) return current;
     if (!current || candidate.distance < current.distance) return candidate;
@@ -6033,7 +6033,7 @@
     // handler below (see initGPUResources), read back by diagnostics().
     // Kept on THIS renderer instance rather than read off the shared probe
     // snapshot, because a successful re-probe nulls that shared snapshot
-    // (16z-scene-webgpu-probe.js's _webgpuDeviceLostInfo) the moment it
+    // (16z-scene-webgpu-probe.ts's _webgpuDeviceLostInfo) the moment it
     // recovers — often before the mount-level watchdog's next poll — so
     // reading the shared snapshot lost the detail exactly when it mattered.
     var lastDeviceLostInfo = null;
@@ -7221,7 +7221,7 @@
         // Handle device loss post-factory. Record the loss detail on THIS
         // renderer (lastDeviceLostInfo, read back by diagnostics() below)
         // for diagnosis, and run our own local cleanup — but do NOT also
-        // invalidate the shared probe here. 16z-scene-webgpu-probe.js's own
+        // invalidate the shared probe here. 16z-scene-webgpu-probe.ts's own
         // sceneWebGPUWatchDeviceLoss already has a `.then()` listener on
         // this EXACT device (it is the same object handed to us as
         // probe.device above), and is the probe's single owner for
@@ -9434,7 +9434,7 @@
 
     // dispatchWaterDropEvents mirrors dispatchWaterObjectDisplacementEvents
     // immediately above, but for the queued-drop trail (see
-    // sceneManagedFluidObjectQueueDrop in 19b-scene-control-forms.js): a fast
+    // sceneManagedFluidObjectQueueDrop in 19b-scene-control-forms.ts): a fast
     // pointer stroke can fire several drops between two rendered frames, and
     // upstream (evanw) injects one per DOM event, so a single-slot scalar
     // (entry.dropEventID/dropX/dropZ) would silently coalesce a burst into
@@ -15001,12 +15001,12 @@
         // box/sphere winding their triangles with the right-hand normal
         // OPPOSITE the declared shading normal. That was a real measurement of
         // a real state, but it described a defect rather than a requirement:
-        // 12-scene-geometry.js wound its solid meshes clockwise while
-        // 16c-scene-shared-pbr.js and scene/geom both wound counter-clockwise,
+        // 12-scene-geometry.ts wound its solid meshes clockwise while
+        // 16c-scene-shared-pbr.ts and scene/geom both wound counter-clockwise,
         // so the same authored shape had opposite winding depending only on
         // whether it was instanced.
         //
-        // 12-scene-geometry.js now winds counter-clockwise, so all three
+        // 12-scene-geometry.ts now winds counter-clockwise, so all three
         // producers agree and every generator's geometric normal points the
         // same way as its shading normal. The native renderer is the evidence
         // that this is the correct sense: render/bundle draws scene/geom with
@@ -18221,7 +18221,7 @@
   // --- Early WebGPU adapter probe ---
   // Adapter probe + sceneWebGPUAvailable + createSceneWebGPURendererOrFallback
   // used to live here. They've been moved to:
-  //   - 16z-scene-webgpu-probe.js (main scene3d bundle) — owns the
+  //   - 16z-scene-webgpu-probe.ts (main scene3d bundle) — owns the
   //     probe, the stub sceneWebGPUAvailable, and the fallback factory
   //     that reads from window.__gosx_scene3d_webgpu_api.
   //   - This file is now loaded only via bootstrap-feature-scene3d-webgpu.js

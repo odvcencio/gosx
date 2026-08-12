@@ -247,7 +247,7 @@ func TestBroadphaseNeverDropsANarrowPhaseHit(t *testing.T) {
 
 // TestRaycastCoverageManifest pins which node kinds the native raycast reaches,
 // and records where the browser pick path disagrees. Keep this table in step
-// with sceneRaycastPick in client/js/bootstrap-src/17-scene-input.js. The
+// with sceneRaycastPick in client/js/bootstrap-src/17-scene-input.ts. The
 // WebGPU GPU picker resolves identity on the GPU and then calls the same two
 // shared helpers (sceneRaycastPickGroup, sceneRaycastPickInstancedMeshes) for
 // every geometric field, so whatever those helpers miss, GPU picking misses.

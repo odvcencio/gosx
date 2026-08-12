@@ -4,7 +4,7 @@
 // when either renderer runs.
 //
 // The texture-unit table, the IBL profile maths and the shared texture-memory
-// budget left this file for 15a1-scene-texture-budget.js. Only
+// budget left this file for 15a1-scene-texture-budget.ts. Only
 // 16-scene-webgl.js reads them, and that renderer ships in the lazily fetched
 // WebGL chunk, so a WebGPU page used to pay for allocation tables it can never
 // reach.

@@ -7,7 +7,7 @@ import "m31labs.dev/gosx/scene/geom"
 //
 // A generator here costs zero browser bytes. A Mesh with a BufferGeometry lowers
 // to a "gltf-mesh" scene object that carries its vertices inline, and
-// 10-runtime-scene-core.js skips its own generation when an object already has
+// 10-runtime-scene-core.ts skips its own generation when an object already has
 // vertices. So the runtime bundle needs no code for any shape in this file.
 // Exact raycasting already works too, through the mesh-triangle path.
 //

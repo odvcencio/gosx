@@ -113,9 +113,6 @@ func chunkFreeIdentifiers(dir string, entry output) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := validateTypedSource(src, data); err != nil {
-			return nil, err
-		}
 		b.WriteString(normalizeNewlines(string(data)))
 		b.WriteByte('\n')
 	}

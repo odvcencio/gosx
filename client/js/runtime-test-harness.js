@@ -37,7 +37,7 @@ const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirn
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
 const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
-const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
+const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.ts"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
 const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dom-regions.ts"), "utf8");
 const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
@@ -518,7 +518,7 @@ class FakeWebGLContext {
     this.ops.push(["drawArrays", mode, first, count, this._activeProgram && this._activeProgram.id]);
   }
 
-  // The thick-line world pass (10-runtime-scene-core.js
+  // The thick-line world pass (10-runtime-scene-core.ts
   // renderSceneWebGLWorldBundle) issues indexed draws. Without this method any
   // scene carrying a LinesGeometry with an explicit width > 1 threw here
   // instead of rendering, so no test could cover a mixed lines+mesh frame.
@@ -713,7 +713,7 @@ class FakeWebGLContext {
 
 // FakeWebGPUCanvasContext is a minimal double for the GPUCanvasContext
 // returned by canvas.getContext("webgpu"). It covers exactly what
-// sceneWebGPUProbeCanvasContext (16z-scene-webgpu-probe.js) and the real
+// sceneWebGPUProbeCanvasContext (16z-scene-webgpu-probe.ts) and the real
 // WebGPU renderer (16a-scene-webgpu.js) call on a canvas context: configure(),
 // getCurrentTexture()/createView(), and unconfigure().
 class FakeWebGPUCanvasContext {
@@ -2045,7 +2045,7 @@ function createContext(options) {
 
   const routes = new Map();
   // The text-layout engine now ships as a lazily fetched chunk instead of
-  // riding in every bundle (see bootstrap-src/00-textlayout.js). Serve it by
+  // riding in every bundle (see bootstrap-src/00-textlayout.ts). Serve it by
   // default: any page with a data-gosx-text-layout element, and any page whose
   // manifest mounts a Scene3D engine, asks for it. A test can still override
   // the route through options.fetchRoutes.
@@ -2881,7 +2881,7 @@ const SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE = {
 function loadSceneWaterClockAPI() {
   // sceneNumber sits in the runtime-utils file and the water clock sits in the
   // scene core file. The bundles load them next to each other, so join them.
-  const core = readBootstrapSrc("10-runtime-scene-utils.js", "10-runtime-scene-core.js");
+  const core = readBootstrapSrc("10-runtime-scene-utils.ts", "10-runtime-scene-core.ts");
   const start = core.indexOf("function sceneNumber(value, fallback)");
   const end = core.indexOf("function sceneNumberOrCSSVar", start);
   assert.notEqual(start, -1, "sceneNumber anchor missing from scene core");
@@ -2967,17 +2967,17 @@ const CUSTOM_POST_TIME_LAYOUT_FIXTURE = {
 };
 
 // sceneCoreSourceRange extracts a [startAnchor, endAnchor) slice from
-// 10-runtime-scene-core.js — used to pull the REAL G2 QualityLadder
+// 10-runtime-scene-core.ts — used to pull the REAL G2 QualityLadder
 // normalizer (sceneQualityLadder et al.) and its two small dependencies
 // into the adaptive-quality VM harness below, instead of stubbing them out,
 // so ladder-driven harness tests exercise the exact same normalization the
 // full bootstrap bundle runs.
 function sceneCoreSourceRange(startAnchor, endAnchor) {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const start = source.indexOf(startAnchor);
   const end = source.indexOf(endAnchor, start);
-  assert.notEqual(start, -1, "10-runtime-scene-core.js anchor missing: " + startAnchor);
-  assert.notEqual(end, -1, "10-runtime-scene-core.js anchor missing: " + endAnchor);
+  assert.notEqual(start, -1, "10-runtime-scene-core.ts anchor missing: " + startAnchor);
+  assert.notEqual(end, -1, "10-runtime-scene-core.ts anchor missing: " + endAnchor);
   return source.slice(start, end);
 }
 
@@ -3126,7 +3126,7 @@ function createAdaptiveQualityHarness(extraProps) {
 // above, but authors a scene.qualityLadder prop (the Go-lowered wire shape —
 // see scene/quality_ladder.go) so createSceneAdaptiveQualityState takes the
 // mode: "ladder" branch. loadSceneAdaptiveQualityAPI splices in the REAL
-// sceneQualityLadder normalizer from 10-runtime-scene-core.js (not a stub),
+// sceneQualityLadder normalizer from 10-runtime-scene-core.ts (not a stub),
 // so this exercises the exact same rung normalization the full bootstrap
 // bundle runs.
 function createQualityLadderHarness(qualityLadder, extraProps) {
@@ -3284,7 +3284,7 @@ window.Hls.Events = {
 // ---------------------------------------------------------------------------
 // Video drift engine: JS fallback ↔ Go golden parity.
 //
-// 28-video-sync-fallback.js is a pure-JS port of the Go videosync engine
+// 28-video-sync-fallback.ts is a pure-JS port of the Go videosync engine
 // (client/videosync). The committed golden vector — produced by the Go
 // Engine — is replayed through a fresh JS engine; the decision stream MUST
 // match. kind/preloadPhase/ready/stalled/resetRate are exact; rate/seekTo/
@@ -3296,17 +3296,17 @@ function loadVideoSyncJSEngineFactory() {
   // source-extraction tests read bootstrap-src/*.js directly), eval it in an
   // isolated context whose only global is `window`, and pull the factory off.
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "28-video-sync-fallback.js"),
+    path.join(__dirname, "bootstrap-src", "28-video-sync-fallback.ts"),
     "utf8",
   );
   const sandbox = { window: {} };
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "28-video-sync-fallback.js" });
+  vm.runInContext(source, sandbox, { filename: "28-video-sync-fallback.ts" });
   const factory = sandbox.window.__gosx_video_sync_js_create;
   assert.equal(
     typeof factory,
     "function",
-    "28-video-sync-fallback.js must install window.__gosx_video_sync_js_create",
+    "28-video-sync-fallback.ts must install window.__gosx_video_sync_js_create",
   );
   return factory;
 }
@@ -3331,13 +3331,13 @@ function loadVideoSyncJSEngineFactory() {
 // sandbox and returns the exposed window.__gosx_paint_canvas_bundle function.
 function loadCanvasPainter() {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b1-canvas2d-painter.js"),
+    path.join(__dirname, "bootstrap-src", "26b1-canvas2d-painter.ts"),
     "utf8",
   );
   const sandbox = {};
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "26b1-canvas2d-painter.js" });
+  vm.runInContext(source, sandbox, { filename: "26b1-canvas2d-painter.ts" });
   const fn = sandbox.window.__gosx_paint_canvas_bundle;
   assert.equal(typeof fn, "function", "painter must expose window.__gosx_paint_canvas_bundle");
   return fn;
@@ -4038,7 +4038,7 @@ function readSceneMountSrc() {
 // uniform packer moved out of createSceneWebGPURenderer into 16a1, so a source
 // assertion about the backend must read both files.
 function readWebGPUBackendSrc() {
-  return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.js");
+  return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.ts");
 }
 
 // readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
@@ -4478,7 +4478,7 @@ function assertWaterComputeKernelBindings(fake, materialName, wantBindings) {
 // -----------------------------------------------------------------------------
 // DOM CanvasBoard overlays — labels/html sync + dispose
 //
-// 26b2-canvas-board-labels.js positions real HTML <span> elements over the
+// 26b2-canvas-board-labels.ts positions real HTML <span> elements over the
 // canvas board so text renders in the DOM rather than via GPU fillText. The
 // tests below exercise the OrthoCamera2D transform parity, index-keyed label
 // reconciliation, keyed HTML reconciliation, culling, defaults, dispose, and
@@ -4495,7 +4495,7 @@ function assertWaterComputeKernelBindings(fake, materialName, wantBindings) {
 // elements can be created.
 function loadBoardLabels() {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b2-canvas-board-labels.js"),
+    path.join(__dirname, "bootstrap-src", "26b2-canvas-board-labels.ts"),
     "utf8",
   );
   const fakeDoc = new FakeDocument();
@@ -4504,7 +4504,7 @@ function loadBoardLabels() {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "26b2-canvas-board-labels.js" });
+  vm.runInContext(source, sandbox, { filename: "26b2-canvas-board-labels.ts" });
   assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_sync, "function",
     "26b2 must expose __gosx_canvas_board_labels_sync");
   assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_dispose, "function",

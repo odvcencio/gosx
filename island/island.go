@@ -2004,7 +2004,7 @@ func (r *Renderer) hasVideoEngines() bool {
 //
 // The field names match the readers in
 // client/js/bootstrap-src/11a-scene-decompress.ts and
-// 11b-scene-points-generate.js. Add a field here whenever one of those files
+// 11b-scene-points-generate.ts. Add a field here whenever one of those files
 // learns to read a new key, or the page will not advertise the chunk that
 // reads it.
 type scene3DChunkRecord struct {

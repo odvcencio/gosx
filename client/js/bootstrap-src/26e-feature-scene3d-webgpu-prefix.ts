@@ -87,7 +87,7 @@
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
   // sceneIsNumericTypedArray: typed-array guard used by drawPointsEntries in
   // 16a to validate entry.positions / sizes / colors before caching them.
-  // Exported from __gosx_scene3d_api by 10-runtime-scene-core.js; fall back
+  // Exported from __gosx_scene3d_api by 10-runtime-scene-core.ts; fall back
   // to an ArrayBuffer.isView check if the main bundle is somehow older.
   var sceneIsNumericTypedArray = sceneApi.sceneIsNumericTypedArray || function(value) {
     return value != null &&
@@ -109,7 +109,7 @@
   // not a snapshot taken at chunk-load time.
   //
   // The probe owns the lifecycle of both the adapter AND the device
-  // (see 16z-scene-webgpu-probe.js). The renderer in 16a reuses the
+  // (see 16z-scene-webgpu-probe.ts). The renderer in 16a reuses the
   // probed device instead of requesting its own, which is what lets
   // the factory be synchronous and guarantees we never taint the
   // canvas with a WebGPU context for a device that doesn't actually

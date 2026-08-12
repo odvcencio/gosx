@@ -25,7 +25,7 @@
 //
 // A single set of capturing document listeners drives discrete client intents
 // with NO per-page JS, so GoSX apps stay fully declarative (this mirrors the
-// data-gosx-motion subsystem in 05-document-env.js — attribute-driven, global
+// data-gosx-motion subsystem in 05-document-env.ts — attribute-driven, global
 // observer/listener, zero app script). Self-contained IIFE; the listeners
 // resolve runtime globals (window.__gosx_set_shared_signal) lazily so load order
 // relative to the tail is immaterial.

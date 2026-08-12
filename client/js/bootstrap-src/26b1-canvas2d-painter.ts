@@ -2,7 +2,7 @@
 //
 // paintCanvasBundle replays a RenderBundle (the JSON __gosx_render_canvas
 // returns) onto a 2D context. It is the JS half of the canvas2d paint loop
-// mounted in 26b-feature-engines-prefix.js; the Go half (CanvasBoardAdapter +
+// mounted in 26b-feature-engines-prefix.ts; the Go half (CanvasBoardAdapter +
 // the __gosx_render_canvas WASM global) produces the bundle.
 //
 // The screen transform replicates render/bundle.OrthoCamera2D exactly so the

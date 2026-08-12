@@ -7,8 +7,8 @@
   // This file ships as the lazily fetched bootstrap-feature-scene3d-webgl.js
   // chunk. A WebGPU-capable browser never runs it, so it must not load until
   // the mount path picks WebGL, or until a WebGPU device loss forces the
-  // fallback ladder down to WebGL. See 26j-feature-scene3d-webgl-prefix.js
-  // for the symbols the base chunk bridges in, and 16c-scene-shared-pbr.js
+  // fallback ladder down to WebGL. See 26j-feature-scene3d-webgl-prefix.ts
+  // for the symbols the base chunk bridges in, and 16c-scene-shared-pbr.ts
   // for the backend-agnostic helpers that stayed eager.
 
   /**
@@ -1298,7 +1298,7 @@
     // names the opposite operation; the call was always right and the words were
     // wrong.
     //
-    // This only works because 12-scene-geometry.js winds its solids
+    // This only works because 12-scene-geometry.ts winds its solids
     // counter-clockwise as seen from outside, and WebGL treats
     // counter-clockwise as front-facing by default. This file sets no
     // frontFace, so that default is load-bearing. render/bundle keeps the
@@ -2426,7 +2426,7 @@
       ? worldUV.subarray(startUV, endUV)
       : new Float32Array(worldUV.slice(startUV, endUV));
     // Normals are baked world-space, same order/stride as positions (see
-    // 10-runtime-scene-core.js: worldMeshPositions/worldMeshNormals/worldMeshUVs
+    // 10-runtime-scene-core.ts: worldMeshPositions/worldMeshNormals/worldMeshUVs
     // are pushed together per vertex). Optional/defensive: a bundle lacking
     // worldMeshNormals (or a length mismatch) falls back to null and the
     // caller (refreshMeshUpload) uses a safe non-NaN default normal.
@@ -3141,7 +3141,7 @@
     function queueWaterEvents(liveEntry) {
       // Queued multi-drop trail: liveEntry.dropEvents carries every drop
       // queued since the last consumed id (see sceneManagedFluidObjectQueueDrop
-      // in 19b-scene-control-forms.js) -- a fast pointer stroke fires several
+      // in 19b-scene-control-forms.ts) -- a fast pointer stroke fires several
       // drops between two rendered frames, and the single-slot scalar fields
       // below (dropEventID/dropX/dropZ) only ever held the latest one. Queue
       // every entry into pendingDropEvents (same Map drainWaterEvents already
@@ -4748,7 +4748,7 @@
 
   // KTX2 block-texture path.
   //
-  // 19a-scene-ktx2.js publishes window.__gosx_scene3d_ktx2 and ships in the
+  // 19a-scene-ktx2.ts publishes window.__gosx_scene3d_ktx2 and ships in the
   // lazily fetched glTF chunk, because only a model asset carries a .ktx2
   // texture. Resolve the reader at call time and fall back to the image path
   // when the chunk is absent.
@@ -5455,7 +5455,7 @@
   // already model-free (view*proj) and `normalMatrix` hardcoded to identity —
   // the established convention is that `position`/`normal` arrive PRE-BAKED
   // to world space (see appendSceneMeshObjectToBundle's CPU bake loop for
-  // static meshes in 10-runtime-scene-core.js). Skinned objects skip that
+  // static meshes in 10-runtime-scene-core.ts). Skinned objects skip that
   // CPU bake (object.skin branch) and hand the raw bind-pose attributes
   // straight through instead, so a Selena material bound as-is on a skinned
   // draw would render the frozen bind pose with no model placement at all.
@@ -6508,7 +6508,7 @@
       console.warn(message);
     }
 
-    // webglRenderTruth resolves the shared helpers from 15a-scene-postfx-shared.js
+    // webglRenderTruth resolves the shared helpers from 15a-scene-postfx-shared.ts
     // through the global, matching how the WebGPU chunk reaches them, so both
     // renderers publish the SAME attribute names from the same code.
     var WEBGL_RENDER_TRUTH_NOOP = {

@@ -489,7 +489,7 @@
 
   // Shared probe helper. Callers in 16a-scene-webgpu.js use this to read
   // the current probe state without re-running the async adapter/device
-  // request. Duplicated in 26e-feature-scene3d-webgpu-prefix.js for the
+  // request. Duplicated in 26e-feature-scene3d-webgpu-prefix.ts for the
   // split webgpu sub-feature bundle (which does not include 16z), and
   // kept here for the legacy monolithic bootstrap.js bundle that inlines
   // 16a without the sub-feature prefix. When both definitions land in

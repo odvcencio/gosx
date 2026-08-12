@@ -1,6 +1,6 @@
   // Legacy vertex-colour WebGL renderer.
   //
-  // This slice used to sit in 10-runtime-scene-core.js, which every Scene3D
+  // This slice used to sit in 10-runtime-scene-core.ts, which every Scene3D
   // page downloads. Only a WebGL page ever runs it: createSceneWebGLResult in
   // 20b-scene-mount-webgl-chunk.js calls createSceneWebGLRenderer as the last
   // resort after the PBR factory declines, and the PBR factory itself lives in

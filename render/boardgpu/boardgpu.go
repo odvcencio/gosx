@@ -264,7 +264,7 @@ func appendBoardSpriteQuads(b *rootengine.RenderBundle, g *boardGeometry) {
 
 // AttachBoardGPUGeometry makes a Canvas2D board bundle GPU-renderable without a
 // new pipeline. The board's rects live in bundle.Objects as a 2D-painter display
-// list (kind/bounds/materialIndex) consumed by 26b1-canvas2d-painter.js, but the
+// list (kind/bounds/materialIndex) consumed by 26b1-canvas2d-painter.ts, but the
 // GPU scene renderers (native render/bundle's drawObjectMeshes and the JS 16a
 // renderer) draw RenderObjects from the bundle's World* vertex buffers via
 // VertexOffset/VertexCount — which the painter bundle leaves empty. This expands

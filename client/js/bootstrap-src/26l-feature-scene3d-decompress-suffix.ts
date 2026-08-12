@@ -1,6 +1,6 @@
   // --- end of 11a and 11b concatenation ---
 
-  // Publish onto the base API object. 10-runtime-scene-core.js reads
+  // Publish onto the base API object. 10-runtime-scene-core.ts reads
   // sceneDecompressProps through it, and 20-scene-mount.js reads
   // sceneUpgradeProgressive and sceneApplyLOD the same way. Every one of those
   // three call sites already guarded the read, because the monolith and the

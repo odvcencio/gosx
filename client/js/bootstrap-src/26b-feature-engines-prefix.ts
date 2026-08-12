@@ -697,7 +697,7 @@
     // __gosx_tick_canvas, fetches the RenderBundle JSON via __gosx_render_canvas
     // at the canvas's CSS size, parses it, and replays it onto the 2D context
     // through the shared painter (window.__gosx_paint_canvas_bundle, installed
-    // by bootstrap-src/26b1-canvas2d-painter.js). The backing store is sized
+    // by bootstrap-src/26b1-canvas2d-painter.ts). The backing store is sized
     // for the device pixel ratio (via _ensureSurfaceCanvas / the ResizeObserver),
     // and the context is pre-scaled by dpr so the painter can work in CSS pixels.
     function _startCanvasSurfaceRAF(id, canvas, instance) {

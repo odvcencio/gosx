@@ -821,7 +821,7 @@ test("shaderLib hydrate: missing cullKernelWGSL lib entry leaves field absent, n
   assert.equal(bad.cullKernelWGSLRef, undefined, "ref key must be deleted even when lib entry missing");
 });
 
-// Regression test: normalizeSceneInstancedMeshEntry (10-runtime-scene-core.js)
+// Regression test: normalizeSceneInstancedMeshEntry (10-runtime-scene-core.ts)
 // used to omit cullKernelWGSL/cullKernelEntry/cullRadius/cullBackend when it
 // rebuilt each instancedMeshes entry into its whitelisted `normalized` object.
 // Consequence: updateInstancedCullSystems in 16a-scene-webgpu.js always saw

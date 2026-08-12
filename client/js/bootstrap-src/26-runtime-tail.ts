@@ -122,7 +122,7 @@
     }
 
     // The monolithic bootstrap.js carries the text-layout engine inline, so the
-    // forwarders in 00-textlayout.js already reach a registered engine. Skip
+    // forwarders in 00-textlayout.ts already reach a registered engine. Skip
     // the fetch in that case.
     if (name === "textlayout"
       && typeof window.__gosx_text_layout_engine_ready === "function"
@@ -197,7 +197,7 @@
   // one extra fetch, never a wrong frame.
   //
   // A label that arrives after mount, through applyCommands, does not appear in
-  // this text. The forwarders in 00-textlayout.js cover that case: the first
+  // this text. The forwarders in 00-textlayout.ts cover that case: the first
   // layout call starts the fetch, and the invalidation listener in
   // 20-scene-mount.js lays the label out again once the engine registers.
   function manifestNeedsTextLayoutFeature(featureNames) {
@@ -479,7 +479,7 @@
     // Start the text-layout engine fetch before any mount work. The document
     // scan answers the question now, so the request goes out in parallel with
     // the manifest read and the runtime download. The forwarders in
-    // 00-textlayout.js queue mountManagedTextLayouts below and replay it when
+    // 00-textlayout.ts queue mountManagedTextLayouts below and replay it when
     // the engine registers, so the fetch never blocks first paint.
     const textLayoutLoad = documentNeedsTextLayoutFeature()
       ? ensureBootstrapFeature("textlayout")

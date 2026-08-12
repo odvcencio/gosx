@@ -1,15 +1,15 @@
-// Unit tests for bootstrap-src/05-document-env.js's declarative motion-split
+// Unit tests for bootstrap-src/05-document-env.ts's declarative motion-split
 // feature (data-gosx-motion-split="char|word|line" + data-gosx-motion-stagger).
 // Runs the real module in a node:vm against a minimal hand-rolled DOM stub,
 // mirroring the pattern in 06-declarative-actions.test.mjs.
 //
-// 05-document-env.js is authored to run inside the bootstrap bundle, after
-// 00-textlayout.js has already defined a handful of shared DOM helpers
+// 05-document-env.ts is authored to run inside the bootstrap bundle, after
+// 00-textlayout.ts has already defined a handful of shared DOM helpers
 // (setAttrValue, setStyleValue, walkElementTree) as top-level functions in
-// the same closure. Loading the whole of 00-textlayout.js would also pull in
+// the same closure. Loading the whole of 00-textlayout.ts would also pull in
 // its font/canvas-dependent top-level init calls, so this harness instead
 // supplies verbatim copies of just the three helpers 05 needs, then the real
-// 05-document-env.js source, in the same vm context (see 07's harness for
+// 05-document-env.ts source, in the same vm context (see 07's harness for
 // the same "load a dependency module first" shape).
 //
 // gosxMotionSplitUnits and playManagedMotionUnits are internal to the
@@ -29,11 +29,11 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "05-document-env.js"),
+  path.join(__dirname, "bootstrap-src", "05-document-env.ts"),
   "utf8"
 );
 
-// Verbatim from bootstrap-src/00-textlayout.js.
+// Verbatim from bootstrap-src/00-textlayout.ts.
 const helperSrc = `
   function setStyleValue(style, name, value) {
     if (!style || typeof name !== "string") {
@@ -205,7 +205,7 @@ function makeDocument() {
   };
 }
 
-// runModule loads the helpers, the real 05-document-env.js source, and the
+// runModule loads the helpers, the real 05-document-env.ts source, and the
 // internal-hooks capture script into one shared vm context, then returns the
 // exposed hooks plus the raw context for anything else a test might need.
 function runModule() {

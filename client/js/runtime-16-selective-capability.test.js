@@ -365,7 +365,7 @@ test("selective runtime loads engines feature and shared wasm for declared self-
 });
 
 // Regression test for the split feature-bundle build: bootstrap-feature-engines.js
-// runs in its own IIFE (see 26b-feature-engines-prefix.js), separate from the
+// runs in its own IIFE (see 26b-feature-engines-prefix.ts), separate from the
 // runtime bundle's closure. normalizeEngineRenderBundle (concatenated in from
 // 30-tail.js's "engine mounting" section) normalizes the camera/label/html/
 // surface fields of ANY runtime:"shared" engine's render bundle — not just
@@ -373,7 +373,7 @@ test("selective runtime loads engines feature and shared wasm for declared self-
 // normalizeTextLayoutOverflow, normalizeSceneLabelCollision,
 // normalizeSceneLabelWhiteSpace, normalizeSceneLabelAlign,
 // normalizeSceneHTMLMode, normalizeSceneHTMLPointerEvents, and clamp01 — all
-// of which live in 00-textlayout.js / 10-runtime-scene-core.js /
+// of which live in 00-textlayout.ts / 10-runtime-scene-core.ts /
 // 11-scene-math.ts, none of which bootstrap-feature-engines.js carries.
 //
 // Before the fix, a page whose ONLY shared-runtime engine is a non-Scene3D

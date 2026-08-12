@@ -3036,7 +3036,7 @@
       //
       // G1: postFXMaxPixels is a second escape-hatch key, live-patched
       // WITHOUT going through applyCommands()'s CommandSetPostEffects path
-      // (applyScenePostEffectsCommand in 10-runtime-scene-core.js) — that
+      // (applyScenePostEffectsCommand in 10-runtime-scene-core.ts) — that
       // command rebuilds sceneState.postEffects from a caller-supplied raw
       // effects array, and when the caller only wants to change the pixel
       // cap (no effects payload in hand) it destructively rebuilds an EMPTY

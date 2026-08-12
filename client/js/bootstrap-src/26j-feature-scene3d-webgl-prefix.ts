@@ -15,7 +15,7 @@
 // 20-scene-mount.js.
 //
 // All cross-IIFE dependencies are bridged below, the same way
-// 26e-feature-scene3d-webgpu-prefix.js bridges the WebGPU chunk. Two window
+// 26e-feature-scene3d-webgpu-prefix.ts bridges the WebGPU chunk. Two window
 // namespaces carry them:
 //   - window.__gosx_scene3d_api           (base scene3d chunk)
 //
@@ -26,7 +26,7 @@
 // new bridge line here. Without it the browser throws ReferenceError on the
 // first WebGL frame, and no test in this repo can see that without a real
 // GPU. Verify with the free-identifier scan described in
-// 16c-scene-shared-pbr.js.
+// 16c-scene-shared-pbr.ts.
 
 (function() {
   "use strict";
@@ -40,8 +40,8 @@
 
   var sceneApi = window.__gosx_scene3d_api;
 
-  // --- Primitives and scalar helpers (10-runtime-primitives.js,
-  // 10-runtime-scene-core.js, 11-scene-math.ts, 15a-scene-postfx-shared.js).
+  // --- Primitives and scalar helpers (10-runtime-primitives.ts,
+  // 10-runtime-scene-core.ts, 11-scene-math.ts, 15a-scene-postfx-shared.ts).
   var sceneBool = sceneApi.sceneBool || function(v, d) { return v == null ? d : !!v; };
   var sceneNumber = sceneApi.sceneNumber || function(v, d) { var n = Number(v); return Number.isFinite(n) ? n : d; };
   var scenePostDOMRegionPixelBounds = sceneApi.scenePostDOMRegionPixelBounds || function() { return { mode: "off", bounds: null }; };
@@ -78,24 +78,24 @@
   var scenePreparedCommandSequence = sceneApi.scenePreparedCommandSequence || function() { return []; };
   var sceneCachedBuffer = sceneApi.sceneCachedBuffer;
 
-  // --- Backend registry (15c-scene-backend-registry.js). The tail of
+  // --- Backend registry (15c-scene-backend-registry.ts). The tail of
   // 16-scene-webgl.js registers the "webgl" backend on it when this chunk
   // finishes loading.
   var sceneBackendRegistry = sceneApi.sceneBackendRegistry;
 
   // --- Legacy vertex-color WebGL renderer. It no longer needs a bridge:
-  // 16e-scene-webgl-legacy.js now ships in this chunk, so createSceneWebGLRenderer,
+  // 16e-scene-webgl-legacy.ts now ships in this chunk, so createSceneWebGLRenderer,
   // createSceneWebGLProgram, createSceneWebGLResources, disposeSceneWebGLRenderer
   // and renderSceneWebGLWorldBundle are lexical here. Re-declaring them as
   // `var x = sceneApi.x` would overwrite the hoisted function declarations with
   // undefined, because both live in this one IIFE scope.
 
-  // --- Typed float coercion (10-runtime-scene-core.js). Mesh and animation
+  // --- Typed float coercion (10-runtime-scene-core.ts). Mesh and animation
   // normalization call it on every backend, so it stayed in the base chunk
   // while the renderer that also calls it moved here.
   var sceneTypedFloatArray = sceneApi.sceneTypedFloatArray;
 
-  // --- Camera helpers (10-runtime-scene-core.js) and draw planning
+  // --- Camera helpers (10-runtime-scene-core.ts) and draw planning
   // (15-scene-draw-plan.ts, 13-scene-material.ts). The legacy renderer in
   // 16e reads all of these; they had no consumer outside the base IIFE
   // until 16e moved into this chunk.
@@ -111,7 +111,7 @@
   var sceneMaterialOpacity = sceneApi.sceneMaterialOpacity;
   var sceneMaterialShaderData = sceneApi.sceneMaterialShaderData;
 
-  // --- Water clock (10-runtime-scene-core.js). The WebGL2 water runtime
+  // --- Water clock (10-runtime-scene-core.ts). The WebGL2 water runtime
   // shares the fixed clock with the WebGPU runtime.
   var sceneWaterAdvanceClock = sceneApi.sceneWaterAdvanceClock;
   var sceneWaterResetClock = sceneApi.sceneWaterResetClock;
@@ -138,13 +138,13 @@
     return api.sceneComputeSystemSignature(entry);
   }
 
-  // --- Post-FX scalars (15a-scene-postfx-shared.js). The texture-unit table
+  // --- Post-FX scalars (15a-scene-postfx-shared.ts). The texture-unit table
   // and the Radiance HDR decoder are lexical in this chunk now: 15a1 and 16b-
   // scene-hdr.js ship here, beside the only renderer that reads them.
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
 
-  // --- Backend-agnostic PBR helpers (16c-scene-shared-pbr.js). These stayed
+  // --- Backend-agnostic PBR helpers (16c-scene-shared-pbr.ts). These stayed
   // in the base chunk because 15b, 10-runtime-scene-core and the WebGPU chunk
   // read them too.
   var SCENE_POST_TONE_MAPPING = sceneApi.SCENE_POST_TONE_MAPPING || "toneMapping";

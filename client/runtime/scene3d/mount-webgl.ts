@@ -38,8 +38,8 @@
   }
 
   // sceneLegacyWebGLRendererFactory resolves the legacy vertex-colour
-  // renderer. It lived in 10-runtime-scene-core.js, so this file used to call
-  // it lexically. It now ships in 16e-scene-webgl-legacy.js inside the WebGL
+  // renderer. It lived in 10-runtime-scene-core.ts, so this file used to call
+  // it lexically. It now ships in 16e-scene-webgl-legacy.ts inside the WebGL
   // chunk, which lands after this file, so the lookup must happen at call
   // time. 16e assigns the function onto window.__gosx_scene3d_api when it
   // runs; bootstrap.js keeps the lexical binding and wins first.
@@ -1551,7 +1551,7 @@
   // Cached promise for the WebGL sub-feature chunk. A WebGPU-capable browser
   // never fetches it, which is the whole point of the split: it used to ride
   // in the base scene3d chunk and cost a Chromium page 160_835 minified bytes
-  // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
+  // it never executed. See 26j-feature-scene3d-webgl-prefix.ts.
   var sceneWebGLFeaturePromise = null;
 
   function ensureWebGLFeatureLoaded() {
@@ -1600,7 +1600,7 @@
   // rank only the backends this page can really use.
   //
   // There is exactly ONE backend selection policy — backendSelectionOrder in
-  // 15c-scene-backend-registry.js. This function only feeds it. Do not add a
+  // 15c-scene-backend-registry.ts. This function only feeds it. Do not add a
   // second ordering rule here.
   function sceneWebGLBackendRequest(props, capability) {
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
@@ -1812,7 +1812,7 @@
   // particle simulation, the CPU particle fallback, the particle force
   // registry and the GPU instanced-cull system. A scene with one cube and one
   // directional light runs none of them, and used to pay 8_772 gzip bytes for
-  // all of them. See 26k-feature-scene3d-compute-prefix.js.
+  // all of them. See 26k-feature-scene3d-compute-prefix.ts.
   var sceneComputeFeaturePromise = null;
 
   function ensureComputeFeatureLoaded() {
@@ -1914,12 +1914,12 @@
   // Cached promise for the decompress sub-feature chunk. It carries the
   // quantized-array decoder, the progressive and level-of-detail ladders, and
   // the procedural point generators. See
-  // 26l-feature-scene3d-decompress-prefix.js.
+  // 26l-feature-scene3d-decompress-prefix.ts.
   var sceneDecompressFeaturePromise = null;
 
   // sceneDecompressAPIFunction resolves one decompress entry point. The
   // monolith keeps 11a and 11b inline, so the lookup finds the function on the
-  // API object either way: 10-runtime-scene-core.js publishes the inline copy
+  // API object either way: 10-runtime-scene-core.ts publishes the inline copy
   // there, and the chunk suffix publishes the fetched copy to the same place.
   function sceneDecompressAPIFunction(name) {
     var api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
@@ -3901,7 +3901,7 @@
   }
 
   // sceneRenderTruthAPI resolves the shared render-truth helpers. Returns null
-  // when 15a-scene-postfx-shared.js is absent, and every caller null-checks.
+  // when 15a-scene-postfx-shared.ts is absent, and every caller null-checks.
   function sceneRenderTruthAPI() {
     if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
       return window.__gosx_scene3d_render_truth_api;

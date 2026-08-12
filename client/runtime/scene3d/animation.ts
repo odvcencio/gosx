@@ -607,7 +607,7 @@
   // Publish the animation API onto window for the legacy monolithic
   // bootstrap.js bundle that inlines 19a-scene-animation.js. The split
   // bootstrap-feature-scene3d-animation.js bundle also publishes in
-  // 26g-feature-scene3d-animation-suffix.js; both writing the same
+  // 26g-feature-scene3d-animation-suffix.ts; both writing the same
   // value is a harmless double-set.
   if (typeof window !== "undefined") {
     window.__gosx_scene3d_animation_api = {

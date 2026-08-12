@@ -2,13 +2,13 @@
   //
   // Intl.Segmenter wrappers, CJK line-break prohibition tables, hyphenation,
   // vertical writing mode and ellipsis clamping. This code used to sit inside
-  // 00-textlayout.js, so every bundle carried it: 42_751 of the 157_086
+  // 00-textlayout.ts, so every bundle carried it: 42_751 of the 157_086
   // minified bytes in bootstrap-runtime.js and 42_738 of the 131_137 in
   // bootstrap-lite.js. It now runs in its own IIFE — inline in the monolithic
   // bootstrap.js, and as the lazily fetched bootstrap-feature-textlayout.js
   // chunk for the selective bundles.
   //
-  // 00-textlayout.js keeps the shared DOM and style helpers, publishes them on
+  // 00-textlayout.ts keeps the shared DOM and style helpers, publishes them on
   // window.__gosx_runtime_api, and holds the forwarders that reach this engine.
   // The last statement of this file registers the engine with those forwarders.
 
@@ -35,8 +35,8 @@
     return mode === "ellipsis" ? "ellipsis" : "clip";
   };
 
-  // sceneNumber and hasAttributeName live in 25-lite-tail.js, 30-tail.js and
-  // 10-runtime-scene-core.js, which this IIFE cannot reach. Both are three-line
+  // sceneNumber and hasAttributeName live in 25-lite-tail.ts, 30-tail.js and
+  // 10-runtime-scene-core.ts, which this IIFE cannot reach. Both are three-line
   // guards, so this file keeps its own copy instead of adding a bridge.
   function sceneNumber(value, fallback) {
     var parsed = Number(value);
@@ -47,7 +47,7 @@
     return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
   }
 
-  // Keyed invalidation scheduler. 05-document-env.js owns the shared one for
+  // Keyed invalidation scheduler. 05-document-env.ts owns the shared one for
   // motion and presentation work but does not publish it, so this file keeps a
   // private copy with the same coalescing contract: one callback per key per
   // frame, and the newest reason wins. Both copies flush in the same frame.
@@ -2585,7 +2585,7 @@
       if (window.__gosx.presentation && typeof window.__gosx.presentation.observe === "function") {
         record.stopPresentation = window.__gosx.presentation.observe(element, function() {
           // Refresh now, not on the next frame. The presentation observer in
-          // 05-document-env.js already coalesces its mutations into one
+          // 05-document-env.ts already coalesces its mutations into one
           // animation frame and calls this listener inside that frame. While
           // this engine shared a closure with 05 both used one scheduler, whose
           // drain loop picked up a refresh added during the flush. The engine
@@ -2654,7 +2654,7 @@
     }
   }
 
-  // Register with the core forwarders in 00-textlayout.js. Core replays every
+  // Register with the core forwarders in 00-textlayout.ts. Core replays every
   // command it queued while this chunk was still in flight — the adopted WASM
   // implementations first, then the managed mounts and refreshes.
   var textLayoutEngineAPI = {

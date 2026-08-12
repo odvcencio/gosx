@@ -587,7 +587,7 @@
   // file (see build-bootstrap.mjs). Bridged via window.__gosx_runtime_api so
   // the engines feature prefers this canonical copy when it's already on the
   // page; the engines-prefix falls back to its own local copy otherwise (see
-  // 26b-feature-engines-prefix.js).
+  // 26b-feature-engines-prefix.ts).
   if (typeof window !== "undefined" && window.__gosx_runtime_api) {
     window.__gosx_runtime_api.clamp01 = clamp01;
   }

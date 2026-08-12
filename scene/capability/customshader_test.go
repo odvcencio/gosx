@@ -115,7 +115,7 @@ func TestPresenceResolverMatchesRendererLanguages(t *testing.T) {
 // PresenceResolver returns BackendCanvas2D: true unconditionally, on the reading
 // that "Canvas2D never needs a custom shader". The stronger fact is that Canvas2D
 // never draws the MESH the custom material belongs to. createSceneCanvasRenderer
-// in 18-scene-canvas.js draws line segments and point sprites only; it rasterizes
+// in 18-scene-canvas.ts draws line segments and point sprites only; it rasterizes
 // no triangle.
 //
 // So "served" is the wrong word for what happens. Canvas2D draws nothing, and the

@@ -35,7 +35,7 @@ const {
 
 test("bootstrap discovers canvas2d surface-kind placeholders without touching the bytecode path", () => {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b-feature-engines-prefix.js"),
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-prefix.ts"),
     "utf8",
   );
 
@@ -69,7 +69,7 @@ test("bootstrap discovers canvas2d surface-kind placeholders without touching th
 
 test("bootstrap engines feature runs canvas2d surface-kind mount on runtime ready", () => {
   const suffix = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b-feature-engines-suffix.js"),
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-suffix.ts"),
     "utf8",
   );
 
@@ -83,7 +83,7 @@ test("bootstrap engines feature runs canvas2d surface-kind mount on runtime read
 
 test("bootstrap starts a canvas2d paint loop (tick + render + paint) only for the canvas2d surface kind", () => {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b-feature-engines-prefix.js"),
+    path.join(__dirname, "bootstrap-src", "26b-feature-engines-prefix.ts"),
     "utf8",
   );
 
@@ -359,9 +359,9 @@ test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D 
   assert.ok(depthRemap > orthoGate, "depth remap must stay downstream of the ortho-2D branch");
 
   // The sceneApi bridge: the chunked build's 26e prefix must import the
-  // helpers, and 10-runtime-scene-core.js must export them.
+  // helpers, and 10-runtime-scene-core.ts must export them.
   const prefix = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.js"),
+    path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.ts"),
     "utf8",
   );
   assert.match(prefix, /var sceneMat4Ortho2DView = sceneApi\.sceneMat4Ortho2DView;/);
@@ -369,7 +369,7 @@ test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D 
   assert.match(prefix, /var sceneMat4Ortho2DViewProj = sceneApi\.sceneMat4Ortho2DViewProj;/);
 
   const core = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"),
+    path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"),
     "utf8",
   );
   assert.match(core, /sceneMat4Ortho2DView:/);

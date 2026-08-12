@@ -398,7 +398,7 @@ test("bootstrap installs a client-event telemetry emitter that POSTs to /_gosx/c
 test("source telemetry facade stays safe when a lite page skips emitter install", async () => {
   const env = createContext({});
   env.context.__gosx_telemetry_installed = true;
-  const source = readBootstrapSrc("00-textlayout.js", "04-telemetry.js", "05-document-env.js") + "\n})();";
+  const source = readBootstrapSrc("00-textlayout.ts", "04-telemetry.ts", "05-document-env.ts") + "\n})();";
 
   runScript(source, env.context, "bootstrap-src-lite-telemetry.js");
   await flushAsyncWork();

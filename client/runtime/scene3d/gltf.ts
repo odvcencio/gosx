@@ -1836,7 +1836,7 @@
   // in test environments and in pages that serve only bootstrap.js
   // doesn't exist), and every declarative model load times out. The
   // split bootstrap-feature-scene3d-gltf.js bundle also has its own
-  // publish in 26f-feature-scene3d-gltf-suffix.js; both writing the
+  // publish in 26f-feature-scene3d-gltf-suffix.ts; both writing the
   // same value to the same global is a harmless double-set.
   if (typeof window !== "undefined") {
     window.__gosx_scene3d_gltf_api = {

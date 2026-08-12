@@ -35,7 +35,7 @@
 
   function ensureRelayState() {
     if (!window.__gosx) {
-      // Created normally by 00-textlayout.js; fall back to a minimal shim if
+      // Created normally by 00-textlayout.ts; fall back to a minimal shim if
       // the relay loaded earlier (preview-mode bootstrap ordering allows
       // either order).
       window.__gosx = {};

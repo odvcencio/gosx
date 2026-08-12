@@ -55,9 +55,6 @@ func chunkDeclaredNames(t *testing.T, dir string, entry output) map[string]bool 
 		if err != nil {
 			t.Fatalf("read %s: %v", src.rel, err)
 		}
-		if err := validateTypedSource(src, data); err != nil {
-			t.Fatalf("validate %s: %v", src.rel, err)
-		}
 		b.WriteString(normalizeNewlines(string(data)))
 		b.WriteByte('\n')
 	}
@@ -160,7 +157,7 @@ var shippedSymbolPlacements = []symbolPlacement{
 		symbol: "createSceneWebGLRenderer",
 		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-webgl.js"},
 		notIn:  []string{"bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-webgpu.js"},
-		why:    "the legacy vertex-colour renderer left 10-runtime-scene-core.js for 16e-scene-webgl-legacy.js; only createSceneWebGLResult reaches it, and the PBR factory it backs up already ships in the WebGL chunk, so a WebGPU page can never run it",
+		why:    "the legacy vertex-colour renderer left 10-runtime-scene-core.ts for 16e-scene-webgl-legacy.ts; only createSceneWebGLResult reaches it, and the PBR factory it backs up already ships in the WebGL chunk, so a WebGPU page can never run it",
 	},
 	{
 		symbol: "createSceneThickLineProgram",
@@ -172,13 +169,13 @@ var shippedSymbolPlacements = []symbolPlacement{
 		symbol: "sceneAllocateTextureUnits",
 		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-webgl.js"},
 		notIn:  []string{"bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-webgpu.js"},
-		why:    "the texture-unit table and the IBL budget moved to 15a1-scene-texture-budget.js; 16-scene-webgl.js is their only caller in the tree, so a WebGPU page stops paying for a WebGL2 sampler table",
+		why:    "the texture-unit table and the IBL budget moved to 15a1-scene-texture-budget.ts; 16-scene-webgl.js is their only caller in the tree, so a WebGPU page stops paying for a WebGL2 sampler table",
 	},
 	{
 		symbol: "sceneParseRadianceHDR",
 		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-webgl.js"},
 		notIn:  []string{"bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-webgpu.js"},
-		why:    "16b-scene-hdr.js followed its only caller, 16-scene-webgl.js. The WebGPU renderer has no Radiance HDR path at all",
+		why:    "16b-scene-hdr.ts followed its only caller, 16-scene-webgl.js. The WebGPU renderer has no Radiance HDR path at all",
 	},
 	{
 		symbol: "createSceneInstancedCullSystem",
@@ -196,13 +193,13 @@ var shippedSymbolPlacements = []symbolPlacement{
 		symbol: "sceneGeneratePointsArrays",
 		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-decompress.js"},
 		notIn:  []string{"bootstrap-feature-scene3d.js"},
-		why:    "11b-scene-points-generate.js shares the decompress chunk because the two files call each other: sceneDecompressProps expands a generator before it decodes, and a generated layer can arrive compressed",
+		why:    "11b-scene-points-generate.ts shares the decompress chunk because the two files call each other: sceneDecompressProps expands a generator before it decodes, and a generated layer can arrive compressed",
 	},
 	{
 		symbol: "SCENE_TEXTURE_UNIT_MATERIALS",
 		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-webgl.js"},
 		notIn:  []string{"bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-webgpu.js"},
-		why:    "the texture-unit table moved with sceneAllocateTextureUnits into 15a1-scene-texture-budget.js. Pinned separately because no bridge aliases this name, so it proves the payload moved and not just the entry point",
+		why:    "the texture-unit table moved with sceneAllocateTextureUnits into 15a1-scene-texture-budget.ts. Pinned separately because no bridge aliases this name, so it proves the payload moved and not just the entry point",
 	},
 	{
 		symbol: "sceneUnpackIndices",
@@ -287,7 +284,7 @@ func filesInMoreThanOneLazyChunk() map[string][]string {
 // showing up later as a size budget breach with no named cause.
 func TestNoUnexpectedSourceFileShipsInTwoLazyChunks(t *testing.T) {
 	allowed := map[string]string{
-		"bootstrap-src/30h-tail-capability-probe.js": "the islands chunk and the engines chunk both call entryRequiresAsyncWebGPUProbe, and either can load without the other",
+		"bootstrap-src/30h-tail-capability-probe.ts": "the islands chunk and the engines chunk both call entryRequiresAsyncWebGPUProbe, and either can load without the other",
 	}
 	for rel, chunks := range filesInMoreThanOneLazyChunk() {
 		if _, ok := allowed[rel]; ok {

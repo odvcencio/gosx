@@ -28,7 +28,7 @@ type PostEffectIR interface {
 
 // Post effect wire kinds. Each concrete PostEffectIR writes one of these
 // strings as its "kind" field, and DecodePostEffectIR dispatches on it. The JS
-// runtime reads the same strings (SCENE_POST_* in 10-runtime-scene-core.js), so
+// runtime reads the same strings (SCENE_POST_* in 10-runtime-scene-core.ts), so
 // treat them as a wire contract and do not rename one without the runtime.
 const (
 	PostEffectKindTonemap    = "toneMapping"

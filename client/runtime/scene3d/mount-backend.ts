@@ -5,8 +5,8 @@
 // GPU backend to try first. 20b resolves the renderer factory that decision
 // names.
 //
-// Depends on 15c-scene-backend-registry.js and the runtime capability helpers
-// 26d-feature-scene3d-prefix.js bridges. Nothing here touches a GPU object.
+// Depends on 15c-scene-backend-registry.ts and the runtime capability helpers
+// 26d-feature-scene3d-prefix.ts bridges. Nothing here touches a GPU object.
 
 /**
  * @typedef {object} GoSXSceneBackendSelection

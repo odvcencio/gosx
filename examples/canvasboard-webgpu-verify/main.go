@@ -15,9 +15,9 @@
 // # Required chunks (file:line evidence)
 //
 //   - wasm_exec.js: Go toolchain shim (engine/surface/runtime_handler.go:34-93)
-//   - bootstrap-runtime.js: the SELECTIVE bootstrap orchestrator (26-runtime-tail.js).
+//   - bootstrap-runtime.js: the SELECTIVE bootstrap orchestrator (26-runtime-tail.ts).
 //     Reads the gosx-manifest, detects features via manifestFeatureNames(), loads WASM,
-//     then dynamically loads bootstrap-feature-engines.js (26-runtime-tail.js:93-134).
+//     then dynamically loads bootstrap-feature-engines.js (26-runtime-tail.ts:93-134).
 //     Its __gosx_runtime_ready delegates to feature.runtimeReady() which calls
 //     mountAllSurfaceKinds() — the critical path for data-gosx-surface-kind canvas2d.
 //     The old monolithic bootstrap.js (30-tail.js) does NOT have mountAllSurfaceKinds.
@@ -26,28 +26,28 @@
 //   - bootstrap-feature-scene3d-webgpu.js: publishes window.__gosx_scene3d_webgpu_api
 //     .createRenderer — REQUIRED for canvas2d WebGPU path; without it
 //     _canvasSurfaceWebGPUFactory() returns null and the board falls back
-//     (client/js/bootstrap-src/26b-feature-engines-prefix.js:541-548)
+//     (client/js/bootstrap-src/26b-feature-engines-prefix.ts:541-548)
 //
 // # Manifest structure
 //
 // The gosx-manifest JSON needs:
 //   - engines[0].runtime = "shared" — triggers manifestNeedsSharedEngineRuntime
-//     → loads the WASM (26-runtime-tail.js:170-177)
-//   - engines[0] present — triggers "engines" feature load (26-runtime-tail.js:141-144)
+//     → loads the WASM (26-runtime-tail.ts:170-177)
+//   - engines[0] present — triggers "engines" feature load (26-runtime-tail.ts:141-144)
 //     which calls mountAllSurfaceKinds().
 //   - engines[0].component = "CanvasSurfaceBoot" (not "CanvasBoard") — a stub
 //     entry whose factory is pre-registered in the page's inline script so
 //     mountAllEngines() completes without the "no engine factory registered" warn.
 //     The actual canvas2d boards are mounted by mountAllSurfaceKinds() via the
 //     data-gosx-surface-kind="canvas2d" placeholders, independent of this entry.
-//   - runtime.path — WASM URL (26-runtime-tail.js:294-308)
+//   - runtime.path — WASM URL (26-runtime-tail.ts:294-308)
 //
 // # Two-board coexistence
 //
 // mountAllSurfaceKinds() uses querySelectorAll("[data-gosx-surface-kind]:not([...])"),
 // which discovers BOTH canvas elements and hydrates each independently.
 // Each call to nextSurfaceID() auto-increments a module-level counter
-// (26b-feature-engines-prefix.js:46-50), so the two boards get distinct ids
+// (26b-feature-engines-prefix.ts:46-50), so the two boards get distinct ids
 // ("gosx-engine-surface-1" and "gosx-engine-surface-2"). The WASM bridge keys
 // all render/tick/event calls by that id, so the two boards are fully isolated.
 // Both painter and WebGPU RAF loops key off their own closure-captured id.
@@ -159,11 +159,11 @@ func main() {
 
 	// Serve the split-bundle runtime stack from client/js/:
 	//
-	//   bootstrap-runtime.js   — the selective bootstrap orchestrator (26-runtime-tail.js).
+	//   bootstrap-runtime.js   — the selective bootstrap orchestrator (26-runtime-tail.ts).
 	//                            Reads the gosx-manifest, detects feature names via
 	//                            manifestFeatureNames(), loads WASM, then dynamically loads
 	//                            bootstrap-feature-engines.js when the manifest has engines
-	//                            entries (26-runtime-tail.js:93-134).  This is the ONLY
+	//                            entries (26-runtime-tail.ts:93-134).  This is the ONLY
 	//                            bundle that calls mountAllSurfaceKinds() — the old monolithic
 	//                            bootstrap.js / 30-tail.js does NOT have that path.
 	//
@@ -193,14 +193,14 @@ func main() {
 		serveClientJS(w, r, filepath.Join(repoRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"))
 	})
 	// The scene3d chunk publishes window.__gosx_scene3d_api (10-runtime-scene-core's
-	// sceneApi export), which 26e-feature-scene3d-webgpu-prefix.js imports from. The
+	// sceneApi export), which 26e-feature-scene3d-webgpu-prefix.ts imports from. The
 	// webgpu chunk is NOT self-sufficient — bootstrap-runtime.js carries only the
 	// runtime-utils extract of scene-core, not the full api. Chain-load this first.
 	mux.HandleFunc("GET /gosx/bootstrap-feature-scene3d.js", func(w http.ResponseWriter, r *http.Request) {
 		serveClientJS(w, r, filepath.Join(repoRoot, "client", "js", "bootstrap-feature-scene3d.js"))
 	})
 
-	// Absorb telemetry pings from 04-telemetry.js (/gosx/client-events).
+	// Absorb telemetry pings from 04-telemetry.ts (/gosx/client-events).
 	// Without this route the browser logs a 405 console error which is noise.
 	mux.HandleFunc("POST /_gosx/client-events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -421,10 +421,10 @@ func buildPage() string {
 
 	// Inline gosx-manifest: one sentinel engine entry with runtime:"shared" to trigger:
 	//   1. manifestNeedsSharedEngineRuntime → WASM load
-	//      (26-runtime-tail.js:170-177, 166-168)
+	//      (26-runtime-tail.ts:170-177, 166-168)
 	//   2. manifestFeatureNames pushes "engines" → dynamic load of
 	//      /gosx/bootstrap-feature-engines.js → mountAllSurfaceKinds()
-	//      (26-runtime-tail.js:141-144)
+	//      (26-runtime-tail.ts:141-144)
 	//
 	// The component name "CanvasSurfaceBoot" is used instead of "CanvasBoard"
 	// because mountAllEngines() (30-tail.js:3374) iterates manifest.engines and
@@ -497,7 +497,7 @@ func buildPage() string {
     <div id="painter-host" class="board-host">
       <!-- CanvasBoard placeholder WITHOUT backend attr — stays on 26b1 painter.
            data-gosx-surface-kind="canvas2d" is picked up by mountAllSurfaceKinds()
-           (26b-feature-engines-prefix.js:1054-1063). -->
+           (26b-feature-engines-prefix.ts:1054-1063). -->
       <canvas id="painter-board"
         class="board-canvas"
         width="620" height="400"
@@ -517,7 +517,7 @@ func buildPage() string {
       <!-- CanvasBoard placeholder WITH data-gosx-canvas-backend="webgpu" opts into
            the 16a renderer (_canvasSurfaceWantsWebGPU).
            data-gosx-surface-kind="canvas2d" is picked up by mountAllSurfaceKinds()
-           (26b-feature-engines-prefix.js:437, 1054-1063). -->
+           (26b-feature-engines-prefix.ts:437, 1054-1063). -->
       <canvas id="webgpu-board"
         class="board-canvas"
         width="620" height="400"
@@ -537,7 +537,7 @@ func buildPage() string {
 <div id="status">Waiting for WASM hydration…</div>
 
 <!-- Inline manifest: engines entry with runtime:"shared" triggers WASM load
-     and "engines" feature (26-runtime-tail.js:141-144,170-177).
+     and "engines" feature (26-runtime-tail.ts:141-144,170-177).
      component:"CanvasSurfaceBoot" is a stub entry whose factory is pre-registered
      below so mountAllEngines() completes cleanly without warnings. -->
 <script id="gosx-manifest" type="application/json">` + manifest + `</script>
@@ -637,7 +637,7 @@ window.__gosx_verify_start = ` + strconv.FormatInt(ts, 10) + `;
 <script defer src="/gosx/wasm_exec.js"></script>
 
 <!-- Step 3: bootstrap-runtime.js — the SELECTIVE bootstrap orchestrator.
-     Contains 26-runtime-tail.js: sets window.__gosx_register_bootstrap_feature,
+     Contains 26-runtime-tail.ts: sets window.__gosx_register_bootstrap_feature,
      reads the gosx-manifest, detects feature names via manifestFeatureNames(),
      loads WASM, then dynamically loads /gosx/bootstrap-feature-engines.js whose
      runtimeReady() calls mountAllSurfaceKinds().
@@ -729,9 +729,9 @@ if (typeof PerformanceObserver !== 'undefined') {
   // probeLabelsLayer locates the label overlay div on the given board host and
   // counts its <span> children.
   //
-  // The overlay is created by ensureLabelLayer() in 26b2-canvas-board-labels.js:
+  // The overlay is created by ensureLabelLayer() in 26b2-canvas-board-labels.ts:
   //   layer.style.cssText = "position:absolute;inset:0;overflow:hidden;pointer-events:none;"
-  // (26b2-canvas-board-labels.js:146)
+  // (26b2-canvas-board-labels.ts:146)
   //
   // It is also cached on host.__gosxBoardLabelLayer (line 153), but that private
   // property is not accessible cross-script. We identify it as the first direct
@@ -751,7 +751,7 @@ if (typeof PerformanceObserver !== 'undefined') {
         if (child.tagName !== 'DIV') continue;
         var style = child.style;
         // Identify layer: pointer-events:none is set only on the label overlay div.
-        // (26b2-canvas-board-labels.js:146: "...pointer-events:none;")
+        // (26b2-canvas-board-labels.ts:146: "...pointer-events:none;")
         if (style && style.pointerEvents === 'none') {
           result.labelsLayerFound = true;
           var spans = child.getElementsByTagName('span');
@@ -829,14 +829,14 @@ if (typeof PerformanceObserver !== 'undefined') {
     setStatus('Runtime ready. Waiting for both boards to hydrate…');
 
     // Wait for both boards to receive data-gosx-surface-id (set by mountSurfaceKind
-    // after __gosx_hydrate succeeds — 26b-feature-engines-prefix.js:431).
+    // after __gosx_hydrate succeeds — 26b-feature-engines-prefix.ts:431).
     var painterSurfaceId = await waitForSurfaceId(painterCanvas, deadline);
     var webgpuSurfaceId  = await waitForSurfaceId(webgpuCanvas,  deadline);
 
     setStatus('Both boards hydrated. Waiting for the WebGPU board to settle (async probe-await re-entry)…');
 
     // The WebGPU-routed board renders only AFTER an async probe-await re-entry
-    // (26b-feature-engines-prefix.js: await __gosx_scene3d_webgpu_probe_ready()),
+    // (26b-feature-engines-prefix.ts: await __gosx_scene3d_webgpu_probe_ready()),
     // which lands several frames after data-gosx-surface-id is set at hydration.
     // A fixed 2-rAF wait samples mid-init — render() early-returns before the
     // bundle carries worldMesh* (16a-scene-webgpu.js), so mesh-objects/perf are
