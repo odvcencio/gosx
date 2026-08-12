@@ -150,7 +150,17 @@ func TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || (!strings.HasSuffix(path, ".ts") && !strings.HasSuffix(path, ".d.ts")) {
+		if entry.IsDir() {
+			// node_modules holds npm's own TypeScript install (test-runtime-types
+			// runs `npm ci` before this test in make test-js). Its .d.ts lib
+			// files are not runtime authorities and were never meant to be
+			// walked here.
+			if entry.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".ts") && !strings.HasSuffix(path, ".d.ts") {
 			return nil
 		}
 		if !reachable[path] && exempt[path] == "" {
