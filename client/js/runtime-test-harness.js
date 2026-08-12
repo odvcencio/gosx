@@ -22,6 +22,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const nodeCrypto = require("node:crypto");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
 const bootstrapLiteSource = fs.readFileSync(path.join(__dirname, "bootstrap-lite.js"), "utf8");
@@ -1577,6 +1578,16 @@ class FakeResponse {
   }
 }
 
+// Derives the WASM runtime asset hash a manifest fixture should carry from the
+// actual bytes its fetch route serves, mirroring what verifyAssetHash() in
+// client/runtime/wasm/loader.ts computes from the real fetched artifact. This
+// keeps the fixture hash honest instead of pinning it to a constant that
+// would pass regardless of which bytes the route serves.
+function runtimeAssetHashForRoute(route) {
+  const bytes = route && typeof route !== "function" && Array.isArray(route.bytes) ? route.bytes : [];
+  return nodeCrypto.createHash("sha256").update(Buffer.from(Uint8Array.from(bytes))).digest("hex").slice(0, 16);
+}
+
 function buildMinimalGLBBytes() {
   const positions = new Float32Array([
     0, 0.75, 0,
@@ -2130,13 +2141,12 @@ function createContext(options) {
         return words;
       },
       subtle: {
-        async digest(_algorithm, _bytes) {
-          return Uint8Array.from([
-            0xcd, 0x5d, 0x49, 0x35, 0xa4, 0x8c, 0x06, 0x72,
-            0xcb, 0x06, 0x40, 0x7b, 0xb4, 0x43, 0xbc, 0x00,
-            0x87, 0xaf, 0xf9, 0x47, 0xc6, 0xb8, 0x64, 0xba,
-            0xc8, 0x86, 0x98, 0x2c, 0x73, 0xb3, 0x02, 0x7f,
-          ]).buffer;
+        async digest(algorithm, bytes) {
+          const algoName = typeof algorithm === "string" ? algorithm : algorithm && algorithm.name;
+          const nodeAlgo = { "SHA-1": "sha1", "SHA-256": "sha256", "SHA-384": "sha384", "SHA-512": "sha512" }[algoName] || "sha256";
+          const view = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
+          const digest = nodeCrypto.createHash(nodeAlgo).update(Buffer.from(view)).digest();
+          return Uint8Array.from(digest).buffer;
         },
       },
     },
@@ -2401,18 +2411,18 @@ function createContext(options) {
   }
 
   context.window = context;
-	context.__gosx_runtime_abi = {
-		handshake() {
-			const contract = context.__gosx_runtime_contract;
-			return contract ? {
-				abiVersion: contract.abiVersion,
-				mailboxVersion: contract.mailboxVersion,
-				manifestHash: contract.manifestHash,
-				variant: "core",
-				featureMask: contract.variants.core,
-			} : null;
-		},
-	};
+  context.__gosx_runtime_abi = {
+    handshake() {
+      const contract = context.__gosx_runtime_contract;
+      return contract ? {
+        abiVersion: contract.abiVersion,
+        mailboxVersion: contract.mailboxVersion,
+        manifestHash: contract.manifestHash,
+        variant: "core",
+        featureMask: contract.variants.core,
+      } : null;
+    },
+  };
   context.__gosx_engine_factories = Object.assign({}, options.engineFactories || {});
   context.__engineMounts = engineMounts;
   context.__engineDisposals = engineDisposals;
@@ -2446,13 +2456,13 @@ function createContext(options) {
   };
 
   if (options.manifest) {
-	const runtime = options.manifest.runtime;
-	if (runtime && runtime.path && !runtime.hash) {
-		runtime.hash = "cd5d4935a48c0672";
-		runtime.manifestHash = "850ff5e72dc872437bf568a7486f0ed08ad0fa046dfaa5f8956243b70182bc10";
-		runtime.variant = "core";
-		runtime.featureMask = 17;
-	}
+    const runtime = options.manifest.runtime;
+    if (runtime && runtime.path && !runtime.hash) {
+      runtime.hash = runtimeAssetHashForRoute(routes.get(runtime.path));
+      runtime.manifestHash = "850ff5e72dc872437bf568a7486f0ed08ad0fa046dfaa5f8956243b70182bc10";
+      runtime.variant = "core";
+      runtime.featureMask = 17;
+    }
     const manifestScript = document.createElement("script");
     manifestScript.id = "gosx-manifest";
     manifestScript.textContent = JSON.stringify(options.manifest);
