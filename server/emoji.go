@@ -14,7 +14,7 @@ import (
 	"m31labs.dev/gosx/internal/emoji"
 )
 
-//go:embed emoji_complete.js
+//go:embed emoji_complete.ts
 var emojiCompleteRuntime string
 
 //go:embed emoji_codes.json

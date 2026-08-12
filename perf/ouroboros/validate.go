@@ -62,6 +62,9 @@ func ValidateInventory(inv *Inventory) error {
 	if inv.Totals.AuditFiles != len(inv.Files.Audit) {
 		return fmt.Errorf("audit file total mismatch")
 	}
+	if inv.Totals.RuntimeSemanticGate == "" || inv.Totals.RuntimeAmbientFacade == "" {
+		return fmt.Errorf("runtime semantic/type-check and ambient facade evidence are required; TypeScript extension counts are not an O6 gate")
+	}
 	if inv.Structural.Gotreesitter.Language == "" {
 		return fmt.Errorf("gotreesitter parse summary is required")
 	}

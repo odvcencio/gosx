@@ -180,6 +180,8 @@ type Totals struct {
 	TestFiles                     int            `json:"testFiles"`
 	RuntimeTypeScriptFiles        int            `json:"runtimeTypeScriptFiles"`
 	RuntimeTypeScriptExclusions   []string       `json:"runtimeTypeScriptExclusions,omitempty"`
+	RuntimeSemanticGate           string         `json:"runtimeSemanticGate"`
+	RuntimeAmbientFacade          string         `json:"runtimeAmbientFacade"`
 }
 
 type Structural struct {
@@ -767,6 +769,12 @@ func collectFiles(root string, inv *Inventory) error {
 	inv.Totals.BroaderBrowserJavaScriptLines = inv.Totals.IncludedJavaScriptLines + inv.Totals.SidecarJavaScriptLines + inv.Totals.EmbeddedJavaScriptLines
 	inv.Totals.BroaderBrowserBytes = inv.Totals.IncludedBytes + inv.Totals.SidecarBytes + inv.Totals.EmbeddedBytes
 	inv.Totals.RuntimeTypeScriptFiles = 0
+	// O6 is not inferred from a suffix count. The executable gates live in
+	// cmd/buildbootstrap: strict generated-contract type checking, typed-source
+	// transpilation/closure, complete source-graph reachability and the single
+	// ambient compatibility adapter audit.
+	inv.Totals.RuntimeSemanticGate = "cmd/buildbootstrap + make test-runtime-types"
+	inv.Totals.RuntimeAmbientFacade = "client/runtime/host/compatibility.ts"
 	sort.Strings(inv.Totals.RuntimeTypeScriptExclusions)
 	return nil
 }

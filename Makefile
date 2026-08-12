@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -142,7 +142,16 @@ BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript grammar_subse
 build-bootstrap:
 	cd cmd/buildbootstrap && $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' .
 
-# test-js runs three independent checks:
+# test-runtime-types uses the real TypeScript compiler in strict mode for the
+# generated ABI contract. The wider runtime is deliberately
+# guarded by buildbootstrap's typed transpilation, chunk closure and source-graph
+# coverage checks: most legacy script bodies remain JSDoc JavaScript syntax and
+# are not falsely advertised as strict TypeScript yet.
+test-runtime-types:
+	cd client/runtime && npm ci
+	cd client/runtime && npm run typecheck
+
+# test-js runs four independent checks:
 #   1. The unit tests of the bundle builder itself. cmd/buildbootstrap
 #      writes every shipped client bundle, so a defect there corrupts
 #      bootstrap.js, bootstrap-lite.js, bootstrap-runtime.js, every
@@ -167,8 +176,9 @@ build-bootstrap:
 #      because it is not a *.test.js file) and the size-budget gates
 #      in bootstrap-size.test.mjs.
 test-js:
+	$(MAKE) test-runtime-types
 	cd cmd/buildbootstrap && GOWORK=off $(GO) test -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
-	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check --allow-deferred-host-assets
+	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
 	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
 
 # test-editor builds, vets and tests the nested editor module.

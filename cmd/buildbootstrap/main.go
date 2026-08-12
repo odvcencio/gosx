@@ -49,7 +49,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -1037,25 +1036,6 @@ func findClientJS(explicit string) (string, error) {
 // hand-written copy of a chunk file list.
 const chunksManifestRel = "bootstrap-src/chunks.json"
 
-// deferredHostCutoverArtifacts are deliberately left at their last released
-// bytes in Stack 03. The typed host authorities are reviewed and tested as
-// source first; Stack 07 owns the one-time generated JS/map/br/gz cutover.
-// The acknowledgement mode below is fail-closed in both directions: an
-// unlisted stale output still fails, and a listed output that is no longer
-// stale fails until this deferral is removed.
-var deferredHostCutoverArtifacts = map[string]bool{
-	"bootstrap.js":                     true,
-	"bootstrap-lite.js":                true,
-	"bootstrap-runtime.js":             true,
-	"bootstrap-feature-islands.js":     true,
-	"bootstrap-feature-engines.js":     true,
-	"bootstrap-feature-hubs.js":        true,
-	"bootstrap-feature-controllers.js": true,
-	"patch.js":                         true,
-	"relay.js":                         true,
-	"stripe-bridge.js":                 true,
-}
-
 // chunksManifestJSON renders the outputs table as stable, indented JSON. The
 // key order follows the outputs table, so a manifest edit shows a small diff.
 func chunksManifestJSON() string {
@@ -1088,7 +1068,6 @@ func chunksManifestJSON() string {
 func run() error {
 	dirFlag := flag.String("dir", "", "path to client/js (default: auto-detect from working directory)")
 	check := flag.Bool("check", false, "verify committed bundles are up to date; exit 1 when stale")
-	allowDeferredHostAssets := flag.Bool("allow-deferred-host-assets", false, "acknowledge only the explicit Stack 03 host-asset deferral")
 	closureOnly := flag.Bool("closure", false, "run only the chunk closure check and exit")
 	minifier := flag.String("minifier", "esbuild", "JS minifier backend: esbuild (default, byte-stable) or tdewolff (A/B comparison)")
 	flag.Parse()
@@ -1114,12 +1093,7 @@ func run() error {
 
 	if *check {
 		var stale []string
-		deferredStale := make(map[string]bool, len(deferredHostCutoverArtifacts))
 		recordStale := func(name string) {
-			if *allowDeferredHostAssets && deferredHostCutoverArtifacts[name] {
-				deferredStale[name] = true
-				return
-			}
 			stale = append(stale, name)
 		}
 		if current, _ := os.ReadFile(manifestPath); string(current) != manifest {
@@ -1143,18 +1117,6 @@ func run() error {
 		}
 		if len(stale) > 0 {
 			return fmt.Errorf("bootstrap runtime assets are out of date (%s). Run `go run ./cmd/buildbootstrap`", strings.Join(stale, ", "))
-		}
-		if *allowDeferredHostAssets {
-			var unexpectedlyCurrent []string
-			for name := range deferredHostCutoverArtifacts {
-				if !deferredStale[name] {
-					unexpectedlyCurrent = append(unexpectedlyCurrent, name)
-				}
-			}
-			if len(unexpectedlyCurrent) > 0 {
-				slices.Sort(unexpectedlyCurrent)
-				return fmt.Errorf("deferred host assets are no longer stale (%s); regenerate the complete asset set and remove the Stack 03 deferral", strings.Join(unexpectedlyCurrent, ", "))
-			}
 		}
 		return nil
 	}

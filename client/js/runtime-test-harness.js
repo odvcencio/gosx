@@ -2129,6 +2129,16 @@ function createContext(options) {
         }
         return words;
       },
+      subtle: {
+        async digest(_algorithm, _bytes) {
+          return Uint8Array.from([
+            0xcd, 0x5d, 0x49, 0x35, 0xa4, 0x8c, 0x06, 0x72,
+            0xcb, 0x06, 0x40, 0x7b, 0xb4, 0x43, 0xbc, 0x00,
+            0x87, 0xaf, 0xf9, 0x47, 0xc6, 0xb8, 0x64, 0xba,
+            0xc8, 0x86, 0x98, 0x2c, 0x73, 0xb3, 0x02, 0x7f,
+          ]).buffer;
+        },
+      },
     },
     CustomEvent: class CustomEvent {
       constructor(type, init = {}) {
@@ -2391,6 +2401,18 @@ function createContext(options) {
   }
 
   context.window = context;
+	context.__gosx_runtime_abi = {
+		handshake() {
+			const contract = context.__gosx_runtime_contract;
+			return contract ? {
+				abiVersion: contract.abiVersion,
+				mailboxVersion: contract.mailboxVersion,
+				manifestHash: contract.manifestHash,
+				variant: "core",
+				featureMask: contract.variants.core,
+			} : null;
+		},
+	};
   context.__gosx_engine_factories = Object.assign({}, options.engineFactories || {});
   context.__engineMounts = engineMounts;
   context.__engineDisposals = engineDisposals;
@@ -2424,6 +2446,13 @@ function createContext(options) {
   };
 
   if (options.manifest) {
+	const runtime = options.manifest.runtime;
+	if (runtime && runtime.path && !runtime.hash) {
+		runtime.hash = "cd5d4935a48c0672";
+		runtime.manifestHash = "850ff5e72dc872437bf568a7486f0ed08ad0fa046dfaa5f8956243b70182bc10";
+		runtime.variant = "core";
+		runtime.featureMask = 17;
+	}
     const manifestScript = document.createElement("script");
     manifestScript.id = "gosx-manifest";
     manifestScript.textContent = JSON.stringify(options.manifest);

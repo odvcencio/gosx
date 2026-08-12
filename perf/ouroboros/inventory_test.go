@@ -353,6 +353,16 @@ func TestValidateInventoryReadyFailsClosed(t *testing.T) {
 	}
 }
 
+func TestValidateInventoryRejectsExtensionOnlyO6Evidence(t *testing.T) {
+	inv := minimalValidInventory()
+	inv.Totals.RuntimeTypeScriptFiles = 100
+	inv.Totals.RuntimeSemanticGate = ""
+	inv.Totals.RuntimeAmbientFacade = ""
+	if err := ValidateInventory(inv); err == nil || !strings.Contains(err.Error(), "extension counts") {
+		t.Fatalf("ValidateInventory error = %v, want semantic O6 evidence failure", err)
+	}
+}
+
 func TestStrictDecodeRejectsUnknownAndTamperedAnchors(t *testing.T) {
 	inv := minimalValidInventory()
 	var buf bytes.Buffer
@@ -896,7 +906,11 @@ func minimalValidInventory() *Inventory {
 			Excluded: []ExcludedFile{},
 			Audit:    []ExcludedFile{},
 		},
-		Totals: Totals{ByExtension: map[string]int{}},
+		Totals: Totals{
+			ByExtension:          map[string]int{},
+			RuntimeSemanticGate:  "cmd/buildbootstrap + make test-runtime-types",
+			RuntimeAmbientFacade: "client/runtime/host/compatibility.ts",
+		},
 		Structural: Structural{
 			Gotreesitter:     ParseSummary{Language: "javascript"},
 			ImportsExports:   []Location{},

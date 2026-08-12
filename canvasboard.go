@@ -124,7 +124,7 @@ type CanvasBoardNode struct {
 //	  data-gosx-onpick="handlePick" ...>
 //	</canvas>
 //
-// The WASM bootstrap (engine/surface/runtime/bootstrap.js) sees the
+// The WASM bootstrap (engine/surface/runtime/bootstrap.ts) sees the
 // data-gosx-surface-kind attribute and dispatches to __gosx_hydrate with
 // surfaceKind="canvas2d" — exactly the 6-arg form Phase 1d added.
 func CanvasBoard(props CanvasBoardProps) Node {

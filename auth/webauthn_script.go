@@ -6,7 +6,7 @@ import (
 	"m31labs.dev/gosx"
 )
 
-//go:embed webauthn_runtime.js
+//go:embed webauthn_runtime.ts
 var webAuthnRuntime string
 
 // WebAuthnScript returns the built-in browser helper for WebAuthn begin/finish

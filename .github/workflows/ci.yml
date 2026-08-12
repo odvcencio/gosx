@@ -162,8 +162,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Node is only needed as a bare runtime for `node --test` (stdlib-only
-      # JS unit tests). There are no npm dependencies to install.
+      # Node also runs the pinned strict TypeScript compiler for the generated
+      # ABI contract. make test-js performs the reproducible npm ci.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:

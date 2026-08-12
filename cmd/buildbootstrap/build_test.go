@@ -310,11 +310,7 @@ func TestShippedManifestMatchesTheChunkTable(t *testing.T) {
 		t.Fatalf("read committed chunks.json: %v", err)
 	}
 	if string(committed) != chunksManifestJSON() {
-		if !deferredHostCutoverArtifacts[chunksManifestRel] {
-			t.Error("committed client/js/bootstrap-src/chunks.json is stale; run `go run ./cmd/buildbootstrap`")
-		}
-	} else if deferredHostCutoverArtifacts[chunksManifestRel] {
-		t.Error("chunks.json is current but still marked as a deferred Stack 03 artifact")
+		t.Error("committed client/js/bootstrap-src/chunks.json is stale; run `go run ./cmd/buildbootstrap`")
 	}
 }
 
@@ -340,10 +336,6 @@ func TestShippedSidecarsDecompressToTheirBundle(t *testing.T) {
 	dir := shippedClientJS(t)
 	for _, entry := range outputs {
 		t.Run(entry.name, func(t *testing.T) {
-			if deferredHostCutoverArtifacts[entry.name] &&
-				(entry.name == "patch.js" || entry.name == "relay.js" || entry.name == "stripe-bridge.js") {
-				t.Skip("standalone host sidecars are deliberately deferred to Stack 07")
-			}
 			bundlePath := filepath.Join(dir, entry.name)
 			code, err := os.ReadFile(bundlePath)
 			if err != nil {

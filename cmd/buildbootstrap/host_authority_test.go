@@ -11,7 +11,8 @@ import (
 // currentMainHostAmbientBaseline is the compatibility surface present before
 // the typed host move. Stack 03 may shrink this set, but it must not grow it.
 var currentMainHostAmbientBaseline = map[string]bool{
-	"__gosx_apply_patches": true, "__gosx_apply_scene_command_scripts": true,
+	"__gosx_apply_patch_mailbox": true,
+	"__gosx_apply_patches":       true, "__gosx_apply_scene_command_scripts": true,
 	"__gosx_bootstrap_page": true, "__gosx_current_event": true,
 	"__gosx_current_handler": true, "__gosx_declarative_actions": true,
 	"__gosx_declarative_regions": true, "__gosx_disconnect_hub": true,
@@ -120,5 +121,44 @@ func TestBuilderUsesTypedHostAuthorities(t *testing.T) {
 		if !found {
 			t.Errorf("typed host authority is absent from the build graph: %s", source)
 		}
+	}
+}
+
+// TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph closes the rename-only
+// loophole: a .ts suffix is not evidence that source is shipped or even
+// transpiled. Every runtime authority must feed a checked output. Declarations
+// and the generated ABI are compile-time inputs consumed by an authority and
+// are the only explicit exceptions.
+func TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph(t *testing.T) {
+	clientJS := shippedClientJS(t)
+	runtimeDir := filepath.Clean(filepath.Join(clientJS, "..", "runtime"))
+	reachable := make(map[string]bool)
+	for _, entry := range outputs {
+		for _, src := range entry.sources {
+			absolute := filepath.Clean(filepath.Join(clientJS, filepath.FromSlash(src.rel)))
+			if strings.HasPrefix(absolute, runtimeDir+string(filepath.Separator)) {
+				reachable[absolute] = true
+			}
+		}
+	}
+	exempt := map[string]string{
+		filepath.Join(runtimeDir, "types.d.ts"):                  "strict-check ambient declarations",
+		filepath.Join(runtimeDir, "generated", "runtime-abi.ts"): "consumed by wasm/abi.ts and checked by test-runtime-types",
+		filepath.Join(runtimeDir, "host", "navigation.ts"):       "embedded by host/navigation_asset.go and exercised by the runtime test harness",
+	}
+	err := filepath.WalkDir(runtimeDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || (!strings.HasSuffix(path, ".ts") && !strings.HasSuffix(path, ".d.ts")) {
+			return nil
+		}
+		if !reachable[path] && exempt[path] == "" {
+			t.Errorf("runtime TypeScript authority is outside the semantic build graph: %s", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
