@@ -70,6 +70,7 @@ type lowerer struct {
 	strictProps   map[string]string
 	strictReads   map[string]map[string]struct{}
 	structFields  map[string]map[string]string
+	structTypes   map[string]map[string]string
 }
 
 // text returns the source text covered by node n. It substrings the
@@ -950,6 +951,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictProps = make(map[string]string)
 	l.strictReads = make(map[string]map[string]struct{})
 	l.structFields = make(map[string]map[string]string)
+	l.structTypes = make(map[string]map[string]string)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
 		switch l.nodeType(child) {
@@ -987,13 +989,9 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct
 		if node == nil {
 			return
 		}
-		if l.nodeType(node) == "selector_expression" && node.NamedChildCount() >= 2 {
-			receiver := node.NamedChild(0)
-			field := node.NamedChild(1)
-			if l.nodeType(receiver) == "identifier" && l.text(receiver) == "props" {
-				if name := l.text(field); name != "" {
-					reads[name] = struct{}{}
-				}
+		if l.nodeType(node) == "selector_expression" {
+			if field, ok := strictcomponent.ServerPropField(l.text(node)); ok {
+				reads[field] = struct{}{}
 			}
 		}
 		for i := 0; i < int(node.NamedChildCount()); i++ {
@@ -1017,12 +1015,17 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 				return
 			}
 			fields := make(map[string]string)
+			fieldTypes := make(map[string]string)
 			var collectFields func(*gotreesitter.Node)
 			collectFields = func(current *gotreesitter.Node) {
 				if current == nil {
 					return
 				}
 				if l.nodeType(current) == "field_declaration" {
+					fieldType := ""
+					if fieldTypeNode := l.childByField(current, "type"); fieldTypeNode != nil {
+						fieldType = strings.TrimSpace(l.text(fieldTypeNode))
+					}
 					for i := 0; i < int(current.NamedChildCount()); i++ {
 						fieldNode := current.NamedChild(i)
 						if l.nodeType(fieldNode) != "field_identifier" {
@@ -1033,6 +1036,7 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 							continue
 						}
 						fields[field] = field
+						fieldTypes[field] = fieldType
 						alias := lowerCamelInitialism(field)
 						if existing, ok := fields[alias]; ok && existing != field {
 							fields[alias] = ""
@@ -1048,7 +1052,9 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 			}
 			collectFields(typeNode)
 			if len(fields) > 0 {
-				l.structFields[l.text(nameNode)] = fields
+				name := l.text(nameNode)
+				l.structFields[name] = fields
+				l.structTypes[name] = fieldTypes
 			}
 			return
 		}
@@ -1057,6 +1063,47 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 		}
 	}
 	walk(n)
+}
+
+func strictRendererScalarType(typeName string) bool {
+	switch strings.TrimSpace(typeName) {
+	case "string", "bool",
+		"int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"byte", "rune", "float32", "float64":
+		return true
+	default:
+		return false
+	}
+}
+
+func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentName, propsType string) {
+	reads := l.strictReads[componentName]
+	if len(reads) == 0 {
+		return
+	}
+	baseType := propsBaseType(propsType)
+	fieldTypes, declared := l.structTypes[baseType]
+	fields := make([]string, 0, len(reads))
+	for field := range reads {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	if !declared {
+		l.errorf(n, "strict component %s renders props fields from %s, whose struct schema is not declared in this .gsx file; declare the renderer-visible props struct beside the component", componentName, propsType)
+		return
+	}
+	for _, field := range fields {
+		fieldType, ok := fieldTypes[field]
+		if !ok {
+			// The package checker supplies the precise unknown/unexported-field
+			// diagnostic; this guard only owns known renderer schema types.
+			continue
+		}
+		if !strictRendererScalarType(fieldType) {
+			l.errorf(n, "strict component %s cannot render props.%s of type %s; renderer-visible props fields must use exact string, bool, integer, or floating-point builtins", componentName, field, fieldType)
+		}
+	}
 }
 
 func lowerCamelInitialism(value string) string {
@@ -1323,10 +1370,12 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	isIsland := l.hasIslandDirective(n)
 	engineKind, isEngine := l.parseEngineDirective(n)
 	propsName, propsType := l.extractStrictProps(n)
+	componentName := l.text(nameNode)
 	if propsType != "" && propsName != "props" {
 		l.errorf(n, "strict component props parameter must be named props; got %q", propsName)
-		l.hintLast("use component " + l.text(nameNode) + "(props: " + propsType + ")")
+		l.hintLast("use component " + componentName + "(props: " + propsType + ")")
 	}
+	l.validateStrictRenderedProps(n, componentName, propsType)
 
 	gsxRoot := l.strictComponentGSXRoot(bodyNode, isIsland || isEngine)
 	if gsxRoot == nil {
@@ -1339,14 +1388,15 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	l.strict = wasStrict
 	scope := l.analyzeBody(bodyNode)
 	comp := Component{
-		Name:      l.text(nameNode),
-		PropsType: propsType,
-		PropsName: propsName,
-		Syntax:    ComponentSyntaxStrict,
-		Root:      rootID,
-		IsIsland:  isIsland,
-		Scope:     scope,
-		Span:      l.span(n),
+		Name:        componentName,
+		PropsType:   propsType,
+		PropsName:   propsName,
+		PropsFields: copyStrictPropTypes(l.structTypes[propsBaseType(propsType)], l.strictReads[componentName]),
+		Syntax:      ComponentSyntaxStrict,
+		Root:        rootID,
+		IsIsland:    isIsland,
+		Scope:       scope,
+		Span:        l.span(n),
 	}
 	if isEngine {
 		comp.IsEngine = true
@@ -1361,6 +1411,19 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 		l.validateStrictServerExpressions(comp.Root)
 	}
 	l.prog.Components = append(l.prog.Components, comp)
+}
+
+func copyStrictPropTypes(fields map[string]string, reads map[string]struct{}) map[string]string {
+	if len(fields) == 0 || len(reads) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(reads))
+	for name := range reads {
+		if fieldType, ok := fields[name]; ok {
+			out[name] = fieldType
+		}
+	}
+	return out
 }
 
 func (l *lowerer) strictComponentGSXRoot(body *gotreesitter.Node, allowIslandDecls bool) *gotreesitter.Node {

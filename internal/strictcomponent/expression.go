@@ -50,8 +50,8 @@ func validate(expr ast.Expr) error {
 	case *ast.ParenExpr:
 		return validate(node.X)
 	case *ast.SelectorExpr:
-		if !selectorRootedInProps(node) {
-			return fmt.Errorf("selector must be rooted in props")
+		if _, ok := directPropsField(node); !ok {
+			return fmt.Errorf("selector must be one field directly on props; nested selector chains cannot preserve Go nil-pointer behavior")
 		}
 		return nil
 	case *ast.IndexExpr:
@@ -99,15 +99,40 @@ func validateLiteral(literal *ast.BasicLit) error {
 	}
 }
 
-func selectorRootedInProps(expr ast.Expr) bool {
-	switch node := expr.(type) {
-	case *ast.Ident:
-		return node.Name == "props"
-	case *ast.SelectorExpr:
-		return selectorRootedInProps(node.X)
-	case *ast.ParenExpr:
-		return selectorRootedInProps(node.X)
-	default:
-		return false
+// ServerPropField reports the single props field read by a validated strict
+// server expression. Parentheses around either the selector or props itself do
+// not change the result.
+func ServerPropField(source string) (string, bool) {
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return "", false
 	}
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expr = paren.X
+	}
+	selector, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	return directPropsField(selector)
+}
+
+func directPropsField(selector *ast.SelectorExpr) (string, bool) {
+	var receiver ast.Expr = selector.X
+	for {
+		paren, ok := receiver.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		receiver = paren.X
+	}
+	ident, ok := receiver.(*ast.Ident)
+	if !ok || ident.Name != "props" || selector.Sel == nil || selector.Sel.Name == "" {
+		return "", false
+	}
+	return selector.Sel.Name, true
 }

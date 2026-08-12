@@ -79,7 +79,7 @@ func TestCompileStrictComponentAcceptsGoTypeGrammar(t *testing.T) {
 		"pkg.Props[string]",
 		"map[string][]pkg.Props[int]",
 	} {
-		source := []byte("package app\ncomponent Page(props: " + propsType + ") {\nreturn <main>{props.Value}</main>\n}\n")
+		source := []byte("package app\ncomponent Page(props: " + propsType + ") {\nreturn <main>typed</main>\n}\n")
 		prog, err := Compile(source)
 		if err != nil {
 			t.Fatalf("type %q: %v", propsType, err)
@@ -118,12 +118,54 @@ func TestCompileStrictServerBodyFailsClosed(t *testing.T) {
 
 func TestCompileStrictServerAllowsRendererSupportedPropsExpressions(t *testing.T) {
 	source := []byte(`package app
+type Props struct { Title string; Subtitle string }
 component Page(props: Props) {
-	return <main title={props.Title}>{(props.Subtitle)}</main>
+	return <main title={(props).Title}>{(props.Subtitle)}</main>
 }
 `)
 	if _, err := Compile(source); err != nil {
 		t.Fatalf("Compile: %v", err)
+	}
+}
+
+func TestCompileStrictServerRejectsNestedPropsSelectors(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Nested struct { Value string }
+type Props struct { Nested *Nested }
+component Page(props: Props) {
+	return <main>{props.Nested.Value}</main>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "one field directly on props") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCompileStrictServerRestrictsRenderedPropFieldTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		fieldType string
+	}{
+		{name: "named duration", fieldType: "Duration"},
+		{name: "pointer", fieldType: "*int"},
+		{name: "slice", fieldType: "[]string"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := []byte("package app\ntype Duration int64\ntype Props struct { Value " + tc.fieldType + " }\ncomponent Page(props: Props) {\nreturn <main>{props.Value}</main>\n}\n")
+			_, err := Compile(source)
+			if err == nil || !strings.Contains(err.Error(), "renderer-visible props fields") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestCompileStrictServerAcceptsExactScalarPropFieldTypes(t *testing.T) {
+	for _, fieldType := range []string{"string", "bool", "int", "int64", "uint32", "float32", "float64"} {
+		source := []byte("package app\ntype Props struct { Value " + fieldType + " }\ncomponent Page(props: Props) {\nreturn <main>{props.Value}</main>\n}\n")
+		if _, err := Compile(source); err != nil {
+			t.Fatalf("type %s: %v", fieldType, err)
+		}
 	}
 }
 

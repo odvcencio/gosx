@@ -150,7 +150,7 @@ func TestCheckFileCompanionGoTypesRequireExactInitialism(t *testing.T) {
 			path := filepath.Join(dir, "page.gsx")
 			mustWrite(t, path, `package main
 component Link(props: *LinkProps) {
-	return <a>{props.URL}</a>
+	return <a>link</a>
 }
 component Page() {
 	return <Link `+test.attr+` />
@@ -214,8 +214,11 @@ func Legacy() Node {
 `)
 	page := filepath.Join(dir, "page.gsx")
 	mustWrite(t, page, `package main
-component Page(props: PageProps) {
-	return <time data-value={props.When}>{props.When}</time>
+component Card(props: PageProps) {
+	return <time>peer type</time>
+}
+component Page() {
+	return <Card />
 }
 `)
 	if err := CheckFile(context.Background(), page); err != nil {
@@ -256,8 +259,11 @@ func TestCheckFileResolvesVersionedImportPackageName(t *testing.T) {
 	mustWrite(t, path, `package main
 import "example.test/go-redis/v9"
 type Props struct { Client *redis.Client }
-component Page(props: Props) {
-	return <main>{props.Client}</main>
+component Card(props: Props) {
+	return <main>redis</main>
+}
+component Page() {
+	return <Card />
 }
 `)
 	if err := CheckFile(context.Background(), path); err != nil {
@@ -271,12 +277,57 @@ func TestCheckFileRetainsConstantsUsedByPropTypes(t *testing.T) {
 	mustWrite(t, path, `package main
 const ItemCount = 3
 type Props struct { Values [ItemCount]string }
-component Page(props: Props) {
-	return <main>{props.Values}</main>
+component Card(props: Props) {
+	return <main>constants</main>
+}
+component Page() {
+	return <Card />
 }
 `)
 	if err := CheckFile(context.Background(), path); err != nil {
 		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
+func TestCheckFileRejectsPropsBearingStrictRenderEntry(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+		t.Fatalf("CheckFile error = %v", err)
+	}
+}
+
+func TestCheckTreeAllowsPropsBearingNonRouteComponentsAndIslands(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "gosxstub", "signal", "signal.go"), `package signal
+type Signal[T any] struct { value T }
+func New[T any](value T) *Signal[T] { return &Signal[T]{value: value} }
+func (s *Signal[T]) Get() T { return s.value }
+`)
+	mustWrite(t, filepath.Join(dir, "player.gsx"), `package main
+type PlayerProps struct { Name string }
+component Player(props: PlayerProps) {
+	return <strong>{props.Name}</strong>
+}
+`)
+	mustWrite(t, filepath.Join(dir, "counter.gsx"), `package main
+import "m31labs.dev/gosx/signal"
+type CounterProps struct { Initial int }
+//gosx:island
+component Counter(props: CounterProps) {
+	count := signal.New(props.Initial)
+	return <button>{count.Get()}</button>
+}
+`)
+	if err := CheckTree(context.Background(), dir); err != nil {
+		t.Fatalf("CheckTree: %v", err)
 	}
 }
 

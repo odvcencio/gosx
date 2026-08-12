@@ -64,6 +64,9 @@ func CheckPackageWithOptions(ctx context.Context, dir string, opts Options) erro
 }
 
 func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Options) error {
+	if err := validateStrictRenderEntries(files); err != nil {
+		return err
+	}
 	if !packageHasStrict(files) {
 		return nil
 	}
@@ -79,6 +82,50 @@ func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Optio
 		return nil
 	}
 	return goCheck(ctx, files, generated, opts)
+}
+
+func validateStrictRenderEntries(files []transpile.PackageFile) error {
+	for _, file := range files {
+		if file.Program == nil || len(file.Program.Components) == 0 {
+			continue
+		}
+		if !strictFileRouteName(file.Path) {
+			continue
+		}
+		components := file.Program.Components
+		preferred := []string{"Page"}
+		if strings.EqualFold(strings.TrimSuffix(filepath.Base(file.Path), filepath.Ext(file.Path)), "layout") {
+			preferred = []string{"Layout", "Page"}
+		}
+		entry := &components[0]
+		for _, name := range preferred {
+			found := false
+			for i := range components {
+				if components[i].Name == name {
+					entry = &components[i]
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if entry.Syntax == ir.ComponentSyntaxStrict && strings.TrimSpace(entry.PropsType) != "" {
+			return fmt.Errorf("%s: strict render entry %s accepts props %s, but file routes do not bind root props; use a zero-props Page/Layout entry", file.Path, entry.Name, entry.PropsType)
+		}
+	}
+	return nil
+}
+
+func strictFileRouteName(path string) bool {
+	name := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	switch name {
+	case "page", "index", "layout", "not-found", "error":
+		return true
+	default:
+		return false
+	}
 }
 
 func packageHasStrict(files []transpile.PackageFile) bool {

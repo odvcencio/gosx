@@ -101,6 +101,31 @@ component Page(props: Props) {
 	}
 }
 
+func TestRunCheckAndRenderRejectPropsBearingStrictEntry(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "check-render-root-props-gate")
+	path := filepath.Join(dir, "app", "page.gsx")
+	mustWriteFile(t, path, `package app
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`)
+	for _, check := range []struct {
+		name string
+		fn   func() error
+	}{
+		{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
+		{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			err := check.fn()
+			if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
 func TestRunCheckRejectsLegacyCallerIntoStrictCalleeBeforePropTyping(t *testing.T) {
 	dir := newInvalidStrictStarter(t, "check-cross-style-gate")
 	path := filepath.Join(dir, "app", "page.gsx")

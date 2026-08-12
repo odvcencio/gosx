@@ -154,7 +154,7 @@ type BadgeProps struct {
 	Unused string
 }
 component Badge(props: BadgeProps) {
-	return <p>{props.Count}:{props.Enabled}</p>
+	return <p>{(props).Count}:{props.Enabled}</p>
 }
 component Page() {
 	return <Badge />
@@ -167,6 +167,39 @@ component Page() {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Compile error %q does not contain %q", err, want)
 		}
+	}
+}
+
+func TestRenderProgramComponentRejectsStrictRootProps(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	_, err = RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err == nil || !strings.Contains(err.Error(), "file renderer has no root props binding") {
+		t.Fatalf("RenderProgramComponent error = %v", err)
+	}
+}
+
+func TestDefaultFileRendererRejectsStrictPreferredRouteProps(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "page.gsx")
+	if err := os.WriteFile(path, []byte(`package app
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := DefaultFileRenderer(nil, FilePage{FilePath: path, Pattern: "/"})
+	if err == nil || !strings.Contains(err.Error(), "file renderer has no root props binding") {
+		t.Fatalf("DefaultFileRenderer error = %v", err)
 	}
 }
 
@@ -192,5 +225,35 @@ component Page() {
 	}
 	if html != "<p>0:false</p>" {
 		t.Fatalf("html = %q", html)
+	}
+}
+
+func TestStrictLocalCallAppliesGeneratedGoNumericConversions(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+type NumericProps struct {
+	N uint64
+	F float32
+}
+component Numeric(props: NumericProps) {
+	return <p>{props.N}:{props.F}</p>
+}
+component Page() {
+	return <Numeric n={1e19} f={1.23456789} />
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := gosx.RenderHTML(gosx.El("p",
+		gosx.Expr(uint64(10000000000000000000)),
+		gosx.Text(":"),
+		gosx.Expr(float32(1.23456789)),
+	))
+	if html != want {
+		t.Fatalf("file render = %q, generated-Go render = %q", html, want)
 	}
 }

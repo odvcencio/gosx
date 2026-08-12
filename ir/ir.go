@@ -68,6 +68,11 @@ type Component struct {
 	// the exact name "props" because the file renderer binds that identifier.
 	PropsName string
 
+	// PropsFields records exact builtin types for fields read from a same-file
+	// strict props struct. The file renderer uses it to apply the same untyped-
+	// literal conversions as generated Go before the component observes them.
+	PropsFields map[string]string
+
 	// Syntax distinguishes legacy `func` components from strict
 	// `component Name(props: Type)` declarations.
 	Syntax ComponentSyntax

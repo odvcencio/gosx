@@ -568,6 +568,23 @@ func TestRunBuildStrictGateRunsBeforeDistWrites(t *testing.T) {
 	}
 }
 
+func TestRunBuildRejectsPropsBearingStrictEntryBeforeDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "build-root-props-gate")
+	mustWriteFile(t, filepath.Join(dir, "app", "page.gsx"), `package app
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`)
+	err := RunBuild(dir, false)
+	if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+		t.Fatalf("RunBuild error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {
+		t.Fatalf("root-props gate wrote dist before failing: %v", statErr)
+	}
+}
+
 func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
