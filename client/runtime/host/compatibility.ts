@@ -7,11 +7,25 @@
 
 /**
  * @typedef {{name: string, owner: string, removeAfter: string}} GoSXHostCompatibilityEntry
+ *
+ * @typedef {object} GoSXRuntimeNamespace
+ * @property {object} [support] - Generated ABI validation and variant selection.
+ * @property {object} [mailbox] - Binary mailbox codec.
+ * @property {object} [loader] - Verified WASM loader.
+ * @property {object} [abi] - Direct Go/WASM ABI published by the running module.
+ *
+ * @typedef {object} GoSXHostNamespace
+ * @property {object} [compatibility]
+ * @property {object} [patch]
+ *
+ * @typedef {object} GoSXBrowserNamespace
+ * @property {GoSXHostNamespace} [host]
+ * @property {GoSXRuntimeNamespace} [runtime]
+ * @property {Function} [reportIssue]
  */
 
 /** @type {GoSXHostCompatibilityEntry[]} */
 var GOSX_HOST_COMPATIBILITY_ALLOWLIST = [
-  { name: "__gosx_apply_patch_mailbox", owner: "host/patch", removeAfter: "Stack 07 compatibility audit" },
   { name: "__gosx_apply_patches", owner: "host/patch", removeAfter: "Stack 07 compatibility audit" },
   { name: "__gosx_apply_scene_command_scripts", owner: "host/regions", removeAfter: "Stack 07 compatibility audit" },
   { name: "__gosx_bootstrap_page", owner: "host/lifecycle", removeAfter: "Stack 07 compatibility audit" },
@@ -54,7 +68,11 @@ var GOSX_HOST_COMPATIBILITY_ALLOWLIST = [
   { name: "__gosx_submit_action", owner: "host/navigation", removeAfter: "Stack 07 compatibility audit" },
 ];
 
+/** @type {GoSXBrowserNamespace} */
 var gosxHostNamespace = window.__gosx || (window.__gosx = {});
+/** @type {GoSXRuntimeNamespace} */
+var gosxRuntime = gosxHostNamespace.runtime || (gosxHostNamespace.runtime = {});
+/** @type {GoSXHostNamespace} */
 var gosxHost = gosxHostNamespace.host || (gosxHostNamespace.host = {});
 var gosxHostCompatibilityMetadata = new Map(
   GOSX_HOST_COMPATIBILITY_ALLOWLIST.map(function(entry) { return [entry.name, entry]; })

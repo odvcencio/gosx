@@ -12,25 +12,15 @@ import (
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 )
 
-// registerRuntimeABI publishes the typed direct surface alongside the legacy
-// globals. The browser can inspect this object before choosing a feature
-// route, while the old names remain available until O6 removes their shim.
+// registerRuntimeABI publishes the typed direct surface under the single
+// browser facade. The browser can inspect this object before choosing a
+// feature route without growing the ambient global namespace.
 func registerRuntimeABI(b *bridge.Bridge) {
 	handshake := runtimewasm.NewHandshake(runtimeVariant())
 	handshakeFn := js.FuncOf(func(this js.Value, args []js.Value) any {
 		return handshakeJSValue(handshake)
 	})
 	mailboxFn := js.FuncOf(runtimeMailboxFunc)
-	abiVersionFn := js.FuncOf(func(this js.Value, args []js.Value) any {
-		return int(runtimewasm.ABIVersion)
-	})
-	featureMaskFn := js.FuncOf(func(this js.Value, args []js.Value) any {
-		return int(handshake.FeatureMask)
-	})
-	mailboxVersionFn := js.FuncOf(func(this js.Value, args []js.Value) any {
-		return int(runtimewasm.MailboxVersion)
-	})
-
 	api := js.Global().Get("Object").New()
 	api.Set("abiVersion", int(runtimewasm.ABIVersion))
 	api.Set("featureMask", int(handshake.FeatureMask))
@@ -45,29 +35,23 @@ func registerRuntimeABI(b *bridge.Bridge) {
 		}
 		return handshake.Supports(required)
 	}))
-	js.Global().Set("__gosx_runtime_abi", api)
-
-	exports := js.Global().Get("Object").New()
-	exports.Set("abiVersion", abiVersionFn)
-	exports.Set("featureMask", featureMaskFn)
-	exports.Set("mailboxVersion", mailboxVersionFn)
-	exports.Set("variant", string(handshake.Variant))
-	exports.Set("handshake", handshakeFn)
-	exports.Set("mailbox", mailboxFn)
-	for _, name := range []string{
-		"__gosx_hydrate",
-		"__gosx_hydrate_compute",
-		"__gosx_action",
-		"__gosx_dispose",
-		"__gosx_set_shared_signal",
-		"__gosx_set_input_batch",
-	} {
-		if value := js.Global().Get(name); value.Type() == js.TypeFunction {
-			exports.Set(name, value)
-		}
-	}
-	js.Global().Set("__gosx_runtime_exports", exports)
+	runtimeFacade().Set("abi", api)
 	_ = b // The bridge owns the patch mailbox callback registered by main.go.
+}
+
+func runtimeFacade() js.Value {
+	object := js.Global().Get("Object")
+	facade := js.Global().Get("__gosx")
+	if facade.Type() != js.TypeObject {
+		facade = object.New()
+		js.Global().Set("__gosx", facade)
+	}
+	runtime := facade.Get("runtime")
+	if runtime.Type() != js.TypeObject {
+		runtime = object.New()
+		facade.Set("runtime", runtime)
+	}
+	return runtime
 }
 
 func handshakeJSValue(handshake runtimewasm.Handshake) js.Value {

@@ -84,7 +84,7 @@
     return "";
   }
 
-  window.__gosx_runtime_abi_support = {
+  gosxRuntime.support = {
     abiVersion: contract.abiVersion,
     mailboxVersion: contract.mailboxVersion,
     manifestHash: contract.manifestHash,

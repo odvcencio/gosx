@@ -204,7 +204,7 @@
     // O4's typed loader owns the direct ABI handshake and binary mailbox
     // surface. Keep this function as the compatibility entry point until O6
     // removes the authored runtime shim entirely.
-    const typedLoader = window.__gosx_runtime_wasm_loader;
+    const typedLoader = window.__gosx && window.__gosx.runtime && window.__gosx.runtime.loader;
     if (typedLoader && typeof typedLoader.load === "function") {
       return typedLoader.load(runtimeRef);
     }

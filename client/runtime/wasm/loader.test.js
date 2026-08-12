@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
+const compatibilitySource = fs.readFileSync(path.join(__dirname, "../host/compatibility.ts"), "utf8");
 const generatedSource = fs.readFileSync(path.join(__dirname, "../generated/runtime-abi.ts"), "utf8");
 const abiSource = fs.readFileSync(path.join(__dirname, "abi.ts"), "utf8");
 const loaderSource = fs.readFileSync(path.join(__dirname, "loader.ts"), "utf8");
@@ -40,7 +41,7 @@ function makeEnvironment(options) {
       mailboxVersion: contract.mailboxVersion,
       manifestHash: contract.manifestHash,
     }, options.handshake || {});
-    window.__gosx_runtime_abi = { handshake: function() { return handshake; } };
+    window.__gosx.runtime.abi = { handshake: function() { return handshake; } };
     window.__gosx_runtime_ready();
     return new Promise(function() {});
   };
@@ -63,6 +64,7 @@ function makeEnvironment(options) {
     setTimeout: setTimeout,
   };
   vm.createContext(context);
+  vm.runInContext(compatibilitySource, context);
   vm.runInContext(generatedSource, context);
   vm.runInContext(abiSource, context);
   vm.runInContext(loaderSource, context);
@@ -76,6 +78,7 @@ function makeEnvironment(options) {
       variant: "islands",
       featureMask: contract.variants.islands,
     },
+    runtime: window.__gosx.runtime,
     hydrationReady: function() { return hydrationReady; },
     runCalls: function() { return runCalls; },
   };
@@ -83,14 +86,14 @@ function makeEnvironment(options) {
 
 test("verified loader forwards readiness only after exact handshake validation", async () => {
   const env = makeEnvironment();
-  await env.window.__gosx_runtime_wasm_loader.load(env.reference);
+  await env.runtime.loader.load(env.reference);
   assert.equal(env.runCalls(), 1);
   assert.equal(env.hydrationReady(), 1);
 });
 
 test("browser selector chooses the smallest published compatible artifact", () => {
   const env = makeEnvironment();
-  const selected = env.window.__gosx_runtime_abi_support.selectVariant(17, {
+  const selected = env.runtime.support.selectVariant(17, {
     core: { size: 10 },
     islands: { size: 5 },
     full: { size: 40 },
@@ -101,35 +104,35 @@ test("browser selector chooses the smallest published compatible artifact", () =
 test("loader rejects an artifact hash mismatch before execution", async () => {
   const env = makeEnvironment();
   env.reference.hash = "0000000000000000";
-  await assert.rejects(env.window.__gosx_runtime_wasm_loader.load(env.reference), /asset hash mismatch/);
+  await assert.rejects(env.runtime.loader.load(env.reference), /asset hash mismatch/);
   assert.equal(env.runCalls(), 0);
   assert.equal(env.hydrationReady(), 0);
 });
 
 test("loader rejects variant drift without releasing hydration", async () => {
   const env = makeEnvironment({ handshake: { variant: "core", featureMask: 17 } });
-  await assert.rejects(env.window.__gosx_runtime_wasm_loader.load(env.reference), /variant does not match/);
+  await assert.rejects(env.runtime.loader.load(env.reference), /variant does not match/);
   assert.equal(env.hydrationReady(), 0);
 });
 
 test("loader rejects a feature mask that contradicts its variant", async () => {
   const env = makeEnvironment({ handshake: { featureMask: 1 } });
-  await assert.rejects(env.window.__gosx_runtime_wasm_loader.load(env.reference), /feature mask does not match/);
+  await assert.rejects(env.runtime.loader.load(env.reference), /feature mask does not match/);
   assert.equal(env.hydrationReady(), 0);
 });
 
 test("loader rejects stale manifest identity", async () => {
   const env = makeEnvironment({ handshake: { manifestHash: "stale" } });
-  await assert.rejects(env.window.__gosx_runtime_wasm_loader.load(env.reference), /manifest identity mismatch/);
+  await assert.rejects(env.runtime.loader.load(env.reference), /manifest identity mismatch/);
   assert.equal(env.hydrationReady(), 0);
 });
 
 test("loader rejects runtime exit and missing readiness", async () => {
   const exited = makeEnvironment({ runFailure: new Error("runtime trap") });
-  await assert.rejects(exited.window.__gosx_runtime_wasm_loader.load(exited.reference), /runtime trap/);
+  await assert.rejects(exited.runtime.loader.load(exited.reference), /runtime trap/);
   assert.equal(exited.hydrationReady(), 0);
 
   const stalled = makeEnvironment({ skipReady: true });
-  await assert.rejects(stalled.window.__gosx_runtime_wasm_loader.load(stalled.reference), /did not signal readiness/);
+  await assert.rejects(stalled.runtime.loader.load(stalled.reference), /did not signal readiness/);
   assert.equal(stalled.hydrationReady(), 0);
 });

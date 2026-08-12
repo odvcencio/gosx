@@ -150,7 +150,7 @@
   }
 
   function decodePatchMailbox(input) {
-    var runtimeMailbox = window.__gosx_runtime_mailbox;
+    var runtimeMailbox = gosxRuntime.mailbox;
     if (runtimeMailbox && typeof runtimeMailbox.decodePatchMailbox === "function") {
       return runtimeMailbox.decodePatchMailbox(input);
     }
@@ -1043,7 +1043,6 @@
     applyJSON: applyPatchesJSON,
     applyMailbox: applyPatchMailbox,
   });
-  gosxHostCompatibility.install("__gosx_apply_patch_mailbox", applyPatchMailbox);
   gosxHostCompatibility.install("__gosx_apply_patches", applyPatchesJSON);
 
 })();
