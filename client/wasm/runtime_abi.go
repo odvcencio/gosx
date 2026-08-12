@@ -130,10 +130,17 @@ func runtimeMailboxFunc(this js.Value, args []js.Value) any {
 }
 
 func uint8ArrayBytes(value js.Value) ([]byte, error) {
+	// value.Get and js.CopyBytesToGo both panic on non-object inputs, so the
+	// type must be verified before either is called. A caller can invoke the
+	// mailbox with any JS value (a number, a string, a plain object without
+	// the right prototype), and none of that may crash the runtime.
+	if value.Type() != js.TypeObject {
+		return nil, errors.New("runtime mailbox requires a Uint8Array or ArrayBuffer")
+	}
 	if value.InstanceOf(js.Global().Get("ArrayBuffer")) {
 		value = js.Global().Get("Uint8Array").New(value)
 	}
-	if value.IsUndefined() || value.IsNull() || value.Get("length").Type() != js.TypeNumber {
+	if !value.InstanceOf(js.Global().Get("Uint8Array")) {
 		return nil, errors.New("runtime mailbox requires a Uint8Array or ArrayBuffer")
 	}
 	length := value.Get("length").Int()
