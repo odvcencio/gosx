@@ -218,9 +218,16 @@ func TestLocalVideoFixturesServe(t *testing.T) {
 }
 
 func TestFixtureMP4BrowserLoadsMetadata(t *testing.T) {
+	// Keep this browser integration test out of the ordinary unit partition.
+	// GitHub's generic runner image may happen to contain Chrome, but startup on
+	// that shared image is not a stable unit-test contract. The browser CI lane
+	// provisions Chrome and opts in with GOSX_CHROME_BIN.
+	if strings.TrimSpace(os.Getenv("GOSX_CHROME_BIN")) == "" {
+		t.Skip("set GOSX_CHROME_BIN to run the media metadata browser smoke")
+	}
 	chrome, ok := chromePath()
 	if !ok {
-		t.Skip("Chrome/Chromium not available for media metadata smoke")
+		t.Fatal("GOSX_CHROME_BIN does not name an available Chrome/Chromium binary")
 	}
 	app, err := newApp()
 	if err != nil {
@@ -249,7 +256,7 @@ func TestFixtureMP4BrowserLoadsMetadata(t *testing.T) {
 	defer allocCancel()
 	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
 	defer browserCancel()
-	ctx, cancel := context.WithTimeout(browserCtx, 12*time.Second)
+	ctx, cancel := context.WithTimeout(browserCtx, 30*time.Second)
 	defer cancel()
 
 	mediaURL := server.URL + "/media/ouroboros-placeholder.mp4"
