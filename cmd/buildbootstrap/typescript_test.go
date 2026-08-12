@@ -4,35 +4,77 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	esbuild "github.com/evanw/esbuild/pkg/api"
 )
 
-func TestESBuildLoaderFollowsSourceExtensions(t *testing.T) {
+// TestLanguageForSourceClassifiesByExtension replaces the former
+// TestESBuildLoaderFollowsSourceExtensions. That test proved a whole chunk's
+// loader followed its highest-ranked source's extension — the exact
+// whole-chunk promotion that reparsed a neighboring .js source as
+// TypeScript. Each source now transpiles with its own loader (see
+// transpileSource), so the only per-extension question left is
+// classification.
+func TestLanguageForSourceClassifiesByExtension(t *testing.T) {
 	tests := []struct {
-		name  string
-		entry output
-		want  esbuild.Loader
+		rel  string
+		want sourceLanguage
 	}{
-		{name: "javascript", entry: chunk("runtime.js", "bootstrap-src/runtime.js"), want: esbuild.LoaderJS},
-		{name: "typescript", entry: chunk("runtime.js", "bootstrap-src/runtime.ts"), want: esbuild.LoaderTS},
-		{name: "mixed", entry: chunk("runtime.js", "bootstrap-src/head.js", "bootstrap-src/runtime.ts"), want: esbuild.LoaderTS},
-		{name: "tsx", entry: chunk("runtime.js", "bootstrap-src/view.tsx"), want: esbuild.LoaderTSX},
+		{"bootstrap-src/runtime.js", sourceJavaScript},
+		{"bootstrap-src/runtime.mjs", sourceJavaScript},
+		{"bootstrap-src/runtime.cjs", sourceJavaScript},
+		{"bootstrap-src/runtime.ts", sourceTypeScript},
+		{"bootstrap-src/runtime.mts", sourceTypeScript},
+		{"bootstrap-src/runtime.cts", sourceTypeScript},
 	}
 	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := esbuildLoaderForOutput(test.entry)
+		t.Run(test.rel, func(t *testing.T) {
+			got, err := languageForSource(sourceFile(test.rel))
 			if err != nil {
-				t.Fatalf("esbuildLoaderForOutput: %v", err)
+				t.Fatalf("languageForSource: %v", err)
 			}
 			if got != test.want {
-				t.Fatalf("loader = %v, want %v", got, test.want)
+				t.Fatalf("language = %v, want %v", got, test.want)
 			}
 		})
 	}
 
-	if _, err := esbuildLoaderForOutput(chunk("runtime.js", "bootstrap-src/runtime.jsx")); err == nil {
-		t.Fatal("esbuildLoaderForOutput accepted an unsupported extension")
+	// TSX is not a supported extension yet: the bootstrap runtime configures
+	// no JSX factory, so an esbuild TSX transform would emit
+	// React.createElement calls into a bundle that ships no React. It
+	// returns once a JSX factory is configured.
+	for _, rel := range []string{"bootstrap-src/view.jsx", "bootstrap-src/view.tsx", "bootstrap-src/notes.txt"} {
+		if _, err := languageForSource(sourceFile(rel)); err == nil {
+			t.Fatalf("languageForSource(%s) accepted an unsupported extension", rel)
+		}
+	}
+}
+
+// TestJavaScriptSourceBesideTypeScriptSourceKeepsComparisonOperators is the
+// regression the reviewer proved against esbuild v0.28.1: parsing a .js
+// source with the TypeScript loader silently rewrites the comparison chain
+// `a < b > (c)` into the generic-argument call `a<b>(c)`, and type erasure
+// then drops it to the call `a(c)`, losing b. Once a typed source shares a
+// chunk with a JavaScript source, the JavaScript source must transpile with
+// its own loader and never reach the TypeScript parser.
+func TestJavaScriptSourceBesideTypeScriptSourceKeepsComparisonOperators(t *testing.T) {
+	f := newFixture(t)
+	jsRel := f.writeSource("10-comparison.js", "const r = a < b > (c);\n")
+	tsRel := f.writeSource("20-typed.ts", `interface RuntimeValue { count: number }
+const value: RuntimeValue = { count: 2 };
+globalThis.__gosx_typed_count = value.count;
+`)
+
+	built, err := buildBundle(f.dir, chunk("mixed.js", jsRel, tsRel), "esbuild", false)
+	if err != nil {
+		t.Fatalf("buildBundle: %v", err)
+	}
+	if strings.Contains(built.code, "interface RuntimeValue") {
+		t.Error("built code kept TypeScript-only syntax from the neighboring .ts source")
+	}
+	if strings.Contains(built.code, "a(c)") {
+		t.Fatalf("the .js source parsed as TypeScript: `a < b > (c)` collapsed into the call `a(c)`, dropping b: %s", built.code)
+	}
+	if !strings.Contains(built.code, "a<b>c") {
+		t.Fatalf("the .js source lost its comparison operators: %s", built.code)
 	}
 }
 
@@ -130,14 +172,15 @@ func TestGotreesitterTypeScriptDiagnosticCarriesSourceRange(t *testing.T) {
 	if err == nil {
 		t.Fatal("validateTypedSource accepted invalid TypeScript")
 	}
-	for _, want := range []string{
-		"bootstrap-src/broken.ts:1:",
-		"-1:",
-		"TypeScript syntax error",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("diagnostic does not contain %q: %v", want, err)
-		}
+	// The full "file:line:col-line:col:" prefix, not just a loose substring:
+	// a weak "-1:" check passes for almost any diagnostic that names a line
+	// 1, so it cannot catch a wrong column or a wrong end point.
+	const wantPrefix = "parse bootstrap-src/broken.ts:1:21-1:24:"
+	if !strings.HasPrefix(err.Error(), wantPrefix) {
+		t.Fatalf("diagnostic = %q, want prefix %q", err.Error(), wantPrefix)
+	}
+	if !strings.Contains(err.Error(), "TypeScript syntax error") {
+		t.Errorf("diagnostic does not name a TypeScript syntax error: %v", err)
 	}
 }
 

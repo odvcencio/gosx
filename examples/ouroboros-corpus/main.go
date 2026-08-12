@@ -385,7 +385,7 @@ func canvasBoardBody(ctx *server.Context) gosx.Node {
 		OnPick:     "selectFixtureNode",
 		ClassName:  "ouroboros-board",
 	}
-	return ctx.Runtime().Surface(gosx.CanvasBoard(props))
+	return gosx.CanvasBoard(props)
 }
 
 func hubBody() gosx.Node {

@@ -107,16 +107,15 @@ func (t *typeofGuarded) Exit(js.INode) {}
 // chunkFreeIdentifiers parses one chunk and returns the names it reads but
 // never declares, minus the browser globals and the typeof-guarded names.
 func chunkFreeIdentifiers(dir string, entry output) ([]string, error) {
-	var b strings.Builder
+	bodies := make([]string, 0, len(entry.sources))
 	for _, src := range entry.sources {
 		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
 		if err != nil {
 			return nil, err
 		}
-		b.WriteString(normalizeNewlines(string(data)))
-		b.WriteByte('\n')
+		bodies = append(bodies, normalizeNewlines(string(data)))
 	}
-	chunkSource, err := transpileTypedChunk(entry, b.String())
+	chunkSource, err := transpileTypedChunk(entry, bodies)
 	if err != nil {
 		return nil, err
 	}
