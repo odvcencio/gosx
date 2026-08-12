@@ -275,6 +275,10 @@ function loadApplier() {
     JSON,
     String,
     Number,
+    Uint8Array,
+    ArrayBuffer,
+    DataView,
+    TextDecoder,
     parseInt,
     isNaN,
     console: {
@@ -468,6 +472,43 @@ function runReference(populate, ops) {
     refApplyOne(scene.doc, scene.root, op);
   }
   return scene;
+}
+
+function encodePatchMailbox(islandID, patches) {
+  const encoder = new TextEncoder();
+  const payload = [];
+  const pushU8 = (value) => payload.push(value & 0xff);
+  const pushU32 = (value) => {
+    payload.push(value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff);
+  };
+  const pushString = (value) => {
+    const bytes = encoder.encode(String(value || ""));
+    pushU32(bytes.length);
+    for (const byte of bytes) payload.push(byte);
+  };
+  pushString(islandID);
+  pushU32(patches.length);
+  for (const op of patches) {
+    pushU8(op.kind);
+    pushString(op.path);
+    pushString(op.tag);
+    pushString(op.text);
+    pushString(op.attrName);
+    const children = Array.isArray(op.children) ? op.children : [];
+    pushU32(children.length);
+    for (const child of children) pushU32(child >>> 0);
+  }
+  const out = new Uint8Array(24 + payload.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, 0x4d585347, true);
+  view.setUint16(4, 1, true);
+  view.setUint16(6, 3, true);
+  view.setUint32(8, 17, true);
+  view.setUint32(12, payload.length, true);
+  view.setInt32(16, 0, true);
+  view.setUint32(20, 1, true);
+  out.set(payload, 24);
+  return out;
 }
 
 // assertMatchesOracles proves the batched applier lands on the same DOM as both
@@ -688,6 +729,25 @@ test("patch applier sets attributes, values and removals identically", () => {
     { kind: 1, path: "0/0", attrName: "aria-label", text: "field" },
   ];
   assertMatchesOracles("attributes", populate, ops);
+});
+
+test("patch applier accepts the direct binary mailbox without JSON parsing", () => {
+  const populate = (root, doc, stats) => {
+    const form = new FakeElement("form", stats, doc);
+    const input = new FakeElement("input", stats, doc);
+    input.value = "old";
+    form.appendChild(input);
+    root.appendChild(form);
+  };
+  const ops = [
+    { kind: 8, path: "0/0", attrName: "value", text: "new" },
+    { kind: 1, path: "0/0", attrName: "data-direct", text: "mailbox" },
+  ];
+  const scene = buildScene(populate);
+  scene.sandbox.__gosx_apply_patch_mailbox("island", encodePatchMailbox("island", ops));
+  const reference = runReference(populate, ops);
+  assert.equal(serialize(scene.root), serialize(reference.root));
+  assert.deepEqual(scene.warnings, []);
 });
 
 test("patch applier survives a long randomized op stream", () => {

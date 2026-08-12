@@ -57,13 +57,8 @@
   // Entry point — called from WASM via the bridge
   // ---------------------------------------------------------------------------
 
-  /**
-   * Apply a batch of patch operations to an island's DOM subtree.
-   *
-   * @param {string} islandID  - The DOM id of the island root element.
-   * @param {string} patchOpsJSON - JSON-encoded array of PatchOp objects.
-   */
-  window.__gosx_apply_patches = function (islandID, patchOpsJSON) {
+  /** Apply decoded patch operations to an island's DOM subtree. */
+  function applyPatchOperations(islandID, ops) {
     var islandWrapper = document.getElementById(islandID);
     if (!islandWrapper) {
       if (typeof console !== "undefined") {
@@ -75,16 +70,6 @@
     // as its first element child. Patch paths are relative to the component
     // root, not the wrapper.
     var root = islandWrapper.firstElementChild || islandWrapper;
-
-    var ops;
-    try {
-      ops = JSON.parse(patchOpsJSON);
-    } catch (e) {
-      if (typeof console !== "undefined") {
-        console.error("[gosx/patch] failed to parse patch ops:", e);
-      }
-      return;
-    }
 
     if (!ops || ops.length === 0) return;
 
@@ -104,7 +89,117 @@
 
     // Restore focus / cursor position.
     restoreFocus(focusState);
+  }
+
+  /**
+   * Apply a batch of patch operations from the compatibility JSON boundary.
+   *
+   * @param {string} islandID  - The DOM id of the island root element.
+   * @param {string} patchOpsJSON - JSON-encoded array of PatchOp objects.
+   */
+  window.__gosx_apply_patches = function (islandID, patchOpsJSON) {
+    var ops;
+    try {
+      ops = JSON.parse(patchOpsJSON);
+    } catch (e) {
+      if (typeof console !== "undefined") {
+        console.error("[gosx/patch] failed to parse patch ops:", e);
+      }
+      return;
+    }
+    applyPatchOperations(islandID, ops);
   };
+
+  /**
+   * Apply the O4 binary patch mailbox. The browser decodes the payload once,
+   * then reuses the exact same DOM applier as the JSON compatibility path.
+   *
+   * @param {string} islandID - Callback id retained for old bridge callers.
+   * @param {Uint8Array|ArrayBuffer} mailbox - GoSX mailbox response.
+   */
+  window.__gosx_apply_patch_mailbox = function (islandID, mailbox) {
+    try {
+      var decoded = decodePatchMailbox(mailbox);
+      var decodedIslandID = decoded.islandID || islandID;
+      if (islandID && decodedIslandID !== islandID) {
+        throw new Error("runtime patch mailbox island id mismatch");
+      }
+      applyPatchOperations(decodedIslandID, decoded.patches);
+    } catch (e) {
+      if (typeof console !== "undefined") {
+        console.error("[gosx/patch] failed to decode patch mailbox:", e);
+      }
+    }
+  };
+
+  function decodePatchMailbox(input) {
+    var runtimeMailbox = window.__gosx_runtime_mailbox;
+    if (runtimeMailbox && typeof runtimeMailbox.decodePatchMailbox === "function") {
+      return runtimeMailbox.decodePatchMailbox(input);
+    }
+    return decodePatchMailboxFallback(input);
+  }
+
+  // Keep patch.js independently loadable for pages that cache it before the
+  // bootstrap chunk. This small fallback is byte-compatible with
+  // client/runtime/wasm/mailbox.ts and is removed with the authored shim in O6.
+  function decodePatchMailboxFallback(input) {
+    var bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+    var headerBytes = 24;
+    if (bytes.byteLength < headerBytes) throw new Error("runtime mailbox is shorter than its header");
+    var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    var magic = view.getUint32(0, true);
+    var version = view.getUint16(4, true);
+    var header = {
+      magic: magic,
+      version: version,
+      opcode: view.getUint16(6, true),
+      requestID: view.getUint32(8, true),
+      payloadSize: view.getUint32(12, true),
+      status: view.getInt32(16, true),
+      flags: view.getUint32(20, true),
+    };
+    if (magic !== 0x4d585347 || version !== 1) throw new Error("runtime mailbox header is invalid");
+    if (header.opcode !== 3 || (header.flags & 1) === 0) throw new Error("runtime mailbox is not a patch response");
+    if (headerBytes + header.payloadSize !== bytes.byteLength) throw new Error("runtime mailbox length is invalid");
+    var cursor = headerBytes;
+    function stringValue() {
+      if (cursor + 4 > view.byteLength) throw new Error("runtime mailbox string length is truncated");
+      var length = view.getUint32(cursor, true);
+      cursor += 4;
+      if (length > view.byteLength - cursor) throw new Error("runtime mailbox string is truncated");
+      var chars = "";
+      for (var i = 0; i < length; i++) chars += String.fromCharCode(view.getUint8(cursor + i));
+      cursor += length;
+      return chars;
+    }
+    var result = { header: header, islandID: stringValue(), patches: [] };
+    if (cursor + 4 > view.byteLength) throw new Error("runtime mailbox patch count is truncated");
+    var count = view.getUint32(cursor, true);
+    cursor += 4;
+    for (var patchIndex = 0; patchIndex < count; patchIndex++) {
+      if (cursor >= view.byteLength) throw new Error("runtime mailbox patch is truncated");
+      var patch = {
+        kind: view.getUint8(cursor++),
+        path: stringValue(),
+        tag: stringValue(),
+        text: stringValue(),
+        attrName: stringValue(),
+        children: [],
+      };
+      if (cursor + 4 > view.byteLength) throw new Error("runtime mailbox child count is truncated");
+      var childCount = view.getUint32(cursor, true);
+      cursor += 4;
+      if (childCount > (view.byteLength - cursor) / 4) throw new Error("runtime mailbox child list is truncated");
+      for (var childIndex = 0; childIndex < childCount; childIndex++) {
+        patch.children.push(view.getInt32(cursor, true));
+        cursor += 4;
+      }
+      result.patches.push(patch);
+    }
+    if (cursor !== view.byteLength) throw new Error("runtime mailbox patch payload has trailing bytes");
+    return result;
+  }
 
   // ---------------------------------------------------------------------------
   // Path resolution cache

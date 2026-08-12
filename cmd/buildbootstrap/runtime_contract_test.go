@@ -33,13 +33,16 @@ func TestGeneratedRuntimeContractCompilesAndErasesTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build generated runtime contract: %v", err)
 	}
-	for _, erased := range []string{"interface GoSXCoreExports", "interface GoSXRuntimeManifestV1", "GoSXFeatureMask"} {
+	for _, erased := range []string{"interface GoSXCoreExports", "interface GoSXRuntimeManifestV2", "interface GoSXRuntimeDirectExports", "GoSXFeatureMask"} {
 		if strings.Contains(built.code, erased) {
 			t.Errorf("built contract kept TypeScript-only syntax %q", erased)
 		}
 	}
 	if !strings.Contains(built.code, "GOSX_RUNTIME_ABI_VERSION") {
 		t.Fatal("built contract lost its runtime ABI version value")
+	}
+	if !strings.Contains(built.code, "GOSX_RUNTIME_MAILBOX_HEADER_BYTES") {
+		t.Fatal("built contract lost its mailbox header size")
 	}
 
 	free, err := chunkFreeIdentifiers(f.dir, chunk("runtime-abi.js", rel))

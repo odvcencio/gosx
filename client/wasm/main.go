@@ -7,6 +7,7 @@ import (
 	"syscall/js"
 
 	"m31labs.dev/gosx/client/bridge"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/vm"
 )
 
@@ -18,7 +19,10 @@ func registerRuntime(b *bridge.Bridge) {
 		}
 	})
 	b.SetPatchCallback(func(islandID, patchJSON string) {
-		js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
+		applyLegacyPatches(islandID, patchJSON)
+	})
+	b.SetPatchMailboxCallback(func(islandID string, mailbox []byte) {
+		applyPatchMailbox(islandID, mailbox)
 	})
 	setRuntimeFunc("__gosx_hydrate", hydrateRuntimeFunc(b))
 	setRuntimeFunc("__gosx_hydrate_canvas", hydrateCanvasRuntimeFunc(b))
@@ -42,6 +46,7 @@ func registerRuntime(b *bridge.Bridge) {
 	// inert when the page does not opt into preview mode via the
 	// gosx-preview=1 query parameter.
 	registerCrossFrameRelay(b)
+	registerRuntimeABI(b)
 }
 
 func setRuntimeFunc(name string, fn js.Func) {
@@ -141,7 +146,7 @@ func actionRuntimeFunc(b *bridge.Bridge) js.Func {
 			logRuntimeError("dispatch error", err)
 			return jsError(err)
 		}
-		return applyPatchedResult(args[0].String(), patches)
+		return applyPatchedResult(b, args[0].String(), patches)
 	})
 }
 
@@ -288,16 +293,46 @@ func normalizeJSONArg(value js.Value, fallback string) (string, error) {
 	}
 }
 
-func applyPatchedResult(islandID string, patches []vm.PatchOp) any {
+func applyPatchedResult(b *bridge.Bridge, islandID string, patches []vm.PatchOp) any {
 	if len(patches) == 0 {
 		return js.ValueOf(0)
 	}
+	b.EmitPatches(islandID, patches)
+	return js.ValueOf(len(patches))
+}
+
+func applyLegacyPatches(islandID, patchJSON string) {
+	apply := js.Global().Get("__gosx_apply_patches")
+	if apply.Type() == js.TypeFunction {
+		apply.Invoke(islandID, patchJSON)
+	}
+}
+
+func applyPatchMailbox(islandID string, mailbox []byte) {
+	apply := js.Global().Get("__gosx_apply_patch_mailbox")
+	if apply.Type() == js.TypeFunction {
+		apply.Invoke(islandID, bytesToUint8Array(mailbox))
+		return
+	}
+	// A stale patch.js may not know the binary path yet. Decode only in that
+	// compatibility case and preserve the old JSON callback contract.
+	_, _, patches, err := runtimewasm.DecodePatchMailbox(mailbox)
+	if err != nil {
+		logRuntimeError("patch mailbox decode", err)
+		return
+	}
 	patchJSON, err := bridge.MarshalPatches(patches)
 	if err != nil {
-		return js.ValueOf("marshal:" + err.Error())
+		logRuntimeError("patch fallback marshal", err)
+		return
 	}
-	js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
-	return js.ValueOf(len(patches))
+	applyLegacyPatches(islandID, patchJSON)
+}
+
+func bytesToUint8Array(data []byte) js.Value {
+	array := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(array, data)
+	return array
 }
 
 func logRuntimeError(prefix string, err error) {

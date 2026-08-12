@@ -1208,3 +1208,63 @@ globalThis.__gosx_typed_count = value.count;
 		t.Fatalf("tdewolff bundle kept TypeScript syntax: %s", built.code)
 	}
 }
+
+func TestShippedRuntimeWASMLeavesAreTypedAndBuildInTheirOwners(t *testing.T) {
+	dir := shippedClientJS(t)
+	leaves := []struct {
+		rel    string
+		marker string
+		global string
+	}{
+		{rel: "../runtime/wasm/abi.ts", marker: "function featureMaskForVariant", global: "__gosx_runtime_abi_support"},
+		{rel: "../runtime/wasm/mailbox.ts", marker: "function decodePatchMailbox", global: "__gosx_runtime_mailbox"},
+		{rel: "../runtime/wasm/loader.ts", marker: "async function load", global: "__gosx_runtime_wasm_loader"},
+	}
+	for _, leaf := range leaves {
+		leaf := leaf
+		t.Run(filepath.Base(leaf.rel), func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(leaf.rel)))
+			if err != nil {
+				t.Fatalf("read shipped runtime WASM leaf %s: %v", leaf.rel, err)
+			}
+			if !strings.Contains(string(body), leaf.marker) || !strings.Contains(string(body), leaf.global) {
+				t.Fatalf("%s is missing its typed runtime marker/global", leaf.rel)
+			}
+			for _, name := range []string{"bootstrap.js", "bootstrap-runtime.js"} {
+				var entry output
+				for _, candidate := range outputs {
+					if candidate.name == name {
+						entry = candidate
+						break
+					}
+				}
+				if entry.name == "" {
+					t.Fatalf("chunk table has no %s", name)
+				}
+				built, err := buildBundle(dir, entry, "esbuild", false)
+				if err != nil {
+					t.Fatalf("build %s with typed runtime WASM leaf %s: %v", name, leaf.rel, err)
+				}
+				if strings.Contains(built.code, "@typedef {object} GoSXRuntime") {
+					t.Errorf("%s retained source-only runtime ABI JSDoc", name)
+				}
+				var parsed struct {
+					Sources []string `json:"sources"`
+				}
+				if err := json.Unmarshal([]byte(built.m), &parsed); err != nil {
+					t.Fatalf("decode %s source map: %v", name, err)
+				}
+				found := false
+				for _, source := range parsed.Sources {
+					if source == leaf.rel {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("%s source map does not retain %s", name, leaf.rel)
+				}
+			}
+		})
+	}
+}

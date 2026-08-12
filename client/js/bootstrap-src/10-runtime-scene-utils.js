@@ -264,6 +264,13 @@
   // window.__gosx_runtime_ready() once it has finished initializing its
   // exported functions (__gosx_hydrate, __gosx_action, etc.).
   async function loadRuntime(runtimeRef) {
+    // O4's typed loader owns the direct ABI handshake and binary mailbox
+    // surface. Keep this function as the compatibility entry point until O6
+    // removes the authored runtime shim entirely.
+    const typedLoader = window.__gosx_runtime_wasm_loader;
+    if (typedLoader && typeof typedLoader.load === "function") {
+      return typedLoader.load(runtimeRef);
+    }
     if (typeof Go === "undefined") {
       console.error("[gosx] wasm_exec.js must be loaded before bootstrap.js");
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {

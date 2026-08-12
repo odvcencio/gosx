@@ -480,7 +480,10 @@ const budgets = [
   // progressive-model render commit and quality-rung diagnostics.
   // Bumped raw/gzip to exact 1_482_820 / 400_783 for the typed O1 math and
   // compressed-array leaves; brotli remains inside its prior ceiling.
-  { file: "bootstrap.js", raw: 1_482_820, gzip: 400_783, brotli: 322_414 },
+  // O4 adds the typed direct-runtime ABI probe, mailbox decoder and WASM
+  // loader. Measured: 1_487_374 / 402_278 / 323_297; keep the usual narrow
+  // rounded ceilings.
+  { file: "bootstrap.js", raw: 1_488_000, gzip: 403_000, brotli: 324_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -529,7 +532,9 @@ const budgets = [
   // runtime surface. Final measurement: 125_629 / 34_137 / 29_910.
   // Bumped to exact 127_614 / 34_641 / 30_369 for the integrated progressive
   // model lifecycle and quality-rung runtime surfaces.
-  { file: "bootstrap-runtime.js", raw: 127_614, gzip: 34_641, brotli: 30_369 },
+  // O4 direct-runtime ABI support is also present on selective runtime pages.
+  // Measured: 132_163 / 36_077 / 31_547.
+  { file: "bootstrap-runtime.js", raw: 133_000, gzip: 37_000, brotli: 32_000 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -1192,9 +1197,13 @@ const routeBudgets = [
     // Final observable-telemetry measurement: 229_436 / 65_617 / 57_847.
     // Bumped to exact 232_335 / 66_386 / 58_527 for the integrated
     // progressive-model lifecycle and quality-rung runtime surfaces.
-    raw: 232_335,
-    gzip: 66_386,
-    brotli: 58_527,
+    // O4 direct-runtime ABI support adds the same typed loader seam here.
+    // Measured: 232_426 / 66_404 / 58_540; keep narrow rounded ceilings.
+    // O4's executable loader is carried by bootstrap-runtime.js. Measured:
+    // 236_884 / 67_822 / 59_705.
+    raw: 238_000,
+    gzip: 68_000,
+    brotli: 60_000,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1294,9 +1303,11 @@ const routeBudgets = [
     // lifecycle guards in the base Scene3D chunk.
     // Bumped to exact 1_174_893 / 312_526 / 264_003 for the integrated quality
     // telemetry path.
-    raw: 1_174_893,
-    gzip: 312_526,
-    brotli: 264_003,
+    // O4's executable loader is carried by bootstrap-runtime.js. Measured:
+    // 1_179_442 / 313_962 / 265_181.
+    raw: 1_180_000,
+    gzip: 314_000,
+    brotli: 266_000,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1376,9 +1387,11 @@ const routeBudgets = [
     // lifecycle guards in the base Scene3D chunk.
     // Bumped to exact 1_002_845 / 278_098 / 235_988 for the integrated quality
     // telemetry path.
-    raw: 1_002_845,
-    gzip: 278_098,
-    brotli: 235_988,
+    // O4's executable loader is carried by bootstrap-runtime.js. Measured:
+    // 1_007_394 / 279_534 / 237_166.
+    raw: 1_008_000,
+    gzip: 280_000,
+    brotli: 238_000,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1449,9 +1462,11 @@ const routeBudgets = [
     // lifecycle guards in the base Scene3D chunk.
     // Bumped to exact 1_386_019 / 370_570 / 313_398 for the integrated quality
     // telemetry path.
-    raw: 1_386_019,
-    gzip: 370_570,
-    brotli: 313_398,
+    // O4's executable loader is carried by bootstrap-runtime.js. Measured:
+    // 1_390_568 / 372_006 / 314_576.
+    raw: 1_391_000,
+    gzip: 373_000,
+    brotli: 315_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1524,9 +1539,11 @@ const routeBudgets = [
     // lifecycle guards in the base Scene3D chunk.
     // Bumped to exact 1_027_849 / 270_003 / 226_214 for the integrated quality
     // telemetry path.
-    raw: 1_027_849,
-    gzip: 270_003,
-    brotli: 226_214,
+    // O4's executable loader is carried by bootstrap-runtime.js. Measured:
+    // 1_032_398 / 271_439 / 227_392.
+    raw: 1_034_000,
+    gzip: 272_000,
+    brotli: 228_000,
   },
 
 ];
