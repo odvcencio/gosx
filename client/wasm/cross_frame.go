@@ -116,16 +116,19 @@ func maybeAutoEnableCrossFrameRelay(b *bridge.Bridge) {
 	if searchStr == "" {
 		return
 	}
-	prefix, origin, ok := parsePreviewModeQuery(searchStr)
-	if !ok {
+	query := inspectPreviewModeQuery(searchStr)
+	if !query.enabled {
+		if query.diagnostic != "" {
+			warnPreviewRelayDisabled(query.diagnostic)
+		}
 		return
 	}
-	b.EnableCrossFrameRelay(prefix, origin)
+	b.EnableCrossFrameRelay(query.prefix, query.origin)
 	configure := js.Global().Get("__gosx_relay_configure")
 	if configure.Type() == js.TypeFunction {
 		cfg := js.Global().Get("Object").New()
-		cfg.Set("prefix", prefix)
-		cfg.Set("allowedOrigin", origin)
+		cfg.Set("prefix", query.prefix)
+		cfg.Set("allowedOrigin", query.origin)
 		arr := js.Global().Get("Array").New(cfg)
 		configure.Invoke(arr)
 	}
@@ -133,6 +136,18 @@ func maybeAutoEnableCrossFrameRelay(b *bridge.Bridge) {
 	if flush.Type() == js.TypeFunction {
 		flush.Invoke()
 	}
+}
+
+func warnPreviewRelayDisabled(reason string) {
+	console := js.Global().Get("console")
+	if !console.Truthy() {
+		return
+	}
+	warn := console.Get("warn")
+	if warn.Type() != js.TypeFunction {
+		return
+	}
+	warn.Invoke("[gosx/relay] preview relay disabled: " + reason)
 }
 
 // parsePreviewModeQuery is implemented in cross_frame_parse.go (no build
