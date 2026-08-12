@@ -1235,6 +1235,9 @@
 
   function normalizeSceneModel(item, index) {
     const current = item && typeof item === "object" ? item : {};
+    const previewSrc = typeof current.previewSrc === "string" && current.previewSrc.trim() ? current.previewSrc.trim() : "";
+    const fullSrc = typeof current.fullSrc === "string" && current.fullSrc.trim() ? current.fullSrc.trim() : "";
+    const progressive = Boolean(current.progressive && previewSrc && fullSrc);
     const scaleSource = current.scale && typeof current.scale === "object" ? current.scale : null;
     const hasStatic = Object.prototype.hasOwnProperty.call(current, "static");
     const hasPickable = Object.prototype.hasOwnProperty.call(current, "pickable");
@@ -1291,7 +1294,10 @@
     }
     const model = {
       id: typeof current.id === "string" && current.id.trim() ? current.id.trim() : ("scene-model-" + index),
-      src: typeof current.src === "string" && current.src.trim() ? current.src.trim() : "",
+      src: progressive ? previewSrc : (typeof current.src === "string" && current.src.trim() ? current.src.trim() : ""),
+      previewSrc,
+      fullSrc,
+      progressive,
       material: materialName,
       x: sceneNumber(current.x, 0),
       y: sceneNumber(current.y, 0),
@@ -3842,6 +3848,41 @@
     }
   }
 
+  function sceneNormalizePostDOMRegionBounds(raw) {
+    if (!sceneIsPlainObject(raw)) return null;
+    const mode = typeof raw.mode === "string" ? raw.mode.trim().toLowerCase() : "";
+    if (mode !== "union") return null;
+    const left = Math.max(0, Math.min(1, sceneNumber(raw.left, 0)));
+    const top = Math.max(0, Math.min(1, sceneNumber(raw.top, 0)));
+    const right = Math.max(0, Math.min(1, sceneNumber(raw.right, 0)));
+    const bottom = Math.max(0, Math.min(1, sceneNumber(raw.bottom, 0)));
+    return {
+      mode: "union",
+      active: raw.active === true,
+      left: Math.min(left, right),
+      top: Math.min(top, bottom),
+      right: Math.max(left, right),
+      bottom: Math.max(top, bottom),
+      paddingPx: Math.max(0, Math.min(2048, sceneNumber(raw.paddingPx, 0))),
+    };
+  }
+
+  function scenePostDOMRegionPixelBounds(effect, width, height) {
+    const raw = effect && effect._domRegionBounds;
+    if (!raw || raw.mode !== "union") return { mode: "off", bounds: null };
+    if (raw.active !== true) return { mode: "union", bounds: null };
+    const w = Math.max(1, Math.floor(sceneNumber(width, 1)));
+    const h = Math.max(1, Math.floor(sceneNumber(height, 1)));
+    const left = Math.max(0, Math.min(w, Math.floor(sceneNumber(raw.left, 0) * w)));
+    const top = Math.max(0, Math.min(h, Math.floor(sceneNumber(raw.top, 0) * h)));
+    const right = Math.max(0, Math.min(w, Math.ceil(sceneNumber(raw.right, 0) * w)));
+    const bottom = Math.max(0, Math.min(h, Math.ceil(sceneNumber(raw.bottom, 0) * h)));
+    const boundsWidth = right - left;
+    const boundsHeight = bottom - top;
+    if (boundsWidth <= 0 || boundsHeight <= 0) return { mode: "union", bounds: null };
+    return { mode: "union", bounds: { x: left, y: top, width: boundsWidth, height: boundsHeight } };
+  }
+
   // applyScenePostUniformsCommand (SCENE_CMD_SET_POST_UNIFORMS): patches
   // per-frame uniform overrides onto already-installed named CustomPost
   // passes WITHOUT rebuilding the post chain. This exists precisely because
@@ -3890,12 +3931,20 @@
       if (!sceneIsPlainObject(entry)) continue;
       const name = typeof entry.name === "string" ? entry.name.trim() : "";
       const patch = sceneIsPlainObject(entry.uniforms) ? entry.uniforms : null;
-      if (!name || !patch) continue;
+      const ownsBounds = Object.prototype.hasOwnProperty.call(entry, "domRegionBounds");
+      const bounds = ownsBounds && entry.domRegionBounds !== null
+        ? sceneNormalizePostDOMRegionBounds(entry.domRegionBounds)
+        : null;
+      if (!name || (!patch && !ownsBounds)) continue;
       let matched = 0;
       for (let i = 0; i < postEffects.length; i += 1) {
         const pass = postEffects[i];
         if (!pass || typeof pass.name !== "string" || pass.name !== name) continue;
-        pass.uniforms = Object.assign({}, pass.uniforms, patch);
+        if (patch) pass.uniforms = Object.assign({}, pass.uniforms, patch);
+        if (ownsBounds) {
+          if (bounds) pass._domRegionBounds = bounds;
+          else delete pass._domRegionBounds;
+        }
         matched += 1;
       }
       if (matched > 0) {
@@ -5919,6 +5968,7 @@
     sceneNormalizeDirection,
     sceneNowMilliseconds,
     sceneNumber,
+    scenePostDOMRegionPixelBounds,
     sceneWaterAdvanceClock,
     sceneWaterResetClock,
     sceneObjectAnimated,

@@ -22,6 +22,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const nodeCrypto = require("node:crypto");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
 const bootstrapLiteSource = fs.readFileSync(path.join(__dirname, "bootstrap-lite.js"), "utf8");
@@ -36,13 +37,27 @@ const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
-const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
-const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15d-scene-dom-regions.js"), "utf8");
-const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
-const stripeBridgeSource = fs.readFileSync(path.join(__dirname, "stripe-bridge.js"), "utf8");
-const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
+const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dom-regions.ts"), "utf8");
+const runtimeContractSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "generated", "runtime-abi.ts"), "utf8");
+const runtimeManifestHashMatch = runtimeContractSource.match(/manifestHash:\s*"([a-f0-9]{64})"/);
+assert.ok(runtimeManifestHashMatch, "generated runtime ABI must publish a manifest hash");
+const runtimeManifestHash = runtimeManifestHashMatch[1];
+const hostCompatibilitySource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8");
+const patchSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "patch.ts"), "utf8"),
+].join("\n");
+const stripeBridgeSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "stripe-bridge.ts"), "utf8"),
+].join("\n");
+const navigationSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "navigation.ts"), "utf8"),
+].join("\n");
 
 function bootstrapSourceMapSource(mapName, sourceName) {
   const sourceMap = JSON.parse(fs.readFileSync(path.join(__dirname, mapName), "utf8"));
@@ -1567,6 +1582,16 @@ class FakeResponse {
   }
 }
 
+// Derives the WASM runtime asset hash a manifest fixture should carry from the
+// actual bytes its fetch route serves, mirroring what verifyAssetHash() in
+// client/runtime/wasm/loader.ts computes from the real fetched artifact. This
+// keeps the fixture hash honest instead of pinning it to a constant that
+// would pass regardless of which bytes the route serves.
+function runtimeAssetHashForRoute(route) {
+  const bytes = route && typeof route !== "function" && Array.isArray(route.bytes) ? route.bytes : [];
+  return nodeCrypto.createHash("sha256").update(Buffer.from(Uint8Array.from(bytes))).digest("hex").slice(0, 16);
+}
+
 function buildMinimalGLBBytes() {
   const positions = new Float32Array([
     0, 0.75, 0,
@@ -2119,6 +2144,15 @@ function createContext(options) {
         }
         return words;
       },
+      subtle: {
+        async digest(algorithm, bytes) {
+          const algoName = typeof algorithm === "string" ? algorithm : algorithm && algorithm.name;
+          const nodeAlgo = { "SHA-1": "sha1", "SHA-256": "sha256", "SHA-384": "sha384", "SHA-512": "sha512" }[algoName] || "sha256";
+          const view = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
+          const digest = nodeCrypto.createHash(nodeAlgo).update(Buffer.from(view)).digest();
+          return Uint8Array.from(digest).buffer;
+        },
+      },
     },
     CustomEvent: class CustomEvent {
       constructor(type, init = {}) {
@@ -2381,6 +2415,19 @@ function createContext(options) {
   }
 
   context.window = context;
+  const runtimeABI = {
+    handshake() {
+      const contract = context.__gosx_runtime_contract;
+      return contract ? {
+        abiVersion: contract.abiVersion,
+        mailboxVersion: contract.mailboxVersion,
+        manifestHash: contract.manifestHash,
+        variant: "core",
+        featureMask: contract.variants.core,
+      } : null;
+    },
+  };
+  context.__gosx = { runtime: { abi: runtimeABI } };
   context.__gosx_engine_factories = Object.assign({}, options.engineFactories || {});
   context.__engineMounts = engineMounts;
   context.__engineDisposals = engineDisposals;
@@ -2414,6 +2461,13 @@ function createContext(options) {
   };
 
   if (options.manifest) {
+    const runtime = options.manifest.runtime;
+    if (runtime && runtime.path && !runtime.hash) {
+      runtime.hash = runtimeAssetHashForRoute(routes.get(runtime.path));
+      runtime.manifestHash = runtimeManifestHash;
+      runtime.variant = "core";
+      runtime.featureMask = 17;
+    }
     const manifestScript = document.createElement("script");
     manifestScript.id = "gosx-manifest";
     manifestScript.textContent = JSON.stringify(options.manifest);
@@ -3063,6 +3117,80 @@ function loadSceneAdaptiveQualityAPI() {
     };
   `, context, { filename: "scene-adaptive-quality.js" });
   return { api: context.adaptiveAPI, clock };
+}
+
+function loadSceneViewportAPI(options = {}) {
+  const mountSource = readSceneMountSrc();
+  const start = mountSource.indexOf("function sceneViewportDevicePixelRatio");
+  const end = mountSource.indexOf("function observeSceneViewport", start);
+  assert.notEqual(start, -1, "viewport start anchor missing");
+  assert.notEqual(end, -1, "viewport end anchor missing");
+  const baseStart = mountSource.indexOf("function sceneViewportBase");
+  const baseEnd = mountSource.indexOf("function scheduleSceneIdleTask", baseStart);
+  assert.notEqual(baseStart, -1, "viewport base start anchor missing");
+  assert.notEqual(baseEnd, -1, "viewport base end anchor missing");
+  const devicePixelRatio = Number.isFinite(Number(options.devicePixelRatio))
+    ? Number(options.devicePixelRatio)
+    : 1;
+  const environment = Object.assign({ devicePixelRatio }, options.environment || {});
+  const context = {
+    window: { devicePixelRatio },
+    __environment: environment,
+  };
+  vm.runInNewContext(`
+    function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+    function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
+    function sceneEnvironmentState() { return __environment; }
+    function defaultSceneMaxDevicePixelRatio(capability) {
+      if (capability && (capability.reducedData || capability.lowPower)) {
+        switch (capability.tier) {
+          case "constrained": return 1.25;
+          case "balanced": return 1.5;
+          default: return 1.75;
+        }
+      }
+      switch (capability && capability.tier) {
+        case "constrained": return 1.5;
+        case "balanced": return 1.75;
+        default: return 2;
+      }
+    }
+  ` + mountSource.slice(baseStart, baseEnd) + mountSource.slice(start, end) + `
+    globalThis.viewportAPI = {
+      sceneViewportBase,
+      sceneViewportDevicePixelRatio,
+      sceneViewportFromMount,
+    };
+  `, context, { filename: "scene-viewport.js" });
+  return context.viewportAPI;
+}
+
+function resolveSceneViewportForTest(props, options = {}) {
+  const api = loadSceneViewportAPI(options);
+  const width = Number.isFinite(Number(options.measuredWidth))
+    ? Number(options.measuredWidth)
+    : sceneNumberForTest(props && props.width, 390);
+  const height = Number.isFinite(Number(options.measuredHeight))
+    ? Number(options.measuredHeight)
+    : sceneNumberForTest(props && props.height, 844);
+  const base = api.sceneViewportBase(Object.assign({ responsive: false }, props || {}));
+  if (options.base) Object.assign(base, options.base);
+  const rect = { width, height, left: 0, top: 0 };
+  const mount = { getBoundingClientRect() { return rect; } };
+  const canvas = { getBoundingClientRect() { return rect; } };
+  return api.sceneViewportFromMount(
+    mount,
+    Object.assign({ responsive: false }, props || {}),
+    base,
+    canvas,
+    options.capability || { tier: "full" },
+    options.adaptiveQuality || null,
+  );
+}
+
+function sceneNumberForTest(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function createAdaptiveQualityHarness(extraProps) {
@@ -3975,7 +4103,10 @@ function bootstrapChunkSources(bundleName) {
 // it when a test inspects source text that one file no longer holds alone.
 function readBootstrapSrc(...names) {
   return names
-    .map((name) => fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8"))
+    .map((name) => fs.readFileSync(
+      name.startsWith("../") ? path.join(__dirname, name) : path.join(__dirname, "bootstrap-src", name),
+      "utf8",
+    ))
     .join("\n");
 }
 
@@ -3984,20 +4115,24 @@ function readBootstrapSrc(...names) {
 // Scene3D chunk; it is now nine files. A source assertion about the mount path
 // must read them all.
 function readSceneMountSrc() {
-  const srcDir = path.join(__dirname, "bootstrap-src");
-  const parts = fs.readdirSync(srcDir).filter((n) => /^20[a-z]?-scene-mount.*\.js$/.test(n));
-  // Build order: 20a..20h first, then the engine factory in 20-scene-mount.js.
-  parts.sort();
-  const factory = parts.indexOf("20-scene-mount.js");
-  if (factory !== -1) parts.push(parts.splice(factory, 1)[0]);
-  return parts.map((n) => fs.readFileSync(path.join(srcDir, n), "utf8")).join("\n");
+  return readBootstrapSrc(
+    "../runtime/scene3d/mount-backend.ts",
+    "../runtime/scene3d/mount-webgl.ts",
+    "../runtime/scene3d/mount-quality.ts",
+    "../runtime/scene3d/overlays.ts",
+    "../runtime/scene3d/mount-viewport.ts",
+    "../runtime/scene3d/overlay-dom.ts",
+    "../runtime/scene3d/mount-controls.ts",
+    "../runtime/scene3d/mount-telemetry.ts",
+    "../runtime/scene3d/mount.ts",
+  );
 }
 
 // readWebGPUBackendSrc joins the WebGPU backend source files. The Selena
 // uniform packer moved out of createSceneWebGPURenderer into 16a1, so a source
 // assertion about the backend must read both files.
 function readWebGPUBackendSrc() {
-  return readBootstrapSrc("16a-scene-webgpu.js", "16a1-scene-webgpu-selena-uniforms.js");
+  return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.js");
 }
 
 // readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
@@ -4024,7 +4159,7 @@ function freshFeatureBundleSource(name, options) {
   const opts = options || {};
   function read(rel) {
     const source = fs.readFileSync(path.join(clientJS, rel), "utf8");
-    if (rel.endsWith("16-scene-webgl.js") && opts.exportWaterRendererForTest) {
+    if (rel.endsWith("webgl.ts") && opts.exportWaterRendererForTest) {
       return source + "\nwindow.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n";
     }
     return source;
@@ -5412,6 +5547,8 @@ module.exports = {
   CUSTOM_POST_TIME_LAYOUT_FIXTURE,
   sceneCoreSourceRange,
   loadSceneAdaptiveQualityAPI,
+  loadSceneViewportAPI,
+  resolveSceneViewportForTest,
   createAdaptiveQualityHarness,
   createQualityLadderHarness,
   THREE_RUNG_LADDER,

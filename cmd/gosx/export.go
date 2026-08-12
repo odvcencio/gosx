@@ -99,6 +99,12 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "gosx-runtime.wasm"), true
 	case "/gosx/runtime-islands.wasm":
 		return filepath.Join(buildDir, "gosx-runtime-islands.wasm"), true
+	case "/gosx/runtime-core.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-core.wasm"), true
+	case "/gosx/runtime-engine.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-engine.wasm"), true
+	case "/gosx/runtime-collab.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-collab.wasm"), true
 	case "/gosx/wasm_exec.js":
 		return filepath.Join(buildDir, "wasm_exec.js"), true
 	case "/gosx/standard-go-wasm_exec.js":

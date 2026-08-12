@@ -12,14 +12,14 @@
   }
 
   function disposeBootstrapOnlyPage() {
-    if (typeof window.__gosx_dispose_runtime_content === "function") {
-      window.__gosx_dispose_runtime_content(document.body || document.documentElement);
+    if (gosxHost.dom && typeof gosxHost.dom.dispose === "function") {
+      gosxHost.dom.dispose(document.body || document.documentElement);
     } else {
-      if (typeof window.__gosx_dispose_declarative_regions === "function") {
-        window.__gosx_dispose_declarative_regions(document.body || document.documentElement);
+      if (gosxHost.regions && typeof gosxHost.regions.dispose === "function") {
+        gosxHost.regions.dispose(document.body || document.documentElement);
       }
-      if (typeof window.__gosx_dispose_runtime_surfaces === "function") {
-        window.__gosx_dispose_runtime_surfaces(document.body || document.documentElement);
+      if (gosxHost.surfaces && typeof gosxHost.surfaces.dispose === "function") {
+        gosxHost.surfaces.dispose(document.body || document.documentElement);
       }
       disposeManagedMotion();
       disposeManagedTextLayouts();
@@ -29,27 +29,31 @@
   function bootstrapLitePage() {
     refreshGosxEnvironmentState("bootstrap-lite");
     refreshGosxDocumentState("bootstrap-lite");
-    if (typeof window.__gosx_mount_runtime_content === "function") {
-      window.__gosx_mount_runtime_content(document.body || document.documentElement);
+    if (gosxHost.dom && typeof gosxHost.dom.mount === "function") {
+      gosxHost.dom.mount(document.body || document.documentElement);
     } else {
       mountManagedMotion(document.body || document.documentElement);
       mountManagedTextLayouts(document.body || document.documentElement);
-      if (typeof window.__gosx_mount_runtime_surfaces === "function") {
-        window.__gosx_mount_runtime_surfaces(document.body || document.documentElement);
+      if (gosxHost.surfaces && typeof gosxHost.surfaces.mount === "function") {
+        gosxHost.surfaces.mount(document.body || document.documentElement);
       }
-      if (typeof window.__gosx_mount_stream_templates === "function") {
-        window.__gosx_mount_stream_templates(document.body || document.documentElement);
+      if (gosxHost.stream && typeof gosxHost.stream.consume === "function") {
+        gosxHost.stream.consume(document.body || document.documentElement);
       }
-      if (typeof window.__gosx_mount_declarative_regions === "function") {
-        window.__gosx_mount_declarative_regions(document.body || document.documentElement);
+      if (gosxHost.regions && typeof gosxHost.regions.mount === "function") {
+        gosxHost.regions.mount(document.body || document.documentElement);
       }
     }
     window.__gosx.ready = true;
     refreshGosxDocumentState("ready");
   }
 
-  window.__gosx_bootstrap_page = bootstrapLitePage;
-  window.__gosx_dispose_page = disposeBootstrapOnlyPage;
+  gosxHost.lifecycle = Object.assign(gosxHost.lifecycle || {}, {
+    bootstrapPage: bootstrapLitePage,
+    disposePage: disposeBootstrapOnlyPage,
+  });
+  gosxHostCompatibility.install("__gosx_bootstrap_page", bootstrapLitePage);
+  gosxHostCompatibility.install("__gosx_dispose_page", disposeBootstrapOnlyPage);
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bootstrapLitePage);

@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -137,10 +137,21 @@ test-fuzz-smoke:
 # budget: nesting it keeps those requires out of the library's go.mod and out of
 # every consumer's module graph. It is invoked from its own directory for the
 # same reason.
-build-bootstrap:
-	cd cmd/buildbootstrap && $(GO) run .
+BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript
 
-# test-js runs three independent checks:
+build-bootstrap:
+	cd cmd/buildbootstrap && $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' .
+
+# test-runtime-types uses the real TypeScript compiler in strict mode for the
+# generated ABI contract. The wider runtime is deliberately
+# guarded by buildbootstrap's typed transpilation, chunk closure and source-graph
+# coverage checks: most legacy script bodies remain JSDoc JavaScript syntax and
+# are not falsely advertised as strict TypeScript yet.
+test-runtime-types:
+	cd client/runtime && npm ci
+	cd client/runtime && npm run typecheck
+
+# test-js runs four independent checks:
 #   1. The unit tests of the bundle builder itself. cmd/buildbootstrap
 #      writes every shipped client bundle, so a defect there corrupts
 #      bootstrap.js, bootstrap-lite.js, bootstrap-runtime.js, every
@@ -156,18 +167,23 @@ build-bootstrap:
 #      without a local go.work.
 #   3. The JS runtime unit tests (`node --test`, stdlib-only, with no
 #      npm dependencies to install), across every *.test.js /
-#      *.test.mjs file. The glob picks up new test files on its own,
-#      so nothing here needs an edit when a suite is added or split.
-#      This includes the 562 client-runtime tests in the
+#      *.test.mjs file under client/js, plus every *.test.js file one
+#      directory below client/runtime (currently
+#      client/runtime/wasm/loader.test.js, the WASM loader's own
+#      suite; it lived here unglobbed and never ran under `make
+#      test-js` or `make ci`). Both globs pick up new test files on
+#      their own, so nothing here needs an edit when a suite is added
+#      or split. This includes the 562 client-runtime tests in the
 #      runtime-NN-*.test.js files (split out of the former
 #      runtime.test.js; their shared setup lives in
 #      client/js/runtime-test-harness.js, which the glob skips
 #      because it is not a *.test.js file) and the size-budget gates
 #      in bootstrap-size.test.mjs.
 test-js:
-	cd cmd/buildbootstrap && GOWORK=off $(GO) test ./...
-	cd cmd/buildbootstrap && GOWORK=off $(GO) run . --check
-	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
+	$(MAKE) test-runtime-types
+	cd cmd/buildbootstrap && GOWORK=off $(GO) test -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
+	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
+	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs ./client/runtime/**/*.test.js
 
 # test-editor builds, vets and tests the nested editor module.
 #
@@ -258,6 +274,11 @@ test-e2e:
 # without Chrome.
 test-perf-browser:
 	GOSX_REQUIRE_CHROME=1 $(GO) test -tags browser -timeout 10m ./perf/...
+
+# Requires OUROBOROS_SMOKE_BASELINE to point at a committed smoke artifact.
+# CI intentionally does not invoke this until that versioned browser capture lands.
+test-ouroboros-smoke:
+	$(SHELL) ./scripts/ouroboros-smoke-ci.sh
 
 # Build the deployable docs bundle and prove the production server can serve
 # the water route and its content-addressed Scene3D runtime assets.

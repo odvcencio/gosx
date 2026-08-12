@@ -1066,6 +1066,9 @@ type HTMLSurface struct {
 type Model struct {
 	ID                 string
 	Src                string
+	PreviewSrc         string
+	FullSrc            string
+	Progressive        bool
 	Position           Vector3
 	Rotation           Euler
 	Scale              Vector3
@@ -3369,7 +3372,15 @@ func mat4FromTRS(t Vector3, q quaternion, s Vector3) []float64 {
 }
 
 func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
+	previewSrc := strings.TrimSpace(model.PreviewSrc)
+	fullSrc := strings.TrimSpace(model.FullSrc)
 	src := strings.TrimSpace(model.Src)
+	if src == "" {
+		src = fullSrc
+	}
+	if src == "" {
+		src = previewSrc
+	}
 	if src == "" {
 		return
 	}
@@ -3386,13 +3397,16 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 			OutState:   model.OutState.legacyProps(),
 			Live:       normalizeLive(model.Live),
 		},
-		Src:      src,
-		ScaleX:   model.Scale.X,
-		ScaleY:   model.Scale.Y,
-		ScaleZ:   model.Scale.Z,
-		Bounds:   model.Bounds,
-		Fit:      strings.TrimSpace(model.Fit),
-		FitAlign: strings.TrimSpace(model.FitAlign),
+		Src:         src,
+		PreviewSrc:  previewSrc,
+		FullSrc:     fullSrc,
+		Progressive: model.Progressive,
+		ScaleX:      model.Scale.X,
+		ScaleY:      model.Scale.Y,
+		ScaleZ:      model.Scale.Z,
+		Bounds:      model.Bounds,
+		Fit:         strings.TrimSpace(model.Fit),
+		FitAlign:    strings.TrimSpace(model.FitAlign),
 	}
 	rotation := eulerFromQuaternion(world.Rotation)
 	record.RotationX = rotation.X

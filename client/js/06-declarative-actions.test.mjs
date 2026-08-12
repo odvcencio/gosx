@@ -1,4 +1,4 @@
-// Unit tests for bootstrap-src/06-declarative-actions.js — the declarative
+// Unit tests for runtime/host/actions.ts — the declarative
 // interaction primitives (data-gosx-action / -submit-on / -set). Runs the module
 // in a node:vm with a minimal DOM stub and asserts the delegated handlers.
 import test from "node:test";
@@ -9,10 +9,10 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "06-declarative-actions.js"),
-  "utf8"
-);
+const moduleSrc = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "actions.ts"), "utf8"),
+].join("\n");
 
 // Minimal selector matcher: tag, [attr], [attr='val'], tag[attr], tag[attr='val'].
 function matchSel(el, sel) {

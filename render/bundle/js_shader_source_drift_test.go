@@ -21,7 +21,7 @@ import (
 // jsWebGPURendererFile is the browser WebGPU renderer, relative to this package
 // directory. Go runs a test with its package directory as the working
 // directory, so this path is stable.
-var jsWebGPURendererFile = filepath.Join("..", "..", "client", "js", "bootstrap-src", "16a-scene-webgpu.js")
+var jsWebGPURendererFile = filepath.Join("..", "..", "client", "runtime", "scene3d", "webgpu.ts")
 
 // readJSWebGPURenderer returns the whole browser WebGPU renderer source.
 func readJSWebGPURenderer(t *testing.T) string {
@@ -41,7 +41,7 @@ func readJSWebGPURenderer(t *testing.T) string {
 // shadow pass decides which face fills the map with a gl.cullFace call rather
 // than with shader text, and the tone-map table guard, because WebGL2 carries
 // two name-to-number tables where WebGPU carries one.
-var jsWebGLRendererFile = filepath.Join("..", "..", "client", "js", "bootstrap-src", "16-scene-webgl.js")
+var jsWebGLRendererFile = filepath.Join("..", "..", "client", "runtime", "scene3d", "webgl.ts")
 
 // readJSWebGLRenderer returns the whole browser WebGL2 renderer source.
 func readJSWebGLRenderer(t *testing.T) string {

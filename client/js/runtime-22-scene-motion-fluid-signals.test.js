@@ -2017,7 +2017,7 @@ test("P1 hub outbound binding: signal publishes to socket and in-binding still w
 });
 
 test("Selena context-class fields resolve to live per-frame scene state on WebGL", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
 
   // The per-frame updater exists and derives every reserved name from real
   // scene state: camera, the

@@ -22,7 +22,64 @@ const {
   flushAsyncWork,
   telemetryPostBodies,
   telemetryEvents,
+  resolveSceneViewportForTest,
 } = require("./runtime-test-harness.js");
+
+test("Scene3D viewport honors minDevicePixelRatio as a sharpness floor after capability selection", () => {
+  const viewport = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 2,
+    maxPixels: 2073600,
+  }, {
+    devicePixelRatio: 1.85,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(viewport.devicePixelRatio, 1.85);
+  assert.ok(viewport.pixelWidth >= 720, "mobile backing width must stay at or above 720px");
+  assert.ok(viewport.pixelWidth * viewport.pixelHeight <= 2073600, "1080p max-pixel budget must remain a hard cap");
+});
+
+test("Scene3D viewport constrains the DPR floor with maxPixels and authored maxDevicePixelRatio", () => {
+  const pixelCapped = resolveSceneViewportForTest({
+    width: 1000,
+    height: 500,
+    minDevicePixelRatio: 1.8,
+    maxDevicePixelRatio: 2,
+    maxPixels: 720000,
+  }, { devicePixelRatio: 2 });
+  assert.ok(Math.abs(pixelCapped.devicePixelRatio - 1.2) < 0.001);
+  assert.equal(pixelCapped.pixelWidth * pixelCapped.pixelHeight, 720000);
+
+  const authoredMaxCapped = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 1.5,
+    maxPixels: 2073600,
+  }, { devicePixelRatio: 2 });
+  assert.equal(authoredMaxCapped.devicePixelRatio, 1.5);
+});
+
+test("Scene3D viewport preserves low-power DPR caps unless an authored floor raises them", () => {
+  const capped = resolveSceneViewportForTest({ width: 390, height: 844 }, {
+    devicePixelRatio: 3,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(capped.devicePixelRatio, 1.25);
+
+  const floored = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 2,
+  }, {
+    devicePixelRatio: 3,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(floored.devicePixelRatio, 1.85);
+});
 
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
   const mount = new FakeElement("div", null);

@@ -139,7 +139,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		addID(model.ID, path+".id", model.Pickable != nil && *model.Pickable)
 		addTargetID(model.ID)
 		validateObject(report, model.ObjectIR, path)
-		if strings.TrimSpace(model.Src) == "" {
+		if !modelHasValidAssetSource(model) {
 			report.add(Error, "scene.asset.missing", "Model scene record requires src", path+".src", model.ID, nil)
 		}
 		validateModel(report, model, path)
@@ -216,6 +216,13 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	for i, raw := range doc.PostEffects {
 		validatePostEffect(report, raw, fmt.Sprintf("postEffects[%d]", i))
 	}
+}
+
+func modelHasValidAssetSource(model scene.ModelIR) bool {
+	if strings.TrimSpace(model.Src) != "" {
+		return true
+	}
+	return model.Progressive && strings.TrimSpace(model.PreviewSrc) != "" && strings.TrimSpace(model.FullSrc) != ""
 }
 
 func validateObject(report *Report, object scene.ObjectIR, path string) {
@@ -874,6 +881,30 @@ func validateCustomPostDOMRegions(report *Report, record map[string]any, path st
 			}
 		}
 	}
+	if rawBounds, ok := dom["bounds"]; ok && rawBounds != nil {
+		bounds, ok := rawBounds.(map[string]any)
+		if !ok {
+			report.add(Error, "scene.post_effect.dom_regions.bounds", "CustomPost domRegions bounds must be an object", path+".domRegions.bounds", "", nil)
+			return
+		}
+		if rawMode, ok := bounds["mode"]; ok && rawMode != nil {
+			mode, ok := rawMode.(string)
+			if !ok || !validCustomPostDOMRegionBoundsMode(mode) {
+				report.add(Error, "scene.post_effect.dom_regions.bounds_mode", "CustomPost domRegions bounds mode is invalid", path+".domRegions.bounds.mode", "", nil)
+			}
+		}
+		if rawPadding, ok := bounds["paddingPx"]; ok && rawPadding != nil {
+			padding, ok := rawPadding.(float64)
+			if !ok || math.IsNaN(padding) || math.IsInf(padding, 0) || padding < 0 || padding > 2048 {
+				report.add(Error, "scene.post_effect.dom_regions.bounds_padding", "CustomPost domRegions bounds paddingPx must be finite and between 0 and 2048", path+".domRegions.bounds.paddingPx", "", nil)
+			}
+		}
+	}
+}
+
+func validCustomPostDOMRegionBoundsMode(value string) bool {
+	mode := strings.TrimSpace(value)
+	return mode == "" || mode == "union"
 }
 
 func validCustomPostUniformName(value string) bool {

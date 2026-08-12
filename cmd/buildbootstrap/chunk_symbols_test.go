@@ -49,16 +49,19 @@ func (d *declaredNames) Exit(js.INode) {}
 // chunkDeclaredNames parses one chunk and returns every name it declares.
 func chunkDeclaredNames(t *testing.T, dir string, entry output) map[string]bool {
 	t.Helper()
-	var b strings.Builder
+	bodies := make([]string, 0, len(entry.sources))
 	for _, src := range entry.sources {
 		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
 		if err != nil {
 			t.Fatalf("read %s: %v", src.rel, err)
 		}
-		b.WriteString(normalizeNewlines(string(data)))
-		b.WriteByte('\n')
+		bodies = append(bodies, normalizeNewlines(string(data)))
 	}
-	ast, err := js.Parse(parse.NewInputString(b.String()), js.Options{})
+	chunkSource, err := transpileTypedChunk(entry, bodies)
+	if err != nil {
+		t.Fatalf("transpile %s: %v", entry.name, err)
+	}
+	ast, err := js.Parse(parse.NewInputString(chunkSource), js.Options{})
 	if err != nil {
 		t.Fatalf("parse %s: %v", entry.name, err)
 	}
@@ -281,6 +284,7 @@ func filesInMoreThanOneLazyChunk() map[string][]string {
 func TestNoUnexpectedSourceFileShipsInTwoLazyChunks(t *testing.T) {
 	allowed := map[string]string{
 		"bootstrap-src/30h-tail-capability-probe.js": "the islands chunk and the engines chunk both call entryRequiresAsyncWebGPUProbe, and either can load without the other",
+		"../runtime/host/compatibility.ts":           "each independently loadable typed host chunk must install the same reload-safe adapter until Stack 07 collapses the final facade",
 	}
 	for rel, chunks := range filesInMoreThanOneLazyChunk() {
 		if _, ok := allowed[rel]; ok {

@@ -17,30 +17,44 @@ type Manifest struct {
 }
 
 type RuntimeAssets struct {
-	WASM                              HashedAsset `json:"wasm"`
-	WASMIslands                       HashedAsset `json:"wasmIslands,omitempty"`
-	WASMExec                          HashedAsset `json:"wasmExec"`
-	StandardGoWASMExec                HashedAsset `json:"standardGoWasmExec,omitempty"`
-	Bootstrap                         HashedAsset `json:"bootstrap"`
-	BootstrapLite                     HashedAsset `json:"bootstrapLite,omitempty"`
-	BootstrapRuntime                  HashedAsset `json:"bootstrapRuntime,omitempty"`
-	BootstrapFeatureIslands           HashedAsset `json:"bootstrapFeatureIslands,omitempty"`
-	BootstrapFeatureEngines           HashedAsset `json:"bootstrapFeatureEngines,omitempty"`
-	BootstrapFeatureHubs              HashedAsset `json:"bootstrapFeatureHubs,omitempty"`
-	BootstrapFeatureControllers       HashedAsset `json:"bootstrapFeatureControllers,omitempty"`
-	BootstrapFeatureTextlayout        HashedAsset `json:"bootstrapFeatureTextlayout,omitempty"`
-	BootstrapFeatureScene3D           HashedAsset `json:"bootstrapFeatureScene3d,omitempty"`
-	BootstrapFeatureScene3DCommand    HashedAsset `json:"bootstrapFeatureScene3dCommand,omitempty"`
-	BootstrapFeatureScene3DWebGPU     HashedAsset `json:"bootstrapFeatureScene3dWebgpu,omitempty"`
-	BootstrapFeatureScene3DWebGL      HashedAsset `json:"bootstrapFeatureScene3dWebgl,omitempty"`
-	BootstrapFeatureScene3DGLTF       HashedAsset `json:"bootstrapFeatureScene3dGltf,omitempty"`
-	BootstrapFeatureScene3DAnimation  HashedAsset `json:"bootstrapFeatureScene3dAnimation,omitempty"`
-	BootstrapFeatureScene3DCompute    HashedAsset `json:"bootstrapFeatureScene3dCompute,omitempty"`
-	BootstrapFeatureScene3DDecompress HashedAsset `json:"bootstrapFeatureScene3dDecompress,omitempty"`
-	Patch                             HashedAsset `json:"patch"`
-	VideoHLS                          HashedAsset `json:"videoHLS,omitempty"`
-	StripeBridge                      HashedAsset `json:"stripeBridge,omitempty"`
-	Relay                             HashedAsset `json:"relay,omitempty"`
+	WASM        HashedAsset `json:"wasm"`
+	WASMIslands HashedAsset `json:"wasmIslands,omitempty"`
+	// WASMVariants contains the capability-linked artifacts. WASM remains the
+	// full-runtime compatibility field so older servers and source builds keep
+	// working while new renderers select the smallest compatible entry.
+	WASMVariants                      map[string]RuntimeVariantAsset `json:"wasmVariants,omitempty"`
+	WASMExec                          HashedAsset                    `json:"wasmExec"`
+	StandardGoWASMExec                HashedAsset                    `json:"standardGoWasmExec,omitempty"`
+	Bootstrap                         HashedAsset                    `json:"bootstrap"`
+	BootstrapLite                     HashedAsset                    `json:"bootstrapLite,omitempty"`
+	BootstrapRuntime                  HashedAsset                    `json:"bootstrapRuntime,omitempty"`
+	BootstrapFeatureIslands           HashedAsset                    `json:"bootstrapFeatureIslands,omitempty"`
+	BootstrapFeatureEngines           HashedAsset                    `json:"bootstrapFeatureEngines,omitempty"`
+	BootstrapFeatureHubs              HashedAsset                    `json:"bootstrapFeatureHubs,omitempty"`
+	BootstrapFeatureControllers       HashedAsset                    `json:"bootstrapFeatureControllers,omitempty"`
+	BootstrapFeatureTextlayout        HashedAsset                    `json:"bootstrapFeatureTextlayout,omitempty"`
+	BootstrapFeatureScene3D           HashedAsset                    `json:"bootstrapFeatureScene3d,omitempty"`
+	BootstrapFeatureScene3DCommand    HashedAsset                    `json:"bootstrapFeatureScene3dCommand,omitempty"`
+	BootstrapFeatureScene3DWebGPU     HashedAsset                    `json:"bootstrapFeatureScene3dWebgpu,omitempty"`
+	BootstrapFeatureScene3DWebGL      HashedAsset                    `json:"bootstrapFeatureScene3dWebgl,omitempty"`
+	BootstrapFeatureScene3DGLTF       HashedAsset                    `json:"bootstrapFeatureScene3dGltf,omitempty"`
+	BootstrapFeatureScene3DAnimation  HashedAsset                    `json:"bootstrapFeatureScene3dAnimation,omitempty"`
+	BootstrapFeatureScene3DCompute    HashedAsset                    `json:"bootstrapFeatureScene3dCompute,omitempty"`
+	BootstrapFeatureScene3DDecompress HashedAsset                    `json:"bootstrapFeatureScene3dDecompress,omitempty"`
+	Patch                             HashedAsset                    `json:"patch"`
+	VideoHLS                          HashedAsset                    `json:"videoHLS,omitempty"`
+	StripeBridge                      HashedAsset                    `json:"stripeBridge,omitempty"`
+	Relay                             HashedAsset                    `json:"relay,omitempty"`
+}
+
+// RuntimeVariantAsset identifies one runtime artifact independently of its
+// compatibility filename. FeatureMask is the ABI capability declaration the
+// browser must validate after loading the artifact.
+type RuntimeVariantAsset struct {
+	HashedAsset
+	Variant      string `json:"variant"`
+	FeatureMask  uint32 `json:"featureMask"`
+	ManifestHash string `json:"manifestHash"`
 }
 
 type IslandAsset struct {
@@ -73,6 +87,7 @@ type SceneAssetManifest struct {
 type RuntimePaths struct {
 	WASM                              string
 	WASMIslands                       string
+	WASMVariants                      map[string]string
 	WASMExec                          string
 	StandardGoWASMExec                string
 	Bootstrap                         string
@@ -113,9 +128,14 @@ func Load(path string) (*Manifest, error) {
 
 // RuntimeURLs returns the public URLs for the shared runtime assets.
 func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
+	variants := make(map[string]string, len(m.Runtime.WASMVariants))
+	for id, asset := range m.Runtime.WASMVariants {
+		variants[id] = AssetURL(assetBaseURL, "runtime", asset.File)
+	}
 	return RuntimePaths{
 		WASM:                              AssetURL(assetBaseURL, "runtime", m.Runtime.WASM.File),
 		WASMIslands:                       AssetURL(assetBaseURL, "runtime", m.Runtime.WASMIslands.File),
+		WASMVariants:                      variants,
 		WASMExec:                          AssetURL(assetBaseURL, "runtime", m.Runtime.WASMExec.File),
 		StandardGoWASMExec:                AssetURL(assetBaseURL, "runtime", m.Runtime.StandardGoWASMExec.File),
 		Bootstrap:                         AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),

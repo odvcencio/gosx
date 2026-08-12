@@ -164,13 +164,13 @@
     }
     record.factories.clear();
 
-    if (record.mountedIDs.size > 0 && typeof window.__gosx_dispose_engine === "function") {
+    if (record.mountedIDs.size > 0 && gosxHost.engines && typeof gosxHost.engines.dispose === "function") {
       for (const engineID of Array.from(record.mountedIDs)) {
         const mounted = window.__gosx && window.__gosx.engines
           ? window.__gosx.engines.get(engineID)
           : null;
         if (mounted && mounted.moduleRecord === record) {
-          window.__gosx_dispose_engine(engineID);
+          gosxHost.engines.dispose(engineID);
         }
       }
     }
@@ -4487,7 +4487,7 @@
   async function mountEngine(entry, preflightError) {
     const existing = window.__gosx.engines.get(entry.id);
     if (existing) {
-      window.__gosx_dispose_engine(entry.id);
+      gosxHost.engines.dispose(entry.id);
     }
     const existingPending = pendingEngineRuntimes.get(entry.id);
     if (existingPending) {

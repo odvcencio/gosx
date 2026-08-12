@@ -182,8 +182,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Node is only needed as a bare runtime for `node --test` (stdlib-only
-      # JS unit tests). There are no npm dependencies to install.
+      # Node also runs the pinned strict TypeScript compiler for the generated
+      # ABI contract. make test-js performs the reproducible npm ci.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -302,6 +302,19 @@ jobs:
         env:
           GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: make test-e2e
+
+      # This fixture test validates that the committed MP4 has browser-readable
+      # metadata. It deliberately requires an explicit browser so a Chrome
+      # binary that merely happens to exist on the generic unit runner cannot
+      # turn the unit partition into a flaky browser lane.
+      - name: Ouroboros media metadata browser smoke
+        # setup-chrome supplies Chromium, whose Linux build omits the MP4
+        # codec exercised by this fixture. GitHub's Ubuntu image also ships
+        # codec-capable Google Chrome; resolve it explicitly so this remains
+        # a browser-lane proof instead of silently skipping the media check.
+        run: |
+          chrome_bin="$(command -v google-chrome-stable || command -v google-chrome)"
+          GOSX_CHROME_BIN="$chrome_bin" go test ./examples/ouroboros-corpus -run '^TestFixtureMP4BrowserLoadsMetadata$' -count=1
 
       # The perf driver's own browser tests. They sit behind `//go:build
       # browser` and nothing passed that tag before this step existed, so 11

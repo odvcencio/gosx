@@ -32,10 +32,10 @@ const {
   installManualTimers,
 } = require("./runtime-test-harness.js");
 
-const hubConnectionsSource = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "30c-tail-hub-connections.js"),
-  "utf8",
-);
+const hubConnectionsSource = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "hubs.ts"), "utf8"),
+].join("\n");
 
 test("bootstrap preserves navigation and request installed before it", async () => {
   const env = createContext({ elements: [] });
@@ -918,6 +918,62 @@ test("navigation runtime loads patch, lifecycle, and managed scripts before page
     Array.from(env.context.__gosx.document.get().assets.scripts, (entry) => entry.role),
     ["patch", "lifecycle"],
   );
+});
+
+test("navigation runtime injects the bootstrap script when window.__gosx_bootstrap_page is absent", async () => {
+  // compatibility.ts always installs a forwarding shim at
+  // gosxHost.lifecycle.bootstrapPage, so `typeof` alone cannot tell whether
+  // the real bootstrap bundle already ran. The bootstrap-role guard in
+  // loadManagedScript must probe the ambient window.__gosx_bootstrap_page
+  // name instead, which stays absent until this fetched script installs it.
+  const parsedDocs = new Map();
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/docs/needs-bootstrap");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Needs bootstrap";
+
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/docs/needs-bootstrap": {
+        text: "__BOOTSTRAP_SCRIPT_DOC__",
+        url: "http://localhost:3000/docs/needs-bootstrap",
+      },
+      "http://localhost:3000/bootstrap.js": {
+        text: "window.__scriptOrder.push('bootstrap-script');",
+        url: "http://localhost:3000/bootstrap.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__scriptOrder = [];
+  env.context.__gosx_dispose_page = async function() {};
+  // window.__gosx_bootstrap_page is deliberately left unset: no bootstrap
+  // bundle has run yet, so only compatibility.ts's forwarding shim exists.
+
+  const bootstrapScript = new FakeElement("script", null);
+  bootstrapScript.setAttribute("data-gosx-script", "bootstrap");
+  bootstrapScript.setAttribute("src", "/bootstrap.js");
+
+  const nextBody = new FakeElement("main", null);
+  nextBody.id = "needs-bootstrap-page";
+  nextBody.textContent = "Needs bootstrap page";
+
+  parsedDocs.set("__BOOTSTRAP_SCRIPT_DOC__", buildNavigatedDocument({
+    title: "Needs Bootstrap",
+    headNodes: [bootstrapScript],
+    bodyNodes: [nextBody],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/docs/needs-bootstrap");
+  await flushAsyncWork();
+
+  assert.deepEqual(env.context.__scriptOrder, ["bootstrap-script"]);
+  assert.equal(env.document.getElementById("needs-bootstrap-page").textContent, "Needs bootstrap page");
 });
 
 test("navigation runtime replays only opted-in inline scripts after page bootstrap", async () => {

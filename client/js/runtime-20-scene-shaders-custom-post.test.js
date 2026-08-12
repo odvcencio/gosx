@@ -46,7 +46,7 @@ const {
 } = require("./runtime-test-harness.js");
 
 test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
 
   assert.match(webgl, /function sceneWebGLNormalizeCustomShaderSource\(source\)/);
   assert.match(webgl, /precision\s+highp\s+float/);

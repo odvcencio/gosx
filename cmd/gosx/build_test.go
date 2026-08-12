@@ -8,8 +8,47 @@ import (
 	"strings"
 	"testing"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
+
+func TestRuntimeVariantAssetCarriesContractIdentity(t *testing.T) {
+	asset := runtimeVariantAsset(string(runtimewasm.VariantIslands), HashedAsset{
+		File: "gosx-runtime-islands.abc.wasm",
+		Hash: "abcdef0123456789",
+		Size: 42,
+	})
+	if asset.ManifestHash == "" || asset.ManifestHash != runtimewasm.ManifestIdentity() {
+		t.Fatalf("runtime variant manifest identity = %q", asset.ManifestHash)
+	}
+	if asset.FeatureMask != uint32(runtimewasm.FeatureCore|runtimewasm.FeatureIslands) {
+		t.Fatalf("runtime variant feature mask = 0x%x", asset.FeatureMask)
+	}
+}
+
+func TestPublishedRuntimeVariantAssetsAreExactlyTheFourProfiles(t *testing.T) {
+	assets := publishedRuntimeVariantAssets(
+		HashedAsset{File: "core.wasm"},
+		HashedAsset{File: "engine.wasm"},
+		HashedAsset{File: "collab.wasm"},
+		HashedAsset{File: "full.wasm"},
+	)
+	if len(assets) != 4 {
+		t.Fatalf("published runtime assets = %v, want four profiles", assets)
+	}
+	if _, ok := assets[string(runtimewasm.VariantIslands)]; ok {
+		t.Fatal("legacy islands alias was advertised as a capability profile")
+	}
+	for _, variant := range runtimewasm.PublishedVariants() {
+		asset, ok := assets[string(variant)]
+		if !ok {
+			t.Fatalf("published runtime assets omitted %q", variant)
+		}
+		if asset.Variant != string(variant) || asset.FeatureMask != uint32(runtimewasm.FeatureMaskForVariant(variant)) {
+			t.Fatalf("published %s contract = %+v", variant, asset)
+		}
+	}
+}
 
 func TestRuntimeJSAssetDataStripsMissingHLSMapTrailer(t *testing.T) {
 	raw := []byte("window.Hls = function() {};\n//# sourceMappingURL=hls.min.js.map\n")

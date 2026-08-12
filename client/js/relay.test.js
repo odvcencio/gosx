@@ -1,4 +1,4 @@
-// Unit tests for client/js/relay.js — exercises the JS side of the
+// Unit tests for the authored cross-frame relay source. Exercises the JS side of the
 // cross-frame postMessage relay defined by ADR 0009.
 //
 // Run via: node --test client/js/relay.test.js
@@ -11,7 +11,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const relaySource = fs.readFileSync(path.join(__dirname, "relay.js"), "utf8");
+const relaySource = [
+  fs.readFileSync(path.join(__dirname, "../runtime/host/compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "../runtime/host/relay.ts"), "utf8"),
+].join("\n");
 
 // makeRelayContext sets up a minimal browser-like sandbox: window, console,
 // a message-listener registry, and an origin. Returns the sandbox plus a
@@ -101,10 +104,22 @@ test("send is no-op for non-relayed prefixes", () => {
   assert.equal(peer.sent.length, 0, "non-relayed signal must not post");
 });
 
+test("send skips a peer registered for a conflicting origin", () => {
+  const env = makeRelayContext({});
+  const peer = env.makePeerWindow("https://attacker.example");
+  env.window.__gosx_relay_configure([
+    { prefix: "$preview.", allowedOrigin: "https://editor.example" },
+  ]);
+  env.window.__gosx_relay_register_peer(peer, "https://attacker.example");
+  env.window.__gosx_relay_send("$preview.x", "1");
+  assert.equal(peer.sent.length, 0);
+});
+
 // B.3: inbound gosx:shared-signal messages route to __gosx_relay_dispatch_inbound
 // when the prefix matches and origin is allowed.
 test("inbound message dispatches to __gosx_relay_dispatch_inbound", () => {
   const env = makeRelayContext({});
+  const peer = env.makePeerWindow("https://editor.example");
   const dispatched = [];
   env.window.__gosx_relay_dispatch_inbound = function(name, valueJSON, origin) {
     dispatched.push({ name: name, valueJSON: valueJSON, origin: origin });
@@ -112,6 +127,7 @@ test("inbound message dispatches to __gosx_relay_dispatch_inbound", () => {
   env.window.__gosx_relay_configure([
     { prefix: "$preview.", allowedOrigin: "https://editor.example" },
   ]);
+  env.window.__gosx_relay_register_peer(peer, "https://editor.example");
 
   env.dispatchMessage({
     data: {
@@ -121,6 +137,7 @@ test("inbound message dispatches to __gosx_relay_dispatch_inbound", () => {
       origin: "https://editor.example",
     },
     origin: "https://editor.example",
+    source: peer,
   });
 
   assert.equal(dispatched.length, 1);
@@ -151,6 +168,7 @@ test("inbound message with wrong type is ignored", () => {
 // B.5: inbound message from disallowed origin is dropped.
 test("inbound message from disallowed origin is dropped", () => {
   const env = makeRelayContext({});
+  const peer = env.makePeerWindow("https://editor.example");
   const dispatched = [];
   env.window.__gosx_relay_dispatch_inbound = function(name, valueJSON, origin) {
     dispatched.push({ name: name, valueJSON: valueJSON, origin: origin });
@@ -158,6 +176,7 @@ test("inbound message from disallowed origin is dropped", () => {
   env.window.__gosx_relay_configure([
     { prefix: "$preview.", allowedOrigin: "https://editor.example" },
   ]);
+  env.window.__gosx_relay_register_peer(peer, "https://editor.example");
 
   env.dispatchMessage({
     data: {
@@ -167,6 +186,7 @@ test("inbound message from disallowed origin is dropped", () => {
       origin: "https://attacker.example",
     },
     origin: "https://attacker.example",
+    source: peer,
   });
 
   assert.equal(dispatched.length, 0, "disallowed origin must not dispatch");
@@ -188,12 +208,14 @@ test("dev-mode * origin accepts any origin and warns", () => {
   vm.runInContext(relaySource, ctx);
 
   const dispatched = [];
+  const peer = env.makePeerWindow("https://anywhere.example");
   env.window.__gosx_relay_dispatch_inbound = function(name, valueJSON, origin) {
     dispatched.push({ name: name });
   };
   env.window.__gosx_relay_configure([
     { prefix: "$preview.", allowedOrigin: "*" },
   ]);
+  env.window.__gosx_relay_register_peer(peer);
 
   assert.equal(warned, true, "dev-mode wildcard should emit console.warn");
 
@@ -205,6 +227,7 @@ test("dev-mode * origin accepts any origin and warns", () => {
       origin: "https://anywhere.example",
     },
     origin: "https://anywhere.example",
+    source: peer,
   });
   assert.equal(dispatched.length, 1, "dev-mode should accept any origin");
 });
@@ -213,9 +236,11 @@ test("dev-mode * origin accepts any origin and warns", () => {
 // and replayed on flush.
 test("inbound messages buffer pre-bridge and flush on demand", () => {
   const env = makeRelayContext({});
+  const peer = env.makePeerWindow("https://editor.example");
   env.window.__gosx_relay_configure([
     { prefix: "$preview.", allowedOrigin: "*" },
   ]);
+  env.window.__gosx_relay_register_peer(peer);
 
   // No __gosx_relay_dispatch_inbound yet — message should buffer.
   env.dispatchMessage({
@@ -226,6 +251,7 @@ test("inbound messages buffer pre-bridge and flush on demand", () => {
       origin: "https://editor.example",
     },
     origin: "https://editor.example",
+    source: peer,
   });
 
   const dispatched = [];
@@ -251,4 +277,28 @@ test("configure is idempotent for repeated entries", () => {
     { prefix: "$preview.", allowedOrigin: "https://editor.example" },
   ]);
   assert.equal(env.window.__gosx.relay.configs.length, 1);
+});
+
+test("configure rejects a missing allowed origin", () => {
+  const env = makeRelayContext({});
+  env.window.__gosx_relay_configure([{ prefix: "$preview." }]);
+  assert.equal(env.window.__gosx.relay.configs.length, 0);
+});
+
+test("inbound message from an unregistered frame source is dropped", () => {
+  const env = makeRelayContext({});
+  const registered = env.makePeerWindow("https://editor.example");
+  const attacker = env.makePeerWindow("https://editor.example");
+  const dispatched = [];
+  env.window.__gosx_relay_dispatch_inbound = function(name) { dispatched.push(name); };
+  env.window.__gosx_relay_configure([
+    { prefix: "$preview.", allowedOrigin: "https://editor.example" },
+  ]);
+  env.window.__gosx_relay_register_peer(registered, "https://editor.example");
+  env.dispatchMessage({
+    data: { type: "gosx:shared-signal", name: "$preview.x", valueJSON: "1" },
+    origin: "https://editor.example",
+    source: attacker,
+  });
+  assert.equal(dispatched.length, 0);
 });

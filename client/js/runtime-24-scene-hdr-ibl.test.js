@@ -18,6 +18,10 @@ function readSource(name) {
   return fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8");
 }
 
+function readRuntimeSource(name) {
+  return fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
+}
+
 function iblDescriptor() {
   return {
     schemaVersion: 1,
@@ -138,7 +142,7 @@ test("fresh Scene3D state and render bundles preserve the complete HDR descripto
 });
 
 test("WebGL HDR IBL compiles the bounded variant and consumes split-sum products in linear space", () => {
-  const source = readSource("16-scene-webgl.js");
+  const source = readRuntimeSource("webgl.ts");
   const vertexStart = source.indexOf("const SCENE_PBR_VERTEX_SOURCE");
   const fragmentStart = source.indexOf("const SCENE_PBR_FRAGMENT_SOURCE");
   const fragmentEnd = source.indexOf("const SCENE_PBR_INSTANCED_VERTEX_SOURCE");
@@ -167,7 +171,7 @@ test("WebGL HDR IBL compiles the bounded variant and consumes split-sum products
 });
 
 test("WebGPU consumes the same split-sum contract and keeps color/data texture formats distinct", () => {
-  const source = readSource("16a-scene-webgpu.js");
+  const source = readRuntimeSource("webgpu.ts");
 
   assert.match(source, new RegExp(BRDF_MODEL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(source, /textureSampleLevel\(iblRadiance, iblSampler, Rr, roughness \* maxLod\)/);
@@ -188,7 +192,7 @@ test("WebGPU consumes the same split-sum contract and keeps color/data texture f
 });
 
 test("mount preloads the real KTX2 reader for complete IBL descriptors and never flips support silently", () => {
-  const mount = readSource("20-scene-mount.js") + "\n" + readSource("20b-scene-mount-webgl-chunk.js");
+  const mount = readRuntimeSource("mount.ts") + "\n" + readRuntimeSource("mount-webgl.ts");
   assert.match(mount, /await settleSceneIBLFeature\(props\)/);
   assert.match(mount, /scenePropsHasIBLProducts/);
   assert.match(mount, /ensureGLTFFeatureLoaded\(\)/);

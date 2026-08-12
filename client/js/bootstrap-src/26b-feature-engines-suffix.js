@@ -27,14 +27,14 @@
             }
             continue;
           }
-          window.__gosx_dispose_engine(engineID);
+          gosxHost.engines.dispose(engineID);
         }
         for (const id of Array.from(surfaceInstances.keys())) {
           _disposeEngineSurface(id);
         }
       },
-      disposeEngine: window.__gosx_dispose_engine,
-      engineFrame: window.__gosx_engine_frame,
+      disposeEngine: gosxHost.engines.dispose,
+      engineFrame: gosxHost.engines.frame,
     };
   });
 })();

@@ -20,7 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
 function createMixerContext() {
@@ -40,7 +40,7 @@ function createMixerContext() {
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox);
   vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
-  vm.runInContext(readSource("19a-scene-animation.js"), context, { filename: "19a-scene-animation.js" });
+  vm.runInContext(readSource("../runtime/scene3d/animation.ts"), context, { filename: "animation.ts" });
   return { context, sandbox };
 }
 

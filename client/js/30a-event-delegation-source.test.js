@@ -11,10 +11,11 @@ const {
   runScript,
 } = require("./runtime-test-harness.js");
 
-const source = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "30a-tail-event-delegation.js"),
-  "utf8",
-) + "\nwindow.__gosx_test_setup_event_delegation = setupEventDelegation;";
+const source = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "events.ts"), "utf8"),
+  "window.__gosx_test_setup_event_delegation = setupEventDelegation;",
+].join("\n");
 
 test("delegation source carries typed pointer/dataset context and clears current event globals", () => {
   const root = new FakeElement("div", null);
@@ -111,6 +112,38 @@ test("delegation omits typed defaults and type-gates pointer numbers while retai
     key: "g",
     currentTargetID: "compact",
     timeStamp: 1400,
+  });
+});
+
+test("delegation stringifies form values and omits the empty value field", () => {
+  const root = new FakeElement("div", null);
+  const input = new FakeElement("input", null);
+  root.id = "value-contract";
+  input.setAttribute("data-gosx-on-input", "update");
+  input.setAttribute("data-gosx-on-change", "commit");
+  root.appendChild(input);
+  const env = createContext({ elements: [root] });
+  const calls = [];
+  env.context.__gosx_action = (...args) => { calls.push(args); return 0; };
+  runScript(source, env.context, "30a-tail-event-delegation.js");
+  env.context.__gosx_test_setup_event_delegation(root, root.id, [
+    { eventType: "input" },
+    { eventType: "change" },
+  ]);
+
+  input.value = 0;
+  root.dispatchEvent({ type: "input", target: input });
+  input.value = "";
+  root.dispatchEvent({ type: "change", target: input });
+
+  assert.deepEqual(JSON.parse(calls[0][2]), {
+    type: "input",
+    value: "0",
+    editable: true,
+  });
+  assert.deepEqual(JSON.parse(calls[1][2]), {
+    type: "change",
+    editable: true,
   });
 });
 

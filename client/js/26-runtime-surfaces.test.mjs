@@ -7,12 +7,12 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "26-runtime-surfaces.js"),
-  "utf8"
-);
+const moduleSrc = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "facade.ts"), "utf8"),
+].join("\n");
 const domModuleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "26-runtime-dom.js"),
+  path.join(__dirname, "..", "runtime", "host", "dom.ts"),
   "utf8"
 );
 
@@ -77,8 +77,8 @@ function runModule(body, options = {}) {
   }
   const context = { window, document, CustomEvent, AbortController, console, setTimeout, clearTimeout };
   vm.createContext(context);
-  if (options.withDOM) vm.runInContext(domModuleSrc, context);
   vm.runInContext(moduleSrc, context);
+  if (options.withDOM) vm.runInContext(domModuleSrc, context);
   return { context, events, telemetry };
 }
 

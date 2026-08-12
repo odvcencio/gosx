@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -492,9 +493,17 @@ type DOMRegionUniformsIR struct {
 
 // CustomPostDOMRegionsIR is the browser CustomPost DOM-region tracker config.
 type CustomPostDOMRegionsIR struct {
-	Selector string              `json:"selector"`
-	Max      int                 `json:"max,omitempty"`
-	Uniforms DOMRegionUniformsIR `json:"uniforms,omitempty"`
+	Selector string                       `json:"selector"`
+	Max      int                          `json:"max,omitempty"`
+	Uniforms DOMRegionUniformsIR          `json:"uniforms,omitempty"`
+	Bounds   *CustomPostDOMRegionBoundsIR `json:"bounds,omitempty"`
+}
+
+// CustomPostDOMRegionBoundsIR describes runtime execution bounds for a
+// CustomPost pass.
+type CustomPostDOMRegionBoundsIR struct {
+	Mode      string  `json:"mode,omitempty"`
+	PaddingPx float64 `json:"paddingPx,omitempty"`
 }
 
 func (ir CustomPostIR) legacyProps() map[string]any {
@@ -659,6 +668,25 @@ func lowerCustomPostDOMRegions(dom CustomPostDOMRegions) *CustomPostDOMRegionsIR
 		Selector: selector,
 		Max:      max,
 		Uniforms: uniforms,
+		Bounds:   lowerCustomPostDOMRegionBounds(dom.Bounds),
+	}
+}
+
+func lowerCustomPostDOMRegionBounds(bounds CustomPostDOMRegionBounds) *CustomPostDOMRegionBoundsIR {
+	mode := strings.TrimSpace(string(bounds.Mode))
+	if mode != string(CustomPostDOMRegionBoundsUnion) {
+		return nil
+	}
+	padding := bounds.PaddingPx
+	if math.IsNaN(padding) || math.IsInf(padding, 0) || padding < 0 {
+		padding = 0
+	}
+	if padding > 2048 {
+		padding = 2048
+	}
+	return &CustomPostDOMRegionBoundsIR{
+		Mode:      string(CustomPostDOMRegionBoundsUnion),
+		PaddingPx: padding,
 	}
 }
 

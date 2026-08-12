@@ -23,6 +23,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
@@ -77,6 +78,7 @@ type Renderer struct {
 	videoHLSPath                   string
 	relayPath                      string
 	islandRuntime                  hydrate.RuntimeRef
+	runtimeVariants                map[string]hydrate.RuntimeRef
 	runtimeAssets                  buildmanifest.RuntimeAssets
 	bootstrapOnly                  bool
 }
@@ -179,11 +181,12 @@ func NewRenderer(bundleID string) *Renderer {
 		runtimeAssets = manifest.Runtime
 	}
 	renderer := &Renderer{
-		manifest:      hydrate.NewManifest(),
-		bundleID:      bundleID,
-		programFormat: "json", // default to dev mode
-		programAssets: make(map[string]programAsset),
-		runtimeAssets: runtimeAssets,
+		manifest:        hydrate.NewManifest(),
+		bundleID:        bundleID,
+		programFormat:   "json", // default to dev mode
+		programAssets:   make(map[string]programAsset),
+		runtimeVariants: make(map[string]hydrate.RuntimeRef),
+		runtimeAssets:   runtimeAssets,
 	}
 	renderer.wasmExecPath = renderer.versionCompatRuntimePath("/gosx/wasm_exec.js", strings.TrimSpace(runtimeAssets.WASMExec.Hash))
 	renderer.standardGoWASMExecPath = renderer.versionCompatRuntimePath("/gosx/standard-go-wasm_exec.js", strings.TrimSpace(runtimeAssets.StandardGoWASMExec.Hash))
@@ -369,10 +372,14 @@ func (r *Renderer) SetRuntime(path string, hash string, size int64) {
 	}
 	path = r.versionCompatRuntimePath(path, hash)
 	r.manifest.Runtime = hydrate.RuntimeRef{
-		Path: path,
-		Hash: hash,
-		Size: size,
+		Path:         path,
+		Hash:         hash,
+		ManifestHash: runtimewasm.ManifestIdentity(),
+		Size:         size,
+		Variant:      string(runtimewasm.VariantFull),
+		FeatureMask:  uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantFull)),
 	}
+	r.setRuntimeVariant(r.manifest.Runtime)
 }
 
 // SetIslandRuntime registers the smaller shared WASM runtime used by pages
@@ -386,10 +393,28 @@ func (r *Renderer) SetIslandRuntime(path string, hash string, size int64) {
 	}
 	path = r.versionCompatRuntimePath(path, hash)
 	r.islandRuntime = hydrate.RuntimeRef{
-		Path: path,
-		Hash: hash,
-		Size: size,
+		Path:         path,
+		Hash:         hash,
+		ManifestHash: runtimewasm.ManifestIdentity(),
+		Size:         size,
+		Variant:      string(runtimewasm.VariantIslands),
+		FeatureMask:  uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantIslands)),
 	}
+	r.setRuntimeVariant(r.islandRuntime)
+}
+
+func (r *Renderer) setRuntimeVariant(ref hydrate.RuntimeRef) {
+	if r == nil || strings.TrimSpace(ref.Path) == "" {
+		return
+	}
+	if r.runtimeVariants == nil {
+		r.runtimeVariants = make(map[string]hydrate.RuntimeRef)
+	}
+	variant := strings.TrimSpace(ref.Variant)
+	if variant == "" {
+		variant = string(runtimewasm.VariantFull)
+	}
+	r.runtimeVariants[variant] = ref
 }
 
 // SetBundle registers a WASM bundle in the manifest.
@@ -659,12 +684,41 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 
 	runtime := manifest.RuntimeURLs(assetBaseURL)
+	r.runtimeAssets = manifest.Runtime
 	if runtime.WASM != "" {
 		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
 		r.SetBundle(r.bundleID, runtime.WASM)
 	}
 	if runtime.WASMIslands != "" {
 		r.SetIslandRuntime(runtime.WASMIslands, manifest.Runtime.WASMIslands.Hash, manifest.Runtime.WASMIslands.Size)
+	}
+	for id, asset := range manifest.Runtime.WASMVariants {
+		path := runtime.WASMVariants[id]
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		variant := strings.TrimSpace(asset.Variant)
+		if variant == "" {
+			variant = strings.TrimSpace(id)
+		}
+		mask := asset.FeatureMask
+		if mask == 0 {
+			mask = uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant)))
+		}
+		r.setRuntimeVariant(hydrate.RuntimeRef{
+			Path:         path,
+			Hash:         asset.Hash,
+			ManifestHash: firstNonEmptyRuntimeManifestHash(asset.ManifestHash),
+			Size:         asset.Size,
+			Variant:      variant,
+			FeatureMask:  mask,
+		})
+	}
+	// WASMIslands remains a compatibility artifact for manifests that predate
+	// capability-linked profiles. Once a manifest advertises variants, the
+	// alias must not compete with core as an independent fifth profile.
+	if len(manifest.Runtime.WASMVariants) > 0 {
+		delete(r.runtimeVariants, string(runtimewasm.VariantIslands))
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
 	r.SetStandardGoWASMExecPath(runtime.StandardGoWASMExec)
@@ -688,6 +742,13 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 
 	return nil
+}
+
+func firstNonEmptyRuntimeManifestHash(value string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return runtimewasm.ManifestIdentity()
 }
 
 // LoadBuildManifest reads a build manifest from disk and applies its asset URLs.
@@ -1814,10 +1875,71 @@ func (r *Renderer) selectedRuntimeRef() hydrate.RuntimeRef {
 	if r == nil {
 		return hydrate.RuntimeRef{}
 	}
+	if required := r.requiredRuntimeFeatures(); required != 0 {
+		if ref, ok := r.smallestCompatibleRuntimeRef(required); ok {
+			return ref
+		}
+	}
 	if (len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0) && !r.needsSharedRuntimeEngineBridge() && strings.TrimSpace(r.islandRuntime.Path) != "" {
 		return r.islandRuntime
 	}
 	return r.manifest.Runtime
+}
+
+func (r *Renderer) smallestCompatibleRuntimeRef(required runtimewasm.FeatureMask) (hydrate.RuntimeRef, bool) {
+	var best hydrate.RuntimeRef
+	for _, ref := range r.runtimeVariants {
+		if strings.TrimSpace(ref.Path) == "" {
+			continue
+		}
+		features := runtimewasm.FeatureMask(ref.FeatureMask)
+		if features == 0 {
+			features = runtimewasm.FeatureMaskForVariant(runtimewasm.Variant(ref.Variant))
+		}
+		if features&required != required {
+			continue
+		}
+		if strings.TrimSpace(best.Path) == "" || runtimeRefIsSmaller(ref, best) {
+			best = ref
+		}
+	}
+	return best, strings.TrimSpace(best.Path) != ""
+}
+
+func runtimeRefIsSmaller(candidate, current hydrate.RuntimeRef) bool {
+	if candidate.Size > 0 && current.Size <= 0 {
+		return true
+	}
+	if candidate.Size <= 0 {
+		return false
+	}
+	if candidate.Size != current.Size {
+		return candidate.Size < current.Size
+	}
+	return candidate.Path < current.Path
+}
+
+func (r *Renderer) requiredRuntimeFeatures() runtimewasm.FeatureMask {
+	if r == nil || r.manifest == nil || !r.clientRuntimePlan().SharedRuntime {
+		return 0
+	}
+	var required runtimewasm.FeatureMask
+	if len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0 {
+		required |= runtimewasm.FeatureIslands
+	}
+	if r.needsSharedRuntimeEngineBridge() {
+		required |= runtimewasm.FeatureEngine
+		if r.hasSceneEngines() {
+			required |= runtimewasm.FeatureScene3D
+		}
+	}
+	if len(r.manifest.Hubs) > 0 && required != 0 {
+		required |= runtimewasm.FeatureCollab
+	}
+	if required == 0 {
+		required = runtimewasm.FeatureCore
+	}
+	return runtimewasm.FeatureCore | required
 }
 
 func (r *Renderer) selectedWASMExecPath() string {

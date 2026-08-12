@@ -1,0 +1,499 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://m31labs.dev/schemas/gosx/ouroboros/baseline.v1.schema.json",
+  "title": "GoSX Ouroboros O0.2 Baseline Inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "contractVersion",
+    "initiative",
+    "spec",
+    "corpusID",
+    "baseRevision",
+    "overlayHash",
+    "generatedAt",
+    "artifactRoot",
+    "scope",
+    "overlay",
+    "files",
+    "totals",
+    "structural",
+    "surface",
+    "drift",
+    "ratchets",
+    "manifest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "gosx.ouroboros.baseline.v1" },
+    "contractVersion": { "const": "O0.2" },
+    "initiative": { "const": "initiative.gosx-ouroboros-runtime-refactor" },
+    "spec": { "const": "spec.gosx-ouroboros-runtime.v0.1" },
+    "corpusID": { "const": "gosx-ouroboros-o0.2-v1" },
+    "baseRevision": { "type": "string", "minLength": 7 },
+    "overlayHash": { "type": "string", "pattern": "^sha256:([a-f0-9]{64}|clean)$" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "artifactRoot": { "type": "string" },
+    "scope": { "$ref": "#/$defs/scope" },
+    "overlay": { "$ref": "#/$defs/overlay" },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included", "sidecars", "embedded", "excluded", "audit"],
+      "properties": {
+        "included": { "type": "array", "items": { "$ref": "#/$defs/sourceFile" } },
+        "sidecars": { "type": "array", "items": { "$ref": "#/$defs/sourceFile" } },
+        "embedded": { "type": "array", "items": { "$ref": "#/$defs/sourceFile" } },
+        "excluded": { "type": "array", "items": { "$ref": "#/$defs/excludedFile" } },
+        "audit": { "type": "array", "items": { "$ref": "#/$defs/excludedFile" } }
+      }
+    },
+    "totals": { "$ref": "#/$defs/totals" },
+    "structural": { "$ref": "#/$defs/structural" },
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gosxNames", "gosxNameCount", "gosxProductionNameCount", "gosxJavaScriptNameCount", "assignedBrowserRootCount", "assignedWindowCount", "goPublishedABICount", "hostCallbackCount", "broaderBrowserGosxNames", "broaderBrowserNameCount", "broaderSerializationSiteCount", "serializationSites", "serializationSiteCount", "compatibilityAudit", "publicFacadeCount"],
+      "properties": {
+        "gosxNames": { "type": "array", "items": { "$ref": "#/$defs/gosxName" } },
+        "gosxNameCount": { "type": "integer", "minimum": 0 },
+        "gosxProductionNameCount": { "type": "integer", "minimum": 0 },
+        "gosxJavaScriptNameCount": { "type": "integer", "minimum": 0 },
+        "assignedBrowserRootCount": { "type": "integer", "minimum": 0 },
+        "assignedWindowCount": { "type": "integer", "minimum": 0 },
+        "goPublishedABICount": { "type": "integer", "minimum": 0 },
+        "hostCallbackCount": { "type": "integer", "minimum": 0 },
+        "broaderBrowserGosxNames": { "type": "array", "items": { "$ref": "#/$defs/gosxName" } },
+        "broaderBrowserNameCount": { "type": "integer", "minimum": 0 },
+        "broaderSerializationSiteCount": { "type": "integer", "minimum": 0 },
+        "serializationSites": { "type": "array", "items": { "$ref": "#/$defs/serializationSite" } },
+        "serializationSiteCount": { "type": "integer", "minimum": 0 },
+        "compatibilityAudit": { "$ref": "#/$defs/compatibilityAudit" },
+        "publicFacadeCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "drift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "driftExplained", "canonical", "measured", "deltas"],
+      "properties": {
+        "status": { "enum": ["pass", "fail-closed"] },
+        "driftExplained": { "type": "boolean" },
+        "acceptedDecision": { "type": "string" },
+        "canonical": { "$ref": "#/$defs/canonical" },
+        "measured": { "$ref": "#/$defs/canonical" },
+        "deltas": { "$ref": "#/$defs/canonical" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ratchets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "scope", "status", "definition"],
+        "properties": {
+          "id": { "type": "string" },
+          "scope": { "type": "string" },
+          "target": { "type": "integer" },
+          "measured": { "type": "integer" },
+          "delta": { "type": "integer" },
+          "status": { "enum": ["pass", "fail-closed"] },
+          "definition": { "type": "string" }
+        }
+      }
+    },
+    "pixels": { "$ref": "#/$defs/pixels" },
+    "manifest": { "$ref": "#/$defs/manifest" }
+  },
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included", "excluded"],
+      "properties": {
+        "included": { "type": "array", "items": { "$ref": "#/$defs/scopeRule" }, "minItems": 1 },
+        "excluded": { "type": "array", "items": { "$ref": "#/$defs/scopeRule" }, "minItems": 1 }
+      }
+    },
+    "scopeRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "reason"],
+      "properties": {
+        "pattern": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "language", "sourceKind", "lines", "bytes", "gzipBytes", "brotliBytes", "parseOK"],
+      "properties": {
+        "path": { "type": "string" },
+        "language": { "type": "string" },
+        "sourceKind": { "type": "string" },
+        "reason": { "type": "string" },
+        "lines": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "gzipBytes": { "type": "integer", "minimum": 0 },
+        "brotliBytes": { "type": "integer", "minimum": 0 },
+        "parseOK": { "type": "boolean" },
+        "parseError": { "type": "string" }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["includedFiles", "includedJavaScriptLines", "includedBytes", "includedGzipBytes", "includedBrotliBytes", "sidecarFiles", "sidecarJavaScriptLines", "sidecarBytes", "embeddedFiles", "embeddedJavaScriptLines", "embeddedBytes", "broaderBrowserFiles", "broaderBrowserJavaScriptLines", "broaderBrowserBytes", "excludedFiles", "auditFiles", "byExtension", "generatedFiles", "vendorFiles", "probeFiles", "testFiles", "runtimeTypeScriptFiles"],
+      "properties": {
+        "includedFiles": { "type": "integer", "minimum": 0 },
+        "includedJavaScriptLines": { "type": "integer", "minimum": 0 },
+        "includedBytes": { "type": "integer", "minimum": 0 },
+        "includedGzipBytes": { "type": "integer", "minimum": 0 },
+        "includedBrotliBytes": { "type": "integer", "minimum": 0 },
+        "sidecarFiles": { "type": "integer", "minimum": 0 },
+        "sidecarJavaScriptLines": { "type": "integer", "minimum": 0 },
+        "sidecarBytes": { "type": "integer", "minimum": 0 },
+        "embeddedFiles": { "type": "integer", "minimum": 0 },
+        "embeddedJavaScriptLines": { "type": "integer", "minimum": 0 },
+        "embeddedBytes": { "type": "integer", "minimum": 0 },
+        "broaderBrowserFiles": { "type": "integer", "minimum": 0 },
+        "broaderBrowserJavaScriptLines": { "type": "integer", "minimum": 0 },
+        "broaderBrowserBytes": { "type": "integer", "minimum": 0 },
+        "excludedFiles": { "type": "integer", "minimum": 0 },
+        "auditFiles": { "type": "integer", "minimum": 0 },
+        "byExtension": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "generatedFiles": { "type": "integer", "minimum": 0 },
+        "vendorFiles": { "type": "integer", "minimum": 0 },
+        "probeFiles": { "type": "integer", "minimum": 0 },
+        "testFiles": { "type": "integer", "minimum": 0 },
+        "runtimeTypeScriptFiles": { "type": "integer", "minimum": 0 },
+        "runtimeTypeScriptExclusions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "structural": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gotreesitter", "importsExports", "freeGlobalReads", "freeGlobalWrites"],
+      "properties": {
+        "canopyVersion": { "type": "string" },
+        "canopyFiles": { "type": "integer", "minimum": 0 },
+        "canopySymbols": { "type": "integer", "minimum": 0 },
+        "canopyRawStats": { "type": "string" },
+        "topHotspots": { "type": "array", "items": { "type": "string" } },
+        "complexitySummary": { "type": "string" },
+        "gotreesitter": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["language", "parsed", "failed"],
+          "properties": {
+            "language": { "type": "string" },
+            "parsed": { "type": "integer", "minimum": 0 },
+            "failed": { "type": "integer", "minimum": 0 },
+            "failures": { "type": "array", "items": { "$ref": "#/$defs/location" } }
+          }
+        },
+        "importsExports": { "type": "array", "items": { "$ref": "#/$defs/location" } },
+        "freeGlobalReads": { "type": "array", "items": { "type": "string" } },
+        "freeGlobalWrites": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line"],
+      "properties": {
+        "path": { "type": "string" },
+        "line": { "type": "integer", "minimum": 0 },
+        "text": { "type": "string" }
+      }
+    },
+    "overlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "hash", "baseRevision", "trackedDiffHash", "trackedCachedDiffHash", "untrackedSources", "recreate"],
+      "properties": {
+        "status": { "enum": ["clean", "dirty"] },
+        "hash": { "type": "string", "pattern": "^sha256:([a-f0-9]{64}|clean)$" },
+        "baseRevision": { "type": "string" },
+        "trackedDiffHash": { "type": "string" },
+        "trackedCachedDiffHash": { "type": "string" },
+        "untrackedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "type", "mode", "bytes", "sha256"],
+            "properties": {
+              "path": { "type": "string" },
+              "type": { "enum": ["file", "symlink"] },
+              "mode": { "type": "string", "pattern": "^[0-7]{4}$" },
+              "bytes": { "type": "integer", "minimum": 0 },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+            }
+          }
+        },
+        "excludedPaths": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "reason"],
+            "properties": {
+              "path": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "patchPath": { "type": "string" },
+        "archivePath": { "type": "string" },
+        "recreate": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "excludedFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "reason"],
+      "properties": {
+        "path": { "type": "string" },
+        "kind": { "type": "string" },
+        "reason": { "type": "string" },
+        "language": { "type": "string" },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "gosxName": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "owners", "sourceFamilies", "compatibilityClass"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^__gosx(_[A-Za-z0-9_]+)?$" },
+        "owners": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "sourceFamilies": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["bootstrap", "sidecar", "embedded", "wasm", "wasm-test"] }
+        },
+        "compatibilityClass": { "type": "string", "minLength": 1 }
+      }
+    },
+    "serializationSite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line", "kind", "phase", "text"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "phase": { "type": "string", "minLength": 1 },
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "compatibilityAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "status", "canonicalAvailable", "receipt", "anchor", "current", "reconciliation"],
+      "properties": {
+        "schemaVersion": { "const": "gosx.ouroboros.compatibility-audit.v1" },
+        "status": { "enum": ["pass", "fail-closed"] },
+        "canonicalAvailable": { "type": "boolean" },
+        "receipt": { "$ref": "#/$defs/compatibilityNameSet" },
+        "anchor": { "$ref": "#/$defs/compatibilityNameSet" },
+        "current": { "$ref": "#/$defs/compatibilityNameSet" },
+        "reconciliation": { "$ref": "#/$defs/compatibilityReconciliation" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "compatibilityNameSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceIdentity", "scope", "methodVersion", "classifierVersion", "names", "count", "nameSetHash", "evidenceHash"],
+      "properties": {
+        "sourceIdentity": { "$ref": "#/$defs/compatibilitySourceIdentity" },
+        "scope": { "enum": ["client/js/bootstrap-src/**/*.js + client/wasm/**/*.go", "inventory.files.included + inventory.files.sidecars + inventory.files.embedded + client/wasm/**/*.go production owners"] },
+        "methodVersion": { "enum": ["gosx.ouroboros.compatibility-receipt.raw-name.v1", "gosx.ouroboros.runtime-json-static.scanner.v3"] },
+        "classifierVersion": { "enum": ["none", "gosx.ouroboros.static-phase.v1"] },
+        "names": { "type": "array", "items": { "type": "string", "pattern": "^__gosx_[A-Za-z0-9_]*$" } },
+        "count": { "type": "integer", "minimum": 0 },
+        "nameSetHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "evidenceHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "runtimeJSONSourceIdentityHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "runtimeJSONSemanticHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "runtimeJSONCountsHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "runtimeJSONGlobalNameHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+      }
+    },
+    "compatibilitySourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["pinned-receipt", "clean-anchor", "current-overlay"] },
+        "revision": { "type": "string" },
+        "overlayHash": { "type": "string" },
+        "artifactPath": { "type": "string" }
+      }
+    },
+    "compatibilityReconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recoveredPreexisting", "addedSinceAnchor", "removedSinceAnchor", "missingFromAnchor"],
+      "properties": {
+        "recoveredPreexisting": { "type": "array", "items": { "type": "string" } },
+        "addedSinceAnchor": { "type": "array", "items": { "type": "string" } },
+        "removedSinceAnchor": { "type": "array", "items": { "type": "string" } },
+        "missingFromAnchor": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "canonical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["javascriptLines", "gosxNameCount", "serializationSiteCount"],
+      "properties": {
+        "javascriptLines": { "type": "integer", "minimum": 0 },
+        "javascriptBytes": { "type": "integer", "minimum": 0 },
+        "gosxNameCount": { "type": "integer", "minimum": 0 },
+        "gosxProductionNameCount": { "type": "integer", "minimum": 0 },
+        "gosxJavaScriptNameCount": { "type": "integer", "minimum": 0 },
+        "assignedBrowserRootCount": { "type": "integer", "minimum": 0 },
+        "assignedWindowCount": { "type": "integer", "minimum": 0 },
+        "goPublishedABICount": { "type": "integer", "minimum": 0 },
+        "hostCallbackCount": { "type": "integer", "minimum": 0 },
+        "serializationSiteCount": { "type": "integer", "minimum": 0 },
+        "serializationStatus": { "type": "string" }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "contractVersion",
+        "initiative",
+        "spec",
+        "corpusID",
+        "baseRevision",
+        "overlayHash",
+        "generatedAt",
+        "artifactRoot",
+        "canonicalTargets",
+        "scope",
+        "fixtureRoutes",
+        "runtimeVariants"
+      ],
+      "properties": {
+        "schemaVersion": { "const": "gosx.ouroboros.baseline.v1" },
+        "contractVersion": { "const": "O0.2" },
+        "initiative": { "const": "initiative.gosx-ouroboros-runtime-refactor" },
+        "spec": { "const": "spec.gosx-ouroboros-runtime.v0.1" },
+        "corpusID": { "const": "gosx-ouroboros-o0.2-v1" },
+        "baseRevision": { "type": "string", "minLength": 7 },
+        "overlayHash": { "type": "string", "pattern": "^sha256:([a-f0-9]{64}|clean)$" },
+        "generatedAt": { "type": "string" },
+        "artifactRoot": { "type": "string" },
+        "canonicalTargets": { "$ref": "#/$defs/canonical" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "fixtureRoutes": { "type": "array", "minItems": 12, "maxItems": 12, "items": { "$ref": "#/$defs/fixtureRoute" } },
+        "runtimeVariants": {
+          "type": "array",
+          "minItems": 6,
+          "items": { "$ref": "#/$defs/runtimeVariant" },
+          "contains": { "type": "object", "required": ["id"], "properties": { "id": { "const": "runtime" } } }
+        },
+        "metadata": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "fixtureRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "route", "fixtureApp", "purpose", "expectedRuntime", "expectedTinyGoCurrent", "expectedTinyGoFuture", "expectedCapabilities"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^R[0-9]{2}[A-Z]?$" },
+        "route": { "type": "string", "minLength": 1 },
+        "fixtureApp": { "type": "string", "minLength": 1 },
+        "purpose": { "type": "string", "minLength": 1 },
+        "expectedRuntime": { "type": "string", "minLength": 1 },
+        "expectedTinyGoCurrent": { "enum": ["runtime", "islands", "none"] },
+        "expectedTinyGoFuture": { "enum": ["core", "engine", "collab", "full", "none"] },
+        "expectedCapabilities": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "runtimeVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "generation", "status", "sizeBytes", "budgetBytes", "sizeArtifact", "wasmArtifact", "selectedByRoutes"],
+      "properties": {
+        "id": { "enum": ["runtime", "islands", "core", "engine", "collab", "full"] },
+        "generation": { "enum": ["current", "future"] },
+        "status": { "enum": ["measured", "planned"] },
+        "sizeBytes": { "type": ["integer", "null"], "minimum": 0 },
+        "budgetBytes": { "type": ["integer", "null"], "minimum": 0 },
+        "sizeArtifact": { "anyOf": [{ "$ref": "#/$defs/artifactRef" }, { "type": "null" }] },
+        "wasmArtifact": { "anyOf": [{ "$ref": "#/$defs/artifactRef" }, { "type": "null" }] },
+        "selectedByRoutes": { "type": "array", "items": { "type": "string", "pattern": "^R[0-9]{2}[A-Z]?$" } }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "id": { "enum": ["runtime", "islands"] },
+            "generation": { "const": "current" },
+            "status": { "const": "measured" },
+            "sizeBytes": { "type": "integer", "minimum": 0 },
+            "budgetBytes": { "type": "integer", "minimum": 0 },
+            "sizeArtifact": { "$ref": "#/$defs/artifactRef" },
+            "wasmArtifact": { "$ref": "#/$defs/artifactRef" },
+            "selectedByRoutes": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^R[0-9]{2}[A-Z]?$" } }
+          }
+        },
+        {
+          "properties": {
+            "id": { "enum": ["core", "engine", "collab", "full"] },
+            "generation": { "const": "future" },
+            "status": { "const": "planned" },
+            "sizeBytes": { "type": "null" },
+            "budgetBytes": { "type": "null" },
+            "sizeArtifact": { "type": "null" },
+            "wasmArtifact": { "type": "null" },
+            "selectedByRoutes": { "type": "array", "items": { "type": "string", "pattern": "^R[0-9]{2}[A-Z]?$" } }
+          },
+          "not": { "properties": { "id": { "const": "future-full" } } }
+        }
+      ]
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "path", "baseRevision", "overlayHash"],
+      "properties": {
+        "schemaVersion": { "const": "gosx.ouroboros.artifact-ref.v1" },
+        "path": { "type": "string", "minLength": 1 },
+        "baseRevision": { "type": "string", "minLength": 7 },
+        "overlayHash": { "type": "string", "pattern": "^sha256:([a-f0-9]{64}|clean)$" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "pixels": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "manifestPath", "initial", "settled"],
+      "properties": {
+        "schemaVersion": { "const": "gosx.ouroboros.pixels.v1" },
+        "manifestPath": { "type": "string", "minLength": 1 },
+        "initial": { "type": "array", "items": { "$ref": "#/$defs/pixelCapture" } },
+        "settled": { "type": "array", "items": { "$ref": "#/$defs/pixelCapture" } }
+      }
+    },
+    "pixelCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["routeID", "backend", "path"],
+      "properties": {
+        "routeID": { "type": "string", "minLength": 1 },
+        "backend": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "hash": { "type": "string" }
+      }
+    }
+  }
+}

@@ -34,7 +34,7 @@ test("bootstrap guards WebGPU points shaders against zero/stale viewport uniform
   // shaders adopt the same clamp-to-1 form the thick-line shader uses, and
   // that neither still divides by the unguarded frame.viewportWidth /
   // frame.viewportHeight fields directly.
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   const pointsVertexStart = source.indexOf("var WGSL_POINTS_VERTEX = [");
   const pointsInstancedStart = source.indexOf("var WGSL_POINTS_INSTANCED_VERTEX = [");

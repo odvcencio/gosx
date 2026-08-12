@@ -19,6 +19,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/island/program"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
@@ -357,7 +358,10 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// route-selected Go WASM variant that drops shared engine, CRDT, syntax
 	// highlighting, and text-layout exports for pages that only hydrate islands.
 	var wg sync.WaitGroup
-	runtimeResult := wasmResult{label: "runtime"}
+	coreResult := wasmResult{label: "core"}
+	engineResult := wasmResult{label: "engine"}
+	collabResult := wasmResult{label: "collab"}
+	runtimeResult := wasmResult{label: "full"}
 	islandsResult := wasmResult{label: "islands"}
 
 	buildOneWASM := func(result *wasmResult, compiler wasmCompiler, name, outputName string, extraTags ...string) {
@@ -415,9 +419,14 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		_ = os.Remove(tmpPath)
 	}
 
-	// Shared runtime — always built
-	wg.Add(1)
-	go buildOneWASM(&runtimeResult, compiler, "runtime", "gosx-runtime")
+	// Capability-linked runtimes — all four published variants are built in
+	// parallel. The full artifact keeps the compatibility filename while the
+	// core/engine/collab artifacts are selected from page requirements.
+	wg.Add(4)
+	go buildOneWASM(&coreResult, compiler, "core", "gosx-runtime-core", runtimeVariantBuildTags(runtimewasm.VariantCore)...)
+	go buildOneWASM(&engineResult, compiler, "engine", "gosx-runtime-engine", runtimeVariantBuildTags(runtimewasm.VariantEngine)...)
+	go buildOneWASM(&collabResult, compiler, "collab", "gosx-runtime-collab", runtimeVariantBuildTags(runtimewasm.VariantCollab)...)
+	go buildOneWASM(&runtimeResult, compiler, "full", "gosx-runtime", runtimeVariantBuildTags(runtimewasm.VariantFull)...)
 
 	// Islands-only runtime — parallel with shared runtime.
 	buildIslands := !tinyGoFullRuntimeEnabled()
@@ -432,9 +441,24 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if runtimeResult.err != nil {
 		return fmt.Errorf("wasm runtime build with %s: %w", compiler, runtimeResult.err)
 	}
+	for _, result := range []*wasmResult{&coreResult, &engineResult, &collabResult} {
+		if result.err != nil {
+			return fmt.Errorf("wasm %s runtime build with %s: %w", result.label, compiler, result.err)
+		}
+	}
 	manifest.Runtime.WASM = runtimeResult.asset
+	manifest.Runtime.WASMVariants = publishedRuntimeVariantAssets(
+		coreResult.asset,
+		engineResult.asset,
+		collabResult.asset,
+		runtimeResult.asset,
+	)
 	gzEst := gzip_c_len(runtimeResult.data)
 	fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", runtimeResult.asset.File, runtimeResult.asset.Size, gzEst/1024, runtimeResult.compiler)
+	for _, result := range []*wasmResult{&coreResult, &engineResult, &collabResult} {
+		gzEst := gzip_c_len(result.data)
+		fmt.Printf("    %s (%d bytes, %dKB gz, built with %s, %s)\n", result.asset.File, result.asset.Size, gzEst/1024, result.compiler, result.label)
+	}
 
 	// Process islands result
 	if buildIslands {
@@ -647,7 +671,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		manifest.Runtime.BootstrapFeatureTextlayout.File,
 		manifest.Runtime.Patch.File,
 		manifest.Runtime.VideoHLS.File,
-	))
+	)+countRuntimeVariantAssets(manifest.Runtime.WASMVariants))
 	fmt.Printf("  Tier 3 (islands): %d programs + %d CSS, immutable CDN\n",
 		len(manifest.Islands), len(manifest.CSS))
 	fmt.Printf("  Manifest: %s\n", manifestPath)
@@ -675,6 +699,16 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	return nil
 }
 
+func countRuntimeVariantAssets(variants map[string]buildmanifest.RuntimeVariantAsset) int {
+	count := 0
+	for _, asset := range variants {
+		if strings.TrimSpace(asset.File) != "" {
+			count++
+		}
+	}
+	return count
+}
+
 // gzip_c_len returns the best-compression gzip transfer size.
 func gzip_c_len(data []byte) int {
 	return int(gzipLength(data))
@@ -686,6 +720,43 @@ func goWASMBuildArgs(outputPath string, extraTags ...string) []string {
 		args = append(args, "-tags="+strings.Join(tags, " "))
 	}
 	return append(args, gosxModuleImportPath+"/client/wasm")
+}
+
+func runtimeVariantAsset(variant string, asset HashedAsset) buildmanifest.RuntimeVariantAsset {
+	return buildmanifest.RuntimeVariantAsset{
+		HashedAsset:  asset,
+		Variant:      variant,
+		FeatureMask:  uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant))),
+		ManifestHash: runtimewasm.ManifestIdentity(),
+	}
+}
+
+func publishedRuntimeVariantAssets(core, engine, collab, full HashedAsset) map[string]buildmanifest.RuntimeVariantAsset {
+	return map[string]buildmanifest.RuntimeVariantAsset{
+		string(runtimewasm.VariantCore):   runtimeVariantAsset(string(runtimewasm.VariantCore), core),
+		string(runtimewasm.VariantEngine): runtimeVariantAsset(string(runtimewasm.VariantEngine), engine),
+		string(runtimewasm.VariantCollab): runtimeVariantAsset(string(runtimewasm.VariantCollab), collab),
+		string(runtimewasm.VariantFull):   runtimeVariantAsset(string(runtimewasm.VariantFull), full),
+	}
+}
+
+// runtimeVariantBuildTags makes each advertised profile select the same source
+// family under TinyGo and standard Go. Core and engine deliberately use the
+// slim implementations for collaboration, highlighting, and text layout;
+// collab and full retain the corresponding full implementations.
+func runtimeVariantBuildTags(variant runtimewasm.Variant) []string {
+	switch variant {
+	case runtimewasm.VariantCore:
+		return []string{"gosx_tiny_runtime", "gosx_runtime_core"}
+	case runtimewasm.VariantEngine:
+		return []string{"gosx_tiny_runtime", "gosx_runtime_engine"}
+	case runtimewasm.VariantCollab:
+		return []string{"gosx_runtime_collab"}
+	case runtimewasm.VariantFull:
+		return []string{"gosx_runtime_full"}
+	default:
+		return nil
+	}
 }
 
 func islandOnlyWASMTags(compiler wasmCompiler) []string {
@@ -1006,6 +1077,12 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASM.File)
 	case "/gosx/runtime-islands.wasm":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASMIslands.File)
+	case "/gosx/runtime-core.wasm":
+		return manifestRuntimeVariantFilePath(runtimeDir, manifest, "core")
+	case "/gosx/runtime-engine.wasm":
+		return manifestRuntimeVariantFilePath(runtimeDir, manifest, "engine")
+	case "/gosx/runtime-collab.wasm":
+		return manifestRuntimeVariantFilePath(runtimeDir, manifest, "collab")
 	case "/gosx/wasm_exec.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASMExec.File)
 	case "/gosx/standard-go-wasm_exec.js":
@@ -1079,6 +1156,17 @@ func manifestRuntimeFilePath(runtimeDir, file string) (string, bool) {
 		return "", false
 	}
 	return filepath.Join(runtimeDir, file), true
+}
+
+func manifestRuntimeVariantFilePath(runtimeDir string, manifest *BuildManifest, variant string) (string, bool) {
+	if manifest == nil {
+		return "", false
+	}
+	asset, ok := manifest.Runtime.WASMVariants[strings.TrimSpace(variant)]
+	if !ok {
+		return "", false
+	}
+	return manifestRuntimeFilePath(runtimeDir, asset.File)
 }
 
 func cssCompatFilename(asset CSSAsset) string {

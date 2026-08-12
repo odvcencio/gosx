@@ -328,7 +328,7 @@ test("bootstrap Scene3D ortho-2D helpers apply the native defaults (zoom<=0→1,
 
 test("bootstrap 16a uploadFrameUniforms takes the ortho-2D branch before the 3D camera normalizer", () => {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"),
+    path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"),
     "utf8",
   );
   const start = source.indexOf("function uploadFrameUniforms(");

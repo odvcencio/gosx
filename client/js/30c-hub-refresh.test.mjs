@@ -6,8 +6,11 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
-const connections = fs.readFileSync(path.join(dirname, "bootstrap-src", "30c-tail-hub-connections.js"), "utf8");
-const disconnect = fs.readFileSync(path.join(dirname, "bootstrap-src", "30f-tail-hub-disconnect.js"), "utf8");
+const connections = [
+  fs.readFileSync(path.join(dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(dirname, "..", "runtime", "host", "hubs.ts"), "utf8"),
+].join("\n");
+const disconnect = fs.readFileSync(path.join(dirname, "..", "runtime", "host", "hub-disposal.ts"), "utf8");
 
 function createContext() {
   let nextTimer = 1;

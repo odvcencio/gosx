@@ -268,6 +268,9 @@ type ObjectIR struct {
 type ModelIR struct {
 	ObjectIR
 	Src                string   `json:"src,omitempty"`
+	PreviewSrc         string   `json:"previewSrc,omitempty"`
+	FullSrc            string   `json:"fullSrc,omitempty"`
+	Progressive        bool     `json:"progressive,omitempty"`
 	ScaleX             float64  `json:"scaleX,omitempty"`
 	ScaleY             float64  `json:"scaleY,omitempty"`
 	ScaleZ             float64  `json:"scaleZ,omitempty"`
@@ -305,6 +308,9 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 	type modelWire struct {
 		objectAlias
 		Src                string   `json:"src,omitempty"`
+		PreviewSrc         string   `json:"previewSrc,omitempty"`
+		FullSrc            string   `json:"fullSrc,omitempty"`
+		Progressive        bool     `json:"progressive,omitempty"`
 		ScaleX             float64  `json:"scaleX,omitempty"`
 		ScaleY             float64  `json:"scaleY,omitempty"`
 		ScaleZ             float64  `json:"scaleZ,omitempty"`
@@ -323,6 +329,9 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 	return json.Marshal(modelWire{
 		objectAlias:        objectAlias(m.ObjectIR),
 		Src:                m.Src,
+		PreviewSrc:         strings.TrimSpace(m.PreviewSrc),
+		FullSrc:            strings.TrimSpace(m.FullSrc),
+		Progressive:        m.Progressive,
 		ScaleX:             m.ScaleX,
 		ScaleY:             m.ScaleY,
 		ScaleZ:             m.ScaleZ,
@@ -1995,6 +2004,11 @@ func (item ModelIR) legacyProps() map[string]any {
 	record := map[string]any{
 		"id":  item.ID,
 		"src": src,
+	}
+	setString(record, "previewSrc", item.PreviewSrc)
+	setString(record, "fullSrc", item.FullSrc)
+	if item.Progressive {
+		record["progressive"] = true
 	}
 	setNumeric(record, "x", item.X)
 	setNumeric(record, "y", item.Y)
