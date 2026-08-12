@@ -853,10 +853,11 @@ func loadOptionalSizeEvidence(paths comparePathSet, source SourceIdentity, route
 	if err := validateSizeEvidenceForCompare(ev, routes); err != nil {
 		return nil, "", err
 	}
-	if ev.Canonical {
-		if err := validateCanonicalSizeEvidenceBundle(paths, ev); err != nil {
-			return nil, "", err
-		}
+	// Size receipts feed route byte ratchets in both modes. Keep the receipt
+	// optional in smoke, but when one is present require the same contained,
+	// byte-recomputed bundle as canonical comparison evidence.
+	if err := validateCanonicalSizeEvidenceBundle(paths, ev); err != nil {
+		return nil, "", err
 	}
 	hash, _ := sha256File(path)
 	return ev, hash, nil

@@ -461,6 +461,36 @@ func TestCanonicalCompareRejectsNoncanonicalZeroSizeReceipt(t *testing.T) {
 	}
 }
 
+func TestSmokeSizeLoaderRejectsUncontainedReceiptMetrics(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "size"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := compareSource("-smoke-size-bundle")
+	evidence := validReconciledSizeEvidence()
+	evidence.SchemaVersion = SchemaVersion
+	evidence.Contract = ContractO02
+	evidence.Source = source
+	evidence.Canonical = false
+	evidence.BundleRoot = ""
+	writeFixtureJSON(t, filepath.Join(root, "size", "route-assets.json"), evidence)
+
+	routes := []FixtureSpec{
+		{ID: "R00", Route: "/static"},
+		{ID: "R01", Route: "/lite"},
+		{ID: "R02", Route: "/island/counter"},
+	}
+	_, _, err := loadOptionalSizeEvidence(
+		comparePathSet{root: root, rootReal: root},
+		source,
+		routes,
+		CompareModeSmoke,
+	)
+	if err == nil || !strings.Contains(err.Error(), "canonical size evidence bundle requires canonical receipt") {
+		t.Fatalf("smoke uncontained size receipt error = %v", err)
+	}
+}
+
 func TestCompareRejectsManifestSamplingDowngrade(t *testing.T) {
 	root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{})
 	var manifest BrowserManifest
@@ -1024,13 +1054,15 @@ func TestCompareArtifactLoadFailures(t *testing.T) {
 		}
 	})
 	t.Run("size route set mismatch", func(t *testing.T) {
-		root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{})
-		var manifest BrowserManifest
-		readFixtureJSON(t, filepath.Join(root, "manifest.json"), &manifest)
-		writeFixtureSizeEvidence(t, root, manifest.Source, []RouteAssetEvidence{})
-		report := runSmokeCompare(t, root, root)
-		if report.ExitCode != 1 || !reportHasMessage(report, "selected browser routes") {
-			t.Fatalf("report did not fail on size route set mismatch: %+v", report.Summary)
+		// Route reconciliation is a structural preflight that runs before bundle
+		// containment. Exercise it directly so this test does not manufacture a
+		// second, independently invalid uncontained receipt.
+		err := validateSizeEvidenceForCompare(
+			&SizeEvidence{Assets: []TransferredAsset{}, Routes: []RouteAssetEvidence{}},
+			[]FixtureSpec{{ID: "R00", Route: "/"}},
+		)
+		if err == nil || !strings.Contains(err.Error(), "selected browser routes") {
+			t.Fatalf("size route set mismatch error = %v", err)
 		}
 	})
 }
