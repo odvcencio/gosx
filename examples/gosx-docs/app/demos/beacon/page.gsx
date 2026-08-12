@@ -1,7 +1,13 @@
 package docs
 
 func Page() Node {
-	return <section class="beacon" aria-label="Blackglass Coast" role="region" data-gosx-scene3d-status-scope data-gosx-scene3d-control-scope>
+	return <section
+		class="beacon"
+		aria-label="Blackglass Coast"
+		role="region"
+		data-gosx-scene3d-status-scope
+		data-gosx-scene3d-control-scope
+	>
 		<div class="beacon__canvas">
 			<Scene3D {...data.scene} />
 		</div>
@@ -46,7 +52,9 @@ func Page() Node {
 			</ul>
 			<p class="beacon__controls">
 				Drag or swipe to orbit · scroll or pinch to zoom · tap the cove for ripples
-				<span>Keyboard: arrows explore · +/− zoom · Home restores the opening view</span>
+				<span>
+					Keyboard: arrows explore · +/− zoom · Home restores the opening view
+				</span>
 			</p>
 		</div>
 	</section>
