@@ -172,14 +172,15 @@ func TestGotreesitterTypeScriptDiagnosticCarriesSourceRange(t *testing.T) {
 	if err == nil {
 		t.Fatal("validateTypedSource accepted invalid TypeScript")
 	}
-	for _, want := range []string{
-		"bootstrap-src/broken.ts:1:",
-		"-1:",
-		"TypeScript syntax error",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("diagnostic does not contain %q: %v", want, err)
-		}
+	// The full "file:line:col-line:col:" prefix, not just a loose substring:
+	// a weak "-1:" check passes for almost any diagnostic that names a line
+	// 1, so it cannot catch a wrong column or a wrong end point.
+	const wantPrefix = "parse bootstrap-src/broken.ts:1:21-1:24:"
+	if !strings.HasPrefix(err.Error(), wantPrefix) {
+		t.Fatalf("diagnostic = %q, want prefix %q", err.Error(), wantPrefix)
+	}
+	if !strings.Contains(err.Error(), "TypeScript syntax error") {
+		t.Errorf("diagnostic does not name a TypeScript syntax error: %v", err)
 	}
 }
 
