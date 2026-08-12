@@ -8,9 +8,13 @@ import (
 )
 
 const (
-	blackglassCoastNodeBudget           = 16
+	blackglassCoastNodeBudget           = 17
 	blackglassCoastExpandedVertexBudget = 72000
 	blackglassCoastMaxPixels            = scene.PostFXMaxPixels720p
+	// blackglassEmberPlumeCount caps the beacon-lens ember plume well under the
+	// WebGL2 CPU-mirror fallback's 10k-particle honesty limit, so the fallback
+	// stays truthful on hardware without WebGPU compute.
+	blackglassEmberPlumeCount = 320
 )
 
 // BlackglassBeaconProgram remains the route-compatible name for the original
@@ -37,6 +41,7 @@ func BlackglassBeaconProgram() scene.Props {
 			scene.Bloom{Threshold: 1.06, Strength: 0.24, Radius: 7, Scale: 0.35},
 			scene.Tonemap{Mode: scene.TonemapACES, Exposure: 1.1},
 			scene.Vignette{Intensity: 0.16},
+			scene.FXAA{},
 		}},
 		Shadows: scene.Shadows{MaxPixels: scene.ShadowMaxPixels512},
 		Graph:   scene.NewGraph(blackglassCoastNodes(contract)...),
@@ -80,6 +85,38 @@ func blackglassCoastNodes(contract BlackglassCoastContract) []scene.Node {
 		scene.Mesh{ID: "blackglass-beacon", Geometry: scene.CylinderGeometry{RadiusTop: 0.55, RadiusBottom: 1.25, Height: 6.4, Segments: 24}, Material: blackglass, Position: local(scene.Vec3(8, 4.7, -4)), CastShadow: true, ReceiveShadow: true},
 		scene.Mesh{ID: "beacon-lens", Geometry: scene.SphereGeometry{Radius: 0.72, Segments: 24}, Material: ember, Position: local(scene.Vec3(8, 8.1, -4)), CastShadow: true},
 		scene.Mesh{ID: "arrival-marker", Geometry: scene.SphereGeometry{Radius: 0.46, Segments: 20}, Material: scene.StandardMaterial{Color: "#e7bd6b", Roughness: 0.4, Metalness: 0.3}, Position: local(scene.Vec3(-1.8, 0.2, 9.2)), CastShadow: true},
+		blackglassBeaconEmberPlume(contract),
+	}
+}
+
+// blackglassBeaconEmberPlume is a small warm plume rising from the beacon
+// lens, colored to match the beacon-fire point light and the lens material
+// (#ff9c4e). Compute particles are WebGPU-only with a CPU-mirror WebGL2
+// fallback capped at 10k particles; blackglassEmberPlumeCount stays two
+// orders of magnitude under that cap so the fallback stays honest.
+func blackglassBeaconEmberPlume(contract BlackglassCoastContract) scene.ComputeParticles {
+	local := contract.Local
+	return scene.ComputeParticles{
+		ID:    "beacon-ember-plume",
+		Count: blackglassEmberPlumeCount,
+		Emitter: scene.ParticleEmitter{
+			Kind:     "point",
+			Position: local(scene.Vec3(8, 8.1, -4)),
+			Rate:     30,
+			Lifetime: 3.2,
+			Scatter:  0.12,
+		},
+		Forces: []scene.ParticleForce{
+			{Kind: "gravity", Strength: 0.3, Direction: scene.Vec3(0, 1, 0)},
+			{Kind: "turbulence", Strength: 0.18, Frequency: 1.6},
+			{Kind: "wind", Strength: 0.1, Direction: scene.Vec3(0.4, 0, 0.2)},
+		},
+		Material: scene.ParticleMaterial{
+			Color: "#ffcf8a", ColorEnd: "#ff9c4e",
+			Style: scene.PointStyleGlow, Size: 0.05, SizeEnd: 0.015,
+			Opacity: 0.85, OpacityEnd: 0, BlendMode: scene.BlendAdditive, Attenuation: true,
+		},
+		Bounds: 7,
 	}
 }
 
