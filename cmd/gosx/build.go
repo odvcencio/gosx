@@ -732,6 +732,15 @@ func runtimeVariantAsset(variant string, asset HashedAsset) buildmanifest.Runtim
 }
 
 func publishedRuntimeVariantAssets(core, engine, collab, full HashedAsset) map[string]buildmanifest.RuntimeVariantAsset {
+	// GOSX_TINYGO_FULL_RUNTIME predates capability-linked profiles. Preserve
+	// its original meaning for callers that use it as a compatibility escape
+	// hatch: the manifest may only advertise the full runtime, so route-level
+	// selection cannot silently choose a slim artifact.
+	if tinyGoFullRuntimeEnabled() {
+		return map[string]buildmanifest.RuntimeVariantAsset{
+			string(runtimewasm.VariantFull): runtimeVariantAsset(string(runtimewasm.VariantFull), full),
+		}
+	}
 	return map[string]buildmanifest.RuntimeVariantAsset{
 		string(runtimewasm.VariantCore):   runtimeVariantAsset(string(runtimewasm.VariantCore), core),
 		string(runtimewasm.VariantEngine): runtimeVariantAsset(string(runtimewasm.VariantEngine), engine),

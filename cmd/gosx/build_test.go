@@ -27,6 +27,7 @@ func TestRuntimeVariantAssetCarriesContractIdentity(t *testing.T) {
 }
 
 func TestPublishedRuntimeVariantAssetsAreExactlyTheFourProfiles(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
 	assets := publishedRuntimeVariantAssets(
 		HashedAsset{File: "core.wasm"},
 		HashedAsset{File: "engine.wasm"},
@@ -47,6 +48,26 @@ func TestPublishedRuntimeVariantAssetsAreExactlyTheFourProfiles(t *testing.T) {
 		if asset.Variant != string(variant) || asset.FeatureMask != uint32(runtimewasm.FeatureMaskForVariant(variant)) {
 			t.Fatalf("published %s contract = %+v", variant, asset)
 		}
+	}
+}
+
+func TestFullRuntimeCompatibilityModeOnlyAdvertisesFullProfile(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "1")
+	assets := publishedRuntimeVariantAssets(
+		HashedAsset{File: "core.wasm"},
+		HashedAsset{File: "engine.wasm"},
+		HashedAsset{File: "collab.wasm"},
+		HashedAsset{File: "full.wasm"},
+	)
+	if len(assets) != 1 {
+		t.Fatalf("full-runtime compatibility assets = %v, want one full profile", assets)
+	}
+	full, ok := assets[string(runtimewasm.VariantFull)]
+	if !ok {
+		t.Fatalf("full-runtime compatibility assets omitted full: %v", assets)
+	}
+	if full.File != "full.wasm" || full.Variant != string(runtimewasm.VariantFull) {
+		t.Fatalf("full-runtime compatibility asset = %+v", full)
 	}
 }
 
