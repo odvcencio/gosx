@@ -45,7 +45,7 @@ component Card(props: *CardProps) {
 	if len(symbols) != 1 {
 		t.Fatalf("symbols = %#v", symbols)
 	}
-	if symbols[0].Detail != "component Card(props: *CardProps) Node" {
+	if symbols[0].Detail != "component Card(props: *CardProps)" {
 		t.Fatalf("detail = %q", symbols[0].Detail)
 	}
 	want := testPositionIn(source, "Card(props", 1)

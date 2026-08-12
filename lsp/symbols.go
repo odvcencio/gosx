@@ -218,9 +218,9 @@ func componentHover(sym componentSymbol) *Hover {
 func componentSignature(comp ir.Component) string {
 	if comp.Syntax == ir.ComponentSyntaxStrict {
 		if comp.PropsType == "" {
-			return "component " + comp.Name + "() Node"
+			return "component " + comp.Name + "()"
 		}
-		return "component " + comp.Name + "(props: " + comp.PropsType + ") Node"
+		return "component " + comp.Name + "(props: " + comp.PropsType + ")"
 	}
 	if comp.PropsType == "" {
 		return "func " + comp.Name + "() Node"
