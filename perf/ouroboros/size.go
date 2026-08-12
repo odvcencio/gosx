@@ -119,6 +119,8 @@ type ToolStatus struct {
 
 type RuntimeArtifactVariant struct {
 	ID                string        `json:"id"`
+	Variant           string        `json:"variant"`
+	FeatureMask       uint32        `json:"featureMask"`
 	Generation        string        `json:"generation,omitempty"`
 	Status            string        `json:"status"`
 	SizeBytes         *int64        `json:"sizeBytes"`

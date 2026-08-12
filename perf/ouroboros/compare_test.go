@@ -54,6 +54,60 @@ func TestCompareSmokeSelfComparePasses(t *testing.T) {
 	}
 }
 
+func TestValidateRuntimeEvidenceRequiresMeasuredProfilesWithoutRouteClaims(t *testing.T) {
+	evidence := measuredRuntimeEvidenceFixture()
+	if err := validateRuntimeEvidenceForCompare(evidence); err != nil {
+		t.Fatalf("valid runtime evidence rejected: %v", err)
+	}
+
+	evidence.Variants[0].PlannedSelectedBy = []string{"R02"}
+	if err := validateRuntimeEvidenceForCompare(evidence); err == nil || !strings.Contains(err.Error(), "fabricates route selection") {
+		t.Fatalf("fabricated route selection error = %v", err)
+	}
+}
+
+func TestValidateRuntimeEvidenceRejectsNilRouteReceipt(t *testing.T) {
+	evidence := measuredRuntimeEvidenceFixture()
+	evidence.Variants[0].PlannedSelectedBy = nil
+	if err := validateRuntimeEvidenceForCompare(evidence); err == nil || !strings.Contains(err.Error(), "allocated empty list") {
+		t.Fatalf("nil selectedByRoutes error = %v", err)
+	}
+}
+
+func measuredRuntimeEvidenceFixture() *RuntimeBuildEvidence {
+	ids := []struct {
+		id      string
+		variant string
+		mask    uint32
+	}{
+		{"core", "core", 17},
+		{"engine", "engine", 27},
+		{"collab", "collab", 21},
+		{"full", "full", 31},
+		{"islands", "islands", 17},
+	}
+	evidence := &RuntimeBuildEvidence{Variants: make([]RuntimeArtifactVariant, 0, len(ids))}
+	for _, item := range ids {
+		size := int64(100)
+		evidence.Variants = append(evidence.Variants, RuntimeArtifactVariant{
+			ID:                item.id,
+			Variant:           item.variant,
+			FeatureMask:       item.mask,
+			Generation:        "current",
+			Status:            "measured",
+			SizeBytes:         &size,
+			File:              item.id + ".wasm",
+			SourcePath:        item.id + ".wasm",
+			SHA256:            strings.Repeat("a", 64),
+			Bytes:             size,
+			GzipBytes:         80,
+			BrotliBytes:       70,
+			PlannedSelectedBy: []string{},
+		})
+	}
+	return evidence
+}
+
 func TestComparePortableManifestSurvivesArtifactRelocation(t *testing.T) {
 	parent := t.TempDir()
 	original := writeCompareFixture(t, filepath.Join(parent, "captured"), compareFixtureOptions{

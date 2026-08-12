@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/visual"
 )
 
@@ -1012,19 +1013,18 @@ func validateRuntimeEvidenceForCompare(ev *RuntimeBuildEvidence) error {
 	if ev == nil {
 		return fmt.Errorf("runtime evidence is nil")
 	}
-	if len(ev.Variants) != 6 {
-		return fmt.Errorf("runtime evidence variant count = %d, want 6", len(ev.Variants))
+	if len(ev.Variants) != 5 {
+		return fmt.Errorf("runtime evidence variant count = %d, want 5", len(ev.Variants))
 	}
 	want := map[string]struct {
-		generation string
-		status     string
+		variant runtimewasm.Variant
+		mask    uint32
 	}{
-		"runtime": {"current", "measured"},
-		"islands": {"current", "measured"},
-		"core":    {"future", "planned"},
-		"engine":  {"future", "planned"},
-		"collab":  {"future", "planned"},
-		"full":    {"future", "planned"},
+		"core":    {runtimewasm.VariantCore, uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantCore))},
+		"engine":  {runtimewasm.VariantEngine, uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantEngine))},
+		"collab":  {runtimewasm.VariantCollab, uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantCollab))},
+		"full":    {runtimewasm.VariantFull, uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantFull))},
+		"islands": {runtimewasm.VariantIslands, uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantIslands))},
 	}
 	seen := map[string]bool{}
 	for _, variant := range ev.Variants {
@@ -1039,17 +1039,30 @@ func validateRuntimeEvidenceForCompare(ev *RuntimeBuildEvidence) error {
 		if !ok {
 			return fmt.Errorf("runtime evidence has unexpected variant %s", variant.ID)
 		}
-		if variant.Generation != expected.generation || variant.Status != expected.status {
-			return fmt.Errorf("runtime variant %s generation/status = %s/%s, want %s/%s", variant.ID, variant.Generation, variant.Status, expected.generation, expected.status)
+		if variant.Generation != "current" || variant.Status != "measured" {
+			return fmt.Errorf("runtime variant %s generation/status = %s/%s, want current/measured", variant.ID, variant.Generation, variant.Status)
 		}
-		if variant.Bytes < 0 || variant.GzipBytes < 0 || variant.BrotliBytes < 0 {
-			return fmt.Errorf("runtime variant %s has negative bytes", variant.ID)
+		if variant.Variant != string(expected.variant) || variant.FeatureMask != expected.mask {
+			return fmt.Errorf("runtime variant %s identity = %s/0x%x, want %s/0x%x", variant.ID, variant.Variant, variant.FeatureMask, expected.variant, expected.mask)
 		}
-		if variant.SizeBytes != nil && *variant.SizeBytes < 0 {
-			return fmt.Errorf("runtime variant %s has negative sizeBytes", variant.ID)
+		if variant.Bytes <= 0 || variant.GzipBytes <= 0 || variant.BrotliBytes <= 0 {
+			return fmt.Errorf("runtime variant %s has unmeasured bytes", variant.ID)
 		}
-		if variant.Generation == "future" && (variant.Bytes != 0 || variant.GzipBytes != 0 || variant.BrotliBytes != 0 || variant.SizeBytes != nil || variant.BudgetBytes != nil || variant.File != "") {
-			return fmt.Errorf("planned runtime variant %s must not pretend to have measured binaries", variant.ID)
+		if variant.SizeBytes == nil || *variant.SizeBytes != variant.Bytes {
+			return fmt.Errorf("runtime variant %s sizeBytes does not bind measured bytes", variant.ID)
+		}
+		if strings.TrimSpace(variant.File) == "" || strings.TrimSpace(variant.SourcePath) == "" {
+			return fmt.Errorf("runtime variant %s has no artifact path", variant.ID)
+		}
+		sha, err := hex.DecodeString(variant.SHA256)
+		if err != nil || len(sha) != sha256.Size {
+			return fmt.Errorf("runtime variant %s has invalid sha256", variant.ID)
+		}
+		if variant.PlannedSelectedBy == nil {
+			return fmt.Errorf("runtime variant %s selectedByRoutes must be an allocated empty list", variant.ID)
+		}
+		if len(variant.PlannedSelectedBy) != 0 {
+			return fmt.Errorf("runtime variant %s fabricates route selection: %s", variant.ID, strings.Join(variant.PlannedSelectedBy, ","))
 		}
 	}
 	for id := range want {

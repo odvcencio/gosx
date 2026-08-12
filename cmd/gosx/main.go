@@ -5,7 +5,7 @@
 //	gosx build [--offline|--msix|--sign|--scene-budget file] <dir>
 //	                              Build GoSX application
 //	gosx assets plan [path...]    Plan Scene3D asset optimization work
-//	gosx build-runtime [outdir]   Build TinyGo production WASM runtimes
+//	gosx build-runtime [flags] [outdir]   Build TinyGo production WASM runtimes
 //	gosx dev [--scene-inspector] <dir>
 //	                              Start development server with hot reload
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
@@ -133,7 +133,12 @@ Usage:
 		fmt.Fprintf(w, `gosx build-runtime - Build TinyGo production WASM runtimes
 
 Usage:
-  gosx build-runtime [outdir]
+  gosx build-runtime [--ouroboros-out dir --inventory file --root dir] [outdir]
+
+Flags:
+  --ouroboros-out dir  Write a canonical, write-once runtime evidence receipt
+  --inventory file     Bind canonical evidence to a source inventory
+  --root dir           Repository root used for both compilation and evidence
 
 `)
 	case "dev":
@@ -240,7 +245,7 @@ Commands:
   build [--offline|--msix|--sign] [--appinstaller <uri>] <dir>
                        Build GoSX application
   assets plan [path...] Plan build-time optimization for Scene3D assets
-  build-runtime [outdir]
+  build-runtime [--ouroboros-out dir --inventory file --root dir] [outdir]
                        Build TinyGo production WASM runtimes
   dev [--scene-inspector] <dir>
                        Start development server with hot reload

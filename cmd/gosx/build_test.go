@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"m31labs.dev/gosx"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/island"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
 
@@ -68,6 +70,29 @@ func TestFullRuntimeCompatibilityModeOnlyAdvertisesFullProfile(t *testing.T) {
 	}
 	if full.File != "full.wasm" || full.Variant != string(runtimewasm.VariantFull) {
 		t.Fatalf("full-runtime compatibility asset = %+v", full)
+	}
+}
+
+func TestFullRuntimeCompatibilityManifestMakesIslandRouteSelectFull(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "1")
+	full := HashedAsset{File: "gosx-runtime-full.wasm", Hash: "full", Size: 40}
+	manifest := &BuildManifest{Runtime: RuntimeAssets{
+		WASM:        full,
+		WASMIslands: HashedAsset{File: "gosx-runtime-islands.wasm", Hash: "islands", Size: 5},
+		WASMVariants: publishedRuntimeVariantAssets(
+			HashedAsset{File: "gosx-runtime-core.wasm", Hash: "core", Size: 10},
+			HashedAsset{File: "gosx-runtime-engine.wasm", Hash: "engine", Size: 25},
+			HashedAsset{File: "gosx-runtime-collab.wasm", Hash: "collab", Size: 28},
+			full,
+		),
+	}}
+	renderer := island.NewRenderer("compatibility-route")
+	if err := renderer.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	renderer.RenderIsland("Counter", nil, gosx.Text("counter"))
+	if got := renderer.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-full.wasm" {
+		t.Fatalf("full-runtime compatibility island selected %q, want full artifact", got)
 	}
 }
 
