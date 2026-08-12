@@ -1042,6 +1042,18 @@ var deferredHostCutoverArtifacts = map[string]bool{
 	"patch.js":                         true,
 	"relay.js":                         true,
 	"stripe-bridge.js":                 true,
+
+	// The 7 Scene3D bundles below are deferred for the same reason: their
+	// sources moved from client/js/bootstrap-src to client/runtime/scene3d
+	// as typed host authorities in Stack 03, and stay stale until the O6
+	// cutover regenerates the complete Scene3D bundle set.
+	"bootstrap-feature-scene3d.js":           true,
+	"bootstrap-feature-scene3d-webgl.js":     true,
+	"bootstrap-feature-scene3d-command.js":   true,
+	"bootstrap-feature-scene3d-webgpu.js":    true,
+	"bootstrap-feature-scene3d-compute.js":   true,
+	"bootstrap-feature-scene3d-gltf.js":      true,
+	"bootstrap-feature-scene3d-animation.js": true,
 }
 
 // chunksManifestJSON renders the outputs table as stable, indented JSON. The

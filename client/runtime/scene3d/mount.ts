@@ -1943,14 +1943,11 @@
 	      const commands = Array.isArray(detail.commands) ? detail.commands : null;
 	      if (!Number.isSafeInteger(revision) || revision <= 0 || revision <= lastMountCommandRevision || !commands) return;
 	      lastMountCommandRevision = revision;
-	      const result = applyMountedSceneCommands(commands, "mount-commands");
-	      if (result && typeof result.then === "function") {
-	        result.then(function() {
-	          emitMountCommandsApplied(revision, commands.length);
-	        });
-	        return;
-	      }
+	      // applyMountedSceneCommands always returns a Promise, so the async
+	      // dispatch below always applies; there is no synchronous fallback.
+	      applyMountedSceneCommands(commands, "mount-commands").then(function() {
 	        emitMountCommandsApplied(revision, commands.length);
+	      });
 	    }
 	    if (ctx.mount && typeof ctx.mount.addEventListener === "function") {
 	      ctx.mount.addEventListener("gosx:scene3d:commands", onMountCommands);
