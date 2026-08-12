@@ -191,6 +191,18 @@ func EncodePatchPayload(islandID string, patches []vm.PatchOp) ([]byte, error) {
 	return out, nil
 }
 
+// minimumPatchBytes is the fewest bytes one iteration of DecodePatchPayload's
+// per-patch loop can consume: the 1-byte kind, four zero-length strings (a
+// 4-byte length prefix each, since reader.string reads the length before the
+// bytes), and a zero-value child count (4 bytes). vm.PatchOp is roughly 100
+// bytes wide, so bounding the declared patch count only by len(payload)
+// still lets a forged header over a small payload request an allocation
+// orders of magnitude larger than the payload that carries it (for example a
+// count of tens of millions over a few dozen remaining bytes). Bounding by
+// reader.remaining()/minimumPatchBytes caps the requested slice capacity at
+// the number of patches the remaining bytes can possibly encode.
+const minimumPatchBytes = 1 + 4*4 + 4 // kind + 4 string length-prefixes + childCount
+
 // DecodePatchPayload decodes the patch payload and rejects trailing or
 // truncated bytes before the caller touches the DOM.
 func DecodePatchPayload(payload []byte) (string, []vm.PatchOp, error) {
@@ -203,7 +215,7 @@ func DecodePatchPayload(payload []byte) (string, []vm.PatchOp, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	if count > uint32(len(payload)) {
+	if uint64(count) > uint64(reader.remaining()/minimumPatchBytes) {
 		return "", nil, errors.New("patch count is impossible for payload size")
 	}
 	patches := make([]vm.PatchOp, 0, count)
