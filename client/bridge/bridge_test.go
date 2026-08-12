@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/crdt"
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/island/program"
@@ -62,6 +64,28 @@ func TestBridgeHydrateBinary(t *testing.T) {
 	}
 	if b.IslandCount() != 1 {
 		t.Fatal("expected 1 island")
+	}
+}
+
+func TestBridgePrefersBinaryPatchMailboxWhenRegistered(t *testing.T) {
+	b := New()
+	var mailbox []byte
+	legacyCalls := 0
+	b.SetPatchCallback(func(string, string) { legacyCalls++ })
+	b.SetPatchMailboxCallback(func(_ string, data []byte) { mailbox = append([]byte(nil), data...) })
+	b.EmitPatches("island-mailbox", []vm.PatchOp{{Kind: vm.PatchSetText, Path: "0", Text: "direct"}})
+	if legacyCalls != 0 {
+		t.Fatalf("legacy JSON callback ran %d time(s)", legacyCalls)
+	}
+	if len(mailbox) == 0 {
+		t.Fatal("binary mailbox callback did not receive a frame")
+	}
+	header, islandID, patches, err := runtimewasm.DecodePatchMailbox(mailbox)
+	if err != nil {
+		t.Fatalf("decode binary patch mailbox: %v", err)
+	}
+	if header.RequestID != 1 || islandID != "island-mailbox" || len(patches) != 1 || patches[0].Text != "direct" {
+		t.Fatalf("unexpected binary patch frame: header=%#v island=%q patches=%#v", header, islandID, patches)
 	}
 }
 

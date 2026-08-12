@@ -89,6 +89,10 @@ const (
 	scene3DCommandBridgeFile = "../runtime/scene3d/command-bridge.ts"
 	controllersFile          = "../runtime/host/controllers.ts"
 	hostCompatibilityFile    = "../runtime/host/compatibility.ts"
+	runtimeContractFile      = "../runtime/generated/runtime-abi.ts"
+	runtimeABISupportFile    = "../runtime/wasm/abi.ts"
+	runtimeMailboxFile       = "../runtime/wasm/mailbox.ts"
+	runtimeLoaderFile        = "../runtime/wasm/loader.ts"
 )
 
 type source struct {
@@ -121,6 +125,10 @@ var outputs = []output{
 			sourceFile("bootstrap-src/04-telemetry.js"),
 			sourceFile("bootstrap-src/05-document-env.js"),
 			sourceFile(hostCompatibilityFile),
+			sourceFile(runtimeContractFile),
+			sourceFile(runtimeABISupportFile),
+			sourceFile(runtimeMailboxFile),
+			sourceFile(runtimeLoaderFile),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile(scene3DCommandBridgeFile),
 			sourceFile("../runtime/host/regions.ts"),
@@ -237,6 +245,10 @@ var outputs = []output{
 			sourceFile("bootstrap-src/04-telemetry.js"),
 			sourceFile("bootstrap-src/05-document-env.js"),
 			sourceFile(hostCompatibilityFile),
+			sourceFile(runtimeContractFile),
+			sourceFile(runtimeABISupportFile),
+			sourceFile(runtimeMailboxFile),
+			sourceFile(runtimeLoaderFile),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile("../runtime/host/regions.ts"),
 			sourceFile("../runtime/host/facade.ts"),

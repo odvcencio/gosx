@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/videosync"
 	"m31labs.dev/gosx/client/vm"
 	rootengine "m31labs.dev/gosx/engine"
@@ -29,14 +30,16 @@ type Bridge struct {
 	// it is a DOM island or a scene engine. Surface-specific dispatch
 	// (Hydrate*, Dispatch*, Tick*, Render*) still goes through the typed
 	// maps — collapsing those is Phase 1d work.
-	reconcilers   map[string]vm.Reconciler
-	store         *Store
-	patchFn       func(islandID, patchJSON string)      // callback to push patches to JS
-	signalFn      func(name, valueJSON string)          // callback to notify JS of shared signal changes
-	dispatching   map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
-	unsubs        map[string][]func()                   // per-island unsubscribe handles for shared signals
-	hostFactories map[string]HostReceiverFactory        // receiver name -> per-island capability factory
-	hostReceivers map[string]map[string]vm.HostReceiver // island id -> live receiver bindings
+	reconcilers    map[string]vm.Reconciler
+	store          *Store
+	patchFn        func(islandID, patchJSON string)      // compatibility callback to push JSON patches to JS
+	patchMailboxFn func(islandID string, mailbox []byte) // direct binary patch callback
+	patchRequestID uint32                                // monotonically increasing id for direct mailbox frames
+	signalFn       func(name, valueJSON string)          // callback to notify JS of shared signal changes
+	dispatching    map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
+	unsubs         map[string][]func()                   // per-island unsubscribe handles for shared signals
+	hostFactories  map[string]HostReceiverFactory        // receiver name -> per-island capability factory
+	hostReceivers  map[string]map[string]vm.HostReceiver // island id -> live receiver bindings
 
 	// engineSurfaces holds live engine-surface VM+canvas+receiver
 	// triples keyed by mount id. Populated by HydrateEngineSurface
@@ -69,6 +72,21 @@ type Bridge struct {
 // trigger a re-render on an island. In WASM, this calls __gosx_apply_patches.
 func (b *Bridge) SetPatchCallback(fn func(islandID, patchJSON string)) {
 	b.patchFn = fn
+}
+
+// SetPatchMailboxCallback registers the direct binary patch channel. When it
+// is present, shared-signal reconciliation and action results use the mailbox
+// instead of allocating a JSON string. The JSON callback remains available as
+// an explicit compatibility fallback for older patch.js assets.
+func (b *Bridge) SetPatchMailboxCallback(fn func(islandID string, mailbox []byte)) {
+	b.patchMailboxFn = fn
+}
+
+// EmitPatches sends an already-reconciled patch list through the selected
+// browser boundary. It is exported for WASM action adapters that receive the
+// list synchronously rather than through a shared-signal observer.
+func (b *Bridge) EmitPatches(islandID string, patches []vm.PatchOp) {
+	b.pushPatches(islandID, patches)
 }
 
 // Store is a shared signal store that enables cross-island state.
@@ -563,7 +581,18 @@ func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
 	if _, compute := b.computeIslands[islandID]; compute {
 		return
 	}
-	if len(patches) == 0 || b.patchFn == nil {
+	if len(patches) == 0 {
+		return
+	}
+	if b.patchMailboxFn != nil {
+		b.patchRequestID++
+		mailbox, err := runtimewasm.EncodePatchMailbox(islandID, b.patchRequestID, patches)
+		if err == nil {
+			b.patchMailboxFn(islandID, mailbox)
+		}
+		return
+	}
+	if b.patchFn == nil {
 		return
 	}
 	patchJSON, err := MarshalPatches(patches)

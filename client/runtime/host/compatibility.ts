@@ -11,6 +11,7 @@
 
 /** @type {GoSXHostCompatibilityEntry[]} */
 var GOSX_HOST_COMPATIBILITY_ALLOWLIST = [
+  { name: "__gosx_apply_patch_mailbox", owner: "host/patch", removeAfter: "Stack 07 compatibility audit" },
   { name: "__gosx_apply_patches", owner: "host/patch", removeAfter: "Stack 07 compatibility audit" },
   { name: "__gosx_apply_scene_command_scripts", owner: "host/regions", removeAfter: "Stack 07 compatibility audit" },
   { name: "__gosx_bootstrap_page", owner: "host/lifecycle", removeAfter: "Stack 07 compatibility audit" },

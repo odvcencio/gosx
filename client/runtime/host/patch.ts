@@ -1022,6 +1022,7 @@
     applyJSON: applyPatchesJSON,
     applyMailbox: applyPatchMailbox,
   });
+  gosxHostCompatibility.install("__gosx_apply_patch_mailbox", applyPatchMailbox);
   gosxHostCompatibility.install("__gosx_apply_patches", applyPatchesJSON);
 
 })();
