@@ -260,6 +260,25 @@
         "../runtime/scene3d/animation.ts",
         "bootstrap-src/26g-feature-scene3d-animation-suffix.ts"
       ]
+    },
+    {
+      "name": "patch.js",
+      "sources": [
+        "../runtime/wasm/mailbox.ts",
+        "../runtime/host/patch.ts"
+      ]
+    },
+    {
+      "name": "relay.js",
+      "sources": [
+        "../runtime/host/relay.ts"
+      ]
+    },
+    {
+      "name": "stripe-bridge.js",
+      "sources": [
+        "../runtime/host/stripe-bridge.ts"
+      ]
     }
   ]
 }

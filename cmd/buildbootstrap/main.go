@@ -516,6 +516,29 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.ts"),
 		},
 	},
+	{
+		// The public patch asset carries the typed mailbox codec beside the
+		// applier so it remains independently loadable without an authored JS
+		// decoder shim. The bootstrap bundle carries the same codec for the
+		// normal runtime path.
+		name: "patch.js",
+		sources: []source{
+			sourceFile("../runtime/wasm/mailbox.ts"),
+			sourceFile("../runtime/host/patch.ts"),
+		},
+	},
+	{
+		name: "relay.js",
+		sources: []source{
+			sourceFile("../runtime/host/relay.ts"),
+		},
+	},
+	{
+		name: "stripe-bridge.js",
+		sources: []source{
+			sourceFile("../runtime/host/stripe-bridge.ts"),
+		},
+	},
 }
 
 const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

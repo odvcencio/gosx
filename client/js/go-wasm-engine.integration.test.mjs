@@ -20,7 +20,7 @@ test("engine/wasm registers and disposes through the version-matched standard-Go
     const tailDir = path.join(repoRoot, "client", "js", "bootstrap-src");
     const loaderSource = fs
       .readdirSync(tailDir)
-      .filter((name) => /^30[a-z]-tail-.*\.js$/.test(name))
+      .filter((name) => /^30[a-z]-tail-.*\.ts$/.test(name))
       .sort()
       .map((name) => fs.readFileSync(path.join(tailDir, name), "utf8"))
       .join("\n");

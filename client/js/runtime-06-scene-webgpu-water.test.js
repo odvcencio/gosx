@@ -570,7 +570,7 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   const waterDir = path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water");
   const waterPage = fs.readFileSync(path.join(waterDir, "page.gsx"), "utf8");
 
-  assert.match(build, /bootstrap-src\/19b-scene-control-forms\.js/);
+  assert.match(build, /bootstrap-src\/19b-scene-control-forms\.ts/);
   assert.match(controls, /function bindSceneManagedControlForms/);
   assert.match(controls, /function registerSceneManagedControlProfile/);
   assert.match(controls, /function publishSceneManagedControlProfiles/);

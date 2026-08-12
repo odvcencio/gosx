@@ -4041,12 +4041,12 @@ function readWebGPUBackendSrc() {
   return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.ts");
 }
 
-// readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
+// readBootstrapTailSrc joins every 30x-tail-*.ts file in build order. The old
 // single 30-tail.js is now that file set.
 function readBootstrapTailSrc() {
   const srcDir = path.join(__dirname, "bootstrap-src");
   return readBootstrapSrc(
-    ...fs.readdirSync(srcDir).filter((n) => /^30[a-z]-tail-.*\.js$/.test(n)).sort(),
+    ...fs.readdirSync(srcDir).filter((n) => /^30[a-z]-tail-.*\.ts$/.test(n)).sort(),
   );
 }
 

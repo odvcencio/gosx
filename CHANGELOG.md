@@ -2881,7 +2881,7 @@ b.WriteString("\x3c/script>")
 
 ### Probe used `powerPreference: "high-performance"`
 
-The module-level adapter probe in `16z-scene-webgpu-probe.js` requested an adapter with `{ powerPreference: "high-performance" }`. On some headless / server Chromium backends (notably SwiftShader and certain Linux Mesa / ANGLE builds) that hint causes `requestAdapter()` to return null where the unbounded request succeeds — there's no discrete GPU to match the preference against and Chromium won't fall back to the integrated path automatically.
+The module-level adapter probe in `16z-scene-webgpu-probe.ts` requested an adapter with `{ powerPreference: "high-performance" }`. On some headless / server Chromium backends (notably SwiftShader and certain Linux Mesa / ANGLE builds) that hint causes `requestAdapter()` to return null where the unbounded request succeeds — there's no discrete GPU to match the preference against and Chromium won't fall back to the integrated path automatically.
 
 Dropped the hint. We don't have a discrete-vs-integrated selection need here; any working device is better than none. Also added `console.warn` diagnostics to the probe's `null`-adapter, `null`-device, and `catch` branches so probe failures surface in the `gosx perf` console-capture section instead of silently disabling WebGPU.
 
@@ -2906,7 +2906,7 @@ The pre-v0.17.17 probe only verified `requestAdapter()`; it never attempted `req
 
 ### Fix: full-lifecycle probe + synchronous factory
 
-**`16z-scene-webgpu-probe.js`** now chains `requestAdapter().then(a => a.requestDevice()).then(d => { ... })` and only flips `_webgpuAdapterReady = true` when the full chain succeeds. Partial implementations (adapter OK, device fails) are detected at probe time, so `sceneWebGPUAvailable()` returns false and the canvas is never touched. The probe caches the device and exposes it through `window.__gosx_scene3d_webgpu_probe()`:
+**`16z-scene-webgpu-probe.ts`** now chains `requestAdapter().then(a => a.requestDevice()).then(d => { ... })` and only flips `_webgpuAdapterReady = true` when the full chain succeeds. Partial implementations (adapter OK, device fails) are detected at probe time, so `sceneWebGPUAvailable()` returns false and the canvas is never touched. The probe caches the device and exposes it through `window.__gosx_scene3d_webgpu_probe()`:
 
 ```js
 window.__gosx_scene3d_webgpu_probe = function() {
@@ -2956,7 +2956,7 @@ Structural changes:
 
 - **`10-runtime-scene-core.js`** extends `window.__gosx_scene3d_api` with the PBR/shadow/post-fx helpers the webgpu renderer needs (`scenePBRDepthSort`, `scenePBRObjectRenderPass`, `scenePBRProjectionMatrix`, `scenePBRViewMatrix`, `sceneShadowLightSpaceMatrix`, `sceneShadowComputeBounds`, `resolvePostFXFactor`, `resolveShadowSize`, `sceneColorRGBA`). These are function declarations in files 11-16 of the main scene3d bundle, hoisted into the IIFE scope, so the `__gosx_scene3d_api` literal in file 10 captures them via `typeof X === "function" ? X : undefined` guards.
 
-- **`16z-scene-webgpu-probe.js`** (new, stays in main scene3d bundle) owns the `navigator.gpu.requestAdapter()` probe and the `sceneWebGPUAvailable()` / `createSceneWebGPURendererOrFallback()` stubs. The stubs dispatch to `window.__gosx_scene3d_webgpu_api.createRenderer(canvas)` if and only if the sub-chunk has loaded AND the adapter probe succeeded. (This file is reworked in v0.17.17 to also verify device creation.)
+- **`16z-scene-webgpu-probe.ts`** (new, stays in main scene3d bundle) owns the `navigator.gpu.requestAdapter()` probe and the `sceneWebGPUAvailable()` / `createSceneWebGPURendererOrFallback()` stubs. The stubs dispatch to `window.__gosx_scene3d_webgpu_api.createRenderer(canvas)` if and only if the sub-chunk has loaded AND the adapter probe succeeded. (This file is reworked in v0.17.17 to also verify device creation.)
 
 - **`26e-feature-scene3d-webgpu-prefix.js` / `26e-feature-scene3d-webgpu-suffix.js`** (new) wrap the sub-chunk as its own IIFE. The prefix destructures all shared helpers from `window.__gosx_scene3d_api`. The suffix publishes the renderer factory to `window.__gosx_scene3d_webgpu_api`.
 
