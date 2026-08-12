@@ -285,6 +285,7 @@ func filesInMoreThanOneLazyChunk() map[string][]string {
 func TestNoUnexpectedSourceFileShipsInTwoLazyChunks(t *testing.T) {
 	allowed := map[string]string{
 		"bootstrap-src/30h-tail-capability-probe.js": "the islands chunk and the engines chunk both call entryRequiresAsyncWebGPUProbe, and either can load without the other",
+		"../runtime/host/compatibility.ts":           "each independently loadable typed host chunk must install the same reload-safe adapter until Stack 07 collapses the final facade",
 	}
 	for rel, chunks := range filesInMoreThanOneLazyChunk() {
 		if _, ok := allowed[rel]; ok {

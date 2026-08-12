@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: streamed-template lifecycle.
 // 26-runtime-stream.js — bootstrap-owned streamed-template consumption.
 //
 // Server streaming normally executes the tiny replacement script emitted next
@@ -8,7 +10,7 @@
   "use strict";
 
   if (typeof window === "undefined" || typeof document === "undefined") return;
-  if (window.__gosx_stream_templates) return;
+  if (gosxHost.stream && typeof gosxHost.stream.consume === "function") return;
 
   const selector = "template[data-gosx-stream-template][data-gosx-stream-target]";
 
@@ -37,8 +39,9 @@
     if (dom && typeof dom.replaceFragment === "function") {
       return dom.replaceFragment(target, content);
     }
-    if (typeof window.__gosx_replace_runtime_fragment === "function") {
-      return window.__gosx_replace_runtime_fragment(target, content);
+    if (gosxHost.dom && typeof gosxHost.dom.replaceFragment === "function") {
+      const replaced = gosxHost.dom.replaceFragment(target, content);
+      if (replaced !== false) return replaced;
     }
     if (!target || !target.parentNode) return false;
     if (typeof target.replaceWith === "function") {
@@ -77,11 +80,13 @@
     return consumed;
   }
 
-  window.__gosx_mount_stream_templates = consume;
-  window.__gosx_stream_templates = {
+  const streamAPI = {
     mount: consume,
     consume,
   };
+  gosxHost.stream = streamAPI;
+  gosxHostCompatibility.install("__gosx_mount_stream_templates", consume);
+  gosxHostCompatibility.install("__gosx_stream_templates", streamAPI);
   if (window.__gosx) {
     window.__gosx.stream = window.__gosx.stream || {};
     window.__gosx.stream.consume = consume;

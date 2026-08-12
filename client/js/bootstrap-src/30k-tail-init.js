@@ -107,8 +107,9 @@
     return Boolean(manifest && manifest[key] && manifest[key].length > 0);
   }
 
-  window.__gosx_bootstrap_page = bootstrapPage;
-  window.__gosx_dispose_page = disposePage;
+  gosxHost.lifecycle = Object.assign(gosxHost.lifecycle || {}, { bootstrapPage, disposePage });
+  gosxHostCompatibility.install("__gosx_bootstrap_page", bootstrapPage);
+  gosxHostCompatibility.install("__gosx_dispose_page", disposePage);
 
   // Bench-mode exports. Activated only when window.__gosx_bench_exports
   // is set to true BEFORE the bundle runs. Zero runtime cost in production

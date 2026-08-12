@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: island disposal.
 // 30d — island disposal.
 //
 // Chunks: bootstrap.js, bootstrap-feature-islands.js.
@@ -8,7 +10,7 @@
 
   // Remove all delegated event listeners for an island and clear it from the
   // tracking map. Optionally calls the WASM-side __gosx_dispose if available.
-  window.__gosx_dispose_island = function(islandID) {
+  function disposeIsland(islandID) {
     const record = window.__gosx.islands.get(islandID);
     if (!record) return;
 
@@ -30,9 +32,9 @@
     }
 
     window.__gosx.islands.delete(islandID);
-  };
+  }
 
-  window.__gosx_dispose_compute_island = function(islandID) {
+  function disposeComputeIsland(islandID) {
     const record = window.__gosx.computeIslands && window.__gosx.computeIslands.get(islandID);
     if (!record) return;
 
@@ -47,4 +49,11 @@
     }
 
     window.__gosx.computeIslands.delete(islandID);
-  };
+  }
+
+  gosxHost.islands = Object.assign(gosxHost.islands || {}, {
+    dispose: disposeIsland,
+    disposeCompute: disposeComputeIsland,
+  });
+  gosxHostCompatibility.install("__gosx_dispose_island", disposeIsland);
+  gosxHostCompatibility.install("__gosx_dispose_compute_island", disposeComputeIsland);

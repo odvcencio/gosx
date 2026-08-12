@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -71,22 +72,23 @@ const (
 	runtimeSceneUtilsFile    = "bootstrap-src/10-runtime-scene-utils.js"
 	runtimeSceneCoreFile     = "bootstrap-src/10-runtime-scene-core.js"
 	runtimePrimitivesFile    = "bootstrap-src/10-runtime-primitives.js"
-	tailEventDelegationFile  = "bootstrap-src/30a-tail-event-delegation.js"
+	tailEventDelegationFile  = "../runtime/host/events.ts"
 	tailEngineMountingFile   = "bootstrap-src/30b-tail-engine-mounting.js"
-	tailHubConnectionsFile   = "bootstrap-src/30c-tail-hub-connections.js"
+	tailHubConnectionsFile   = "../runtime/host/hubs.ts"
 	tailHubFightInputFile    = "bootstrap-src/30c1-tail-hub-fight-input.js"
 	tailArcadeAudioFile      = "bootstrap-src/30c2-tail-arcade-audio.js"
-	tailIslandDisposeFile    = "bootstrap-src/30d-tail-island-dispose.js"
-	tailEngineDisposeFile    = "bootstrap-src/30e-tail-engine-dispose.js"
-	tailHubDisconnectFile    = "bootstrap-src/30f-tail-hub-disconnect.js"
-	tailPageDisposeFile      = "bootstrap-src/30g-tail-page-dispose.js"
+	tailIslandDisposeFile    = "../runtime/host/disposal.ts"
+	tailEngineDisposeFile    = "../runtime/host/engine-disposal.ts"
+	tailHubDisconnectFile    = "../runtime/host/hub-disposal.ts"
+	tailPageDisposeFile      = "../runtime/host/page-disposal.ts"
 	tailCapabilityProbeFile  = "bootstrap-src/30h-tail-capability-probe.js"
-	tailHydrationFile        = "bootstrap-src/30i-tail-hydration.js"
+	tailHydrationFile        = "../runtime/host/hydration.ts"
 	tailRuntimeReadyFile     = "bootstrap-src/30j-tail-runtime-ready.js"
 	tailInitFile             = "bootstrap-src/30k-tail-init.js"
 	videoSyncFallbackFile    = "bootstrap-src/28-video-sync-fallback.js"
 	scene3DCommandBridgeFile = "bootstrap-src/09-scene3d-command-bridge.js"
-	controllersFile          = "bootstrap-src/08-controllers.js"
+	controllersFile          = "../runtime/host/controllers.ts"
+	hostCompatibilityFile    = "../runtime/host/compatibility.ts"
 )
 
 type source struct {
@@ -118,13 +120,14 @@ var outputs = []output{
 			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.js"),
 			sourceFile("bootstrap-src/04-telemetry.js"),
 			sourceFile("bootstrap-src/05-document-env.js"),
-			sourceFile("bootstrap-src/06-declarative-actions.js"),
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/actions.ts"),
 			sourceFile(scene3DCommandBridgeFile),
-			sourceFile("bootstrap-src/07-declarative-regions.js"),
+			sourceFile("../runtime/host/regions.ts"),
 			sourceFile(controllersFile),
-			sourceFile("bootstrap-src/26-runtime-surfaces.js"),
-			sourceFile("bootstrap-src/26-runtime-stream.js"),
-			sourceFile("bootstrap-src/26-runtime-dom.js"),
+			sourceFile("../runtime/host/facade.ts"),
+			sourceFile("../runtime/host/stream.ts"),
+			sourceFile("../runtime/host/dom.ts"),
 			sourceFile("bootstrap-src/26-runtime-blocks.js"),
 			sourceFile(runtimePrimitivesFile),
 			sourceFile(runtimeSceneUtilsFile),
@@ -217,11 +220,12 @@ var outputs = []output{
 			sourceFile("bootstrap-src/00-textlayout.js"),
 			sourceFile("bootstrap-src/04-telemetry.js"),
 			sourceFile("bootstrap-src/05-document-env.js"),
-			sourceFile("bootstrap-src/06-declarative-actions.js"),
-			sourceFile("bootstrap-src/07-declarative-regions.js"),
-			sourceFile("bootstrap-src/26-runtime-surfaces.js"),
-			sourceFile("bootstrap-src/26-runtime-stream.js"),
-			sourceFile("bootstrap-src/26-runtime-dom.js"),
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/actions.ts"),
+			sourceFile("../runtime/host/regions.ts"),
+			sourceFile("../runtime/host/facade.ts"),
+			sourceFile("../runtime/host/stream.ts"),
+			sourceFile("../runtime/host/dom.ts"),
 			sourceFile("bootstrap-src/26-runtime-blocks.js"),
 			sourceFile("bootstrap-src/25-lite-tail.js"),
 		},
@@ -232,11 +236,12 @@ var outputs = []output{
 			sourceFile("bootstrap-src/00-textlayout.js"),
 			sourceFile("bootstrap-src/04-telemetry.js"),
 			sourceFile("bootstrap-src/05-document-env.js"),
-			sourceFile("bootstrap-src/06-declarative-actions.js"),
-			sourceFile("bootstrap-src/07-declarative-regions.js"),
-			sourceFile("bootstrap-src/26-runtime-surfaces.js"),
-			sourceFile("bootstrap-src/26-runtime-stream.js"),
-			sourceFile("bootstrap-src/26-runtime-dom.js"),
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/actions.ts"),
+			sourceFile("../runtime/host/regions.ts"),
+			sourceFile("../runtime/host/facade.ts"),
+			sourceFile("../runtime/host/stream.ts"),
+			sourceFile("../runtime/host/dom.ts"),
 			sourceFile("bootstrap-src/26-runtime-blocks.js"),
 			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimePrimitivesFile),
@@ -247,6 +252,7 @@ var outputs = []output{
 		name: "bootstrap-feature-islands.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26a-feature-islands-prefix.js"),
+			sourceFile(hostCompatibilityFile),
 			sourceFile(tailEventDelegationFile),
 			sourceFile(tailIslandDisposeFile),
 			// 30h holds entryRequiresAsyncWebGPUProbe. The hydration path calls
@@ -262,6 +268,7 @@ var outputs = []output{
 		name: "bootstrap-feature-engines.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26b-feature-engines-prefix.js"),
+			sourceFile(hostCompatibilityFile),
 			// 26b1 installs window.__gosx_paint_canvas_bundle — the standalone 2D
 			// painter the canvas2d surface-kind render loop (in 26b-prefix's
 			// _startCanvasSurfaceRAF) calls each frame. Self-contained IIFE; load
@@ -287,6 +294,7 @@ var outputs = []output{
 		name: "bootstrap-feature-hubs.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26c-feature-hubs-prefix.js"),
+			sourceFile(hostCompatibilityFile),
 			sourceFile(tailHubConnectionsFile),
 			// 30c1 is one application's fighting-game controller set. It ships
 			// only because hydrate.HubInputConfig.Mode routes to it. Drop this
@@ -301,6 +309,7 @@ var outputs = []output{
 		name: "bootstrap-feature-controllers.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26h-feature-controllers-prefix.js"),
+			sourceFile(hostCompatibilityFile),
 			sourceFile(controllersFile),
 			sourceFile("bootstrap-src/26h-feature-controllers-suffix.js"),
 		},
@@ -505,6 +514,30 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26g-feature-scene3d-animation-prefix.js"),
 			sourceFile("bootstrap-src/19a-scene-animation.js"),
 			sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.js"),
+		},
+	},
+	{
+		// Standalone host authorities are part of the build graph now, but their
+		// committed JS/map/compressed artifacts remain a deliberate Stack 07
+		// cutover. Until then --check reports them stale.
+		name: "patch.js",
+		sources: []source{
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/patch.ts"),
+		},
+	},
+	{
+		name: "relay.js",
+		sources: []source{
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/relay.ts"),
+		},
+	},
+	{
+		name: "stripe-bridge.js",
+		sources: []source{
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/stripe-bridge.ts"),
 		},
 	},
 }
@@ -992,6 +1025,26 @@ func findClientJS(explicit string) (string, error) {
 // hand-written copy of a chunk file list.
 const chunksManifestRel = "bootstrap-src/chunks.json"
 
+// deferredHostCutoverArtifacts are deliberately left at their last released
+// bytes in Stack 03. The typed host authorities are reviewed and tested as
+// source first; Stack 07 owns the one-time generated JS/map/br/gz cutover.
+// The acknowledgement mode below is fail-closed in both directions: an
+// unlisted stale output still fails, and a listed output that is no longer
+// stale fails until this deferral is removed.
+var deferredHostCutoverArtifacts = map[string]bool{
+	chunksManifestRel:                  true,
+	"bootstrap.js":                     true,
+	"bootstrap-lite.js":                true,
+	"bootstrap-runtime.js":             true,
+	"bootstrap-feature-islands.js":     true,
+	"bootstrap-feature-engines.js":     true,
+	"bootstrap-feature-hubs.js":        true,
+	"bootstrap-feature-controllers.js": true,
+	"patch.js":                         true,
+	"relay.js":                         true,
+	"stripe-bridge.js":                 true,
+}
+
 // chunksManifestJSON renders the outputs table as stable, indented JSON. The
 // key order follows the outputs table, so a manifest edit shows a small diff.
 func chunksManifestJSON() string {
@@ -1024,6 +1077,7 @@ func chunksManifestJSON() string {
 func run() error {
 	dirFlag := flag.String("dir", "", "path to client/js (default: auto-detect from working directory)")
 	check := flag.Bool("check", false, "verify committed bundles are up to date; exit 1 when stale")
+	allowDeferredHostAssets := flag.Bool("allow-deferred-host-assets", false, "acknowledge only the explicit Stack 03 host-asset deferral")
 	closureOnly := flag.Bool("closure", false, "run only the chunk closure check and exit")
 	minifier := flag.String("minifier", "esbuild", "JS minifier backend: esbuild (default, byte-stable) or tdewolff (A/B comparison)")
 	flag.Parse()
@@ -1049,8 +1103,16 @@ func run() error {
 
 	if *check {
 		var stale []string
+		deferredStale := make(map[string]bool, len(deferredHostCutoverArtifacts))
+		recordStale := func(name string) {
+			if *allowDeferredHostAssets && deferredHostCutoverArtifacts[name] {
+				deferredStale[name] = true
+				return
+			}
+			stale = append(stale, name)
+		}
 		if current, _ := os.ReadFile(manifestPath); string(current) != manifest {
-			stale = append(stale, chunksManifestRel)
+			recordStale(chunksManifestRel)
 		}
 		for _, entry := range outputs {
 			next, err := buildBundle(dir, entry, *minifier, debugSourcemaps)
@@ -1065,11 +1127,23 @@ func run() error {
 				return err
 			}
 			if string(currentCode) != next.code || string(currentMap) != next.m || !match {
-				stale = append(stale, entry.name)
+				recordStale(entry.name)
 			}
 		}
 		if len(stale) > 0 {
 			return fmt.Errorf("bootstrap runtime assets are out of date (%s). Run `go run ./cmd/buildbootstrap`", strings.Join(stale, ", "))
+		}
+		if *allowDeferredHostAssets {
+			var unexpectedlyCurrent []string
+			for name := range deferredHostCutoverArtifacts {
+				if !deferredStale[name] {
+					unexpectedlyCurrent = append(unexpectedlyCurrent, name)
+				}
+			}
+			if len(unexpectedlyCurrent) > 0 {
+				slices.Sort(unexpectedlyCurrent)
+				return fmt.Errorf("deferred host assets are no longer stale (%s); regenerate the complete asset set and remove the Stack 03 deferral", strings.Join(unexpectedlyCurrent, ", "))
+			}
 		}
 		return nil
 	}

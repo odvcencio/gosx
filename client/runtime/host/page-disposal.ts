@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: page disposal and engine reuse.
 // 30g — page disposal and persistent scene engines across soft navigations.
 //
 // Chunks: bootstrap.js only. Soft navigation calls disposePage, which keeps
@@ -10,11 +12,11 @@
       disposePendingEngine(pending, true);
     }
     for (const islandID of Array.from(window.__gosx.islands.keys())) {
-      window.__gosx_dispose_island(islandID);
+      gosxHost.islands.dispose(islandID);
     }
     if (window.__gosx.computeIslands) {
       for (const islandID of Array.from(window.__gosx.computeIslands.keys())) {
-        window.__gosx_dispose_compute_island(islandID);
+        gosxHost.islands.disposeCompute(islandID);
       }
     }
     for (const engineID of Array.from(window.__gosx.engines.keys())) {
@@ -23,14 +25,14 @@
         reportEngineReuseTelemetry(engineID, record && record.component, record && record.mount);
         continue; // carried across the navigation — see window.__gosx_reusable_engines
       }
-      window.__gosx_dispose_engine(engineID);
+      gosxHost.engines.dispose(engineID);
     }
     for (const hubID of Array.from(window.__gosx.hubs.keys())) {
-      window.__gosx_disconnect_hub(hubID);
+      gosxHost.hubs.disconnect(hubID);
     }
     if (window.__gosx.controllers) {
       for (const controllerID of Array.from(window.__gosx.controllers.keys())) {
-        window.__gosx_dispose_controller(controllerID);
+        gosxHost.controllers.dispose(controllerID);
       }
     }
     disposeManagedMotion();
@@ -77,7 +79,7 @@
     }
   }
 
-  window.__gosx_reusable_engines = function(nextDoc) {
+  function reusableEngines(nextDoc) {
     const reusable = new Set();
     if (!nextDoc || !pendingManifest || !Array.isArray(pendingManifest.engines)) {
       return reusable;
@@ -110,7 +112,14 @@
       reusable.add(engineID);
     }
     return reusable;
-  };
+  }
+
+  gosxHost.lifecycle = Object.assign(gosxHost.lifecycle || {}, {
+    disposePage,
+    reusableEngines,
+  });
+  gosxHostCompatibility.install("__gosx_dispose_page", disposePage);
+  gosxHostCompatibility.install("__gosx_reusable_engines", reusableEngines);
 
   function reportEngineReuseTelemetry(engineID, component, mount) {
     if (mount && typeof mount.setAttribute === "function") {

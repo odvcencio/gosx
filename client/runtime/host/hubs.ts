@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: realtime hub transport.
 // 30c — realtime hub transport.
 //
 // Chunks: bootstrap.js, bootstrap-feature-hubs.js.
@@ -300,7 +302,9 @@
   function connectHub(entry) {
     if (!canConnectHub(entry)) return;
 
-    window.__gosx_disconnect_hub(entry.id);
+    if (gosxHost.hubs && typeof gosxHost.hubs.disconnect === "function") {
+      gosxHost.hubs.disconnect(entry.id);
+    }
     const record = createHubRecord(entry);
     window.__gosx.hubs.set(entry.id, record);
     attachHubSocketHandlers(record);
@@ -469,3 +473,8 @@
       connectHub(entry);
     }
   }
+
+  gosxHost.hubs = Object.assign(gosxHost.hubs || {}, {
+    connect: connectHub,
+    connectAll: connectAllHubs,
+  });

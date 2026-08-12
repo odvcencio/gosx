@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: declarative headless controllers.
   // --------------------------------------------------------------------------
   // Declarative headless controllers
   // --------------------------------------------------------------------------
@@ -465,9 +467,15 @@
     return Promise.all(pending).then(function() {});
   }
 
-  window.__gosx_dispose_controller = function(controllerID) {
+  function disposeController(controllerID) {
     if (!window.__gosx.controllers) return;
     const record = window.__gosx.controllers.get(controllerID);
     controllerDisposeRecord(record);
     window.__gosx.controllers.delete(controllerID);
-  };
+  }
+
+  gosxHost.controllers = Object.assign(gosxHost.controllers || {}, {
+    mountAll: mountAllControllers,
+    dispose: disposeController,
+  });
+  gosxHostCompatibility.install("__gosx_dispose_controller", disposeController);

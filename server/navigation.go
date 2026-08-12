@@ -1,14 +1,11 @@
 package server
 
 import (
-	_ "embed"
 	"html"
 
 	"m31labs.dev/gosx"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 )
-
-//go:embed navigation_runtime.js
-var navigationRuntime string
 
 // NavigationScript returns the inline GoSX page-navigation runtime. Its public
 // navigate method soft-fetches only same-origin HTTP(S), hard-navigates safe
@@ -21,7 +18,7 @@ func NavigationScript() gosx.Node {
 // with a CSP nonce attribute attached. Passing an empty nonce is equivalent to
 // NavigationScript.
 func NavigationScriptWithNonce(nonce string) gosx.Node {
-	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + `>` + navigationRuntime + `</script>`)
+	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + `>` + runtimehost.NavigationRuntime + `</script>`)
 }
 
 func nonceAttr(nonce string) string {

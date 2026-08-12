@@ -33,9 +33,9 @@
 
     mountAllEngines(pendingManifest, pendingEngineReuseIDs, pendingIsNavigationBootstrap).then(function() {
       return Promise.all([
-        hydrateAllIslands(pendingManifest),
-        connectAllHubs(pendingManifest),
-        mountAllControllers(pendingManifest),
+        gosxHost.hydration.hydrateAll(pendingManifest),
+        gosxHost.hubs.connectAll(pendingManifest),
+        gosxHost.controllers.mountAll(pendingManifest),
       ]);
     }).then(function() {
       window.__gosx.ready = true;

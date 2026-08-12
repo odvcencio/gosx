@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: island hydration.
 // 30i — island hydration: fetch island program data, call the WASM hydrate
 // entry point, and attach delegated listeners.
 //
@@ -11,7 +13,7 @@
     const program = await loadIslandProgram(entry, root);
     if (!program) return;
     if (!runIslandHydration(entry, root, program)) return;
-    const listeners = setupEventDelegation(root, entry.id, entry.events);
+    const listeners = gosxHost.events.setup(root, entry.id, entry.events);
     rememberHydratedIsland(entry, root, listeners);
   }
 
@@ -290,3 +292,9 @@
 
     await Promise.all(promises);
   }
+
+  gosxHost.hydration = Object.assign(gosxHost.hydration || {}, {
+    hydrateAll: hydrateAllIslands,
+    hydrateIsland,
+    hydrateComputeIsland,
+  });

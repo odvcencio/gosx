@@ -1,12 +1,12 @@
 
     return {
       runtimeReady(manifest) {
-        return mountAllControllers(manifest);
+        return gosxHost.controllers.mountAll(manifest);
       },
       disposePage() {
         if (!window.__gosx.controllers) return;
         for (const controllerID of Array.from(window.__gosx.controllers.keys())) {
-          window.__gosx_dispose_controller(controllerID);
+            gosxHost.controllers.dispose(controllerID);
         }
       },
       disposeController: window.__gosx_dispose_controller,

@@ -1,8 +1,10 @@
+// @ts-check
+// GoSX browser host: engine disposal.
 // 30e — engine disposal.
 //
 // Chunks: bootstrap.js, bootstrap-feature-engines.js.
 // Tears down what 30b mounted, including pending Go-WASM engine runtimes.
-  window.__gosx_dispose_engine = function(engineID) {
+  function disposeEngine(engineID) {
     const pending = pendingEngineRuntimes.get(engineID);
     if (pending) disposePendingEngine(pending, true);
 
@@ -33,9 +35,9 @@
     if (record.fallbackSnapshot) {
       restoreGoWASMEngineFallback(record.mount, record.fallbackSnapshot);
     }
-  };
+  }
 
-  window.__gosx_engine_frame = function(engineID) {
+  function hostEngineFrame(engineID) {
     const pending = pendingEngineRuntimes.get(engineID);
     if (pending && pending.runtime && typeof pending.runtime.frame === "function") {
       return pending.runtime.frame();
@@ -45,4 +47,11 @@
       return null;
     }
     return record.runtime.frame();
-  };
+  }
+
+  gosxHost.engines = Object.assign(gosxHost.engines || {}, {
+    dispose: disposeEngine,
+    frame: hostEngineFrame,
+  });
+  gosxHostCompatibility.install("__gosx_dispose_engine", disposeEngine);
+  gosxHostCompatibility.install("__gosx_engine_frame", hostEngineFrame);

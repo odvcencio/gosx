@@ -1,8 +1,10 @@
+// @ts-check
+// GoSX browser host: hub disposal.
 // 30f — hub disconnect.
 //
 // Chunks: bootstrap.js, bootstrap-feature-hubs.js.
 // Closes the sockets 30c opened and drops the hub record.
-  window.__gosx_disconnect_hub = function(hubID) {
+  function disconnectHub(hubID) {
     const record = window.__gosx.hubs.get(hubID);
     if (!record) return;
 
@@ -34,4 +36,7 @@
     }
 
     window.__gosx.hubs.delete(hubID);
-  };
+  }
+
+  gosxHost.hubs = Object.assign(gosxHost.hubs || {}, { disconnect: disconnectHub });
+  gosxHostCompatibility.install("__gosx_disconnect_hub", disconnectHub);

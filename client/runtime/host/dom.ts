@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: managed DOM lifecycle.
 // 26-runtime-dom.js — one core lifecycle for replacing server-rendered HTML.
 //
 // Actions, regions, and future browser surfaces can replace a fragment without
@@ -149,13 +151,13 @@
     if (window.__gosx && window.__gosx.textLayout && typeof window.__gosx.textLayout.disposeAll === "function") {
       window.__gosx.textLayout.disposeAll(host);
     }
-    if (typeof window.__gosx_dispose_declarative_regions === "function") {
-      window.__gosx_dispose_declarative_regions(host, {
+    if (gosxHost.regions && typeof gosxHost.regions.dispose === "function") {
+      gosxHost.regions.dispose(host, {
         preserveRoot: config.preserveRegionRoot === true,
       });
     }
-    if (typeof window.__gosx_dispose_runtime_surfaces === "function") {
-      window.__gosx_dispose_runtime_surfaces(host);
+    if (gosxHost.surfaces && typeof gosxHost.surfaces.dispose === "function") {
+      gosxHost.surfaces.dispose(host);
     }
     return host;
   }
@@ -163,8 +165,10 @@
   function mountRuntimeContent(root) {
     const host = root || document.body || document.documentElement;
     if (!host) return null;
-    if (typeof window.__gosx_mount_stream_templates === "function") {
-      window.__gosx_mount_stream_templates(host);
+    if (gosxHost.stream && typeof gosxHost.stream.consume === "function") {
+      gosxHost.stream.consume(host);
+    } else {
+      gosxHostCompatibility.forward("__gosx_mount_stream_templates", [host]);
     }
     if (typeof window.__gosx_apply_scene_command_scripts === "function") {
       window.__gosx_apply_scene_command_scripts(host);
@@ -175,11 +179,11 @@
     if (window.__gosx && window.__gosx.textLayout && typeof window.__gosx.textLayout.mountAll === "function") {
       window.__gosx.textLayout.mountAll(host);
     }
-    if (typeof window.__gosx_mount_runtime_surfaces === "function") {
-      window.__gosx_mount_runtime_surfaces(host);
+    if (gosxHost.surfaces && typeof gosxHost.surfaces.mount === "function") {
+      gosxHost.surfaces.mount(host);
     }
-    if (typeof window.__gosx_mount_declarative_regions === "function") {
-      window.__gosx_mount_declarative_regions(host);
+    if (gosxHost.regions && typeof gosxHost.regions.mount === "function") {
+      gosxHost.regions.mount(host);
     }
     return host;
   }
@@ -281,15 +285,10 @@
     }
   }
 
-  window.__gosx_mount_runtime_content = mountRuntimeContent;
-  window.__gosx_dispose_runtime_content = disposeRuntimeContent;
-  window.__gosx_replace_runtime_content = replaceRuntimeContent;
-  window.__gosx_replace_runtime_fragment = replaceRuntimeFragment;
-  window.__gosx_reconcile_runtime_content = reconcileRuntimeContent;
   const existingDOM = window.__gosx && window.__gosx.dom && typeof window.__gosx.dom === "object"
     ? window.__gosx.dom
     : {};
-  window.__gosx_runtime_dom = Object.assign(existingDOM, {
+  const runtimeDOM = Object.assign(existingDOM, {
     mount: mountRuntimeContent,
     dispose: disposeRuntimeContent,
     replace: replaceRuntimeContent,
@@ -306,5 +305,12 @@
       return Number(existingDOM._lifecycleDepth || 0) > 0;
     },
   });
-  if (window.__gosx) window.__gosx.dom = window.__gosx_runtime_dom;
+  gosxHost.dom = runtimeDOM;
+  window.__gosx.dom = runtimeDOM;
+  gosxHostCompatibility.install("__gosx_mount_runtime_content", mountRuntimeContent);
+  gosxHostCompatibility.install("__gosx_dispose_runtime_content", disposeRuntimeContent);
+  gosxHostCompatibility.install("__gosx_replace_runtime_content", replaceRuntimeContent);
+  gosxHostCompatibility.install("__gosx_replace_runtime_fragment", replaceRuntimeFragment);
+  gosxHostCompatibility.install("__gosx_reconcile_runtime_content", reconcileRuntimeContent);
+  gosxHostCompatibility.install("__gosx_runtime_dom", runtimeDOM);
 })();

@@ -32,10 +32,10 @@ const {
   installManualTimers,
 } = require("./runtime-test-harness.js");
 
-const hubConnectionsSource = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "30c-tail-hub-connections.js"),
-  "utf8",
-);
+const hubConnectionsSource = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "hubs.ts"), "utf8"),
+].join("\n");
 
 test("bootstrap preserves navigation and request installed before it", async () => {
   const env = createContext({ elements: [] });

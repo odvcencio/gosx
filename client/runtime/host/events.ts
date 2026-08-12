@@ -1,8 +1,10 @@
+// @ts-check
+// GoSX browser host: complete delegated event transport.
 // 30a — delegated DOM event listeners for island roots.
 //
 // Chunks: bootstrap.js, bootstrap-feature-islands.js.
 // Reads from the enclosing IIFE: window.__gosx, the island registry.
-// Publishes: attachDelegatedListeners, detachDelegatedListeners.
+// Publishes: gosxHost.events.setup plus the event extraction/dispatch helpers.
   // --------------------------------------------------------------------------
   // Event delegation
   // --------------------------------------------------------------------------
@@ -303,10 +305,10 @@
     const actionFn = window.__gosx_action;
     if (typeof actionFn !== "function") return;
 
-    const previousEvent = window.__gosx_current_event;
-    const previousHandler = window.__gosx_current_handler;
-    window.__gosx_current_event = event;
-    window.__gosx_current_handler = handlerElement;
+    const previousEvent = gosxHostCompatibility.read("__gosx_current_event");
+    const previousHandler = gosxHostCompatibility.read("__gosx_current_handler");
+    gosxHostCompatibility.install("__gosx_current_event", event);
+    gosxHostCompatibility.install("__gosx_current_handler", handlerElement);
     try {
       const result = actionFn(islandID, handlerName, JSON.stringify(eventData));
       if (typeof result === "string" && result !== "") {
@@ -315,9 +317,15 @@
     } catch (err) {
       console.error(`[gosx] action error (${islandID}/${handlerName}):`, err);
     } finally {
-      if (previousEvent === undefined) delete window.__gosx_current_event;
-      else window.__gosx_current_event = previousEvent;
-      if (previousHandler === undefined) delete window.__gosx_current_handler;
-      else window.__gosx_current_handler = previousHandler;
+      if (previousEvent === undefined) gosxHostCompatibility.clear("__gosx_current_event");
+      else gosxHostCompatibility.install("__gosx_current_event", previousEvent);
+      if (previousHandler === undefined) gosxHostCompatibility.clear("__gosx_current_handler");
+      else gosxHostCompatibility.install("__gosx_current_handler", previousHandler);
     }
   }
+
+  gosxHost.events = Object.assign(gosxHost.events || {}, {
+    setup: setupEventDelegation,
+    extract: extractEventData,
+    dispatch: dispatchIslandAction,
+  });

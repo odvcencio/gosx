@@ -1,7 +1,9 @@
+// @ts-check
+// GoSX browser host: soft-navigation lifecycle.
 (function() {
   "use strict";
 
-  if (window.__gosx_page_nav && typeof window.__gosx_page_nav.navigate === "function") {
+  if (gosxHost.navigation && typeof gosxHost.navigation.navigate === "function") {
     return;
   }
 
@@ -44,8 +46,8 @@
   const PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
   const PAGE_CACHE_OPT_OUT_META = "gosx-page-cache";
   const PAGE_CACHE_OPT_OUT_VALUE = "no-store";
-  const scriptCache = window.__gosx_loaded_scripts || new Map();
-  const pageCache = window.__gosx_page_cache || new Map();
+  const scriptCache = gosxHost.navigationScriptCache || new Map();
+  const pageCache = gosxHost.navigationPageCache || new Map();
   let navigationState = {
     phase: "idle",
     currentURL: String(window.location && window.location.href || ""),
@@ -61,8 +63,10 @@
   let navigationFrameSequence = 0;
   const pendingManagedForms = new WeakSet();
   const sentNavigationBeacons = new Set();
-  window.__gosx_loaded_scripts = scriptCache;
-  window.__gosx_page_cache = pageCache;
+  gosxHost.navigationScriptCache = scriptCache;
+  gosxHost.navigationPageCache = pageCache;
+  gosxHostCompatibility.install("__gosx_loaded_scripts", scriptCache);
+  gosxHostCompatibility.install("__gosx_page_cache", pageCache);
 
   function gosxRuntimeRequest(input, init) {
     if (window.__gosx && typeof window.__gosx.request === "function") {
@@ -1323,7 +1327,7 @@
 
   async function loadManagedScript(role, src, load) {
     if (!src) return false;
-    if (role === "bootstrap" && typeof window.__gosx_bootstrap_page === "function") {
+    if (role === "bootstrap" && gosxHost.lifecycle && typeof gosxHost.lifecycle.bootstrapPage === "function") {
       return false;
     }
     const effectiveLoad = load === "dom" || currentDocumentNonce() ? "dom" : "eval";
@@ -1390,14 +1394,14 @@
   }
 
   async function disposeCurrentPage(reuseIDs) {
-    if (typeof window.__gosx_dispose_page === "function") {
-      await window.__gosx_dispose_page(reuseIDs);
+    if (gosxHost.lifecycle && typeof gosxHost.lifecycle.disposePage === "function") {
+      await gosxHost.lifecycle.disposePage(reuseIDs);
     }
   }
 
   async function bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs) {
-    if (!bootstrapLoadedNow && typeof window.__gosx_bootstrap_page === "function") {
-      await window.__gosx_bootstrap_page(reuseIDs);
+    if (!bootstrapLoadedNow && gosxHost.lifecycle && typeof gosxHost.lifecycle.bootstrapPage === "function") {
+      await gosxHost.lifecycle.bootstrapPage(reuseIDs);
     }
   }
 
@@ -2349,8 +2353,8 @@
   // navigation runtime through the shared GoSX namespace. This lets optional
   // surfaces observe or initiate navigation without depending on a private
   // global name.
-  window.__gosx_page_nav = navigationAPI;
-  window.__gosx = window.__gosx || {};
+  gosxHost.navigation = navigationAPI;
   window.__gosx.navigation = navigationAPI;
-  window.__gosx_submit_action = submitAction;
+  gosxHostCompatibility.install("__gosx_page_nav", navigationAPI);
+  gosxHostCompatibility.install("__gosx_submit_action", submitAction);
 })();

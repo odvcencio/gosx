@@ -11,10 +11,11 @@ const {
   runScript,
 } = require("./runtime-test-harness.js");
 
-const source = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "30a-tail-event-delegation.js"),
-  "utf8",
-) + "\nwindow.__gosx_test_setup_event_delegation = setupEventDelegation;";
+const source = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "events.ts"), "utf8"),
+  "window.__gosx_test_setup_event_delegation = setupEventDelegation;",
+].join("\n");
 
 test("delegation source carries typed pointer/dataset context and clears current event globals", () => {
   const root = new FakeElement("div", null);

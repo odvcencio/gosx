@@ -19,30 +19,26 @@ func TestParsePreviewModeQueryEmpty(t *testing.T) {
 }
 
 func TestParsePreviewModeQueryActivates(t *testing.T) {
-	prefix, origin, ok := parsePreviewModeQuery("?gosx-preview=1")
-	if !ok {
-		t.Fatal("gosx-preview=1 should activate the relay")
-	}
-	if prefix != "$preview." {
-		t.Fatalf("expected default prefix $preview., got %q", prefix)
-	}
-	if origin != "*" {
-		t.Fatalf("expected default origin * (dev), got %q", origin)
+	if _, _, ok := parsePreviewModeQuery("?gosx-preview=1"); ok {
+		t.Fatal("preview without an explicit origin must stay disabled")
 	}
 }
 
 func TestParsePreviewModeQueryPinnedOrigin(t *testing.T) {
-	_, origin, ok := parsePreviewModeQuery("?gosx-preview=1&gosx-preview-origin=https%3A%2F%2Feditor.example")
+	prefix, origin, ok := parsePreviewModeQuery("?gosx-preview=1&gosx-preview-origin=https%3A%2F%2Feditor.example")
 	if !ok {
 		t.Fatal("preview activated")
 	}
 	if origin != "https://editor.example" {
 		t.Fatalf("expected decoded origin, got %q", origin)
 	}
+	if prefix != "$preview." {
+		t.Fatalf("expected default prefix $preview., got %q", prefix)
+	}
 }
 
 func TestParsePreviewModeQueryCustomPrefix(t *testing.T) {
-	prefix, _, ok := parsePreviewModeQuery("?gosx-preview=1&gosx-preview-prefix=%24custom.")
+	prefix, _, ok := parsePreviewModeQuery("?gosx-preview=1&gosx-preview-origin=https%3A%2F%2Feditor.example&gosx-preview-prefix=%24custom.")
 	if !ok {
 		t.Fatal("preview activated")
 	}
@@ -52,8 +48,14 @@ func TestParsePreviewModeQueryCustomPrefix(t *testing.T) {
 }
 
 func TestParsePreviewModeQueryAcceptsTrue(t *testing.T) {
-	if _, _, ok := parsePreviewModeQuery("?gosx-preview=true"); !ok {
+	if _, _, ok := parsePreviewModeQuery("?gosx-preview=true&gosx-preview-origin=https%3A%2F%2Feditor.example"); !ok {
 		t.Fatal("gosx-preview=true should also activate the relay")
+	}
+}
+
+func TestParsePreviewModeQueryRejectsWildcardOrigin(t *testing.T) {
+	if _, _, ok := parsePreviewModeQuery("?gosx-preview=1&gosx-preview-origin=*"); ok {
+		t.Fatal("URL-driven preview must reject wildcard origin")
 	}
 }
 

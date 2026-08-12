@@ -6,7 +6,10 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "08-controllers.js"), "utf8");
+const source = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "controllers.ts"), "utf8"),
+].join("\n");
 
 async function drainMicrotasks(turns = 8) {
   for (let i = 0; i < turns; i += 1) {

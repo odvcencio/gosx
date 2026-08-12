@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: managed surfaces and the typed host facade.
 // 26-runtime-surfaces.js — generic GoSX-managed browser surfaces.
 //
 // Optional packages such as gosx/editor can register a surface runtime without
@@ -297,13 +299,10 @@
     window.__gosx.scheduler = existingScheduler;
   }
 
-  if (window.__gosx_runtime_surfaces) return;
+  if (gosxHost.surfaces && gosxHost.surfaces.mounts) return;
 
-  const factories = window.__gosx_runtime_surface_factories || Object.create(null);
+  const factories = gosxHost.surfaces && gosxHost.surfaces.factories || Object.create(null);
   const mounts = new Map();
-
-  window.__gosx_runtime_surface_factories = factories;
-  window.__gosx_runtime_surfaces = mounts;
   if (window.__gosx) window.__gosx.runtimeSurfaces = mounts;
 
   function surfaceName(root) {
@@ -653,7 +652,7 @@
     return mounts;
   }
 
-  window.__gosx_register_runtime_surface = function (name, factory) {
+  function registerRuntimeSurface(name, factory) {
     const key = String(name || "").trim();
     if (!key || typeof factory !== "function") {
       console.error("[gosx] invalid runtime surface registration");
@@ -663,12 +662,22 @@
     observe("debug", "runtime surface registered", { name: key });
     mountRuntimeSurfaces(document.body || document.documentElement);
     return factory;
+  }
+  gosxHost.surfaces = {
+    register: registerRuntimeSurface,
+    mount: mountRuntimeSurfaces,
+    dispose: disposeRuntimeSurfaces,
+    factories,
+    mounts,
   };
-  window.__gosx_mount_runtime_surfaces = mountRuntimeSurfaces;
-  window.__gosx_dispose_runtime_surfaces = disposeRuntimeSurfaces;
+  gosxHostCompatibility.install("__gosx_runtime_surface_factories", factories);
+  gosxHostCompatibility.install("__gosx_runtime_surfaces", mounts);
+  gosxHostCompatibility.install("__gosx_register_runtime_surface", registerRuntimeSurface);
+  gosxHostCompatibility.install("__gosx_mount_runtime_surfaces", mountRuntimeSurfaces);
+  gosxHostCompatibility.install("__gosx_dispose_runtime_surfaces", disposeRuntimeSurfaces);
   if (window.__gosx) {
     window.__gosx.runtimeSurfaceAPI = {
-      register: window.__gosx_register_runtime_surface,
+      register: registerRuntimeSurface,
       mount: mountRuntimeSurfaces,
       dispose: disposeRuntimeSurfaces,
       factories,

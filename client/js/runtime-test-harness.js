@@ -40,9 +40,19 @@ const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "b
 const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
 const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15d-scene-dom-regions.js"), "utf8");
-const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
-const stripeBridgeSource = fs.readFileSync(path.join(__dirname, "stripe-bridge.js"), "utf8");
-const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
+const hostCompatibilitySource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8");
+const patchSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "patch.ts"), "utf8"),
+].join("\n");
+const stripeBridgeSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "stripe-bridge.ts"), "utf8"),
+].join("\n");
+const navigationSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "navigation.ts"), "utf8"),
+].join("\n");
 
 function bootstrapSourceMapSource(mapName, sourceName) {
   const sourceMap = JSON.parse(fs.readFileSync(path.join(__dirname, mapName), "utf8"));

@@ -168,7 +168,7 @@ build-bootstrap:
 #      in bootstrap-size.test.mjs.
 test-js:
 	cd cmd/buildbootstrap && GOWORK=off $(GO) test -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
-	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
+	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check --allow-deferred-host-assets
 	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
 
 # test-editor builds, vets and tests the nested editor module.

@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: declarative server-fragment regions.
 // 07-declarative-regions.js — bootstrap-owned declarative server-fragment regions.
 //
 // An htmx-lite region that re-fetches an HTML fragment and swaps it into place
@@ -37,8 +39,9 @@
 // that mount asynchronously after DOMContentLoaded) is safe and idempotent.
 // Malformed JSON warns once and is skipped — it never throws.
 (function () {
-  if (typeof document === "undefined" || window.__gosxDeclarativeRegions) return;
-  window.__gosxDeclarativeRegions = true;
+  gosxHost.state = gosxHost.state || {};
+  if (typeof document === "undefined" || gosxHost.state.declarativeRegions) return;
+  gosxHost.state.declarativeRegions = true;
 
   // applySceneCommandScripts finds every data-gosx-scene-commands payload
   // under `root` (a freshly-swapped region element, or `document` for the
@@ -127,18 +130,17 @@
         if (record.disposed || (controller && controller.signal.aborted) || data == null) return;
         var html = record.field ? data[record.field] : data;
         if (typeof html !== "string") return;
-        if (typeof window.__gosx_replace_runtime_content === "function") {
-          if (!window.__gosx_replace_runtime_content(el, html)) {
-            throw new Error("runtime content replacement failed");
-          }
-        } else {
-          if (typeof window.__gosx_dispose_runtime_surfaces === "function") {
-            window.__gosx_dispose_runtime_surfaces(el);
+        var replaced = gosxHost.dom && typeof gosxHost.dom.replace === "function"
+          ? gosxHost.dom.replace(el, html)
+          : false;
+        if (replaced === false) {
+          if (gosxHost.surfaces && typeof gosxHost.surfaces.dispose === "function") {
+            gosxHost.surfaces.dispose(el);
           }
           el.innerHTML = html;
           applySceneCommandScripts(el);
-          if (typeof window.__gosx_mount_runtime_surfaces === "function") {
-            window.__gosx_mount_runtime_surfaces(el);
+          if (gosxHost.surfaces && typeof gosxHost.surfaces.mount === "function") {
+            gosxHost.surfaces.mount(el);
           }
         }
         setRegionState(el, "ready", "");
@@ -290,9 +292,6 @@
     return record.refresh();
   }
 
-  window.__gosx_mount_declarative_regions = scan;
-  window.__gosx_dispose_declarative_regions = dispose;
-  window.__gosx_apply_scene_command_scripts = applySceneCommandScripts;
   var regionsAPI = {
     mount: scan,
     dispose: dispose,
@@ -300,8 +299,11 @@
     applySceneCommands: applySceneCommandScripts,
     bindings: regionBindings,
   };
-  window.__gosx_declarative_regions = regionsAPI;
-  window.__gosx = window.__gosx || {};
+  gosxHost.regions = regionsAPI;
+  gosxHostCompatibility.install("__gosx_mount_declarative_regions", scan);
+  gosxHostCompatibility.install("__gosx_dispose_declarative_regions", dispose);
+  gosxHostCompatibility.install("__gosx_apply_scene_command_scripts", applySceneCommandScripts);
+  gosxHostCompatibility.install("__gosx_declarative_regions", regionsAPI);
   window.__gosx.regions = Object.assign(window.__gosx.regions || {}, regionsAPI);
 
   if (document.readyState === "loading") {

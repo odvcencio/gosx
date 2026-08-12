@@ -1,3 +1,5 @@
+// @ts-check
+// GoSX browser host: declarative interaction attributes.
 // 06-declarative-actions.js — bootstrap-owned declarative interaction attributes.
 //
 // A single set of capturing document listeners drives discrete client intents
@@ -41,8 +43,9 @@
 // GET requests (Protect's csrfProtectedMethod ignores them) never get the
 // header, matching the server's own method filter.
 (function () {
-  if (typeof document === "undefined" || window.__gosxDeclarativeActions) return;
-  window.__gosxDeclarativeActions = true;
+  gosxHost.state = gosxHost.state || {};
+  if (typeof document === "undefined" || gosxHost.state.declarativeActions) return;
+  gosxHost.state.declarativeActions = true;
 
   function setSignal(name, value) {
     if (!name) return;
@@ -258,23 +261,24 @@
     if (!selector || !html || typeof document.querySelector !== "function") return;
     var target = document.querySelector(selector);
     if (!target) return;
-    if (typeof window.__gosx_replace_runtime_content === "function") {
-      window.__gosx_replace_runtime_content(target, html);
-      focusAfterAction(target, trigger);
-      return;
+    if (gosxHost.dom && typeof gosxHost.dom.replace === "function") {
+      if (gosxHost.dom.replace(target, html) !== false) {
+        focusAfterAction(target, trigger);
+        return;
+      }
     }
-    if (typeof window.__gosx_dispose_runtime_surfaces === "function") {
-      window.__gosx_dispose_runtime_surfaces(target);
+    if (gosxHost.surfaces && typeof gosxHost.surfaces.dispose === "function") {
+      gosxHost.surfaces.dispose(target);
     }
     target.innerHTML = html;
-    if (typeof window.__gosx_mount_stream_templates === "function") {
-      window.__gosx_mount_stream_templates(target);
+    if (gosxHost.stream && typeof gosxHost.stream.consume === "function") {
+      gosxHost.stream.consume(target);
     }
-    if (typeof window.__gosx_mount_runtime_surfaces === "function") {
-      window.__gosx_mount_runtime_surfaces(target);
+    if (gosxHost.surfaces && typeof gosxHost.surfaces.mount === "function") {
+      gosxHost.surfaces.mount(target);
     }
-    if (typeof window.__gosx_mount_declarative_regions === "function") {
-      window.__gosx_mount_declarative_regions(target);
+    if (gosxHost.regions && typeof gosxHost.regions.mount === "function") {
+      gosxHost.regions.mount(target);
     }
     focusAfterAction(target, trigger);
   }
@@ -590,7 +594,7 @@
     openDisclosure: openDisclosure,
     closeDisclosure: closeDisclosure,
   };
-  window.__gosx = window.__gosx || {};
   window.__gosx.actions = Object.assign(window.__gosx.actions || {}, actionsAPI);
-  window.__gosx_declarative_actions = window.__gosx.actions;
+  gosxHost.actions = window.__gosx.actions;
+  gosxHostCompatibility.install("__gosx_declarative_actions", gosxHost.actions);
 })();
