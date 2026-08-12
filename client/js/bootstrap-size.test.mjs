@@ -480,13 +480,29 @@ const budgets = [
   // combined measurement: 1_481_931 / 401_314 / 322_353.
   // Merging main's declarative submit-action fixes with the Scene3D status
   // bindings yields the combined generated bundle measured here.
-  // Bumped raw 1_483_937 -> 1_490_000, gzip 401_833 -> 403_000, brotli
-  // 323_032 -> 324_000 for the water-tap control-form profile
-  // (19b-scene-control-forms.js): a minimal pointer-to-drop-event bridge for
-  // a WaterSystem whose InteractionProfile carries its own authored Studio
-  // identity, so it cannot borrow the fluid-object lab's
-  // "water-object-drop-orbit" gate. Measured: 1_486_702 / 402_596 / 323_748.
-  { file: "bootstrap.js", raw: 1_490_000, gzip: 403_000, brotli: 324_000 },
+  // 16a bind-group and pipeline-key memoization (see the WebGPU chunk
+  // note below). Exact merged measurement: 1_486_231 / 402_762 / 323_723.
+  // Open post-init engine-factory registration plus the late-mount hook
+  // (cold-cache chunk race fix) add ~680 raw across the shared bootstrap
+  // head and the engine tail; every bundle and route ceiling below moves
+  // by its share of that. Exact measured totals per entry.
+  // Scene3D first-content reveal exact measurement: 1_486_988 / 402_918 /
+  // 323_691. Brotli retains its prior headroom.
+  // v0.38.0: bumped raw 1_486_988 -> 1_492_950, gzip 402_918 -> 404_688,
+  // brotli 323_723 -> 325_342 for the island-VM core (hub connect/disconnect,
+  // island dispose, hydration, and event-delegation tails; shared namespace
+  // init guard). Exact measurement: 1_492_950 / 404_688 / 325_342.
+  //
+  // Merged the Scene3D parity cluster A WebGPU environment-map work (see
+  // the bootstrap-feature-scene3d-webgpu.js note below; the monolith
+  // carries the same source) with v0.38.0's island-VM core budgets.
+  // Measured: 1_494_714 / 405_094 / 325_346.
+  //
+  // Merged the Blackglass Coast beacon evidence work (FXAA enable, the
+  // water-tap control-form profile in 19b-scene-control-forms.js, and ember
+  // plume particles) with main's WebGPU environment-map and island-VM core
+  // budgets above. Measured: 1_497_474 / 405_745 / 326_094.
+  { file: "bootstrap.js", raw: 1_501_300, gzip: 406_800, brotli: 327_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -534,8 +550,11 @@ const budgets = [
   // Observable transport outcomes and queue health are available on every
   // runtime surface. Final measurement: 125_629 / 34_137 / 29_910.
   // Main's declarative submit-action handling is part of the shared runtime.
-  // Combined post-merge measurement: 127_488 / 34_643 / 30_304.
-  { file: "bootstrap-runtime.js", raw: 127_488, gzip: 34_643, brotli: 30_304 },
+  // Combined post-merge measurement: 127_742 / 34_679 / 30_385.
+  // v0.38.0: bumped raw 127_742 -> 127_869, gzip 34_679 -> 34_718 for the
+  // island-VM core shared namespace init guard. Brotli headroom unchanged.
+  // Exact measurement: 127_869 / 34_718 / 30_381.
+  { file: "bootstrap-runtime.js", raw: 127_869, gzip: 34_718, brotli: 30_385 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -568,8 +587,11 @@ const budgets = [
   // The lite surface carries the same audited observable telemetry transport.
   // Final measurement: 98_110 / 26_463 / 23_574.
   // The same submit-action handling reaches the lite bundle. Brotli remains
-  // within its existing ceiling; raw/gzip measure 99_966 / 26_949.
-  { file: "bootstrap-lite.js", raw: 99_966, gzip: 26_949, brotli: 24_000 },
+  // within its existing ceiling; raw/gzip measure 100_220 / 26_981.
+  // v0.38.0: bumped raw 100_220 -> 100_347, gzip 26_981 -> 27_027 for the
+  // island-VM core shared namespace init guard. Brotli headroom unchanged.
+  // Exact measurement: 100_347 / 27_027 / 24_037.
+  { file: "bootstrap-lite.js", raw: 100_347, gzip: 27_027, brotli: 24_077 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -837,10 +859,14 @@ const budgets = [
   // Declarative renderer/fallback/quality outputs add 1_048 reusable raw bytes.
   // Merged with main's retained-geometry and quality-ladder work; exact
   // combined measurement: 518_329 / 143_807 / 119_210.
-  // Bumped raw 518_329 -> 524_000, gzip 143_807 -> 145_000, brotli 119_210 ->
-  // 120_200 for the water-tap control-form profile (see the bootstrap.js
-  // budget above). Measured: 521_091 / 144_515 / 119_807.
-  { file: "bootstrap-feature-scene3d.js", raw: 524_000, gzip: 145_000, brotli: 120_200 },
+  // Scene3D first-content reveal exact measurement: 519_113 / 143_984 /
+  // 119_406.
+  //
+  // Merged the Blackglass Coast beacon evidence work (water-tap
+  // control-form profile in 19b-scene-control-forms.js, this chunk's share
+  // of the FXAA enable and ember plume particles) with main's budget above.
+  // Measured: 521_875 / 144_723 / 120_062.
+  { file: "bootstrap-feature-scene3d.js", raw: 523_200, gzip: 145_100, brotli: 120_400 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -999,7 +1025,19 @@ const budgets = [
   // Final integrated measurement: 381_179 / 91_911 / 76_934.
   // FINAL-FIX-19 exact measurement: 381_939 / 92_096 / 77_192.
   // WebGPU point-billboard viewport guards measure 382_077 / 92_098 / 77_082.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 382_186, gzip: 92_152, brotli: 77_247 },
+  // 16a bind-group and pipeline-key memoization removes the per-frame
+  // createBindGroup churn and the ~13 KB per-frame pipeline cache-key
+  // rebuild across the point layers. Costs 1_566 raw in this chunk.
+  // Exact merged measurement: 383_752 / 92_793 / 77_621.
+  //
+  // Merged the Scene3D parity cluster A lighting-environment work: the
+  // envEquirectUV WGSL port, the envMapTex/envMapSampler bindings 13/14, the
+  // dedicated repeat/clamp-to-edge sampler, and the hasEnvMap EnvUniforms lane
+  // (with its three pad words) that let the WebGPU renderer read
+  // Environment.EnvironmentMap for the first time. Combined with the 16a
+  // memoization above. Measured: 385_516 / 93_168 / 77_942.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 386_500, gzip: 93_500, brotli: 78_100 },
+
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
@@ -1100,7 +1138,11 @@ const budgets = [
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
   { file: "bootstrap-feature-controllers.js", raw: 10_000, gzip: 3_500, brotli: 3_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
-  { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
+  // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
+  // connect/disconnect, island dispose, hydration, and event-delegation
+  // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
+  // measurement: 12_963 / 3_560 / 3_184.
+  { file: "bootstrap-feature-islands.js", raw: 14_000, gzip: 4_000, brotli: 4_000 },
 ];
 
 const routeBudgets = [
@@ -1196,9 +1238,14 @@ const routeBudgets = [
     // Final observable-telemetry measurement: 229_436 / 65_617 / 57_847.
     // Main's declarative submit-action handling is shared by the selective
     // runtime; record the combined post-merge measurement.
-    raw: 231_295,
-    gzip: 66_123,
-    brotli: 58_241,
+    //
+    // v0.38.0: bumped raw 231_974 -> 232_101, gzip 66_291 -> 66_330 for the
+    // island-VM core shared namespace init guard carried by
+    // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
+    // 232_101 / 66_330 / 58_408.
+    raw: 232_101,
+    gzip: 66_330,
+    brotli: 58_412,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1296,14 +1343,26 @@ const routeBudgets = [
     // retained-geometry and quality-ladder work with declarative status
     // bindings, plus main's declarative submit-action fix, brings the exact
     // route total to:
-    // Bumped raw 1_174_281 -> 1_180_000, gzip 312_889 -> 314_000, brotli
-    // 264_360 -> 265_500 for the water-tap control-form profile, the same
-    // reason as bootstrap.js above (this route carries
-    // bootstrap-feature-scene3d.js, which holds 19b-scene-control-forms.js).
-    // Measured: 1_177_043 / 313_597 / 264_957.
-    raw: 1_180_000,
-    gzip: 314_000,
-    brotli: 265_500,
+    // 16a memoization rides in through the WebGPU chunk. Exact merged
+    // route measurement: 1_176_526 / 313_698 / 264_905.
+    // Scene3D first-content reveal exact measurement: 1_177_310 / 313_875 / 265_101.
+    // v0.38.0: bumped raw 1_177_310 -> 1_177_437, gzip 313_875 -> 313_914 for
+    // the island-VM core shared namespace init guard carried by
+    // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
+    // 1_177_437 / 313_914 / 265_097.
+    //
+    // Merged the Scene3D parity cluster A WebGPU environment-map work (see
+    // bootstrap-feature-scene3d-webgpu.js above; this route carries that
+    // chunk) with v0.38.0's island-VM core budgets. Measured: 1_179_201 /
+    // 314_289 / 265_418.
+    //
+    // Merged the Blackglass Coast beacon evidence work (water-tap
+    // control-form profile, FXAA, ember plume particles; this route carries
+    // bootstrap-feature-scene3d.js, which holds 19b-scene-control-forms.js)
+    // with main's budget above. Measured: 1_181_963 / 315_028 / 266_074.
+    raw: 1_185_000,
+    gzip: 315_900,
+    brotli: 266_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1375,12 +1434,19 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    // Bumped raw 1_004_064 -> 1_010_000, gzip 279_132 -> 280_500, brotli
-    // 236_782 -> 238_000 for the water-tap control-form profile (see the
-    // bootstrap.js budget above). Measured: 1_006_826 / 279_840 / 237_379.
-    raw: 1_010_000,
-    gzip: 280_500,
-    brotli: 238_000,
+    // Scene3D first-content reveal exact measurement: 1_005_527 / 279_477 / 237_149.
+    // v0.38.0: bumped raw 1_005_527 -> 1_005_654, gzip 279_477 -> 279_516 for
+    // the island-VM core shared namespace init guard carried by
+    // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
+    // 1_005_654 / 279_516 / 237_145.
+    //
+    // Merged the Blackglass Coast beacon evidence work (water-tap
+    // control-form profile; this route carries bootstrap-feature-scene3d.js,
+    // which holds 19b-scene-control-forms.js) with main's budget above.
+    // Measured: 1_008_416 / 280_255 / 237_801.
+    raw: 1_011_000,
+    gzip: 281_000,
+    brotli: 238_400,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1444,12 +1510,26 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    // Bumped raw 1_386_250 -> 1_393_000, gzip 371_284 -> 372_500, brotli
-    // 314_029 -> 315_500 for the water-tap control-form profile (see the
-    // bootstrap.js budget above). Measured: 1_389_012 / 371_992 / 314_626.
-    raw: 1_393_000,
-    gzip: 372_500,
-    brotli: 315_500,
+    // 16a memoization rides in through the WebGPU chunk. Exact merged
+    // route measurement: 1_388_495 / 372_093 / 314_574.
+    // Scene3D first-content reveal exact measurement: 1_389_279 / 372_270 / 314_770.
+    // v0.38.0: bumped raw 1_389_279 -> 1_389_406, gzip 372_270 -> 372_309 for
+    // the island-VM core shared namespace init guard carried by
+    // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
+    // 1_389_406 / 372_309 / 314_766.
+    //
+    // Merged the Scene3D parity cluster A WebGPU environment-map work (see
+    // bootstrap-feature-scene3d-webgpu.js above; this route carries that
+    // chunk) with v0.38.0's island-VM core budgets. Measured: 1_391_170 /
+    // 372_684 / 315_087.
+    //
+    // Merged the Blackglass Coast beacon evidence work (water-tap
+    // control-form profile, FXAA, ember plume particles; this route loads
+    // both backends, so it carries the full cost of both) with main's
+    // budget above. Measured: 1_393_932 / 373_423 / 315_743.
+    raw: 1_397_500,
+    gzip: 374_400,
+    brotli: 316_600,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1516,12 +1596,26 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    // Bumped raw 1_028_003 -> 1_034_000, gzip 270_602 -> 272_000, brotli
-    // 226_761 -> 228_000 for the water-tap control-form profile (see the
-    // bootstrap.js budget above). Measured: 1_030_765 / 271_310 / 227_358.
-    raw: 1_034_000,
-    gzip: 272_000,
-    brotli: 228_000,
+    // 16a memoization rides in through the WebGPU chunk. Exact merged
+    // route measurement: 1_029_823 / 271_279 / 227_216.
+    // Scene3D first-content reveal exact measurement: 1_030_607 / 271_456 / 227_412.
+    // v0.38.0: bumped raw 1_030_607 -> 1_030_734, gzip 271_456 -> 271_495 for
+    // the island-VM core shared namespace init guard carried by
+    // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
+    // 1_030_734 / 271_495 / 227_408.
+    //
+    // Merged the Scene3D parity cluster A WebGPU environment-map work (see
+    // bootstrap-feature-scene3d-webgpu.js above; this route carries that
+    // chunk) with v0.38.0's island-VM core budgets. Measured: 1_032_498 /
+    // 271_870 / 227_729.
+    //
+    // Merged the Blackglass Coast beacon evidence work (this route carries
+    // bootstrap-feature-scene3d.js and bootstrap-feature-scene3d-webgpu.js,
+    // so it picks up the FXAA enable and ember plume particles' share) with
+    // main's budget above. Measured: 1_035_260 / 272_609 / 228_385.
+    raw: 1_037_900,
+    gzip: 273_300,
+    brotli: 229_000,
   },
 
 ];

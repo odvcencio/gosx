@@ -108,6 +108,10 @@
     "    envRotation: f32,",
     "    hasIBL: u32,",
     "    radianceMipLevels: u32,",
+    "    hasEnvMap: u32,",
+    "    _pad1: u32,",
+    "    _pad2: u32,",
+    "    _pad3: u32,",
     "};",
     "",
     "struct ShadowUniforms {",
@@ -1480,6 +1484,8 @@
     "@group(0) @binding(10) var iblRadiance: texture_cube<f32>;",
     "@group(0) @binding(11) var iblBRDFLUT: texture_2d<f32>;",
     "@group(0) @binding(12) var iblSampler: sampler;",
+    "@group(0) @binding(13) var envMapTex: texture_2d<f32>;",
+    "@group(0) @binding(14) var envMapSampler: sampler;",
     "",
     // Group 1: per-material
     "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
@@ -1585,6 +1591,14 @@
     "    let c = cos(radians);",
     "    let s = sin(radians);",
     "    return vec3f(dir.x * c + dir.z * s, dir.y, -dir.x * s + dir.z * c);",
+    "}",
+    "",
+    // Equirectangular direction-to-UV mapping. Ported verbatim from the GLSL
+    // source (16-scene-webgl.js envEquirectUV) so both backends sample the
+    // same texel for the same direction.
+    "fn envEquirectUV(dir: vec3f) -> vec2f {",
+    "    let d = normalize(dir);",
+    "    return vec2f(atan2(d.z, d.x) / (2.0 * PI) + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);",
     "}",
     "",
     // Point light distance attenuation.
@@ -1886,6 +1900,14 @@
     "        let diffuseIBL = irradiance * albedo * kDenv;",
     "        let specularIBL = prefiltered * (F0 * brdf.x + brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
+    "    } else if (env.hasEnvMap != 0u) {",
+    "        let Nr = rotateEnvY(N, env.envRotation);",
+    "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
+    "        let envDiffuse = textureSample(envMapTex, envMapSampler, envEquirectUV(Nr)).rgb * albedo;",
+    "        let envSpecular = textureSample(envMapTex, envMapSampler, envEquirectUV(Rr)).rgb;",
+    "        let Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
+    "        let kDenv = (vec3f(1.0) - Fenv) * (1.0 - metalness);",
+    "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
@@ -3338,6 +3360,8 @@
         { binding: 10, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
         { binding: 11, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
         { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+        { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+        { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
       ],
     });
   }
@@ -3954,6 +3978,41 @@
 
     var linearSampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
 
+    // Same memoization pattern as the renderer's wgpuCachedBindGroup: a bind
+    // group stays valid while the layout and every bound resource identity
+    // are unchanged, and per-frame recreation churns GPU wrapper objects.
+    // The device is fixed for this processor's lifetime, so it needs no
+    // check. Resize replaces the texture views, which invalidates naturally.
+    var postBindGroupOwners = { blit: {}, effects: new Map() };
+    function postCachedBindGroup(owner, layout, entries) {
+      var cache = owner.bgCache;
+      if (cache && cache.layout === layout && cache.ids.length === entries.length) {
+        var match = true;
+        for (var ci = 0; ci < entries.length && match; ci++) {
+          var res = entries[ci].resource;
+          if (cache.ids[ci] !== (res && res.buffer ? res.buffer : res)) match = false;
+        }
+        if (match) return cache.bg;
+      }
+      var ids = [];
+      for (var ii = 0; ii < entries.length; ii++) {
+        var r = entries[ii].resource;
+        ids.push(r && r.buffer ? r.buffer : r);
+      }
+      var bg = device.createBindGroup({ layout: layout, entries: entries });
+      owner.bgCache = { layout: layout, ids: ids, bg: bg };
+      return bg;
+    }
+    function postEffectBindGroupOwner(effect) {
+      var name = (typeof effect.name === "string" && effect.name) ? effect.name : "custom";
+      var owner = postBindGroupOwners.effects.get(name);
+      if (!owner) {
+        owner = {};
+        postBindGroupOwners.effects.set(name, owner);
+      }
+      return owner;
+    }
+
     // Render-truth chain state, owned by apply() but hoisted here so
     // fullscreenPass -- the ONE function every post pass funnels through --
     // can attribute its dispatch to the effect currently being processed.
@@ -4505,16 +4564,13 @@
                 break;
               }
               var cpUniformBuf = ensureCustomPostUniformBuffer(effect);
-              var cpBG = device.createBindGroup({
-                layout: cpRes.bgl,
-                entries: [
-                  { binding: 0, resource: currentTexView },
-                  { binding: 1, resource: linearSampler },
-                  { binding: 2, resource: depthTexView },
-                  { binding: 3, resource: getDepthSampler() },
-                  { binding: 4, resource: { buffer: cpUniformBuf } },
-                ],
-              });
+              var cpBG = postCachedBindGroup(postEffectBindGroupOwner(effect), cpRes.bgl, [
+                { binding: 0, resource: currentTexView },
+                { binding: 1, resource: linearSampler },
+                { binding: 2, resource: depthTexView },
+                { binding: 3, resource: getDepthSampler() },
+                { binding: 4, resource: { buffer: cpUniformBuf } },
+              ]);
               fullscreenPass(encoder, cpRes.pipeline, cpBG, outputView);
               currentTexView = outputView;
               break;
@@ -4532,13 +4588,10 @@
 
         // If no effects matched or we need a final blit.
         if (currentTexView !== finalView) {
-          var blitBG = device.createBindGroup({
-            layout: getPostBlitLayout(),
-            entries: [
-              { binding: 0, resource: currentTexView },
-              { binding: 1, resource: linearSampler },
-            ],
-          });
+          var blitBG = postCachedBindGroup(postBindGroupOwners.blit, getPostBlitLayout(), [
+            { binding: 0, resource: currentTexView },
+            { binding: 1, resource: linearSampler },
+          ]);
           fullscreenPass(encoder, blitPipeline, blitBG, finalView);
         }
         activePostChain = null;
@@ -6794,6 +6847,11 @@
     var linearSampler = null;
     var comparisonSampler = null;
     var waterTileSampler = null;
+    // Dedicated envMap sampler: the equirect wrap seam needs addressModeU
+    // "repeat" (the seam wraps around the sphere) and addressModeV
+    // "clamp-to-edge" (the poles do not wrap). linearSampler clamps both
+    // axes, so it cannot serve this texture without a visible seam.
+    var envMapSampler = null;
 
     // Water simulation resources.
     var waterComputeBindGroupLayout = null;
@@ -6872,6 +6930,17 @@
       active: false,
       diagnostics: { requested: false, active: false, state: "not-requested", reason: "", radianceMipLevels: 0 },
     };
+    // Legacy equirectangular Environment.EnvironmentMap image (the same
+    // `envMap` field 16-scene-webgl.js reads). IBL wins when it is active:
+    // syncEnvironmentMap suppresses this the same frame syncEnvironmentIBL
+    // reports ibl.active, mirroring the WebGL2 status machine at
+    // 16-scene-webgl.js:6249-6252 (envMap MAY still shade while IBL is only
+    // "loading"/"validating", never once it is "active").
+    var envMapResources = {
+      key: "",
+      record: null,
+      active: false,
+    };
 
     // pbrSceneAttributeCache backs wgpuStablePBRAttributeBuffer below, keyed
     // by slot name (not by `bundle`, which createSceneRenderBundle rebuilds
@@ -6919,7 +6988,7 @@
     var _shadowUniformU   = new Uint32Array(_shadowUniformBuf);
     var _shadowUniformI   = new Int32Array(_shadowUniformBuf);
 
-    var _envUniformBuf = new ArrayBuffer(64);
+    var _envUniformBuf = new ArrayBuffer(80);
     var _envUniformF = new Float32Array(_envUniformBuf);
     var _envUniformU = new Uint32Array(_envUniformBuf);
 
@@ -7493,7 +7562,7 @@
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        envUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        envUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
@@ -7516,6 +7585,13 @@
           compare: "less",
           magFilter: "linear",
           minFilter: "linear",
+        });
+        envMapSampler = device.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          addressModeU: "repeat",
+          addressModeV: "clamp-to-edge",
         });
 
         // Create 1x1 dummy shadow depth texture.
@@ -8751,10 +8827,39 @@
 
     // buildAuthoredPointsVertexPipeline: for Points layers, uses vertex buffer (instanced path).
     function buildAuthoredPointsVertexPipelineAsync(entry, blendMode, depthWrite, systemID) {
-      var vertWGSL = (typeof entry.customVertexWGSL === "string") ? entry.customVertexWGSL.trim() : "";
-      var fragWGSL = (typeof entry.customFragmentWGSL === "string") ? entry.customFragmentWGSL.trim() : "";
+      // The joined cache key embeds both WGSL sources (~13 KB). This function
+      // runs per layer per frame, and rebuilding the key allocated ~29 MB/s
+      // of transient strings across 19 layers. Memoize the trimmed sources
+      // and the key on the entry; the raw source identities plus the
+      // pipeline parameters validate the memo. Reusing one key string also
+      // keeps the Map lookup cheap (the string hash is computed once).
+      var rawVert = (typeof entry.customVertexWGSL === "string") ? entry.customVertexWGSL : "";
+      var rawFrag = (typeof entry.customFragmentWGSL === "string") ? entry.customFragmentWGSL : "";
+      var memo = entry._gosxWGPUPointsPipelineKeyMemo;
+      if (!memo || memo.rawVert !== rawVert || memo.rawFrag !== rawFrag ||
+          memo.blendMode !== blendMode || memo.depthWrite !== depthWrite ||
+          memo.targetFormat !== targetFormat || memo.sampleCount !== activeSampleCount) {
+        var trimmedVert = rawVert.trim();
+        var trimmedFrag = rawFrag.trim();
+        memo = {
+          rawVert: rawVert,
+          rawFrag: rawFrag,
+          blendMode: blendMode,
+          depthWrite: depthWrite,
+          targetFormat: targetFormat,
+          sampleCount: activeSampleCount,
+          vertWGSL: trimmedVert,
+          fragWGSL: trimmedFrag,
+          key: (trimmedVert && trimmedFrag)
+            ? [trimmedVert, trimmedFrag, blendMode, depthWrite ? "1" : "0", targetFormat, activeSampleCount].join("|")
+            : "",
+        };
+        entry._gosxWGPUPointsPipelineKeyMemo = memo;
+      }
+      var vertWGSL = memo.vertWGSL;
+      var fragWGSL = memo.fragWGSL;
       if (!vertWGSL || !fragWGSL) return null; // no authored shader
-      var cacheKey = [vertWGSL, fragWGSL, blendMode, depthWrite ? "1" : "0", targetFormat, activeSampleCount].join("|");
+      var cacheKey = memo.key;
       var cached = pointsAuthoredPipelineCache.get(cacheKey);
       if (cached) return cached.failed ? null : cached;
 
@@ -8810,10 +8915,34 @@
 
     // buildAuthoredParticleRenderPipelineAsync: for ComputeParticles render, reads from storage.
     function buildAuthoredParticleRenderPipelineAsync(entry, blendMode, depthWrite, systemID) {
-      var vertWGSL = (typeof entry.renderVertexWGSL === "string") ? entry.renderVertexWGSL.trim() : "";
-      var fragWGSL = (typeof entry.renderFragmentWGSL === "string") ? entry.renderFragmentWGSL.trim() : "";
+      // Same per-frame key memoization as buildAuthoredPointsVertexPipelineAsync.
+      var rawVert = (typeof entry.renderVertexWGSL === "string") ? entry.renderVertexWGSL : "";
+      var rawFrag = (typeof entry.renderFragmentWGSL === "string") ? entry.renderFragmentWGSL : "";
+      var memo = entry._gosxWGPUCPRenderPipelineKeyMemo;
+      if (!memo || memo.rawVert !== rawVert || memo.rawFrag !== rawFrag ||
+          memo.blendMode !== blendMode || memo.depthWrite !== depthWrite ||
+          memo.targetFormat !== targetFormat || memo.sampleCount !== activeSampleCount) {
+        var trimmedVert = rawVert.trim();
+        var trimmedFrag = rawFrag.trim();
+        memo = {
+          rawVert: rawVert,
+          rawFrag: rawFrag,
+          blendMode: blendMode,
+          depthWrite: depthWrite,
+          targetFormat: targetFormat,
+          sampleCount: activeSampleCount,
+          vertWGSL: trimmedVert,
+          fragWGSL: trimmedFrag,
+          key: (trimmedVert && trimmedFrag)
+            ? ["cr", trimmedVert, trimmedFrag, blendMode, depthWrite ? "1" : "0", targetFormat, activeSampleCount].join("|")
+            : "",
+        };
+        entry._gosxWGPUCPRenderPipelineKeyMemo = memo;
+      }
+      var vertWGSL = memo.vertWGSL;
+      var fragWGSL = memo.fragWGSL;
       if (!vertWGSL || !fragWGSL) return null;
-      var cacheKey = ["cr", vertWGSL, fragWGSL, blendMode, depthWrite ? "1" : "0", targetFormat, activeSampleCount].join("|");
+      var cacheKey = memo.key;
       var cached = pointsAuthoredPipelineCache.get(cacheKey);
       if (cached) return cached.failed ? null : cached;
 
@@ -13683,14 +13812,38 @@
       return iblResources;
     }
 
+    // syncEnvironmentMap loads the legacy equirectangular Environment.EnvironmentMap
+    // image through the shared 2D texture cache/loader (wgpuLoadTexture), the
+    // same path material albedo maps use. IBL wins: iblActive (ibl.active from
+    // syncEnvironmentIBL, not merely "requested") suppresses this, matching
+    // 16-scene-webgl.js's scenePBRUploadEnvironmentMap status machine, which
+    // only zeroes hasEnvMap once iblStatus.active is true.
+    function syncEnvironmentMap(environment, iblActive) {
+      var env = environment || {};
+      var url = typeof env.envMap === "string" ? env.envMap.trim() : "";
+      if (!url || iblActive) {
+        envMapResources.active = false;
+        return envMapResources;
+      }
+      if (envMapResources.key !== url) {
+        envMapResources.key = url;
+        envMapResources.record = wgpuLoadTexture(device, url, textureCache, null, "environment-radiance", "linear");
+      }
+      var record = envMapResources.record;
+      envMapResources.active = Boolean(record && record.loaded && !record.failed);
+      return envMapResources;
+    }
+
     function uploadEnvUniforms(environment) {
       var env = environment || {};
       var ibl = syncEnvironmentIBL(env);
+      var envMap = syncEnvironmentMap(env, ibl.active);
       var ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
       var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
       var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
 
-      // EnvUniforms: three vec3+scalar pairs plus one IBL control vec4 = 64 bytes.
+      // EnvUniforms: three vec3+scalar pairs, one IBL control vec4, and one
+      // envMap control vec4 (only word 0 used today) = 80 bytes.
       var data = _envUniformF;
       var words = _envUniformU;
       data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
@@ -13703,6 +13856,8 @@
       data[13] = sceneNumber(env.envRotation, 0);
       words[14] = ibl.active ? 1 : 0;
       words[15] = ibl.active ? Math.max(1, ibl.diagnostics.radianceMipLevels | 0) : 0;
+      words[16] = envMap.active ? 1 : 0;
+      words[17] = 0; words[18] = 0; words[19] = 0;
       device.queue.writeBuffer(envUniformBuffer, 0, data);
     }
 
@@ -13788,6 +13943,34 @@
       f[38] = modelScaleSigns ? sceneNumber(modelScaleSigns[2], 1) : 1;
       f[39] = 0;
       return { data: f, u: u };
+    }
+
+    // Memoized bind group on an owner slot. Bind groups reference their
+    // resources by identity, so one stays valid while the device, the layout,
+    // and every bound resource are unchanged. Recreating them per frame
+    // churned thousands of GPU wrapper objects per second across the point
+    // layers; WebKit frees the backing Metal objects only on JS garbage
+    // collection, so the churn grows the GPU process between collections
+    // (iOS jetsam pressure). Identity source per entry: `resource.buffer`
+    // for buffer bindings, the resource itself for views and samplers.
+    function wgpuCachedBindGroup(owner, slot, layout, entries) {
+      var cache = owner[slot];
+      if (cache && cache.device === device && cache.layout === layout && cache.ids.length === entries.length) {
+        var match = true;
+        for (var ci = 0; ci < entries.length && match; ci++) {
+          var res = entries[ci].resource;
+          if (cache.ids[ci] !== (res && res.buffer ? res.buffer : res)) match = false;
+        }
+        if (match) return cache.bg;
+      }
+      var ids = [];
+      for (var ii = 0; ii < entries.length; ii++) {
+        var r = entries[ii].resource;
+        ids.push(r && r.buffer ? r.buffer : r);
+      }
+      var bg = device.createBindGroup({ layout: layout, entries: entries });
+      owner[slot] = { device: device, layout: layout, ids: ids, bg: bg };
+      return bg;
     }
 
     function createMaterialBindGroup(material, receiveShadow, cacheOwner, modelMatrix, modelScaleSigns) {
@@ -13883,6 +14066,7 @@
       var iblIrradianceView = iblResources.active && iblResources.irradiance ? iblResources.irradiance.view : placeholderCubeView;
       var iblRadianceView = iblResources.active && iblResources.radiance ? iblResources.radiance.view : placeholderCubeView;
       var iblBRDFView = iblResources.active && iblResources.brdfLUT ? iblResources.brdfLUT.view : placeholderView;
+      var envMapView = envMapResources.active && envMapResources.record ? envMapResources.record.view : placeholderView;
       var cache = _frameBindGroupCache;
       if (
         cache &&
@@ -13899,11 +14083,13 @@
         cache.iblIrradiance === iblIrradianceView &&
         cache.iblRadiance === iblRadianceView &&
         cache.iblBRDF === iblBRDFView &&
-        cache.iblSampler === linearSampler
+        cache.iblSampler === linearSampler &&
+        cache.envMap === envMapView &&
+        cache.envMapSampler === envMapSampler
       ) {
         return cache.bindGroup;
       }
-      var bindGroup = _createFrameBindGroupUncached(view0, view1, iblIrradianceView, iblRadianceView, iblBRDFView);
+      var bindGroup = _createFrameBindGroupUncached(view0, view1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView);
       _frameBindGroupCache = {
         device: device,
         layout: frameBindGroupLayout,
@@ -13919,12 +14105,14 @@
         iblRadiance: iblRadianceView,
         iblBRDF: iblBRDFView,
         iblSampler: linearSampler,
+        envMap: envMapView,
+        envMapSampler: envMapSampler,
         bindGroup: bindGroup,
       };
       return bindGroup;
     }
 
-    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView) {
+    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView) {
       return device.createBindGroup({
         layout: frameBindGroupLayout,
         entries: [
@@ -13941,6 +14129,8 @@
           { binding: 10, resource: iblRadianceView || placeholderCubeView },
           { binding: 11, resource: iblBRDFView || placeholderView },
           { binding: 12, resource: linearSampler },
+          { binding: 13, resource: envMapView || placeholderView },
+          { binding: 14, resource: envMapSampler },
         ],
       });
     }
@@ -15921,8 +16111,11 @@
         var depthWrite = entry.depthWrite !== false;
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
 
-        var hasAuthoredWGSL = (typeof entry.customVertexWGSL === "string" && entry.customVertexWGSL.trim()) &&
-                              (typeof entry.customFragmentWGSL === "string" && entry.customFragmentWGSL.trim());
+        // Truthiness only — the pipeline builder trims and validates once,
+        // memoized on the entry. Trimming ~6 KB WGSL strings here allocated
+        // per layer per frame.
+        var hasAuthoredWGSL = (typeof entry.customVertexWGSL === "string" && entry.customVertexWGSL) &&
+                              (typeof entry.customFragmentWGSL === "string" && entry.customFragmentWGSL);
         var layerID = entry.id || ("points-" + i);
         var authoredResource = hasAuthoredWGSL && !pointsAuthoredLayerFailed.get(layerID)
           ? buildAuthoredPointsVertexPipelineAsync(entry, validBlend, depthWrite, layerID)
@@ -15933,14 +16126,12 @@
         if (useAuthored) {
           // Authored path: bind group 1 = user uniforms, group 2 = PointsUniforms.
           var userUnifBuf = ensurePointsAuthoredUserUniformBuffer(entry, "_gosxWGPUPointsUserUniform", entry.customUniforms, entry.shaderLayout);
-          var userUnifBG = device.createBindGroup({
-            layout: pointsAuthoredUserUniformBGL,
-            entries: [{ binding: 0, resource: { buffer: userUnifBuf } }],
-          });
-          pointsBG = device.createBindGroup({
-            layout: pointsUniformBindGroupLayout,
-            entries: [{ binding: 0, resource: { buffer: pointsUniformBuffer } }],
-          });
+          var userUnifBG = wgpuCachedBindGroup(entry, "_gosxWGPUPointsUserUniformBG", pointsAuthoredUserUniformBGL, [
+            { binding: 0, resource: { buffer: userUnifBuf } },
+          ]);
+          pointsBG = wgpuCachedBindGroup(entry, "_gosxWGPUPointsUniformBG", pointsUniformBindGroupLayout, [
+            { binding: 0, resource: { buffer: pointsUniformBuffer } },
+          ]);
           pipeline = authoredResource.pipeline;
           pass.setPipeline(pipeline);
           pass.setVertexBuffer(0, pointsParticleBuffer);
@@ -15948,10 +16139,9 @@
           pass.setBindGroup(2, pointsBG);
         } else {
           // Builtin path.
-          pointsBG = device.createBindGroup({
-            layout: pointsUniformBindGroupLayout,
-            entries: [{ binding: 0, resource: { buffer: pointsUniformBuffer } }],
-          });
+          pointsBG = wgpuCachedBindGroup(entry, "_gosxWGPUPointsUniformBG", pointsUniformBindGroupLayout, [
+            { binding: 0, resource: { buffer: pointsUniformBuffer } },
+          ]);
           pipeline = getPointsVertexPipeline(validBlend, depthWrite);
           pass.setPipeline(pipeline);
           pass.setVertexBuffer(0, pointsParticleBuffer);
@@ -16081,9 +16271,11 @@
         var validBlend = blendMode === "additive" || blendMode === "alpha" ? blendMode : "opaque";
         var depthWrite = entry.depthWrite === true || (validBlend === "opaque" && entry.depthWrite !== false);
 
-        // Authored render path: check for renderVertexWGSL/renderFragmentWGSL on the entry.
-        var hasAuthoredRender = (typeof entry.renderVertexWGSL === "string" && entry.renderVertexWGSL.trim()) &&
-                                (typeof entry.renderFragmentWGSL === "string" && entry.renderFragmentWGSL.trim());
+        // Authored render path: check for renderVertexWGSL/renderFragmentWGSL
+        // on the entry. Truthiness only — the pipeline builder trims and
+        // validates once, memoized on the entry.
+        var hasAuthoredRender = (typeof entry.renderVertexWGSL === "string" && entry.renderVertexWGSL) &&
+                                (typeof entry.renderFragmentWGSL === "string" && entry.renderFragmentWGSL);
         var cpSystemID = (entry && typeof entry.id === "string") ? entry.id : ("cp-" + i);
         if (hasAuthoredRender) {
           stats.computeParticleAuthoredCandidateEntries += 1;
@@ -16103,30 +16295,23 @@
         if (useCPAuthored) {
           // Authored render: group 1 = user uniforms, group 2 = PointsUniforms + particles storage.
           var cpUserUnifBuf = ensurePointsAuthoredUserUniformBuffer(system, "_gosxWGPUCPRenderUserUniform", entry.renderUniforms, entry.renderShaderLayout);
-          var cpUserUnifBG = device.createBindGroup({
-            layout: pointsAuthoredUserUniformBGL,
-            entries: [{ binding: 0, resource: { buffer: cpUserUnifBuf } }],
-          });
-          pointsBG = device.createBindGroup({
-            layout: pointsBindGroupLayout,
-            entries: [
-              { binding: 0, resource: { buffer: pointsUniformBuffer } },
-              { binding: 1, resource: { buffer: system.renderBuffer } },
-            ],
-          });
+          var cpUserUnifBG = wgpuCachedBindGroup(system, "_gosxWGPUCPRenderUserUniformBG", pointsAuthoredUserUniformBGL, [
+            { binding: 0, resource: { buffer: cpUserUnifBuf } },
+          ]);
+          pointsBG = wgpuCachedBindGroup(system, "_gosxWGPUCPPointsBG", pointsBindGroupLayout, [
+            { binding: 0, resource: { buffer: pointsUniformBuffer } },
+            { binding: 1, resource: { buffer: system.renderBuffer } },
+          ]);
           pipeline = cpAuthoredResource.pipeline;
           pass.setPipeline(pipeline);
           pass.setBindGroup(1, cpUserUnifBG);
           pass.setBindGroup(2, pointsBG);
         } else {
           // Builtin render path.
-          pointsBG = device.createBindGroup({
-            layout: pointsBindGroupLayout,
-            entries: [
-              { binding: 0, resource: { buffer: pointsUniformBuffer } },
-              { binding: 1, resource: { buffer: system.renderBuffer } },
-            ],
-          });
+          pointsBG = wgpuCachedBindGroup(system, "_gosxWGPUCPPointsBG", pointsBindGroupLayout, [
+            { binding: 0, resource: { buffer: pointsUniformBuffer } },
+            { binding: 1, resource: { buffer: system.renderBuffer } },
+          ]);
           pipeline = getPointsPipeline(validBlend, depthWrite);
           pass.setPipeline(pipeline);
           pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));

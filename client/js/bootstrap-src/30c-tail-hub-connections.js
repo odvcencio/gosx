@@ -45,25 +45,90 @@
     return path.startsWith("/") ? path : "/" + path;
   }
 
-  function applyHubBindings(entry, message) {
+  function applyHubBindings(record, message) {
+    const entry = record.entry;
     if (!entry.bindings || entry.bindings.length === 0) return;
 
-    for (const binding of entry.bindings) {
-      applyHubBinding(entry, binding, message);
+    for (let i = 0; i < entry.bindings.length; i++) {
+      applyHubBinding(record, entry.bindings[i], message);
     }
   }
 
-  function applyHubBinding(entry, binding, message) {
+  function applyHubBinding(record, binding, message) {
+    const entry = record.entry;
     if (binding && binding.direction === "out") return;
-    if (!binding || binding.event !== message.event || !binding.signal) return;
-    try {
-      const result = setSharedSignalJSON(binding.signal, JSON.stringify(message.data));
-      if (typeof result === "string" && result !== "") {
-        console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
+    // Welcome frames are transport metadata unless a binding names the
+    // welcome event explicitly.
+    if (!binding || binding.event !== message.event) return;
+    if (binding.signal) {
+      try {
+        const result = setSharedSignalJSON(binding.signal, JSON.stringify(message.data));
+        if (typeof result === "string" && result !== "") {
+          console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, result);
+        }
+      } catch (e) {
+        console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
       }
-    } catch (e) {
-      console.error(`[gosx] hub binding error (${entry.id}/${binding.signal}):`, e);
     }
+    if (binding.refresh) scheduleHubRefresh(record, binding);
+  }
+
+  function hubNavigationFetchEpoch(navigation) {
+    if (!navigation || typeof navigation.getFetchEpoch !== "function") return null;
+    try {
+      const snapshot = navigation.getFetchEpoch();
+      if (!snapshot || typeof snapshot !== "object") return null;
+      const started = Number(snapshot.started);
+      const applied = Number(snapshot.applied);
+      return Number.isFinite(started) && Number.isFinite(applied)
+        ? { started: started, applied: applied }
+        : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function scheduleHubRefresh(record, binding) {
+    const pending = record.refreshTimer != null;
+    if (pending) clearTimeout(record.refreshTimer);
+    const preserveScroll = binding.refreshPreserveScroll !== false;
+    record.refreshPreserveScroll = pending
+      ? record.refreshPreserveScroll !== false && preserveScroll
+      : preserveScroll;
+    record.refreshEvent = binding.event;
+    const navigation = window.__gosx.navigation || window.__gosx_page_nav;
+    const fetchEpoch = hubNavigationFetchEpoch(navigation);
+    record.refreshFetchEpoch = fetchEpoch ? fetchEpoch.started : null;
+    const delay = Math.max(0, Math.floor(Number(binding.refreshDebounceMs || 0)));
+    const run = function() {
+      record.refreshTimer = null;
+      if (window.__gosx.hubs.get(record.entry.id) !== record) return;
+      const liveNavigation = window.__gosx.navigation || window.__gosx_page_nav;
+      if (!liveNavigation || typeof liveNavigation.revalidate !== "function") return;
+      let navigationPending = false;
+      try {
+        const state = typeof liveNavigation.getState === "function" ? liveNavigation.getState() : null;
+        navigationPending = !!state && state.phase === "pending";
+      } catch (_) {}
+      if (navigationPending) {
+        record.refreshTimer = setTimeout(run, 32);
+        return;
+      }
+      const refreshPreserveScroll = record.refreshPreserveScroll !== false;
+      const refreshEvent = record.refreshEvent;
+      const refreshFetchEpoch = record.refreshFetchEpoch;
+      record.refreshPreserveScroll = null;
+      record.refreshEvent = null;
+      record.refreshFetchEpoch = null;
+      const liveFetchEpoch = hubNavigationFetchEpoch(liveNavigation);
+      if (refreshFetchEpoch != null && liveFetchEpoch && liveFetchEpoch.applied > refreshFetchEpoch) return;
+      Promise.resolve().then(function() {
+        return liveNavigation.revalidate({ preserveScroll: refreshPreserveScroll });
+      }).catch(function(error) {
+        console.error(`[gosx] hub refresh error (${record.entry.id}/${refreshEvent}):`, error);
+      });
+    };
+    record.refreshTimer = setTimeout(run, delay);
   }
 
   function initializeClientIdentity(config) {
@@ -331,7 +396,7 @@
   function dispatchHubMessage(record, message) {
     if (!message) return;
     const entry = record.entry;
-    applyHubBindings(entry, message);
+    applyHubBindings(record, message);
     if (record.inputController && typeof record.inputController.onMessage === "function") {
       try {
         record.inputController.onMessage(message);

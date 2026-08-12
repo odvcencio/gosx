@@ -1,5 +1,98 @@
 # Changelog
 
+## v0.38.0 (2026-08-09)
+
+### Island-VM core: capability-scoped browser handlers, computed signals, hub refresh
+
+- **Browser host receiver.** A framework-owned, root-scoped capability
+  surface (`browser` receiver) for island handler effects: microtask-isolated
+  dialogs and focus movement, deferred activation, clipboard access, managed
+  navigation and refresh, deferred form submission, event control, and
+  scrolling. Handlers author against `browser.Activate(...)` and similar
+  calls; the framework lowers each to a host call and resolves it through a
+  registered `HostReceiverFactory` (`client/bridge.RegisterIslandHostFactory`)
+  at hydration, keeping host objects out of serialized island programs.
+- **Typed event payloads.** Compact, typed keyboard, pointer, drag/drop,
+  dataset, and timing payloads reach handlers instead of raw DOM event
+  objects, with lifecycle-safe document/window event conventions.
+- **Manifest-selective delegated listeners.** Hydration manifests select
+  which delegated listeners an island needs, with legacy-manifest
+  compatibility, explicit zero-listener eventless manifests, and ownership
+  boundaries that keep nested islands from claiming a parent's events.
+- **Chained computed signals.** Island programs run reactive computed
+  definitions (`signal.Derive`) that chain across DOM, Scene3D, and Canvas2D
+  surfaces, with shared-signal rebinding, prop invalidation, and
+  hot-reload/disposal cleanup. Dispatch is guarded against reentrancy; reload
+  binds new shared and computed inputs before its single DOM reconcile.
+- **Boolean HTML attributes.** A shared `internal/htmlattr` helper normalizes
+  boolean attribute rendering and hydration (for example `disabled`,
+  `checked`) so island VM state and server-rendered markup agree.
+- **Navigation and hub refresh.** Forced soft-route refresh with mutation
+  revalidation, debounced hub-triggered refresh bindings, and direct JSON
+  storage-to-signal hydration.
+- **Accessible managed forms.** Scoped managed-form result projection,
+  including stale-error cleanup, status announcement on submit, and
+  invalid-field focus.
+
+## v0.37.0 (2026-08-09)
+
+### New framework surfaces that retire app-authored scripts
+
+Three features moved out of the first consumer (m31labs.dev) and into the
+framework, so any GoSX app gets them declaratively:
+
+- **Scene3D first-content reveal.** An opt-in
+  `data-gosx-scene3d-reveal-class` mount attribute names a CSS class. After
+  the first frame with drawable content, the mount stamps
+  `data-gosx-scene3d-revealed="true"` and the runtime adds the class to the
+  document element; dispose removes it. Apps fade a static boot placeholder
+  with pure CSS instead of a hand-written readiness watcher.
+- **Lantern Scene3D inspector.** A read-only dev inspector served embedded
+  at `/gosx/devtools-lantern.js` (`server.DevtoolsLanternPath`). Shift+D
+  toggles a panel with truthful render FPS, backend and adaptive-quality
+  state, live node-type counts, draw calls, and camera state — all read
+  from the debug registry the production bundle already ships.
+- **YouTube audio bridge.** A declarative background-audio bridge served
+  embedded at `/gosx/youtube-audio.js` (`server.YouTubeAudioBridgePath`).
+  Elements with `data-gosx-youtube-audio="<url>"` toggle one shared hidden
+  player; the active element carries
+  `data-gosx-youtube-audio-state="playing"` for CSS styling.
+
+Embedded runtime assets resolve before the runtime asset root, so they work
+in bare `go run` development with no build step.
+
+### Editor
+
+- Fixed blank-area clicks in the native editor: clicking below the last
+  line focuses the end of the document. It no longer appends newlines or
+  dispatches a synthetic input event, which corrupted autosave state in
+  consumer apps. The source textarea also gained a configurable accessible
+  name (`Options.Label`, falling back to `Title`, then "Editor").
+
+### Since v0.36.0, grouped
+
+This release also rolls up the main-line work merged since v0.36.0:
+
+- **Scene3D rendering** — retained geometry, HDR IBL, native lighting and
+  post FX additions, DOM region bindings for custom post effects,
+  HTML-texture surfaces gated on confirmed uploads, hardened WebGL
+  instanced draws with point budget scaling, WebGPU bind-group and
+  pipeline-key memoization, and per-feature chunk splitting with
+  re-measured size ceilings.
+- **Runtime and navigation** — late engine factory registration, stable
+  engine IDs with a page cache TTL, soft-navigation replay of opted-in
+  inline scripts, declarative submit-action preservation, and Scene3D
+  scroll and device lifecycle stabilization.
+- **Water** — quality profiles and workload telemetry.
+- **Server** — trailing-slash redirects no longer capture descendant
+  paths.
+- **Parser** — nested GoSX parsing fixed on forward GoTreeSitter (v0.47
+  line), which lets consumers drop their gotreesitter downgrade pins.
+- **CI** — Go CI split into parallel unit and CLI lanes with a focused PR
+  race lane.
+- **Showcase** — the Blackglass Beacon demo became the Coast world with
+  headless render evidence.
+
 ## v0.36.0 (2026-07-26)
 
 ### Checkable cross-file claims (`internal/claimcheck`)

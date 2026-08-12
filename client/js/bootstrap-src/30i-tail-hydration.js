@@ -11,7 +11,7 @@
     const program = await loadIslandProgram(entry, root);
     if (!program) return;
     if (!runIslandHydration(entry, root, program)) return;
-    const listeners = setupEventDelegation(root, entry.id);
+    const listeners = setupEventDelegation(root, entry.id, entry.events);
     rememberHydratedIsland(entry, root, listeners);
   }
 

@@ -128,13 +128,22 @@ type ControllerEntry struct {
 	Config controller.Config `json:"config"`
 }
 
-// HubBinding maps a hub event to a shared signal name.
+// HubBinding maps an inbound hub event to a shared signal, a soft page
+// refresh, or both. Direction, throttle, and debounce also describe outbound
+// signal bindings.
 type HubBinding struct {
 	Event      string `json:"event"`
-	Signal     string `json:"signal"`
+	Signal     string `json:"signal,omitempty"`
 	Direction  string `json:"direction,omitempty"`
 	ThrottleMS int    `json:"throttleMs,omitempty"`
 	DebounceMS int    `json:"debounceMs,omitempty"`
+	// Refresh forces a same-URL soft navigation after a matching inbound event.
+	Refresh bool `json:"refresh,omitempty"`
+	// RefreshDebounceMS joins the hub connection's refresh burst and rearms its
+	// single timer. Zero still coalesces matching events until the current task ends.
+	RefreshDebounceMS int `json:"refreshDebounceMs,omitempty"`
+	// RefreshPreserveScroll defaults to true; false wins within a pending burst.
+	RefreshPreserveScroll *bool `json:"refreshPreserveScroll,omitempty"`
 }
 
 // HubInputConfig lets the browser bootstrap forward bounded, page-declared
@@ -249,7 +258,7 @@ type IslandEntry struct {
 	Props json.RawMessage `json:"props"`
 
 	// Events lists the event bindings for this island.
-	Events []EventSlot `json:"events,omitempty"`
+	Events []EventSlot `json:"events"`
 
 	// Static is true if the island has no dynamic content and can skip hydration.
 	Static bool `json:"static,omitempty"`
@@ -363,6 +372,7 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 		Component: component,
 		BundleID:  bundleID,
 		Props:     propsJSON,
+		Events:    []EventSlot{},
 	}
 	m.Islands = append(m.Islands, entry)
 	return id, nil
@@ -422,7 +432,7 @@ func (m *Manifest) AddEngineWithRuntimeRequirements(component, kind, programRef,
 	if err != nil {
 		return "", err
 	}
-	id := engineID(len(m.Engines))
+	id := engineID(len(m.Engines), mountID)
 	entry := EngineEntry{
 		ID:                   id,
 		Component:            component,
@@ -522,7 +532,23 @@ func controllerID(n int) string {
 	return "gosx-controller-" + itoa(n)
 }
 
-func engineID(n int) string {
+// autoMountIDPrefix is island.Renderer.RenderEngine's own placeholder mount
+// id ("gosx-engine-mount-<n>") for a mount-needing engine whose caller left
+// Config.MountID empty. It carries no author identity, so it is still
+// positional and engineID must not treat it as one — that pairing must stay
+// in sync with island/island.go's fallback.
+const autoMountIDPrefix = "gosx-engine-mount-"
+
+// engineID assigns a stable engine id. An authored mount id derives the id
+// directly (two engines never share a mount id, since it is also the DOM
+// element the engine attaches to), so two engines on different routes with
+// different mount ids never collide on a shared positional id. An engine
+// with no mount id, or only the auto-generated placeholder mount id, falls
+// back to the positional id.
+func engineID(n int, mountID string) string {
+	if mountID != "" && !strings.HasPrefix(mountID, autoMountIDPrefix) {
+		return "gosx-engine-" + mountID
+	}
 	return "gosx-engine-" + itoa(n)
 }
 

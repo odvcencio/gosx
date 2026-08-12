@@ -18,6 +18,8 @@
   const FORM_MODE_ATTR = "data-gosx-form-mode";
   const FORM_STATE_ATTR = "data-gosx-form-state";
   const FORM_PENDING_ATTR = "data-gosx-pending";
+  const FORM_PROJECT_ATTR = "data-gosx-form-project";
+  const FORM_ERROR_DESCRIPTION_ATTR = "data-gosx-form-error-describedby";
   const PREFETCH_ATTR = "data-gosx-prefetch";
   const NAVIGATION_BEACON_ATTR = "data-gosx-navigation-beacon";
   const NAV_STATE_ATTR = "data-gosx-navigation-state";
@@ -27,12 +29,21 @@
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
   const MANAGED_FOCUS_ATTR = "data-gosx-focus-managed";
+  const NAV_INLINE_REPLAY_ATTR = "data-gosx-navigation-replay";
+  const NAV_INLINE_REPLAYED_ATTR = "data-gosx-navigation-replayed";
   const URL_ATTRS = ["href", "src", "action", "poster"];
   const SUBMITTER_ATTRS = {
     formAction: "formaction",
     formMethod: "formmethod",
     formTarget: "formtarget",
   };
+  // A prefetched page never revalidates on its own, so a stale entry can
+  // outlive the session that time-boxed its content (rotating tokens,
+  // bucketed data). PAGE_CACHE_TTL_MS bounds how long a cached page answers
+  // before the next lookup treats it as a miss and refetches.
+  const PAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+  const PAGE_CACHE_OPT_OUT_META = "gosx-page-cache";
+  const PAGE_CACHE_OPT_OUT_VALUE = "no-store";
   const scriptCache = window.__gosx_loaded_scripts || new Map();
   const pageCache = window.__gosx_page_cache || new Map();
   let navigationState = {
@@ -41,9 +52,14 @@
     pendingURL: "",
   };
   let navigationSequence = 0;
+  let navigationFetchStarted = 0;
+  let navigationFetchApplied = 0;
   let activeNavigationController = null;
+  let activeNavigationURL = "";
   let announceSeq = 0;
+  let formErrorSeq = 0;
   let navigationFrameSequence = 0;
+  const pendingManagedForms = new WeakSet();
   const sentNavigationBeacons = new Set();
   window.__gosx_loaded_scripts = scriptCache;
   window.__gosx_page_cache = pageCache;
@@ -452,11 +468,16 @@
       return null;
     }
     return {
+      protocol: parsed.protocol,
       origin: parsed.origin,
       path: normalizedNavigationPath(parsed.pathname),
       search: String(parsed.search || ""),
       href: parsed.href,
     };
+  }
+
+  function isHTTPNavigationURL(url) {
+    return !!url && (url.protocol === "http:" || url.protocol === "https:");
   }
 
   function sameNavigationURL(left, right) {
@@ -693,6 +714,7 @@
   function shouldPrefetchLink(anchor, trigger) {
     if (!anchor || !anchor.getAttribute) return false;
     const target = navigationURLParts(anchor.getAttribute("href"));
+    if (!isSameOriginNavigation(target && target.href, windowLocationHref())) return false;
     if (sameNavigationURL(target, currentNavigationURL())) return false;
     const mode = linkPrefetchMode(anchor);
     if (mode === "off") return false;
@@ -1197,6 +1219,52 @@
     }
   }
 
+  function inlineNavigationScriptCanReplay(script) {
+    if (!isElement(script, "SCRIPT")) return false;
+    if (!script.hasAttribute(NAV_INLINE_REPLAY_ATTR)) return false;
+    if (script.hasAttribute(SCRIPT_ROLE)) return false;
+    if (script.getAttribute("src")) return false;
+    if (script.getAttribute(NAV_INLINE_REPLAYED_ATTR) === "true") return false;
+    const type = String(script.getAttribute("type") || "").trim().toLowerCase();
+    return !type
+      || type === "text/javascript"
+      || type === "application/javascript"
+      || type === "module";
+  }
+
+  // The marker value selects when the script replays during navigation.
+  // "pre-bootstrap" runs before managed scripts load and before the engine
+  // bootstrap consumes the manifest. Every other value replays after
+  // bootstrap completes.
+  function inlineNavigationReplayPhase(script) {
+    const value = String(script.getAttribute(NAV_INLINE_REPLAY_ATTR) || "").trim().toLowerCase();
+    return value === "pre-bootstrap" ? "pre-bootstrap" : "post";
+  }
+
+  function replayInlineNavigationScripts(root, phase) {
+    if (!root || typeof root.querySelectorAll !== "function") return;
+    const activePhase = phase === "pre-bootstrap" ? "pre-bootstrap" : "post";
+    const scripts = root.querySelectorAll("script[" + NAV_INLINE_REPLAY_ATTR + "]");
+    for (const script of toArray(scripts)) {
+      if (!inlineNavigationScriptCanReplay(script) || !script.parentNode) {
+        continue;
+      }
+      if (inlineNavigationReplayPhase(script) !== activePhase) {
+        continue;
+      }
+      const executable = document.createElement("script");
+      for (const attr of attributeEntries(script)) {
+        if (attr.name === NAV_INLINE_REPLAYED_ATTR) continue;
+        executable.setAttribute(attr.name, attr.value);
+      }
+      executable.setAttribute(NAV_INLINE_REPLAYED_ATTR, "true");
+      executable.textContent = script.textContent || "";
+      script.setAttribute(NAV_INLINE_REPLAYED_ATTR, "true");
+      script.parentNode.insertBefore(executable, script);
+      script.parentNode.removeChild(script);
+    }
+  }
+
   function collectManagedScripts(root, baseURL) {
     const found = [];
     function walk(node) {
@@ -1379,7 +1447,7 @@
   function isSameOriginNavigation(value, baseURL) {
     const url = navigationURLParts(value);
     const current = navigationURLParts(baseURL || windowLocationHref());
-    return !!url && !!current && url.origin === current.origin;
+    return isHTTPNavigationURL(url) && isHTTPNavigationURL(current) && url.origin === current.origin;
   }
 
   function closestLink(node) {
@@ -1544,9 +1612,194 @@
     }
   }
 
+  function hasClass(node, className) {
+    const value = String(node && node.getAttribute && node.getAttribute("class") || "");
+    return value.split(/\s+/).indexOf(className) >= 0;
+  }
+
+  function managedFormControls(form) {
+    return collectElements(form, function(node) {
+      const tag = String(node.tagName || "").toUpperCase();
+      return (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA")
+        && !!node.getAttribute("name");
+    });
+  }
+
+  function managedFormFieldControls(form, name, controls) {
+    const fieldName = String(name);
+    const css = window.CSS;
+    if (form && typeof form.querySelectorAll === "function" && css && typeof css.escape === "function") {
+      try {
+        const matches = toArray(form.querySelectorAll('[name="' + css.escape(fieldName) + '"]')).filter(function(control) {
+          return !form.contains || form.contains(control);
+        });
+        if (matches.length > 0) return matches;
+      } catch (_) {}
+    }
+    return controls.filter(function(control) {
+      return String(control.getAttribute("name") || "") === fieldName;
+    });
+  }
+
+  function managedFormErrorNodes(form) {
+    return collectElements(form, function(node) {
+      return hasClass(node, "form-error");
+    });
+  }
+
+  function describedFormError(form, control) {
+    const ids = String(control && control.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    for (const id of ids) {
+      const node = document.getElementById(id);
+      if (node && hasClass(node, "form-error") && (!form.contains || form.contains(node))) return node;
+    }
+    return null;
+  }
+
+  function managedFieldError(form, controls, fieldName, errors) {
+    for (const control of controls) {
+      const described = describedFormError(form, control);
+      if (described) return described;
+    }
+    for (const node of errors) {
+      if (String(node.getAttribute("data-gosx-field-error") || node.getAttribute("data-field-error") || "") === fieldName) {
+        return node;
+      }
+    }
+    return errors.length === 1 ? errors[0] : null;
+  }
+
+  function linkControlDescription(control, errorNode) {
+    if (!control || !errorNode) return;
+    let id = errorNode.getAttribute("id");
+    if (!id) {
+      formErrorSeq += 1;
+      id = "gosx-form-error-" + formErrorSeq;
+      errorNode.setAttribute("id", id);
+    }
+    const ids = String(control.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    if (ids.indexOf(id) < 0) {
+      ids.push(id);
+      control.setAttribute("aria-describedby", ids.join(" "));
+      const managed = String(control.getAttribute(FORM_ERROR_DESCRIPTION_ATTR) || "").split(/\s+/).filter(Boolean);
+      if (managed.indexOf(id) < 0) managed.push(id);
+      control.setAttribute(FORM_ERROR_DESCRIPTION_ATTR, managed.join(" "));
+    }
+  }
+
+  function clearManagedControlDescription(control) {
+    const managed = String(control.getAttribute(FORM_ERROR_DESCRIPTION_ATTR) || "").split(/\s+/).filter(Boolean);
+    if (managed.length === 0) return;
+    const ids = String(control.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean).filter(function(id) {
+      return managed.indexOf(id) < 0;
+    });
+    if (ids.length > 0) {
+      control.setAttribute("aria-describedby", ids.join(" "));
+    } else {
+      control.removeAttribute("aria-describedby");
+    }
+    control.removeAttribute(FORM_ERROR_DESCRIPTION_ATTR);
+  }
+
+  function managedFormStatus(form) {
+    return findElement(form, function(node) {
+      return hasClass(node, "form-status") || hasClass(node, "action-message");
+    });
+  }
+
+  function managedFormControlFocusable(control, form) {
+    if (!control || control.disabled === true || control.hasAttribute("disabled")) return false;
+    if (String(control.tagName || "").toUpperCase() === "INPUT"
+        && String(control.getAttribute("type") || "").toLowerCase() === "hidden") return false;
+    let node = control;
+    while (node) {
+      if ((node.hasAttribute && node.hasAttribute("hidden")) || node.hidden === true) return false;
+      if (typeof window.getComputedStyle === "function") {
+        const style = window.getComputedStyle(node);
+        if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      }
+      if (node === form) break;
+      node = node.parentNode;
+    }
+    return true;
+  }
+
+  function projectManagedFormResult(form, response, result) {
+    if (!form || String(form.getAttribute(FORM_PROJECT_ATTR) || "").toLowerCase() === "off") return;
+    const controls = managedFormControls(form);
+    const errorNodes = managedFormErrorNodes(form);
+    for (const control of controls) {
+      control.removeAttribute("aria-invalid");
+      clearManagedControlDescription(control);
+    }
+    for (const node of errorNodes) node.textContent = "";
+    const status = managedFormStatus(form);
+    if (status) status.textContent = "";
+
+    const fieldErrors = result && result.fieldErrors && typeof result.fieldErrors === "object"
+      ? result.fieldErrors
+      : {};
+    const names = Object.keys(fieldErrors);
+    for (const name of names) {
+      const fieldControls = managedFormFieldControls(form, name, controls);
+      if (fieldControls.length === 0) continue;
+      const errorNode = managedFieldError(form, fieldControls, name, errorNodes);
+      if (errorNode) {
+        errorNode.textContent = String(fieldErrors[name] || "");
+      }
+      for (const control of fieldControls) {
+        control.setAttribute("aria-invalid", "true");
+        if (errorNode) linkControlDescription(control, errorNode);
+      }
+    }
+
+    let firstInvalid = null;
+    for (const control of controls) {
+      if (control.getAttribute("aria-invalid") === "true" && managedFormControlFocusable(control, form)) {
+        firstInvalid = control;
+        break;
+      }
+    }
+
+    const failed = !response || !response.ok || !!(result && result.ok === false) || names.length > 0;
+    const message = normalizeTextValue(result && result.message);
+    const announcement = message || (failed ? "Action failed." : "Action completed.");
+    if (status) status.textContent = announcement;
+    form.setAttribute(FORM_STATE_ATTR, failed ? "error" : "success");
+    announceNavigation(announcement);
+    if (firstInvalid) {
+      focusElement(firstInvalid, true);
+      if (typeof firstInvalid.scrollIntoView === "function") {
+        firstInvalid.scrollIntoView({
+          behavior: mediaQueryMatches("(prefers-reduced-motion: reduce)") ? "auto" : "smooth",
+          block: "center",
+        });
+      }
+    }
+  }
+
   async function submitManagedGetForm(url, method, formData) {
     await navigate(formNavigationURL(url, formData).href, { replace: false });
     dispatchManagedFormNavigate(url.href, method);
+  }
+
+  function hardNavigate(url, replace) {
+    const location = window.location;
+    if (replace && typeof location.replace === "function") {
+      location.replace(url);
+    } else if (!replace && typeof location.assign === "function") {
+      location.assign(url);
+    } else {
+      location.href = url;
+    }
+  }
+
+  function reportManagedActionResponseFailure(operation, error, url, method) {
+    console.error("[gosx] " + operation + " failed:", error);
+    reportNavigationFailure(operation, error, {
+      source: url,
+      telemetry: { url: url, method: method },
+    });
   }
 
   async function submitManagedActionForm(url, method, formData) {
@@ -1561,22 +1814,70 @@
       body: formData,
       redirect: "follow",
     });
-    const result = await parseJSONResponse(response);
-    applyManagedFormData(result);
-    if (result && result.redirect) {
-      await navigate(new URL(result.redirect, window.location.href).href, { replace: false });
+    let result = null;
+    try {
+      result = await parseJSONResponse(response);
+      applyManagedFormData(result);
+    } catch (err) {
+      reportManagedActionResponseFailure("form action response", err, url.href, method);
     }
-    dispatchManagedFormResult(url.href, method, response, result);
+    let redirected = false;
+    if (result && result.redirect) {
+      const redirectURL = navigationURLParts(result.redirect);
+      if (!redirectURL || !isSameOriginNavigation(redirectURL.href, windowLocationHref())) {
+        reportManagedActionResponseFailure(
+          "form action redirect",
+          new Error("blocked unsafe action redirect"),
+          url.href,
+          method,
+        );
+      } else {
+        redirected = true;
+        const redirectsCurrent = sameNavigationURL(redirectURL, currentNavigationURL());
+        try {
+          await navigate(redirectURL.href, {
+            force: true,
+            revalidate: true,
+            mutationBarrier: true,
+            replace: redirectsCurrent,
+            preserveScroll: redirectsCurrent,
+          });
+        } catch (err) {
+          reportManagedActionResponseFailure("form action redirect", err, redirectURL.href, method);
+          try {
+            hardNavigate(redirectURL.href, redirectsCurrent);
+          } catch (fallbackError) {
+            reportManagedActionResponseFailure("form action redirect fallback", fallbackError, redirectURL.href, method);
+          }
+        }
+      }
+    }
+    try {
+      dispatchManagedFormResult(url.href, method, response, result);
+    } catch (err) {
+      reportManagedActionResponseFailure("form action result", err, url.href, method);
+    }
+    return { response: response, result: result, redirected: redirected };
   }
 
   async function submitForm(form, submitter) {
-    if (!form) return;
+    if (!form || pendingManagedForms.has(form)) return;
+    pendingManagedForms.add(form);
+    try {
+      return await submitFormOnce(form, submitter);
+    } finally {
+      pendingManagedForms.delete(form);
+    }
+  }
+
+  async function submitFormOnce(form, submitter) {
 
     const method = formSubmissionMethod(form, submitter);
     const action = formSubmissionAction(form, submitter) || window.location.href;
     const url = new URL(action, window.location.href);
     const formData = serializeForm(form, submitter);
     const previous = captureManagedFormState(form);
+    let outcome = null;
 
     setManagedFormPending(form);
 
@@ -1585,7 +1886,7 @@
         await submitManagedGetForm(url, method, formData);
         return;
       }
-      await submitManagedActionForm(url, method, formData);
+      outcome = await submitManagedActionForm(url, method, formData);
     } catch (err) {
       console.error("[gosx] form action failed:", err);
       reportNavigationFailure("form action", err, {
@@ -1595,7 +1896,15 @@
       nativeSubmitForm(form, submitter);
       return;
     } finally {
-      restoreManagedFormState(form, previous);
+      try {
+        restoreManagedFormState(form, previous);
+        if (outcome && !outcome.redirected
+            && (!document.documentElement.contains || document.documentElement.contains(form))) {
+          projectManagedFormResult(form, outcome.response, outcome.result);
+        }
+      } catch (err) {
+        reportManagedActionResponseFailure("form action projection", err, url.href, method);
+      }
     }
   }
 
@@ -1646,12 +1955,46 @@
     return new DOMParser().parseFromString(html, "text/html");
   }
 
-  async function fetchPage(url, signal) {
+  // pageCacheOptsOut reads the FETCHED page's own head, not the live
+  // document's — a page opts its own HTML out of pageCache with <meta
+  // name="gosx-page-cache" content="no-store">, the same meta/attribute
+  // lookup shape as csrfTokenFromMeta above.
+  function pageCacheOptsOut(html) {
+    let doc;
+    try {
+      doc = parseDocument(html);
+    } catch (_e) {
+      return false;
+    }
+    const meta = findElement(doc && doc.head, function(node) {
+      return isElement(node, "META")
+        && node.getAttribute
+        && node.getAttribute("name") === PAGE_CACHE_OPT_OUT_META;
+    });
+    return !!meta && String(meta.getAttribute("content") || "").toLowerCase() === PAGE_CACHE_OPT_OUT_VALUE;
+  }
+
+  // A pageCache entry is a Promise, decorated with its own insertion time
+  // (__gosxCachedAt) rather than wrapped in a {value, insertedAt} record, so
+  // the map keeps its original Map<string, Promise<{html,url}>> shape for
+  // any code outside this module that already reads window.__gosx_page_cache.
+  function pageCacheEntryExpired(entry) {
+    return typeof entry.__gosxCachedAt === "number"
+      && (Date.now() - entry.__gosxCachedAt) > PAGE_CACHE_TTL_MS;
+  }
+
+  async function fetchPage(url, signal, trackFetch) {
     const key = String(url);
-    if (pageCache.has(key)) {
-      return pageCache.get(key);
+    const cached = pageCache.get(key);
+    if (cached) {
+      if (pageCacheEntryExpired(cached)) {
+        pageCache.delete(key);
+      } else {
+        return cached;
+      }
     }
 
+    const fetchID = trackFetch ? ++navigationFetchStarted : 0;
     const request = (async function() {
       const request = {
         headers: {
@@ -1664,17 +2007,27 @@
       if (!response.ok) {
         throw new Error("navigation fetch failed with status " + response.status);
       }
+      const responseURL = response.url || key;
+      if (!isSameOriginNavigation(responseURL, windowLocationHref())) {
+        throw new Error("blocked cross-origin navigation response");
+      }
       return {
         html: await response.text(),
-        url: response.url || key,
+        url: responseURL,
+        fetchID: fetchID,
       };
     })();
 
     pageCache.set(key, request);
+    request.__gosxCachedAt = Date.now();
     try {
-      return await request;
+      const page = await request;
+      if (pageCacheOptsOut(page.html) && pageCache.get(key) === request) {
+        pageCache.delete(key);
+      }
+      return page;
     } catch (err) {
-      pageCache.delete(key);
+      if (pageCache.get(key) === request) pageCache.delete(key);
       throw err;
     }
   }
@@ -1704,13 +2057,34 @@
 
   async function navigate(url, options) {
     const opts = options || {};
-    const sequence = ++navigationSequence;
-    if (activeNavigationController && typeof activeNavigationController.abort === "function") {
-      activeNavigationController.abort();
-    }
     const target = navigationURLParts(url);
-    if (sameNavigationURL(target, currentNavigationURL())) {
+    if (!isHTTPNavigationURL(target)) {
+      throw new Error("blocked unsafe navigation URL");
+    }
+    const current = navigationURLParts(windowLocationHref());
+    if (!isHTTPNavigationURL(current) || target.origin !== current.origin) {
+      ++navigationSequence;
+      if (activeNavigationController && typeof activeNavigationController.abort === "function") {
+        activeNavigationController.abort();
+      }
       activeNavigationController = null;
+      activeNavigationURL = "";
+      hardNavigate(target.href, !!opts.replace);
+      return true;
+    }
+    const sequence = ++navigationSequence;
+    const sharesPendingFetch = !opts.mutationBarrier
+      && navigationState.phase === "pending"
+      && activeNavigationURL === target.href;
+    if (!sharesPendingFetch) {
+      if (activeNavigationController && typeof activeNavigationController.abort === "function") {
+        activeNavigationController.abort();
+      }
+      if (opts.revalidate) pageCache.delete(target.href);
+    }
+    if (!sharesPendingFetch && !opts.force && sameNavigationURL(target, currentNavigationURL())) {
+      activeNavigationController = null;
+      activeNavigationURL = "";
       setNavigationState({
         phase: "idle",
         currentURL: target.href,
@@ -1720,11 +2094,14 @@
       finalizeNavigation(target.href, opts, resolveNavigationA11y(target.href));
       return true;
     }
-    activeNavigationController = typeof AbortController === "function" ? new AbortController() : null;
+    if (!sharesPendingFetch) {
+      activeNavigationController = typeof AbortController === "function" ? new AbortController() : null;
+      activeNavigationURL = target.href;
+    }
     const signal = activeNavigationController ? activeNavigationController.signal : null;
-    startNavigation(url);
+    startNavigation(target.href);
     try {
-      const page = await resolveNavigationPage(url, signal);
+      const page = await resolveNavigationPage(target.href, signal);
       if (!navigationIsCurrent(sequence)) {
         observeNavigation("debug", "navigation superseded", { url: String(url || "") });
         return false;
@@ -1740,6 +2117,7 @@
         return false;
       }
       completeNavigation(page.nextURL);
+      if (page.fetchID > navigationFetchApplied) navigationFetchApplied = page.fetchID;
       finalizeNavigation(page.nextURL, opts, resolveNavigationA11y(page.nextURL));
       return true;
     } catch (err) {
@@ -1747,7 +2125,10 @@
       failNavigation(err, url);
       throw err;
     } finally {
-      if (navigationIsCurrent(sequence)) activeNavigationController = null;
+      if (navigationIsCurrent(sequence)) {
+        activeNavigationController = null;
+        activeNavigationURL = "";
+      }
     }
   }
 
@@ -1783,11 +2164,12 @@
   }
 
   async function resolveNavigationPage(url, signal) {
-    const page = await fetchPage(url, signal);
+    const page = await fetchPage(url, signal, true);
     const nextURL = page.url || url;
     return {
       nextURL: nextURL,
       nextDoc: parseDocument(page.html),
+      fetchID: Number(page.fetchID || 0),
     };
   }
 
@@ -1826,9 +2208,16 @@
     if (isCurrent && !isCurrent()) return;
     replaceBody(nextDoc, nextURL, reuseIDs);
     updateHistory(nextURL, !!replace);
+    // Pre-bootstrap replays run before the managed scene chunks load and
+    // before bootstrap consumes the manifest. A manifest-rewriting boot
+    // script therefore observes the same ordering a full page load gives it.
+    replayInlineNavigationScripts(document.body, "pre-bootstrap");
+    if (isCurrent && !isCurrent()) return;
     const bootstrapLoadedNow = await ensureManagedScripts(nextDoc, nextURL, managedScripts);
     if (isCurrent && !isCurrent()) return;
     await bootstrapCurrentPage(bootstrapLoadedNow, reuseIDs);
+    if (isCurrent && !isCurrent()) return;
+    replayInlineNavigationScripts(document.body, "post");
   }
 
   function applyNavigationScroll(a11y, preserveScroll) {
@@ -1859,6 +2248,33 @@
     focusElement(a11y.focusTarget, true);
     const announcement = announceNavigation(a11y.announcement);
     dispatchNavigate(url, opts.replace, announcement, a11y.focusTarget);
+  }
+
+  function revalidateNavigation(options) {
+    // Force a same-URL revalidation through the normal navigation lifecycle.
+    // The returned promise rejects without mutating the current document when
+    // fetch fails, so callers can choose an appropriate hard-load fallback.
+    const opts = Object.assign({
+      replace: true,
+      preserveScroll: true,
+    }, options || {}, {
+      force: true,
+      revalidate: true,
+    });
+    return navigate(windowLocationHref(), opts);
+  }
+
+  function refreshNavigationState() {
+    // Legacy refresh() is synchronous and state-only.
+    applyNavigationState();
+    return currentNavigationSnapshot();
+  }
+
+  function currentNavigationFetchEpoch() {
+    return {
+      started: navigationFetchStarted,
+      applied: navigationFetchApplied,
+    };
   }
 
   function onClick(event) {
@@ -1897,6 +2313,11 @@
   function onPopState() {
     navigate(window.location.href, { replace: true, preserveScroll: true }).catch(function(err) {
       console.error("[gosx] popstate navigation failed:", err);
+      // The browser already moved the URL. A soft-nav failure here would
+      // leave the old DOM under the new URL, so fall back to a hard load
+      // of the URL the history entry points at — the same safety net
+      // onClick has.
+      window.location.reload();
     });
   }
 
@@ -1919,10 +2340,10 @@
     navigate: navigate,
     submitAction: submitAction,
     getState: currentNavigationSnapshot,
-    refresh: function() {
-      applyNavigationState();
-      return currentNavigationSnapshot();
-    },
+    getFetchEpoch: currentNavigationFetchEpoch,
+    refresh: refreshNavigationState,
+    refreshState: refreshNavigationState,
+    revalidate: revalidateNavigation,
   };
   // Keep the original global for compatibility while publishing the
   // navigation runtime through the shared GoSX namespace. This lets optional

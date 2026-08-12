@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"html"
 	"strings"
+
+	"m31labs.dev/gosx/internal/htmlattr"
 )
 
 // Node is the runtime representation of a GoSX component tree node.
@@ -27,8 +29,9 @@ const (
 )
 
 type nodeAttr struct {
-	name  string
-	value any
+	name     string
+	value    any
+	presence bool
 }
 
 // El creates an element node. The variadic args can be AttrList or Node children.
@@ -119,7 +122,7 @@ func Attr(name string, value any) nodeAttr {
 
 // BoolAttr creates a boolean attribute (e.g., disabled, checked).
 func BoolAttr(name string) nodeAttr {
-	return nodeAttr{name: name, value: true}
+	return nodeAttr{name: name, value: true, presence: true}
 }
 
 // Spread merges attributes from a map.
@@ -236,9 +239,20 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
 	switch v := attr.value.(type) {
 	case bool:
-		if v {
+		if attr.presence || htmlattr.IsBoolean(attr.name) {
+			if !v {
+				return
+			}
 			b.WriteByte(' ')
 			b.WriteString(html.EscapeString(attr.name))
+			return
+		}
+		b.WriteByte(' ')
+		b.WriteString(html.EscapeString(attr.name))
+		if v {
+			b.WriteString(`="true"`)
+		} else {
+			b.WriteString(`="false"`)
 		}
 	case string:
 		// Direct byte writes instead of fmt.Fprintf — each Fprintf boxes

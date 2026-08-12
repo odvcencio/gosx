@@ -38,6 +38,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/format"
+	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/transpile"
 )
@@ -389,6 +390,14 @@ func runCheck(file string, stderr io.Writer) error {
 	prog, err := gosx.Compile(source)
 	if err != nil {
 		return err
+	}
+	for i, component := range prog.Components {
+		if !component.IsIsland {
+			continue
+		}
+		if _, err := ir.LowerIsland(prog, i); err != nil {
+			return fmt.Errorf("lower island %s: %w", component.Name, err)
+		}
 	}
 	fmt.Fprintf(stderr, "ok: %d components\n", len(prog.Components))
 	for _, c := range prog.Components {

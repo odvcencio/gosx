@@ -18,6 +18,9 @@ const (
 	ManagedFormAttr      = "data-gosx-form"
 	ManagedFormModeAttr  = "data-gosx-form-mode"
 	ManagedFormStateAttr = "data-gosx-form-state"
+	// ManagedFormProjectAttr controls framework projection of JSON action
+	// messages and field errors. The default is enabled; "off" opts out.
+	ManagedFormProjectAttr = "data-gosx-form-project"
 
 	ActionAttr           = "data-gosx-action"
 	ActionResetAttr      = "data-gosx-reset"

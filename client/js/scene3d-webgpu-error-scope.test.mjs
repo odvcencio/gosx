@@ -360,11 +360,15 @@ test("webgpu: 16a keeps only the two error scopes that cannot interleave", () =>
   assert.match(webgpuSource, /device\.pushErrorScope\("out-of-memory"\)/);
   assert.match(webgpuSource, /device\.pushErrorScope\("validation"\)/);
 
-  // No async pipeline build may reach for a scope again.
+  // No async pipeline build may reach for a scope again. The 5000-char
+  // window covers the longest builder (the authored-particle one, whose
+  // memoized cache key sits before the sceneShaderModuleError consult at
+  // ~4400 chars) and still ends before the nearest real pushErrorScope
+  // outside these functions (~6500 chars after buildCustomPostPipelineAsync).
   for (const name of ["buildCustomPostPipelineAsync", "buildAuthoredPointsVertexPipelineAsync", "buildAuthoredParticleRenderPipelineAsync"]) {
     const start = webgpuSource.indexOf("function " + name + "(");
     assert.ok(start > 0, name + " must exist");
-    const body = webgpuSource.slice(start, start + 4000);
+    const body = webgpuSource.slice(start, start + 5000);
     assert.ok(!body.includes("pushErrorScope"), name + " must validate per object, not through a device error scope");
     assert.ok(body.includes("sceneShaderModuleError"), name + " must consult getCompilationInfo for its own modules");
   }

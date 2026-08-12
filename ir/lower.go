@@ -533,9 +533,13 @@ func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotrees
 	if !ok || callKind != signalCallDerive || argsNode == nil {
 		return ComputedInfo{}, false
 	}
+	bodyExpr, err := l.extractDeriveBody(argsNode)
+	if err != nil {
+		l.errorf(rightExpr, "computed %q: %v", varName, err)
+	}
 	return ComputedInfo{
 		Name:     varName,
-		BodyExpr: l.extractDeriveBody(argsNode),
+		BodyExpr: bodyExpr,
 	}, true
 }
 
@@ -655,33 +659,46 @@ func (l *lowerer) normalizeSharedSignalName(expr string) string {
 	return "$" + name
 }
 
-// extractDeriveBody extracts the return expression from a signal.Derive(func() T { return expr }) call.
-func (l *lowerer) extractDeriveBody(argsNode *gotreesitter.Node) string {
-	// Walk all children (named and unnamed) looking for func_literal
-	for i := 0; i < int(argsNode.ChildCount()); i++ {
-		child := argsNode.Child(i)
-		if child == nil {
-			continue
-		}
-		if l.nodeType(child) == "func_literal" {
-			return l.extractReturnExpr(child)
+// extractDeriveBody accepts exactly the VM-computed shape supported by the
+// legacy island expression language: signal.Derive(func() T { return expr }).
+// Rejecting extra statements here prevents the old first-return extraction
+// from silently discarding setup or control-flow statements.
+func (l *lowerer) extractDeriveBody(argsNode *gotreesitter.Node) (string, error) {
+	var funcLit *gotreesitter.Node
+	if argsNode.NamedChildCount() != 1 {
+		return "", fmt.Errorf("requires exactly one function literal argument")
+	}
+	for i := 0; i < int(argsNode.NamedChildCount()); i++ {
+		child := argsNode.NamedChild(i)
+		if child != nil && l.nodeType(child) == "func_literal" {
+			funcLit = child
 		}
 	}
-	return ""
-}
+	if funcLit == nil {
+		return "", fmt.Errorf("requires signal.Derive(func() T { return expr })")
+	}
 
-// extractReturnExpr finds the return statement inside a func_literal and extracts its expression.
-func (l *lowerer) extractReturnExpr(funcLit *gotreesitter.Node) string {
 	body := l.funcLiteralBody(funcLit)
 	if body == nil {
-		return ""
+		return "", fmt.Errorf("function literal has no body")
 	}
-
+	statements := l.extractStatements(body)
+	if len(statements) != 1 {
+		return "", fmt.Errorf("body must contain exactly one return statement; multi-statement bodies are not supported")
+	}
 	ret := l.firstReturnStatement(body)
 	if ret == nil {
-		return ""
+		return "", fmt.Errorf("body must contain exactly one return statement")
 	}
-	return l.firstNonEmptyNodeText(l.returnExprNodes(ret))
+	exprs := l.returnExprNodes(ret)
+	if len(exprs) != 1 {
+		return "", fmt.Errorf("return must contain exactly one expression")
+	}
+	bodyExpr := strings.TrimSpace(l.text(exprs[0]))
+	if bodyExpr == "" {
+		return "", fmt.Errorf("return expression is empty")
+	}
+	return bodyExpr, nil
 }
 
 // extractStatements gets the source text of each statement in a block.
