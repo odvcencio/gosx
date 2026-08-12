@@ -987,7 +987,12 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 							continue
 						}
 						fields[field] = field
-						fields[lowerCamelInitialism(field)] = field
+						alias := lowerCamelInitialism(field)
+						if existing, ok := fields[alias]; ok && existing != field {
+							fields[alias] = ""
+						} else if !ok {
+							fields[alias] = field
+						}
 					}
 					return
 				}
@@ -1040,7 +1045,16 @@ func (l *lowerer) normalizeStrictComponentAttrs(tag string, attrs []Attr) {
 	}
 	aliases := l.structFields[propsBaseType(propsType)]
 	for i := range attrs {
-		if field := aliases[attrs[i].Name]; field != "" {
+		field, known := aliases[attrs[i].Name]
+		if known && field == "" {
+			l.errs = append(l.errs, Diagnostic{
+				Span:    Span{},
+				Message: fmt.Sprintf("strict prop %q is ambiguous for %s", attrs[i].Name, propsType),
+				Hint:    "use the exact exported Go field spelling",
+			})
+			continue
+		}
+		if field != "" {
 			attrs[i].Name = field
 		}
 	}

@@ -199,7 +199,12 @@ func (t *transpiler) collectStructFieldsFromTypeDecl(n *gotreesitter.Node) {
 						continue
 					}
 					fields[field] = field
-					fields[lowerCamelField(field)] = field
+					alias := lowerCamelField(field)
+					if existing, ok := fields[alias]; ok && existing != field {
+						fields[alias] = ""
+					} else if !ok {
+						fields[alias] = field
+					}
 				}
 				return
 			}
@@ -682,7 +687,10 @@ func (t *transpiler) emitTypedAttrsForType(propsType string, n *gotreesitter.Nod
 			}
 			name := t.text(nameNode)
 			field := name
-			if resolved := aliases[name]; resolved != "" {
+			if resolved, known := aliases[name]; known && resolved == "" {
+				t.errorf(child, "typed prop %q is ambiguous; use the exact exported Go field spelling", name)
+				continue
+			} else if resolved != "" {
 				field = resolved
 			} else if isLowerASCII(name) {
 				field = upperFirst(name)

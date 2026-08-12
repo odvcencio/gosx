@@ -150,6 +150,21 @@ component Page() {
 	}
 }
 
+func TestCompileStrictAmbiguousFieldAliasFailsClosed(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Props struct { URL string; Url string }
+component Child(props: Props) {
+	return <p>{props.URL}</p>
+}
+component Page() {
+	return <Child url="/docs" />
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestCompileStrictPropsParameterMustBeNamedProps(t *testing.T) {
 	_, err := Compile([]byte(`package app
 component Page(input: Props) {
