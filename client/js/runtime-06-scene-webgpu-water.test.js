@@ -926,6 +926,22 @@ test("Scene3D orbit controls keep upstream-style release inertia", () => {
   assert.match(bootstrapFeatureScene3DSource, /controls-inertia/);
 });
 
+test("Scene3D orbit controls expose focused keyboard exploration and authored reset", () => {
+  const mount = readSceneMountSrc();
+
+  assert.match(mount, /function sceneOrbitKeyCode\(event\)/);
+  assert.match(mount, /case "arrowleft":/);
+  assert.match(mount, /case "home":\s+return "reset";/);
+  assert.match(mount, /function sceneOrbitApplyKey\(controls, readSourceCamera, key\)/);
+  assert.match(mount, /applySceneControlsCamera\(controls, sourceCamera\);/);
+  assert.match(mount, /canvas\.setAttribute\("tabindex", "0"\);/);
+  assert.match(mount, /canvas\.setAttribute\("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown Home \+ -"\);/);
+  assert.match(mount, /document\.activeElement !== canvas/);
+  assert.match(mount, /scheduleRender\(orbitKey === "reset" \? "controls-reset" : "controls-keyboard"\);/);
+  assert.match(mount, /document\.addEventListener\("keydown", onKeyDown\);/);
+  assert.match(mount, /document\.removeEventListener\("keydown", onKeyDown\);/);
+});
+
 test("Scene3D WebGPU water consumes caustic reflection refraction optics flags", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
 
