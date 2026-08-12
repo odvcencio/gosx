@@ -165,6 +165,62 @@ component Page() {
 	}
 }
 
+func TestCompileStrictCalleeRejectsDynamicCallShape(t *testing.T) {
+	tests := []struct {
+		name    string
+		call    string
+		message string
+	}{
+		{name: "spread", call: `<Badge {...props} />`, message: "spread attributes are not supported"},
+		{name: "attribute", call: `<Badge bogus="x" />`, message: "does not accept props"},
+		{name: "children", call: `<Badge>child</Badge>`, message: "does not accept positional children"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := `package app
+component Badge() {
+	return <span>badge</span>
+}
+func Page(props Props) Node {
+	return ` + test.call + `
+}
+`
+			_, err := Compile([]byte(source))
+			if err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("error = %v, want %q", err, test.message)
+			}
+		})
+	}
+}
+
+func TestCompileStrictCalleeAcceptsEmptyCall(t *testing.T) {
+	_, err := Compile([]byte(`package app
+component Badge() {
+	return <span>badge</span>
+}
+func Page() Node {
+	return <Badge />
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+}
+
+func TestCompileLegacyCalleeKeepsDynamicCallShape(t *testing.T) {
+	_, err := Compile([]byte(`package app
+func Badge(attrs AttrList) Node {
+	return <span>badge</span>
+}
+component Page() {
+	return <Badge bogus="x">child</Badge>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+}
+
 func TestCompileStrictPropsParameterMustBeNamedProps(t *testing.T) {
 	_, err := Compile([]byte(`package app
 component Page(input: Props) {

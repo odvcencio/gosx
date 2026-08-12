@@ -112,7 +112,7 @@ component Page() {
 	}
 }
 
-func TestTranspileNoPropsStrictComponentAttrsRemainGoDiagnostics(t *testing.T) {
+func TestTranspileNoPropsStrictComponentAttrsFailClosed(t *testing.T) {
 	source := []byte(`package app
 component Badge() {
 	return <span>badge</span>
@@ -121,11 +121,8 @@ component Page() {
 	return <Badge bogus="x" />
 }
 `)
-	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
-	if err != nil {
-		t.Fatalf("Transpile: %v", err)
-	}
-	if !strings.Contains(out, `Badge(gosx.Props(gosx.Attr("bogus", "x")))`) {
-		t.Fatalf("no-props call should preserve an argument for Go to reject:\n%s", out)
+	_, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err == nil || !strings.Contains(err.Error(), "does not accept props") {
+		t.Fatalf("error = %v", err)
 	}
 }

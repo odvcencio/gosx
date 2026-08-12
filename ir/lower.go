@@ -64,6 +64,7 @@ type lowerer struct {
 	signalImports map[string]struct{}
 	signalDot     bool
 	strict        bool
+	strictNames   map[string]struct{}
 	strictProps   map[string]string
 	structFields  map[string]map[string]string
 }
@@ -941,6 +942,7 @@ func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 }
 
 func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
+	l.strictNames = make(map[string]struct{})
 	l.strictProps = make(map[string]string)
 	l.structFields = make(map[string]map[string]string)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
@@ -949,8 +951,12 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 		case "gosx_component_declaration":
 			name := l.childByField(child, "name")
 			_, propsType := l.extractStrictProps(child)
-			if name != nil && propsType != "" {
-				l.strictProps[l.text(name)] = propsType
+			if name != nil {
+				componentName := l.text(name)
+				l.strictNames[componentName] = struct{}{}
+				if propsType != "" {
+					l.strictProps[componentName] = propsType
+				}
 			}
 		case "type_declaration":
 			l.collectStructSchemas(child)
@@ -1057,6 +1063,28 @@ func (l *lowerer) normalizeStrictComponentAttrs(tag string, attrs []Attr) {
 		if field != "" {
 			attrs[i].Name = field
 		}
+	}
+}
+
+// validateStrictComponentCall keeps the file-local strict component contract
+// fail-closed in the IR compiler. This is deliberately based on the callee,
+// not the caller's declaration style: legacy components may call strict
+// components, but strict calls still cannot smuggle dynamic props or children
+// past the package checker/runtime renderer.
+func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, attrs []Attr, children []NodeID) {
+	if _, strict := l.strictNames[tag]; !strict {
+		return
+	}
+	for _, attr := range attrs {
+		if attr.Kind == AttrSpread {
+			l.errorf(n, "spread attributes are not supported for strict component %s", tag)
+		}
+	}
+	if _, acceptsProps := l.strictProps[tag]; !acceptsProps && len(attrs) > 0 {
+		l.errorf(n, "strict component %s does not accept props", tag)
+	}
+	if len(children) > 0 {
+		l.errorf(n, "strict component %s does not accept positional children", tag)
 	}
 }
 
@@ -1539,12 +1567,13 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 
 	tag := l.extractTagName(openNode)
 	attrs := l.extractAttrs(openNode)
+	children := l.extractChildren(n)
+	l.validateStrictComponentCall(n, tag, attrs, children)
 	if l.strict && !IsComponent(tag) {
 		normalizeStrictHTMLAttrs(attrs)
 	} else if IsComponent(tag) {
 		l.normalizeStrictComponentAttrs(tag, attrs)
 	}
-	children := l.extractChildren(n)
 
 	// <script> and <style> contain raw text, not HTML-parsed content.
 	// Convert any text children to NodeRawHTML so the renderer won't escape
@@ -1627,6 +1656,7 @@ func trimRawTextCloseTag(raw string) string {
 func (l *lowerer) lowerSelfClosing(n *gotreesitter.Node) NodeID {
 	tag := l.extractTagName(n)
 	attrs := l.extractAttrs(n)
+	l.validateStrictComponentCall(n, tag, attrs, nil)
 	if l.strict && !IsComponent(tag) {
 		normalizeStrictHTMLAttrs(attrs)
 	} else if IsComponent(tag) {
