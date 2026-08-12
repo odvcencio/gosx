@@ -1807,6 +1807,109 @@
   });
   publishSceneManagedControlProfiles();
 
+  // --- water-tap: pointer-driven ripples for a Studio-authored WaterSystem -
+  //
+  // "fluid-object" above owns its own draggable-object physics, pool-shape
+  // controls, and camera-zoom takeover, all gated on the literal string
+  // "water-object-drop-orbit" — and it hardcodes a 1x1 unit pool for its own
+  // hit-test and full-payload rebuild (sceneManagedFluidObjectEffectivePoolControls),
+  // so it silently mis-hit-tests and clobbers any WaterSystem sized
+  // differently, including one whose InteractionProfile carries its own
+  // authored Studio identity rather than that literal string. water-tap is a
+  // minimal, additive sibling profile: it only turns a pointer hit inside the
+  // pool into a live one-shot drop event (WaterSystem.DropEventID/DropX/DropZ),
+  // reading the pool's own declared poolWidth/poolLength as the hit-test and
+  // NDC-normalization half-extents (matching the drop kernel and pool-mesh
+  // convention in 16-scene-webgl.js), and it passes the rest of the live
+  // scene particle state through unchanged so it never disturbs seeded
+  // drops, the active object, or any ComputeParticles system. Taps outside
+  // the pool are left alone (no preventDefault) so native orbit controls
+  // keep handling them.
+  function sceneManagedPoolTapSystem(form, sceneState) {
+    const waterID = (form && form.getAttribute("data-gosx-scene3d-control-subject")) || "";
+    const systems = Array.isArray(sceneState && sceneState.waterSystems) ? sceneState.waterSystems : [];
+    return sceneManagedFluidObjectWaterSystemByID(systems, waterID);
+  }
+
+  function sceneManagedPoolTapPoolHit(event, canvas, camera) {
+    if (!event || !canvas || typeof canvas.getBoundingClientRect !== "function") return null;
+    if (typeof sceneScreenToRay !== "function" || typeof sceneRayIntersectYPlane !== "function") return null;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    const pointerX = sceneManagedFluidObjectClamp(event.clientX - rect.left, 0, rect.width);
+    const pointerY = sceneManagedFluidObjectClamp(event.clientY - rect.top, 0, rect.height);
+    const ray = sceneScreenToRay(pointerX, pointerY, rect.width, rect.height, camera);
+    return sceneRayIntersectYPlane(ray, 0);
+  }
+
+  // sceneManagedPoolTapDropCenter converts a world-space y=0 pool hit into a
+  // normalized [-1,1] drop center, the same NDC convention the drop compute
+  // pass consumes (see the "drop" function in 16-scene-webgl.js). Returns
+  // null when the hit falls outside the pool footprint.
+  function sceneManagedPoolTapDropCenter(hit, system) {
+    if (!hit || !system) return null;
+    const halfWidth = Math.max(0.001, sceneNumber(system.poolWidth, 1));
+    const halfLength = Math.max(0.001, sceneNumber(system.poolLength, 1));
+    const x = sceneNumber(hit.x, 0) / halfWidth;
+    const z = sceneNumber(hit.z, 0) / halfLength;
+    if (Math.abs(x) > 1 || Math.abs(z) > 1) return null;
+    return { x: sceneManagedFluidObjectClamp(x, -1, 1), z: sceneManagedFluidObjectClamp(z, -1, 1) };
+  }
+
+  function sceneManagedPoolTapBind(form, mount, sceneState, applyCommands, options) {
+    if (!form || !sceneManagedFluidObjectFormTargetsMount(form, mount)) return null;
+    const canvas = sceneManagedFluidObjectMountCanvas(mount);
+    if (!canvas) return null;
+    let disposed = false;
+    let lastDropEventID = null;
+    function onPointerDown(event) {
+      if (disposed || !event) return;
+      const pointerType = String(event.pointerType || "");
+      if (pointerType === "mouse" && event.button != null && event.button !== 0) return;
+      const system = sceneManagedPoolTapSystem(form, sceneState);
+      if (!system) return;
+      const camera = options && typeof options.getCamera === "function" ? options.getCamera() : (sceneState && sceneState.camera);
+      if (!camera) return;
+      const hit = sceneManagedPoolTapPoolHit(event, canvas, camera);
+      const drop = sceneManagedPoolTapDropCenter(hit, system);
+      if (!drop) return;
+      sceneManagedFluidObjectConsumePointerEvent(event);
+      if (lastDropEventID === null) {
+        lastDropEventID = Math.max(0, Math.floor(sceneNumber(system.dropEventID, 0)));
+      }
+      lastDropEventID += 1;
+      const nextID = lastDropEventID;
+      const liveWater = Array.isArray(sceneState && sceneState.waterSystems) ? sceneState.waterSystems : [];
+      const nextWaterSystems = liveWater.map(function(entry) {
+        if (!entry || entry.id !== system.id) return entry;
+        return Object.assign({}, entry, { dropEventID: nextID, dropX: drop.x, dropZ: drop.z });
+      });
+      if (typeof applyCommands === "function") {
+        applyCommands([{
+          kind: SCENE_CMD_SET_PARTICLES,
+          data: {
+            waterSystems: nextWaterSystems,
+            points: (sceneState && sceneState.points) || [],
+            computeParticles: (sceneState && sceneState.computeParticles) || [],
+          },
+        }]);
+      }
+    }
+    canvas.addEventListener("pointerdown", onPointerDown, true);
+    return {
+      dispose: function() {
+        disposed = true;
+        canvas.removeEventListener("pointerdown", onPointerDown, true);
+      },
+    };
+  }
+
+  registerSceneManagedControlProfile("water-tap", {
+    selector: '[data-gosx-scene3d-control-form="water-tap"]',
+    bind: sceneManagedPoolTapBind,
+  });
+  publishSceneManagedControlProfiles();
+
   function bindSceneManagedControlForms(mount, sceneState, applyCommands, options) {
     if (typeof document === "undefined") return function() {};
     const bindings = [];

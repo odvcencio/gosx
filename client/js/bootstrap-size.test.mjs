@@ -497,8 +497,12 @@ const budgets = [
   // the bootstrap-feature-scene3d-webgpu.js note below; the monolith
   // carries the same source) with v0.38.0's island-VM core budgets.
   // Measured: 1_494_714 / 405_094 / 325_346.
-  { file: "bootstrap.js", raw: 1_498_000, gzip: 406_000, brotli: 326_000 },
-
+  //
+  // Merged the Blackglass Coast beacon evidence work (FXAA enable, the
+  // water-tap control-form profile in 19b-scene-control-forms.js, and ember
+  // plume particles) with main's WebGPU environment-map and island-VM core
+  // budgets above. Measured: 1_497_474 / 405_745 / 326_094.
+  { file: "bootstrap.js", raw: 1_501_300, gzip: 406_800, brotli: 327_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -857,7 +861,12 @@ const budgets = [
   // combined measurement: 518_329 / 143_807 / 119_210.
   // Scene3D first-content reveal exact measurement: 519_113 / 143_984 /
   // 119_406.
-  { file: "bootstrap-feature-scene3d.js", raw: 519_113, gzip: 143_984, brotli: 119_406 },
+  //
+  // Merged the Blackglass Coast beacon evidence work (water-tap
+  // control-form profile in 19b-scene-control-forms.js, this chunk's share
+  // of the FXAA enable and ember plume particles) with main's budget above.
+  // Measured: 521_875 / 144_723 / 120_062.
+  { file: "bootstrap-feature-scene3d.js", raw: 523_200, gzip: 145_100, brotli: 120_400 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1346,10 +1355,14 @@ const routeBudgets = [
     // bootstrap-feature-scene3d-webgpu.js above; this route carries that
     // chunk) with v0.38.0's island-VM core budgets. Measured: 1_179_201 /
     // 314_289 / 265_418.
-    raw: 1_182_000,
-    gzip: 315_000,
-    brotli: 266_000,
-
+    //
+    // Merged the Blackglass Coast beacon evidence work (water-tap
+    // control-form profile, FXAA, ember plume particles; this route carries
+    // bootstrap-feature-scene3d.js, which holds 19b-scene-control-forms.js)
+    // with main's budget above. Measured: 1_181_963 / 315_028 / 266_074.
+    raw: 1_185_000,
+    gzip: 315_900,
+    brotli: 266_800,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1426,9 +1439,14 @@ const routeBudgets = [
     // the island-VM core shared namespace init guard carried by
     // bootstrap-runtime.js. Brotli headroom unchanged. Exact measurement:
     // 1_005_654 / 279_516 / 237_145.
-    raw: 1_005_654,
-    gzip: 279_516,
-    brotli: 237_149,
+    //
+    // Merged the Blackglass Coast beacon evidence work (water-tap
+    // control-form profile; this route carries bootstrap-feature-scene3d.js,
+    // which holds 19b-scene-control-forms.js) with main's budget above.
+    // Measured: 1_008_416 / 280_255 / 237_801.
+    raw: 1_011_000,
+    gzip: 281_000,
+    brotli: 238_400,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1504,10 +1522,14 @@ const routeBudgets = [
     // bootstrap-feature-scene3d-webgpu.js above; this route carries that
     // chunk) with v0.38.0's island-VM core budgets. Measured: 1_391_170 /
     // 372_684 / 315_087.
-    raw: 1_394_000,
-    gzip: 373_500,
-    brotli: 315_800,
-
+    //
+    // Merged the Blackglass Coast beacon evidence work (water-tap
+    // control-form profile, FXAA, ember plume particles; this route loads
+    // both backends, so it carries the full cost of both) with main's
+    // budget above. Measured: 1_393_932 / 373_423 / 315_743.
+    raw: 1_397_500,
+    gzip: 374_400,
+    brotli: 316_600,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1586,10 +1608,14 @@ const routeBudgets = [
     // bootstrap-feature-scene3d-webgpu.js above; this route carries that
     // chunk) with v0.38.0's island-VM core budgets. Measured: 1_032_498 /
     // 271_870 / 227_729.
-    raw: 1_035_000,
-    gzip: 272_500,
-    brotli: 228_200,
-
+    //
+    // Merged the Blackglass Coast beacon evidence work (this route carries
+    // bootstrap-feature-scene3d.js and bootstrap-feature-scene3d-webgpu.js,
+    // so it picks up the FXAA enable and ember plume particles' share) with
+    // main's budget above. Measured: 1_035_260 / 272_609 / 228_385.
+    raw: 1_037_900,
+    gzip: 273_300,
+    brotli: 229_000,
   },
 
 ];
