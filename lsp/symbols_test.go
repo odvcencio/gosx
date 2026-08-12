@@ -37,6 +37,8 @@ func TestDocumentSymbolsReturnsComponents(t *testing.T) {
 
 func TestDocumentSymbolsDescribeStrictComponents(t *testing.T) {
 	source := `package app
+type CardProps struct { Title string }
+
 component Card(props: *CardProps) {
 	return <article>{props.Title}</article>
 }

@@ -10,6 +10,11 @@ import (
 
 func TestSourceFormatsStrictComponentIdempotently(t *testing.T) {
 	source := []byte(`package app
+type CardProps struct {
+	Title string
+	Body string
+}
+
 component Card(props: CardProps) {
 	return <article><h2>{props.Title}</h2><p>{props.Body}</p></article>
 }
