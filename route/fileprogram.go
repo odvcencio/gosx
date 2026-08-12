@@ -147,6 +147,15 @@ func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, en
 }
 
 func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
+	// Strict calls are type-checked as calls to the same-file declaration. Keep
+	// that declaration authoritative even when its name collides with a layout
+	// replacement or one of the legacy renderer builtins; otherwise generated Go
+	// and file rendering would execute different components.
+	if comp, ok := r.components[node.Tag]; ok && comp.Syntax == ir.ComponentSyntaxStrict {
+		r.writeLocalComponent(b, comp, node, env)
+		return
+	}
+
 	if replacement, ok := r.opts.ComponentReplacements[node.Tag]; ok {
 		r.replaced = true
 		if replacement != "" {

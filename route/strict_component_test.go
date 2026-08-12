@@ -38,6 +38,52 @@ func TestRenderProgramComponentNormalizesStrictInitialismSchema(t *testing.T) {
 	}
 }
 
+func TestRenderProgramComponentPrefersStrictLocalOverBuiltin(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+type LinkProps struct { Label string }
+component Link(props: LinkProps) {
+	return <strong>{props.Label}</strong>
+}
+component Page() {
+	return <Link label="local" />
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	if html != "<strong>local</strong>" {
+		t.Fatalf("strict Link rendered as builtin: %q", html)
+	}
+}
+
+func TestRenderProgramComponentPrefersStrictLocalOverReplacement(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+type SlotProps struct { Label string }
+component Slot(props: SlotProps) {
+	return <em>{props.Label}</em>
+}
+component Page() {
+	return <Slot label="local" />
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, replaced, err := renderFileProgramHTML(prog, "Page", fileRenderOptions{
+		ComponentReplacements: map[string]string{"Slot": "replacement"},
+	})
+	if err != nil {
+		t.Fatalf("renderFileProgramHTML: %v", err)
+	}
+	if replaced || html != "<em>local</em>" {
+		t.Fatalf("strict Slot replacement won: html=%q replaced=%v", html, replaced)
+	}
+}
+
 func TestDefaultFileRendererNormalizesStrictInitialismSchema(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "page.gsx")
