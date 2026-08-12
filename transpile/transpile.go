@@ -10,9 +10,12 @@ package transpile
 
 import (
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"path"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -26,6 +29,11 @@ import (
 type Options struct {
 	SourceFile string
 	Debug      bool
+
+	// strictProjection is used by the package checker to emit only declarations
+	// that the strict renderer can execute. It intentionally remains internal:
+	// ordinary callers should transpile the complete source file.
+	strictProjection bool
 }
 
 // Transpile converts GoSX source into valid Go code that uses the gosx/node package.
@@ -47,10 +55,11 @@ func Transpile(source []byte, opts Options) (string, error) {
 	}
 
 	t := &transpiler{
-		src:        source,
-		lang:       lang,
-		sourceFile: opts.SourceFile,
-		imports:    make(map[string]string),
+		src:              source,
+		lang:             lang,
+		sourceFile:       opts.SourceFile,
+		imports:          make(map[string]string),
+		strictProjection: opts.strictProjection,
 	}
 
 	result := t.emit(root)
@@ -72,17 +81,18 @@ func Transpile(source []byte, opts Options) (string, error) {
 }
 
 type transpiler struct {
-	src         []byte
-	lang        *gotreesitter.Language
-	sourceFile  string
-	imports     map[string]string // alias -> path
-	propsTypes  map[string]string
-	propsFields map[string]map[string]string
-	errs        []string
-	hasStrict   bool
-	strict      int
-	gosxAlias   string
-	injectGosx  bool
+	src              []byte
+	lang             *gotreesitter.Language
+	sourceFile       string
+	imports          map[string]string // alias -> path
+	propsTypes       map[string]string
+	propsFields      map[string]map[string]string
+	errs             []string
+	hasStrict        bool
+	strict           int
+	gosxAlias        string
+	injectGosx       bool
+	strictProjection bool
 }
 
 func (t *transpiler) text(n *gotreesitter.Node) string {
@@ -128,11 +138,15 @@ func (t *transpiler) emit(n *gotreesitter.Node) string {
 }
 
 func (t *transpiler) emitSourceFile(n *gotreesitter.Node) string {
-	var b strings.Builder
 	t.collectImports(n)
 	t.collectStructFields(n)
 	t.collectComponentProps(n)
 	t.resolveGoSXQualifier()
+	if t.strictProjection {
+		return t.emitStrictSourceFile(n)
+	}
+
+	var b strings.Builder
 
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
@@ -144,6 +158,218 @@ func (t *transpiler) emitSourceFile(n *gotreesitter.Node) string {
 	}
 
 	return b.String()
+}
+
+// emitStrictSourceFile projects a mixed GoSX file into the subset that the
+// strict renderer and package checker share: package, imports used by retained
+// declarations, types, and strict components. Legacy funcs and top-level DSL
+// values are omitted even if they contain identifiers that ordinary Go cannot
+// resolve (route/data/request and application helpers are interpreted later by
+// the legacy runtime).
+func (t *transpiler) emitStrictSourceFile(n *gotreesitter.Node) string {
+	var packageClause string
+	var declarations []string
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		switch t.nodeType(child) {
+		case "package_clause":
+			packageClause = t.text(child)
+		case "type_declaration":
+			declaration := t.emitDefault(child)
+			if t.sourceFile != "" {
+				declaration = fmt.Sprintf("//line %s:%d\n%s", filepathForLineDirective(t.sourceFile), child.StartPoint().Row+1, declaration)
+			}
+			declarations = append(declarations, declaration)
+		case "gosx_component_declaration":
+			declaration := t.emitStrictComponent(child)
+			if t.sourceFile != "" {
+				declaration = fmt.Sprintf("//line %s:%d\n%s", filepathForLineDirective(t.sourceFile), child.StartPoint().Row+1, declaration)
+			}
+			declarations = append(declarations, declaration)
+		}
+	}
+
+	body := strings.Join(declarations, "\n\n")
+	imports := t.strictProjectionImports(n, body)
+	if t.injectGosx {
+		imports = append(imports, projectionImport{alias: t.gosxAlias, path: "m31labs.dev/gosx"})
+	}
+	sortProjectionImports(imports)
+
+	var b strings.Builder
+	b.WriteString(packageClause)
+	b.WriteByte('\n')
+	if len(imports) > 0 {
+		b.WriteString("import (\n")
+		for _, spec := range imports {
+			b.WriteByte('\t')
+			if spec.alias != "" {
+				b.WriteString(spec.alias)
+				b.WriteByte(' ')
+			}
+			b.WriteString(strconv.Quote(spec.path))
+			b.WriteByte('\n')
+		}
+		b.WriteString(")\n")
+	}
+	if body != "" {
+		b.WriteByte('\n')
+		b.WriteString(body)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+type projectionImport struct {
+	alias string
+	path  string
+}
+
+func (t *transpiler) strictProjectionImports(n *gotreesitter.Node, body string) []projectionImport {
+	selectorAliases, unresolvedNames := projectionIdentifiers(body)
+	var imports []projectionImport
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		if t.nodeType(child) != "import_declaration" {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), t.sourceFile, "package gosxprojection\n"+t.text(child), parser.ImportsOnly)
+		if err != nil {
+			continue
+		}
+		for _, spec := range file.Imports {
+			importPath, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				continue
+			}
+			alias := path.Base(importPath)
+			explicit := false
+			if spec.Name != nil {
+				alias = spec.Name.Name
+				explicit = true
+			}
+			switch alias {
+			case "_":
+				// Side-effect imports cannot affect structural type checking.
+				continue
+			case ".":
+				// Dot imports are file-scoped. Retain gosx when generated code uses
+				// its unqualified API, and otherwise only when the retained syntax
+				// has an unresolved exported identifier that could come from it.
+				if !(importPath == "m31labs.dev/gosx" && t.gosxAlias == ".") && len(unresolvedNames) == 0 {
+					continue
+				}
+			default:
+				if _, used := selectorAliases[alias]; !used {
+					continue
+				}
+			}
+			emitAlias := ""
+			if explicit || alias == "." {
+				emitAlias = alias
+			}
+			imports = append(imports, projectionImport{alias: emitAlias, path: importPath})
+		}
+	}
+	return imports
+}
+
+// projectionIdentifiers returns package aliases used as selector roots and
+// exported identifiers that remain unresolved inside the projected file. The
+// latter lets us discard legacy-only dot imports without discarding a dot
+// import that supplies a strict prop type or expression.
+func projectionIdentifiers(body string) (map[string]struct{}, map[string]struct{}) {
+	selectors := make(map[string]struct{})
+	unresolved := make(map[string]struct{})
+	file, err := parser.ParseFile(token.NewFileSet(), "projection.go", "package gosxprojection\n"+body, 0)
+	if err != nil {
+		return selectors, unresolved
+	}
+	declared := make(map[string]struct{})
+	selectorNames := make(map[*ast.Ident]struct{})
+	fieldKeys := make(map[*ast.Ident]struct{})
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.TypeSpec:
+			declared[node.Name.Name] = struct{}{}
+		case *ast.FuncDecl:
+			declared[node.Name.Name] = struct{}{}
+		case *ast.Field:
+			for _, name := range node.Names {
+				declared[name.Name] = struct{}{}
+			}
+		case *ast.AssignStmt:
+			if node.Tok == token.DEFINE {
+				for _, lhs := range node.Lhs {
+					if ident, ok := lhs.(*ast.Ident); ok {
+						declared[ident.Name] = struct{}{}
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, name := range node.Names {
+				declared[name.Name] = struct{}{}
+			}
+		case *ast.SelectorExpr:
+			selectorNames[node.Sel] = struct{}{}
+			if ident, ok := node.X.(*ast.Ident); ok {
+				selectors[ident.Name] = struct{}{}
+			}
+		case *ast.KeyValueExpr:
+			if ident, ok := node.Key.(*ast.Ident); ok {
+				fieldKeys[ident] = struct{}{}
+			}
+		}
+		return true
+	})
+	predeclared := map[string]struct{}{
+		"any": {}, "bool": {}, "byte": {}, "comparable": {}, "complex64": {}, "complex128": {},
+		"error": {}, "false": {}, "float32": {}, "float64": {}, "int": {}, "int8": {}, "int16": {},
+		"int32": {}, "int64": {}, "iota": {}, "nil": {}, "rune": {}, "string": {}, "true": {},
+		"uint": {}, "uint8": {}, "uint16": {}, "uint32": {}, "uint64": {}, "uintptr": {},
+		"append": {}, "cap": {}, "clear": {}, "close": {}, "complex": {}, "copy": {}, "delete": {},
+		"imag": {}, "len": {}, "make": {}, "max": {}, "min": {}, "new": {}, "panic": {}, "print": {},
+		"println": {}, "real": {}, "recover": {},
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		ident, ok := node.(*ast.Ident)
+		if !ok || ident.Obj != nil || ident.Name == "_" {
+			return true
+		}
+		if _, ok := selectorNames[ident]; ok {
+			return true
+		}
+		if _, ok := fieldKeys[ident]; ok {
+			return true
+		}
+		if _, ok := declared[ident.Name]; ok {
+			return true
+		}
+		if _, ok := predeclared[ident.Name]; ok {
+			return true
+		}
+		if ident.Name != "" && unicode.IsUpper([]rune(ident.Name)[0]) {
+			unresolved[ident.Name] = struct{}{}
+		}
+		return true
+	})
+	return selectors, unresolved
+}
+
+func sortProjectionImports(imports []projectionImport) {
+	sort.SliceStable(imports, func(i, j int) bool {
+		if imports[i].path == imports[j].path {
+			return imports[i].alias < imports[j].alias
+		}
+		return imports[i].path < imports[j].path
+	})
+}
+
+func filepathForLineDirective(name string) string {
+	if abs, err := filepath.Abs(name); err == nil {
+		name = abs
+	}
+	return filepath.ToSlash(name)
 }
 
 func (t *transpiler) collectStructFields(n *gotreesitter.Node) {
