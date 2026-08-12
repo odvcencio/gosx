@@ -1610,21 +1610,31 @@ test("selective runtime route surfaces stay within first-load budgets", () => {
 // universally, that OR throttled capable phones to the low-power GPU.
 test("device-capability gate stays DRY (gosxLowEndHardware, AND-form, no inlined OR drift)", () => {
   const srcDir = path.join(__dirname, "bootstrap-src");
-  const files = fs.readdirSync(srcDir).filter((f) => f.endsWith(".js") || f.endsWith(".ts"));
+  // The Scene3D consumer of gosxLowEndHardware moved from bootstrap-src to
+  // client/runtime/scene3d as a typed source file, so the scan must cover
+  // both directories or it undercounts the reference floor below.
+  const scene3dDir = path.join(__dirname, "..", "runtime", "scene3d");
+  const scanDirs = [
+    { dir: srcDir, exts: [".js"] },
+    { dir: scene3dDir, exts: [".ts"] },
+  ];
   let definitions = 0;
   let references = 0;
-  for (const f of files) {
-    const body = fs.readFileSync(path.join(srcDir, f), "utf8");
-    assert.ok(
-      !/deviceMemory\s*<=\s*4\s*\)\s*\|\|\s*\(?\s*hardwareConcurrency/.test(body) &&
-        !/hardwareConcurrency\s*<=\s*4\s*\)\s*\|\|\s*\(?\s*deviceMemory/.test(body),
-      `inlined OR-form device-capability predicate found in ${f}; derive it from gosxLowEndHardware instead`,
-    );
-    definitions += (body.match(/function\s+gosxLowEndHardware\s*\(/g) || []).length;
-    references += (body.match(/gosxLowEndHardware\s*\(/g) || []).length;
+  for (const { dir, exts } of scanDirs) {
+    const files = fs.readdirSync(dir).filter((f) => exts.some((ext) => f.endsWith(ext)));
+    for (const f of files) {
+      const body = fs.readFileSync(path.join(dir, f), "utf8");
+      assert.ok(
+        !/deviceMemory\s*<=\s*4\s*\)\s*\|\|\s*\(?\s*hardwareConcurrency/.test(body) &&
+          !/hardwareConcurrency\s*<=\s*4\s*\)\s*\|\|\s*\(?\s*deviceMemory/.test(body),
+        `inlined OR-form device-capability predicate found in ${f}; derive it from gosxLowEndHardware instead`,
+      );
+      definitions += (body.match(/function\s+gosxLowEndHardware\s*\(/g) || []).length;
+      references += (body.match(/gosxLowEndHardware\s*\(/g) || []).length;
+    }
   }
   assert.equal(definitions, 1, "gosxLowEndHardware must be defined exactly once (single source of truth)");
-  assert.ok(references >= 2, "gosxLowEndHardware should have one definition and at least one policy consumer");
+  assert.ok(references >= 3, "gosxLowEndHardware should back both lowPower and constrainedHardware");
   const env = fs.readFileSync(path.join(srcDir, "05-document-env.js"), "utf8");
   assert.ok(
     /function\s+gosxLowEndHardware[\s\S]{0,200}<=\s*4\s*\)\s*&&\s*\(/.test(env),

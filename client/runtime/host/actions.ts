@@ -261,11 +261,19 @@
     if (!selector || !html || typeof document.querySelector !== "function") return;
     var target = document.querySelector(selector);
     if (!target) return;
-    if (gosxHost.dom && typeof gosxHost.dom.replace === "function") {
-      if (gosxHost.dom.replace(target, html) !== false) {
-        focusAfterAction(target, trigger);
-        return;
-      }
+    if (typeof gosxHostCompatibility.read("__gosx_replace_runtime_content") === "function") {
+      // gosxHost.dom.replace is a forwarding shim that always exists (see
+      // compatibility.ts), so the ambient name it forwards to is the only
+      // reliable signal that dom.ts is actually loaded. Once it is,
+      // gosxHost.dom.replace owns the whole replace lifecycle, including its
+      // own failure path (see dom.ts replaceRuntimeContent): it disposes the
+      // old subtree, and on failure may have already written the new HTML
+      // before returning false. Return unconditionally so a failed managed
+      // replace does not fall through to the unmanaged dispose/innerHTML/
+      // stream-consume/mount path below and double-apply on top of it.
+      gosxHost.dom.replace(target, html);
+      focusAfterAction(target, trigger);
+      return;
     }
     if (gosxHost.surfaces && typeof gosxHost.surfaces.dispose === "function") {
       gosxHost.surfaces.dispose(target);

@@ -1327,7 +1327,13 @@
 
   async function loadManagedScript(role, src, load) {
     if (!src) return false;
-    if (role === "bootstrap" && gosxHost.lifecycle && typeof gosxHost.lifecycle.bootstrapPage === "function") {
+    // gosxHost.lifecycle.bootstrapPage is a forwarding shim installed by
+    // compatibility.ts on every page (see compatibility.ts), so it is always
+    // a function — probing it can never detect whether the real bootstrap
+    // bundle already ran. Probe the ambient name directly instead: it stays
+    // absent until the bootstrap bundle installs it, matching the pre-typed
+    // behavior this guard restores.
+    if (role === "bootstrap" && typeof gosxHostCompatibility.read("__gosx_bootstrap_page") === "function") {
       return false;
     }
     const effectiveLoad = load === "dom" || currentDocumentNonce() ? "dom" : "eval";

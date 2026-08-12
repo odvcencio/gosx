@@ -137,7 +137,7 @@ test-fuzz-smoke:
 # budget: nesting it keeps those requires out of the library's go.mod and out of
 # every consumer's module graph. It is invoked from its own directory for the
 # same reason.
-BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript grammar_subset_tsx
+BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript
 
 build-bootstrap:
 	cd cmd/buildbootstrap && $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' .
@@ -167,9 +167,13 @@ test-runtime-types:
 #      without a local go.work.
 #   3. The JS runtime unit tests (`node --test`, stdlib-only, with no
 #      npm dependencies to install), across every *.test.js /
-#      *.test.mjs file. The glob picks up new test files on its own,
-#      so nothing here needs an edit when a suite is added or split.
-#      This includes the 562 client-runtime tests in the
+#      *.test.mjs file under client/js, plus every *.test.js file one
+#      directory below client/runtime (currently
+#      client/runtime/wasm/loader.test.js, the WASM loader's own
+#      suite; it lived here unglobbed and never ran under `make
+#      test-js` or `make ci`). Both globs pick up new test files on
+#      their own, so nothing here needs an edit when a suite is added
+#      or split. This includes the 562 client-runtime tests in the
 #      runtime-NN-*.test.js files (split out of the former
 #      runtime.test.js; their shared setup lives in
 #      client/js/runtime-test-harness.js, which the glob skips
@@ -179,7 +183,7 @@ test-js:
 	$(MAKE) test-runtime-types
 	cd cmd/buildbootstrap && GOWORK=off $(GO) test -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
 	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
-	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
+	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs ./client/runtime/**/*.test.js
 
 # test-editor builds, vets and tests the nested editor module.
 #
