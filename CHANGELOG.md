@@ -2958,7 +2958,7 @@ Structural changes:
 
 - **`16z-scene-webgpu-probe.ts`** (new, stays in main scene3d bundle) owns the `navigator.gpu.requestAdapter()` probe and the `sceneWebGPUAvailable()` / `createSceneWebGPURendererOrFallback()` stubs. The stubs dispatch to `window.__gosx_scene3d_webgpu_api.createRenderer(canvas)` if and only if the sub-chunk has loaded AND the adapter probe succeeded. (This file is reworked in v0.17.17 to also verify device creation.)
 
-- **`26e-feature-scene3d-webgpu-prefix.js` / `26e-feature-scene3d-webgpu-suffix.js`** (new) wrap the sub-chunk as its own IIFE. The prefix destructures all shared helpers from `window.__gosx_scene3d_api`. The suffix publishes the renderer factory to `window.__gosx_scene3d_webgpu_api`.
+- **`26e-feature-scene3d-webgpu-prefix.ts` / `26e-feature-scene3d-webgpu-suffix.ts`** (new) wrap the sub-chunk as its own IIFE. The prefix destructures all shared helpers from `window.__gosx_scene3d_api`. The suffix publishes the renderer factory to `window.__gosx_scene3d_webgpu_api`.
 
 - **`16a-scene-webgpu.js`** drops its inline adapter probe (now owned by 16z) and reads the shared probe via `_externalProbe()`.
 
@@ -3223,7 +3223,7 @@ Fixed by removing `emit` from the runtime API export. Nothing in the scene3d chu
 
 ## v0.17.7
 
-Bridge the runtime API for scene3d chunk cross-IIFE access: introduces `window.__gosx_runtime_api` as the formal contract between the runtime bundle and the scene3d feature chunk. `00-textlayout.js` exports `setAttrValue`, `setStyleValue`, `gosxSubscribeSharedSignal`, `setSharedSignalValue`, `gosxTextLayoutRevision`, `normalizeTextLayoutOverflow`, `layoutBrowserText`, `applyTextLayoutPresentation`, and `onTextLayoutInvalidated` onto the namespace. The scene3d chunk's prefix (`26d-feature-scene3d-prefix.js`) destructures from it with fallbacks, so a missing runtime API degrades to a no-op rather than a hard reference error.
+Bridge the runtime API for scene3d chunk cross-IIFE access: introduces `window.__gosx_runtime_api` as the formal contract between the runtime bundle and the scene3d feature chunk. `00-textlayout.js` exports `setAttrValue`, `setStyleValue`, `gosxSubscribeSharedSignal`, `setSharedSignalValue`, `gosxTextLayoutRevision`, `normalizeTextLayoutOverflow`, `layoutBrowserText`, `applyTextLayoutPresentation`, and `onTextLayoutInvalidated` onto the namespace. The scene3d chunk's prefix (`26d-feature-scene3d-prefix.ts`) destructures from it with fallbacks, so a missing runtime API degrades to a no-op rather than a hard reference error.
 
 ## v0.17.6
 
@@ -3257,7 +3257,7 @@ Structural wiring:
 
 - **`client/js/build-bootstrap.mjs`** now emits four bundles: `bootstrap.js` (monolith for pages without feature chunks), `bootstrap-lite.js`, `bootstrap-runtime.js` (runtime + islands + engines + hubs), and `bootstrap-feature-scene3d.js` (files 10–20, the scene graph pipeline).
 
-- **`client/js/bootstrap-src/26d-feature-scene3d-prefix.js` / `...-suffix.js`** (new) wrap the scene3d chunk as its own IIFE. The prefix declares the symbols the IIFE needs from the runtime's scope (file 00's text layout state, file 10's registries).
+- **`client/js/bootstrap-src/26d-feature-scene3d-prefix.ts` / `...-suffix.js`** (new) wrap the scene3d chunk as its own IIFE. The prefix declares the symbols the IIFE needs from the runtime's scope (file 00's text layout state, file 10's registries).
 
 - **`client/js/bootstrap-src/10-runtime-scene-core.js`** exposes scene utilities on `window.__gosx_scene3d_api` for future cross-IIFE access — the foundation the v0.17.16 WebGPU split builds on.
 
