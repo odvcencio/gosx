@@ -54,6 +54,16 @@ type Island struct {
 	// reuseBuilt records that the analysis already ran, so a program that
 	// cannot benefit is analysed once instead of on every reconcile.
 	reuseBuilt bool
+	// reuseOff keeps ensureReuse from building island.reuse at all, so
+	// evalTreeInto never enters reuse.begin/reuse.end and never copies a
+	// prev.Nodes span into the tree under construction. recycleOff and
+	// skipOff alone do not reach this: they gate the diff walk and the
+	// spare buffer, but the subtree-copy itself runs inside evalTreeInto
+	// whenever island.reuse is non-nil, regardless of either flag. TinyGo
+	// miscompiles the backing-array aliasing that copy depends on, so this
+	// is the flag island_defensive_tinygo.go actually needs set to revert
+	// to the pre-optimisation evaluation path. See ensureReuse.
+	reuseOff bool
 	// recycleOff disables the spare buffer and makes every reconcile
 	// allocate a fresh tree, which is the behaviour before double
 	// buffering. FuzzIslandRecycleMatchesFreshTree drives both paths and
@@ -121,6 +131,9 @@ func (island *Island) ensureReuse() {
 		return
 	}
 	island.reuseBuilt = true
+	if island.reuseOff {
+		return
+	}
 	island.reuse = newIslandReuse(island.program)
 }
 
@@ -218,6 +231,19 @@ func NewIsland(prog *program.Program, propsJSON string) *Island {
 		program:  prog,
 		handlers: handlerMap(prog),
 	}
+
+	// TinyGo miscompiles the slice backing-array aliasing the subtree-reuse
+	// copy, the spare-buffer recycle, and the subtree-diff skip all rely
+	// on, corrupting the retained tree's child list. Production builds
+	// compile with TinyGo, so force all three optimisations off there and
+	// keep the fast path for native/standard-Go builds. reuseOff is the
+	// one that matters most: it keeps ensureReuse from building the reuse
+	// plan at all, so evalTreeInto never runs the aliased subtree copy in
+	// the first place, regardless of recycleOff and skipOff. See
+	// island_defensive_tinygo.go.
+	island.reuseOff = tinygoDefensiveReconcile
+	island.recycleOff = tinygoDefensiveReconcile
+	island.skipOff = tinygoDefensiveReconcile
 
 	// The first tree has nothing to reuse, so the analysis stays unbuilt
 	// here. An island that renders once and never receives an event — the

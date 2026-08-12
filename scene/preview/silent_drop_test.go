@@ -181,34 +181,20 @@ func TestEnvironmentFieldsThatChangeNothingAreReported(t *testing.T) {
 		}
 	})
 
-	// Reaching a pixel HERE is not the whole answer, and the case above alone
-	// reads as though it is. The browser WebGPU renderer draws no environment
-	// map, so the poster this test just proved correct is the poster that
-	// misleads: the author sizes the lighting from an image the preferred
-	// backend will not reproduce. The warning is the only thing that says so.
-	t.Run("envMap-warns-that-WebGPU-draws-none-of-it", func(t *testing.T) {
-		if capability.Supports(capability.BackendWebGPU, capability.FeatureEnvironmentMap) {
-			t.Fatal("the WebGPU environment-map cell went true. Delete this case, delete " +
-				"environmentMapBackendDiagnostic, and pin the browser implementation instead.")
+	// The WebGPU environment-map cell went true (16a-scene-webgpu.js binds
+	// envMapTex/envMapSampler and taps envEquirectUV). The gap warning this
+	// test used to require is gone: capability.Supports gates
+	// environmentMapBackendDiagnostic, and it now returns false unconditionally
+	// for this scene, so scene.preview.environment_map_backend_gap never fires.
+	t.Run("envMap-raises-no-WebGPU-gap-warning", func(t *testing.T) {
+		if !capability.Supports(capability.BackendWebGPU, capability.FeatureEnvironmentMap) {
+			t.Fatal("the WebGPU environment-map cell went false again. Restore the gap-warning case and pin " +
+				"the browser regression instead.")
 		}
 		result := render(t, `{"envMap":"/env/studio.hdr","envIntensity":2}`)
-		diagnostic, reported := findDiagnostic(result.Bundle.Diagnostics, "scene.preview.environment_map_backend_gap")
-		if !reported {
-			t.Fatalf("a scene with an authored envMap raised no WebGPU gap warning: %+v", result.Bundle.Diagnostics)
-		}
-		if diagnostic.Backend != string(capability.BackendWebGPU) {
-			t.Fatalf("the warning names backend %q; it reports a browser gap, not a headless one", diagnostic.Backend)
-		}
-		if diagnostic.Severity != "warning" {
-			t.Fatalf("the warning has severity %q; an info line reads as a note and this is a wrong image", diagnostic.Severity)
-		}
-	})
-
-	// The warning must stay silent when the author writes no environment map,
-	// or every scene carries it and the reader learns to skip it.
-	t.Run("no-envMap-raises-no-WebGPU-gap-warning", func(t *testing.T) {
-		if _, reported := findDiagnostic(baseline.Bundle.Diagnostics, "scene.preview.environment_map_backend_gap"); reported {
-			t.Fatalf("a scene with no envMap raised the WebGPU gap warning: %+v", baseline.Bundle.Diagnostics)
+		if _, reported := findDiagnostic(result.Bundle.Diagnostics, "scene.preview.environment_map_backend_gap"); reported {
+			t.Fatalf("a scene with an authored envMap still raised the WebGPU gap warning, but both GPU "+
+				"backends implement the feature now: %+v", result.Bundle.Diagnostics)
 		}
 	})
 

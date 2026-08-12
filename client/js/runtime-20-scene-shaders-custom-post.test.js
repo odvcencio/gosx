@@ -967,12 +967,14 @@ test("capability/drift: WebGPU-only capabilities are explicit in backend JSON", 
   // scene/capability/water_shadow_test.go, which reads both renderers.
   assert.equal(webglCaps["water-object-mesh-shadow-pass"], false, "WebGL2 capabilities JSON must declare water-object-mesh-shadow-pass: false (no mesh rasterization in the WebGL2 water renderer)");
   assert.ok("water-object-mesh-shadow-pass" in webglCaps, "water-object-mesh-shadow-pass must be explicit in WebGL2 capabilities JSON (not absent)");
-  // ibl is false on BOTH backends. The WebGL2 path tone maps the environment to
-  // an 8-bit texture and taps it twice; it holds no samplerCube, no
-  // textureCubeLod and no BRDF lookup table. See assetpipe/ibl for the products
-  // a real consumer needs.
-  assert.equal(webglCaps["ibl"], false, "WebGL2 capabilities JSON must declare ibl: false (tone-mapped equirect is not prefiltered IBL)");
-  assert.equal(webgpuCaps["ibl"], false, "WebGPU capabilities JSON must declare ibl: false");
+  // ibl splits by backend. WebGL2 tone maps the environment to an 8-bit
+  // texture and taps it twice; the real samplerCube/textureCubeLod/BRDF-LUT
+  // path only activates at >= 18 fragment texture units, so its unconditional
+  // cell stays false. WebGPU binds all three IBL products (group(0) bindings
+  // 9-12) and loads/validates them at runtime with no texture-unit budget to
+  // negotiate, so its cell is true. See scene/capability/ibl_test.go.
+  assert.equal(webglCaps["ibl"], false, "WebGL2 capabilities JSON must declare ibl: false (gated on >= 18 fragment texture units)");
+  assert.equal(webgpuCaps["ibl"], true, "WebGPU capabilities JSON must declare ibl: true (unconditional split-sum consumer)");
 });
 
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {

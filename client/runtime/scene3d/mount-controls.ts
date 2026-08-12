@@ -761,6 +761,66 @@
     }
   }
 
+  function sceneOrbitKeyCode(event) {
+    const code = String(event && (event.code || event.key) || "").toLowerCase();
+    switch (code) {
+      case "arrowleft":
+        return "left";
+      case "arrowright":
+        return "right";
+      case "arrowup":
+        return "up";
+      case "arrowdown":
+        return "down";
+      case "equal":
+      case "numpadadd":
+      case "+":
+        return "zoom-in";
+      case "minus":
+      case "numpadsubtract":
+      case "-":
+        return "zoom-out";
+      case "home":
+        return "reset";
+      default:
+        return "";
+    }
+  }
+
+  function sceneOrbitApplyKey(controls, readSourceCamera, key) {
+    if (!controls || controls.mode !== "orbit" || !key) {
+      return false;
+    }
+    if (key === "reset") {
+      const sourceCamera = typeof readSourceCamera === "function" ? readSourceCamera() : null;
+      applySceneControlsCamera(controls, sourceCamera);
+      return true;
+    }
+    syncSceneControlsFromSource(controls, readSourceCamera);
+    sceneOrbitStopInertia(controls);
+    controls.touched = true;
+    if (key === "left" || key === "right") {
+      controls.orbit.yaw += (key === "left" ? -1 : 1) * (Math.PI / 24) * controls.rotateSpeed;
+      return true;
+    }
+    if (key === "up" || key === "down") {
+      const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
+      controls.orbit.pitch = sceneClamp(
+        controls.orbit.pitch + (key === "up" ? -1 : 1) * (Math.PI / 36) * controls.rotateSpeed,
+        -pitchLimit,
+        pitchLimit,
+      );
+      return true;
+    }
+    const zoomScale = Math.exp((key === "zoom-in" ? -1 : 1) * 0.12 * controls.zoomSpeed);
+    controls.orbit.radius = sceneClamp(
+      controls.orbit.radius * zoomScale,
+      controls.minDistance,
+      controls.maxDistance,
+    );
+    return true;
+  }
+
   function sceneFlyApplyMovement(controls, readSourceCamera, deltaSeconds) {
     if (!controls || !controls.keys || controls.keys.size === 0) {
       return false;
@@ -825,8 +885,11 @@
     const flyMode = controls.mode === "first-person" || controls.mode === "fly";
     canvas.style.cursor = flyMode ? "crosshair" : "grab";
     canvas.style.touchAction = "none";
-    if (flyMode && !canvas.hasAttribute("tabindex")) {
+    if (!canvas.hasAttribute("tabindex")) {
       canvas.setAttribute("tabindex", "0");
+    }
+    if (!flyMode && !canvas.hasAttribute("aria-keyshortcuts")) {
+      canvas.setAttribute("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown Home + -");
     }
 
     function onPointerLockChange(event) {
@@ -942,7 +1005,22 @@
     }
 
     function onKeyDown(event) {
-      if (!flyMode || (document.activeElement !== canvas && !controls.touched)) {
+      if (!flyMode) {
+        if (document.activeElement !== canvas) {
+          return;
+        }
+        const orbitKey = sceneOrbitKeyCode(event);
+        if (!sceneOrbitApplyKey(controls, readSourceCamera, orbitKey)) {
+          return;
+        }
+        cancelOrbitInertia();
+        scheduleRender(orbitKey === "reset" ? "controls-reset" : "controls-keyboard");
+        if (typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+        return;
+      }
+      if (document.activeElement !== canvas && !controls.touched) {
         return;
       }
       const key = sceneFlyKeyCode(event);
@@ -978,8 +1056,8 @@
     canvas.addEventListener("pointercancel", finishPointerDrag);
     canvas.addEventListener("lostpointercapture", finishPointerDrag);
     canvas.addEventListener("wheel", onWheel);
+    document.addEventListener("keydown", onKeyDown);
     if (flyMode) {
-      document.addEventListener("keydown", onKeyDown);
       document.addEventListener("keyup", onKeyUp);
       if (controls.pointerLock) {
         document.addEventListener("pointerlockchange", onPointerLockChange);
@@ -1013,9 +1091,9 @@
         canvas.removeEventListener("pointercancel", finishPointerDrag);
         canvas.removeEventListener("lostpointercapture", finishPointerDrag);
         canvas.removeEventListener("wheel", onWheel);
+        document.removeEventListener("keydown", onKeyDown);
         if (flyMode) {
           sceneExitPointerLock(canvas);
-          document.removeEventListener("keydown", onKeyDown);
           document.removeEventListener("keyup", onKeyUp);
           if (controls.pointerLock) {
             document.removeEventListener("pointerlockchange", onPointerLockChange);

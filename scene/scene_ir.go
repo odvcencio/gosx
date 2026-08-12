@@ -1029,6 +1029,7 @@ type EnvironmentIR struct {
 	GroundIntensity  float64        `json:"groundIntensity,omitempty"`
 	EnvMap           string         `json:"envMap,omitempty"`
 	IBL              EnvironmentIBL `json:"ibl,omitzero"`
+	Sky              *Sky           `json:"sky,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
@@ -2987,6 +2988,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.GroundIntensity == 0 &&
 		item.EnvMap == "" &&
 		item.IBL.IsZero() &&
+		item.Sky == nil &&
 		item.EnvIntensity == 0 &&
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
@@ -3014,6 +3016,9 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	if !item.IBL.IsZero() {
 		record["ibl"] = item.IBL
 	}
+	if item.Sky != nil {
+		record["sky"] = item.Sky
+	}
 	setNumeric(record, "envIntensity", item.EnvIntensity)
 	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
@@ -3034,6 +3039,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		GroundIntensity:  environment.GroundIntensity,
 		EnvMap:           strings.TrimSpace(environment.EnvironmentMap),
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
+		Sky:              normalizeSky(environment.Sky),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,
@@ -3071,6 +3077,7 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureWaterSim,
 	capability.FeatureIBL,
 	capability.FeatureEnvironmentMap,
+	capability.FeatureSkyEnvironment,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3146,16 +3153,30 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	// ibl and environment-map: the environment carries a non-empty env-map.
 	//
 	// One authored field raises two features because the two questions differ.
-	// ibl asks whether a backend runs a split-sum fit; no backend does, so both
-	// its cells are false. environment-map asks whether a backend opens the
-	// image at all; WebGL2 does and WebGPU does not. Raising only ibl reported
-	// the two backends as equal, and they are not.
+	// ibl asks whether a backend runs a split-sum fit: WebGPU does
+	// (syncEnvironmentIBL consumes the prefiltered products unconditionally);
+	// WebGL2 only above the 18-fragment-texture-unit gate, so its cell stays
+	// false. environment-map asks whether a backend opens the legacy equirect
+	// image at all: both backends do now. See capability.go's ibl and
+	// environment-map rows.
+	//
+	// Pairing a bare EnvMap with ibl is conservative: an env-map-only scene now
+	// degrades on WebGL2 even though it authored no split-sum descriptor. See
+	// the open question this raises in specs/scene3d-parity/cluster-a-
+	// environment.md section 4, Q7; this cluster does not resolve it.
 	if strings.TrimSpace(ir.Environment.EnvMap) != "" {
 		seen[capability.FeatureIBL] = true
 		seen[capability.FeatureEnvironmentMap] = true
 	}
 	if !ir.Environment.IBL.IsZero() {
 		seen[capability.FeatureIBL] = true
+	}
+
+	// sky-environment: the environment mode of an authored Sky. Gradient sky
+	// (the default and the degrade target) draws on every backend and raises
+	// nothing; see the row's doc comment in capability.go.
+	if skyRaisesEnvironmentFeature(ir.Environment.Sky) {
+		seen[capability.FeatureSkyEnvironment] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.

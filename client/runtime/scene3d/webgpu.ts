@@ -115,6 +115,10 @@
     "    envRotation: f32,",
     "    hasIBL: u32,",
     "    radianceMipLevels: u32,",
+    "    hasEnvMap: u32,",
+    "    _pad1: u32,",
+    "    _pad2: u32,",
+    "    _pad3: u32,",
     "};",
     "",
     "struct ShadowUniforms {",
@@ -1487,6 +1491,8 @@
     "@group(0) @binding(10) var iblRadiance: texture_cube<f32>;",
     "@group(0) @binding(11) var iblBRDFLUT: texture_2d<f32>;",
     "@group(0) @binding(12) var iblSampler: sampler;",
+    "@group(0) @binding(13) var envMapTex: texture_2d<f32>;",
+    "@group(0) @binding(14) var envMapSampler: sampler;",
     "",
     // Group 1: per-material
     "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
@@ -1592,6 +1598,14 @@
     "    let c = cos(radians);",
     "    let s = sin(radians);",
     "    return vec3f(dir.x * c + dir.z * s, dir.y, -dir.x * s + dir.z * c);",
+    "}",
+    "",
+    // Equirectangular direction-to-UV mapping. Ported verbatim from the GLSL
+    // source (16-scene-webgl.js envEquirectUV) so both backends sample the
+    // same texel for the same direction.
+    "fn envEquirectUV(dir: vec3f) -> vec2f {",
+    "    let d = normalize(dir);",
+    "    return vec2f(atan2(d.z, d.x) / (2.0 * PI) + 0.5, asin(clamp(d.y, -1.0, 1.0)) / PI + 0.5);",
     "}",
     "",
     // Point light distance attenuation.
@@ -1893,6 +1907,14 @@
     "        let diffuseIBL = irradiance * albedo * kDenv;",
     "        let specularIBL = prefiltered * (F0 * brdf.x + brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
+    "    } else if (env.hasEnvMap != 0u) {",
+    "        let Nr = rotateEnvY(N, env.envRotation);",
+    "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
+    "        let envDiffuse = textureSample(envMapTex, envMapSampler, envEquirectUV(Nr)).rgb * albedo;",
+    "        let envSpecular = textureSample(envMapTex, envMapSampler, envEquirectUV(Rr)).rgb;",
+    "        let Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
+    "        let kDenv = (vec3f(1.0) - Fenv) * (1.0 - metalness);",
+    "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
@@ -3345,6 +3367,8 @@
         { binding: 10, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "cube" } },
         { binding: 11, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
         { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
+        { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d" } },
+        { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
       ],
     });
   }
@@ -6869,6 +6893,11 @@
     var linearSampler = null;
     var comparisonSampler = null;
     var waterTileSampler = null;
+    // Dedicated envMap sampler: the equirect wrap seam needs addressModeU
+    // "repeat" (the seam wraps around the sphere) and addressModeV
+    // "clamp-to-edge" (the poles do not wrap). linearSampler clamps both
+    // axes, so it cannot serve this texture without a visible seam.
+    var envMapSampler = null;
 
     // Water simulation resources.
     var waterComputeBindGroupLayout = null;
@@ -6947,6 +6976,17 @@
       active: false,
       diagnostics: { requested: false, active: false, state: "not-requested", reason: "", radianceMipLevels: 0 },
     };
+    // Legacy equirectangular Environment.EnvironmentMap image (the same
+    // `envMap` field 16-scene-webgl.js reads). IBL wins when it is active:
+    // syncEnvironmentMap suppresses this the same frame syncEnvironmentIBL
+    // reports ibl.active, mirroring the WebGL2 status machine at
+    // 16-scene-webgl.js:6249-6252 (envMap MAY still shade while IBL is only
+    // "loading"/"validating", never once it is "active").
+    var envMapResources = {
+      key: "",
+      record: null,
+      active: false,
+    };
 
     // pbrSceneAttributeCache backs wgpuStablePBRAttributeBuffer below, keyed
     // by slot name (not by `bundle`, which createSceneRenderBundle rebuilds
@@ -6994,7 +7034,7 @@
     var _shadowUniformU   = new Uint32Array(_shadowUniformBuf);
     var _shadowUniformI   = new Int32Array(_shadowUniformBuf);
 
-    var _envUniformBuf = new ArrayBuffer(64);
+    var _envUniformBuf = new ArrayBuffer(80);
     var _envUniformF = new Float32Array(_envUniformBuf);
     var _envUniformU = new Uint32Array(_envUniformBuf);
 
@@ -7568,7 +7608,7 @@
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        envUniformBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        envUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
@@ -7591,6 +7631,13 @@
           compare: "less",
           magFilter: "linear",
           minFilter: "linear",
+        });
+        envMapSampler = device.createSampler({
+          magFilter: "linear",
+          minFilter: "linear",
+          mipmapFilter: "linear",
+          addressModeU: "repeat",
+          addressModeV: "clamp-to-edge",
         });
 
         // Create 1x1 dummy shadow depth texture.
@@ -13811,14 +13858,38 @@
       return iblResources;
     }
 
+    // syncEnvironmentMap loads the legacy equirectangular Environment.EnvironmentMap
+    // image through the shared 2D texture cache/loader (wgpuLoadTexture), the
+    // same path material albedo maps use. IBL wins: iblActive (ibl.active from
+    // syncEnvironmentIBL, not merely "requested") suppresses this, matching
+    // 16-scene-webgl.js's scenePBRUploadEnvironmentMap status machine, which
+    // only zeroes hasEnvMap once iblStatus.active is true.
+    function syncEnvironmentMap(environment, iblActive) {
+      var env = environment || {};
+      var url = typeof env.envMap === "string" ? env.envMap.trim() : "";
+      if (!url || iblActive) {
+        envMapResources.active = false;
+        return envMapResources;
+      }
+      if (envMapResources.key !== url) {
+        envMapResources.key = url;
+        envMapResources.record = wgpuLoadTexture(device, url, textureCache, null, "environment-radiance", "linear");
+      }
+      var record = envMapResources.record;
+      envMapResources.active = Boolean(record && record.loaded && !record.failed);
+      return envMapResources;
+    }
+
     function uploadEnvUniforms(environment) {
       var env = environment || {};
       var ibl = syncEnvironmentIBL(env);
+      var envMap = syncEnvironmentMap(env, ibl.active);
       var ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
       var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
       var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
 
-      // EnvUniforms: three vec3+scalar pairs plus one IBL control vec4 = 64 bytes.
+      // EnvUniforms: three vec3+scalar pairs, one IBL control vec4, and one
+      // envMap control vec4 (only word 0 used today) = 80 bytes.
       var data = _envUniformF;
       var words = _envUniformU;
       data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
@@ -13831,6 +13902,8 @@
       data[13] = sceneNumber(env.envRotation, 0);
       words[14] = ibl.active ? 1 : 0;
       words[15] = ibl.active ? Math.max(1, ibl.diagnostics.radianceMipLevels | 0) : 0;
+      words[16] = envMap.active ? 1 : 0;
+      words[17] = 0; words[18] = 0; words[19] = 0;
       device.queue.writeBuffer(envUniformBuffer, 0, data);
     }
 
@@ -14039,6 +14112,7 @@
       var iblIrradianceView = iblResources.active && iblResources.irradiance ? iblResources.irradiance.view : placeholderCubeView;
       var iblRadianceView = iblResources.active && iblResources.radiance ? iblResources.radiance.view : placeholderCubeView;
       var iblBRDFView = iblResources.active && iblResources.brdfLUT ? iblResources.brdfLUT.view : placeholderView;
+      var envMapView = envMapResources.active && envMapResources.record ? envMapResources.record.view : placeholderView;
       var cache = _frameBindGroupCache;
       if (
         cache &&
@@ -14055,11 +14129,13 @@
         cache.iblIrradiance === iblIrradianceView &&
         cache.iblRadiance === iblRadianceView &&
         cache.iblBRDF === iblBRDFView &&
-        cache.iblSampler === linearSampler
+        cache.iblSampler === linearSampler &&
+        cache.envMap === envMapView &&
+        cache.envMapSampler === envMapSampler
       ) {
         return cache.bindGroup;
       }
-      var bindGroup = _createFrameBindGroupUncached(view0, view1, iblIrradianceView, iblRadianceView, iblBRDFView);
+      var bindGroup = _createFrameBindGroupUncached(view0, view1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView);
       _frameBindGroupCache = {
         device: device,
         layout: frameBindGroupLayout,
@@ -14075,12 +14151,14 @@
         iblRadiance: iblRadianceView,
         iblBRDF: iblBRDFView,
         iblSampler: linearSampler,
+        envMap: envMapView,
+        envMapSampler: envMapSampler,
         bindGroup: bindGroup,
       };
       return bindGroup;
     }
 
-    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView) {
+    function _createFrameBindGroupUncached(shadowView0, shadowView1, iblIrradianceView, iblRadianceView, iblBRDFView, envMapView) {
       return device.createBindGroup({
         layout: frameBindGroupLayout,
         entries: [
@@ -14097,6 +14175,8 @@
           { binding: 10, resource: iblRadianceView || placeholderCubeView },
           { binding: 11, resource: iblBRDFView || placeholderView },
           { binding: 12, resource: linearSampler },
+          { binding: 13, resource: envMapView || placeholderView },
+          { binding: 14, resource: envMapSampler },
         ],
       });
     }
