@@ -1,12 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestTopLevelHelpAdvertisesOnlyImplementedSceneCommands(t *testing.T) {
+	var out bytes.Buffer
+	commandUsage("scene", &out)
+	text := out.String()
+	for _, want := range []string{"gosx scene check", "gosx scene inspect", "gosx scene render"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("scene help missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "scene certify") || strings.Contains(text, "inspect --cert") {
+		t.Fatalf("scene help advertises removed commands:\n%s", text)
+	}
+}
 
 func TestMainHelpProcess(t *testing.T) {
 	if os.Getenv("GOSX_HELP_PROCESS") != "1" {

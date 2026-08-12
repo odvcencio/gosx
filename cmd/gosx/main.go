@@ -23,7 +23,7 @@
 //	gosx perf budget <report> <budget>
 //	                              Check saved perf output against budgets
 //	gosx release check           Check release metadata consistency
-//	gosx scene certify           Check Scene3D feature certification
+//	gosx scene check             Check Scene3D feature support and budgets
 //	gosx scene inspect           Inspect Scene3D feature use and budgets
 //	gosx scene validate          Validate SceneIR JSON files
 //	gosx size [--json] <dist|build.json>
@@ -263,7 +263,7 @@ Commands:
   visual <url>         Pixel-level visual regression testing
   repl <url>           Interactive browser runtime explorer
   release check        Check release metadata consistency
-  scene certify        Check Scene3D feature certification
+  scene check          Check Scene3D feature support and budgets
   scene inspect        Inspect Scene3D feature use and budgets
   scene validate       Validate SceneIR JSON files
   version              Print version
