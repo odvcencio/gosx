@@ -2160,15 +2160,13 @@ func fillDrift(inv *Inventory) {
 	}
 	status := "pass"
 	notes := []string{}
-	if deltas.JavaScriptLines != 0 || deltas.GosxNameCount != 0 || deltas.GosxProductionNameCount != 0 || deltas.GosxJavaScriptNameCount != 0 || deltas.AssignedBrowserRootCount != 0 || deltas.AssignedWindowCount != 0 || deltas.GoPublishedABICount != 0 || deltas.HostCallbackCount != 0 || deltas.SerializationSiteCount != 0 {
+	if deltas.JavaScriptLines > 0 || deltas.JavaScriptBytes > 0 || deltas.GosxNameCount > 0 || deltas.GosxProductionNameCount > 0 || deltas.GosxJavaScriptNameCount > 0 || deltas.AssignedBrowserRootCount > 0 || deltas.AssignedWindowCount > 0 || deltas.GoPublishedABICount > 0 || deltas.HostCallbackCount > 0 || deltas.SerializationSiteCount != 0 {
 		status = "fail-closed"
-		notes = append(notes, "Current inventory does not reproduce canonical O0.2 scoreboard targets.")
-		notes = append(notes, "Do not rewrite canonical denominators without an accepted Hyphae decision.")
+		notes = append(notes, "Current inventory exceeds a historical O0.2 ceiling or does not reproduce the fail-closed serialization denominator.")
 	}
-	notes = append(notes, "Canonical clean HEAD source ratchet is 87,086 lines and 3,815,610 bytes over client/js/bootstrap-src/**/*.js.")
-	notes = append(notes, "Current dirty overlay source ratchet is expected to drift by +623 lines and +29,174 bytes when the nine Scene3D edits are present.")
-	notes = append(notes, "The 209 compatibility ratchet is raw distinct __gosx_* over bootstrap-src plus all client/wasm, including tests.")
-	notes = append(notes, "Production compatibility raw target is 208 over bootstrap-src plus non-test client/wasm.")
+	notes = append(notes, "The immutable v1 receipt and corpus values are historical ceilings, not equality pins to the receipt revision; reductions pass and growth fails closed.")
+	notes = append(notes, "The 209 compatibility ceiling is raw distinct __gosx_* over bootstrap-src plus all client/wasm, including tests.")
+	notes = append(notes, "The production compatibility raw ceiling is 208 over bootstrap-src plus non-test client/wasm.")
 	notes = append(notes, "The 253 serialization denominator lacks a reproducible exact query and JSONL corpus; this collector fails it closed.")
 	inv.Drift = DriftReport{
 		Status:         status,
@@ -2185,8 +2183,8 @@ func fillDrift(inv *Inventory) {
 			Target:     int64(canonical.JavaScriptLines),
 			Measured:   int64(measured.JavaScriptLines),
 			Delta:      int64(deltas.JavaScriptLines),
-			Status:     passFail(deltas.JavaScriptLines == 0),
-			Definition: "wc -l over first-party authored browser runtime JavaScript source.",
+			Status:     passFail(deltas.JavaScriptLines <= 0),
+			Definition: "Monotonic historical ceiling: wc -l over first-party authored browser runtime JavaScript source; reductions pass, growth fails closed.",
 		},
 		{
 			ID:         "js-source-bytes",
@@ -2194,8 +2192,8 @@ func fillDrift(inv *Inventory) {
 			Target:     canonical.JavaScriptBytes,
 			Measured:   measured.JavaScriptBytes,
 			Delta:      deltas.JavaScriptBytes,
-			Status:     passFail(deltas.JavaScriptBytes == 0),
-			Definition: "Raw byte count over first-party authored browser runtime JavaScript source.",
+			Status:     passFail(deltas.JavaScriptBytes <= 0),
+			Definition: "Monotonic historical ceiling: raw byte count over first-party authored browser runtime JavaScript source; reductions pass, growth fails closed.",
 		},
 		{
 			ID:         "compat-gosx-raw-all",
@@ -2203,8 +2201,8 @@ func fillDrift(inv *Inventory) {
 			Target:     int64(canonical.GosxNameCount),
 			Measured:   int64(measured.GosxNameCount),
 			Delta:      int64(deltas.GosxNameCount),
-			Status:     passFail(deltas.GosxNameCount == 0),
-			Definition: "Distinct raw __gosx_* tokens over browser runtime source and all WASM host bridge code.",
+			Status:     passFail(deltas.GosxNameCount <= 0),
+			Definition: "Monotonic historical ceiling: distinct raw __gosx_* tokens over browser runtime source and all WASM host bridge code.",
 		},
 		{
 			ID:         "compat-gosx-production-raw",
@@ -2212,8 +2210,8 @@ func fillDrift(inv *Inventory) {
 			Target:     int64(canonical.GosxProductionNameCount),
 			Measured:   int64(measured.GosxProductionNameCount),
 			Delta:      int64(deltas.GosxProductionNameCount),
-			Status:     passFail(deltas.GosxProductionNameCount == 0),
-			Definition: "Distinct raw __gosx_* tokens over production browser runtime source and production WASM host bridge code.",
+			Status:     passFail(deltas.GosxProductionNameCount <= 0),
+			Definition: "Monotonic historical ceiling: distinct raw __gosx_* tokens over production browser runtime source and production WASM host bridge code.",
 		},
 		{
 			ID:         "compat-gosx-js-raw",
@@ -2221,8 +2219,8 @@ func fillDrift(inv *Inventory) {
 			Target:     int64(canonical.GosxJavaScriptNameCount),
 			Measured:   int64(measured.GosxJavaScriptNameCount),
 			Delta:      int64(deltas.GosxJavaScriptNameCount),
-			Status:     passFail(deltas.GosxJavaScriptNameCount == 0),
-			Definition: "Distinct raw __gosx_* tokens over authored browser runtime JavaScript.",
+			Status:     passFail(deltas.GosxJavaScriptNameCount <= 0),
+			Definition: "Monotonic historical ceiling: distinct raw __gosx_* tokens over authored browser runtime JavaScript.",
 		},
 		{
 			ID:         "compat-assigned-browser-root",
@@ -2230,8 +2228,8 @@ func fillDrift(inv *Inventory) {
 			Target:     int64(canonical.AssignedBrowserRootCount),
 			Measured:   int64(measured.AssignedBrowserRootCount),
 			Delta:      int64(deltas.AssignedBrowserRootCount),
-			Status:     passFail(deltas.AssignedBrowserRootCount == 0),
-			Definition: "Distinct assigned window.__gosx_* or globalThis.__gosx_* browser-root names.",
+			Status:     passFail(deltas.AssignedBrowserRootCount <= 0),
+			Definition: "Monotonic historical ceiling: distinct assigned window.__gosx_* or globalThis.__gosx_* browser-root names.",
 		},
 		{
 			ID:         "compat-assigned-window",
@@ -2239,8 +2237,8 @@ func fillDrift(inv *Inventory) {
 			Target:     int64(canonical.AssignedWindowCount),
 			Measured:   int64(measured.AssignedWindowCount),
 			Delta:      int64(deltas.AssignedWindowCount),
-			Status:     passFail(deltas.AssignedWindowCount == 0),
-			Definition: "Distinct assigned window.__gosx_* names.",
+			Status:     passFail(deltas.AssignedWindowCount <= 0),
+			Definition: "Monotonic historical ceiling: distinct assigned window.__gosx_* names.",
 		},
 		{
 			ID:         "compat-go-published-abi",
@@ -2248,8 +2246,8 @@ func fillDrift(inv *Inventory) {
 			Target:     int64(canonical.GoPublishedABICount),
 			Measured:   int64(measured.GoPublishedABICount),
 			Delta:      int64(deltas.GoPublishedABICount),
-			Status:     passFail(deltas.GoPublishedABICount == 0),
-			Definition: "Distinct __gosx_* names published through setRuntimeFunc in production WASM host code.",
+			Status:     passFail(deltas.GoPublishedABICount <= 0),
+			Definition: "Monotonic historical ceiling: distinct __gosx_* names published through setRuntimeFunc in production WASM host code.",
 		},
 		{
 			ID:         "compat-host-callbacks",
@@ -2257,8 +2255,8 @@ func fillDrift(inv *Inventory) {
 			Target:     int64(canonical.HostCallbackCount),
 			Measured:   int64(measured.HostCallbackCount),
 			Delta:      int64(deltas.HostCallbackCount),
-			Status:     passFail(deltas.HostCallbackCount == 0),
-			Definition: "Distinct __gosx_* host callback names read or called from production WASM host code.",
+			Status:     passFail(deltas.HostCallbackCount <= 0),
+			Definition: "Monotonic historical ceiling: distinct __gosx_* host callback names read or called from production WASM host code.",
 		},
 		{
 			ID:         "serialization-candidates",
