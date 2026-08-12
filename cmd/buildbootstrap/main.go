@@ -841,12 +841,16 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 // compacted map rides in as an inline sourceMappingURL data URL, and esbuild
 // emits the composed external map.
 func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
+	loader, err := esbuildLoaderForOutput(entry)
+	if err != nil {
+		return builtBundle{}, err
+	}
 	dataURL := "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(built.m))
 	input := built.code + "\n//# sourceMappingURL=" + dataURL
 	result := esbuild.Transform(input, esbuild.TransformOptions{
 		Charset:           esbuild.CharsetUTF8,
 		LegalComments:     esbuild.LegalCommentsNone,
-		Loader:            esbuild.LoaderJS,
+		Loader:            loader,
 		MinifyWhitespace:  true,
 		MinifyIdentifiers: true,
 		MinifySyntax:      true,
@@ -937,15 +941,19 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 			m:    minified.m,
 		}, nil
 	case "tdewolff":
-		minified, err := minifyTdewolff(built.code)
+		code, err := transpileTypedChunk(entry, built.code)
+		if err != nil {
+			return builtBundle{}, err
+		}
+		minified, err := minifyTdewolff(code)
 		if err != nil {
 			return builtBundle{}, fmt.Errorf("minify %s: %w", entry.name, err)
 		}
 		return builtBundle{
 			code: normalizeGeneratedCode(minified, entry.name+".map", debugSourcemaps),
-			// tdewolff cannot compose source maps; ship the compacted
-			// (pre-minify) map, which still carries accurate sources and
-			// sourcesContent.
+			// tdewolff cannot compose source maps. The pre-minify map keeps
+			// source names and contents. Typed mappings stop before type
+			// erasure, so the esbuild path remains the release default.
 			m: built.m,
 		}, nil
 	default:
