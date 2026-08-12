@@ -64,7 +64,13 @@ jobs:
       - name: Test, vet, and build
         run: |
           set -euo pipefail
-          go test ./...
+          # Keep release verification aligned with the CI package partition.
+          # cmd/gosx runs real TinyGo production builds and needs the explicit
+          # 15-minute Go timeout carried by test-cli; a plain `go test ./...`
+          # silently restores Go's 10-minute package timeout.
+          make test-ci-partitions
+          make test-unit
+          make test-cli
           # Generated Danmuji test cases run under go test; vet production files only.
           while IFS= read -r pkg; do
             dir="$(GOFLAGS=-buildvcs=false go list -f '{{.Dir}}' "${pkg}")"
