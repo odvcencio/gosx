@@ -14,11 +14,15 @@ func init() {
 				"description": "Server-authored motion presets with reduced-motion awareness.",
 				"tags":        []string{"animation", "motion", "transitions", "reduced-motion"},
 				"toc": []map[string]string{
-					{"href": "#motion-presets", "label": "Motion Presets"},
-					{"href": "#viewport-triggers", "label": "Viewport Triggers"},
+					{"href": "#dom-motion", "label": "DOM Motion"},
+					{"href": "#presets", "label": "Presets"},
+					{"href": "#triggers", "label": "Triggers"},
 					{"href": "#reduced-motion", "label": "Reduced Motion"},
-					{"href": "#custom-timing", "label": "Custom Timing"},
+					{"href": "#timing", "label": "Timing"},
+					{"href": "#bootstrap", "label": "Bootstrap"},
 				},
+				"motionSample":  "node := ctx.Motion(server.MotionProps{\n\tTag:      \"article\",\n\tPreset:   server.MotionPresetSlideUp,\n\tTrigger:  server.MotionTriggerView,\n\tDuration: 260,\n\tDelay:    40,\n},\n\tgosx.Attrs(gosx.Attr(\"class\", \"result-card\")),\n\tgosx.Text(\"Ready\"),\n)",
+				"reducedSample": "respect := false\nnode := ctx.Motion(server.MotionProps{\n\tPreset:               server.MotionPresetFade,\n\tRespectReducedMotion: &respect,\n}, content)",
 			}, nil
 		},
 	})

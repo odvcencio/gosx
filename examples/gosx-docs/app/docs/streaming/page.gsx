@@ -1,7 +1,7 @@
 package docs
 
 func Page() Node {
-	return <div>
+	return <article class="prose">
 		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
 			<div id={docScene.SurfaceID} class="doc-scene__surface">
 				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
@@ -10,9 +10,7 @@ func Page() Node {
 			</div>
 			<div class="doc-scene__teaching">
 				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
-					{docScene.Title}
-				</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
 				<p class="doc-scene__summary">{docScene.Summary}</p>
 				<dl class="doc-scene__facts">
 					<div>
@@ -24,165 +22,60 @@ func Page() Node {
 						<dd>{docScene.InteractionHint}</dd>
 					</div>
 				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
-					{docScene.DemoLabel}
-				</a>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
 			</div>
 		</section>
-		<section id="deferred-regions">
-			<h2>Deferred Regions</h2>
-			<p>
-				A deferred region is a portion of the page that renders after the initial HTML shell is flushed to the browser.
-				<span class="inline-code">ctx.Defer()</span>
-				marks a node as deferred: the server emits a fallback immediately, continues flushing the rest of the page, and then streams the resolved content into the live DOM as the resolver function completes.
+		<div class="page-topper">
+			<span class="eyebrow">Progressive server response</span>
+			<p class="lede">
+				Deferred boundaries render useful fallback HTML in the shell, then resolve concurrently and stream replacement templates as their server work completes.
 			</p>
-			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    deferred := ctx.Defer(
-	        gosx.El("p", gosx.Text("Loading...")),   // fallback
-	        func() (gosx.Node, error) {              // resolver
-	            data, err := fetchSlowData()
-	            if err != nil {
-	                return nil, err
-	            }
-	            return renderData(data), nil
-	        },
-	    )
-	    return map[string]any{"region": deferred}, nil
-	}`)}
-			<p>
-				The deferred node can be placed anywhere in the template. In the
-				<span class="inline-code">.gsx</span>
-				file it is injected like any other data value:
-			</p>
-			{CodeBlock("gosx", `func Page() Node {
-	    return <article>
-	        <h1>My page</h1>
-	        {data.region}
-	    </article>
-	}`)}
-			<p>
-				The live demo below uses a 200ms artificial delay to show the fallback and resolved states:
-			</p>
-			{streamDemo}
-		</section>
-		<section id="fallback-content">
-			<h2>Fallback Content</h2>
-			<p>
-				The first argument to
-				<span class="inline-code">ctx.Defer()</span>
-				is the fallback node. It must be a complete, visible HTML subtree that is meaningful without the resolved content. Design fallbacks so the page is usable while deferred sections load.
-			</p>
-			<p>
-				<span class="inline-code">ctx.DeferWithOptions()</span>
-				adds a wrapping element with controllable attributes:
-			</p>
-			{CodeBlock("go", `deferred := ctx.DeferWithOptions(server.DeferredOptions{
-	    Class: "card skeleton",
-	    ID:    "slow-section",
-	},
-	    fallbackNode,
-	    resolverFunc,
-	)`)}
-			<p>
-				The options apply to the outer wrapper element that GoSX emits around both the fallback slot and the stream target. Setting a stable
-				<span class="inline-code">ID</span>
-				is useful when you want to target the wrapper from CSS or tests.
-			</p>
-			<section class="callout">
-				<strong>Fallback must render without data</strong>
-				<p>
-					Fallback nodes are rendered synchronously as part of the initial flush. They cannot depend on the deferred resolver's result. Write them as skeleton states, spinners, or placeholder copy.
-				</p>
-			</section>
-		</section>
-		<section id="streaming-response">
-			<h2>Streaming Response</h2>
-			<p>
-				When a page contains one or more deferred regions, GoSX switches the HTTP response to chunked transfer encoding. The server flushes:
-			</p>
-			<ol>
-				<li>
-					The document head and opening body markup.
-				</li>
-				<li>
-					All synchronously-rendered HTML including fallback slots.
-				</li>
-				<li>
-					A small inline script that the client uses to locate and replace each slot.
-				</li>
-				<li>
-					As each resolver completes, a chunk containing the resolved HTML and a swap script.
-				</li>
-				<li>
-					The closing body tag once all resolvers have finished.
-				</li>
-			</ol>
-			<p>
-				The browser receives and renders each chunk as it arrives. Time-to-first-byte is the server processing time for the synchronous shell, regardless of how long deferred resolvers take.
-			</p>
-			{CodeBlock("go", `// resolvers run concurrently — the slowest one determines total page time
-	slow := ctx.Defer(skeletonNode, func() (gosx.Node, error) {
-	    time.Sleep(800 * time.Millisecond) // slow database call
-	    return resolvedNode, nil
-	})
-	fast := ctx.Defer(skeletonNode, func() (gosx.Node, error) {
-	    time.Sleep(60 * time.Millisecond) // fast cache hit
-	    return resolvedNode, nil
-	})`)}
-			<p>
-				GoSX runs deferred resolvers concurrently. In the example above, the page takes roughly 800ms total, not 860ms, because the fast region resolves and streams while the slow region is still working.
-			</p>
-		</section>
-		<section id="use-cases">
-			<h2>Use Cases</h2>
-			<p>
-				Use streaming when part of the page is fast to render and another part depends on a slow or uncertain data source. Common patterns:
-			</p>
-			<ul>
-				<li>
-					<strong>Slow database queries.</strong>
-					Render the page chrome and navigation synchronously while a heavy aggregation query runs in a deferred region.
-				</li>
-				<li>
-					<strong>
-						Personalized content after a static shell.
-					</strong>
-					Cache the static outer layout at the CDN edge. Defer the user-specific section so the personalized HTML streams from the origin.
-				</li>
-				<li>
-					<strong>Third-party API calls.</strong>
-					Embed inventory, pricing, or availability data that lives behind a slow external API without blocking the page chrome.
-				</li>
-				<li>
-					<strong>Progressive disclosure.</strong>
-					Stream supplementary content (related posts, recommendations) after the primary content is visible. Users can start reading while the page finishes.
-				</li>
-			</ul>
-			<section class="callout">
-				<strong>When not to use streaming</strong>
-				<p>
-					If the entire page depends on a single fast query, streaming adds complexity without benefit. Prefer a standard synchronous
-					<span class="inline-code">Load</span>
-					handler unless you have measured a real benefit from deferring specific regions.
-				</p>
-			</section>
-			{CodeBlock("go", `// good candidate: product shell is fast, reviews are slow
-	func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
-	    product, err := db.GetProduct(id)    // fast, cached
-	    if err != nil {
-	        return nil, err
-	    }
-	    reviews := ctx.Defer(
-	        gosx.El("p", gosx.Text("Loading reviews...")),
-	        func() (gosx.Node, error) {
-	            return renderReviews(db.GetReviews(id)) // slow, not cached
-	        },
-	    )
-	    return map[string]any{
-	        "product": product,
-	        "reviews": reviews,
-	    }, nil
-	}`)}
-		</section>
-	</div>
+		</div>
+		<h1 id="deferred-regions">Deferred regions</h1>
+		<CodeBlock lang="go" source={data.deferSample} />
+		<p>
+			<span class="inline-code">ctx.Defer</span>
+			registers a page-scoped resolver and returns its placeholder node.
+			<span class="inline-code">ctx.Suspense</span>
+			has the same completion behavior but marks the placeholder as a component boundary for tooling.
+		</p>
+		<CodeBlock lang="go" source={data.optionsSample} />
+		<p>
+			Options can choose a stable ID, placeholder tag, class, and boundary label. IDs must remain unique in the rendered document.
+		</p>
+		<h2 id="fallback-content">Fallback content</h2>
+		<p>
+			The fallback is real server-rendered HTML, not an empty client-only marker. Make it useful and accessible: reserve layout space, label loading state, and avoid hiding content required to understand the page.
+		</p>
+		{streamDemo}
+		<h2 id="completion-order">Shell flush and completion order</h2>
+		<p>
+			When the response writer supports
+			<span class="inline-code">http.Flusher</span>
+			, GoSX writes and flushes the initial shell, runs registered resolvers in separate goroutines, and writes each chunk in completion order. A slow region does not hold a faster sibling behind it.
+		</p>
+		<p>
+			Each chunk contains a template and a small replacement script. The runtime facade performs the managed fragment replacement when available, with a native DOM replacement fallback. Go's HTTP server and middleware determine the actual transfer framing; applications should not depend on a hard-coded
+			<span class="inline-code">Transfer-Encoding</span>
+			claim.
+		</p>
+		<h2 id="errors-and-csp">Errors and CSP</h2>
+		<p>
+			If a resolver returns an error or panics, GoSX streams a
+			<span class="inline-code">data-gosx-stream-error</span>
+			block instead of abandoning the remaining boundaries. Keep user-facing errors sanitized; the default block includes the returned error text.
+		</p>
+		<p>
+			Under a nonce-based Content Security Policy, streamed scripts receive the same request nonce as the document. Custom response code must carry the page's deferred registry and nonce into
+			<span class="inline-code">server.WriteHTML</span>
+			.
+		</p>
+		<h2 id="caching">Caching</h2>
+		<p>
+			A streamed response is incomplete when cache headers are decided, so it does not receive the same body-derived validator path as a fully buffered page. Shared-cache policy also removes per-request nonce and request identity from the representation.
+		</p>
+		<p>
+			Do not mark personalized deferred output publicly cacheable. Choose cache policy from the complete authorization and representation model, not merely from the shell.
+		</p>
+	</article>
 }
