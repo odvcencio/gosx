@@ -11,6 +11,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/action"
+	clientvm "m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/examples/gosx-docs/app/demos/democtl"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
@@ -50,9 +51,14 @@ type CompileResult struct {
 	// "Page".
 	Component string `json:"component"`
 
-	// HTML is the SSR placeholder the client runtime hydrates. In this task
-	// it is a static hydration target; future tasks may enrich it.
+	// HTML is a static hydration target kept for API compatibility. Authored
+	// markup never enters this string; Preview carries the initial DOM as data.
 	HTML string `json:"html"`
+
+	// Preview is the program's resolved initial tree. The browser materializes
+	// it with createElement/createTextNode after enforcing the same constrained
+	// tag and attribute policy used before program encoding.
+	Preview PlaygroundPreviewTree `json:"preview"`
 
 	// Program is the binary-encoded island VM program. Callers are expected
 	// to base64 the bytes when they travel over JSON.
@@ -148,15 +154,24 @@ func compileSourceWithCountsImpl(source []byte) (CompileResult, int, int, error)
 
 	nNodes := len(island.Nodes)
 	nExprs := len(island.Exprs)
+	if err := validatePlaygroundProgram(island); err != nil {
+		return CompileResult{
+			Diagnostics: []Diagnostic{{Message: err.Error()}},
+			NodeCount:   nNodes,
+			ExprCount:   nExprs,
+		}, nNodes, nExprs, nil
+	}
 
 	bin, err := program.EncodeBinary(island)
 	if err != nil {
 		return CompileResult{}, nNodes, nExprs, fmt.Errorf("encode island program: %w", err)
 	}
 
+	preview := makePlaygroundPreview(clientvm.ResolveInitialTree(island, `{}`))
 	return CompileResult{
 		Component: prog.Components[0].Name,
 		HTML:      renderPlaygroundSSR(prog.Components[0].Name),
+		Preview:   preview,
 		Program:   bin,
 		NodeCount: nNodes,
 		ExprCount: nExprs,
@@ -172,9 +187,8 @@ func CompileSource(source []byte) (CompileResult, error) {
 	return result, err
 }
 
-// renderPlaygroundSSR emits the minimal hydration target element. The client
-// replaces its children when the new program is hydrated. We keep the element
-// slot stable across recompiles so the hydrator can find it.
+// renderPlaygroundSSR emits only a static hydration target. Authored markup is
+// transported in Preview as structured data and never parsed as HTML.
 func renderPlaygroundSSR(componentName string) string {
 	return `<div data-gosx-island="playground-preview" data-component="` + componentName + `"></div>`
 }
@@ -377,6 +391,7 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		return ctx.Success("", map[string]any{
 			"component":   result.Component,
 			"html":        result.HTML,
+			"preview":     result.Preview,
 			"program":     base64.StdEncoding.EncodeToString(result.Program),
 			"diagnostics": result.Diagnostics,
 			"nodeCount":   result.NodeCount,
@@ -417,6 +432,7 @@ func CompileAction(ctx *action.Context) error {
 	return ctx.Success("", map[string]any{
 		"component":   result.Component,
 		"html":        result.HTML,
+		"preview":     result.Preview,
 		"program":     base64.StdEncoding.EncodeToString(result.Program),
 		"diagnostics": result.Diagnostics,
 		"nodeCount":   result.NodeCount,

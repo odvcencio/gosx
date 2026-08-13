@@ -301,7 +301,10 @@ func startBuiltFixture(t *testing.T, dist string, port int) *logBuffer {
 	logs := &logBuffer{}
 	cmd := exec.Command(filepath.Join(dist, "run.sh"))
 	cmd.Dir = dist
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("PORT=%d", port),
+		"SESSION_SECRET=gosx-e2e-session-secret",
+	)
 	cmd.Stdout = logs
 	cmd.Stderr = logs
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
