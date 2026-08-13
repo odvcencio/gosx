@@ -43,6 +43,13 @@ if [ ! -f "$transaction_lib" ]; then
 fi
 # shellcheck source=deploy-gosx-docs-transaction.sh
 . "$transaction_lib"
+public_lib="${repo_root}/scripts/deploy-gosx-docs-public.sh"
+if [ ! -f "$public_lib" ]; then
+	echo "gosx docs deploy: public verification helper is missing: ${public_lib}" >&2
+	exit 1
+fi
+# shellcheck source=deploy-gosx-docs-public.sh
+. "$public_lib"
 
 host_goos="$($go_cmd env GOHOSTOS)"
 host_goarch="$($go_cmd env GOHOSTARCH)"
@@ -176,7 +183,7 @@ on_exit() {
 	trap - EXIT INT TERM
 	if [ "$exit_status" -ne 0 ] && [ "${rollback_armed:-0}" -eq 1 ]; then
 		if ! rollback; then
-			echo "gosx docs deploy: automatic rollback did not restore the captured template" >&2
+			echo "gosx docs deploy: automatic rollback could not be fully verified" >&2
 		fi
 	fi
 	cleanup
@@ -374,7 +381,9 @@ rollback() {
 		echo "gosx docs deploy: rollback state is not the captured release; image is ${rolled_back_image:-unavailable}, expected ${previous_image}" >&2
 		return 1
 	fi
-	if ! "$curl_cmd" --fail --silent --show-error --connect-timeout 10 --max-time 30 "${public_url}/healthz" >/dev/null; then
+	if ! gosx_docs_wait_for_public_health "$curl_cmd" "$public_url" \
+		"${GOSX_DOCS_ROLLBACK_HEALTH_ATTEMPTS:-6}" \
+		"${GOSX_DOCS_ROLLBACK_HEALTH_DELAY_SECONDS:-2}"; then
 		return 1
 	fi
 	return 0
@@ -572,6 +581,9 @@ if [ "$identity_ok" -ne 1 ]; then
 	fi
 	exit 1
 fi
+
+CURL="$curl_cmd" scripts/wait-gosx-docs-release.sh "$public_url" \
+	"$framework_version" "$revision" "$built_at" "$public_url"
 
 GOSX_DOCS_EXPECT_FRAMEWORK_VERSION="$framework_version" \
 	GOSX_DOCS_EXPECT_REVISION="$revision" \
