@@ -64,7 +64,7 @@ component Field(props: FieldProps) {
 	</label>
 }`,
 				"commandsSample": `gosx check app/page.gsx
-gosx render app/page.gsx
+gosx render app/page.gsx Page
 gosx dev
 gosx build .
 gosx export .`,

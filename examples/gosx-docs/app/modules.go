@@ -68,10 +68,7 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 	metadata := opts.Metadata
 	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-		meta := server.Metadata{
-			Title:       server.Title{Absolute: title + " | GoSX"},
-			Description: description,
-		}
+		meta := baseDocsMetadata(title, description, docsCanonicalPath(ctx, page))
 		if metadata == nil {
 			return meta, nil
 		}
@@ -82,7 +79,8 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 		return mergeDocsMetadata(meta, extra), nil
 	}
 	opts.Bindings = func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
-		bound := defaultDocsBindings()
+		bound := defaultDocsBindings(ctx, page)
+		bound.Values["docsSectionClassName"] = docsSectionClassName(data)
 		if bindings == nil {
 			return bound
 		}
@@ -98,10 +96,7 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 	metaMetadata := opts.Metadata
 	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-		meta := server.Metadata{
-			Title:       server.Title{Absolute: title + " | GoSX"},
-			Description: description,
-		}
+		meta := baseDocsMetadata(title, description, docsCanonicalPath(ctx, page))
 		if metaMetadata == nil {
 			return meta, nil
 		}
@@ -112,7 +107,8 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 		return mergeDocsMetadata(meta, extra), nil
 	}
 	opts.Bindings = func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
-		bound := defaultDocsBindings()
+		bound := defaultDocsBindings(ctx, page)
+		bound.Values["docsSectionClassName"] = docsSectionClassName(data)
 		if bindings == nil {
 			return bound
 		}
@@ -121,6 +117,15 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 	if err := route.RegisterFileModuleCaller(1, opts); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func docsSectionClassName(data any) string {
+	className := "docs-section"
+	values, ok := data.(map[string]any)
+	if ok && values["mode"] == "light" {
+		className += " light"
+	}
+	return className
 }
 
 func mergeDocsMetadata(base, extra server.Metadata) server.Metadata {
@@ -173,8 +178,71 @@ func isZeroDocsTitle(title server.Title) bool {
 	return title.Absolute == "" && title.Default == "" && title.Template == ""
 }
 
-func defaultDocsBindings() route.FileTemplateBindings {
+func baseDocsMetadata(title, description, canonicalPath string) server.Metadata {
+	canonical := PublicSiteURL(canonicalPath)
+	return server.Metadata{
+		Title:        server.Title{Absolute: title + " | GoSX"},
+		Description:  description,
+		MetadataBase: PublicBaseURL(),
+		Alternates:   &server.Alternates{Canonical: canonical},
+		Manifest:     "/site.webmanifest",
+		Icons: &server.Icons{Icon: []server.IconAsset{
+			{URL: "/favicon.svg", Type: "image/svg+xml", Sizes: "any"},
+		}},
+		ThemeColor: []server.ThemeColor{
+			{Color: "#000000", Media: "(prefers-color-scheme: dark)"},
+			{Color: "#fafaf8", Media: "(prefers-color-scheme: light)"},
+		},
+		OpenGraph: &server.OpenGraph{
+			Type:        "website",
+			URL:         canonical,
+			SiteName:    "GoSX",
+			Locale:      "en_US",
+			Title:       title,
+			Description: description,
+		},
+		Twitter: &server.Twitter{
+			Card:        "summary",
+			Title:       title,
+			Description: description,
+		},
+		JSONLD: []any{map[string]any{
+			"@context":    "https://schema.org",
+			"@type":       "WebPage",
+			"headline":    title,
+			"description": description,
+			"url":         canonical,
+			"isPartOf": map[string]any{
+				"@type": "WebSite",
+				"name":  "GoSX Documentation",
+				"url":   PublicBaseURL(),
+			},
+		}},
+	}
+}
+
+func docsCanonicalPath(ctx *route.RouteContext, page route.FilePage) string {
+	if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path != "" {
+		return ctx.Request.URL.Path
+	}
+	if page.RoutePath != "" {
+		return page.RoutePath
+	}
+	return "/"
+}
+
+func defaultDocsBindings(ctx *route.RouteContext, page route.FilePage) route.FileTemplateBindings {
+	currentPath := page.RoutePath
+	if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path != "" {
+		currentPath = ctx.Request.URL.Path
+	}
 	return route.FileTemplateBindings{
+		Values: map[string]any{
+			"docsNavigation":     DocsNavigation(currentPath),
+			"docsIndexClassName": DocsIndexClassName(currentPath),
+			"docsIndexCurrent":   DocsIndexAriaCurrent(currentPath),
+			"site":               SiteBuildInfo(),
+		},
 		Funcs: map[string]any{
 			"CodeBlock":     CodeBlock,
 			"StatCard":      StatCard,

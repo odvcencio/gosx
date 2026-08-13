@@ -8,7 +8,7 @@ func Page() Node {
 				TextBlock can emit browser-refined layout metadata or render an approximate server-only line plan. The server estimator does not parse font files or claim exact browser metrics.
 			</p>
 		</div>
-		<h1 id="textblock">TextBlock</h1>
+		<h2 id="textblock">TextBlock</h2>
 		<CodeBlock lang="go" source={data.blockSample} />
 		<p>
 			The default

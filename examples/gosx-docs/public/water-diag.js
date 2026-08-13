@@ -60,9 +60,33 @@
     }
 
     function row(label, value, warn) {
-      return '<div style="display:flex;justify-content:space-between;gap:14px">' +
-        '<span style="opacity:.62">' + label + "</span>" +
-        '<span style="color:' + (warn ? "#ff8f6b" : "#e8f0fa") + '">' + value + "</span></div>";
+      var line = document.createElement("div");
+      line.style.cssText = "display:flex;justify-content:space-between;gap:14px";
+      var name = document.createElement("span");
+      name.style.opacity = ".62";
+      name.textContent = String(label);
+      var result = document.createElement("span");
+      result.style.color = warn ? "#ff8f6b" : "#e8f0fa";
+      result.textContent = String(value);
+      line.appendChild(name);
+      line.appendChild(result);
+      return line;
+    }
+
+    function block(text, cssText) {
+      var element = document.createElement("div");
+      element.style.cssText = cssText || "";
+      element.textContent = String(text);
+      return element;
+    }
+
+    function spacer() {
+      return block("", "height:6px");
+    }
+
+    function replaceBox(children) {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      children.forEach(function (child) { box.appendChild(child); });
     }
 
     function paint() {
@@ -83,74 +107,75 @@
         .filter(function (k) { return q.has(k); })
         .map(function (k) { return k + "=" + q.get(k); });
 
-      box.innerHTML =
-        '<div style="font-weight:600;margin-bottom:6px;letter-spacing:.04em">WATER · PERF DIAG</div>' +
-        row("fps (delivered)", fps.toFixed(1), fps < 50) +
-        row("frame median", med.toFixed(1) + " ms", med > 20) +
-        row("frame p95", p95.toFixed(1) + " ms", p95 > 33) +
-        '<div style="height:6px"></div>' +
-        row("runtime says", reported.toFixed(1) + " ms", Math.abs(reported - med) > med * 0.4) +
-        row("· cpu encode", cpuMS.toFixed(1) + " ms", false) +
-        row("· interval", intervalMS.toFixed(1) + " ms", false) +
-        '<div style="height:6px"></div>' +
-        row("backing", backingMP.toFixed(3) + " MP", backingMP > 0.5) +
-        row("dpr (device)", String(window.devicePixelRatio), false) +
-        row("dpr (scene)", attr("pixel-ratio") || "?", false) +
-        row("backend", attr("backend") || "?", false) +
-        row("adapter", attr("webgpu-adapter") || "-", false) +
-        row("quality tier", attr("quality-tier") || "?", attr("quality-tier") !== "full") +
-        '<div style="height:6px"></div>' +
+      var children = [
+        block("WATER · PERF DIAG", "font-weight:600;margin-bottom:6px;letter-spacing:.04em"),
+        row("fps (delivered)", fps.toFixed(1), fps < 50),
+        row("frame median", med.toFixed(1) + " ms", med > 20),
+        row("frame p95", p95.toFixed(1) + " ms", p95 > 33),
+        spacer(),
+        row("runtime says", reported.toFixed(1) + " ms", Math.abs(reported - med) > med * 0.4),
+        row("· cpu encode", cpuMS.toFixed(1) + " ms", false),
+        row("· interval", intervalMS.toFixed(1) + " ms", false),
+        spacer(),
+        row("backing", backingMP.toFixed(3) + " MP", backingMP > 0.5),
+        row("dpr (device)", String(window.devicePixelRatio), false),
+        row("dpr (scene)", attr("pixel-ratio") || "?", false),
+        row("backend", attr("backend") || "?", false),
+        row("adapter", attr("webgpu-adapter") || "-", false),
+        row("quality tier", attr("quality-tier") || "?", attr("quality-tier") !== "full"),
+        spacer(),
         row("water passes", attr("webgpu-water-selena-surface-passes") + " surface / " +
-          attr("webgpu-water-caustic-passes") + " caustic", false) +
-        row("water verts", attr("webgpu-water-draw-vertices") || "-", false) +
+          attr("webgpu-water-caustic-passes") + " caustic", false),
+        row("water verts", attr("webgpu-water-draw-vertices") || "-", false),
         // If the Selena surface pipeline fails validation the renderer silently falls back
         // to the built-in shader, which draws the FULL simulation-resolution mesh and reads
         // the heightfield from the storage buffer -- losing both optimisations at once and
         // still paying for the state-texture copy. Silent means unmeasurable, so say it.
         row("selena surface", (attr("webgpu-water-selena-surface-passes") || "0") + " passes",
-          num(attr("webgpu-water-selena-surface-passes")) === 0) +
+          num(attr("webgpu-water-selena-surface-passes")) === 0),
         row("surface FALLBACK", (attr("webgpu-water-authored-surface-fallbacks") || "0") +
           (attr("webgpu-water-authored-surface-fallback-reason")
             ? " · " + attr("webgpu-water-authored-surface-fallback-reason").slice(0, 40)
             : ""),
-          num(attr("webgpu-water-authored-surface-fallbacks")) > 0) +
+          num(attr("webgpu-water-authored-surface-fallbacks")) > 0),
         row("mesh res (used)", attr("webgpu-water-surface-mesh-resolution") || "-",
-          Boolean(q.get("meshRes")) && attr("webgpu-water-surface-mesh-resolution") !== q.get("meshRes")) +
+          Boolean(q.get("meshRes")) && attr("webgpu-water-surface-mesh-resolution") !== q.get("meshRes")),
         row("duck RTT", (attr("webgpu-water-object-texture-mesh-passes") || "0") + " pass · " +
-          (attr("webgpu-water-object-texture-mesh-draw-calls") || "0") + " draw", false) +
+          (attr("webgpu-water-object-texture-mesh-draw-calls") || "0") + " draw", false),
         row("duck RTT size", (attr("webgpu-water-object-texture-width") || "0") + "x" +
-          (attr("webgpu-water-object-texture-height") || "0"), false) +
-        row("retained cadence", "1 / " + (attr("webgpu-water-expensive-pass-cadence") || "1") + " frames", false) +
-        row("duck Selena", (attr("webgpu-water-object-texture-selena-draw-calls") || "0") + " draw", false) +
+          (attr("webgpu-water-object-texture-height") || "0"), false),
+        row("retained cadence", "1 / " + (attr("webgpu-water-expensive-pass-cadence") || "1") + " frames", false),
+        row("duck Selena", (attr("webgpu-water-object-texture-selena-draw-calls") || "0") + " draw", false),
         row("duck RTT fallback", attr("webgpu-water-object-texture-fallback-passes") || "0",
-          num(attr("webgpu-water-object-texture-fallback-passes")) > 0) +
-        row("compute", attr("webgpu-water-compute-dispatches") + " dispatch", false) +
+          num(attr("webgpu-water-object-texture-fallback-passes")) > 0),
+        row("compute", attr("webgpu-water-compute-dispatches") + " dispatch", false),
         // M5/M6 (water-parity-campaign): at-rest gating retains the last
         // rendered sim/normal/state-copy/caustics textures once the
         // heightfield settles instead of recomputing a steady state every
         // frame, and the uniform-upload dedup skips the GPU writeBuffer call
         // when nothing but the volatile time/frameIndex header changed.
         row("water at rest", (Number(attr("webgpu-water-at-rest-systems")) > 0 ? "yes" : "no") +
-          " · " + (attr("webgpu-water-rest-substeps-skipped") || "0") + " substeps skipped", false) +
+          " · " + (attr("webgpu-water-rest-substeps-skipped") || "0") + " substeps skipped", false),
         row("uniform uploads", (attr("webgpu-water-uniform-uploads") || "0") + " sent / " +
-          (attr("webgpu-water-uniform-uploads-skipped") || "0") + " skipped", false) +
-        '<div style="height:6px"></div>' +
-        row("canvas", lastW + "x" + lastH, false) +
-        row("resizes/sec", String(resizeWindow.length), resizeWindow.length > 0) +
-        row("resizes total", String(resizeCount), resizeCount > 3) +
-        row("LoAF worst", loaf.maxMS.toFixed(0) + " ms", loaf.maxMS > 30) +
-        row("· script", loaf.scriptMS.toFixed(0) + " ms", false) +
-        row("· render", loaf.renderMS.toFixed(0) + " ms", false) +
-        '<div style="height:6px"></div>' +
+          (attr("webgpu-water-uniform-uploads-skipped") || "0") + " skipped", false),
+        spacer(),
+        row("canvas", lastW + "x" + lastH, false),
+        row("resizes/sec", String(resizeWindow.length), resizeWindow.length > 0),
+        row("resizes total", String(resizeCount), resizeCount > 3),
+        row("LoAF worst", loaf.maxMS.toFixed(0) + " ms", loaf.maxMS > 30),
+        row("· script", loaf.scriptMS.toFixed(0) + " ms", false),
+        row("· render", loaf.renderMS.toFixed(0) + " ms", false),
+        spacer(),
         row("GPU work", attr("webgpu-gpu-ms")
           ? attr("webgpu-gpu-ms") + " ms"
           : (attr("webgpu-gpu-timing") === "timer-unavailable"
             ? "active · timer unavailable"
-            : (attr("webgpu-gpu-timing") || "unavailable")), num(attr("webgpu-gpu-ms")) > 20) +
-        (knobs.length
-          ? '<div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,.12);opacity:.7">' +
-            knobs.join(" · ") + "</div>"
-          : '<div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,.12);opacity:.5">stock settings</div>');
+            : (attr("webgpu-gpu-timing") || "unavailable")), num(attr("webgpu-gpu-ms")) > 20),
+        block(knobs.length ? knobs.join(" · ") : "stock settings",
+          "margin-top:7px;padding-top:6px;border-top:1px solid rgba(255,255,255,.12);opacity:" +
+          (knobs.length ? ".7" : ".5")),
+      ];
+      replaceBox(children);
     }
 
     // Canvas-size churn. This overlay was written while chasing a stall where

@@ -31,7 +31,7 @@ func Page() Node {
 				The server motion primitive emits semantic HTML and a small set of bootstrap-managed transition attributes. Reduced-motion respect is the default.
 			</p>
 		</div>
-		<h1 id="dom-motion">DOM motion</h1>
+		<h2 id="dom-motion">DOM motion</h2>
 		<CodeBlock lang="go" source={data.motionSample} />
 		<p>
 			Use

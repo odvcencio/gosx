@@ -317,6 +317,18 @@ func TestHTMLDocument(t *testing.T) {
 	}
 }
 
+func TestHTMLDocumentWithLanguage(t *testing.T) {
+	doc := HTMLDocumentWithLanguage("English Docs", " en-US ", gosx.Text(""), gosx.Text("hello"))
+	html := gosx.RenderHTML(doc)
+
+	if !strings.Contains(html, `<html data-gosx-document="true" lang="en-US">`) {
+		t.Fatalf("expected language on the html element, got %q", html)
+	}
+	if withEmpty, plain := gosx.RenderHTML(HTMLDocumentWithLanguage("Docs", "", gosx.Text(""), gosx.Text("body"))), gosx.RenderHTML(HTMLDocument("Docs", gosx.Text(""), gosx.Text("body"))); withEmpty != plain {
+		t.Fatalf("expected empty language document to match plain output")
+	}
+}
+
 func TestResolveListenAddrUsesPortEnv(t *testing.T) {
 	prev := os.Getenv("PORT")
 	t.Cleanup(func() {
@@ -2335,6 +2347,24 @@ func TestAppServesPublicFilesAtRoot(t *testing.T) {
 	}
 	if got := w.Header().Get("Cache-Control"); got != "public, max-age=0, must-revalidate" {
 		t.Fatalf("unexpected public asset cache-control %q", got)
+	}
+}
+
+func TestAppServesWebManifestWithStandardContentType(t *testing.T) {
+	publicDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(publicDir, "site.webmanifest"), []byte(`{"name":"GoSX"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetPublicDir(publicDir)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/site.webmanifest", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/manifest+json; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
 	}
 }
 

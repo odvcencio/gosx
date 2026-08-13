@@ -15,6 +15,10 @@ var sim *Sim
 
 func init() {
 	Hub = hub.New("fluid")
+	Hub.MaxClients = 64
+	Hub.RequireOrigin = true
+	Hub.MaxMessagesPerSecond = 10
+	Hub.MaxMessageBurst = 20
 	sim = NewSim(Hub)
 	sim.Start()
 

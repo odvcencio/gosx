@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos test-docs-deploy perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -341,24 +341,31 @@ build-runtime:
 #      go.mod contains ANY replace directive; this is what made v0.27.0 a bad tag.
 #   3. tracked-filename scan - a stray file with a shell-redirect-style name broke
 #      Go module zip creation and forced the v0.29.0 retraction.
-#   4. module-zip smoke (`git archive --format=zip`) - reproduces the exact
+#   4. docs deploy transaction - prevents an overlapping deployment or rollback
+#      from overwriting a newer successful docs release.
+#   5. module-zip smoke (`git archive --format=zip`) - reproduces the exact
 #      operation that broke v0.29.0 so a zip-breaking commit fails fast.
+test-docs-deploy:
+	sh scripts/deploy-gosx-docs-concurrency-test.sh
+
 release-gate:
-	@echo "release-gate (1/4): go run ./cmd/gosx release check"
+	@echo "release-gate (1/5): go run ./cmd/gosx release check"
 	$(GO) run ./cmd/gosx release check
-	@echo "release-gate (2/4): go.mod replace-directive scan"
+	@echo "release-gate (2/5): go.mod replace-directive scan"
 	@if grep -E '^replace ' go.mod; then \
 		echo "release-gate: go.mod has a replace directive; 'go run mod@version' fails with any replace present (this is why v0.27.0 was a bad tag). Remove it before release."; \
 		exit 1; \
 	fi
-	@echo "release-gate (3/4): tracked-filename scan"
+	@echo "release-gate (3/5): tracked-filename scan"
 	@bad="$$(git ls-files | grep -E '[:"|<>?*[:cntrl:]]' || true)"; \
 	if [ -n "$$bad" ]; then \
 		echo "release-gate: tracked filenames contain characters Go's module zip format rejects (a file like this broke v0.29.0's module zip and forced its retraction):"; \
 		echo "$$bad"; \
 		exit 1; \
 	fi
-	@echo "release-gate (4/4): module-zip smoke (git archive --format=zip)"
+	@echo "release-gate (4/5): docs deploy transaction regression"
+	@$(MAKE) --no-print-directory test-docs-deploy
+	@echo "release-gate (5/5): module-zip smoke (git archive --format=zip)"
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 

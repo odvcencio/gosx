@@ -31,7 +31,7 @@ func Page() Node {
 				The Go signal package provides concurrent reactive values for Go code. Island source uses a related, compiler-recognized subset that becomes browser VM instructions.
 			</p>
 		</div>
-		<h1 id="go-signals">Go signals</h1>
+		<h2 id="go-signals">Go signals</h2>
 		<CodeBlock lang="go" source={data.basicSample} />
 		<p>
 			<span class="inline-code">signal.New</span>

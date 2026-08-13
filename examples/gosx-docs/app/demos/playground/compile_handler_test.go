@@ -341,6 +341,47 @@ func TestCompilerParseTimeout(t *testing.T) {
 	}
 }
 
+func TestCompilerTimeoutKeepsConcurrencySlotUntilWorkerExits(t *testing.T) {
+	orig := compileSourceWithCountsFn
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	compileSourceWithCountsFn = func(source []byte) (CompileResult, int, int, error) {
+		started <- struct{}{}
+		<-release
+		return CompileResult{}, 0, 0, nil
+	}
+	defer func() { compileSourceWithCountsFn = orig }()
+
+	limiter := democtl.NewLimiter(100, 1000)
+	c := newTestCompiler(t, limiter, func(cfg *CompileConfig) {
+		cfg.ParseTimeout = 20 * time.Millisecond
+		cfg.MaxConcurrent = 1
+	})
+
+	_, err := c.Compile("", []byte("first"))
+	if !errors.Is(err, ErrParseTimeout) {
+		t.Fatalf("first compile: expected ErrParseTimeout, got %v", err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("compile worker did not start")
+	}
+
+	if _, err := c.Compile("", []byte("second")); !errors.Is(err, ErrCompilerBusy) {
+		t.Fatalf("second compile while timed-out worker remains: got %v, want ErrCompilerBusy", err)
+	}
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for len(c.compileSlots) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := len(c.compileSlots); got != 0 {
+		t.Fatalf("worker slot count after release = %d, want 0", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Cache unit tests
 // ---------------------------------------------------------------------------
@@ -405,9 +446,9 @@ func TestClientIPFromRequestStripsPort(t *testing.T) {
 		{"ipv4 with port", "127.0.0.1:49352", "", "127.0.0.1"},
 		{"ipv4 different port same host", "127.0.0.1:49999", "", "127.0.0.1"},
 		{"ipv6 with port", "[::1]:49352", "", "::1"},
-		{"xff single", "10.0.0.1:80", "203.0.113.5", "203.0.113.5"},
-		{"xff chain takes first", "10.0.0.1:80", "203.0.113.5, 10.0.0.2", "203.0.113.5"},
-		{"xff with spaces", "10.0.0.1:80", " 203.0.113.5 , 10.0.0.2", "203.0.113.5"},
+		{"xff single ignored", "10.0.0.1:80", "203.0.113.5", "10.0.0.1"},
+		{"xff chain ignored", "10.0.0.1:80", "203.0.113.5, 10.0.0.2", "10.0.0.1"},
+		{"xff spaces ignored", "10.0.0.1:80", " 203.0.113.5 , 10.0.0.2", "10.0.0.1"},
 		{"no port fallback", "bare-host", "", "bare-host"},
 	}
 	for _, tc := range cases {

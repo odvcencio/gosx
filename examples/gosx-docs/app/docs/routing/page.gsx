@@ -31,7 +31,7 @@ func Page() Node {
 				GoSX discovers page and layout files, maps directory names to route patterns, and pairs each page with an optional request-aware server module.
 			</p>
 		</div>
-		<h1 id="file-routes">File routes</h1>
+		<h2 id="file-routes">File routes</h2>
 		<CodeBlock lang="text" source={data.treeSample} />
 		<p>
 			<span class="inline-code">page.gsx</span>

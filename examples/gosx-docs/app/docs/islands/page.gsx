@@ -31,7 +31,7 @@ func Page() Node {
 				An island is a named GSX component whose supported state, expressions, handlers, and markup are compiled into a program for GoSX's shared browser VM.
 			</p>
 		</div>
-		<h1 id="island-model">Island model</h1>
+		<h2 id="island-model">Island model</h2>
 		<p>
 			Server rendering remains responsible for the page and its ordinary HTML. Islands opt specific regions into client behavior. They do not grant arbitrary DOM access or a general Go runtime; engines are the unrestricted client-computation tier.
 		</p>

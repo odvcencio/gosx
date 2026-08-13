@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -34,7 +35,11 @@ func main() {
 	// Keep the Secure cookie flag, unless PUBLIC_URL serves plain HTTP. A
 	// local HTTP run needs the opt-out, because a browser drops a Secure
 	// cookie on a plain HTTP origin.
-	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{
+	sessionSecret, err := docsSessionSecret(publicBase, os.Getenv("SESSION_SECRET"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	sessions, err := session.New(sessionSecret, session.Options{
 		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
 	})
 	if err != nil {
@@ -42,39 +47,43 @@ func main() {
 	}
 	authn := auth.New(sessions, auth.Options{LoginPath: "/docs/auth"})
 	docsapp.BindAuth(authn)
-	magicLinks := authn.MagicLinks(auth.MagicLinkOptions{
-		Path: "/auth/magic-link",
-		// Pin the origin that carries the sign-in token. Without BaseURL a
-		// forged Host header could send the token to another site.
-		BaseURL:     publicBase,
-		SuccessPath: "/docs/auth",
-		FailurePath: "/docs/auth",
-		FlashKey:    "magicLink",
-		Resolver: auth.MagicLinkResolverFunc(func(_ context.Context, email string) (auth.User, error) {
-			return docsDemoUser(email), nil
-		}),
-	})
+	publicAuthDemos := !strings.HasPrefix(strings.ToLower(publicBase), "https://")
+	var magicLinks *auth.MagicLinks
+	var webauthn *auth.WebAuthn
+	if publicAuthDemos {
+		magicLinks = authn.MagicLinks(auth.MagicLinkOptions{
+			Path: "/auth/magic-link",
+			// Pin the origin that carries the sign-in token. Without BaseURL a
+			// forged Host header could send the token to another site.
+			BaseURL:     publicBase,
+			SuccessPath: "/docs/auth",
+			FailurePath: "/docs/auth",
+			FlashKey:    "magicLink",
+			Resolver: auth.MagicLinkResolverFunc(func(_ context.Context, email string) (auth.User, error) {
+				return docsDemoUser(email), nil
+			}),
+		})
+		webauthn = authn.WebAuthn(auth.WebAuthnOptions{
+			RPName:      "GoSX",
+			Origin:      publicBase,
+			SuccessPath: "/docs/auth",
+			FailurePath: "/docs/auth",
+			FlashKey:    "passkey",
+			Resolver: auth.WebAuthnResolverFunc(func(_ context.Context, login string) (auth.User, error) {
+				return docsDemoUser(login), nil
+			}),
+		})
+	}
 	docsapp.BindMagicLinks(magicLinks)
-	webauthn := authn.WebAuthn(auth.WebAuthnOptions{
-		RPName:      "GoSX",
-		Origin:      publicBase,
-		SuccessPath: "/docs/auth",
-		FailurePath: "/docs/auth",
-		FlashKey:    "passkey",
-		Resolver: auth.WebAuthnResolverFunc(func(_ context.Context, login string) (auth.User, error) {
-			return docsDemoUser(login), nil
-		}),
-	})
 	docsapp.BindWebAuthn(webauthn)
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
 		ctx.AddHead(server.NavigationScript())
-		ctx.AddHead(gosx.RawHTML(`<link rel="icon" href="data:,">`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>`))
-		return server.HTMLDocument(ctx.Title("GoSX"), ctx.Head(), body)
+		return server.HTMLDocumentWithLanguage(ctx.Title("GoSX"), "en", ctx.Head(), body)
 	})
 
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
@@ -91,6 +100,9 @@ func main() {
 	router.SetRevalidator(app.Revalidator())
 	app.EnableISR()
 	app.EnableNavigation()
+	app.Use(docsSecurityHeaders)
+	app.Use(canonicalDocsIndex)
+	app.Use(limitDocsRequestBodies(1 << 20))
 	app.Use(sessions.Middleware)
 	app.Use(authn.Middleware)
 	// CSRF-protect unsafe requests, but exempt the telemetry beacon: it is
@@ -100,7 +112,7 @@ func main() {
 	app.Use(func(next http.Handler) http.Handler {
 		protected := sessions.Protect(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == server.ClientEventsRoute {
+			if r.URL.Path == server.ClientEventsRoute || r.URL.Path == "/api/site/probe" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -108,18 +120,16 @@ func main() {
 		})
 	})
 	app.SetPublicDir(filepath.Join(root, "public"))
-	app.Mount("/auth/magic-link/request", magicLinks.RequestHandler())
-	app.Mount("/auth/magic-link", magicLinks.CallbackHandler())
-	app.Mount("/auth/webauthn/register/options", webauthn.RegisterOptionsHandler())
-	app.Mount("/auth/webauthn/register", webauthn.RegisterHandler())
-	app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
-	app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
-	// Only the bare /docs path redirects. A "GET /docs/" pattern would be a
-	// subtree match under Go's ServeMux, so it also matches /docs/getting-started
-	// — the redirect target itself — and every other page below /docs. Each of
-	// those then redirects to a target that redirects again, which the static
-	// export reports as "stopped after 10 redirects".
-	app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)
+	mountSiteDocuments(app, root)
+	configureProductionReadiness(app)
+	if publicAuthDemos {
+		app.Mount("/auth/magic-link/request", magicLinks.RequestHandler())
+		app.Mount("/auth/magic-link", magicLinks.CallbackHandler())
+		app.Mount("/auth/webauthn/register/options", webauthn.RegisterOptionsHandler())
+		app.Mount("/auth/webauthn/register", webauthn.RegisterHandler())
+		app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
+		app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
+	}
 	app.Mount("/demos/collab/ws", collab.Hub)
 	app.Mount("/demos/checkers/ws", checkers.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)
@@ -134,11 +144,33 @@ func main() {
 	log.Fatal(app.ListenAndServe(":" + port))
 }
 
+func limitDocsRequestBodies(maxBytes int64) server.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil && maxBytes > 0 && r.Method != http.MethodGet && r.Method != http.MethodHead {
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func getenv(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return fallback
+}
+
+func docsSessionSecret(publicBase, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		return value, nil
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(publicBase)), "https://") {
+		return "", fmt.Errorf("SESSION_SECRET is required for the public HTTPS docs deployment")
+	}
+	return "gosx-docs-session-secret", nil
 }
 
 func docsDemoUser(value string) auth.User {

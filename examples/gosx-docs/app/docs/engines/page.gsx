@@ -31,7 +31,7 @@ func Page() Node {
 				Engines mount browser work that does not fit the constrained island VM: background workers, owned surfaces, managed video, and dedicated Go/WASM modules.
 			</p>
 		</div>
-		<h1 id="engine-model">Engine model</h1>
+		<h2 id="engine-model">Engine model</h2>
 		<p>
 			An engine instance is described by
 			<span class="inline-code">engine.Config</span>

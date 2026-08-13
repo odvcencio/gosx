@@ -191,6 +191,69 @@ func TestHubOriginCheck(t *testing.T) {
 	}
 }
 
+func TestHubRequireOriginRejectsMissingAndAcceptsSameOrigin(t *testing.T) {
+	h := New("browser-only")
+	h.RequireOrigin = true
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	if conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil); err == nil {
+		conn.Close()
+		t.Fatal("expected browser-only hub to reject a missing Origin")
+	}
+
+	header := http.Header{"Origin": []string{server.URL}}
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("same-origin dial: %v", err)
+	}
+	conn.Close()
+}
+
+func TestHubInboundMessageRateClosesFloodingClient(t *testing.T) {
+	h := New("rate-limited")
+	h.MaxMessagesPerSecond = 1
+	h.MaxMessageBurst = 1
+	handled := make(chan struct{}, 2)
+	h.On("message", func(ctx *Context) { handled <- struct{}{} })
+	server := httptest.NewServer(h)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	readUntilEvent(t, conn, "__welcome")
+
+	if err := conn.WriteJSON(Message{Event: "message"}); err != nil {
+		t.Fatalf("write first message: %v", err)
+	}
+	if err := conn.WriteJSON(Message{Event: "message"}); err != nil {
+		t.Fatalf("write flooding message: %v", err)
+	}
+	select {
+	case <-handled:
+	case <-time.After(time.Second):
+		t.Fatal("first message was not handled")
+	}
+	select {
+	case <-handled:
+		t.Fatal("message beyond configured burst reached the handler")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for h.ClientCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := h.ClientCount(); got != 0 {
+		t.Fatalf("client count after inbound flood = %d, want 0", got)
+	}
+}
+
 func TestHubMaxClients(t *testing.T) {
 	h := New("limited")
 	h.MaxClients = 2
