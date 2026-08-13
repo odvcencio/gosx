@@ -103,12 +103,14 @@ jobs:
   # in parallel instead of serializing after the unit lane. This lane needs
   # neither TinyGo nor Node. The pull-request path runs the focused
   # test-race-pr suite within the shared job ceiling. The push path instead
-  # runs the full test-race suite over every package, including the BC7 and
-  # vector-search kernels the PR lane omits. Main has exceeded 15 minutes on
-  # a cold runner, and perf/ouroboros exceeds Go's default 10-minute
-  # per-package timeout under race instrumentation. The Make target carries a
-  # 40-minute package timeout inside this 50-minute job ceiling, leaving room
-  # for race-instrumented compilation and the remaining packages.
+  # race-builds every package and runs the full package set except nine named,
+  # validated perf/ouroboros tests whose real-repository evidence scans spend
+  # tens of minutes in deterministic parsing/Brotli work under instrumentation.
+  # Ordinary tests still gate all nine. A second scoped perf/ouroboros race run
+  # retains every fixture-sized test plus direct concurrent coverage of its
+  # mutex-protected network capture. The broad lane includes the expensive BC7
+  # and vector-search kernels omitted from pull requests and keeps a 40-minute
+  # per-package alarm inside this 50-minute job ceiling.
   go-race-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -127,8 +129,8 @@ jobs:
         if: github.event_name == 'pull_request'
         run: make test-race-pr
 
-      # Pushes reaching main/master retain the exhaustive race gate, including
-      # the expensive BC7 and vector-search kernels omitted from the PR lane.
+      # Pushes reaching main/master retain exhaustive package coverage, with
+      # only the validated deterministic evidence recomputations split out.
       - name: Full repository race tests
         if: github.event_name == 'push'
         run: make test-race
