@@ -54,11 +54,30 @@ jobs:
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
+          TINYGO_GO_VERSION: 1.25.5
+          TINYGO_SHA256: 901fbccffc61adb111656d1f907dfc21b6c499ca841b115866a0d6de2d835fbe
+          TINYGO_GO_SHA256: 9e9b755d63b36acf30c12a9a3fc379243714c1c6d3dd72861da637f336ebb35b
         run: |
-          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
-          sudo dpkg -i tinygo.deb
-          go install golang.org/dl/go1.25.5@latest
-          go1.25.5 download
+          set -euo pipefail
+          work_dir="$(mktemp -d)"
+          trap 'rm -rf -- "${work_dir}"' EXIT
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${work_dir}/tinygo.deb" \
+            "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          printf '%s  %s\n' "${TINYGO_SHA256}" "${work_dir}/tinygo.deb" | sha256sum --check --status
+          sudo dpkg -i "${work_dir}/tinygo.deb"
+          compat_root="${HOME}/sdk/go${TINYGO_GO_VERSION}"
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${work_dir}/go.tar.gz" \
+            "https://dl.google.com/go/go${TINYGO_GO_VERSION}.linux-amd64.tar.gz"
+          printf '%s  %s\n' "${TINYGO_GO_SHA256}" "${work_dir}/go.tar.gz" | sha256sum --check --status
+          mkdir -p "${HOME}/sdk"
+          tar -C "${work_dir}" -xzf "${work_dir}/go.tar.gz"
+          mv "${work_dir}/go" "${compat_root}"
+          GOTOOLCHAIN=local "${compat_root}/bin/go" version
+          printf 'GOSX_TINYGO_GOROOT=%s\n' "${compat_root}" >>"${GITHUB_ENV}"
           tinygo version
 
       - name: Test, vet, and build
