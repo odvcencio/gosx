@@ -25,21 +25,22 @@
   flex-shrink: 0;
   display: flex;
   align-items: baseline;
-  gap: 1rem;
-  padding-bottom: 0.75rem;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-xs);
   border-bottom: 1px solid var(--demo-hair);
 }
 
 .play__title {
-  font-size: 1rem;
+  flex-shrink: 0;
+  font-size: var(--type-base);
   font-weight: 600;
-  color: #9fffa5;
+  color: var(--demo-accent);
   margin: 0;
   letter-spacing: 0.01em;
 }
 
 .play__subtitle {
-  font-size: 0.8rem;
+  font-size: var(--type-xs);
   color: var(--demo-muted);
   margin: 0;
 }
@@ -467,6 +468,16 @@
   .play {
     padding: 1rem;
     overflow: auto;
+  }
+
+  .play__header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .play__title {
+    width: 100%;
   }
 
   .play__body {
