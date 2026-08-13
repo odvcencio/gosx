@@ -15,11 +15,15 @@
 
   function waitForRuntime() {
     return new Promise(function (resolve, reject) {
-      if (typeof window.__gosx_hydrate === "function") {
+      function isReady() {
+        return typeof window.__gosx_hydrate === "function" &&
+          window.__gosx && window.__gosx.ready === true;
+      }
+      if (isReady()) {
         return resolve();
       }
       var interval = setInterval(function () {
-        if (typeof window.__gosx_hydrate === "function") {
+        if (isReady()) {
           clearInterval(interval);
           resolve();
         }
@@ -72,7 +76,13 @@
     if (!compileURL || !textarea || !preview) {
       return;
     }
-    var islandID = preview.getAttribute("data-gosx-island");
+    // __gosx_hydrate and the patch runtime key islands by the wrapper's DOM
+    // id. data-gosx-island is the component name (for example "Counter"),
+    // not the runtime identity.
+    var islandID = preview.id;
+    if (!islandID) {
+      return;
+    }
 
     var timer = null;
     var requestGeneration = 0;
@@ -147,6 +157,155 @@
       }
     }
 
+    function runtimeHost() {
+      return window.__gosx && window.__gosx.host;
+    }
+
+    function disposePreviewIsland() {
+      var host = runtimeHost();
+      var registry = window.__gosx && window.__gosx.islands;
+      if (host && host.islands && typeof host.islands.dispose === "function" &&
+          registry && typeof registry.has === "function" && registry.has(islandID)) {
+        host.islands.dispose(islandID);
+        return;
+      }
+      if (typeof window.__gosx_dispose === "function") {
+        window.__gosx_dispose(islandID);
+      }
+    }
+
+    function safePreviewURL(value) {
+      var trimmed = String(value || "").trim();
+      if (trimmed === "" || trimmed.charAt(0) === "#" ||
+          trimmed.charAt(0) === "?" ||
+          trimmed.indexOf("/") === 0 || trimmed.indexOf("./") === 0 ||
+          trimmed.indexOf("../") === 0) {
+        return true;
+      }
+      return /^(https?:|mailto:|tel:)/i.test(trimmed);
+    }
+
+    function buildPreviewContent(tree) {
+      if (!tree || !Array.isArray(tree.nodes) || tree.nodes.length === 0) {
+        throw new Error("compiler did not return a structured island preview");
+      }
+      var allowedTags = new Set([
+        "a", "article", "aside", "b", "blockquote", "br", "button",
+        "caption", "code", "dd", "details", "div", "dl", "dt", "em",
+        "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2",
+        "h3", "h4", "h5", "h6", "header", "hr", "i", "input", "label",
+        "legend", "li", "main", "mark", "meter", "nav", "ol", "option",
+        "output", "p", "pre", "progress", "s", "section", "select", "small",
+        "span", "strong", "sub", "summary", "sup", "table", "tbody", "td",
+        "textarea", "tfoot", "th", "thead", "tr", "u", "ul"
+      ]);
+      var allowedAttrs = new Set([
+        "aria-atomic", "aria-busy", "aria-controls", "aria-current",
+        "aria-describedby", "aria-details", "aria-disabled", "aria-expanded",
+        "aria-haspopup", "aria-hidden", "aria-label", "aria-labelledby",
+        "aria-live", "aria-pressed", "aria-selected", "aria-valuemax",
+        "aria-valuemin", "aria-valuenow", "aria-valuetext", "autocomplete",
+        "checked", "class", "cols", "colspan", "dir", "disabled", "for",
+        "hidden", "inputmode", "lang", "max", "maxlength", "min", "minlength",
+        "multiple", "name", "open", "pattern", "placeholder", "readonly",
+        "required", "role", "rows", "rowspan", "selected", "size", "step",
+        "style", "tabindex", "title", "type", "value", "wrap"
+      ]);
+      var urlAttrs = new Set([
+        "action", "cite", "formaction", "href", "poster", "src", "xlink:href"
+      ]);
+      var eventMarkers = new Set([
+        "blur", "change", "click", "document-keydown", "document-keyup",
+        "dragend", "dragleave", "dragover", "dragstart", "drop", "focus",
+        "input", "keydown", "keyup", "pointercancel", "pointerdown",
+        "pointermove", "pointerup", "submit", "window-resize"
+      ]);
+      var active = new Set();
+
+      function materialize(index) {
+        if (!Number.isInteger(index) || index < 0 || index >= tree.nodes.length) {
+          throw new Error("compiler returned an invalid preview node reference");
+        }
+        if (active.has(index)) {
+          throw new Error("compiler returned a cyclic preview tree");
+        }
+        active.add(index);
+        var spec = tree.nodes[index] || {};
+        var tag = String(spec.tag || "").toLowerCase();
+        var node;
+        if (tag === "") {
+          node = document.createTextNode(String(spec.text || ""));
+        } else {
+          if (!allowedTags.has(tag)) {
+            throw new Error("compiler returned a disallowed preview element");
+          }
+          node = document.createElement(tag);
+          var attrs = Array.isArray(spec.attrs) ? spec.attrs : [];
+          attrs.forEach(function (attr) {
+            var name = String((attr && attr.name) || "").toLowerCase();
+            var eventMarkerPrefix = "data-gosx-on-";
+            var generatedMarker = name === "data-gosx-handler" || name === "data-gosx-path" ||
+              (name.indexOf(eventMarkerPrefix) === 0 && eventMarkers.has(name.slice(eventMarkerPrefix.length)));
+            var applicationData = name.indexOf("data-") === 0 && name.indexOf("data-gosx-") !== 0;
+            if (!name || name.indexOf("on") === 0 || name === "srcdoc" || name === "is" ||
+                (!allowedAttrs.has(name) && !urlAttrs.has(name) && !applicationData && !generatedMarker)) {
+              throw new Error("compiler returned a disallowed preview attribute");
+            }
+            if (urlAttrs.has(name) && !safePreviewURL(attr.value)) {
+              throw new Error("compiler returned an unsafe preview URL");
+            }
+            node.setAttribute(name, attr && attr.bool ? "" : String((attr && attr.value) || ""));
+          });
+          if (spec.text) node.appendChild(document.createTextNode(String(spec.text)));
+          var children = Array.isArray(spec.children) ? spec.children : [];
+          children.forEach(function (child) { node.appendChild(materialize(child)); });
+        }
+        active.delete(index);
+        return node;
+      }
+
+      return materialize(0);
+    }
+
+    function replacePreviewContent(content) {
+      preview.replaceChildren(content);
+    }
+
+    function previewEventSlots() {
+      var prefix = "data-gosx-on-";
+      var seen = new Set();
+      var slots = [];
+      var elements = [preview].concat(Array.from(preview.querySelectorAll("*")));
+      elements.forEach(function (element) {
+        Array.from(element.attributes || []).forEach(function (attr) {
+          if (attr.name.indexOf(prefix) !== 0) return;
+          var eventType = attr.name.slice(prefix.length);
+          if (!eventType || seen.has(eventType)) return;
+          seen.add(eventType);
+          slots.push({ eventType: eventType });
+        });
+      });
+      return slots;
+    }
+
+    function registerPreviewEvents(component) {
+      var host = runtimeHost();
+      var registry = window.__gosx && window.__gosx.islands;
+      if (!host || !host.events || typeof host.events.setup !== "function" ||
+          !registry || typeof registry.set !== "function") {
+        throw new Error("GoSX island event host is unavailable");
+      }
+      // The playground accepts freshly compiled programs, so derive the same
+      // selective listener slots a normal build manifest would carry from the
+      // validated, generated data-gosx-on-* markers.
+      var listeners = host.events.setup(preview, islandID, previewEventSlots());
+      registry.set(islandID, {
+        component: component,
+        root: preview,
+        listeners: listeners,
+      });
+    }
+
     function compile(source) {
       var generation = ++requestGeneration;
       if (activeController) activeController.abort();
@@ -208,15 +367,17 @@
             return;
           }
           var bytes = base64ToBytes(data.program);
+          // Build the detached replacement from structured nodes first. No
+          // authored source is ever passed to an HTML-string parser.
+          var previewContent = buildPreviewContent(data.preview);
           // Dispose the previous island instance before mounting the new one
           // to avoid leaking signal subscriptions and DOM event listeners.
           try {
-            if (typeof window.__gosx_dispose === "function") {
-              window.__gosx_dispose(islandID);
-            }
+            disposePreviewIsland();
           } catch (e) {
             // Ignore dispose errors — a missing island is fine on first run.
           }
+          replacePreviewContent(previewContent);
           var ret = window.__gosx_hydrate(
             islandID,
             data.component,
@@ -235,6 +396,8 @@
             setStatus("diagnostic", "Hydration failed");
             return;
           }
+          registerPreviewEvents(data.component);
+          preview.setAttribute("data-gosx-island", data.component);
           preview.setAttribute("data-component", data.component);
           setStatus("hydrated", data.component + " hydrated from GoSX island bytecode");
         })

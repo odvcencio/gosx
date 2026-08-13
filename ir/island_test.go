@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	clientvm "m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/island/program"
 )
 
@@ -111,6 +112,57 @@ func TestLowerIslandEventAttr(t *testing.T) {
 	}
 	if attr.Event != "handleClick" {
 		t.Fatalf("expected handleClick, got %s", attr.Event)
+	}
+}
+
+func TestLowerIslandLegacyInlineEventDispatches(t *testing.T) {
+	prog := &Program{
+		Nodes: []Node{
+			{Kind: NodeElement, Tag: "div", Children: []NodeID{1, 2}},
+			{
+				Kind: NodeElement,
+				Tag:  "button",
+				Attrs: []Attr{{
+					Kind:  AttrStatic,
+					Name:  "data-on-click",
+					Value: "count.Set(count.Get() + 1)",
+				}},
+				Children: []NodeID{3},
+			},
+			{Kind: NodeExpr, Text: "count.Get()"},
+			{Kind: NodeText, Text: "+1", IsStatic: true},
+		},
+		Components: []Component{{
+			Name:     "Counter",
+			Root:     0,
+			IsIsland: true,
+			Scope: &ComponentScope{Signals: []SignalInfo{{
+				Name:     "count",
+				Local:    "count",
+				InitExpr: "0",
+			}}},
+		}},
+	}
+
+	island, err := LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("LowerIsland: %v", err)
+	}
+	if len(island.Nodes[1].Attrs) != 1 {
+		t.Fatalf("button attrs = %#v, want one event", island.Nodes[1].Attrs)
+	}
+	event := island.Nodes[1].Attrs[0]
+	if event.Kind != program.AttrEvent || event.Name != "click" || event.Event == "" {
+		t.Fatalf("legacy event attr = %#v, want a named click event", event)
+	}
+	if len(island.Handlers) != 1 || island.Handlers[0].Name != event.Event || len(island.Handlers[0].Body) != 1 {
+		t.Fatalf("handlers = %#v, want one synthesized inline handler", island.Handlers)
+	}
+
+	runtime := clientvm.NewIsland(island, `{}`)
+	patches := runtime.Dispatch(event.Event, `{"type":"click"}`)
+	if len(patches) != 1 || patches[0].Kind != clientvm.PatchSetText || patches[0].Text != "1" {
+		t.Fatalf("dispatch patches = %#v, want one SetText(1)", patches)
 	}
 }
 

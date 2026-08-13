@@ -120,6 +120,37 @@ func startDocsApp(t *testing.T, baseURL string) *docsApp {
 	return app
 }
 
+// startProductionDocsApp builds the docs application with the same hashed
+// runtime contract used in production, then starts the generated server on a
+// free local port. Interactive island regressions must use this path: dev-mode
+// compatibility URLs intentionally do not prove immutable runtime metadata.
+func startProductionDocsApp(t *testing.T) *docsApp {
+	t.Helper()
+	root := e2eRepoRoot(t)
+	dist := os.Getenv("GOSX_E2E_DOCS_DIST")
+	if dist == "" {
+		build := exec.Command("go", "run", "./cmd/gosx", "build", "--prod", "./examples/gosx-docs")
+		build.Dir = root
+		build.Env = os.Environ()
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build production docs: %v\n%s", err, output)
+		}
+		dist = filepath.Join(root, "examples", "gosx-docs", "dist")
+	}
+	if !filepath.IsAbs(dist) {
+		dist = filepath.Join(root, dist)
+	}
+
+	port := freeE2EPort(t)
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	logs := startBuiltFixture(t, dist, port)
+	app := &docsApp{baseURL: baseURL, logs: logs}
+	if err := waitForHealthy(baseURL+"/readyz", 45*time.Second); err != nil {
+		t.Fatalf("%v\n\nLogs:\n%s", err, logs.String())
+	}
+	return app
+}
+
 func waitForHealthy(url string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	lastError := ""
