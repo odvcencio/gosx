@@ -11,6 +11,10 @@ metadata:
     kubernetes.io/change-cause: "Deploy gosx-docs __GIT_REVISION__ at __BUILT_AT__ (sha256:__IMAGE_DIGEST__)"
 spec:
   replicas: 1
+  # Keep the prior ready pod serving while ingress controllers observe the
+  # candidate endpoint. A single successful readiness probe is not enough to
+  # declare a one-replica public rollout stable.
+  minReadySeconds: 10
   # Keep enough rollout history for an immediate operator rollback without
   # retaining an unbounded set of old ReplicaSets.
   revisionHistoryLimit: 5

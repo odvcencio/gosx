@@ -52,8 +52,10 @@ assert_status() {
 fetch_exact() {
 	path="$1"
 	output="$2"
+	retries="${3:-3}"
 	headers="${output}.headers"
 	if ! "$curl_cmd" --fail --silent --show-error --max-redirs 0 \
+		--retry "$retries" --retry-delay 1 --retry-max-time 15 \
 		--connect-timeout 10 --max-time 45 --dump-header "$headers" \
 		"${base_url}${path}" -o "$output"; then
 		return 1
@@ -231,7 +233,10 @@ image_attempt=0
 image_ok=0
 while [ "$image_attempt" -lt 5 ]; do
 	image_attempt=$((image_attempt + 1))
-	if fetch_exact "/_gosx/image?src=%2Fcheckers-native-preview.png&w=320&format=png" "$tmp_dir/checkers-320.png"; then
+	# This endpoint has its own bounded loop because an initial cache miss may
+	# return a non-retriable HTTP status. Disable curl's inner retry here so the
+	# two bounds cannot multiply into twenty requests.
+	if fetch_exact "/_gosx/image?src=%2Fcheckers-native-preview.png&w=320&format=png" "$tmp_dir/checkers-320.png" 0; then
 		image_ok=1
 		break
 	fi

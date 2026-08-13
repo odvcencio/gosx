@@ -44,15 +44,63 @@ run_wait() {
 		GOSX_DOCS_FAKE_PUBLIC_URL="$public_url" \
 		GOSX_DOCS_PUBLIC_CONVERGENCE_ATTEMPTS="$2" \
 		GOSX_DOCS_PUBLIC_CONVERGENCE_DELAY_SECONDS=1 \
+		GOSX_DOCS_PUBLIC_CONVERGENCE_SUCCESSES="${3:-3}" \
 		CURL="$fake_curl" SLEEP=true \
 		sh "$wait_script" "$public_url" "$framework_version" \
 			"$revision" "$built_at" "$public_url"
 }
 
 reset_counter
-run_wait release-converges 4
-if [ "$(read_counter)" -ne 3 ]; then
-	echo "deploy public test: release convergence did not retry exactly twice" >&2
+run_wait release-converges 5
+if [ "$(read_counter)" -ne 15 ]; then
+	echo "deploy public test: release convergence did not require three stable checks" >&2
+	exit 1
+fi
+
+reset_counter
+run_wait release-flaps 6
+if [ "$(read_counter)" -ne 18 ]; then
+	echo "deploy public test: an unhealthy edge response did not reset the stability streak" >&2
+	exit 1
+fi
+
+reset_counter
+if run_wait release-health-fails 3; then
+	echo "deploy public test: persistently unhealthy release unexpectedly converged" >&2
+	exit 1
+fi
+if [ "$(read_counter)" -ne 9 ]; then
+	echo "deploy public test: unhealthy release did not exhaust its bounded checks" >&2
+	exit 1
+fi
+
+reset_counter
+if run_wait release-ready-fails 3; then
+	echo "deploy public test: persistently unready release unexpectedly converged" >&2
+	exit 1
+fi
+if [ "$(read_counter)" -ne 9 ]; then
+	echo "deploy public test: unready release did not exhaust its bounded checks" >&2
+	exit 1
+fi
+
+reset_counter
+if run_wait release-converges 5 2; then
+	echo "deploy public test: fewer than three required successes unexpectedly passed validation" >&2
+	exit 1
+fi
+if [ "$(read_counter)" -ne 0 ]; then
+	echo "deploy public test: invalid stability configuration made a public request" >&2
+	exit 1
+fi
+
+reset_counter
+if run_wait release-converges 2 3; then
+	echo "deploy public test: successes greater than attempts unexpectedly passed validation" >&2
+	exit 1
+fi
+if [ "$(read_counter)" -ne 0 ]; then
+	echo "deploy public test: impossible stability configuration made a public request" >&2
 	exit 1
 fi
 
@@ -61,7 +109,7 @@ if run_wait release-never-matches 3; then
 	echo "deploy public test: incomplete release identity unexpectedly converged" >&2
 	exit 1
 fi
-if [ "$(read_counter)" -ne 3 ]; then
+if [ "$(read_counter)" -ne 9 ]; then
 	echo "deploy public test: release mismatch did not exhaust its bounded attempts" >&2
 	exit 1
 fi
