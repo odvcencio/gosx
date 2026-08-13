@@ -139,11 +139,12 @@ func cloneExprScope(scope *ExprScope) *ExprScope {
 }
 
 type islandLowerer struct {
-	src     *Program
-	dst     *program.Program
-	nodeMap map[NodeID]program.NodeID
-	srcIDs  []NodeID // tracks source node ID for each dst node
-	scope   *ExprScope
+	src                *Program
+	dst                *program.Program
+	nodeMap            map[NodeID]program.NodeID
+	srcIDs             []NodeID // tracks source node ID for each dst node
+	scope              *ExprScope
+	inlineHandlerIndex int
 }
 
 func newIslandLowerer(src *Program, name string, scope *ExprScope) *islandLowerer {
@@ -471,6 +472,13 @@ func (l *islandLowerer) scopeForEach(node program.Node) *ExprScope {
 func (l *islandLowerer) lowerAttr(attr Attr) (program.Attr, error) {
 	switch attr.Kind {
 	case AttrStatic:
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Name)), "data-on-") {
+			eventType, ok := legacyInlineEventType(attr.Name)
+			if !ok {
+				return program.Attr{}, fmt.Errorf("island event attribute %q is not supported", attr.Name)
+			}
+			return l.lowerInlineEvent(eventType, attr.Value)
+		}
 		return program.Attr{
 			Kind:  program.AttrStatic,
 			Name:  attr.Name,
@@ -500,6 +508,77 @@ func (l *islandLowerer) lowerAttr(attr Attr) (program.Attr, error) {
 		return program.Attr{}, fmt.Errorf("spread attributes are not allowed in island components")
 	default:
 		return program.Attr{}, fmt.Errorf("unknown attr kind: %d", attr.Kind)
+	}
+}
+
+// legacyInlineEventType recognizes the original island event spelling:
+//
+//	<button data-on-click="count.Set(count.Get() + 1)">+1</button>
+//
+// TSX-style onClick={increment} remains the preferred typed form. Keeping this
+// spelling in the island lowerer preserves existing components and playground
+// snippets without treating data-on-* as executable on server components.
+func legacyInlineEventType(name string) (string, bool) {
+	const prefix = "data-on-"
+	if !strings.HasPrefix(name, prefix) {
+		return "", false
+	}
+	eventType := strings.TrimSpace(strings.ToLower(strings.TrimPrefix(name, prefix)))
+	if eventType == "" {
+		return "", false
+	}
+	return eventType, legacyInlineEventSupported(eventType)
+}
+
+func legacyInlineEventSupported(eventType string) bool {
+	switch eventType {
+	case "click", "input", "change", "submit", "keydown", "keyup", "focus", "blur",
+		"dragstart", "dragend", "dragover", "dragleave", "drop",
+		"pointerdown", "pointermove", "pointerup", "pointercancel",
+		"document-keydown", "document-keyup", "window-resize":
+		return true
+	default:
+		return false
+	}
+}
+
+func (l *islandLowerer) lowerInlineEvent(eventType, source string) (program.Attr, error) {
+	expression := strings.TrimSpace(source)
+	// JSX string literals retain Go-style escapes in the IR so ordinary static
+	// attributes round-trip exactly. Inline event source is code, however, and
+	// must turn \"light\" back into "light" before expression parsing.
+	if unquoted, err := strconv.Unquote(`"` + expression + `"`); err == nil {
+		expression = unquoted
+	}
+	if expression == "" {
+		return program.Attr{}, fmt.Errorf("data-on-%s requires a handler expression", eventType)
+	}
+
+	handlerName := l.nextInlineHandlerName()
+	exprs, rootID, err := ParseExpr(expression, handlerExprScope(l.scope))
+	if err != nil {
+		return program.Attr{}, fmt.Errorf("parse data-on-%s expression %q: %w", eventType, expression, err)
+	}
+	bodyID := l.appendExprs(exprs, rootID)
+	l.dst.Handlers = append(l.dst.Handlers, program.Handler{
+		Name: handlerName,
+		Body: []program.ExprID{bodyID},
+	})
+
+	return program.Attr{
+		Kind:  program.AttrEvent,
+		Name:  eventType,
+		Event: handlerName,
+	}, nil
+}
+
+func (l *islandLowerer) nextInlineHandlerName() string {
+	for {
+		name := "__gosx_inline_event_" + strconv.Itoa(l.inlineHandlerIndex)
+		l.inlineHandlerIndex++
+		if l.scope == nil || !l.scope.Handlers[name] {
+			return name
+		}
 	}
 }
 

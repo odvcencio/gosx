@@ -113,6 +113,195 @@ func TestDocsMobileNavigationWorksWithoutDisclosureRuntime(t *testing.T) {
 	}
 }
 
+func TestPlaygroundCounterHydratesAndUpdates(t *testing.T) {
+	chrome := e2eChromePath(t)
+	var app *docsApp
+	if existing := strings.TrimRight(os.Getenv("GOSX_E2E_EXISTING_BASE_URL"), "/"); existing != "" {
+		app = &docsApp{baseURL: existing, logs: &logBuffer{}}
+	} else {
+		app = startProductionDocsApp(t)
+	}
+	page := newBrowserPage(t, chrome, nil, 1440, 960, "", 90*time.Second)
+
+	if status := page.navigate(t, app.baseURL+"/demos/playground"); status < 200 || status > 299 {
+		t.Fatalf("/demos/playground returned %d\n\nLogs:\n%s", status, app.logs.String())
+	}
+	page.waitFor(t,
+		`document.querySelector(".play")?.dataset.playgroundState === "hydrated"`,
+		20*time.Second,
+		"playground hydration",
+	)
+
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(`.play__preview-frame [data-gosx-island] button:last-child`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("click playground +1: %v", err)
+	}
+	page.waitFor(t,
+		`document.querySelector(".play__preview-frame [data-gosx-island] span")?.textContent.trim() === "1"`,
+		10*time.Second,
+		"counter increment",
+	)
+
+	// Recompile the same preset and exercise it again. This proves the editor
+	// disposed the old VM/listeners, restored the compiled initial DOM, and
+	// registered the replacement under the wrapper id.
+	page.eval(t, `document.querySelector(".play").dataset.playgroundState = "reset-requested"`, nil)
+	if err := chromedp.Run(page.ctx, chromedp.Click(`.play__reset-btn`, chromedp.ByQuery)); err != nil {
+		t.Fatalf("reset playground counter: %v", err)
+	}
+	page.waitFor(t,
+		`document.querySelector(".play")?.dataset.playgroundState === "hydrated" &&
+document.querySelector(".play__preview-frame [data-gosx-island] span")?.textContent.trim() === "0"`,
+		10*time.Second,
+		"counter recompilation",
+	)
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(`.play__preview-frame [data-gosx-island] button:last-child`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("click recompiled playground +1: %v", err)
+	}
+	page.waitFor(t,
+		`document.querySelector(".play__preview-frame [data-gosx-island] span")?.textContent.trim() === "1"`,
+		10*time.Second,
+		"recompiled counter increment",
+	)
+	var registeredByDOMID bool
+	page.eval(t, `(() => {
+const root = document.querySelector(".play__preview-frame [data-gosx-island]");
+return !!root?.id && window.__gosx?.islands?.has(root.id) && !window.__gosx.islands.has(root.dataset.gosxIsland);
+})()`, &registeredByDOMID)
+	if !registeredByDOMID {
+		t.Fatal("playground replacement island was not registered by its DOM id")
+	}
+	var counterListenersSelective bool
+	page.eval(t, `(() => {
+const root = document.querySelector(".play__preview-frame [data-gosx-island]");
+const record = window.__gosx.islands.get(root.id);
+if (!record || record.listeners.length !== 1 || record.listeners[0].type !== "click") return false;
+const oldListeners = record.listeners.slice();
+const originalRemove = root.removeEventListener.bind(root);
+window.__playgroundListenerAudit = { oldListeners, removed: 0, originalRemove };
+root.removeEventListener = function(type, listener, capture) {
+  if (oldListeners.some((entry) => entry.type === type && entry.listener === listener && entry.capture === capture)) {
+    window.__playgroundListenerAudit.removed++;
+  }
+  return originalRemove(type, listener, capture);
+};
+return true;
+})()`, &counterListenersSelective)
+	if !counterListenersSelective {
+		t.Fatal("compiled Counter did not register only its declared click listener")
+	}
+
+	// Change component shape and event family. Counter only needs click;
+	// Greeter needs input. A real browser input after the switch proves the
+	// replacement listener set is attached to the stable wrapper rather than
+	// inherited accidentally from the original manifest entry.
+	page.eval(t, `(() => {
+const picker = document.querySelector(".play__preset-select");
+picker.value = "greeter";
+picker.dispatchEvent(new Event("change", { bubbles: true }));
+})()`, nil)
+	page.waitFor(t,
+		`document.querySelector(".play")?.dataset.playgroundState === "hydrated" &&
+document.querySelector('.play__preview-frame [data-gosx-island="Greeter"]')?.dataset.component === "Greeter" &&
+document.querySelector(".play__preview-frame h1")?.textContent.trim() === "Hello, world" &&
+(() => {
+  const root = document.querySelector('.play__preview-frame [data-gosx-island="Greeter"]');
+  const record = window.__gosx.islands.get(root.id);
+  const audit = window.__playgroundListenerAudit;
+  return audit?.removed === audit?.oldListeners?.length &&
+    record?.listeners?.length === 1 && record.listeners[0].type === "input" &&
+    !audit.oldListeners.some((old) => old.listener === record.listeners[0].listener);
+})()`,
+		10*time.Second,
+		"greeter preset hydration",
+	)
+	page.eval(t, `(() => {
+const root = document.querySelector('.play__preview-frame [data-gosx-island="Greeter"]');
+if (root && window.__playgroundListenerAudit?.originalRemove) {
+  root.removeEventListener = window.__playgroundListenerAudit.originalRemove;
+}
+})()`, nil)
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(`.play__preview-frame input`, chromedp.ByQuery),
+		chromedp.SendKeys(`.play__preview-frame input`, "Ada", chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("type in playground greeter: %v", err)
+	}
+	page.waitFor(t,
+		`document.querySelector(".play__preview-frame h1")?.textContent.trim() === "Hello, Ada"`,
+		10*time.Second,
+		"greeter input update",
+	)
+
+	// Reset recompiles the selected Greeter preset. Exercise input once more so
+	// the regression also covers disposal and rebinding within the new family.
+	if err := chromedp.Run(page.ctx, chromedp.Click(`.play__reset-btn`, chromedp.ByQuery)); err != nil {
+		t.Fatalf("reset playground greeter: %v", err)
+	}
+	page.waitFor(t,
+		`document.querySelector(".play")?.dataset.playgroundState === "hydrated" &&
+document.querySelector('.play__preview-frame [data-gosx-island="Greeter"]')?.dataset.component === "Greeter" &&
+document.querySelector(".play__preview-frame h1")?.textContent.trim() === "Hello, world"`,
+		10*time.Second,
+		"greeter recompilation",
+	)
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(`.play__preview-frame input`, chromedp.ByQuery),
+		chromedp.SendKeys(`.play__preview-frame input`, "Grace", chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("type in recompiled playground greeter: %v", err)
+	}
+	page.waitFor(t,
+		`document.querySelector(".play__preview-frame h1")?.textContent.trim() === "Hello, Grace"`,
+		10*time.Second,
+		"recompiled greeter input update",
+	)
+
+	// Active markup must be rejected before program encoding. Keep the live
+	// Greeter DOM and global scope as sentinels: each probe must produce a
+	// diagnostic without replacing the last good preview or executing content.
+	page.eval(t, `window.__gosxPlaygroundPwned = 0`, nil)
+	attackBodies := []string{
+		`<img src="/definitely-missing.png" onerror="window.__gosxPlaygroundPwned++" />`,
+		`<script>window.__gosxPlaygroundPwned++</script>`,
+		`<svg onload="window.__gosxPlaygroundPwned++"></svg>`,
+	}
+	for index, body := range attackBodies {
+		source := `package playground
+
+//gosx:island
+func Attack() Node {
+	return ` + body + `
+}
+`
+		sourceJSON, err := json.Marshal(source)
+		if err != nil {
+			t.Fatalf("encode unsafe playground source: %v", err)
+		}
+		page.eval(t, `(() => {
+const editor = document.querySelector(".play__source");
+editor.value = `+string(sourceJSON)+`;
+editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+})()`, nil)
+		page.waitFor(t,
+			`document.querySelector(".play")?.dataset.playgroundState === "diagnostic" &&
+document.querySelector(".play__errors")?.textContent.includes("not allowed") &&
+document.querySelector('.play__preview-frame [data-gosx-island="Greeter"]')?.dataset.component === "Greeter" &&
+document.querySelector(".play__preview-frame h1")?.textContent.trim() === "Hello, Grace" &&
+window.__gosxPlaygroundPwned === 0`,
+			10*time.Second,
+			"unsafe playground source rejection "+string(rune('1'+index)),
+		)
+	}
+
+	if len(page.PageErrors()) > 0 {
+		t.Fatalf("playground raised page errors: %v\nconsole:\n%s", page.PageErrors(), page.Console())
+	}
+}
+
 type accessibilityReport struct {
 	HasMain            bool     `json:"hasMain"`
 	HasContentInfo     bool     `json:"hasContentInfo"`
