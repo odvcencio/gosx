@@ -58,6 +58,32 @@ test("bootstrap preserves navigation and request installed before it", async () 
   assert.equal(env.context.__gosx.islands instanceof Map, true);
 });
 
+test("initial document navigation state replays after parser-built links exist", () => {
+  const env = createContext({ elements: [] });
+  env.document.readyState = "loading";
+  env.context.location.href = "http://localhost:3000/demos/playground";
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const link = new FakeElement("a", env.document);
+  link.setAttribute("href", "/demos/playground");
+  link.setAttribute("data-gosx-link", "true");
+  env.document.body.appendChild(link);
+
+  const bindingSnapshots = [];
+  env.context.__gosx.actions = {
+    refreshBindings() {
+      bindingSnapshots.push(link.getAttribute("aria-current"));
+    },
+  };
+  env.document.dispatchEvent({ type: "DOMContentLoaded" });
+
+  assert.equal(link.getAttribute("aria-current"), "page");
+  assert.equal(link.getAttribute("data-gosx-link-current"), "page");
+  assert.equal(link.getAttribute("data-gosx-link-state"), "idle");
+  assert.deepEqual(bindingSnapshots, ["page"]);
+});
+
 test("bootstrap restores legacy page navigation into the preserved namespace", async () => {
   const env = createContext({ elements: [] });
   const navigation = { navigate() {}, revalidate() {} };

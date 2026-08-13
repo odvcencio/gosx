@@ -2288,6 +2288,20 @@
     return currentNavigationSnapshot();
   }
 
+  function refreshInitialDocumentNavigation() {
+    // The navigation host can execute from <head> while the parser is still
+    // building <body>. Replay after DOMContentLoaded so initial-document links
+    // receive the same current/prefetch state as links installed by soft nav.
+    // Bindings depend on that current marker, so refresh them only after the
+    // navigation replay. Both operations are synchronous and idempotent.
+    refreshNavigationState();
+    prefetchManagedLinks("render");
+    const actions = window.__gosx && window.__gosx.actions;
+    if (actions && typeof actions.refreshBindings === "function") {
+      actions.refreshBindings();
+    }
+  }
+
   function currentNavigationFetchEpoch() {
     return {
       started: navigationFetchStarted,
@@ -2353,6 +2367,9 @@
     pendingURL: "",
   }, "init");
   prefetchManagedLinks("render");
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", refreshInitialDocumentNavigation, { once: true });
+  }
 
   const navigationAPI = {
     navigate: navigate,

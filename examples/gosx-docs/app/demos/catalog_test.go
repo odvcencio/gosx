@@ -197,6 +197,105 @@ func TestDemoLayoutRendersMobileDockWithCompleteCatalog(t *testing.T) {
 	}
 }
 
+func TestDemoLayoutDirectLoadsRenderCurrentProofMetadata(t *testing.T) {
+	layoutPath := repoPath(t, "examples/gosx-docs/app/demos/layout.gsx")
+	layout, err := route.FileLayout(layoutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range Demos() {
+		want := want
+		t.Run(want.Slug, func(t *testing.T) {
+			ctx := &route.RouteContext{Request: httptest.NewRequest(http.MethodGet, "/demos/"+want.Slug, nil)}
+			rendered := gosx.RenderHTML(layout(ctx, gosx.El("main", gosx.Text(want.Title))))
+			if status := ctx.StatusCode(); status != 0 && status != http.StatusOK {
+				t.Fatalf("layout render status = %d; body=%s", status, rendered)
+			}
+
+			doc, parseErr := html.Parse(strings.NewReader(rendered))
+			if parseErr != nil {
+				t.Fatalf("parse rendered layout: %v", parseErr)
+			}
+
+			currentHrefs := []string{}
+			currentManaged := []string{}
+			facts := map[string]string{}
+			var shellSlug, title, lesson, sourceHref, sourcePath string
+			var visit func(*html.Node)
+			visit = func(node *html.Node) {
+				if node.Type == html.ElementNode {
+					attrs := htmlAttributes(node)
+					classes := strings.Fields(attrs["class"])
+					switch {
+					case contains(classes, "demos-shell"):
+						shellSlug = attrs["data-demo-slug"]
+					case node.Data == "a" && contains(classes, "demo-dock__link") && attrs["aria-current"] == "page":
+						currentHrefs = append(currentHrefs, attrs["href"])
+						currentManaged = append(currentManaged, attrs["data-gosx-aria-current-managed"])
+					case node.Data == "h2" && attrs["id"] == "demo-details-title":
+						title = normalizedNodeText(node)
+					case node.Data == "p" && contains(classes, "demo-details__lesson"):
+						lesson = normalizedNodeText(node)
+					case node.Data == "dd" && attrs["data-gosx-bind-text"] != "":
+						facts[attrs["data-gosx-bind-text"]] = normalizedNodeText(node)
+					case node.Data == "a" && contains(classes, "demo-details__source"):
+						sourceHref = attrs["href"]
+					case node.Data == "code" && contains(classes, "demo-details__path"):
+						sourcePath = normalizedNodeText(node)
+					}
+				}
+				for child := node.FirstChild; child != nil; child = child.NextSibling {
+					visit(child)
+				}
+			}
+			visit(doc)
+
+			if len(currentHrefs) != 1 || currentHrefs[0] != "/demos/"+want.Slug {
+				t.Fatalf("server-rendered current links = %#v, want only /demos/%s", currentHrefs, want.Slug)
+			}
+			if len(currentManaged) != 1 || currentManaged[0] != "true" {
+				t.Fatalf("server-rendered current link ownership = %#v, want managed current state", currentManaged)
+			}
+			if shellSlug != want.Slug {
+				t.Errorf("server-rendered shell slug = %q, want %q", shellSlug, want.Slug)
+			}
+			if title != want.Title || lesson != want.Lesson {
+				t.Errorf("server-rendered details = title %q, lesson %q", title, lesson)
+			}
+			wantFacts := map[string]string{
+				"data-demo-facets":      demoValues(want.Facets),
+				"data-demo-packages":    demoValues(want.Packages),
+				"data-demo-render-mode": want.RenderMode,
+				"data-demo-limitations": want.Limitations,
+			}
+			for binding, wantValue := range wantFacts {
+				if facts[binding] != wantValue {
+					t.Errorf("server-rendered %s = %q, want %q", binding, facts[binding], wantValue)
+				}
+			}
+			if sourceHref != demoSourceURL(want.SourcePath) || sourcePath != want.SourcePath {
+				t.Errorf("server-rendered source = (%q, %q), want (%q, %q)", sourceHref, sourcePath, demoSourceURL(want.SourcePath), want.SourcePath)
+			}
+		})
+	}
+}
+
+func normalizedNodeText(node *html.Node) string {
+	parts := []string{}
+	var visit func(*html.Node)
+	visit = func(current *html.Node) {
+		if current.Type == html.TextNode {
+			parts = append(parts, current.Data)
+		}
+		for child := current.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	visit(node)
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
 func htmlAttributes(node *html.Node) map[string]string {
 	attrs := make(map[string]string, len(node.Attr))
 	for _, attr := range node.Attr {

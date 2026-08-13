@@ -113,6 +113,136 @@ func TestDocsMobileNavigationWorksWithoutDisclosureRuntime(t *testing.T) {
 	}
 }
 
+func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
+	chrome := e2eChromePath(t)
+	app := startProductionDocsApp(t)
+	page := newBrowserPage(t, chrome, nil, 390, 844, "", 90*time.Second)
+	if err := chromedp.Run(page.ctx, chromedp.EmulateViewport(390, 844)); err != nil {
+		t.Fatalf("emulate 390x844 mobile viewport: %v", err)
+	}
+	if status := page.navigate(t, app.baseURL+"/demos/playground"); status < 200 || status > 299 {
+		t.Fatalf("/demos/playground returned %d\n\nLogs:\n%s", status, app.logs.String())
+	}
+
+	type mobileContract struct {
+		ViewportWidth       int      `json:"viewportWidth"`
+		CurrentHrefs        []string `json:"currentHrefs"`
+		ShellSlug           string   `json:"shellSlug"`
+		DetailsTitle        string   `json:"detailsTitle"`
+		DetailsLesson       string   `json:"detailsLesson"`
+		Facts               []string `json:"facts"`
+		SourceHref          string   `json:"sourceHref"`
+		SourcePath          string   `json:"sourcePath"`
+		HeaderDirection     string   `json:"headerDirection"`
+		HeaderAlign         string   `json:"headerAlign"`
+		TitleWidth          float64  `json:"titleWidth"`
+		TitleHeight         float64  `json:"titleHeight"`
+		HasHorizontalScroll bool     `json:"hasHorizontalScroll"`
+	}
+	var got mobileContract
+	page.eval(t, `(() => {
+	const current = [...document.querySelectorAll('.demo-dock__link[aria-current="page"]')];
+	const header = document.querySelector('.play__header');
+	const title = document.querySelector('.play__title');
+	const headerStyle = getComputedStyle(header);
+	const titleRect = title.getBoundingClientRect();
+	return {
+	  viewportWidth: window.innerWidth,
+	  currentHrefs: current.map((link) => new URL(link.href, location.href).pathname),
+	  shellSlug: document.querySelector('.demos-shell')?.dataset.demoSlug || '',
+	  detailsTitle: document.querySelector('#demo-details-title')?.textContent.trim() || '',
+	  detailsLesson: document.querySelector('.demo-details__lesson')?.textContent.trim() || '',
+	  facts: [...document.querySelectorAll('.demo-details__facts dd')].map((fact) => fact.textContent.trim()),
+	  sourceHref: document.querySelector('.demo-details__source')?.getAttribute('href') || '',
+	  sourcePath: document.querySelector('.demo-details__path')?.textContent.trim() || '',
+	  headerDirection: headerStyle.flexDirection,
+	  headerAlign: headerStyle.alignItems,
+	  titleWidth: titleRect.width,
+	  titleHeight: titleRect.height,
+	  hasHorizontalScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+	};
+	})()`, &got)
+
+	if got.ViewportWidth != 390 {
+		t.Fatalf("mobile viewport width = %d, want 390", got.ViewportWidth)
+	}
+	if len(got.CurrentHrefs) != 1 || got.CurrentHrefs[0] != "/demos/playground" {
+		t.Errorf("current demo links = %#v, want only /demos/playground", got.CurrentHrefs)
+	}
+	if got.ShellSlug != "playground" || got.DetailsTitle != "GoSX Playground" {
+		t.Errorf("direct-load metadata = slug %q, title %q", got.ShellSlug, got.DetailsTitle)
+	}
+	if got.DetailsLesson == "" || strings.Contains(got.DetailsLesson, "Choose a demo") {
+		t.Errorf("direct-load lesson was not initialized: %q", got.DetailsLesson)
+	}
+	if len(got.Facts) != 4 {
+		t.Errorf("direct-load facts = %#v, want four facts", got.Facts)
+	} else {
+		for index, fact := range got.Facts {
+			if fact == "" || fact == "—" {
+				t.Errorf("direct-load fact %d was not initialized: %q", index, fact)
+			}
+		}
+	}
+	if !strings.Contains(got.SourceHref, "/examples/gosx-docs/app/demos/playground/page.gsx") || got.SourcePath != "examples/gosx-docs/app/demos/playground/page.gsx" {
+		t.Errorf("direct-load source = (%q, %q)", got.SourceHref, got.SourcePath)
+	}
+	if got.HeaderDirection != "column" || got.HeaderAlign != "flex-start" {
+		t.Errorf("mobile playground header layout = direction %q, align %q", got.HeaderDirection, got.HeaderAlign)
+	}
+	if got.TitleWidth < 250 || got.TitleHeight > 40 {
+		t.Errorf("mobile playground title bounds = %.2fx%.2f; title is still squeezed or wrapped", got.TitleWidth, got.TitleHeight)
+	}
+	if got.HasHorizontalScroll {
+		t.Error("mobile playground introduced horizontal document scrolling")
+	}
+
+	if err := chromedp.Run(page.ctx, chromedp.Click(`.demos-topbar__menu`, chromedp.ByQuery)); err != nil {
+		t.Fatalf("open mobile demos dock: %v", err)
+	}
+	page.waitFor(t,
+		`document.querySelector('.demos-body')?.hasAttribute('data-dock-open') &&
+		document.querySelector('.demos-topbar__menu')?.getAttribute('aria-expanded') === 'true' &&
+		document.querySelector('#demo-dock')?.getBoundingClientRect().left >= -0.5`,
+		5*time.Second,
+		"settled mobile demos dock",
+	)
+	if err := chromedp.Run(page.ctx,
+		chromedp.ScrollIntoView(`.demo-dock__link[href="/demos/cms"]`, chromedp.ByQuery),
+		chromedp.Click(`.demo-dock__link[href="/demos/cms"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("soft-navigate from playground to CMS demo: %v", err)
+	}
+	softNavigationReady := page.pollFor(`location.pathname === "/demos/cms" &&
+	  document.querySelectorAll('.demo-dock__link[aria-current="page"]').length === 1 &&
+	  new URL(document.querySelector('.demo-dock__link[aria-current="page"]')?.href || '', location.href).pathname === "/demos/cms" &&
+	  document.querySelector('.demos-shell')?.dataset.demoSlug === "cms" &&
+	  document.querySelector('#demo-details-title')?.textContent.trim() === "CMS Editor" &&
+	  document.querySelector('.demo-details__source')?.getAttribute('href')?.includes('/examples/gosx-docs/app/demos/cms/page.gsx')`,
+		10*time.Second)
+	if !softNavigationReady {
+		var snapshot map[string]any
+		page.eval(t, `({
+		  path: location.pathname,
+		  currentHrefs: [...document.querySelectorAll('.demo-dock__link[aria-current="page"]')].map((link) => new URL(link.href, location.href).pathname),
+		  shellSlug: document.querySelector('.demos-shell')?.dataset.demoSlug || '',
+		  detailsTitle: document.querySelector('#demo-details-title')?.textContent.trim() || '',
+		  sourceHref: document.querySelector('.demo-details__source')?.getAttribute('href') || '',
+		  dockOpen: document.querySelector('.demos-body')?.hasAttribute('data-dock-open') || false,
+		})`, &snapshot)
+		t.Fatalf("timed out waiting for soft-navigation current demo metadata: %#v\nconsole:\n%s", snapshot, page.Console())
+	}
+	var stalePlaygroundCurrent bool
+	page.eval(t, `[...document.querySelectorAll('.demo-dock__link')].some((link) =>
+	  new URL(link.href, location.href).pathname === '/demos/playground' && link.hasAttribute('aria-current'))`, &stalePlaygroundCurrent)
+	if stalePlaygroundCurrent {
+		t.Error("soft navigation left the server-rendered playground link current")
+	}
+	if len(page.PageErrors()) > 0 {
+		t.Fatalf("mobile playground raised page errors: %v\nconsole:\n%s", page.PageErrors(), page.Console())
+	}
+}
+
 func TestPlaygroundCounterHydratesAndUpdates(t *testing.T) {
 	chrome := e2eChromePath(t)
 	var app *docsApp
