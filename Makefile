@@ -112,11 +112,15 @@ test-ci-partitions:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify
 
 test-race:
-	$(GO) test -race -timeout 40m ./...
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test full-race
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test ouroboros-race
 
 # Pull requests exercise the reviewed shared-state surfaces without rerunning
 # CPU-heavy codec and vector kernels under the race detector. Protected-branch
-# pushes still run test-race across every package.
+# pushes race-build every package and run every test except nine explicitly
+# validated real-repository evidence recomputations in perf/ouroboros. The unit
+# lane runs those deterministic tests; the scoped race lane retains a direct
+# concurrent network-capture mutation/snapshot test.
 test-race-pr:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test race
 

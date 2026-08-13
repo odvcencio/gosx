@@ -13,9 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/network"
 	"m31labs.dev/gosx/perf"
 	"m31labs.dev/gosx/visual"
 )
@@ -437,6 +439,81 @@ func TestSampleMetricsPreservesRawTransferAndMemoryValues(t *testing.T) {
 	metrics := sampleMetrics(page, mem)
 	if metrics["transferBytes"] != 789 || metrics["jsHeapUsedMb"] != 1.5 || metrics["domNodeCount"] != 42 {
 		t.Fatalf("metrics = %#v", metrics)
+	}
+}
+
+func TestNetworkCaptureConcurrentRecordAndSnapshot(t *testing.T) {
+	const (
+		requestCount = 8
+		iterations   = 250
+		readers      = 4
+	)
+	capture := &networkCapture{records: make(map[network.RequestID]*NetworkRecord)}
+	for i := 0; i < requestCount; i++ {
+		id := network.RequestID(fmt.Sprintf("request-%d", i))
+		capture.record(&network.EventRequestWillBeSent{
+			RequestID:   id,
+			DocumentURL: "https://example.test/",
+			Type:        network.ResourceTypeScript,
+			Request: &network.Request{
+				URL:     fmt.Sprintf("https://example.test/runtime-%d.js", i),
+				Method:  http.MethodGet,
+				Headers: network.Headers{},
+			},
+		})
+	}
+
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	for i := 0; i < requestCount; i++ {
+		i := i
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			id := network.RequestID(fmt.Sprintf("request-%d", i))
+			url := fmt.Sprintf("https://example.test/runtime-%d.js", i)
+			for n := 1; n <= iterations; n++ {
+				capture.record(&network.EventResponseReceived{
+					RequestID: id,
+					Type:      network.ResourceTypeScript,
+					Response: &network.Response{
+						URL:               url,
+						Status:            http.StatusOK,
+						MimeType:          "text/javascript",
+						Protocol:          "h2",
+						EncodedDataLength: float64(n),
+						Headers:           network.Headers{"cache-control": "public, max-age=31536000, immutable"},
+					},
+				})
+				capture.record(&network.EventLoadingFinished{RequestID: id, EncodedDataLength: float64(n * 2)})
+			}
+		}()
+	}
+	for i := 0; i < readers; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			for n := 0; n < iterations; n++ {
+				_ = capture.Records()
+			}
+		}()
+	}
+	close(start)
+	workers.Wait()
+
+	records := capture.Records()
+	if len(records) != requestCount {
+		t.Fatalf("network records = %d, want %d", len(records), requestCount)
+	}
+	for _, record := range records {
+		if record.Status != http.StatusOK || record.TransferredBytes != iterations*2 {
+			t.Fatalf("incomplete network record: %+v", record)
+		}
+		if !record.Immutable || record.CacheControl == "" {
+			t.Fatalf("cache metadata was lost: %+v", record)
+		}
 	}
 }
 

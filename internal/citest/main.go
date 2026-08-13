@@ -18,16 +18,27 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-const cliRelativePath = "cmd/gosx"
+const (
+	cliRelativePath                   = "cmd/gosx"
+	ouroborosRaceRelativePath         = "perf/ouroboros"
+	exhaustiveRacePackageTimeout      = "40m"
+	ouroborosScopedRacePackageTimeout = "10m"
+)
 
 type raceTarget struct {
 	relativePath string
 	reason       string
+}
+
+type raceSkipTarget struct {
+	testName string
+	reason   string
 }
 
 // prRaceTargets covers shared framework state and the server-authoritative 3D
@@ -52,6 +63,23 @@ var prRaceTargets = []raceTarget{
 	{"signal", "concurrent subscriptions, tracking, and batching"},
 	{"sim", "server-authoritative simulation loop"},
 	{"scene", "parallel scene geometry work"},
+}
+
+// ouroborosRaceSkips is intentionally an exact-name allowlist, not a file or
+// prefix exclusion. These tests build source identity from the real repository,
+// repeatedly parsing and Brotli-compressing the complete browser-source corpus.
+// The ordinary unit lane executes every one. The scoped race lane retains all
+// fixture-sized evidence tests and the package's shared-state tests.
+var ouroborosRaceSkips = []raceSkipTarget{
+	{"TestBuildSizeEvidenceAttributesRouteAssetsAndDedupesTotals", "recomputes the real-repository source inventory before checking route attribution"},
+	{"TestBuildSizeEvidenceResolvesHashedURLsWithQuery", "recomputes the real-repository source inventory before checking hashed URL resolution"},
+	{"TestBuildSizeEvidenceResolvesCapabilityRuntimeVariants", "recomputes the real-repository source inventory before checking runtime variants"},
+	{"TestBuildSizeEvidenceRecordsNoncanonicalUnresolvedRefs", "recomputes the real-repository source inventory before checking unresolved refs"},
+	{"TestBuildSizeEvidenceRecordsNoncanonicalUnsafeManifestPaths", "recomputes the real-repository source inventory before checking unsafe paths"},
+	{"TestBuildSizeEvidenceRecordsNoncanonicalSymlinkEscapedAsset", "recomputes the real-repository source inventory before checking symlink escapes"},
+	{"TestBuildSizeEvidenceRejectsInventoryOverlayMismatch", "recomputes the real-repository source inventory to construct and reject a stale receipt"},
+	{"TestCompatibilityAuditReceiptAndReconciliation", "recomputes and parses the real-repository compatibility inventory"},
+	{"TestRunBrowserBaselineRemoteDialErrorRedactedInArtifacts", "recomputes real-repository source identity before exercising the remote dial boundary"},
 }
 
 type listedModule struct {
@@ -80,12 +108,20 @@ type racePackage struct {
 	evidence concurrencyEvidence
 }
 
+type scopedRacePackage struct {
+	listedPackage
+	testCount int
+	skips     []raceSkipTarget
+}
+
 type testPlan struct {
-	modulePath string
-	all        []listedPackage
-	unit       []listedPackage
-	cli        []listedPackage
-	race       []racePackage
+	modulePath    string
+	all           []listedPackage
+	unit          []listedPackage
+	cli           []listedPackage
+	race          []racePackage
+	fullRace      []listedPackage
+	ouroborosRace scopedRacePackage
 }
 
 func main() {
@@ -97,7 +133,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: citest verify | list <unit|cli|race> | test <unit|race>")
+		return errors.New("usage: citest verify | list <unit|cli|race|full-race> | test <unit|race|full-race|ouroboros-race>")
 	}
 
 	goBinary := os.Getenv("GOSX_CI_GO")
@@ -118,7 +154,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "list":
 		if len(args) != 2 {
-			return errors.New("usage: citest list <unit|cli|race>")
+			return errors.New("usage: citest list <unit|cli|race|full-race>")
 		}
 		packages, err := selectPackages(plan, args[1])
 		if err != nil {
@@ -129,17 +165,29 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return nil
 	case "test":
-		if len(args) != 2 || (args[1] != "unit" && args[1] != "race") {
-			return errors.New("usage: citest test <unit|race>")
+		if len(args) != 2 || (args[1] != "unit" && args[1] != "race" && args[1] != "full-race" && args[1] != "ouroboros-race") {
+			return errors.New("usage: citest test <unit|race|full-race|ouroboros-race>")
 		}
 		printPlan(stderr, plan)
-		packages, err := selectPackages(plan, args[1])
-		if err != nil {
-			return err
-		}
 		commandArgs := []string{"test"}
-		if args[1] == "race" {
+		if args[1] != "unit" {
 			commandArgs = append(commandArgs, "-race")
+		}
+		if args[1] == "full-race" {
+			commandArgs = append(commandArgs, "-timeout", exhaustiveRacePackageTimeout)
+		}
+		var packages []string
+		if args[1] == "ouroboros-race" {
+			commandArgs = append(commandArgs,
+				"-timeout", ouroborosScopedRacePackageTimeout,
+				"-skip", raceSkipPattern(plan.ouroborosRace.skips),
+			)
+			packages = []string{plan.ouroborosRace.ImportPath}
+		} else {
+			packages, err = selectPackages(plan, args[1])
+			if err != nil {
+				return err
+			}
 		}
 		commandArgs = append(commandArgs, packages...)
 		fmt.Fprintf(stderr, "citest: running %s tests across %d packages\n", args[1], len(packages))
@@ -189,12 +237,18 @@ func buildTestPlan(goBinary string) (testPlan, error) {
 	if err != nil {
 		return testPlan{}, err
 	}
+	fullRace, ouroborosRace, err := resolveExhaustiveRacePackages(modulePath, packages)
+	if err != nil {
+		return testPlan{}, err
+	}
 	return testPlan{
-		modulePath: modulePath,
-		all:        packages,
-		unit:       unit,
-		cli:        cli,
-		race:       race,
+		modulePath:    modulePath,
+		all:           packages,
+		unit:          unit,
+		cli:           cli,
+		race:          race,
+		fullRace:      fullRace,
+		ouroborosRace: ouroborosRace,
 	}, nil
 }
 
@@ -367,6 +421,85 @@ func inspectConcurrencySource(filename string, source []byte) (int, int, error) 
 	return goStatements, syncImports, nil
 }
 
+func resolveExhaustiveRacePackages(modulePath string, all []listedPackage) ([]listedPackage, scopedRacePackage, error) {
+	ouroborosImportPath := modulePath + "/" + ouroborosRaceRelativePath
+	fullRace := make([]listedPackage, 0, len(all)-1)
+	var ouroboros listedPackage
+	for _, pkg := range all {
+		if pkg.ImportPath == ouroborosImportPath {
+			if ouroboros.ImportPath != "" {
+				return nil, scopedRacePackage{}, fmt.Errorf("exhaustive race package %s is listed more than once", ouroborosImportPath)
+			}
+			ouroboros = pkg
+			continue
+		}
+		fullRace = append(fullRace, pkg)
+	}
+	if ouroboros.ImportPath == "" {
+		return nil, scopedRacePackage{}, fmt.Errorf("exhaustive race package %s is missing", ouroborosImportPath)
+	}
+	if err := validateCoverage(all, map[string][]listedPackage{
+		"full-race":      fullRace,
+		"ouroboros-race": {ouroboros},
+	}); err != nil {
+		return nil, scopedRacePackage{}, err
+	}
+
+	testNames, err := inspectTestNames(ouroboros)
+	if err != nil {
+		return nil, scopedRacePackage{}, err
+	}
+	seen := make(map[string]struct{}, len(ouroborosRaceSkips))
+	for _, skip := range ouroborosRaceSkips {
+		if strings.TrimSpace(skip.reason) == "" {
+			return nil, scopedRacePackage{}, fmt.Errorf("Ouroboros race skip %s has no review reason", skip.testName)
+		}
+		if _, duplicate := seen[skip.testName]; duplicate {
+			return nil, scopedRacePackage{}, fmt.Errorf("Ouroboros race skip %s is listed more than once", skip.testName)
+		}
+		seen[skip.testName] = struct{}{}
+		if _, exists := testNames[skip.testName]; !exists {
+			return nil, scopedRacePackage{}, fmt.Errorf("Ouroboros race skip %s does not name a current test", skip.testName)
+		}
+	}
+	if len(testNames) <= len(ouroborosRaceSkips) {
+		return nil, scopedRacePackage{}, fmt.Errorf("Ouroboros scoped race lane would run no tests: discovered=%d skipped=%d", len(testNames), len(ouroborosRaceSkips))
+	}
+	return fullRace, scopedRacePackage{
+		listedPackage: ouroboros,
+		testCount:     len(testNames),
+		skips:         append([]raceSkipTarget(nil), ouroborosRaceSkips...),
+	}, nil
+}
+
+func inspectTestNames(pkg listedPackage) (map[string]struct{}, error) {
+	names := make(map[string]struct{})
+	files := append(append([]string{}, pkg.TestGoFiles...), pkg.XTestGoFiles...)
+	for _, name := range files {
+		path := filepath.Join(pkg.Dir, name)
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || !strings.HasPrefix(fn.Name.Name, "Test") {
+				continue
+			}
+			names[fn.Name.Name] = struct{}{}
+		}
+	}
+	return names, nil
+}
+
+func raceSkipPattern(skips []raceSkipTarget) string {
+	names := make([]string, 0, len(skips))
+	for _, skip := range skips {
+		names = append(names, regexp.QuoteMeta(skip.testName))
+	}
+	return "^(" + strings.Join(names, "|") + ")$"
+}
+
 func selectPackages(plan testPlan, partition string) ([]string, error) {
 	var packages []string
 	switch partition {
@@ -385,6 +518,11 @@ func selectPackages(plan testPlan, partition string) ([]string, error) {
 		for _, pkg := range plan.race {
 			packages = append(packages, pkg.ImportPath)
 		}
+	case "full-race":
+		packages = make([]string, 0, len(plan.fullRace))
+		for _, pkg := range plan.fullRace {
+			packages = append(packages, pkg.ImportPath)
+		}
 	default:
 		return nil, fmt.Errorf("unknown package partition %q", partition)
 	}
@@ -394,12 +532,15 @@ func selectPackages(plan testPlan, partition string) ([]string, error) {
 func printPlan(w io.Writer, plan testPlan) {
 	fmt.Fprintf(
 		w,
-		"citest: partition verified module=%s total=%d unit=%d cli=%d pr-race=%d\n",
+		"citest: partition verified module=%s total=%d unit=%d cli=%d pr-race=%d full-race=%d ouroboros-race-tests=%d ouroboros-race-skips=%d\n",
 		plan.modulePath,
 		len(plan.all),
 		len(plan.unit),
 		len(plan.cli),
 		len(plan.race),
+		len(plan.fullRace),
+		plan.ouroborosRace.testCount,
+		len(plan.ouroborosRace.skips),
 	)
 	fmt.Fprintf(w, "citest: cli %s\n", plan.cli[0].ImportPath)
 	for _, pkg := range plan.race {
@@ -412,5 +553,9 @@ func printPlan(w io.Writer, plan testPlan) {
 			pkg.evidence.syncImports,
 			pkg.target.reason,
 		)
+	}
+	fmt.Fprintf(w, "citest: scoped race %s runs=%d skips=%d\n", plan.ouroborosRace.ImportPath, plan.ouroborosRace.testCount-len(plan.ouroborosRace.skips), len(plan.ouroborosRace.skips))
+	for _, skip := range plan.ouroborosRace.skips {
+		fmt.Fprintf(w, "citest: scoped race skip %s reason=%q\n", skip.testName, skip.reason)
 	}
 }

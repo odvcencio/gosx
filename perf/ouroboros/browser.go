@@ -3084,62 +3084,64 @@ type networkCapture struct {
 func startNetworkCapture(d *perf.Driver) (*networkCapture, error) {
 	ctx, cancel := context.WithCancel(d.Context())
 	c := &networkCapture{records: map[network.RequestID]*NetworkRecord{}, cancel: cancel, d: d}
-	chromedp.ListenTarget(ctx, func(ev any) {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		switch e := ev.(type) {
-		case *network.EventRequestWillBeSent:
-			rec := c.records[e.RequestID]
-			if rec == nil {
-				rec = &NetworkRecord{RequestID: string(e.RequestID)}
-				c.records[e.RequestID] = rec
-			}
-			rec.DocumentURL = e.DocumentURL
-			rec.Role = string(e.Type)
-			if e.Request != nil {
-				rec.URL = e.Request.URL
-				rec.Method = e.Request.Method
-			}
-		case *network.EventResponseReceived:
-			rec := c.records[e.RequestID]
-			if rec == nil {
-				rec = &NetworkRecord{RequestID: string(e.RequestID)}
-				c.records[e.RequestID] = rec
-			}
-			rec.Role = string(e.Type)
-			if e.Response != nil {
-				rec.URL = e.Response.URL
-				rec.Status = e.Response.Status
-				rec.MimeType = e.Response.MimeType
-				rec.Protocol = e.Response.Protocol
-				rec.EncodedDataLength = e.Response.EncodedDataLength
-				rec.TransferredBytes = e.Response.EncodedDataLength
-				rec.FromDiskCache = e.Response.FromDiskCache
-				rec.FromServiceWorker = e.Response.FromServiceWorker
-				rec.FromPrefetchCache = e.Response.FromPrefetchCache
-				rec.CacheControl = headerValue(e.Response.Headers, "cache-control")
-				rec.Immutable = strings.Contains(strings.ToLower(rec.CacheControl), "immutable")
-				rec.HeaderBytes = approximateHeaderBytes(e.Response.Headers)
-				rec.Headers = headersToStrings(e.Response.Headers)
-				rec.RuntimeAssetRole, rec.UnresolvedAssetRole = classifyRuntimeAsset(rec.URL)
-			}
-		case *network.EventLoadingFinished:
-			rec := c.records[e.RequestID]
-			if rec == nil {
-				rec = &NetworkRecord{RequestID: string(e.RequestID)}
-				c.records[e.RequestID] = rec
-			}
-			rec.TransferredBytes = e.EncodedDataLength
-			if rec.EncodedDataLength == 0 {
-				rec.EncodedDataLength = e.EncodedDataLength
-			}
-		}
-	})
+	chromedp.ListenTarget(ctx, c.record)
 	if err := chromedp.Run(d.Context(), network.Enable()); err != nil {
 		cancel()
 		return nil, err
 	}
 	return c, nil
+}
+
+func (c *networkCapture) record(ev any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch e := ev.(type) {
+	case *network.EventRequestWillBeSent:
+		rec := c.records[e.RequestID]
+		if rec == nil {
+			rec = &NetworkRecord{RequestID: string(e.RequestID)}
+			c.records[e.RequestID] = rec
+		}
+		rec.DocumentURL = e.DocumentURL
+		rec.Role = string(e.Type)
+		if e.Request != nil {
+			rec.URL = e.Request.URL
+			rec.Method = e.Request.Method
+		}
+	case *network.EventResponseReceived:
+		rec := c.records[e.RequestID]
+		if rec == nil {
+			rec = &NetworkRecord{RequestID: string(e.RequestID)}
+			c.records[e.RequestID] = rec
+		}
+		rec.Role = string(e.Type)
+		if e.Response != nil {
+			rec.URL = e.Response.URL
+			rec.Status = e.Response.Status
+			rec.MimeType = e.Response.MimeType
+			rec.Protocol = e.Response.Protocol
+			rec.EncodedDataLength = e.Response.EncodedDataLength
+			rec.TransferredBytes = e.Response.EncodedDataLength
+			rec.FromDiskCache = e.Response.FromDiskCache
+			rec.FromServiceWorker = e.Response.FromServiceWorker
+			rec.FromPrefetchCache = e.Response.FromPrefetchCache
+			rec.CacheControl = headerValue(e.Response.Headers, "cache-control")
+			rec.Immutable = strings.Contains(strings.ToLower(rec.CacheControl), "immutable")
+			rec.HeaderBytes = approximateHeaderBytes(e.Response.Headers)
+			rec.Headers = headersToStrings(e.Response.Headers)
+			rec.RuntimeAssetRole, rec.UnresolvedAssetRole = classifyRuntimeAsset(rec.URL)
+		}
+	case *network.EventLoadingFinished:
+		rec := c.records[e.RequestID]
+		if rec == nil {
+			rec = &NetworkRecord{RequestID: string(e.RequestID)}
+			c.records[e.RequestID] = rec
+		}
+		rec.TransferredBytes = e.EncodedDataLength
+		if rec.EncodedDataLength == 0 {
+			rec.EncodedDataLength = e.EncodedDataLength
+		}
+	}
 }
 
 func (c *networkCapture) Stop() {
