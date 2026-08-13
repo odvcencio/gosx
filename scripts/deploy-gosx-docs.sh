@@ -36,6 +36,13 @@ done
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+transaction_lib="${repo_root}/scripts/deploy-gosx-docs-transaction.sh"
+if [ ! -f "$transaction_lib" ]; then
+	echo "gosx docs deploy: transaction helper is missing: ${transaction_lib}" >&2
+	exit 1
+fi
+# shellcheck source=deploy-gosx-docs-transaction.sh
+. "$transaction_lib"
 
 host_goos="$($go_cmd env GOHOSTOS)"
 host_goarch="$($go_cmd env GOHOSTARCH)"
@@ -78,13 +85,40 @@ esac
 
 revision="$(git rev-parse HEAD)"
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [ ! -r /proc/sys/kernel/random/uuid ]; then
+	echo "gosx docs deploy: kernel UUID source is unavailable" >&2
+	exit 1
+fi
+transaction_id="$(tr -d '-' </proc/sys/kernel/random/uuid)"
+case "$transaction_id" in
+	*[!0-9a-f]*) transaction_id="" ;;
+esac
+if [ "${#transaction_id}" -ne 32 ]; then
+	echo "gosx docs deploy: could not create a unique deployment transaction ID" >&2
+	exit 1
+fi
 tag="${GOSX_DOCS_TAG:-git-${revision}}"
 image="${registry}:${tag}"
 
-"$kubectl_cmd" get -n "$namespace" "deployment/${deployment}" >/dev/null
-previous_deployment_json="$($kubectl_cmd get -n "$namespace" "deployment/${deployment}" -o json)"
-previous_template="$(printf '%s\n' "$previous_deployment_json" | jq -c '.spec.template')"
-previous_image="$(printf '%s\n' "$previous_deployment_json" | jq -r --arg container "$container" '.spec.template.spec.containers[] | select(.name == $container) | .image')"
+build_base_deployment_json="$($kubectl_cmd get -n "$namespace" "deployment/${deployment}" -o json)"
+build_base_deployment_uid="$(printf '%s\n' "$build_base_deployment_json" | jq -r '.metadata.uid // empty')"
+build_base_deployment_generation="$(printf '%s\n' "$build_base_deployment_json" | jq -r '.metadata.generation // empty')"
+build_base_spec="$(printf '%s\n' "$build_base_deployment_json" | jq -c '.spec // empty')"
+build_base_change_cause="$(printf '%s\n' "$build_base_deployment_json" | jq -r '.metadata.annotations["kubernetes.io/change-cause"] // empty')"
+build_base_change_cause_present="$(printf '%s\n' "$build_base_deployment_json" | jq -r '(.metadata.annotations // {}) | has("kubernetes.io/change-cause")')"
+build_base_transaction="$(printf '%s\n' "$build_base_deployment_json" | jq -r '.metadata.annotations["gosx.m31labs.dev/deploy-transaction"] // empty')"
+build_base_transaction_present="$(printf '%s\n' "$build_base_deployment_json" | jq -r '(.metadata.annotations // {}) | has("gosx.m31labs.dev/deploy-transaction")')"
+case "$build_base_deployment_generation" in
+	''|*[!0-9]*)
+		echo "gosx docs deploy: starting Deployment generation is invalid" >&2
+		exit 1
+		;;
+esac
+if [ -z "$build_base_deployment_uid" ] || [ -z "$build_base_spec" ] || \
+	[ -z "$build_base_change_cause_present" ] || [ -z "$build_base_transaction_present" ]; then
+	echo "gosx docs deploy: starting Deployment identity is unavailable" >&2
+	exit 1
+fi
 session_secret_b64="$($kubectl_cmd get -n "$namespace" "secret/${secret}" -o json | jq -er '.data["session-secret"]')"
 session_secret="$(printf '%s' "$session_secret_b64" | base64 --decode)"
 session_secret_b64=""
@@ -112,12 +146,28 @@ if [ -n "$(git ls-files -- examples/gosx-docs/dist)" ]; then
 fi
 gosx_cli="$(mktemp)"
 manifest=""
-release_template=""
+support_manifest=""
+release_spec=""
+release_change_cause=""
+release_applied_spec=""
+release_deployment_uid=""
+release_deployment_generation=""
+previous_spec=""
+previous_change_cause=""
+previous_change_cause_present=""
+previous_transaction=""
+previous_transaction_present=""
+previous_deployment_uid=""
+previous_template=""
+previous_image=""
 rollback_armed=0
 cleanup() {
 	session_secret=""
 	if [ -n "$manifest" ]; then
 		rm -f "$manifest"
+	fi
+	if [ -n "$support_manifest" ]; then
+		rm -f "$support_manifest"
 	fi
 	rm -f "$gosx_cli"
 }
@@ -212,41 +262,116 @@ rollback() {
 		return
 	fi
 	rollback_armed=0
-	echo "gosx docs deploy: rolling back failed rollout" >&2
-	current_deployment_json="$($kubectl_cmd get -n "$namespace" "deployment/${deployment}" -o json 2>/dev/null || true)"
-	if [ -z "$current_deployment_json" ] || [ -z "$release_template" ]; then
+	echo "gosx docs deploy: reconciling failed rollout" >&2
+	if [ -z "$previous_deployment_uid" ] || [ -z "$release_spec" ] || \
+		[ -z "$release_change_cause" ] || \
+		[ -z "$transaction_id" ] || [ -z "$previous_spec" ] || \
+		[ -z "$previous_change_cause_present" ] || [ -z "$previous_transaction_present" ]; then
 		echo "gosx docs deploy: cannot verify the failed release before rollback" >&2
 		return 1
 	fi
-	if ! printf '%s\n' "$current_deployment_json" | jq -e --argjson expected "$release_template" '.spec.template == $expected' >/dev/null; then
-		echo "gosx docs deploy: Deployment template changed concurrently; refusing to overwrite it" >&2
+	recovery_attempt=0
+	while [ "$recovery_attempt" -lt 5 ]; do
+		recovery_attempt=$((recovery_attempt + 1))
+		current_deployment_json="$($kubectl_cmd get -n "$namespace" "deployment/${deployment}" -o json 2>/dev/null || true)"
+		if [ -z "$current_deployment_json" ]; then
+			echo "gosx docs deploy: cannot read the Deployment during recovery" >&2
+			return 1
+		fi
+		current_owner="$(gosx_docs_deployment_owner \
+			"$current_deployment_json" \
+			"$previous_deployment_uid" \
+			"$previous_spec" \
+			"$previous_change_cause_present" \
+			"$previous_change_cause" \
+			"$previous_transaction_present" \
+			"$previous_transaction" \
+			"$release_spec" \
+			"$release_change_cause" \
+			"$transaction_id")"
+		case "$current_owner" in
+			base)
+				current_resource_version="$(printf '%s\n' "$current_deployment_json" | jq -r '.metadata.resourceVersion // empty')"
+				current_generation="$(printf '%s\n' "$current_deployment_json" | jq -r '.metadata.generation // empty')"
+				current_template="$(printf '%s\n' "$current_deployment_json" | jq -c '.spec.template // empty')"
+				fence_patch="$(gosx_docs_recovery_fence_patch \
+					"$previous_deployment_uid" \
+					"$current_resource_version" \
+					"$current_generation" \
+					"$previous_spec" \
+					"$current_template" \
+					"$previous_change_cause_present" \
+					"$previous_change_cause" \
+					"$previous_transaction_present" \
+					"$previous_transaction" \
+					"$transaction_id")"
+				if "$kubectl_cmd" patch -n "$namespace" "deployment/${deployment}" \
+					--type=json --field-manager=gosx-docs-deploy -p "$fence_patch" >/dev/null 2>&1; then
+					echo "gosx docs deploy: guarded release did not commit; recovery fence secured the previous release" >&2
+					return 0
+				fi
+				;;
+			release) break ;;
+			*)
+				echo "gosx docs deploy: Deployment belongs to another release; refusing recovery mutation" >&2
+				return 1
+				;;
+		esac
+	done
+	if [ "$current_owner" != "release" ]; then
+		echo "gosx docs deploy: could not establish release ownership during recovery" >&2
 		return 1
 	fi
-	rollback_generation="$(printf '%s\n' "$current_deployment_json" | jq -r '.metadata.generation')"
-	case "$rollback_generation" in
+	current_deployment_uid="$(printf '%s\n' "$current_deployment_json" | jq -r '.metadata.uid // empty')"
+	current_deployment_generation="$(printf '%s\n' "$current_deployment_json" | jq -r '.metadata.generation // empty')"
+	current_release_spec="$(printf '%s\n' "$current_deployment_json" | jq -c '.spec // empty')"
+	current_release_template="$(printf '%s\n' "$current_deployment_json" | jq -c '.spec.template // empty')"
+	case "$current_deployment_generation" in
 		''|*[!0-9]*)
-			echo "gosx docs deploy: current Deployment generation is invalid" >&2
+			echo "gosx docs deploy: recovery Deployment generation is invalid" >&2
 			return 1
 			;;
 	esac
-	rollback_patch="$(jq -cn \
-		--argjson generation "$rollback_generation" \
-		--argjson template "$previous_template" \
-		'[
-			{"op":"test","path":"/metadata/generation","value":$generation},
-			{"op":"replace","path":"/spec/template","value":$template}
-		]')"
-	if ! "$kubectl_cmd" patch -n "$namespace" "deployment/${deployment}" --type=json -p "$rollback_patch" >/dev/null; then
-		echo "gosx docs deploy: exact rollback patch was rejected (possibly a concurrent deployment)" >&2
+	rollback_patch="$(gosx_docs_rollback_patch \
+		"$current_deployment_uid" \
+		"$current_deployment_generation" \
+		"$current_release_spec" \
+		"$current_release_template" \
+		"$release_change_cause" \
+		"$transaction_id" \
+		"$previous_spec" \
+		"$previous_change_cause_present" \
+		"$previous_change_cause" \
+		"$previous_transaction_present" \
+		"$previous_transaction")"
+	if ! "$kubectl_cmd" patch -n "$namespace" "deployment/${deployment}" \
+		--type=json --field-manager=gosx-docs-deploy -p "$rollback_patch" >/dev/null; then
+		echo "gosx docs deploy: exact rollback transaction was rejected (possibly a concurrent deployment)" >&2
 		return 1
 	fi
 	if ! "$kubectl_cmd" rollout status -n "$namespace" "deployment/${deployment}" --timeout=5m; then
 		return 1
 	fi
 	rolled_back_json="$($kubectl_cmd get -n "$namespace" "deployment/${deployment}" -o json 2>/dev/null || true)"
-	if ! printf '%s\n' "$rolled_back_json" | jq -e --argjson expected "$previous_template" '.spec.template == $expected' >/dev/null; then
+	if ! printf '%s\n' "$rolled_back_json" | jq -e \
+		--argjson expectedSpec "$previous_spec" \
+		--argjson expectedChangeCausePresent "$previous_change_cause_present" \
+		--arg expectedChangeCause "$previous_change_cause" \
+		--argjson expectedTransactionPresent "$previous_transaction_present" \
+		--arg expectedTransaction "$previous_transaction" \
+		'.spec == $expectedSpec and
+		(if $expectedChangeCausePresent then
+			.metadata.annotations["kubernetes.io/change-cause"] == $expectedChangeCause
+		else
+			((.metadata.annotations // {}) | has("kubernetes.io/change-cause") | not)
+		end) and
+		(if $expectedTransactionPresent then
+			.metadata.annotations["gosx.m31labs.dev/deploy-transaction"] == $expectedTransaction
+		else
+			((.metadata.annotations // {}) | has("gosx.m31labs.dev/deploy-transaction") | not)
+		end)' >/dev/null; then
 		rolled_back_image="$(printf '%s\n' "$rolled_back_json" | jq -r --arg container "$container" '.spec.template.spec.containers[]? | select(.name == $container) | .image' 2>/dev/null || true)"
-		echo "gosx docs deploy: rollback image is ${rolled_back_image:-unavailable}; expected ${previous_image}" >&2
+		echo "gosx docs deploy: rollback state is not the captured release; image is ${rolled_back_image:-unavailable}, expected ${previous_image}" >&2
 		return 1
 	fi
 	if ! "$curl_cmd" --fail --silent --show-error --connect-timeout 10 --max-time 30 "${public_url}/healthz" >/dev/null; then
@@ -257,12 +382,13 @@ rollback() {
 
 dry_run_json="$($kubectl_cmd apply --server-side --field-manager=gosx-docs-deploy --force-conflicts \
 	--dry-run=server -f "$manifest" -o json)"
-release_template="$(printf '%s\n' "$dry_run_json" | jq -c '
+release_deployment_json="$(printf '%s\n' "$dry_run_json" | jq -c '
 	if .kind == "List" then .items[] else . end
-	| select(.kind == "Deployment")
-	| .spec.template')"
-if [ -z "$release_template" ]; then
-	echo "gosx docs deploy: server dry-run did not return the Deployment template" >&2
+	| select(.kind == "Deployment")')"
+release_spec="$(printf '%s\n' "$release_deployment_json" | jq -c '.spec // empty')"
+release_change_cause="$(printf '%s\n' "$release_deployment_json" | jq -r '.metadata.annotations["kubernetes.io/change-cause"] // empty')"
+if [ -z "$release_spec" ] || [ -z "$release_change_cause" ]; then
+	echo "gosx docs deploy: server dry-run did not return the desired Deployment state" >&2
 	exit 1
 fi
 set +e
@@ -273,22 +399,136 @@ if [ "$diff_status" -gt 1 ]; then
 	echo "gosx docs deploy: kubectl diff failed with status ${diff_status}" >&2
 	exit "$diff_status"
 fi
+
+support_manifest="$(mktemp)"
+sed '1,/^---$/d' "$manifest" >"$support_manifest"
+if ! grep -q '^apiVersion:' "$support_manifest"; then
+	echo "gosx docs deploy: rendered manifest does not contain supporting resources" >&2
+	exit 1
+fi
+
+# A deployment that started from an older release must not proceed. This
+# permits controller metadata churn while rejecting a newer release identity
+# or spec.
+pre_support_deployment_json="$($kubectl_cmd get -n "$namespace" "deployment/${deployment}" -o json)"
+if ! gosx_docs_deployment_matches_base \
+	"$pre_support_deployment_json" \
+	"$build_base_deployment_uid" \
+	"$build_base_deployment_generation" \
+	"$build_base_spec" \
+	"$build_base_change_cause_present" \
+	"$build_base_change_cause" \
+	"$build_base_transaction_present" \
+	"$build_base_transaction"; then
+	echo "gosx docs deploy: Deployment changed while the release was built; refusing a stale deployment" >&2
+	exit 1
+fi
+
+# Service and Ingress are stable infrastructure, not image-release state.
+# Routine releases validate them but never mutate them, so a stale image runner
+# cannot overwrite a newer infrastructure change. Drift is handled as an
+# explicit, separately reviewed infrastructure operation.
+set +e
+"$kubectl_cmd" diff --server-side --field-manager=gosx-docs-deploy --force-conflicts -f "$support_manifest"
+support_diff_status=$?
+set -e
+if [ "$support_diff_status" -gt 1 ]; then
+	echo "gosx docs deploy: supporting-resource validation failed with status ${support_diff_status}" >&2
+	exit "$support_diff_status"
+fi
+if [ "$support_diff_status" -eq 1 ]; then
+	echo "gosx docs deploy: Service or Ingress drift requires an explicit infrastructure update" >&2
+	exit 1
+fi
+
+# Capture the rollback base only after the long build, push, and dry-run
+# validation. The JSON Patch tests make the following read and
+# write one optimistic transaction at the API server: any intervening release
+# changes the UID, generation, resourceVersion, or spec and rejects this patch.
+previous_deployment_json="$($kubectl_cmd get -n "$namespace" "deployment/${deployment}" -o json)"
+previous_deployment_uid="$(printf '%s\n' "$previous_deployment_json" | jq -r '.metadata.uid // empty')"
+previous_deployment_generation="$(printf '%s\n' "$previous_deployment_json" | jq -r '.metadata.generation // empty')"
+previous_deployment_resource_version="$(printf '%s\n' "$previous_deployment_json" | jq -r '.metadata.resourceVersion // empty')"
+previous_spec="$(printf '%s\n' "$previous_deployment_json" | jq -c '.spec // empty')"
+previous_template="$(printf '%s\n' "$previous_deployment_json" | jq -c '.spec.template // empty')"
+previous_change_cause="$(printf '%s\n' "$previous_deployment_json" | jq -r '.metadata.annotations["kubernetes.io/change-cause"] // empty')"
+previous_change_cause_present="$(printf '%s\n' "$previous_deployment_json" | jq -r '(.metadata.annotations // {}) | has("kubernetes.io/change-cause")')"
+previous_transaction="$(printf '%s\n' "$previous_deployment_json" | jq -r '.metadata.annotations["gosx.m31labs.dev/deploy-transaction"] // empty')"
+previous_transaction_present="$(printf '%s\n' "$previous_deployment_json" | jq -r '(.metadata.annotations // {}) | has("gosx.m31labs.dev/deploy-transaction")')"
+previous_image="$(printf '%s\n' "$previous_deployment_json" | jq -r --arg container "$container" '.spec.template.spec.containers[] | select(.name == $container) | .image')"
+case "$previous_deployment_generation" in
+	''|*[!0-9]*)
+		echo "gosx docs deploy: pre-apply Deployment generation is invalid" >&2
+		exit 1
+		;;
+esac
+if [ -z "$previous_deployment_uid" ] || [ -z "$previous_deployment_resource_version" ] || \
+	[ -z "$previous_spec" ] || [ -z "$previous_template" ] || \
+	[ -z "$previous_change_cause_present" ] || [ -z "$previous_transaction_present" ]; then
+	echo "gosx docs deploy: pre-apply Deployment state is unavailable" >&2
+	exit 1
+fi
+if ! gosx_docs_deployment_matches_base \
+	"$previous_deployment_json" \
+	"$build_base_deployment_uid" \
+	"$build_base_deployment_generation" \
+	"$build_base_spec" \
+	"$build_base_change_cause_present" \
+	"$build_base_change_cause" \
+	"$build_base_transaction_present" \
+	"$build_base_transaction"; then
+	echo "gosx docs deploy: Deployment changed during release preparation; refusing a stale deployment" >&2
+	exit 1
+fi
+release_patch="$(gosx_docs_release_patch \
+	"$previous_deployment_uid" \
+	"$previous_deployment_resource_version" \
+	"$previous_deployment_generation" \
+	"$previous_spec" \
+	"$previous_template" \
+	"$release_spec" \
+	"$release_change_cause" \
+	"$transaction_id")"
+# Recovery is armed before the mutating request. If the API server commits but
+# the client loses the response, the EXIT trap classifies live state and rolls
+# back only this exact release.
 rollback_armed=1
-"$kubectl_cmd" apply --server-side --field-manager=gosx-docs-deploy --force-conflicts -f "$manifest"
+if ! applied_deployment_json="$($kubectl_cmd patch -n "$namespace" "deployment/${deployment}" \
+	--type=json --field-manager=gosx-docs-deploy -p "$release_patch" -o json)"; then
+	echo "gosx docs deploy: guarded Deployment transaction was rejected; another release may have won" >&2
+	exit 1
+fi
+release_deployment_uid="$(printf '%s\n' "$applied_deployment_json" | jq -r '.metadata.uid // empty')"
+release_deployment_generation="$(printf '%s\n' "$applied_deployment_json" | jq -r '.metadata.generation // empty')"
+release_applied_spec="$(printf '%s\n' "$applied_deployment_json" | jq -c '.spec // empty')"
+case "$release_deployment_generation" in
+	''|*[!0-9]*)
+		echo "gosx docs deploy: applied Deployment generation is invalid" >&2
+		exit 1
+		;;
+esac
+if [ "$release_deployment_uid" != "$previous_deployment_uid" ] || \
+	[ -z "$release_applied_spec" ]; then
+	echo "gosx docs deploy: applied Deployment identity is invalid" >&2
+	exit 1
+fi
 "$kubectl_cmd" rollout status -n "$namespace" "deployment/${deployment}" --timeout=5m
 
 deployment_json="$($kubectl_cmd get -n "$namespace" "deployment/${deployment}" -o json)"
+deployment_transaction="$(printf '%s\n' "$deployment_json" | jq -r '.metadata.annotations["gosx.m31labs.dev/deploy-transaction"] // empty')"
 template_image="$(printf '%s\n' "$deployment_json" | jq -r --arg container "$container" '.spec.template.spec.containers[] | select(.name == $container) | .image')"
 template_init_image="$(printf '%s\n' "$deployment_json" | jq -r --arg container "$init_container" '.spec.template.spec.initContainers[] | select(.name == $container) | .image')"
 template_revision="$(printf '%s\n' "$deployment_json" | jq -r --arg container "$container" '.spec.template.spec.containers[] | select(.name == $container) | .env[] | select(.name == "GOSX_DOCS_REVISION") | .value')"
 template_built_at="$(printf '%s\n' "$deployment_json" | jq -r --arg container "$container" '.spec.template.spec.containers[] | select(.name == $container) | .env[] | select(.name == "GOSX_DOCS_BUILT_AT") | .value')"
-if [ "$template_image" != "$immutable_image" ] || [ "$template_init_image" != "$immutable_image" ] || \
+if [ "$deployment_transaction" != "$transaction_id" ] || \
+	[ "$template_image" != "$immutable_image" ] || [ "$template_init_image" != "$immutable_image" ] || \
 	[ "$template_revision" != "$revision" ] || [ "$template_built_at" != "$built_at" ]; then
 	echo "gosx docs deploy: Deployment template identity does not match the rendered release" >&2
 	echo "  image: ${template_image:-unavailable}" >&2
 	echo "  init image: ${template_init_image:-unavailable}" >&2
 	echo "  revision: ${template_revision:-unavailable}" >&2
 	echo "  built at: ${template_built_at:-unavailable}" >&2
+	echo "  transaction: ${deployment_transaction:-unavailable}" >&2
 	exit 1
 fi
 
