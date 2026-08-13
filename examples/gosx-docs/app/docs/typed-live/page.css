@@ -1,0 +1,63 @@
+.typed-proof {
+  max-width: 48rem;
+}
+
+.typed-proof__kicker {
+  margin: 0 0 var(--space-sm);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+}
+
+.typed-proof h2 {
+  margin-top: 0;
+}
+
+.typed-proof__contract {
+  padding: 0;
+  margin: var(--space-xl) 0;
+  border-top: 1px solid var(--border);
+  list-style: none;
+}
+
+.typed-proof__row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1fr) minmax(0, 2fr);
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.typed-proof__row span {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+}
+
+.typed-proof__row strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  font-weight: 400;
+}
+
+.typed-proof__boundary {
+  padding: var(--space-md);
+  background: var(--surface);
+  border-left: 2px solid var(--accent);
+}
+
+.typed-proof__source {
+  display: inline-block;
+  margin-top: var(--space-sm);
+}
+
+@media (max-width: 36rem) {
+  .typed-proof__row {
+    grid-template-columns: 1fr;
+    gap: var(--space-xs);
+  }
+}

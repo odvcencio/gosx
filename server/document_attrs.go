@@ -31,9 +31,15 @@ func DocumentBodyAttrs(doc *DocumentContext) gosx.AttrList {
 }
 
 func documentHTMLAttrValues(doc *DocumentContext) []documentAttr {
-	return appendDocumentContextAttrs([]documentAttr{
+	attrs := []documentAttr{
 		{name: "data-gosx-document", value: "true"},
-	}, doc, true)
+	}
+	if doc != nil {
+		if language := strings.TrimSpace(doc.Language); language != "" {
+			attrs = append(attrs, documentAttr{name: "lang", value: language})
+		}
+	}
+	return appendDocumentContextAttrs(attrs, doc, true)
 }
 
 func documentBodyAttrValues(doc *DocumentContext) []documentAttr {

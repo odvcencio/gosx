@@ -208,6 +208,73 @@ func TestAppRejectsImageTraversal(t *testing.T) {
 	}
 }
 
+func TestAppRejectsOversizedImageDimensionsBeforeDecoding(t *testing.T) {
+	app := New()
+	app.SetPublicDir(t.TempDir())
+	handler := app.Build()
+
+	for _, query := range []string{
+		"?src=/missing.png&w=100000&h=100000",
+		"?src=/missing.png&w=4096&h=4096",
+	} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, defaultImageEndpoint+query, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s status = %d; want 400", query, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "image dimensions exceed") {
+			t.Fatalf("%s body = %q", query, w.Body.String())
+		}
+	}
+}
+
+func TestImageHeadDoesNotDecodeOrTransformSource(t *testing.T) {
+	publicDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(publicDir, "broken.png"), []byte("not a png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := New()
+	app.SetPublicDir(publicDir)
+	handler := app.Build()
+
+	head := httptest.NewRecorder()
+	handler.ServeHTTP(head, httptest.NewRequest(http.MethodHead, defaultImageEndpoint+"?src=/broken.png&w=320", nil))
+	if head.Code != http.StatusOK || head.Header().Get("Content-Type") != "image/png" || head.Body.Len() != 0 {
+		t.Fatalf("HEAD optimized image = %d type=%q body=%q", head.Code, head.Header().Get("Content-Type"), head.Body.String())
+	}
+
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, defaultImageEndpoint+"?src=/broken.png&w=320", nil))
+	if get.Code != http.StatusInternalServerError {
+		t.Fatalf("GET corrupt image = %d; want 500", get.Code)
+	}
+}
+
+func TestImageTransformConcurrencyIsBounded(t *testing.T) {
+	releases := make([]func(), 0, maxConcurrentImageVariants)
+	for range maxConcurrentImageVariants {
+		release, ok := acquireImageTransform()
+		if !ok {
+			t.Fatal("image transform slot unavailable before capacity")
+		}
+		releases = append(releases, release)
+	}
+	if release, ok := acquireImageTransform(); ok {
+		release()
+		t.Fatal("image transform capacity was not enforced")
+	}
+	for _, release := range releases {
+		release()
+	}
+}
+
+func TestTargetImageSizeNeverUpscalesTwoDimensionRequest(t *testing.T) {
+	width, height := targetImageSize(960, 600, 4096, 4096)
+	if width != 960 || height != 600 {
+		t.Fatalf("target size = %dx%d; want source-bound 960x600", width, height)
+	}
+}
+
 func writeTestPNG(path string, width, height int) error {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	for y := 0; y < height; y++ {

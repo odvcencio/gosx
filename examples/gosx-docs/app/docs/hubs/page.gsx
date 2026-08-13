@@ -31,7 +31,7 @@ func Page() Node {
 				A hub is an HTTP WebSocket handler with named event callbacks, presence, shared process state, selective fanout, and optional binary CRDT synchronization.
 			</p>
 		</div>
-		<h1 id="hub-model">Hub model</h1>
+		<h2 id="hub-model">Hub model</h2>
 		<CodeBlock lang="go" source={data.hubSample} />
 		<p>
 			<span class="inline-code">hub.New</span>

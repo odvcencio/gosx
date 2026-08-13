@@ -51,10 +51,13 @@ type DocumentFunc func(doc *DocumentContext) gosx.Node
 // DocumentContext captures the fully prepared page state used to render a
 // document shell.
 type DocumentContext struct {
-	Request       *http.Request
-	Pattern       string
-	Status        int
-	Title         string
+	Request *http.Request
+	Pattern string
+	Status  int
+	Title   string
+	// Language is the BCP 47 language tag written to the document's html
+	// element. Empty preserves the historical document output.
+	Language      string
 	PageID        string
 	Path          string
 	RequestID     string

@@ -5,165 +5,70 @@ func Layout() Node {
 		<a class="skip-link" href="#main-content">Skip to content</a>
 		<a class="skip-link" href="#pill-nav">Skip to navigation</a>
 		<nav id="pill-nav" class="pill-nav" role="navigation" aria-label="Main navigation">
-			<a href="/" class="pill-logo" data-gosx-link="true">GoSX</a>
+			<a href="/" class="pill-logo" data-gosx-link="true" aria-label="GoSX home">GoSX</a>
 			<div class="pill-links">
-				<a href="/docs/getting-started" data-gosx-link="true" class="pill-link">Docs</a>
+				<a href="/docs" data-gosx-link="true" class="pill-link">Docs</a>
 				<a href="/demos" data-gosx-link="true" class="pill-link">Demos</a>
+				<form class="nav-search" action="/docs" method="get" role="search">
+					<label class="visually-hidden" for="site-search">Search documentation</label>
+					<input id="site-search" name="q" type="search" placeholder="Search docs" autocomplete="off" />
+					<button type="submit">Search</button>
+				</form>
 				<a href="https://github.com/odvcencio/gosx" rel="noopener" class="pill-link">GitHub</a>
+				<a
+					href="/api/site"
+					class="pill-version"
+					aria-label={"Running GoSX version " + site.frameworkVersion}
+				>{site.frameworkVersion}</a>
 			</div>
-			<button
+			<a
 				class="pill-toggle"
-				type="button"
-				data-gosx-disclosure-target="#nav-overlay"
-				aria-expanded="false"
+				href="#nav-overlay"
 				aria-controls="nav-overlay"
-				aria-label="Toggle navigation menu"
+				aria-label="Open navigation menu"
 			>
 				<span class="pill-toggle__bar"></span>
 				<span class="pill-toggle__bar"></span>
 				<span class="pill-toggle__bar"></span>
-			</button>
+			</a>
 		</nav>
-		<div
-			id="nav-overlay"
-			class="nav-overlay"
-			data-gosx-disclosure
-			role="dialog"
-			aria-modal="true"
-			aria-label="Site navigation"
-			hidden
-		>
+		<div id="nav-overlay" class="nav-overlay" role="dialog" aria-modal="true" aria-label="Site navigation">
 			<div class="nav-overlay__inner">
-				<div class="nav-group">
-					<span class="nav-group__label">Start</span>
-					<a href="/" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Overview</a>
-					<a
-						href="/docs/getting-started"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Getting Started</a>
-					<a
-						href="/docs/components"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Components</a>
-				</div>
-				<div class="nav-group">
-					<span class="nav-group__label">Reference</span>
-					<a
-						href="/docs/routing"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Routing</a>
-					<a
-						href="/docs/forms"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Forms</a>
-					<a
-						href="/docs/auth"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Auth</a>
-					<a
-						href="/docs/islands"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Islands</a>
-					<a
-						href="/docs/signals"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Signals</a>
-					<a
-						href="/docs/engines"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Engines</a>
-					<a
-						href="/docs/scene3d"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>3D Engine</a>
-					<a
-						href="/docs/scene3d-vs-threejs"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Scene3D vs three.js</a>
-					<a
-						href="/docs/debugging-scene3d"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Debugging Scene3D</a>
-					<a
-						href="/docs/hubs"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Hubs & CRDT</a>
-					<a
-						href="/docs/runtime"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Runtime</a>
-					<a
-						href="/docs/images"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Images</a>
-					<a
-						href="/docs/text-layout"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Text Layout</a>
-					<a
-						href="/docs/motion"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Motion</a>
-					<a
-						href="/docs/streaming"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Streaming</a>
-					<a
-						href="/docs/compiler"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Compiler</a>
-					<a
-						href="/docs/deployment"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Deployment</a>
-				</div>
-				<div class="nav-group">
-					<span class="nav-group__label">Demos</span>
-					<a href="/demos" data-gosx-link="true" data-gosx-disclosure-close="#nav-overlay" class="nav-link">Explore all demos</a>
-					<a
-						href="/demos/water"
-						data-gosx-link="true"
-						data-gosx-disclosure-close="#nav-overlay"
-						class="nav-link"
-					>Water Lab</a>
+				<a class="nav-overlay__close" href="#main-content" aria-label="Close navigation menu">Close</a>
+				<form class="overlay-search" action="/docs" method="get" role="search">
+					<label for="overlay-site-search">Search all guides</label>
+					<div>
+						<input
+							id="overlay-site-search"
+							name="q"
+							type="search"
+							placeholder="Components, routing, Scene3D…"
+							autocomplete="off"
+						 />
+						<button type="submit">Search</button>
+					</div>
+				</form>
+				<div class="nav-overlay__groups">
+					<div class="nav-group">
+						<span class="nav-group__label">Learn</span>
+						<a href="/docs" data-gosx-link="true" class="nav-link">All documentation</a>
+						<a href="/docs/getting-started" data-gosx-link="true" class="nav-link">Getting started</a>
+						<a href="/docs/components" data-gosx-link="true" class="nav-link">Components</a>
+						<a href="/docs/typed-live" data-gosx-link="true" class="nav-link">Typed component proof</a>
+					</div>
+					<div class="nav-group">
+						<span class="nav-group__label">See it work</span>
+						<a href="/demos" data-gosx-link="true" class="nav-link">All demos</a>
+						<a href="/demos/playground" data-gosx-link="true" class="nav-link">Compiler playground</a>
+						<a href="/demos/collab" data-gosx-link="true" class="nav-link">Realtime collaboration</a>
+						<a href="/demos/beacon" data-gosx-link="true" class="nav-link">Scene3D world</a>
+					</div>
+					<div class="nav-group">
+						<span class="nav-group__label">Project</span>
+						<a href="https://github.com/odvcencio/gosx" rel="noopener" class="nav-link">Source on GitHub</a>
+						<a href="https://github.com/odvcencio/gosx/releases/tag/v0.39.0" rel="noopener" class="nav-link">v0.39.0 release notes</a>
+						<a href="/api/site" class="nav-link">Running build metadata</a>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -174,14 +79,24 @@ func Layout() Node {
 			<div class="site-footer__inner">
 				<div class="site-footer__brand">
 					<span class="site-footer__logo chrome-text">GoSX</span>
-					<span class="site-footer__tagline">Go-native web platform</span>
+					<span class="site-footer__tagline">
+						This documentation is a GoSX application.
+					</span>
 				</div>
-				<div class="site-footer__links">
-					<a href="https://github.com/odvcencio/gosx" class="site-footer__link" rel="noopener">GitHub</a>
+				<div class="site-footer__links" aria-label="Project links">
+					<a href="/docs" data-gosx-link="true" class="site-footer__link">Documentation</a>
+					<a href="/demos" data-gosx-link="true" class="site-footer__link">Live demos</a>
+					<a href="https://github.com/odvcencio/gosx" class="site-footer__link" rel="noopener">Source</a>
 				</div>
-				<div class="site-footer__a11y">
+				<div class="site-footer__build">
+					<a href="/api/site" class="site-footer__version">
+						Running GoSX
+						{site.frameworkVersion}
+						·
+						{site.revision}
+					</a>
 					<p>
-						GoSX accessibility is backed by semantic landmarks, named controls, reduced-motion defaults, and CI checks for duplicate IDs and broken ARIA references.
+						Server-rendered routes, actions, islands, hubs, and managed GPU scenes are exercised by this site and its demos.
 					</p>
 				</div>
 			</div>

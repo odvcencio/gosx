@@ -8,7 +8,7 @@ func Page() Node {
 				GoSX can resize local PNG, JPEG, and GIF assets on request and emit responsive image markup. Remote URLs and SVG files remain ordinary image sources.
 			</p>
 		</div>
-		<h1 id="helper">Image helper</h1>
+		<h2 id="helper">Image helper</h2>
 		<CodeBlock lang="go" source={data.imageSample} />
 		<p>
 			<span class="inline-code">server.Image</span>
@@ -21,6 +21,17 @@ func Page() Node {
 		<p>
 			Paths pass through the configured asset resolver before optimization. Unsupported sources, including remote URLs and SVG, render as plain images rather than being fetched or decoded by the optimizer.
 		</p>
+		<div class="demo-well" role="region" aria-label="Live optimized image example">
+			<p class="demo-well__label">Live helper output</p>
+			{data.liveImage}
+			<p>
+				Inspect this image request: the page emitted a responsive
+				<span class="inline-code">srcset</span>
+				and local optimizer URLs from
+				<span class="inline-code">server.Image</span>
+				. The source is a checked-in PNG rendered by the GoSX native scene harness.
+			</p>
+		</div>
 		<h2 id="responsive">Responsive images</h2>
 		<CodeBlock lang="go" source={data.responsiveSample} />
 		<p>

@@ -1,7 +1,9 @@
 /dashboard
 build/
 .canopy/
-/docs/
+/docs/*
+!/docs/docs-site-operations.md
+!/docs/docs-site-spec.md
 /gosx
 node_modules/
 

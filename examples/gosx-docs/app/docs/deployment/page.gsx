@@ -37,7 +37,7 @@ func Page() Node {
 				bundle: the server binary when the project is runnable, file-route inputs, public content, hashed browser assets, prerendered pages, and platform metadata.
 			</p>
 		</div>
-		<h1 id="build-output">Build the deployable bundle</h1>
+		<h2 id="build-output">Build the deployable bundle</h2>
 		<p>
 			<span class="inline-code">gosx build</span>
 			accepts an application directory. Development is the default; select production explicitly for hashed assets, a production server build, static prerendering, and edge/platform output.

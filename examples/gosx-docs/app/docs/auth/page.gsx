@@ -8,7 +8,7 @@ func Page() Node {
 				GoSX provides signed cookie sessions, authentication middleware, one-time magic links, WebAuthn server ceremonies, and OAuth 2.0 helpers with state and PKCE.
 			</p>
 		</div>
-		<h1 id="sessions">Sessions</h1>
+		<h2 id="sessions">Sessions</h2>
 		<CodeBlock lang="go" source={data.sessionSample} />
 		<p>
 			<span class="inline-code">session.New</span>
@@ -30,6 +30,53 @@ func Page() Node {
 		<p>
 			Register session middleware before auth middleware. Both sign-in state and pending auth ceremonies are stored in the request session.
 		</p>
+		<section id="session-demo" class="demo-well" aria-labelledby="session-demo-title">
+			<p class="demo-well__label">Live session-backed action</p>
+			<h3 id="session-demo-title">Sign in to this documentation route</h3>
+			<If cond={actions.signIn.ok}>
+				<p class="form-status form-status--ok">{actions.signIn.message}</p>
+			</If>
+			<If cond={!actions.signIn.ok && actions.signIn.status != 0}>
+				<p class="form-status form-status--error">{actions.signIn.message}</p>
+			</If>
+			<If cond={!data.currentUser.signedIn}>
+				<p>
+					This form posts through a named GoSX action, validates on the server, rotates the signed session cookie, and returns the action state to this page.
+				</p>
+				<form method="post" action={actionPath("signIn")}>
+					<input type="hidden" name="csrf_token" value={csrf.token} />
+					<label class="field" for="docs-auth-name">
+						<span>Name</span>
+						<input
+							id="docs-auth-name"
+							name="name"
+							type="text"
+							value={actions.signIn.values.name}
+							autocomplete="name"
+							required
+						 />
+					</label>
+					<p class="form-error">{actions.signIn.fieldErrors.name}</p>
+					<button class="cta-link primary" type="submit">Create demo session</button>
+				</form>
+			</If>
+			<If cond={data.currentUser.signedIn}>
+				<p>
+					Current request identity:
+					<strong>{data.currentUser.name}</strong>
+					. Refresh this route to verify that the signed session survives another request.
+				</p>
+				<form method="post" action={actionPath("signOut")}>
+					<input type="hidden" name="csrf_token" value={csrf.token} />
+					<button class="cta-link" type="submit">Clear demo session</button>
+				</form>
+			</If>
+			<p class="docs-demo-limit">
+				Demo boundary: identity is intentionally local to this process and carries only the
+				<span class="inline-code">docs</span>
+				role. It is not a production account system.
+			</p>
+		</section>
 		<h2 id="magic-links">Magic links</h2>
 		<CodeBlock lang="go" source={data.magicSample} />
 		<p>
@@ -67,6 +114,14 @@ func Page() Node {
 					</If>
 				</div>
 			</If>
+		</If>
+		<If cond={!data.authFlows.magicLinkEnabled}>
+			<div class="callout">
+				<strong>Public deployment boundary</strong>
+				<p>
+					This production docs site disables token issuance and passkey mutation endpoints. Run the example locally to exercise those in-memory demos; production applications should bind durable stores, delivery, and abuse controls.
+				</p>
+			</div>
 		</If>
 		<h2 id="passkeys">WebAuthn and passkeys</h2>
 		<CodeBlock lang="go" source={data.passkeySample} />

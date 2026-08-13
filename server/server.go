@@ -14,6 +14,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -745,6 +746,17 @@ func HTMLDocument(title string, head gosx.Node, body gosx.Node) gosx.Node {
 	return HTMLDocumentWithNonce(title, "", head, body)
 }
 
+// HTMLDocumentWithLanguage wraps content in a full HTML5 document and sets
+// the document language. An empty language preserves HTMLDocument output.
+func HTMLDocumentWithLanguage(title string, language string, head gosx.Node, body gosx.Node) gosx.Node {
+	return gosx.RawHTML(renderDocumentWithContext(&DocumentContext{
+		Title:    title,
+		Language: strings.TrimSpace(language),
+		Head:     head,
+		Body:     body,
+	}))
+}
+
 // HTMLDocumentWithNonce wraps content in a full HTML5 document, threading a
 // per-request CSP nonce through GoSX-owned document shell scripts.
 func HTMLDocumentWithNonce(title string, nonce string, head gosx.Node, body gosx.Node) gosx.Node {
@@ -1030,6 +1042,11 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 
 	MarkObservedRequest(r, "public", cleanPath)
 	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	if strings.EqualFold(filepath.Ext(fsPath), ".webmanifest") {
+		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+	} else if contentType := mime.TypeByExtension(filepath.Ext(fsPath)); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
 	http.ServeFile(w, r, fsPath)
 	return true
 }

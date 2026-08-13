@@ -40,6 +40,9 @@ type Hub struct {
 	name    string
 	clients map[string]*Client
 	mu      sync.RWMutex
+	// pendingClients reserves capacity while WebSocket upgrades are in flight,
+	// closing the check-then-register race around MaxClients.
+	pendingClients int
 
 	// Event handlers registered via On()
 	handlers map[string]HandlerFunc
@@ -72,6 +75,18 @@ type Hub struct {
 
 	// MaxClients limits the number of concurrent connections. 0 = unlimited.
 	MaxClients int
+
+	// RequireOrigin rejects WebSocket upgrades that omit Origin, in addition
+	// to the default same-origin check. Browsers send Origin for WebSockets;
+	// public browser-only hubs should enable this before serving.
+	RequireOrigin bool
+
+	// MaxMessagesPerSecond bounds inbound text and binary messages per client.
+	// MaxMessageBurst is the per-client token-bucket capacity; when zero it
+	// defaults to twice MaxMessagesPerSecond. Zero rate means unlimited.
+	// Configure these fields before accepting the first connection.
+	MaxMessagesPerSecond int
+	MaxMessageBurst      int
 
 	// MaxSyncMessageSize is the inbound frame allowance, in bytes, for a
 	// connection that may push CRDT sync. Zero selects
@@ -108,6 +123,11 @@ type Client struct {
 	binaryDropped atomic.Uint64
 	// loggedDrop marks that the first drop for this client was logged.
 	loggedDrop atomic.Bool
+
+	// inbound token-bucket state belongs to readPump, the sole reader for a
+	// connection, so it needs no additional mutex.
+	messageTokens float64
+	messageLast   time.Time
 }
 
 // DropStats counts the messages a hub or one client lost because a send buffer
@@ -268,10 +288,18 @@ type Message struct {
 var upgrader = websocket.Upgrader{
 	// CheckOrigin: reject cross-origin requests by default.
 	// Use SetCheckOrigin to override for development or trusted origins.
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
-	},
+	CheckOrigin: func(r *http.Request) bool { return sameOrigin(r, false) },
+}
+
+func sameOrigin(r *http.Request, require bool) bool {
+	if r == nil {
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return !require
+	}
+	return origin == "http://"+r.Host || origin == "https://"+r.Host
 }
 
 // SetCheckOrigin overrides the default origin check for WebSocket upgrades.
@@ -572,12 +600,22 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //		hub.ServeHTTPWithMetadata(w, r, metadata)
 //	}))
 func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, metadata ConnectionMetadata) {
-	if h.MaxClients > 0 && h.ClientCount() >= h.MaxClients {
+	if !h.reserveClientSlot() {
 		http.Error(w, "hub full", http.StatusServiceUnavailable)
 		return
 	}
+	reserved := true
+	defer func() {
+		if reserved {
+			h.releaseClientSlot()
+		}
+	}()
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	connectionUpgrader := upgrader
+	if h.RequireOrigin {
+		connectionUpgrader.CheckOrigin = func(r *http.Request) bool { return sameOrigin(r, true) }
+	}
+	conn, err := connectionUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
 		return
@@ -606,10 +644,13 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	// sync keeps the small frame allowance. See readLimitFor.
 	conn.SetReadLimit(h.readLimitFor(client))
 
-	// Register client
+	// Register the client and convert its in-flight capacity reservation into
+	// a live slot under the same lock.
 	h.mu.Lock()
+	h.pendingClients--
 	h.clients[clientID] = client
 	h.mu.Unlock()
+	reserved = false
 
 	// Track presence
 	h.presence.add(clientID)
@@ -662,6 +703,51 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	go client.readPump()
 }
 
+func (h *Hub) reserveClientSlot() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.MaxClients > 0 && len(h.clients)+h.pendingClients >= h.MaxClients {
+		return false
+	}
+	h.pendingClients++
+	return true
+}
+
+func (h *Hub) releaseClientSlot() {
+	h.mu.Lock()
+	h.pendingClients--
+	h.mu.Unlock()
+}
+
+func (c *Client) allowInboundMessage(now time.Time) bool {
+	rate := c.Hub.MaxMessagesPerSecond
+	if rate <= 0 {
+		return true
+	}
+	burst := c.Hub.MaxMessageBurst
+	if burst <= 0 {
+		burst = rate * 2
+	}
+	if c.messageLast.IsZero() {
+		c.messageTokens = float64(burst)
+		c.messageLast = now
+	} else {
+		elapsed := now.Sub(c.messageLast).Seconds()
+		if elapsed > 0 {
+			c.messageTokens += elapsed * float64(rate)
+			if c.messageTokens > float64(burst) {
+				c.messageTokens = float64(burst)
+			}
+			c.messageLast = now
+		}
+	}
+	if c.messageTokens < 1 {
+		return false
+	}
+	c.messageTokens--
+	return true
+}
+
 func (c *Client) readPump() {
 	defer func() {
 		c.Hub.removeClient(c)
@@ -677,6 +763,10 @@ func (c *Client) readPump() {
 			if !websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
 				log.Printf("[hub/%s] read error: %v", c.Hub.name, err)
 			}
+			break
+		}
+		if !c.allowInboundMessage(time.Now()) {
+			log.Printf("[hub/%s] client %s exceeded inbound message rate", c.Hub.name, c.ID)
 			break
 		}
 

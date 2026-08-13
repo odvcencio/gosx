@@ -159,6 +159,29 @@ func ImageHandler(rootDir string) http.Handler {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if r.Method == http.MethodHead {
+			contentType, err := imageVariantContentType(path, req.Format)
+			if err != nil {
+				status := http.StatusBadRequest
+				if os.IsNotExist(err) {
+					status = http.StatusNotFound
+				}
+				http.Error(w, err.Error(), status)
+				return
+			}
+			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		release, ok := acquireImageTransform()
+		if !ok {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "image optimizer is busy", http.StatusServiceUnavailable)
+			return
+		}
+		defer release()
 
 		variant, err := renderImageVariant(path, req)
 		if err != nil {
@@ -175,9 +198,6 @@ func ImageHandler(rootDir string) http.Handler {
 		w.Header().Set("Content-Type", variant.contentType)
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		w.WriteHeader(http.StatusOK)
-		if r.Method == http.MethodHead {
-			return
-		}
 		_, _ = w.Write(variant.data)
 	})
 }
@@ -193,6 +213,23 @@ type imageRequest struct {
 type imageVariant struct {
 	data        []byte
 	contentType string
+}
+
+const (
+	maxImageDimension          = 4096
+	maxImagePixels             = 8 * 1024 * 1024
+	maxConcurrentImageVariants = 2
+)
+
+var imageTransformSlots = make(chan struct{}, maxConcurrentImageVariants)
+
+func acquireImageTransform() (func(), bool) {
+	select {
+	case imageTransformSlots <- struct{}{}:
+		return func() { <-imageTransformSlots }, true
+	default:
+		return nil, false
+	}
 }
 
 func parseImageRequest(r *http.Request) (imageRequest, error) {
@@ -214,6 +251,9 @@ func parseImageRequest(r *http.Request) (imageRequest, error) {
 	if err != nil {
 		return imageRequest{}, fmt.Errorf("invalid quality: %w", err)
 	}
+	if err := validateImageDimensions(width, height); err != nil {
+		return imageRequest{}, err
+	}
 
 	return imageRequest{
 		Src:     src,
@@ -222,6 +262,16 @@ func parseImageRequest(r *http.Request) (imageRequest, error) {
 		Quality: quality,
 		Format:  normalizeImageFormat(query.Get("fmt")),
 	}, nil
+}
+
+func validateImageDimensions(width, height int) error {
+	if width > maxImageDimension || height > maxImageDimension {
+		return fmt.Errorf("image dimensions exceed %d pixels", maxImageDimension)
+	}
+	if width > 0 && height > 0 && int64(width)*int64(height) > int64(maxImagePixels) {
+		return fmt.Errorf("image dimensions exceed %d total pixels", maxImagePixels)
+	}
+	return nil
 }
 
 func renderImageVariant(filePath string, req imageRequest) (imageVariant, error) {
@@ -243,6 +293,9 @@ func renderImageVariant(filePath string, req imageRequest) (imageVariant, error)
 
 	bounds := srcImage.Bounds()
 	targetWidth, targetHeight := targetImageSize(bounds.Dx(), bounds.Dy(), req.Width, req.Height)
+	if err := validateImageDimensions(targetWidth, targetHeight); err != nil {
+		return imageVariant{}, err
+	}
 	if targetWidth != bounds.Dx() || targetHeight != bounds.Dy() {
 		dst := image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
 		draw.CatmullRom.Scale(dst, dst.Bounds(), srcImage, bounds, draw.Over, nil)
@@ -298,7 +351,7 @@ func targetImageSize(sourceWidth, sourceHeight, requestedWidth, requestedHeight 
 
 	switch {
 	case requestedWidth > 0 && requestedHeight > 0:
-		return requestedWidth, requestedHeight
+		return min(requestedWidth, sourceWidth), min(requestedHeight, sourceHeight)
 	case requestedWidth > 0:
 		if requestedWidth > sourceWidth {
 			requestedWidth = sourceWidth
@@ -311,6 +364,31 @@ func targetImageSize(sourceWidth, sourceHeight, requestedWidth, requestedHeight 
 		return max(1, int(float64(sourceWidth)*(float64(requestedHeight)/float64(sourceHeight)))), requestedHeight
 	default:
 		return sourceWidth, sourceHeight
+	}
+}
+
+func imageVariantContentType(filePath, requestedFormat string) (string, error) {
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("image source is not a regular file")
+	}
+	sourceFormat := strings.TrimPrefix(strings.ToLower(filepath.Ext(filePath)), ".")
+	format, err := selectTargetImageFormat(sourceFormat, requestedFormat)
+	if err != nil {
+		return "", err
+	}
+	switch format {
+	case "jpeg":
+		return "image/jpeg", nil
+	case "png":
+		return "image/png", nil
+	case "gif":
+		return "image/gif", nil
+	default:
+		return "", fmt.Errorf("unsupported image format %q", format)
 	}
 }
 
@@ -475,6 +553,7 @@ func isImageClientError(err error) bool {
 		"must reference a file",
 		"escapes source directory",
 		"unsupported",
+		"image dimensions exceed",
 	} {
 		if strings.Contains(err.Error(), snippet) {
 			return true

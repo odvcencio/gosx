@@ -161,3 +161,43 @@ func TestLimiterConcurrentSafe(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestLimiterBoundsRotatingKeyStateAndSharesOverflowBurst(t *testing.T) {
+	clk := newFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	l := NewLimiter(1, 1, WithClock(clk), WithMaxBuckets(2))
+
+	if !l.Allow("first") || !l.Allow("second") {
+		t.Fatal("expected retained caller buckets to receive their initial token")
+	}
+	if !l.Allow("rotating-third") {
+		t.Fatal("expected the shared overflow bucket to receive one initial token")
+	}
+	if l.Allow("rotating-fourth") {
+		t.Fatal("a new rotating key must share the exhausted overflow bucket")
+	}
+	if got := len(l.buckets); got != 2 {
+		t.Fatalf("retained key count = %d, want hard cap 2", got)
+	}
+}
+
+func TestLimiterLazilySweepsIdleBuckets(t *testing.T) {
+	clk := newFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	l := NewLimiter(10, 1,
+		WithClock(clk),
+		WithMaxBuckets(2),
+		WithLazySweep(time.Second, 3),
+	)
+
+	l.Allow("first")
+	l.Allow("second")
+	clk.advance(2 * time.Second)
+	if !l.Allow("fresh") { // third call runs the lazy sweep before lookup.
+		t.Fatal("fresh key should be admitted after idle buckets are swept")
+	}
+	if got := len(l.buckets); got != 1 {
+		t.Fatalf("bucket count after lazy sweep = %d, want 1", got)
+	}
+	if _, ok := l.buckets["fresh"]; !ok {
+		t.Fatal("fresh key should have a retained bucket after the sweep")
+	}
+}

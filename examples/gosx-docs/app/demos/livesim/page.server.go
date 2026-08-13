@@ -34,6 +34,10 @@ const viewerPollInterval = 300 * time.Millisecond
 
 func init() {
 	Hub = hub.New("livesim")
+	Hub.MaxClients = 64
+	Hub.RequireOrigin = true
+	Hub.MaxMessagesPerSecond = 60
+	Hub.MaxMessageBurst = 120
 	theGame = newGame()
 	runner = sim.New(Hub, theGame, sim.Options{TickRate: 20})
 	runner.RegisterHandlers()

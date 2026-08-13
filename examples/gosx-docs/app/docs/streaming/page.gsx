@@ -31,7 +31,7 @@ func Page() Node {
 				Deferred boundaries render useful fallback HTML in the shell, then resolve concurrently and stream replacement templates as their server work completes.
 			</p>
 		</div>
-		<h1 id="deferred-regions">Deferred regions</h1>
+		<h2 id="deferred-regions">Deferred regions</h2>
 		<CodeBlock lang="go" source={data.deferSample} />
 		<p>
 			<span class="inline-code">ctx.Defer</span>

@@ -31,7 +31,7 @@ func Page() Node {
 				A single parser and IR serve both GSX component spellings. Strict declarations add a fail-closed typed boundary; legacy Go-function components preserve the established dynamic route and island model.
 			</p>
 		</div>
-		<h1 id="source-model">GSX source model</h1>
+		<h2 id="source-model">GSX source model</h2>
 		<p>
 			A
 			<span class="inline-code">.gsx</span>

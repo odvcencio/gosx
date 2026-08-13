@@ -98,11 +98,11 @@ func Page() Node {
 		</section>
 		<div class="demo-well" role="region" aria-label="Form demo">
 			<p class="demo-well__label">Live demo</p>
-			<If cond={actions.subscribe.result.ok}>
-				<p class="form-status form-status--ok">{actions.subscribe.result.message}</p>
+			<If cond={actions.subscribe.ok}>
+				<p class="form-status form-status--ok">{actions.subscribe.message}</p>
 			</If>
-			<If cond={!actions.subscribe.result.ok && actions.subscribe.submitted}>
-				<p class="form-status form-status--error">{actions.subscribe.result.message}</p>
+			<If cond={!actions.subscribe.ok && actions.subscribe.status != 0}>
+				<p class="form-status form-status--error">{actions.subscribe.message}</p>
 			</If>
 			<form method="post" action={actionPath("subscribe")}>
 				<input type="hidden" name="csrf_token" value={csrf.token} />

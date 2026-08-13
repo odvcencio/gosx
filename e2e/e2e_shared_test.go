@@ -10,6 +10,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -122,16 +123,40 @@ func startDocsApp(t *testing.T, baseURL string) *docsApp {
 func waitForHealthy(url string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	lastError := ""
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	requested, parseErr := http.NewRequest(http.MethodGet, url, nil)
+	if parseErr != nil {
+		return fmt.Errorf("invalid health URL %q: %w", url, parseErr)
+	}
+	probePath := requested.URL.Path
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil {
 			status := resp.StatusCode
-			resp.Body.Close()
-			if status < 500 {
-				return nil
+			if status >= http.StatusOK && status < http.StatusMultipleChoices {
+				if strings.HasSuffix(probePath, "/healthz") || strings.HasSuffix(probePath, "/readyz") {
+					var payload struct {
+						OK bool `json:"ok"`
+					}
+					decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
+					resp.Body.Close()
+					if decodeErr == nil && payload.OK {
+						return nil
+					}
+					lastError = fmt.Sprintf("status %d without an ok readiness payload", status)
+				} else {
+					resp.Body.Close()
+					return nil
+				}
+			} else {
+				resp.Body.Close()
+				lastError = fmt.Sprintf("status %d", status)
 			}
-			lastError = fmt.Sprintf("status %d", status)
 		} else {
 			lastError = err.Error()
 		}

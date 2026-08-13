@@ -20,6 +20,10 @@ var presenceRoster *roster
 
 func init() {
 	Hub = hub.New("collab")
+	Hub.MaxClients = 64
+	Hub.RequireOrigin = true
+	Hub.MaxMessagesPerSecond = 60
+	Hub.MaxMessageBurst = 120
 	doc = NewDoc(defaultDocText)
 	presenceRoster = newRoster()
 

@@ -10,7 +10,7 @@ func Page() Node {
 				file: a strict, typed form for deliberately small server components and the established Go-function form for routes, islands, and richer bodies.
 			</p>
 		</div>
-		<h1 id="two-styles">Components</h1>
+		<h2 id="two-styles">Two authoring styles</h2>
 		<p>
 			Both styles lower to the same GoSX component IR. Choosing a style changes the source contract and validation boundary; it does not create a second renderer or runtime.
 		</p>
