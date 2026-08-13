@@ -347,6 +347,7 @@ build-runtime:
 #      operation that broke v0.29.0 so a zip-breaking commit fails fast.
 test-docs-deploy:
 	sh scripts/deploy-gosx-docs-concurrency-test.sh
+	sh scripts/deploy-gosx-docs-public-test.sh
 
 release-gate:
 	@echo "release-gate (1/5): go run ./cmd/gosx release check"
