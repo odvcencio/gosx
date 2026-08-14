@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/server"
 )
 
@@ -253,8 +254,12 @@ func TestCurrentSiteBuildInfoReportsReleaseAndSanitizedBuildFields(t *testing.T)
 	t.Setenv("GOSX_DOCS_BUILT_AT", "2026-08-12T20:30:00-07:00")
 
 	got := currentSiteBuildInfo()
-	if got.FrameworkVersion != "v0.39.0" {
-		t.Fatalf("frameworkVersion = %q; want v0.39.0", got.FrameworkVersion)
+	// Derive the expected version from the framework rather than pinning it.
+	// The site reports "v"+gosx.Version, so a release bump used to fail this
+	// test for a reason unrelated to build-info handling.
+	wantVersion := "v" + gosx.Version
+	if got.FrameworkVersion != wantVersion {
+		t.Fatalf("frameworkVersion = %q; want %q", got.FrameworkVersion, wantVersion)
 	}
 	if got.Revision != "deadbeef" || got.BuiltAt != "2026-08-13T03:30:00Z" {
 		t.Fatalf("unexpected normalized build info: %#v", got)
@@ -291,7 +296,7 @@ func TestSiteDocumentsAreMachineReadableAndExcludeTestRoutes(t *testing.T) {
 	if err := json.NewDecoder(apiResponse.Body).Decode(&info); err != nil {
 		t.Fatalf("decode /api/site: %v", err)
 	}
-	if info.FrameworkVersion != "v0.39.0" || info.Status != "ok" {
+	if info.FrameworkVersion != "v"+gosx.Version || info.Status != "ok" {
 		t.Fatalf("unexpected /api/site payload: %#v", info)
 	}
 	probeRequest := httptest.NewRequest(http.MethodPost, "/api/site/probe", nil)

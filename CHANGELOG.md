@@ -1,6 +1,13 @@
 # Changelog
 
-## v0.40.0 (2026-08-14)
+## v0.40.1 (2026-08-14)
+
+v0.40.0 was tagged and is present on the module proxy, but it is not usable:
+its `go.mod` carried a local `replace` directive for `gotreesitter` pointing at
+a scratch path, so the module does not resolve anywhere else. The release job
+caught it and published nothing. v0.40.1 is the same work with that directive
+removed. Do not depend on v0.40.0.
+
 
 ### Browser runtime sources move to TypeScript
 

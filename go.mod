@@ -52,5 +52,3 @@ require (
 	lukechampine.com/blake3 v1.4.1 // indirect
 	m31labs.dev/eos v0.1.4
 )
-
-replace github.com/odvcencio/gotreesitter => /tmp/claude-1000/-home-draco-work-m31labs-dev/04e79c2d-63f8-4153-a5c8-26205acfe572/scratchpad/gts-bisect

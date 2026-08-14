@@ -1,6 +1,10 @@
 package docs
 
-import "testing"
+import (
+	"testing"
+
+	"m31labs.dev/gosx"
+)
 
 func TestPublicSiteURLUsesValidatedPublicOrigin(t *testing.T) {
 	t.Setenv("PUBLIC_URL", "https://docs.example.test/base/?ignored=yes")
@@ -29,7 +33,7 @@ func TestSiteBuildInfoReportsReleaseAndSanitizedDeploymentIdentity(t *testing.T)
 	t.Setenv("GOSX_DOCS_BUILT_AT", "2026-08-12T20:30:00-07:00")
 
 	got := SiteBuildInfo()
-	if got["frameworkVersion"] != "v0.39.0" || got["revision"] != "deadbeef" {
+	if got["frameworkVersion"] != "v"+gosx.Version || got["revision"] != "deadbeef" {
 		t.Fatalf("unexpected build identity: %#v", got)
 	}
 	if got["builtAt"] != "2026-08-13T03:30:00Z" || got["publicURL"] != "https://docs.example.test" {
