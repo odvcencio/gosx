@@ -1,6 +1,6 @@
 // Base64 decoding for Scene3D binary payloads.
 //
-// It sat in 11a-scene-decompress.js until that file became the lazily fetched
+// It sat in 11a-scene-decompress.ts until that file became the lazily fetched
 // decompress chunk. This helper cannot follow it: 20-scene-mount.js calls
 // sceneBase64Decode on every page that carries a motion program, and a motion
 // program is not a compressed array. The two features are independent, so the

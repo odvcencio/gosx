@@ -31,7 +31,7 @@ var allBackends = []Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D}
 // CANVAS2D BLANKET RULE.
 //
 // Canvas2D draws exactly two things: line segments and screen-space point
-// sprites. Read createSceneCanvasRenderer in 18-scene-canvas.js — it calls
+// sprites. Read createSceneCanvasRenderer in 18-scene-canvas.ts — it calls
 // renderSceneCanvasPoints and renderSceneCanvasWorldBundle, and nothing else.
 // It rasterizes no triangle, so it shades no material, reads no light, runs no
 // pass and samples no texture.
@@ -183,7 +183,7 @@ var Matrix = map[Feature]map[Backend]bool{
 	//
 	// The pick CONTRACT — the gosx:scene3d:input events, the pick/drag/event
 	// signal namespaces, and every hit field including the world-space ray — is
-	// produced by setupScenePickInteractions in 17-scene-input.js. That function
+	// produced by setupScenePickInteractions in 17-scene-input.ts. That function
 	// takes no renderer argument and has no backend branch, so a page returns
 	// identical pick results whichever GPU backend draws it.
 	//
@@ -204,7 +204,7 @@ var Matrix = map[Feature]map[Backend]bool{
 	//	16-scene-webgl.js       "dash" appears 0 times, case-insensitive
 	//	16a-scene-webgpu.js     "lineDash" appears 3 times, all of them in
 	//	                        webGPUUnsupportedLineStyles, which REFUSES the draw
-	//	18-scene-canvas.js      "dash" appears 16 times, and line 31 calls
+	//	18-scene-canvas.ts      "dash" appears 16 times, and line 31 calls
 	//	                        ctx2d.setLineDash([dashSize, gapSize])
 	//
 	// So WebGL2 draws a dashed line as a SOLID line, WebGPU drops the line data

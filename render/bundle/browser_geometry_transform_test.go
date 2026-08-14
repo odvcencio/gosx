@@ -71,7 +71,7 @@ func TestBrowserWorldBakeTransformContract(t *testing.T) {
 		},
 		{
 			name: "legacy WebGL",
-			file: "16e-scene-webgl-legacy.js",
+			file: "16e-scene-webgl-legacy.ts",
 			needles: []string{
 				"sceneSliceFloatArray(bundle.worldMeshPositions",
 				"gl.drawArrays(resources.trianglesMode",
@@ -79,7 +79,7 @@ func TestBrowserWorldBakeTransformContract(t *testing.T) {
 		},
 		{
 			name: "CPU picking",
-			file: "17-scene-input.js",
+			file: "17-scene-input.ts",
 			needles: []string{
 				"sceneRaycastPickGroup(ray, bundle.meshObjects, bundle.worldMeshPositions",
 				"sceneRayIntersectsTriangle(ray.origin, ray.dir, v0, v1, v2)",

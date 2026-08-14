@@ -24,7 +24,7 @@ function readSrc(name) {
   return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const sharedSource = readSrc("15a-scene-postfx-shared.js");
+const sharedSource = readSrc("15a-scene-postfx-shared.ts");
 const webglSource = readSrc("../runtime/scene3d/webgl.ts");
 const webgpuSource = readSrc("../runtime/scene3d/webgpu.ts");
 // sceneRenderBackendTruth and its DOM surface live in

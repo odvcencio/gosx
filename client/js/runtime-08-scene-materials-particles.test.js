@@ -705,7 +705,7 @@ test("bootstrap keeps Scene3D initial point buffers out of entry transitions", a
 });
 
 test("bootstrap keeps Scene3D CSS transition diagnostics opt-in", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.ts"), "utf8");
 
   assert.match(source, /function sceneCSSDebugLog\(\)/);
   assert.match(source, /__gosx_scene3d_css_debug/);
@@ -744,15 +744,15 @@ test("bootstrap skips redundant runtime style and attribute writes", () => {
 test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
   const builder = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
-  const utils = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-utils.js"), "utf8");
-  const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.js"), "utf8");
+  const utils = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-utils.ts"), "utf8");
+  const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.ts"), "utf8");
 
   // The selective runtime bundle carries the runtime-utils head as a real
   // file. The build used to cut it out of the scene core with two literal
   // source markers, so a rename or a re-indent changed what shipped.
   assert.deepEqual(
     bootstrapChunkSources("bootstrap-runtime.js").filter((s) => s.includes("10-runtime-scene")),
-    ["bootstrap-src/10-runtime-scene-utils.js"],
+    ["bootstrap-src/10-runtime-scene-utils.ts"],
   );
   // The scene3d chunk carries no copy of the utils file. It bridges the ten
   // names it reads from window.__gosx_runtime_api instead, so the Chromium
@@ -777,11 +777,11 @@ test("bootstrap derives selective runtime utilities from the Scene3D core source
   assert.match(primitives, /function sceneBool\(/);
   assert.match(primitives, /function clearChildren\(/);
   assert.equal(
-    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function sceneSegmentResolution\(/g) || []).length,
     1,
   );
   assert.equal(
-    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function sceneSegmentResolution\(/g) || []).length,
     1,
   );
 });

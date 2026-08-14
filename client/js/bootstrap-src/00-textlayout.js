@@ -559,7 +559,7 @@
   // mode and ellipsis clamping. It cost 42_751 of the 157_086 minified bytes in
   // bootstrap-runtime.js and 42_738 of the 131_137 in bootstrap-lite.js, and it
   // loaded on every page, even a page that holds no text block. The engine now
-  // ships as bootstrap-src/01-textlayout-engine.js. The monolithic bootstrap.js
+  // ships as bootstrap-src/01-textlayout-engine.ts. The monolithic bootstrap.js
   // still carries it inline. The selective bundles fetch it as
   // bootstrap-feature-textlayout.js when the document holds a
   // data-gosx-text-layout element, or when the manifest mounts a Scene3D

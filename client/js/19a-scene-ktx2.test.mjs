@@ -1,4 +1,4 @@
-// KTX2 reader tests for 19a-scene-ktx2.js.
+// KTX2 reader tests for 19a-scene-ktx2.ts.
 //
 // The oracle is not our own writer. render/bundle/ktx2/testdata holds ten
 // containers that KTX-Software 4.4.2 wrote with "ktx create --raw", one per BC
@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 const fixtureDir = path.join(__dirname, "..", "..", "render", "bundle", "ktx2", "testdata");
-const ktx2Source = fs.readFileSync(path.join(srcDir, "19a-scene-ktx2.js"), "utf8");
+const ktx2Source = fs.readFileSync(path.join(srcDir, "19a-scene-ktx2.ts"), "utf8");
 
 function loadKTX2() {
   const window = {};

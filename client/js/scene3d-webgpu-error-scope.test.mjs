@@ -46,7 +46,7 @@ function readSrc(name) {
 
 const computeSource = readSrc("../runtime/scene3d/compute.ts");
 const webgpuSource = readSrc("../runtime/scene3d/webgpu.ts");
-const sharedSource = readSrc("15a-scene-postfx-shared.js");
+const sharedSource = readSrc("15a-scene-postfx-shared.ts");
 
 const GOOD_KERNEL = "@compute @workgroup_size(64) fn simulate() {}";
 const BAD_KERNEL = "@compute @workgroup_size(64) fn simulate() { let x = 10u * 3812015801u; }";

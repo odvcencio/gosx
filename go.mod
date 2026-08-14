@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/gorilla/websocket v1.5.3
-	github.com/odvcencio/gotreesitter v0.47.0
+	github.com/odvcencio/gotreesitter v0.50.1
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/image v0.38.0
 	golang.org/x/net v0.52.0
@@ -23,7 +23,7 @@ require (
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
 	github.com/redis/go-redis/v9 v9.18.0
 	golang.org/x/sys v0.43.0
-	m31labs.dev/selena v0.4.0
+	m31labs.dev/selena v0.5.2
 )
 
 require (
@@ -52,3 +52,5 @@ require (
 	lukechampine.com/blake3 v1.4.1 // indirect
 	m31labs.dev/eos v0.1.4
 )
+
+replace github.com/odvcencio/gotreesitter => /tmp/claude-1000/-home-draco-work-m31labs-dev/04e79c2d-63f8-4153-a5c8-26205acfe572/scratchpad/gts-bisect

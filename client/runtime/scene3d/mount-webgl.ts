@@ -39,7 +39,7 @@
 
   // sceneLegacyWebGLRendererFactory resolves the legacy vertex-colour
   // renderer. It lived in 10-runtime-scene-core.js, so this file used to call
-  // it lexically. It now ships in 16e-scene-webgl-legacy.js inside the WebGL
+  // it lexically. It now ships in 16e-scene-webgl-legacy.ts inside the WebGL
   // chunk, which lands after this file, so the lookup must happen at call
   // time. 16e assigns the function onto window.__gosx_scene3d_api when it
   // runs; bootstrap.js keeps the lexical binding and wins first.
@@ -1600,7 +1600,7 @@
   // rank only the backends this page can really use.
   //
   // There is exactly ONE backend selection policy — backendSelectionOrder in
-  // 15c-scene-backend-registry.js. This function only feeds it. Do not add a
+  // 15c-scene-backend-registry.ts. This function only feeds it. Do not add a
   // second ordering rule here.
   function sceneWebGLBackendRequest(props, capability) {
     const webglPreference = sceneCapabilityWebGLPreference(props, capability);
@@ -3901,7 +3901,7 @@
   }
 
   // sceneRenderTruthAPI resolves the shared render-truth helpers. Returns null
-  // when 15a-scene-postfx-shared.js is absent, and every caller null-checks.
+  // when 15a-scene-postfx-shared.ts is absent, and every caller null-checks.
   function sceneRenderTruthAPI() {
     if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
       return window.__gosx_scene3d_render_truth_api;

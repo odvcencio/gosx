@@ -321,7 +321,7 @@ func instanceCount(mesh InstancedMesh) int {
 // one hit and reports its index through RayHit.InstanceIndex.
 //
 // The browser pick path now covers points as well: sceneRaycastPickPoints in
-// client/js/bootstrap-src/17-scene-input.js tests every particle of every
+// client/js/bootstrap-src/17-scene-input.ts tests every particle of every
 // bundle.points layer against the same radius, the same near-root sphere test and
 // the same rotate-then-translate order used here, so the two sides report the
 // same distance for the same ray. See TestRaycastCoverageManifest for the split

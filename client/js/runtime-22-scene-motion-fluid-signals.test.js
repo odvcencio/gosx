@@ -397,7 +397,7 @@ test("Scene3D WebGPU water retires replaced systems after submitted work drains"
 });
 
 test("Scene3D managed fluid controls clamp rounded pool radius like upstream", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     querySelector() { return null; },
@@ -418,7 +418,7 @@ test("Scene3D managed fluid controls clamp rounded pool radius like upstream", (
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidObjectTest = { read: sceneManagedFluidObjectReadControls, effective: sceneManagedFluidObjectEffectivePoolControls, reflect: sceneManagedFluidObjectReflectForm, maxCornerRadius: sceneManagedFluidObjectMaxCornerRadius };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const api = context.window.__managedFluidObjectTest;
@@ -470,7 +470,7 @@ test("Scene3D managed fluid controls clamp rounded pool radius like upstream", (
 
 
 test("Scene3D managed fluid controls sync previous position on pool resize like upstream", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     getElementById() { return null; },
@@ -496,7 +496,7 @@ test("Scene3D managed fluid controls sync previous position on pool resize like 
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidPoolResizeTest = { apply: sceneManagedFluidObjectApply };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const profile = {
@@ -586,7 +586,7 @@ test("Scene3D managed fluid controls sync previous position on pool resize like 
 
 
 test("Scene3D managed fluid dragging threads the pre-drag position into the water displacement payload", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
 
   // Source-shape guard: the drag handler must hand its pre-drag snapshot to the
   // next objectStep() via the pendingPrevious mechanism. The old code wrote it
@@ -626,7 +626,7 @@ test("Scene3D managed fluid dragging threads the pre-drag position into the wate
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidDragTest = { apply: sceneManagedFluidObjectApply, objectState: sceneManagedFluidObjectObjectState };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const duck = {
@@ -716,7 +716,7 @@ test("Scene3D managed fluid dragging threads the pre-drag position into the wate
 
 
 test("Scene3D managed fluid controls queue every drop event in a fast pointer burst (water-parity/p6 Fix 1)", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
 
   // Source-shape guard: the queue must be a bounded ARRAY push (mirroring
   // the existing objectDisplacementEvents 12-entry pattern at
@@ -752,7 +752,7 @@ test("Scene3D managed fluid controls queue every drop event in a fast pointer bu
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidDropBurstTest = { queueDrop: sceneManagedFluidObjectQueueDrop };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const canvas = {
@@ -814,7 +814,7 @@ test("Scene3D managed fluid controls queue every drop event in a fast pointer bu
 
 
 test("Scene3D managed fluid controls queue outgoing object displacement when selection becomes None", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     getElementById() { return null; },
@@ -839,7 +839,7 @@ test("Scene3D managed fluid controls queue outgoing object displacement when sel
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidObjectExitTest = { apply: sceneManagedFluidObjectApply };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const profile = {
@@ -924,7 +924,7 @@ test("Scene3D managed fluid controls queue outgoing object displacement when sel
 
 
 test("Scene3D managed fluid object hit policy matches upstream water objects", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     querySelector() { return null; },
@@ -968,7 +968,7 @@ test("Scene3D managed fluid object hit policy matches upstream water objects", (
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidHitTest = { active: sceneManagedFluidObjectActiveObjectHit, mode: sceneManagedFluidObjectHitTestMode };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
   const api = context.window.__managedFluidHitTest;
   const profile = {
@@ -1046,7 +1046,7 @@ test("Scene3D managed fluid object hit policy matches upstream water objects", (
 
 
 test("Scene3D managed fluid interactions stop camera inertia before consuming water events", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     querySelector() { return null; },
@@ -1073,7 +1073,7 @@ test("Scene3D managed fluid interactions stop camera inertia before consuming wa
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidStartTest = { start: sceneManagedFluidObjectStartInteraction };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
   const api = context.window.__managedFluidStartTest;
   const profile = { interaction: { profile: "water-object-drop-orbit", pointerDrops: true }, objects: {} };
@@ -1114,7 +1114,7 @@ test("Scene3D managed fluid interactions stop camera inertia before consuming wa
 });
 
 function loadWaterTapAPI(overrides) {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = { documentElement: { setAttribute() {} }, querySelector() { return null; } };
   const context = vm.createContext(Object.assign({
     Date,
@@ -1136,7 +1136,7 @@ function loadWaterTapAPI(overrides) {
   vm.runInContext(
     controlsSource + "\nwindow.__waterTapTest = { dropCenter: sceneManagedPoolTapDropCenter, bind: sceneManagedPoolTapBind };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
   return context.window.__waterTapTest;
 }
@@ -1234,7 +1234,7 @@ test("water-tap: a pointer hit outside the pool dispatches nothing and leaves th
 });
 
 test("Scene3D managed fluid L key light direction points toward camera like upstream", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = { documentElement: { setAttribute() {} }, querySelector() { return null; } };
   const context = vm.createContext({
     Date,
@@ -1269,7 +1269,7 @@ test("Scene3D managed fluid L key light direction points toward camera like upst
     },
     window: { document },
   });
-  vm.runInContext(controlsSource + "\nwindow.__managedFluidLightTest = { light: sceneManagedFluidObjectCameraLightDirection, key: sceneManagedFluidObjectCameraLightKey, changed: sceneManagedFluidObjectLightCameraChanged, dragNormal: sceneManagedFluidObjectCameraDragNormal, zoom: sceneManagedFluidObjectZoomCameraByScale, wheel: sceneManagedFluidObjectZoomCameraByWheel };", context, { filename: "19b-scene-control-forms.js" });
+  vm.runInContext(controlsSource + "\nwindow.__managedFluidLightTest = { light: sceneManagedFluidObjectCameraLightDirection, key: sceneManagedFluidObjectCameraLightKey, changed: sceneManagedFluidObjectLightCameraChanged, dragNormal: sceneManagedFluidObjectCameraDragNormal, zoom: sceneManagedFluidObjectZoomCameraByScale, wheel: sceneManagedFluidObjectZoomCameraByWheel };", context, { filename: "19b-scene-control-forms.ts" });
   const api = context.window.__managedFluidLightTest;
   const pitched = api.light({ rotationX: Math.PI / 6, rotationY: 0, rotationZ: 0 });
   assert.ok(Math.abs(pitched.x - 0) < 0.000001, "pitched x=" + pitched.x);
@@ -2050,16 +2050,16 @@ test("Selena context-class fields resolve to live per-frame scene state on WebGL
 });
 
 // Regression guard: cylinder, cone and pyramid drew as wireframes.
-// scenePrimitiveTriangleMesh (12-scene-geometry.js) had no case for them, so
+// scenePrimitiveTriangleMesh (12-scene-geometry.ts) had no case for them, so
 // 10-runtime-scene-core.js never set vertices, appendSceneObjectToBundle fell
-// through to sceneObjectSegments, 15-scene-draw-plan.js kept the object on the
+// through to sceneObjectSegments, 15-scene-draw-plan.ts kept the object on the
 // line pass, and the WebGPU backend drew it with topology "line-list". All
 // three are documented primitive kinds. The plane case was broken too: it
 // sliced the first four boxVertices, which all share z = -depth/2, so a solid
 // plane was a zero-area strip.
 test("Scene3D primitive kinds all build solid triangle meshes", () => {
-  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.js"), "utf8");
-  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.js"), "utf8");
+  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.ts"), "utf8");
+  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.ts"), "utf8");
   const context = {
     window: {}, document: {}, console, Math, Number, Float32Array, Array,
     Object, String, Boolean, JSON,

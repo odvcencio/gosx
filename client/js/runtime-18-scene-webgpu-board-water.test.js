@@ -877,7 +877,7 @@ test("Scene3D fake WebGPU water drains an ENTIRE queued dropEvents burst in one 
 
   // Simulate a fast drag: 5 drops queued between two rendered frames, the
   // shape sceneManagedFluidObjectQueueDrop's bounded controlState.dropEvents
-  // array produces (19b-scene-control-forms.js). Before Fix 1 this would
+  // array produces (19b-scene-control-forms.ts). Before Fix 1 this would
   // have coalesced to a single scalar dropEventID/dropX/dropZ and only the
   // LAST drop would ever reach the simulation.
   entry.dropEvents = [
@@ -1284,7 +1284,7 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
 
   // water-parity/p6 Fix 1: a fast drag queues MULTIPLE drops between two
   // rendered frames (entry.dropEvents, see sceneManagedFluidObjectQueueDrop
-  // in 19b-scene-control-forms.js) -- the WebGL queueWaterEvents/
+  // in 19b-scene-control-forms.ts) -- the WebGL queueWaterEvents/
   // drainWaterEvents Map-based drain (16-scene-webgl.js) must consume every
   // one of them in the same tick, not just entry.dropEventID's scalar
   // latest. Appended at the end (a fresh, later nowMS not reused anywhere

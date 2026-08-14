@@ -2,7 +2,7 @@
 //
 // Two files ride here:
 //
-//   1. 11a-scene-decompress.js — the quantized-array decoder, the progressive
+//   1. 11a-scene-decompress.ts — the quantized-array decoder, the progressive
 //      and level-of-detail ladders, and the index unpacker.
 //   2. 11b-scene-points-generate.js — the procedural point generators, with
 //      the bit-exact sin, log, exp and pow the Go side uses so a generated

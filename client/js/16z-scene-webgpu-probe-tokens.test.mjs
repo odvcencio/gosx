@@ -1,4 +1,4 @@
-// Device-evidence tests for 16z-scene-webgpu-probe.js.
+// Device-evidence tests for 16z-scene-webgpu-probe.ts.
 //
 // Two claims are under test.
 //
@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
-const probeSource = fs.readFileSync(path.join(srcDir, "16z-scene-webgpu-probe.js"), "utf8");
+const probeSource = fs.readFileSync(path.join(srcDir, "16z-scene-webgpu-probe.ts"), "utf8");
 
 // featureSet builds the setlike object a GPUAdapter and a GPUDevice expose.
 function featureSet(names) {

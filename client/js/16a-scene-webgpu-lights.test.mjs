@@ -90,8 +90,8 @@ function createContext() {
     function sceneProjectPoint() { return null; }
   `;
   vm.runInContext(prelude, context, { filename: "prelude.js" });
-  vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
-  vm.runInContext(readSource("17-scene-input.js"), context, { filename: "17-scene-input.js" });
+  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  vm.runInContext(readSource("17-scene-input.ts"), context, { filename: "17-scene-input.ts" });
   vm.runInContext(webgpuSource, context, { filename: "16a-scene-webgpu.js" });
   return { context, sandbox };
 }

@@ -665,7 +665,7 @@ test("Scene3D base chunk keeps the backend-agnostic PBR helpers eager", () => {
   runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
   const api = env.context.__gosx_scene3d_api;
   assert.ok(api, "base chunk must publish __gosx_scene3d_api");
-  // 15b-scene-planner.js, 10-runtime-scene-core.js and the WebGPU chunk read
+  // 15b-scene-planner.ts, 10-runtime-scene-core.js and the WebGPU chunk read
   // these. A WebGPU-only page never loads 16-scene-webgl.js, so a helper that
   // slipped back into the lazy chunk would leave one of them undefined here and
   // break WebGPU rendering with no test coverage short of a real GPU.
@@ -722,8 +722,8 @@ test("Scene3D spot lights get a usable default cone when the author omits Angle"
   }
 });
 
-test("16c-scene-shared-pbr.js stays free of WebGL context calls", () => {
-  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.js"), "utf8");
+test("16c-scene-shared-pbr.ts stays free of WebGL context calls", () => {
+  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.ts"), "utf8");
   // Strip line comments so prose about WebGL cannot trip the scan.
   const code = shared.split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
   assert.doesNotMatch(code, /\bgl\s*\./, "16c must stay backend-agnostic; a gl. call means the WebGL split leaked back");
@@ -1196,7 +1196,7 @@ test("Scene3D WebGPU climbs back onto WebGPU after a device-lost fallback once t
   assert.equal(recoveryEvent.fields.adapterInfo && recoveryEvent.fields.adapterInfo.vendor, "test-vendor");
 
   // --- The probe recovers: this is the exact production trigger
-  // (16z-scene-webgpu-probe.js's sceneWebGPUDispatchProbeReady) for a
+  // (16z-scene-webgpu-probe.ts's sceneWebGPUDispatchProbeReady) for a
   // device re-acquired after a loss. Before this fix, handleSceneWebGPUProbeReady
   // silently ignored this because renderer.kind was "webgl". ---
   events.length = 0;

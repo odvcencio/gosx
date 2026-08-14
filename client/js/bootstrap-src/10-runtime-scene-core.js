@@ -2685,7 +2685,7 @@
     // Progressive mode: decompress preview now, schedule the full-resolution
     // upgrade after the first frame.
     //
-    // 11a-scene-decompress.js now ships in the lazily fetched decompress
+    // 11a-scene-decompress.ts now ships in the lazily fetched decompress
     // chunk, so resolve through the API object rather than lexically. The
     // mount awaits settleSceneDecompressFeature before it calls this function,
     // so the chunk has landed by now for any scene that needs it. A scene with
@@ -5978,7 +5978,7 @@
     // 11-scene-base64.js. The lazily fetched decompress chunk reads it, and so
     // does any caller that needs the raw bytes of a base64 payload.
     sceneBase64Decode: typeof sceneBase64Decode === "function" ? sceneBase64Decode : undefined,
-    // 11a-scene-decompress.js and 11b-scene-points-generate.js ship in the
+    // 11a-scene-decompress.ts and 11b-scene-points-generate.js ship in the
     // lazily fetched decompress chunk. Guard the reads: in the base chunk the
     // names do not exist, and the chunk suffix assigns the real functions here
     // when it lands. bootstrap.js keeps both files inline, so these carry the

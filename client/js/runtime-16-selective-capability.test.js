@@ -219,7 +219,7 @@ test("selective runtime mounts native JS engines without loading the shared wasm
 // normalizeSceneLabelWhiteSpace, normalizeSceneLabelAlign,
 // normalizeSceneHTMLMode, normalizeSceneHTMLPointerEvents, and clamp01 — all
 // of which live in 00-textlayout.js / 10-runtime-scene-core.js /
-// 11-scene-math.js, none of which bootstrap-feature-engines.js carries.
+// 11-scene-math.ts, none of which bootstrap-feature-engines.js carries.
 //
 // Before the fix, a page whose ONLY shared-runtime engine is a non-Scene3D
 // surface (so bootstrap-feature-scene3d.js never loads — manifestFeatureNames

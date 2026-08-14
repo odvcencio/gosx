@@ -248,10 +248,10 @@ test("bootstrap Scene3D world planner keeps front bounds and drops behind bounds
 
 test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
   // The legacy vertex-colour renderer and its shaders left
-  // 10-runtime-scene-core.js for 16e-scene-webgl-legacy.js, which ships in the
+  // 10-runtime-scene-core.js for 16e-scene-webgl-legacy.ts, which ships in the
   // WebGL chunk instead of on every Scene3D page. Read the file that holds the
   // shaders now, and keep every assertion the depth contract had.
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.ts"), "utf8");
 
   assert.match(core, /uniform vec2 u_depth_range;/);
   assert.match(core, /a_position\.z - u_camera\.z/);

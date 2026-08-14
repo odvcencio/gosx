@@ -117,7 +117,7 @@ test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
 test("Scene3D WebGPU supports tiered MSAA render targets", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
   const mount = readSceneMountSrc();
-  const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.js"), "utf8");
+  const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.ts"), "utf8");
 
   assert.match(webgpu, /function createSceneWebGPURenderer\(canvas, options\)/);
   assert.match(webgpu, /function ensureMSAAColor\(width, height, sampleCount\)/);
@@ -270,7 +270,7 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   assert.equal(diagnostics.requiredLimits.maxComputeWorkgroupSizeX, 128);
   assert.equal(diagnostics.requiredLimits.maxTextureDimension2D, 4096);
   assert.equal(typeof env.context.__gosx_scene3d_api.sceneWebGPUDiagnostics, "function");
-  // Regression guard: extractFrustumPlanesJS is hoisted into 11-scene-math.js
+  // Regression guard: extractFrustumPlanesJS is hoisted into 11-scene-math.ts
   // (base scene3d bundle) but USED by the separate scene3d-webgpu chunk's
   // instanced GPU cull. It MUST be exported on __gosx_scene3d_api so the webgpu
   // chunk's prefix can bridge it; otherwise the webgpu render path throws

@@ -38,7 +38,7 @@ const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirn
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
 const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
-const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
+const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.ts"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
 const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dom-regions.ts"), "utf8");
 const runtimeContractSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "generated", "runtime-abi.ts"), "utf8");
@@ -735,7 +735,7 @@ class FakeWebGLContext {
 
 // FakeWebGPUCanvasContext is a minimal double for the GPUCanvasContext
 // returned by canvas.getContext("webgpu"). It covers exactly what
-// sceneWebGPUProbeCanvasContext (16z-scene-webgpu-probe.js) and the real
+// sceneWebGPUProbeCanvasContext (16z-scene-webgpu-probe.ts) and the real
 // WebGPU renderer (16a-scene-webgpu.js) call on a canvas context: configure(),
 // getCurrentTexture()/createView(), and unconfigure().
 class FakeWebGPUCanvasContext {
@@ -2985,7 +2985,7 @@ const SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE = {
 function loadSceneWaterClockAPI() {
   // sceneNumber sits in the runtime-utils file and the water clock sits in the
   // scene core file. The bundles load them next to each other, so join them.
-  const core = readBootstrapSrc("10-runtime-scene-utils.js", "10-runtime-scene-core.js");
+  const core = readBootstrapSrc("10-runtime-scene-utils.ts", "10-runtime-scene-core.js");
   const start = core.indexOf("function sceneNumber(value, fallback)");
   const end = core.indexOf("function sceneNumberOrCSSVar", start);
   assert.notEqual(start, -1, "sceneNumber anchor missing from scene core");
@@ -3388,7 +3388,7 @@ window.Hls.Events = {
 // ---------------------------------------------------------------------------
 // Video drift engine: JS fallback ↔ Go golden parity.
 //
-// 28-video-sync-fallback.js is a pure-JS port of the Go videosync engine
+// 28-video-sync-fallback.ts is a pure-JS port of the Go videosync engine
 // (client/videosync). The committed golden vector — produced by the Go
 // Engine — is replayed through a fresh JS engine; the decision stream MUST
 // match. kind/preloadPhase/ready/stalled/resetRate are exact; rate/seekTo/
@@ -3400,17 +3400,17 @@ function loadVideoSyncJSEngineFactory() {
   // source-extraction tests read bootstrap-src/*.js directly), eval it in an
   // isolated context whose only global is `window`, and pull the factory off.
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "28-video-sync-fallback.js"),
+    path.join(__dirname, "bootstrap-src", "28-video-sync-fallback.ts"),
     "utf8",
   );
   const sandbox = { window: {} };
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "28-video-sync-fallback.js" });
+  vm.runInContext(source, sandbox, { filename: "28-video-sync-fallback.ts" });
   const factory = sandbox.window.__gosx_video_sync_js_create;
   assert.equal(
     typeof factory,
     "function",
-    "28-video-sync-fallback.js must install window.__gosx_video_sync_js_create",
+    "28-video-sync-fallback.ts must install window.__gosx_video_sync_js_create",
   );
   return factory;
 }
@@ -3435,13 +3435,13 @@ function loadVideoSyncJSEngineFactory() {
 // sandbox and returns the exposed window.__gosx_paint_canvas_bundle function.
 function loadCanvasPainter() {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b1-canvas2d-painter.js"),
+    path.join(__dirname, "bootstrap-src", "26b1-canvas2d-painter.ts"),
     "utf8",
   );
   const sandbox = {};
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "26b1-canvas2d-painter.js" });
+  vm.runInContext(source, sandbox, { filename: "26b1-canvas2d-painter.ts" });
   const fn = sandbox.window.__gosx_paint_canvas_bundle;
   assert.equal(typeof fn, "function", "painter must expose window.__gosx_paint_canvas_bundle");
   return fn;
@@ -3494,7 +3494,7 @@ function nodeFillRects(ctx, cssWidth, cssHeight) {
 
 // -----------------------------------------------------------------------------
 // Ortho-2D WebGPU camera math — sceneMat4Ortho2DView/Proj/ViewProj
-// (bootstrap-src/11-scene-math.js, exported through window.__gosx_scene3d_api).
+// (bootstrap-src/11-scene-math.ts, exported through window.__gosx_scene3d_api).
 //
 // sceneMat4Ortho2DViewProj is the JS half of the pinned cross-language golden
 // contract with the native 2D board camera: render/bundle/math.go
@@ -4132,7 +4132,7 @@ function readSceneMountSrc() {
 // uniform packer moved out of createSceneWebGPURenderer into 16a1, so a source
 // assertion about the backend must read both files.
 function readWebGPUBackendSrc() {
-  return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.js");
+  return readBootstrapSrc("../runtime/scene3d/webgpu.ts", "16a1-scene-webgpu-selena-uniforms.ts");
 }
 
 // readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
@@ -4140,7 +4140,9 @@ function readWebGPUBackendSrc() {
 function readBootstrapTailSrc() {
   const srcDir = path.join(__dirname, "bootstrap-src");
   return readBootstrapSrc(
-    ...fs.readdirSync(srcDir).filter((n) => /^30[a-z]-tail-.*\.js$/.test(n)).sort(),
+    // bootstrap-src is mixed: standalone-parseable sources are TypeScript,
+    // concatenation fragments stay JavaScript. Match both extensions.
+    ...fs.readdirSync(srcDir).filter((n) => /^30[a-z]-tail-.*\.(js|ts)$/.test(n)).sort(),
   );
 }
 
@@ -4572,7 +4574,7 @@ function assertWaterComputeKernelBindings(fake, materialName, wantBindings) {
 // -----------------------------------------------------------------------------
 // DOM CanvasBoard overlays — labels/html sync + dispose
 //
-// 26b2-canvas-board-labels.js positions real HTML <span> elements over the
+// 26b2-canvas-board-labels.ts positions real HTML <span> elements over the
 // canvas board so text renders in the DOM rather than via GPU fillText. The
 // tests below exercise the OrthoCamera2D transform parity, index-keyed label
 // reconciliation, keyed HTML reconciliation, culling, defaults, dispose, and
@@ -4589,7 +4591,7 @@ function assertWaterComputeKernelBindings(fake, materialName, wantBindings) {
 // elements can be created.
 function loadBoardLabels() {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b2-canvas-board-labels.js"),
+    path.join(__dirname, "bootstrap-src", "26b2-canvas-board-labels.ts"),
     "utf8",
   );
   const fakeDoc = new FakeDocument();
@@ -4598,7 +4600,7 @@ function loadBoardLabels() {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "26b2-canvas-board-labels.js" });
+  vm.runInContext(source, sandbox, { filename: "26b2-canvas-board-labels.ts" });
   assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_sync, "function",
     "26b2 must expose __gosx_canvas_board_labels_sync");
   assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_dispose, "function",
@@ -5398,22 +5400,22 @@ function makeInstancedBundle(meshOverrides) {
 // =========================================================================
 
 // Helper: extract and compile extractFrustumPlanesJS + instancePassesCullTest
-// from 11-scene-math.js for headless unit testing.
+// from 11-scene-math.ts for headless unit testing.
 function loadCullFunctions() {
   const mathSrc = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+    path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   // Extract extractFrustumPlanesJS (indented 2 spaces inside the IIFE).
   const extractMatch = mathSrc.match(
     /function extractFrustumPlanesJS\(vp\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(extractMatch, "extractFrustumPlanesJS must be extractable from 11-scene-math.js");
+  assert.ok(extractMatch, "extractFrustumPlanesJS must be extractable from 11-scene-math.ts");
   const extractFn = new Function(
     "return (function extractFrustumPlanesJS(vp) {" + extractMatch[1] + "\n  })")();
 
   // Extract instancePassesCullTest (indented 2 spaces).
   const passMatch = mathSrc.match(
     /function instancePassesCullTest\(transforms, instanceIndex, planes, radius\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(passMatch, "instancePassesCullTest must be extractable from 11-scene-math.js");
+  assert.ok(passMatch, "instancePassesCullTest must be extractable from 11-scene-math.ts");
   const passFn = new Function(
     "return (function instancePassesCullTest(transforms, instanceIndex, planes, radius) {" +
     passMatch[1] + "\n  })")();

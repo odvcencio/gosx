@@ -498,7 +498,7 @@ type LightIR struct {
 // normalised (kind, stride and size exponent resolved), so the payload is
 // self-describing and does not depend on the client agreeing about defaults.
 //
-// See client/js/bootstrap-src/11b-scene-points-generate.js for the expander
+// See client/js/bootstrap-src/11b-scene-points-generate.ts for the expander
 // and scene/points_generator.go for the determinism contract.
 type PointsGeneratorIR struct {
 	Kind       string  `json:"kind"`

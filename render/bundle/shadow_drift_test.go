@@ -284,7 +284,7 @@ func TestShadowDriftGuardsDetectMutation(t *testing.T) {
 //	                                 defaults to counter-clockwise second depth
 //
 // The browser pair reached second depth by accident, not by design. Both sites
-// predate the winding change. 12-scene-geometry.js used to wind its solids
+// predate the winding change. 12-scene-geometry.ts used to wind its solids
 // CLOCKWISE as seen from outside, so a lit triangle projected clockwise from the
 // light, read as BACK facing, and survived a front-face cull. The pass recorded
 // the near surface and the mitigation those two sites were written for never

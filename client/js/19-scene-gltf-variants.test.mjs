@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
-const sceneMathSource = fs.readFileSync(path.join(srcDir, "11-scene-math.js"), "utf8");
+const sceneMathSource = fs.readFileSync(path.join(srcDir, "11-scene-math.ts"), "utf8");
 const gltfSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "gltf.ts"), "utf8");
 
 const BASE = "https://example.test/models/city.gltf";

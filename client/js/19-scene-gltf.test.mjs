@@ -3,7 +3,7 @@
 // The loader had no test coverage before this suite. These tests load two
 // bootstrap fragments into ONE VM context, the way the shipped bundles
 // concatenate them:
-//   - 11-scene-math.js   -> SCENE_IDENTITY_MAT4, sceneMat4Multiply, sceneTRSToMat4
+//   - 11-scene-math.ts   -> SCENE_IDENTITY_MAT4, sceneMat4Multiply, sceneTRSToMat4
 //   - 19-scene-gltf.js   -> the GLB/glTF parser and the extension mapping
 //
 // The fragments declare plain top-level functions, so running them in a VM
@@ -71,7 +71,7 @@ function createLoaderContext() {
   sandbox.URL = { createObjectURL: () => "blob:fake" };
 
   const context = vm.createContext(sandbox);
-  vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
+  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
   vm.runInContext(readSource("../runtime/scene3d/gltf.ts"), context, { filename: "gltf.ts" });
   return { context, sandbox, warnings };
 }

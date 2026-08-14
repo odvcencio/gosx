@@ -666,7 +666,9 @@ func collectFiles(root string, inv *Inventory) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || filepath.Ext(path) != ".js" {
+		// bootstrap-src is mixed .js/.ts. Collecting only .js drops every
+		// migrated source from the inventory and reads as anchor drift.
+		if d.IsDir() || !isBrowserSourceExt(path) {
 			return nil
 		}
 		return collectIncludedFile(root, path, inv)
@@ -887,8 +889,8 @@ func collectEmbeddedFile(root, path string, inv *Inventory) error {
 		GzipBytes:   compressedSize(body, "gzip"),
 		BrotliBytes: compressedSize(body, "brotli"),
 	}
-	if strings.HasSuffix(rel, ".js") {
-		if err := parseJavaScript(body); err != nil {
+	if isBrowserSourceExt(rel) {
+		if err := parseBrowserSource(rel, body); err != nil {
 			src.ParseError = err.Error()
 		} else {
 			src.ParseOK = true
@@ -2555,6 +2557,40 @@ func gitOutput(ctx context.Context, dir string, command string, args ...string) 
 		return "", errors.New(msg)
 	}
 	return string(out), nil
+}
+
+// parseBrowserSource parses a first-party browser source with the grammar its
+// extension names. bootstrap-src is a mixed directory: sources that parse
+// standalone are TypeScript, while the concatenation fragments stay JavaScript.
+// Parsing a .ts file with the JavaScript grammar drops its symbols from the
+// inventory, which shows up as unexplained anchor drift.
+func parseBrowserSource(rel string, body []byte) error {
+	switch languageForPath(rel) {
+	case "typescript":
+		return parseWithGrammar(grammars.TypescriptLanguage(), "TypeScript", body)
+	case "tsx":
+		return parseWithGrammar(grammars.TsxLanguage(), "TSX", body)
+	default:
+		return parseJavaScript(body)
+	}
+}
+
+func parseWithGrammar(grammar *gotreesitter.Language, name string, body []byte) error {
+	if grammar == nil {
+		return fmt.Errorf("gotreesitter %s grammar is unavailable", name)
+	}
+	tree, err := gotreesitter.NewParser(grammar).Parse(body)
+	if err != nil {
+		return err
+	}
+	root := tree.RootNode()
+	if root == nil {
+		return errors.New("gotreesitter returned no syntax tree")
+	}
+	if root.IsError() || root.HasError() {
+		return fmt.Errorf("syntax tree has error node %s", root.Type(grammar))
+	}
+	return nil
 }
 
 func parseJavaScript(body []byte) error {

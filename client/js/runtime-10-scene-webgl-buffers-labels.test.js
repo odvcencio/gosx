@@ -550,7 +550,7 @@ test("bootstrap prefers engine-batched Scene3D pass payloads when present", asyn
 });
 
 test("legacy WebGL pass cache uploads first static pass when cacheKey is empty", () => {
-  const legacyWebGL = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.js"), "utf8");
+  const legacyWebGL = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.ts"), "utf8");
   assert.match(legacyWebGL, /key:\s*null,\s*\n\s*vertexCount:\s*0/);
   assert.match(legacyWebGL, /record\.key !== pass\.cacheKey \|\|/);
   assert.match(legacyWebGL, /record\.vertexCount !== vertexCount \|\|/);

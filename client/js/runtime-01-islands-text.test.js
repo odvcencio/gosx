@@ -201,7 +201,7 @@ test("bootstrap keeps first-time engine factory registration open after init", (
 
 test("engine runtime publishes the late-factory mount hook", () => {
   const src = require("node:fs").readFileSync(
-    path.join(__dirname, "bootstrap-src", "30b-tail-engine-mounting.js"),
+    path.join(__dirname, "bootstrap-src", "30b-tail-engine-mounting.ts"),
     "utf8",
   );
   assert.ok(

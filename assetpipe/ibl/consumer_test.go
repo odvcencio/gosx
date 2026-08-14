@@ -72,13 +72,13 @@ func TestBothRenderersConsumeTheGeneratedIBLProducts(t *testing.T) {
 
 // TestTheIBLTextureSlotsAreAllocatedAndBound records the WebGL resource path.
 func TestTheIBLTextureSlotsAreAllocatedAndBound(t *testing.T) {
-	// The three units moved out of 15a-scene-postfx-shared.js into
-	// 15a1-scene-texture-budget.js when the base 3D chunk was split by feature.
+	// The three units moved out of 15a-scene-postfx-shared.ts into
+	// 15a1-scene-texture-budget.ts when the base 3D chunk was split by feature.
 	// 15a1 ships in the WebGL chunk now, because 16-scene-webgl.js is its only
 	// caller, so a WebGPU page stops paying for a WebGL2 sampler table.
 	//
 	// The units are negotiated against the cascaded-shadow allocator.
-	const sharedPath = "../../client/js/bootstrap-src/15a1-scene-texture-budget.js"
+	const sharedPath = "../../client/js/bootstrap-src/15a1-scene-texture-budget.ts"
 	data, err := os.ReadFile(sharedPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", sharedPath, err)

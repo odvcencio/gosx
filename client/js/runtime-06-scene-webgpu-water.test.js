@@ -335,7 +335,7 @@ test("Scene3D WebGPU water supports compound sphere object displacement", () => 
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-dispatches/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-dispatch-total/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-event/);
-  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
   assert.match(math, /function sceneRayIntersectYPlane/);
   assert.match(math, /function sceneRayIntersectPlane/);
   assert.match(math, /function sceneRayIntersectSphere/);
@@ -564,13 +564,13 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
 
 test("Scene3D managed control forms replace the route water-controls bridge", () => {
   const build = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
-  const controls = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
-  const strictSchema = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15-scene-ir-schema-strict.js"), "utf8");
+  const controls = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
+  const strictSchema = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15-scene-ir-schema-strict.ts"), "utf8");
   const mount = readSceneMountSrc();
   const waterDir = path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water");
   const waterPage = fs.readFileSync(path.join(waterDir, "page.gsx"), "utf8");
 
-  assert.match(build, /bootstrap-src\/19b-scene-control-forms\.js/);
+  assert.match(build, /bootstrap-src\/19b-scene-control-forms\.ts/);
   assert.match(controls, /function bindSceneManagedControlForms/);
   assert.match(controls, /function registerSceneManagedControlProfile/);
   assert.match(controls, /function publishSceneManagedControlProfiles/);
@@ -1059,7 +1059,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
   const mount = readSceneMountSrc();
-  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.js"), "utf8");
+  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.ts"), "utf8");
   const waterPage = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "page.gsx"), "utf8");
   const waterProgram = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "program.go"), "utf8");
 
@@ -1374,7 +1374,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
 });
 
 test("Scene3D planner hashes inline mesh vertex payloads", () => {
-  const planner = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
+  const planner = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.ts"), "utf8");
 
   assert.match(planner, /function scenePlannerHashFloatArray/);
   assert.match(planner, /function scenePlannerHashMeshVertices/);
@@ -1399,7 +1399,7 @@ test("Scene3D static GLB models can receive live motion patches", () => {
 test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   const prefix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.js"), "utf8");
   const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
-  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   assert.match(prefix, /var clamp01 = sceneApi\.clamp01/);
   assert.match(prefix, /var sceneMat4MultiplyInto = sceneApi\.sceneMat4MultiplyInto/);
@@ -1413,7 +1413,7 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(prefix, /var generateInstancedGeometry = sceneApi\.generateInstancedGeometry/);
   assert.match(prefix, /var normalizeInstancedGeometryKind = sceneApi\.normalizeInstancedGeometryKind/);
   assert.match(prefix, /var buildSceneWorldDrawPlan = sceneApi\.buildSceneWorldDrawPlan/);
-  // extractFrustumPlanesJS lives in 11-scene-math.js (base bundle) but is called
+  // extractFrustumPlanesJS lives in 11-scene-math.ts (base bundle) but is called
   // by 16a's instanced GPU cull in the webgpu chunk — must be bridged here.
   assert.match(prefix, /var extractFrustumPlanesJS = sceneApi\.extractFrustumPlanesJS/);
   assert.match(prefix, /var createSceneWorldDrawScratch = sceneApi\.createSceneWorldDrawScratch/);
@@ -1479,7 +1479,7 @@ test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
 
 test("Scene3D FXAA is wired as the chain-end postfx pass in WebGL and WebGPU", () => {
   const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
-  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.js"), "utf8");
+  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.ts"), "utf8");
   const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   // WebGL: GLSL fullscreen pass, dedicated program, wired into the effect switch.
@@ -1571,7 +1571,7 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
 
   // WebGL keeps the per-frame clock in its renderer closure. WebGPU keeps the
   // same value on selenaFrame, the object it hands to the module-scope uniform
-  // packer in 16a1-scene-webgpu-selena-uniforms.js.
+  // packer in 16a1-scene-webgpu-selena-uniforms.ts.
   assert.match(webgl, /var sceneSelenaFrameTime = 0;/);
   assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0 \};/);
 

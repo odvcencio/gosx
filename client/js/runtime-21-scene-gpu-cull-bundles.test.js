@@ -907,22 +907,22 @@ test("gpu-cull T2e: compute pass is dispatched when system is ready", async () =
 // -------------------------------------------------------------------------
 // Task 3: extractFrustumPlanesJS — golden test vs. native Go vectors
 // -------------------------------------------------------------------------
-test("gpu-cull T3: extractFrustumPlanesJS source exists in 11-scene-math.js (shared) and produces 6 normalized planes", () => {
-  // extractFrustumPlanesJS was hoisted from 16a to 11-scene-math.js (Slice 3)
+test("gpu-cull T3: extractFrustumPlanesJS source exists in 11-scene-math.ts (shared) and produces 6 normalized planes", () => {
+  // extractFrustumPlanesJS was hoisted from 16a to 11-scene-math.ts (Slice 3)
   // so both the WebGPU renderer (16a) and the WebGL2 renderer (16) share one
   // implementation with no divergence.
-  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
   const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   // Function lives in the shared math module.
   assert.match(math, /function extractFrustumPlanesJS\(vp\)/,
-    "extractFrustumPlanesJS must be defined in 11-scene-math.js (shared)");
+    "extractFrustumPlanesJS must be defined in 11-scene-math.ts (shared)");
   assert.match(math, /near.*R2|R2.*near/,
     "near plane formula must reference R2 (Gribb-Hartmann near=R2)");
   assert.match(math, /addRow.*r3.*r0|left.*R3\+R0/,
     "left plane must be R3+R0 (Gribb-Hartmann)");
   assert.match(math, /function instancePassesCullTest\(/,
-    "instancePassesCullTest must be defined in 11-scene-math.js");
+    "instancePassesCullTest must be defined in 11-scene-math.ts");
 
   // 16a must NOT redefine it (hoisted away) — it only carries the comment pointer.
   assert.doesNotMatch(webgpu, /function extractFrustumPlanesJS\(vp\)/,
@@ -954,14 +954,14 @@ test("gpu-cull T3-golden: extractFrustumPlanesJS matches native Go cull.go outpu
   // a no-op.  The native Go extractFrustumPlanes produces identical output.
   // This golden test documents the parity.
   //
-  // Slice 3: extractFrustumPlanesJS was hoisted to 11-scene-math.js.
+  // Slice 3: extractFrustumPlanesJS was hoisted to 11-scene-math.ts.
   // NOTE: built files (bootstrap-feature-scene3d-webgpu.js) are minified by
   // esbuild and function names are mangled, so we extract from the SOURCE file.
   const mathSrc = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+    path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   const match = mathSrc.match(/function extractFrustumPlanesJS\(vp\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(match, "extractFrustumPlanesJS must be extractable from 11-scene-math.js source (check indentation)");
+  assert.ok(match, "extractFrustumPlanesJS must be extractable from 11-scene-math.ts source (check indentation)");
 
   const fnSrc = "function extractFrustumPlanesJS(vp) {" + match[1] + "\n  }";
   const extractFn = new Function("return (" + fnSrc + ")")();
@@ -1378,7 +1378,7 @@ test("cpu-cull S3-T6: WebGPU path (16a) does NOT redefine extractFrustumPlanesJS
 
   // Must not redefine the function (it was hoisted to 11).
   assert.doesNotMatch(webgpu, /function extractFrustumPlanesJS\(vp\)/,
-    "16a must not redefine extractFrustumPlanesJS (hoisted to 11-scene-math.js)");
+    "16a must not redefine extractFrustumPlanesJS (hoisted to 11-scene-math.ts)");
 
   // The GPU cull path must remain intact: updateInstancedCullSystems + drawIndirect.
   assert.match(webgpu, /updateInstancedCullSystems\(/,
@@ -1390,16 +1390,16 @@ test("cpu-cull S3-T6: WebGPU path (16a) does NOT redefine extractFrustumPlanesJS
 });
 
 // -------------------------------------------------------------------------
-// S3 T7: 11-scene-math.js exports both shared cull functions
+// S3 T7: 11-scene-math.ts exports both shared cull functions
 // -------------------------------------------------------------------------
-test("cpu-cull S3-T7: 11-scene-math.js defines extractFrustumPlanesJS and instancePassesCullTest", () => {
+test("cpu-cull S3-T7: 11-scene-math.ts defines extractFrustumPlanesJS and instancePassesCullTest", () => {
   const math = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+    path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   assert.match(math, /function extractFrustumPlanesJS\(vp\)/,
-    "extractFrustumPlanesJS must be defined in 11-scene-math.js");
+    "extractFrustumPlanesJS must be defined in 11-scene-math.ts");
   assert.match(math, /function instancePassesCullTest\(transforms, instanceIndex, planes, radius\)/,
-    "instancePassesCullTest must be defined in 11-scene-math.js");
+    "instancePassesCullTest must be defined in 11-scene-math.ts");
 
   // instancePassesCullTest must match cull.go: cull when d < -radius.
   assert.match(math, /if\s*\(d\s*<\s*-r\)\s*return false/,

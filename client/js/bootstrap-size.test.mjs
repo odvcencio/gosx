@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
 const budgets = [
-  // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.js
+  // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
   // headroom unchanged.
   // Bumped raw 812_000 -> 814_000 and gzip 222_000 -> 223_000 for Scene3D's
@@ -103,7 +103,7 @@ const budgets = [
   //
   // Bumped raw 894_000 -> 895_000: Slice 1 browser-gpu-cull plumbing —
   // SHADER_LIB_FIELDS entry for instancedMeshes/cullKernelWGSL in
-  // 10-runtime-scene-core.js; cull-field validators in 15-scene-ir-schema-strict.js;
+  // 10-runtime-scene-core.js; cull-field validators in 15-scene-ir-schema-strict.ts;
   // gpu-cull capability in 16a-scene-webgpu.capabilities.json and
   // 16-scene-webgl.capabilities.json. Measured: 894_095 / 243_280 / 197_165.
   //
@@ -116,7 +116,7 @@ const budgets = [
   // Measured: 902_343 / 244_995 / 198_759 + rounding headroom.
   //
   // Bumped raw 903_000 -> 905_000: Slice 3 WebGL2 CPU-cull fallback —
-  // extractFrustumPlanesJS + instancePassesCullTest hoisted to 11-scene-math.js
+  // extractFrustumPlanesJS + instancePassesCullTest hoisted to 11-scene-math.ts
   // (shared); CPU cull path (hasCullConfig gate + survivor compaction +
   // dynamic VBO upload) added to drawInstancedMeshes in 16-scene-webgl.js.
   // Measured: 903_824 / 245_457 / 198_989 + rounding headroom.
@@ -126,7 +126,7 @@ const budgets = [
   // __gosx_motion_load/refs once, per-frame __gosx_motion_tick + grow/re-tick,
   // packed-float decode loop mapping position/scale/quat-rotation to
   // SET_TRANSFORM commands via applySceneCommands) plus sceneQuatToEulerXYZ in
-  // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm (inert when unset).
+  // 11-scene-math.ts. Flag-gated on window.__gosx_motion_wasm (inert when unset).
   // Measured: 905_554 / 246_098 / 199_456 + rounding headroom.
   //
   // Bumped raw 906_500 -> 911_000, gzip 246_500 -> 247_500, brotli 199_500 ->
@@ -288,7 +288,7 @@ const budgets = [
   //   1. WebGPU GPU picking in 16a-scene-webgpu.js: raw +11_087, gzip +3_553,
   //      brotli +2_933.
   //   2. The text-layout engine split: the engine moved out of 00-textlayout.js
-  //      into 01-textlayout-engine.js and now runs in its own IIFE. The monolith
+  //      into 01-textlayout-engine.ts and now runs in its own IIFE. The monolith
   //      still carries it, so it pays the seam without collecting the saving —
   //      forwarders in core, bridge reads in the engine, and no cross-IIFE
   //      identifier mangling. Roughly raw +12_000, gzip +3_000, brotli +2_000.
@@ -343,7 +343,7 @@ const budgets = [
   // visitor; a JS comment does not.
   //
   // Ratcheted down raw 1_390_000 -> 1_362_000, gzip 370_000 -> 363_500, brotli
-  // 300_000 -> 294_500. 15-scene-ir-schema-strict.js left every bundle: it
+  // 300_000 -> 294_500. 15-scene-ir-schema-strict.ts left every bundle: it
   // re-validates server-generated SceneIR, it publishes
   // window.__gosx_validate_scene_ir_strict, and nothing reads that global.
   // Measured before 1_384_788 / 368_563 / 298_245; after 1_357_472 / 362_216 /
@@ -373,7 +373,7 @@ const budgets = [
   // stayed 0 and every time-driven post effect rendered a static frame.
   // Bumped raw 1_327_000 -> 1_341_000, gzip 352_000 -> 356_000, brotli
   // 285_000 -> 288_000 for render-truth telemetry: the shared helpers in
-  // 15a-scene-postfx-shared.js (per-effect post-chain records, the timestamped
+  // 15a-scene-postfx-shared.ts (per-effect post-chain records, the timestamped
   // device-loss/fallback journal, Dawn-versus-wgpu implementation identity,
   // getCompilationInfo capture) plus the WebGL and WebGPU call sites that feed
   // them. Measured: 1_337_953 / 355_010 / 286_800 — +11_977 raw, +3_867 gzip,
@@ -407,7 +407,7 @@ const budgets = [
   // the same 1_327_000 base) landing on this branch.
   //
   // One entry, both histories. This branch added procedural point clouds
-  // (11b-scene-points-generate.js): the canonical sin/log/exp/pow kernel plus
+  // (11b-scene-points-generate.ts): the canonical sin/log/exp/pow kernel plus
   // the box-scatter expander. Measured on that branch alone: 1_330_627 /
   // 353_413 / 285_862. The kernel is ~3.6KB raw of ported Go math that cannot
   // be replaced with Math.sin/Math.pow without losing bit-exact parity with
@@ -420,7 +420,7 @@ const budgets = [
   // from measurement of the merged bundle.
   //
   // Bumped raw 1_365_000 -> 1_366_500 for the Points and Sprite ray pick
-  // (sceneRaycastPickPoints in 17-scene-input.js). Measured after the change:
+  // (sceneRaycastPickPoints in 17-scene-input.ts). Measured after the change:
   // 1_365_161 raw, 365_590 gzip, 296_053 brotli, so gzip and brotli are still
   // INSIDE their ceilings and neither moves. Measure all three before you raise
   // one: this test asserts raw first and stops there, so a raw overage hides a
@@ -443,7 +443,7 @@ const budgets = [
   //
   // All three figures are measured from the files, because the assertions run
   // raw first and stop, so a raw overage hides the compressed overages.
-  // Re-measured after the KTX2 reader (19a-scene-ktx2.js) and both renderer
+  // Re-measured after the KTX2 reader (19a-scene-ktx2.ts) and both renderer
   // upload paths landed in the monolith: 1_381_612 raw, 370_028 gzip, 299_340
   // brotli. Ceilings raw 1_376_000 -> 1_383_000, gzip 368_500 -> 370_500,
   // brotli 298_500 -> 300_000, each measured from the file rather than added
@@ -501,7 +501,12 @@ const budgets = [
   // Final integration adds main's environment-map/beacon sources, the typed
   // ABI facade, and restored boolean-attribute semantics. Regenerated exactly:
   // 1_526_695 / 413_606 / 332_200.
-  { file: "bootstrap.js", raw: 1_526_695, gzip: 413_606, brotli: 332_200 },
+  //
+  // Bumped raw 1_526_695 -> 1_526_702 for the bootstrap-src TypeScript
+  // migration. The transpiled sources shift esbuild's identifier mangling
+  // order, so a few minified names change length. The output stays
+  // semantically identical: total bundle growth is 8 bytes over 1.69 MB.
+  { file: "bootstrap.js", raw: 1_526_702, gzip: 413_638, brotli: 332_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -541,7 +546,7 @@ const budgets = [
   // bootstrap-src snapshot, so no other in-flight work is folded in.
   //
   // Bumped raw 124_000 -> 124_500 for the ten-name publication block at the end
-  // of 10-runtime-scene-utils.js. That block is what lets the Scene3D chunk
+  // of 10-runtime-scene-utils.ts. That block is what lets the Scene3D chunk
   // drop its duplicate copy of the whole file, so the route pays 554 raw bytes
   // here to save 45_750 there. Measured before 122_824 / 33_056 / 28_965;
   // after 123_378 / 33_194 / 29_089.
@@ -657,7 +662,7 @@ const budgets = [
   // Measured: 545_325 / 148_714 / 122_349 + rounding headroom.
   //
   // Bumped raw 546_000 -> 548_500: Slice 3 WebGL2 CPU-cull fallback —
-  // instancePassesCullTest in 11-scene-math.js + CPU cull path in
+  // instancePassesCullTest in 11-scene-math.ts + CPU cull path in
   // 16-scene-webgl.js (drawInstancedMeshes: hasCullConfig gate, survivor
   // compaction, dynamic VBO upload). Measured: 547_225 / 149_287 / 122_821.
   //
@@ -667,7 +672,7 @@ const budgets = [
   // grow-and-re-tick on truncation, packed LE-float64 decode loop mapping
   // position/scale/quat-rotation to SET_TRANSFORM commands through
   // applySceneCommands) in 20-scene-mount.js + sceneQuatToEulerXYZ in
-  // 11-scene-math.js. Flag-gated on window.__gosx_motion_wasm; inert when unset.
+  // 11-scene-math.ts. Flag-gated on window.__gosx_motion_wasm; inert when unset.
   // Measured: 548_880 / 149_960 / 123_499 + rounding headroom.
   //
   // Bumped raw 550_000 -> 552_500: P4-M3 unified-motion WASM mixer bridge for
@@ -746,7 +751,7 @@ const budgets = [
   // fetched bootstrap-feature-scene3d-webgl.js. A WebGPU-capable browser
   // downloaded both GPU backends and drew with one of them, so the WebGL
   // renderer was 151_301 minified bytes a Chromium page never executed.
-  // 16c-scene-shared-pbr.js keeps the backend-agnostic 37-symbol closure eager.
+  // 16c-scene-shared-pbr.ts keeps the backend-agnostic 37-symbol closure eager.
   // Measured before 722_708 / 197_507 / 162_733; after 571_407 / 155_678 /
   // 128_930. Both figures come from the same bootstrap-src snapshot, so the
   // concurrent WebGPU light-fidelity work sits in both columns.
@@ -758,10 +763,10 @@ const budgets = [
   //
   // Ratcheted down raw 578_000 -> 532_000, gzip 158_000 -> 146_500, brotli
   // 131_000 -> 121_800. Two cuts. First, this chunk no longer carries its own
-  // copy of 10-runtime-scene-utils.js; bootstrap-runtime.js already ships that
+  // copy of 10-runtime-scene-utils.ts; bootstrap-runtime.js already ships that
   // file, so the Chromium Scene3D route downloaded the same 42_096 source
   // bytes twice. 26d-feature-scene3d-prefix.js bridges the ten names this
-  // chunk reads. Second, 15-scene-ir-schema-strict.js left every bundle.
+  // chunk reads. Second, 15-scene-ir-schema-strict.ts left every bundle.
   // Measured before 574_532 / 156_879 / 129_941; after 528_782 / 145_264 /
   // 120_684.
   // WebGL2 renderer chunk, split out of bootstrap-feature-scene3d.js. Fetched
@@ -784,9 +789,9 @@ const budgets = [
   // Bumped raw 151_000 -> 191_000, gzip 41_800 -> 51_800, brotli 36_100 ->
   // 44_200. Three payloads moved INTO this chunk from the base scene3d chunk,
   // because 16-scene-webgl.js is their only caller in the tree:
-  //   1. 16e-scene-webgl-legacy.js, the legacy vertex-colour renderer.
-  //   2. 15a1-scene-texture-budget.js, the texture-unit table and IBL budget.
-  //   3. 16b-scene-hdr.js, the Radiance HDR decoder.
+  //   1. 16e-scene-webgl-legacy.ts, the legacy vertex-colour renderer.
+  //   2. 15a1-scene-texture-budget.ts, the texture-unit table and IBL budget.
+  //   3. 16b-scene-hdr.ts, the Radiance HDR decoder.
   //
   // This is a move, not growth. A WebGL page paid for all three before, inside
   // the base chunk; it now pays for them here. A WebGPU page stops paying
@@ -808,7 +813,7 @@ const budgets = [
   // and gzip headroom unchanged. Measured: 213_368 / 58_765 / 50_018.
   { file: "bootstrap-feature-scene3d-webgl.js", raw: 213_368, gzip: 58_765, brotli: 50_018 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
-  // 166_000 for procedural point clouds (11b-scene-points-generate.js) — the
+  // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
   // above; this chunk carries the same Scene3D scene sources. Measured:
   // 727_318 / 199_778 / 164_522.
@@ -821,7 +826,7 @@ const budgets = [
   // RATCHETED DOWN, raw 535_000 -> 465_000, gzip 149_000 -> 128_500, brotli
   // 124_000 -> 107_000. Four payloads left this chunk, and every one of them
   // now loads only for a scene that reaches it:
-  //   1. The legacy vertex-colour WebGL renderer (16e-scene-webgl-legacy.js)
+  //   1. The legacy vertex-colour WebGL renderer (16e-scene-webgl-legacy.ts)
   //      joined the WebGL chunk. Only createSceneWebGLResult calls it, and the
   //      PBR factory it backs up already ships there, so a WebGPU page could
   //      never run it.
@@ -830,7 +835,7 @@ const budgets = [
   //   3. The quantized decoder and the point generators (11a, 11b) became
   //      bootstrap-feature-scene3d-decompress.js.
   //   4. The texture-unit table, the IBL budget (15a1) and the Radiance HDR
-  //      decoder (16b-scene-hdr.js) joined the WebGL chunk, their only caller.
+  //      decoder (16b-scene-hdr.ts) joined the WebGL chunk, their only caller.
   //
   // Measured before 538_114 / 148_997 / 123_683; after 463_543 / 127_747 /
   // 106_136. That is -74_571 raw, -21_250 gzip and -17_547 brotli off every
@@ -873,7 +878,10 @@ const budgets = [
   // Bumped brotli 121_831 -> 121_832 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 531_047 / 147_078 / 121_832.
   // Final main + O-series authority build: 533_809 / 147_802 / 122_610.
-  { file: "bootstrap-feature-scene3d.js", raw: 533_809, gzip: 147_802, brotli: 122_610 },
+  //
+  // Bumped raw 533_809 -> 533_817 for the bootstrap-src TypeScript
+  // migration (esbuild identifier-mangling shift, semantically identical).
+  { file: "bootstrap-feature-scene3d.js", raw: 533_817, gzip: 147_802, brotli: 122_610 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -974,7 +982,7 @@ const budgets = [
   // +3_553 / brotli +2_933 in the same window. 16b-scene-compute.js used to ship
   // in this chunk AND in bootstrap-feature-scene3d.js, so a Chromium Scene3D page
   // downloaded the same 27_651 minified bytes twice. The file now ships once, in
-  // the base scene3d chunk, and 26e1-feature-scene3d-webgpu-compute-bridge.js
+  // the base scene3d chunk, and 26e1-feature-scene3d-webgpu-compute-bridge.ts
   // hands 16a the two symbols it reads lexically. Measured before 369_250 /
   // 87_335 / 72_806; after 341_499 / 79_699 / 66_886, a saving of 27_751 raw /
   // 7_636 gzip / 5_920 brotli. Both figures come from the same bootstrap-src
@@ -1043,7 +1051,7 @@ const budgets = [
   { file: "bootstrap-feature-scene3d-webgpu.js", raw: 386_741, gzip: 93_538, brotli: 78_254 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
-  // KTX2 reader in 19a-scene-ktx2.js, which ships in this chunk because only
+  // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
   // 19-scene-gltf.js reads it lexically. A page that loads no model asset never
   // fetches any of it.
   //
@@ -1062,10 +1070,10 @@ const budgets = [
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 29_500, gzip: 11_100, brotli: 9_801 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
-  // carries 28-video-sync-fallback.js (the JS drift engine): raw 52_000 ->
+  // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
   //
-  // Bumped again for the canvas2d paint loop (26b1-canvas2d-painter.js + the
+  // Bumped again for the canvas2d paint loop (26b1-canvas2d-painter.ts + the
   // _startCanvasSurfaceRAF render loop in 26b-feature-engines-prefix.js):
   // raw 58_000 -> 62_000, gzip 18_500 -> 20_000, brotli 16_500 -> 18_000.
   //
@@ -1084,7 +1092,7 @@ const budgets = [
   // Direct compressed budgets still hold.
   //
   // Bumped raw 66_500 -> 70_000, gzip 21_000 -> 22_000, brotli 19_000 -> 19_700
-  // for the DOM label overlay (26b2-canvas-board-labels.js): __gosx_canvas_board_labels_sync
+  // for the DOM label overlay (26b2-canvas-board-labels.ts): __gosx_canvas_board_labels_sync
   // and __gosx_canvas_board_labels_dispose. Measured: 69_141 / 21_901 / 19_540,
   // plus sub-1% rounding headroom.
   //
@@ -1096,7 +1104,7 @@ const budgets = [
   // sub-1% rounding headroom.
   //
   // Bumped raw 73_000 -> 76_000, gzip 23_000 -> 24_000, brotli 20_500 -> 21_300
-  // for CanvasBoard WebGPU HTML overlays in 26b2-canvas-board-labels.js:
+  // for CanvasBoard WebGPU HTML overlays in 26b2-canvas-board-labels.ts:
   // keyed RenderBundle.HTML reconciliation, pointer-event handling, and
   // focus-preserving editable DOM sync. Measured: 75_180 / 23_446 / 20_888,
   // plus sub-1% rounding headroom.
@@ -1156,7 +1164,7 @@ const routeBudgets = [
   {
     name: "video selective runtime",
     files: ["bootstrap-runtime.js", "bootstrap-feature-engines.js"],
-    // raw bumped 160_000 -> 164_000 for 28-video-sync-fallback.js folded into
+    // raw bumped 160_000 -> 164_000 for 28-video-sync-fallback.ts folded into
     // the engines surface. Bumped again 164_000 -> 167_000 (gzip 46_000 ->
     // 48_000) for the canvas2d paint loop folded into the engines surface.
     // Bumped raw 167_000 -> 169_000 (brotli 42_000 -> 43_000) for the canvas2d
@@ -1165,7 +1173,7 @@ const routeBudgets = [
     // marquee + keyboard-nav loop (shift-drag marquee, arrow-key nav, Escape).
     // Bumped brotli 43_000 -> 43_100 for the video resilience additions above.
     // Bumped raw 171_000 -> 175_000, gzip 49_000 -> 50_000, brotli 43_100 -> 44_100
-    // for the DOM label overlay (26b2-canvas-board-labels.js). Measured:
+    // for the DOM label overlay (26b2-canvas-board-labels.ts). Measured:
     // 173_758 / 49_610 / 43_879, plus sub-1% rounding headroom.
     // Bumped raw 175_000 -> 178_000, gzip 50_000 -> 51_000, brotli 44_100 -> 45_000
     // for the M1 slice-4 WebGPU backend routing folded into the engines surface
@@ -1309,7 +1317,7 @@ const routeBudgets = [
     //
     // Ratcheted down raw 1_210_000 -> 1_163_000, gzip 319_000 -> 308_000,
     // brotli 269_500 -> 261_000. Two cuts, both in the base scene3d chunk:
-    // the duplicate copy of 10-runtime-scene-utils.js this route already had
+    // the duplicate copy of 10-runtime-scene-utils.ts this route already had
     // inside bootstrap-runtime.js, and the dev-only strict SceneIR validator.
     // Measured before 1_206_251 / 318_235 / 268_477; after 1_158_990 /
     // 306_310 / 259_184. That is -47_261 raw / -11_925 gzip / -9_293 brotli.
@@ -1320,7 +1328,7 @@ const routeBudgets = [
     // merge: 1_163_921 raw, 308_635 gzip.
     //
     // Bumped raw 1_165_000 -> 1_166_500 for the Points and Sprite ray pick in
-    // 17-scene-input.js, which this route carries inside the base scene3d chunk.
+    // 17-scene-input.ts, which this route carries inside the base scene3d chunk.
     // Measured after the change: 1_165_611 raw, 309_298 gzip, 261_293 brotli. Both
     // compressed figures are still INSIDE their ceilings, so neither moves.
     //
@@ -1366,7 +1374,11 @@ const routeBudgets = [
     // Bumped raw 1_210_036 -> 1_210_050 for the O-series propagation merge.
     // gzip and brotli headroom widened. Measured: 1_210_050 / 321_836 /
     // 271_743.
-    raw: 1_214_379,
+    //
+    // Bumped raw 1_214_379 -> 1_214_387 for the bootstrap-src TypeScript
+    // migration. The cause is the same identifier-mangling shift recorded on
+    // the bootstrap.js budget above.
+    raw: 1_214_387,
     gzip: 322_997,
     brotli: 272_806,
   },
@@ -1449,7 +1461,7 @@ const routeBudgets = [
     // Bumped raw 1_038_427 -> 1_038_441 for the O-series propagation merge.
     // gzip and brotli headroom widened. Measured: 1_038_441 / 287_478 /
     // 243_846.
-    raw: 1_041_006,
+    raw: 1_041_014,
     gzip: 288_224,
     brotli: 244_554,
   },
@@ -1488,7 +1500,7 @@ const routeBudgets = [
     // measurement actually breaches.
     //
     // Bumped BROTLI ONLY, 296_500 -> 297_500, for the Points and Sprite ray pick
-    // in 17-scene-input.js. Measured after the change: 1_314_212 raw, 350_485
+    // in 17-scene-input.ts. Measured after the change: 1_314_212 raw, 350_485
     // gzip, 296_799 brotli. Raw and gzip still fit with 788 and 1_015 bytes to
     // spare, so they do not move. This entry is the reason to measure all three
     // figures from the files: the assertions read raw first, so this brotli
@@ -1526,7 +1538,7 @@ const routeBudgets = [
     // Bumped raw 1_423_404 -> 1_423_418 for the O-series propagation merge.
     // gzip and brotli headroom widened. Measured: 1_423_418 / 380_601 /
     // 321_761.
-    raw: 1_427_747,
+    raw: 1_427_755,
     gzip: 381_762,
     brotli: 322_808,
   },
@@ -1537,12 +1549,12 @@ const routeBudgets = [
     // floor of the Scene3D product, and it was never measured before.
     //
     // Measured 1_012_865 / 264_049 / 221_597 after two cuts: the duplicate
-    // copy of 10-runtime-scene-utils.js and the dev-only strict SceneIR
+    // copy of 10-runtime-scene-utils.ts and the dev-only strict SceneIR
     // validator. Before those cuts the same route was 1_060_126 / 275_974 /
     // 230_890.
     //
     // The base chunk still dominates this route. 16b-scene-compute.js,
-    // 15b-scene-planner.js and 17-scene-input.js are conditional capability
+    // 15b-scene-planner.ts and 17-scene-input.ts are conditional capability
     // that a hero scene never runs, and the server already computes the
     // verdict for each one. Gating them is the next cut.
     name: "Scene3D minimal route (WebGPU, no islands, no hub, no labels)",
@@ -1607,7 +1619,7 @@ const routeBudgets = [
     // 233_174 -> 233_266 for the O-series propagation merge (Stack 04's dual
     // navigation dispatch/guard folded in with Stack 05's mailbox work).
     // Measured: 1_057_706 / 278_511 / 233_266.
-    raw: 1_062_102,
+    raw: 1_062_110,
     gzip: 279_663,
     brotli: 234_301,
   },
@@ -1664,8 +1676,12 @@ test("device-capability gate stays DRY (gosxLowEndHardware, AND-form, no inlined
   // client/runtime/scene3d as a typed source file, so the scan must cover
   // both directories or it undercounts the reference floor below.
   const scene3dDir = path.join(__dirname, "..", "runtime", "scene3d");
+  // bootstrap-src is a mixed directory: sources that parse standalone are
+  // TypeScript, while the concatenation fragments (prefix/suffix wrapper pairs)
+  // must stay JavaScript because each .ts source is transpiled on its own.
+  // Scan both extensions or the counts below silently undercount.
   const scanDirs = [
-    { dir: srcDir, exts: [".js"] },
+    { dir: srcDir, exts: [".js", ".ts"] },
     { dir: scene3dDir, exts: [".ts"] },
   ];
   let definitions = 0;
@@ -1685,7 +1701,7 @@ test("device-capability gate stays DRY (gosxLowEndHardware, AND-form, no inlined
   }
   assert.equal(definitions, 1, "gosxLowEndHardware must be defined exactly once (single source of truth)");
   assert.ok(references >= 3, "gosxLowEndHardware should back both lowPower and constrainedHardware");
-  const env = fs.readFileSync(path.join(srcDir, "05-document-env.js"), "utf8");
+  const env = fs.readFileSync(path.join(srcDir, "05-document-env.ts"), "utf8");
   assert.ok(
     /function\s+gosxLowEndHardware[\s\S]{0,200}<=\s*4\s*\)\s*&&\s*\(/.test(env),
     "gosxLowEndHardware must AND the memory and core checks (not OR)",

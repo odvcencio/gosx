@@ -13,7 +13,7 @@
 // The tests load the BUILT chunks, not the sources, because the gate global is
 // what a browser really sees. Both renderers publish their uploader on
 // window.__gosx_scene3d_ktx2_texture_loader with the same (context, url,
-// record) signature, and sceneKTX2UploadPathReady in 19a-scene-ktx2.js reads
+// record) signature, and sceneKTX2UploadPathReady in 19a-scene-ktx2.ts reads
 // that global before 19-scene-gltf.js swaps an image URI for a block variant.
 
 import test from "node:test";
@@ -30,7 +30,7 @@ const { freshFeatureBundleSource } = require("./runtime-test-harness.js");
 const webglChunk = freshFeatureBundleSource("scene3d-webgl");
 const webgpuChunk = freshFeatureBundleSource("scene3d-webgpu");
 const gltfChunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-gltf.js"), "utf8");
-const ktx2Source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19a-scene-ktx2.js"), "utf8");
+const ktx2Source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19a-scene-ktx2.ts"), "utf8");
 
 async function settle(turns = 8) {
   for (let i = 0; i < turns; i += 1) {

@@ -322,7 +322,7 @@ func canvasBoardJoinIDs(ids []string) string {
 }
 
 // canvasBoardScreenToWorld inverts the OrthoCamera2D screen transform the JS
-// painter applies (bootstrap-src/26b1-canvas2d-painter.js):
+// painter applies (bootstrap-src/26b1-canvas2d-painter.ts):
 //
 //	screenX = (worldX - panX) * zoom + cssW/2
 //	screenY = cssH/2 - (worldY - panY) * zoom   (Y flipped)

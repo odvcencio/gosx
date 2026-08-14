@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.40.0 (2026-08-14)
+
+### Browser runtime sources move to TypeScript
+
+- **39 of the 70 `bootstrap-src` sources are now TypeScript.** `buildbootstrap`
+  classifies each source by its own extension and transpiles it with its own
+  esbuild loader, so a `.ts` source must parse on its own. The 31 sources left
+  as JavaScript are the concatenation fragments: the `26*-prefix` and
+  `26*-suffix` wrapper pairs open a scope in one file and close it in another,
+  which no single-file parse can accept. Converting those needs the wrapper
+  architecture dissolved into modules, and is not attempted here.
+
+- **The shipped bundles are unchanged in behaviour.** Total bundle growth is 8
+  bytes across 1.69 MB, and every byte of it is esbuild choosing different
+  short names for minified locals after the transpile step. The Scene3D
+  decompress bundle is byte-identical. The full browser runtime suite passes,
+  1078 of 1078.
+
+- **`perf/ouroboros` reads TypeScript sources.** `collectFiles` walked
+  `bootstrap-src` for `.js` only, so every migrated source silently dropped out
+  of the global-symbol inventory and read as unexplained anchor drift. The walk
+  now accepts both extensions and `parseBrowserSource` selects the grammar from
+  the file extension.
+
+- **Upgraded gotreesitter to v0.50.1 and selena to v0.5.2.** gotreesitter
+  v0.50.x carries the fix for TypeScript and TSX splitting a signed right-shift
+  operator into two generic closers, which blocked `11a-scene-decompress` from
+  migrating at all. Taking it also required selena v0.5.2: gotreesitter v0.49.0
+  added a leaf-tiling invariant that declines a subtree whose span contains
+  bytes no child covers, and selena declared its `//` comment rule hidden, so
+  comment bytes belonged to no node. Every `.sel` source containing a comment
+  failed to parse on gotreesitter v0.49.0 and later until selena made the rule
+  visible.
+
 ## v0.39.0 (2026-08-12)
 
 ### Typed GoSX grammar and fail-closed browser runtime contracts
