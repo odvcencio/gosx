@@ -2107,6 +2107,26 @@ func boolPointerValue(value any) *bool {
 	return &result
 }
 
+// hoistEngineSceneShaderLib deduplicates repeated shader source in a scene that
+// was assembled from JSX children rather than from a typed SceneIR.
+//
+// It runs after canonicalizeEnginePropsMap for two reasons: that pass deep-
+// copies every nested map and slice, so the scene map here is owned by this
+// call and safe to mutate, and it rewrites prop keys, which would otherwise
+// rename the "shaderLib" key this pass adds.
+//
+// A json.RawMessage scene is left alone. Those bytes come from
+// SceneIR.marshalWire, which has already run the typed hoisting pass, so
+// decoding them here would cost a full parse of the largest value in the
+// manifest to discover there is nothing left to hoist.
+func hoistEngineSceneShaderLib(normalized map[string]any) {
+	sceneMap, ok := normalized["scene"].(map[string]any)
+	if !ok {
+		return
+	}
+	gosxscene.ApplyShaderLib(sceneMap)
+}
+
 func marshalEngineProps(props map[string]any) json.RawMessage {
 	if len(props) == 0 {
 		return nil
@@ -2115,6 +2135,7 @@ func marshalEngineProps(props map[string]any) json.RawMessage {
 	if len(normalized) == 0 {
 		return nil
 	}
+	hoistEngineSceneShaderLib(normalized)
 	data, err := json.Marshal(normalized)
 	if err != nil {
 		return nil
