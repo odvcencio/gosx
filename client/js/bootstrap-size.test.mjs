@@ -511,7 +511,10 @@ const budgets = [
   // fetch + name-keyed patch), quantized _POINT_SIZE decode, and the
   // memoized manifest parse with opt-in data-gosx-release text drop.
   // Measured: 1_529_671 / 414_563 / 332_950, plus rounding headroom.
-  { file: "bootstrap.js", raw: 1_530_000, gzip: 415_000, brotli: 333_300 },
+  // Bumped raw 1_530_000 -> 1_531_500 for the material-clock animation
+  // source (sceneHasTimeDrivenMaterials): a time-uniform material now keeps
+  // the render loop running so shader-clock scenes stop freezing.
+  { file: "bootstrap.js", raw: 1_531_500, gzip: 415_400, brotli: 333_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -894,7 +897,9 @@ const budgets = [
   // -> 123_000 for the memoized-manifest water shader source path
   // (mount-backend prefers window.__gosx_manifest over a DOM re-parse).
   // Measured: 533_909 / 147_844 / 122_634, plus rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 534_500, gzip: 148_200, brotli: 123_000 },
+  // Bumped raw 534_500 -> 535_500 for the material-clock animation source
+  // in mount.ts (raw-props uniform scan feeding sceneAnimationState).
+  { file: "bootstrap-feature-scene3d.js", raw: 535_500, gzip: 148_500, brotli: 123_300 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
