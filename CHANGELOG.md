@@ -1,11 +1,6 @@
 # Changelog
 
-## v0.42.0 (2026-08-16)
-
-Fail closed, everywhere. Every change in this release either catches a
-failure that used to be silent or widens a strict surface without giving up
-its guarantee. The batch began as an audit from one production app
-(gridiron-2000); all eight filed issues land here.
+## v0.42.1 (2026-08-16)
 
 ### The render loop runs for time-driven materials
 
@@ -23,6 +18,13 @@ its guarantee. The batch began as an audit from one production app
 - **The visual harness's local Chrome launch carries the WebGPU-on-
   SwiftShader flags**, so `--require-backend webgpu` can pass on a headless
   box instead of silently exercising the WebGL fallback.
+
+## v0.42.0 (2026-08-16)
+
+Fail closed, everywhere. Every change in this release either catches a
+failure that used to be silent or widens a strict surface without giving up
+its guarantee. The batch began as an audit from one production app
+(gridiron-2000); all eight filed issues land here.
 
 ### Strict components: concatenation, boolean If, and a fail-open fix
 
