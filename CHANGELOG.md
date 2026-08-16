@@ -41,6 +41,16 @@
   (nested `props.player.*` combined with the v0.42.0 concatenation
   extension), alongside TeamMark, RosterRow, and DraftTeam.
 
+### The `ir` package's compatibility contract is now written down
+
+- **`ir` is documented as experimental while gosx is pre-1.0.** A
+  breaking change to an exported `ir` type is called out in this
+  changelog with a migration note; a consumer that compiles against `ir`
+  directly (for example `gsxmail`, or any tool built against `ir` instead
+  of gosx's higher-level entry points) should pin an exact gosx version
+  rather than a version range. No behavior changes with this entry —
+  it states the policy the project already followed.
+
 ## v0.42.2 (2026-08-16)
 
 ### Fixed: the managed-form shorthand did not expand consistently across server render surfaces

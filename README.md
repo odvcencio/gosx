@@ -746,7 +746,7 @@ Three tiers:
 | Package | Purpose |
 |---------|---------|
 | `gosx` | Node API, grammar, parser, compiler |
-| `ir` | Intermediate representation, lowering, validation, expression parser |
+| `ir` | Intermediate representation, lowering, validation, expression parser. Experimental pre-1.0: pin an exact gosx version if you compile against it directly. |
 | `island` | Island renderer, manifest generation, program serialization |
 | `signal` | Reactive state: `Signal[T]`, `Computed[T]`, `Effect`, `Batch` |
 | `server` | HTTP server, page rendering, caching, streaming, i18n, edge annotations, assets |

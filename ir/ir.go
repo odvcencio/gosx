@@ -3,6 +3,15 @@
 // The IR is the contract between syntax, validation, server renderer,
 // and client hydration. All references are index-based (no recursive pointers)
 // following the same pattern as Arbiter's flat-array IR.
+//
+// # Compatibility
+//
+// This package is experimental while gosx is pre-1.0. Breaking changes to
+// exported ir types are called out in CHANGELOG.md with a migration note.
+// A consumer that compiles against ir directly — for example gsxmail, or
+// any other tool that imports this package instead of going through gosx's
+// higher-level entry points — should pin an exact gosx version rather than
+// a version range.
 package ir
 
 import "strings"
