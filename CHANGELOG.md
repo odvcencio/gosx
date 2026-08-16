@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.42.2 (2026-08-16)
+
+### Fixed: the managed-form shorthand was inert on .gsx-rendered forms
+
+- **`data-gosx-managed` now expands on forms rendered through the .gsx
+  pipeline, not only through the Go Node API.** v0.42.0 added the shorthand
+  and expanded it in `RenderHTML`, the Go Node API path. The `.gsx`
+  file-program renderer wrote form attributes through a separate path. That
+  path never called the expansion. A `.gsx`-authored form using the
+  shorthand served unmanaged in v0.42.0. The browser fell back to a native
+  full-page POST. `gosx check` gave the author no warning. Fixes #179.
+- The fix closes both render surfaces:
+  - The route package's file-program renderer now calls the same shared
+    expansion rule as `node.go` (`gosx.ManagedFormShorthandTruthy`). A bare
+    attribute or `"true"` expands the form. `"false"` opts out. An
+    author-written `data-gosx-form*` attribute next to the shorthand keeps
+    its authored value; the expansion does not overwrite it.
+  - The navigation runtime now accepts `data-gosx-managed` at the same
+    delegation point it already used for `data-gosx-form`. An island's
+    re-render can build a form entirely in client-side JS. That form is
+    still discovered and intercepted, even when no server render path ever
+    saw it.
+
 ## v0.42.1 (2026-08-16)
 
 ### The render loop runs for time-driven materials
