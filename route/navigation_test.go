@@ -80,3 +80,36 @@ func TestFileRoutedAppManualNavigationScriptNotDuplicated(t *testing.T) {
 		t.Fatalf("expected exactly one navigation script tag, got %d\n%s", count, html)
 	}
 }
+
+// TestFileRoutedAppMountBeforeEnableNavigationStillInjectsScript covers PR
+// #174 review N3: Mount used to read app.navigation eagerly, so calling
+// app.Mount before app.EnableNavigation silently dropped the wiring. The
+// wiring now resolves at Build() time (see server.App.registerMountRoutes),
+// so app.EnableNavigation() may run before or after app.Mount() as long as
+// both run before app.Build().
+func TestFileRoutedAppMountBeforeEnableNavigationStillInjectsScript(t *testing.T) {
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocumentWithLanguage(ctx.Title("Test"), "en", ctx.Head(), body)
+	})
+	router.Add(Route{
+		Pattern: "/",
+		Handler: func(ctx *RouteContext) gosx.Node {
+			return gosx.El("p", gosx.Text("home"))
+		},
+	})
+	rootHandler, err := router.BuildChecked()
+	if err != nil {
+		t.Fatalf("BuildChecked: %v", err)
+	}
+
+	app := server.New()
+	app.Mount("/", rootHandler) // Mount before EnableNavigation, deliberately.
+	app.EnableNavigation()
+	handler := app.Build()
+
+	html := getBody(t, handler)
+	if count := strings.Count(html, navScriptOpenTag); count != 1 {
+		t.Fatalf("expected exactly one navigation script tag when Mount runs before EnableNavigation, got %d\n%s", count, html)
+	}
+}

@@ -287,6 +287,11 @@ func (a *App) HandleAPI(route APIRoute) {
 
 // EnableNavigation injects the built-in client-side page navigation runtime
 // into document/head-aware responses.
+//
+// Call it any time before Build(): Build() is what wires the navigation-runtime
+// head builder into every mounted NavigationConfigurable handler (see Mount and
+// registerMountRoutes), so EnableNavigation, Mount, and MountApp may run in any
+// order relative to each other as long as all of them run before Build().
 func (a *App) EnableNavigation() {
 	a.navigation = true
 }
@@ -349,21 +354,16 @@ type NavigationConfigurable interface {
 }
 
 // Mount registers an arbitrary HTTP handler under the given pattern. When
-// EnableNavigation is set and handler implements NavigationConfigurable, Mount
-// wires the navigation-runtime head builder into it, so a file-routed app
-// built with route.NewRouter and mounted here needs only
+// EnableNavigation is set and handler implements NavigationConfigurable, Build
+// wires the navigation-runtime head builder into it (see registerMountRoutes),
+// so a file-routed app built with route.NewRouter and mounted here needs only
 // app.EnableNavigation() — no manual ctx.AddHead(server.NavigationScript())
-// in the layout. Call EnableNavigation before Mount; Mount reads a.navigation
-// once, at registration time.
+// in the layout. EnableNavigation and Mount may run in either order; only
+// Build reads a.navigation, so both must run before Build.
 func (a *App) Mount(pattern string, handler http.Handler) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || handler == nil {
 		return
-	}
-	if a.navigation {
-		if configurable, ok := handler.(NavigationConfigurable); ok {
-			configurable.SetNavigationHead(NavigationScriptWithNonce)
-		}
 	}
 	a.mounts[pattern] = registeredMountedRoute{
 		pattern: pattern,
@@ -655,6 +655,15 @@ func (a *App) registerMountRoutes(mux *http.ServeMux) {
 	for _, route := range a.mounts {
 		pattern := route.pattern
 		handler := route.handler
+		// Wired here, at Build time, rather than back in Mount — see the N3
+		// ordering note on EnableNavigation and Mount. This makes
+		// EnableNavigation order-independent relative to Mount: it only has
+		// to run before Build.
+		if a.navigation {
+			if configurable, ok := handler.(NavigationConfigurable); ok {
+				configurable.SetNavigationHead(NavigationScriptWithNonce)
+			}
+		}
 		mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			MarkObservedRequest(r, "mount", pattern)
 			handler.ServeHTTP(w, r)
