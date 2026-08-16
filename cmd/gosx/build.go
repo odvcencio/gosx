@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,10 +54,12 @@ type hashedWriteOptions struct {
 	CompressedSidecars bool
 }
 
-// contentHash returns the first 8 hex chars of sha256.
+// contentHash returns the first 8 hex chars of sha256. Delegates to
+// buildmanifest.ContentHash so every content hash the build writes —
+// hashed asset filenames and island SourceHash entries alike — comes from
+// one algorithm; a server comparing them later must never see two schemes.
 func contentHash(data []byte) string {
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:8])
+	return buildmanifest.ContentHash(data)
 }
 
 // writeHashed writes data to dir/name.hash.ext and returns the asset info.
@@ -273,10 +273,10 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		var data []byte
 		var err error
 		if opts.Dev {
-			data, err = program.EncodeJSON(prog)
+			data, err = program.EncodeJSON(prog.Program)
 			islandFormat = "json"
 		} else {
-			data, err = program.EncodeBinary(prog)
+			data, err = program.EncodeBinary(prog.Program)
 			islandFormat = "bin"
 		}
 		if err != nil {
@@ -288,10 +288,25 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			return fmt.Errorf("write island %s: %w", prog.Name, err)
 		}
 
+		// SourceFile/SourceHash let a server started later (issue #166)
+		// detect that this island's .gsx source changed since this build,
+		// without re-running the compiler pipeline: it re-hashes the file
+		// at SourceFile and compares against SourceHash. Store the path
+		// project-relative so it stays stable across machines and matches
+		// the root a server passes to SetRuntimeRoot. Best-effort: an
+		// island whose source lives outside the project tree (an imported
+		// package elsewhere on disk) still gets a "../"-relative path.
+		sourceFile := ""
+		if rel, relErr := filepath.Rel(dir, prog.SourceFile); relErr == nil {
+			sourceFile = filepath.ToSlash(rel)
+		}
+
 		manifest.Islands = append(manifest.Islands, IslandAsset{
 			Name:        prog.Name,
 			Format:      islandFormat,
 			HashedAsset: asset,
+			SourceFile:  sourceFile,
+			SourceHash:  prog.SourceHash,
 		})
 
 		fmt.Printf("    %s → %s (%d bytes)\n", prog.Name, asset.File, asset.Size)
