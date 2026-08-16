@@ -17,6 +17,16 @@
   const LINK_PREFETCH_STATE_ATTR = "data-gosx-prefetch-state";
   const LINK_MANAGED_CURRENT_ATTR = "data-gosx-aria-current-managed";
   const FORM_ATTR = "data-gosx-form";
+  // FORM_MANAGED_SHORTHAND_ATTR is the .gsx template shorthand for the full
+  // managed-form contract (gosx#179). The server expands it into FORM_ATTR
+  // and the rest of the contract at render time when it can — see
+  // gosx.ManagedFormShorthandTruthy and route.fileManagedFormShorthandTruthy
+  // in the Go source — but a form built by client-side JS (an island's
+  // re-render, or hand-authored markup that bypasses gosx rendering
+  // entirely) never passes through that expansion. The runtime accepts the
+  // shorthand directly at the matching level so those forms are still
+  // discovered and intercepted.
+  const FORM_MANAGED_SHORTHAND_ATTR = "data-gosx-managed";
   const FORM_MODE_ATTR = "data-gosx-form-mode";
   const FORM_STATE_ATTR = "data-gosx-form-state";
   const FORM_PENDING_ATTR = "data-gosx-pending";
@@ -849,10 +859,34 @@
     }
   }
 
+  // managedFormShorthandTruthy mirrors the server's truthy rule for
+  // FORM_MANAGED_SHORTHAND_ATTR (gosx.ManagedFormShorthandTruthy in the Go
+  // source, the single definition both server render paths call): a bare
+  // attribute is truthy, "false" (case-insensitive) opts out, and any other
+  // non-empty value is truthy so `data-gosx-managed="true"` also works.
+  function managedFormShorthandTruthy(value) {
+    if (value == null) return false;
+    const trimmed = String(value).trim();
+    if (trimmed === "") return true;
+    return trimmed.toLowerCase() !== "false";
+  }
+
+  // isManagedFormElement is the single place the runtime decides whether a
+  // <form> is under managed navigation, so a form still carrying the raw
+  // FORM_MANAGED_SHORTHAND_ATTR (never expanded server-side, or built
+  // directly by client JS) is discovered exactly like one already carrying
+  // the full FORM_ATTR contract.
+  function isManagedFormElement(node) {
+    if (!node || !node.hasAttribute) return false;
+    if (node.hasAttribute(FORM_ATTR)) return true;
+    if (node.hasAttribute(FORM_MANAGED_SHORTHAND_ATTR)) {
+      return managedFormShorthandTruthy(node.getAttribute(FORM_MANAGED_SHORTHAND_ATTR));
+    }
+    return false;
+  }
+
   function managedForms(root) {
-    return collectElements(root, function(node) {
-      return node.hasAttribute && node.hasAttribute(FORM_ATTR);
-    });
+    return collectElements(root, isManagedFormElement);
   }
 
   function normalizeManagedFormMode(value) {
@@ -1505,7 +1539,7 @@
   }
 
   function shouldHandleForm(form, event) {
-    if (!form || !form.hasAttribute || !form.hasAttribute(FORM_ATTR)) return false;
+    if (!isManagedFormElement(form)) return false;
     if (event.defaultPrevented) return false;
     const submitter = event && event.submitter ? event.submitter : null;
     if (formSubmitTarget(form, submitter)) return false;
@@ -1964,12 +1998,18 @@
   }
 
   function nativeSubmitForm(form, submitter) {
-    if (!form) return;
-    const previousManaged = form.getAttribute(FORM_ATTR);
-    if (previousManaged == null) {
-      return;
-    }
-    form.removeAttribute(FORM_ATTR);
+    if (!form || !isManagedFormElement(form)) return;
+    // Strip every attribute that makes isManagedFormElement true — FORM_ATTR
+    // and/or the shorthand — so form.requestSubmit() below dispatches a
+    // fresh "submit" event that shouldHandleForm lets through natively,
+    // instead of re-intercepting it. Both are restored once the native
+    // submission has been requested.
+    const hadForm = form.hasAttribute(FORM_ATTR);
+    const previousForm = hadForm ? form.getAttribute(FORM_ATTR) : null;
+    const hadShorthand = form.hasAttribute(FORM_MANAGED_SHORTHAND_ATTR);
+    const previousShorthand = hadShorthand ? form.getAttribute(FORM_MANAGED_SHORTHAND_ATTR) : null;
+    if (hadForm) form.removeAttribute(FORM_ATTR);
+    if (hadShorthand) form.removeAttribute(FORM_MANAGED_SHORTHAND_ATTR);
     try {
       if (typeof form.requestSubmit === "function") {
         if (submitter) {
@@ -1987,7 +2027,8 @@
         form.submit();
       }
     } finally {
-      form.setAttribute(FORM_ATTR, previousManaged);
+      if (hadForm) form.setAttribute(FORM_ATTR, previousForm);
+      if (hadShorthand) form.setAttribute(FORM_MANAGED_SHORTHAND_ATTR, previousShorthand);
     }
   }
 

@@ -124,12 +124,27 @@ func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, en
 
 func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	tag := html.EscapeString(node.Tag)
-	formContract := fileAutoManagedFormContract(node.Attrs, env, strings.EqualFold(node.Tag, "form"))
+	isForm := strings.EqualFold(node.Tag, "form")
+	formContract := fileAutoManagedFormContract(node.Attrs, env, isForm)
+	// gosx#179: a <form data-gosx-managed> shorthand attribute expands the
+	// same way here as it does through node.go's RenderHTML (Go Node API
+	// path) — see fileManagedFormShorthandTruthy and
+	// gosx.ManagedFormShorthandTruthy, the shared truthy rule both paths
+	// call. Unlike the method-based auto-detection above, the shorthand
+	// does not set a mode: the HTML method attribute, if present, stays
+	// authoritative for the navigation runtime.
+	shorthandManaged := isForm && fileManagedFormShorthandTruthy(node.Attrs, env)
+	if shorthandManaged {
+		formContract.Managed = true
+	}
 	b.WriteByte('<')
 	b.WriteString(tag)
 	attrs := node.Attrs
+	if shorthandManaged {
+		attrs = stripManagedFormShorthandAttr(attrs)
+	}
 	if formContract.Managed {
-		attrs = managedFormAttrs(node.Attrs)
+		attrs = managedFormAttrs(attrs)
 	}
 	r.renderAttrs(b, attrs, env)
 	r.writeManagedFormContract(b, node.Attrs, env, formContract)
@@ -1618,6 +1633,39 @@ func managedFormAttrs(attrs []ir.Attr) []ir.Attr {
 	for _, attr := range attrs {
 		switch strings.TrimSpace(attr.Name) {
 		case "actionName", server.NavigationFormModeAttr:
+			continue
+		}
+		out = append(out, attr)
+	}
+	return out
+}
+
+// fileManagedFormShorthandTruthy reports whether attrs carries a truthy
+// gosx.ManagedFormShorthandAttr (data-gosx-managed). attrValue already
+// resolves a static value, a dynamic {expr} attribute expression, an
+// AttrBool presence attribute, and a spread attribute to the same "value
+// present or not" shape, so this covers every way the shorthand can appear
+// in a .gsx template. A nil result — the attribute is absent, or a dynamic
+// expression evaluated to nil — means "not present"; only a value that
+// exists is handed to gosx.ManagedFormShorthandTruthy for the truthy
+// judgment, matching how node.go only calls its truthy check once it has
+// found the attribute in the list.
+func fileManagedFormShorthandTruthy(attrs []ir.Attr, env fileRenderEnv) bool {
+	value := attrValue(attrs, env, gosx.ManagedFormShorthandAttr)
+	if value == nil {
+		return false
+	}
+	return gosx.ManagedFormShorthandTruthy(false, value)
+}
+
+// stripManagedFormShorthandAttr removes the data-gosx-managed attribute
+// from attrs. Called only once the shorthand has expanded, matching
+// node.go's rule that the shorthand attribute itself does not survive into
+// the rendered output.
+func stripManagedFormShorthandAttr(attrs []ir.Attr) []ir.Attr {
+	out := make([]ir.Attr, 0, len(attrs))
+	for _, attr := range attrs {
+		if attr.Name == gosx.ManagedFormShorthandAttr {
 			continue
 		}
 		out = append(out, attr)

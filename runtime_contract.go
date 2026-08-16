@@ -24,9 +24,11 @@ const (
 	// ManagedFormShorthandAttr is a single-attribute alternative to writing
 	// out the ManagedFormAttrs default set by hand on a <form> element. A
 	// .gsx template author writes `<form data-gosx-managed>` (or
-	// `data-gosx-managed="true"`) instead of the five contract attributes;
-	// RenderHTML expands it on any <form> element at render time. See
-	// expandManagedFormAttrs in node.go for the expansion and merge rules.
+	// `data-gosx-managed="true"`) instead of the five contract attributes.
+	// Both server render paths expand it on any <form> element at render
+	// time: RenderHTML (see expandManagedFormAttrs in node.go) for the Go
+	// Node API, and the route package's file-program renderer for .gsx
+	// pages. See ManagedFormShorthandTruthy for the shared truthy rule.
 	ManagedFormShorthandAttr = "data-gosx-managed"
 
 	ActionAttr           = "data-gosx-action"
@@ -107,6 +109,37 @@ func ManagedFormAttrs(opts ManagedFormOptions) AttrList {
 		Fallback: fallback,
 	})...)
 	return attrs
+}
+
+// ManagedFormShorthandTruthy reports whether a ManagedFormShorthandAttr
+// value opts a <form> element into the managed-form contract. A bare
+// attribute (presence with no value) is truthy; among valued attributes,
+// any non-empty value other than "false" (case-insensitive) is truthy, so
+// both `data-gosx-managed` and `data-gosx-managed="true"` opt in and
+// `data-gosx-managed="false"` opts out.
+//
+// This is the single definition of the shorthand's truthy rule. Both server
+// render paths call it: node.go's expandManagedFormAttrs for the Go Node
+// API, and the route package's file-program renderer for .gsx pages, so a
+// form written in either surface expands the same way. A caller decides
+// separately whether the attribute is present at all; this function only
+// judges a value already known to exist.
+func ManagedFormShorthandTruthy(presence bool, value any) bool {
+	if presence {
+		return true
+	}
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return false
+		}
+		return !strings.EqualFold(v, "false")
+	default:
+		return true
+	}
 }
 
 // RuntimeSurfaceOptions describes the framework-owned attributes on an

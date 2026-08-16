@@ -4599,6 +4599,155 @@ test("navigation runtime intercepts managed GET forms and navigates with query p
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
 });
 
+// gosx#179: data-gosx-managed is the .gsx template shorthand for the full
+// managed-form contract. The server expands it into data-gosx-form when it
+// can, but a form built by client-side JS (an island's re-render, or
+// hand-authored markup) may never pass through that expansion, so the
+// runtime must also recognize the shorthand directly at the matching level.
+test("navigation runtime intercepts forms carrying only the data-gosx-managed shorthand attribute", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/search");
+  form.setAttribute("method", "get");
+  form.setAttribute("data-gosx-managed", "true");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "shorthand";
+  form.appendChild(query);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/search?q=shorthand": {
+        text: "__SHORTHAND_DOC__",
+        url: "http://localhost:3000/search?q=shorthand",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const results = new FakeElement("main", null);
+  results.id = "results";
+  results.textContent = "results";
+  parsedDocs.set("__SHORTHAND_DOC__", buildNavigatedDocument({
+    title: "Search",
+    bodyNodes: [results],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter: null,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/search?q=shorthand");
+  assert.equal(env.context.location.href, "http://localhost:3000/search?q=shorthand");
+});
+
+test("navigation runtime leaves data-gosx-managed=\"false\" forms to native submission", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/search");
+  form.setAttribute("method", "get");
+  form.setAttribute("data-gosx-managed", "false");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "opt-out";
+  form.appendChild(query);
+
+  const env = createContext({ elements: [form] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter: null,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, false);
+  assert.equal(env.fetchCalls.length, 0);
+});
+
+test("navigation runtime still intercepts an explicit data-gosx-form=\"true\" form", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/search");
+  form.setAttribute("method", "get");
+  form.setAttribute("data-gosx-form", "true");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "explicit";
+  form.appendChild(query);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/search?q=explicit": {
+        text: "__EXPLICIT_DOC__",
+        url: "http://localhost:3000/search?q=explicit",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const results = new FakeElement("main", null);
+  results.id = "results";
+  results.textContent = "results";
+  parsedDocs.set("__EXPLICIT_DOC__", buildNavigatedDocument({
+    title: "Search",
+    bodyNodes: [results],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter: null,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/search?q=explicit");
+  assert.equal(env.context.location.href, "http://localhost:3000/search?q=explicit");
+});
+
 test("navigation runtime restores prior managed form lifecycle attrs after submit", async () => {
   const form = new FakeElement("form", null);
   form.setAttribute("action", "/search");
