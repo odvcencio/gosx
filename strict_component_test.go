@@ -1398,6 +1398,51 @@ component Row(props: RowProps) {
 	}
 }
 
+// TestCompileStrictEachRejectsBindingSelectorEmbeddedField extends gosx#183's
+// B1 fix (a promoted field at selector hop i>0 fails closed) to an <Each>
+// binding root: row.Stat.City crosses a promoted field the same way
+// props.Player.City did in TestCompileStrictServerRejectsNestedSelectorEmbeddedField.
+// TeamRef carries its own named sibling field (Note) so structTypes
+// registers TeamRef at all — with no named field of its own, TeamRef never
+// enters structTypes and the call fails on the separate "struct is not
+// declared" gate instead of the promoted-field gate this test means to
+// cover.
+func TestCompileStrictEachRejectsBindingSelectorEmbeddedField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Team struct { City string }
+type TeamRef struct { Team; Note string }
+type BreakdownRow struct { Stat TeamRef }
+type RowProps struct { Breakdown []BreakdownRow }
+component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>{row.Stat.City}</span></Each></div>
+}
+`))
+	want := "strict component Row cannot resolve row.Stat.City: struct TeamRef declares no visible field City; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachRejectsBindingSelectorUnexportedLeaf covers the other
+// B1 shape for a binding root: an unexported leaf field on a same-file
+// declared struct (not promoted, just lowercase) hits the identical
+// hop-i>0 unknown-field gate, since collectStructSchemas never records an
+// unexported field at all.
+func TestCompileStrictEachRejectsBindingSelectorUnexportedLeaf(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Team struct { city string; Zone string }
+type BreakdownRow struct { Stat Team }
+type RowProps struct { Breakdown []BreakdownRow }
+component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>{row.Stat.city}</span></Each></div>
+}
+`))
+	want := "strict component Row cannot resolve row.Stat.city: struct Team declares no visible field city; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
 func TestCompileStrictEachBindingConcatAndCondBothPolarities(t *testing.T) {
 	// Accept: exact string/bool leaves.
 	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {

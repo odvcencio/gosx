@@ -1963,6 +1963,17 @@ func strictComponentSliceAttrValue(comp *ir.Component, attr ir.Attr, env fileRen
 // well-typed Go slice's elements all share one type, so proving the type
 // once proves every element's field access is total. A typed nil slice
 // passes (its Kind is still Slice) and iterates zero times, matching Go.
+//
+// Each hop rejects a promoted field the same way requireStrictStructValue
+// does (gosx#183's M2 fix, applied here to E1's own element walk):
+// reflect.Type.FieldByName also resolves embedded-field promotion, so a
+// bare found check alone would let a promoted field cross this boundary
+// even though the lowerer's walkStrictHops already refuses to compile a
+// loop-binding read through one (gosx#182/#184's generalized B1 fix). This
+// walk is type-level only (never Value.FieldByName), so there is no nil-
+// embedded-pointer panic vector here the way there was for
+// requireStrictStructValue's per-element instance would have had — but the
+// silent-promotion gap is the same, and closes the same way.
 func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) {
 	if value == nil {
 		return nil, fmt.Errorf("value is nil")
@@ -1990,8 +2001,11 @@ func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) 
 				return nil, fmt.Errorf("slice element %s: field %s is not a struct", schema.Elem, path)
 			}
 			field, found = ft.FieldByName(segment)
-			if !found {
+			if !found || !field.IsExported() {
 				return nil, fmt.Errorf("slice element %s has no field %s (%s) required by the renderer", schema.Elem, path, leafType)
+			}
+			if len(field.Index) != 1 {
+				return nil, fmt.Errorf("slice element %s field %s is a promoted (embedded) field; only fields declared directly on the struct resolve here", schema.Elem, path)
 			}
 			ft = field.Type
 		}
@@ -2043,10 +2057,25 @@ func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
 	props := make(map[string]any, len(fields)+4)
 	for _, field := range fields {
 		fieldType := comp.PropsFields[field]
-		fv := rv.FieldByName(field)
-		if !fv.IsValid() || !fv.CanInterface() {
+		// Resolve through the TYPE first, not Value.FieldByName: the latter
+		// also walks embedded-field promotion and indirects through any
+		// pointer along the way, which panics on a nil embedded pointer
+		// (gosx#183's M2 bug, reproduced here for a tier-2 spread source: a
+		// legacy caller's spread value has no declared type at compile
+		// time, so this render-time boundary is the only place a promoted
+		// field on the source struct is ever caught). sf.Index has length 1
+		// for a field declared directly on the struct and length >1 for a
+		// promoted field reached through one or more embeddings — reject
+		// before ever touching the value, the same way
+		// requireStrictStructValue does for a nested-selector root.
+		sf, found := rv.Type().FieldByName(field)
+		if !found || !sf.IsExported() {
 			return nil, fmt.Errorf("spread source %s has no field %s (%s); the renderer reads props.%s", rv.Type(), field, fieldType, field)
 		}
+		if len(sf.Index) != 1 {
+			return nil, fmt.Errorf("spread source %s field %s is a promoted (embedded) field; only fields declared directly on the struct resolve here", rv.Type(), field)
+		}
+		fv := rv.Field(sf.Index[0])
 		raw := fv.Interface()
 		var proved any
 		var err error

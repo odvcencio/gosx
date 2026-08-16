@@ -1048,6 +1048,32 @@ func TestRequireStrictSliceValueDirectRejections(t *testing.T) {
 			t.Fatal("requireStrictSliceValue returned nil for a typed nil slice")
 		}
 	})
+
+	// "promoted element field" extends gosx#183's M2 fix (reject a
+	// promoted field by StructField.Index length before it can cross the
+	// boundary) to E1's own element walk: reflect.Type.FieldByName also
+	// resolves embedded-field promotion at the type level, so a bare
+	// found check alone would let a slice element whose read only
+	// resolves through embedding cross this boundary even though the
+	// lowerer's walkStrictHops already refuses to compile a loop-binding
+	// read through one (gosx#182/#184's generalized B1 fix).
+	t.Run("promoted element field required by the renderer", func(t *testing.T) {
+		type promotedElemInner struct{ City string }
+		type promotedElemRow struct {
+			promotedElemInner
+			Age int
+		}
+		promotedSchema := ir.SlicePropSchema{Elem: "promotedElemRow", Reads: map[string]string{"City": "string"}}
+		value := []promotedElemRow{{promotedElemInner: promotedElemInner{City: "Springfield"}, Age: 7}}
+		_, err := requireStrictSliceValue(value, promotedSchema)
+		if err == nil {
+			t.Fatal("requireStrictSliceValue unexpectedly accepted a promoted element field")
+		}
+		want := "field City is a promoted (embedded) field"
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want it to contain %q", err, want)
+		}
+	})
 }
 
 // --- E2 (#184): spread props at strict call sites -------------------------
@@ -1176,6 +1202,39 @@ func TestStrictSpreadProps(t *testing.T) {
 		}
 		if props["Tone"] != "red" || props["tone"] != "red" {
 			t.Fatalf("props = %#v, want Tone/tone aliases set", props)
+		}
+	})
+
+	// TestStrictSpreadProps/promoted field on the spread source fails
+	// closed instead of zero-filling extends gosx#183's M2 fix (reject a
+	// promoted field before Value.FieldByName can panic or silently
+	// resolve one) to the E2 tier-2 spread boundary: a legacy caller's
+	// spread source has no declared type at compile time, so
+	// walkStrictHops' B1 rejection at lowering time never sees it — this
+	// render-time boundary is the only place a source whose Tone field is
+	// only reachable through embedding promotion is ever caught. Before
+	// the fix, Value.FieldByName resolved the promotion (a non-nil,
+	// non-pointer embed cannot panic the way M2's nil-embedded-pointer
+	// case does) and let the promoted value cross the boundary un-proven,
+	// the same silent-acceptance gap requireStrictStructValue's own M2 fix
+	// closed for a nested-selector struct root — never a Go zero value
+	// (strictSpreadProps' contract is to fail closed on any missing or
+	// unprovable field, never to synthesize one the way the generated-Go
+	// twin does for an explicit call's omitted attribute).
+	t.Run("promoted field on the spread source fails closed instead of zero-filling", func(t *testing.T) {
+		type toneHolder struct{ Tone string }
+		type promotedSpreadSource struct {
+			toneHolder
+			Abbreviation string
+		}
+		source := promotedSpreadSource{toneHolder: toneHolder{Tone: "red"}, Abbreviation: "NE"}
+		_, err := strictSpreadProps(comp, source)
+		if err == nil {
+			t.Fatal("strictSpreadProps unexpectedly accepted a promoted field on the spread source")
+		}
+		want := "field Tone is a promoted (embedded) field"
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want it to contain %q", err, want)
 		}
 	})
 }
