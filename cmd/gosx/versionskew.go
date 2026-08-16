@@ -1,134 +1,114 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
 
 	"m31labs.dev/gosx"
 )
 
-// checkVersionSkew fails fast when a project's go.mod pins a different
-// m31labs.dev/gosx release than this CLI. Left unchecked, resolveGoSXModuleRoot
-// resolves client sources from the module cache path of the pinned release,
-// and a newer CLI fails deep inside that path with an obscure missing-file
-// error instead of a version diagnostic.
+// gosxModulePath is the module path this CLI ships as, and the one
+// checkVersionSkew resolves against every project it inspects.
+const gosxModulePath = "m31labs.dev/gosx"
+
+// skipVersionCheckEnv, set to any non-empty value, bypasses checkVersionSkew
+// entirely. It exists because the check runs a real toolchain command and can
+// be wrong for a setup this package has not anticipated; the escape hatch
+// lets a build proceed instead of blocking on a diagnostic.
+const skipVersionCheckEnv = "GOSX_SKIP_VERSION_CHECK"
+
+// checkVersionSkew fails fast when a project's module graph resolves a
+// different m31labs.dev/gosx release than this CLI. Left unchecked,
+// resolveGoSXModuleRoot resolves client sources from the module cache path of
+// the pinned release, and a newer CLI fails deep inside that path with an
+// obscure missing-file error instead of a version diagnostic.
 func checkVersionSkew(projectDir string) error {
-	goModPath, err := projectGoModPath(projectDir)
-	if err != nil || goModPath == "" {
+	if os.Getenv(skipVersionCheckEnv) != "" {
 		return nil
 	}
-	data, err := os.ReadFile(goModPath)
-	if err != nil {
-		return nil
-	}
-	projectVersion, hasLocalReplace := parseGoSXRequirement(string(data))
-	if projectVersion == "" {
+	projectVersion, hasLocalReplace, ok := resolveProjectGoSXVersion(projectDir)
+	if !ok {
 		return nil
 	}
 	return versionSkewError("v"+gosx.Version, projectVersion, hasLocalReplace)
 }
 
-// projectGoModPath resolves the go.mod that governs projectDir, the same way
-// moduleInfo does for modules.go generation. An empty result means projectDir
-// is not inside a module, which is not this check's problem to report.
-func projectGoModPath(projectDir string) (string, error) {
-	cmd := exec.Command("go", "env", "GOMOD")
+// goListModule mirrors the subset of `go list -m -json` fields this check
+// needs. Replace is nil unless a replace directive governs the module; when
+// set, its own Version and Dir describe the replacement, not the original.
+type goListModule struct {
+	Version string
+	Dir     string
+	Replace *goListModule
+}
+
+// resolveProjectGoSXVersion asks the Go toolchain how projectDir's module
+// graph resolves m31labs.dev/gosx, rather than scanning go.mod text by hand.
+// `go list -m -json` already understands require and replace blocks in every
+// formatting a hand-rolled scanner gets wrong (block form, space-free
+// "require(", trailing comments), and it is the one place that correctly
+// resolves go.work workspaces, where `go env GOMOD` still names a member
+// module's go.mod even though a `use` directive overrides the version.
+//
+// ok is false whenever the check has nothing useful to say: m31labs.dev/gosx
+// is not required, projectDir is not inside a module, or the toolchain
+// invocation itself failed (offline, no go on PATH, malformed output, and so
+// on). None of those are grounds to block a build over a diagnostic.
+func resolveProjectGoSXVersion(projectDir string) (version string, localReplace bool, ok bool) {
+	cmd := exec.Command("go", "list", "-m", "-json", gosxModulePath)
 	cmd.Dir = projectDir
 	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", false, false
 	}
-	path := strings.TrimSpace(string(out))
-	if path == "" || path == os.DevNull {
-		return "", nil
+	var mod goListModule
+	if err := json.Unmarshal(bytes.TrimSpace(out), &mod); err != nil {
+		return "", false, false
 	}
-	return path, nil
+	return interpretGoListModule(mod)
 }
 
-// parseGoSXRequirement scans go.mod text for the m31labs.dev/gosx require
-// version and whether a local-path replace directive redirects it. It is a
-// minimal scanner rather than golang.org/x/mod/modfile because the module does
-// not otherwise depend on that package.
-func parseGoSXRequirement(goMod string) (version string, hasLocalReplace bool) {
-	scanner := bufio.NewScanner(strings.NewReader(goMod))
-	inRequireBlock := false
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "//") {
-			continue
+// interpretGoListModule is the pure decision behind resolveProjectGoSXVersion:
+// given one `go list -m -json` record for m31labs.dev/gosx, it decides the
+// version to compare against the CLI's own, and whether local disk sources
+// make that comparison moot. Kept separate from process execution so it is
+// testable without shelling out.
+func interpretGoListModule(mod goListModule) (version string, localReplace bool, ok bool) {
+	if mod.Replace != nil {
+		if mod.Replace.Version == "" {
+			// A path replace: the target is a directory on disk, not a
+			// tagged version, so the require line never governs the build.
+			return "", true, true
 		}
-		switch {
-		case line == "require (":
-			inRequireBlock = true
-		case inRequireBlock && line == ")":
-			inRequireBlock = false
-		case inRequireBlock:
-			if v, ok := matchGoSXRequireFields(line); ok {
-				version = v
-			}
-		case strings.HasPrefix(line, "require "):
-			if v, ok := matchGoSXRequireFields(strings.TrimPrefix(line, "require ")); ok {
-				version = v
-			}
-		case strings.HasPrefix(line, "replace "):
-			if matchGoSXLocalReplaceFields(strings.TrimPrefix(line, "replace ")) {
-				hasLocalReplace = true
-			}
+		// A module-version replace: the replaced version is what the build
+		// actually uses, not the original require line.
+		return mod.Replace.Version, false, true
+	}
+	if mod.Version == "" {
+		if mod.Dir != "" {
+			// Workspace mode: m31labs.dev/gosx resolved to a `use`d local
+			// module rather than a required version.
+			return "", true, true
 		}
+		// Neither a version nor a local dir: nothing this check understands.
+		return "", false, false
 	}
-	return version, hasLocalReplace
-}
-
-// matchGoSXRequireFields reads one require-line body ("m31labs.dev/gosx
-// v0.31.4" or "m31labs.dev/gosx v0.31.4 // indirect") and returns the pinned
-// version.
-func matchGoSXRequireFields(rest string) (string, bool) {
-	fields := strings.Fields(rest)
-	if len(fields) < 2 || fields[0] != "m31labs.dev/gosx" {
-		return "", false
-	}
-	return fields[1], true
-}
-
-// matchGoSXLocalReplaceFields reports whether a replace-line body ("m31labs.dev/gosx
-// [oldver] => target [newver]") redirects m31labs.dev/gosx to a local
-// filesystem path rather than another module version.
-func matchGoSXLocalReplaceFields(rest string) bool {
-	fields := strings.Fields(rest)
-	if len(fields) == 0 || fields[0] != "m31labs.dev/gosx" {
-		return false
-	}
-	arrow := -1
-	for i, field := range fields {
-		if field == "=>" {
-			arrow = i
-			break
-		}
-	}
-	if arrow < 0 || arrow+1 >= len(fields) {
-		return false
-	}
-	target := fields[arrow+1]
-	if strings.Contains(target, "@") {
-		return false
-	}
-	return strings.HasPrefix(target, ".") || filepath.IsAbs(target)
+	return mod.Version, false, true
 }
 
 // versionSkewError is the pure decision behind checkVersionSkew: given the
-// CLI's own version and the project's pinned m31labs.dev/gosx version, decide
-// whether to fail and with what message. Kept separate from filesystem and
-// process access so it is testable on its own.
+// CLI's own version and the project's resolved m31labs.dev/gosx version,
+// decide whether to fail and with what message. Kept separate from
+// filesystem and process access so it is testable on its own.
 func versionSkewError(cliVersion, projectVersion string, hasLocalReplace bool) error {
 	if hasLocalReplace || projectVersion == "" || cliVersion == projectVersion {
 		return nil
 	}
 	return fmt.Errorf(
-		"gosx %s cannot operate on a project pinned to m31labs.dev/gosx %s. Run: go install m31labs.dev/gosx/cmd/gosx@%s",
-		cliVersion, projectVersion, projectVersion,
+		"gosx %s cannot operate on a project pinned to m31labs.dev/gosx %s. Run: go install m31labs.dev/gosx/cmd/gosx@%s, or set %s=1 to override",
+		cliVersion, projectVersion, projectVersion, skipVersionCheckEnv,
 	)
 }
