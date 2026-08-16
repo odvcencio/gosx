@@ -93,6 +93,51 @@ func Page() Node {
 			attributes are not part of this form.
 		</p>
 		<CodeBlock lang="gosx" source={data.conditionalSample} />
+		<h2 id="strict-loops-and-spread">Loops and spread props</h2>
+		<p>
+			A strict body may also loop with
+			<span class="inline-code">
+				&lt;Each of=
+				{"{"}
+				...
+				{"}"}
+				as="name"&gt;
+			</span>
+			. The
+			<span class="inline-code">of</span>
+			source must be a
+			<span class="inline-code">props</span>
+			field declared
+			<span class="inline-code">[]T</span>
+			, where
+			<span class="inline-code">T</span>
+			is a value struct declared in the same file. Inside the loop, the binding resolves selectors exactly like
+			<span class="inline-code">props</span>
+			does, against
+			<span class="inline-code">T</span>
+			's fields. An optional
+			<span class="inline-code">index="i"</span>
+			attribute binds the loop index as a plain
+			<span class="inline-code">int</span>
+			; it renders bare but admits no selector. An empty or nil slice renders nothing — write an
+			<span class="inline-code">&lt;If&gt;</span>
+			sibling for the empty state.
+		</p>
+		<CodeBlock lang="gosx" source={data.eachSample} />
+		<p>
+			A strict call site may also spread exactly one value and nothing else:
+			<span class="inline-code">
+				&lt;Callee
+				{"{"}
+				...source
+				{"}"}
+				/&gt;
+			</span>
+			. A strict caller's spread source must have exactly the callee's declared props type — the Go compiler proves this like any other typed call. A legacy caller's single spread is proved instead at the file-renderer boundary: the source must be a struct with every field the callee renders, of the exact declared type; a
+			<span class="inline-code">map[string]any</span>
+			source is always rejected, because a map can omit a key where the typed call would supply a zero value, and map keys have no declared type to check ahead of time. Spread plus named attributes, and more than one spread, stay rejected at every call site.
+		</p>
+		<CodeBlock lang="gosx" source={data.spreadSample} />
 		<section class="callout">
 			<strong>Keep strict components local</strong>
 			<p>
@@ -143,11 +188,15 @@ func Page() Node {
 		</p>
 		<h2 id="attributes">Elements and attributes</h2>
 		<p>
-			Lowercase tags create HTML elements. Static quoted attributes, boolean attributes, expression attributes, expression children, and fragments are available in both styles within their validation contracts. Strict capitalized tags resolve only to same-file strict components; renderer builtins and element spread attributes remain legacy-only in v0.39.
+			Lowercase tags create HTML elements. Static quoted attributes, boolean attributes, expression attributes, expression children, and fragments are available in both styles within their validation contracts. Strict capitalized tags resolve only to same-file strict components, plus the
+			<span class="inline-code">If</span>
+			and
+			<span class="inline-code">Each</span>
+			builtins covered above; every other renderer builtin and element spread attributes remain legacy-only.
 		</p>
 		<CodeBlock lang="gosx" source={data.attributesSample} />
 		<p>
-			A strict component call is intentionally narrower than an HTML element: pass named attributes that match the props struct. Strict component calls reject spread props and positional child content; use a legacy caller-and-callee chain when component composition needs nested Node content in v0.39.
+			A strict component call is intentionally narrower than an HTML element: pass named attributes that match the props struct, or the single proven spread described above. Positional child content stays rejected either way; use a legacy caller-and-callee chain when component composition needs nested Node content.
 		</p>
 		<p>
 			Strict markup also accepts the familiar aliases

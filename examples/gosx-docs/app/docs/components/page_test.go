@@ -66,6 +66,66 @@ func TestDocumentedConditionalSampleCompilesAndRenders(t *testing.T) {
 	}
 }
 
+// TestDocumentedEachSampleCompilesAndRenders proves the #182 docs sample:
+// a strict <Each of={...} as="stat" index="i"> loop over a same-file
+// struct slice, called from a legacy Page via a single tier-2 spread.
+func TestDocumentedEachSampleCompilesAndRenders(t *testing.T) {
+	prog, err := gosx.Compile([]byte(strictEachSample))
+	if err != nil {
+		t.Fatalf("compile documented each sample: %v", err)
+	}
+	// Stat's name must match the .gsx element schema's bare struct name
+	// exactly (case-sensitive) — requireStrictSliceValue proves identity by
+	// reflect.Type.Name(), not by field-shape compatibility.
+	type Stat struct {
+		Label string
+		Value string
+	}
+	type loaderCard struct {
+		Stats []Stat
+	}
+	html, err := route.RenderProgramComponent(prog, "Page", route.ProgramRenderEnv{
+		Values: map[string]any{
+			"loaderCard": loaderCard{Stats: []Stat{{Label: "Views", Value: "12"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render documented each sample: %v", err)
+	}
+	for _, want := range []string{"<li>0: Views = 12</li>"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("rendered HTML %q does not contain %q", html, want)
+		}
+	}
+}
+
+// TestDocumentedSpreadSampleCompilesAndRenders proves the #184 docs
+// sample: a strict-to-strict tier-1 spread (Panel forwarding its own
+// props verbatim) and a legacy tier-2 spread both compile and render.
+func TestDocumentedSpreadSampleCompilesAndRenders(t *testing.T) {
+	prog, err := gosx.Compile([]byte(strictSpreadSample))
+	if err != nil {
+		t.Fatalf("compile documented spread sample: %v", err)
+	}
+	type loaderRow struct {
+		Label string
+		Count int
+	}
+	html, err := route.RenderProgramComponent(prog, "Page", route.ProgramRenderEnv{
+		Values: map[string]any{
+			"data": map[string]any{
+				"loaderRow": loaderRow{Label: "Inbox", Count: 3},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("render documented spread sample: %v", err)
+	}
+	if !strings.Contains(html, "Inbox: 3") {
+		t.Fatalf("rendered HTML %q does not contain the spread values", html)
+	}
+}
+
 func TestDocumentedComponentsPageCompilesAndTypeChecks(t *testing.T) {
 	source, err := os.ReadFile("page.gsx")
 	if err != nil {
@@ -118,9 +178,17 @@ component Card(props: Props) {
 	}
 }
 
+// TestStrictComponentCallsRejectSpreadPropsAndPositionalChildren covers the
+// v0.39 shape rejections that remain unconditional; the v0.44 (#182/#184)
+// docs page ("Loops and spread props" below) covers the two narrow cases
+// v0.44 admits: a spread whose source type exactly matches the callee's
+// props type (a strict caller) or a legacy caller's single spread. The
+// "spread props" case here uses a mismatched source type so it stays
+// rejected under the new, narrower rule — a bare-props spread of the exact
+// same type is now valid, so this fixture must not reuse that shape.
 func TestStrictComponentCallsRejectSpreadPropsAndPositionalChildren(t *testing.T) {
 	tests := map[string]string{
-		"spread props": `package profile
+		"spread props of mismatched type": `package profile
 
 type BadgeProps struct { Label string }
 
@@ -128,7 +196,9 @@ component Badge(props: BadgeProps) {
 	return <span>{props.Label}</span>
 }
 
-component Page(props: BadgeProps) {
+type PageProps struct { Label string }
+
+component Page(props: PageProps) {
 	return <Badge {...props} />
 }`,
 		"positional children": `package profile

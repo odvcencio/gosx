@@ -199,6 +199,58 @@
   The runtime checks it at render time instead, and leaves the element
   untouched on a bad value.
 
+### Strict components: typed `<Each>` loops and checked spread call sites
+
+- **`<Each of={props.Field} as="row">` in a strict body.** A strict
+  component may now loop, when the `of` source's declared type reads
+  exactly `[]T` and `T` is a value struct declared in the same file. The
+  binding (`row`) resolves selectors the same way `props` does, against
+  `T`'s fields, up to three hops deep (`row.Stat.Label`), and composes
+  with a concat operand and `<If cond>` under the same exact-type rules.
+  An optional `index="i"` attribute binds the loop index as a plain
+  `int`; it renders bare but admits no selector. `[]*T`, `[]string`,
+  `map[K]V`, `[N]T` arrays, and a named slice type (`type Rows []T`) all
+  fail closed with a diagnostic naming the field and its declared type.
+  Fixes #182.
+- **A strict call site may spread one value.** `<Callee {...source}>` is
+  admitted at exactly one shape: a single spread attribute and nothing
+  else. A strict caller's spread source must have a declared type,
+  resolved against the caller's own schema, that is exactly the callee's
+  props type — proved by the lowerer and the Go compiler, and emitted
+  verbatim (`Callee(source)`) with zero synthesis. A legacy caller's
+  single spread is provable only at the file-renderer boundary (legacy
+  expressions carry no declared type); the boundary re-proves it
+  structurally: the source must be a non-nil struct — never a
+  `map[string]any`, which can omit a key where a typed call would supply
+  a zero value — with every field the callee renders present at its
+  exact declared type. Spread plus named attributes, and more than one
+  spread, stay rejected at every call site. Fixes #184.
+- **`ir.Component.PropsSlices`** records, per `<Each of>` loop-source
+  read, the element struct name and the binding-relative fields the loop
+  body reads with their leaf types — the render boundary's
+  `requireStrictSliceValue` checks the runtime value's reflect *type*
+  once per call (not once per element), so a well-typed slice's elements
+  are all provably safe to select through. Additive; absent decodes to
+  `nil` for a program serialized before this field existed, matching
+  `ComponentSyntax` and `PropsPaths`' zero-value convention.
+- **The cross-style call ban narrows in one direction.** A legacy body
+  may now call a same-file strict component through the single-spread
+  shape; every other legacy-to-strict shape, and every strict-to-legacy
+  call regardless of shape, keep failing closed with their existing
+  messages (the legacy-to-strict named-attributes message now names the
+  supported spread spelling instead).
+- **`internal/strictcomponent`'s validator functions gain scope-aware
+  variants** (`ValidateServerExpressionScope`, `ServerSelectorPath`,
+  `ServerExpressionRootedPaths`, `ServerConcatRootedPaths`,
+  `ValidateServerCondExpressionScope`), admitting a selector rooted at an
+  `<Each>` item binding alongside `props`. The pre-#182/#184 signatures
+  remain as empty-scope wrappers and behave byte-identically to v0.42.2
+  for every existing case.
+- This closes issue #182 (gsxmail upstream ask U2's loop half) and #184
+  (the gridiron-2000 adoption stall at zero spread-blocked components);
+  together they convert RosterRow (`<Each>` body plus a legacy `{...player}`
+  call), DraftTeam, and TeamMark (both call sites) end to end.
+
 ### Strict components: nested prop reads
 
 - **`props.A.B` and `props.A.B.C` in strict expressions.** A strict

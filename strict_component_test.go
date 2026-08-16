@@ -1357,7 +1357,7 @@ func TestCompileStrictEachRejectsSliceFieldRenderedAsScalar(t *testing.T) {
 	return <div>{props.Breakdown}</div>
 }
 `))
-	want := "renderer-visible props fields must use exact string, bool, integer, or floating-point builtins"
+	want := "strict component Row cannot render props.Breakdown of type []BreakdownRow here; slice props render only through <Each of>"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("error = %v, want to contain %q", err, want)
 	}

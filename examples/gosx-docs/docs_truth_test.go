@@ -117,7 +117,7 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 		{
 			page: "components",
 			required: []string{
-				"Strict component calls reject spread props and positional child content",
+				"Positional child content stays rejected either way",
 				"gosx export .",
 			},
 		},

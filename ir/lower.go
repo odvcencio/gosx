@@ -1463,11 +1463,41 @@ func (l *lowerer) resolveStrictSelectorPath(n *gotreesitter.Node, componentName,
 		return
 	case strictHopOK:
 		if !strictRendererScalarType(res.leafType) {
+			if l.isStrictEachLoopableSliceType(res.leafType) {
+				// A slice whose element is a same-file value struct has its
+				// own admitted rendering shape (design spec section 4.2's
+				// dedicated message) — the generic non-scalar-leaf message
+				// below would otherwise be technically true but misleading,
+				// naming builtins this slice could never satisfy instead of
+				// naming the one shape that does admit it. A slice this
+				// .gsx file's <Each of> would ALSO reject ([]string, a
+				// scalar-element slice) keeps the generic message — v0.42.2
+				// already rejected it that way, before <Each> existed.
+				l.errorf(n, "strict component %s cannot render %s of type %s here; slice props render only through <Each of>", componentName, res.pathText, res.leafType)
+				return
+			}
 			l.errorf(n, "strict component %s cannot render %s of type %s; renderer-visible props fields must use exact string, bool, integer, or floating-point builtins", componentName, res.pathText, res.leafType)
 		}
 	default:
 		l.errorf(n, "%s", strictHopMessage(componentName, res))
 	}
+}
+
+// isStrictEachLoopableSliceType reports whether typeName is a "[]T" whose T
+// is a same-file declared struct — the same admission admitStrictEachElemType
+// would give it inside a real <Each of>, checked here only to choose which
+// diagnostic a bare (non-loop) read of the same field gets.
+func (l *lowerer) isStrictEachLoopableSliceType(typeName string) bool {
+	trimmed := strings.TrimSpace(typeName)
+	if !strings.HasPrefix(trimmed, "[]") {
+		return false
+	}
+	elem := strings.TrimSpace(strings.TrimPrefix(trimmed, "[]"))
+	if elem == "" || strings.HasPrefix(elem, "*") {
+		return false
+	}
+	_, ok := l.structTypes[elem]
+	return ok
 }
 
 // resolveStrictEachSourceType validates a strict <Each of> source's

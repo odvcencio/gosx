@@ -66,6 +66,48 @@ component Page() {
 	return <main><Badge ready={true} /></main>
 }`
 
+const strictEachSample = `package profile
+
+type Stat struct {
+	Label string
+	Value string
+}
+
+type CardProps struct {
+	Stats []Stat
+}
+
+component Card(props: CardProps) {
+	return <ul>
+		<Each of={props.Stats} as="stat" index="i">
+			<li>{i}: {stat.Label} = {stat.Value}</li>
+		</Each>
+	</ul>
+}
+
+func Page() Node {
+	return <main><Card {...loaderCard} /></main>
+}`
+
+const strictSpreadSample = `package profile
+
+type BadgeProps struct {
+	Label string
+	Count int
+}
+
+component Badge(props: BadgeProps) {
+	return <span>{props.Label}: {props.Count}</span>
+}
+
+component Panel(props: BadgeProps) {
+	return <div class="panel"><Badge {...props} /></div>
+}
+
+func Page() Node {
+	return <main><Badge {...data.loaderRow} /></main>
+}`
+
 func init() {
 	docs.RegisterStaticDocsPage("Components", "Choose between strict typed and legacy Go-function GSX components.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
@@ -78,6 +120,7 @@ func init() {
 					{"href": "#two-styles", "label": "Two Styles"},
 					{"href": "#strict-components", "label": "Strict Components"},
 					{"href": "#strict-expressions", "label": "Strict Expressions"},
+					{"href": "#strict-loops-and-spread", "label": "Loops & Spread Props"},
 					{"href": "#legacy-components", "label": "Legacy Components"},
 					{"href": "#attributes", "label": "Elements & Attributes"},
 					{"href": "#tooling", "label": "Tooling"},
@@ -87,6 +130,8 @@ func init() {
 				"legacySample":      legacyComponentSample,
 				"concatSample":      strictConcatSample,
 				"conditionalSample": strictConditionalSample,
+				"eachSample":        strictEachSample,
+				"spreadSample":      strictSpreadSample,
 				"attributesSample": `type FieldProps struct {
 	ID    string
 	Class string
