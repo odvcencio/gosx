@@ -24,12 +24,43 @@
 
   // Parse the inline JSON manifest from #gosx-manifest script tag.
   // Returns the parsed object, or null if missing/malformed.
+  //
+  // The parse is memoized per element identity: the WebGPU probe and the
+  // runtime tail both call this during one boot, and the manifest can be
+  // hundreds of kilobytes, so parsing it once instead of once per caller is a
+  // real main-thread saving. A soft navigation swaps in a new element, which
+  // misses the memo and re-parses.
+  //
+  // The memoized result is also published as window.__gosx_manifest so code in
+  // other bundles (the scene3d feature reads water shader sources, for one)
+  // can reuse the parse instead of re-reading and re-parsing the DOM text.
+  //
+  // When the element carries data-gosx-release, the JSON text is removed from
+  // the DOM after the parse: the string is dead weight once the object graph
+  // exists. This is opt-in because pages may carry their own scripts that read
+  // the element's text later; a page opts in only once every consumer goes
+  // through the published parse.
   function loadManifest() {
     const el = document.getElementById("gosx-manifest");
     if (!el) return null;
 
+    const memo = window.__gosx_manifest;
+    if (memo && memo.element === el) {
+      return memo.value;
+    }
+
     try {
-      return JSON.parse(el.textContent);
+      const raw = el.textContent;
+      const value = JSON.parse(raw);
+      window.__gosx_manifest = {
+        element: el,
+        value: value,
+        textHasLabel: typeof raw === "string" && raw.indexOf('"label"') >= 0,
+      };
+      if (el.hasAttribute && el.hasAttribute("data-gosx-release")) {
+        el.textContent = "";
+      }
+      return value;
     } catch (e) {
       console.error("[gosx] failed to parse manifest:", e);
       if (window.__gosx && typeof window.__gosx.reportIssue === "function") {

@@ -36,6 +36,7 @@ type Renderer struct {
 	manifest                           *hydrate.Manifest
 	counter                            int
 	bundleID                           string
+	releaseManifestText                bool
 	programDir                         string // directory where island programs are stored
 	programFormat                      string // "json" or "bin"
 	programAssets                      map[string]programAsset
@@ -883,11 +884,31 @@ func (r *Renderer) ManifestScriptWithNonce(nonce string) gosx.Node {
 	if err != nil {
 		return gosx.Text("")
 	}
+	// data-gosx-release tells the bootstrap runtime it may drop the JSON text
+	// from the DOM after its one memoized parse; without the attribute the text
+	// is retained for the page's lifetime. The manifest can reach hundreds of
+	// kilobytes, so the drop is a per-tab memory saving, but it is opt-in: an
+	// app whose own inline scripts read the element's text later must not set
+	// it until those readers consume window.__gosx_manifest instead.
+	release := ""
+	if r.releaseManifestText {
+		release = ` data-gosx-release`
+	}
 	return gosx.RawHTML(fmt.Sprintf(
-		`<script id="gosx-manifest" type="application/json"%s>%s</script>`,
+		`<script id="gosx-manifest" type="application/json"%s%s>%s</script>`,
 		cspNonceAttr(nonce),
+		release,
 		string(data),
 	))
+}
+
+// ReleaseManifestText marks the emitted manifest script tag with
+// data-gosx-release, allowing the browser runtime to drop the manifest JSON
+// text from the DOM once it has been parsed. Opt in only when no script on the
+// page reads the element's textContent after boot; late consumers must use the
+// published window.__gosx_manifest parse instead.
+func (r *Renderer) ReleaseManifestText() {
+	r.releaseManifestText = true
 }
 
 // BootstrapScript returns the script tags needed for island hydration.

@@ -205,6 +205,13 @@
       return false;
     }
     const node = typeof document.getElementById === "function" ? document.getElementById("gosx-manifest") : null;
+    // The label flag is captured at parse time in loadManifest, because a page
+    // that opted into data-gosx-release no longer has the JSON text in the DOM
+    // by the time this runs.
+    const memo = window.__gosx_manifest;
+    if (node && memo && memo.element === node) {
+      return memo.textHasLabel === true;
+    }
     const raw = node ? String(node.textContent || "") : "";
     return raw.indexOf('"label"') >= 0;
   }

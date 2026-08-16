@@ -287,9 +287,14 @@
   function sceneMountedWaterShaderSources() {
     const out = {};
     const script = typeof document !== "undefined" && document.getElementById ? document.getElementById("gosx-manifest") : null;
-    if (!script || !script.textContent) return out;
+    // Prefer the parse the bootstrap runtime already published: it saves a
+    // full re-parse of the manifest text, and on a page that opted into
+    // data-gosx-release the DOM text is gone and the memo is the only copy.
+    const memo = typeof window !== "undefined" ? window.__gosx_manifest : null;
+    const memoized = script && memo && memo.element === script ? memo.value : null;
+    if (!memoized && (!script || !script.textContent)) return out;
     try {
-      const manifest = JSON.parse(script.textContent);
+      const manifest = memoized || JSON.parse(script.textContent);
       const engines = Array.isArray(manifest && manifest.engines) ? manifest.engines : [];
       for (let ei = 0; ei < engines.length; ei += 1) {
         const scene = engines[ei] && engines[ei].props && engines[ei].props.scene;

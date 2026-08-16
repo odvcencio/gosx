@@ -9721,6 +9721,26 @@
         "poolVertexWGSL", "poolFragmentWGSL", "surfaceVertexWGSL", "surfaceFragmentWGSL", "surfaceBelowFragmentWGSL",
         "objectShadowWGSL", "objectMeshShadowVertexWGSL", "objectMeshShadowFragmentWGSL",
       ];
+      function ingestManifestValue(manifest) {
+        try {
+          var engines = manifest && Array.isArray(manifest.engines) ? manifest.engines : [];
+          for (var ei = 0; ei < engines.length; ei += 1) {
+            var scene = engines[ei] && engines[ei].props && engines[ei].props.scene;
+            var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : [];
+            for (var wi = 0; wi < systems.length; wi += 1) {
+              var water = systems[wi];
+              if (!water || typeof water !== "object") continue;
+              var id = typeof water.id === "string" && water.id ? water.id : ("scene-water-" + wi);
+              var record = waterManifestShaderSourcesByID.get(id) || {};
+              for (var fi = 0; fi < fields.length; fi += 1) {
+                var name = fields[fi];
+                if (typeof water[name] === "string" && water[name].trim()) record[name] = water[name];
+              }
+              waterManifestShaderSourcesByID.set(id, record);
+            }
+          }
+        } catch (_err) {}
+      }
       function ingestManifestText(text) {
         if (!text || text.indexOf("waterSystems") < 0 || text.indexOf("WGSL") < 0) return;
         try {
@@ -9744,6 +9764,14 @@
         } catch (_err) {}
       }
       var manifestScript = doc.getElementById ? doc.getElementById("gosx-manifest") : null;
+      // The bootstrap runtime publishes its manifest parse; reusing it skips a
+      // re-parse, and on a page that opted into data-gosx-release the DOM text
+      // is empty and the published parse is the only remaining copy.
+      var manifestMemo = typeof window !== "undefined" ? window.__gosx_manifest : null;
+      if (manifestScript && manifestMemo && manifestMemo.element === manifestScript && manifestMemo.value) {
+        ingestManifestValue(manifestMemo.value);
+        if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
+      }
       ingestManifestText(manifestScript && manifestScript.textContent || "");
       if (waterManifestShaderSourcesByID.size > 0) return waterManifestShaderSourcesByID;
       var scripts = doc.scripts || doc.querySelectorAll("script");
