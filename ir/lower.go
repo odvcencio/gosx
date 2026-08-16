@@ -988,6 +988,21 @@ func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 	}
 }
 
+// collectStrictSchemas runs in two passes over root's top-level
+// declarations rather than one, precisely because collectStrictPropReads
+// (via collectStrictElementReads' isSpreadForwardTag check) needs
+// l.strictNames complete for the WHOLE file before it can classify any
+// component's spread reads correctly (gosx#182/#184 M-3). A single pass
+// populated l.strictNames incrementally in file order, so a spread source
+// forwarded to a same-file strict callee declared LATER in the file — e.g.
+// Outer declared before Mark, with Outer's body containing
+// <Mark {...props.Away}> — was not yet in l.strictNames when Outer's own
+// reads were collected. isSpreadForwardTag then read false, the spread
+// fell through to the generic scalar-read walk, and
+// validateStrictRenderedProps rejected the struct-typed props.Away as "not
+// ... string, bool, integer, or floating-point" — a real compile failure
+// that depended only on declaration order, not on any type-safety
+// difference between the two orders.
 func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictNames = make(map[string]struct{})
 	l.legacyNames = make(map[string]struct{})
@@ -995,6 +1010,10 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictReads = make(map[string]map[string]strictReadClass)
 	l.structFields = make(map[string]map[string]string)
 	l.structTypes = make(map[string]map[string]string)
+	// Pass 1: every same-file strict component's name and props type,
+	// every legacy (non-strict) top-level renderer function's name, and
+	// every declared struct's field schema — nothing here depends on
+	// declaration order among components.
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
 		switch l.nodeType(child) {
@@ -1012,12 +1031,29 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 				l.strictNames[componentName] = struct{}{}
 				if propsType != "" {
 					l.strictProps[componentName] = propsType
-					l.strictReads[componentName] = l.collectStrictPropReads(child)
 				}
 			}
 		case "type_declaration":
 			l.collectStructSchemas(child)
 		}
+	}
+	// Pass 2: each strict component's prop reads, now that l.strictNames
+	// holds every same-file strict component regardless of where in the
+	// file it is declared.
+	for i := 0; i < int(root.NamedChildCount()); i++ {
+		child := root.NamedChild(i)
+		if l.nodeType(child) != "gosx_component_declaration" {
+			continue
+		}
+		name := l.childByField(child, "name")
+		if name == nil {
+			continue
+		}
+		componentName := l.text(name)
+		if _, hasProps := l.strictProps[componentName]; !hasProps {
+			continue
+		}
+		l.strictReads[componentName] = l.collectStrictPropReads(child)
 	}
 }
 
@@ -1123,16 +1159,26 @@ func (l *lowerer) collectStrictElementReads(node *gotreesitter.Node, reads map[s
 	tag := l.extractTagName(open)
 	isEach := tag == "Each"
 	_, isStrictCallee := l.strictNames[tag]
-	// Forward-referenced same-file strict components (declared later in
-	// this file than the component currently being collected) are not yet
-	// in l.strictNames at this point in collectStrictSchemas' single pass;
-	// such a spread's read simply is not pre-registered here. That is a
-	// narrow completeness gap in the explicit-supply rule and PropsFields
-	// for THIS component only — the actual type safety is unaffected,
-	// because validateStrictComponentCall's tier-1 check independently
-	// re-resolves and proves the same source once l.strictNames is
-	// complete, later in lowering.
-	isSpreadForwardTag := isStrictCallee && tag != "If" && tag != "Each"
+	// l.strictNames is complete for the whole file by the time this runs —
+	// collectStrictSchemas' pass 2 (gosx#182/#184 M-3) only starts
+	// collecting any component's reads after its pass 1 has recorded every
+	// same-file strict component's name, regardless of declaration order.
+	// A forward-referenced strict callee (declared later in the file than
+	// the caller) is therefore seen here exactly as an earlier-declared one
+	// is.
+	// isStrictCallee alone decides this (gosx#182/#184 minor m-6): it is
+	// already false for the builtin If/Each (neither is ever a key in
+	// l.strictNames), so an explicit "tag != If/Each" exclusion here only
+	// ever changed anything for the one case it should NOT have — a
+	// same-file strict component literally named If or Each (a legitimate
+	// shadow, section 2.1's carve-out). A spread into a shadowed If/Each
+	// used to fall through to the generic scalar-read walk instead of
+	// getting the spread-forward class, so validateStrictRenderedProps'
+	// later pass saw a struct-typed source registered as a scalar read
+	// and rejected it with the scalar diagnostic — even when
+	// validateStrictToStrictSpreadCall (a separate pass) would have
+	// accepted the very same call as a valid E2 tier-1 spread.
+	isSpreadForwardTag := isStrictCallee
 	for i := 0; i < int(open.NamedChildCount()); i++ {
 		attrChild := open.NamedChild(i)
 		if isEach && l.nodeType(attrChild) == "jsx_attribute" {
@@ -1312,12 +1358,23 @@ const (
 	strictHopPointer
 	strictHopThroughScalar
 	strictHopUndeclaredStruct
-	// strictHopUnknownField is silent, and only ever returned for hop 0: the
-	// package checker supplies the precise unknown/unexported-field
-	// diagnostic for the root's own field, since the generated program's
-	// real root value (props, or an <Each> binding bound to its concrete
-	// element type) is exactly this same-file struct type. Every caller of
-	// walkStrictHops skips emitting anything for this kind.
+	// strictHopUnknownField is only ever returned for hop 0 (the root's own
+	// field), and its two callers treat it differently:
+	//   - An <Each> binding root (validateEachBindingRead): the binding's
+	//     element struct is fully known here, and the projection compiles
+	//     in the SAME package as its declaration, so Go resolves a
+	//     promoted or unexported field there exactly as it resolves a
+	//     declared one — there is no compiler backstop. This caller does
+	//     NOT skip this kind; it reports it, reusing
+	//     strictHopUnknownFieldDeep's wording with the binding root
+	//     substituted (gosx#182/#184).
+	//   - The props root (resolveStrictSelectorPath and its siblings):
+	//     still skips emitting anything for this kind, deferring to the
+	//     package checker. That deferral is sound only for a genuinely
+	//     absent field, which IS a compile error there; for a promoted or
+	//     unexported field it is not — Go resolves those too, same as for
+	//     an Each binding, so this is a known, inherited-from-main gap, not
+	//     a backstop, tracked in gosx#195.
 	strictHopUnknownField
 	// strictHopUnknownFieldDeep is gosx#183's B1 fix, generalized: an
 	// unknown field at hop i>0 gets no compiler backstop. Field promotion
@@ -1372,10 +1429,13 @@ func (l *lowerer) walkStrictHops(rootLabel, rootType string, path []string) stri
 		fieldType, known := l.structTypes[currentType][field]
 		if !known {
 			if i == 0 {
-				// The root's own field: the package checker supplies the
-				// precise unknown/unexported-field diagnostic; this guard
-				// only owns known renderer schema types.
-				return strictHopResult{pathText: pathText, failKind: strictHopUnknownField}
+				// The root's own field. failField/failType are populated
+				// the same way as the i>0 branch below so a caller that
+				// upgrades this kind to an error (an <Each> binding root —
+				// see strictHopUnknownField's doc comment) can format the
+				// identical message; a caller that defers instead (the
+				// props root) ignores both.
+				return strictHopResult{pathText: pathText, failKind: strictHopUnknownField, failField: field, failType: currentType}
 			}
 			// gosx#183's B1 fix, generalized to any root: a promoted,
 			// unexported, or genuinely absent field past the root fails
@@ -1404,13 +1464,18 @@ func (l *lowerer) walkStrictHops(rootLabel, rootType string, path []string) stri
 }
 
 // strictHopMessage formats every walkStrictHops structural failure except
-// strictHopOK and strictHopUnknownField (both handled by their caller, not
-// here) with full component context. One definition keeps the message text
-// identical regardless of which selector position (a props read, a loop-
-// source read, an Each binding read) triggered it — the failure is about
-// the schema shape, not what the path is used for.
+// strictHopOK with full component context. One definition keeps the
+// message text identical regardless of which selector position (a props
+// read, a loop-source read, an Each binding read) triggered it — the
+// failure is about the schema shape, not what the path is used for.
+// strictHopUnknownField (hop 0) is included here only for a caller that
+// has decided to upgrade it to an error (an <Each> binding root — see its
+// doc comment); a caller that instead defers hop 0 (the props root) keeps
+// its own early "case strictHopUnknownField: return" and never reaches
+// this function for that kind.
 //
-// strictHopUnknownFieldDeep reuses gosx#183's B1 wording verbatim,
+// strictHopUnknownFieldDeep and (when a caller reports it)
+// strictHopUnknownField both reuse gosx#183's B1 wording verbatim,
 // substituting only the root: the original fix names props explicitly
 // ("struct %s declares no visible field %s"); this generalized copy
 // composes the identical sentence from res.pathText, which already carries
@@ -1426,7 +1491,7 @@ func strictHopMessage(componentName string, res strictHopResult) string {
 		return fmt.Sprintf("strict component %s cannot select %q through %s of type %s; selector paths cross same-file struct fields only", componentName, res.failField, res.pathText, res.failType)
 	case strictHopUndeclaredStruct:
 		return fmt.Sprintf("strict component %s cannot resolve %s.%s: struct %s is not declared in this .gsx file; declare the renderer-visible struct beside the component", componentName, res.pathText, res.failField, res.failType)
-	case strictHopUnknownFieldDeep:
+	case strictHopUnknownFieldDeep, strictHopUnknownField:
 		return fmt.Sprintf("strict component %s cannot resolve %s.%s: struct %s declares no visible field %s; promoted, unexported, and unknown fields cannot cross the file renderer boundary", componentName, res.pathText, res.failField, res.failType, res.failField)
 	default:
 		return ""
@@ -1445,10 +1510,15 @@ func strictHopMessage(componentName string, res strictHopResult) string {
 // path.
 //
 // An unknown field at hop 0 (a direct field of the props struct itself) is
-// left to the package checker: the generated program's real props parameter
-// is exactly this same-file struct type, so an unknown or unexported field
-// there is a compile error in the check program regardless of what this
-// lowerer does. An unknown field at any later hop gets no such backstop:
+// left to the package checker. That deferral is a real backstop only for a
+// genuinely absent field — the check program's real props parameter is
+// exactly this same-file struct type, so a field this .gsx file never
+// declares anywhere is a compile error there regardless of what this
+// lowerer does. It is NOT a backstop for a promoted or unexported field:
+// the check program compiles those exactly as it compiles a directly
+// declared field, so this lowerer's silence here is a known, inherited
+// gap (tracked in gosx#195), not a guarantee. An unknown field at any
+// later hop gets no such backstop, for any field shape:
 // field promotion through an embedded type is legal Go, so the check
 // program compiles a promoted, unexported, or genuinely absent field the
 // same way — silently deferring here would let the component compile while
@@ -1961,6 +2031,27 @@ func (l *lowerer) lowerImportSpec(n *gotreesitter.Node) {
 	l.recordSignalImport(imp)
 }
 
+// isImportAlias reports whether name is this file's explicit alias for an
+// import (import name "path"). Imports lower before any component
+// (lowerSourceFile's single pass visits import_declaration before any
+// gosx_component_declaration — Go itself requires imports at the top of
+// the file), so l.prog.Imports is complete by the time strictEachShape
+// calls this. Only an EXPLICIT alias is checked: a bare `import "path"`'s
+// effective identifier is the imported package's own declared name, which
+// this lowerer does not resolve, so that narrower collision is left
+// alone (gosx#182/#184 nit n-1).
+func (l *lowerer) isImportAlias(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, imp := range l.prog.Imports {
+		if imp.Alias == name {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *lowerer) recordSignalImport(imp Import) {
 	if strings.TrimSpace(imp.Path) != "m31labs.dev/gosx/signal" {
 		return
@@ -2402,6 +2493,15 @@ func (l *lowerer) validateStrictBindingReadTypes(span Span, source, componentNam
 // section 2.4 to a binding root), reports exactly one diagnostic on
 // failure, and records a clean scalar resolution into the owning scope
 // level's SlicePropSchema.Reads.
+//
+// Unlike the props-rooted callers, a hop-0 unknown field here (root's own
+// field on the element struct) is NOT deferred: the element struct is
+// fully known — this is the whole point of a typed <Each> — and the
+// package checker gives no backstop for a promoted or unexported field (it
+// resolves those the same as a declared one, same package). Deferring
+// would let this exact field read compile while the transpiled Go and the
+// map-backed file renderer diverge on what it resolves to (gosx#182/#184
+// M-2). So this reports the same message an hop-i>0 unknown field gets.
 func (l *lowerer) validateEachBindingRead(span Span, componentName string, scope *eachScope, root string, path []string) {
 	itemType, isIndex, found := scope.resolve(root)
 	if !found {
@@ -2413,8 +2513,6 @@ func (l *lowerer) validateEachBindingRead(span Span, componentName string, scope
 	}
 	res := l.walkStrictHops(root, itemType, path)
 	switch res.failKind {
-	case strictHopUnknownField:
-		return
 	case strictHopOK:
 		if !strictRendererScalarType(res.leafType) {
 			l.errs = append(l.errs, Diagnostic{Span: span, Message: fmt.Sprintf("strict component %s cannot render %s of type %s; loop selectors must reach an exact scalar field", componentName, res.pathText, res.leafType)})
@@ -2591,10 +2689,17 @@ func (l *lowerer) enterStrictEach(node *Node, componentName, propsType string, s
 // static as attribute, at most one static index attribute, and no others;
 // then the binding-name rules (section 2.2): valid Go identifier syntax,
 // not reserved (props/children), not shared between as and index, and not
-// already bound by an enclosing <Each>.
+// already bound by an enclosing <Each>. Each of of/as/index is counted
+// across all attributes on the node — a duplicate (e.g. two as attributes)
+// is rejected the same way validateStrictConditionalCall rejects a
+// duplicate cond: silently accepting the last-wins attribute here would
+// diverge from route/fileprogram.go's attrValue, which binds the FIRST
+// match, producing two components that compile clean but bind different
+// values at transpile time vs. file-render time.
 func (l *lowerer) strictEachShape(node *Node, scope *eachScope) (itemName, indexName string, ofAttr *Attr, ok bool) {
 	ok = true
 	var asAttr, indexAttrPtr *Attr
+	ofCount, asCount, indexCount := 0, 0, 0
 	for i := range node.Attrs {
 		attr := &node.Attrs[i]
 		switch {
@@ -2602,6 +2707,7 @@ func (l *lowerer) strictEachShape(node *Node, scope *eachScope) (itemName, index
 			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> does not accept spread attributes; of, as, and index are the only supported attributes"})
 			ok = false
 		case attr.Name == "of":
+			ofCount++
 			if attr.Kind != AttrExpr {
 				l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires exactly one of attribute with an expression value"})
 				ok = false
@@ -2609,23 +2715,34 @@ func (l *lowerer) strictEachShape(node *Node, scope *eachScope) (itemName, index
 			}
 			ofAttr = attr
 		case attr.Name == "as":
+			asCount++
 			asAttr = attr
 		case attr.Name == "index":
+			indexCount++
 			indexAttrPtr = attr
 		default:
 			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> does not accept attribute %q; of, as, and index are the only supported attributes", attr.Name)})
 			ok = false
 		}
 	}
-	if ofAttr == nil {
+	if ofCount > 1 {
+		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires exactly one of attribute with an expression value"})
+		ok = false
+	} else if ofAttr == nil {
 		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires exactly one of attribute with an expression value"})
 		ok = false
 	}
-	if asAttr == nil || asAttr.Kind != AttrStatic || strings.TrimSpace(asAttr.Value) == "" {
+	if asCount > 1 {
+		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires exactly one as attribute naming the loop binding"})
+		ok = false
+	} else if asAttr == nil || asAttr.Kind != AttrStatic || strings.TrimSpace(asAttr.Value) == "" {
 		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires a static as attribute naming the loop binding"})
 		ok = false
 	}
-	if indexAttrPtr != nil && (indexAttrPtr.Kind != AttrStatic || strings.TrimSpace(indexAttrPtr.Value) == "") {
+	if indexCount > 1 {
+		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires exactly one index attribute naming the index binding"})
+		ok = false
+	} else if indexAttrPtr != nil && (indexAttrPtr.Kind != AttrStatic || strings.TrimSpace(indexAttrPtr.Value) == "") {
 		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires a static index attribute naming the index binding"})
 		ok = false
 	}
@@ -2647,6 +2764,19 @@ func (l *lowerer) strictEachShape(node *Node, scope *eachScope) (itemName, index
 		}
 		if binding == "props" || binding == "children" {
 			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q is reserved; choose another name", binding)})
+			ok = false
+			continue
+		}
+		if l.isImportAlias(binding) {
+			// gosx#182/#184 nit n-1: a binding named after an explicit
+			// import alias already fails closed in the strictcheck
+			// projection (the generated Go shadows the package alias
+			// inside the loop body, so a package-qualified reference to it
+			// there resolves to the loop variable instead and the
+			// projection fails to compile) — but with a confusing Go
+			// compiler error far from the .gsx source, not a clear one
+			// here. Reject it at the source instead.
+			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q shadows this file's %q import; choose another name", binding, binding)})
 			ok = false
 		}
 	}
