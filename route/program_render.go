@@ -16,10 +16,16 @@ import (
 //     a hydrated server-rendered mount — pass server.PageRuntime.Island or
 //     island.(*Renderer).RenderIslandFromProgram. When nil, island children
 //     degrade to inert placeholders.
+//   - Profile installs an EXPERIMENTAL render-profile hook: an attribute
+//     writer that can rewrite, veto, or append an element's attributes, and
+//     a pre-render validation pass that can refuse to render the program
+//     (gosx#185). A nil Profile reproduces today's rendering exactly, byte
+//     for byte. See RenderProfile.
 type ProgramRenderEnv struct {
 	Values       map[string]any
 	Funcs        map[string]any
 	RenderIsland func(*islandprogram.Program, any) gosx.Node
+	Profile      *RenderProfile
 }
 
 // RenderProgramComponent renders the named component of a compiled program (from
@@ -32,6 +38,10 @@ type ProgramRenderEnv struct {
 // page files. A single compiled source may declare the rendered component plus
 // any sibling components and islands it references; cross-references resolve here
 // at render time.
+//
+// When env.Profile is set and its Validate hook reports any diagnostic,
+// RenderProgramComponent returns a *RenderProfileError and an empty string;
+// no partial HTML is ever returned alongside that error.
 func RenderProgramComponent(prog *ir.Program, component string, env ProgramRenderEnv) (string, error) {
 	html, _, err := renderFileProgramHTML(prog, component, fileRenderOptions{
 		EvalEnv: fileRenderEnv{
@@ -39,6 +49,7 @@ func RenderProgramComponent(prog *ir.Program, component string, env ProgramRende
 			funcs:        env.Funcs,
 			renderIsland: env.RenderIsland,
 		},
+		Profile: env.Profile,
 	})
 	return html, err
 }
