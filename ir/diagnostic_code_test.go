@@ -31,3 +31,28 @@ func TestDiagnosticStringCodeFieldIsAdditive(t *testing.T) {
 		t.Fatalf("String() with Code and hint = %q, want %q", got, want)
 	}
 }
+
+// TestDiagnosticStringIncludesFilePrefixWhenSpanFileIsSet pins gosx#186 B2:
+// a diagnostic whose Span.File is set (as every strictcheck.Lint finding's
+// is, by strictcheck itself if the lint leaves it empty) prints that file
+// as a "path:" prefix before "line:col:". A diagnostic that leaves Span.File
+// empty -- every built-in gosx and strictcheck diagnostic today -- is
+// unaffected; see TestDiagnosticStringCodeFieldIsAdditive above.
+func TestDiagnosticStringIncludesFilePrefixWhenSpanFileIsSet(t *testing.T) {
+	noFile := Diagnostic{Span: Span{StartLine: 5, StartCol: 1}, Message: "element has empty tag name"}
+	if got, want := noFile.String(), "5:1: element has empty tag name"; got != want {
+		t.Fatalf("String() with empty Span.File = %q, want %q", got, want)
+	}
+
+	// The consumer contract this extension point exists for (a gsxmail-style
+	// per-file email lint catalog; see strictcheck.Lint and gsx-email-spec.md
+	// section 8): a coded finding attributed to its source file.
+	consumer := Diagnostic{
+		Span:    Span{File: "emails/invite.gsx", StartLine: 14, StartCol: 9},
+		Code:    "EM0xx",
+		Message: "message per gsx-email-spec §8",
+	}
+	if got, want := consumer.String(), "emails/invite.gsx:14:9: EM0xx: message per gsx-email-spec §8"; got != want {
+		t.Fatalf("String() with Span.File set = %q, want %q", got, want)
+	}
+}

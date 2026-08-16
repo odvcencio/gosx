@@ -11,21 +11,44 @@
   streams. `Options.ExtraLints []strictcheck.Lint` now lets a consumer
   pass its own per-file checks straight into `CheckFile`, `CheckPackage`,
   and `CheckTree`; their diagnostics come back on the same `error` as
-  strictcheck's own findings, one channel end to end. Fixes #186.
+  strictcheck's own findings, one channel end to end. Refs #186.
 - **EXPERIMENTAL, library-level, in-process only.** There is no plugin
   loading, no CLI flag, and no global registry: a consumer imports
   `strictcheck`, builds `[]strictcheck.Lint` values, and passes them
-  through `Options` on every call. `Lint.Check` receives a `LintFile`
-  (the file path and its compiled `*ir.Program`) and a `report` sink; a
-  panic inside `Check` is recovered and turned into one diagnostic naming
-  the lint rather than crashing the check run, and checking continues over
+  through `Options` on every call. **The shipped `gosx` binary cannot
+  register a lint** — this is a library API only a Go program that
+  imports `strictcheck` directly can use; `gosx check` on the command line
+  gets no new rules from this. `Lint.Check` receives a `LintFile` (the
+  file path and its compiled `*ir.Program`) and a `report` sink; a panic
+  inside `Check` is recovered and turned into one diagnostic naming the
+  lint rather than crashing the check run, and checking continues over
   the remaining files and lints. The shape may still change in a later
   minor version; pin an exact gosx version until it settles.
+- **Honest limits, today.** A `Lint`'s position granularity is
+  element-level: `ir.Attr` carries no `Span`, so a finding about one
+  attribute is reported at its owning element's position, not the
+  attribute's own. CSS-declaration positions and rendered-output rules
+  (an EM-style catalog's EM101–EM103, EM120/EM121, for example) are out
+  of scope — this extension point sees the compiled `*ir.Program`, not
+  rendered HTML or CSS. Props typing is strict-syntax-only; a legacy
+  component's props stay untyped `any`. Roughly two thirds of an
+  EM-style catalog fits what this extension point can see today.
 - **`ir.Diagnostic` gains an additive `Code` field** so a third-party
   lint's own rule codes (for example `EM001`) surface distinctly in the
   shared diagnostic stream. Every built-in gosx and strictcheck diagnostic
   leaves `Code` empty, and `Diagnostic.String()` only changes output when
-  `Code` is set, so existing callers see no difference.
+  `Code` is set, so existing callers see no difference. This field is
+  additive for a caller that builds an `ir.Diagnostic` with a keyed struct
+  literal (`ir.Diagnostic{Span: ..., Message: ...}`, the only form gosx
+  itself uses); it is source-breaking for a positional literal
+  (`ir.Diagnostic{span, msg, hint}` with no field names), since the field
+  count changed.
+- **`ir.Diagnostic.String()` now prints a `Span.File` prefix when
+  `Span.File` is set** (`path:line:col: ...` instead of `line:col: ...`),
+  so a multi-file check run can attribute each finding to its file. Every
+  built-in gosx and strictcheck diagnostic still leaves `Span.File` empty
+  and is unaffected; a third-party `Lint` finding gets its file filled in
+  automatically when it leaves `Span.File` unset.
 - Registering no lints (the field left absent, set to `nil`, or set to an
   empty slice) leaves `strictcheck`'s behavior byte-for-byte identical to
   a build with no extension point at all.

@@ -22,7 +22,17 @@ type Diagnostic struct {
 }
 
 func (d Diagnostic) String() string {
-	s := fmt.Sprintf("%d:%d: ", d.Span.StartLine, d.Span.StartCol)
+	s := ""
+	if d.Span.File != "" {
+		// gosx#186 B2: a multi-file check run (CheckPackage, CheckTree, or a
+		// third-party strictcheck.Lint spanning several files) is otherwise
+		// unattributable -- every diagnostic prints the same bare line:col
+		// with no way to tell which file it came from. Built-in gosx and
+		// strictcheck diagnostics leave Span.File empty today, so this only
+		// changes output for a diagnostic that set it.
+		s += d.Span.File + ":"
+	}
+	s += fmt.Sprintf("%d:%d: ", d.Span.StartLine, d.Span.StartCol)
 	if d.Code != "" {
 		s += d.Code + ": "
 	}
