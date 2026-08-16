@@ -3112,6 +3112,100 @@ func TestMountAppIncludesRoutesRegisteredAfterMount(t *testing.T) {
 	}
 }
 
+func TestMountWildcardPatternPopulatesPathValue(t *testing.T) {
+	app := New()
+	var sawTeamID string
+	app.Mount("GET /avatars/{teamID}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawTeamID = r.PathValue("teamID")
+		_, _ = w.Write([]byte("avatar-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/avatars/broncos.png", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if sawTeamID != "broncos.png" {
+		t.Fatalf("expected PathValue(teamID) to be %q, got %q", "broncos.png", sawTeamID)
+	}
+}
+
+func TestMountPatternWithMultipleWildcardsPopulatesEach(t *testing.T) {
+	app := New()
+	var sawLeague, sawTeamID string
+	app.Mount("GET /leagues/{league}/teams/{teamID}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawLeague = r.PathValue("league")
+		sawTeamID = r.PathValue("teamID")
+		_, _ = w.Write([]byte("team-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/leagues/nfl/teams/broncos", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if sawLeague != "nfl" {
+		t.Fatalf("expected PathValue(league) to be %q, got %q", "nfl", sawLeague)
+	}
+	if sawTeamID != "broncos" {
+		t.Fatalf("expected PathValue(teamID) to be %q, got %q", "broncos", sawTeamID)
+	}
+}
+
+func TestMountUnmatchedRequestFallsThroughToPageRouter(t *testing.T) {
+	app := New()
+	app.Mount("GET /avatars/{teamID}/logo", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("avatar-ok"))
+	}))
+	app.SetNotFound(func(ctx *Context) gosx.Node {
+		return gosx.Text("custom-not-found")
+	})
+
+	handler := app.Build()
+	// One path segment short of the mounted pattern: no mount match, so
+	// dispatch must still fall through to the page router's 404 handler.
+	req := httptest.NewRequest(http.MethodGet, "/avatars/broncos", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "custom-not-found") {
+		t.Fatalf("expected custom-not-found body, got %q", body)
+	}
+}
+
+func TestMountSubtreePatternStillMatches(t *testing.T) {
+	app := New()
+	var sawPath string
+	app.Mount("/legacy/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPath = r.URL.Path
+		_, _ = w.Write([]byte("legacy-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/legacy/reports/2024.csv", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "legacy-ok") {
+		t.Fatalf("expected legacy-ok body, got %q", body)
+	}
+	if sawPath != "/legacy/reports/2024.csv" {
+		t.Fatalf("expected subtree handler to see full path, got %q", sawPath)
+	}
+}
+
 func TestAppServesBootstrapStubWhenNoBuildExists(t *testing.T) {
 	// Use a temp dir with no build artifacts at all — simulates `go run`
 	// without ever running `gosx build`.
