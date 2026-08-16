@@ -77,6 +77,7 @@ func init() {
 				"toc": []map[string]string{
 					{"href": "#two-styles", "label": "Two Styles"},
 					{"href": "#strict-components", "label": "Strict Components"},
+					{"href": "#strict-expressions", "label": "Strict Expressions"},
 					{"href": "#legacy-components", "label": "Legacy Components"},
 					{"href": "#attributes", "label": "Elements & Attributes"},
 					{"href": "#tooling", "label": "Tooling"},

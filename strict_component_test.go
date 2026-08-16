@@ -1,6 +1,7 @@
 package gosx
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -560,6 +561,32 @@ func TestCompileStrictServerRejectsIfShapeViolations(t *testing.T) {
 				t.Fatalf("error = %v, want to contain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestCompileStrictServerIfSpreadReportsOneDiagnostic covers the N1 review
+// fix: a spread attribute on strict <If> is always missing cond, but the
+// validator must not also report the separate cond-count violation — a
+// spread attribute report is enough on its own.
+func TestCompileStrictServerIfSpreadReportsOneDiagnostic(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Props struct { Extra bool }
+component Page(props: Props) {
+	return <main><If {...props.Extra}>content</If></main>
+}
+`))
+	if err == nil {
+		t.Fatal("expected validation diagnostics")
+	}
+	var diagErr *ir.DiagnosticsError
+	if !errors.As(err, &diagErr) {
+		t.Fatalf("expected diagnostics error, got %T: %v", err, err)
+	}
+	if len(diagErr.Diagnostics) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d: %v", len(diagErr.Diagnostics), diagErr.Diagnostics)
+	}
+	if !strings.Contains(diagErr.Diagnostics[0].Message, "strict <If> does not accept spread attributes") {
+		t.Fatalf("unexpected diagnostic %#v", diagErr.Diagnostics[0])
 	}
 }
 

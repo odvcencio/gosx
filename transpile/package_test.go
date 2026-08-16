@@ -28,8 +28,9 @@ import (
 )
 
 type BadgeProps struct {
-	Label string
-	When clock.Time
+	Label    string
+	When     bool
+	Recorded clock.Time
 }
 
 const BadgeLimit = 3
@@ -39,11 +40,11 @@ func Legacy() Node {
 }
 
 component Badge(props: BadgeProps) {
-	return <span>{props.Label}</span>
+	return <span data-when={props.When}>{props.Label}</span>
 }
 
 component Page() {
-	return <Badge label="ready" />
+	return <Badge label="ready" when={true} />
 }
 `)
 	got, strict, err := StrictProjection(file)
@@ -57,7 +58,7 @@ component Page() {
 		`clock "time"`,
 		`gx "m31labs.dev/gosx"`,
 		`func Badge(props BadgeProps) gx.Node`,
-		`Badge(BadgeProps{Label: "ready"})`,
+		`Badge(BadgeProps{Label: "ready", When: true})`,
 		`const BadgeLimit = 3`,
 	} {
 		if !strings.Contains(got, want) {

@@ -1256,6 +1256,7 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 // point of the tag — so this checks attributes only.
 func (l *lowerer) validateStrictConditionalCall(n *gotreesitter.Node, attrs []Attr) {
 	condCount := 0
+	sawSpreadError := false
 	for i := range attrs {
 		attr := &attrs[i]
 		if attr.Name == "cond" && attr.Kind == AttrExpr {
@@ -1264,11 +1265,18 @@ func (l *lowerer) validateStrictConditionalCall(n *gotreesitter.Node, attrs []At
 		}
 		if attr.Kind == AttrSpread {
 			l.errorf(n, "strict <If> does not accept spread attributes; cond is the only supported attribute")
+			sawSpreadError = true
 			continue
 		}
 		if attr.Name != "cond" {
 			l.errorf(n, "strict <If> does not accept attribute %q; cond is the only supported attribute", attr.Name)
 		}
+	}
+	// A spread attribute already reported its own diagnostic above; the
+	// cond-count check below would otherwise double-report the same call
+	// (a spread never counts toward condCount, so it always fails it too).
+	if sawSpreadError {
+		return
 	}
 	if condCount != 1 {
 		l.errorf(n, "strict <If> requires exactly one cond attribute")
