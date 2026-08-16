@@ -14,19 +14,40 @@ type Diagnostic struct {
 	Span    Span
 	Message string
 	Hint    string
+
+	// Code is an optional rule identifier, for example a consumer-defined
+	// catalog code such as "EM001". Built-in gosx diagnostics leave Code
+	// empty; it exists so a diagnostic sink shared with a third-party
+	// checker (see strictcheck.Lint) can surface that checker's own rule
+	// codes without a second, differently-shaped diagnostic type.
+	Code string
 }
 
 func (d Diagnostic) String() string {
 	message := d.Message
 	if strings.TrimSpace(message) == "" {
 		// gosx#185 n3: an empty Message would otherwise print as a bare
-		// "line:col: " with nothing readable after it — most likely from a
+		// "line:col: " with nothing readable after it -- most likely from a
 		// hand-built Diagnostic (a render profile's Validate hook, for
 		// example) that forgot to set one, so say so instead of staying
 		// silent about which diagnostic is the empty one.
 		message = "(no message)"
 	}
-	s := fmt.Sprintf("%d:%d: %s", d.Span.StartLine, d.Span.StartCol, message)
+	s := ""
+	if d.Span.File != "" {
+		// gosx#186 B2: a multi-file check run (CheckPackage, CheckTree, or a
+		// third-party strictcheck.Lint spanning several files) is otherwise
+		// unattributable -- every diagnostic prints the same bare line:col
+		// with no way to tell which file it came from. Built-in gosx and
+		// strictcheck diagnostics leave Span.File empty today, so this only
+		// changes output for a diagnostic that set it.
+		s += d.Span.File + ":"
+	}
+	s += fmt.Sprintf("%d:%d: ", d.Span.StartLine, d.Span.StartCol)
+	if d.Code != "" {
+		s += d.Code + ": "
+	}
+	s += message
 	if d.Hint != "" {
 		s += " (" + d.Hint + ")"
 	}

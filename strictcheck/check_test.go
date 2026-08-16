@@ -625,6 +625,51 @@ func TestCheckTreeChecksRoutableNestedNamedDirectories(t *testing.T) {
 	}
 }
 
+// TestCheckTreeAccumulatesBuiltinFindingsAcrossTwoDirectoriesWithDifferentPackages
+// is the gosx#186 B3 regression using only built-in findings (see
+// extension_test.go's TestCheckTreeReportsLintFindingsFromEveryOffendingPackageNotJustTheFirst
+// for the ExtraLints version). TestCheckTreeChecksEachPackageClauseInOneDirectory
+// above put two package clauses in one directory, but only the second ever
+// produced a finding, so it never actually exercised the stop-at-the-first-
+// error bug. This uses two directories with two different package names,
+// each with its own distinct, independently verifiable finding, and checks
+// that CheckTree's error contains both rather than only the first.
+func TestCheckTreeAccumulatesBuiltinFindingsAcrossTwoDirectoriesWithDifferentPackages(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "legacypkg", "page.gsx"), `package legacypkg
+
+func Page(data any) Node {
+	return <span>{data.picks.length}</span>
+}
+`)
+	mustWrite(t, filepath.Join(dir, "widgets", "page.gsx"), `package widgets
+
+type LinkProps struct {
+	Label string
+}
+
+component Link(props: *LinkProps) {
+	return <a>{props.Label}</a>
+}
+
+component Page() {
+	return <Link label={42} />
+}
+`)
+
+	err := CheckTree(context.Background(), dir)
+	if err == nil {
+		t.Fatal("expected findings from both packages")
+	}
+	message := err.Error()
+	if !strings.Contains(message, "data.picks.length") {
+		t.Fatalf("missing the legacypkg finding; message:\n%s", message)
+	}
+	if !strings.Contains(message, "cannot use 42") {
+		t.Fatalf("missing the widgets finding; message:\n%s", message)
+	}
+}
+
 func TestCheckFileWithOptionsAcceptsBuildEnvironment(t *testing.T) {
 	dir := newTestModule(t)
 	path := filepath.Join(dir, "page.gsx")

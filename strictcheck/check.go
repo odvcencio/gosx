@@ -5,6 +5,7 @@ package strictcheck
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,6 +25,33 @@ type Options struct {
 	Env     []string
 	GOWORK  string
 	GOFLAGS string
+
+	// ExtraLints registers third-party, per-file lints that run alongside
+	// strictcheck's own checks and report through the same error returned by
+	// CheckFileWithOptions/CheckPackageWithOptions/CheckTreeWithOptions.
+	//
+	// EXPERIMENTAL (gosx#186): see the Lint doc comment for the full
+	// compatibility posture. A nil or empty ExtraLints (including the zero
+	// value of Options) leaves check behavior byte-for-byte unchanged.
+	//
+	// The returned error takes one of two shapes once ExtraLints is
+	// non-empty (gosx#186 M3):
+	//   - a bare *ir.DiagnosticsError when only ExtraLints findings exist
+	//     (every built-in stage passed) -- errors.As(err, &diagErr) reaches
+	//     it directly, same as any other strictcheck.DiagnosticsError;
+	//   - errors.Join(builtinErr, extraErr) when a built-in stage also
+	//     failed. builtinErr (a strict-syntax or Go-compiler error) is never
+	//     itself an *ir.DiagnosticsError, so errors.As(err, &diagErr) on the
+	//     joined error still succeeds -- it finds extraErr, the only
+	//     DiagnosticsError present -- but that recovers only the ExtraLints
+	//     findings; builtinErr's text is present in err.Error() but not
+	//     reachable through that structured type. A caller that special-
+	//     cases *ir.DiagnosticsError (gosx's own lsp package does, for
+	//     example) must call err.Error() as a fallback rather than assume a
+	//     successful errors.As means the diagnostics it got back are
+	//     complete. gosx's lsp package does not feed it ExtraLints results
+	//     today, so it is unaffected; this note is for a consumer that does.
+	ExtraLints []Lint
 }
 
 // CheckFile checks the complete .gsx package containing path.
@@ -63,7 +91,45 @@ func CheckPackageWithOptions(ctx context.Context, dir string, opts Options) erro
 	return checkSourcePackages(ctx, paths, opts)
 }
 
+// checkPackage runs every built-in strictcheck stage over files, then runs
+// every registered extra lint (Options.ExtraLints), and joins their
+// findings. The order is load-bearing (gosx#186 B1/M1): runBuiltinChecks
+// runs to completion -- success or failure, through every stage that reads
+// file.Program -- before runExtraLints is called at all, so a lint can never
+// observe a *ir.Program that a built-in stage has not already finished
+// reading. That is what makes the compatibility claim in Lint.Check's doc
+// (a lint only adds diagnostics; it cannot suppress or alter a built-in
+// finding) structurally true rather than merely intended: a lint that
+// mutates or empties file.Program now runs strictly after every built-in
+// read of it, whatever else it does.
+//
+// Extra lints run over every file regardless of strict syntax and regardless
+// of whether a built-in stage failed: a consumer's per-file catalog
+// (gosx#186) targets ordinary legacy-syntax .gsx files too, not just strict
+// components, and a package that fails render-entry validation, import
+// resolution, or transpilation still has a fully compiled *ir.Program for
+// every file a lint can check (see LintFile.Program). Their findings join
+// into every return path, including every one of those early-error paths.
 func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Options) error {
+	builtinErr := runBuiltinChecks(ctx, files, opts)
+	extraErr := runExtraLints(files, opts.ExtraLints)
+	switch {
+	case builtinErr != nil && extraErr != nil:
+		return errors.Join(builtinErr, extraErr)
+	case builtinErr != nil:
+		return builtinErr
+	default:
+		return extraErr
+	}
+}
+
+// runBuiltinChecks runs every built-in strictcheck stage over files: strict
+// render-entry validation, import-name resolution, IR-to-Go projection, and
+// the Go compiler pass over that projection. It returns the first failing
+// stage's error, or nil once every stage passes (or is skipped because the
+// package has no strict syntax). No extra lint (Options.ExtraLints) runs
+// inside this function; see checkPackage for why that ordering matters.
+func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts Options) error {
 	if err := validateStrictRenderEntries(files); err != nil {
 		return err
 	}
@@ -315,13 +381,20 @@ func CheckTreeWithOptions(ctx context.Context, root string, opts Options) error 
 	return checkSourcePackages(ctx, sources, opts)
 }
 
+// checkSourcePackages checks every distinct package found among paths and
+// accumulates every failure rather than stopping at the first (gosx#186 B3):
+// a lint finding is a package error like any other now, and CheckTree /
+// CheckPackage covering several offending packages must surface all of
+// them, not just whichever sorts first.
 func checkSourcePackages(ctx context.Context, paths []string, opts Options) error {
 	sort.Strings(paths)
 	seen := make(map[string]struct{})
+	var errs []error
 	for _, path := range paths {
 		files, err := transpile.LoadPackage(path)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if len(files) == 0 || files[0].Program == nil {
 			continue
@@ -332,10 +405,10 @@ func checkSourcePackages(ctx context.Context, paths []string, opts Options) erro
 		}
 		seen[key] = struct{}{}
 		if err := checkPackage(ctx, files, opts); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func shouldSkipDir(root, path, name string) bool {
