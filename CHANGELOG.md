@@ -102,6 +102,52 @@
   shape checks with usable spans; `AttrWriter` covers EM004,
   EM110-EM112, and role-injection detection for plain elements.
 
+### Added: a declarative countdown attribute for the enhancer layer
+
+- **`data-gosx-countdown="<RFC3339 instant>"` renders a live countdown
+  with no bespoke JavaScript.** Write the element's initial text (or each
+  segment's initial value) yourself, so the page shows a correct value
+  even with no JavaScript at all. The runtime takes over at the first
+  1-second tick after the page loads. To compute that initial text from
+  the server's own clock instead of a hand-typed guess, format it in the
+  page's loader and render the result as the element's text — see the
+  runtime guide's declarative countdown section for the recipe. One
+  shared 1-second timer drives every countdown on the page. The timer is
+  generation-guarded across navigations, the same way the revalidate poll
+  is. Fixes #178.
+- Two render modes are available:
+  - **Compact.** `data-gosx-countdown-format="dhms"` or `"mm:ss"` on the
+    countdown element itself. The runtime writes the element's own text.
+  - **Segment.** A child element carries
+    `data-gosx-countdown-segment="days"`, `"hours"`, `"minutes"`, or
+    `"seconds"`. The runtime fills only that child's text. The app owns
+    the surrounding markup. A segment set missing one or more of the four
+    names still renders, but each present segment shows only its own
+    remainder modulo its own unit (a seconds-only segment on a 5 minute
+    countdown shows "59", not "299") — the runtime logs one console
+    warning for an incomplete set.
+- `data-gosx-countdown-warn="30s"` adds the class `gosx-countdown--warn`
+  once the remaining time drops to the threshold or below. This is a
+  small declarative duration subset, not a general Go duration parser:
+  whole hour/minute/second components combined in one value, such as
+  `"30s"` or `"1m30s"`, or a bare non-negative integer as whole seconds.
+- `data-gosx-countdown-then="revalidate"` fires one revalidation of the
+  page's revalidate root the first time the countdown reaches zero. It
+  never fires a second time, and it does nothing while the page has no
+  active revalidation poll (no `data-gosx-revalidate-interval` element,
+  or one whose value failed validation).
+- The countdown clamps a passed target to zero. It never shows a
+  negative value or the text "NaN".
+- `gosx check` now rejects a static `data-gosx-countdown` value that is
+  not a valid RFC3339 instant, a static `data-gosx-countdown-format`
+  value outside `"dhms"` and `"mm:ss"`, a static
+  `data-gosx-countdown-segment` value outside the four supported names, a
+  static `data-gosx-countdown-warn` value outside the duration subset
+  above, and a static `data-gosx-countdown-then` value other than
+  `"revalidate"`. A dynamic expression value is exempt from this check.
+  The runtime checks it at render time instead, and leaves the element
+  untouched on a bad value.
+
 ### Strict components: nested prop reads
 
 - **`props.A.B` and `props.A.B.C` in strict expressions.** A strict
@@ -112,7 +158,11 @@
   generalizes `ServerPropField`), the lowerer resolves each accepted path
   against the same-file struct schema and reports the three-hop cap there
   with full component context, and the generated check program proves
-  every field exists with the declared type through the real Go compiler.
+  every field exists with its declared Go type through the real Go
+  compiler. The check program proves field existence and struct-literal
+  types; it does not re-prove the renderer's own scalar-leaf rule (exact
+  `string`, `bool`, integer, or floating-point builtins only) — the
+  lowerer alone enforces that.
 - **Pointer fields stay out of the strict surface.** A nested selector
   through a pointer intermediate (`*Player`) still fails closed: the
   map-backed file renderer dissolves a nil pointer to an empty string
@@ -140,6 +190,19 @@
 - Re-audit of GitHub issue #171's motivating app: BoardRow now qualifies
   (nested `props.player.*` combined with the v0.42.0 concatenation
   extension), alongside TeamMark, RosterRow, and DraftTeam.
+- **A `.gsx` file cannot forward a struct prop to a nested-read component
+  yet.** Nested reads work today for a generated-Go caller and for a
+  hand-built `ir.Program` that supplies the struct value directly. A
+  strict `.gsx` parent cannot pass one:
+  - it rejects rendering a struct-typed prop itself;
+  - a legacy (non-strict) component cannot call a strict component at
+    all; and
+  - a strict entry point cannot bind root props at all (file routes have
+    no way to supply one), so a struct prop cannot arrive from routing
+    either.
+
+  That composition — one `.gsx`-authored component forwarding another's
+  struct prop — arrives with the spread work (#184).
 
 ### The `ir` package's compatibility contract is now written down
 
@@ -150,6 +213,20 @@
   of gosx's higher-level entry points) should pin an exact gosx version
   rather than a version range. No behavior changes with this entry —
   it states the policy the project already followed.
+
+## v0.42.3 (2026-08-16)
+
+### Fixed: the adaptive frame budget ignored maxFrameRate
+
+- **`cpuRAFBudgetMS` now honors the same key precedence as the frame
+  limiter** (frameIntervalMS, then maxFrameRate, then maxFPS). It read only
+  maxFPS, so a scene authored with `MaxFrameRate: 30` produced ~33.3ms rAF
+  intervals by design and was judged against its 28ms adaptive target: every
+  measured frame "missed budget", sustained-miss demotion fired within a
+  second, and the quality ladder walked to the floor rung — re-partitioning
+  point layers at every step. On the m31labs galaxy that staircase replayed
+  after each rung reset and read as the gas bodies flickering; it survived
+  three shader-side fixes because it was never the shader.
 
 ## v0.42.2 (2026-08-16)
 

@@ -33,6 +33,35 @@ const (
 	// response body changes; without a src it revalidates unconditionally.
 	NavigationRevalidateIntervalAttr = "data-gosx-revalidate-interval"
 	NavigationRevalidateSrcAttr      = "data-gosx-revalidate-src"
+
+	// NavigationCountdownAttr declares a countdown to an RFC3339 instant
+	// (gosx#178). The author writes the element's initial text or each
+	// segment's initial value directly (optionally computed server-side in
+	// the page loader from the server's own clock); the navigation runtime
+	// keeps them moving with one shared 1-second timer starting at the
+	// first tick after the page loads. NavigationCountdownFormatAttr
+	// selects the compact render ("dhms" or "mm:ss") on the same element;
+	// NavigationCountdownSegmentAttr marks a descendant the runtime fills
+	// instead, leaving the rest of the element's markup to the app.
+	// NavigationCountdownWarnAttr toggles NavigationCountdownWarnClass at a
+	// threshold; NavigationCountdownThenAttr set to "revalidate" fires one
+	// revalidation of the page's revalidate root (see
+	// NavigationRevalidateIntervalAttr) when the countdown first reaches
+	// zero, and does nothing while the page has no active revalidation
+	// poll. `gosx check` rejects a static NavigationCountdownAttr value
+	// that is not a valid RFC3339 instant, a static
+	// NavigationCountdownFormatAttr outside its two supported values, a
+	// static NavigationCountdownSegmentAttr outside its four supported
+	// names, a static NavigationCountdownWarnAttr outside its small
+	// duration subset, and a static NavigationCountdownThenAttr other than
+	// "revalidate" (see ir/validate.go); a dynamic expression value is
+	// checked at run time instead, and fails inert there.
+	NavigationCountdownAttr        = "data-gosx-countdown"
+	NavigationCountdownFormatAttr  = "data-gosx-countdown-format"
+	NavigationCountdownSegmentAttr = "data-gosx-countdown-segment"
+	NavigationCountdownWarnAttr    = "data-gosx-countdown-warn"
+	NavigationCountdownThenAttr    = "data-gosx-countdown-then"
+	NavigationCountdownWarnClass   = "gosx-countdown--warn"
 )
 
 // NormalizeNavigationLinkCurrentPolicy normalizes the declarative "current"

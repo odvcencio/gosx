@@ -39,6 +39,14 @@
   const NAV_PENDING_URL_ATTR = "data-gosx-navigation-pending-url";
   const REVALIDATE_INTERVAL_ATTR = "data-gosx-revalidate-interval";
   const REVALIDATE_SRC_ATTR = "data-gosx-revalidate-src";
+  const COUNTDOWN_ATTR = "data-gosx-countdown";
+  const COUNTDOWN_FORMAT_ATTR = "data-gosx-countdown-format";
+  const COUNTDOWN_SEGMENT_ATTR = "data-gosx-countdown-segment";
+  const COUNTDOWN_WARN_ATTR = "data-gosx-countdown-warn";
+  const COUNTDOWN_THEN_ATTR = "data-gosx-countdown-then";
+  const COUNTDOWN_WARN_CLASS = "gosx-countdown--warn";
+  const COUNTDOWN_SEGMENT_NAMES = ["days", "hours", "minutes", "seconds"];
+  const COUNTDOWN_TICK_MS = 1000;
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
@@ -98,6 +106,28 @@
   // Guards against an interval tick or visibility catch-up starting a
   // second overlapping poll before the first one has settled.
   let revalidatePollInFlight = false;
+  // countdownRoots holds one state record per data-gosx-countdown element
+  // discovered by the current generation's setupPageCountdowns() call; a
+  // single shared setInterval (countdownTimerHandle) ticks all of them
+  // together every second. countdownGeneration is bumped every time
+  // setupPageCountdowns runs (page boot and every soft navigation) — see
+  // its own doc comment and revalidateGeneration above. It discards a
+  // countdown-triggered revalidation's failure report once navigation has
+  // moved past the generation that started it (see triggerCountdownThen);
+  // the then="revalidate" trigger's own re-fire guard lives in
+  // countdownFiredTargets below instead, deliberately OUTSIDE this
+  // per-generation counter — see its doc comment for why.
+  let countdownRoots = [];
+  let countdownTimerHandle = null;
+  let countdownGeneration = 0;
+  // countdownFiredTargets and countdownThenLastFiredAt back
+  // then="revalidate" (gosx#178 review finding B1): see triggerCountdownThen
+  // and updateCountdownState's doc comments for the full design. Both are
+  // module-level and deliberately never reset by setupPageCountdowns or
+  // countdownGeneration — their whole job is to survive the very rescan a
+  // countdown's own trigger causes.
+  const countdownFiredTargets = new Set();
+  let countdownThenLastFiredAt = -Infinity;
   gosxHost.navigationScriptCache = scriptCache;
   gosxHost.navigationPageCache = pageCache;
   gosxHostCompatibility.install("__gosx_loaded_scripts", scriptCache);
@@ -2350,6 +2380,7 @@
     // fetched a new document or reconciled the already-current page — see
     // setupPageRevalidation's doc comment.
     setupPageRevalidation();
+    setupPageCountdowns();
   }
 
   // documentIsHidden prefers the real, read-only document.hidden a browser
@@ -2573,6 +2604,526 @@
     revalidateTimerHandle = setInterval(runRevalidateTick, intervalMs);
   }
 
+  // ---------------------------------------------------------------------
+  // Declarative countdown (data-gosx-countdown, gosx#178)
+  //
+  // The author writes the element's initial text (compact) or each
+  // segment's initial value directly, so the page already shows a
+  // correct value with no JavaScript at all — see the runtime guide's
+  // declarative countdown section for the recipe that computes that
+  // initial text from the server's own clock in the page loader. This
+  // block only keeps the value moving from there: one shared 1-second
+  // timer drives every countdown root on the page at once,
+  // generation-guarded across navigations the same way setupPageRevalidation
+  // guards revalidateGeneration above. A root is left exactly as it was
+  // written until the first tick fires one second later — setup never
+  // blanks it or writes NaN text.
+  // ---------------------------------------------------------------------
+
+  // daysFromCivil converts a proleptic-Gregorian calendar date to a day
+  // count since the Unix epoch (Howard Hinnant's days_from_civil
+  // algorithm). parseCountdownInstant uses this instead of `new Date(...)`
+  // because a test's installManualClock replaces the global Date with a
+  // now()-only double — the countdown timer must still parse instants
+  // under that double the same way every other clock read in this file
+  // only ever calls Date.now().
+  //
+  // The reference algorithm special-cases a negative `y` (era = floor((y
+  // >= 0 ? y : y - 399) / 400)) to work around C++ integer division
+  // truncating toward zero. JavaScript's Math.floor already floors
+  // negative numbers correctly, and COUNTDOWN_INSTANT_RE's year group is
+  // exactly four digits — the only negative `y` that expression can ever
+  // reach is -1 (year "0000" with month <= 2) — so the special case is a
+  // no-op here: Math.floor(y / 400) alone gives the identical result for
+  // every reachable input. Verified against the reference formula across
+  // the full reachable range with no divergence.
+  function daysFromCivil(year, month, day) {
+    const y = month <= 2 ? year - 1 : year;
+    const era = Math.floor(y / 400);
+    const yoe = y - era * 400;
+    const doy = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+    const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+    return era * 146097 + doe - 719468;
+  }
+
+  // daysInMonth returns how many days `month` (1-12) has in `year`,
+  // derived from daysFromCivil itself — the gap between the first day of
+  // `month` and the first day of the next one — instead of a separate
+  // 28/29/30/31 table with its own leap-year rule to keep in sync with the
+  // civil math above.
+  function daysInMonth(year, month) {
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    return daysFromCivil(nextYear, nextMonth, 1) - daysFromCivil(year, month, 1);
+  }
+
+  // No `i` flag and no trimming: Go's time.Parse(time.RFC3339, ...) is
+  // case-sensitive ("T" and "Z" only, never "t"/"z") and rejects leading
+  // or trailing whitespace. gosx#178 review finding m13 — the runtime must
+  // fail closed on exactly the same strings the check-time validator
+  // (ir/validate.go) and Go's own parser do, not a superset of them.
+  const COUNTDOWN_INSTANT_RE =
+    /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$/;
+
+  // parseCountdownInstant returns the target instant in epoch
+  // milliseconds, or null for anything that is not a valid RFC3339
+  // instant. A static value this rejects never reaches the browser —
+  // `gosx check` fails closed on it (see ir/validate.go) — so null here
+  // means either a dynamic expression value that evaluated to a bad
+  // string at render time, or hand-authored markup that bypassed gosx
+  // rendering entirely.
+  //
+  // The day and zone-offset bounds below (gosx#178 review finding M5)
+  // mirror exactly what Go's time.Parse(time.RFC3339, ...) accepts: a day
+  // bounded by the actual length of its month (leap years included, via
+  // daysInMonth above), and a zone offset whose hour is at most 24 and
+  // whose minute is at most 60 — Go's own zone-offset parser uses `>` (not
+  // `>=`) against those two figures, so e.g. "+24:00" is accepted by both
+  // sides and "+99:99" is rejected by both. Differential-tested against
+  // time.Parse across a 531-case corpus (every month/day boundary across
+  // eight years, every offset edge case, every case/whitespace variant):
+  // zero acceptance or value mismatches beyond the documented sub-millisecond
+  // fraction rounding.
+  function parseCountdownInstant(value) {
+    const trimmed = String(value == null ? "" : value);
+    const match = COUNTDOWN_INSTANT_RE.exec(trimmed);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6]);
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month) || hour > 23 || minute > 59 || second > 59) {
+      return null;
+    }
+    const fraction = match[7] ? Number("0" + match[7]) : 0;
+    let offsetMinutes = 0;
+    const zone = match[8];
+    if (zone !== "Z") {
+      const sign = zone[0] === "-" ? -1 : 1;
+      const offsetHour = Number(zone.slice(1, 3));
+      const offsetMinute = Number(zone.slice(4, 6));
+      if (offsetHour > 24 || offsetMinute > 60) {
+        return null;
+      }
+      offsetMinutes = sign * (offsetHour * 60 + offsetMinute);
+    }
+    const days = daysFromCivil(year, month, day);
+    const utcSeconds = days * 86400 + hour * 3600 + minute * 60 + second - offsetMinutes * 60;
+    const ms = utcSeconds * 1000 + Math.round(fraction * 1000);
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  // parseCountdownWarnSeconds accepts the same small Go-style duration
+  // subset parseRevalidateInterval does above (whole-number amounts),
+  // extended to combine hour/minute/second components in one value
+  // ("1m30s") and to accept a bare integer as whole seconds ("30"), per
+  // gosx#178.
+  function parseCountdownWarnSeconds(value) {
+    const trimmed = String(value == null ? "" : value).trim();
+    if (!trimmed) return null;
+    if (/^[0-9]+$/.test(trimmed)) {
+      return Number(trimmed);
+    }
+    const match = /^(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+)s)?$/.exec(trimmed);
+    if (!match || (!match[1] && !match[2] && !match[3])) {
+      return null;
+    }
+    return Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0);
+  }
+
+  function countdownPad2(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  function countdownComponents(totalSeconds) {
+    const clamped = Math.max(0, totalSeconds);
+    return {
+      days: Math.floor(clamped / 86400),
+      hours: Math.floor((clamped % 86400) / 3600),
+      minutes: Math.floor((clamped % 3600) / 60),
+      seconds: Math.floor(clamped % 60),
+    };
+  }
+
+  function formatCountdownDHMS(totalSeconds) {
+    const c = countdownComponents(totalSeconds);
+    return c.days + "d " + countdownPad2(c.hours) + ":" + countdownPad2(c.minutes) + ":" + countdownPad2(c.seconds);
+  }
+
+  function formatCountdownMMSS(totalSeconds) {
+    const clamped = Math.max(0, totalSeconds);
+    const minutes = Math.floor(clamped / 60);
+    const seconds = Math.floor(clamped % 60);
+    return minutes + ":" + countdownPad2(seconds);
+  }
+
+  function countdownClassNames(el) {
+    return String((el.getAttribute && el.getAttribute("class")) || "").split(/\s+/).filter(Boolean);
+  }
+
+  // setCountdownWarnClass adds or removes gosx-countdown--warn by editing
+  // the class attribute directly rather than through element.classList —
+  // matching every other DOM-attribute read/write in this file, and
+  // keeping the toggle testable through the same getAttribute/setAttribute
+  // surface the rest of the runtime's test doubles already implement.
+  //
+  // It compares against the CURRENT state before writing anything: most
+  // ticks call this with the same `active` value as the tick before, and a
+  // real DOM write on every one of them would both burn a style/layout
+  // recalculation for nothing and re-serialize the class attribute (author
+  // whitespace collapsed to single spaces) even though nothing changed. A
+  // real toggle still normalizes the attribute the same way it always did.
+  function setCountdownWarnClass(el, active) {
+    if (!el || typeof el.getAttribute !== "function" || typeof el.setAttribute !== "function") return;
+    const classes = countdownClassNames(el);
+    const idx = classes.indexOf(COUNTDOWN_WARN_CLASS);
+    const has = idx !== -1;
+    if (active === has) {
+      return;
+    }
+    if (active) {
+      classes.push(COUNTDOWN_WARN_CLASS);
+    } else {
+      classes.splice(idx, 1);
+    }
+    if (classes.length) {
+      el.setAttribute("class", classes.join(" "));
+    } else if (typeof el.removeAttribute === "function") {
+      el.removeAttribute("class");
+    }
+  }
+
+  // findCountdownSegments collects every descendant of root carrying
+  // data-gosx-countdown-segment, keyed by its segment name. The app owns
+  // this markup entirely — the runtime only ever writes textContent on an
+  // element already carrying the attribute, so anything else under root
+  // (whitespace, labels, other children) is left untouched.
+  //
+  // The walk stops descending at a NESTED data-gosx-countdown root (gosx#178
+  // review finding m9): that element owns its own descendants through its
+  // own findCountdownRootElements/buildCountdownState call, so an outer
+  // root's scan must never claim an inner root's segment children. This
+  // uses its own recursive walk rather than the shared walkElements helper
+  // because walkElements' `visit() === false` return aborts the ENTIRE
+  // walk (used by findElement to stop at the first match); this needs the
+  // narrower "skip this subtree, keep scanning its siblings" behavior
+  // instead.
+  //
+  // `segments` is created with Object.create(null) and every lookup goes
+  // through hasOwnProperty (gosx#178 review finding B2): a segment name is
+  // untrusted, author-controlled attribute data, and a plain object
+  // literal answers `segments["constructor"]` and `segments["toString"]`
+  // truthy without ever calling .push — the old `if (segments[name])`
+  // guard let a data-driven segment name reach `.push` on a function
+  // value and throw, taking the whole navigation runtime's boot down with
+  // it (see setupPageCountdowns' try/catch below for the second layer of
+  // the same defense). A null-prototype object has no such inherited
+  // properties to collide with, and the explicit hasOwnProperty check
+  // means only the four names this object was seeded with can ever match,
+  // even for a value like "__proto__" that behaves unusually as a plain
+  // object's live key.
+  function findCountdownSegments(root) {
+    const segments = Object.create(null);
+    for (const name of COUNTDOWN_SEGMENT_NAMES) {
+      segments[name] = [];
+    }
+    collectCountdownSegments(root, segments);
+    return segments;
+  }
+
+  function collectCountdownSegments(node, segments) {
+    for (const child of toArray(node.childNodes)) {
+      if (!child || child.nodeType !== 1) continue;
+      if (child.hasAttribute && child.hasAttribute(COUNTDOWN_ATTR)) {
+        continue;
+      }
+      if (child.hasAttribute && child.hasAttribute(COUNTDOWN_SEGMENT_ATTR)) {
+        const name = child.getAttribute(COUNTDOWN_SEGMENT_ATTR);
+        if (Object.prototype.hasOwnProperty.call(segments, name)) {
+          segments[name].push(child);
+        }
+      }
+      collectCountdownSegments(child, segments);
+    }
+  }
+
+  function findCountdownRootElements() {
+    const found = [];
+    walkElements(document.body, function(node) {
+      if (node.hasAttribute && node.hasAttribute(COUNTDOWN_ATTR)) {
+        found.push(node);
+      }
+      return true;
+    });
+    return found;
+  }
+
+  // buildCountdownState turns one data-gosx-countdown element into the
+  // internal record runCountdownTick reads every second, or returns null
+  // for an invalid instant — the element is then left exactly as the
+  // server rendered it, matching data-gosx-revalidate-interval's own
+  // "disabled, not an error" handling of a bad declarative value.
+  function buildCountdownState(root) {
+    const rawInstant = root.getAttribute(COUNTDOWN_ATTR);
+    const targetMs = parseCountdownInstant(rawInstant);
+    if (targetMs == null) {
+      console.warn(
+        "[gosx] invalid " + COUNTDOWN_ATTR + " value " + JSON.stringify(String(rawInstant || ""))
+        + "; this countdown is disabled",
+      );
+      return null;
+    }
+
+    const segments = findCountdownSegments(root);
+    const hasSegments = COUNTDOWN_SEGMENT_NAMES.some(function(name) { return segments[name].length > 0; });
+
+    let format = null;
+    const hasFormatAttr = root.hasAttribute(COUNTDOWN_FORMAT_ATTR);
+    if (!hasSegments) {
+      const rawFormat = root.getAttribute(COUNTDOWN_FORMAT_ATTR);
+      if (rawFormat === "dhms" || rawFormat === "mm:ss") {
+        format = rawFormat;
+      }
+    }
+
+    const thenRevalidate = root.getAttribute(COUNTDOWN_THEN_ATTR) === "revalidate";
+
+    // gosx#178 review finding m6: a root with no segment children and no
+    // valid compact format renders nothing at all — the timer still ticks
+    // every second for no visible effect. That is silent and easy to miss
+    // in review, so warn once at setup, unless then="revalidate" makes the
+    // countdown useful for its side effect alone even with nothing to
+    // render.
+    if (!hasSegments && format == null && !thenRevalidate) {
+      if (hasFormatAttr) {
+        console.warn(
+          "[gosx] invalid " + COUNTDOWN_FORMAT_ATTR + " value " + JSON.stringify(String(root.getAttribute(COUNTDOWN_FORMAT_ATTR) || ""))
+          + "; this countdown renders nothing (no valid format and no " + COUNTDOWN_SEGMENT_ATTR + " children)",
+        );
+      } else {
+        console.warn(
+          "[gosx] " + COUNTDOWN_ATTR + " has no " + COUNTDOWN_FORMAT_ATTR + " and no " + COUNTDOWN_SEGMENT_ATTR
+          + " children; this countdown renders nothing",
+        );
+      }
+    }
+
+    // gosx#178 review finding m7: a segment set missing one or more of the
+    // four names still renders — each present segment just shows its own
+    // remainder modulo its own unit (a seconds-only segment on a 5 minute
+    // countdown shows "59", not "299"), which reads as a bug to an author
+    // who did not intend it. Warn once at setup so an incomplete set is a
+    // deliberate choice, not a silent surprise.
+    if (hasSegments) {
+      const missing = COUNTDOWN_SEGMENT_NAMES.filter(function(name) { return segments[name].length === 0; });
+      if (missing.length > 0) {
+        console.warn(
+          "[gosx] " + COUNTDOWN_ATTR + " segment set on this element is missing " + missing.join(", ")
+          + "; each present segment shows only its own remainder (for example seconds wraps at 60), not the total across the missing units",
+        );
+      }
+    }
+
+    let warnSeconds = null;
+    if (root.hasAttribute(COUNTDOWN_WARN_ATTR)) {
+      const rawWarn = root.getAttribute(COUNTDOWN_WARN_ATTR);
+      warnSeconds = parseCountdownWarnSeconds(rawWarn);
+      if (warnSeconds == null) {
+        console.warn(
+          "[gosx] invalid " + COUNTDOWN_WARN_ATTR + " value " + JSON.stringify(String(rawWarn || ""))
+          + "; the warn threshold is disabled for this countdown",
+        );
+      }
+    }
+
+    return {
+      root: root,
+      targetMs: targetMs,
+      hasSegments: hasSegments,
+      segments: segments,
+      format: format,
+      warnSeconds: warnSeconds,
+      then: thenRevalidate,
+    };
+  }
+
+  function renderCountdownState(state, remainderSeconds) {
+    if (state.hasSegments) {
+      const c = countdownComponents(remainderSeconds);
+      const values = { days: c.days, hours: c.hours, minutes: c.minutes, seconds: c.seconds };
+      COUNTDOWN_SEGMENT_NAMES.forEach(function(name) {
+        const text = countdownPad2(values[name]);
+        state.segments[name].forEach(function(el) {
+          el.textContent = text;
+        });
+      });
+      return;
+    }
+    if (state.format === "dhms") {
+      state.root.textContent = formatCountdownDHMS(remainderSeconds);
+    } else if (state.format === "mm:ss") {
+      state.root.textContent = formatCountdownMMSS(remainderSeconds);
+    }
+  }
+
+  // triggerCountdownThen fires the one-time then="revalidate" action, and
+  // reports whether it actually did (the caller only marks a target
+  // "fired" — see countdownFiredTargets below — on a true return, so a
+  // target this backs off on gets to retry on a later tick instead of
+  // being silently abandoned).
+  //
+  // It no-ops when the page has no ACTIVE revalidation poll — reusing
+  // revalidateTimerHandle (set by setupPageRevalidation above) instead of
+  // re-scanning the DOM means this reads the same "is periodic
+  // revalidation actually running" answer the revalidate poll itself
+  // relies on. revalidateTimerHandle is also null when a revalidate root
+  // element IS present but its interval failed validation or its src is
+  // cross-origin (gosx#178 review finding m12) — "no active poll", not "no
+  // revalidate root", is the precise condition.
+  //
+  // gosx#178 review finding M3: this applies the exact same three guards
+  // runRevalidateTick does before its own periodic poll — an in-progress
+  // navigation or form submission, a hidden document, or a focused form
+  // control all block a countdown-triggered revalidation exactly like they
+  // block the periodic one. A blocked attempt returns false and is retried
+  // on the next 1-second countdown tick, same as the periodic poll retries
+  // on its own next interval tick.
+  function triggerCountdownThen() {
+    if (revalidateTimerHandle == null) {
+      return false;
+    }
+    if (documentIsHidden() || focusedControlBlocksRevalidation() || navigationOrFormSubmissionInFlight()) {
+      return false;
+    }
+    // gosx#178 review finding B1, second layer: countdownFiredTargets below
+    // stops a re-render that still carries the SAME target instant from
+    // re-arming the trigger, but a DYNAMIC data-gosx-countdown value
+    // ({...}) can legitimately compute a slightly different target on
+    // every render (an app bug, or simply "5 seconds from now" recomputed
+    // each time) — every such render mints a fresh key the Set has never
+    // seen. This cooldown is independent of which target asked: no
+    // countdown-triggered revalidation fires more than once per
+    // revalidateIntervalMs, the same cadence its own author already
+    // declared acceptable for periodic revalidation on this page.
+    const now = Date.now();
+    if (now - countdownThenLastFiredAt < revalidateIntervalMs) {
+      return false;
+    }
+    countdownThenLastFiredAt = now;
+    const generation = countdownGeneration;
+    revalidateNavigation().catch(function(error) {
+      if (generation !== countdownGeneration) return;
+      reportNavigationFailure("countdown revalidation", error, {
+        source: windowLocationHref(),
+      });
+    });
+    return true;
+  }
+
+  // updateCountdownState renders one tick for one countdown and reports
+  // whether that countdown is now fully "finished": its remainder has
+  // clamped to zero AND (it has no then="revalidate" action, or that
+  // action has already fired). A finished countdown can never change
+  // again — render output stays clamped, warn class stays set, and the
+  // then action (if any) has run — so runCountdownTick below stops the
+  // shared timer once every countdown on the page is finished (gosx#178
+  // review finding m8).
+  //
+  // then="revalidate" firing is keyed by the countdown's OWN target
+  // instant (countdownFiredTargets), not a flag on this per-generation
+  // record (gosx#178 review finding B1). setupPageCountdowns rebuilds a
+  // fresh record — with no memory of any previous firing — every time it
+  // runs, including after the very revalidation a countdown's own trigger
+  // just caused; if the refreshed document still shows the same expired
+  // instant (the common real case: a draft pick's clock at zero while the
+  // server has not advanced yet), a per-record flag re-arms and fires
+  // again next tick, forever. Keying by the immutable target value itself,
+  // in a Set that lives for the page's whole lifetime (never reset by
+  // setupPageCountdowns/countdownGeneration), means the SAME instant is
+  // recognized as already handled no matter how many times a rescan
+  // rebuilds a state record for it.
+  function updateCountdownState(state, nowMs) {
+    const remainderMs = Math.max(0, state.targetMs - nowMs);
+    const remainderSeconds = Math.floor(remainderMs / 1000);
+    renderCountdownState(state, remainderSeconds);
+    if (state.warnSeconds != null) {
+      setCountdownWarnClass(state.root, remainderSeconds <= state.warnSeconds);
+    }
+    if (state.then && remainderMs <= 0 && !countdownFiredTargets.has(state.targetMs)) {
+      if (triggerCountdownThen()) {
+        countdownFiredTargets.add(state.targetMs);
+      }
+    }
+    return remainderMs <= 0 && (!state.then || countdownFiredTargets.has(state.targetMs));
+  }
+
+  function runCountdownTick() {
+    const now = Date.now();
+    let allFinished = true;
+    for (const state of countdownRoots) {
+      if (!updateCountdownState(state, now)) {
+        allFinished = false;
+      }
+    }
+    if (allFinished && countdownTimerHandle != null) {
+      // gosx#178 review finding m8: nothing left on the page can ever
+      // change again — stop paying for a 1-second timer that would only
+      // ever re-render the same clamped, already-final values.
+      clearInterval(countdownTimerHandle);
+      countdownTimerHandle = null;
+    }
+  }
+
+  function teardownPageCountdowns() {
+    if (countdownTimerHandle != null) {
+      clearInterval(countdownTimerHandle);
+    }
+    countdownTimerHandle = null;
+    countdownRoots = [];
+  }
+
+  // setupPageCountdowns scans for every data-gosx-countdown element on
+  // page boot and after every soft navigation (see finalizeNavigation and
+  // the initial-document replay below) — the same lifecycle
+  // setupPageRevalidation follows just above. It never writes to a
+  // countdown element itself: the server-rendered text (or segment
+  // values) stays exactly as rendered until the first tick, one second
+  // later, moves it.
+  function setupPageCountdowns() {
+    // Every call — page boot and every soft navigation — starts a new
+    // generation, even one that ends up finding no countdown roots at
+    // all. See countdownGeneration's declaration for why.
+    countdownGeneration += 1;
+    teardownPageCountdowns();
+    const states = [];
+    for (const root of findCountdownRootElements()) {
+      // gosx#178 review finding B2, second layer: buildCountdownState (and
+      // everything it calls) must never be able to take the whole
+      // navigation runtime's boot down. findCountdownSegments' own guard
+      // (Object.create(null) plus hasOwnProperty) is the primary defense
+      // for the known prototype-collision shape; this try/catch is the
+      // backstop for any other countdown defect this or a future change
+      // introduces — one bad root must degrade to "this countdown is
+      // disabled", never to "window.__gosx.navigation never publishes".
+      let state = null;
+      try {
+        state = buildCountdownState(root);
+      } catch (error) {
+        reportNavigationFailure("countdown setup", error, {
+          source: windowLocationHref(),
+        });
+      }
+      if (state) states.push(state);
+    }
+    if (!states.length) {
+      return;
+    }
+    countdownRoots = states;
+    countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
+  }
+
   function revalidateNavigation(options) {
     // Force a same-URL revalidation through the normal navigation lifecycle.
     // The returned promise rejects without mutating the current document when
@@ -2602,6 +3153,7 @@
     refreshNavigationState();
     prefetchManagedLinks("render");
     setupPageRevalidation();
+    setupPageCountdowns();
     const actions = window.__gosx && window.__gosx.actions;
     if (actions && typeof actions.refreshBindings === "function") {
       actions.refreshBindings();
@@ -2675,6 +3227,7 @@
   }, "init");
   prefetchManagedLinks("render");
   setupPageRevalidation();
+  setupPageCountdowns();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", refreshInitialDocumentNavigation, { once: true });
   }
