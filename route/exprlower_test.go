@@ -44,6 +44,15 @@ func referenceEvalFileNode(expr ast.Expr, env fileRenderEnv) any {
 	}
 }
 
+// exprLowerNestedStruct backs the nested-selector differential case below: a
+// real Go struct value (not a map), so chained selector_expression
+// evaluation exercises the same reflection-based selectStructValue path a
+// nested props read (props.Player.Name) does at the strict-component
+// renderer boundary.
+type exprLowerNestedStruct struct {
+	Value string
+}
+
 func exprLowerTestEnv() fileRenderEnv {
 	return fileRenderEnv{
 		values: map[string]any{
@@ -57,6 +66,7 @@ func exprLowerTestEnv() fileRenderEnv {
 				"lookup": map[string]int{"a": 1, "b": 2},
 				"blank":  "",
 				"none":   nil,
+				"nested": exprLowerNestedStruct{Value: "leaf"},
 			},
 			"total": 10,
 			"label": "Hello",
@@ -139,6 +149,14 @@ var exprLowerCases = []string{
 	`"a" + data.name + "b"`,
 	`data.on == false`,
 	`data.off == false`,
+	// Nested prop reads (props.A.B[.C]): selectValue's struct branch is
+	// pre-existing and untouched by this change, but nothing exercised a
+	// chained selector through a real struct value here before — the
+	// nested-selector strict-surface extension is what makes GoSX-authored
+	// source actually reach it via props.Player.Name-shaped expressions, so
+	// the differential oracle gets explicit coverage.
+	`data.nested.Value`,
+	`"leaf-" + data.nested.Value`,
 }
 
 func TestLoweredExprMatchesReferenceInterpreter(t *testing.T) {

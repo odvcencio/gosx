@@ -979,21 +979,33 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	}
 }
 
-// collectStrictPropReads records the top-level props fields whose values the
-// file renderer must observe. Local strict calls must provide these fields
-// explicitly: generated Go composite literals otherwise synthesize typed zero
-// values while the map-backed renderer would observe a missing key as nil.
+// collectStrictPropReads records every props field path (dot-joined, e.g.
+// "Tone" or "Player.Name") whose value the file renderer must observe. Local
+// strict calls must provide the ROOT field of every registered path
+// explicitly: generated Go composite literals otherwise synthesize typed
+// zero values while the map-backed renderer would observe a missing key as
+// nil (see validateStrictComponentCall, which derives required root names
+// from these paths).
 //
 // jsx_attribute_expression (an attribute's `{...}` value) gets its own branch
 // because the grammar's external attribute scanner hands its content back as
 // one opaque token with no nested CST — unlike jsx_expression_container
 // (element/text children), whose Go sub-expression parses into real
-// selector_expression descendants this walk already finds. Every v0.42
-// concatenation and <If cond> shape in this spec's motivating examples lives
-// in attribute position (class, aria-label, cond), so without this branch
-// their props operands would never reach validateStrictRenderedProps, the
-// renderer-boundary type check, or the explicit-required-prop rule below —
-// exactly the class of divergence the strict contract exists to prevent.
+// selector_expression descendants this walk already finds. Concatenation and
+// <If cond> shapes live in attribute position (class, aria-label, cond), so
+// without this branch their props operands would never reach
+// validateStrictRenderedProps, the renderer-boundary type check, or the
+// explicit-required-prop rule below — exactly the class of divergence the
+// strict contract exists to prevent.
+//
+// Both branches register a nested chain (props.Player.Name) as one maximal
+// path and stop descending into its own inner selector once matched — see
+// strictcomponent.ServerExpressionPropPaths' doc comment. Falling through to
+// also register the chain's own props.Player sub-expression as an
+// independent bare read would fail closed on a struct-typed root that has no
+// bare use anywhere in the source, which is the same class of bug a prior
+// review caught in this collector once already (see CHANGELOG.md's v0.42.0
+// entry), just inverted from a missed read to a false rejection.
 func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct{} {
 	reads := make(map[string]struct{})
 	var walk func(*gotreesitter.Node)
@@ -1003,13 +1015,14 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct
 		}
 		switch l.nodeType(node) {
 		case "selector_expression":
-			if field, ok := strictcomponent.ServerPropField(l.text(node)); ok {
-				reads[field] = struct{}{}
+			if path, ok := strictcomponent.ServerPropPath(l.text(node)); ok {
+				reads[strings.Join(path, ".")] = struct{}{}
+				return
 			}
 		case "jsx_attribute_expression":
 			expr := stripGSXAttributeExpressionText(l.text(node))
-			for _, field := range strictcomponent.ServerExpressionPropFields(expr) {
-				reads[field] = struct{}{}
+			for _, path := range strictcomponent.ServerExpressionPropPaths(expr) {
+				reads[strings.Join(path, ".")] = struct{}{}
 			}
 		}
 		for i := 0; i < int(node.NamedChildCount()); i++ {
@@ -1101,27 +1114,143 @@ func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentNam
 		return
 	}
 	baseType := propsBaseType(propsType)
-	fieldTypes, declared := l.structTypes[baseType]
-	fields := make([]string, 0, len(reads))
-	for field := range reads {
-		fields = append(fields, field)
-	}
-	sort.Strings(fields)
-	if !declared {
+	if _, declared := l.structTypes[baseType]; !declared {
 		l.errorf(n, "strict component %s renders props fields from %s, whose struct schema is not declared in this .gsx file; declare the renderer-visible props struct beside the component", componentName, propsType)
 		return
 	}
-	for _, field := range fields {
-		fieldType, ok := fieldTypes[field]
-		if !ok {
-			// The package checker supplies the precise unknown/unexported-field
-			// diagnostic; this guard only owns known renderer schema types.
-			continue
+	paths := make([]string, 0, len(reads))
+	for path := range reads {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		l.resolveStrictSelectorPath(n, componentName, propsType, strings.Split(path, "."))
+	}
+}
+
+// strictSelectorPathDepthLimit caps how many struct-field hops a nested
+// selector path may cross: props.A.B.C is the deepest chain the strict
+// renderer resolves. strictcomponent.ServerPropPath itself places no upper
+// bound on shape (it is schema-blind), so this lowerer function is where the
+// cap is enforced, with full component context in the diagnostic.
+const strictSelectorPathDepthLimit = 3
+
+// resolveStrictSelectorPath walks a props-rooted field path (see
+// strictcomponent.ServerPropPath) against the same-file struct schema,
+// reporting exactly one diagnostic when any hop cannot preserve Go's
+// selector semantics in the map-backed file renderer: too deep, a pointer
+// intermediate, an intermediate whose type is a renderer scalar (nothing to
+// select further through), an intermediate struct type this .gsx file does
+// not declare, an unknown field past the root, or a non-scalar leaf. The
+// props base type itself is assumed already declared in this file —
+// validateStrictRenderedProps checks that gate before calling this for any
+// path.
+//
+// An unknown field at hop 0 (a direct field of the props struct itself) is
+// left to the package checker: the generated program's real props parameter
+// is exactly this same-file struct type, so an unknown or unexported field
+// there is a compile error in the check program regardless of what this
+// lowerer does. An unknown field at any later hop gets no such backstop:
+// field promotion through an embedded type is legal Go, so the check
+// program compiles a promoted, unexported, or genuinely absent field the
+// same way — silently deferring here would let the component compile while
+// the map-backed file renderer and generated Go disagree on what the
+// selector resolves to (or panic trying). This function fails closed for
+// all three shapes at hop i>0, exactly mirroring the lowerer rule
+// strictSelectorPathType applies for its own, diagnostic-free callers.
+func (l *lowerer) resolveStrictSelectorPath(n *gotreesitter.Node, componentName, propsType string, path []string) {
+	if len(path) > strictSelectorPathDepthLimit {
+		l.errorf(n, "strict component %s selector props.%s is too deep; the strict renderer resolves at most three fields", componentName, strings.Join(path, "."))
+		return
+	}
+	currentType := propsBaseType(propsType)
+	pathText := "props"
+	for i, field := range path {
+		fieldType, known := l.structTypes[currentType][field]
+		if !known {
+			if i == 0 {
+				// The props struct's own field: the package checker
+				// supplies the precise unknown/unexported-field diagnostic;
+				// this guard only owns known renderer schema types.
+				return
+			}
+			l.errorf(n, "strict component %s cannot resolve %s.%s: struct %s declares no visible field %s; promoted, unexported, and unknown fields cannot cross the file renderer boundary", componentName, pathText, field, currentType, field)
+			return
 		}
-		if !strictRendererScalarType(fieldType) {
-			l.errorf(n, "strict component %s cannot render props.%s of type %s; renderer-visible props fields must use exact string, bool, integer, or floating-point builtins", componentName, field, fieldType)
+		trimmed := strings.TrimSpace(fieldType)
+		pathText += "." + field
+		if i == len(path)-1 {
+			if !strictRendererScalarType(trimmed) {
+				l.errorf(n, "strict component %s cannot render %s of type %s; renderer-visible props fields must use exact string, bool, integer, or floating-point builtins", componentName, pathText, trimmed)
+			}
+			return
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "*"):
+			l.errorf(n, "strict component %s cannot select through %s of pointer type %s; pointer fields cannot preserve Go nil-pointer behavior in the file renderer", componentName, pathText, trimmed)
+			return
+		case strictRendererScalarType(trimmed):
+			l.errorf(n, "strict component %s cannot select %q through %s of type %s; selector paths cross same-file struct fields only", componentName, path[i+1], pathText, trimmed)
+			return
+		default:
+			if _, isStruct := l.structTypes[trimmed]; isStruct {
+				currentType = trimmed
+				continue
+			}
+			l.errorf(n, "strict component %s cannot resolve %s.%s: struct %s is not declared in this .gsx file; declare the renderer-visible struct beside the component", componentName, pathText, path[i+1], trimmed)
+			return
 		}
 	}
+}
+
+// strictSelectorPathType is resolveStrictSelectorPath's silent counterpart:
+// it resolves path the same way but reports no diagnostic, returning
+// ok=false for any structural problem (too deep, an unknown field at hop 0
+// or later, a pointer or otherwise non-struct intermediate, an undeclared
+// intermediate struct) and also for a leaf that is not a renderer scalar at
+// all. It applies the same hop-0-vs-later distinction resolveStrictSelectorPath
+// documents for an unknown field, just without ever emitting a diagnostic
+// itself: validateStrictRenderedProps already reports each registered
+// read's own root cause once (an hop-0 unknown field by deferring to the
+// package checker, an hop-i>0 unknown field — promoted, unexported, or
+// absent — as its own error); a second caller (the concat exact-string
+// pass, the <If cond> exact-bool pass) restating either for the same path
+// would just duplicate that diagnostic, so those callers use this and skip
+// emitting anything when ok is false.
+func (l *lowerer) strictSelectorPathType(propsType string, path []string) (string, bool) {
+	if len(path) == 0 || len(path) > strictSelectorPathDepthLimit {
+		return "", false
+	}
+	currentType := propsBaseType(propsType)
+	for i, field := range path {
+		fieldType, known := l.structTypes[currentType][field]
+		if !known {
+			// Unknown at hop 0 or later: both fail closed here (no leaf
+			// type, ok=false). Only resolveStrictSelectorPath's own copy of
+			// this check treats the two differently, since only it decides
+			// whether to emit a diagnostic.
+			return "", false
+		}
+		trimmed := strings.TrimSpace(fieldType)
+		if i == len(path)-1 {
+			if !strictRendererScalarType(trimmed) {
+				return "", false
+			}
+			return trimmed, true
+		}
+		if strings.HasPrefix(trimmed, "*") || strictRendererScalarType(trimmed) {
+			return "", false
+		}
+		if _, isStruct := l.structTypes[trimmed]; !isStruct {
+			return "", false
+		}
+		currentType = trimmed
+	}
+	// Unreachable: the top-of-function guard rejects an empty path, so the
+	// final iteration always has i == len(path)-1 and returns from the
+	// branch above. Go cannot prove that for a for-range loop, so this
+	// satisfies the compiler's return-statement requirement.
+	return "", false
 }
 
 func lowerCamelInitialism(value string) string {
@@ -1224,8 +1353,17 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 		// Let the package checker produce the authoritative unknown-field
 		// diagnostic before checking omissions in a same-file schema.
 		if !hasUnknownSameFileAttr {
-			fields := make([]string, 0, len(required))
-			for field := range required {
+			// required is keyed by dot-joined read path ("Player.Name"); the
+			// explicit-supply rule only needs each path's root field — the
+			// caller supplies the whole root value once, regardless of how
+			// many nested paths this callee reads under it.
+			roots := make(map[string]struct{}, len(required))
+			for path := range required {
+				root, _, _ := strings.Cut(path, ".")
+				roots[root] = struct{}{}
+			}
+			fields := make([]string, 0, len(roots))
+			for field := range roots {
 				fields = append(fields, field)
 			}
 			sort.Strings(fields)
@@ -1471,11 +1609,13 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	l.strict = wasStrict
 	l.strictServer = wasStrictServer
 	scope := l.analyzeBody(bodyNode)
+	propsFields, propsPaths := l.copyStrictPropTypes(propsType, l.strictReads[componentName])
 	comp := Component{
 		Name:        componentName,
 		PropsType:   propsType,
 		PropsName:   propsName,
-		PropsFields: copyStrictPropTypes(l.structTypes[propsBaseType(propsType)], l.strictReads[componentName]),
+		PropsFields: propsFields,
+		PropsPaths:  propsPaths,
 		Syntax:      ComponentSyntaxStrict,
 		Root:        rootID,
 		IsIsland:    isIsland,
@@ -1497,17 +1637,41 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	l.prog.Components = append(l.prog.Components, comp)
 }
 
-func copyStrictPropTypes(fields map[string]string, reads map[string]struct{}) map[string]string {
+// copyStrictPropTypes builds the two IR maps the renderer boundary uses.
+// PropsFields records, for the root field of every registered read path,
+// that root's own declared type (a scalar builtin for a direct read, or a
+// same-file struct name for a nested read's root). PropsPaths records, for
+// every read path with at least one hop past its root, the leaf field's
+// declared type keyed by the full dot-joined path — populated only when the
+// path resolves cleanly; a broken path already has its own diagnostic from
+// validateStrictRenderedProps, so this silently omits it rather than
+// producing partial data for a component that is failing to compile anyway.
+func (l *lowerer) copyStrictPropTypes(propsType string, reads map[string]struct{}) (map[string]string, map[string]string) {
+	fields := l.structTypes[propsBaseType(propsType)]
 	if len(fields) == 0 || len(reads) == 0 {
-		return nil
+		return nil, nil
 	}
-	out := make(map[string]string, len(reads))
-	for name := range reads {
-		if fieldType, ok := fields[name]; ok {
-			out[name] = fieldType
+	propsFields := make(map[string]string, len(reads))
+	var propsPaths map[string]string
+	for path := range reads {
+		segments := strings.Split(path, ".")
+		root := segments[0]
+		if fieldType, ok := fields[root]; ok {
+			propsFields[root] = fieldType
+		}
+		if len(segments) > 1 {
+			if leafType, ok := l.strictSelectorPathType(propsType, segments); ok {
+				if propsPaths == nil {
+					propsPaths = make(map[string]string)
+				}
+				propsPaths[path] = leafType
+			}
 		}
 	}
-	return out
+	if len(propsFields) == 0 {
+		propsFields = nil
+	}
+	return propsFields, propsPaths
 }
 
 func (l *lowerer) strictComponentGSXRoot(body *gotreesitter.Node, allowIslandDecls bool) *gotreesitter.Node {
@@ -1613,41 +1777,41 @@ func (l *lowerer) validateStrictServerExpression(span Span, source, componentNam
 }
 
 // validateStrictExpressionTypes runs the type-side gate for expression shapes
-// the syntactic validator accepts but cannot itself type-check. In v0.42 that
-// is exactly the string-concatenation chain: every props field operand must
-// resolve, through the same-file struct schema, to declared type exactly
-// string — not a named string type, not []byte. Fields that are unknown or
-// that already fail the renderer-scalar-type gate are skipped here; those
-// diagnostics belong to the package checker and validateStrictRenderedProps
-// respectively, and duplicating them would just restate the same root cause.
+// the syntactic validator accepts but cannot itself type-check: the
+// string-concatenation chain. Every props field operand — a direct field or
+// a nested path (props.A.B[.C]) — must resolve, through the same-file
+// struct schema, to declared type exactly string — not a named string type,
+// not []byte, not a struct. A path that fails to resolve at all is skipped
+// here; validateStrictRenderedProps already reports that root cause once,
+// and restating it would just duplicate the diagnostic.
 func (l *lowerer) validateStrictExpressionTypes(span Span, source, componentName, propsType string) {
-	fields, ok := strictcomponent.ServerConcatPropFields(source)
+	paths, ok := strictcomponent.ServerConcatPropPaths(source)
 	if !ok {
 		return
 	}
-	fieldTypes := l.structTypes[propsBaseType(propsType)]
-	for _, field := range fields {
-		fieldType, known := fieldTypes[field]
-		if !known || !strictRendererScalarType(fieldType) {
+	for _, path := range paths {
+		leafType, known := l.strictSelectorPathType(propsType, path)
+		if !known {
 			continue
 		}
-		if strings.TrimSpace(fieldType) != "string" {
+		if leafType != "string" {
 			l.errs = append(l.errs, Diagnostic{
 				Span:    span,
-				Message: fmt.Sprintf("strict component %s cannot concatenate props.%s of type %s; \"+\" operands must be exact string props fields", componentName, field, fieldType),
+				Message: fmt.Sprintf("strict component %s cannot concatenate props.%s of type %s; \"+\" operands must be exact string props fields", componentName, strings.Join(path, "."), leafType),
 			})
 		}
 	}
 }
 
 // validateStrictConditionalExpression validates a strict <If cond={...}>
-// attribute's expression content: the syntactic shape (bare bool selector or
-// selector == false) through the dedicated cond validator, then the exact
-// bool type through the same-file struct schema. General expression
-// positions never reach this function — only the cond attribute of an
-// unshadowed <If> does, dispatched from validateStrictServerExpressions.
+// attribute's expression content: the syntactic shape (bare bool selector,
+// possibly a nested path, or that selector == false) through the dedicated
+// cond validator, then the exact bool type through the same-file struct
+// schema. General expression positions never reach this function — only the
+// cond attribute of an unshadowed <If> does, dispatched from
+// validateStrictServerExpressions.
 func (l *lowerer) validateStrictConditionalExpression(span Span, source, componentName, propsType string) {
-	field, _, err := strictcomponent.ValidateServerCondExpression(source)
+	path, _, err := strictcomponent.ValidateServerCondExpression(source)
 	if err != nil {
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
@@ -1656,14 +1820,14 @@ func (l *lowerer) validateStrictConditionalExpression(span Span, source, compone
 		})
 		return
 	}
-	fieldType, known := l.structTypes[propsBaseType(propsType)][field]
-	if !known || !strictRendererScalarType(fieldType) {
+	fieldType, known := l.strictSelectorPathType(propsType, path)
+	if !known {
 		return
 	}
-	if strings.TrimSpace(fieldType) != "bool" {
+	if fieldType != "bool" {
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
-			Message: fmt.Sprintf("strict component %s cannot use props.%s of type %s in <If cond>; cond requires an exact bool props field", componentName, field, fieldType),
+			Message: fmt.Sprintf("strict component %s cannot use props.%s of type %s in <If cond>; cond requires an exact bool props field", componentName, strings.Join(path, "."), fieldType),
 		})
 	}
 }

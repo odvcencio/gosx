@@ -4189,7 +4189,19 @@
     const warmupFrames = Math.max(0, Math.floor(sceneNumber(props && props.adaptiveWarmupFrames, 24)));
     const adaptivePostFX = sceneBool(props && props.adaptivePostFX, true);
     const authoredFrameIntervalMS = Math.max(0, sceneNumber(props && props.frameIntervalMS, 0));
-    const authoredMaxFPS = Math.max(0, sceneNumber(props && props.maxFPS, 0));
+    // Key precedence MUST mirror sceneAnimationFrameIntervalMS in mount.ts:
+    // frameIntervalMS, then maxFrameRate, then maxFPS. This read once skipped
+    // maxFrameRate, so a scene capped at 30fps (authored intervals ~33.3ms)
+    // was judged against its 28ms adaptive target: every rAF-measured frame
+    // "missed budget" by construction, badFrames hit 20 within a second, and
+    // the quality ladder walked itself to the floor rung — re-partitioning
+    // point layers on every step. On the m31labs galaxy that replayed after
+    // every rung reset and read as the gas bodies flickering; it survived
+    // three shader-side fixes because it was never the shader.
+    const authoredMaxFPS = Math.max(0, sceneNumber(
+      props && (props.maxFrameRate != null ? props.maxFrameRate : props.maxFPS),
+      0,
+    ));
     const cpuRAFBudgetMS = Math.max(targetFrameMS, authoredFrameIntervalMS > 0
       ? authoredFrameIntervalMS
       : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 0));

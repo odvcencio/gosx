@@ -1367,10 +1367,12 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 	}
 	props := make(map[string]any, len(attrs)+4)
 	for _, attr := range attrs {
-		fieldType, rendered := comp.PropsFields[attr.Name]
+		field, fieldType, rendered := resolvePropsFieldAlias(comp.PropsFields, attr.Name)
 		var value any
 		if rendered {
-			converted, err := strictComponentAttrValue(attr, env, fieldType)
+			resolved := attr
+			resolved.Name = field
+			converted, err := strictComponentAttrValue(comp, resolved, env, fieldType)
 			if err != nil {
 				return nil, fmt.Errorf("prop %s (%s): %w", attr.Name, fieldType, err)
 			}
@@ -1387,7 +1389,16 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 	return props, nil
 }
 
-func strictComponentAttrValue(attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if !strictScalarFieldType(fieldType) {
+		// A rendered field whose declared type is not one of the renderer's
+		// exact scalar builtins is a nested-selector root (ir.Component.
+		// PropsPaths): a same-file struct, provable at every strict-call
+		// boundary but not renderable directly (ir/lower.go's
+		// validateStrictRenderedProps only ever admits a struct-typed root
+		// when at least one nested path under it resolves to a scalar leaf).
+		return strictComponentStructAttrValue(comp, attr, env, fieldType)
+	}
 	var value any
 	switch attr.Kind {
 	case ir.AttrStatic:
@@ -1403,6 +1414,167 @@ func strictComponentAttrValue(attr ir.Attr, env fileRenderEnv, fieldType string)
 		return nil, fmt.Errorf("spread attributes are not supported")
 	}
 	return requireStrictScalarType(value, fieldType)
+}
+
+// strictScalarFieldType reports whether fieldType is one of the renderer's
+// exact scalar builtins. Duplicated from ir.strictRendererScalarType (an
+// unexported ir-package function route cannot import) rather than exported,
+// since it is a small, stable, closed set and this is its only other
+// reference point.
+func strictScalarFieldType(fieldType string) bool {
+	switch fieldType {
+	case "string", "bool",
+		"int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"byte", "rune", "float32", "float64":
+		return true
+	default:
+		return false
+	}
+}
+
+// resolvePropsFieldAlias resolves attr's rendered-prop name against
+// comp.PropsFields, trying an exact match first and then the
+// lowerCamelInitialism alias the lowerer accepts at a same-file strict call
+// site (ir/lower.go's normalizeStrictComponentAttrs and
+// validateStrictComponentCall). A program the lowerer itself compiled
+// already carries the canonical spelling by the time it reaches this
+// boundary — normalizeStrictComponentAttrs rewrites it during lowering —
+// but ir.Program is plain data a generated-Go caller or a hand-built
+// program can also produce directly, without ever running through that
+// rewrite. Without this fallback, an alias-spelled attribute misses the
+// exact-key lookup, rendered comes back false, and the value skips
+// strictComponentAttrValue's whole type-checked boundary (conversion,
+// requireStrictScalarType, requireStrictStructValue) while still landing in
+// the runtime props map under both spellings via setComponentProp — this
+// closes that gap by resolving the alias before the lookup instead.
+func resolvePropsFieldAlias(fields map[string]string, name string) (field, fieldType string, ok bool) {
+	if fieldType, exact := fields[name]; exact {
+		return name, fieldType, true
+	}
+	for candidate, candidateType := range fields {
+		if lowerCamelInitialism(candidate) != name {
+			continue
+		}
+		if field != "" {
+			// Ambiguous: two declared fields alias to the same name. Fail
+			// closed the same way an unresolved attribute already does,
+			// rather than guessing.
+			return "", "", false
+		}
+		field, fieldType = candidate, candidateType
+	}
+	return field, fieldType, field != ""
+}
+
+// lowerCamelInitialism lower-cases a leading initialism run (HTMLFor ->
+// htmlFor, URL -> url) the same way ir's unexported function of the same
+// name does for a strict call site's alias-named attributes. Duplicated
+// rather than exported for the same reason strictScalarFieldType is: a
+// small, stable transform route needs at exactly one other boundary and
+// cannot import from ir (unexported).
+func lowerCamelInitialism(value string) string {
+	if value == "" || value[0] < 'A' || value[0] > 'Z' {
+		return value
+	}
+	end := 1
+	for end < len(value) && value[end] >= 'A' && value[end] <= 'Z' {
+		if end+1 < len(value) && value[end+1] >= 'a' && value[end+1] <= 'z' {
+			break
+		}
+		end++
+	}
+	return strings.ToLower(value[:end]) + value[end:]
+}
+
+// strictComponentStructAttrValue handles a rendered prop whose declared type
+// is a same-file struct. A struct value can only arrive through an AttrExpr
+// — there is no static or boolean spelling for one — so every other
+// attribute kind fails closed with the same shape of error a type mismatch
+// would produce.
+func strictComponentStructAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if attr.Kind != ir.AttrExpr {
+		return nil, fmt.Errorf("value has no struct spelling, want exact struct %s", fieldType)
+	}
+	value := evalFileExpr(attr.Expr, env)
+	return requireStrictStructValue(value, fieldType, strictStructPropsPaths(comp, attr.Name))
+}
+
+// strictStructPropsPaths filters comp.PropsPaths — keyed by the full
+// dot-joined path including its root, e.g. "Player.Name" — down to the
+// sub-paths under one root field, with the root segment removed (e.g.
+// "Name"), for requireStrictStructValue to walk.
+func strictStructPropsPaths(comp *ir.Component, root string) map[string]string {
+	if comp == nil || len(comp.PropsPaths) == 0 {
+		return nil
+	}
+	prefix := root + "."
+	var out map[string]string
+	for path, leafType := range comp.PropsPaths {
+		if sub, ok := strings.CutPrefix(path, prefix); ok {
+			if out == nil {
+				out = make(map[string]string, len(comp.PropsPaths))
+			}
+			out[sub] = leafType
+		}
+	}
+	return out
+}
+
+// requireStrictStructValue is requireStrictScalarType's counterpart for a
+// nested-selector root: value's runtime type must match typeName by name
+// (not a pointer, not an anonymous struct, not a map — PkgPath must be
+// non-empty), and every read path this component resolves under that root
+// (paths, keyed by the dot-joined sub-path with the root segment removed)
+// must resolve to a value of its declared leaf type. The name check is
+// nominal only: it does not compare package paths against this file's own
+// package, since a rendered program's caller can live in any package; the
+// per-path leaf-type walk below is what actually proves the value shape a
+// same-file .gsx struct declares. A mismatch anywhere fails closed; the
+// caller (strictComponentAttrValue, through localComponentProps) wraps the
+// error with the attribute name and field type, matching the scalar
+// boundary's existing error shape.
+func requireStrictStructValue(value any, typeName string, paths map[string]string) (any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	rv := reflect.ValueOf(value)
+	rt := rv.Type()
+	if rt.Kind() != reflect.Struct || rt.PkgPath() == "" || rt.Name() != typeName {
+		return nil, fmt.Errorf("runtime value has type %s, want exact struct %s", rt, typeName)
+	}
+	for subPath, leafType := range paths {
+		fv := rv
+		for _, segment := range strings.Split(subPath, ".") {
+			if fv.Kind() != reflect.Struct {
+				return nil, fmt.Errorf("path %s.%s: value has type %s, want struct", typeName, subPath, fv.Type())
+			}
+			// Resolve through the TYPE first, not Value.FieldByName: the
+			// latter also walks embedded-field promotion and indirects
+			// through any pointer along the way, which panics when that
+			// pointer is nil ("reflect: indirection through nil pointer to
+			// embedded struct") for a value whose runtime shape does not
+			// match what the .gsx schema declared. sf.Index has length 1
+			// for a field declared directly on the struct and length >1 for
+			// a promoted field reached through one or more embeddings — the
+			// lowerer already rejects a promoted field at this same path
+			// shape (ir/lower.go's resolveStrictSelectorPath), so a length
+			// other than 1 here only reaches a caller that fed a struct
+			// value the lowerer never validated.
+			sf, ok := fv.Type().FieldByName(segment)
+			if !ok || !sf.IsExported() {
+				return nil, fmt.Errorf("path %s.%s: field %s not found", typeName, subPath, segment)
+			}
+			if len(sf.Index) != 1 {
+				return nil, fmt.Errorf("path %s.%s: field %s is a promoted (embedded) field; only fields declared directly on the struct resolve here", typeName, subPath, segment)
+			}
+			fv = fv.Field(sf.Index[0])
+		}
+		if _, err := requireStrictScalarType(fv.Interface(), leafType); err != nil {
+			return nil, fmt.Errorf("path %s.%s: %w", typeName, subPath, err)
+		}
+	}
+	return value, nil
 }
 
 func strictGoConstant(source string) (constant.Value, bool) {

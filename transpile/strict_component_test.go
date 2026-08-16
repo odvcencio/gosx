@@ -253,6 +253,78 @@ func Page() Node {
 	}
 }
 
+// TestTranspileStrictNestedSelectorEmitsVerbatimGo covers section 2.b's
+// "no transpiler change" claim: a nested-selector text hole, a nested
+// operand inside a concat chain, and a nested <If cond> selector all appear
+// verbatim in the projected Go, exactly like a direct field read.
+func TestTranspileStrictNestedSelectorEmitsVerbatimGo(t *testing.T) {
+	source := []byte(`package app
+
+type Team struct {
+	City string
+}
+
+type Player struct {
+	Name  string
+	Ready bool
+	Team  Team
+}
+
+type RowProps struct {
+	Player Player
+}
+
+component Row(props: RowProps) {
+	return <p class={"player-" + props.Player.Name}><If cond={props.Player.Ready}>{props.Player.Team.City}</If></p>
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	for _, want := range []string{
+		`func Row(props RowProps) gosx.Node`,
+		`gosx.Attr("class", "player-" + props.Player.Name)`,
+		`gosx.If(props.Player.Ready, gosx.Fragment(gosx.Expr(props.Player.Team.City)))`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestTranspileStrictNestedSelectorForwardsStructPropVerbatim covers the
+// generated-Go-caller path open question 1 describes: a strict component
+// declared with a struct-typed field forwards it as a plain composite
+// literal field, and the Go compiler — not the transpiler — proves the
+// field exists with the declared type.
+func TestTranspileStrictNestedSelectorForwardsStructPropVerbatim(t *testing.T) {
+	source := []byte(`package app
+
+type Player struct {
+	Name string
+}
+
+type RowProps struct {
+	Player Player
+}
+
+component Row(props: RowProps) {
+	return <p>{props.Player.Name}</p>
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if !strings.Contains(out, `func Row(props RowProps) gosx.Node`) {
+		t.Fatalf("missing typed func signature:\n%s", out)
+	}
+	if !strings.Contains(out, `gosx.Expr(props.Player.Name)`) {
+		t.Fatalf("missing verbatim nested read:\n%s", out)
+	}
+}
+
 func TestTranspileStrictExplicitZeroPropsMatchFileRendererContract(t *testing.T) {
 	source := []byte(`package app
 type BadgeProps struct {
