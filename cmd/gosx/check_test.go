@@ -177,6 +177,59 @@ func Page() Node {
 	}
 }
 
+// TestRunCheckRejectsLengthMemberInCond covers gosx#164: `gosx check` used to
+// report ok for a legacy `<If cond={data.picks.length == 0}>`, and the page
+// then silently rendered neither branch (a slice has no .length; the
+// reflective renderer resolves it to nil, and nil never equals 0). check must
+// now fail closed and name the offending expression.
+func TestRunCheckRejectsLengthMemberInCond(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "page.gsx")
+	writeTempFile(t, dir, "page.gsx", `package main
+
+func Page(data any) Node {
+	return <div>
+		<If cond={data.picks.length == 0}>
+			<b>empty</b>
+		</If>
+	</div>
+}
+`)
+
+	err := runCheck(path, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("expected runCheck to reject .length in a cond expression")
+	}
+	if !strings.Contains(err.Error(), ".length") {
+		t.Fatalf("expected error naming .length, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "data.picks.length == 0") {
+		t.Fatalf("expected error naming the offending expression, got: %v", err)
+	}
+}
+
+// TestRunCheckAcceptsValidCondWorkaround proves the documented workaround —
+// passing a precomputed boolean from a DataLoader instead of reading .length
+// in the template — still passes check.
+func TestRunCheckAcceptsValidCondWorkaround(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "page.gsx")
+	writeTempFile(t, dir, "page.gsx", `package main
+
+func Page(data any) Node {
+	return <div>
+		<If cond={data.picksEmpty}>
+			<b>empty</b>
+		</If>
+	</div>
+}
+`)
+
+	if err := runCheck(path, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runCheck failed on a valid cond: %v", err)
+	}
+}
+
 func TestRunCheckAcceptsDocsAppPages(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "examples", "gosx-docs", "app"))
 	if err != nil {

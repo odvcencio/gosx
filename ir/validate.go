@@ -2,6 +2,8 @@ package ir
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
 	"strings"
 )
 
@@ -84,6 +86,18 @@ func (v *validator) validateComponent(comp *Component) {
 	if comp.IsEngine && comp.EngineKind == "surface" {
 		v.diags = append(v.diags, validateEngineSurface(v.prog, comp)...)
 	}
+
+	// Legacy (non-strict, non-island) components render through the
+	// file-router's reflective interpreter (route/fileeval.go), which has no
+	// static types for `any` data params. gosx#164: `.length` there resolves
+	// to nil on every target — a slice has no such field or method — so
+	// `cond={data.picks.length == 0}` compares nil to 0 and silently renders
+	// neither branch. Strict and island components carry their own
+	// type-checked or type-restricted expression paths and do not need this
+	// rule.
+	if comp.Syntax != ComponentSyntaxStrict && !comp.IsIsland {
+		v.diags = append(v.diags, validateLegacyTemplateExprs(v.prog, comp)...)
+	}
 }
 
 func (v *validator) validateNode(node *Node) {
@@ -143,6 +157,122 @@ func (v *validator) validateAttr(node *Node, attr *Attr) {
 	case AttrSpread:
 		if strings.TrimSpace(attr.Expr) == "" {
 			v.errorf(node.Span, "spread attribute has empty expression")
+		}
+	}
+}
+
+// validateLegacyTemplateExprs flags the well-known JS mistake of reading
+// .length on a slice-valued expression (see gosx#164). The legacy file-router
+// renderer resolves member access reflectively with no static types, so a
+// slice's .length silently evaluates to nil instead of failing to compile —
+// and nil compared to 0 is always false, so `<If cond={x.length == 0}>`
+// renders neither branch with no error anywhere.
+//
+// gosx has no type information for legacy `any` data at check time, so this
+// cannot distinguish a slice's .length from a map value legitimately keyed
+// "length" (m[string]any{"length": n} resolves that reflectively too, and
+// correctly). It flags ".length" selectors rooted at the identifier "data"
+// rather than staying silent — the honest trade a checker with no types can
+// make: a rare, working `data["length"]`-shaped access is rejected alongside
+// the far more common accidental one, and check-time failure with a
+// diagnosis beats silent divergence between check and render.
+//
+// gosx#174: the rule used to flag ".length" anywhere in a legacy component's
+// expression holes, regardless of which identifier it was read from. That
+// rejected valid Go: a legacy component can declare a typed parameter other
+// than "data" (e.g. `func Page(r *ruler) Node` where `type ruler struct{
+// length int }`), and `r.length` there is an ordinary, statically-checked
+// struct field read — real Go code that compiles fine. It is "data" alone
+// that route/fileeval.go binds to the reflective, untyped route payload
+// (see fileRenderEnv / newFileRenderEnv: `env.values["data"] = ctx.Data`) —
+// that binding exists under the literal name "data" no matter what the
+// component's own function-parameter is named, because the file router
+// never reads the source parameter name back. Only a selector chain whose
+// root identifier is that literal "data" binding (`data.picks.length`,
+// `data.picks[0].length`, ...) can hit the reflective-nil gotcha this rule
+// exists for, so only those are flagged now.
+func validateLegacyTemplateExprs(prog *Program, comp *Component) []Diagnostic {
+	if int(comp.Root) >= len(prog.Nodes) {
+		return nil
+	}
+
+	var diags []Diagnostic
+	for _, id := range collectComponentNodeIDs(prog, comp.Root) {
+		node := &prog.Nodes[id]
+		if node.Kind == NodeExpr {
+			diags = append(diags, lengthSelectorDiagnostics(node.Span, node.Text)...)
+		}
+		for _, attr := range node.Attrs {
+			switch attr.Kind {
+			case AttrExpr, AttrSpread:
+				diags = append(diags, lengthSelectorDiagnostics(node.Span, attr.Expr)...)
+			}
+		}
+	}
+	return diags
+}
+
+// lengthSelectorDiagnostics parses one Go expression hole and reports every
+// ".length" member access rooted at the "data" identifier it contains. A
+// source that fails to parse here is not this check's job — the render path
+// already tolerates unparseable expressions by evaluating them to nil, and
+// normal validation elsewhere covers empty/malformed expressions.
+func lengthSelectorDiagnostics(span Span, source string) []Diagnostic {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil
+	}
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return nil
+	}
+
+	var diags []Diagnostic
+	ast.Inspect(expr, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok || sel.Sel == nil || sel.Sel.Name != "length" {
+			return true
+		}
+		// Only the reflective "data" binding resolves .length to a silent nil
+		// (see the comment above validateLegacyTemplateExprs). A selector
+		// rooted at any other identifier — including a legacy component's own
+		// typed, non-"data" parameter — is either a real Go struct/map access
+		// the compiler already checks, or a value the file router never binds
+		// reflectively, so it is out of scope for this rule.
+		root, ok := selectorRootIdent(sel.X)
+		if !ok || root != "data" {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Span:    span,
+			Message: fmt.Sprintf("unsupported member \".length\" in expression %q", source),
+			Hint:    "Go has no automatic .length; pass a precomputed count from a DataLoader (e.g. \"picksEmpty\": len(picks) == 0), or add a typed component that calls len(...) directly",
+		})
+		return true
+	})
+	return diags
+}
+
+// selectorRootIdent walks down the left-hand side of a selector/index/paren
+// chain (data.picks[0].length -> data.picks[0] -> data.picks -> data) to find
+// the identifier the chain is rooted at. It reports ok=false for a chain
+// rooted at anything other than a bare identifier (a call result, a
+// composite literal, and so on), since those can never be the "data" binding.
+func selectorRootIdent(expr ast.Expr) (string, bool) {
+	for {
+		switch e := expr.(type) {
+		case *ast.Ident:
+			return e.Name, true
+		case *ast.SelectorExpr:
+			expr = e.X
+		case *ast.IndexExpr:
+			expr = e.X
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.StarExpr:
+			expr = e.X
+		default:
+			return "", false
 		}
 	}
 }

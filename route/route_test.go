@@ -47,7 +47,7 @@ func TestRouterBasic(t *testing.T) {
 }
 
 func TestRouteContextHeadUsesRequestPathForAutomaticMetadataURLs(t *testing.T) {
-	ctx := newRouteContext(httptest.NewRequest(http.MethodGet, "/blog/example", nil))
+	ctx := (&Router{}).newRouteContext(httptest.NewRequest(http.MethodGet, "/blog/example", nil))
 	ctx.SetMetadata(server.Metadata{MetadataBase: "https://example.com"})
 
 	html := gosx.RenderHTML(ctx.Head())
