@@ -5561,6 +5561,29 @@ test("countdown boot survives a \"__proto__\" segment name", () => {
   assert.equal(typeof env.context.__gosx.navigation.navigate, "function");
 });
 
+// An unknown name that does NOT collide with Object.prototype is the other
+// half of gosx#178 review finding B2's requested coverage: it must be
+// silently ignored (not rendered into, no crash, no console noise) exactly
+// like a prototype-colliding name, just for the ordinary "not one of the
+// four supported names" reason rather than the prototype-collision hazard.
+test("countdown ignores a segment name outside the four supported names", () => {
+  const root = new FakeElement("div", null);
+  root.setAttribute("data-gosx-countdown", "1970-01-01T00:05:00Z");
+  const weeks = new FakeElement("b", null);
+  weeks.setAttribute("data-gosx-countdown-segment", "weeks");
+  weeks.textContent = "SERVER";
+  root.appendChild(weeks);
+  const env = createContext({ elements: [root] });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  clock.advance(1000);
+  timers.runInterval(1000);
+
+  assert.equal(weeks.textContent, "SERVER", "an unrecognized segment name must never be written into");
+});
+
 // gosx#178 review finding M3: then="revalidate" used to skip the periodic
 // poll's own three guards (document hidden, a form control focused, a
 // navigation or form submission already in flight) entirely — a countdown
