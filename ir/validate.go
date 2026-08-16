@@ -12,10 +12,21 @@ type Diagnostic struct {
 	Span    Span
 	Message string
 	Hint    string
+
+	// Code is an optional rule identifier, for example a consumer-defined
+	// catalog code such as "EM001". Built-in gosx diagnostics leave Code
+	// empty; it exists so a diagnostic sink shared with a third-party
+	// checker (see strictcheck.Lint) can surface that checker's own rule
+	// codes without a second, differently-shaped diagnostic type.
+	Code string
 }
 
 func (d Diagnostic) String() string {
-	s := fmt.Sprintf("%d:%d: %s", d.Span.StartLine, d.Span.StartCol, d.Message)
+	s := fmt.Sprintf("%d:%d: ", d.Span.StartLine, d.Span.StartCol)
+	if d.Code != "" {
+		s += d.Code + ": "
+	}
+	s += d.Message
 	if d.Hint != "" {
 		s += " (" + d.Hint + ")"
 	}

@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### `strictcheck.Options.ExtraLints`: an extension point for third-party per-file lints (experimental)
+
+- **`strictcheck` accepts registered third-party lints and reports their
+  findings through its existing error channel.** A consumer such as
+  gsxmail (an email-template lint catalog) previously had to run its own
+  checker beside `gosx check` in CI — two commands, two diagnostic
+  streams. `Options.ExtraLints []strictcheck.Lint` now lets a consumer
+  pass its own per-file checks straight into `CheckFile`, `CheckPackage`,
+  and `CheckTree`; their diagnostics come back on the same `error` as
+  strictcheck's own findings, one channel end to end. Fixes #186.
+- **EXPERIMENTAL, library-level, in-process only.** There is no plugin
+  loading, no CLI flag, and no global registry: a consumer imports
+  `strictcheck`, builds `[]strictcheck.Lint` values, and passes them
+  through `Options` on every call. `Lint.Check` receives a `LintFile`
+  (the file path and its compiled `*ir.Program`) and a `report` sink; a
+  panic inside `Check` is recovered and turned into one diagnostic naming
+  the lint rather than crashing the check run, and checking continues over
+  the remaining files and lints. The shape may still change in a later
+  minor version; pin an exact gosx version until it settles.
+- **`ir.Diagnostic` gains an additive `Code` field** so a third-party
+  lint's own rule codes (for example `EM001`) surface distinctly in the
+  shared diagnostic stream. Every built-in gosx and strictcheck diagnostic
+  leaves `Code` empty, and `Diagnostic.String()` only changes output when
+  `Code` is set, so existing callers see no difference.
+- Registering no lints (the field left absent, set to `nil`, or set to an
+  empty slice) leaves `strictcheck`'s behavior byte-for-byte identical to
+  a build with no extension point at all.
+
 ## v0.42.2 (2026-08-16)
 
 ### Fixed: the managed-form shorthand did not expand consistently across server render surfaces

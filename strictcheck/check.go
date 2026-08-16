@@ -5,6 +5,7 @@ package strictcheck
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,6 +25,15 @@ type Options struct {
 	Env     []string
 	GOWORK  string
 	GOFLAGS string
+
+	// ExtraLints registers third-party, per-file lints that run alongside
+	// strictcheck's own checks and report through the same error returned by
+	// CheckFileWithOptions/CheckPackageWithOptions/CheckTreeWithOptions.
+	//
+	// EXPERIMENTAL (gosx#186): see the Lint doc comment for the full
+	// compatibility posture. A nil or empty ExtraLints (including the zero
+	// value of Options) leaves check behavior byte-for-byte unchanged.
+	ExtraLints []Lint
 }
 
 // CheckFile checks the complete .gsx package containing path.
@@ -67,8 +77,12 @@ func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Optio
 	if err := validateStrictRenderEntries(files); err != nil {
 		return err
 	}
+	// Extra lints run over every file regardless of strict syntax: a
+	// consumer's per-file catalog (gosx#186) targets ordinary legacy-syntax
+	// .gsx files too, not just strict components.
+	extraErr := runExtraLints(files, opts.ExtraLints)
 	if !packageHasStrict(files) {
-		return nil
+		return extraErr
 	}
 	importNames, err := resolveImportNames(ctx, files, opts)
 	if err != nil {
@@ -79,9 +93,15 @@ func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Optio
 		return err
 	}
 	if len(generated) == 0 {
-		return nil
+		return extraErr
 	}
-	return goCheck(ctx, files, generated, opts)
+	if err := goCheck(ctx, files, generated, opts); err != nil {
+		if extraErr != nil {
+			return errors.Join(err, extraErr)
+		}
+		return err
+	}
+	return extraErr
 }
 
 func validateStrictRenderEntries(files []transpile.PackageFile) error {
