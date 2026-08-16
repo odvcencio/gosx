@@ -50,10 +50,49 @@ func Page() Node {
 			<span class="inline-code">int64</span>
 			range, a finite ungrouped decimal float, or one direct field on
 			<span class="inline-code">props</span>
-			whose type is a parity-safe built-in scalar declared in the same file. Nested selectors, indexing, calls, unary and binary operators, ordinary local declarations,
+			whose type is a parity-safe built-in scalar declared in the same file. Nested selectors, indexing, calls, unary operators, ordinary local declarations,
 			<span class="inline-code">if</span>
-			statements, free helper calls, imported function calls, and cross-file component calls are outside the v0.39 strict contract.
+			statements, free helper calls, imported function calls, and cross-file component calls are outside the v0.39 strict contract. v0.42 widens this contract in two narrow, typed ways; the next section covers both.
 		</p>
+		<h2 id="strict-expressions">Concatenation and conditional rendering</h2>
+		<p>
+			A hole may join a
+			<span class="inline-code">+</span>
+			chain of string literals and
+			<span class="inline-code">props</span>
+			field selectors. The chain needs at least one literal and at least one field. Each field must have the exact declared type
+			<span class="inline-code">string</span>
+			, not a named string type. Use this to build a class name or a label from a typed prop.
+		</p>
+		<CodeBlock lang="gosx" source={data.concatSample} />
+		<p>
+			A strict body may also render
+			<span class="inline-code">
+				&lt;If cond=
+				{"{"}
+				...
+				{"}"}
+				&gt;
+			</span>
+			. The
+			<span class="inline-code">cond</span>
+			attribute takes exactly one bool
+			<span class="inline-code">props</span>
+			field, bare or compared with
+			<span class="inline-code">== false</span>
+			. GoSX renders the children when
+			<span class="inline-code">cond</span>
+			is true and renders nothing otherwise. Write a second
+			<span class="inline-code">&lt;If&gt;</span>
+			with
+			<span class="inline-code">== false</span>
+			for the opposite branch;
+			<span class="inline-code">fallback</span>
+			and
+			<span class="inline-code">else</span>
+			attributes are not part of this form.
+		</p>
+		<CodeBlock lang="gosx" source={data.conditionalSample} />
 		<section class="callout">
 			<strong>Keep strict components local</strong>
 			<p>
