@@ -38,6 +38,71 @@
   and the same latent gap; gosx#195 names only the direct-read case. A
   follow-up issue should track the other two.
 
+### Fixes
+
+- **`route`: deterministic attribute order for an unresolved component
+  reference.** `defaultRenderedComponent` renders the
+  `<div data-gosx-component="Tag" ...>` fallback for a `<Component/>`
+  reference gosx does not resolve locally. It iterated its attribute map
+  in Go's randomized map order. Two renders of the same compiled program
+  could emit the same attributes in a different order. This broke
+  byte-identity goldens and churned HTTP caches and ETags on unchanged
+  content. Attribute names now sort before emission. Output is
+  byte-identical across repeated renders. Fixes #188.
+- **`route`: drop an attribute name smuggled through a `{...spread}` map
+  key.** `html.EscapeString` does not escape a space or an `=`. A spread
+  map key such as `x onmouseover=alert(1) y` rendered as three attributes —
+  `x`, `onmouseover=alert(1)`, and `y` — from one map entry, because
+  `normalizeFileAttrName` only trimmed whitespace and mapped `className`
+  to `class`. Every `{...spread}` call site now validates each key with
+  `validRenderAttrName`, the same helper #185's render-profile
+  `AttrWriter` path already uses, and drops an invalid key instead of
+  emitting it. This is inert, not fail-closed: the render-profile path
+  still fails closed on an invalid name, because a profile is trusted
+  code and a bad name there is a bug in it. A spread commonly carries
+  request or database data an author never wrote. One bad key must not
+  fail an otherwise-valid render. Fixes #189.
+
+### Added: first-class file uploads through the action layer
+
+- **`ctx.Files(name)` and `ctx.File(name)` read uploaded files from an
+  action request.** Before this, an uploaded file sat in
+  `req.MultipartForm` behind `ctx.Request`, and every consumer wrote the
+  same lookup by hand. `Files` returns `[]*multipart.FileHeader` for a
+  form field name. `File` returns the first header, or nil. Both stay
+  nil-safe: a non-multipart request, a nil `Context`, or an absent field
+  name all return nil. Fixes #187.
+- **The 1 MiB action body cap is now configurable.** `ServeHandler`
+  keeps the 1 MiB default. A caller with a larger upload calls the new
+  `ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{MaxBodyBytes: n})`
+  instead. `route.FileModuleOptions.MaxActionBodyBytes` carries the same
+  cap through file-routed actions registered with
+  `route.RegisterFileModuleHere` and its sibling constructors, so a
+  consumer raises the limit per module without touching the action
+  package directly. An oversized request still fails with 413 through
+  `http.MaxBytesReader` semantics, never a silent truncation.
+- **A pinned test proves the navigation runtime's managed form
+  submission already carries a selected file.** `serializeForm()`
+  builds a real `FormData` from the form element and passes it straight
+  through to `fetch` as the request body, with no intermediate
+  stringification. The first consumer of this ask, gridiron-2000's team
+  avatar upload, needed the accessor and the raised cap. The runtime
+  half of the ask needed only this test.
+
+### Fixed
+
+- **`App.Mount` now populates named path wildcards.** A mounted pattern
+  with a wildcard segment, for example `GET /avatars/{teamID}`, dispatched
+  through `(*http.ServeMux).Handler(r)`, which the stdlib documents as
+  never populating `r.PathValue` — every wildcard silently read back as
+  the empty string. The dispatcher now serves a matched mount through
+  `mux.ServeHTTP`, which runs the same lookup internally and sets the
+  wildcard values on the request before the handler runs. Detecting a
+  non-match still uses `Handler(r)`, so an unmounted request falls through
+  to the page router exactly as before. Non-wildcard mounts, subtree
+  mounts, and the 404 fall-through keep their existing behavior. Refs
+  #194.
+
 ## v0.43.0 (2026-08-16)
 
 The strict surface grows loops and spreads, and the runtime grows time. Seven

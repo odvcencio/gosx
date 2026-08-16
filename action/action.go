@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"sync"
@@ -17,6 +18,11 @@ import (
 	"m31labs.dev/gosx/session"
 )
 
+// maxActionBodyBytes is the default request-body cap enforced by
+// [ServeHandler]. A caller that needs a larger cap (for example, an action
+// that accepts file uploads) calls [ServeHandlerWithOptions] with a
+// [ServeHandlerOptions.MaxBodyBytes] value instead; the default never
+// changes.
 const maxActionBodyBytes = 1024 * 1024
 
 const actionFlashKey = "__gosx_action_state"
@@ -127,6 +133,35 @@ type Context struct {
 
 	status int
 	result *Result
+}
+
+// Files returns the uploaded file headers submitted under the given
+// multipart form field name.
+//
+// [ServeHandler] and [ServeHandlerWithOptions] populate the backing form by
+// calling [http.Request.ParseMultipartForm] with the configured body-size
+// limit (1 MiB by default; see [ServeHandlerOptions.MaxBodyBytes]). Parts up
+// to that limit are held in memory; parts beyond it spill to temporary files
+// on disk for the life of the request, per the standard library's own
+// ParseMultipartForm behavior. Files is nil-safe: a non-multipart request, a
+// nil Context, or a field name absent from the form all return nil.
+func (c *Context) Files(name string) []*multipart.FileHeader {
+	if c == nil || c.Request == nil || c.Request.MultipartForm == nil {
+		return nil
+	}
+	return c.Request.MultipartForm.File[name]
+}
+
+// File returns the first uploaded file header submitted under the given
+// multipart form field name, or nil if the request carried none. It is a
+// singular convenience over [Context.Files]; see that method's doc comment
+// for the parse limit and memory/disk-spill behavior.
+func (c *Context) File(name string) *multipart.FileHeader {
+	files := c.Files(name)
+	if len(files) == 0 {
+		return nil
+	}
+	return files[0]
 }
 
 // View is the browser-facing action state surfaced back to HTML pages after a
@@ -314,15 +349,43 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ServeHandler(w, req, handler)
 }
 
+// ServeHandlerOptions configures [ServeHandlerWithOptions].
+type ServeHandlerOptions struct {
+	// MaxBodyBytes caps the request body accepted for this action, enforced
+	// with [http.MaxBytesReader] semantics: a request over the cap fails
+	// with 413 Request Entity Too Large rather than being silently
+	// truncated. Zero or a negative value falls back to the package default
+	// of 1 MiB (the same default [ServeHandler] uses).
+	MaxBodyBytes int64
+}
+
 // ServeHandler handles a single action handler over HTTP using the same form,
-// JSON, redirect, and validation semantics as Registry.ServeHTTP.
+// JSON, redirect, and validation semantics as Registry.ServeHTTP. The request
+// body is capped at 1 MiB; call [ServeHandlerWithOptions] to raise that cap,
+// for example for an action that accepts file uploads.
 func ServeHandler(w http.ResponseWriter, req *http.Request, handler Handler) {
+	serveHandler(w, req, handler, maxActionBodyBytes)
+}
+
+// ServeHandlerWithOptions is [ServeHandler] with a configurable request-body
+// cap. It is the seam a file-routed app reaches through
+// `route.FileModuleOptions.MaxActionBodyBytes` to accept uploads larger than
+// the 1 MiB default.
+func ServeHandlerWithOptions(w http.ResponseWriter, req *http.Request, handler Handler, opts ServeHandlerOptions) {
+	maxBodyBytes := opts.MaxBodyBytes
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = maxActionBodyBytes
+	}
+	serveHandler(w, req, handler, maxBodyBytes)
+}
+
+func serveHandler(w http.ResponseWriter, req *http.Request, handler Handler, maxBodyBytes int64) {
 	if handler == nil {
 		http.Error(w, "action handler required", http.StatusNotFound)
 		return
 	}
 
-	req.Body = http.MaxBytesReader(w, req.Body, maxActionBodyBytes)
+	req.Body = http.MaxBytesReader(w, req.Body, maxBodyBytes)
 	defer req.Body.Close()
 
 	ctx := &Context{
@@ -347,7 +410,7 @@ func ServeHandler(w http.ResponseWriter, req *http.Request, handler Handler) {
 	} else {
 		var err error
 		if strings.HasPrefix(contentType, "multipart/form-data") {
-			err = req.ParseMultipartForm(maxActionBodyBytes)
+			err = req.ParseMultipartForm(maxBodyBytes)
 		} else {
 			err = req.ParseForm()
 		}
