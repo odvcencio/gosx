@@ -130,6 +130,107 @@ func Page() Node {
 				Teardown is automatic. A soft navigation to a page without the attribute clears the interval. A soft navigation to a page with the attribute reads it again.
 			</p>
 		</section>
+		<section id="declarative-countdown">
+			<h2>Declarative countdown</h2>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown</span>
+				with an RFC3339 instant to count down to that moment with zero application JavaScript. Write the element's initial text yourself, so the page shows a correct value even with no JavaScript at all. The runtime takes over at the first 1-second tick after the page loads, with one shared timer for every countdown on the page.
+			</p>
+			{CodeBlock("gosx", `<span data-gosx-countdown="2026-08-22T16:00:00-04:00"
+	      data-gosx-countdown-format="mm:ss">15:00</span>`)}
+			<p>
+				To compute that initial text from the server's own clock instead of a hand-typed guess, format it in the page's loader and render the result as the element's text:
+			</p>
+			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+	    remaining := time.Until(launchAt)
+	    return map[string]any{
+	        "countdownText": fmt.Sprintf("%d:%02d", int(remaining.Minutes()), int(remaining.Seconds())%60),
+	    }, nil
+	}`)}
+			{CodeBlock("gosx", `<span data-gosx-countdown="2026-08-22T16:00:00-04:00"
+	      data-gosx-countdown-format="mm:ss">{data.countdownText}</span>`)}
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown-format</span>
+				to render compact text on the countdown element itself:
+				<span class="inline-code">"dhms"</span>
+				for day/hour/minute/second text, or
+				<span class="inline-code">"mm:ss"</span>
+				for a minutes:seconds clock. On a target more than a day away,
+				<span class="inline-code">"mm:ss"</span>
+				renders the total minutes remaining rather than wrapping at 60 — for example a 2-day target shows a value like
+				<span class="inline-code">"2880:00"</span>
+				, not a clock that resets at each hour.
+			</p>
+			<p>
+				To own the markup instead, leave the format off and mark child elements with
+				<span class="inline-code">data-gosx-countdown-segment</span>
+				, set to one of
+				<span class="inline-code">"days"</span>
+				,
+				<span class="inline-code">"hours"</span>
+				,
+				<span class="inline-code">"minutes"</span>
+				, or
+				<span class="inline-code">"seconds"</span>
+				. The runtime fills only the matching element, and leaves the rest of the subtree untouched. Write each segment's own initial value, the same way the compact form's initial text is author-written above.
+			</p>
+			{CodeBlock("gosx", `<div data-gosx-countdown="2026-08-22T16:00:00-04:00">
+	    <b data-gosx-countdown-segment="days">3</b>
+	    <b data-gosx-countdown-segment="hours">04</b>
+	    <b data-gosx-countdown-segment="minutes">12</b>
+	    <b data-gosx-countdown-segment="seconds">09</b>
+	</div>`)}
+			<p>
+				A segment set missing one or more of the four names still renders, but each present segment shows only its own remainder modulo its own unit — a seconds-only segment on a 5 minute countdown shows
+				<span class="inline-code">"59"</span>
+				, not
+				<span class="inline-code">"299"</span>
+				. The runtime logs one console warning for an incomplete segment set.
+			</p>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown-warn="30s"</span>
+				to add the class
+				<span class="inline-code">gosx-countdown--warn</span>
+				once the remaining time drops to the threshold or below. This is a small declarative duration subset, not a general Go duration parser: whole hour/minute/second components combined in one value, such as
+				<span class="inline-code">"30s"</span>
+				or
+				<span class="inline-code">"1m30s"</span>
+				, or a bare non-negative integer as whole seconds.
+			</p>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown-then="revalidate"</span>
+				to fire one revalidation of the page's revalidate root (see
+				<span class="inline-code">data-gosx-revalidate-interval</span>
+				above) the first time the countdown reaches zero. It never fires a second time, and it does nothing while the page has no active revalidation poll — no
+				<span class="inline-code">data-gosx-revalidate-interval</span>
+				element, or one whose value failed validation.
+			</p>
+			<p>
+				The countdown clamps a passed target to zero. It never shows a negative value. An invalid instant leaves the element exactly as it was written.
+				<span class="inline-code">gosx check</span>
+				rejects a static
+				<span class="inline-code">data-gosx-countdown</span>
+				value that is not a valid RFC3339 instant, a static
+				<span class="inline-code">data-gosx-countdown-format</span>
+				value outside
+				<span class="inline-code">"dhms"</span>
+				and
+				<span class="inline-code">"mm:ss"</span>
+				, a static
+				<span class="inline-code">data-gosx-countdown-segment</span>
+				value outside the four supported names, a static
+				<span class="inline-code">data-gosx-countdown-warn</span>
+				value outside the duration subset above, and a static
+				<span class="inline-code">data-gosx-countdown-then</span>
+				value other than
+				<span class="inline-code">"revalidate"</span>
+				, before the page ever serves.
+			</p>
+		</section>
 		<section id="lifecycle-scripts">
 			<h2>Managed and lifecycle scripts</h2>
 			<p>
