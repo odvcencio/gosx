@@ -385,6 +385,98 @@ component Page() {
 	}
 }
 
+// TestCheckFileAcceptsNestedSelector is the strictcheck half of extension
+// (b): a two-hop selector through a same-file value struct passes the real
+// Go compiler. Row is never called — open question 1 in the design spec
+// notes that a strict .gsx caller has no composite-literal spelling to
+// construct a struct prop, so a zero-props Page cannot feed Row real data
+// (see route's TestStrictNestedSelectorRendersRealStructThroughRouteBoundary
+// for the "generated-Go caller feeds it" path this proves compiles). The Go
+// compiler still fully type-checks Row's declaration and body as an
+// ordinary top-level func, uncalled or not.
+func TestCheckFileAcceptsNestedSelector(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type Player struct {
+	Name string
+}
+type RowProps struct {
+	Player Player
+}
+component Row(props: RowProps) {
+	return <p>{props.Player.Name}</p>
+}
+component Page() {
+	return <main>ok</main>
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
+// TestCheckFileRejectsNestedSelectorThroughPointerField proves the pointer
+// rejection propagates through the full strictcheck pipeline: gosx.Compile
+// runs first (transpile.Transpile re-runs the IR semantic gate), so the
+// lowerer's rejection surfaces here exactly as it does through Compile
+// directly.
+func TestCheckFileRejectsNestedSelectorThroughPointerField(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type Player struct {
+	Name string
+}
+type RowProps struct {
+	Player *Player
+}
+component Row(props: RowProps) {
+	return <p>{props.Player.Name}</p>
+}
+component Page() {
+	return <Row />
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "pointer fields cannot preserve Go nil-pointer behavior") {
+		t.Fatalf("CheckFile error = %v", err)
+	}
+}
+
+// TestCheckFileRejectsNestedSelectorUnknownLeafField covers section 5.4's
+// Go-compiler backstop for a nested selector: an unresolvable leaf field
+// (Nickname is not declared on Player) is exactly the class of mismatch
+// resolveStrictSelectorPath intentionally leaves silent — an unknown field
+// anywhere along a path returns early with no lowerer diagnostic, deferring
+// to "the package checker supplies the precise unknown/unexported-field
+// diagnostic" (the same rule the depth-1 case already followed). This
+// proves the Go compiler is still the backstop for nested paths, including
+// the companion-.go-file-diverged-from-the-.gsx-schema-copy shape section
+// 5.4 describes, of which an unknown nested field is one concrete instance.
+func TestCheckFileRejectsNestedSelectorUnknownLeafField(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type Player struct {
+	Name string
+}
+type RowProps struct {
+	Player Player
+}
+component Row(props: RowProps) {
+	return <p>{props.Player.Nickname}</p>
+}
+component Page() {
+	return <main>ok</main>
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "Nickname") {
+		t.Fatalf("CheckFile error = %v", err)
+	}
+}
+
 func TestCheckFileRejectsPropsBearingStrictRenderEntry(t *testing.T) {
 	dir := newTestModule(t)
 	path := filepath.Join(dir, "page.gsx")

@@ -81,3 +81,54 @@ component Card(props: CardProps) {
 		t.Fatalf("format is not idempotent\nfirst:\n%s\nsecond:\n%s", formatted, again)
 	}
 }
+
+// TestSourceFormatsStrictNestedSelectorIdempotently covers section 2.b: a
+// nested selector text hole, a nested concat operand, and a nested <If
+// cond> selector all format idempotently and keep compiling.
+func TestSourceFormatsStrictNestedSelectorIdempotently(t *testing.T) {
+	source := []byte(`package app
+type Team struct {
+	City string
+}
+
+type Player struct {
+	Name  string
+	Ready bool
+	Team  Team
+}
+
+type RowProps struct {
+	Player Player
+}
+
+component Row(props: RowProps) {
+	return <div class={"player-" + props.Player.Name}>
+		<span>{props.Player.Team.City}</span>
+		<If cond={props.Player.Ready}>ready</If>
+	</div>
+}
+`)
+	formatted, err := Source(source)
+	if err != nil {
+		t.Fatalf("Source: %v", err)
+	}
+	for _, want := range []string{
+		`class={"player-" + props.Player.Name}`,
+		`{props.Player.Team.City}`,
+		`<If cond={props.Player.Ready}>`,
+	} {
+		if !strings.Contains(string(formatted), want) {
+			t.Fatalf("formatting changed %q:\n%s", want, formatted)
+		}
+	}
+	if _, err := gosx.Compile(formatted); err != nil {
+		t.Fatalf("formatted strict source does not compile: %v\n%s", err, formatted)
+	}
+	again, err := Source(formatted)
+	if err != nil {
+		t.Fatalf("Source second pass: %v", err)
+	}
+	if !bytes.Equal(formatted, again) {
+		t.Fatalf("format is not idempotent\nfirst:\n%s\nsecond:\n%s", formatted, again)
+	}
+}

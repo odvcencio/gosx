@@ -105,6 +105,20 @@ test("Scene3D adaptive measurement escapes stale renderer timing and respects au
   for (let i = 0; i < 24; i++) capped.sample(99, 34);
   assert.equal(capped.state.measurement, "cpu-raf");
   assert.equal(capped.state.activeTier, "balanced", "authored 30 FPS rAF cadence must not trigger a false downshift");
+
+  // maxFrameRate is the key the Scene3D frame limiter honors FIRST (see
+  // sceneAnimationFrameIntervalMS), and it is the key real apps author. The
+  // budget derivation once read only maxFPS, so a maxFrameRate-capped scene
+  // measured its own authored ~33ms cadence against the adaptive target and
+  // demoted itself to the floor over and over — on the m31labs galaxy every
+  // rung step re-partitioned the point layers and read as gas-body flicker.
+  const capdRate = createAdaptiveQualityHarness({ maxFrameRate: 30, adaptiveTargetFrameMS: 28 });
+  capdRate.renderer.pollPerformanceSample = function() { return null; };
+  capdRate.renderer.getPerformanceTimingStatus = function() { return { available: false, active: false, pending: false, source: "none" }; };
+  for (let i = 0; i < 60; i++) capdRate.sample(99, 34);
+  assert.equal(capdRate.state.measurement, "cpu-raf");
+  assert.equal(capdRate.state.activeTier, "balanced", "authored maxFrameRate cadence must not trigger a false downshift");
+  assert.ok(capdRate.state.cpuRAFBudgetMS >= 1000 / 30 - 0.1, "cpu-raf budget must honor maxFrameRate, got " + capdRate.state.cpuRAFBudgetMS);
 });
 
 test("Scene3D adaptive controller is hysteretic, cooldown-safe, and recovers one tier", () => {

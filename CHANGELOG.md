@@ -53,6 +53,232 @@
   empty slice) leaves `strictcheck`'s behavior byte-for-byte identical to
   a build with no extension point at all.
 
+### `route`: an EXPERIMENTAL render-profile hook (gosx#185)
+
+- **`route.RenderProfile`, `RenderAttr`, `AttrWriter`, and `RenderProfileError`
+  are new, and marked EXPERIMENTAL.** A profile installs an attribute-writer
+  hook plus a pre-render validation pass on `RenderProgramComponent`, via a
+  new `Profile *RenderProfile` field on `ProgramRenderEnv`. This is the
+  Architecture C convergence path named in the gsxmail design spec (§5, §14
+  U5): a downstream renderer that needs a different HTML dialect — for
+  example an email target that swaps classes for inline styles and rejects
+  `<script>` — can now do so through this hook instead of owning a full
+  writer over `ir.Program`. Following the `ir` package's compatibility
+  policy below, this surface may change or be removed in a future minor
+  release; pin an exact gosx version if you depend on it directly.
+- **`AttrWriter` runs once per rendered element**, after `{expr}` attributes
+  evaluate, `{...spread}` attributes expand and flatten, and any managed-form
+  shorthand attribute is removed — the hook never sees the shorthand itself,
+  or the runtime-contract attributes it expands into — and before HTML
+  escaping. It receives the tag name and the element's resolved attributes
+  (`[]RenderAttr`) and returns the attributes to emit: change a `Value` to
+  rewrite one, omit an entry to veto it, or append a new `RenderAttr` to add
+  one.
+- **`AttrWriter` cannot weaken the gosx#179 managed-form runtime contract.**
+  A hook may see an author-written copy of a contract attribute
+  (`data-gosx-form` and its `-state`/`-mode`/`-project` variants, the
+  client-runtime `-form-error-describedby` attribute, the shared
+  `-enhance`/`-enhance-layer`/`-fallback` attributes, and the
+  `data-gosx-managed` shorthand), but the renderer discards any add, change,
+  or removal its returned copy makes to one of those names and restores the
+  original, then computes the contract's own presence check from that same
+  reconciled list — a vetoing profile can no longer make a contract
+  attribute disappear from the output, and an appending profile can no
+  longer make its own forged copy render ahead of, or instead of, the real
+  one.
+- **A returned attribute `Name` is validated.** `html.EscapeString` does not
+  escape a space or an `=`, so an `AttrWriter` that returned, for example,
+  `RenderAttr{Name: "x onmouseover=alert(1) y"}` could smuggle three
+  attributes past one `Name` field. A `Name` that is empty, whitespace-only,
+  or contains a character that would end an HTML5 attribute-name token early
+  now fails the whole render with a `*RenderProfileError` naming the
+  offending tag and `Name`, instead of being escaped and emitted as-is. The
+  identical hole in `{...spread}`'s attribute-name path is a separate,
+  already-filed issue (gosx#189), not fixed by this change.
+- **Escaping cannot be bypassed through the hook.** `RenderAttr` is a plain
+  `{Name, Value, Boolean}` value type with no raw-HTML or pre-escaped
+  variant; the renderer escapes every returned `Name` and `Value`
+  unconditionally, after `AttrWriter` runs, so nothing a profile returns can
+  reach output unescaped.
+- **`AttrWriter` reaches every plain element, nested component's own
+  elements, `If`/`Show`/`When` subtree, and `Each`/`For` iteration — it does
+  NOT reach a builtin component's own markup** (`Link`'s `<a>`, `Image`'s
+  `<img>`, and every other builtin), **an unknown, engine, or bound
+  component's markup** (rendered through `defaultRenderedComponent`, which
+  emits the author's own attributes verbatim — this one is different in
+  kind from the other builtins, since it has no escaping or contract logic
+  of its own for the hook to stand in for), **an `ir.NodeRawHTML` node or a
+  runtime `gosx.RawHTML` value** (both opaque strings `Validate` cannot see
+  inside either, any more than `AttrWriter` can), **or an island subtree**
+  (rendered by a separate renderer, through `ProgramRenderEnv.RenderIsland`).
+  Only `RenderProgramComponent` sets this hook; a file-routed page or layout
+  has no field to install one from.
+- **`Validate` runs once per render, over the whole compiled `*ir.Program`,
+  before any output is written** — including before the "component not
+  found" check for the component this call names. A non-empty
+  `[]ir.Diagnostic` return aborts the render: `RenderProgramComponent`
+  returns a `*RenderProfileError` and an empty string, never partial HTML —
+  the render is fail closed. `Validate` must not modify the program (the
+  renderer may run concurrently over the same one), and it walks the WHOLE
+  program, not only the component being rendered: a component this call
+  never reaches still gets checked and can still refuse the render, which
+  is both a safety net and a cost every render pays.
+- **A panic inside `AttrWriter` or `Validate` is recovered**, and becomes an
+  ordinary `*RenderProfileError` naming the hook, instead of crashing the
+  calling process. A profile is trusted code, but a bug in it should fail
+  one render closed, not the whole program.
+- **A nil `*RenderProfile` reproduces today's rendering exactly, byte for
+  byte**, and so does a non-nil `*RenderProfile{}` with both hooks left
+  unset: every profile-aware branch is gated on a non-nil `AttrWriter` or
+  `Validate` field specifically. Managed-form shorthand expansion, strict-
+  component boundary checks, and text-node escaping all run unconditionally
+  regardless of any profile.
+- **Known gaps, left for a follow-up.** Fail-soft expression evaluation is
+  unchanged: a missing key still renders empty with a nil error, so a
+  profile cannot make evaluation itself fail closed. Builtins and unknown
+  components bypass `AttrWriter` entirely (see the reach/no-reach list
+  above). There is no text-node hook — a text twin needs its own walk to
+  reach it. There is no node context passed to `AttrWriter` (parent,
+  siblings, or ancestry), so a CSS-cascade-style inlining profile cannot see
+  enough to compute one. Duplicate-attribute-name merging is the profile's
+  own problem — `AttrWriter` does no by-name merging on its return, the same
+  as two `ir.Attr`s sharing a name today; the shipped "email-ish" demo in
+  `route/renderprofile_test.go` now merges a class-derived style declaration
+  into any style attribute already on the element, rather than emitting two,
+  since that demo is the example people are expected to copy. There is no
+  diagnostic severity — every `Validate` diagnostic is fatal to the render,
+  there is no warn-and-continue tier.
+- **What the two hooks measurably cover, in gsx-email-spec.md's own
+  diagnostic vocabulary:** `Validate` covers the EM001-EM006 and EM020-EM033
+  shape checks with usable spans; `AttrWriter` covers EM004,
+  EM110-EM112, and role-injection detection for plain elements.
+
+### Added: a declarative countdown attribute for the enhancer layer
+
+- **`data-gosx-countdown="<RFC3339 instant>"` renders a live countdown
+  with no bespoke JavaScript.** Write the element's initial text (or each
+  segment's initial value) yourself, so the page shows a correct value
+  even with no JavaScript at all. The runtime takes over at the first
+  1-second tick after the page loads. To compute that initial text from
+  the server's own clock instead of a hand-typed guess, format it in the
+  page's loader and render the result as the element's text — see the
+  runtime guide's declarative countdown section for the recipe. One
+  shared 1-second timer drives every countdown on the page. The timer is
+  generation-guarded across navigations, the same way the revalidate poll
+  is. Fixes #178.
+- Two render modes are available:
+  - **Compact.** `data-gosx-countdown-format="dhms"` or `"mm:ss"` on the
+    countdown element itself. The runtime writes the element's own text.
+  - **Segment.** A child element carries
+    `data-gosx-countdown-segment="days"`, `"hours"`, `"minutes"`, or
+    `"seconds"`. The runtime fills only that child's text. The app owns
+    the surrounding markup. A segment set missing one or more of the four
+    names still renders, but each present segment shows only its own
+    remainder modulo its own unit (a seconds-only segment on a 5 minute
+    countdown shows "59", not "299") — the runtime logs one console
+    warning for an incomplete set.
+- `data-gosx-countdown-warn="30s"` adds the class `gosx-countdown--warn`
+  once the remaining time drops to the threshold or below. This is a
+  small declarative duration subset, not a general Go duration parser:
+  whole hour/minute/second components combined in one value, such as
+  `"30s"` or `"1m30s"`, or a bare non-negative integer as whole seconds.
+- `data-gosx-countdown-then="revalidate"` fires one revalidation of the
+  page's revalidate root the first time the countdown reaches zero. It
+  never fires a second time, and it does nothing while the page has no
+  active revalidation poll (no `data-gosx-revalidate-interval` element,
+  or one whose value failed validation).
+- The countdown clamps a passed target to zero. It never shows a
+  negative value or the text "NaN".
+- `gosx check` now rejects a static `data-gosx-countdown` value that is
+  not a valid RFC3339 instant, a static `data-gosx-countdown-format`
+  value outside `"dhms"` and `"mm:ss"`, a static
+  `data-gosx-countdown-segment` value outside the four supported names, a
+  static `data-gosx-countdown-warn` value outside the duration subset
+  above, and a static `data-gosx-countdown-then` value other than
+  `"revalidate"`. A dynamic expression value is exempt from this check.
+  The runtime checks it at render time instead, and leaves the element
+  untouched on a bad value.
+
+### Strict components: nested prop reads
+
+- **`props.A.B` and `props.A.B.C` in strict expressions.** A strict
+  component may now read a field through a same-file value struct, up to
+  three fields deep: `props.Player.Name`, `props.Player.Team.City`. The
+  rule is enforced at all three gates — the syntactic validator accepts a
+  props-rooted field chain of any depth as a shape (`ServerPropPath`
+  generalizes `ServerPropField`), the lowerer resolves each accepted path
+  against the same-file struct schema and reports the three-hop cap there
+  with full component context, and the generated check program proves
+  every field exists with its declared Go type through the real Go
+  compiler. The check program proves field existence and struct-literal
+  types; it does not re-prove the renderer's own scalar-leaf rule (exact
+  `string`, `bool`, integer, or floating-point builtins only) — the
+  lowerer alone enforces that.
+- **Pointer fields stay out of the strict surface.** A nested selector
+  through a pointer intermediate (`*Player`) still fails closed: the
+  map-backed file renderer dissolves a nil pointer to an empty string
+  where generated Go would panic, so admitting pointers would let a
+  strict component type-check one way and render another. Same for a
+  struct this `.gsx` file does not declare, an embedded (promoted) field,
+  and a chain deeper than three hops — each fails closed with a
+  diagnostic naming the component and the exact selector.
+- **The widened selector rule applies everywhere a selector is admitted.**
+  A concat operand (`"player-" + props.Player.Name`) and an `<If
+  cond={props.Player.Ready}>` selector both accept a nested path in this
+  same change, with the same type rules (concat still requires an exact
+  `string` leaf; `cond` still requires an exact `bool` leaf).
+- **`ir.Component.PropsPaths`** carries the resolved leaf type for every
+  nested read, alongside the existing `PropsFields`. It is additive and
+  absent-decodes to `nil` for a program serialized before this field
+  existed, matching `ComponentSyntax`'s zero-value convention — an
+  existing `.gsx` file's projection and render output are unchanged.
+- **The file renderer gained `requireStrictStructValue`**,
+  `requireStrictScalarType`'s counterpart for a nested-selector root: it
+  verifies an incoming struct is exactly the declared same-file type (not
+  a pointer, not an anonymous struct, not a map) and that every path the
+  component reads under it resolves to its declared scalar type, before
+  the component's body observes the value.
+- Re-audit of GitHub issue #171's motivating app: BoardRow now qualifies
+  (nested `props.player.*` combined with the v0.42.0 concatenation
+  extension), alongside TeamMark, RosterRow, and DraftTeam.
+- **A `.gsx` file cannot forward a struct prop to a nested-read component
+  yet.** Nested reads work today for a generated-Go caller and for a
+  hand-built `ir.Program` that supplies the struct value directly. A
+  strict `.gsx` parent cannot pass one:
+  - it rejects rendering a struct-typed prop itself;
+  - a legacy (non-strict) component cannot call a strict component at
+    all; and
+  - a strict entry point cannot bind root props at all (file routes have
+    no way to supply one), so a struct prop cannot arrive from routing
+    either.
+
+  That composition — one `.gsx`-authored component forwarding another's
+  struct prop — arrives with the spread work (#184).
+
+### The `ir` package's compatibility contract is now written down
+
+- **`ir` is documented as experimental while gosx is pre-1.0.** A
+  breaking change to an exported `ir` type is called out in this
+  changelog with a migration note; a consumer that compiles against `ir`
+  directly (for example `gsxmail`, or any tool built against `ir` instead
+  of gosx's higher-level entry points) should pin an exact gosx version
+  rather than a version range. No behavior changes with this entry —
+  it states the policy the project already followed.
+
+## v0.42.3 (2026-08-16)
+
+### Fixed: the adaptive frame budget ignored maxFrameRate
+
+- **`cpuRAFBudgetMS` now honors the same key precedence as the frame
+  limiter** (frameIntervalMS, then maxFrameRate, then maxFPS). It read only
+  maxFPS, so a scene authored with `MaxFrameRate: 30` produced ~33.3ms rAF
+  intervals by design and was judged against its 28ms adaptive target: every
+  measured frame "missed budget", sustained-miss demotion fired within a
+  second, and the quality ladder walked to the floor rung — re-partitioning
+  point layers at every step. On the m31labs galaxy that staircase replayed
+  after each rung reset and read as the gas bodies flickering; it survived
+  three shader-side fixes because it was never the shader.
+
 ## v0.42.2 (2026-08-16)
 
 ### Fixed: the managed-form shorthand did not expand consistently across server render surfaces
