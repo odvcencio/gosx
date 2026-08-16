@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"strings"
+	"time"
 )
 
 // Diagnostic represents a validation error or warning.
@@ -157,6 +158,49 @@ func (v *validator) validateAttr(node *Node, attr *Attr) {
 	case AttrSpread:
 		if strings.TrimSpace(attr.Expr) == "" {
 			v.errorf(node.Span, "spread attribute has empty expression")
+		}
+	case AttrStatic:
+		v.validateStaticCountdownAttr(node, attr)
+	}
+}
+
+// countdownInstantAttr and countdownFormatAttr are the two
+// data-gosx-countdown attributes with a fixed value vocabulary (gosx#178).
+const (
+	countdownInstantAttr = "data-gosx-countdown"
+	countdownFormatAttr  = "data-gosx-countdown-format"
+)
+
+// validateStaticCountdownAttr flags a static data-gosx-countdown value that
+// is not a valid RFC3339 instant, and a static data-gosx-countdown-format
+// value outside the two render modes the countdown runtime supports
+// ("dhms" and "mm:ss"). This follows the same fail-closed principle as the
+// ".length" rule above: a bad value here renders a silently inert
+// countdown today, with nothing at the terminal to explain why, so
+// Validate now catches it at check time instead.
+//
+// A dynamic expression value ({...}) is exempt — attr.Kind is AttrExpr for
+// those, and this method only runs from the AttrStatic case above. Its
+// instant or format is known only at render or run time, and the browser
+// runtime already fails inert (leaves the element untouched) on a bad
+// value it discovers there.
+func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
+	switch attr.Name {
+	case countdownInstantAttr:
+		if _, err := time.Parse(time.RFC3339, attr.Value); err != nil {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: not a valid RFC3339 instant", countdownInstantAttr, attr.Value),
+				Hint:    `use an RFC3339 instant such as "2026-08-22T16:00:00-04:00", or move the value into an expression ({...}) to compute it at render time`,
+			})
+		}
+	case countdownFormatAttr:
+		if attr.Value != "dhms" && attr.Value != "mm:ss" {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be \"dhms\" or \"mm:ss\"", countdownFormatAttr, attr.Value),
+				Hint:    `"dhms" renders day/hour/minute/second text; "mm:ss" renders a minutes:seconds clock`,
+			})
 		}
 	}
 }

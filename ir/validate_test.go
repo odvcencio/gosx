@@ -236,3 +236,98 @@ func Page(data any) Node {
 		t.Fatalf("expected no diagnostics — .length only appears in Handlers/Computeds source text, which this rule does not scan, got: %+v", diags)
 	}
 }
+
+// TestValidateRejectsInvalidCountdownInstant covers gosx#178: a static
+// data-gosx-countdown value that is not a valid RFC3339 instant used to
+// reach the browser runtime unchecked, where it renders a silently inert
+// countdown. Validate must now fail closed at check time.
+func TestValidateRejectsInvalidCountdownInstant(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="not-a-real-instant"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-countdown value "not-a-real-instant": not a valid RFC3339 instant`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsInvalidCountdownFormat covers gosx#178:
+// data-gosx-countdown-format only supports "dhms" and "mm:ss". Any other
+// static value must fail at check time with a clear message.
+func TestValidateRejectsInvalidCountdownFormat(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-format="hh:mm"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-countdown-format value "hh:mm": must be "dhms" or "mm:ss"`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateAllowsValidCountdownAttrs proves the rule does not
+// false-positive on a well-formed countdown: a real RFC3339 instant paired
+// with one of the two supported compact formats.
+func TestValidateAllowsValidCountdownAttrs(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-format="mm:ss"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for valid countdown attributes, got %+v", diags)
+	}
+}
+
+// TestValidateSkipsCountdownCheckForDynamicExpression proves the rule only
+// applies to a static (AttrStatic) value. A dynamic expression
+// (data-gosx-countdown={...}) is computed at render time, so its instant
+// or format cannot be known here — it is exempt, and the browser runtime
+// fails inert on a bad value it finds there instead.
+func TestValidateSkipsCountdownCheckForDynamicExpression(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown={launchAt} data-gosx-countdown-format={format}></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for dynamic countdown expressions, got %+v", diags)
+	}
+}

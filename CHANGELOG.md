@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Added: a declarative countdown attribute for the enhancer layer
+
+- **`data-gosx-countdown="<RFC3339 instant>"` renders a live countdown
+  with no bespoke JavaScript.** The server renders the initial text or
+  segment values. The runtime keeps that value moving after the page
+  loads. One shared 1-second timer drives every countdown on the page.
+  The timer is generation-guarded across navigations, the same way the
+  revalidate poll is. Fixes #178.
+- Two render modes are available:
+  - **Compact.** `data-gosx-countdown-format="dhms"` or `"mm:ss"` on the
+    countdown element itself. The runtime writes the element's own text.
+  - **Segment.** A child element carries
+    `data-gosx-countdown-segment="days"`, `"hours"`, `"minutes"`, or
+    `"seconds"`. The runtime fills only that child's text. The app owns
+    the surrounding markup.
+- `data-gosx-countdown-warn="30s"` adds the class `gosx-countdown--warn`
+  once the remaining time drops to the threshold or below. The value
+  accepts a Go-style duration string or a bare number of seconds.
+- `data-gosx-countdown-then="revalidate"` fires one revalidation of the
+  page's revalidate root the first time the countdown reaches zero. It
+  never fires a second time. It does nothing on a page with no
+  revalidate root.
+- The countdown clamps a passed target to zero. It never shows a
+  negative value or the text "NaN".
+- `gosx check` now rejects a static `data-gosx-countdown` value that is
+  not a valid RFC3339 instant, and a static `data-gosx-countdown-format`
+  value outside `"dhms"` and `"mm:ss"`. A dynamic expression value is
+  exempt from this check. The runtime checks it at render time instead,
+  and leaves the element untouched on a bad value.
+
 ## v0.42.2 (2026-08-16)
 
 ### Fixed: the managed-form shorthand did not expand consistently across server render surfaces

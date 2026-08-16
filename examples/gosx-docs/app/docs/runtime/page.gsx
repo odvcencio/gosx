@@ -130,6 +130,67 @@ func Page() Node {
 				Teardown is automatic. A soft navigation to a page without the attribute clears the interval. A soft navigation to a page with the attribute reads it again.
 			</p>
 		</section>
+		<section id="declarative-countdown">
+			<h2>Declarative countdown</h2>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown</span>
+				with an RFC3339 instant to count down to that moment with zero application JavaScript. The server renders the initial text or segment values. The runtime only keeps the value moving, with one shared 1-second timer for every countdown on the page.
+			</p>
+			{CodeBlock("gosx", `<span data-gosx-countdown="2026-08-22T16:00:00-04:00"
+	      data-gosx-countdown-format="mm:ss"></span>`)}
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown-format</span>
+				to render compact text on the countdown element itself:
+				<span class="inline-code">"dhms"</span>
+				for day/hour/minute/second text, or
+				<span class="inline-code">"mm:ss"</span>
+				for a minutes:seconds clock.
+			</p>
+			<p>
+				To own the markup instead, leave the format off and mark child elements with
+				<span class="inline-code">data-gosx-countdown-segment</span>
+				. The runtime fills only the matching element, and leaves the rest of the subtree untouched.
+			</p>
+			{CodeBlock("gosx", `<div data-gosx-countdown="2026-08-22T16:00:00-04:00">
+	    <b data-gosx-countdown-segment="days"></b>
+	    <b data-gosx-countdown-segment="hours"></b>
+	    <b data-gosx-countdown-segment="minutes"></b>
+	    <b data-gosx-countdown-segment="seconds"></b>
+	</div>`)}
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown-warn="30s"</span>
+				to add the class
+				<span class="inline-code">gosx-countdown--warn</span>
+				once the remaining time drops to the threshold or below. The value accepts a Go-style duration string, such as
+				<span class="inline-code">"30s"</span>
+				or
+				<span class="inline-code">"1m30s"</span>
+				, or a bare number of seconds.
+			</p>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown-then="revalidate"</span>
+				to fire one revalidation of the page's revalidate root (see
+				<span class="inline-code">data-gosx-revalidate-interval</span>
+				above) the first time the countdown reaches zero. It never fires a second time, and it does nothing on a page with no revalidate root.
+			</p>
+			<p>
+				The countdown clamps a passed target to zero. It never shows a negative value. An invalid instant leaves the element exactly as the server rendered it.
+				<span class="inline-code">gosx check</span>
+				rejects a static
+				<span class="inline-code">data-gosx-countdown</span>
+				value that is not a valid RFC3339 instant, and a static
+				<span class="inline-code">data-gosx-countdown-format</span>
+				value outside
+				<span class="inline-code">"dhms"</span>
+				and
+				<span class="inline-code">"mm:ss"</span>
+				, before the page ever serves.
+			</p>
+		</section>
 		<section id="lifecycle-scripts">
 			<h2>Managed and lifecycle scripts</h2>
 			<p>
