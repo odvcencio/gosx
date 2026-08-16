@@ -100,8 +100,11 @@ func TestDocumentedEachSampleCompilesAndRenders(t *testing.T) {
 }
 
 // TestDocumentedSpreadSampleCompilesAndRenders proves the #184 docs
-// sample: a strict-to-strict tier-1 spread (Panel forwarding its own
-// props verbatim) and a legacy tier-2 spread both compile and render.
+// sample end to end: Page (legacy) spreads a loader-shaped struct into
+// Panel (a legacy tier-2 spread), and Panel forwards its own props
+// verbatim to Badge with a bare {...props} spread (a strict-to-strict
+// tier-1 spread, gosx#182/#184 M-1) — both the outer call and Panel's own
+// forwarding call must render, not just compile.
 func TestDocumentedSpreadSampleCompilesAndRenders(t *testing.T) {
 	prog, err := gosx.Compile([]byte(strictSpreadSample))
 	if err != nil {
@@ -123,6 +126,9 @@ func TestDocumentedSpreadSampleCompilesAndRenders(t *testing.T) {
 	}
 	if !strings.Contains(html, "Inbox: 3") {
 		t.Fatalf("rendered HTML %q does not contain the spread values", html)
+	}
+	if want := `<div class="panel"><span>Inbox: 3</span></div>`; !strings.Contains(html, want) {
+		t.Fatalf("rendered HTML %q does not contain Panel's own forwarding call %q", html, want)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	gosx "m31labs.dev/gosx"
@@ -245,4 +246,50 @@ func TestGridironAcceptanceTeamMarkCallSitesCompileAndCheck(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	checkFixtureInRealModule(t, "teammarkcallsites", "teammark.gsx", teamMarkFixtureCallSitesSource)
+}
+
+// TestStrictcheckRejectsPromotedEachBindingHopZeroField is gosx#182/#184
+// M-2's real-Go-compiler-backed proof, alongside the lowerer-level
+// TestCompileStrictEachRejectsPromotedBindingHopZeroField: before the fix,
+// the projected check program compiled clean here — the promoted field
+// resolves fine in real Go, same package — which is exactly why the old
+// "the package checker backstops it" comment was false for this root.
+// strictcheck must reject it at the strict-syntax stage (the same
+// diagnostic gosx.Compile produces), never reach the Go compiler at all.
+func TestStrictcheckRejectsPromotedEachBindingHopZeroField(t *testing.T) {
+	source := `package app
+type Base struct { Label string }
+type Row struct { Base; Points string }
+type RowProps struct { Rows []Row }
+component C(props: RowProps) {
+	return <section><Each of={props.Rows} as="row"><span>{row.Label}</span></Each></section>
+}
+`
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	goMod := "module example.test/promotedhopzero\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => " + filepath.ToSlash(root) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goSum, err := os.ReadFile("go.sum")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), goSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "promotedhopzero.gsx")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = strictcheck.CheckFileWithOptions(context.Background(), path, strictcheck.Options{GOFLAGS: "-mod=mod"})
+	if err == nil {
+		t.Fatal("strictcheck unexpectedly accepted a promoted field read at an <Each> binding's hop 0")
+	}
+	if want := "declares no visible field Label"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
 }

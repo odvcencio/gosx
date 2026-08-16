@@ -853,6 +853,15 @@ func strictEachRowProgram() *ir.Program {
 		Root:   rowRoot,
 	})
 
+	// This named "Breakdown" attribute (a "[]T" PropsFields root, supplied
+	// by name rather than through a spread or an <Each of>) is not a shape
+	// gosx#182/#184 minor m-1/m-4: real .gsx source never compiles a named
+	// attribute into a slice-typed field — validateStrictComponentCall
+	// never routes one there. This hand-built ir.Program exercises
+	// strictComponentSliceAttrValue's own boundary check directly, the
+	// same way this file's other hand-built-IR tests cover a route
+	// boundary function a compiler-admitted program cannot reach on its
+	// own; it is not a regression-of-compilability concern.
 	rowCall := prog.AddNode(ir.Node{
 		Kind:  ir.NodeComponent,
 		Tag:   "Row",
@@ -926,14 +935,35 @@ func TestStrictEachEmptyAndNilSliceRenderEmptyString(t *testing.T) {
 // (newest-first) matches the lexical shadow ban's guarantee, so the two
 // cannot disagree (design spec section 2.2). It mirrors
 // TestGSXEachScopeIsolatesItemBindings (route/gsxperf_test.go) for the
-// strict surface, and doubles as the implicit-key-binding-absent proof: the
-// strict Each path never binds an outer.rowKey-style name, so this
-// component reads only its own declared bindings, unlike the legacy Each
-// path this file's gsxperf_test.go exercises.
+// strict surface.
+//
+// It does NOT prove an implicit itemNameKey binding is absent — that
+// binding IS pushed: writeEach (this file's fileprogram.go) is the one
+// implementation both the legacy and the strict Each path render through,
+// and for a slice source (what strict <Each> requires) fileEachEntries
+// sets entry.Key equal to the index, so entry.Key != nil always holds and
+// "rowKey" lands in the render-time scope chain exactly as "row" does —
+// this is a documented spec drift from an earlier design that omitted it
+// for strict bodies. It is unobservable from a strict body only because
+// the COMPILE-TIME validator (strictcomponent.Scope) knows nothing but
+// props and the as/index names an <Each> actually declares — any
+// selector rooted at "rowKey" is rejected as an out-of-scope identifier
+// before this render-time scope chain is ever consulted, and for a slice
+// specifically, Key ties to Index, offering no field a rowKey selector
+// could reach even if one somehow compiled.
 func TestStrictEachScopeIsolatesNestedBindings(t *testing.T) {
 	prog := &ir.Program{}
 	innerLabelID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "inner.Label"})
 	innerSpanID := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "b", Children: []ir.NodeID{innerLabelID}})
+	// of={row.Stats} is a BINDING-rooted of source (gosx#182/#184 minor
+	// m-4): real .gsx source cannot compile this — enterStrictEach
+	// resolves an of source through strictcomponent.ServerPropPath, which
+	// requires a "props" root unconditionally, so a same-file <Each
+	// of={row.Stats}> is always rejected at compile time (this release
+	// only admits of={props.Field}, section 2.4). This hand-built
+	// ir.Program is boundary-defensive coverage of the render path a
+	// compiler-admitted program cannot reach, not a claim this shape
+	// compiles.
 	innerEachID := prog.AddNode(ir.Node{
 		Kind: ir.NodeComponent,
 		Tag:  "Each",
@@ -1235,6 +1265,153 @@ func TestStrictSpreadProps(t *testing.T) {
 		want := "field Tone is a promoted (embedded) field"
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error = %v, want it to contain %q", err, want)
+		}
+	})
+}
+
+// TestTierOneBarePropsSpreadRenders and TestTierOneNestedFieldSpreadRenders
+// are gosx#182/#184 M-1's tier-1 render tests for both admitted E2 tier-1
+// spread source shapes: bare props (the whole props value) and a props
+// field selector. Before the fix, a strict body's "props" scope binding was
+// always the map[string]any localComponentProps built for the current
+// frame, and re-spreading that map into strictSpreadProps always failed
+// the struct-kind check there — so the admitted, documented bare-props
+// shape could compile but could never render. The props.Field shape
+// already worked (requireStrictStructValue preserves the real struct value
+// under its own map key), so it is here as the other half of the pair.
+func TestTierOneBarePropsSpreadRenders(t *testing.T) {
+	source := `package app
+type MarkProps struct {
+	Tone string
+}
+component Mark(props: MarkProps) {
+	return <span>{props.Tone}</span>
+}
+component Panel(props: MarkProps) {
+	return <div class="panel"><Mark {...props}></Mark></div>
+}
+func Page() Node {
+	return <main><Panel {...src}></Panel></main>
+}
+`
+	prog, err := gosx.Compile([]byte(source))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	type markPropsGo struct{ Tone string }
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"src": markPropsGo{Tone: "red"}},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	if want := `<main><div class="panel"><span>red</span></div></main>`; html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+func TestTierOneNestedFieldSpreadRenders(t *testing.T) {
+	source := `package app
+type MarkProps struct {
+	Tone string
+}
+component Mark(props: MarkProps) {
+	return <span>{props.Tone}</span>
+}
+type OuterProps struct {
+	Away MarkProps
+	Name string
+}
+component Outer(props: OuterProps) {
+	return <div><b>{props.Name}</b><Mark {...props.Away}></Mark></div>
+}
+func Page() Node {
+	return <main><Outer {...src}></Outer></main>
+}
+`
+	prog, err := gosx.Compile([]byte(source))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	// requireStrictStructValue checks a nested struct-typed field's runtime
+	// Go type NAME against the .gsx-declared name exactly ("MarkProps"),
+	// unlike the outer Outer{...src} call itself (a tier-2 spread, proved
+	// field by field with no such nominal check on its own container
+	// type) — so this local type must be named MarkProps, not merely
+	// shaped like it.
+	type MarkProps struct{ Tone string }
+	type outerPropsGo struct {
+		Away MarkProps
+		Name string
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"src": outerPropsGo{Away: MarkProps{Tone: "blue"}, Name: "N"}},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	if want := `<main><div><b>N</b><span>blue</span></div></main>`; html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+// TestZeroReadStrictCalleeSpreadBoundaryStillChecksKind covers minor m-2: a
+// strict callee with an empty read set (PropsFields nil) used to bypass
+// localComponentProps' strict spread branch entirely (the early
+// len(comp.PropsFields)==0 return fell to the generic, non-strict
+// componentProps builder), so a nil, map, or scalar spread source rendered
+// clean instead of failing closed the way design spec section 3.4
+// requires. A field-less but genuinely struct-typed source must still
+// pass — there is nothing to prove per field, but the nil/kind checks
+// still run.
+func TestZeroReadStrictCalleeSpreadBoundaryStillChecksKind(t *testing.T) {
+	source := `package app
+type EmptyProps struct {
+	Unused string
+}
+component Leaf(props: EmptyProps) {
+	return <span>leaf</span>
+}
+func Page() Node {
+	return <main><Leaf {...src}></Leaf></main>
+}
+`
+	prog, err := gosx.Compile([]byte(source))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if fields := prog.Components[0].PropsFields; len(fields) != 0 {
+		t.Fatalf("Leaf.PropsFields = %#v, want empty", fields)
+	}
+
+	for _, tc := range []struct {
+		name string
+		src  any
+	}{
+		{"nil", nil},
+		{"map", map[string]any{"Unused": "x"}},
+		{"int", 42},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+				Values: map[string]any{"src": tc.src},
+			})
+			if err == nil {
+				t.Fatalf("%s source: want a boundary error, got a clean render", tc.name)
+			}
+		})
+	}
+
+	t.Run("struct still passes", func(t *testing.T) {
+		type emptyPropsGo struct{ Unused string }
+		html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+			Values: map[string]any{"src": emptyPropsGo{Unused: "x"}},
+		})
+		if err != nil {
+			t.Fatalf("RenderProgramComponent: %v", err)
+		}
+		if want := `<main><span>leaf</span></main>`; html != want {
+			t.Fatalf("html = %q, want %q", html, want)
 		}
 	})
 }

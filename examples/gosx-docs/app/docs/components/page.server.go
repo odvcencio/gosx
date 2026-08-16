@@ -105,7 +105,7 @@ component Panel(props: BadgeProps) {
 }
 
 func Page() Node {
-	return <main><Badge {...data.loaderRow} /></main>
+	return <main><Panel {...data.loaderRow} /></main>
 }`
 
 func init() {
