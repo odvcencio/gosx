@@ -15,10 +15,11 @@ func init() {
 					"mode":        "light",
 					"title":       "Runtime",
 					"description": "Managed navigation, script roles, prefetch, telemetry, and page disposal.",
-					"tags":        []string{"navigation", "transitions", "lifecycle", "prefetch", "telemetry", "observability"},
+					"tags":        []string{"navigation", "transitions", "lifecycle", "prefetch", "revalidation", "telemetry", "observability"},
 					"toc": []map[string]string{
 						{"href": "#client-navigation", "label": "Client navigation"},
 						{"href": "#page-transitions", "label": "Transition ownership"},
+						{"href": "#periodic-revalidation", "label": "Periodic revalidation"},
 						{"href": "#lifecycle-scripts", "label": "Managed scripts"},
 						{"href": "#prefetch", "label": "Prefetch"},
 						{"href": "#runtime-telemetry", "label": "Telemetry"},

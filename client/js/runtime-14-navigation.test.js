@@ -518,6 +518,255 @@ test("navigation fetch epoch does not commit when page application fails", async
   env.context.__gosx_dispose_page = async function() {};
 });
 
+test("declarative revalidation logs one warning and stays disabled for an invalid interval", () => {
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-revalidate-interval", "10h");
+  const env = createContext({ elements: [main] });
+  const timers = installManualTimers(env.context);
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(timers.count(), 0);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-revalidate-interval/);
+});
+
+test("declarative revalidation logs one warning and stays disabled for a cross-origin src", () => {
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  main.setAttribute("data-gosx-revalidate-src", "https://other.example/api/version");
+  const env = createContext({ elements: [main] });
+  const timers = installManualTimers(env.context);
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(timers.count(), 0);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-revalidate-src/);
+});
+
+test("declarative revalidation without a src revalidates unconditionally on the interval", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const main = new FakeElement("main", null);
+  main.id = "scoreboard";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [url]: { text: "__SCOREBOARD_REFRESH__", url },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "scoreboard";
+  freshMain.setAttribute("data-gosx-revalidate-interval", "4s");
+  parsedDocs.set("__SCOREBOARD_REFRESH__", buildNavigatedDocument({
+    title: "Scoreboard",
+    bodyNodes: [freshMain],
+  }));
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.filter((call) => call.url === url).length, 1);
+  assert.equal(timers.count(), 1, "the refreshed page still carries the attribute, so the timer survives");
+});
+
+test("declarative revalidation triggers exactly once when its src body changes, and never while it stays the same", async () => {
+  const url = "http://localhost:3000/draft-room";
+  const versionURL = "http://localhost:3000/api/league/version";
+  const main = new FakeElement("main", null);
+  main.id = "draft-room";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  main.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+  let versionBody = '{"version":1}';
+  let versionCalls = 0;
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [versionURL]: () => {
+        versionCalls += 1;
+        return { text: versionBody };
+      },
+      [url]: { text: "__DRAFT_ROOM_REFRESH__", url },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "draft-room";
+  freshMain.setAttribute("data-gosx-revalidate-interval", "4s");
+  freshMain.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+  parsedDocs.set("__DRAFT_ROOM_REFRESH__", buildNavigatedDocument({
+    title: "Draft room",
+    bodyNodes: [freshMain],
+  }));
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 1, "the first successful poll only records the baseline");
+  assert.equal(env.fetchCalls.filter((call) => call.url === url).length, 0);
+
+  versionBody = '{"version":2}';
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 2);
+  assert.equal(env.fetchCalls.filter((call) => call.url === url).length, 1, "a changed body triggers exactly one revalidate");
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 3);
+  assert.equal(env.fetchCalls.filter((call) => call.url === url).length, 1, "an unchanged body never triggers a second revalidate");
+
+  const versionRequest = env.fetchCalls.find((call) => call.url === versionURL);
+  assert.equal(versionRequest.init.headers.Accept, "application/json");
+  assert.equal(versionRequest.init.cache, "no-store");
+});
+
+test("declarative revalidation skips a tick while the document is hidden", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const versionURL = "http://localhost:3000/api/league/version";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  main.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [versionURL]: { text: '{"version":1}' },
+    },
+  });
+  env.context.location.href = url;
+  env.document.visibilityState = "hidden";
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 0, "a hidden document must skip the tick entirely");
+});
+
+test("declarative revalidation skips a tick while an input, textarea, or select is focused", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const versionURL = "http://localhost:3000/api/league/version";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  main.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+  const input = new FakeElement("input", null);
+  main.appendChild(input);
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [versionURL]: { text: '{"version":1}' },
+    },
+  });
+  env.context.location.href = url;
+  env.document.activeElement = input;
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 0, "a focused form control must skip the tick entirely");
+});
+
+test("declarative revalidation skips a tick while a navigation is already in flight", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const versionURL = "http://localhost:3000/api/league/version";
+  const otherURL = "http://localhost:3000/other";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  main.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+  let resolvePending;
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [versionURL]: { text: '{"version":1}' },
+      [otherURL]: () => new Promise((resolve) => { resolvePending = resolve; }),
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  parsedDocs.set("__OTHER_PAGE__", buildNavigatedDocument({
+    title: "Other",
+    bodyNodes: [new FakeElement("main", null)],
+  }));
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  const pending = env.context.__gosx.navigation.navigate(otherURL, { replace: false });
+  await Promise.resolve();
+  assert.equal(env.context.__gosx.navigation.getState().phase, "pending");
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === versionURL).length,
+    0,
+    "an in-flight navigation must skip the tick entirely",
+  );
+
+  resolvePending({ text: "__OTHER_PAGE__", url: otherURL });
+  assert.equal(await pending, true);
+});
+
+test("declarative revalidation tears down its interval when a soft navigation lands on a page without the attribute", async () => {
+  const url = "http://localhost:3000/plain-page";
+  const main = new FakeElement("main", null);
+  main.id = "draft-room";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [url]: { text: "__PLAIN_PAGE__", url },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const plainMain = new FakeElement("main", null);
+  plainMain.id = "plain-page";
+  parsedDocs.set("__PLAIN_PAGE__", buildNavigatedDocument({
+    title: "Plain page",
+    bodyNodes: [plainMain],
+  }));
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  assert.equal(await env.context.__gosx.navigation.navigate(url, { replace: false }), true);
+  await flushAsyncWork();
+
+  assert.equal(timers.count(), 0, "the new page carries no revalidate attribute, so the timer must be cleared");
+});
+
 test("navigation runtime sends typed beacons once per soft navigation path", async () => {
   function beaconScript() {
     const script = new FakeElement("script", null);
