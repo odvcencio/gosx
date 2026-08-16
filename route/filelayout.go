@@ -272,7 +272,11 @@ type fileRenderOptions struct {
 	Scene3DStyles         gosxcss.Scene3DStylesheet
 	// Profile installs an EXPERIMENTAL render-profile hook (gosx#185). A nil
 	// Profile reproduces today's rendering exactly, byte for byte. See
-	// RenderProfile.
+	// RenderProfile. Only RenderProgramComponent sets this field, from
+	// ProgramRenderEnv.Profile: renderFileNode, the entry point a
+	// file-routed page or layout renders through, has no Profile field of
+	// its own to set it from, so a file-routed page or layout cannot
+	// install a render profile today (gosx#185 m6).
 	Profile *RenderProfile
 }
 

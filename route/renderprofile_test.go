@@ -247,67 +247,98 @@ func Page() Node {
 	}
 }
 
-// TestRenderProfileManagedFormShorthandStillExpandsUnderProfile reuses the
-// managed_form_shorthand_test.go fixture pattern (gosx#179) to prove an
-// active render profile does not weaken the managed-form contract: the
-// shorthand still expands to the full runtime-contract attribute set even
-// though an AttrWriter is rewriting the form's ordinary attributes.
-func TestRenderProfileManagedFormShorthandStillExpandsUnderProfile(t *testing.T) {
-	html := compileManagedFormFixtureWithProfile(t,
-		`<form method="post" action="/x/__actions/y" data-gosx-managed="true">`,
-		&RenderProfile{
-			AttrWriter: func(tag string, attrs []RenderAttr) []RenderAttr {
-				// A benign, observable rewrite: append a marker attribute to
-				// every element. If this ran on the managed-form contract
-				// attributes too, the marker would appear more than once per
-				// element and the contract assertions below would still pass
-				// (this profile never touches them) — proving the contract
-				// attributes are outside AttrWriter's reach, not merely
-				// untouched by coincidence.
-				return append(attrs, RenderAttr{Name: "data-profile-seen", Value: tag})
-			},
-		})
+// TestRenderProfileAttrWriterCannotVetoManagedFormContractAttrs is the
+// gosx#185 B1 negative test for a vetoing profile: an AttrWriter that drops
+// every "data-gosx-" attribute it is handed must not be able to make the
+// author's own contract attributes disappear from the output. Before B1's
+// fix, writeManagedFormContract computed presence from the pre-hook
+// node.Attrs, saw the author-written attributes there, concluded the
+// contract was already satisfied, and never re-added what AttrWriter had
+// just vetoed out of the actual output — orphaning the contract entirely.
+func TestRenderProfileAttrWriterCannotVetoManagedFormContractAttrs(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package main
 
-	for _, want := range []string{
-		`method="post"`,
-		`action="/x/__actions/y"`,
-		gosx.ManagedFormStateAttr + `="idle"`,
-		gosx.EnhancementAttr + `="form"`,
-		gosx.EnhancementLayerAttr + `="bootstrap"`,
-		gosx.RuntimeFallbackAttr + `="native-form"`,
-		`data-profile-seen="form"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("expected %q in rendered managed-shorthand form html %q", want, html)
-		}
-	}
-	if !hasManagedFormAttr(html) {
-		t.Fatalf("expected the bare %s attribute in rendered managed-shorthand form html %q", gosx.ManagedFormAttr, html)
-	}
-	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
-		t.Fatalf("expected shorthand attribute removed from output, got %q", html)
-	}
+func Page() Node {
+	return <form method="post" action="/a" data-gosx-form data-gosx-form-state="idle"></form>
 }
-
-func compileManagedFormFixtureWithProfile(t *testing.T, formOpenTag string, profile *RenderProfile) string {
-	t.Helper()
-	src := "package docs\n\n" +
-		"func Page() Node {\n" +
-		"\treturn <main>\n" +
-		"\t\t" + formOpenTag + "\n" +
-		"\t\t\t<input name=\"q\" value=\"docs\"></input>\n" +
-		"\t\t</form>\n" +
-		"\t</main>\n" +
-		"}\n"
-	prog, err := gosx.Compile([]byte(src))
+`))
 	if err != nil {
 		t.Fatalf("compile: %v", err)
+	}
+
+	profile := &RenderProfile{
+		AttrWriter: func(tag string, attrs []RenderAttr) []RenderAttr {
+			out := attrs[:0:0]
+			for _, a := range attrs {
+				if strings.HasPrefix(a.Name, "data-gosx-") {
+					continue // try to veto every managed-form contract attribute
+				}
+				out = append(out, a)
+			}
+			return out
+		},
 	}
 	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Profile: profile})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
-	return html
+
+	if !hasManagedFormAttr(html) {
+		t.Fatalf("AttrWriter veto orphaned the bare %s contract attribute: %q", gosx.ManagedFormAttr, html)
+	}
+	if !strings.Contains(html, gosx.ManagedFormStateAttr+`="idle"`) {
+		t.Fatalf("AttrWriter veto orphaned %s, or lost the author's original value: %q", gosx.ManagedFormStateAttr, html)
+	}
+}
+
+// TestRenderProfileAttrWriterCannotAppendConflictingManagedFormContractAttrs
+// is the gosx#185 B1 negative test for an appending profile: an AttrWriter
+// that appends its own conflicting copy of a contract attribute must not
+// win. Before B1's fix, the profile's copy was emitted first (from
+// AttrWriter's output) and the contract's own copy second (from
+// writeManagedFormContract, unconditionally, right after) — two attributes
+// with the same name, with an HTML parser keeping whichever one it sees
+// first, so the profile's forged value silently won.
+func TestRenderProfileAttrWriterCannotAppendConflictingManagedFormContractAttrs(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package main
+
+func Page() Node {
+	return <form method="post" action="/x/__actions/y" data-gosx-managed="true"></form>
+}
+`))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	profile := &RenderProfile{
+		AttrWriter: func(tag string, attrs []RenderAttr) []RenderAttr {
+			if tag != "form" {
+				return attrs
+			}
+			return append(attrs,
+				RenderAttr{Name: gosx.ManagedFormStateAttr, Value: "PROFILE-WINS"},
+				RenderAttr{Name: gosx.EnhancementAttr, Value: "PROFILE-WINS"},
+				RenderAttr{Name: gosx.RuntimeFallbackAttr, Value: "PROFILE-WINS"},
+			)
+		},
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Profile: profile})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if strings.Contains(html, "PROFILE-WINS") {
+		t.Fatalf("AttrWriter's appended contract-attribute copy reached output: %q", html)
+	}
+	for _, want := range []string{
+		gosx.ManagedFormStateAttr + `="idle"`,
+		gosx.EnhancementAttr + `="form"`,
+		gosx.RuntimeFallbackAttr + `="native-form"`,
+	} {
+		if count := strings.Count(html, want); count != 1 {
+			t.Fatalf("want exactly one %q in output, got %d: %q", want, count, html)
+		}
+	}
 }
 
 // emailishClassStyles is the toy "email-ish" profile's class-to-inline-style
@@ -320,18 +351,72 @@ var emailishClassStyles = map[string]string{
 	"miss": "background:#f00",
 }
 
+// emailishAttrWriter rewrites a recognized class value to its inline-style
+// stub, merging it into any style attribute already on the element instead
+// of emitting a second style attribute alongside the author's own (gosx#185
+// M4). AttrWriter itself does no by-name merging — a profile that returns
+// two RenderAttr entries named "style" gets two style attributes in the
+// output, the same as if two ir.Attrs shared a name — and this demo is the
+// starting point people copy, so it must not carry that bug into every
+// downstream profile that starts from it.
 func emailishAttrWriter(tag string, attrs []RenderAttr) []RenderAttr {
-	out := make([]RenderAttr, 0, len(attrs))
+	// Collect by role, not by source order: the author's own style always
+	// merges ahead of the class-derived addition, regardless of whether
+	// class or style comes first in the element's attribute list.
+	authorStyle, hasAuthorStyle := "", false
+	classStyle, hasClassStyle := "", false
 	for _, attr := range attrs {
-		if !attr.Boolean && attr.Name == "class" {
+		if attr.Boolean {
+			continue
+		}
+		switch attr.Name {
+		case "style":
+			authorStyle, hasAuthorStyle = attr.Value, true
+		case "class":
 			if style, ok := emailishClassStyles[attr.Value]; ok {
-				out = append(out, RenderAttr{Name: "style", Value: style})
-				continue
+				classStyle, hasClassStyle = style, true
 			}
+		}
+	}
+	hasStyle := hasAuthorStyle || hasClassStyle
+	merged := mergeEmailishStyle(authorStyle, classStyle)
+
+	out := make([]RenderAttr, 0, len(attrs)+1)
+	styleWritten := false
+	for _, attr := range attrs {
+		switch {
+		case !attr.Boolean && attr.Name == "class":
+			if _, ok := emailishClassStyles[attr.Value]; ok {
+				continue // merged into style above; the class attribute itself is dropped
+			}
+		case !attr.Boolean && attr.Name == "style":
+			if hasStyle && !styleWritten {
+				out = append(out, RenderAttr{Name: "style", Value: merged})
+				styleWritten = true
+			}
+			continue
 		}
 		out = append(out, attr)
 	}
+	if hasStyle && !styleWritten {
+		out = append(out, RenderAttr{Name: "style", Value: merged})
+	}
 	return out
+}
+
+// mergeEmailishStyle appends a new inline-style declaration onto an
+// existing one, separating declarations the way hand-authored inline CSS
+// does. An empty side of the merge contributes nothing, so the first
+// declaration on an element never picks up a stray leading separator.
+func mergeEmailishStyle(existing, addition string) string {
+	switch {
+	case existing == "":
+		return addition
+	case addition == "":
+		return existing
+	default:
+		return existing + "; " + addition
+	}
 }
 
 func emailishValidate(prog *ir.Program) []ir.Diagnostic {
@@ -415,4 +500,139 @@ func Page() Node {
 			t.Fatalf("expected an unrecognized class value passed through unchanged: %q", html)
 		}
 	})
+
+	// gosx#185 M4: an element that already carries its own style attribute
+	// alongside a recognized class must end up with exactly one merged
+	// style attribute, not two separate ones. This is the regression the
+	// original, unmerged emailishAttrWriter would have hit.
+	t.Run("class rewrite merges with an existing style attribute", func(t *testing.T) {
+		prog, err := gosx.Compile([]byte(`package main
+
+func Page() Node {
+	return <table><tr><td class="hit" style="color:blue">H</td></tr></table>
+}
+`))
+		if err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+		html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Profile: profile})
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		if count := strings.Count(html, `style="`); count != 1 {
+			t.Fatalf("want exactly one style attribute, got %d: %q", count, html)
+		}
+		if !strings.Contains(html, `style="color:blue; background:#0f0"`) {
+			t.Fatalf("expected the author's style and the class rewrite merged into one attribute: %q", html)
+		}
+	})
+}
+
+// TestRenderProfileAttrWriterInvalidNameFailsClosed is the gosx#185 M1
+// regression test: html.EscapeString does not escape a space or an "=", so
+// an AttrWriter that returns a Name containing either could otherwise
+// smuggle extra attributes past one Name field. The render must fail
+// closed with a *RenderProfileError instead of emitting whatever an HTML
+// parser would make of the unescaped syntax characters.
+func TestRenderProfileAttrWriterInvalidNameFailsClosed(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package main
+
+func Page() Node {
+	return <div title="benign">x</div>
+}
+`))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	profile := &RenderProfile{
+		AttrWriter: func(tag string, attrs []RenderAttr) []RenderAttr {
+			return []RenderAttr{{Name: `x onmouseover=alert(1) y`, Value: "z"}}
+		},
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Profile: profile})
+	if err == nil {
+		t.Fatalf("expected an error for an invalid attribute name, got rendered html %q", html)
+	}
+	if html != "" {
+		t.Fatalf("expected no partial output on an invalid attribute name, got %q", html)
+	}
+	var profileErr *RenderProfileError
+	if !errors.As(err, &profileErr) {
+		t.Fatalf("error is not a *RenderProfileError: %v (%T)", err, err)
+	}
+	if !strings.Contains(err.Error(), "invalid attribute name") {
+		t.Fatalf("error message %q does not name the invalid-attribute-name failure", err.Error())
+	}
+}
+
+// TestRenderProfileAttrWriterPanicFailsClosed is the gosx#185 m5 regression
+// test: a panicking AttrWriter must not crash the calling process. It has
+// to become an ordinary *RenderProfileError instead, recoverable the same
+// way a reported Validate diagnostic is.
+func TestRenderProfileAttrWriterPanicFailsClosed(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package main
+
+func Page() Node {
+	return <div>x</div>
+}
+`))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	profile := &RenderProfile{
+		AttrWriter: func(tag string, attrs []RenderAttr) []RenderAttr {
+			panic("boom")
+		},
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Profile: profile})
+	if err == nil {
+		t.Fatalf("expected an error from the panicking AttrWriter, got rendered html %q", html)
+	}
+	if html != "" {
+		t.Fatalf("expected no partial output after an AttrWriter panic, got %q", html)
+	}
+	var profileErr *RenderProfileError
+	if !errors.As(err, &profileErr) {
+		t.Fatalf("error is not a *RenderProfileError: %v (%T)", err, err)
+	}
+	if !strings.Contains(err.Error(), "panicked") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("error message %q does not name the panic or its value", err.Error())
+	}
+}
+
+// TestRenderProfileValidatePanicFailsClosed is the gosx#185 m5 regression
+// test for Validate: a panic there must become a *RenderProfileError too,
+// not crash the caller.
+func TestRenderProfileValidatePanicFailsClosed(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package main
+
+func Page() Node {
+	return <div>x</div>
+}
+`))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	profile := &RenderProfile{
+		Validate: func(p *ir.Program) []ir.Diagnostic {
+			panic("kaboom")
+		},
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{Profile: profile})
+	if err == nil {
+		t.Fatalf("expected an error from the panicking Validate, got rendered html %q", html)
+	}
+	if html != "" {
+		t.Fatalf("expected no partial output after a Validate panic, got %q", html)
+	}
+	var profileErr *RenderProfileError
+	if !errors.As(err, &profileErr) {
+		t.Fatalf("error is not a *RenderProfileError: %v (%T)", err, err)
+	}
+	if !strings.Contains(err.Error(), "panicked") || !strings.Contains(err.Error(), "kaboom") {
+		t.Fatalf("error message %q does not name the panic or its value", err.Error())
+	}
 }

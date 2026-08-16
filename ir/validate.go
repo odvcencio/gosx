@@ -15,7 +15,16 @@ type Diagnostic struct {
 }
 
 func (d Diagnostic) String() string {
-	s := fmt.Sprintf("%d:%d: %s", d.Span.StartLine, d.Span.StartCol, d.Message)
+	message := d.Message
+	if strings.TrimSpace(message) == "" {
+		// gosx#185 n3: an empty Message would otherwise print as a bare
+		// "line:col: " with nothing readable after it — most likely from a
+		// hand-built Diagnostic (a render profile's Validate hook, for
+		// example) that forgot to set one, so say so instead of staying
+		// silent about which diagnostic is the empty one.
+		message = "(no message)"
+	}
+	s := fmt.Sprintf("%d:%d: %s", d.Span.StartLine, d.Span.StartCol, message)
 	if d.Hint != "" {
 		s += " (" + d.Hint + ")"
 	}

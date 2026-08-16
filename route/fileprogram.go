@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
@@ -41,9 +42,17 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 	// written, over the whole compiled program, not just the component
 	// being rendered. A non-empty diagnostic list aborts the render here —
 	// fail closed, no output written at all — rather than after the
-	// component below has already produced partial HTML.
+	// component below has already produced partial HTML. It also runs
+	// before the "component not found" check just below: a bad component
+	// name and a Validate refusal can both apply to one call, and Validate
+	// wins the race, reporting its diagnostics instead of the not-found
+	// error (gosx#185 n2).
 	if opts.Profile != nil && opts.Profile.Validate != nil {
-		if diags := opts.Profile.Validate(prog); len(diags) > 0 {
+		diags, err := runProfileValidate(opts.Profile.Validate, prog)
+		if err != nil {
+			return "", false, err
+		}
+		if len(diags) > 0 {
 			return "", false, &RenderProfileError{Diagnostics: diags}
 		}
 	}
@@ -66,6 +75,24 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 		return "", renderer.replaced, renderer.err
 	}
 	return b.String(), renderer.replaced, nil
+}
+
+// runProfileValidate calls validate and recovers a panic instead of letting
+// it unwind out of RenderProgramComponent and crash the caller's process
+// (gosx#185 m5): a profile is trusted code, but "trusted" should not mean "a
+// bug here takes down the whole render," any more than an AttrWriter bug
+// should (see callAttrWriterSafely). A panic becomes a *RenderProfileError
+// naming the Validate hook, the same fail-closed shape as an ordinary
+// diagnostic refusal.
+func runProfileValidate(validate func(*ir.Program) []ir.Diagnostic, prog *ir.Program) (diags []ir.Diagnostic, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = &RenderProfileError{Diagnostics: []ir.Diagnostic{{
+				Message: fmt.Sprintf("render profile: Validate panicked: %v", rec),
+			}}}
+		}
+	}()
+	return validate(prog), nil
 }
 
 // fileProgramRenderSizeHint estimates the output size from the node count so the
@@ -165,16 +192,26 @@ func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, en
 		attrs = managedFormAttrs(attrs, formContract.Mode)
 	}
 	// gosx#185: a render profile's AttrWriter, when set, sees this same
-	// fully-expanded attrs slice — after shorthand and managed-form
-	// expansion, before renderAttrs' own escaping — and can rewrite, veto,
-	// or append entries. No profile, or a profile with no AttrWriter, takes
-	// the original renderAttrs path unchanged.
+	// attrs slice — after the managed-form shorthand attribute is removed
+	// (the hook never sees the shorthand itself, or the runtime-contract
+	// attributes it expands into: those are added afterward, in
+	// writeManagedFormContract, outside AttrWriter's reach entirely),
+	// before renderAttrs' own escaping — and can rewrite, veto, or append
+	// entries. Any author-written copy of a #179 contract attribute name
+	// that IS present here (see renderProfileContractAttrNames) still goes
+	// to the hook, but renderAttrsWithProfile discards whatever the hook's
+	// output does to it and restores the original (gosx#185 B1) — that
+	// reconciled, effective list is what writeManagedFormContractPostHook
+	// below computes contract presence from. No profile, or a profile with
+	// no AttrWriter, takes the original renderAttrs/writeManagedFormContract
+	// path unchanged.
 	if writer := r.profileAttrWriter(); writer != nil {
-		r.renderAttrsWithProfile(b, node.Tag, attrs, env, excludeSpreadKey, writer)
+		effective := r.renderAttrsWithProfile(b, node.Tag, attrs, env, excludeSpreadKey, writer)
+		r.writeManagedFormContractPostHook(b, effective, formContract)
 	} else {
 		r.renderAttrs(b, attrs, env, excludeSpreadKey)
+		r.writeManagedFormContract(b, node.Attrs, env, formContract)
 	}
-	r.writeManagedFormContract(b, node.Attrs, env, formContract)
 	// Match node.go's renderNodeHTML: only self-close a void element that has
 	// no children. The old branch dropped children silently.
 	if ir.VoidElements[node.Tag] && len(node.Children) == 0 {
@@ -1154,19 +1191,142 @@ func (r *fileProgramRenderer) profileAttrWriter() AttrWriter {
 // renderAttrsWithProfile resolves attrs the same way renderAttrs's
 // per-attribute helpers do — {expr} evaluation, {...spread} expansion and
 // flattening, and the excludeSpreadKey filter all run first — then hands the
-// fully resolved, unescaped list to writer before emitting. renderResolvedAttrs
-// is the only place a RenderAttr produced by writer reaches output, and it
-// escapes every Name and Value unconditionally, so writer cannot inject
-// unescaped HTML through a returned value.
-func (r *fileProgramRenderer) renderAttrsWithProfile(b *strings.Builder, tag string, attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string, writer AttrWriter) {
+// fully resolved, unescaped list to writer. writer's return goes through
+// resolveContractProtectedAttrs, which discards any add, change, or removal
+// it made to a #179 managed-form contract attribute name and restores the
+// original (gosx#185 B1), before renderResolvedAttrs emits it.
+// renderResolvedAttrs is the only place a RenderAttr produced by writer
+// reaches output, and it escapes every Name and Value unconditionally, so
+// writer cannot inject unescaped HTML through a returned value.
+//
+// The returned []RenderAttr is the same effective, post-reconciliation list
+// that rendered — the caller passes it to writeManagedFormContractPostHook
+// so contract presence is computed from what actually rendered, not from
+// the pre-hook node.Attrs (gosx#185 B1(b)).
+func (r *fileProgramRenderer) renderAttrsWithProfile(b *strings.Builder, tag string, attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string, writer AttrWriter) []RenderAttr {
 	resolved := resolveFileAttrs(attrs, env, excludeSpreadKey)
-	renderResolvedAttrs(b, writer(tag, resolved))
+	hookOut, err := callAttrWriterSafely(writer, tag, resolved)
+	if err != nil {
+		// A panicking AttrWriter is a bug in trusted profile code, not a
+		// process-fatal event (gosx#185 m5) — same fail-closed shape as an
+		// invalid returned Name (see renderResolvedAttrs) or a refused
+		// Validate pass: the whole render is discarded by the r.err check
+		// in renderFileProgramHTML, so what this call renders here does
+		// not matter; resolved is returned only to keep the type honest.
+		r.profileError(err)
+		return resolved
+	}
+	effective := resolveContractProtectedAttrs(resolved, hookOut)
+	r.renderResolvedAttrs(b, tag, effective)
+	return effective
 }
+
+// callAttrWriterSafely calls writer and recovers a panic instead of letting
+// it unwind into the renderer and crash the process (gosx#185 m5): a
+// profile is trusted code, but a bug in it should fail this one render
+// closed, the same as a reported Validate diagnostic does, not take down
+// whatever process is calling RenderProgramComponent.
+func callAttrWriterSafely(writer AttrWriter, tag string, attrs []RenderAttr) (out []RenderAttr, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = &RenderProfileError{Diagnostics: []ir.Diagnostic{{
+				Message: fmt.Sprintf("render profile: AttrWriter panicked for <%s>: %v", tag, rec),
+			}}}
+		}
+	}()
+	return writer(tag, attrs), nil
+}
+
+// resolveContractProtectedAttrs enforces the gosx#185 B1 rule documented on
+// RenderProfile: an AttrWriter call may see a #179 managed-form contract
+// attribute (see renderProfileContractAttrNames) in original, its resolved,
+// pre-hook input, but its returned copy in hookOut never reaches output
+// unchanged from what the hook did to it. This filters every protected name
+// out of hookOut, then reinserts each one's ORIGINAL RenderAttr value from
+// original at the index it held there: a hook's rewrite or veto of a
+// protected name is discarded and replaced with the true original, and a
+// hook's freshly appended, conflicting copy of a protected name — one with
+// no original in original to restore — is simply dropped, so it can never
+// render at all, let alone before the contract's own copy.
+func resolveContractProtectedAttrs(original, hookOut []RenderAttr) []RenderAttr {
+	if !attrsContainProtectedName(original) && !attrsContainProtectedName(hookOut) {
+		return hookOut
+	}
+	filtered := make([]RenderAttr, 0, len(hookOut))
+	for _, attr := range hookOut {
+		if renderProfileContractAttrNames[attr.Name] {
+			continue
+		}
+		filtered = append(filtered, attr)
+	}
+	for i, attr := range original {
+		if !renderProfileContractAttrNames[attr.Name] {
+			continue
+		}
+		idx := i
+		if idx > len(filtered) {
+			idx = len(filtered)
+		}
+		filtered = append(filtered, RenderAttr{})
+		copy(filtered[idx+1:], filtered[idx:])
+		filtered[idx] = attr
+	}
+	return filtered
+}
+
+func attrsContainProtectedName(attrs []RenderAttr) bool {
+	for _, attr := range attrs {
+		if renderProfileContractAttrNames[attr.Name] {
+			return true
+		}
+	}
+	return false
+}
+
+// renderProfileContractAttrNames is the gosx#179 managed-form runtime-
+// contract attribute vocabulary an AttrWriter cannot weaken (gosx#185 B1):
+// data-gosx-form, its -state/-mode/-project variants, the client-runtime
+// -form-error-describedby wiring attribute, the shared data-gosx-enhance/
+// -enhance-layer/-fallback progressive-enhancement attributes, and the
+// data-gosx-managed shorthand. See resolveContractProtectedAttrs for the
+// enforcement and RenderProfile's doc comment for the full rule.
+var renderProfileContractAttrNames = map[string]bool{
+	server.NavigationFormAttr:         true, // data-gosx-form
+	server.NavigationFormStateAttr:    true, // data-gosx-form-state
+	server.NavigationFormModeAttr:     true, // data-gosx-form-mode
+	server.NavigationFormProjectAttr:  true, // data-gosx-form-project
+	formErrorDescribedbyAttr:          true, // data-gosx-form-error-describedby
+	server.NavigationEnhanceAttr:      true, // data-gosx-enhance
+	server.NavigationEnhanceLayerAttr: true, // data-gosx-enhance-layer
+	server.NavigationFallbackAttr:     true, // data-gosx-fallback
+	gosx.ManagedFormShorthandAttr:     true, // data-gosx-managed
+}
+
+// formErrorDescribedbyAttr names the client runtime's form-level error
+// aria-describedby wiring attribute (client/runtime/host/navigation.ts's
+// FORM_ERROR_DESCRIPTION_ATTR — "data-gosx-form-error-describedby"). No
+// Go code in this repository emits or reads it today, and no Go constant
+// for it exists outside this file, but it is part of the #179 contract
+// vocabulary an author can write by hand, so AttrWriter is barred from
+// touching it the same as every other contract attribute name.
+const formErrorDescribedbyAttr = "data-gosx-form-error-describedby"
 
 // resolveFileAttrs evaluates and flattens attrs into RenderAttr values,
 // mirroring renderFileAttr/renderFileSpreadAttrs' coercion rules exactly but
 // building a slice instead of writing bytes, so a RenderProfile's AttrWriter
 // can inspect and rewrite the list before anything is escaped or emitted.
+//
+// WHY the allocation: this slice is built only on the profile-active path
+// writeElement takes when an AttrWriter is set — the plain, no-profile
+// renderAttrs path below never calls this function, so an inactive profile
+// costs nothing extra (benchmarked; see gosx#185's byte-identity and
+// zero-cost golden tests). A scratch slice reused across sibling elements
+// was considered to cut this allocation further, but writer can retain the
+// slice it is handed past the call (nothing in AttrWriter's contract says
+// it cannot), so reusing a backing array across calls would risk a profile
+// silently reading or corrupting a later element's attributes through a
+// stale reference. Not worth it until profiling on a real profile shows
+// this allocation matters relative to itself.
 func resolveFileAttrs(attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string) []RenderAttr {
 	out := make([]RenderAttr, 0, len(attrs))
 	for _, attr := range attrs {
@@ -1221,8 +1381,29 @@ func appendResolvedAttr(out []RenderAttr, name string, value any) []RenderAttr {
 // renderResolvedAttrs emits attrs as HTML attribute text, escaping every
 // Name and Value unconditionally. See RenderAttr and RenderProfile.AttrWriter
 // for the escape-after-the-hook guarantee this function completes.
-func renderResolvedAttrs(b *strings.Builder, attrs []RenderAttr) {
+//
+// It also validates every Name before escaping it (gosx#185 M1):
+// html.EscapeString does not escape a space or an "=", so an AttrWriter
+// that returns RenderAttr{Name: "x onmouseover=alert(1) y"} would otherwise
+// smuggle three attributes past one Name field, none of them named
+// anything the profile author wrote down. A profile is trusted code, so an
+// invalid Name is a bug in that profile, not untrusted input to sanitize
+// around: the render fails closed with a *RenderProfileError naming the
+// tag and the offending Name, the same way a reported Validate diagnostic
+// does, instead of emitting whatever the parser would make of it.
+//
+// The identical hole in the {...spread} attribute-name path — normalizeFileAttrName
+// does not reject a name with these characters either — is gosx#189, out of
+// scope on this branch. A shared name-validation helper for both paths (this
+// one and normalizeFileAttrName's callers) is the natural follow-up once
+// #189 lands; validRenderAttrName is written so it can become that helper
+// without changing its signature.
+func (r *fileProgramRenderer) renderResolvedAttrs(b *strings.Builder, tag string, attrs []RenderAttr) {
 	for _, attr := range attrs {
+		if !validRenderAttrName(attr.Name) {
+			r.profileErrorf("render profile: AttrWriter for <%s> returned an invalid attribute name %q", tag, attr.Name)
+			continue
+		}
 		name := html.EscapeString(attr.Name)
 		if attr.Boolean {
 			writeFileAttrName(b, name)
@@ -1230,6 +1411,47 @@ func renderResolvedAttrs(b *strings.Builder, attrs []RenderAttr) {
 		}
 		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
 	}
+}
+
+// validRenderAttrName reports whether name is safe to use as an HTML
+// attribute name on its own: non-empty once whitespace is accounted for,
+// and free of every character that ends an HTML5 attribute-name token
+// early — Unicode whitespace, the control-character range, and the
+// syntax characters `"`, `'`, `>`, `/`, and `=` (gosx#185 M1). An
+// all-whitespace name is caught by the same loop, folding in gosx#185 n4.
+func validRenderAttrName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case unicode.IsSpace(r):
+			return false
+		case r < 0x20 || r == 0x7f:
+			return false
+		case r == '"', r == '\'', r == '>', r == '/', r == '=':
+			return false
+		}
+	}
+	return true
+}
+
+// profileError records the first error a render profile hook causes,
+// mirroring renderError's first-error-wins rule: the whole render is
+// discarded once r.err is non-nil (see renderFileProgramHTML), so only the
+// first failure's message is worth keeping.
+func (r *fileProgramRenderer) profileError(err error) {
+	if err != nil && r.err == nil {
+		r.err = err
+	}
+}
+
+// profileErrorf builds a single-diagnostic *RenderProfileError and records
+// it through profileError.
+func (r *fileProgramRenderer) profileErrorf(format string, args ...any) {
+	r.profileError(&RenderProfileError{Diagnostics: []ir.Diagnostic{{
+		Message: fmt.Sprintf(format, args...),
+	}}})
 }
 
 func (r *fileProgramRenderer) componentAttrMap(attrs []ir.Attr, env fileRenderEnv) map[string]any {
@@ -1972,11 +2194,63 @@ func fileManagedFormPresenceForAttrs(attrs []ir.Attr, env fileRenderEnv) fileMan
 	}
 }
 
+// fileManagedFormPresenceForRenderAttrs computes the same presence shape
+// fileManagedFormPresenceForAttrs does, but from the POST-AttrWriter
+// effective []RenderAttr list instead of the pre-hook []ir.Attr (gosx#185
+// B1(b)). resolveContractProtectedAttrs has already reinserted every
+// contract-owned name's untouched pre-hook value into that list, so a name
+// match here is a plain string comparison — no expression evaluation is
+// needed, unlike attrValue's []ir.Attr walk.
+func fileManagedFormPresenceForRenderAttrs(attrs []RenderAttr) fileManagedFormPresence {
+	var presence fileManagedFormPresence
+	for _, attr := range attrs {
+		switch attr.Name {
+		case server.NavigationFormAttr:
+			presence.Form = true
+		case server.NavigationFormStateAttr:
+			presence.State = true
+		case server.NavigationEnhanceAttr:
+			presence.Enhancement = true
+		case server.NavigationEnhanceLayerAttr:
+			presence.EnhancementLayer = true
+		case server.NavigationFallbackAttr:
+			presence.Fallback = true
+		}
+	}
+	return presence
+}
+
 func (r *fileProgramRenderer) writeManagedFormContract(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv, contract fileManagedFormContract) {
 	if !contract.Managed {
 		return
 	}
-	presence := fileManagedFormPresenceForAttrs(attrs, env)
+	r.writeManagedFormContractBody(b, fileManagedFormPresenceForAttrs(attrs, env), contract)
+}
+
+// writeManagedFormContractPostHook is writeManagedFormContract's
+// render-profile counterpart (gosx#185 B1(b)): it computes contract
+// presence from the POST-AttrWriter effective attribute list instead of the
+// pre-hook node.Attrs. Because resolveContractProtectedAttrs has already
+// reinserted every contract-owned name's untouched pre-hook value into
+// effective, this reads exactly what rendered a moment ago — so an
+// AttrWriter veto of a contract attribute can never make this believe the
+// contract is already satisfied when the actual output no longer has it,
+// and an AttrWriter append of a conflicting copy can never make this skip
+// writing the real one.
+func (r *fileProgramRenderer) writeManagedFormContractPostHook(b *strings.Builder, effective []RenderAttr, contract fileManagedFormContract) {
+	if !contract.Managed {
+		return
+	}
+	r.writeManagedFormContractBody(b, fileManagedFormPresenceForRenderAttrs(effective), contract)
+}
+
+// writeManagedFormContractBody writes the managed-form runtime-contract
+// attributes gosx#179 defines, given a presence already computed for
+// whichever attribute list actually rendered. Both writeManagedFormContract
+// and writeManagedFormContractPostHook are thin presence-computation
+// wrappers around this one writer, so the two callers cannot drift apart on
+// what they emit — only on where presence comes from.
+func (r *fileProgramRenderer) writeManagedFormContractBody(b *strings.Builder, presence fileManagedFormPresence, contract fileManagedFormContract) {
 	if !presence.Form {
 		b.WriteString(" " + server.NavigationFormAttr)
 	}
