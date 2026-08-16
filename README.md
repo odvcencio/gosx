@@ -746,7 +746,7 @@ Three tiers:
 | Package | Purpose |
 |---------|---------|
 | `gosx` | Node API, grammar, parser, compiler |
-| `ir` | Intermediate representation, lowering, validation, expression parser |
+| `ir` | Intermediate representation, lowering, validation, expression parser. Experimental pre-1.0: pin an exact gosx version if you compile against it directly. |
 | `island` | Island renderer, manifest generation, program serialization |
 | `signal` | Reactive state: `Signal[T]`, `Computed[T]`, `Effect`, `Batch` |
 | `server` | HTTP server, page rendering, caching, streaming, i18n, edge annotations, assets |
@@ -847,7 +847,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.42.2**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.42.2**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

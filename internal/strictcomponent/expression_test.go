@@ -34,6 +34,32 @@ func TestValidateServerExpressionAcceptsConcatChains(t *testing.T) {
 		`("a") + (props.X)`,
 		`"tone-" + props.Tone`,
 		`"Remove " + props.Name + " from roster"`,
+		`"a" + props.A.B`,
+		`"a" + props.A.B.C`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			if err := ValidateServerExpression(source); err != nil {
+				t.Fatalf("ValidateServerExpression(%q) = %v, want nil", source, err)
+			}
+		})
+	}
+}
+
+// TestValidateServerExpressionAcceptsNestedSelectors covers the widened
+// selector rule this change adds: a props-rooted field chain of any depth is
+// a valid shape. The lowerer (ir/lower.go), not this schema-blind validator,
+// enforces the three-hop resolution cap and every same-file-struct type
+// rule — see resolveStrictSelectorPath and its tests in strict_component_test.go.
+func TestValidateServerExpressionAcceptsNestedSelectors(t *testing.T) {
+	for _, source := range []string{
+		"props.A.B",
+		"props.A.B.C",
+		"(props.A).B",
+		"(props.A.B)",
+		// Deeper than the lowerer's three-hop cap: still a valid *shape*.
+		// TestCompileStrictServerRejectsSelectorTooDeep (root package)
+		// proves the lowerer rejects it with full component context.
+		"props.A.B.C.D",
 	} {
 		t.Run(source, func(t *testing.T) {
 			if err := ValidateServerExpression(source); err != nil {
@@ -77,8 +103,12 @@ func TestValidateServerExpressionRejectsWithExactMessages(t *testing.T) {
 			want:   "\"+\" operand `props.Count + 1` is not renderable; strict concatenation accepts string literals and props field selectors only",
 		},
 		{
-			source: "props.A.B.C.D",
-			want:   "selector must be one field directly on props; nested selector chains cannot preserve Go nil-pointer behavior",
+			source: "x.Field",
+			want:   "selector must be a field chain rooted at props, with every step a plain field access; anything else cannot preserve Go nil-pointer behavior",
+		},
+		{
+			source: "props.A[0].B",
+			want:   "selector must be a field chain rooted at props, with every step a plain field access; anything else cannot preserve Go nil-pointer behavior",
 		},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
@@ -121,6 +151,10 @@ func TestServerPropFieldUnaffectedByConcatSupport(t *testing.T) {
 		{"(props).Title", "Title", true},
 		{`"a" + props.X`, "", false},
 		{"props", "", false},
+		// ServerPropField is ServerPropPath's length-1 case: a nested path
+		// is a valid ServerPropPath result but not a valid ServerPropField
+		// result.
+		{"props.A.B", "", false},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			field, ok := ServerPropField(tc.source)
@@ -131,24 +165,51 @@ func TestServerPropFieldUnaffectedByConcatSupport(t *testing.T) {
 	}
 }
 
-func TestServerConcatPropFields(t *testing.T) {
+func TestServerPropPath(t *testing.T) {
 	for _, tc := range []struct {
 		source string
 		want   []string
 		wantOK bool
 	}{
-		{`"a" + props.X`, []string{"X"}, true},
-		{`props.X + "a"`, []string{"X"}, true},
-		{`"a" + props.X + "b"`, []string{"X"}, true},
-		{`"Remove " + props.Name + " from roster"`, []string{"Name"}, true},
-		{`props.A + props.B`, []string{"A", "B"}, true}, // fields extracted even though the syntax validator rejects the chain overall
+		{"props.Title", []string{"Title"}, true},
+		{"(props.Title)", []string{"Title"}, true},
+		{"(props).Title", []string{"Title"}, true},
+		{"props.A.B", []string{"A", "B"}, true},
+		{"props.A.B.C", []string{"A", "B", "C"}, true},
+		{"(props.A).B.C", []string{"A", "B", "C"}, true},
+		{"props.A.B.C.D", []string{"A", "B", "C", "D"}, true},
+		{"props", nil, false},
+		{"x.Field", nil, false},
+		{`"a" + props.X`, nil, false},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			path, ok := ServerPropPath(tc.source)
+			if ok != tc.wantOK || !equalStrings(path, tc.want) {
+				t.Fatalf("ServerPropPath(%q) = (%v, %v), want (%v, %v)", tc.source, path, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestServerConcatPropPaths(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		want   [][]string
+		wantOK bool
+	}{
+		{`"a" + props.X`, [][]string{{"X"}}, true},
+		{`props.X + "a"`, [][]string{{"X"}}, true},
+		{`"a" + props.X + "b"`, [][]string{{"X"}}, true},
+		{`"Remove " + props.Name + " from roster"`, [][]string{{"Name"}}, true},
+		{`props.A + props.B`, [][]string{{"A"}, {"B"}}, true}, // paths extracted even though the syntax validator rejects the chain overall
+		{`"a" + props.A.B`, [][]string{{"A", "B"}}, true},
 		{"props.Title", nil, false},
 		{`"a" + "b"`, nil, true},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
-			fields, ok := ServerConcatPropFields(tc.source)
-			if ok != tc.wantOK || !equalStrings(fields, tc.want) {
-				t.Fatalf("ServerConcatPropFields(%q) = (%v, %v), want (%v, %v)", tc.source, fields, ok, tc.want, tc.wantOK)
+			paths, ok := ServerConcatPropPaths(tc.source)
+			if ok != tc.wantOK || !equalPathLists(paths, tc.want) {
+				t.Fatalf("ServerConcatPropPaths(%q) = (%v, %v), want (%v, %v)", tc.source, paths, ok, tc.want, tc.wantOK)
 			}
 		})
 	}
@@ -166,23 +227,37 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
+func equalPathLists(a, b [][]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !equalStrings(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func TestValidateServerCondExpressionAcceptsBoolShapes(t *testing.T) {
 	for _, tc := range []struct {
 		source      string
-		wantField   string
+		wantPath    []string
 		wantNegated bool
 	}{
-		{"props.Ready", "Ready", false},
-		{"props.Ready == false", "Ready", true},
-		{"(props.Ready) == (false)", "Ready", true},
+		{"props.Ready", []string{"Ready"}, false},
+		{"props.Ready == false", []string{"Ready"}, true},
+		{"(props.Ready) == (false)", []string{"Ready"}, true},
+		{"props.A.Ready", []string{"A", "Ready"}, false},
+		{"props.A.Ready == false", []string{"A", "Ready"}, true},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
-			field, negated, err := ValidateServerCondExpression(tc.source)
+			path, negated, err := ValidateServerCondExpression(tc.source)
 			if err != nil {
 				t.Fatalf("ValidateServerCondExpression(%q) = %v, want nil error", tc.source, err)
 			}
-			if field != tc.wantField || negated != tc.wantNegated {
-				t.Fatalf("ValidateServerCondExpression(%q) = (%q, %v), want (%q, %v)", tc.source, field, negated, tc.wantField, tc.wantNegated)
+			if !equalStrings(path, tc.wantPath) || negated != tc.wantNegated {
+				t.Fatalf("ValidateServerCondExpression(%q) = (%v, %v), want (%v, %v)", tc.source, path, negated, tc.wantPath, tc.wantNegated)
 			}
 		})
 	}
@@ -223,24 +298,30 @@ func TestValidateServerCondExpressionRejectsWithExactMessages(t *testing.T) {
 	}
 }
 
-func TestServerExpressionPropFields(t *testing.T) {
+func TestServerExpressionPropPaths(t *testing.T) {
 	for _, tc := range []struct {
 		source string
-		want   []string
+		want   [][]string
 	}{
-		{"props.Title", []string{"Title"}},
-		{`"a" + props.X`, []string{"X"}},
-		{`"a" + props.X + props.Y`, []string{"X", "Y"}},
-		{"props.Ready == false", []string{"Ready"}},
-		{"props.A == props.B", []string{"A", "B"}},
-		{"props.A.B", []string{"A"}}, // the syntax validator rejects the chain overall; the root field still gets tracked for the explicit-supply rule
+		{"props.Title", [][]string{{"Title"}}},
+		{`"a" + props.X`, [][]string{{"X"}}},
+		{`"a" + props.X + props.Y`, [][]string{{"X"}, {"Y"}}},
+		{"props.Ready == false", [][]string{{"Ready"}}},
+		{"props.A == props.B", [][]string{{"A"}, {"B"}}},
+		// A nested chain registers as one maximal path, not also a spurious
+		// bare read of its own non-scalar inner selector (props.A alone,
+		// whose type is a struct, would otherwise fail the renderer-scalar
+		// gate even though the author never wrote a bare props.A anywhere).
+		{"props.A.B", [][]string{{"A", "B"}}},
+		{"props.A.B.C", [][]string{{"A", "B", "C"}}},
+		{`"a" + props.A.B`, [][]string{{"A", "B"}}},
 		{`"a" + "b"`, nil},
-		{"props.X()", []string{"X"}}, // shape-invalid overall, but the read still matters for tracking
+		{"props.X()", [][]string{{"X"}}}, // shape-invalid overall, but the read still matters for tracking
 	} {
 		t.Run(tc.source, func(t *testing.T) {
-			got := ServerExpressionPropFields(tc.source)
-			if !equalStrings(got, tc.want) {
-				t.Fatalf("ServerExpressionPropFields(%q) = %v, want %v", tc.source, got, tc.want)
+			got := ServerExpressionPropPaths(tc.source)
+			if !equalPathLists(got, tc.want) {
+				t.Fatalf("ServerExpressionPropPaths(%q) = %v, want %v", tc.source, got, tc.want)
 			}
 		})
 	}

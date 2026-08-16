@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 var (
@@ -19,11 +20,18 @@ var (
 // ValidateServerExpression accepts exactly the expression shapes implemented
 // by the file renderer for strict server components. The v0.39 contract is
 // intentionally small: literals and one direct props field (with parentheses).
-// The v0.42 contract adds one narrow extension: a `+` chain that concatenates
-// string literals with props field selectors (ValidateConcatExpression
-// documents the accepted shape). Operators outside that one exception,
-// indexing, and calls need static Go type/method information that the
-// map-backed file renderer does not retain, so they fail closed.
+// v0.42 added a `+` chain that concatenates string literals with props field
+// selectors (validateConcatChain documents the accepted shape). This change
+// widens every props selector position (a bare read, a concat operand, an
+// <If cond>) to accept a field chain rooted at props up to three fields deep
+// (see ServerPropPath) instead of exactly one field. This function places no
+// upper bound on chain length itself: it is schema-blind, so it cannot know
+// where three hops actually lands against a given props struct. The lowerer
+// (ir/lower.go) resolves each accepted path against the same-file struct
+// schema and reports the three-hop cap there, with full component context.
+// Operators outside the one `+` exception, indexing, and calls need static
+// Go type/method information that the map-backed file renderer does not
+// retain, so they fail closed.
 func ValidateServerExpression(source string) error {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
@@ -53,8 +61,8 @@ func validate(expr ast.Expr, source string) error {
 	case *ast.ParenExpr:
 		return validate(node.X, source)
 	case *ast.SelectorExpr:
-		if _, ok := directPropsField(node); !ok {
-			return fmt.Errorf("selector must be one field directly on props; nested selector chains cannot preserve Go nil-pointer behavior")
+		if _, ok := propsSelectorPath(node); !ok {
+			return fmt.Errorf("selector must be a field chain rooted at props, with every step a plain field access; anything else cannot preserve Go nil-pointer behavior")
 		}
 		return nil
 	case *ast.IndexExpr:
@@ -124,7 +132,7 @@ func classifyConcatOperand(operand ast.Expr) concatOperandKind {
 		}
 		return concatOperandNonStringLiteral
 	case *ast.SelectorExpr:
-		if _, ok := directPropsField(node); ok {
+		if _, ok := propsSelectorPath(node); ok {
 			return concatOperandSelector
 		}
 		return concatOperandInvalid
@@ -205,84 +213,112 @@ func validateLiteral(literal *ast.BasicLit) error {
 	}
 }
 
-// ServerPropField reports the single props field read by a validated strict
-// server expression. Parentheses around either the selector or props itself do
-// not change the result.
-func ServerPropField(source string) (string, bool) {
+// ServerPropPath reports the ordered field path of a selector chain rooted
+// at the identifier props, for example props.Player.Name -> []string{
+// "Player", "Name"}. Parentheses are transparent at any level, including
+// around props itself and around any intermediate selector. It places no
+// upper bound on chain length — see ValidateServerExpression's doc comment
+// for why the depth cap lives in the lowerer instead.
+func ServerPropPath(source string) ([]string, bool) {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
-		return "", false
+		return nil, false
 	}
-	for {
-		paren, ok := expr.(*ast.ParenExpr)
-		if !ok {
-			break
+	return propsSelectorPath(expr)
+}
+
+// propsSelectorPath is ServerPropPath's expression-tree implementation,
+// reused by the validator (selector shape, concat operand classification,
+// cond selector extraction) so every props selector position resolves
+// nested paths through one definition.
+func propsSelectorPath(expr ast.Expr) ([]string, bool) {
+	selector, ok := unwrapParens(expr).(*ast.SelectorExpr)
+	if !ok || selector.Sel == nil || selector.Sel.Name == "" {
+		return nil, false
+	}
+	receiver := unwrapParens(selector.X)
+	if ident, ok := receiver.(*ast.Ident); ok {
+		if ident.Name != "props" {
+			return nil, false
 		}
-		expr = paren.X
+		return []string{selector.Sel.Name}, true
 	}
-	selector, ok := expr.(*ast.SelectorExpr)
+	path, ok := propsSelectorPath(receiver)
 	if !ok {
-		return "", false
+		return nil, false
 	}
-	return directPropsField(selector)
+	return append(path, selector.Sel.Name), true
 }
 
-func directPropsField(selector *ast.SelectorExpr) (string, bool) {
-	var receiver ast.Expr = selector.X
-	for {
-		paren, ok := receiver.(*ast.ParenExpr)
-		if !ok {
-			break
-		}
-		receiver = paren.X
-	}
-	ident, ok := receiver.(*ast.Ident)
-	if !ok || ident.Name != "props" || selector.Sel == nil || selector.Sel.Name == "" {
+// ServerPropField reports the single props field read by a validated direct
+// selector (props.X) — ServerPropPath's length-1 case. Parentheses around
+// either the selector or props itself do not change the result.
+// collectStrictPropReads's CST walk (ir/lower.go) called this once per
+// selector_expression node before the nested-reads change generalized that
+// walk to ServerPropPath directly; ServerPropField has no production caller
+// today and is kept as a tested, documented length-1 convenience over
+// ServerPropPath for any future caller that only ever wants a bare field.
+func ServerPropField(source string) (string, bool) {
+	path, ok := ServerPropPath(source)
+	if !ok || len(path) != 1 {
 		return "", false
 	}
-	return selector.Sel.Name, true
+	return path[0], true
 }
 
-// ServerExpressionPropFields reports every direct props field selector
-// (props.X) found anywhere in source, regardless of whether source's overall
-// shape passes ValidateServerExpression. Read-tracking passes use this to see
-// every props field an expression touches — not just the operands of one
+// ServerExpressionPropPaths reports every maximal props-rooted selector path
+// found anywhere in source, regardless of whether source's overall shape
+// passes ValidateServerExpression. Read-tracking passes use this to see
+// every props path an expression touches — not just the operands of one
 // accepted top-level shape — because the grammar's external attribute
 // scanner hands attribute-position expressions back as one opaque token with
 // no nested CST, unlike element/text children (jsx_expression_container),
 // whose nested Go sub-tree the CST-based read-tracking walk can see
-// directly. Attribute-position expressions are exactly where every v0.42
+// directly. Attribute-position expressions are exactly where every
 // concatenation and <If cond> shape lives, so this closes that visibility
-// gap generally instead of only for the two new shapes.
-func ServerExpressionPropFields(source string) []string {
+// gap generally instead of only for those two shapes.
+//
+// "Maximal" matters for nested paths: once a *ast.SelectorExpr node yields a
+// full props path, this stops descending into that node's own operand
+// sub-tree. Otherwise a chain like props.Player.Name would also register its
+// inner props.Player sub-expression as an independent (and spurious) bare
+// read of a non-scalar field — the same class of fail-open gap
+// collectStrictPropReads was fixed for once already, in reverse: a false
+// rejection of a valid nested read instead of a missed one.
+func ServerExpressionPropPaths(source string) [][]string {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
 		return nil
 	}
-	var fields []string
+	var paths [][]string
 	seen := make(map[string]struct{})
 	ast.Inspect(expr, func(n ast.Node) bool {
 		selector, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
-		if field, ok := directPropsField(selector); ok {
-			if _, dup := seen[field]; !dup {
-				seen[field] = struct{}{}
-				fields = append(fields, field)
-			}
+		path, ok := propsSelectorPath(selector)
+		if !ok {
+			return true
 		}
-		return true
+		key := strings.Join(path, ".")
+		if _, dup := seen[key]; !dup {
+			seen[key] = struct{}{}
+			paths = append(paths, path)
+		}
+		return false
 	})
-	return fields
+	return paths
 }
 
-// ServerConcatPropFields reports, in operand order, the props fields read by
-// a validated string-concatenation chain (see ValidateServerExpression). It
-// returns ok=false when source's top-level shape (parentheses transparent)
-// is not a `+` expression — callers use that to skip the concat-specific
-// type pass for every other already-validated expression shape.
-func ServerConcatPropFields(source string) ([]string, bool) {
+// ServerConcatPropPaths reports, in operand order, the props field paths
+// read by a validated string-concatenation chain (see
+// ValidateServerExpression); each entry is ServerPropPath's ordered field
+// list for that operand. It returns ok=false when source's top-level shape
+// (parentheses transparent) is not a `+` expression — callers use that to
+// skip the concat-specific type pass for every other already-validated
+// expression shape.
+func ServerConcatPropPaths(source string) ([][]string, bool) {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
 		return nil, false
@@ -291,28 +327,25 @@ func ServerConcatPropFields(source string) ([]string, bool) {
 	if !ok || bin.Op != token.ADD {
 		return nil, false
 	}
-	var fields []string
+	var paths [][]string
 	for _, operand := range flattenAddChain(bin) {
-		selector, ok := unwrapParens(operand).(*ast.SelectorExpr)
-		if !ok {
-			continue
-		}
-		if field, ok := directPropsField(selector); ok {
-			fields = append(fields, field)
+		if path, ok := propsSelectorPath(operand); ok {
+			paths = append(paths, path)
 		}
 	}
-	return fields, true
+	return paths, true
 }
 
 // ValidateServerCondExpression accepts the two expression shapes a strict
-// <If cond={...}> attribute may use: a bare props field selector, or that
-// selector compared against the literal false with `==`. It reports the
-// props field read and whether the comparison negates it. Parentheses are
-// transparent at any level.
-func ValidateServerCondExpression(source string) (field string, negated bool, err error) {
+// <If cond={...}> attribute may use: a props field selector (a direct field,
+// or a nested field path per ServerPropPath), or that selector compared
+// against the literal false with `==`. It reports the props path read and
+// whether the comparison negates it. Parentheses are transparent at any
+// level.
+func ValidateServerCondExpression(source string) (path []string, negated bool, err error) {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
-		return "", false, fmt.Errorf("invalid Go expression: %w", err)
+		return nil, false, fmt.Errorf("invalid Go expression: %w", err)
 	}
 	root := unwrapParens(expr)
 
@@ -321,23 +354,19 @@ func ValidateServerCondExpression(source string) (field string, negated bool, er
 			left := unwrapParens(bin.X)
 			right := unwrapParens(bin.Y)
 			if ident, ok := right.(*ast.Ident); ok && ident.Name == "true" {
-				return "", false, fmt.Errorf("comparison \"== true\" is not supported in strict cond; write the field bare")
+				return nil, false, fmt.Errorf("comparison \"== true\" is not supported in strict cond; write the field bare")
 			}
-			if selector, ok := left.(*ast.SelectorExpr); ok {
+			if condPath, ok := propsSelectorPath(left); ok {
 				if ident, ok := right.(*ast.Ident); ok && ident.Name == "false" {
-					if field, ok := directPropsField(selector); ok {
-						return field, true, nil
-					}
+					return condPath, true, nil
 				}
 			}
 		}
-		return "", false, fmt.Errorf("strict cond must be a bool props field or a bool props field compared with \"== false\"; got %q", source)
+		return nil, false, fmt.Errorf("strict cond must be a bool props field or a bool props field compared with \"== false\"; got %q", source)
 	}
 
-	if selector, ok := root.(*ast.SelectorExpr); ok {
-		if field, ok := directPropsField(selector); ok {
-			return field, false, nil
-		}
+	if condPath, ok := propsSelectorPath(root); ok {
+		return condPath, false, nil
 	}
-	return "", false, fmt.Errorf("strict cond must be a bool props field or a bool props field compared with \"== false\"; got %q", source)
+	return nil, false, fmt.Errorf("strict cond must be a bool props field or a bool props field compared with \"== false\"; got %q", source)
 }

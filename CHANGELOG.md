@@ -1,5 +1,73 @@
 # Changelog
 
+## Unreleased
+
+### Strict components: nested prop reads
+
+- **`props.A.B` and `props.A.B.C` in strict expressions.** A strict
+  component may now read a field through a same-file value struct, up to
+  three fields deep: `props.Player.Name`, `props.Player.Team.City`. The
+  rule is enforced at all three gates — the syntactic validator accepts a
+  props-rooted field chain of any depth as a shape (`ServerPropPath`
+  generalizes `ServerPropField`), the lowerer resolves each accepted path
+  against the same-file struct schema and reports the three-hop cap there
+  with full component context, and the generated check program proves
+  every field exists with its declared Go type through the real Go
+  compiler. The check program proves field existence and struct-literal
+  types; it does not re-prove the renderer's own scalar-leaf rule (exact
+  `string`, `bool`, integer, or floating-point builtins only) — the
+  lowerer alone enforces that.
+- **Pointer fields stay out of the strict surface.** A nested selector
+  through a pointer intermediate (`*Player`) still fails closed: the
+  map-backed file renderer dissolves a nil pointer to an empty string
+  where generated Go would panic, so admitting pointers would let a
+  strict component type-check one way and render another. Same for a
+  struct this `.gsx` file does not declare, an embedded (promoted) field,
+  and a chain deeper than three hops — each fails closed with a
+  diagnostic naming the component and the exact selector.
+- **The widened selector rule applies everywhere a selector is admitted.**
+  A concat operand (`"player-" + props.Player.Name`) and an `<If
+  cond={props.Player.Ready}>` selector both accept a nested path in this
+  same change, with the same type rules (concat still requires an exact
+  `string` leaf; `cond` still requires an exact `bool` leaf).
+- **`ir.Component.PropsPaths`** carries the resolved leaf type for every
+  nested read, alongside the existing `PropsFields`. It is additive and
+  absent-decodes to `nil` for a program serialized before this field
+  existed, matching `ComponentSyntax`'s zero-value convention — an
+  existing `.gsx` file's projection and render output are unchanged.
+- **The file renderer gained `requireStrictStructValue`**,
+  `requireStrictScalarType`'s counterpart for a nested-selector root: it
+  verifies an incoming struct is exactly the declared same-file type (not
+  a pointer, not an anonymous struct, not a map) and that every path the
+  component reads under it resolves to its declared scalar type, before
+  the component's body observes the value.
+- Re-audit of GitHub issue #171's motivating app: BoardRow now qualifies
+  (nested `props.player.*` combined with the v0.42.0 concatenation
+  extension), alongside TeamMark, RosterRow, and DraftTeam.
+- **A `.gsx` file cannot forward a struct prop to a nested-read component
+  yet.** Nested reads work today for a generated-Go caller and for a
+  hand-built `ir.Program` that supplies the struct value directly. A
+  strict `.gsx` parent cannot pass one:
+  - it rejects rendering a struct-typed prop itself;
+  - a legacy (non-strict) component cannot call a strict component at
+    all; and
+  - a strict entry point cannot bind root props at all (file routes have
+    no way to supply one), so a struct prop cannot arrive from routing
+    either.
+
+  That composition — one `.gsx`-authored component forwarding another's
+  struct prop — arrives with the spread work (#184).
+
+### The `ir` package's compatibility contract is now written down
+
+- **`ir` is documented as experimental while gosx is pre-1.0.** A
+  breaking change to an exported `ir` type is called out in this
+  changelog with a migration note; a consumer that compiles against `ir`
+  directly (for example `gsxmail`, or any tool built against `ir` instead
+  of gosx's higher-level entry points) should pin an exact gosx version
+  rather than a version range. No behavior changes with this entry —
+  it states the policy the project already followed.
+
 ## v0.42.2 (2026-08-16)
 
 ### Fixed: the managed-form shorthand did not expand consistently across server render surfaces
