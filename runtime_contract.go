@@ -25,10 +25,11 @@ const (
 	// out the ManagedFormAttrs default set by hand on a <form> element. A
 	// .gsx template author writes `<form data-gosx-managed>` (or
 	// `data-gosx-managed="true"`) instead of the five contract attributes.
-	// Both server render paths expand it on any <form> element at render
-	// time: RenderHTML (see expandManagedFormAttrs in node.go) for the Go
-	// Node API, and the route package's file-program renderer for .gsx
-	// pages. See ManagedFormShorthandTruthy for the shared truthy rule.
+	// All three server render paths expand it on a <form> element at
+	// render time: RenderHTML (see expandManagedFormAttrs in node.go) for
+	// the Go Node API, the route package's file-program renderer for .gsx
+	// pages, and the island package's resolved-tree renderer for island
+	// forms. See ManagedFormShorthandTruthy for the shared truthy rule.
 	ManagedFormShorthandAttr = "data-gosx-managed"
 
 	ActionAttr           = "data-gosx-action"
@@ -112,31 +113,36 @@ func ManagedFormAttrs(opts ManagedFormOptions) AttrList {
 }
 
 // ManagedFormShorthandTruthy reports whether a ManagedFormShorthandAttr
-// value opts a <form> element into the managed-form contract. A bare
-// attribute (presence with no value) is truthy; among valued attributes,
-// any non-empty value other than "false" (case-insensitive) is truthy, so
-// both `data-gosx-managed` and `data-gosx-managed="true"` opt in and
-// `data-gosx-managed="false"` opts out.
+// value opts a <form> element into the managed-form contract. The exact
+// rule: a bare attribute (presence with no value) is truthy; a nil value —
+// the attribute was never found — is falsy; every other value is truthy
+// unless it equals "false" (case-insensitive, surrounding whitespace
+// ignored). This makes `data-gosx-managed`, `data-gosx-managed=""`, and
+// `data-gosx-managed="true"` all opt in; only `data-gosx-managed="false"`
+// opts out. Treating an empty string as truthy mirrors the DOM: a bare
+// HTML boolean attribute and its `=""` spelling parse identically, and the
+// browser-side mirror of this rule (managedFormShorthandTruthy in
+// client/runtime/host/navigation.ts) has no way to tell them apart either,
+// since both read back as the empty string from getAttribute.
 //
-// This is the single definition of the shorthand's truthy rule. Both server
-// render paths call it: node.go's expandManagedFormAttrs for the Go Node
-// API, and the route package's file-program renderer for .gsx pages, so a
-// form written in either surface expands the same way. A caller decides
-// separately whether the attribute is present at all; this function only
-// judges a value already known to exist.
+// This is the single definition of the shorthand's truthy rule. All three
+// server render paths call it: node.go's expandManagedFormAttrs for the Go
+// Node API, the route package's file-program renderer for .gsx pages, and
+// the island package's resolved-tree renderer for island forms — so a form
+// written in any surface expands the same way. A caller decides separately
+// whether the attribute is present at all; this function only judges a
+// value already known to exist (or its explicit absence, via a nil value).
 func ManagedFormShorthandTruthy(presence bool, value any) bool {
 	if presence {
 		return true
 	}
 	switch v := value.(type) {
+	case nil:
+		return false
 	case bool:
 		return v
 	case string:
-		v = strings.TrimSpace(v)
-		if v == "" {
-			return false
-		}
-		return !strings.EqualFold(v, "false")
+		return !strings.EqualFold(strings.TrimSpace(v), "false")
 	default:
 		return true
 	}

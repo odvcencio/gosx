@@ -15,7 +15,7 @@ func TestFileRendererUsesNamedHTMLBooleanSemantics(t *testing.T) {
 	renderFileEvaluatedAttr(&b, "checked", true)
 	renderFileEvaluatedAttr(&b, "aria-pressed", false)
 	renderFileEvaluatedAttr(&b, "spellcheck", false)
-	renderFileAttr(&b, ir.Attr{Kind: ir.AttrStatic, Name: "hidden", Value: "until-found"}, fileRenderEnv{})
+	renderFileAttr(&b, ir.Attr{Kind: ir.AttrStatic, Name: "hidden", Value: "until-found"}, fileRenderEnv{}, "")
 	html := b.String()
 
 	if strings.Contains(html, `hidden="false"`) || strings.Contains(html, `required="false"`) {

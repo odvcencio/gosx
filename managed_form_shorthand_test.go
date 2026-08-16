@@ -81,6 +81,28 @@ func TestManagedFormShorthandNonFormElementLeftUntouched(t *testing.T) {
 	}
 }
 
+// TestManagedFormShorthandEmptyStringValueIsTruthy covers gosx#179 F3: a
+// trimmed empty string (data-gosx-managed="") expands the same way as the
+// bare attribute. A bare HTML boolean attribute and its `=""` spelling are
+// indistinguishable once parsed, so the two must not diverge.
+func TestManagedFormShorthandEmptyStringValueIsTruthy(t *testing.T) {
+	node := El("form", Attrs(Attr(ManagedFormShorthandAttr, "")))
+	if got, want := RenderHTML(node), wantManagedFormDefaults(); got != want {
+		t.Fatalf(`RenderHTML data-gosx-managed="" = %q, want %q`, got, want)
+	}
+}
+
+// TestManagedFormShorthandTruthyTreatsNilAsAbsent covers gosx#179 F3's nil
+// alignment: ManagedFormShorthandTruthy(false, nil) must return false, the
+// same "not present" judgment fileManagedFormShorthandTruthy
+// (route/fileprogram.go) always made for a nil attrValue result, so the two
+// callers agree without either one special-casing nil itself.
+func TestManagedFormShorthandTruthyTreatsNilAsAbsent(t *testing.T) {
+	if got := ManagedFormShorthandTruthy(false, nil); got {
+		t.Fatalf("ManagedFormShorthandTruthy(false, nil) = %v, want false", got)
+	}
+}
+
 func TestManagedFormShorthandCaseInsensitiveFormTag(t *testing.T) {
 	node := El("FORM", Attrs(BoolAttr(ManagedFormShorthandAttr)))
 	got := RenderHTML(node)

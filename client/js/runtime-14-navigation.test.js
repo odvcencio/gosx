@@ -4692,6 +4692,179 @@ test("navigation runtime leaves data-gosx-managed=\"false\" forms to native subm
   assert.equal(env.fetchCalls.length, 0);
 });
 
+// gosx#179 F5: managedForms/isManagedFormElement scope the
+// data-gosx-managed shorthand branch to <form> elements only, matching
+// every server render path (see managedFormAttrs in route/fileprogram.go
+// and expandIslandManagedFormAttrs in island/island.go, which both leave
+// the shorthand inert on a non-form element). A non-form element carrying
+// the shorthand must not be treated as a managed form or gain form-only
+// lifecycle attributes from refreshManagedForms.
+test("navigation runtime leaves a non-form element carrying data-gosx-managed untouched", async () => {
+  const panel = new FakeElement("div", null);
+  panel.setAttribute("data-gosx-managed", "true");
+
+  const env = createContext({ elements: [panel] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(panel.hasAttribute("data-gosx-form-state"), false);
+  assert.equal(panel.hasAttribute("data-gosx-form-mode"), false);
+
+  env.document.eventListeners.get("submit")?.[0]?.({
+    type: "submit",
+    target: panel,
+    submitter: null,
+    defaultPrevented: false,
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+
+  assert.equal(panel.hasAttribute("data-gosx-form-state"), false);
+  assert.equal(panel.hasAttribute("data-gosx-form-mode"), false);
+});
+
+// gosx#179 F7: a bare shorthand attribute (`<form data-gosx-managed>`)
+// serializes through the DOM as `data-gosx-managed=""`, the same value
+// setAttribute(attr, "") produces — this is the case the F3 Go-side fix
+// (a trimmed empty string is truthy) mirrors on the browser side, where
+// managedFormShorthandTruthy already treated it as truthy.
+test("navigation runtime intercepts a bare data-gosx-managed shorthand attribute", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/search");
+  form.setAttribute("method", "get");
+  form.setAttribute("data-gosx-managed", "");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "bare";
+  form.appendChild(query);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/search?q=bare": {
+        text: "__BARE_DOC__",
+        url: "http://localhost:3000/search?q=bare",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const results = new FakeElement("main", null);
+  results.id = "results";
+  results.textContent = "results";
+  parsedDocs.set("__BARE_DOC__", buildNavigatedDocument({
+    title: "Search",
+    bodyNodes: [results],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter: null,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/search?q=bare");
+  assert.equal(env.context.location.href, "http://localhost:3000/search?q=bare");
+});
+
+// gosx#179's exact reproduction shape: method="post" plus the shorthand,
+// with no data-gosx-form attribute at all. Before the fix this fell back
+// to a native full-page POST because the runtime matched FORM_ATTR only.
+test("navigation runtime intercepts a POST form carrying only the data-gosx-managed shorthand", async () => {
+  const actionURL = "http://localhost:3000/x/__actions/y";
+  const form = new FakeElement("form", null);
+  form.setAttribute("method", "post");
+  form.setAttribute("action", "/x/__actions/y");
+  form.setAttribute("data-gosx-managed", "true");
+
+  const query = new FakeElement("input", null);
+  query.setAttribute("name", "q");
+  query.value = "issue-179";
+  form.appendChild(query);
+
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]: { text: '{"ok":true}', url: actionURL },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  let prevented = false;
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter: null,
+    defaultPrevented: false,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+  });
+  await flushAsyncWork();
+
+  assert.equal(prevented, true);
+  assert.equal(env.fetchCalls[0].url, actionURL);
+  assert.equal(env.fetchCalls[0].init.method, "POST");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "success");
+});
+
+// gosx#179 F7 + nativeSubmitForm: a form carrying only the data-gosx-managed
+// shorthand (never expanded server-side) must also fall back to a clean
+// native submission when the managed transport fails. nativeSubmitForm has
+// to strip the shorthand — not just FORM_ATTR — before requestSubmit(), or
+// isManagedFormElement would re-intercept its own fallback submission; it
+// must then restore the exact prior value so the DOM is unchanged afterward.
+test("nativeSubmitForm strips and restores the shorthand attribute around a native fallback submission", async () => {
+  const actionURL = "http://localhost:3000/save";
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-managed", "true");
+  const submitter = new FakeElement("button", null);
+  form.appendChild(submitter);
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]() { throw new Error("action transport failed"); },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.deepEqual(env.fetchCalls.map((call) => call.url), [actionURL]);
+  assert.equal(form.requestSubmitCalls.length, 1);
+  assert.equal(form.requestSubmitCalls[0][0], submitter);
+  assert.equal(form.submitCalls.length, 0);
+  assert.equal(form.getAttribute("data-gosx-managed"), "true");
+});
+
 test("navigation runtime still intercepts an explicit data-gosx-form=\"true\" form", async () => {
   const form = new FakeElement("form", null);
   form.setAttribute("action", "/search");

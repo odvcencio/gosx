@@ -19,6 +19,20 @@ import (
 // renderer in this package lowers .gsx templates and wrote attributes
 // through its own path, which never called the shared expansion helper.
 
+// hasManagedFormAttr reports whether html contains the bare
+// gosx.ManagedFormAttr contract attribute as its own attribute — not
+// merely as a prefix of a longer attribute that happens to share the name,
+// such as data-gosx-form-state or data-gosx-form-mode. A plain
+// strings.Contains(html, gosx.ManagedFormAttr) check passes on either of
+// those alone, which would let a regression that dropped the bare
+// attribute go undetected (gosx#179 F6). The bare attribute is always
+// preceded by a space (it never opens a tag), and is followed by either
+// another space (another attribute follows) or the tag's closing ">".
+func hasManagedFormAttr(html string) bool {
+	return strings.Contains(html, " "+gosx.ManagedFormAttr+" ") ||
+		strings.Contains(html, " "+gosx.ManagedFormAttr+">")
+}
+
 func compileManagedFormFixture(t *testing.T, formOpenTag string) string {
 	t.Helper()
 	src := "package docs\n\n" +
@@ -46,7 +60,6 @@ func TestFileRendererExpandsManagedFormShorthandTrue(t *testing.T) {
 	for _, want := range []string{
 		`method="post"`,
 		`action="/x/__actions/y"`,
-		gosx.ManagedFormAttr,
 		gosx.ManagedFormStateAttr + `="idle"`,
 		gosx.EnhancementAttr + `="form"`,
 		gosx.EnhancementLayerAttr + `="bootstrap"`,
@@ -55,6 +68,9 @@ func TestFileRendererExpandsManagedFormShorthandTrue(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Fatalf("expected %q in rendered managed-shorthand form html %q", want, html)
 		}
+	}
+	if !hasManagedFormAttr(html) {
+		t.Fatalf("expected the bare %s attribute in rendered managed-shorthand form html %q", gosx.ManagedFormAttr, html)
 	}
 	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
 		t.Fatalf("expected shorthand attribute removed from output, got %q", html)
@@ -70,7 +86,6 @@ func TestFileRendererExpandsManagedFormShorthandBare(t *testing.T) {
 	html := compileManagedFormFixture(t, `<form action="/save" data-gosx-managed>`)
 
 	for _, want := range []string{
-		gosx.ManagedFormAttr,
 		gosx.ManagedFormStateAttr + `="idle"`,
 		gosx.EnhancementAttr + `="form"`,
 		gosx.EnhancementLayerAttr + `="bootstrap"`,
@@ -79,6 +94,9 @@ func TestFileRendererExpandsManagedFormShorthandBare(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Fatalf("expected %q in rendered bare-shorthand form html %q", want, html)
 		}
+	}
+	if !hasManagedFormAttr(html) {
+		t.Fatalf("expected the bare %s attribute in rendered bare-shorthand form html %q", gosx.ManagedFormAttr, html)
 	}
 	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
 		t.Fatalf("expected shorthand attribute removed from output, got %q", html)
@@ -114,7 +132,6 @@ func TestFileRendererManagedFormShorthandKeepsAuthorOverride(t *testing.T) {
 		t.Fatalf("expected %s to appear once, appeared %d times in %q", gosx.ManagedFormStateAttr, n, html)
 	}
 	for _, want := range []string{
-		gosx.ManagedFormAttr,
 		gosx.EnhancementAttr + `="form"`,
 		gosx.EnhancementLayerAttr + `="bootstrap"`,
 		gosx.RuntimeFallbackAttr + `="native-form"`,
@@ -122,6 +139,9 @@ func TestFileRendererManagedFormShorthandKeepsAuthorOverride(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Fatalf("expected %q in rendered override html %q", want, html)
 		}
+	}
+	if !hasManagedFormAttr(html) {
+		t.Fatalf("expected the bare %s attribute in rendered override html %q", gosx.ManagedFormAttr, html)
 	}
 }
 
@@ -169,7 +189,7 @@ func Page() Node {
 	if err != nil {
 		t.Fatalf("render (managed=true): %v", err)
 	}
-	if !strings.Contains(managedHTML, gosx.ManagedFormAttr) {
+	if !hasManagedFormAttr(managedHTML) {
 		t.Fatalf("expected expansion when the expression evaluates truthy, got %q", managedHTML)
 	}
 	if strings.Contains(managedHTML, gosx.ManagedFormShorthandAttr) {
@@ -184,5 +204,158 @@ func Page() Node {
 	}
 	if strings.Contains(unmanagedHTML, gosx.ManagedFormAttr) {
 		t.Fatalf("expected no expansion when the expression evaluates falsy, got %q", unmanagedHTML)
+	}
+}
+
+// TestFileRendererManagedFormShorthandPreservesAuthorModeAttribute covers
+// gosx#179 F1: managedFormAttrs used to strip server.NavigationFormModeAttr
+// unconditionally, so an author-written data-gosx-form-mode next to the
+// shorthand silently vanished — a managed-GET form (method="post" plus
+// data-gosx-form-mode="get") would then be rewritten to managed POST by
+// the client runtime's refreshManagedForms, which reads the HTML method
+// attribute once no data-gosx-form-mode survives. The fix only strips the
+// mode attribute when the contract computed its own (contractMode != ""),
+// which the shorthand alone never does.
+func TestFileRendererManagedFormShorthandPreservesAuthorModeAttribute(t *testing.T) {
+	html := compileManagedFormFixture(t, `<form method="post" action="/a" data-gosx-form-mode="get" data-gosx-managed>`)
+
+	if !strings.Contains(html, gosx.ManagedFormModeAttr+`="get"`) {
+		t.Fatalf("expected author-written %s=\"get\" to survive, got %q", gosx.ManagedFormModeAttr, html)
+	}
+	if n := strings.Count(html, gosx.ManagedFormModeAttr); n != 1 {
+		t.Fatalf("expected %s to appear once, appeared %d times in %q", gosx.ManagedFormModeAttr, n, html)
+	}
+	if !hasManagedFormAttr(html) {
+		t.Fatalf("expected the bare %s attribute in rendered html %q", gosx.ManagedFormAttr, html)
+	}
+	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("expected shorthand attribute removed from output, got %q", html)
+	}
+}
+
+// TestFileRendererManagedFormShorthandDropsActionNameOnRawForm documents a
+// known, low-impact side effect of the shorthand-expansion strip logic
+// (gosx#179 F8): a raw <form>'s author-written actionName attribute — a
+// prop meaningful only on the <ActionForm> builtin, never real HTML — does
+// not survive expansion. managedFormAttrs strips actionName
+// unconditionally, a rule the F1 fix (which only made the mode-attribute
+// strip conditional) leaves untouched. This has no runtime impact: a raw
+// <form>'s actionName was never valid HTML and the browser ignores it
+// either way.
+func TestFileRendererManagedFormShorthandDropsActionNameOnRawForm(t *testing.T) {
+	html := compileManagedFormFixture(t, `<form method="post" action="/a" actionName="save" data-gosx-managed>`)
+
+	if strings.Contains(html, "actionName") {
+		t.Fatalf("expected actionName stripped from expanded raw <form>, got %q", html)
+	}
+	if !hasManagedFormAttr(html) {
+		t.Fatalf("expected the form still expanded, got %q", html)
+	}
+}
+
+// TestFileRendererStripsSpreadSuppliedManagedFormShorthand covers gosx#179
+// F4: stripManagedFormShorthandAttr matches attrs by ir.Attr.Name, but a
+// {...extra}-supplied shorthand has no Name of its own — the key lives
+// inside the spread map's evaluated value, rendered later by
+// renderFileSpreadAttrs. Detection already worked (attrValue searches
+// spread maps too), so the shorthand still expanded; only the strip step
+// missed it, leaving the raw data-gosx-managed key rendered beside the full
+// contract it triggered.
+func TestFileRendererStripsSpreadSuppliedManagedFormShorthand(t *testing.T) {
+	src := []byte(`package docs
+
+func Page() Node {
+	return <main>
+		<form method="post" action="/save" {...extra}>
+			<input name="q" value="docs"></input>
+		</form>
+	</main>
+}
+`)
+	prog, err := gosx.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"extra": map[string]any{"data-gosx-managed": "true"}},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if !hasManagedFormAttr(html) {
+		t.Fatalf("expected the spread-supplied shorthand to expand, got %q", html)
+	}
+	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("expected the spread-supplied shorthand key stripped from output, got %q", html)
+	}
+}
+
+// TestFileRendererSpreadShorthandFalseLeavesFormUnmanaged is the opt-out
+// counterpart to the spread-supplied truthy case above: when the
+// spread-supplied value is falsy, the shorthand key must survive exactly
+// as authored, matching the direct-attribute opt-out rule
+// (TestFileRendererManagedFormShorthandFalseOptsOut).
+func TestFileRendererSpreadShorthandFalseLeavesFormUnmanaged(t *testing.T) {
+	src := []byte(`package docs
+
+func Page() Node {
+	return <main>
+		<form method="post" action="/save" {...extra}>
+			<input name="q" value="docs"></input>
+		</form>
+	</main>
+}
+`)
+	prog, err := gosx.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"extra": map[string]any{"data-gosx-managed": "false"}},
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if !strings.Contains(html, `data-gosx-managed="false"`) {
+		t.Fatalf("expected the literal opt-out attribute in output, got %q", html)
+	}
+	if hasManagedFormAttr(html) {
+		t.Fatalf("expected no expansion for a falsy spread-supplied shorthand, got %q", html)
+	}
+}
+
+// TestFileRendererManagedFormBuiltinStripsShorthand covers gosx#179 F9: the
+// <Form>/<ActionForm> builtins are always managed, so an author-written
+// data-gosx-managed shorthand beside them is pure noise. writeManagedForm
+// used to render it unchanged next to the full contract it did nothing to
+// produce; it must now be stripped, matching how the shorthand disappears
+// once it does something on a raw <form>.
+func TestFileRendererManagedFormBuiltinStripsShorthand(t *testing.T) {
+	src := []byte(`package docs
+
+func Page() Node {
+	return <main>
+		<Form method="post" action="/save" data-gosx-managed>
+			<input name="q" value="docs"></input>
+		</Form>
+	</main>
+}
+`)
+	prog, err := gosx.Compile(src)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("expected shorthand attribute stripped from <Form> builtin output, got %q", html)
+	}
+	if !hasManagedFormAttr(html) {
+		t.Fatalf("expected the builtin's own contract in output, got %q", html)
 	}
 }

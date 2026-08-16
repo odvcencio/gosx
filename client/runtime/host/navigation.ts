@@ -861,9 +861,14 @@
 
   // managedFormShorthandTruthy mirrors the server's truthy rule for
   // FORM_MANAGED_SHORTHAND_ATTR (gosx.ManagedFormShorthandTruthy in the Go
-  // source, the single definition both server render paths call): a bare
-  // attribute is truthy, "false" (case-insensitive) opts out, and any other
-  // non-empty value is truthy so `data-gosx-managed="true"` also works.
+  // source, the single definition all three server render paths call): a
+  // bare attribute and its `=""` spelling are indistinguishable once
+  // parsed and both are truthy, "false" (case-insensitive, surrounding
+  // whitespace ignored) opts out, and any other value is truthy — so
+  // `data-gosx-managed`, `data-gosx-managed=""`, and
+  // `data-gosx-managed="true"` all opt in. A null value (the attribute is
+  // absent) is falsy; isManagedFormElement below only calls this after
+  // confirming the attribute exists, so that branch is defensive only.
   function managedFormShorthandTruthy(value) {
     if (value == null) return false;
     const trimmed = String(value).trim();
@@ -876,10 +881,19 @@
   // FORM_MANAGED_SHORTHAND_ATTR (never expanded server-side, or built
   // directly by client JS) is discovered exactly like one already carrying
   // the full FORM_ATTR contract.
+  //
+  // The shorthand branch below is scoped to <form> elements only (gosx#179
+  // F5): every server render path leaves the shorthand inert on a non-form
+  // element (see managedFormAttrs in route/fileprogram.go), so a
+  // data-gosx-managed on, say, a <div> is not a managed form and must not
+  // gain form-only lifecycle attributes (data-gosx-form-mode,
+  // data-gosx-form-state) from refreshManagedForms. FORM_ATTR is left
+  // unguarded: it is a framework-written attribute, never hand-authored on
+  // a non-form element, so no equivalent risk exists there.
   function isManagedFormElement(node) {
     if (!node || !node.hasAttribute) return false;
     if (node.hasAttribute(FORM_ATTR)) return true;
-    if (node.hasAttribute(FORM_MANAGED_SHORTHAND_ATTR)) {
+    if (isElement(node, "FORM") && node.hasAttribute(FORM_MANAGED_SHORTHAND_ATTR)) {
       return managedFormShorthandTruthy(node.getAttribute(FORM_MANAGED_SHORTHAND_ATTR));
     }
     return false;
