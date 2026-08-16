@@ -1141,9 +1141,23 @@ const strictSelectorPathDepthLimit = 3
 // selector semantics in the map-backed file renderer: too deep, a pointer
 // intermediate, an intermediate whose type is a renderer scalar (nothing to
 // select further through), an intermediate struct type this .gsx file does
-// not declare, or a non-scalar leaf. The props base type itself is assumed
-// already declared in this file — validateStrictRenderedProps checks that
-// gate before calling this for any path.
+// not declare, an unknown field past the root, or a non-scalar leaf. The
+// props base type itself is assumed already declared in this file —
+// validateStrictRenderedProps checks that gate before calling this for any
+// path.
+//
+// An unknown field at hop 0 (a direct field of the props struct itself) is
+// left to the package checker: the generated program's real props parameter
+// is exactly this same-file struct type, so an unknown or unexported field
+// there is a compile error in the check program regardless of what this
+// lowerer does. An unknown field at any later hop gets no such backstop:
+// field promotion through an embedded type is legal Go, so the check
+// program compiles a promoted, unexported, or genuinely absent field the
+// same way — silently deferring here would let the component compile while
+// the map-backed file renderer and generated Go disagree on what the
+// selector resolves to (or panic trying). This function fails closed for
+// all three shapes at hop i>0, exactly mirroring the lowerer rule
+// strictSelectorPathType applies for its own, diagnostic-free callers.
 func (l *lowerer) resolveStrictSelectorPath(n *gotreesitter.Node, componentName, propsType string, path []string) {
 	if len(path) > strictSelectorPathDepthLimit {
 		l.errorf(n, "strict component %s selector props.%s is too deep; the strict renderer resolves at most three fields", componentName, strings.Join(path, "."))
@@ -1154,9 +1168,13 @@ func (l *lowerer) resolveStrictSelectorPath(n *gotreesitter.Node, componentName,
 	for i, field := range path {
 		fieldType, known := l.structTypes[currentType][field]
 		if !known {
-			// Unknown field: the package checker supplies the precise
-			// unknown/unexported-field diagnostic; this guard only owns
-			// known renderer schema types.
+			if i == 0 {
+				// The props struct's own field: the package checker
+				// supplies the precise unknown/unexported-field diagnostic;
+				// this guard only owns known renderer schema types.
+				return
+			}
+			l.errorf(n, "strict component %s cannot resolve %s.%s: struct %s declares no visible field %s; promoted, unexported, and unknown fields cannot cross the file renderer boundary", componentName, pathText, field, currentType, field)
 			return
 		}
 		trimmed := strings.TrimSpace(fieldType)
@@ -1187,14 +1205,18 @@ func (l *lowerer) resolveStrictSelectorPath(n *gotreesitter.Node, componentName,
 
 // strictSelectorPathType is resolveStrictSelectorPath's silent counterpart:
 // it resolves path the same way but reports no diagnostic, returning
-// ok=false for any structural problem (too deep, an unknown field, a
-// pointer or otherwise non-struct intermediate, an undeclared intermediate
-// struct) and also for a leaf that is not a renderer scalar at all.
-// validateStrictRenderedProps already reports each registered read's own
-// root cause once (including "leaf is not a renderer scalar"); a second
-// caller (the concat exact-string pass, the <If cond> exact-bool pass)
-// restating it for the same path would just duplicate that diagnostic, so
-// those callers use this and skip emitting anything when ok is false.
+// ok=false for any structural problem (too deep, an unknown field at hop 0
+// or later, a pointer or otherwise non-struct intermediate, an undeclared
+// intermediate struct) and also for a leaf that is not a renderer scalar at
+// all. It applies the same hop-0-vs-later distinction resolveStrictSelectorPath
+// documents for an unknown field, just without ever emitting a diagnostic
+// itself: validateStrictRenderedProps already reports each registered
+// read's own root cause once (an hop-0 unknown field by deferring to the
+// package checker, an hop-i>0 unknown field — promoted, unexported, or
+// absent — as its own error); a second caller (the concat exact-string
+// pass, the <If cond> exact-bool pass) restating either for the same path
+// would just duplicate that diagnostic, so those callers use this and skip
+// emitting anything when ok is false.
 func (l *lowerer) strictSelectorPathType(propsType string, path []string) (string, bool) {
 	if len(path) == 0 || len(path) > strictSelectorPathDepthLimit {
 		return "", false
@@ -1203,6 +1225,10 @@ func (l *lowerer) strictSelectorPathType(propsType string, path []string) (strin
 	for i, field := range path {
 		fieldType, known := l.structTypes[currentType][field]
 		if !known {
+			// Unknown at hop 0 or later: both fail closed here (no leaf
+			// type, ok=false). Only resolveStrictSelectorPath's own copy of
+			// this check treats the two differently, since only it decides
+			// whether to emit a diagnostic.
 			return "", false
 		}
 		trimmed := strings.TrimSpace(fieldType)
@@ -1220,6 +1246,10 @@ func (l *lowerer) strictSelectorPathType(propsType string, path []string) (strin
 		}
 		currentType = trimmed
 	}
+	// Unreachable: the top-of-function guard rejects an empty path, so the
+	// final iteration always has i == len(path)-1 and returns from the
+	// branch above. Go cannot prove that for a for-range loop, so this
+	// satisfies the compiler's return-statement requirement.
 	return "", false
 }
 

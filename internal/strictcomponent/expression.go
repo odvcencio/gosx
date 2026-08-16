@@ -252,10 +252,12 @@ func propsSelectorPath(expr ast.Expr) ([]string, bool) {
 
 // ServerPropField reports the single props field read by a validated direct
 // selector (props.X) — ServerPropPath's length-1 case. Parentheses around
-// either the selector or props itself do not change the result. Kept as its
-// own function because collectStrictPropReads's CST walk (ir/lower.go) calls
-// it once per selector_expression node it visits, independent of any
-// top-level validated shape.
+// either the selector or props itself do not change the result.
+// collectStrictPropReads's CST walk (ir/lower.go) called this once per
+// selector_expression node before the nested-reads change generalized that
+// walk to ServerPropPath directly; ServerPropField has no production caller
+// today and is kept as a tested, documented length-1 convenience over
+// ServerPropPath for any future caller that only ever wants a bare field.
 func ServerPropField(source string) (string, bool) {
 	path, ok := ServerPropPath(source)
 	if !ok || len(path) != 1 {

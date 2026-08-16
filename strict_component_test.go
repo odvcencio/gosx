@@ -257,19 +257,44 @@ component BoardRow(props: Props) {
 // TestCompileStrictServerRejectsNestedSelectorEmbeddedField covers section
 // 2.b's embedded-field non-goal: collectStructSchemas only records
 // field_identifier children, so a promoted field through an embedded struct
-// is invisible to the same-file schema and fails closed the same way an
-// undeclared struct does.
+// is invisible to the same-file schema. Player also carries its own named
+// sibling field (Age) so structTypes registers Player at all — with a
+// host struct that has no named field of its own, Player never enters
+// structTypes and the call fails on the separate "struct is not declared"
+// gate instead of the promoted-field gate this test means to cover (this
+// was B1: the promoted-field gate silently deferred at hop i>0 and let the
+// call compile).
 func TestCompileStrictServerRejectsNestedSelectorEmbeddedField(t *testing.T) {
 	_, err := Compile([]byte(`package app
 type Team struct { City string }
-type Player struct { Team }
+type Player struct { Team; Age int }
 type Props struct { Player Player }
 component BoardRow(props: Props) {
 	return <main>{props.Player.City}</main>
 }
 `))
-	if err == nil {
-		t.Fatal("Compile unexpectedly accepted a promoted (embedded) field selector")
+	want := "strict component BoardRow cannot resolve props.Player.City: struct Player declares no visible field City; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerRejectsNestedSelectorUnexportedLeaf covers the
+// other B1 shape: an unexported leaf field on a same-file declared struct
+// (not promoted, just lowercase) hits the identical hop-i>0 unknown-field
+// gate, since collectStructSchemas never records an unexported field at
+// all.
+func TestCompileStrictServerRejectsNestedSelectorUnexportedLeaf(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Team struct { city string; Zone string }
+type Props struct { Team Team }
+component BoardRow(props: Props) {
+	return <main>{props.Team.city}</main>
+}
+`))
+	want := "strict component BoardRow cannot resolve props.Team.city: struct Team declares no visible field city; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
 	}
 }
 

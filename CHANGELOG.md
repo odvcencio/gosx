@@ -12,7 +12,11 @@
   generalizes `ServerPropField`), the lowerer resolves each accepted path
   against the same-file struct schema and reports the three-hop cap there
   with full component context, and the generated check program proves
-  every field exists with the declared type through the real Go compiler.
+  every field exists with its declared Go type through the real Go
+  compiler. The check program proves field existence and struct-literal
+  types; it does not re-prove the renderer's own scalar-leaf rule (exact
+  `string`, `bool`, integer, or floating-point builtins only) — the
+  lowerer alone enforces that.
 - **Pointer fields stay out of the strict surface.** A nested selector
   through a pointer intermediate (`*Player`) still fails closed: the
   map-backed file renderer dissolves a nil pointer to an empty string
@@ -40,6 +44,19 @@
 - Re-audit of GitHub issue #171's motivating app: BoardRow now qualifies
   (nested `props.player.*` combined with the v0.42.0 concatenation
   extension), alongside TeamMark, RosterRow, and DraftTeam.
+- **A `.gsx` file cannot forward a struct prop to a nested-read component
+  yet.** Nested reads work today for a generated-Go caller and for a
+  hand-built `ir.Program` that supplies the struct value directly. A
+  strict `.gsx` parent cannot pass one:
+  - it rejects rendering a struct-typed prop itself;
+  - a legacy (non-strict) component cannot call a strict component at
+    all; and
+  - a strict entry point cannot bind root props at all (file routes have
+    no way to supply one), so a struct prop cannot arrive from routing
+    either.
+
+  That composition — one `.gsx`-authored component forwarding another's
+  struct prop — arrives with the spread work (#184).
 
 ### The `ir` package's compatibility contract is now written down
 
