@@ -1041,7 +1041,16 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	MarkObservedRequest(r, "public", cleanPath)
-	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	// A version query marks the URL as content-addressed by the app (the
+	// scaffold's publicAsset helper stamps mtime+size), so the response for
+	// that exact URL never changes and a year of immutable caching is safe.
+	// Unversioned URLs keep revalidation: the app may overwrite the file in
+	// place and the next view must see it.
+	if r.URL.Query().Get("v") != "" {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	}
 	if strings.EqualFold(filepath.Ext(fsPath), ".webmanifest") {
 		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 	} else if contentType := mime.TypeByExtension(filepath.Ext(fsPath)); contentType != "" {
