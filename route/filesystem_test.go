@@ -1,8 +1,10 @@
 package route
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -3214,6 +3216,134 @@ func Page() Node {
 	}
 	if dataValue["slug"] != "hello-world" || dataValue["name"] != "GoSX" {
 		t.Fatalf("unexpected action data %#v", dataValue)
+	}
+}
+
+func buildMultipartUpload(t *testing.T, fieldName, filename string, size int) (*bytes.Buffer, string) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile(fieldName, filename)
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(bytes.Repeat([]byte("a"), size)); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return &body, writer.FormDataContentType()
+}
+
+func registerUploadModule(t *testing.T, root string, opts FileModuleOptions) *FileModuleRegistry {
+	t.Helper()
+	writeRouteFile(t, root, "upload/page.gsx", `package docs
+
+func Page() Node {
+	return <main>Upload</main>
+}
+`)
+
+	opts.Actions = FileActions{
+		"upload": func(ctx *action.Context) error {
+			return ctx.Success("saved", nil)
+		},
+	}
+
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor("upload/page.gsx", opts)); err != nil {
+		t.Fatal(err)
+	}
+	return modules
+}
+
+func TestRouterAddDirFileModuleMaxActionBodyBytesRejectsOversizedUpload(t *testing.T) {
+	root := t.TempDir()
+	modules := registerUploadModule(t, root, FileModuleOptions{
+		MaxActionBodyBytes: 2048,
+	})
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, contentType := buildMultipartUpload(t, "avatar", "avatar.png", 8*1024)
+	req := httptest.NewRequest(http.MethodPost, "/upload/__actions/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for an upload over the configured module cap, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRouterAddDirFileModuleMaxActionBodyBytesAllowsUploadUnderConfiguredLimit(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "upload/page.gsx", `package docs
+
+func Page() Node {
+	return <main>Upload</main>
+}
+`)
+
+	var uploaded *multipart.FileHeader
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor("upload/page.gsx", FileModuleOptions{
+		// The payload below sits over the 1 MiB package default and under
+		// this 2 MiB module cap, proving the knob raises the ceiling.
+		MaxActionBodyBytes: 2 * 1024 * 1024,
+		Actions: FileActions{
+			"upload": func(ctx *action.Context) error {
+				uploaded = ctx.File("avatar")
+				return ctx.Success("saved", nil)
+			},
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	const oneMiB = 1024 * 1024
+	body, contentType := buildMultipartUpload(t, "avatar", "avatar.png", oneMiB+512*1024)
+	req := httptest.NewRequest(http.MethodPost, "/upload/__actions/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for an upload under the configured module cap, got %d: %s", w.Code, w.Body.String())
+	}
+	if uploaded == nil || uploaded.Filename != "avatar.png" {
+		t.Fatalf("expected uploaded avatar.png, got %#v", uploaded)
+	}
+}
+
+func TestRouterAddDirFileModuleDefaultMaxActionBodyBytesRejectsOversizedUpload(t *testing.T) {
+	root := t.TempDir()
+	modules := registerUploadModule(t, root, FileModuleOptions{})
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	const oneMiB = 1024 * 1024
+	body, contentType := buildMultipartUpload(t, "avatar", "avatar.png", oneMiB+512*1024)
+	req := httptest.NewRequest(http.MethodPost, "/upload/__actions/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 from the unchanged 1 MiB default, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

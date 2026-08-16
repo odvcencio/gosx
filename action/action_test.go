@@ -242,6 +242,184 @@ func TestRegistryHTTPMultipartFormData(t *testing.T) {
 	}
 }
 
+func TestContextFilesFromMultipartForm(t *testing.T) {
+	var gotFiles []*multipart.FileHeader
+	var gotFile *multipart.FileHeader
+	var gotMissing []*multipart.FileHeader
+
+	r := NewRegistry()
+	r.Register("upload", func(ctx *Context) error {
+		gotFiles = ctx.Files("avatar")
+		gotFile = ctx.File("avatar")
+		gotMissing = ctx.Files("does-not-exist")
+		return nil
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("name", "Ada"); err != nil {
+		t.Fatalf("write name field: %v", err)
+	}
+	part, err := writer.CreateFormFile("avatar", "avatar.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("fake-png-bytes")); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/gosx/action/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.SetPathValue("name", "upload")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(gotFiles) != 1 {
+		t.Fatalf("expected 1 file header, got %d", len(gotFiles))
+	}
+	if gotFiles[0].Filename != "avatar.png" {
+		t.Fatalf("expected avatar.png, got %q", gotFiles[0].Filename)
+	}
+	if gotFile == nil || gotFile.Filename != "avatar.png" {
+		t.Fatalf("expected File convenience accessor to return avatar.png, got %#v", gotFile)
+	}
+	if gotMissing != nil {
+		t.Fatalf("expected nil for an absent field name, got %#v", gotMissing)
+	}
+}
+
+func TestContextFilesNilOnNonMultipartRequest(t *testing.T) {
+	var gotFiles []*multipart.FileHeader
+	var gotFile *multipart.FileHeader
+
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		gotFiles = ctx.Files("avatar")
+		gotFile = ctx.File("avatar")
+		return nil
+	})
+
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader("name=Ada"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if gotFiles != nil {
+		t.Fatalf("expected nil Files on a non-multipart request, got %#v", gotFiles)
+	}
+	if gotFile != nil {
+		t.Fatalf("expected nil File on a non-multipart request, got %#v", gotFile)
+	}
+}
+
+func TestContextFilesNilSafeOnNilContext(t *testing.T) {
+	var ctx *Context
+	if got := ctx.Files("avatar"); got != nil {
+		t.Fatalf("expected nil, got %#v", got)
+	}
+	if got := ctx.File("avatar"); got != nil {
+		t.Fatalf("expected nil, got %#v", got)
+	}
+}
+
+func TestServeHandlerWithOptionsRejectsOversizedMultipartUpload(t *testing.T) {
+	called := false
+	handler := func(ctx *Context) error {
+		called = true
+		return nil
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("avatar", "avatar.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(bytes.Repeat([]byte("a"), 4096)); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/gosx/action/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{MaxBodyBytes: 1024})
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d: %s", w.Code, w.Body.String())
+	}
+	if called {
+		t.Fatal("expected the handler not to run once the body exceeds the configured limit")
+	}
+}
+
+func TestServeHandlerWithOptionsAllowsUploadUnderConfiguredLimit(t *testing.T) {
+	var uploaded *multipart.FileHeader
+	handler := func(ctx *Context) error {
+		uploaded = ctx.File("avatar")
+		return ctx.Success("saved", nil)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("avatar", "avatar.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// The payload sits over the package's 1 MiB default cap and under the 2
+	// MiB cap configured below, so this proves the knob raises the ceiling
+	// rather than merely staying under an unrelated limit.
+	payload := bytes.Repeat([]byte("a"), maxActionBodyBytes+512*1024)
+	if _, err := part.Write(payload); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/gosx/action/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{MaxBodyBytes: 2 * 1024 * 1024})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if uploaded == nil || uploaded.Filename != "avatar.png" {
+		t.Fatalf("expected uploaded avatar.png, got %#v", uploaded)
+	}
+}
+
+func TestServeHandlerWithOptionsZeroFallsBackToPackageDefault(t *testing.T) {
+	handler := func(ctx *Context) error { return nil }
+
+	body := "name=" + strings.Repeat("a", maxActionBodyBytes+1)
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{})
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 from the package default cap, got %d", w.Code)
+	}
+}
+
 func TestRegistryHTTPStructuredValidationError(t *testing.T) {
 	r := NewRegistry()
 	r.Register("submit", func(ctx *Context) error {

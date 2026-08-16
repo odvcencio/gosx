@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Added: first-class file uploads through the action layer
+
+- **`ctx.Files(name)` and `ctx.File(name)` read uploaded files from an
+  action request.** Before this, an uploaded file sat in
+  `req.MultipartForm` behind `ctx.Request`, and every consumer wrote the
+  same lookup by hand. `Files` returns `[]*multipart.FileHeader` for a
+  form field name. `File` returns the first header, or nil. Both stay
+  nil-safe: a non-multipart request, a nil `Context`, or an absent field
+  name all return nil. Fixes #187.
+- **The 1 MiB action body cap is now configurable.** `ServeHandler`
+  keeps the 1 MiB default. A caller with a larger upload calls the new
+  `ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{MaxBodyBytes: n})`
+  instead. `route.FileModuleOptions.MaxActionBodyBytes` carries the same
+  cap through file-routed actions registered with
+  `route.RegisterFileModuleHere` and its sibling constructors, so a
+  consumer raises the limit per module without touching the action
+  package directly. An oversized request still fails with 413 through
+  `http.MaxBytesReader` semantics, never a silent truncation.
+- **A pinned test proves the navigation runtime's managed form
+  submission already carries a selected file.** `serializeForm()`
+  builds a real `FormData` from the form element and passes it straight
+  through to `fetch` as the request body, with no intermediate
+  stringification. The first consumer of this ask, gridiron-2000's team
+  avatar upload, needed the accessor and the raised cap. The runtime
+  half of the ask needed only this test.
+
 ### Fixed
 
 - **`App.Mount` now populates named path wildcards.** A mounted pattern
