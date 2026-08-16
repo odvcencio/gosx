@@ -790,3 +790,628 @@ func TestLocalComponentPropsResolvesAliasBeforePropsFieldsLookup(t *testing.T) {
 		}
 	})
 }
+
+// routeTestBreakdownRow backs the E1 (#182) renderer-boundary tests below,
+// standing in for a same-file .gsx-declared element struct the same way
+// routeTestPlayer does for a nested-selector struct root.
+type routeTestBreakdownRow struct {
+	Scored bool
+	Label  string
+	Points string
+}
+
+// strictEachRowProgram builds the hand-written ir.Program every E1
+// renderer-boundary test below shares: a strict Row component with a
+// <Each of={props.Breakdown} as="row" index="i"> body, called from a
+// zero-props legacy Page that hands the Breakdown slice through
+// ProgramRenderEnv.Values — the same "generated-Go/typed caller" stand-in
+// TestStrictNestedSelectorRendersRealStructThroughRouteBoundary uses, since
+// the strict surface itself has no slice-literal spelling to construct one
+// (open question 1's reasoning, generalized to a slice source).
+func strictEachRowProgram() *ir.Program {
+	prog := &ir.Program{}
+	labelExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "row.Label"})
+	pointsExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "row.Points"})
+	indexExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "i"})
+	rowDivID := prog.AddNode(ir.Node{
+		Kind: ir.NodeElement,
+		Tag:  "div",
+		Attrs: []ir.Attr{
+			{Name: "data-scored", Kind: ir.AttrExpr, Expr: "row.Scored"},
+		},
+		Children: []ir.NodeID{labelExprID, pointsExprID, indexExprID},
+	})
+	eachID := prog.AddNode(ir.Node{
+		Kind: ir.NodeComponent,
+		Tag:  "Each",
+		Attrs: []ir.Attr{
+			{Name: "of", Kind: ir.AttrExpr, Expr: "props.Breakdown"},
+			{Name: "as", Kind: ir.AttrStatic, Value: "row"},
+			{Name: "index", Kind: ir.AttrStatic, Value: "i"},
+		},
+		Children: []ir.NodeID{rowDivID},
+	})
+	rowRoot := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "section", Children: []ir.NodeID{eachID}})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:      "Row",
+		PropsName: "props",
+		PropsType: "RowProps",
+		PropsFields: map[string]string{
+			"Breakdown": "[]routeTestBreakdownRow",
+		},
+		PropsSlices: map[string]ir.SlicePropSchema{
+			"Breakdown": {
+				Elem: "routeTestBreakdownRow",
+				Reads: map[string]string{
+					"Scored": "bool",
+					"Label":  "string",
+					"Points": "string",
+				},
+			},
+		},
+		Syntax: ir.ComponentSyntaxStrict,
+		Root:   rowRoot,
+	})
+
+	// This named "Breakdown" attribute (a "[]T" PropsFields root, supplied
+	// by name rather than through a spread or an <Each of>) is not a shape
+	// gosx#182/#184 minor m-1/m-4: real .gsx source never compiles a named
+	// attribute into a slice-typed field — validateStrictComponentCall
+	// never routes one there. This hand-built ir.Program exercises
+	// strictComponentSliceAttrValue's own boundary check directly, the
+	// same way this file's other hand-built-IR tests cover a route
+	// boundary function a compiler-admitted program cannot reach on its
+	// own; it is not a regression-of-compilability concern.
+	rowCall := prog.AddNode(ir.Node{
+		Kind:  ir.NodeComponent,
+		Tag:   "Row",
+		Attrs: []ir.Attr{{Name: "Breakdown", Kind: ir.AttrExpr, Expr: "breakdownVar"}},
+	})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:   "Page",
+		Syntax: ir.ComponentSyntaxLegacy,
+		Root:   rowCall,
+	})
+	return prog
+}
+
+// TestStrictEachRendersSliceParityWithGeneratedGo is E1's render-parity
+// proof: a three-element slice renders byte-identically to the
+// hand-computed gosx.Map equivalent, including escaping, bool attr
+// rendering (data-scored), and index text.
+func TestStrictEachRendersSliceParityWithGeneratedGo(t *testing.T) {
+	rows := []routeTestBreakdownRow{
+		{Scored: true, Label: "Pass Yds", Points: "12.4"},
+		{Scored: false, Label: "Rush <TD>", Points: "0"},
+		{Scored: true, Label: "Rec", Points: "6"},
+	}
+	html, err := RenderProgramComponent(strictEachRowProgram(), "Page", ProgramRenderEnv{
+		Values: map[string]any{"breakdownVar": rows},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	var want strings.Builder
+	want.WriteString("<section>")
+	for i, row := range rows {
+		want.WriteString(gosx.RenderHTML(gosx.El("div", gosx.Attrs(gosx.Attr("data-scored", row.Scored)),
+			gosx.Expr(row.Label), gosx.Expr(row.Points), gosx.Expr(i),
+		)))
+	}
+	want.WriteString("</section>")
+	if html != want.String() {
+		t.Fatalf("file render = %q, generated-Go render = %q", html, want.String())
+	}
+}
+
+// TestStrictEachEmptyAndNilSliceRenderEmptyString covers section 2.5: the
+// strict form admits no fallback/empty attribute, so an empty or nil slice
+// renders zero iterations on both the file renderer and the generated
+// gosx.Map twin.
+func TestStrictEachEmptyAndNilSliceRenderEmptyString(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows []routeTestBreakdownRow
+	}{
+		{"empty", []routeTestBreakdownRow{}},
+		{"nil", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html, err := RenderProgramComponent(strictEachRowProgram(), "Page", ProgramRenderEnv{
+				Values: map[string]any{"breakdownVar": tc.rows},
+			})
+			if err != nil {
+				t.Fatalf("RenderProgramComponent: %v", err)
+			}
+			if html != "<section></section>" {
+				t.Fatalf("html = %q, want %q", html, "<section></section>")
+			}
+		})
+	}
+}
+
+// TestStrictEachScopeIsolatesNestedBindings proves nested strict <Each>
+// loops keep their bindings separate — the render-time scope chain
+// (newest-first) matches the lexical shadow ban's guarantee, so the two
+// cannot disagree (design spec section 2.2). It mirrors
+// TestGSXEachScopeIsolatesItemBindings (route/gsxperf_test.go) for the
+// strict surface.
+//
+// It does NOT prove an implicit itemNameKey binding is absent — that
+// binding IS pushed: writeEach (this file's fileprogram.go) is the one
+// implementation both the legacy and the strict Each path render through,
+// and for a slice source (what strict <Each> requires) fileEachEntries
+// sets entry.Key equal to the index, so entry.Key != nil always holds and
+// "rowKey" lands in the render-time scope chain exactly as "row" does —
+// this is a documented spec drift from an earlier design that omitted it
+// for strict bodies. It is unobservable from a strict body only because
+// the COMPILE-TIME validator (strictcomponent.Scope) knows nothing but
+// props and the as/index names an <Each> actually declares — any
+// selector rooted at "rowKey" is rejected as an out-of-scope identifier
+// before this render-time scope chain is ever consulted, and for a slice
+// specifically, Key ties to Index, offering no field a rowKey selector
+// could reach even if one somehow compiled.
+func TestStrictEachScopeIsolatesNestedBindings(t *testing.T) {
+	prog := &ir.Program{}
+	innerLabelID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "inner.Label"})
+	innerSpanID := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "b", Children: []ir.NodeID{innerLabelID}})
+	// of={row.Stats} is a BINDING-rooted of source (gosx#182/#184 minor
+	// m-4): real .gsx source cannot compile this — enterStrictEach
+	// resolves an of source through strictcomponent.ServerPropPath, which
+	// requires a "props" root unconditionally, so a same-file <Each
+	// of={row.Stats}> is always rejected at compile time (this release
+	// only admits of={props.Field}, section 2.4). This hand-built
+	// ir.Program is boundary-defensive coverage of the render path a
+	// compiler-admitted program cannot reach, not a claim this shape
+	// compiles.
+	innerEachID := prog.AddNode(ir.Node{
+		Kind: ir.NodeComponent,
+		Tag:  "Each",
+		Attrs: []ir.Attr{
+			{Name: "of", Kind: ir.AttrExpr, Expr: "row.Stats"},
+			{Name: "as", Kind: ir.AttrStatic, Value: "inner"},
+		},
+		Children: []ir.NodeID{innerSpanID},
+	})
+	outerLabelID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "row.Label"})
+	outerDivID := prog.AddNode(ir.Node{
+		Kind:     ir.NodeElement,
+		Tag:      "div",
+		Children: []ir.NodeID{outerLabelID, innerEachID},
+	})
+	outerEachID := prog.AddNode(ir.Node{
+		Kind: ir.NodeComponent,
+		Tag:  "Each",
+		Attrs: []ir.Attr{
+			{Name: "of", Kind: ir.AttrExpr, Expr: "props.Rows"},
+			{Name: "as", Kind: ir.AttrStatic, Value: "row"},
+		},
+		Children: []ir.NodeID{outerDivID},
+	})
+	rootID := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "section", Children: []ir.NodeID{outerEachID}})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:      "Nested",
+		PropsName: "props",
+		PropsType: "NestedProps",
+		PropsFields: map[string]string{
+			"Rows": "[]routeTestOuterRow",
+		},
+		PropsSlices: map[string]ir.SlicePropSchema{
+			"Rows": {Elem: "routeTestOuterRow", Reads: map[string]string{"Label": "string"}},
+		},
+		Syntax: ir.ComponentSyntaxStrict,
+		Root:   rootID,
+	})
+	call := prog.AddNode(ir.Node{Kind: ir.NodeComponent, Tag: "Nested", Attrs: []ir.Attr{{Name: "Rows", Kind: ir.AttrExpr, Expr: "rowsVar"}}})
+	prog.Components = append(prog.Components, ir.Component{Name: "Page", Syntax: ir.ComponentSyntaxLegacy, Root: call})
+
+	rows := []routeTestOuterRow{
+		{Label: "outer-1", Stats: []routeTestInnerStat{{Label: "a"}, {Label: "b"}}},
+		{Label: "outer-2", Stats: []routeTestInnerStat{{Label: "c"}}},
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"rowsVar": rows},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := "<section><div>outer-1<b>a</b><b>b</b></div><div>outer-2<b>c</b></div></section>"
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+type routeTestOuterRow struct {
+	Label string
+	Stats []routeTestInnerStat
+}
+
+type routeTestInnerStat struct {
+	Label string
+}
+
+// TestRequireStrictSliceValueDirectRejections exercises
+// requireStrictSliceValue directly, mirroring
+// TestRequireStrictStructValueRejectsBoundaryMismatches's pattern for the
+// slice boundary: []map[string]any (the wrong Kind of element), a wrong
+// element type name, a wrong leaf type, and pointer elements each fail
+// closed with a message naming what the renderer expected.
+func TestRequireStrictSliceValueDirectRejections(t *testing.T) {
+	schema := ir.SlicePropSchema{
+		Elem:  "routeTestBreakdownRow",
+		Reads: map[string]string{"Label": "string"},
+	}
+	type otherRow struct{ Label string }
+
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{"nil value", nil},
+		{"not a slice", routeTestBreakdownRow{Label: "x"}},
+		{"slice of maps", []map[string]any{{"Label": "x"}}},
+		{"wrong element type name", []otherRow{{Label: "x"}}},
+		{"pointer elements", []*routeTestBreakdownRow{{Label: "x"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := requireStrictSliceValue(tc.value, schema); err == nil {
+				t.Fatalf("requireStrictSliceValue(%#v) unexpectedly accepted", tc.value)
+			}
+		})
+	}
+
+	t.Run("wrong leaf field type", func(t *testing.T) {
+		type wrongLeafRow struct{ Label int }
+		wrongSchema := ir.SlicePropSchema{Elem: "wrongLeafRow", Reads: map[string]string{"Label": "string"}}
+		if _, err := requireStrictSliceValue([]wrongLeafRow{{Label: 1}}, wrongSchema); err == nil {
+			t.Fatal("requireStrictSliceValue unexpectedly accepted a mismatched leaf field type")
+		}
+	})
+
+	t.Run("typed nil slice passes and iterates zero times", func(t *testing.T) {
+		var rows []routeTestBreakdownRow
+		got, err := requireStrictSliceValue(rows, schema)
+		if err != nil {
+			t.Fatalf("requireStrictSliceValue(nil slice): %v", err)
+		}
+		if got == nil {
+			t.Fatal("requireStrictSliceValue returned nil for a typed nil slice")
+		}
+	})
+
+	// "promoted element field" extends gosx#183's M2 fix (reject a
+	// promoted field by StructField.Index length before it can cross the
+	// boundary) to E1's own element walk: reflect.Type.FieldByName also
+	// resolves embedded-field promotion at the type level, so a bare
+	// found check alone would let a slice element whose read only
+	// resolves through embedding cross this boundary even though the
+	// lowerer's walkStrictHops already refuses to compile a loop-binding
+	// read through one (gosx#182/#184's generalized B1 fix).
+	t.Run("promoted element field required by the renderer", func(t *testing.T) {
+		type promotedElemInner struct{ City string }
+		type promotedElemRow struct {
+			promotedElemInner
+			Age int
+		}
+		promotedSchema := ir.SlicePropSchema{Elem: "promotedElemRow", Reads: map[string]string{"City": "string"}}
+		value := []promotedElemRow{{promotedElemInner: promotedElemInner{City: "Springfield"}, Age: 7}}
+		_, err := requireStrictSliceValue(value, promotedSchema)
+		if err == nil {
+			t.Fatal("requireStrictSliceValue unexpectedly accepted a promoted element field")
+		}
+		want := "field City is a promoted (embedded) field"
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want it to contain %q", err, want)
+		}
+	})
+}
+
+// --- E2 (#184): spread props at strict call sites -------------------------
+
+type routeTestMatchupTeam struct {
+	Tone         string
+	Abbreviation string
+}
+
+// strictSpreadTeamMarkProgram builds the shared TeamMark component both the
+// spread-parity test and the explicit-attr comparison call through, so the
+// two render paths exercise the identical strict body.
+func strictSpreadTeamMarkProgram(callAttrs []ir.Attr) *ir.Program {
+	prog := &ir.Program{}
+	toneExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "props.Tone"})
+	abbrExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "props.Abbreviation"})
+	rootID := prog.AddNode(ir.Node{
+		Kind:     ir.NodeElement,
+		Tag:      "span",
+		Attrs:    []ir.Attr{{Name: "class", Kind: ir.AttrExpr, Expr: `"tone-" + props.Tone`}},
+		Children: []ir.NodeID{abbrExprID, toneExprID},
+	})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:      "TeamMark",
+		PropsName: "props",
+		PropsType: "TeamMarkProps",
+		PropsFields: map[string]string{
+			"Tone":         "string",
+			"Abbreviation": "string",
+		},
+		Syntax: ir.ComponentSyntaxStrict,
+		Root:   rootID,
+	})
+	call := prog.AddNode(ir.Node{Kind: ir.NodeComponent, Tag: "TeamMark", Attrs: callAttrs})
+	prog.Components = append(prog.Components, ir.Component{Name: "Page", Syntax: ir.ComponentSyntaxLegacy, Root: call})
+	return prog
+}
+
+// TestStrictSpreadParityWithExplicitAttrCall proves a legacy caller
+// spreading a covering struct renders identically to the explicit-attr
+// call with the same values — the twin-equivalence E2's whole design rests
+// on (design spec section 3.1).
+func TestStrictSpreadParityWithExplicitAttrCall(t *testing.T) {
+	team := routeTestMatchupTeam{Tone: "red", Abbreviation: "NE"}
+
+	spreadHTML, err := RenderProgramComponent(
+		strictSpreadTeamMarkProgram([]ir.Attr{{Kind: ir.AttrSpread, Expr: "teamVar"}}),
+		"Page", ProgramRenderEnv{Values: map[string]any{"teamVar": team}},
+	)
+	if err != nil {
+		t.Fatalf("RenderProgramComponent (spread): %v", err)
+	}
+
+	explicitHTML, err := RenderProgramComponent(
+		strictSpreadTeamMarkProgram([]ir.Attr{
+			{Name: "Tone", Kind: ir.AttrExpr, Expr: "teamVar.Tone"},
+			{Name: "Abbreviation", Kind: ir.AttrExpr, Expr: "teamVar.Abbreviation"},
+		}),
+		"Page", ProgramRenderEnv{Values: map[string]any{"teamVar": team}},
+	)
+	if err != nil {
+		t.Fatalf("RenderProgramComponent (explicit): %v", err)
+	}
+
+	if spreadHTML != explicitHTML {
+		t.Fatalf("spread render = %q, explicit-attr render = %q", spreadHTML, explicitHTML)
+	}
+	if want := `<span class="tone-red">NEred</span>`; spreadHTML != want {
+		t.Fatalf("html = %q, want %q", spreadHTML, want)
+	}
+}
+
+// TestStrictSpreadProps exercises strictSpreadProps directly for every
+// design spec section 4.5 rejection shape: a nil source, a map source
+// (rejected unconditionally, never zero-filled), a struct missing a
+// rendered field, and a rendered field whose runtime type does not match
+// its declared scalar type.
+func TestStrictSpreadProps(t *testing.T) {
+	comp := &ir.Component{
+		Name: "TeamMark",
+		PropsFields: map[string]string{
+			"Tone":         "string",
+			"Abbreviation": "string",
+		},
+	}
+
+	t.Run("nil source", func(t *testing.T) {
+		if _, err := strictSpreadProps(comp, nil); err == nil {
+			t.Fatal("strictSpreadProps(nil) unexpectedly accepted")
+		}
+	})
+
+	t.Run("map source rejected unconditionally", func(t *testing.T) {
+		_, err := strictSpreadProps(comp, map[string]any{"Tone": "red", "Abbreviation": "NE"})
+		if err == nil {
+			t.Fatal("strictSpreadProps(map) unexpectedly accepted")
+		}
+		if !strings.Contains(err.Error(), "maps cannot prove field coverage") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("missing field", func(t *testing.T) {
+		type partialTeam struct{ Tone string }
+		_, err := strictSpreadProps(comp, partialTeam{Tone: "red"})
+		if err == nil || !strings.Contains(err.Error(), "no field Abbreviation") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("wrong field type", func(t *testing.T) {
+		type wrongTypeTeam struct {
+			Tone         string
+			Abbreviation int
+		}
+		_, err := strictSpreadProps(comp, wrongTypeTeam{Tone: "red", Abbreviation: 1})
+		if err == nil || !strings.Contains(err.Error(), "want exact string") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("accepts a covering struct and proves values through setComponentProp aliases", func(t *testing.T) {
+		props, err := strictSpreadProps(comp, routeTestMatchupTeam{Tone: "red", Abbreviation: "NE"})
+		if err != nil {
+			t.Fatalf("strictSpreadProps: %v", err)
+		}
+		if props["Tone"] != "red" || props["tone"] != "red" {
+			t.Fatalf("props = %#v, want Tone/tone aliases set", props)
+		}
+	})
+
+	// TestStrictSpreadProps/promoted field on the spread source fails
+	// closed instead of zero-filling extends gosx#183's M2 fix (reject a
+	// promoted field before Value.FieldByName can panic or silently
+	// resolve one) to the E2 tier-2 spread boundary: a legacy caller's
+	// spread source has no declared type at compile time, so
+	// walkStrictHops' B1 rejection at lowering time never sees it — this
+	// render-time boundary is the only place a source whose Tone field is
+	// only reachable through embedding promotion is ever caught. Before
+	// the fix, Value.FieldByName resolved the promotion (a non-nil,
+	// non-pointer embed cannot panic the way M2's nil-embedded-pointer
+	// case does) and let the promoted value cross the boundary un-proven,
+	// the same silent-acceptance gap requireStrictStructValue's own M2 fix
+	// closed for a nested-selector struct root — never a Go zero value
+	// (strictSpreadProps' contract is to fail closed on any missing or
+	// unprovable field, never to synthesize one the way the generated-Go
+	// twin does for an explicit call's omitted attribute).
+	t.Run("promoted field on the spread source fails closed instead of zero-filling", func(t *testing.T) {
+		type toneHolder struct{ Tone string }
+		type promotedSpreadSource struct {
+			toneHolder
+			Abbreviation string
+		}
+		source := promotedSpreadSource{toneHolder: toneHolder{Tone: "red"}, Abbreviation: "NE"}
+		_, err := strictSpreadProps(comp, source)
+		if err == nil {
+			t.Fatal("strictSpreadProps unexpectedly accepted a promoted field on the spread source")
+		}
+		want := "field Tone is a promoted (embedded) field"
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want it to contain %q", err, want)
+		}
+	})
+}
+
+// TestTierOneBarePropsSpreadRenders and TestTierOneNestedFieldSpreadRenders
+// are gosx#182/#184 M-1's tier-1 render tests for both admitted E2 tier-1
+// spread source shapes: bare props (the whole props value) and a props
+// field selector. Before the fix, a strict body's "props" scope binding was
+// always the map[string]any localComponentProps built for the current
+// frame, and re-spreading that map into strictSpreadProps always failed
+// the struct-kind check there — so the admitted, documented bare-props
+// shape could compile but could never render. The props.Field shape
+// already worked (requireStrictStructValue preserves the real struct value
+// under its own map key), so it is here as the other half of the pair.
+func TestTierOneBarePropsSpreadRenders(t *testing.T) {
+	source := `package app
+type MarkProps struct {
+	Tone string
+}
+component Mark(props: MarkProps) {
+	return <span>{props.Tone}</span>
+}
+component Panel(props: MarkProps) {
+	return <div class="panel"><Mark {...props}></Mark></div>
+}
+func Page() Node {
+	return <main><Panel {...src}></Panel></main>
+}
+`
+	prog, err := gosx.Compile([]byte(source))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	type markPropsGo struct{ Tone string }
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"src": markPropsGo{Tone: "red"}},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	if want := `<main><div class="panel"><span>red</span></div></main>`; html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+func TestTierOneNestedFieldSpreadRenders(t *testing.T) {
+	source := `package app
+type MarkProps struct {
+	Tone string
+}
+component Mark(props: MarkProps) {
+	return <span>{props.Tone}</span>
+}
+type OuterProps struct {
+	Away MarkProps
+	Name string
+}
+component Outer(props: OuterProps) {
+	return <div><b>{props.Name}</b><Mark {...props.Away}></Mark></div>
+}
+func Page() Node {
+	return <main><Outer {...src}></Outer></main>
+}
+`
+	prog, err := gosx.Compile([]byte(source))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	// requireStrictStructValue checks a nested struct-typed field's runtime
+	// Go type NAME against the .gsx-declared name exactly ("MarkProps"),
+	// unlike the outer Outer{...src} call itself (a tier-2 spread, proved
+	// field by field with no such nominal check on its own container
+	// type) — so this local type must be named MarkProps, not merely
+	// shaped like it.
+	type MarkProps struct{ Tone string }
+	type outerPropsGo struct {
+		Away MarkProps
+		Name string
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"src": outerPropsGo{Away: MarkProps{Tone: "blue"}, Name: "N"}},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	if want := `<main><div><b>N</b><span>blue</span></div></main>`; html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+// TestZeroReadStrictCalleeSpreadBoundaryStillChecksKind covers minor m-2: a
+// strict callee with an empty read set (PropsFields nil) used to bypass
+// localComponentProps' strict spread branch entirely (the early
+// len(comp.PropsFields)==0 return fell to the generic, non-strict
+// componentProps builder), so a nil, map, or scalar spread source rendered
+// clean instead of failing closed the way design spec section 3.4
+// requires. A field-less but genuinely struct-typed source must still
+// pass — there is nothing to prove per field, but the nil/kind checks
+// still run.
+func TestZeroReadStrictCalleeSpreadBoundaryStillChecksKind(t *testing.T) {
+	source := `package app
+type EmptyProps struct {
+	Unused string
+}
+component Leaf(props: EmptyProps) {
+	return <span>leaf</span>
+}
+func Page() Node {
+	return <main><Leaf {...src}></Leaf></main>
+}
+`
+	prog, err := gosx.Compile([]byte(source))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if fields := prog.Components[0].PropsFields; len(fields) != 0 {
+		t.Fatalf("Leaf.PropsFields = %#v, want empty", fields)
+	}
+
+	for _, tc := range []struct {
+		name string
+		src  any
+	}{
+		{"nil", nil},
+		{"map", map[string]any{"Unused": "x"}},
+		{"int", 42},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+				Values: map[string]any{"src": tc.src},
+			})
+			if err == nil {
+				t.Fatalf("%s source: want a boundary error, got a clean render", tc.name)
+			}
+		})
+	}
+
+	t.Run("struct still passes", func(t *testing.T) {
+		type emptyPropsGo struct{ Unused string }
+		html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+			Values: map[string]any{"src": emptyPropsGo{Unused: "x"}},
+		})
+		if err != nil {
+			t.Fatalf("RenderProgramComponent: %v", err)
+		}
+		if want := `<main><span>leaf</span></main>`; html != want {
+			t.Fatalf("html = %q, want %q", html, want)
+		}
+	})
+}

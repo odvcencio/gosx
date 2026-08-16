@@ -29,6 +29,30 @@ type fileRenderEnv struct {
 	renderEngine    func(engine.Config, gosx.Node) gosx.Node
 	renderIsland    func(*islandprogram.Program, any) gosx.Node
 	enableBootstrap func()
+	// strictSpreadSource is the raw, already-boundary-proved value that
+	// localComponentProps used to build the CURRENT strict component
+	// render frame's own "props" binding — set only when that frame came
+	// from the single-spread call shape (nil for an explicit-attrs call).
+	// writeLocalComponent resets it on every strict-component call, so it
+	// is never stale across an unrelated nested component, and it survives
+	// unchanged through any HTML/If/Each nodes in between, the same way
+	// the "props" scope binding itself does.
+	//
+	// It exists only to make a BARE {...props} spread forward, from
+	// inside a strict body, work at the map-backed file renderer boundary
+	// (gosx#182/#184 M-1): "props" in scope is always the reduced
+	// map[string]any localComponentProps builds for the current frame
+	// (never a real Go struct, even when every field it needs was proved
+	// from one), so re-spreading it verbatim into strictSpreadProps always
+	// fails the struct-kind check there — the same struct-kind check that
+	// correctly rejects an arbitrary map. Re-running that same proof
+	// against strictSpreadSource instead is sound unconditionally, not
+	// just for a statically-proven tier-1 chain: strictSpreadProps always
+	// re-proves every field the callee needs against the concrete runtime
+	// value, so a mismatched shape still fails closed, just against the
+	// right value instead of an artificially reduced map. See
+	// localComponentProps' single-spread branch.
+	strictSpreadSource any
 }
 
 // fileRenderScope is one copy-on-write binding in the render environment.

@@ -1,7 +1,10 @@
 package gosx
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -562,7 +565,7 @@ func TestCompileStrictCalleeRejectsDynamicCallShape(t *testing.T) {
 		call    string
 		message string
 	}{
-		{name: "spread", call: `<Badge {...props} />`, message: "spread attributes are not supported"},
+		{name: "spread", call: `<Badge {...props} />`, message: "does not accept props"},
 		{name: "attribute", call: `<Badge bogus="x" />`, message: "does not accept props"},
 		{name: "children", call: `<Badge>child</Badge>`, message: "does not accept positional children"},
 	}
@@ -915,6 +918,831 @@ component Page() {
 `))
 	if err == nil || !strings.Contains(err.Error(), "requires prop Label") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// --- E2 (#184): spread props at strict call sites -------------------------
+
+// TestCompileStrictTierOneSpreadIntoShadowedEachAccepts covers gosx#182/
+// #184 minor m-6: a same-file strict component literally named "Each"
+// (the section 2.1 shadow carve-out) is a valid E2 tier-1 spread callee
+// like any other. Before the fix, collectStrictElementReads excluded tag
+// "Each" from the spread-forward read class unconditionally, so the
+// struct-typed spread source fell through to the scalar-read walk and
+// validateStrictRenderedProps rejected it as a non-scalar prop — even
+// though validateStrictToStrictSpreadCall, a separate pass, proves this
+// exact call valid. This must now compile clean.
+func TestCompileStrictTierOneSpreadIntoShadowedEachAccepts(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type EachProps struct {
+	Label string
+}
+component Each(props: EachProps) {
+	return <em>{props.Label}</em>
+}
+component Page(props: EachProps) {
+	return <div><Each {...props}></Each></div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+}
+
+// TestCompileStrictTierOneSpreadAcceptsExactTypeSources covers design spec
+// section 3.2: bare props (the whole props value) and a props field
+// selector whose declared type is exactly the callee's props type.
+func TestCompileStrictTierOneSpreadAcceptsExactTypeSources(t *testing.T) {
+	t.Run("bare props", func(t *testing.T) {
+		_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+component Matchup(props: TeamMarkProps) {
+	return <div><TeamMark {...props}></TeamMark></div>
+}
+`))
+		if err != nil {
+			t.Fatalf("Compile: %v", err)
+		}
+	})
+	t.Run("props field", func(t *testing.T) {
+		_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+type MatchupProps struct {
+	Away TeamMarkProps
+}
+component Matchup(props: MatchupProps) {
+	return <div><TeamMark {...props.Away}></TeamMark></div>
+}
+`))
+		if err != nil {
+			t.Fatalf("Compile: %v", err)
+		}
+	})
+}
+
+// TestCompileStrictTierOneSpreadForwardReferencedCalleeCompiles covers
+// gosx#182/#184 M-3: collectStrictSchemas used to be one pass, populating
+// l.strictNames in file order while ALSO collecting each component's own
+// reads in that same pass — so isSpreadForwardTag (which needs
+// l.strictNames complete to classify a spread's read) saw a callee
+// declared LATER in the file as unknown, and a caller's {...props.Away}
+// spread into it fell through to the generic scalar-read walk, which
+// rejected the struct-typed props.Away as not a renderer scalar. Whether
+// this compiled depended only on which order Mark and Outer were declared
+// in, not on any real type-safety difference between the two orders. Both
+// orders must now compile, and produce byte-identical PropsFields and
+// PropsPaths for both components regardless of which pass order collected
+// them.
+func TestCompileStrictTierOneSpreadForwardReferencedCalleeCompiles(t *testing.T) {
+	calleeFirst := `package app
+type MarkProps struct {
+	Tone string
+}
+component Mark(props: MarkProps) {
+	return <span>{props.Tone}</span>
+}
+type OuterProps struct {
+	Away MarkProps
+}
+component Outer(props: OuterProps) {
+	return <div><Mark {...props.Away}></Mark></div>
+}
+`
+	calleeLast := `package app
+type OuterProps struct {
+	Away MarkProps
+}
+component Outer(props: OuterProps) {
+	return <div><Mark {...props.Away}></Mark></div>
+}
+type MarkProps struct {
+	Tone string
+}
+component Mark(props: MarkProps) {
+	return <span>{props.Tone}</span>
+}
+`
+	progFirst, err := Compile([]byte(calleeFirst))
+	if err != nil {
+		t.Fatalf("Compile (callee declared first): %v", err)
+	}
+	progLast, err := Compile([]byte(calleeLast))
+	if err != nil {
+		t.Fatalf("Compile (callee declared last, forward reference): %v", err)
+	}
+
+	fieldsByName := func(prog *ir.Program) map[string]ir.Component {
+		out := make(map[string]ir.Component, len(prog.Components))
+		for _, c := range prog.Components {
+			out[c.Name] = c
+		}
+		return out
+	}
+	first := fieldsByName(progFirst)
+	last := fieldsByName(progLast)
+	for _, name := range []string{"Outer", "Mark"} {
+		fc, lc := first[name], last[name]
+		if len(fc.PropsFields) == 0 {
+			t.Fatalf("%s: PropsFields empty in the callee-first order", name)
+		}
+		if fmtMap(fc.PropsFields) != fmtMap(lc.PropsFields) {
+			t.Fatalf("%s: PropsFields differ by declaration order: first=%#v last=%#v", name, fc.PropsFields, lc.PropsFields)
+		}
+		if fmtMap(fc.PropsPaths) != fmtMap(lc.PropsPaths) {
+			t.Fatalf("%s: PropsPaths differ by declaration order: first=%#v last=%#v", name, fc.PropsPaths, lc.PropsPaths)
+		}
+	}
+}
+
+// fmtMap gives two maps a deterministic, comparable string form for an
+// order-independence assertion — map equality via reflect.DeepEqual would
+// work too, but this reads directly in a failure message.
+func fmtMap(m map[string]string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s=%s;", k, m[k])
+	}
+	return b.String()
+}
+
+func TestCompileStrictTierOneSpreadRejectsWrongType(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+type MatchupTeam struct {
+	Tone string
+}
+type MatchupProps struct {
+	Away MatchupTeam
+}
+component Matchup(props: MatchupProps) {
+	return <div><TeamMark {...props.Away}></TeamMark></div>
+}
+`))
+	want := "strict spread source props.Away has type MatchupTeam, want exact TeamMarkProps; a strict caller spreads a value whose declared type is the callee props type"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictTierOneSpreadRejectsNonSelectorSource(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+component Matchup(props: TeamMarkProps) {
+	return <div><TeamMark {...team()}></TeamMark></div>
+}
+`))
+	want := `strict spread source "team()" is not renderable; spread sources are props or a props field selector`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictTierOneSpreadRejectsSpreadPlusNamedAttr(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+component Matchup(props: TeamMarkProps) {
+	return <div><TeamMark {...props} tone="x"></TeamMark></div>
+}
+`))
+	want := "strict component call TeamMark accepts at most one spread attribute and no other attributes"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictTierOneSpreadRejectsTwoSpreads(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+component Matchup(props: TeamMarkProps) {
+	return <div><TeamMark {...props} {...props}></TeamMark></div>
+}
+`))
+	want := "strict component call TeamMark accepts at most one spread attribute and no other attributes"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictTierTwoSpreadAcceptsLegacySingleSpread covers section
+// 3.3: a legacy body's single spread into a same-file strict component
+// compiles — the shape is all the lowerer can prove; the renderer boundary
+// proves the value.
+func TestCompileStrictTierTwoSpreadAcceptsLegacySingleSpread(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+func Page() Node {
+	team := map[string]any{"Tone": "red"}
+	return <div><TeamMark {...team}></TeamMark></div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+}
+
+// TestCompileStrictTierTwoSpreadRejectsNamedAttrs covers section 4.4's
+// updated cross-style message: a legacy body calling a strict component
+// with named attributes stays banned, now naming the supported spread
+// spelling instead of the flat v0.39 message.
+func TestCompileStrictTierTwoSpreadRejectsNamedAttrs(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+func Page() Node {
+	return <div><TeamMark tone="red"></TeamMark></div>
+}
+`))
+	want := "legacy component cannot call strict component TeamMark with named attributes; pass one {...source} spread and the renderer will prove it at the boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictTierTwoSpreadRejectsSpreadPlusAttr covers the shape rule
+// for tier 2 too: a spread plus a named attribute stays rejected by the
+// same message as the bare named-attrs case.
+func TestCompileStrictTierTwoSpreadRejectsSpreadPlusAttr(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+func Page() Node {
+	team := map[string]any{"Tone": "red"}
+	return <div><TeamMark {...team} tone="blue"></TeamMark></div>
+}
+`))
+	want := "legacy component cannot call strict component TeamMark with named attributes; pass one {...source} spread and the renderer will prove it at the boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileRejectsCrossStyleComponentCallsPolarityRegression re-runs
+// TestCompileRejectsCrossStyleComponentCalls' strict-to-legacy direction
+// (unaffected by E2, which only narrows the legacy-to-strict direction) and
+// the legacy-to-strict, no-attribute direction (which keeps its exact
+// v0.39 message).
+func TestCompileRejectsCrossStyleComponentCallsPolarityRegression(t *testing.T) {
+	_, err := Compile([]byte(`package app
+component Badge() {
+	return <span>badge</span>
+}
+func Page() Node {
+	return <Badge />
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "calls must stay within one style") {
+		t.Fatalf("error = %v", err)
+	}
+	_, err = Compile([]byte(`package app
+func Badge(attrs AttrList) Node {
+	return <span>badge</span>
+}
+component Page() {
+	return <Badge bogus="x">child</Badge>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "calls must stay within one style") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// --- E1 (#182): strict <Each> ----------------------------------------------
+
+const breakdownRowFixturePrelude = `package app
+type BreakdownRow struct {
+	Scored bool
+	Label  string
+	Points string
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+`
+
+func TestCompileStrictEachAcceptsSliceOfSameFileStruct(t *testing.T) {
+	prog, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div>
+		<Each of={props.Breakdown} as="row">
+			<div data-scored={row.Scored}><span>{row.Label}</span><b>{row.Points}</b></div>
+		</Each>
+	</div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	row := prog.Components[0]
+	schema, ok := row.PropsSlices["Breakdown"]
+	if !ok {
+		t.Fatalf("PropsSlices missing Breakdown: %#v", row.PropsSlices)
+	}
+	if schema.Elem != "BreakdownRow" {
+		t.Fatalf("Elem = %q, want BreakdownRow", schema.Elem)
+	}
+	for _, field := range []string{"Scored", "Label", "Points"} {
+		if _, ok := schema.Reads[field]; !ok {
+			t.Fatalf("Reads missing %q: %#v", field, schema.Reads)
+		}
+	}
+	if row.PropsFields["Breakdown"] != "[]BreakdownRow" {
+		t.Fatalf("PropsFields[Breakdown] = %q, want []BreakdownRow", row.PropsFields["Breakdown"])
+	}
+}
+
+func TestCompileStrictEachRejectsLoopableTypeTable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		fields string
+		of     string
+		want   string
+	}{
+		{
+			name:   "map",
+			fields: "Breakdown map[string]BreakdownRow",
+			of:     "props.Breakdown",
+			want:   "<Each> sources must be []T slices of structs declared in this .gsx file",
+		},
+		{
+			name:   "pointer elements",
+			fields: "Breakdown []*BreakdownRow",
+			of:     "props.Breakdown",
+			want:   "pointer elements cannot preserve Go nil-pointer behavior in the file renderer",
+		},
+		{
+			name:   "scalar elements",
+			fields: "Names []string",
+			of:     "props.Names",
+			want:   "loop elements must be structs declared in this .gsx file",
+		},
+		{
+			name:   "array",
+			fields: "Breakdown [3]BreakdownRow",
+			of:     "props.Breakdown",
+			want:   "<Each> sources must be []T slices of structs declared in this .gsx file",
+		},
+		{
+			name:   "named slice type",
+			fields: "Breakdown Rows",
+			of:     "props.Breakdown",
+			want:   "<Each> sources must be []T slices of structs declared in this .gsx file",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := []byte(`package app
+type BreakdownRow struct {
+	Label string
+}
+type Rows []BreakdownRow
+type RowProps struct {
+	` + tc.fields + `
+}
+component Row(props: RowProps) {
+	return <div><Each of={` + tc.of + `} as="row"><span>{row.Label}</span></Each></div>
+}
+`)
+			_, err := Compile(source)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCompileStrictEachRejectsMissingAs(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown}><span>x</span></Each></div>
+}
+`))
+	want := "strict <Each> requires a static as attribute naming the loop binding"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachRejectsDuplicateOf, TestCompileStrictEachRejectsDuplicateAs,
+// and TestCompileStrictEachRejectsDuplicateIndex cover gosx#182/#184 B-1:
+// strictEachShape used to count of, as, and index last-wins, with no
+// duplicate check — validateStrictConditionalCall already counted cond,
+// but <Each> lost that rule. route/fileprogram.go's attrValue binds the
+// FIRST matching attribute, while the transpiled Go call binds whichever
+// one the AST holds last, so `<Each of={props.Rows} as="row" as="alt">`
+// compiled clean and bound "alt" in generated Go but "row" in the file
+// renderer — a silent two-surface divergence with no compile error at
+// all. These prove the fix fails closed at compile time.
+func TestCompileStrictEachRejectsDuplicateOf(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} of={props.Breakdown} as="row"><span>{row.Label}</span></Each></div>
+}
+`))
+	want := "strict <Each> requires exactly one of attribute with an expression value"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachRejectsDuplicateAs reproduces the reviewer's exact
+// divergence shape verbatim: `<Each of={props.Rows} as="row" as="alt">`.
+// Before the fix this compiled; the file renderer bound "row" (attrValue's
+// first match) while the transpiled Go bound "alt" (the AST's last as),
+// so the SAME program rendered two different values depending on which
+// renderer executed it, with no diagnostic anywhere. It must now fail
+// closed at Compile, closing that divergence at the source.
+func TestCompileStrictEachRejectsDuplicateAs(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row" as="alt"><span>{alt.Label}</span></Each></div>
+}
+`))
+	want := "strict <Each> requires exactly one as attribute naming the loop binding"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachRejectsDuplicateIndex(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row" index="i" index="j"><span>{j}</span><b>{row.Label}</b></Each></div>
+}
+`))
+	want := "strict <Each> requires exactly one index attribute naming the index binding"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachRejectsBindingNamedAfterImportAlias covers gosx#182/
+// #184 nit n-1: a binding named after an explicit same-file import alias
+// already failed closed in the strictcheck projection (the generated Go
+// shadows the package alias inside the loop body), just with a confusing
+// Go-compiler error far from the .gsx source instead of a clear lowerer
+// diagnostic at the binding itself.
+func TestCompileStrictEachRejectsBindingNamedAfterImportAlias(t *testing.T) {
+	_, err := Compile([]byte(`package app
+
+import strs "strings"
+
+type BreakdownRow struct {
+	Label string
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="strs"><span>{strs.Label}</span></Each></div>
+}
+`))
+	want := `strict <Each> binding "strs" shadows this file's "strs" import; choose another name`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachRejectsFallbackAttr(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row" fallback="none"><span>{row.Label}</span></Each></div>
+}
+`))
+	want := `strict <Each> does not accept attribute "fallback"; of, as, and index are the only supported attributes`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachRejectsUppercaseBinding(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="Row"><span>x</span></Each></div>
+}
+`))
+	want := `strict <Each> binding "Row" must start with a lowercase letter and be a valid Go identifier`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachRejectsReservedPropsBinding(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="props"><span>x</span></Each></div>
+}
+`))
+	want := `strict <Each> binding "props" is reserved; choose another name`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachRejectsShadowedBinding(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Stat struct {
+	Label string
+}
+type BreakdownRow struct {
+	Stats []Stat
+	Label string
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+component Row(props: RowProps) {
+	return <div>
+		<Each of={props.Breakdown} as="row">
+			<Each of={row.Stats} as="row"><span>{row.Label}</span></Each>
+		</Each>
+	</div>
+}
+`))
+	want := `strict <Each> binding "row" is already bound by an enclosing <Each>; loop bindings cannot shadow`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachRejectsCrossFileElement covers section 2.3's
+// cross-package/sibling-.go element row: this .gsx file's schema is blind
+// to any type it does not itself declare, including a scalar-looking
+// builtin-shaped name it never defines.
+func TestCompileStrictEachRejectsCrossFileElement(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type RowProps struct {
+	Breakdown []external.Row
+}
+component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>x</span></Each></div>
+}
+`))
+	if err == nil {
+		t.Fatal("Compile unexpectedly accepted a cross-package element type")
+	}
+}
+
+// TestCompileStrictEachShadowedByComponentStaysAComponentCall mirrors
+// TestCompileStrictServerIfShadowedBySameFileComponentStaysAComponentCall:
+// a same-file strict component literally named Each wins over the
+// builtin, and ordinary strict-call rules apply to it.
+func TestCompileStrictEachShadowedByComponentStaysAComponentCall(t *testing.T) {
+	prog, err := Compile([]byte(`package app
+type EachProps struct {
+	Label string
+}
+component Each(props: EachProps) {
+	return <em>{props.Label}</em>
+}
+component Page() {
+	return <Each label="shadowed" />
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	page := prog.Components[1]
+	call := prog.NodeAt(page.Root)
+	if call == nil || call.Tag != "Each" || len(call.Attrs) != 1 || call.Attrs[0].Name != "Label" {
+		t.Fatalf("shadowed Each call not lowered as a component call: %#v", call)
+	}
+}
+
+func TestCompileStrictEachRejectsSliceFieldRenderedAsScalar(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div>{props.Breakdown}</div>
+}
+`))
+	want := "strict component Row cannot render props.Breakdown of type []BreakdownRow here; slice props render only through <Each of>"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachAcceptsFieldBothLoopedAndNeverRenderedScalar proves
+// the same field looped (and never separately rendered as a bare scalar)
+// compiles cleanly.
+func TestCompileStrictEachAcceptsFieldBothLoopedAndNeverRenderedScalar(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>{row.Label}</span></Each></div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+}
+
+func TestCompileStrictEachBindingSelectorAcceptsScalarLeafRejectsStructLeaf(t *testing.T) {
+	source := []byte(`package app
+type Stat struct {
+	Label string
+}
+type BreakdownRow struct {
+	Stat Stat
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>{row.Stat}</span></Each></div>
+}
+`)
+	_, err := Compile(source)
+	want := "strict component Row cannot render row.Stat of type Stat; loop selectors must reach an exact scalar field"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachRejectsBindingSelectorEmbeddedField extends gosx#183's
+// B1 fix (a promoted field at selector hop i>0 fails closed) to an <Each>
+// binding root: row.Stat.City crosses a promoted field the same way
+// props.Player.City did in TestCompileStrictServerRejectsNestedSelectorEmbeddedField.
+// TeamRef carries its own named sibling field (Note) so structTypes
+// registers TeamRef at all — with no named field of its own, TeamRef never
+// enters structTypes and the call fails on the separate "struct is not
+// declared" gate instead of the promoted-field gate this test means to
+// cover.
+func TestCompileStrictEachRejectsBindingSelectorEmbeddedField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Team struct { City string }
+type TeamRef struct { Team; Note string }
+type BreakdownRow struct { Stat TeamRef }
+type RowProps struct { Breakdown []BreakdownRow }
+component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>{row.Stat.City}</span></Each></div>
+}
+`))
+	want := "strict component Row cannot resolve row.Stat.City: struct TeamRef declares no visible field City; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachRejectsBindingSelectorUnexportedLeaf covers the other
+// B1 shape for a binding root: an unexported leaf field on a same-file
+// declared struct (not promoted, just lowercase) hits the identical
+// hop-i>0 unknown-field gate, since collectStructSchemas never records an
+// unexported field at all.
+func TestCompileStrictEachRejectsBindingSelectorUnexportedLeaf(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Team struct { city string; Zone string }
+type BreakdownRow struct { Stat Team }
+type RowProps struct { Breakdown []BreakdownRow }
+component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>{row.Stat.city}</span></Each></div>
+}
+`))
+	want := "strict component Row cannot resolve row.Stat.city: struct Team declares no visible field city; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachRejectsPromotedBindingHopZeroField and
+// TestCompileStrictEachRejectsUnexportedBindingHopZeroField cover gosx#182/
+// #184 M-2: a HOP-0 read on an <Each> BINDING root (the item's own
+// field, not a nested one) used to return the silent strictHopUnknownField
+// kind, on the claim that the package checker backstops it. That claim was
+// false here — the projection compiles in the SAME package as the .gsx
+// file's declarations, so Go resolves a promoted or unexported field on
+// the binding's element struct exactly as it resolves a declared one.
+// Before the fix this compiled clean, strictcheck accepted it, PropsSlices
+// omitted the field from Reads, and the boundary never proved it, so the
+// file renderer and the transpiled Go diverged on row.Label silently. Both
+// must now fail closed at compile time with the B1-style message.
+func TestCompileStrictEachRejectsPromotedBindingHopZeroField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Base struct { Label string }
+type Row struct { Base; Points string }
+type RowProps struct { Rows []Row }
+component C(props: RowProps) {
+	return <section><Each of={props.Rows} as="row"><span>{row.Label}</span></Each></section>
+}
+`))
+	want := "strict component C cannot resolve row.Label: struct Row declares no visible field Label; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachRejectsUnexportedBindingHopZeroField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Row struct { label string; Points string }
+type RowProps struct { Rows []Row }
+component C(props: RowProps) {
+	return <section><Each of={props.Rows} as="row"><span>{row.label}</span></Each></section>
+}
+`))
+	want := "strict component C cannot resolve row.label: struct Row declares no visible field label; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachBindingConcatAndCondBothPolarities(t *testing.T) {
+	// Accept: exact string/bool leaves.
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span class={"tone-" + row.Label}><If cond={row.Scored}>scored</If></span></Each></div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile (accept): %v", err)
+	}
+
+	// Reject: concat of a non-string binding field.
+	_, err = Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>{"scored-" + row.Scored}</span></Each></div>
+}
+`))
+	want := `strict component Row cannot concatenate row.Scored of type bool; "+" operands must be exact string fields`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+
+	// Reject: cond over a non-bool binding field.
+	_, err = Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><If cond={row.Label}>x</If></Each></div>
+}
+`))
+	want = "strict component Row cannot use row.Label of type string in <If cond>; cond requires an exact bool field"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachRejectsIndexBindingInSelector(t *testing.T) {
+	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row" index="i"><span>{i.Label}</span></Each></div>
+}
+`))
+	want := "strict component Row cannot use index binding i in a selector; the index is an int value"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictEachSerializationRoundTrip covers the PropsSlices
+// round-trip half of section 5.2's list (paired with the dedicated absent-
+// field decode test in ir/propspaths_roundtrip_test.go-style coverage,
+// added under ir/).
+func TestCompileStrictEachSerializationRoundTrip(t *testing.T) {
+	prog, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row"><span>{row.Label}</span></Each></div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	data, err := json.Marshal(prog.Components[0])
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var decoded ir.Component
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if decoded.PropsSlices["Breakdown"].Elem != "BreakdownRow" {
+		t.Fatalf("PropsSlices did not round-trip: %#v", decoded.PropsSlices)
 	}
 }
 

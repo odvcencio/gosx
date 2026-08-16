@@ -23,6 +23,7 @@ import (
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/strictcomponent"
 )
 
 // Options controls transpiler behavior.
@@ -83,13 +84,24 @@ func Transpile(source []byte, opts Options) (string, error) {
 }
 
 type transpiler struct {
-	src              []byte
-	lang             *gotreesitter.Language
-	sourceFile       string
-	imports          map[string]string // alias -> path
-	propsTypes       map[string]string
-	propsFields      map[string]map[string]string
+	src         []byte
+	lang        *gotreesitter.Language
+	sourceFile  string
+	imports     map[string]string // alias -> path
+	propsTypes  map[string]string
+	propsFields map[string]map[string]string
+	// structFieldTypes records, per same-file struct name, each field's raw
+	// declared type text — collectStructFields' companion map, populated
+	// alongside propsFields. emitStrictEach uses it to name a strict
+	// <Each>'s gosx.Map callback element type without re-deriving it from
+	// ir.Component (transpile.go works from the CST directly, not the IR).
+	structFieldTypes map[string]map[string]string
 	strictNames      map[string]struct{} // same-file gosx_component_declaration names, props or not
+	// currentPropsType is the props type of the strict component whose body
+	// is currently being emitted (empty outside strict emission) — needed
+	// to resolve a same-file <Each of> or spread source's element/struct
+	// type by walking structFieldTypes from the right root.
+	currentPropsType string
 	errs             []string
 	hasStrict        bool
 	strict           int
@@ -419,12 +431,17 @@ func (t *transpiler) collectStructFieldsFromTypeDecl(n *gotreesitter.Node) {
 			continue
 		}
 		fields := make(map[string]string)
+		fieldTypes := make(map[string]string)
 		var collect func(*gotreesitter.Node)
 		collect = func(node *gotreesitter.Node) {
 			if node == nil {
 				return
 			}
 			if t.nodeType(node) == "field_declaration" {
+				fieldType := ""
+				if fieldTypeNode := t.childByField(node, "type"); fieldTypeNode != nil {
+					fieldType = strings.TrimSpace(t.text(fieldTypeNode))
+				}
 				for i := 0; i < int(node.NamedChildCount()); i++ {
 					child := node.NamedChild(i)
 					if t.nodeType(child) != "field_identifier" {
@@ -436,6 +453,7 @@ func (t *transpiler) collectStructFieldsFromTypeDecl(n *gotreesitter.Node) {
 						continue
 					}
 					fields[field] = field
+					fieldTypes[field] = fieldType
 					alias := lowerCamelField(field)
 					if existing, ok := fields[alias]; ok && existing != field {
 						fields[alias] = ""
@@ -451,7 +469,12 @@ func (t *transpiler) collectStructFieldsFromTypeDecl(n *gotreesitter.Node) {
 		}
 		collect(typeNode)
 		if len(fields) > 0 {
-			t.propsFields[t.text(nameNode)] = fields
+			name := t.text(nameNode)
+			t.propsFields[name] = fields
+			if t.structFieldTypes == nil {
+				t.structFieldTypes = make(map[string]map[string]string)
+			}
+			t.structFieldTypes[name] = fieldTypes
 		}
 	}
 }
@@ -604,9 +627,12 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 		}
 	}
 
+	prevPropsType := t.currentPropsType
+	t.currentPropsType = t.propsTypes[t.text(nameNode)]
 	t.strict++
 	body := t.emitDefault(bodyNode)
 	t.strict--
+	t.currentPropsType = prevPropsType
 	return "func " + t.text(nameNode) + "(" + params + ") " + t.gosxRef("Node") + " " + body
 }
 
@@ -673,12 +699,21 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 	}
 
 	tag := t.extractTagName(openNode)
+
+	if t.isStrictEachTag(tag) {
+		return t.emitStrictEach(openNode, n)
+	}
+
 	children := t.emitChildren(n)
 
 	if t.isStrictConditionalTag(tag) {
 		if cond, ok := t.strictConditionalCondExpr(openNode); ok {
 			return t.emitStrictConditional(cond, children)
 		}
+	}
+
+	if verbatim, ok := t.strictSpreadCallVerbatim(tag, openNode); ok {
+		return verbatim
 	}
 
 	if isComponent(tag) {
@@ -734,6 +769,167 @@ func (t *transpiler) strictConditionalCondExpr(openNode *gotreesitter.Node) (str
 // wrote zero, one, or many GSX children.
 func (t *transpiler) emitStrictConditional(cond string, children []string) string {
 	return fmt.Sprintf("%s(%s, %s(%s))", t.gosxRef("If"), cond, t.gosxRef("Fragment"), strings.Join(children, ", "))
+}
+
+// isStrictEachTag reports whether tag resolves to the strict <Each> builtin
+// rather than a same-file component named Each. It mirrors
+// isStrictConditionalTag's shadow rule and its reasoning: gosx.Compile
+// (run before any emission in Transpile) has already proven the file
+// compiles under ir/lower.go's identical carve-out, so by the time
+// emission runs, tag=="Each" outside t.strictNames can only be the
+// builtin.
+func (t *transpiler) isStrictEachTag(tag string) bool {
+	if t.strict == 0 || tag != "Each" {
+		return false
+	}
+	_, shadowed := t.strictNames[tag]
+	return !shadowed
+}
+
+// emitStrictEach projects a strict <Each of={...} as="x" [index="i"]> call
+// onto gosx.Map (design spec section 2.8): the of source, the item and
+// (optional) index binding names, and the Go compiler-provable element
+// type together produce
+//
+//	gosx.Map(<of>, func(<as> <ElemType>, <index or _> int) gosx.Node {
+//	    return gosx.Fragment(<children...>)
+//	})
+//
+// ir/lower.go's validateStrictEachCall has already proven the shape,
+// binding names, and loopable element type before transpile emission
+// runs, so this is extraction, not a second validation pass. elementNode
+// is nil for a self-closing <Each /> (no children).
+func (t *transpiler) emitStrictEach(openNode, elementNode *gotreesitter.Node) string {
+	var ofExpr, asName, indexName string
+	for i := 0; i < int(openNode.NamedChildCount()); i++ {
+		child := openNode.NamedChild(i)
+		if t.nodeType(child) != "jsx_attribute" {
+			continue
+		}
+		nameNode := t.childByField(child, "name")
+		if nameNode == nil {
+			continue
+		}
+		switch t.text(nameNode) {
+		case "of":
+			if value, boolAttr, ok := t.emitAttrValue(child); ok && !boolAttr {
+				ofExpr = value
+			}
+		case "as":
+			asName = trimGSXStringLiteral(child, t)
+		case "index":
+			indexName = trimGSXStringLiteral(child, t)
+		}
+	}
+
+	var children []string
+	if elementNode != nil {
+		children = t.emitChildren(elementNode)
+	}
+
+	elemType := t.strictEachElemType(ofExpr)
+	indexParam := "_"
+	if indexName != "" {
+		indexParam = indexName
+	}
+	body := fmt.Sprintf("%s(%s)", t.gosxRef("Fragment"), strings.Join(children, ", "))
+	return fmt.Sprintf("%s(%s, func(%s %s, %s int) %s { return %s })",
+		t.gosxRef("Map"), ofExpr, asName, elemType, indexParam, t.gosxRef("Node"), body)
+}
+
+// trimGSXStringLiteral reads a jsx_attribute's static string value (the
+// grammar's jsx_string_literal, quotes included) and strips the quotes —
+// used for as/index, which are always the static-string shape by the time
+// emission runs.
+func trimGSXStringLiteral(attr *gotreesitter.Node, t *transpiler) string {
+	valueNode := t.childByField(attr, "value")
+	if valueNode == nil {
+		return ""
+	}
+	raw := t.text(valueNode)
+	if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+		return raw[1 : len(raw)-1]
+	}
+	return raw
+}
+
+// strictEachElemType resolves a props-rooted <Each of> source to its
+// element struct name by walking t.structFieldTypes from
+// t.currentPropsType's base name — the transpiler's own re-derivation of
+// the same declared-text rule ir/lower.go's admitStrictEachElemType
+// enforces, needed here only to name the gosx.Map callback parameter. It
+// falls back to "any" for a shape the lowerer would already have rejected
+// (unreachable once gosx.Compile has run), so a transpiler bug fails as an
+// invalid-Go build error instead of a panic.
+func (t *transpiler) strictEachElemType(ofExpr string) string {
+	path, ok := strictcomponent.ServerPropPath(ofExpr)
+	if !ok || len(path) != 1 {
+		return "any"
+	}
+	fieldType := strings.TrimSpace(t.structFieldTypes[strictStructBaseName(t.currentPropsType)][path[0]])
+	if !strings.HasPrefix(fieldType, "[]") {
+		return "any"
+	}
+	elem := strings.TrimSpace(strings.TrimPrefix(fieldType, "[]"))
+	if elem == "" {
+		return "any"
+	}
+	return elem
+}
+
+// strictStructBaseName strips a declared type's pointer prefix, package
+// qualifier, and generic/array brackets down to the bare same-file struct
+// name t.structFieldTypes and t.propsFields key on — transpile.go's own
+// copy of ir/lower.go's propsBaseType, kept local since the two packages
+// share no such helper today.
+func strictStructBaseName(typeText string) string {
+	typeText = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(typeText), "*"))
+	if idx := strings.LastIndex(typeText, "."); idx >= 0 {
+		typeText = typeText[idx+1:]
+	}
+	if idx := strings.Index(typeText, "["); idx >= 0 {
+		typeText = typeText[:idx]
+	}
+	return typeText
+}
+
+// strictSpreadCallVerbatim recognizes E2 tier 1's proven call shape (design
+// spec section 3.2): inside a strict body, a call to a same-file strict
+// component with exactly one spread attribute and no other attributes.
+// ir/lower.go's validateStrictToStrictSpreadCall has already proven the
+// spread source's declared type is exactly the callee's props type before
+// transpile emission runs, so the call can be emitted verbatim —
+// Callee(<source>) — and the Go compiler proves the rest with zero
+// synthesis. This bypasses emitTypedAttrsForType's spread rejection only
+// for this proven shape; every other spread shape (a legacy caller's tier-2
+// spread, or any shape the lowerer did not prove) still reaches that
+// rejection with its own message.
+func (t *transpiler) strictSpreadCallVerbatim(tag string, n *gotreesitter.Node) (string, bool) {
+	if t.strict == 0 {
+		return "", false
+	}
+	if _, strictCallee := t.strictNames[tag]; !strictCallee {
+		return "", false
+	}
+	spreadCount := 0
+	otherCount := 0
+	var spreadExpr string
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		switch t.nodeType(child) {
+		case "jsx_spread_attribute":
+			spreadCount++
+			if exprNode := t.childByField(child, "expression"); exprNode != nil {
+				spreadExpr = t.text(exprNode)
+			}
+		case "jsx_attribute":
+			otherCount++
+		}
+	}
+	if spreadCount != 1 || otherCount != 0 {
+		return "", false
+	}
+	return tag + "(" + spreadExpr + ")", true
 }
 
 // emitRawTextElement emits <script>/<style>. Their bodies are script or
@@ -795,10 +991,18 @@ func rawTextBody(raw string) string {
 func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 	tag := t.extractTagName(n)
 
+	if t.isStrictEachTag(tag) {
+		return t.emitStrictEach(n, nil)
+	}
+
 	if t.isStrictConditionalTag(tag) {
 		if cond, ok := t.strictConditionalCondExpr(n); ok {
 			return t.emitStrictConditional(cond, nil)
 		}
+	}
+
+	if verbatim, ok := t.strictSpreadCallVerbatim(tag, n); ok {
+		return verbatim
 	}
 
 	if isComponent(tag) {
@@ -963,10 +1167,10 @@ func (t *transpiler) emitTypedAttrsForTag(tag string, n *gotreesitter.Node) []st
 	if t.isGoSXUITag(tag) {
 		return t.emitGoSXUIAttrs(tag, n)
 	}
-	return t.emitTypedAttrsForType(t.propsTypes[tag], n)
+	return t.emitTypedAttrsForType(tag, t.propsTypes[tag], n)
 }
 
-func (t *transpiler) emitTypedAttrsForType(propsType string, n *gotreesitter.Node) []string {
+func (t *transpiler) emitTypedAttrsForType(tag, propsType string, n *gotreesitter.Node) []string {
 	baseType, _ := typedPropsLiteralType(propsType)
 	if idx := strings.LastIndex(baseType, "."); idx >= 0 {
 		baseType = baseType[idx+1:]
@@ -980,6 +1184,17 @@ func (t *transpiler) emitTypedAttrsForType(propsType string, n *gotreesitter.Nod
 		child := n.NamedChild(i)
 		switch t.nodeType(child) {
 		case "jsx_spread_attribute":
+			if _, strictCallee := t.strictNames[tag]; strictCallee {
+				// E2 tier 2 (design spec section 3.3, non-goal 3.5): a
+				// legacy body's spread into a strict callee is proved only
+				// at the file-renderer boundary (strictSpreadProps,
+				// route/fileprogram.go); full transpile has no equivalent
+				// run-time re-proof, so it keeps failing here, with a
+				// message that names the supported path instead of the
+				// unproven one.
+				t.errorf(child, "spread attributes at a strict component call site are proven by the file renderer boundary, not by gosx transpile; render %s through gosx's file router, or call it with explicit typed attributes from a strict body", tag)
+				continue
+			}
 			t.errorf(child, "spread attributes are not supported for typed component props")
 		case "jsx_attribute":
 			nameNode := t.childByField(child, "name")
