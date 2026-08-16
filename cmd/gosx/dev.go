@@ -293,7 +293,7 @@ func compileDevIslands(dir, islandDir string) error {
 	}
 
 	for _, isl := range islands {
-		data, err := program.EncodeJSON(isl)
+		data, err := program.EncodeJSON(isl.Program)
 		if err != nil {
 			return fmt.Errorf("encode island %s: %w", isl.Name, err)
 		}

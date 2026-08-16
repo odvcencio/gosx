@@ -1,6 +1,8 @@
 package buildmanifest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +16,15 @@ type Manifest struct {
 	Islands     []IslandAsset       `json:"islands"`
 	CSS         []CSSAsset          `json:"css"`
 	SceneAssets *SceneAssetManifest `json:"sceneAssets,omitempty"`
+
+	// SourceRoot is the absolute project root `gosx build` ran from when it
+	// wrote this manifest (the directory holding `dist/`, `app/`, and
+	// `go.mod`). A server started later prefers this recorded path — if it
+	// still exists on the host — over guessing the project root from where
+	// it found build.json, since a guess breaks whenever the manifest is
+	// not nested one level under a directory literally named "dist". See
+	// StaleIslands.
+	SourceRoot string `json:"sourceRoot,omitempty"`
 }
 
 type RuntimeAssets struct {
@@ -61,6 +72,22 @@ type IslandAsset struct {
 	Name   string `json:"name"`
 	Format string `json:"format"` // "json" or "bin"
 	HashedAsset
+
+	// SourceFile is the project-relative, slash-separated path to the .gsx
+	// file that declared this island. Empty on manifests written before
+	// issue #166 added source staleness detection.
+	SourceFile string `json:"sourceFile,omitempty"`
+	// SourceHash is ContentHash of SourceFile's raw bytes at the moment
+	// `gosx build` wrote this asset. It is deliberately NOT the same value
+	// as HashedAsset.Hash: Hash covers the compiled program bytes (the
+	// JSON/binary IR shipped to the browser), while SourceHash covers the
+	// .gsx source text the compiler read to produce that program. A server
+	// started later re-hashes SourceFile and compares against SourceHash to
+	// detect that source changed since the dist/ program was built, without
+	// re-running the compiler pipeline. Empty when the manifest predates
+	// this field, or when the build could not resolve a source file for
+	// the island (for example, an island a Go-only test synthesizes).
+	SourceHash string `json:"sourceHash,omitempty"`
 }
 
 type CSSAsset struct {
@@ -169,6 +196,72 @@ func (m *Manifest) IslandAssetByName(componentName string) (IslandAsset, bool) {
 		}
 	}
 	return IslandAsset{}, false
+}
+
+// ContentHash returns the first 16 hex characters (8 bytes) of the sha256
+// digest of data. This is the one hashing scheme every build-time content
+// hash in a manifest uses — asset file hashes (HashedAsset.Hash) and island
+// source hashes (IslandAsset.SourceHash) alike — so a hash comparison never
+// silently compares two different algorithms.
+func ContentHash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
+}
+
+// StaleIsland names one island asset whose recorded SourceHash no longer
+// matches the current bytes of its SourceFile, together with that
+// SourceFile so a caller can name the changed file in a log message.
+type StaleIsland struct {
+	Name       string
+	SourceFile string
+}
+
+// StaleIslands returns one StaleIsland for every island asset whose recorded
+// SourceHash no longer matches the current bytes of its SourceFile under
+// sourceRoot. It reports nothing, and never returns an error, in any of
+// these cases:
+//
+//   - sourceRoot is empty (no app source directory known).
+//   - The island's SourceFile or SourceHash is empty — the manifest
+//     predates issue #166's staleness fields, so there is nothing to
+//     compare against. Reporting staleness here would be a false positive.
+//   - SourceFile is not local to sourceRoot (it escapes via ".." or is
+//     rooted) — a manifest should never record such a path, so this is
+//     defensive, not an expected case.
+//   - SourceFile cannot be read under sourceRoot — a production image may
+//     ship dist/ without the app's .gsx sources, and that is not an error.
+//
+// Recomputing the build-time program hash would require the full compiler
+// pipeline (parse, lower, encode); SourceHash is the cheap, honest
+// alternative recorded once at build time expressly for this comparison.
+func (m *Manifest) StaleIslands(sourceRoot string) []StaleIsland {
+	if m == nil {
+		return nil
+	}
+	sourceRoot = strings.TrimSpace(sourceRoot)
+	if sourceRoot == "" {
+		return nil
+	}
+
+	var stale []StaleIsland
+	for _, asset := range m.Islands {
+		if strings.TrimSpace(asset.SourceFile) == "" || strings.TrimSpace(asset.SourceHash) == "" {
+			continue
+		}
+		rel := filepath.FromSlash(asset.SourceFile)
+		if !filepath.IsLocal(rel) {
+			continue
+		}
+		path := filepath.Join(sourceRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		if ContentHash(data) != asset.SourceHash {
+			stale = append(stale, StaleIsland{Name: asset.Name, SourceFile: asset.SourceFile})
+		}
+	}
+	return stale
 }
 
 // IslandURL returns the public URL for an island program asset.

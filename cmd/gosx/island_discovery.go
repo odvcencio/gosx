@@ -13,11 +13,24 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/ir"
 	islandprogram "m31labs.dev/gosx/island/program"
 )
 
-func collectProjectIslandPrograms(projectDir string) ([]*islandprogram.Program, []string, error) {
+// IslandProgramSource pairs a compiled island program with the absolute path
+// to the .gsx file that declared it and a content hash (buildmanifest.
+// ContentHash) of that file's raw source bytes as read for this compile.
+// RunBuildWithOptions stores SourceHash in the build manifest so a server
+// started later can detect that source changed since `gosx build` without
+// re-running the compiler pipeline — see buildmanifest.Manifest.StaleIslands.
+type IslandProgramSource struct {
+	*islandprogram.Program
+	SourceFile string
+	SourceHash string
+}
+
+func collectProjectIslandPrograms(projectDir string) ([]*IslandProgramSource, []string, error) {
 	absProjectDir, err := filepath.Abs(projectDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve project dir: %w", err)
@@ -88,8 +101,8 @@ func discoverProjectGSXFiles(projectDir string) ([]string, error) {
 	return files, nil
 }
 
-func collectIslandProgramsFromFiles(files []string) ([]*islandprogram.Program, []string, []string, error) {
-	var programs []*islandprogram.Program
+func collectIslandProgramsFromFiles(files []string) ([]*IslandProgramSource, []string, []string, error) {
+	var programs []*IslandProgramSource
 	importSet := map[string]struct{}{}
 	qualifiedAliasSet := map[string]struct{}{}
 
@@ -121,7 +134,11 @@ func collectIslandProgramsFromFiles(files []string) ([]*islandprogram.Program, [
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("lower island %s in %s: %w", comp.Name, file, err)
 			}
-			programs = append(programs, island)
+			programs = append(programs, &IslandProgramSource{
+				Program:    island,
+				SourceFile: file,
+				SourceHash: buildmanifest.ContentHash(source),
+			})
 		}
 	}
 

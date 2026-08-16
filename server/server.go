@@ -106,6 +106,12 @@ type App struct {
 	schedulerOnce sync.Once
 	scheduler     *scheduled.Scheduler
 	srv           *http.Server
+
+	// staleIslandsOnce guards warnStaleIslands, so hashing every island's
+	// source runs at most once per App even if Build() runs more than once
+	// (a test harness may call it directly, more than once, without ever
+	// calling ListenAndServe).
+	staleIslandsOnce sync.Once
 }
 
 // New creates a new GoSX server app.
@@ -469,6 +475,7 @@ func (a *App) preloadGrammarBlob() {
 
 func (a *App) Build() http.Handler {
 	a.preloadGrammarBlob()
+	a.warnStaleIslands()
 	mux := http.NewServeMux()
 	redirectMux := http.NewServeMux()
 	rewriteMux := http.NewServeMux()
