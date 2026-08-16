@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.43.0 (2026-08-16)
+
+The strict surface grows loops and spreads, and the runtime grows time. Seven
+issues ship in this release: nested prop reads (#183), typed <Each> loops
+(#182), spread props at strict call sites (#184), the declarative countdown
+attribute (#178), an experimental render-profile hook (#185), an experimental
+strictcheck extension point (#186), and the ir compatibility statement (#181).
+Every extension keeps the house rule: fail closed at check time, re-prove at
+the renderer boundary, and let the Go compiler backstop what it can.
 
 ### `strictcheck.Options.ExtraLints`: an extension point for third-party per-file lints (experimental)
 

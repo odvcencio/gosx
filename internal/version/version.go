@@ -1,11 +1,11 @@
 package version
 
 // Current is the canonical GoSX release tag.
-const Current = "v0.42.3"
+const Current = "v0.43.0"
 
 // Number is Current without the leading tag prefix. Keep this constant in sync
 // with Current so packages that historically expose bare semver remain stable.
-const Number = "0.42.3"
+const Number = "0.43.0"
 
 // MinGo is the lowest Go toolchain release that can build GoSX. It must equal
 // the go directive in the repository go.mod.
