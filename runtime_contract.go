@@ -21,6 +21,13 @@ const (
 	// ManagedFormProjectAttr controls framework projection of JSON action
 	// messages and field errors. The default is enabled; "off" opts out.
 	ManagedFormProjectAttr = "data-gosx-form-project"
+	// ManagedFormShorthandAttr is a single-attribute alternative to writing
+	// out the ManagedFormAttrs default set by hand on a <form> element. A
+	// .gsx template author writes `<form data-gosx-managed>` (or
+	// `data-gosx-managed="true"`) instead of the five contract attributes;
+	// RenderHTML expands it on any <form> element at render time. See
+	// expandManagedFormAttrs in node.go for the expansion and merge rules.
+	ManagedFormShorthandAttr = "data-gosx-managed"
 
 	ActionAttr           = "data-gosx-action"
 	ActionResetAttr      = "data-gosx-reset"
