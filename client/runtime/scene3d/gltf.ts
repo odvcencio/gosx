@@ -520,10 +520,21 @@
     if (!record || !record.values || !record.values.length) {
       return null;
     }
+    // Quantized sizes: a builder may store _POINT_SIZE as a normalized integer
+    // accessor (half the bytes of float32) and carry the dequantization factor
+    // in the primitive extras. The accessor decodes to 0..1 above, and the
+    // factor restores source units. A float32 accessor omits the factor and
+    // multiplies by 1.
+    var scale = 1;
+    var extras = primitive.extras;
+    var extrasGroup = extras && (extras.gosx || extras.scene3d);
+    if (extrasGroup && Number(extrasGroup.pointSizeScale) > 0) {
+      scale = Number(extrasGroup.pointSizeScale);
+    }
     var componentCount = gltfAccessorTypeCount(record.accessor.type);
     var sizes = new Float32Array(count);
     for (var i = 0; i < count; i++) {
-      sizes[i] = Math.max(0, Number(record.values[i * componentCount]) || 0);
+      sizes[i] = Math.max(0, Number(record.values[i * componentCount]) || 0) * scale;
     }
     return sizes;
   }
@@ -1508,6 +1519,149 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Point overlay: split scene loading
+  // ---------------------------------------------------------------------------
+  //
+  // A scene whose point colors change on a schedule but whose geometry does not
+  // would otherwise re-ship the full GLB on every rotation. The split serves
+  // the stable attributes (POSITION, _POINT_SIZE) once from an immutable,
+  // content-addressed base file, and rotates only a small overlay GLB carrying
+  // the attributes that actually change.
+  //
+  // The overlay names its base in the glTF root extras:
+  //
+  //   { "extras": { "gosx": { "baseSrc": "/galaxy/geo-<hash>.glb" } } }
+  //
+  // The model src points at the overlay. The loader fetches it, follows
+  // baseSrc (resolved against the overlay URL), extracts the base scene, and
+  // patches each point entry whose mesh name and primitive index match an
+  // overlay mesh. The base URL changes whenever the geometry content changes,
+  // so a base/overlay mismatch cannot arise from caching; the count guard
+  // below defends against a server that writes the two files from different
+  // layer sets.
+  //
+  // The page can hide the serial overlay-then-base fetch by preloading the
+  // base URL, which it knows at render time.
+
+  function gltfPointOverlayBaseSrc(gltf) {
+    var extras = gltf && gltf.extras;
+    var group = extras && (extras.gosx || extras.scene3d);
+    var src = group && group.baseSrc;
+    return typeof src === "string" && src.trim() ? src.trim() : "";
+  }
+
+  // Collect patchable point attributes from an overlay document, keyed by the
+  // entry id the base extraction will produce for the same mesh name and
+  // primitive index. Only mode-0 (points) primitives participate; an overlay
+  // mesh may carry COLOR_0, POSITION, or both, and needs no other attributes.
+  function gltfCollectPointOverlay(gltf, binaryBuffer) {
+    var out = {};
+    var sceneIndex = gltf.scene != null ? gltf.scene : 0;
+    var scene = gltf.scenes && gltf.scenes[sceneIndex];
+    if (!scene || !scene.nodes) {
+      return out;
+    }
+    var identity = new Float32Array(SCENE_IDENTITY_MAT4);
+    for (var i = 0; i < scene.nodes.length; i++) {
+      gltfCollectPointOverlayNode(gltf, scene.nodes[i], binaryBuffer, identity, out);
+    }
+    return out;
+  }
+
+  function gltfCollectPointOverlayNode(gltf, nodeIndex, binaryBuffer, parentTransform, out) {
+    var node = gltf.nodes && gltf.nodes[nodeIndex];
+    if (!node) {
+      return;
+    }
+    var worldTransform = sceneMat4Multiply(parentTransform, gltfNodeTransform(node));
+    if (node.mesh != null) {
+      var mesh = gltf.meshes && gltf.meshes[node.mesh];
+      var primitives = mesh && mesh.primitives ? mesh.primitives : [];
+      for (var p = 0; p < primitives.length; p++) {
+        var primitive = primitives[p];
+        var mode = primitive.mode != null ? primitive.mode : 4;
+        if (mode !== 0 || !primitive.attributes) {
+          continue;
+        }
+        var positions = null;
+        var count = 0;
+        if (primitive.attributes.POSITION != null) {
+          var positionRecord = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
+          if (positionRecord && positionRecord.values && positionRecord.values.length >= 3) {
+            positions = gltfTransformPositions(positionRecord.values, worldTransform);
+            count = Math.floor(positions.length / 3);
+          }
+        }
+        if (!count && primitive.attributes.COLOR_0 != null) {
+          var colorAccessor = gltf.accessors && gltf.accessors[primitive.attributes.COLOR_0];
+          count = colorAccessor && colorAccessor.count ? colorAccessor.count : 0;
+        }
+        if (!count && primitive.attributes._POINT_SIZE != null) {
+          var sizeAccessor = gltf.accessors && gltf.accessors[primitive.attributes._POINT_SIZE];
+          count = sizeAccessor && sizeAccessor.count ? sizeAccessor.count : 0;
+        }
+        if (!count) {
+          continue;
+        }
+        var colors = gltfPointColorBuffer(gltf, primitive, binaryBuffer, count);
+        var sizes = gltfPointSizeBuffer(gltf, primitive, binaryBuffer, count);
+        if (!colors && !positions && !sizes) {
+          continue;
+        }
+        // Key by the id the base extraction will give the matching entry. An
+        // authored extras id (node, mesh, or primitive level) overrides the
+        // synthesized meshName-points-p id, exactly as gltfApplyScene3DExtras
+        // does during base extraction, so the overlay must resolve it the
+        // same way or every authored layer misses its patch.
+        var extras = gltfCollectScene3DExtras(node, mesh, primitive);
+        var key = extras && typeof extras.id === "string" && extras.id
+          ? extras.id
+          : ((mesh.name ? mesh.name : ("mesh-" + node.mesh)) + "-points-" + p);
+        out[key] = { count: count, colors: colors, positions: positions, sizes: sizes };
+      }
+    }
+    var children = node.children || [];
+    for (var c = 0; c < children.length; c++) {
+      gltfCollectPointOverlayNode(gltf, children[c], binaryBuffer, worldTransform, out);
+    }
+  }
+
+  // Patch base point entries in place. A count mismatch means the base and
+  // overlay were built from different layer sets; the entry keeps its base
+  // attributes so the scene stays renderable, and the skew is reported once
+  // per entry rather than corrupting the buffers.
+  function gltfApplyPointOverlay(scene, overlay) {
+    var points = scene && scene.points;
+    if (!points || !points.length) {
+      return scene;
+    }
+    for (var i = 0; i < points.length; i++) {
+      var entry = points[i];
+      var patch = overlay[entry.id];
+      if (!patch) {
+        continue;
+      }
+      if (patch.count !== entry.count) {
+        console.warn("[gosx] glb overlay skipped " + entry.id + ": overlay has " + patch.count + " points, base has " + entry.count);
+        continue;
+      }
+      if (patch.colors) {
+        entry.colors = patch.colors;
+        entry._cachedColors = patch.colors;
+      }
+      if (patch.positions) {
+        entry.positions = patch.positions;
+        entry._cachedPos = patch.positions;
+      }
+      if (patch.sizes) {
+        entry.sizes = patch.sizes;
+        entry._cachedSizes = patch.sizes;
+      }
+    }
+    return scene;
+  }
+
+  // ---------------------------------------------------------------------------
   // External buffer fetching for .gltf (non-binary) files
   // ---------------------------------------------------------------------------
 
@@ -1786,6 +1940,36 @@
       }
       var arrayBuffer = await response.arrayBuffer();
       var parsed = sceneParseGLB(arrayBuffer);
+      var baseSrc = gltfPointOverlayBaseSrc(parsed.json);
+      if (baseSrc) {
+        var baseURL = new URL(baseSrc, assetURL).toString();
+        var baseResponse = await fetch(baseURL, { credentials: "same-origin" });
+        if (!baseResponse.ok) {
+          throw new Error("Failed to fetch GLB base: " + baseURL + " (HTTP " + baseResponse.status + ")");
+        }
+        var baseParsed = sceneParseGLB(await baseResponse.arrayBuffer());
+        gltfResolveExternalImageURIs(baseParsed.json, baseURL, await variantContextPromise);
+        var baseScene = gltfExtractScene(baseParsed.json, baseParsed.binaryBuffer);
+        gltfApplyPointOverlay(baseScene, gltfCollectPointOverlay(parsed.json, parsed.binaryBuffer));
+        // A layer that exists only in this rotation — a phenomenon absent from
+        // the reference geometry — ships as a full mesh in the overlay. Those
+        // extract standalone here; append the ones the base does not already
+        // carry so presence drift adds content instead of dropping it.
+        // Attribute-only overlay meshes have no POSITION and never extract.
+        var overlayScene = gltfExtractScene(parsed.json, parsed.binaryBuffer);
+        if (overlayScene.points && overlayScene.points.length) {
+          var basePointIDs = {};
+          for (var bi = 0; bi < baseScene.points.length; bi++) {
+            basePointIDs[baseScene.points[bi].id] = true;
+          }
+          for (var oi = 0; oi < overlayScene.points.length; oi++) {
+            if (!basePointIDs[overlayScene.points[oi].id]) {
+              baseScene.points.push(overlayScene.points[oi]);
+            }
+          }
+        }
+        return baseScene;
+      }
       gltfResolveExternalImageURIs(parsed.json, assetURL, await variantContextPromise);
       return gltfExtractScene(parsed.json, parsed.binaryBuffer);
     }
