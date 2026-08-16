@@ -27,6 +27,8 @@
   const NAV_STATE_ATTR = "data-gosx-navigation-state";
   const NAV_CURRENT_PATH_ATTR = "data-gosx-navigation-current-path";
   const NAV_PENDING_URL_ATTR = "data-gosx-navigation-pending-url";
+  const REVALIDATE_INTERVAL_ATTR = "data-gosx-revalidate-interval";
+  const REVALIDATE_SRC_ATTR = "data-gosx-revalidate-src";
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
@@ -61,8 +63,31 @@
   let announceSeq = 0;
   let formErrorSeq = 0;
   let navigationFrameSequence = 0;
-  const pendingManagedForms = new WeakSet();
+  // A Set (not a WeakSet) so its size doubles as the "a managed form
+  // submission is in flight" signal periodic revalidation reads — see
+  // navigationOrFormSubmissionInFlight below. submitForm's try/finally keeps
+  // every entry reliably removed once its submission settles.
+  const pendingManagedForms = new Set();
   const sentNavigationBeacons = new Set();
+  let revalidateTimerHandle = null;
+  let revalidateSrc = "";
+  let revalidateHasBaseline = false;
+  let revalidateLastBody = null;
+  // revalidateGeneration is bumped every time setupPageRevalidation runs
+  // (page boot and every soft navigation). pollRevalidateSrc captures it
+  // before its fetch and re-checks it after: a poll that started on the
+  // page this counter belonged to, but settles after navigation moved on,
+  // discards its response instead of writing a baseline (or triggering a
+  // revalidate) for whatever page is current now.
+  let revalidateGeneration = 0;
+  let revalidateIntervalMs = 0;
+  // Set the instant the document goes hidden, cleared on the next visible
+  // transition. Backs the visibilitychange catch-up tick below.
+  let revalidateHiddenSince = null;
+  // True while pollRevalidateSrc's own fetch/text() awaits are unresolved.
+  // Guards against an interval tick or visibility catch-up starting a
+  // second overlapping poll before the first one has settled.
+  let revalidatePollInFlight = false;
   gosxHost.navigationScriptCache = scriptCache;
   gosxHost.navigationPageCache = pageCache;
   gosxHostCompatibility.install("__gosx_loaded_scripts", scriptCache);
@@ -2266,6 +2291,231 @@
     focusElement(a11y.focusTarget, true);
     const announcement = announceNavigation(a11y.announcement);
     dispatchNavigate(url, opts.replace, announcement, a11y.focusTarget);
+    // Runs after every soft navigation this function completes, whether it
+    // fetched a new document or reconciled the already-current page — see
+    // setupPageRevalidation's doc comment.
+    setupPageRevalidation();
+  }
+
+  // documentIsHidden prefers the real, read-only document.hidden a browser
+  // provides. Test doubles (and any host that only tracks visibilityState)
+  // fall back to the same "hidden" comparison mount-viewport.ts already uses
+  // for its own pageVisible fallback.
+  function documentIsHidden() {
+    if (typeof document.hidden === "boolean") {
+      return document.hidden;
+    }
+    return String(document.visibilityState || "visible").toLowerCase() === "hidden";
+  }
+
+  function focusedControlBlocksRevalidation() {
+    const active = document.activeElement;
+    if (!active) return false;
+    switch (String(active.tagName || "").toUpperCase()) {
+      case "INPUT":
+      case "TEXTAREA":
+      case "SELECT":
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  // Reuses the runtime's own in-flight state: navigationState.phase covers a
+  // soft navigation (including a GET form, which navigates) and
+  // pendingManagedForms covers a POST/action form submission, which fetches
+  // outside the navigate() path.
+  function navigationOrFormSubmissionInFlight() {
+    return navigationState.phase === "pending" || pendingManagedForms.size > 0;
+  }
+
+  // A JS timer's delay is a 32-bit signed int internally; a larger value
+  // does not error, it just fires almost immediately (or never, depending
+  // on the engine) instead of after the requested delay. Reject a
+  // declarative interval that would exceed this bound outright, the same
+  // way any other malformed value is rejected below.
+  const REVALIDATE_MAX_INTERVAL_MS = 2147483647;
+  // A poll slower than this is a config mistake, not a real requirement —
+  // clamp instead of rejecting outright so the page still revalidates.
+  const REVALIDATE_INTERVAL_CLAMP_MS = 60 * 60 * 1000;
+
+  // parseRevalidateInterval accepts only whole-second or whole-minute
+  // Go-style duration literals ("4s", "90s", "2m") — this is a small
+  // declarative subset, not a general Go duration parser. Anything else, a
+  // duration under one second, or a duration past the 32-bit timer bound,
+  // is invalid.
+  function parseRevalidateInterval(value) {
+    const trimmed = String(value == null ? "" : value).trim();
+    const match = /^([0-9]+)(s|m)$/.exec(trimmed);
+    if (!match) return null;
+    const amount = Number(match[1]);
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const ms = match[2] === "m" ? amount * 60000 : amount * 1000;
+    if (ms < 1000 || ms > REVALIDATE_MAX_INTERVAL_MS) return null;
+    return ms;
+  }
+
+  function findRevalidateElement() {
+    return findElement(document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute(REVALIDATE_INTERVAL_ATTR);
+    });
+  }
+
+  function teardownPageRevalidation() {
+    if (revalidateTimerHandle != null) {
+      clearInterval(revalidateTimerHandle);
+    }
+    revalidateTimerHandle = null;
+    revalidateSrc = "";
+    revalidateHasBaseline = false;
+    revalidateLastBody = null;
+    revalidateIntervalMs = 0;
+    revalidateHiddenSince = null;
+  }
+
+  function triggerPeriodicRevalidation() {
+    revalidateNavigation().catch(function(error) {
+      reportNavigationFailure("periodic revalidation", error, {
+        source: revalidateSrc || windowLocationHref(),
+      });
+    });
+  }
+
+  async function pollRevalidateSrc() {
+    // Skip if the previous poll's fetch/text() awaits have not settled yet
+    // — an overlapping request in flight for the same src answers nothing
+    // an already-pending one won't, and would race it for revalidateLastBody.
+    if (revalidatePollInFlight) {
+      return;
+    }
+    revalidatePollInFlight = true;
+    const generation = revalidateGeneration;
+    try {
+      let response;
+      try {
+        response = await gosxRuntimeRequest(revalidateSrc, {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        });
+      } catch (_error) {
+        return; // Fetch errors skip silently; the next tick tries again.
+      }
+      if (generation !== revalidateGeneration) {
+        // Navigation moved on while this fetch was in flight. This response
+        // belongs to whatever page was current when it started, not the one
+        // current now — discard it rather than writing its baseline.
+        return;
+      }
+      if (!response || !response.ok) {
+        return;
+      }
+      let body;
+      try {
+        body = await response.text();
+      } catch (_error) {
+        return;
+      }
+      if (generation !== revalidateGeneration) {
+        return;
+      }
+      if (!revalidateHasBaseline) {
+        // The first successful poll only records the baseline — it never
+        // triggers a revalidation on its own.
+        revalidateHasBaseline = true;
+        revalidateLastBody = body;
+        return;
+      }
+      if (body === revalidateLastBody) {
+        return;
+      }
+      revalidateLastBody = body;
+      triggerPeriodicRevalidation();
+    } finally {
+      revalidatePollInFlight = false;
+    }
+  }
+
+  function runRevalidateTick() {
+    if (documentIsHidden() || focusedControlBlocksRevalidation() || navigationOrFormSubmissionInFlight()) {
+      return;
+    }
+    if (!revalidateSrc) {
+      triggerPeriodicRevalidation();
+      return;
+    }
+    pollRevalidateSrc();
+  }
+
+  // onRevalidateVisibilityChange runs a catch-up tick the moment the
+  // document becomes visible again, if at least one full interval elapsed
+  // while it was hidden — runRevalidateTick's own documentIsHidden() guard
+  // otherwise means a page hidden for hours only revalidates once it is
+  // looked at again, which can be long after its data went stale.
+  function onRevalidateVisibilityChange() {
+    if (documentIsHidden()) {
+      if (revalidateHiddenSince == null) {
+        revalidateHiddenSince = Date.now();
+      }
+      return;
+    }
+    const hiddenSince = revalidateHiddenSince;
+    revalidateHiddenSince = null;
+    if (hiddenSince == null || !revalidateIntervalMs) {
+      return;
+    }
+    if (Date.now() - hiddenSince >= revalidateIntervalMs) {
+      runRevalidateTick();
+    }
+  }
+
+  // setupPageRevalidation scans for the FIRST element carrying
+  // data-gosx-revalidate-interval on page boot and after every soft
+  // navigation (see finalizeNavigation and the initial-document replay
+  // below), tearing down any previous timer first so a page without the
+  // attribute, or with new attribute values, always gets a fresh read.
+  function setupPageRevalidation() {
+    // Every call — page boot and every soft navigation — starts a new
+    // generation, even one that ends up disabling or not finding periodic
+    // revalidation. See revalidateGeneration's declaration for why.
+    revalidateGeneration += 1;
+    teardownPageRevalidation();
+    const target = findRevalidateElement();
+    if (!target) {
+      return;
+    }
+
+    const rawInterval = target.getAttribute(REVALIDATE_INTERVAL_ATTR);
+    let intervalMs = parseRevalidateInterval(rawInterval);
+    if (intervalMs == null) {
+      console.warn(
+        "[gosx] invalid " + REVALIDATE_INTERVAL_ATTR + " value "
+        + JSON.stringify(String(rawInterval || "")) + "; periodic revalidation is disabled for this page",
+      );
+      return;
+    }
+    if (intervalMs > REVALIDATE_INTERVAL_CLAMP_MS) {
+      console.warn(
+        "[gosx] " + REVALIDATE_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval || ""))
+        + " exceeds the 1 hour maximum for periodic revalidation; clamping to 1 hour",
+      );
+      intervalMs = REVALIDATE_INTERVAL_CLAMP_MS;
+    }
+
+    const rawSrc = target.hasAttribute(REVALIDATE_SRC_ATTR) ? target.getAttribute(REVALIDATE_SRC_ATTR) : "";
+    if (rawSrc) {
+      if (!isSameOriginNavigation(rawSrc, windowLocationHref())) {
+        console.warn(
+          "[gosx] " + REVALIDATE_SRC_ATTR + " must be same-origin: " + JSON.stringify(String(rawSrc))
+          + "; periodic revalidation is disabled for this page",
+        );
+        return;
+      }
+      const parsedSrc = navigationURLParts(rawSrc);
+      revalidateSrc = parsedSrc ? parsedSrc.href : "";
+    }
+
+    revalidateIntervalMs = intervalMs;
+    revalidateTimerHandle = setInterval(runRevalidateTick, intervalMs);
   }
 
   function revalidateNavigation(options) {
@@ -2296,6 +2546,7 @@
     // navigation replay. Both operations are synchronous and idempotent.
     refreshNavigationState();
     prefetchManagedLinks("render");
+    setupPageRevalidation();
     const actions = window.__gosx && window.__gosx.actions;
     if (actions && typeof actions.refreshBindings === "function") {
       actions.refreshBindings();
@@ -2357,6 +2608,7 @@
   document.addEventListener("mouseover", onMouseOver);
   document.addEventListener("focusin", onFocusIn);
   document.addEventListener("submit", onSubmit);
+  document.addEventListener("visibilitychange", onRevalidateVisibilityChange);
   if (typeof window.addEventListener === "function") {
     window.addEventListener("popstate", onPopState);
   }
@@ -2367,6 +2619,7 @@
     pendingURL: "",
   }, "init");
   prefetchManagedLinks("render");
+  setupPageRevalidation();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", refreshInitialDocumentNavigation, { once: true });
   }

@@ -83,6 +83,53 @@ func Page() Node {
 	await window.__gosx.navigation.revalidate()
 	console.log(window.__gosx.navigation.getState())`)}
 		</section>
+		<section id="periodic-revalidation">
+			<h2>Periodic revalidation</h2>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-revalidate-interval</span>
+				to the first matching element on a page. The runtime revalidates on that interval, with zero application JavaScript.
+			</p>
+			{CodeBlock("gosx", `<main data-gosx-revalidate-interval="4s" data-gosx-revalidate-src="/api/league/version">
+	    <!-- draft room, scoreboard, or other live server state -->
+	</main>`)}
+			<p>
+				The interval accepts whole seconds or whole minutes only, for example
+				<span class="inline-code">"4s"</span>
+				or
+				<span class="inline-code">"2m"</span>
+				, and must resolve to at least one second. An invalid interval logs one console warning and disables periodic revalidation for the page.
+			</p>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-revalidate-src</span>
+				to poll a same-origin JSON endpoint instead of revalidating on every tick. The runtime fetches it with
+				<span class="inline-code">no-store</span>
+				and keeps the last response body. It revalidates only when the body changes; the first poll records a baseline and never revalidates. Without
+				<span class="inline-code">data-gosx-revalidate-src</span>
+				, the runtime revalidates on every interval.
+			</p>
+			<p>
+				A tick skips entirely, with no fetch and no revalidation, in these cases:
+			</p>
+			<ul>
+				<li>The document is hidden.</li>
+				<li>
+					An input, textarea, or select has focus.
+				</li>
+				<li>
+					A navigation or form submission is in flight.
+				</li>
+			</ul>
+			<p>
+				A cross-origin
+				<span class="inline-code">data-gosx-revalidate-src</span>
+				logs one console warning and disables periodic revalidation for the page. Fetch errors skip silently, and the next tick tries again.
+			</p>
+			<p>
+				Teardown is automatic. A soft navigation to a page without the attribute clears the interval. A soft navigation to a page with the attribute reads it again.
+			</p>
+		</section>
 		<section id="lifecycle-scripts">
 			<h2>Managed and lifecycle scripts</h2>
 			<p>

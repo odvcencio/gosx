@@ -25,6 +25,14 @@ const (
 	NavigationFormModeAttr    = gosx.ManagedFormModeAttr
 	NavigationFormStateAttr   = gosx.ManagedFormStateAttr
 	NavigationFormProjectAttr = gosx.ManagedFormProjectAttr
+
+	// NavigationRevalidateIntervalAttr and NavigationRevalidateSrcAttr declare
+	// periodic revalidation on an element. The navigation runtime polls
+	// NavigationRevalidateSrcAttr (same-origin only) on the
+	// NavigationRevalidateIntervalAttr period and revalidates the page when the
+	// response body changes; without a src it revalidates unconditionally.
+	NavigationRevalidateIntervalAttr = "data-gosx-revalidate-interval"
+	NavigationRevalidateSrcAttr      = "data-gosx-revalidate-src"
 )
 
 // NormalizeNavigationLinkCurrentPolicy normalizes the declarative "current"
