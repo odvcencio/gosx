@@ -1,8 +1,10 @@
 package route
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -268,6 +270,122 @@ component Page() {
 	}
 	if html != "<p>0:false</p>" {
 		t.Fatalf("html = %q", html)
+	}
+}
+
+// TestStrictConcatAndCondParityWithGeneratedGo is the v0.42 render-parity
+// test: it renders through renderFileProgramHTML and compares against the
+// generated-Go equivalent (a hand-written gosx.El/gosx.If tree matching
+// exactly what transpile.Transpile emits for this source), for both the true
+// and false branches of the cond. Single-line JSX avoids a pre-existing,
+// unrelated whitespace-handling difference between the transpile path (which
+// drops whitespace-only text children) and the IR/file-render path (which
+// renders them as a single space) — see the investigation note in this
+// change's report; that gap predates this change and is not part of it.
+func TestStrictConcatAndCondParityWithGeneratedGo(t *testing.T) {
+	const source = `package app
+type CardProps struct {
+	Ready bool
+	Tone  string
+}
+component Card(props: CardProps) {
+	return <div class={"tone-" + props.Tone}><If cond={props.Ready}>ready</If><If cond={props.Ready == false}>not ready</If></div>
+}
+component Page() {
+	return <Card ready={%s} tone="ok" />
+}
+`
+	for _, ready := range []bool{true, false} {
+		t.Run(strconv.FormatBool(ready), func(t *testing.T) {
+			prog, err := gosx.Compile([]byte(fmt.Sprintf(source, strconv.FormatBool(ready))))
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+			if err != nil {
+				t.Fatalf("RenderProgramComponent: %v", err)
+			}
+			want := gosx.RenderHTML(gosx.El("div", gosx.Attrs(gosx.Attr("class", "tone-"+"ok")),
+				gosx.If(ready, gosx.Fragment(gosx.Text("ready"))),
+				gosx.If(ready == false, gosx.Fragment(gosx.Text("not ready"))),
+			))
+			if html != want {
+				t.Fatalf("file render = %q, generated-Go render = %q", html, want)
+			}
+		})
+	}
+}
+
+// TestStrictConcatEscapesHTMLInJoinedValue proves the concatenated result
+// runs through the same HTML-escaping path as any other attribute value —
+// concatenation happens before escaping, not after.
+func TestStrictConcatEscapesHTMLInJoinedValue(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+type CardProps struct { Tone string }
+component Card(props: CardProps) {
+	return <div class={"tone-" + props.Tone}>x</div>
+}
+component Page() {
+	return <Card tone={"\"<script>\""} />
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := gosx.RenderHTML(gosx.El("div", gosx.Attrs(gosx.Attr("class", "tone-"+`"<script>"`)), gosx.Text("x")))
+	if html != want {
+		t.Fatalf("file render = %q, generated-Go render = %q", html, want)
+	}
+	if !strings.Contains(html, "&lt;script&gt;") {
+		t.Fatalf("expected the joined value to be HTML-escaped, got %q", html)
+	}
+}
+
+// TestRequireStrictScalarTypeRejectsConcatBoundaryMismatch exercises the
+// renderer boundary directly (requireStrictScalarType), mirroring
+// TestRenderProgramComponentCannotReceiveDivergentStrictExpression: a
+// same-file strict callee whose declared field is string, called with a
+// non-string value, must fail closed at the render boundary rather than
+// silently stringify.
+func TestRequireStrictScalarTypeRejectsConcatBoundaryMismatch(t *testing.T) {
+	if _, err := requireStrictScalarType(42, "string"); err == nil {
+		t.Fatal("requireStrictScalarType(42, \"string\") unexpectedly accepted a non-string value")
+	}
+}
+
+// TestIfConditionalParityMatchesGoSXIf checks writeConditional (the existing
+// "If"/"Show"/"When" builtin) against gosx.If directly for both branches,
+// confirming the v0.42 <If cond> extension needed zero renderer changes: the
+// strict validator only narrows which shapes reach the pre-existing builtin.
+func TestIfConditionalParityMatchesGoSXIf(t *testing.T) {
+	const source = `package app
+type Props struct { Ready bool }
+component Card(props: Props) {
+	return <main><If cond={props.Ready}>yes</If></main>
+}
+component Page() {
+	return <Card ready={%s} />
+}
+`
+	for _, ready := range []bool{true, false} {
+		t.Run(strconv.FormatBool(ready), func(t *testing.T) {
+			prog, err := gosx.Compile([]byte(fmt.Sprintf(source, strconv.FormatBool(ready))))
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			got, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+			if err != nil {
+				t.Fatalf("RenderProgramComponent: %v", err)
+			}
+			want := gosx.RenderHTML(gosx.El("main", nil, gosx.If(ready, gosx.Fragment(gosx.Text("yes")))))
+			if got != want {
+				t.Fatalf("ready=%v: file render = %q, gosx.If render = %q", ready, got, want)
+			}
+		})
 	}
 }
 

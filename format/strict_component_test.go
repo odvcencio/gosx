@@ -37,3 +37,47 @@ component Card(props: CardProps) {
 		t.Fatalf("format is not idempotent\nfirst:\n%s\nsecond:\n%s", formatted, again)
 	}
 }
+
+// TestSourceFormatsStrictConcatAndCondIdempotently covers the v0.42
+// extensions: a concat hole in an attribute and text child, and a strict
+// <If cond> element, must format idempotently and keep compiling.
+func TestSourceFormatsStrictConcatAndCondIdempotently(t *testing.T) {
+	source := []byte(`package app
+type CardProps struct {
+	Ready bool
+	Tone string
+}
+
+component Card(props: CardProps) {
+	return <div class={"tone-" + props.Tone}>
+		<span>{"Rank " + props.Tone}</span>
+		<If cond={props.Ready}>ready</If>
+		<If cond={props.Ready == false}>not ready</If>
+	</div>
+}
+`)
+	formatted, err := Source(source)
+	if err != nil {
+		t.Fatalf("Source: %v", err)
+	}
+	for _, want := range []string{
+		`class={"tone-" + props.Tone}`,
+		`{"Rank " + props.Tone}`,
+		`<If cond={props.Ready}>`,
+		`<If cond={props.Ready == false}>`,
+	} {
+		if !strings.Contains(string(formatted), want) {
+			t.Fatalf("formatting changed %q:\n%s", want, formatted)
+		}
+	}
+	if _, err := gosx.Compile(formatted); err != nil {
+		t.Fatalf("formatted strict source does not compile: %v\n%s", err, formatted)
+	}
+	again, err := Source(formatted)
+	if err != nil {
+		t.Fatalf("Source second pass: %v", err)
+	}
+	if !bytes.Equal(formatted, again) {
+		t.Fatalf("format is not idempotent\nfirst:\n%s\nsecond:\n%s", formatted, again)
+	}
+}

@@ -198,7 +198,6 @@ func TestCompileStrictServerRejectsTypeDivergentExpressions(t *testing.T) {
 		"props.A / props.B",
 		"props.OK && props.SideEffect()",
 		"props.OK || props.SideEffect()",
-		"props.A + props.B",
 		"-props.A",
 		"!props.OK",
 		"props.Items[0]",
@@ -212,6 +211,22 @@ func TestCompileStrictServerRejectsTypeDivergentExpressions(t *testing.T) {
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+// TestCompileStrictServerRejectsConcatChainsMissingALiteral covers the one
+// v0.41 rejection whose message changed under the v0.42 concatenation
+// extension: `props.A + props.B` used to fail the blanket "binary operator...
+// not supported" message; it still fails closed, but now with the
+// concat-specific diagnostic that names the missing literal operand instead.
+func TestCompileStrictServerRejectsConcatChainsMissingALiteral(t *testing.T) {
+	_, err := Compile([]byte(`package app
+component Page(props: Props) {
+	return <main>{props.A + props.B}</main>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "strict concatenation requires at least one string literal operand") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -374,6 +389,238 @@ component Page(input: Props) {
 }
 `))
 	if err == nil || !strings.Contains(err.Error(), "must be named props") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestCompileStrictServerAcceptsConcatOfExactStringFields covers the v0.42
+// concatenation extension (spec section 2.a): a `+` chain whose operands are
+// string literals and props field selectors of declared type string.
+func TestCompileStrictServerAcceptsConcatOfExactStringFields(t *testing.T) {
+	for _, expression := range []string{
+		`"tone-" + props.Tone`,
+		`props.Tone + "-tone"`,
+		`"Remove " + props.Name + " from roster"`,
+		`("tone-") + (props.Tone)`,
+	} {
+		t.Run(expression, func(t *testing.T) {
+			source := []byte("package app\ntype Props struct { Tone string; Name string }\ncomponent Page(props: Props) {\nreturn <main class={" + expression + "}>{" + expression + "}</main>\n}\n")
+			if _, err := Compile(source); err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+		})
+	}
+}
+
+// TestCompileStrictServerRejectsConcatOfNonStringField covers section 4.2:
+// a field that passes the general renderer-scalar-type gate (it is a valid
+// exact builtin) but is not exactly string still fails concatenation, named
+// specifically.
+func TestCompileStrictServerRejectsConcatOfNonStringField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Props struct { Count int }
+component RosterRow(props: Props) {
+	return <main>{"Rank " + props.Count}</main>
+}
+`))
+	want := `strict component RosterRow cannot concatenate props.Count of type int; "+" operands must be exact string props fields`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerConcatOfNamedStringTypeFailsClosedOnExistingGate
+// documents a spec divergence: section 4.2's second example message
+// ("named string types are outside the strict renderer contract") is not
+// separately reachable. Any field whose declared type is not one of the
+// known renderer-scalar builtins — including a named string type — already
+// fails validateStrictRenderedProps's pre-existing renderer-scalar-type gate
+// before the concat-specific pass would run. The component still fails
+// closed; it just does so with the existing, more general diagnostic
+// instead of a second, concat-specific one.
+//
+// This test also doubles as the regression check for a fail-open bug this
+// change fixes in collectStrictPropReads (see the doc comment there):
+// props.Tone here is read only inside the class attribute's `{...}` value,
+// and before the fix, attribute-position expressions were invisible to
+// read-tracking (the grammar hands them back as one opaque scanner token
+// with no nested CST), so validateStrictRenderedProps never saw this field
+// at all and this exact source compiled with no error.
+func TestCompileStrictServerConcatOfNamedStringTypeFailsClosedOnExistingGate(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Tone string
+type Props struct { Tone Tone }
+component TeamMark(props: Props) {
+	return <span class={"tone-" + props.Tone}>mark</span>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "renderer-visible props fields must use exact string, bool, integer, or floating-point builtins") {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.Contains(err.Error(), "cannot concatenate") {
+		t.Fatalf("did not expect a duplicate concat-specific diagnostic: %v", err)
+	}
+}
+
+// TestCompileStrictServerTracksAttributePositionPropsReads is a direct
+// regression test for the collectStrictPropReads fix: a props field read
+// only inside attribute-position expressions (a concat operand and an <If
+// cond> selector) must still be subject to the explicit-required-prop rule
+// and the renderer-scalar-type gate, exactly as a text-child read would be.
+func TestCompileStrictServerTracksAttributePositionPropsReads(t *testing.T) {
+	const source = `package app
+type CardProps struct {
+	Ready bool
+	Tone  string
+}
+component Card(props: CardProps) {
+	return <div class={"tone-" + props.Tone}><If cond={props.Ready}>ready</If></div>
+}
+component Page() {
+	return <Card />
+}
+`
+	_, err := Compile([]byte(source))
+	if err == nil {
+		t.Fatal("Compile unexpectedly accepted a call that omitted attribute-only-read props")
+	}
+	for _, want := range []string{"requires prop Ready", "requires prop Tone"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Compile error %q does not contain %q", err, want)
+		}
+	}
+}
+
+// TestCompileStrictServerRejectsConcatMissingAPropsFieldOperand covers the
+// "literal-only chain" rejection from section 2.a's non-goals.
+func TestCompileStrictServerRejectsConcatMissingAPropsFieldOperand(t *testing.T) {
+	_, err := Compile([]byte(`package app
+component Page() {
+	return <main>{"a" + "b"}</main>
+}
+`))
+	want := "strict concatenation requires at least one props field operand; fold literal-only chains by hand"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestCompileStrictServerAcceptsBoolCond covers the v0.42 <If cond> extension
+// (spec section 2.c): a bare bool selector and its `== false` negation.
+func TestCompileStrictServerAcceptsBoolCond(t *testing.T) {
+	for _, cond := range []string{"props.Ready", "props.Ready == false", "(props.Ready) == (false)"} {
+		t.Run(cond, func(t *testing.T) {
+			source := []byte("package app\ntype Props struct { Ready bool }\ncomponent Page(props: Props) {\nreturn <main><If cond={" + cond + "}>content</If></main>\n}\n")
+			if _, err := Compile(source); err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+		})
+	}
+}
+
+// TestCompileStrictServerRejectsNonBoolCond covers section 4.4's cond-type
+// diagnostic: a props field of an exact renderer-scalar type that is not bool.
+func TestCompileStrictServerRejectsNonBoolCond(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Props struct { Label string }
+component SeatRow(props: Props) {
+	return <main><If cond={props.Label}>content</If></main>
+}
+`))
+	want := "strict component SeatRow cannot use props.Label of type string in <If cond>; cond requires an exact bool props field"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerRejectsIfShapeViolations covers section 4.4's shape
+// diagnostics: a second attribute and a missing cond attribute (the
+// `when=` legacy spelling does not satisfy the cond-only shape).
+func TestCompileStrictServerRejectsIfShapeViolations(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "second-attribute",
+			body: `<If cond={props.Ready} fallback="no">content</If>`,
+			want: `strict <If> does not accept attribute "fallback"; cond is the only supported attribute`,
+		},
+		{
+			name: "when-spelling",
+			body: `<If when={props.Ready}>content</If>`,
+			want: "strict <If> requires exactly one cond attribute",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := []byte("package app\ntype Props struct { Ready bool }\ncomponent Page(props: Props) {\nreturn <main>" + tc.body + "</main>\n}\n")
+			_, err := Compile(source)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestCompileStrictServerRejectsIfCondComparisonShapes covers section 4.4's
+// cond-expression-shape diagnostics from the validator.
+func TestCompileStrictServerRejectsIfCondComparisonShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cond string
+		want string
+	}{
+		{"eq-true", "props.Ready == true", `comparison "== true" is not supported in strict cond; write the field bare`},
+		{"neq-false", "props.Ready != false", `strict cond must be a bool props field or a bool props field compared with "== false"; got "props.Ready != false"`},
+		{"negation", "!props.Ready", `strict cond must be a bool props field or a bool props field compared with "== false"; got "!props.Ready"`},
+		{"two-selectors", "props.A == props.B", `strict cond must be a bool props field or a bool props field compared with "== false"; got "props.A == props.B"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := []byte("package app\ntype Props struct { Ready bool; A bool; B bool }\ncomponent Page(props: Props) {\nreturn <main><If cond={" + tc.cond + "}>content</If></main>\n}\n")
+			_, err := Compile(source)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestCompileStrictServerIfShadowedBySameFileComponentStaysAComponentCall
+// covers the shadow regression from section 5.2: a same-file strict
+// component named If wins over the builtin, and the ordinary strict-call
+// rules (explicit rendered props, no positional children) still apply to it.
+func TestCompileStrictServerIfShadowedBySameFileComponentStaysAComponentCall(t *testing.T) {
+	prog, err := Compile([]byte(`package app
+type IfProps struct { Label string }
+component If(props: IfProps) {
+	return <em>{props.Label}</em>
+}
+component Page() {
+	return <If label="shadowed" />
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	page := prog.Components[1]
+	call := prog.NodeAt(page.Root)
+	if call == nil || call.Tag != "If" || len(call.Attrs) != 1 || call.Attrs[0].Name != "Label" {
+		t.Fatalf("shadowed If call not lowered as a component call: %#v", call)
+	}
+
+	// The ordinary strict-call rules still apply: omitting the rendered prop
+	// still fails closed instead of silently falling through to the builtin.
+	_, err = Compile([]byte(`package app
+type IfProps struct { Label string }
+component If(props: IfProps) {
+	return <em>{props.Label}</em>
+}
+component Page() {
+	return <If />
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "requires prop Label") {
 		t.Fatalf("error = %v", err)
 	}
 }

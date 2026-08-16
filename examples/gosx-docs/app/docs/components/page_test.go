@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -34,6 +35,44 @@ func TestDocumentedStrictComponentCompilesAndRenders(t *testing.T) {
 	}
 	if strings.Contains(html, "className") {
 		t.Fatalf("rendered HTML retained className alias: %q", html)
+	}
+}
+
+func TestDocumentedConcatSampleCompilesAndRenders(t *testing.T) {
+	prog, err := gosx.Compile([]byte(strictConcatSample))
+	if err != nil {
+		t.Fatalf("compile documented concat sample: %v", err)
+	}
+	html, err := route.RenderProgramComponent(prog, "Page", route.ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("render documented concat sample: %v", err)
+	}
+	if !strings.Contains(html, `class="badge tone-alert"`) {
+		t.Fatalf("rendered HTML %q does not contain the concatenated class", html)
+	}
+}
+
+func TestDocumentedConditionalSampleCompilesAndRenders(t *testing.T) {
+	prog, err := gosx.Compile([]byte(strictConditionalSample))
+	if err != nil {
+		t.Fatalf("compile documented conditional sample: %v", err)
+	}
+	html, err := route.RenderProgramComponent(prog, "Page", route.ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("render documented conditional sample: %v", err)
+	}
+	if !strings.Contains(html, "Ready") || strings.Contains(html, "Pending") {
+		t.Fatalf("rendered HTML %q does not match the cond=true branch", html)
+	}
+}
+
+func TestDocumentedComponentsPageCompilesAndTypeChecks(t *testing.T) {
+	source, err := os.ReadFile("page.gsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gosx.Compile(source); err != nil {
+		t.Fatalf("compile components docs page: %v", err)
 	}
 }
 

@@ -129,6 +129,16 @@ var exprLowerCases = []string{
 	`data.lookup`,
 	`^data.count`,
 	`func() {}`,
+	// v0.42 strict-surface shapes: concatenation and cond's `== false` idiom.
+	// These are not new evaluator shapes — applyFileBinaryOp already handled
+	// ADD's string branch and EQL's reflect.DeepEqual comparison — but the
+	// strict extensions are what makes GoSX-authored source actually reach
+	// them, so the differential oracle gets explicit coverage here.
+	`"tone-" + data.name`,
+	`data.name + "-suffix"`,
+	`"a" + data.name + "b"`,
+	`data.on == false`,
+	`data.off == false`,
 }
 
 func TestLoweredExprMatchesReferenceInterpreter(t *testing.T) {

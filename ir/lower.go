@@ -983,6 +983,17 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 // file renderer must observe. Local strict calls must provide these fields
 // explicitly: generated Go composite literals otherwise synthesize typed zero
 // values while the map-backed renderer would observe a missing key as nil.
+//
+// jsx_attribute_expression (an attribute's `{...}` value) gets its own branch
+// because the grammar's external attribute scanner hands its content back as
+// one opaque token with no nested CST — unlike jsx_expression_container
+// (element/text children), whose Go sub-expression parses into real
+// selector_expression descendants this walk already finds. Every v0.42
+// concatenation and <If cond> shape in this spec's motivating examples lives
+// in attribute position (class, aria-label, cond), so without this branch
+// their props operands would never reach validateStrictRenderedProps, the
+// renderer-boundary type check, or the explicit-required-prop rule below —
+// exactly the class of divergence the strict contract exists to prevent.
 func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct{} {
 	reads := make(map[string]struct{})
 	var walk func(*gotreesitter.Node)
@@ -990,8 +1001,14 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct
 		if node == nil {
 			return
 		}
-		if l.nodeType(node) == "selector_expression" {
+		switch l.nodeType(node) {
+		case "selector_expression":
 			if field, ok := strictcomponent.ServerPropField(l.text(node)); ok {
+				reads[field] = struct{}{}
+			}
+		case "jsx_attribute_expression":
+			expr := stripGSXAttributeExpressionText(l.text(node))
+			for _, field := range strictcomponent.ServerExpressionPropFields(expr) {
 				reads[field] = struct{}{}
 			}
 		}
@@ -1169,6 +1186,10 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 		l.errorf(n, "legacy component cannot call strict component %s; component styles may coexist but calls must stay within one style", tag)
 		return
 	}
+	if l.strictServer && tag == "If" && !strictCallee {
+		l.validateStrictConditionalCall(n, attrs)
+		return
+	}
 	if l.strictServer && IsComponent(tag) && !strictCallee {
 		l.errorf(n, "strict server component %s is not renderable; v0.39 strict server components may call only same-file strict components", tag)
 		return
@@ -1225,6 +1246,32 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 	}
 	if len(children) > 0 {
 		l.errorf(n, "strict component %s does not accept positional children", tag)
+	}
+}
+
+// validateStrictConditionalCall enforces the shape of a strict <If cond={...}>
+// call: exactly one attribute, named cond, of expression kind. It runs only
+// when tag "If" is not shadowed by a same-file strict component (the carve-out
+// in validateStrictComponentCall). Children are unrestricted — that is the
+// point of the tag — so this checks attributes only.
+func (l *lowerer) validateStrictConditionalCall(n *gotreesitter.Node, attrs []Attr) {
+	condCount := 0
+	for i := range attrs {
+		attr := &attrs[i]
+		if attr.Name == "cond" && attr.Kind == AttrExpr {
+			condCount++
+			continue
+		}
+		if attr.Kind == AttrSpread {
+			l.errorf(n, "strict <If> does not accept spread attributes; cond is the only supported attribute")
+			continue
+		}
+		if attr.Name != "cond" {
+			l.errorf(n, "strict <If> does not accept attribute %q; cond is the only supported attribute", attr.Name)
+		}
+	}
+	if condCount != 1 {
+		l.errorf(n, "strict <If> requires exactly one cond attribute")
 	}
 }
 
@@ -1437,7 +1484,7 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	}
 
 	if !isIsland && !isEngine {
-		l.validateStrictServerExpressions(comp.Root)
+		l.validateStrictServerExpressions(comp.Root, componentName, propsType)
 	}
 	l.prog.Components = append(l.prog.Components, comp)
 }
@@ -1515,8 +1562,9 @@ func (l *lowerer) isSupportedStrictIslandDeclaration(n *gotreesitter.Node) bool 
 	return true
 }
 
-func (l *lowerer) validateStrictServerExpressions(root NodeID) {
+func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, propsType string) {
 	seen := make(map[NodeID]bool)
+	_, shadowedByStrict := l.strictNames["If"]
 	var visit func(NodeID)
 	visit = func(id NodeID) {
 		if seen[id] || int(id) >= len(l.prog.Nodes) {
@@ -1525,11 +1573,16 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID) {
 		seen[id] = true
 		node := &l.prog.Nodes[id]
 		if node.Kind == NodeExpr {
-			l.validateStrictServerExpression(node.Span, node.Text)
+			l.validateStrictServerExpression(node.Span, node.Text, componentName, propsType)
 		}
+		isBuiltinIf := node.Kind == NodeComponent && node.Tag == "If" && !shadowedByStrict
 		for _, attr := range node.Attrs {
+			if isBuiltinIf && attr.Name == "cond" && attr.Kind == AttrExpr {
+				l.validateStrictConditionalExpression(node.Span, attr.Expr, componentName, propsType)
+				continue
+			}
 			if attr.Kind == AttrExpr || attr.Kind == AttrSpread {
-				l.validateStrictServerExpression(node.Span, attr.Expr)
+				l.validateStrictServerExpression(node.Span, attr.Expr, componentName, propsType)
 			}
 		}
 		for _, child := range node.Children {
@@ -1539,12 +1592,70 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID) {
 	visit(root)
 }
 
-func (l *lowerer) validateStrictServerExpression(span Span, source string) {
+func (l *lowerer) validateStrictServerExpression(span Span, source, componentName, propsType string) {
 	if err := strictcomponent.ValidateServerExpression(source); err != nil {
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
 			Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
 			Hint:    "use literals or props field selection; compute, index, and call methods before rendering",
+		})
+		return
+	}
+	l.validateStrictExpressionTypes(span, source, componentName, propsType)
+}
+
+// validateStrictExpressionTypes runs the type-side gate for expression shapes
+// the syntactic validator accepts but cannot itself type-check. In v0.42 that
+// is exactly the string-concatenation chain: every props field operand must
+// resolve, through the same-file struct schema, to declared type exactly
+// string — not a named string type, not []byte. Fields that are unknown or
+// that already fail the renderer-scalar-type gate are skipped here; those
+// diagnostics belong to the package checker and validateStrictRenderedProps
+// respectively, and duplicating them would just restate the same root cause.
+func (l *lowerer) validateStrictExpressionTypes(span Span, source, componentName, propsType string) {
+	fields, ok := strictcomponent.ServerConcatPropFields(source)
+	if !ok {
+		return
+	}
+	fieldTypes := l.structTypes[propsBaseType(propsType)]
+	for _, field := range fields {
+		fieldType, known := fieldTypes[field]
+		if !known || !strictRendererScalarType(fieldType) {
+			continue
+		}
+		if strings.TrimSpace(fieldType) != "string" {
+			l.errs = append(l.errs, Diagnostic{
+				Span:    span,
+				Message: fmt.Sprintf("strict component %s cannot concatenate props.%s of type %s; \"+\" operands must be exact string props fields", componentName, field, fieldType),
+			})
+		}
+	}
+}
+
+// validateStrictConditionalExpression validates a strict <If cond={...}>
+// attribute's expression content: the syntactic shape (bare bool selector or
+// selector == false) through the dedicated cond validator, then the exact
+// bool type through the same-file struct schema. General expression
+// positions never reach this function — only the cond attribute of an
+// unshadowed <If> does, dispatched from validateStrictServerExpressions.
+func (l *lowerer) validateStrictConditionalExpression(span Span, source, componentName, propsType string) {
+	field, _, err := strictcomponent.ValidateServerCondExpression(source)
+	if err != nil {
+		l.errs = append(l.errs, Diagnostic{
+			Span:    span,
+			Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
+			Hint:    "use literals or props field selection; compute, index, and call methods before rendering",
+		})
+		return
+	}
+	fieldType, known := l.structTypes[propsBaseType(propsType)][field]
+	if !known || !strictRendererScalarType(fieldType) {
+		return
+	}
+	if strings.TrimSpace(fieldType) != "bool" {
+		l.errs = append(l.errs, Diagnostic{
+			Span:    span,
+			Message: fmt.Sprintf("strict component %s cannot use props.%s of type %s in <If cond>; cond requires an exact bool props field", componentName, field, fieldType),
 		})
 	}
 }

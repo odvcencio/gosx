@@ -33,6 +33,39 @@ func Page() Node {
 	</main>
 }`
 
+const strictConcatSample = `package profile
+
+type BadgeProps struct {
+	Tone string
+}
+
+component Badge(props: BadgeProps) {
+	return <span class={"badge tone-" + props.Tone}>
+		{props.Tone}
+	</span>
+}
+
+component Page() {
+	return <main><Badge tone="alert" /></main>
+}`
+
+const strictConditionalSample = `package profile
+
+type BadgeProps struct {
+	Ready bool
+}
+
+component Badge(props: BadgeProps) {
+	return <span>
+		<If cond={props.Ready}>Ready</If>
+		<If cond={props.Ready == false}>Pending</If>
+	</span>
+}
+
+component Page() {
+	return <main><Badge ready={true} /></main>
+}`
+
 func init() {
 	docs.RegisterStaticDocsPage("Components", "Choose between strict typed and legacy Go-function GSX components.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
@@ -49,8 +82,10 @@ func init() {
 					{"href": "#tooling", "label": "Tooling"},
 					{"href": "#choosing", "label": "Choosing a Style"},
 				},
-				"strictSample": strictComponentSample,
-				"legacySample": legacyComponentSample,
+				"strictSample":      strictComponentSample,
+				"legacySample":      legacyComponentSample,
+				"concatSample":      strictConcatSample,
+				"conditionalSample": strictConditionalSample,
 				"attributesSample": `type FieldProps struct {
 	ID    string
 	Class string

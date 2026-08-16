@@ -39,7 +39,7 @@ func Legacy() Node {
 }
 
 component Badge(props: BadgeProps) {
-	return <span data-when={props.When}>{props.Label}</span>
+	return <span>{props.Label}</span>
 }
 
 component Page() {

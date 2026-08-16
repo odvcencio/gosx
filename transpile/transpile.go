@@ -89,6 +89,7 @@ type transpiler struct {
 	imports          map[string]string // alias -> path
 	propsTypes       map[string]string
 	propsFields      map[string]map[string]string
+	strictNames      map[string]struct{} // same-file gosx_component_declaration names, props or not
 	errs             []string
 	hasStrict        bool
 	strict           int
@@ -568,6 +569,12 @@ func (t *transpiler) collectComponentProps(n *gotreesitter.Node) {
 		if !isComponent(name) {
 			continue
 		}
+		if typ == "gosx_component_declaration" {
+			if t.strictNames == nil {
+				t.strictNames = make(map[string]struct{})
+			}
+			t.strictNames[name] = struct{}{}
+		}
 		if propsType := t.extractPropsType(child); propsType != "" {
 			t.propsTypes[name] = propsType
 		}
@@ -668,6 +675,12 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 	tag := t.extractTagName(openNode)
 	children := t.emitChildren(n)
 
+	if t.isStrictConditionalTag(tag) {
+		if cond, ok := t.strictConditionalCondExpr(openNode); ok {
+			return t.emitStrictConditional(cond, children)
+		}
+	}
+
 	if isComponent(tag) {
 		if propsType, ok := t.typedPropsType(tag); ok {
 			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, openNode), children)
@@ -675,6 +688,52 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 		return t.emitComponentCall(tag, t.emitAttrs(openNode), children)
 	}
 	return t.emitElementCall(tag, t.emitHTMLAttrs(openNode), children)
+}
+
+// isStrictConditionalTag reports whether tag resolves to the strict <If>
+// builtin rather than a same-file component named If. It mirrors the
+// shadow rule in validateStrictComponentCall (ir/lower.go): the IR semantic
+// gate (gosx.Compile, run before any emission in Transpile) has already
+// proven the file compiles under that same rule, so by the time emission
+// runs, tag=="If" outside t.strictNames can only be the builtin.
+func (t *transpiler) isStrictConditionalTag(tag string) bool {
+	if t.strict == 0 || tag != "If" {
+		return false
+	}
+	_, shadowed := t.strictNames[tag]
+	return !shadowed
+}
+
+// strictConditionalCondExpr extracts the verbatim source of a strict <If>'s
+// cond attribute. validateStrictConditionalCall (ir/lower.go) has already
+// rejected every other attribute shape before transpile emission runs, so
+// this is an extraction step, not a second validation pass.
+func (t *transpiler) strictConditionalCondExpr(openNode *gotreesitter.Node) (string, bool) {
+	for i := 0; i < int(openNode.NamedChildCount()); i++ {
+		child := openNode.NamedChild(i)
+		if t.nodeType(child) != "jsx_attribute" {
+			continue
+		}
+		nameNode := t.childByField(child, "name")
+		if nameNode == nil || t.text(nameNode) != "cond" {
+			continue
+		}
+		value, boolAttr, ok := t.emitAttrValue(child)
+		if !ok || boolAttr {
+			return "", false
+		}
+		return value, true
+	}
+	return "", false
+}
+
+// emitStrictConditional projects a strict <If cond={...}> call as a call to
+// gosx.If, so the Go compiler proves cond is exactly bool
+// (func If(cond bool, child Node) Node, helpers.go). Children collapse into
+// one gosx.Fragment so If's single-child signature holds whether the source
+// wrote zero, one, or many GSX children.
+func (t *transpiler) emitStrictConditional(cond string, children []string) string {
+	return fmt.Sprintf("%s(%s, %s(%s))", t.gosxRef("If"), cond, t.gosxRef("Fragment"), strings.Join(children, ", "))
 }
 
 // emitRawTextElement emits <script>/<style>. Their bodies are script or
@@ -735,6 +794,12 @@ func rawTextBody(raw string) string {
 
 func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 	tag := t.extractTagName(n)
+
+	if t.isStrictConditionalTag(tag) {
+		if cond, ok := t.strictConditionalCondExpr(n); ok {
+			return t.emitStrictConditional(cond, nil)
+		}
+	}
 
 	if isComponent(tag) {
 		if propsType, ok := t.typedPropsType(tag); ok {

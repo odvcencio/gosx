@@ -28,6 +28,7 @@ func Attr(string, any) AttrValue { return AttrValue{} }
 func Attrs(...AttrValue) any { return nil }
 func Props(values ...AttrValue) AttrList { return values }
 func Spread(any) AttrValue { return AttrValue{} }
+func If(cond bool, child Node) Node { return Node{} }
 `)
 	mustWrite(t, filepath.Join(dir, "go.mod"), "module example.test/app\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => "+filepath.ToSlash(stub)+"\n")
 	return dir
@@ -287,6 +288,100 @@ component Page() {
 `)
 	if err := CheckFile(context.Background(), path); err != nil {
 		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
+// TestCheckFileAcceptsConcatAndCondTogether is the v0.42 acceptance case: a
+// strict component that concatenates a string prop and gates a child on a
+// bool prop through <If cond> must pass CheckFile end to end (IR lowering,
+// Go-compiler projection, and go list).
+func TestCheckFileAcceptsConcatAndCondTogether(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type CardProps struct {
+	Ready bool
+	Tone  string
+}
+component Card(props: CardProps) {
+	return <div class={"tone-" + props.Tone}><If cond={props.Ready}>ready</If><If cond={props.Ready == false}>not ready</If></div>
+}
+component Page() {
+	return <Card ready={true} tone="ok" />
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
+// TestCheckFileRejectsConcatOfNonStringField is the strictcheck half of the
+// concat type rule: a concat of an int prop must fail the generated check
+// program, and the Go compiler's own diagnostic must still name the field.
+func TestCheckFileRejectsConcatOfNonStringField(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type RowProps struct {
+	Count int
+}
+component Row(props: RowProps) {
+	return <p>{"Rank " + props.Count}</p>
+}
+component Page() {
+	return <Row count={3} />
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "cannot concatenate props.Count") {
+		t.Fatalf("CheckFile error = %v", err)
+	}
+}
+
+// TestCheckFileRejectsConcatOfUnknownField proves the Go-compiler backstop
+// still owns unknown-field diagnostics for concat operands, exactly as it
+// does for a v0.41 direct-field selector.
+func TestCheckFileRejectsConcatOfUnknownField(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type RowProps struct {
+	Tone string
+}
+component Row(props: RowProps) {
+	return <p>{"tone-" + props.Tonee}</p>
+}
+component Page() {
+	return <Row tone="ok" />
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "Tonee") {
+		t.Fatalf("CheckFile error = %v", err)
+	}
+}
+
+// TestCheckFileRejectsCondOfNonBoolField is the strictcheck half of section
+// 4.4's cond-type rule: cond on an int field must fail with a diagnostic
+// naming the field, both at the IR gate and (if it ever got that far) at the
+// Go compiler's "cannot use ... as bool" boundary.
+func TestCheckFileRejectsCondOfNonBoolField(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type RowProps struct {
+	Count int
+}
+component Row(props: RowProps) {
+	return <p><If cond={props.Count}>x</If></p>
+}
+component Page() {
+	return <Row count={3} />
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "cond requires an exact bool props field") {
+		t.Fatalf("CheckFile error = %v", err)
 	}
 }
 
