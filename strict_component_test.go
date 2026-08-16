@@ -129,7 +129,15 @@ component Page(props: Props) {
 	}
 }
 
-func TestCompileStrictServerRejectsNestedPropsSelectors(t *testing.T) {
+// TestCompileStrictServerRejectsNestedSelectorThroughPointerField flips
+// polarity from the v0.41 blanket nested-selector rejection: a pointer
+// intermediate stays rejected under extension (b), but the diagnostic now
+// comes from the lowerer's path resolution (section 4.3), naming the
+// component and the exact pointer type, because the syntax itself
+// (props.Nested.Value) is now a valid shape — see
+// TestCompileStrictServerAcceptsValueStructNestedSelectors below for the
+// case this test used to conflate with pointer rejection.
+func TestCompileStrictServerRejectsNestedSelectorThroughPointerField(t *testing.T) {
 	_, err := Compile([]byte(`package app
 type Nested struct { Value string }
 type Props struct { Nested *Nested }
@@ -137,8 +145,241 @@ component Page(props: Props) {
 	return <main>{props.Nested.Value}</main>
 }
 `))
-	if err == nil || !strings.Contains(err.Error(), "one field directly on props") {
-		t.Fatalf("error = %v", err)
+	want := "strict component Page cannot select through props.Nested of pointer type *Nested; pointer fields cannot preserve Go nil-pointer behavior in the file renderer"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerAcceptsValueStructNestedSelectors is the accept
+// half of section 2.b: a two- and three-hop selector chain through same-file
+// value (non-pointer) structs resolves to a scalar leaf and compiles.
+func TestCompileStrictServerAcceptsValueStructNestedSelectors(t *testing.T) {
+	source := []byte(`package app
+type Team struct { City string }
+type Player struct { Name string; Team Team }
+type Props struct { Player Player }
+component Row(props: Props) {
+	return <p>{props.Player.Name}: {props.Player.Team.City}</p>
+}
+`)
+	prog, err := Compile(source)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	row := prog.Components[0]
+	if row.PropsFields["Player"] != "Player" {
+		t.Fatalf("PropsFields[Player] = %q, want %q", row.PropsFields["Player"], "Player")
+	}
+	if row.PropsPaths["Player.Name"] != "string" {
+		t.Fatalf("PropsPaths[Player.Name] = %q, want %q", row.PropsPaths["Player.Name"], "string")
+	}
+	if row.PropsPaths["Player.Team.City"] != "string" {
+		t.Fatalf("PropsPaths[Player.Team.City] = %q, want %q", row.PropsPaths["Player.Team.City"], "string")
+	}
+}
+
+// TestCompileStrictServerRejectsSelectorThroughScalarField covers section
+// 4.3's first message: a selector tries to select a further field through
+// an intermediate that already resolved to a renderer scalar (nothing to
+// select through).
+func TestCompileStrictServerRejectsSelectorThroughScalarField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Props struct { Player string }
+component BoardRow(props: Props) {
+	return <main>{props.Player.Name}</main>
+}
+`))
+	want := `strict component BoardRow cannot select "Name" through props.Player of type string; selector paths cross same-file struct fields only`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerRejectsSelectorThroughUndeclaredStruct covers
+// section 4.3's third message: an intermediate field's type is a plausible
+// struct reference, but this .gsx file does not declare that struct.
+func TestCompileStrictServerRejectsSelectorThroughUndeclaredStruct(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Player struct { Team Team }
+type Props struct { Player Player }
+component BoardRow(props: Props) {
+	return <main>{props.Player.Team.City}</main>
+}
+`))
+	want := "strict component BoardRow cannot resolve props.Player.Team.City: struct Team is not declared in this .gsx file; declare the renderer-visible struct beside the component"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerRejectsSelectorTooDeep covers section 4.3's fourth
+// message: the lowerer's three-hop resolution cap. The syntax itself is
+// valid (see TestValidateServerExpressionAcceptsNestedSelectors in
+// internal/strictcomponent); the cap is a lowerer concern with full
+// component context, not a schema-blind shape concern.
+func TestCompileStrictServerRejectsSelectorTooDeep(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type C struct { D string }
+type B struct { C C }
+type A struct { B B }
+type Props struct { A A }
+component BoardRow(props: Props) {
+	return <main>{props.A.B.C.D}</main>
+}
+`))
+	want := "strict component BoardRow selector props.A.B.C.D is too deep; the strict renderer resolves at most three fields"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerRejectsNestedSelectorNonScalarLeaf covers a leaf
+// that resolves cleanly through the schema but is not itself a renderer
+// scalar (a struct-typed leaf within the three-hop cap) — the same
+// "renderer-visible props fields" message the depth-1 case already uses,
+// generalized to a full path instead of a bare field name.
+func TestCompileStrictServerRejectsNestedSelectorNonScalarLeaf(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Team struct { City string }
+type Player struct { Team Team }
+type Props struct { Player Player }
+component BoardRow(props: Props) {
+	return <main>{props.Player.Team}</main>
+}
+`))
+	want := "strict component BoardRow cannot render props.Player.Team of type Team; renderer-visible props fields must use exact string, bool, integer, or floating-point builtins"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerRejectsNestedSelectorEmbeddedField covers section
+// 2.b's embedded-field non-goal: collectStructSchemas only records
+// field_identifier children, so a promoted field through an embedded struct
+// is invisible to the same-file schema and fails closed the same way an
+// undeclared struct does.
+func TestCompileStrictServerRejectsNestedSelectorEmbeddedField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Team struct { City string }
+type Player struct { Team }
+type Props struct { Player Player }
+component BoardRow(props: Props) {
+	return <main>{props.Player.City}</main>
+}
+`))
+	if err == nil {
+		t.Fatal("Compile unexpectedly accepted a promoted (embedded) field selector")
+	}
+}
+
+// TestCompileStrictServerAcceptsConcatOfNestedStringField covers the
+// interaction note: a concat operand accepts a nested selector path, not
+// just a direct field, in the same change that admits nested reads
+// generally.
+func TestCompileStrictServerAcceptsConcatOfNestedStringField(t *testing.T) {
+	source := []byte(`package app
+type Player struct { Name string }
+type Props struct { Player Player }
+component BoardRow(props: Props) {
+	return <span class={"player-" + props.Player.Name}>{props.Player.Name}</span>
+}
+`)
+	if _, err := Compile(source); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+}
+
+// TestCompileStrictServerRejectsConcatOfNestedNonStringField mirrors
+// TestCompileStrictServerRejectsConcatOfNonStringField for a nested operand:
+// the leaf must be exactly string, named by its full path.
+func TestCompileStrictServerRejectsConcatOfNestedNonStringField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Player struct { Number int }
+type Props struct { Player Player }
+component BoardRow(props: Props) {
+	return <span>{"No. " + props.Player.Number}</span>
+}
+`))
+	want := `strict component BoardRow cannot concatenate props.Player.Number of type int; "+" operands must be exact string props fields`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerAcceptsConcatOfNestedFieldPointerRootStillFailsClosed
+// proves the pointer rule applies uniformly to a concat operand, not just a
+// bare nested read — the interaction note's "widened selector rule applies
+// consistently wherever selectors are admitted" requirement.
+func TestCompileStrictServerAcceptsConcatOfNestedFieldPointerRootStillFailsClosed(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Player struct { Name string }
+type Props struct { Player *Player }
+component BoardRow(props: Props) {
+	return <span>{"player-" + props.Player.Name}</span>
+}
+`))
+	want := "strict component BoardRow cannot select through props.Player of pointer type *Player; pointer fields cannot preserve Go nil-pointer behavior in the file renderer"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerAcceptsBoolCondOnNestedSelector covers the
+// interaction note for <If cond>: a nested selector is accepted in cond
+// position the same release that admits it as a bare read, both the direct
+// and the == false spelling.
+func TestCompileStrictServerAcceptsBoolCondOnNestedSelector(t *testing.T) {
+	for _, cond := range []string{"props.Player.Ready", "props.Player.Ready == false"} {
+		t.Run(cond, func(t *testing.T) {
+			source := []byte("package app\ntype Player struct { Ready bool }\ntype Props struct { Player Player }\ncomponent BoardRow(props: Props) {\nreturn <main><If cond={" + cond + "}>content</If></main>\n}\n")
+			if _, err := Compile(source); err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+		})
+	}
+}
+
+// TestCompileStrictServerRejectsNonBoolNestedCond mirrors
+// TestCompileStrictServerRejectsNonBoolCond for a nested selector.
+func TestCompileStrictServerRejectsNonBoolNestedCond(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Player struct { Label string }
+type Props struct { Player Player }
+component SeatRow(props: Props) {
+	return <main><If cond={props.Player.Label}>content</If></main>
+}
+`))
+	want := "strict component SeatRow cannot use props.Player.Label of type string in <If cond>; cond requires an exact bool props field"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictLocalCallRequiresRootOfNestedSelectorOnce covers the
+// interaction note's explicit-supply rule: a callee that reads two different
+// nested paths under the same root requires that root supplied exactly
+// once, not once per nested path.
+func TestCompileStrictLocalCallRequiresRootOfNestedSelectorOnce(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Player struct { Name string; Number int }
+type Props struct { Player Player }
+component BoardRow(props: Props) {
+	return <p>{props.Player.Name}: {props.Player.Number}</p>
+}
+component Page() {
+	return <BoardRow />
+}
+`))
+	if err == nil {
+		t.Fatal("Compile unexpectedly accepted a call that omitted the nested selector's root prop")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "requires prop Player") {
+		t.Fatalf("error = %v, want it to require prop Player", err)
+	}
+	if strings.Count(msg, "requires prop Player") != 1 {
+		t.Fatalf("error = %v, want exactly one \"requires prop Player\" diagnostic for two nested reads under one root", err)
 	}
 }
 

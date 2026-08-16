@@ -1370,7 +1370,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 		fieldType, rendered := comp.PropsFields[attr.Name]
 		var value any
 		if rendered {
-			converted, err := strictComponentAttrValue(attr, env, fieldType)
+			converted, err := strictComponentAttrValue(comp, attr, env, fieldType)
 			if err != nil {
 				return nil, fmt.Errorf("prop %s (%s): %w", attr.Name, fieldType, err)
 			}
@@ -1387,7 +1387,16 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 	return props, nil
 }
 
-func strictComponentAttrValue(attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if !strictScalarFieldType(fieldType) {
+		// A rendered field whose declared type is not one of the renderer's
+		// exact scalar builtins is a nested-selector root (ir.Component.
+		// PropsPaths): a same-file struct, provable at every strict-call
+		// boundary but not renderable directly (ir/lower.go's
+		// validateStrictRenderedProps only ever admits a struct-typed root
+		// when at least one nested path under it resolves to a scalar leaf).
+		return strictComponentStructAttrValue(comp, attr, env, fieldType)
+	}
 	var value any
 	switch attr.Kind {
 	case ir.AttrStatic:
@@ -1403,6 +1412,94 @@ func strictComponentAttrValue(attr ir.Attr, env fileRenderEnv, fieldType string)
 		return nil, fmt.Errorf("spread attributes are not supported")
 	}
 	return requireStrictScalarType(value, fieldType)
+}
+
+// strictScalarFieldType reports whether fieldType is one of the renderer's
+// exact scalar builtins. Duplicated from ir.strictRendererScalarType (an
+// unexported ir-package function route cannot import) rather than exported,
+// since it is a small, stable, closed set and this is its only other
+// reference point.
+func strictScalarFieldType(fieldType string) bool {
+	switch fieldType {
+	case "string", "bool",
+		"int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"byte", "rune", "float32", "float64":
+		return true
+	default:
+		return false
+	}
+}
+
+// strictComponentStructAttrValue handles a rendered prop whose declared type
+// is a same-file struct. A struct value can only arrive through an AttrExpr
+// — there is no static or boolean spelling for one — so every other
+// attribute kind fails closed with the same shape of error a type mismatch
+// would produce.
+func strictComponentStructAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if attr.Kind != ir.AttrExpr {
+		return nil, fmt.Errorf("value has no struct spelling, want exact struct %s", fieldType)
+	}
+	value := evalFileExpr(attr.Expr, env)
+	return requireStrictStructValue(value, fieldType, strictStructPropsPaths(comp, attr.Name))
+}
+
+// strictStructPropsPaths filters comp.PropsPaths — keyed by the full
+// dot-joined path including its root, e.g. "Player.Name" — down to the
+// sub-paths under one root field, with the root segment removed (e.g.
+// "Name"), for requireStrictStructValue to walk.
+func strictStructPropsPaths(comp *ir.Component, root string) map[string]string {
+	if comp == nil || len(comp.PropsPaths) == 0 {
+		return nil
+	}
+	prefix := root + "."
+	var out map[string]string
+	for path, leafType := range comp.PropsPaths {
+		if sub, ok := strings.CutPrefix(path, prefix); ok {
+			if out == nil {
+				out = make(map[string]string, len(comp.PropsPaths))
+			}
+			out[sub] = leafType
+		}
+	}
+	return out
+}
+
+// requireStrictStructValue is requireStrictScalarType's counterpart for a
+// nested-selector root: value must be exactly the same-file declared struct
+// type typeName (not a pointer, not an anonymous struct, not a map), and
+// every read path this component resolves under that root (paths, keyed by
+// the dot-joined sub-path with the root segment removed) must resolve by
+// FieldByName to a value of its declared leaf type. A mismatch anywhere
+// fails closed; the caller (strictComponentAttrValue, through
+// localComponentProps) wraps the error with the attribute name and field
+// type, matching the scalar boundary's existing error shape.
+func requireStrictStructValue(value any, typeName string, paths map[string]string) (any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	rv := reflect.ValueOf(value)
+	rt := rv.Type()
+	if rt.Kind() != reflect.Struct || rt.PkgPath() == "" || rt.Name() != typeName {
+		return nil, fmt.Errorf("runtime value has type %s, want exact struct %s", rt, typeName)
+	}
+	for subPath, leafType := range paths {
+		fv := rv
+		for _, segment := range strings.Split(subPath, ".") {
+			if fv.Kind() != reflect.Struct {
+				return nil, fmt.Errorf("path %s.%s: value has type %s, want struct", typeName, subPath, fv.Type())
+			}
+			field := fv.FieldByName(segment)
+			if !field.IsValid() || !field.CanInterface() {
+				return nil, fmt.Errorf("path %s.%s: field %s not found", typeName, subPath, segment)
+			}
+			fv = field
+		}
+		if _, err := requireStrictScalarType(fv.Interface(), leafType); err != nil {
+			return nil, fmt.Errorf("path %s.%s: %w", typeName, subPath, err)
+		}
+	}
+	return value, nil
 }
 
 func strictGoConstant(source string) (constant.Value, bool) {

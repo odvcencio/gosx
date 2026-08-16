@@ -68,10 +68,23 @@ type Component struct {
 	// the exact name "props" because the file renderer binds that identifier.
 	PropsName string
 
-	// PropsFields records exact builtin types for fields read from a same-file
-	// strict props struct. The file renderer uses it to apply the same untyped-
-	// literal conversions as generated Go before the component observes them.
+	// PropsFields records, for the root field of every rendered props read,
+	// that root's own declared type: an exact renderer builtin for a direct
+	// read, or a same-file struct type name for a nested-selector read's
+	// root. The file renderer uses it to apply the same untyped-literal
+	// conversions as generated Go (for a builtin) or the struct boundary
+	// check (for a struct name) before the component observes the value.
 	PropsFields map[string]string
+
+	// PropsPaths records exact builtin leaf types for nested props reads
+	// (props.A.B[.C], added alongside PropsFields' struct-typed roots),
+	// keyed by the dot-joined path under its root ("Player.Name" ->
+	// "string"). It does not repeat PropsFields' direct-read entries: a
+	// path appears here only when it has at least one hop past its root.
+	// The zero value (a nil map) is absent and decodes unchanged for
+	// programs serialized before this field existed, matching the
+	// ComponentSyntax zero-value convention above.
+	PropsPaths map[string]string
 
 	// Syntax distinguishes legacy `func` components from strict
 	// `component Name(props: Type)` declarations.

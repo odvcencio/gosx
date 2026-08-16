@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/ir"
 )
 
 const strictInitialismSource = `package app
@@ -416,5 +417,209 @@ component Page() {
 	))
 	if html != want {
 		t.Fatalf("file render = %q, generated-Go render = %q", html, want)
+	}
+}
+
+// routeTestPlayer and routeTestTeam back the nested-selector renderer
+// boundary tests below. They stand in for a same-file .gsx-declared struct:
+// a real Go type, declared in this package, so reflect.Type.Name() and
+// PkgPath() behave exactly as they would for a struct the strict lowerer
+// resolved from a .gsx file's own schema.
+type routeTestPlayer struct {
+	Name string
+	Team routeTestTeam
+}
+
+type routeTestTeam struct {
+	City string
+}
+
+// TestRequireStrictStructValueAcceptsMatchingStruct is the struct-boundary
+// accept case, mirroring TestRequireStrictScalarTypeRejectsConcatBoundaryMismatch's
+// direct-call pattern for the new function.
+func TestRequireStrictStructValueAcceptsMatchingStruct(t *testing.T) {
+	value := routeTestPlayer{Name: "Ada", Team: routeTestTeam{City: "Springfield"}}
+	got, err := requireStrictStructValue(value, "routeTestPlayer", map[string]string{
+		"Name":      "string",
+		"Team.City": "string",
+	})
+	if err != nil {
+		t.Fatalf("requireStrictStructValue: %v", err)
+	}
+	if got != value {
+		t.Fatalf("requireStrictStructValue returned %#v, want %#v", got, value)
+	}
+}
+
+// TestRequireStrictStructValueRejectsBoundaryMismatches exercises the
+// renderer boundary directly for every §2.b rejection shape reachable at
+// the struct boundary: a wrong declared type name, a pointer masquerading
+// as the value struct, a map masquerading as the struct, and a struct whose
+// runtime leaf field does not match its declared scalar type.
+func TestRequireStrictStructValueRejectsBoundaryMismatches(t *testing.T) {
+	type otherStruct struct{ Name string }
+
+	for _, tc := range []struct {
+		name  string
+		value any
+		paths map[string]string
+	}{
+		{
+			name:  "nil value",
+			value: nil,
+			paths: nil,
+		},
+		{
+			name:  "wrong declared type",
+			value: otherStruct{Name: "Ada"},
+			paths: nil,
+		},
+		{
+			name:  "pointer to the struct is not the struct",
+			value: &routeTestPlayer{Name: "Ada"},
+			paths: nil,
+		},
+		{
+			name:  "map masquerading as the struct",
+			value: map[string]any{"Name": "Ada"},
+			paths: nil,
+		},
+		{
+			name:  "leaf field type mismatch",
+			value: struct{ Name int }{Name: 1},
+			paths: map[string]string{"Name": "string"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := requireStrictStructValue(tc.value, "routeTestPlayer", tc.paths); err == nil {
+				t.Fatalf("requireStrictStructValue(%#v) unexpectedly accepted", tc.value)
+			}
+		})
+	}
+}
+
+// TestRequireStrictStructValueRejectsMissingNestedField covers a leaf path
+// that does not exist on the runtime value at all — the "companion Go
+// struct diverged from the .gsx schema copy" scenario section 5.4 assigns to
+// strictcheck's Go-compiler-backed half; this proves the renderer boundary
+// also fails closed for the same shape instead of panicking or rendering
+// empty.
+func TestRequireStrictStructValueRejectsMissingNestedField(t *testing.T) {
+	value := routeTestPlayer{Name: "Ada"}
+	if _, err := requireStrictStructValue(value, "routeTestPlayer", map[string]string{"Missing": "string"}); err == nil {
+		t.Fatal("requireStrictStructValue unexpectedly accepted a path with no matching field")
+	}
+}
+
+// TestRequireStrictStructValueRejectsPathThroughScalarField covers a
+// registered sub-path that tries to select through a leaf that already
+// bottomed out at a scalar (a slice-through-a-string shape mirroring
+// section 2.b's "selector paths cross same-file struct fields only" rule,
+// exercised here at the runtime boundary rather than at compile time).
+func TestRequireStrictStructValueRejectsPathThroughScalarField(t *testing.T) {
+	value := routeTestPlayer{Name: "Ada"}
+	if _, err := requireStrictStructValue(value, "routeTestPlayer", map[string]string{"Name.Extra": "string"}); err == nil {
+		t.Fatal("requireStrictStructValue unexpectedly accepted a path through a scalar field")
+	}
+}
+
+// TestStrictNestedSelectorRendersRealStructThroughRouteBoundary is the
+// nested-selector render-parity proof. Open question 1 in the design spec
+// notes that a strict .gsx caller cannot construct a struct value to
+// forward — there is no composite-literal spelling in the strict surface —
+// so no compiled .gsx source can feed a real struct through the file-route
+// boundary today; "generated-Go callers feed them" is the documented path.
+// This test exercises that same boundary code (writeLocalComponent ->
+// localComponentProps -> strictComponentAttrValue -> requireStrictStructValue
+// -> the callee body's props.Player.Name read through the pre-existing,
+// unchanged selectValue chain in fileeval.go) with a hand-built ir.Program
+// standing in for a generated-Go/typed caller, since ir.Program is plain
+// data and gosx.Compile is not the only legitimate way to produce one.
+func TestStrictNestedSelectorRendersRealStructThroughRouteBoundary(t *testing.T) {
+	prog := &ir.Program{}
+
+	// Row's body: <p>{props.Player.Name}</p>
+	exprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "props.Player.Name"})
+	rowRoot := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "p", Children: []ir.NodeID{exprID}})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:        "Row",
+		PropsName:   "props",
+		PropsType:   "RowProps",
+		PropsFields: map[string]string{"Player": "routeTestPlayer"},
+		PropsPaths:  map[string]string{"Player.Name": "string"},
+		Syntax:      ir.ComponentSyntaxStrict,
+		Root:        rowRoot,
+	})
+
+	// Page's body: <Row player={playerVar} />. Page itself carries no
+	// props (a zero-props Legacy root satisfies renderFileProgramHTML's
+	// root-props gate the same way a real zero-props Page component would);
+	// playerVar resolves through env.Values, standing in for a value a
+	// generated-Go/typed caller would pass directly.
+	rowCall := prog.AddNode(ir.Node{
+		Kind: ir.NodeComponent,
+		Tag:  "Row",
+		Attrs: []ir.Attr{
+			{Name: "Player", Kind: ir.AttrExpr, Expr: "playerVar"},
+		},
+	})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:   "Page",
+		Syntax: ir.ComponentSyntaxLegacy,
+		Root:   rowCall,
+	})
+
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"playerVar": routeTestPlayer{Name: "Ada"}},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	if html != "<p>Ada</p>" {
+		t.Fatalf("html = %q, want %q", html, "<p>Ada</p>")
+	}
+}
+
+// TestStrictNestedSelectorRejectsWrongTypedStructAtRouteBoundary is the
+// reject half of the same end-to-end wiring: Row still declares its player
+// prop as exactly routeTestPlayer, so a caller handing it any other struct
+// — even one with a same-named, same-typed Name field, the classic "looks
+// right by field but is not the declared type" mismatch — fails closed at
+// the render boundary instead of rendering whatever the mismatched value
+// happens to expose.
+func TestStrictNestedSelectorRejectsWrongTypedStructAtRouteBoundary(t *testing.T) {
+	type otherPlayer struct{ Name string }
+
+	prog := &ir.Program{}
+	exprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "props.Player.Name"})
+	rowRoot := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "p", Children: []ir.NodeID{exprID}})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:        "Row",
+		PropsName:   "props",
+		PropsType:   "RowProps",
+		PropsFields: map[string]string{"Player": "routeTestPlayer"},
+		PropsPaths:  map[string]string{"Player.Name": "string"},
+		Syntax:      ir.ComponentSyntaxStrict,
+		Root:        rowRoot,
+	})
+	rowCall := prog.AddNode(ir.Node{
+		Kind:  ir.NodeComponent,
+		Tag:   "Row",
+		Attrs: []ir.Attr{{Name: "Player", Kind: ir.AttrExpr, Expr: "playerVar"}},
+	})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:   "Page",
+		Syntax: ir.ComponentSyntaxLegacy,
+		Root:   rowCall,
+	})
+
+	_, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"playerVar": otherPlayer{Name: "Ada"}},
+	})
+	if err == nil {
+		t.Fatal("RenderProgramComponent unexpectedly accepted a struct of the wrong declared type")
+	}
+	if !strings.Contains(err.Error(), "render strict component Row") {
+		t.Fatalf("error = %v, want it to name the failing strict component", err)
 	}
 }
