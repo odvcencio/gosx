@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Fixes
+
+- **`route`: deterministic attribute order for an unresolved component
+  reference.** `defaultRenderedComponent` renders the
+  `<div data-gosx-component="Tag" ...>` fallback for a `<Component/>`
+  reference gosx does not resolve locally. It iterated its attribute map
+  in Go's randomized map order. Two renders of the same compiled program
+  could emit the same attributes in a different order. This broke
+  byte-identity goldens and churned HTTP caches and ETags on unchanged
+  content. Attribute names now sort before emission. Output is
+  byte-identical across repeated renders. Fixes #188.
+- **`route`: drop an attribute name smuggled through a `{...spread}` map
+  key.** `html.EscapeString` does not escape a space or an `=`. A spread
+  map key such as `x onmouseover=alert(1) y` rendered as three attributes —
+  `x`, `onmouseover=alert(1)`, and `y` — from one map entry, because
+  `normalizeFileAttrName` only trimmed whitespace and mapped `className`
+  to `class`. Every `{...spread}` call site now validates each key with
+  `validRenderAttrName`, the same helper #185's render-profile
+  `AttrWriter` path already uses, and drops an invalid key instead of
+  emitting it. This is inert, not fail-closed: the render-profile path
+  still fails closed on an invalid name, because a profile is trusted
+  code and a bad name there is a bug in it. A spread commonly carries
+  request or database data an author never wrote. One bad key must not
+  fail an otherwise-valid render. Fixes #189.
+
 ### Added: first-class file uploads through the action layer
 
 - **`ctx.Files(name)` and `ctx.File(name)` read uploaded files from an

@@ -390,7 +390,9 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 				key := entry.Key
 				value := entry.Value
 				normalized := normalizeFileAttrName(key)
-				if normalized == "" || linkReservedAttr(normalized) {
+				// gosx#189: drop an invalid spread key inertly, same rule
+				// and same shared helper as renderFileSpreadAttrs.
+				if normalized == "" || linkReservedAttr(normalized) || !validRenderAttrName(normalized) {
 					continue
 				}
 				renderFileEvaluatedAttr(b, normalized, value)
@@ -1345,7 +1347,12 @@ func resolveFileAttrs(attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey strin
 		case ir.AttrSpread:
 			for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
 				normalized := normalizeFileAttrName(entry.Key)
-				if normalized == "" || normalized == excludeSpreadKey {
+				// gosx#189: drop an invalid spread key here, before it ever
+				// reaches the render profile's AttrWriter, so spread data
+				// cannot trigger renderResolvedAttrs's fail-closed
+				// *RenderProfileError — that path is reserved for a name
+				// the profile itself introduces or mangles.
+				if normalized == "" || normalized == excludeSpreadKey || !validRenderAttrName(normalized) {
 					continue
 				}
 				out = appendResolvedAttr(out, normalized, entry.Value)
@@ -1397,12 +1404,16 @@ func appendResolvedAttr(out []RenderAttr, name string, value any) []RenderAttr {
 // tag and the offending Name, the same way a reported Validate diagnostic
 // does, instead of emitting whatever the parser would make of it.
 //
-// The identical hole in the {...spread} attribute-name path — normalizeFileAttrName
-// does not reject a name with these characters either — is gosx#189, out of
-// scope on this branch. A shared name-validation helper for both paths (this
-// one and normalizeFileAttrName's callers) is the natural follow-up once
-// #189 lands; validRenderAttrName is written so it can become that helper
-// without changing its signature.
+// The identical hole in the {...spread} attribute-name path —
+// normalizeFileAttrName does not reject a name with these characters
+// either — is gosx#189, fixed by sharing this function's validRenderAttrName
+// with every {...spread} call site (renderFileSpreadAttrs,
+// renderLinkAttrs's spread branch, and resolveFileAttrs). The two paths
+// disagree on purpose about what happens next: an invalid Name here is a bug
+// in trusted profile code, so this function still fails the render closed;
+// an invalid name from a spread is commonly untrusted request or database
+// data, so the spread call sites drop it inertly instead — one bad key does
+// not take out the rest of an otherwise-valid render.
 func (r *fileProgramRenderer) renderResolvedAttrs(b *strings.Builder, tag string, attrs []RenderAttr) {
 	for _, attr := range attrs {
 		if !validRenderAttrName(attr.Name) {
@@ -1509,10 +1520,24 @@ func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv, exclude
 	}
 }
 
+// renderFileSpreadAttrs expands a {...spread} attribute's evaluated map into
+// HTML attribute text.
+//
+// Every key is validated with validRenderAttrName before it renders
+// (gosx#189): html.EscapeString does not escape a space or an "=", so a map
+// key like "x onmouseover=alert(1) y" would otherwise smuggle three
+// attributes past one map entry, the same hole gosx#185 M1 closed on the
+// render-profile hook path. A spread key fails INERT here — it is dropped
+// silently, with no attribute emitted and no logger call (nothing in this
+// render path holds a logger) — unlike the profile path's fail-closed
+// *RenderProfileError. The profile path treats an invalid Name as a bug in
+// trusted profile code, worth stopping the whole render over; a spread key
+// commonly carries request or database data an author never wrote down, so
+// one bad key must not take out an otherwise-valid render.
 func renderFileSpreadAttrs(b *strings.Builder, value any, excludeKey string) {
 	for _, entry := range sortedSpreadProps(value) {
 		normalized := normalizeFileAttrName(entry.Key)
-		if normalized == "" || normalized == excludeKey {
+		if normalized == "" || normalized == excludeKey || !validRenderAttrName(normalized) {
 			continue
 		}
 		renderFileEvaluatedAttr(b, normalized, entry.Value)

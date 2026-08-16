@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -512,10 +513,26 @@ func injectHTMLTagAttr(tag, name, value string) string {
 	return out.String()
 }
 
+// defaultRenderedComponent emits the fallback markup for an unresolved
+// component reference: a <div data-gosx-component="Tag"> carrying every
+// attribute the reference supplied, so client-side hydration can find and
+// mount the real component.
+//
+// attrs iterates in sorted name order (gosx#188): Go's map iteration order
+// is randomized per run, so two renders of the same input previously
+// differed only in attribute order — byte-identity goldens, HTTP ETags, and
+// caches all churn on content that has not actually changed. Sorting names
+// before emission makes the output deterministic across runs and processes.
 func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `<div data-gosx-component="%s"`, html.EscapeString(tag))
-	for name, value := range attrs {
+	names := make([]string, 0, len(attrs))
+	for name := range attrs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		value := attrs[name]
 		safeName := html.EscapeString(name)
 		switch v := value.(type) {
 		case bool:
