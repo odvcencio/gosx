@@ -1,5 +1,92 @@
 # Changelog
 
+## v0.42.0 (2026-08-16)
+
+Fail closed, everywhere. Every change in this release either catches a
+failure that used to be silent or widens a strict surface without giving up
+its guarantee. The batch began as an audit from one production app
+(gridiron-2000); all eight filed issues land here.
+
+### Strict components: concatenation, boolean If, and a fail-open fix
+
+- **String concatenation in strict expressions.** A strict component may now
+  write `class={"team-mark tone-" + props.Tone}`: chains of string literals
+  and string-typed props fields, enforced at the validator, the lowerer, and
+  the generated check program. Non-string operands and every other binary
+  operator still fail closed with dedicated diagnostics.
+- **`<If cond={props.Ready}>` in strict bodies**, plus the negated
+  `== false` form, restricted to exact bool props fields. The transpiler
+  emits `gosx.If`; no renderer change was needed.
+- **Fixed: attribute-position prop reads were invisible to strict
+  tracking.** Since v0.39, `collectStrictPropReads` never saw a `props.X`
+  read inside an attribute expression, so a wrong-typed or omitted prop in
+  `class={props.Tone}` passed every check. The tracking now covers
+  attribute expressions; one fixture that accidentally relied on the gap
+  was corrected. Re-audit of the motivating app: three of eight server
+  components now qualify for the strict form.
+
+### Declarative periodic revalidation
+
+- **`data-gosx-revalidate-interval` / `data-gosx-revalidate-src`.** A page
+  element may declare a poll interval (and optionally a same-origin source
+  URL); the navigation runtime revalidates the page when the source body
+  changes, skipping hidden tabs, focused form controls, and in-flight
+  navigations. Live pages need zero app JavaScript. Cross-origin sources
+  and sub-second intervals disable the feature with one console warning.
+
+### Silent failures now speak
+
+- **CLI/module version skew fails with the fix in the message.** A gosx CLI
+  operating on a project pinned to a different m31labs.dev/gosx version
+  stops before building: `gosx vX cannot operate on a project pinned to
+  m31labs.dev/gosx vY. Run: go install m31labs.dev/gosx/cmd/gosx@vY`.
+  Local replace directives skip the check.
+- **Stale island programs are reported at startup.** `gosx build` stores a
+  source hash per island in the manifest; the server compares at boot and
+  logs `gosx islands: <Name> program in dist is stale ... run gosx build`.
+  Old manifests without the field skip the check.
+- **Unregistered file modules are reported at router build.** A routed
+  directory with a page.server.go but no registered module logs
+  `regenerate modules.go (gosx build)` instead of serving pages with empty
+  data and 403 actions.
+- **`.length` in legacy template conditions is rejected at check time.**
+  `<If cond={data.picks.length == 0}>` rendered neither branch silently;
+  `gosx check` now names the expression and suggests shipping a boolean.
+
+### EnableNavigation reaches file-routed apps
+
+- **`App.EnableNavigation()` now injects the navigation runtime for
+  route.NewRouter apps.** The flag was a silent no-op for the file-routed
+  path. Injection de-duplicates against a manually added script, so the
+  documented workaround keeps working unchanged. The starter template's
+  export test had encoded the missing injection as expected behavior; it
+  now asserts the runtime is present.
+
+### Behavior changes to note when upgrading
+
+- **`.length` in a legacy template now fails at render time too, not only
+  at check time.** File-routed templates compile at request time, so a
+  deployed page that still carries `.length` in a condition returns an
+  error page instead of silently rendering neither branch. Run
+  `gosx check` before deploying this upgrade.
+- **Strict components: three source patterns that v0.41.0 accepted now
+  fail closed.** All three follow from fixing the attribute-read tracking
+  hole: (1) a strict call site may no longer omit a prop that the
+  component reads in attribute position — v0.41.0 rendered the file-route
+  path with the value present and the generated-Go path with `class=""`,
+  a real divergence; (2) a non-scalar props field read in attribute
+  position is rejected; (3) local strict calls must pass every
+  attribute-read field explicitly. Each failure names the prop and the
+  fix in its diagnostic.
+
+### Managed-form shorthand
+
+- **`data-gosx-managed` on a form** expands at render time into the full
+  five-attribute managed-form contract, with author-specified attributes
+  winning over defaults. Templates no longer copy the attribute block onto
+  every form, and a typo can no longer silently downgrade a form to
+  full-reload behavior.
+
 ## v0.41.0 (2026-08-15)
 
 Client resource cost. Every change in this release reduces what a GoSX page
