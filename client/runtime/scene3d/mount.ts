@@ -132,6 +132,9 @@
       })) {
         return { wants: true, reason: "point-spin" };
       }
+      if (sceneHasTimeDrivenMaterials(sceneState)) {
+        return { wants: true, reason: "material-clock" };
+      }
       if (sceneStateObjects(sceneState).some(sceneObjectAnimated)) {
         return { wants: true, reason: "object-animation" };
       }
@@ -149,6 +152,66 @@
 
     function sceneShouldAnimate() {
       return sceneAnimationState().wants;
+    }
+
+    // A material that declares a `time` uniform is animated by the per-frame
+    // clock the renderer feeds (WGSL user.time / GLSL uniform float time /
+    // selena `param time`), even when nothing else in the scene moves. The
+    // content starfields are the canonical case: their layer spin was removed
+    // and every twinkle and depth-wrap cycle lives in the shader clock, so
+    // without this source the loop reported "static" after one frame and the
+    // whole field froze. Detection is structural — a customUniforms map or a
+    // shaderLayout uniform field named "time" — never a source-text scan.
+    function sceneEntryDeclaresTimeUniform(entry) {
+      if (!entry || typeof entry !== "object") {
+        return false;
+      }
+      const uniforms = entry.customUniforms || entry.uniforms;
+      if (uniforms && typeof uniforms === "object" && Object.prototype.hasOwnProperty.call(uniforms, "time")) {
+        return true;
+      }
+      const layout = entry.shaderLayout;
+      const block = layout && layout.uniformBlock;
+      const fields = block && (block.fields || block.Fields);
+      if (Array.isArray(fields)) {
+        for (let i = 0; i < fields.length; i++) {
+          const field = fields[i];
+          if (field && (field.name === "time" || field.Name === "time")) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function sceneHasTimeDrivenMaterials(state) {
+      // The normalized scene state strips authored-material fields (see
+      // normalizeScenePointsEntry's whitelist), so the raw wire scene in
+      // props is the source of truth for uniform declarations. The state
+      // pools are still scanned as a fallback for callers that assembled
+      // entries programmatically.
+      const rawScene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+      const pools = [
+        rawScene && rawScene.points,
+        rawScene && rawScene.materials,
+        rawScene && rawScene.objects,
+        rawScene && rawScene.models,
+        state && state.points,
+        state && state.materials,
+        state ? sceneStateObjects(state) : null,
+      ];
+      for (let p = 0; p < pools.length; p++) {
+        const pool = pools[p];
+        if (!Array.isArray(pool)) {
+          continue;
+        }
+        for (let i = 0; i < pool.length; i++) {
+          if (sceneEntryDeclaresTimeUniform(pool[i])) {
+            return true;
+          }
+        }
+      }
+      return false;
     }
 
     // Extract CSS var transition timing from materials/environment so the
