@@ -270,6 +270,10 @@ type fileRenderOptions struct {
 	EvalEnv               fileRenderEnv
 	RequireReplacement    bool
 	Scene3DStyles         gosxcss.Scene3DStylesheet
+	// Profile installs an EXPERIMENTAL render-profile hook (gosx#185). A nil
+	// Profile reproduces today's rendering exactly, byte for byte. See
+	// RenderProfile.
+	Profile *RenderProfile
 }
 
 func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {

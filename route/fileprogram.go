@@ -37,6 +37,16 @@ type fileProgramRenderer struct {
 }
 
 func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (string, bool, error) {
+	// gosx#185: a render profile's validation pass runs before anything is
+	// written, over the whole compiled program, not just the component
+	// being rendered. A non-empty diagnostic list aborts the render here —
+	// fail closed, no output written at all — rather than after the
+	// component below has already produced partial HTML.
+	if opts.Profile != nil && opts.Profile.Validate != nil {
+		if diags := opts.Profile.Validate(prog); len(diags) > 0 {
+			return "", false, &RenderProfileError{Diagnostics: diags}
+		}
+	}
 	renderer := newFileProgramRenderer(prog, opts)
 	comp, ok := renderer.components[component]
 	if !ok {
@@ -154,7 +164,16 @@ func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, en
 	if formContract.Managed {
 		attrs = managedFormAttrs(attrs, formContract.Mode)
 	}
-	r.renderAttrs(b, attrs, env, excludeSpreadKey)
+	// gosx#185: a render profile's AttrWriter, when set, sees this same
+	// fully-expanded attrs slice — after shorthand and managed-form
+	// expansion, before renderAttrs' own escaping — and can rewrite, veto,
+	// or append entries. No profile, or a profile with no AttrWriter, takes
+	// the original renderAttrs path unchanged.
+	if writer := r.profileAttrWriter(); writer != nil {
+		r.renderAttrsWithProfile(b, node.Tag, attrs, env, excludeSpreadKey, writer)
+	} else {
+		r.renderAttrs(b, attrs, env, excludeSpreadKey)
+	}
 	r.writeManagedFormContract(b, node.Attrs, env, formContract)
 	// Match node.go's renderNodeHTML: only self-close a void element that has
 	// no children. The old branch dropped children silently.
@@ -1117,6 +1136,99 @@ func (r *fileProgramRenderer) renderChildren(children []ir.NodeID, env fileRende
 func (r *fileProgramRenderer) renderAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string) {
 	for _, attr := range attrs {
 		renderFileAttr(b, attr, env, excludeSpreadKey)
+	}
+}
+
+// profileAttrWriter returns the active render profile's AttrWriter, or nil
+// when there is no profile or the profile leaves AttrWriter unset. writeElement
+// uses a nil return to fall through to the original, profile-unaware
+// renderAttrs path — the byte-identical-with-nil-profile guarantee holds for
+// an empty *RenderProfile{} too, not only for a nil *RenderProfile.
+func (r *fileProgramRenderer) profileAttrWriter() AttrWriter {
+	if r.opts.Profile == nil {
+		return nil
+	}
+	return r.opts.Profile.AttrWriter
+}
+
+// renderAttrsWithProfile resolves attrs the same way renderAttrs's
+// per-attribute helpers do — {expr} evaluation, {...spread} expansion and
+// flattening, and the excludeSpreadKey filter all run first — then hands the
+// fully resolved, unescaped list to writer before emitting. renderResolvedAttrs
+// is the only place a RenderAttr produced by writer reaches output, and it
+// escapes every Name and Value unconditionally, so writer cannot inject
+// unescaped HTML through a returned value.
+func (r *fileProgramRenderer) renderAttrsWithProfile(b *strings.Builder, tag string, attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string, writer AttrWriter) {
+	resolved := resolveFileAttrs(attrs, env, excludeSpreadKey)
+	renderResolvedAttrs(b, writer(tag, resolved))
+}
+
+// resolveFileAttrs evaluates and flattens attrs into RenderAttr values,
+// mirroring renderFileAttr/renderFileSpreadAttrs' coercion rules exactly but
+// building a slice instead of writing bytes, so a RenderProfile's AttrWriter
+// can inspect and rewrite the list before anything is escaped or emitted.
+func resolveFileAttrs(attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string) []RenderAttr {
+	out := make([]RenderAttr, 0, len(attrs))
+	for _, attr := range attrs {
+		switch attr.Kind {
+		case ir.AttrStatic:
+			out = append(out, RenderAttr{Name: attr.Name, Value: attr.Value})
+		case ir.AttrExpr:
+			out = appendResolvedAttr(out, attr.Name, evalFileExpr(attr.Expr, env))
+		case ir.AttrBool:
+			out = append(out, RenderAttr{Name: attr.Name, Boolean: true})
+		case ir.AttrSpread:
+			for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
+				normalized := normalizeFileAttrName(entry.Key)
+				if normalized == "" || normalized == excludeSpreadKey {
+					continue
+				}
+				out = appendResolvedAttr(out, normalized, entry.Value)
+			}
+		}
+	}
+	return out
+}
+
+// appendResolvedAttr coerces one evaluated attribute value into a RenderAttr
+// using the same rules renderFileEvaluatedAttr applies when writing directly:
+// nil drops the attribute, a bool becomes a presence-only Boolean attribute
+// when the name uses HTML boolean semantics (htmlattr.IsBoolean) and
+// "true"/"false" text otherwise, and every other value takes the same
+// scalar/Stringer/fmt.Sprint fallback chain the non-profile path uses.
+func appendResolvedAttr(out []RenderAttr, name string, value any) []RenderAttr {
+	switch v := value.(type) {
+	case nil:
+		return out
+	case bool:
+		if htmlattr.IsBoolean(name) {
+			if v {
+				return append(out, RenderAttr{Name: name, Boolean: true})
+			}
+			return out
+		}
+		return append(out, RenderAttr{Name: name, Value: strconv.FormatBool(v)})
+	case fmt.Stringer:
+		return append(out, RenderAttr{Name: name, Value: v.String()})
+	default:
+		if text, ok := fileScalarText(value); ok {
+			return append(out, RenderAttr{Name: name, Value: text})
+		}
+		return append(out, RenderAttr{Name: name, Value: fmt.Sprint(v)})
+	}
+}
+
+// renderResolvedAttrs emits attrs as HTML attribute text, escaping every
+// Name and Value unconditionally. See RenderAttr and RenderProfile.AttrWriter
+// for the escape-after-the-hook guarantee this function completes.
+func renderResolvedAttrs(b *strings.Builder, attrs []RenderAttr) {
+	for _, attr := range attrs {
+		name := html.EscapeString(attr.Name)
+		if attr.Boolean {
+			writeFileAttrName(b, name)
+			continue
+		}
+		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
 	}
 }
 

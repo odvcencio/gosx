@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### `route`: an EXPERIMENTAL render-profile hook (gosx#185)
+
+- **`route.RenderProfile`, `RenderAttr`, `AttrWriter`, and `RenderProfileError`
+  are new, and marked EXPERIMENTAL.** A profile installs an attribute-writer
+  hook plus a pre-render validation pass on `RenderProgramComponent`, via a
+  new `Profile *RenderProfile` field on `ProgramRenderEnv`. This is the
+  Architecture C convergence path named in the gsxmail design spec (§5, §14
+  U5): a downstream renderer that needs a different HTML dialect — for
+  example an email target that swaps classes for inline styles and rejects
+  `<script>` — can now do so through this hook instead of owning a full
+  writer over `ir.Program`. Following the `ir` package's compatibility
+  policy above, this surface may change or be removed in a future minor
+  release; pin an exact gosx version if you depend on it directly.
+- **`AttrWriter` runs once per rendered element**, after `{expr}` attributes
+  evaluate, `{...spread}` attributes expand and flatten, and any managed-form
+  shorthand expands — and before HTML escaping. It receives the tag name and
+  the element's resolved attributes (`[]RenderAttr`) and returns the
+  attributes to emit: change a `Value` to rewrite one, omit an entry to veto
+  it, or append a new `RenderAttr` to add one.
+- **Escaping cannot be bypassed through the hook.** `RenderAttr` is a plain
+  `{Name, Value, Boolean}` value type with no raw-HTML or pre-escaped
+  variant; the renderer escapes every returned `Name` and `Value`
+  unconditionally, after `AttrWriter` runs, so nothing a profile returns can
+  reach output unescaped.
+- **`Validate` runs once per render, over the whole compiled `*ir.Program`,
+  before any output is written.** A non-empty `[]ir.Diagnostic` return aborts
+  the render: `RenderProgramComponent` returns a `*RenderProfileError` and an
+  empty string, never partial HTML — the render is fail closed.
+- **A nil `*RenderProfile` reproduces today's rendering exactly, byte for
+  byte**, and so does a non-nil `*RenderProfile{}` with both hooks left
+  unset: every profile-aware branch is gated on a non-nil `AttrWriter` or
+  `Validate` field specifically. Managed-form shorthand expansion, strict-
+  component boundary checks, and text-node escaping all run unconditionally
+  regardless of any profile.
+
 ### Strict components: nested prop reads
 
 - **`props.A.B` and `props.A.B.C` in strict expressions.** A strict
