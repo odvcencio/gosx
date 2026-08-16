@@ -205,7 +205,11 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 		safeTag := html.EscapeString(n.tag)
 		b.WriteByte('<')
 		b.WriteString(safeTag)
-		for _, attr := range n.attrs {
+		attrs := n.attrs
+		if strings.EqualFold(n.tag, "form") {
+			attrs = expandManagedFormAttrs(attrs)
+		}
+		for _, attr := range attrs {
 			renderAttrHTML(b, attr)
 		}
 		if isVoidElement(n.tag) && len(n.children) == 0 {
@@ -233,6 +237,72 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 
 	case kindRawHTML:
 		b.WriteString(n.text)
+	}
+}
+
+// expandManagedFormAttrs replaces a truthy ManagedFormShorthandAttr on a
+// <form> element's attribute list with the ManagedFormAttrs default set
+// (state idle, layer bootstrap, fallback native-form). The HTML method
+// attribute, if present on the same element, stays authoritative for the
+// navigation runtime; the shorthand does not add ManagedFormModeAttr.
+//
+// Merge rule: any contract attribute the author already wrote (for example
+// an explicit data-gosx-form-state) is left exactly as authored, in its
+// original position — only the missing contract attributes are inserted,
+// in place of the shorthand attribute. Attribute order and values outside
+// the contract are untouched. If the shorthand attribute is absent, or
+// present but not truthy, attrs is returned unchanged.
+func expandManagedFormAttrs(attrs []nodeAttr) []nodeAttr {
+	idx := -1
+	for i, attr := range attrs {
+		if attr.name == ManagedFormShorthandAttr {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || !managedFormShorthandTruthy(attrs[idx]) {
+		return attrs
+	}
+
+	have := make(map[string]bool, len(attrs))
+	for _, attr := range attrs {
+		have[attr.name] = true
+	}
+
+	var fill []nodeAttr
+	for _, d := range ManagedFormAttrs(ManagedFormOptions{}) {
+		if !have[d.name] {
+			fill = append(fill, d)
+		}
+	}
+
+	out := make([]nodeAttr, 0, len(attrs)-1+len(fill))
+	out = append(out, attrs[:idx]...)
+	out = append(out, fill...)
+	out = append(out, attrs[idx+1:]...)
+	return out
+}
+
+// managedFormShorthandTruthy reports whether a ManagedFormShorthandAttr
+// value opts the element in. A bare attribute (BoolAttr, presence=true) and
+// any non-empty value other than "false" (case-insensitive) are truthy, so
+// both `data-gosx-managed` and `data-gosx-managed="true"` work from .gsx
+// templates; `data-gosx-managed="false"` is an explicit opt-out.
+func managedFormShorthandTruthy(attr nodeAttr) bool {
+	if attr.presence {
+		return true
+	}
+	switch v := attr.value.(type) {
+	case bool:
+		return v
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return false
+		}
+		return !strings.EqualFold(v, "false")
+	default:
+		return true
 	}
 }
 
