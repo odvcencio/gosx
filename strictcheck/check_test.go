@@ -29,6 +29,7 @@ func Attrs(...AttrValue) any { return nil }
 func Props(values ...AttrValue) AttrList { return values }
 func Spread(any) AttrValue { return AttrValue{} }
 func If(cond bool, child Node) Node { return Node{} }
+func Map[T any](items []T, fn func(T, int) Node) Node { return Node{} }
 `)
 	mustWrite(t, filepath.Join(dir, "go.mod"), "module example.test/app\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => "+filepath.ToSlash(stub)+"\n")
 	return dir
@@ -697,5 +698,194 @@ func TestCommandEnvPreservesWorkspaceUnlessOverridden(t *testing.T) {
 	joined = strings.Join(got, "\n")
 	if strings.Contains(joined, "GOWORK=/workspace/go.work") || !strings.Contains(joined, "GOWORK=off") || !strings.Contains(joined, "GOFLAGS=-mod=readonly") {
 		t.Fatalf("environment not overridden: %v", got)
+	}
+}
+
+// TestCheckFileAcceptsTierOneSpreadCall covers design spec section 3.2
+// (#184 E2) through the full strictcheck pipeline: a strict caller's spread
+// source has exactly the callee's declared props type, so
+// emitStrictComponent/strictSpreadCallVerbatim emits the call verbatim and
+// the Go compiler proves it with zero synthesis.
+func TestCheckFileAcceptsTierOneSpreadCall(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type TeamMarkProps struct {
+	Tone         string
+	Abbreviation string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span class={"tone-" + props.Tone}>{props.Abbreviation}</span>
+}
+component Wrap(props: TeamMarkProps) {
+	return <div><TeamMark {...props}></TeamMark></div>
+}
+component Page() {
+	return <main>ok</main>
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
+// TestCheckFileRejectsTierOneSpreadWrongType proves the lowerer's tier-1
+// identity check fails before the Go compiler ever sees a mismatched
+// spread — a strict caller spreading a value whose declared type is not
+// the callee's props type.
+func TestCheckFileRejectsTierOneSpreadWrongType(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+type WrapProps struct {
+	Tone string
+}
+component Wrap(props: WrapProps) {
+	return <div><TeamMark {...props}></TeamMark></div>
+}
+component Page() {
+	return <main>ok</main>
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "a strict caller spreads a value whose declared type is the callee props type") {
+		t.Fatalf("CheckFile error = %v", err)
+	}
+}
+
+// TestCheckFileAcceptsStrictEachLoop is the check-program half of #182: a
+// same-file strict <Each> over a []T slice of a same-file struct emits
+// gosx.Map, and the Go compiler proves every binding-rooted read inside the
+// callback, including a concat operand and an <If cond>.
+func TestCheckFileAcceptsStrictEachLoop(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type BreakdownRow struct {
+	Scored bool
+	Label  string
+	Points string
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+component Row(props: RowProps) {
+	return <div>
+		<Each of={props.Breakdown} as="row" index="i">
+			<div class={"row-" + row.Label} data-scored={row.Scored}><If cond={row.Scored}>{row.Points}</If>{i}</div>
+		</Each>
+	</div>
+}
+component Page() {
+	return <main>ok</main>
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}
+
+// TestCheckFileRejectsEachOverScalarSlice proves the lowerer's loopable-type
+// table (design spec section 2.3) fails at the IR gate, before the Go
+// compiler ever runs, with a message naming the field and its type.
+func TestCheckFileRejectsEachOverScalarSlice(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type RowProps struct {
+	Names []string
+}
+component Row(props: RowProps) {
+	return <div>
+		<Each of={props.Names} as="name">
+			<span>{name}</span>
+		</Each>
+	</div>
+}
+component Page() {
+	return <main>ok</main>
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "loop elements must be structs declared in this .gsx file") {
+		t.Fatalf("CheckFile error = %v", err)
+	}
+}
+
+// TestCheckFileRejectsEachIndexBindingMisusedAsOperand proves an index
+// binding's int-only contract fails at the IR gate: an index name used
+// where a string field is required (a concat operand here) is a shape the
+// syntactic validator's scope rules admit as a selector root candidate but
+// the lowerer's type resolution rejects, since an index binding is never a
+// struct.
+func TestCheckFileRejectsEachIndexBindingMisusedAsOperand(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type BreakdownRow struct {
+	Label string
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+component Row(props: RowProps) {
+	return <div>
+		<Each of={props.Breakdown} as="row" index="i">
+			<span>{"row-" + i.Label}</span>
+		</Each>
+	</div>
+}
+component Page() {
+	return <main>ok</main>
+}
+`)
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "index binding i in a selector") {
+		t.Fatalf("CheckFile error = %v", err)
+	}
+}
+
+// TestCheckFileAcceptsCombinedEachSpreadConcatCondAndNestedSelector proves
+// the full file combining E1, E2 tier 1, concat, <If>, and (b)'s nested
+// selectors passes — the acceptance bar section 5.4 sets for the combined
+// surface.
+func TestCheckFileAcceptsCombinedEachSpreadConcatCondAndNestedSelector(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+type BreakdownRow struct {
+	Scored bool
+	Label  string
+}
+type Team struct {
+	City string
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+	Team      Team
+}
+component Row(props: RowProps) {
+	return <div>
+		<span>{"in-" + props.Team.City}</span>
+		<Each of={props.Breakdown} as="row">
+			<div class={"tone-" + row.Label}><If cond={row.Scored}>scored</If></div>
+		</Each>
+	</div>
+}
+component Wrap(props: RowProps) {
+	return <div><Row {...props}></Row></div>
+}
+component Page() {
+	return <main>ok</main>
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile: %v", err)
 	}
 }

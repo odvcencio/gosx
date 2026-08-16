@@ -95,6 +95,18 @@ type Component struct {
 	// ComponentSyntax zero-value convention above.
 	PropsPaths map[string]string
 
+	// PropsSlices records loop-source props reads for strict components: a
+	// same-file <Each of={props.Field}> whose element type is a same-file
+	// value struct. Keys are the dot-joined props path the of attribute
+	// resolves (this release resolves only depth-1 paths — see
+	// resolveStrictEachSourceType's doc comment in ir/lower.go — so a key
+	// is always a bare field name today, but the dot-joined convention
+	// matches PropsPaths so a future nested of source needs no key-shape
+	// migration). The zero value (a nil map) is absent and decodes
+	// unchanged for programs serialized before this field existed,
+	// matching the ComponentSyntax zero-value convention above.
+	PropsSlices map[string]SlicePropSchema
+
 	// Syntax distinguishes legacy `func` components from strict
 	// `component Name(props: Type)` declarations.
 	Syntax ComponentSyntax
@@ -132,6 +144,23 @@ type Component struct {
 	// component's function body. Populated by the body analyzer when
 	// the source is a .gsx file with a full component body.
 	Scope *ComponentScope
+}
+
+// SlicePropSchema records the element struct type and the binding-relative
+// read paths a strict <Each> loop needs, so the file renderer boundary can
+// re-prove a loop source's runtime value once per call (type-level, O(read
+// paths)) instead of walking every element — see requireStrictSliceValue in
+// route/fileprogram.go.
+type SlicePropSchema struct {
+	// Elem is the bare same-file struct name every element of the loop
+	// source must have, e.g. "BreakdownRow".
+	Elem string
+
+	// Reads maps each binding-relative field path the loop body reads to
+	// its exact declared leaf type, dot-joined for a nested selector
+	// through a same-file value struct (e.g. "Label" -> "string",
+	// "Stat.Label" -> "string"), matching PropsPaths' convention.
+	Reads map[string]string
 }
 
 // SurfaceHandlerRef records a single on* attribute binding on a surface

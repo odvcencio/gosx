@@ -790,3 +790,392 @@ func TestLocalComponentPropsResolvesAliasBeforePropsFieldsLookup(t *testing.T) {
 		}
 	})
 }
+
+// routeTestBreakdownRow backs the E1 (#182) renderer-boundary tests below,
+// standing in for a same-file .gsx-declared element struct the same way
+// routeTestPlayer does for a nested-selector struct root.
+type routeTestBreakdownRow struct {
+	Scored bool
+	Label  string
+	Points string
+}
+
+// strictEachRowProgram builds the hand-written ir.Program every E1
+// renderer-boundary test below shares: a strict Row component with a
+// <Each of={props.Breakdown} as="row" index="i"> body, called from a
+// zero-props legacy Page that hands the Breakdown slice through
+// ProgramRenderEnv.Values — the same "generated-Go/typed caller" stand-in
+// TestStrictNestedSelectorRendersRealStructThroughRouteBoundary uses, since
+// the strict surface itself has no slice-literal spelling to construct one
+// (open question 1's reasoning, generalized to a slice source).
+func strictEachRowProgram() *ir.Program {
+	prog := &ir.Program{}
+	labelExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "row.Label"})
+	pointsExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "row.Points"})
+	indexExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "i"})
+	rowDivID := prog.AddNode(ir.Node{
+		Kind: ir.NodeElement,
+		Tag:  "div",
+		Attrs: []ir.Attr{
+			{Name: "data-scored", Kind: ir.AttrExpr, Expr: "row.Scored"},
+		},
+		Children: []ir.NodeID{labelExprID, pointsExprID, indexExprID},
+	})
+	eachID := prog.AddNode(ir.Node{
+		Kind: ir.NodeComponent,
+		Tag:  "Each",
+		Attrs: []ir.Attr{
+			{Name: "of", Kind: ir.AttrExpr, Expr: "props.Breakdown"},
+			{Name: "as", Kind: ir.AttrStatic, Value: "row"},
+			{Name: "index", Kind: ir.AttrStatic, Value: "i"},
+		},
+		Children: []ir.NodeID{rowDivID},
+	})
+	rowRoot := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "section", Children: []ir.NodeID{eachID}})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:      "Row",
+		PropsName: "props",
+		PropsType: "RowProps",
+		PropsFields: map[string]string{
+			"Breakdown": "[]routeTestBreakdownRow",
+		},
+		PropsSlices: map[string]ir.SlicePropSchema{
+			"Breakdown": {
+				Elem: "routeTestBreakdownRow",
+				Reads: map[string]string{
+					"Scored": "bool",
+					"Label":  "string",
+					"Points": "string",
+				},
+			},
+		},
+		Syntax: ir.ComponentSyntaxStrict,
+		Root:   rowRoot,
+	})
+
+	rowCall := prog.AddNode(ir.Node{
+		Kind:  ir.NodeComponent,
+		Tag:   "Row",
+		Attrs: []ir.Attr{{Name: "Breakdown", Kind: ir.AttrExpr, Expr: "breakdownVar"}},
+	})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:   "Page",
+		Syntax: ir.ComponentSyntaxLegacy,
+		Root:   rowCall,
+	})
+	return prog
+}
+
+// TestStrictEachRendersSliceParityWithGeneratedGo is E1's render-parity
+// proof: a three-element slice renders byte-identically to the
+// hand-computed gosx.Map equivalent, including escaping, bool attr
+// rendering (data-scored), and index text.
+func TestStrictEachRendersSliceParityWithGeneratedGo(t *testing.T) {
+	rows := []routeTestBreakdownRow{
+		{Scored: true, Label: "Pass Yds", Points: "12.4"},
+		{Scored: false, Label: "Rush <TD>", Points: "0"},
+		{Scored: true, Label: "Rec", Points: "6"},
+	}
+	html, err := RenderProgramComponent(strictEachRowProgram(), "Page", ProgramRenderEnv{
+		Values: map[string]any{"breakdownVar": rows},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	var want strings.Builder
+	want.WriteString("<section>")
+	for i, row := range rows {
+		want.WriteString(gosx.RenderHTML(gosx.El("div", gosx.Attrs(gosx.Attr("data-scored", row.Scored)),
+			gosx.Expr(row.Label), gosx.Expr(row.Points), gosx.Expr(i),
+		)))
+	}
+	want.WriteString("</section>")
+	if html != want.String() {
+		t.Fatalf("file render = %q, generated-Go render = %q", html, want.String())
+	}
+}
+
+// TestStrictEachEmptyAndNilSliceRenderEmptyString covers section 2.5: the
+// strict form admits no fallback/empty attribute, so an empty or nil slice
+// renders zero iterations on both the file renderer and the generated
+// gosx.Map twin.
+func TestStrictEachEmptyAndNilSliceRenderEmptyString(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rows []routeTestBreakdownRow
+	}{
+		{"empty", []routeTestBreakdownRow{}},
+		{"nil", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html, err := RenderProgramComponent(strictEachRowProgram(), "Page", ProgramRenderEnv{
+				Values: map[string]any{"breakdownVar": tc.rows},
+			})
+			if err != nil {
+				t.Fatalf("RenderProgramComponent: %v", err)
+			}
+			if html != "<section></section>" {
+				t.Fatalf("html = %q, want %q", html, "<section></section>")
+			}
+		})
+	}
+}
+
+// TestStrictEachScopeIsolatesNestedBindings proves nested strict <Each>
+// loops keep their bindings separate — the render-time scope chain
+// (newest-first) matches the lexical shadow ban's guarantee, so the two
+// cannot disagree (design spec section 2.2). It mirrors
+// TestGSXEachScopeIsolatesItemBindings (route/gsxperf_test.go) for the
+// strict surface, and doubles as the implicit-key-binding-absent proof: the
+// strict Each path never binds an outer.rowKey-style name, so this
+// component reads only its own declared bindings, unlike the legacy Each
+// path this file's gsxperf_test.go exercises.
+func TestStrictEachScopeIsolatesNestedBindings(t *testing.T) {
+	prog := &ir.Program{}
+	innerLabelID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "inner.Label"})
+	innerSpanID := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "b", Children: []ir.NodeID{innerLabelID}})
+	innerEachID := prog.AddNode(ir.Node{
+		Kind: ir.NodeComponent,
+		Tag:  "Each",
+		Attrs: []ir.Attr{
+			{Name: "of", Kind: ir.AttrExpr, Expr: "row.Stats"},
+			{Name: "as", Kind: ir.AttrStatic, Value: "inner"},
+		},
+		Children: []ir.NodeID{innerSpanID},
+	})
+	outerLabelID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "row.Label"})
+	outerDivID := prog.AddNode(ir.Node{
+		Kind:     ir.NodeElement,
+		Tag:      "div",
+		Children: []ir.NodeID{outerLabelID, innerEachID},
+	})
+	outerEachID := prog.AddNode(ir.Node{
+		Kind: ir.NodeComponent,
+		Tag:  "Each",
+		Attrs: []ir.Attr{
+			{Name: "of", Kind: ir.AttrExpr, Expr: "props.Rows"},
+			{Name: "as", Kind: ir.AttrStatic, Value: "row"},
+		},
+		Children: []ir.NodeID{outerDivID},
+	})
+	rootID := prog.AddNode(ir.Node{Kind: ir.NodeElement, Tag: "section", Children: []ir.NodeID{outerEachID}})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:      "Nested",
+		PropsName: "props",
+		PropsType: "NestedProps",
+		PropsFields: map[string]string{
+			"Rows": "[]routeTestOuterRow",
+		},
+		PropsSlices: map[string]ir.SlicePropSchema{
+			"Rows": {Elem: "routeTestOuterRow", Reads: map[string]string{"Label": "string"}},
+		},
+		Syntax: ir.ComponentSyntaxStrict,
+		Root:   rootID,
+	})
+	call := prog.AddNode(ir.Node{Kind: ir.NodeComponent, Tag: "Nested", Attrs: []ir.Attr{{Name: "Rows", Kind: ir.AttrExpr, Expr: "rowsVar"}}})
+	prog.Components = append(prog.Components, ir.Component{Name: "Page", Syntax: ir.ComponentSyntaxLegacy, Root: call})
+
+	rows := []routeTestOuterRow{
+		{Label: "outer-1", Stats: []routeTestInnerStat{{Label: "a"}, {Label: "b"}}},
+		{Label: "outer-2", Stats: []routeTestInnerStat{{Label: "c"}}},
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{
+		Values: map[string]any{"rowsVar": rows},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := "<section><div>outer-1<b>a</b><b>b</b></div><div>outer-2<b>c</b></div></section>"
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+type routeTestOuterRow struct {
+	Label string
+	Stats []routeTestInnerStat
+}
+
+type routeTestInnerStat struct {
+	Label string
+}
+
+// TestRequireStrictSliceValueDirectRejections exercises
+// requireStrictSliceValue directly, mirroring
+// TestRequireStrictStructValueRejectsBoundaryMismatches's pattern for the
+// slice boundary: []map[string]any (the wrong Kind of element), a wrong
+// element type name, a wrong leaf type, and pointer elements each fail
+// closed with a message naming what the renderer expected.
+func TestRequireStrictSliceValueDirectRejections(t *testing.T) {
+	schema := ir.SlicePropSchema{
+		Elem:  "routeTestBreakdownRow",
+		Reads: map[string]string{"Label": "string"},
+	}
+	type otherRow struct{ Label string }
+
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{"nil value", nil},
+		{"not a slice", routeTestBreakdownRow{Label: "x"}},
+		{"slice of maps", []map[string]any{{"Label": "x"}}},
+		{"wrong element type name", []otherRow{{Label: "x"}}},
+		{"pointer elements", []*routeTestBreakdownRow{{Label: "x"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := requireStrictSliceValue(tc.value, schema); err == nil {
+				t.Fatalf("requireStrictSliceValue(%#v) unexpectedly accepted", tc.value)
+			}
+		})
+	}
+
+	t.Run("wrong leaf field type", func(t *testing.T) {
+		type wrongLeafRow struct{ Label int }
+		wrongSchema := ir.SlicePropSchema{Elem: "wrongLeafRow", Reads: map[string]string{"Label": "string"}}
+		if _, err := requireStrictSliceValue([]wrongLeafRow{{Label: 1}}, wrongSchema); err == nil {
+			t.Fatal("requireStrictSliceValue unexpectedly accepted a mismatched leaf field type")
+		}
+	})
+
+	t.Run("typed nil slice passes and iterates zero times", func(t *testing.T) {
+		var rows []routeTestBreakdownRow
+		got, err := requireStrictSliceValue(rows, schema)
+		if err != nil {
+			t.Fatalf("requireStrictSliceValue(nil slice): %v", err)
+		}
+		if got == nil {
+			t.Fatal("requireStrictSliceValue returned nil for a typed nil slice")
+		}
+	})
+}
+
+// --- E2 (#184): spread props at strict call sites -------------------------
+
+type routeTestMatchupTeam struct {
+	Tone         string
+	Abbreviation string
+}
+
+// strictSpreadTeamMarkProgram builds the shared TeamMark component both the
+// spread-parity test and the explicit-attr comparison call through, so the
+// two render paths exercise the identical strict body.
+func strictSpreadTeamMarkProgram(callAttrs []ir.Attr) *ir.Program {
+	prog := &ir.Program{}
+	toneExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "props.Tone"})
+	abbrExprID := prog.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "props.Abbreviation"})
+	rootID := prog.AddNode(ir.Node{
+		Kind:     ir.NodeElement,
+		Tag:      "span",
+		Attrs:    []ir.Attr{{Name: "class", Kind: ir.AttrExpr, Expr: `"tone-" + props.Tone`}},
+		Children: []ir.NodeID{abbrExprID, toneExprID},
+	})
+	prog.Components = append(prog.Components, ir.Component{
+		Name:      "TeamMark",
+		PropsName: "props",
+		PropsType: "TeamMarkProps",
+		PropsFields: map[string]string{
+			"Tone":         "string",
+			"Abbreviation": "string",
+		},
+		Syntax: ir.ComponentSyntaxStrict,
+		Root:   rootID,
+	})
+	call := prog.AddNode(ir.Node{Kind: ir.NodeComponent, Tag: "TeamMark", Attrs: callAttrs})
+	prog.Components = append(prog.Components, ir.Component{Name: "Page", Syntax: ir.ComponentSyntaxLegacy, Root: call})
+	return prog
+}
+
+// TestStrictSpreadParityWithExplicitAttrCall proves a legacy caller
+// spreading a covering struct renders identically to the explicit-attr
+// call with the same values — the twin-equivalence E2's whole design rests
+// on (design spec section 3.1).
+func TestStrictSpreadParityWithExplicitAttrCall(t *testing.T) {
+	team := routeTestMatchupTeam{Tone: "red", Abbreviation: "NE"}
+
+	spreadHTML, err := RenderProgramComponent(
+		strictSpreadTeamMarkProgram([]ir.Attr{{Kind: ir.AttrSpread, Expr: "teamVar"}}),
+		"Page", ProgramRenderEnv{Values: map[string]any{"teamVar": team}},
+	)
+	if err != nil {
+		t.Fatalf("RenderProgramComponent (spread): %v", err)
+	}
+
+	explicitHTML, err := RenderProgramComponent(
+		strictSpreadTeamMarkProgram([]ir.Attr{
+			{Name: "Tone", Kind: ir.AttrExpr, Expr: "teamVar.Tone"},
+			{Name: "Abbreviation", Kind: ir.AttrExpr, Expr: "teamVar.Abbreviation"},
+		}),
+		"Page", ProgramRenderEnv{Values: map[string]any{"teamVar": team}},
+	)
+	if err != nil {
+		t.Fatalf("RenderProgramComponent (explicit): %v", err)
+	}
+
+	if spreadHTML != explicitHTML {
+		t.Fatalf("spread render = %q, explicit-attr render = %q", spreadHTML, explicitHTML)
+	}
+	if want := `<span class="tone-red">NEred</span>`; spreadHTML != want {
+		t.Fatalf("html = %q, want %q", spreadHTML, want)
+	}
+}
+
+// TestStrictSpreadProps exercises strictSpreadProps directly for every
+// design spec section 4.5 rejection shape: a nil source, a map source
+// (rejected unconditionally, never zero-filled), a struct missing a
+// rendered field, and a rendered field whose runtime type does not match
+// its declared scalar type.
+func TestStrictSpreadProps(t *testing.T) {
+	comp := &ir.Component{
+		Name: "TeamMark",
+		PropsFields: map[string]string{
+			"Tone":         "string",
+			"Abbreviation": "string",
+		},
+	}
+
+	t.Run("nil source", func(t *testing.T) {
+		if _, err := strictSpreadProps(comp, nil); err == nil {
+			t.Fatal("strictSpreadProps(nil) unexpectedly accepted")
+		}
+	})
+
+	t.Run("map source rejected unconditionally", func(t *testing.T) {
+		_, err := strictSpreadProps(comp, map[string]any{"Tone": "red", "Abbreviation": "NE"})
+		if err == nil {
+			t.Fatal("strictSpreadProps(map) unexpectedly accepted")
+		}
+		if !strings.Contains(err.Error(), "maps cannot prove field coverage") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("missing field", func(t *testing.T) {
+		type partialTeam struct{ Tone string }
+		_, err := strictSpreadProps(comp, partialTeam{Tone: "red"})
+		if err == nil || !strings.Contains(err.Error(), "no field Abbreviation") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("wrong field type", func(t *testing.T) {
+		type wrongTypeTeam struct {
+			Tone         string
+			Abbreviation int
+		}
+		_, err := strictSpreadProps(comp, wrongTypeTeam{Tone: "red", Abbreviation: 1})
+		if err == nil || !strings.Contains(err.Error(), "want exact string") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("accepts a covering struct and proves values through setComponentProp aliases", func(t *testing.T) {
+		props, err := strictSpreadProps(comp, routeTestMatchupTeam{Tone: "red", Abbreviation: "NE"})
+		if err != nil {
+			t.Fatalf("strictSpreadProps: %v", err)
+		}
+		if props["Tone"] != "red" || props["tone"] != "red" {
+			t.Fatalf("props = %#v, want Tone/tone aliases set", props)
+		}
+	})
+}

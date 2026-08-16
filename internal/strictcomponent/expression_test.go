@@ -333,3 +333,173 @@ func TestValidateServerCondExpressionRejectsInvalidGo(t *testing.T) {
 		t.Fatalf("ValidateServerCondExpression(malformed) = %v", err)
 	}
 }
+
+// rowScope is the Scope a strict <Each of={...} as="row"> pushes for its
+// children (design spec section 2.2); rowIndexScope adds an index="i"
+// binding.
+var rowScope = Scope{Items: []string{"row"}}
+var rowIndexScope = Scope{Items: []string{"row"}, Indices: []string{"i"}}
+
+// TestValidateServerExpressionScopeAcceptsBindingSelectors covers #182's
+// widened selector rule: a binding-rooted selector, its parenthesized
+// forms, a concat operand, a cond selector, and a bare index reference are
+// all accepted with an active Scope.
+func TestValidateServerExpressionScopeAcceptsBindingSelectors(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		scope  Scope
+	}{
+		{"row.Label", rowScope},
+		{"(row).Label", rowScope},
+		{`"x-" + row.Tone`, rowScope},
+		{"row.Scored", rowScope},
+		{"row.Stat.Label", rowScope},
+		{"i", rowIndexScope},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			if err := ValidateServerExpressionScope(tc.source, tc.scope); err != nil {
+				t.Fatalf("ValidateServerExpressionScope(%q, %v) = %v, want nil", tc.source, tc.scope, err)
+			}
+		})
+	}
+}
+
+// TestValidateServerExpressionScopeRejectsWithExactMessages covers the
+// reject half: a bare binding, an unbound name even though a binding is
+// active, a binding used with an empty scope (falls back to the ordinary
+// identifier message), and a mixed chain that fails the widened rule for
+// an unrelated reason.
+func TestValidateServerExpressionScopeRejectsWithExactMessages(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+		scope  Scope
+		want   string
+	}{
+		{
+			name:   "bare item binding",
+			source: "row",
+			scope:  rowScope,
+			want:   `bare row is not supported; select a field on row`,
+		},
+		{
+			name:   "unbound selector root",
+			source: "rowKey.X",
+			scope:  rowScope,
+			want:   `selector must be a field chain rooted at props, with every step a plain field access; anything else cannot preserve Go nil-pointer behavior`,
+		},
+		{
+			name:   "binding used with empty scope",
+			source: "item.X",
+			scope:  Scope{},
+			want:   `selector must be a field chain rooted at props, with every step a plain field access; anything else cannot preserve Go nil-pointer behavior`,
+		},
+		{
+			name:   "row.Label with empty scope",
+			source: "row.Label",
+			scope:  Scope{},
+			want:   `selector must be a field chain rooted at props, with every step a plain field access; anything else cannot preserve Go nil-pointer behavior`,
+		},
+		{
+			name:   "index binding used as a selector root",
+			source: "i.Field",
+			scope:  rowIndexScope,
+			// Syntactically admitted here (an index name is a valid scope
+			// root candidate — see Scope's doc comment); the lowerer's
+			// walkStrictHops rejects it with schema context, since an
+			// index is never a struct. This validator has no schema, so it
+			// accepts the shape.
+			want: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateServerExpressionScope(tc.source, tc.scope)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("ValidateServerExpressionScope(%q, %v) = %v, want nil", tc.source, tc.scope, err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("ValidateServerExpressionScope(%q, %v) = %v, want %q", tc.source, tc.scope, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateServerExpressionUnaffectedByScopeGeneralization is the
+// signature regression WP-4 requires: the empty-scope wrapper behaves
+// byte-identically to the pre-#182/#184 signature for every existing case,
+// re-run here through the new Scope-aware entry point at Scope{}.
+func TestValidateServerExpressionUnaffectedByScopeGeneralization(t *testing.T) {
+	for _, source := range []string{
+		`"text"`, "props.Title", "props.A.B.C", `"a" + props.X`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			want := ValidateServerExpression(source)
+			got := ValidateServerExpressionScope(source, Scope{})
+			if (want == nil) != (got == nil) {
+				t.Fatalf("scope wrapper diverged: ValidateServerExpression=%v ValidateServerExpressionScope=%v", want, got)
+			}
+			if want != nil && want.Error() != got.Error() {
+				t.Fatalf("scope wrapper message diverged: %q vs %q", want.Error(), got.Error())
+			}
+		})
+	}
+}
+
+func TestServerSelectorPathReportsRoot(t *testing.T) {
+	for _, tc := range []struct {
+		source   string
+		scope    Scope
+		wantRoot string
+		wantPath []string
+		wantOK   bool
+	}{
+		{"props.Tone", Scope{}, "props", []string{"Tone"}, true},
+		{"row.Label", rowScope, "row", []string{"Label"}, true},
+		{"row.Stat.Label", rowScope, "row", []string{"Stat", "Label"}, true},
+		{"other.Label", rowScope, "", nil, false},
+		{"row.Label", Scope{}, "", nil, false},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			root, path, ok := ServerSelectorPath(tc.source, tc.scope)
+			if ok != tc.wantOK || root != tc.wantRoot || !equalStrings(path, tc.wantPath) {
+				t.Fatalf("ServerSelectorPath(%q, %v) = (%q, %v, %v), want (%q, %v, %v)", tc.source, tc.scope, root, path, ok, tc.wantRoot, tc.wantPath, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestServerExpressionRootedPathsFindsBindingReads(t *testing.T) {
+	for _, tc := range []struct {
+		source string
+		scope  Scope
+		want   []RootedPath
+	}{
+		{"row.Label", rowScope, []RootedPath{{Root: "row", Path: []string{"Label"}}}},
+		{`"x-" + row.Tone + props.Suffix`, rowScope, []RootedPath{{Root: "row", Path: []string{"Tone"}}, {Root: "props", Path: []string{"Suffix"}}}},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			got := ServerExpressionRootedPaths(tc.source, tc.scope)
+			if len(got) != len(tc.want) {
+				t.Fatalf("ServerExpressionRootedPaths(%q, %v) = %v, want %v", tc.source, tc.scope, got, tc.want)
+			}
+			for i := range got {
+				if got[i].Root != tc.want[i].Root || !equalStrings(got[i].Path, tc.want[i].Path) {
+					t.Fatalf("ServerExpressionRootedPaths(%q, %v)[%d] = %v, want %v", tc.source, tc.scope, i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestValidateServerCondExpressionScopeAcceptsBindingRoot(t *testing.T) {
+	root, path, negated, err := ValidateServerCondExpressionScope("row.Scored == false", rowScope)
+	if err != nil {
+		t.Fatalf("ValidateServerCondExpressionScope: %v", err)
+	}
+	if root != "row" || !equalStrings(path, []string{"Scored"}) || !negated {
+		t.Fatalf("ValidateServerCondExpressionScope = (%q, %v, %v), want (row, [Scored], true)", root, path, negated)
+	}
+}

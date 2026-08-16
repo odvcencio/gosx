@@ -17,33 +17,88 @@ var (
 	strictDecimalFloat   = regexp.MustCompile(`^(([0-9]+\.[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)$`)
 )
 
+// Scope names the <Each> loop bindings visible to a strict expression at its
+// position in the IR tree — the lowerer's active binding set (see
+// ir/lower.go's validateStrictServerExpressions), pushed on an unshadowed
+// <Each> node before its children validate (design spec section 2.2).
+//
+// Items and Indices are kept apart because they admit different shapes: an
+// Item name is a valid selector root (row.Label), the same way props is,
+// but never a valid bare reference — a loop element is always a struct, and
+// the renderer has no single-value spelling for one. An Index name is the
+// opposite: always a plain int, so it is a valid bare reference (bare {i}
+// renders like an int props field) but never a valid selector root — this
+// function knows that unconditionally, with no schema lookup, because an
+// index binding's type never varies. Both are still accepted as syntactic
+// selector roots by rootedSelectorPath below, so a misuse such as i.Field
+// reaches the lowerer's schema-aware diagnostic (design spec section 4.2)
+// instead of this schema-blind validator's generic message.
+type Scope struct {
+	Items   []string
+	Indices []string
+}
+
+func (s Scope) isItem(name string) bool {
+	for _, item := range s.Items {
+		if item == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (s Scope) isIndex(name string) bool {
+	for _, index := range s.Indices {
+		if index == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (s Scope) isBinding(name string) bool {
+	return s.isItem(name) || s.isIndex(name)
+}
+
 // ValidateServerExpression accepts exactly the expression shapes implemented
 // by the file renderer for strict server components. The v0.39 contract is
 // intentionally small: literals and one direct props field (with parentheses).
 // v0.42 added a `+` chain that concatenates string literals with props field
-// selectors (validateConcatChain documents the accepted shape). This change
-// widens every props selector position (a bare read, a concat operand, an
-// <If cond>) to accept a field chain rooted at props up to three fields deep
-// (see ServerPropPath) instead of exactly one field. This function places no
-// upper bound on chain length itself: it is schema-blind, so it cannot know
-// where three hops actually lands against a given props struct. The lowerer
-// (ir/lower.go) resolves each accepted path against the same-file struct
-// schema and reports the three-hop cap there, with full component context.
-// Operators outside the one `+` exception, indexing, and calls need static
-// Go type/method information that the map-backed file renderer does not
-// retain, so they fail closed.
+// selectors (validateConcatChain documents the accepted shape). v0.42's
+// nested-selector change widens every props selector position (a bare read,
+// a concat operand, an <If cond>) to accept a field chain rooted at props up
+// to three fields deep (see ServerPropPath) instead of exactly one field.
+// This function places no upper bound on chain length itself: it is
+// schema-blind, so it cannot know where three hops actually lands against a
+// given props struct. The lowerer (ir/lower.go) resolves each accepted path
+// against the same-file struct schema and reports the three-hop cap there,
+// with full component context. Operators outside the one `+` exception,
+// indexing, and calls need static Go type/method information that the
+// map-backed file renderer does not retain, so they fail closed.
+//
+// ValidateServerExpression is ValidateServerExpressionScope's empty-scope
+// wrapper: it behaves byte-identically to the pre-#182/#184 signature for
+// every existing caller, admitting only props as a selector root.
 func ValidateServerExpression(source string) error {
+	return ValidateServerExpressionScope(source, Scope{})
+}
+
+// ValidateServerExpressionScope is ValidateServerExpression, generalized to
+// admit a selector chain rooted at any name in scope alongside props — the
+// #182 (`<Each>`) extension. See Scope's doc comment for the Items/Indices
+// distinction.
+func ValidateServerExpressionScope(source string, scope Scope) error {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
 		return fmt.Errorf("invalid Go expression: %w", err)
 	}
-	if err := validate(expr, source); err != nil {
+	if err := validate(expr, source, scope); err != nil {
 		return err
 	}
 	return nil
 }
 
-func validate(expr ast.Expr, source string) error {
+func validate(expr ast.Expr, source string, scope Scope) error {
 	switch node := expr.(type) {
 	case *ast.BasicLit:
 		return validateLiteral(node)
@@ -56,12 +111,22 @@ func validate(expr ast.Expr, source string) error {
 		case "props":
 			return fmt.Errorf("bare props is not supported; select a props field")
 		default:
+			if scope.isIndex(node.Name) {
+				// An Each index binding is always a plain int — the same
+				// parity class already proven for an int props field, so a
+				// bare reference renders exactly the way {props.SomeInt}
+				// does. See design spec section 2.5.
+				return nil
+			}
+			if scope.isItem(node.Name) {
+				return fmt.Errorf("bare %s is not supported; select a field on %s", node.Name, node.Name)
+			}
 			return fmt.Errorf("identifier %q is not available to the strict server renderer", node.Name)
 		}
 	case *ast.ParenExpr:
-		return validate(node.X, source)
+		return validate(node.X, source, scope)
 	case *ast.SelectorExpr:
-		if _, ok := propsSelectorPath(node); !ok {
+		if _, _, ok := rootedSelectorPath(node, scope); !ok {
 			return fmt.Errorf("selector must be a field chain rooted at props, with every step a plain field access; anything else cannot preserve Go nil-pointer behavior")
 		}
 		return nil
@@ -73,7 +138,7 @@ func validate(expr ast.Expr, source string) error {
 		if node.Op != token.ADD {
 			return fmt.Errorf("binary operator %q is not supported by the strict server renderer; only string concatenation with %q is renderable", node.Op, "+")
 		}
-		return validateConcatChain(node, source)
+		return validateConcatChain(node, source, scope)
 	case *ast.CallExpr:
 		return fmt.Errorf("calls are not supported by the strict server renderer because typed Go methods are not retained in its props map")
 	default:
@@ -82,16 +147,16 @@ func validate(expr ast.Expr, source string) error {
 }
 
 // validateConcatChain accepts a `+` chain whose flattened operands are each a
-// string literal or a direct props field selector, with at least one of each.
-// The renderer's applyFileBinaryOp takes the string branch whenever either
-// side of `+` is a Go string (route/exprlower.go), so this is the one binary
-// shape the file renderer and generated Go execute identically.
-func validateConcatChain(node *ast.BinaryExpr, source string) error {
+// string literal or a direct props/binding field selector, with at least one
+// of each. The renderer's applyFileBinaryOp takes the string branch whenever
+// either side of `+` is a Go string (route/exprlower.go), so this is the one
+// binary shape the file renderer and generated Go execute identically.
+func validateConcatChain(node *ast.BinaryExpr, source string, scope Scope) error {
 	hasStringLiteral := false
 	hasPropsField := false
 	for _, operand := range flattenAddChain(node) {
 		text := operandText(operand, source)
-		switch classifyConcatOperand(operand) {
+		switch classifyConcatOperand(operand, scope) {
 		case concatOperandString:
 			hasStringLiteral = true
 		case concatOperandNonStringLiteral:
@@ -121,7 +186,7 @@ const (
 	concatOperandSelector
 )
 
-func classifyConcatOperand(operand ast.Expr) concatOperandKind {
+func classifyConcatOperand(operand ast.Expr, scope Scope) concatOperandKind {
 	switch node := unwrapParens(operand).(type) {
 	case *ast.BasicLit:
 		if node.Kind == token.STRING {
@@ -132,7 +197,7 @@ func classifyConcatOperand(operand ast.Expr) concatOperandKind {
 		}
 		return concatOperandNonStringLiteral
 	case *ast.SelectorExpr:
-		if _, ok := propsSelectorPath(node); ok {
+		if _, _, ok := rootedSelectorPath(node, scope); ok {
 			return concatOperandSelector
 		}
 		return concatOperandInvalid
@@ -218,36 +283,54 @@ func validateLiteral(literal *ast.BasicLit) error {
 // "Player", "Name"}. Parentheses are transparent at any level, including
 // around props itself and around any intermediate selector. It places no
 // upper bound on chain length — see ValidateServerExpression's doc comment
-// for why the depth cap lives in the lowerer instead.
+// for why the depth cap lives in the lowerer instead. ServerPropPath is
+// ServerSelectorPath's empty-scope wrapper, filtered to a props root, so
+// every pre-#182/#184 caller keeps its exact signature and behavior.
 func ServerPropPath(source string) ([]string, bool) {
-	expr, err := parser.ParseExpr(source)
-	if err != nil {
+	root, path, ok := ServerSelectorPath(source, Scope{})
+	if !ok || root != "props" {
 		return nil, false
 	}
-	return propsSelectorPath(expr)
+	return path, true
 }
 
-// propsSelectorPath is ServerPropPath's expression-tree implementation,
+// ServerSelectorPath generalizes ServerPropPath to report both the root
+// identifier and the ordered field path of a selector chain rooted at props
+// or at any name in scope — the #182 (`<Each>`) binding-selector extension
+// (design spec section 2.4: path resolution is (rootType, path), with props
+// and an Each item binding both valid roots at this syntactic layer).
+func ServerSelectorPath(source string, scope Scope) (root string, path []string, ok bool) {
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return "", nil, false
+	}
+	return rootedSelectorPath(expr, scope)
+}
+
+// rootedSelectorPath is ServerSelectorPath's expression-tree implementation,
 // reused by the validator (selector shape, concat operand classification,
-// cond selector extraction) so every props selector position resolves
-// nested paths through one definition.
-func propsSelectorPath(expr ast.Expr) ([]string, bool) {
-	selector, ok := unwrapParens(expr).(*ast.SelectorExpr)
-	if !ok || selector.Sel == nil || selector.Sel.Name == "" {
-		return nil, false
+// cond selector extraction) so every selector position resolves rooted
+// paths through one definition. It admits props and, per scope, an Item or
+// Index binding name as syntactically valid roots — Scope's doc comment
+// explains why an Index root is admitted here even though it is never a
+// valid root once the lowerer resolves its type.
+func rootedSelectorPath(expr ast.Expr, scope Scope) (root string, path []string, ok bool) {
+	selector, isSelector := unwrapParens(expr).(*ast.SelectorExpr)
+	if !isSelector || selector.Sel == nil || selector.Sel.Name == "" {
+		return "", nil, false
 	}
 	receiver := unwrapParens(selector.X)
-	if ident, ok := receiver.(*ast.Ident); ok {
-		if ident.Name != "props" {
-			return nil, false
+	if ident, isIdent := receiver.(*ast.Ident); isIdent {
+		if ident.Name != "props" && !scope.isBinding(ident.Name) {
+			return "", nil, false
 		}
-		return []string{selector.Sel.Name}, true
+		return ident.Name, []string{selector.Sel.Name}, true
 	}
-	path, ok := propsSelectorPath(receiver)
+	root, path, ok = rootedSelectorPath(receiver, scope)
 	if !ok {
-		return nil, false
+		return "", nil, false
 	}
-	return append(path, selector.Sel.Name), true
+	return root, append(path, selector.Sel.Name), true
 }
 
 // ServerPropField reports the single props field read by a validated direct
@@ -266,45 +349,70 @@ func ServerPropField(source string) (string, bool) {
 	return path[0], true
 }
 
+// RootedPath is one maximal rooted selector path ServerExpressionRootedPaths
+// or ServerConcatRootedPaths finds — Root is "props" or a Scope binding
+// name, Path is ServerSelectorPath's ordered field list under that root.
+type RootedPath struct {
+	Root string
+	Path []string
+}
+
 // ServerExpressionPropPaths reports every maximal props-rooted selector path
 // found anywhere in source, regardless of whether source's overall shape
-// passes ValidateServerExpression. Read-tracking passes use this to see
-// every props path an expression touches — not just the operands of one
-// accepted top-level shape — because the grammar's external attribute
-// scanner hands attribute-position expressions back as one opaque token with
-// no nested CST, unlike element/text children (jsx_expression_container),
-// whose nested Go sub-tree the CST-based read-tracking walk can see
-// directly. Attribute-position expressions are exactly where every
-// concatenation and <If cond> shape lives, so this closes that visibility
-// gap generally instead of only for those two shapes.
+// passes ValidateServerExpression. ServerExpressionRootedPaths' empty-scope
+// wrapper, filtered to props roots, so every pre-#182/#184 caller keeps its
+// exact signature and behavior.
+func ServerExpressionPropPaths(source string) [][]string {
+	var paths [][]string
+	for _, rp := range ServerExpressionRootedPaths(source, Scope{}) {
+		if rp.Root == "props" {
+			paths = append(paths, rp.Path)
+		}
+	}
+	return paths
+}
+
+// ServerExpressionRootedPaths reports every maximal rooted selector path
+// (props- or scope-binding-rooted) found anywhere in source, regardless of
+// whether source's overall shape passes ValidateServerExpressionScope.
+// Read-tracking passes use this to see every path an expression touches —
+// not just the operands of one accepted top-level shape — because the
+// grammar's external attribute scanner hands attribute-position expressions
+// back as one opaque token with no nested CST, unlike element/text children
+// (jsx_expression_container), whose nested Go sub-tree the CST-based
+// read-tracking walk can see directly. Attribute-position expressions are
+// exactly where every concatenation and <If cond> shape lives, so this
+// closes that visibility gap generally instead of only for those two
+// shapes; the #182 generalization does the same for a loop binding's reads
+// inside an <Each> body.
 //
 // "Maximal" matters for nested paths: once a *ast.SelectorExpr node yields a
-// full props path, this stops descending into that node's own operand
+// full rooted path, this stops descending into that node's own operand
 // sub-tree. Otherwise a chain like props.Player.Name would also register its
 // inner props.Player sub-expression as an independent (and spurious) bare
 // read of a non-scalar field — the same class of fail-open gap
 // collectStrictPropReads was fixed for once already, in reverse: a false
 // rejection of a valid nested read instead of a missed one.
-func ServerExpressionPropPaths(source string) [][]string {
+func ServerExpressionRootedPaths(source string, scope Scope) []RootedPath {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
 		return nil
 	}
-	var paths [][]string
+	var paths []RootedPath
 	seen := make(map[string]struct{})
 	ast.Inspect(expr, func(n ast.Node) bool {
 		selector, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
-		path, ok := propsSelectorPath(selector)
+		root, path, ok := rootedSelectorPath(selector, scope)
 		if !ok {
 			return true
 		}
-		key := strings.Join(path, ".")
+		key := root + "\x00" + strings.Join(path, ".")
 		if _, dup := seen[key]; !dup {
 			seen[key] = struct{}{}
-			paths = append(paths, path)
+			paths = append(paths, RootedPath{Root: root, Path: path})
 		}
 		return false
 	})
@@ -317,8 +425,28 @@ func ServerExpressionPropPaths(source string) [][]string {
 // list for that operand. It returns ok=false when source's top-level shape
 // (parentheses transparent) is not a `+` expression — callers use that to
 // skip the concat-specific type pass for every other already-validated
-// expression shape.
+// expression shape. ServerConcatRootedPaths' empty-scope wrapper, filtered
+// to props roots, so every pre-#182/#184 caller keeps its exact signature
+// and behavior.
 func ServerConcatPropPaths(source string) ([][]string, bool) {
+	rooted, ok := ServerConcatRootedPaths(source, Scope{})
+	if !ok {
+		return nil, false
+	}
+	var paths [][]string
+	for _, rp := range rooted {
+		if rp.Root == "props" {
+			paths = append(paths, rp.Path)
+		}
+	}
+	return paths, true
+}
+
+// ServerConcatRootedPaths generalizes ServerConcatPropPaths to report each
+// concat operand's root alongside its field path, admitting an operand
+// rooted at a Scope binding the same way ValidateServerExpressionScope's
+// concat pass does.
+func ServerConcatRootedPaths(source string, scope Scope) ([]RootedPath, bool) {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
 		return nil, false
@@ -327,10 +455,10 @@ func ServerConcatPropPaths(source string) ([][]string, bool) {
 	if !ok || bin.Op != token.ADD {
 		return nil, false
 	}
-	var paths [][]string
+	var paths []RootedPath
 	for _, operand := range flattenAddChain(bin) {
-		if path, ok := propsSelectorPath(operand); ok {
-			paths = append(paths, path)
+		if root, path, ok := rootedSelectorPath(operand, scope); ok {
+			paths = append(paths, RootedPath{Root: root, Path: path})
 		}
 	}
 	return paths, true
@@ -341,32 +469,42 @@ func ServerConcatPropPaths(source string) ([][]string, bool) {
 // or a nested field path per ServerPropPath), or that selector compared
 // against the literal false with `==`. It reports the props path read and
 // whether the comparison negates it. Parentheses are transparent at any
-// level.
+// level. ValidateServerCondExpressionScope's empty-scope wrapper, so every
+// pre-#182/#184 caller keeps its exact signature and behavior.
 func ValidateServerCondExpression(source string) (path []string, negated bool, err error) {
+	_, path, negated, err = ValidateServerCondExpressionScope(source, Scope{})
+	return path, negated, err
+}
+
+// ValidateServerCondExpressionScope generalizes ValidateServerCondExpression
+// to admit a cond selector rooted at a Scope binding (design spec section
+// 2.4), reporting the root alongside the path so the lowerer knows which
+// schema to resolve the leaf type against.
+func ValidateServerCondExpressionScope(source string, scope Scope) (root string, path []string, negated bool, err error) {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
-		return nil, false, fmt.Errorf("invalid Go expression: %w", err)
+		return "", nil, false, fmt.Errorf("invalid Go expression: %w", err)
 	}
-	root := unwrapParens(expr)
+	top := unwrapParens(expr)
 
-	if bin, ok := root.(*ast.BinaryExpr); ok {
+	if bin, ok := top.(*ast.BinaryExpr); ok {
 		if bin.Op == token.EQL {
 			left := unwrapParens(bin.X)
 			right := unwrapParens(bin.Y)
 			if ident, ok := right.(*ast.Ident); ok && ident.Name == "true" {
-				return nil, false, fmt.Errorf("comparison \"== true\" is not supported in strict cond; write the field bare")
+				return "", nil, false, fmt.Errorf("comparison \"== true\" is not supported in strict cond; write the field bare")
 			}
-			if condPath, ok := propsSelectorPath(left); ok {
+			if condRoot, condPath, ok := rootedSelectorPath(left, scope); ok {
 				if ident, ok := right.(*ast.Ident); ok && ident.Name == "false" {
-					return condPath, true, nil
+					return condRoot, condPath, true, nil
 				}
 			}
 		}
-		return nil, false, fmt.Errorf("strict cond must be a bool props field or a bool props field compared with \"== false\"; got %q", source)
+		return "", nil, false, fmt.Errorf("strict cond must be a bool props field or a bool props field compared with \"== false\"; got %q", source)
 	}
 
-	if condPath, ok := propsSelectorPath(root); ok {
-		return condPath, false, nil
+	if condRoot, condPath, ok := rootedSelectorPath(top, scope); ok {
+		return condRoot, condPath, false, nil
 	}
-	return nil, false, fmt.Errorf("strict cond must be a bool props field or a bool props field compared with \"== false\"; got %q", source)
+	return "", nil, false, fmt.Errorf("strict cond must be a bool props field or a bool props field compared with \"== false\"; got %q", source)
 }

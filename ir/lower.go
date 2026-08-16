@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"html"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -68,11 +69,52 @@ type lowerer struct {
 	strictNames   map[string]struct{}
 	legacyNames   map[string]struct{}
 	strictProps   map[string]string
-	strictReads   map[string]map[string]struct{}
+	strictReads   map[string]map[string]strictReadClass
 	structFields  map[string]map[string]string
 	structTypes   map[string]map[string]string
 	strictServer  bool
+
+	// currentStrictComponent and currentStrictPropsType name the strict
+	// component whose body lowerGSXNode is currently walking (empty
+	// outside strict lowering). E2 tier 1 (validateStrictToStrictSpreadCall)
+	// resolves a spread source's declared type against the CALLER's own
+	// schema, so it needs this context even though it fires from the
+	// generic per-element validateStrictComponentCall, which has no other
+	// way to see which component's body it is validating.
+	currentStrictComponent string
+	currentStrictPropsType string
+
+	// strictEachElems records, per strict component and per depth-1
+	// props-rooted <Each of> path, the same-file element struct name that
+	// path's loopable-type check (section 2.3) resolved — populated by
+	// validateStrictRenderedProps (the early, component-span diagnostic
+	// pass) and consumed by the second validation pass
+	// (validateStrictServerExpressions) so a structurally invalid of
+	// source is reported exactly once instead of twice.
+	strictEachElems map[string]map[string]string
 }
+
+// strictReadClass records the position(s) a props read appears in, so
+// validateStrictRenderedProps can apply the right admission rule per
+// position: a field read as a scalar (bare, concat operand, cond selector)
+// keeps the exact-scalar rule; a field read as an <Each of> loop source
+// takes section 2.3's loopable-[]T-of-struct rule; a field read as an E2
+// spread source (design spec section 3.2, "the predecessor's open question
+// 1, answered narrowly: struct values reach strict props by forwarding")
+// admits any same-file declared struct type with no requirement of nested
+// reads underneath — the callee, not the read tracker, owns which fields
+// it actually needs. More than one bit can be set for one path — a field
+// used more than one way keeps its own diagnostic for each position it
+// appears in (section 2.6).
+type strictReadClass uint8
+
+const (
+	strictReadScalar strictReadClass = 1 << iota
+	strictReadLoopSource
+	strictReadSpreadForward
+)
+
+func (c strictReadClass) has(bit strictReadClass) bool { return c&bit != 0 }
 
 // text returns the source text covered by node n. It substrings the
 // pre-converted srcStr instead of reallocating per call — Go strings
@@ -950,7 +992,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictNames = make(map[string]struct{})
 	l.legacyNames = make(map[string]struct{})
 	l.strictProps = make(map[string]string)
-	l.strictReads = make(map[string]map[string]struct{})
+	l.strictReads = make(map[string]map[string]strictReadClass)
 	l.structFields = make(map[string]map[string]string)
 	l.structTypes = make(map[string]map[string]string)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
@@ -1006,8 +1048,22 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 // bare use anywhere in the source, which is the same class of bug a prior
 // review caught in this collector once already (see CHANGELOG.md's v0.42.0
 // entry), just inverted from a missed read to a false rejection.
-func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct{} {
-	reads := make(map[string]struct{})
+//
+// A third branch (element open tags) special-cases a strict <Each>'s of
+// attribute: its props source is a loop-source read (section 2.3's
+// loopable-[]T-of-struct rule), not a scalar read, so it must not fall
+// through to the jsx_attribute_expression branch above, which would apply
+// the scalar rule and reject a legitimate []T slice field. The tag is
+// matched by name only, not shadow-checked against l.strictNames — that map
+// is not reliably complete this early for a same-file forward reference
+// (collectStrictSchemas is still populating it), so a file that declares an
+// actual component named Each and also happens to use <Each of=...> before
+// declaring it is a known, narrow limitation, not engineered around here;
+// validateStrictComponentCall and the second validation pass, both of which
+// run once every component's schema is known, are the real authority on
+// whether a given <Each> is the builtin or a shadowing component call.
+func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]strictReadClass {
+	reads := make(map[string]strictReadClass)
 	var walk func(*gotreesitter.Node)
 	walk = func(node *gotreesitter.Node) {
 		if node == nil {
@@ -1016,14 +1072,18 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct
 		switch l.nodeType(node) {
 		case "selector_expression":
 			if path, ok := strictcomponent.ServerPropPath(l.text(node)); ok {
-				reads[strings.Join(path, ".")] = struct{}{}
+				registerStrictPropRead(reads, path, strictReadScalar)
 				return
 			}
 		case "jsx_attribute_expression":
 			expr := stripGSXAttributeExpressionText(l.text(node))
 			for _, path := range strictcomponent.ServerExpressionPropPaths(expr) {
-				reads[strings.Join(path, ".")] = struct{}{}
+				registerStrictPropRead(reads, path, strictReadScalar)
 			}
+			return
+		case "jsx_element", "jsx_self_closing_element":
+			l.collectStrictElementReads(node, reads, walk)
+			return
 		}
 		for i := 0; i < int(node.NamedChildCount()); i++ {
 			walk(node.NamedChild(i))
@@ -1031,6 +1091,91 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]struct
 	}
 	walk(n)
 	return reads
+}
+
+// registerStrictPropRead OR's class into path's entry, so a field read in
+// both a scalar position and a loop-source position (section 2.6) keeps
+// both bits instead of one overwriting the other.
+func registerStrictPropRead(reads map[string]strictReadClass, path []string, class strictReadClass) {
+	reads[strings.Join(path, ".")] |= class
+}
+
+// collectStrictElementReads walks one element's open-tag attributes and, for
+// jsx_element, its children — the same subtree collectStrictPropReads' walk
+// would otherwise cover directly — special-casing a strict <Each>'s of
+// attribute and, on an actual same-file strict component tag, a spread
+// attribute's own top-level expression (see the two per-caller doc
+// comments below). Every other attribute and every child still runs
+// through walk unchanged, including a spread on If, Each, an HTML element,
+// or an unresolved component tag — those keep the pre-#184 behavior of
+// falling through to the generic selector_expression case, since their own
+// shape rules (validateStrictConditionalCall, validateStrictHTMLElement,
+// the "not renderable" rejection) do not turn on a read's class the way a
+// strict callee's spread-forward proof does.
+func (l *lowerer) collectStrictElementReads(node *gotreesitter.Node, reads map[string]strictReadClass, walk func(*gotreesitter.Node)) {
+	open := node
+	isElement := l.nodeType(node) == "jsx_element"
+	if isElement {
+		if o := l.childByField(node, "open"); o != nil {
+			open = o
+		}
+	}
+	tag := l.extractTagName(open)
+	isEach := tag == "Each"
+	_, isStrictCallee := l.strictNames[tag]
+	// Forward-referenced same-file strict components (declared later in
+	// this file than the component currently being collected) are not yet
+	// in l.strictNames at this point in collectStrictSchemas' single pass;
+	// such a spread's read simply is not pre-registered here. That is a
+	// narrow completeness gap in the explicit-supply rule and PropsFields
+	// for THIS component only — the actual type safety is unaffected,
+	// because validateStrictComponentCall's tier-1 check independently
+	// re-resolves and proves the same source once l.strictNames is
+	// complete, later in lowering.
+	isSpreadForwardTag := isStrictCallee && tag != "If" && tag != "Each"
+	for i := 0; i < int(open.NamedChildCount()); i++ {
+		attrChild := open.NamedChild(i)
+		if isEach && l.nodeType(attrChild) == "jsx_attribute" {
+			nameNode := l.childByField(attrChild, "name")
+			if nameNode != nil && l.text(nameNode) == "of" {
+				if valueNode := l.childByField(attrChild, "value"); valueNode != nil && l.nodeType(valueNode) == "jsx_attribute_expression" {
+					expr := stripGSXAttributeExpressionText(l.text(valueNode))
+					for _, path := range strictcomponent.ServerExpressionPropPaths(expr) {
+						registerStrictPropRead(reads, path, strictReadLoopSource)
+					}
+				}
+				continue
+			}
+		}
+		if isSpreadForwardTag && l.nodeType(attrChild) == "jsx_spread_attribute" {
+			// A spread's own top-level expression is, by the E2 shape rule
+			// (design spec section 3.1), exactly props or a props field
+			// selector — never some larger expression a struct-typed
+			// selector could be buried inside. Registering it directly
+			// here, instead of falling through to walk (which would find
+			// the same inner selector_expression and register it with the
+			// scalar class instead), is what gives a struct-typed spread
+			// source the spread-forward admission rule.
+			if exprNode := l.childByField(attrChild, "expression"); exprNode != nil {
+				if path, ok := strictcomponent.ServerPropPath(l.text(exprNode)); ok {
+					registerStrictPropRead(reads, path, strictReadSpreadForward)
+				}
+			}
+			continue
+		}
+		walk(attrChild)
+	}
+	if !isElement {
+		return
+	}
+	for i := 0; i < int(node.NamedChildCount()); i++ {
+		child := node.NamedChild(i)
+		typ := l.nodeType(child)
+		if typ == "jsx_opening_element" || typ == "jsx_closing_element" {
+			continue
+		}
+		walk(child)
+	}
 }
 
 func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
@@ -1124,16 +1269,169 @@ func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentNam
 	}
 	sort.Strings(paths)
 	for _, path := range paths {
-		l.resolveStrictSelectorPath(n, componentName, propsType, strings.Split(path, "."))
+		class := reads[path]
+		segments := strings.Split(path, ".")
+		if class.has(strictReadScalar) {
+			l.resolveStrictSelectorPath(n, componentName, propsType, segments)
+		}
+		if class.has(strictReadLoopSource) {
+			if elem := l.resolveStrictEachSourceType(n, componentName, propsType, segments); elem != "" {
+				if l.strictEachElems == nil {
+					l.strictEachElems = make(map[string]map[string]string)
+				}
+				if l.strictEachElems[componentName] == nil {
+					l.strictEachElems[componentName] = make(map[string]string)
+				}
+				l.strictEachElems[componentName][path] = elem
+			}
+		}
+		if class.has(strictReadSpreadForward) {
+			l.resolveStrictSpreadForwardType(n, componentName, propsType, segments)
+		}
 	}
 }
 
 // strictSelectorPathDepthLimit caps how many struct-field hops a nested
-// selector path may cross: props.A.B.C is the deepest chain the strict
-// renderer resolves. strictcomponent.ServerPropPath itself places no upper
-// bound on shape (it is schema-blind), so this lowerer function is where the
-// cap is enforced, with full component context in the diagnostic.
+// selector path may cross: props.A.B.C (or, for an Each binding, row.A.B.C)
+// is the deepest chain the strict renderer resolves. strictcomponent's path
+// extractors place no upper bound on shape (they are schema-blind), so this
+// lowerer function is where the cap is enforced, with full component
+// context in the diagnostic.
 const strictSelectorPathDepthLimit = 3
+
+// strictHopFailKind classifies why walkStrictHops stopped short of the
+// final hop. strictHopOK is not a failure — the walk reached the final hop
+// cleanly and res.leafType holds its raw declared type text, unfiltered by
+// any admission rule; every caller applies its own (scalar, loopable-[]T,
+// or E2 tier-1 struct-identity).
+type strictHopFailKind int
+
+const (
+	strictHopOK strictHopFailKind = iota
+	strictHopTooDeep
+	strictHopPointer
+	strictHopThroughScalar
+	strictHopUndeclaredStruct
+	// strictHopUnknownField is silent, and only ever returned for hop 0: the
+	// package checker supplies the precise unknown/unexported-field
+	// diagnostic for the root's own field, since the generated program's
+	// real root value (props, or an <Each> binding bound to its concrete
+	// element type) is exactly this same-file struct type. Every caller of
+	// walkStrictHops skips emitting anything for this kind.
+	strictHopUnknownField
+	// strictHopUnknownFieldDeep is gosx#183's B1 fix, generalized: an
+	// unknown field at hop i>0 gets no compiler backstop. Field promotion
+	// through an embedded type, and same-package unexported access, are
+	// both legal Go, so the check program resolves a promoted, unexported,
+	// or genuinely absent field the same way it resolves a declared one,
+	// while the map-backed file renderer's structTypes schema never records
+	// a promoted or unexported field at any hop. Deferring here would let
+	// the component compile while the two renderers disagree on what the
+	// selector resolves to, or panic trying. Every caller of walkStrictHops
+	// reports this kind through strictHopMessage instead of skipping it —
+	// for a props root and, gosx#182/#184, for an <Each> binding root.
+	strictHopUnknownFieldDeep
+)
+
+// strictHopResult is walkStrictHops' outcome: either a clean resolution
+// (strictHopOK, with leafType set) or the first structural failure, with
+// enough context for strictHopMessage to format a diagnostic.
+type strictHopResult struct {
+	leafType  string
+	pathText  string
+	failKind  strictHopFailKind
+	failField string
+	failType  string
+}
+
+// walkStrictHops is the one implementation of the strict selector path
+// resolution rule every strict expression position composes on: given
+// (rootLabel, rootType) and a field path, it walks each hop through the
+// same-file struct schema and either returns the final hop's raw declared
+// type or the first structural problem. rootLabel only affects the
+// returned pathText, which every diagnostic quotes back to the author. This
+// generalizes the pre-#182/#184 resolveStrictSelectorPath to the (rootType,
+// path) composition contract in the design spec's section 2.4: a props
+// read resolves with rootLabel "props" and rootType the props struct; an
+// Each item binding read resolves with rootLabel the binding's name and
+// rootType its element struct — both are just a (rootLabel, rootType) pair
+// to this function, and it applies the identical pointer-ban,
+// scalar-cannot-be-selected-through, undeclared-struct, depth-cap, and
+// (gosx#183's B1 fix) hop-0-vs-later unknown-field rules to either root: an
+// unknown field at hop 0 is the root's own field, deferred to the package
+// checker; an unknown field at any later hop — promoted, unexported, or
+// genuinely absent — fails closed here, since no compiler backstop catches
+// it for either root shape (see strictHopUnknownFieldDeep).
+func (l *lowerer) walkStrictHops(rootLabel, rootType string, path []string) strictHopResult {
+	if len(path) > strictSelectorPathDepthLimit {
+		return strictHopResult{pathText: rootLabel + "." + strings.Join(path, "."), failKind: strictHopTooDeep}
+	}
+	currentType := rootType
+	pathText := rootLabel
+	for i, field := range path {
+		fieldType, known := l.structTypes[currentType][field]
+		if !known {
+			if i == 0 {
+				// The root's own field: the package checker supplies the
+				// precise unknown/unexported-field diagnostic; this guard
+				// only owns known renderer schema types.
+				return strictHopResult{pathText: pathText, failKind: strictHopUnknownField}
+			}
+			// gosx#183's B1 fix, generalized to any root: a promoted,
+			// unexported, or genuinely absent field past the root fails
+			// closed here — see strictHopUnknownFieldDeep.
+			return strictHopResult{pathText: pathText, failKind: strictHopUnknownFieldDeep, failField: field, failType: currentType}
+		}
+		trimmed := strings.TrimSpace(fieldType)
+		pathText += "." + field
+		if i == len(path)-1 {
+			return strictHopResult{leafType: trimmed, pathText: pathText, failKind: strictHopOK}
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "*"):
+			return strictHopResult{pathText: pathText, failKind: strictHopPointer, failType: trimmed}
+		case strictRendererScalarType(trimmed):
+			return strictHopResult{pathText: pathText, failKind: strictHopThroughScalar, failField: path[i+1], failType: trimmed}
+		default:
+			if _, isStruct := l.structTypes[trimmed]; isStruct {
+				currentType = trimmed
+				continue
+			}
+			return strictHopResult{pathText: pathText, failKind: strictHopUndeclaredStruct, failField: path[i+1], failType: trimmed}
+		}
+	}
+	return strictHopResult{pathText: pathText, failKind: strictHopOK}
+}
+
+// strictHopMessage formats every walkStrictHops structural failure except
+// strictHopOK and strictHopUnknownField (both handled by their caller, not
+// here) with full component context. One definition keeps the message text
+// identical regardless of which selector position (a props read, a loop-
+// source read, an Each binding read) triggered it — the failure is about
+// the schema shape, not what the path is used for.
+//
+// strictHopUnknownFieldDeep reuses gosx#183's B1 wording verbatim,
+// substituting only the root: the original fix names props explicitly
+// ("struct %s declares no visible field %s"); this generalized copy
+// composes the identical sentence from res.pathText, which already carries
+// whichever root (props or an <Each> binding name) walkStrictHops was
+// given.
+func strictHopMessage(componentName string, res strictHopResult) string {
+	switch res.failKind {
+	case strictHopTooDeep:
+		return fmt.Sprintf("strict component %s selector %s is too deep; the strict renderer resolves at most three fields", componentName, res.pathText)
+	case strictHopPointer:
+		return fmt.Sprintf("strict component %s cannot select through %s of pointer type %s; pointer fields cannot preserve Go nil-pointer behavior in the file renderer", componentName, res.pathText, res.failType)
+	case strictHopThroughScalar:
+		return fmt.Sprintf("strict component %s cannot select %q through %s of type %s; selector paths cross same-file struct fields only", componentName, res.failField, res.pathText, res.failType)
+	case strictHopUndeclaredStruct:
+		return fmt.Sprintf("strict component %s cannot resolve %s.%s: struct %s is not declared in this .gsx file; declare the renderer-visible struct beside the component", componentName, res.pathText, res.failField, res.failType)
+	case strictHopUnknownFieldDeep:
+		return fmt.Sprintf("strict component %s cannot resolve %s.%s: struct %s declares no visible field %s; promoted, unexported, and unknown fields cannot cross the file renderer boundary", componentName, res.pathText, res.failField, res.failType, res.failField)
+	default:
+		return ""
+	}
+}
 
 // resolveStrictSelectorPath walks a props-rooted field path (see
 // strictcomponent.ServerPropPath) against the same-file struct schema,
@@ -1159,47 +1457,104 @@ const strictSelectorPathDepthLimit = 3
 // all three shapes at hop i>0, exactly mirroring the lowerer rule
 // strictSelectorPathType applies for its own, diagnostic-free callers.
 func (l *lowerer) resolveStrictSelectorPath(n *gotreesitter.Node, componentName, propsType string, path []string) {
-	if len(path) > strictSelectorPathDepthLimit {
-		l.errorf(n, "strict component %s selector props.%s is too deep; the strict renderer resolves at most three fields", componentName, strings.Join(path, "."))
+	res := l.walkStrictHops("props", propsBaseType(propsType), path)
+	switch res.failKind {
+	case strictHopUnknownField:
 		return
+	case strictHopOK:
+		if !strictRendererScalarType(res.leafType) {
+			l.errorf(n, "strict component %s cannot render %s of type %s; renderer-visible props fields must use exact string, bool, integer, or floating-point builtins", componentName, res.pathText, res.leafType)
+		}
+	default:
+		l.errorf(n, "%s", strictHopMessage(componentName, res))
 	}
-	currentType := propsBaseType(propsType)
-	pathText := "props"
-	for i, field := range path {
-		fieldType, known := l.structTypes[currentType][field]
-		if !known {
-			if i == 0 {
-				// The props struct's own field: the package checker
-				// supplies the precise unknown/unexported-field diagnostic;
-				// this guard only owns known renderer schema types.
-				return
-			}
-			l.errorf(n, "strict component %s cannot resolve %s.%s: struct %s declares no visible field %s; promoted, unexported, and unknown fields cannot cross the file renderer boundary", componentName, pathText, field, currentType, field)
-			return
+}
+
+// resolveStrictEachSourceType validates a strict <Each of> source's
+// loopable-type table (design spec section 2.3): the resolved field's
+// declared type must read exactly "[]T" where T is a same-file value
+// (non-pointer) struct. It returns T's bare name on success, or "" after
+// reporting exactly one diagnostic.
+//
+// This release resolves an of source one field deep only (a direct
+// props.Field, not a nested props.A.B): section 2.4 admits a nested of
+// source once every intermediate is a same-file value struct, but the file
+// renderer boundary (route/fileprogram.go's strictComponentAttrValue) only
+// dispatches a slice-typed check off a top-level props field name today.
+// Accepting a nested of source here without that boundary wiring would
+// type-check and transpile cleanly while leaving the loop's element type
+// unverified at the one place a caller-supplied value can diverge from what
+// the body assumes — exactly the class of gap this whole design exists to
+// close. No acceptance component needs a nested of source, so this widens
+// only alongside the boundary support, not ahead of it.
+func (l *lowerer) resolveStrictEachSourceType(n *gotreesitter.Node, componentName, propsType string, path []string) string {
+	if len(path) != 1 {
+		l.errorf(n, "strict component %s cannot loop over props.%s; <Each> resolves loop sources one field deep in this release, not a nested selector", componentName, strings.Join(path, "."))
+		return ""
+	}
+	res := l.walkStrictHops("props", propsBaseType(propsType), path)
+	switch res.failKind {
+	case strictHopUnknownField:
+		return ""
+	case strictHopOK:
+		elem, msg := admitStrictEachElemType(componentName, res.pathText, res.leafType, l.structTypes)
+		if msg != "" {
+			l.errorf(n, "%s", msg)
+			return ""
 		}
-		trimmed := strings.TrimSpace(fieldType)
-		pathText += "." + field
-		if i == len(path)-1 {
-			if !strictRendererScalarType(trimmed) {
-				l.errorf(n, "strict component %s cannot render %s of type %s; renderer-visible props fields must use exact string, bool, integer, or floating-point builtins", componentName, pathText, trimmed)
-			}
-			return
+		return elem
+	default:
+		l.errorf(n, "%s", strictHopMessage(componentName, res))
+		return ""
+	}
+}
+
+// admitStrictEachElemType implements section 2.3's loopable-type table: the
+// final hop's declared type must read exactly "[]T", T a same-file value
+// struct. It returns T on success, or "" and a formatted message on any
+// other shape — a scalar-element slice, a pointer-element slice, a named
+// slice type, an array, a map, or a cross-file/undeclared element type
+// (Go's core-type generic inference would accept a named slice type such as
+// `type Rows []T`, so this exact-declared-text check is deliberately
+// stricter than the Go compiler alone would be here).
+func admitStrictEachElemType(componentName, pathText, leafType string, structTypes map[string]map[string]string) (elem string, message string) {
+	trimmed := strings.TrimSpace(leafType)
+	if strings.HasPrefix(trimmed, "[]") {
+		elemType := strings.TrimSpace(strings.TrimPrefix(trimmed, "[]"))
+		if strings.HasPrefix(elemType, "*") {
+			return "", fmt.Sprintf("strict component %s cannot loop over %s of type %s; pointer elements cannot preserve Go nil-pointer behavior in the file renderer", componentName, pathText, trimmed)
 		}
-		switch {
-		case strings.HasPrefix(trimmed, "*"):
-			l.errorf(n, "strict component %s cannot select through %s of pointer type %s; pointer fields cannot preserve Go nil-pointer behavior in the file renderer", componentName, pathText, trimmed)
-			return
-		case strictRendererScalarType(trimmed):
-			l.errorf(n, "strict component %s cannot select %q through %s of type %s; selector paths cross same-file struct fields only", componentName, path[i+1], pathText, trimmed)
-			return
-		default:
-			if _, isStruct := l.structTypes[trimmed]; isStruct {
-				currentType = trimmed
-				continue
+		if elemType != "" {
+			if _, ok := structTypes[elemType]; ok {
+				return elemType, ""
 			}
-			l.errorf(n, "strict component %s cannot resolve %s.%s: struct %s is not declared in this .gsx file; declare the renderer-visible struct beside the component", componentName, pathText, path[i+1], trimmed)
-			return
 		}
+		if strictRendererScalarType(elemType) {
+			return "", fmt.Sprintf("strict component %s cannot loop over %s of type %s; loop elements must be structs declared in this .gsx file", componentName, pathText, trimmed)
+		}
+	}
+	return "", fmt.Sprintf("strict component %s cannot loop over %s of type %s; <Each> sources must be []T slices of structs declared in this .gsx file", componentName, pathText, trimmed)
+}
+
+// resolveStrictSpreadForwardType validates an E2 spread source read (design
+// spec section 3.2, the "spread-forward" position class): the resolved
+// field's declared type must be a same-file declared struct — any struct
+// this .gsx file's schema knows, not necessarily one with further rendered
+// reads under it, since the callee (not this read-tracking pass) owns which
+// fields it actually needs. A pointer or scalar leaf fails closed with the
+// same "cannot forward" shape either way.
+func (l *lowerer) resolveStrictSpreadForwardType(n *gotreesitter.Node, componentName, propsType string, path []string) {
+	res := l.walkStrictHops("props", propsBaseType(propsType), path)
+	switch res.failKind {
+	case strictHopUnknownField:
+		return
+	case strictHopOK:
+		trimmed := strings.TrimSpace(res.leafType)
+		if _, isStruct := l.structTypes[trimmed]; !isStruct {
+			l.errorf(n, "strict component %s cannot forward %s of type %s; a spread source field must be a same-file declared struct", componentName, res.pathText, res.leafType)
+		}
+	default:
+		l.errorf(n, "%s", strictHopMessage(componentName, res))
 	}
 }
 
@@ -1218,39 +1573,30 @@ func (l *lowerer) resolveStrictSelectorPath(n *gotreesitter.Node, componentName,
 // would just duplicate that diagnostic, so those callers use this and skip
 // emitting anything when ok is false.
 func (l *lowerer) strictSelectorPathType(propsType string, path []string) (string, bool) {
-	if len(path) == 0 || len(path) > strictSelectorPathDepthLimit {
+	return l.resolveRootedFieldType(propsBaseType(propsType), path, true)
+}
+
+// resolveRootedFieldType generalizes strictSelectorPathType to an arbitrary
+// (rootType, path) pair — the same composition contract walkStrictHops
+// documents — for a caller that needs the leaf type with no component-span
+// diagnostic. scalarOnly=true keeps strictSelectorPathType's existing
+// exact-renderer-scalar gate (the concat and <If cond> exact-type passes,
+// generalized to a binding root in section 2.4); scalarOnly=false returns
+// the raw leaf type unfiltered — struct, slice, or scalar — for a caller
+// that applies its own admission rule, such as E2 tier 1's struct-identity
+// spread check.
+func (l *lowerer) resolveRootedFieldType(rootType string, path []string, scalarOnly bool) (string, bool) {
+	if len(path) == 0 {
 		return "", false
 	}
-	currentType := propsBaseType(propsType)
-	for i, field := range path {
-		fieldType, known := l.structTypes[currentType][field]
-		if !known {
-			// Unknown at hop 0 or later: both fail closed here (no leaf
-			// type, ok=false). Only resolveStrictSelectorPath's own copy of
-			// this check treats the two differently, since only it decides
-			// whether to emit a diagnostic.
-			return "", false
-		}
-		trimmed := strings.TrimSpace(fieldType)
-		if i == len(path)-1 {
-			if !strictRendererScalarType(trimmed) {
-				return "", false
-			}
-			return trimmed, true
-		}
-		if strings.HasPrefix(trimmed, "*") || strictRendererScalarType(trimmed) {
-			return "", false
-		}
-		if _, isStruct := l.structTypes[trimmed]; !isStruct {
-			return "", false
-		}
-		currentType = trimmed
+	res := l.walkStrictHops("", rootType, path)
+	if res.failKind != strictHopOK {
+		return "", false
 	}
-	// Unreachable: the top-of-function guard rejects an empty path, so the
-	// final iteration always has i == len(path)-1 and returns from the
-	// branch above. Go cannot prove that for a for-range loop, so this
-	// satisfies the compiler's return-statement requirement.
-	return "", false
+	if scalarOnly && !strictRendererScalarType(res.leafType) {
+		return "", false
+	}
+	return res.leafType, true
 }
 
 func lowerCamelInitialism(value string) string {
@@ -1312,11 +1658,18 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 		return
 	}
 	if !l.strict && strictCallee {
-		l.errorf(n, "legacy component cannot call strict component %s; component styles may coexist but calls must stay within one style", tag)
+		l.validateLegacyToStrictCall(n, tag, attrs, children)
 		return
 	}
 	if l.strictServer && tag == "If" && !strictCallee {
 		l.validateStrictConditionalCall(n, attrs)
+		return
+	}
+	if l.strictServer && tag == "Each" && !strictCallee {
+		// Shape, binding, and type rules for a strict <Each> run in the
+		// second validation pass (validateStrictServerExpressions), which
+		// tracks the active binding scope while it walks the built IR tree
+		// — see section 2.2 of the design spec. Nothing to check here.
 		return
 	}
 	if l.strictServer && IsComponent(tag) && !strictCallee {
@@ -1326,10 +1679,9 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 	if !strictCallee {
 		return
 	}
-	for _, attr := range attrs {
-		if attr.Kind == AttrSpread {
-			l.errorf(n, "spread attributes are not supported for strict component %s", tag)
-		}
+	if attrHasSpread(attrs) {
+		l.validateStrictToStrictSpreadCall(n, tag, attrs, children)
+		return
 	}
 	if _, acceptsProps := l.strictProps[tag]; !acceptsProps && len(attrs) > 0 {
 		l.errorf(n, "strict component %s does not accept props", tag)
@@ -1385,6 +1737,100 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 	if len(children) > 0 {
 		l.errorf(n, "strict component %s does not accept positional children", tag)
 	}
+}
+
+// attrHasSpread reports whether attrs contains at least one spread
+// attribute — the trigger for validateStrictComponentCall's E2 branches.
+func attrHasSpread(attrs []Attr) bool {
+	for _, attr := range attrs {
+		if attr.Kind == AttrSpread {
+			return true
+		}
+	}
+	return false
+}
+
+// singleSpreadShape reports whether attrs is exactly one attribute, and
+// that attribute is a spread — the only call shape design spec section 3.1
+// admits at a strict callee: no named attributes beside the spread, no
+// second spread.
+func singleSpreadShape(attrs []Attr) (Attr, bool) {
+	if len(attrs) != 1 || attrs[0].Kind != AttrSpread {
+		return Attr{}, false
+	}
+	return attrs[0], true
+}
+
+// validateLegacyToStrictCall narrows the legacy-caller/strict-callee
+// cross-style ban (design spec section 3.3, E2 tier 2): a legacy body may
+// call a same-file strict component when the call is the single-spread
+// shape. The lowerer proves shape only here — a legacy expression has no
+// declared type — so the renderer boundary (strictSpreadProps,
+// route/fileprogram.go) re-proves the value structurally at run time. Every
+// other shape (no attributes, named attributes, multiple spreads, spread
+// plus named attributes) keeps the v0.39 cross-style ban, with an updated
+// message for the named-attributes case that names the supported spelling.
+func (l *lowerer) validateLegacyToStrictCall(n *gotreesitter.Node, tag string, attrs []Attr, children []NodeID) {
+	if len(attrs) == 0 {
+		l.errorf(n, "legacy component cannot call strict component %s; component styles may coexist but calls must stay within one style", tag)
+		return
+	}
+	if _, ok := singleSpreadShape(attrs); ok {
+		if len(children) > 0 {
+			l.errorf(n, "strict component %s does not accept positional children", tag)
+		}
+		return
+	}
+	l.errorf(n, "legacy component cannot call strict component %s with named attributes; pass one {...source} spread and the renderer will prove it at the boundary", tag)
+}
+
+// validateStrictToStrictSpreadCall validates E2 tier 1 (design spec section
+// 3.2): a strict caller may spread exactly one value into a same-file
+// strict callee when the source's declared type, resolved against the
+// caller's own schema, is exactly the callee's props type. Coverage is then
+// trivial: every rendered read is a field of the very struct the callee
+// declares, so no per-field proof is needed here — the emitted Go call is
+// verbatim (transpile.go), so the Go compiler proves the rest.
+func (l *lowerer) validateStrictToStrictSpreadCall(n *gotreesitter.Node, tag string, attrs []Attr, children []NodeID) {
+	spread, ok := singleSpreadShape(attrs)
+	if !ok {
+		l.errorf(n, "strict component call %s accepts at most one spread attribute and no other attributes", tag)
+		return
+	}
+	if len(children) > 0 {
+		l.errorf(n, "strict component %s does not accept positional children", tag)
+	}
+	calleeProps := l.strictProps[tag]
+	if strings.TrimSpace(calleeProps) == "" {
+		l.errorf(n, "strict component %s does not accept props", tag)
+		return
+	}
+	sourceType, ok := l.tierOneSpreadSourceType(spread.Expr)
+	if !ok {
+		l.errorf(n, "strict spread source %q is not renderable; spread sources are props or a props field selector", strings.TrimSpace(spread.Expr))
+		return
+	}
+	if propsBaseType(sourceType) != propsBaseType(calleeProps) {
+		l.errorf(n, "strict spread source %s has type %s, want exact %s; a strict caller spreads a value whose declared type is the callee props type", strings.TrimSpace(spread.Expr), sourceType, calleeProps)
+	}
+}
+
+// tierOneSpreadSourceType resolves a strict spread source's declared type
+// against l.currentStrictPropsType, the schema of the component whose body
+// is being lowered — validateStrictToStrictSpreadCall's caller-side half of
+// the tier-1 identity proof. It admits bare props (the whole props value)
+// and any props field selector the widened selector rule (section 2.4)
+// admits; every other expression shape returns ok=false, reported by the
+// caller with the "is not renderable" message (design spec section 4.4).
+func (l *lowerer) tierOneSpreadSourceType(expr string) (string, bool) {
+	if strings.TrimSpace(expr) == "props" {
+		return l.currentStrictPropsType, true
+	}
+	path, ok := strictcomponent.ServerPropPath(expr)
+	if !ok {
+		return "", false
+	}
+	return l.resolveRootedFieldType(propsBaseType(l.currentStrictPropsType), path, false)
 }
 
 // validateStrictConditionalCall enforces the shape of a strict <If cond={...}>
@@ -1603,11 +2049,17 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 
 	wasStrict := l.strict
 	wasStrictServer := l.strictServer
+	prevComponent := l.currentStrictComponent
+	prevPropsType := l.currentStrictPropsType
 	l.strict = true
 	l.strictServer = !isIsland && !isEngine
+	l.currentStrictComponent = componentName
+	l.currentStrictPropsType = propsType
 	rootID := l.lowerGSXNode(gsxRoot)
 	l.strict = wasStrict
 	l.strictServer = wasStrictServer
+	l.currentStrictComponent = prevComponent
+	l.currentStrictPropsType = prevPropsType
 	scope := l.analyzeBody(bodyNode)
 	propsFields, propsPaths := l.copyStrictPropTypes(propsType, l.strictReads[componentName])
 	comp := Component{
@@ -1632,21 +2084,28 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	}
 
 	if !isIsland && !isEngine {
-		l.validateStrictServerExpressions(comp.Root, componentName, propsType)
+		comp.PropsSlices = l.validateStrictServerExpressions(comp.Root, componentName, propsType)
 	}
 	l.prog.Components = append(l.prog.Components, comp)
 }
 
 // copyStrictPropTypes builds the two IR maps the renderer boundary uses.
 // PropsFields records, for the root field of every registered read path,
-// that root's own declared type (a scalar builtin for a direct read, or a
-// same-file struct name for a nested read's root). PropsPaths records, for
-// every read path with at least one hop past its root, the leaf field's
-// declared type keyed by the full dot-joined path — populated only when the
-// path resolves cleanly; a broken path already has its own diagnostic from
-// validateStrictRenderedProps, so this silently omits it rather than
-// producing partial data for a component that is failing to compile anyway.
-func (l *lowerer) copyStrictPropTypes(propsType string, reads map[string]struct{}) (map[string]string, map[string]string) {
+// that root's own declared type (a scalar builtin for a direct read, a
+// same-file struct name for a nested read's root, or a "[]T" slice text for
+// an <Each of> loop-source read — section 2.6's back-compat rule: the
+// explicit-supply rule and the boundary dispatch see the field's raw
+// declared text unchanged, regardless of read class). PropsPaths records,
+// for every read path with at least one hop past its root, the leaf
+// field's declared type keyed by the full dot-joined path — populated only
+// when the path resolves cleanly; a broken path already has its own
+// diagnostic from validateStrictRenderedProps, so this silently omits it
+// rather than producing partial data for a component that is failing to
+// compile anyway. A loop-source read is always one field deep in this
+// release (resolveStrictEachSourceType), so it never reaches the
+// len(segments) > 1 branch below; its element schema lives in PropsSlices
+// instead, built by validateStrictServerExpressions.
+func (l *lowerer) copyStrictPropTypes(propsType string, reads map[string]strictReadClass) (map[string]string, map[string]string) {
 	fields := l.structTypes[propsBaseType(propsType)]
 	if len(fields) == 0 || len(reads) == 0 {
 		return nil, nil
@@ -1734,38 +2193,151 @@ func (l *lowerer) isSupportedStrictIslandDeclaration(n *gotreesitter.Node) bool 
 	return true
 }
 
-func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, propsType string) {
+// eachScope is one active <Each> binding the second validation pass has
+// pushed while it walks a strict component's IR tree — design spec section
+// 2.2's scoping rule and section 2.4's composition contract: a selector
+// chain may root at props or at any name in the active scope, resolved
+// through itemType (the element struct) instead of the props struct. It
+// forms a parent-linked chain the same shape as route/fileeval.go's
+// fileRenderScope, so nested loops shadow newest-first the same way at both
+// compile time and render time — with shadowing banned (section 2.2), the
+// two cannot disagree.
+type eachScope struct {
+	parent    *eachScope
+	itemName  string
+	itemType  string // same-file element struct name
+	indexName string
+	reads     map[string]string // binding-relative read paths -> leaf types; becomes this level's SlicePropSchema.Reads
+}
+
+func (s *eachScope) hasBinding(name string) bool {
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.itemName == name || (cur.indexName != "" && cur.indexName == name) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolve looks up name in the active scope chain, reporting whether it is
+// an item binding (with its element type) or an index binding.
+func (s *eachScope) resolve(name string) (itemType string, isIndex, ok bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.itemName == name {
+			return cur.itemType, false, true
+		}
+		if cur.indexName != "" && cur.indexName == name {
+			return "", true, true
+		}
+	}
+	return "", false, false
+}
+
+func (s *eachScope) items() []string {
+	var out []string
+	for cur := s; cur != nil; cur = cur.parent {
+		out = append(out, cur.itemName)
+	}
+	return out
+}
+
+func (s *eachScope) indices() []string {
+	var out []string
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.indexName != "" {
+			out = append(out, cur.indexName)
+		}
+	}
+	return out
+}
+
+func (s *eachScope) strictScope() strictcomponent.Scope {
+	return strictcomponent.Scope{Items: s.items(), Indices: s.indices()}
+}
+
+// recordRead registers a binding-rooted read's resolved leaf type into the
+// owning scope level's Reads accumulator (SlicePropSchema.Reads), walking
+// outward to find the level whose item name is root — a nested Each may
+// read an outer binding's field, and that read belongs to the outer
+// level's schema, not the innermost one.
+func (s *eachScope) recordRead(root string, path []string, leafType string) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.itemName == root {
+			if cur.reads != nil {
+				cur.reads[strings.Join(path, ".")] = leafType
+			}
+			return
+		}
+	}
+}
+
+// validateStrictServerExpressions walks a strict component's built IR tree,
+// validating every expression hole and expression/spread attribute, and
+// (design spec section 2.2) pushing an unshadowed <Each>'s declared
+// bindings onto the active scope before visiting its children. It returns
+// the component's PropsSlices — every depth-1 <Each of> loop-source read
+// this walk found, together with the binding-relative fields the loop body
+// actually reads (nil when the component has no strict <Each>).
+func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, propsType string) map[string]SlicePropSchema {
 	seen := make(map[NodeID]bool)
-	_, shadowedByStrict := l.strictNames["If"]
-	var visit func(NodeID)
-	visit = func(id NodeID) {
+	_, ifShadowed := l.strictNames["If"]
+	_, eachShadowed := l.strictNames["Each"]
+	slices := make(map[string]SlicePropSchema)
+	var visit func(NodeID, *eachScope)
+	visit = func(id NodeID, scope *eachScope) {
 		if seen[id] || int(id) >= len(l.prog.Nodes) {
 			return
 		}
 		seen[id] = true
 		node := &l.prog.Nodes[id]
 		if node.Kind == NodeExpr {
-			l.validateStrictServerExpression(node.Span, node.Text, componentName, propsType)
+			l.validateStrictServerExpression(node.Span, node.Text, componentName, propsType, scope)
 		}
-		isBuiltinIf := node.Kind == NodeComponent && node.Tag == "If" && !shadowedByStrict
+		isBuiltinIf := node.Kind == NodeComponent && node.Tag == "If" && !ifShadowed
+		isBuiltinEach := node.Kind == NodeComponent && node.Tag == "Each" && !eachShadowed
+		if isBuiltinEach {
+			childScope, ok := l.enterStrictEach(node, componentName, propsType, scope, slices)
+			if !ok {
+				return
+			}
+			for _, child := range node.Children {
+				visit(child, childScope)
+			}
+			return
+		}
 		for _, attr := range node.Attrs {
 			if isBuiltinIf && attr.Name == "cond" && attr.Kind == AttrExpr {
-				l.validateStrictConditionalExpression(node.Span, attr.Expr, componentName, propsType)
+				l.validateStrictConditionalExpression(node.Span, attr.Expr, componentName, propsType, scope)
 				continue
 			}
-			if attr.Kind == AttrExpr || attr.Kind == AttrSpread {
-				l.validateStrictServerExpression(node.Span, attr.Expr, componentName, propsType)
+			if attr.Kind == AttrExpr {
+				l.validateStrictServerExpression(node.Span, attr.Expr, componentName, propsType, scope)
 			}
+			// AttrSpread is not revalidated as an ordinary expression here:
+			// every spread position already has its own, more specific
+			// pass-1 validation (validateStrictToStrictSpreadCall for a
+			// strict callee's proven E2 tier-1 shape, whose admission rule
+			// legitimately differs from an ordinary expression position —
+			// bare props is a valid spread source but not a valid bare
+			// expression; validateStrictHTMLElement's unconditional ban for
+			// a strict HTML element; the "not renderable" rejection for any
+			// other unresolved component tag). Revalidating here would
+			// either duplicate a diagnostic or wrongly reject a proven
+			// spread with the bare-props message.
 		}
 		for _, child := range node.Children {
-			visit(child)
+			visit(child, scope)
 		}
 	}
-	visit(root)
+	visit(root, nil)
+	if len(slices) == 0 {
+		return nil
+	}
+	return slices
 }
 
-func (l *lowerer) validateStrictServerExpression(span Span, source, componentName, propsType string) {
-	if err := strictcomponent.ValidateServerExpression(source); err != nil {
+func (l *lowerer) validateStrictServerExpression(span Span, source, componentName, propsType string, scope *eachScope) {
+	if err := strictcomponent.ValidateServerExpressionScope(source, scope.strictScope()); err != nil {
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
 			Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
@@ -1773,31 +2345,102 @@ func (l *lowerer) validateStrictServerExpression(span Span, source, componentNam
 		})
 		return
 	}
-	l.validateStrictExpressionTypes(span, source, componentName, propsType)
+	l.validateStrictBindingReadTypes(span, source, componentName, scope)
+	l.validateStrictExpressionTypes(span, source, componentName, propsType, scope)
+}
+
+// validateStrictBindingReadTypes is a props read's counterpart for a loop
+// binding: props reads get their scalar-ness checked once, early, by
+// validateStrictRenderedProps, before any <Each> scope even exists to
+// track; a binding read has no such early pass (the binding set is only
+// known once this second pass walks an <Each> node), so this scans source
+// for every binding-rooted path — bare, or nested inside a concat or cond
+// — and resolves+records each one here. A props-rooted path is skipped: it
+// already went through validateStrictRenderedProps, and restating it here
+// would just duplicate the diagnostic.
+func (l *lowerer) validateStrictBindingReadTypes(span Span, source, componentName string, scope *eachScope) {
+	for _, rp := range strictcomponent.ServerExpressionRootedPaths(source, scope.strictScope()) {
+		if rp.Root == "props" {
+			continue
+		}
+		l.validateEachBindingRead(span, componentName, scope, rp.Root, rp.Path)
+	}
+}
+
+// validateEachBindingRead resolves one binding-rooted read against its
+// owning <Each> element schema (walkStrictHops, generalized per design spec
+// section 2.4 to a binding root), reports exactly one diagnostic on
+// failure, and records a clean scalar resolution into the owning scope
+// level's SlicePropSchema.Reads.
+func (l *lowerer) validateEachBindingRead(span Span, componentName string, scope *eachScope, root string, path []string) {
+	itemType, isIndex, found := scope.resolve(root)
+	if !found {
+		return
+	}
+	if isIndex {
+		l.errs = append(l.errs, Diagnostic{Span: span, Message: fmt.Sprintf("strict component %s cannot use index binding %s in a selector; the index is an int value", componentName, root)})
+		return
+	}
+	res := l.walkStrictHops(root, itemType, path)
+	switch res.failKind {
+	case strictHopUnknownField:
+		return
+	case strictHopOK:
+		if !strictRendererScalarType(res.leafType) {
+			l.errs = append(l.errs, Diagnostic{Span: span, Message: fmt.Sprintf("strict component %s cannot render %s of type %s; loop selectors must reach an exact scalar field", componentName, res.pathText, res.leafType)})
+			return
+		}
+		scope.recordRead(root, path, res.leafType)
+	default:
+		l.errs = append(l.errs, Diagnostic{Span: span, Message: strictHopMessage(componentName, res)})
+	}
+}
+
+// resolveScopedFieldType resolves path's leaf type against root's schema —
+// the props struct when root is "props", or an active binding's element
+// struct otherwise (design spec section 2.4) — for the concat and cond
+// exact-type passes, which need the type regardless of which root supplied
+// it.
+func (l *lowerer) resolveScopedFieldType(propsType string, scope *eachScope, root string, path []string) (string, bool) {
+	if root == "props" {
+		return l.strictSelectorPathType(propsType, path)
+	}
+	itemType, isIndex, found := scope.resolve(root)
+	if !found || isIndex {
+		return "", false
+	}
+	return l.resolveRootedFieldType(itemType, path, true)
 }
 
 // validateStrictExpressionTypes runs the type-side gate for expression shapes
 // the syntactic validator accepts but cannot itself type-check: the
-// string-concatenation chain. Every props field operand — a direct field or
-// a nested path (props.A.B[.C]) — must resolve, through the same-file
-// struct schema, to declared type exactly string — not a named string type,
-// not []byte, not a struct. A path that fails to resolve at all is skipped
-// here; validateStrictRenderedProps already reports that root cause once,
-// and restating it would just duplicate the diagnostic.
-func (l *lowerer) validateStrictExpressionTypes(span Span, source, componentName, propsType string) {
-	paths, ok := strictcomponent.ServerConcatPropPaths(source)
+// string-concatenation chain. Every operand — a direct or nested props
+// field, or (section 2.4) a direct or nested binding field — must resolve,
+// through the same-file struct schema, to declared type exactly string —
+// not a named string type, not []byte, not a struct. A path that fails to
+// resolve at all is skipped here; a props path already got its own root
+// cause from validateStrictRenderedProps, and a binding path from
+// validateStrictBindingReadTypes above — restating either would just
+// duplicate the diagnostic.
+func (l *lowerer) validateStrictExpressionTypes(span Span, source, componentName, propsType string, scope *eachScope) {
+	rootedPaths, ok := strictcomponent.ServerConcatRootedPaths(source, scope.strictScope())
 	if !ok {
 		return
 	}
-	for _, path := range paths {
-		leafType, known := l.strictSelectorPathType(propsType, path)
+	for _, rp := range rootedPaths {
+		leafType, known := l.resolveScopedFieldType(propsType, scope, rp.Root, rp.Path)
 		if !known {
 			continue
 		}
 		if leafType != "string" {
+			suffix := "fields"
+			if rp.Root == "props" {
+				suffix = "props fields"
+			}
+			pathText := rp.Root + "." + strings.Join(rp.Path, ".")
 			l.errs = append(l.errs, Diagnostic{
 				Span:    span,
-				Message: fmt.Sprintf("strict component %s cannot concatenate props.%s of type %s; \"+\" operands must be exact string props fields", componentName, strings.Join(path, "."), leafType),
+				Message: fmt.Sprintf("strict component %s cannot concatenate %s of type %s; \"+\" operands must be exact string %s", componentName, pathText, leafType, suffix),
 			})
 		}
 	}
@@ -1805,13 +2448,13 @@ func (l *lowerer) validateStrictExpressionTypes(span Span, source, componentName
 
 // validateStrictConditionalExpression validates a strict <If cond={...}>
 // attribute's expression content: the syntactic shape (bare bool selector,
-// possibly a nested path, or that selector == false) through the dedicated
-// cond validator, then the exact bool type through the same-file struct
-// schema. General expression positions never reach this function — only the
-// cond attribute of an unshadowed <If> does, dispatched from
-// validateStrictServerExpressions.
-func (l *lowerer) validateStrictConditionalExpression(span Span, source, componentName, propsType string) {
-	path, _, err := strictcomponent.ValidateServerCondExpression(source)
+// possibly a nested path rooted at props or, section 2.4, at a binding, or
+// that selector == false) through the dedicated cond validator, then the
+// exact bool type through the same-file struct schema. General expression
+// positions never reach this function — only the cond attribute of an
+// unshadowed <If> does, dispatched from validateStrictServerExpressions.
+func (l *lowerer) validateStrictConditionalExpression(span Span, source, componentName, propsType string, scope *eachScope) {
+	root, path, _, err := strictcomponent.ValidateServerCondExpressionScope(source, scope.strictScope())
 	if err != nil {
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
@@ -1820,16 +2463,177 @@ func (l *lowerer) validateStrictConditionalExpression(span Span, source, compone
 		})
 		return
 	}
-	fieldType, known := l.strictSelectorPathType(propsType, path)
+	if root != "" && root != "props" {
+		l.validateEachBindingRead(span, componentName, scope, root, path)
+	}
+	fieldType, known := l.resolveScopedFieldType(propsType, scope, root, path)
 	if !known {
 		return
 	}
 	if fieldType != "bool" {
+		suffix := "field"
+		if root == "props" {
+			suffix = "props field"
+		}
+		pathText := root + "." + strings.Join(path, ".")
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
-			Message: fmt.Sprintf("strict component %s cannot use props.%s of type %s in <If cond>; cond requires an exact bool props field", componentName, strings.Join(path, "."), fieldType),
+			Message: fmt.Sprintf("strict component %s cannot use %s of type %s in <If cond>; cond requires an exact bool %s", componentName, pathText, fieldType, suffix),
 		})
 	}
+}
+
+// strictBindingNamePattern is design spec section 2.2's binding-name rule:
+// lowercase-first, valid Go identifier characters. Lowercase-first keeps a
+// binding visually and lexically disjoint from component tags and type
+// names.
+var strictBindingNamePattern = regexp.MustCompile(`^[a-z][A-Za-z0-9]*$`)
+
+// goKeywords is the exhaustive Go keyword set; a binding may not use one,
+// since it is emitted verbatim as a Go func parameter name
+// (transpile.go's emitStrictEach).
+var goKeywords = map[string]bool{
+	"break": true, "default": true, "func": true, "interface": true, "select": true,
+	"case": true, "defer": true, "go": true, "map": true, "struct": true,
+	"chan": true, "else": true, "goto": true, "package": true, "switch": true,
+	"const": true, "fallthrough": true, "if": true, "range": true, "type": true,
+	"continue": true, "for": true, "import": true, "return": true, "var": true,
+}
+
+func invalidStrictBindingNameReason(name string) string {
+	if !strictBindingNamePattern.MatchString(name) || goKeywords[name] {
+		return "must start with a lowercase letter and be a valid Go identifier"
+	}
+	return ""
+}
+
+// enterStrictEach validates one strict <Each> node's own shape, binding
+// names, and of-source type, and returns the scope its children should
+// validate under. ok=false means the subtree should not be walked further:
+// a shape or type problem already reported its own diagnostic (or, for an
+// of source whose type already failed validateStrictRenderedProps' early
+// pass, was already reported there), and there is no well-defined binding
+// to check descendant expressions against.
+func (l *lowerer) enterStrictEach(node *Node, componentName, propsType string, scope *eachScope, slices map[string]SlicePropSchema) (*eachScope, bool) {
+	itemName, indexName, ofAttr, ok := l.strictEachShape(node, scope)
+	if !ok {
+		return nil, false
+	}
+	if err := strictcomponent.ValidateServerExpression(ofAttr.Expr); err != nil {
+		l.errs = append(l.errs, Diagnostic{
+			Span:    node.Span,
+			Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(ofAttr.Expr), err),
+			Hint:    "of must select a []T slice field on props",
+		})
+		return nil, false
+	}
+	path, sok := strictcomponent.ServerPropPath(ofAttr.Expr)
+	if !sok {
+		l.errs = append(l.errs, Diagnostic{
+			Span:    node.Span,
+			Message: fmt.Sprintf("strict <Each> of attribute %q must select a props field; of sources are props or a props field selector", strings.TrimSpace(ofAttr.Expr)),
+		})
+		return nil, false
+	}
+	dotted := strings.Join(path, ".")
+	elem, known := l.strictEachElems[componentName][dotted]
+	if !known {
+		// validateStrictRenderedProps (the early, component-span pass) has
+		// already reported this exact path's own diagnostic — see
+		// collectStrictPropReads' loop-source classification and
+		// resolveStrictEachSourceType. Stop walking this subtree without a
+		// duplicate.
+		return nil, false
+	}
+	reads := make(map[string]string)
+	if existing, exists := slices[dotted]; exists && existing.Reads != nil {
+		// Two <Each> loops over the same props path share one boundary
+		// schema — the union of fields either loop reads.
+		reads = existing.Reads
+	}
+	slices[dotted] = SlicePropSchema{Elem: elem, Reads: reads}
+	itemScope := &eachScope{parent: scope, itemName: itemName, itemType: elem, indexName: indexName, reads: reads}
+	return itemScope, true
+}
+
+// strictEachShape validates a strict <Each> node's own attributes (design
+// spec section 4.1): exactly one of attribute with an expression value, a
+// static as attribute, at most one static index attribute, and no others;
+// then the binding-name rules (section 2.2): valid Go identifier syntax,
+// not reserved (props/children), not shared between as and index, and not
+// already bound by an enclosing <Each>.
+func (l *lowerer) strictEachShape(node *Node, scope *eachScope) (itemName, indexName string, ofAttr *Attr, ok bool) {
+	ok = true
+	var asAttr, indexAttrPtr *Attr
+	for i := range node.Attrs {
+		attr := &node.Attrs[i]
+		switch {
+		case attr.Kind == AttrSpread:
+			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> does not accept spread attributes; of, as, and index are the only supported attributes"})
+			ok = false
+		case attr.Name == "of":
+			if attr.Kind != AttrExpr {
+				l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires exactly one of attribute with an expression value"})
+				ok = false
+				continue
+			}
+			ofAttr = attr
+		case attr.Name == "as":
+			asAttr = attr
+		case attr.Name == "index":
+			indexAttrPtr = attr
+		default:
+			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> does not accept attribute %q; of, as, and index are the only supported attributes", attr.Name)})
+			ok = false
+		}
+	}
+	if ofAttr == nil {
+		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires exactly one of attribute with an expression value"})
+		ok = false
+	}
+	if asAttr == nil || asAttr.Kind != AttrStatic || strings.TrimSpace(asAttr.Value) == "" {
+		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires a static as attribute naming the loop binding"})
+		ok = false
+	}
+	if indexAttrPtr != nil && (indexAttrPtr.Kind != AttrStatic || strings.TrimSpace(indexAttrPtr.Value) == "") {
+		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: "strict <Each> requires a static index attribute naming the index binding"})
+		ok = false
+	}
+	if !ok {
+		return "", "", nil, false
+	}
+	itemName = asAttr.Value
+	if indexAttrPtr != nil {
+		indexName = indexAttrPtr.Value
+	}
+	for _, binding := range []string{itemName, indexName} {
+		if binding == "" {
+			continue
+		}
+		if msg := invalidStrictBindingNameReason(binding); msg != "" {
+			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q %s", binding, msg)})
+			ok = false
+			continue
+		}
+		if binding == "props" || binding == "children" {
+			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q is reserved; choose another name", binding)})
+			ok = false
+		}
+	}
+	if indexName != "" && indexName == itemName {
+		l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q is already bound by this <Each>; as and index must name different bindings", itemName)})
+		ok = false
+	}
+	for _, binding := range []string{itemName, indexName} {
+		if binding != "" && scope.hasBinding(binding) {
+			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q is already bound by an enclosing <Each>; loop bindings cannot shadow", binding)})
+			ok = false
+		}
+	}
+	if !ok {
+		return "", "", nil, false
+	}
+	return itemName, indexName, ofAttr, true
 }
 
 // surfaceAllowedHandlers is the exhaustive set of on* event names permitted on

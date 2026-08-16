@@ -346,3 +346,205 @@ component Page() {
 		t.Fatalf("generated Go is missing %q:\n%s", want, out)
 	}
 }
+
+// --- E1 (#182): strict <Each> ----------------------------------------------
+
+// TestTranspileStrictEachEmitsGoSXMap covers design spec section 2.8: a
+// strict <Each of={...} as="row"> projects onto gosx.Map, with the row
+// element type named from the same-file struct schema and every
+// binding-rooted read emitted verbatim so the Go compiler proves it inside
+// the callback scope.
+func TestTranspileStrictEachEmitsGoSXMap(t *testing.T) {
+	source := []byte(`package app
+type BreakdownRow struct {
+	Scored bool
+	Label  string
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+component Row(props: RowProps) {
+	return <div>
+		<Each of={props.Breakdown} as="row">
+			<div data-scored={row.Scored}>{row.Label}</div>
+		</Each>
+	</div>
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	for _, want := range []string{
+		`gosx.Map(props.Breakdown, func(row BreakdownRow, _ int) gosx.Node { return gosx.Fragment(`,
+		`gosx.Attr("data-scored", row.Scored)`,
+		`gosx.Expr(row.Label)`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestTranspileStrictEachWithIndexNamesTheCallbackParam covers the index
+// binding: with index="i", the callback's second parameter is named i
+// instead of the placeholder _, so a bare {i} read compiles as an ordinary
+// int reference (compare the <If> emission tests above's alias-injection
+// pattern).
+func TestTranspileStrictEachWithIndexNamesTheCallbackParam(t *testing.T) {
+	source := []byte(`package app
+type BreakdownRow struct {
+	Label string
+}
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+component Row(props: RowProps) {
+	return <div><Each of={props.Breakdown} as="row" index="i">{row.Label}{i}</Each></div>
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if want := `func(row BreakdownRow, i int) gosx.Node`; !strings.Contains(out, want) {
+		t.Fatalf("missing %q in:\n%s", want, out)
+	}
+	if want := `gosx.Expr(i)`; !strings.Contains(out, want) {
+		t.Fatalf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestTranspileStrictEachHonorsGoSXAliasInjection mirrors
+// TestTranspileStrictConditionalHonorsGoSXAliasInjection for the Map
+// emission: gosx.Map must reference whatever alias (or dot import) the
+// rest of the file's gosx emission uses.
+func TestTranspileStrictEachHonorsGoSXAliasInjection(t *testing.T) {
+	source := []byte(`package app
+import gx "m31labs.dev/gosx"
+type Row struct {
+	Label string
+}
+type Props struct {
+	Rows []Row
+}
+component Page(props: Props) {
+	return <div><Each of={props.Rows} as="row">{row.Label}</Each></div>
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if want := `gx.Map(props.Rows, func(row Row, _ int) gx.Node { return gx.Fragment(`; !strings.Contains(out, want) {
+		t.Fatalf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestTranspileStrictEachShadowedByLocalComponentStaysAComponentCall mirrors
+// TestTranspileStrictConditionalShadowedByLocalComponentStaysAComponentCall:
+// a same-file strict component named Each keeps its ordinary typed-call
+// emission instead of the gosx.Map builtin projection.
+func TestTranspileStrictEachShadowedByLocalComponentStaysAComponentCall(t *testing.T) {
+	source := []byte(`package app
+type EachProps struct {
+	Label string
+}
+component Each(props: EachProps) {
+	return <em>{props.Label}</em>
+}
+component Page() {
+	return <Each label="shadowed" />
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if want := `Each(EachProps{Label: "shadowed"})`; !strings.Contains(out, want) {
+		t.Fatalf("missing %q in:\n%s", want, out)
+	}
+	if strings.Contains(out, "gosx.Map") {
+		t.Fatalf("shadowed Each must not emit gosx.Map:\n%s", out)
+	}
+}
+
+// --- E2 (#184): spread props at strict call sites -------------------------
+
+// TestTranspileStrictTierOneSpreadEmitsVerbatimCall covers design spec
+// section 3.2's check-program encoding: a proven tier-1 spread emits the
+// call verbatim — Callee(<source>) — instead of a composite literal, so
+// the Go compiler proves type identity with zero synthesis.
+func TestTranspileStrictTierOneSpreadEmitsVerbatimCall(t *testing.T) {
+	source := []byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+component Wrap(props: TeamMarkProps) {
+	return <div><TeamMark {...props}></TeamMark></div>
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if want := `TeamMark(props)`; !strings.Contains(out, want) {
+		t.Fatalf("missing verbatim spread call %q in:\n%s", want, out)
+	}
+	if strings.Contains(out, "TeamMarkProps{") {
+		t.Fatalf("tier-1 spread must not synthesize a composite literal:\n%s", out)
+	}
+}
+
+// TestTranspileStrictTierOneSpreadForwardsNestedFieldVerbatim covers a
+// props field selector source (not bare props): the spread source's exact
+// text is still emitted verbatim as the call argument.
+func TestTranspileStrictTierOneSpreadForwardsNestedFieldVerbatim(t *testing.T) {
+	source := []byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+type MatchupProps struct {
+	Away TeamMarkProps
+}
+component Matchup(props: MatchupProps) {
+	return <div><TeamMark {...props.Away}></TeamMark></div>
+}
+`)
+	out, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	if want := `TeamMark(props.Away)`; !strings.Contains(out, want) {
+		t.Fatalf("missing verbatim spread call %q in:\n%s", want, out)
+	}
+}
+
+// TestTranspileStrictLegacyTierTwoSpreadStillFailsFullTranspile covers
+// non-goal 3.5/open question 5: a legacy body's spread into a strict
+// callee is proved only at the file-renderer boundary, so full transpile
+// keeps failing, now with the updated message naming the supported path.
+func TestTranspileStrictLegacyTierTwoSpreadStillFailsFullTranspile(t *testing.T) {
+	source := []byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+func Page() Node {
+	team := map[string]any{"Tone": "red"}
+	return <div><TeamMark {...team}></TeamMark></div>
+}
+`)
+	_, err := Transpile(source, Options{SourceFile: "page.gsx"})
+	if err == nil || !strings.Contains(err.Error(), "proven by the file renderer boundary, not by gosx transpile") {
+		t.Fatalf("error = %v", err)
+	}
+}

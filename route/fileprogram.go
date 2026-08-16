@@ -1699,6 +1699,24 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 	if comp == nil || comp.Syntax != ir.ComponentSyntaxStrict || len(comp.PropsFields) == 0 {
 		return componentProps(attrs, env, children), nil
 	}
+	// The single-spread shape (design spec section 3.1) is the only spread
+	// shape validateStrictComponentCall admits at a strict callee, for
+	// both E2 tiers. strictSpreadProps re-proves it structurally at run
+	// time regardless of which tier produced it: a tier-1 spread's static
+	// proof only guarantees this re-proof can fail closed, not that it is
+	// skippable.
+	if len(attrs) == 1 && attrs[0].Kind == ir.AttrSpread {
+		source := evalFileExpr(attrs[0].Expr, env)
+		props, err := strictSpreadProps(comp, source)
+		if err != nil {
+			return nil, err
+		}
+		if !children.IsZero() {
+			setComponentProp(props, "children", children)
+			setComponentProp(props, "Children", children)
+		}
+		return props, nil
+	}
 	props := make(map[string]any, len(attrs)+4)
 	for _, attr := range attrs {
 		field, fieldType, rendered := resolvePropsFieldAlias(comp.PropsFields, attr.Name)
@@ -1725,6 +1743,14 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 
 func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
 	if !strictScalarFieldType(fieldType) {
+		if strings.HasPrefix(strings.TrimSpace(fieldType), "[]") {
+			// A rendered field whose declared type is "[]T" is an <Each of>
+			// loop source (ir.Component.PropsSlices, design spec section
+			// 2.7): T is a same-file element struct, provable at the
+			// boundary type-level (requireStrictSliceValue) without
+			// walking every element.
+			return strictComponentSliceAttrValue(comp, attr, env, fieldType)
+		}
 		// A rendered field whose declared type is not one of the renderer's
 		// exact scalar builtins is a nested-selector root (ir.Component.
 		// PropsPaths): a same-file struct, provable at every strict-call
@@ -1911,6 +1937,139 @@ func requireStrictStructValue(value any, typeName string, paths map[string]strin
 	return value, nil
 }
 
+// strictComponentSliceAttrValue handles a rendered prop whose declared type
+// is "[]T" (an <Each of> loop source, ir.Component.PropsSlices). A slice
+// value can only arrive through an AttrExpr — there is no static or
+// boolean spelling for one.
+func strictComponentSliceAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if attr.Kind != ir.AttrExpr {
+		return nil, fmt.Errorf("value has no slice spelling, want exact %s", fieldType)
+	}
+	schema, ok := comp.PropsSlices[attr.Name]
+	if !ok {
+		return nil, fmt.Errorf("strict component %s has no loop schema for slice field %s", comp.Name, attr.Name)
+	}
+	value := evalFileExpr(attr.Expr, env)
+	return requireStrictSliceValue(value, schema)
+}
+
+// requireStrictSliceValue is E1's renderer-boundary check (design spec
+// section 2.7): value's runtime type must be a slice whose element type is
+// exactly the same-file struct schema.Elem — a declared struct type from
+// any package, never an anonymous struct and never a map element — and
+// every read path schema.Reads names must resolve, by FieldByName on the
+// element TYPE (not each element's value), to its exact declared leaf
+// type. The check is O(read paths) once per call, not O(elements): a
+// well-typed Go slice's elements all share one type, so proving the type
+// once proves every element's field access is total. A typed nil slice
+// passes (its Kind is still Slice) and iterates zero times, matching Go.
+func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	rt := reflect.TypeOf(value)
+	if rt.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs named %s", rt, schema.Elem)
+	}
+	elemType := rt.Elem()
+	if elemType.Kind() != reflect.Struct || elemType.PkgPath() == "" || elemType.Name() != schema.Elem {
+		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs named %s", rt, schema.Elem)
+	}
+	paths := make([]string, 0, len(schema.Reads))
+	for path := range schema.Reads {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		leafType := schema.Reads[path]
+		ft := elemType
+		var field reflect.StructField
+		found := false
+		for _, segment := range strings.Split(path, ".") {
+			if ft.Kind() != reflect.Struct {
+				return nil, fmt.Errorf("slice element %s: field %s is not a struct", schema.Elem, path)
+			}
+			field, found = ft.FieldByName(segment)
+			if !found {
+				return nil, fmt.Errorf("slice element %s has no field %s (%s) required by the renderer", schema.Elem, path, leafType)
+			}
+			ft = field.Type
+		}
+		if want := strictScalarWantName(leafType); ft.PkgPath() != "" || ft.Name() != want {
+			return nil, fmt.Errorf("slice element field %s has type %s, want exact %s", path, ft, leafType)
+		}
+	}
+	return value, nil
+}
+
+// strictSpreadProps re-proves a single spread attribute's source at the
+// strict-callee boundary (design spec section 3.4). It is the render-time
+// authority for both E2 tiers: a tier-1 spread (a strict caller; the
+// lowerer already proved the source's declared type is exactly the
+// callee's props type) can only fail here on caller-side data corruption
+// between compile and render, and a tier-2 spread (a legacy caller,
+// unprovable at compile time because legacy expressions have no declared
+// type) is proved here for the first time. Failure order matches the spec:
+//  1. non-nil after pointer indirection;
+//  2. reflect kind is exactly Struct — map[string]any and every other map
+//     are rejected: a map can omit keys where the generated-Go twin
+//     synthesizes a typed zero value (the same divergence the
+//     explicit-supply rule exists to close); map keys have no canonical
+//     mapping to Go fields; a map has no field types to check ahead of the
+//     values; and no generated-Go call can be spelled from a map, so no
+//     twin exists to match;
+//  3. every rendered read (PropsFields' roots, dispatched by their own
+//     declared type — scalar, "[]T" loop source, or nested-selector
+//     struct) is present on the source with a matching value, never
+//     zero-filled;
+//  4. the proved values are written through setComponentProp, so body-side
+//     alias resolution behaves exactly as an explicit call does.
+func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
+	rv := reflect.ValueOf(value)
+	rv, ok := indirectReflectValue(rv)
+	if !ok {
+		return nil, fmt.Errorf("spread source is nil")
+	}
+	if rv.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("spread source has type %s; the strict boundary proves struct values with declared fields, and maps cannot prove field coverage", rv.Type())
+	}
+
+	fields := make([]string, 0, len(comp.PropsFields))
+	for field := range comp.PropsFields {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+
+	props := make(map[string]any, len(fields)+4)
+	for _, field := range fields {
+		fieldType := comp.PropsFields[field]
+		fv := rv.FieldByName(field)
+		if !fv.IsValid() || !fv.CanInterface() {
+			return nil, fmt.Errorf("spread source %s has no field %s (%s); the renderer reads props.%s", rv.Type(), field, fieldType, field)
+		}
+		raw := fv.Interface()
+		var proved any
+		var err error
+		switch {
+		case strictScalarFieldType(fieldType):
+			proved, err = requireStrictScalarType(raw, fieldType)
+		case strings.HasPrefix(strings.TrimSpace(fieldType), "[]"):
+			if schema, hasSchema := comp.PropsSlices[field]; hasSchema {
+				proved, err = requireStrictSliceValue(raw, schema)
+			} else {
+				err = fmt.Errorf("strict component %s has no loop schema for slice field %s", comp.Name, field)
+			}
+		default:
+			proved, err = requireStrictStructValue(raw, fieldType, strictStructPropsPaths(comp, field))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("prop %s (%s): %w", field, fieldType, err)
+		}
+		setComponentProp(props, field, proved)
+	}
+	return props, nil
+}
+
 func strictGoConstant(source string) (constant.Value, bool) {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
@@ -2046,14 +2205,23 @@ func convertStrictConstant(value constant.Value, fieldType string) (any, error) 
 	}
 }
 
-func requireStrictScalarType(value any, fieldType string) (any, error) {
-	want := fieldType
-	switch want {
+// strictScalarWantName maps a declared field type to the reflect.Type.Name
+// the runtime value must match exactly: byte and rune are aliases (uint8,
+// int32), so a runtime value that alias-resolves to the same underlying
+// predeclared type must show that name, not the alias spelling.
+func strictScalarWantName(fieldType string) string {
+	switch fieldType {
 	case "byte":
-		want = "uint8"
+		return "uint8"
 	case "rune":
-		want = "int32"
+		return "int32"
+	default:
+		return fieldType
 	}
+}
+
+func requireStrictScalarType(value any, fieldType string) (any, error) {
+	want := strictScalarWantName(fieldType)
 	if value == nil {
 		return nil, fmt.Errorf("value is nil")
 	}

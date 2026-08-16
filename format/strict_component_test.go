@@ -82,6 +82,107 @@ component Card(props: CardProps) {
 	}
 }
 
+// TestSourceFormatsStrictEachIdempotently covers #182: a strict <Each
+// of={...} as="row" index="i"> block, including binding-rooted selector,
+// concat, and cond holes inside its body, formats idempotently and keeps
+// compiling.
+func TestSourceFormatsStrictEachIdempotently(t *testing.T) {
+	source := []byte(`package app
+type BreakdownRow struct {
+	Scored bool
+	Label string
+}
+
+type RowProps struct {
+	Breakdown []BreakdownRow
+}
+
+component Row(props: RowProps) {
+	return <div>
+		<Each of={props.Breakdown} as="row" index="i">
+			<div class={"tone-" + row.Label} data-scored={row.Scored}>
+				<span>{row.Label}</span>
+				<span>{i}</span>
+				<If cond={row.Scored}>scored</If>
+			</div>
+		</Each>
+	</div>
+}
+`)
+	formatted, err := Source(source)
+	if err != nil {
+		t.Fatalf("Source: %v", err)
+	}
+	for _, want := range []string{
+		`<Each of={props.Breakdown} as="row" index="i">`,
+		`class={"tone-" + row.Label}`,
+		`data-scored={row.Scored}`,
+		`{row.Label}`,
+		`{i}`,
+		`<If cond={row.Scored}>`,
+	} {
+		if !strings.Contains(string(formatted), want) {
+			t.Fatalf("formatting changed %q:\n%s", want, formatted)
+		}
+	}
+	if _, err := gosx.Compile(formatted); err != nil {
+		t.Fatalf("formatted strict source does not compile: %v\n%s", err, formatted)
+	}
+	again, err := Source(formatted)
+	if err != nil {
+		t.Fatalf("Source second pass: %v", err)
+	}
+	if !bytes.Equal(formatted, again) {
+		t.Fatalf("format is not idempotent\nfirst:\n%s\nsecond:\n%s", formatted, again)
+	}
+}
+
+// TestSourceFormatsStrictSpreadCallSitesIdempotently covers #184: a tier-1
+// spread at a strict call site and a tier-2 spread from a legacy body both
+// format idempotently and keep compiling.
+func TestSourceFormatsStrictSpreadCallSitesIdempotently(t *testing.T) {
+	source := []byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+
+component Wrap(props: TeamMarkProps) {
+	return <div><TeamMark {...props}></TeamMark></div>
+}
+
+func Page() Node {
+	team := map[string]any{"Tone": "red"}
+	return <div><TeamMark {...team}></TeamMark></div>
+}
+`)
+	formatted, err := Source(source)
+	if err != nil {
+		t.Fatalf("Source: %v", err)
+	}
+	for _, want := range []string{
+		`<TeamMark {...props}>`,
+		`<TeamMark {...team}>`,
+	} {
+		if !strings.Contains(string(formatted), want) {
+			t.Fatalf("formatting changed %q:\n%s", want, formatted)
+		}
+	}
+	if _, err := gosx.Compile(formatted); err != nil {
+		t.Fatalf("formatted strict source does not compile: %v\n%s", err, formatted)
+	}
+	again, err := Source(formatted)
+	if err != nil {
+		t.Fatalf("Source second pass: %v", err)
+	}
+	if !bytes.Equal(formatted, again) {
+		t.Fatalf("format is not idempotent\nfirst:\n%s\nsecond:\n%s", formatted, again)
+	}
+}
+
 // TestSourceFormatsStrictNestedSelectorIdempotently covers section 2.b: a
 // nested selector text hole, a nested concat operand, and a nested <If
 // cond> selector all format idempotently and keep compiling.
