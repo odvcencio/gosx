@@ -48,6 +48,13 @@ type FileModule struct {
 	Render   FileRenderDataFunc
 	Actions  FileActions
 	Bindings FileBindingsFunc
+
+	// MaxActionBodyBytes caps the request body accepted by this module's
+	// actions, enforced with http.MaxBytesReader semantics (an oversized
+	// request fails with 413 rather than being silently truncated). Zero
+	// keeps the action package default of 1 MiB. Set this to accept larger
+	// uploads, such as a file, through an action route.
+	MaxActionBodyBytes int64
 }
 
 // FileModuleOptions configures a file-routed server module.
@@ -57,17 +64,25 @@ type FileModuleOptions struct {
 	Render   FileRenderDataFunc
 	Actions  FileActions
 	Bindings FileBindingsFunc
+
+	// MaxActionBodyBytes caps the request body accepted by this module's
+	// actions, enforced with http.MaxBytesReader semantics (an oversized
+	// request fails with 413 rather than being silently truncated). Zero
+	// keeps the action package default of 1 MiB. Set this to accept larger
+	// uploads, such as a file, through an action route.
+	MaxActionBodyBytes int64
 }
 
 // FileModuleFor builds a file-routed server module definition.
 func FileModuleFor(source string, opts FileModuleOptions) FileModule {
 	return FileModule{
-		Source:   source,
-		Load:     opts.Load,
-		Metadata: opts.Metadata,
-		Render:   opts.Render,
-		Actions:  cloneFileActions(opts.Actions),
-		Bindings: opts.Bindings,
+		Source:             source,
+		Load:               opts.Load,
+		Metadata:           opts.Metadata,
+		Render:             opts.Render,
+		Actions:            cloneFileActions(opts.Actions),
+		Bindings:           opts.Bindings,
+		MaxActionBodyBytes: opts.MaxActionBodyBytes,
 	}
 }
 

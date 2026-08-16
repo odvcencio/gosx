@@ -477,7 +477,7 @@ func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
 		}
 	}
 	if len(resolved.module.Actions) > 0 {
-		r.router.Handle(filePageActionPattern(resolved.page.Pattern), buildFileActionHandler(resolved.page, resolved.module.Actions), routeMiddleware...)
+		r.router.Handle(filePageActionPattern(resolved.page.Pattern), buildFileActionHandler(resolved.page, resolved.module.Actions, resolved.module.MaxActionBodyBytes), routeMiddleware...)
 	}
 	return Route{
 		Pattern:      resolved.page.Pattern,
@@ -633,7 +633,7 @@ func filePageActionPattern(pattern string) string {
 	return "POST " + strings.TrimSuffix(pattern, "/") + "/__actions/{__gosx_action}"
 }
 
-func buildFileActionHandler(page FilePage, handlers FileActions) http.Handler {
+func buildFileActionHandler(page FilePage, handlers FileActions, maxActionBodyBytes int64) http.Handler {
 	handlers = cloneFileActions(handlers)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("__gosx_action")
@@ -646,7 +646,9 @@ func buildFileActionHandler(page FilePage, handlers FileActions) http.Handler {
 			http.Error(w, fmt.Sprintf("action %q not found for %s", name, page.Source), http.StatusNotFound)
 			return
 		}
-		action.ServeHandler(w, r, handler)
+		action.ServeHandlerWithOptions(w, r, handler, action.ServeHandlerOptions{
+			MaxBodyBytes: maxActionBodyBytes,
+		})
 	})
 }
 
