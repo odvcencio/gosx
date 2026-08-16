@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.41.0 (2026-08-15)
+
+Client resource cost. Every change in this release reduces what a GoSX page
+asks of the visitor's browser: fewer bytes shipped, fewer bytes parsed, fewer
+bytes retained.
+
+### Shader deduplication now covers JSX-authored scenes
+
+- **`marshalEngineProps` runs the shader-lib hoisting pass.** Scenes written as
+  `.gsx` children never reach the typed SceneIR collections, so the existing
+  hoisting pass could not see them and every repeated shader string shipped in
+  full, once per element. The m31labs.dev home page carried one 1,385-byte
+  fragment shader twelve times over. The pass now runs on the canonicalized
+  engine props map; the browser side already inflated `*Ref` fields, so wire
+  output shrinks with no runtime change. On that page the manifest lost 46 KB
+  (7.2% of the HTML) and repeated shader text fell 87%.
+
+### Split scene loading for GLB models
+
+- **A GLB can name an immutable geometry base and ship only what rotates.** A
+  scene whose point colors change on a schedule no longer re-downloads its
+  unchanged geometry: the overlay GLB names its base in root extras
+  (`gosx.baseSrc`), and the loader fetches the base (served content-addressed
+  and immutable), patches point colors, positions, and sizes by layer id, and
+  appends any layer that exists only in the overlay. A count mismatch refuses
+  the patch and keeps the base attributes, so server-side skew degrades to
+  stale colors instead of corrupt buffers.
+
+- **`_POINT_SIZE` accepts quantized storage.** A builder may write point sizes
+  as a normalized integer accessor with the dequantization factor in primitive
+  extras (`gosx.pointSizeScale`); the loader multiplies it back. Halves the
+  size stream against float32 at a worst-case error of scale/65535.
+
+### Manifest parse memoized, DOM text releasable
+
+- **`#gosx-manifest` is parsed once per element.** The WebGPU probe and the
+  runtime tail each ran a full `JSON.parse` of the manifest during one boot —
+  hundreds of kilobytes parsed twice. The parse is now memoized per element
+  and published as `window.__gosx_manifest`; the scene3d water shader readers
+  reuse it instead of re-parsing DOM text.
+
+- **Opt-in `data-gosx-release` drops the manifest text after boot.** The JSON
+  string is dead weight once the object graph exists. A server opts in per
+  renderer with `ReleaseManifestText()`; the default remains retention because
+  app scripts may read the element's text after boot. Late consumers must use
+  `window.__gosx_manifest`.
+
 ## v0.40.1 (2026-08-14)
 
 v0.40.0 was tagged and is present on the module proxy, but it is not usable:
