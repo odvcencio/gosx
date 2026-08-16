@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.42.3 (2026-08-16)
+
+### Fixed: the adaptive frame budget ignored maxFrameRate
+
+- **`cpuRAFBudgetMS` now honors the same key precedence as the frame
+  limiter** (frameIntervalMS, then maxFrameRate, then maxFPS). It read only
+  maxFPS, so a scene authored with `MaxFrameRate: 30` produced ~33.3ms rAF
+  intervals by design and was judged against its 28ms adaptive target: every
+  measured frame "missed budget", sustained-miss demotion fired within a
+  second, and the quality ladder walked to the floor rung — re-partitioning
+  point layers at every step. On the m31labs galaxy that staircase replayed
+  after each rung reset and read as the gas bodies flickering; it survived
+  three shader-side fixes because it was never the shader.
+
 ## v0.42.2 (2026-08-16)
 
 ### Fixed: the managed-form shorthand did not expand consistently across server render surfaces
