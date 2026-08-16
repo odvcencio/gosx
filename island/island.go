@@ -891,7 +891,7 @@ func (r *Renderer) ManifestScriptWithNonce(nonce string) gosx.Node {
 	// app whose own inline scripts read the element's text later must not set
 	// it until those readers consume window.__gosx_manifest instead.
 	release := ""
-	if r.releaseManifestText {
+	if r.releaseManifestText || os.Getenv("GOSX_RELEASE_MANIFEST_TEXT") == "1" {
 		release = ` data-gosx-release`
 	}
 	return gosx.RawHTML(fmt.Sprintf(
