@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -140,6 +141,16 @@ func (v *validator) validateComponentRef(node *Node) {
 		if attr.IsEvent && attr.Kind == AttrExpr && attr.Expr == "" {
 			v.errorf(node.Span, "event handler %q has empty expression", attr.Name)
 		}
+		// gosx#178 review finding m14: a component reference can carry the
+		// same data-gosx-countdown-* attributes an element can (for example
+		// a builtin like <Form> or a component that forwards them onto its
+		// own root element) — route static values through the same
+		// countdown checks an element gets, so a component reference is not
+		// a blind spot for the exact same bad-value class validateAttr
+		// already catches on plain elements.
+		if attr.Kind == AttrStatic {
+			v.validateStaticCountdownAttr(node, &attr)
+		}
 	}
 }
 
@@ -164,26 +175,56 @@ func (v *validator) validateAttr(node *Node, attr *Attr) {
 	}
 }
 
-// countdownInstantAttr and countdownFormatAttr are the two
-// data-gosx-countdown attributes with a fixed value vocabulary (gosx#178).
+// The five data-gosx-countdown-* attributes with a fixed value vocabulary
+// (gosx#178). These string values are pinned against server/navigation_contract.go
+// and client/runtime/host/navigation.ts by server/navigation_contract_countdown_test.go
+// (gosx#178 review finding m11).
 const (
 	countdownInstantAttr = "data-gosx-countdown"
 	countdownFormatAttr  = "data-gosx-countdown-format"
+	countdownSegmentAttr = "data-gosx-countdown-segment"
+	countdownWarnAttr    = "data-gosx-countdown-warn"
+	countdownThenAttr    = "data-gosx-countdown-then"
 )
 
-// validateStaticCountdownAttr flags a static data-gosx-countdown value that
-// is not a valid RFC3339 instant, and a static data-gosx-countdown-format
-// value outside the two render modes the countdown runtime supports
-// ("dhms" and "mm:ss"). This follows the same fail-closed principle as the
-// ".length" rule above: a bad value here renders a silently inert
-// countdown today, with nothing at the terminal to explain why, so
-// Validate now catches it at check time instead.
+// countdownWarnIntegerPattern and countdownWarnDurationPattern mirror the
+// small declarative duration subset parseCountdownWarnSeconds accepts in
+// client/runtime/host/navigation.ts: a bare non-negative integer as whole
+// seconds, or whole hour/minute/second components combined in one value
+// (for example "30s" or "1m30s"). This is not a general Go duration parser
+// — see parseRevalidateInterval's own comment in navigation.ts for the
+// same small-subset rationale applied to data-gosx-revalidate-interval.
+var (
+	countdownWarnIntegerPattern  = regexp.MustCompile(`^[0-9]+$`)
+	countdownWarnDurationPattern = regexp.MustCompile(`^(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+)s)?$`)
+)
+
+// isValidCountdownWarnValue reports whether value parses under the small
+// declarative duration subset described above.
+func isValidCountdownWarnValue(value string) bool {
+	if countdownWarnIntegerPattern.MatchString(value) {
+		return true
+	}
+	m := countdownWarnDurationPattern.FindStringSubmatch(value)
+	return m != nil && (m[1] != "" || m[2] != "" || m[3] != "")
+}
+
+// validateStaticCountdownAttr flags a static data-gosx-countdown-* value
+// outside its documented vocabulary: an instant that is not valid RFC3339,
+// a format outside the two render modes the countdown runtime supports
+// ("dhms" and "mm:ss"), a segment name outside the four the runtime fills
+// (days|hours|minutes|seconds), a warn duration outside the small
+// declarative subset above, or a then action other than "revalidate". This
+// follows the same fail-closed principle as the ".length" rule above: a
+// bad value here renders a silently inert (or silently ignored) countdown
+// today, with nothing at the terminal to explain why, so Validate now
+// catches it at check time instead.
 //
 // A dynamic expression value ({...}) is exempt — attr.Kind is AttrExpr for
-// those, and this method only runs from the AttrStatic case above. Its
-// instant or format is known only at render or run time, and the browser
-// runtime already fails inert (leaves the element untouched) on a bad
-// value it discovers there.
+// those, and this method only runs from the AttrStatic case in validateAttr
+// and from validateComponentRef. Its value is known only at render or run
+// time, and the browser runtime already fails inert (leaves the element or
+// segment untouched) on a bad value it discovers there.
 func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 	switch attr.Name {
 	case countdownInstantAttr:
@@ -200,6 +241,32 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 				Span:    node.Span,
 				Message: fmt.Sprintf("invalid %s value %q: must be \"dhms\" or \"mm:ss\"", countdownFormatAttr, attr.Value),
 				Hint:    `"dhms" renders day/hour/minute/second text; "mm:ss" renders a minutes:seconds clock`,
+			})
+		}
+	case countdownSegmentAttr:
+		switch attr.Value {
+		case "days", "hours", "minutes", "seconds":
+		default:
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be \"days\", \"hours\", \"minutes\", or \"seconds\"", countdownSegmentAttr, attr.Value),
+				Hint:    `mark each descendant the countdown should fill with one of these four segment names`,
+			})
+		}
+	case countdownWarnAttr:
+		if !isValidCountdownWarnValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a bare integer number of seconds, or whole h/m/s components such as \"30s\" or \"1m30s\"", countdownWarnAttr, attr.Value),
+				Hint:    `this is a small declarative duration subset, not a general Go duration parser`,
+			})
+		}
+	case countdownThenAttr:
+		if attr.Value != "revalidate" {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be \"revalidate\"", countdownThenAttr, attr.Value),
+				Hint:    `"revalidate" fires one revalidation of the page's revalidate root the first time the countdown reaches zero`,
 			})
 		}
 	}

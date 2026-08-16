@@ -119,3 +119,43 @@ func TestCompileRejectsInvalidStaticCountdownFormat(t *testing.T) {
 		t.Fatalf("expected the format diagnostic in the compile error, got %v", err)
 	}
 }
+
+// TestCompileRejectsCalendarInvalidStaticCountdownInstant covers gosx#178
+// review finding M5 through the real gosx.Compile path: a day out of range
+// for its month is not a valid RFC3339 instant, so it must fail check the
+// same way a syntactically malformed instant does.
+func TestCompileRejectsCalendarInvalidStaticCountdownInstant(t *testing.T) {
+	src := "package docs\n\n" +
+		"func Page() Node {\n" +
+		"\treturn <main>\n" +
+		"\t\t<span data-gosx-countdown=\"2026-02-30T00:00:00Z\"></span>\n" +
+		"\t</main>\n" +
+		"}\n"
+	_, err := gosx.Compile([]byte(src))
+	if err == nil {
+		t.Fatal("expected compile to reject a calendar-invalid data-gosx-countdown instant (February 30)")
+	}
+	if !strings.Contains(err.Error(), "data-gosx-countdown") || !strings.Contains(err.Error(), "RFC3339") {
+		t.Fatalf("expected the RFC3339 diagnostic in the compile error, got %v", err)
+	}
+}
+
+// TestCompileRejectsInvalidStaticCountdownSegment is the same end-to-end
+// proof for data-gosx-countdown-segment (gosx#178 review finding m14).
+func TestCompileRejectsInvalidStaticCountdownSegment(t *testing.T) {
+	src := "package docs\n\n" +
+		"func Page() Node {\n" +
+		"\treturn <main>\n" +
+		"\t\t<div data-gosx-countdown=\"2026-08-22T16:00:00-04:00\">\n" +
+		"\t\t\t<b data-gosx-countdown-segment=\"weeks\"></b>\n" +
+		"\t\t</div>\n" +
+		"\t</main>\n" +
+		"}\n"
+	_, err := gosx.Compile([]byte(src))
+	if err == nil {
+		t.Fatal("expected compile to reject an invalid data-gosx-countdown-segment value")
+	}
+	if !strings.Contains(err.Error(), "data-gosx-countdown-segment") {
+		t.Fatalf("expected the segment diagnostic in the compile error, got %v", err)
+	}
+}

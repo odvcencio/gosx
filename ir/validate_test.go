@@ -331,3 +331,170 @@ func Page() Node {
 		t.Fatalf("expected no diagnostics for dynamic countdown expressions, got %+v", diags)
 	}
 }
+
+// TestValidateRejectsCalendarInvalidCountdownInstant covers gosx#178 review
+// finding M5: a static data-gosx-countdown value with an out-of-range day
+// for its month (or a February 29 on a non-leap year) is not a valid
+// RFC3339 instant — time.Parse already rejects it, and that rejection is
+// exactly what the browser runtime's own parseCountdownInstant now matches
+// (see the differential test coverage in client/js/runtime-14-navigation.test.js).
+func TestValidateRejectsCalendarInvalidCountdownInstant(t *testing.T) {
+	for _, bad := range []string{
+		"2026-02-30T00:00:00Z",
+		"2026-04-31T00:00:00Z",
+		"2026-02-29T00:00:00Z", // 2026 is not a leap year
+	} {
+		source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="` + bad + `"></span>
+}
+`)
+		prog, err := parse(t, source)
+		if err != nil {
+			t.Fatalf("Lower failed for %q: %v", bad, err)
+		}
+
+		diags := ir.Validate(prog)
+		if len(diags) != 1 {
+			t.Fatalf("expected exactly one diagnostic for %q, got %+v", bad, diags)
+		}
+		if !strings.Contains(diags[0].Message, "RFC3339") {
+			t.Fatalf("expected an RFC3339 diagnostic for %q, got %q", bad, diags[0].Message)
+		}
+	}
+}
+
+// TestValidateRejectsInvalidCountdownSegment covers gosx#178 review finding
+// m14: a static data-gosx-countdown-segment value outside the four names
+// the runtime fills renders no diagnostic today and is simply ignored at
+// run time (see findCountdownSegments in navigation.ts) — Validate now
+// catches the mistake at check time.
+func TestValidateRejectsInvalidCountdownSegment(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <div data-gosx-countdown="2026-08-22T16:00:00-04:00">
+		<b data-gosx-countdown-segment="weeks"></b>
+	</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-countdown-segment value "weeks": must be "days", "hours", "minutes", or "seconds"`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsInvalidCountdownWarn covers gosx#178 review finding
+// m14: a static data-gosx-countdown-warn value outside the small
+// declarative duration subset (a bare integer, or whole h/m/s components)
+// disables the warn threshold silently at run time — Validate now catches
+// it at check time.
+func TestValidateRejectsInvalidCountdownWarn(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-warn="soon"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-countdown-warn value "soon": must be a bare integer number of seconds, or whole h/m/s components such as "30s" or "1m30s"`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsInvalidCountdownThen covers gosx#178 review finding
+// m14: data-gosx-countdown-then only supports "revalidate". Any other
+// static value is silently ignored at run time — Validate now catches it
+// at check time.
+func TestValidateRejectsInvalidCountdownThen(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-then="reload"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-countdown-then value "reload": must be "revalidate"`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateAllowsValidCountdownSegmentWarnThen proves the m14 rules do
+// not false-positive on well-formed values across all three attributes.
+func TestValidateAllowsValidCountdownSegmentWarnThen(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <div data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-warn="1m30s" data-gosx-countdown-then="revalidate">
+		<b data-gosx-countdown-segment="days"></b>
+		<b data-gosx-countdown-segment="hours"></b>
+		<b data-gosx-countdown-segment="minutes"></b>
+		<b data-gosx-countdown-segment="seconds"></b>
+	</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for valid countdown segment/warn/then attributes, got %+v", diags)
+	}
+}
+
+// TestValidateRoutesCountdownChecksThroughComponentRef covers gosx#178
+// review finding m14: a component reference (an uppercase tag, including a
+// builtin like <Form>) can carry the same data-gosx-countdown-* attributes
+// an element can. validateComponentRef must route its static attributes
+// through the same checks validateElement already applies, so a bad value
+// is caught here too, not only on a plain HTML element.
+func TestValidateRoutesCountdownChecksThroughComponentRef(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <Form data-gosx-countdown="not-a-real-instant"></Form>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic for a component reference, got %+v", diags)
+	}
+	if !strings.Contains(diags[0].Message, "data-gosx-countdown") || !strings.Contains(diags[0].Message, "RFC3339") {
+		t.Fatalf("expected the RFC3339 diagnostic routed through the component reference, got %q", diags[0].Message)
+	}
+}

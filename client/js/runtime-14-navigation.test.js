@@ -5466,3 +5466,300 @@ test("countdown generation guard stops the shared timer on navigation, and its o
   timers.runInterval(1000);
   assert.equal(el.textContent, "4:59", "an element from the old page must never update again after navigation");
 });
+
+// gosx#178 review finding B1: then="revalidate" used to key its fired state
+// by a per-generation flag. setupPageCountdowns rebuilds a fresh record (with
+// a fresh, unfired flag) on every rescan, including the rescan a countdown's
+// own revalidation triggers — so a re-rendered document that still carries
+// the same zeroed countdown (the server has not advanced yet) re-armed and
+// re-fired every single tick, forever. The fix keys fired state by the
+// countdown's own immutable target instant instead, in a Set that survives
+// every rescan.
+test("countdown then=\"revalidate\" fires exactly once even when every re-rendered document still carries the same zeroed countdown", async () => {
+  const url = "http://localhost:3000/draft-room";
+  function draftRoom() {
+    const main = new FakeElement("main", null);
+    main.id = "draft-room";
+    main.setAttribute("data-gosx-revalidate-interval", "4s");
+    const clockEl = new FakeElement("span", null);
+    clockEl.setAttribute("data-gosx-countdown", "1970-01-01T00:00:01Z");
+    clockEl.setAttribute("data-gosx-countdown-then", "revalidate");
+    clockEl.setAttribute("data-gosx-countdown-format", "mm:ss");
+    main.appendChild(clockEl);
+    return main;
+  }
+  const env = createContext({
+    elements: [draftRoom()],
+    fetchRoutes: { [url]: { text: "__DRAFT_ROOM_REFRESH__", url } },
+    // Every parse returns a FRESH document that still carries the expired
+    // countdown — the server has not advanced past it yet.
+    parseHTML() {
+      return buildNavigatedDocument({ title: "Draft room", bodyNodes: [draftRoom()] });
+    },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 2, "the revalidate-interval timer and the countdown tick");
+
+  clock.advance(1000); // countdown now at zero
+  for (let i = 0; i < 6; i += 1) {
+    timers.runInterval(1000);
+    await flushAsyncWork();
+    clock.advance(1000);
+  }
+
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === url).length,
+    1,
+    "the countdown's target instant has already fired once; every later tick recognizes the same instant and must not re-fire",
+  );
+});
+
+// gosx#178 review finding B2: a segment name is untrusted, author-controlled
+// attribute data. On a plain object literal, "constructor" and "__proto__"
+// answer truthy from Object.prototype without ever calling .push, so the old
+// `if (segments[name]) segments[name].push(node)` guard threw at boot —
+// window.__gosx.navigation never published, and the whole client runtime
+// (not just the countdown) was dead for the page.
+test("countdown boot survives a segment name that collides with an Object.prototype key", () => {
+  const root = new FakeElement("div", null);
+  root.setAttribute("data-gosx-countdown", "1970-01-01T00:05:00Z");
+  const seg = new FakeElement("b", null);
+  seg.setAttribute("data-gosx-countdown-segment", "constructor");
+  root.appendChild(seg);
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/other");
+  link.setAttribute("data-gosx-link", "");
+  const env = createContext({ elements: [root, link] });
+  installManualClock(env.context, 0);
+  installManualTimers(env.context);
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(typeof env.context.__gosx.navigation, "object", "the navigation runtime must still publish");
+  assert.equal(typeof env.context.__gosx.navigation.navigate, "function");
+  assert.equal(env.context.document.eventListeners.get("click").length, 1, "the click listener must still install");
+});
+
+test("countdown boot survives a \"__proto__\" segment name", () => {
+  const root = new FakeElement("div", null);
+  root.setAttribute("data-gosx-countdown", "1970-01-01T00:05:00Z");
+  const seg = new FakeElement("b", null);
+  seg.setAttribute("data-gosx-countdown-segment", "__proto__");
+  root.appendChild(seg);
+  const env = createContext({ elements: [root] });
+  installManualClock(env.context, 0);
+  installManualTimers(env.context);
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(typeof env.context.__gosx.navigation.navigate, "function");
+});
+
+// gosx#178 review finding M3: then="revalidate" used to skip the periodic
+// poll's own three guards (document hidden, a form control focused, a
+// navigation or form submission already in flight) entirely — a countdown
+// could yank text out from under a typing user the periodic poll would never
+// have touched. The fix applies the same guards and retries on the next tick.
+test("countdown then=\"revalidate\" retries on the next tick while a text input is focused, and fires once it blurs", async () => {
+  const url = "http://localhost:3000/draft-room";
+  const main = new FakeElement("main", null);
+  main.id = "draft-room";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  const clockElement = new FakeElement("span", null);
+  clockElement.setAttribute("data-gosx-countdown", "1970-01-01T00:00:01Z");
+  clockElement.setAttribute("data-gosx-countdown-then", "revalidate");
+  const input = new FakeElement("input", null);
+  main.appendChild(clockElement);
+  main.appendChild(input);
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: { [url]: { text: "__DRAFT_ROOM_REFRESH__", url } },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "draft-room";
+  freshMain.setAttribute("data-gosx-revalidate-interval", "4s");
+  parsedDocs.set("__DRAFT_ROOM_REFRESH__", buildNavigatedDocument({
+    title: "Draft room",
+    bodyNodes: [freshMain],
+  }));
+
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  env.context.document.activeElement = input;
+
+  clock.advance(1000);
+  timers.runInterval(1000); // the countdown reaches zero, but the input is focused
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === url).length,
+    0,
+    "a focused text input must block the countdown's revalidation, same as the periodic poll",
+  );
+  assert.equal(timers.count(), 2, "the countdown timer must still be running to retry next tick");
+
+  env.context.document.activeElement = null;
+  clock.advance(1000);
+  timers.runInterval(1000); // no longer blocked
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === url).length,
+    1,
+    "once the input blurs, the next tick fires the retried revalidation",
+  );
+});
+
+// gosx#178 review finding M5: the runtime's own acceptance set must match
+// what `gosx check` and Go's time.Parse(time.RFC3339, ...) accept, or a
+// dynamic value that check-time validation cannot see can roll a
+// calendar-invalid date over into the next month at run time instead of
+// failing inert.
+test("countdown rejects a calendar-invalid day for its month", () => {
+  for (const bad of ["2026-02-30T00:00:00Z", "2026-04-31T00:00:00Z", "2026-02-29T00:00:00Z"]) {
+    const el = new FakeElement("span", null);
+    el.setAttribute("data-gosx-countdown", bad);
+    el.textContent = "SERVER";
+    const env = createContext({ elements: [el] });
+    const timers = installManualTimers(env.context);
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    assert.equal(timers.count(), 0, bad + " must not start the countdown timer");
+    assert.equal(el.textContent, "SERVER", bad + " must leave the element untouched");
+  }
+});
+
+test("countdown accepts February 29 on a leap year and rejects it on a non-leap year", () => {
+  const leap = new FakeElement("span", null);
+  leap.setAttribute("data-gosx-countdown", "2024-02-29T00:00:00Z");
+  leap.setAttribute("data-gosx-countdown-format", "mm:ss");
+  const nonLeap = new FakeElement("span", null);
+  nonLeap.setAttribute("data-gosx-countdown", "2026-02-29T00:00:00Z");
+  nonLeap.textContent = "SERVER";
+  const env = createContext({ elements: [leap, nonLeap] });
+  const timers = installManualTimers(env.context);
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(timers.count(), 1, "only the valid leap-year instant starts the shared timer");
+  assert.equal(nonLeap.textContent, "SERVER", "2026 is not a leap year, so February 29 must be rejected");
+});
+
+test("countdown rejects a zone offset with an out-of-range hour or minute", () => {
+  for (const bad of ["2026-08-22T16:00:00+99:99", "2026-08-22T16:00:00-00:99"]) {
+    const el = new FakeElement("span", null);
+    el.setAttribute("data-gosx-countdown", bad);
+    el.textContent = "SERVER";
+    const env = createContext({ elements: [el] });
+    const timers = installManualTimers(env.context);
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    assert.equal(timers.count(), 0, bad);
+    assert.equal(el.textContent, "SERVER", bad);
+  }
+});
+
+// gosx#178 review finding m13: the runtime's instant parser used to accept
+// lowercase "t"/"z" and surrounding whitespace that Go's time.Parse rejects.
+// Dropping the regex's `i` flag and the value's .trim() makes the two sides
+// identically strict instead of the runtime silently accepting a superset.
+test("countdown rejects lowercase t/z and surrounding whitespace, matching Go's RFC3339 strictness", () => {
+  for (const bad of ["2026-08-22t16:00:00Z", "2026-08-22T16:00:00z", "  2026-08-22T16:00:00Z  "]) {
+    const el = new FakeElement("span", null);
+    el.setAttribute("data-gosx-countdown", bad);
+    el.textContent = "SERVER";
+    const env = createContext({ elements: [el] });
+    const timers = installManualTimers(env.context);
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    assert.equal(timers.count(), 0, bad);
+    assert.equal(el.textContent, "SERVER", bad);
+  }
+});
+
+// gosx#178 review finding m8: a countdown with no then pending never changes
+// again once it clamps to zero — render output is frozen and the warn class
+// (if any) has already settled. Continuing to tick it every second forever
+// only burns cycles for nothing.
+test("countdown stops its shared timer once every root is finished with no then pending", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:01Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  const env = createContext({ elements: [el] });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  clock.advance(1000);
+  timers.runInterval(1000);
+  assert.equal(el.textContent, "0:00");
+  assert.equal(timers.count(), 0, "the countdown finished with no then pending, so the shared timer must stop");
+
+  clock.advance(1000);
+  assert.equal(timers.runInterval(1000), 0, "no interval remains to tick");
+  assert.equal(el.textContent, "0:00", "a stopped timer must never write again");
+});
+
+// gosx#178 review finding m9: findCountdownSegments used to walk into a
+// nested data-gosx-countdown root's own descendants, so an outer root's scan
+// could claim a segment element that belongs to an inner, independent
+// countdown.
+test("countdown segment scan stops at a nested data-gosx-countdown root", () => {
+  const outer = new FakeElement("div", null);
+  outer.setAttribute("data-gosx-countdown", "1970-01-01T00:00:11Z"); // 11s -> 10s after one tick
+  const inner = new FakeElement("div", null);
+  inner.setAttribute("data-gosx-countdown", "1970-01-01T00:00:44Z"); // 44s -> 43s after one tick
+  const seg = new FakeElement("b", null);
+  seg.setAttribute("data-gosx-countdown-segment", "seconds");
+  inner.appendChild(seg);
+  outer.appendChild(inner);
+  const env = createContext({ elements: [outer] });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  clock.advance(1000);
+  timers.runInterval(1000);
+
+  assert.equal(seg.textContent, "43", "the segment belongs to the inner root, never the outer one");
+});
+
+// gosx#178 review nit: setCountdownWarnClass used to rewrite the class
+// attribute on every tick, even when the warn threshold had not been
+// crossed — collapsing any author whitespace in the attribute for no
+// reason. Comparing before writing skips the rewrite entirely until the
+// warn state actually changes.
+test("countdown warn class write is skipped until the threshold actually crosses, preserving author whitespace", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:35Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-warn", "30s");
+  el.setAttribute("class", "  pick-clock   big  ");
+  const env = createContext({ elements: [el] });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  for (let i = 0; i < 4; i += 1) {
+    clock.advance(1000);
+    timers.runInterval(1000);
+  }
+  // remainder = 31s: still above the 30s threshold — the warn state has not
+  // changed since setup, so the class attribute must be untouched.
+  assert.equal(el.getAttribute("class"), "  pick-clock   big  ", "an unchanged warn state must never rewrite the attribute");
+
+  clock.advance(1000);
+  timers.runInterval(1000);
+  // remainder = 30s: the threshold crosses, so this tick's write is real.
+  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("gosx-countdown--warn"), true);
+});
