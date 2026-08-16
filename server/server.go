@@ -1496,11 +1496,18 @@ func routeHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bo
 }
 
 func mountHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
-	handler, pattern := mux.Handler(r)
-	if pattern == "" || handler == nil {
+	if !muxMatched(mux, r) {
 		return false
 	}
-	handler.ServeHTTP(w, r)
+	// Dispatch through mux.ServeHTTP, not the handler pulled off mux.Handler:
+	// Handler's own doc comment says it "does not populate named path
+	// wildcards, so r.PathValue will always return the empty string." A
+	// mount pattern with a wildcard segment, e.g. "GET /avatars/{teamID}.png",
+	// needs ServeHTTP's internal findHandler call, which sets r.pat and
+	// r.matches before invoking the handler. muxMatched still does the
+	// match/no-match check via Handler(r), matching the no-match fall-through
+	// contract used by routeHandled, redirectHandled and rewriteHandled.
+	mux.ServeHTTP(w, r)
 	return true
 }
 

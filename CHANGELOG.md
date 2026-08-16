@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`App.Mount` now populates named path wildcards.** A mounted pattern
+  with a wildcard segment, for example `GET /avatars/{teamID}`, dispatched
+  through `(*http.ServeMux).Handler(r)`, which the stdlib documents as
+  never populating `r.PathValue` — every wildcard silently read back as
+  the empty string. The dispatcher now serves a matched mount through
+  `mux.ServeHTTP`, which runs the same lookup internally and sets the
+  wildcard values on the request before the handler runs. Detecting a
+  non-match still uses `Handler(r)`, so an unmounted request falls through
+  to the page router exactly as before. Non-wildcard mounts, subtree
+  mounts, and the 404 fall-through keep their existing behavior. Refs
+  #194.
+
 ## v0.43.0 (2026-08-16)
 
 The strict surface grows loops and spreads, and the runtime grows time. Seven
