@@ -338,11 +338,32 @@ func (a *App) HandleRewrite(route RewriteRoute) {
 	}
 }
 
-// Mount registers an arbitrary HTTP handler under the given pattern.
+// NavigationConfigurable is implemented by mountable handlers — such as the
+// value route.Router.Build/BuildChecked returns — that keep a live reference
+// to their own document assembly and can accept the navigation-runtime head
+// builder. Mount uses this to carry EnableNavigation through to a file-routed
+// app: server cannot import route (route already imports server), so the seam
+// is a structural interface rather than a route.Router type check.
+type NavigationConfigurable interface {
+	SetNavigationHead(fn func(nonce string) gosx.Node)
+}
+
+// Mount registers an arbitrary HTTP handler under the given pattern. When
+// EnableNavigation is set and handler implements NavigationConfigurable, Mount
+// wires the navigation-runtime head builder into it, so a file-routed app
+// built with route.NewRouter and mounted here needs only
+// app.EnableNavigation() — no manual ctx.AddHead(server.NavigationScript())
+// in the layout. Call EnableNavigation before Mount; Mount reads a.navigation
+// once, at registration time.
 func (a *App) Mount(pattern string, handler http.Handler) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || handler == nil {
 		return
+	}
+	if a.navigation {
+		if configurable, ok := handler.(NavigationConfigurable); ok {
+			configurable.SetNavigationHead(NavigationScriptWithNonce)
+		}
 	}
 	a.mounts[pattern] = registeredMountedRoute{
 		pattern: pattern,
@@ -925,7 +946,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 	// Runtime head emission moved into PageState.Head() (lazy, at document
 	// render) so layout-registered engines reach the manifest.
 	if a.navigation {
-		ctx.AddHead(NavigationScriptWithNonce(ctx.Nonce()))
+		ctx.SetNavigationHead(NavigationScriptWithNonce)
 	}
 	for _, decorate := range a.headDecorators {
 		if decorate == nil {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"m31labs.dev/gosx"
@@ -13,15 +14,16 @@ import (
 // PageState carries shared request-scoped page response state used by both
 // server.Context and route.RouteContext.
 type PageState struct {
-	requestPath string
-	headers     http.Header
-	status      int
-	metadata    Metadata
-	head        []gosx.Node
-	deferred    *DeferredRegistry
-	cache       *CacheState
-	runtime     *PageRuntime
-	nonce       string
+	requestPath    string
+	headers        http.Header
+	status         int
+	metadata       Metadata
+	head           []gosx.Node
+	deferred       *DeferredRegistry
+	cache          *CacheState
+	runtime        *PageRuntime
+	nonce          string
+	navigationHead func(nonce string) gosx.Node
 }
 
 // NewPageState creates an empty shared page-state container.
@@ -193,6 +195,20 @@ func (s *PageState) MetadataValue() Metadata {
 	return s.metadata
 }
 
+// SetNavigationHead registers the navigation-runtime head builder Head uses
+// to inject the client navigation script exactly once. App.decoratePageContext
+// sets this when EnableNavigation is on; route.Router.SetNavigationHead wires
+// the same builder in for file-routed apps mounted on such an App (see
+// server.NavigationConfigurable). A manual AddHead(NavigationScript(...)) call
+// still works: Head checks the assembled head for NavigationScriptAttr first
+// and skips the builder when the script is already present.
+func (s *PageState) SetNavigationHead(fn func(nonce string) gosx.Node) {
+	if s == nil {
+		return
+	}
+	s.navigationHead = fn
+}
+
 // AddHead appends arbitrary head nodes to the response document.
 func (s *PageState) AddHead(nodes ...gosx.Node) {
 	if s == nil {
@@ -222,6 +238,11 @@ func (s *PageState) Head() gosx.Node {
 		nodes = append(nodes, metaHead)
 	}
 	nodes = append(nodes, s.head...)
+	if s.navigationHead != nil && !headContainsNavigationScript(nodes) {
+		if nav := s.navigationHead(s.nonce); !nav.IsZero() {
+			nodes = append(nodes, nav)
+		}
+	}
 	if s.runtime != nil {
 		if runtimeHead := s.runtime.HeadWithNonce(s.nonce); !runtimeHead.IsZero() {
 			nodes = append(nodes, runtimeHead)
@@ -363,4 +384,23 @@ func (s *PageState) CacheState() *CacheState {
 		s.cache = NewCacheState()
 	}
 	return s.cache
+}
+
+// navigationScriptAttrMarker matches the attribute *assignment* NavigationScript
+// renders (`data-gosx-navigation="true"`), not just the attribute name. A plain
+// NavigationScriptAttr substring match would also fire on unrelated attributes
+// that merely start with the same name, such as data-gosx-navigation-state.
+const navigationScriptAttrMarker = NavigationScriptAttr + `="`
+
+// headContainsNavigationScript reports whether the already-assembled head
+// nodes carry a script tagged with NavigationScriptAttr. Head calls this
+// before invoking navigationHead, so a manual AddHead(NavigationScript(...))
+// call in a layout suppresses the automatic injection instead of duplicating it.
+func headContainsNavigationScript(nodes []gosx.Node) bool {
+	for _, node := range nodes {
+		if strings.Contains(gosx.RenderHTML(node), navigationScriptAttrMarker) {
+			return true
+		}
+	}
+	return false
 }

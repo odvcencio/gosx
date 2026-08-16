@@ -2,6 +2,8 @@ package ir
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
 	"strings"
 )
 
@@ -84,6 +86,18 @@ func (v *validator) validateComponent(comp *Component) {
 	if comp.IsEngine && comp.EngineKind == "surface" {
 		v.diags = append(v.diags, validateEngineSurface(v.prog, comp)...)
 	}
+
+	// Legacy (non-strict, non-island) components render through the
+	// file-router's reflective interpreter (route/fileeval.go), which has no
+	// static types for `any` data params. gosx#164: `.length` there resolves
+	// to nil on every target — a slice has no such field or method — so
+	// `cond={data.picks.length == 0}` compares nil to 0 and silently renders
+	// neither branch. Strict and island components carry their own
+	// type-checked or type-restricted expression paths and do not need this
+	// rule.
+	if comp.Syntax != ComponentSyntaxStrict && !comp.IsIsland {
+		v.diags = append(v.diags, validateLegacyTemplateExprs(v.prog, comp)...)
+	}
 }
 
 func (v *validator) validateNode(node *Node) {
@@ -145,6 +159,73 @@ func (v *validator) validateAttr(node *Node, attr *Attr) {
 			v.errorf(node.Span, "spread attribute has empty expression")
 		}
 	}
+}
+
+// validateLegacyTemplateExprs flags the well-known JS mistake of reading
+// .length on a slice-valued expression (see gosx#164). The legacy file-router
+// renderer resolves member access reflectively with no static types, so a
+// slice's .length silently evaluates to nil instead of failing to compile —
+// and nil compared to 0 is always false, so `<If cond={x.length == 0}>`
+// renders neither branch with no error anywhere.
+//
+// gosx has no type information for legacy `any` data at check time, so this
+// cannot distinguish a slice's .length from a map value legitimately keyed
+// "length" (m[string]any{"length": n} resolves that reflectively too, and
+// correctly). It flags every ".length" selector in the component's
+// expression holes rather than staying silent — the honest trade a checker
+// with no types can make: a rare, working `data["length"]`-shaped access is
+// rejected alongside the far more common accidental one, and check-time
+// failure with a diagnosis beats silent divergence between check and render.
+func validateLegacyTemplateExprs(prog *Program, comp *Component) []Diagnostic {
+	if int(comp.Root) >= len(prog.Nodes) {
+		return nil
+	}
+
+	var diags []Diagnostic
+	for _, id := range collectComponentNodeIDs(prog, comp.Root) {
+		node := &prog.Nodes[id]
+		if node.Kind == NodeExpr {
+			diags = append(diags, lengthSelectorDiagnostics(node.Span, node.Text)...)
+		}
+		for _, attr := range node.Attrs {
+			switch attr.Kind {
+			case AttrExpr, AttrSpread:
+				diags = append(diags, lengthSelectorDiagnostics(node.Span, attr.Expr)...)
+			}
+		}
+	}
+	return diags
+}
+
+// lengthSelectorDiagnostics parses one Go expression hole and reports every
+// ".length" member access it contains. A source that fails to parse here is
+// not this check's job — the render path already tolerates unparseable
+// expressions by evaluating them to nil, and normal validation elsewhere
+// covers empty/malformed expressions.
+func lengthSelectorDiagnostics(span Span, source string) []Diagnostic {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil
+	}
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return nil
+	}
+
+	var diags []Diagnostic
+	ast.Inspect(expr, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok || sel.Sel == nil || sel.Sel.Name != "length" {
+			return true
+		}
+		diags = append(diags, Diagnostic{
+			Span:    span,
+			Message: fmt.Sprintf("unsupported member \".length\" in expression %q", source),
+			Hint:    "Go has no automatic .length; pass a precomputed count from a DataLoader (e.g. \"picksEmpty\": len(picks) == 0), or add a typed component that calls len(...) directly",
+		})
+		return true
+	})
+	return diags
 }
 
 // validateIslandExprs validates that all expressions in an island component
