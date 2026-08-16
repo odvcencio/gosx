@@ -767,6 +767,328 @@ test("declarative revalidation tears down its interval when a soft navigation la
   assert.equal(timers.count(), 0, "the new page carries no revalidate attribute, so the timer must be cleared");
 });
 
+test("declarative revalidation discards a stale-generation poll that settles after navigation moved on", async () => {
+  const pageBURL = "http://localhost:3000/draft-room-b";
+  const versionURL = "http://localhost:3000/api/league/version";
+  const main = new FakeElement("main", null);
+  main.id = "draft-room";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  main.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+
+  let versionCalls = 0;
+  let resolveStalePoll;
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [versionURL]: () => {
+        versionCalls += 1;
+        if (versionCalls === 2) {
+          // Held pending so it settles only after the test navigates away.
+          return new Promise((resolve) => { resolveStalePoll = resolve; });
+        }
+        return { text: '{"version":1}' };
+      },
+      [pageBURL]: { text: "__PAGE_B__", url: pageBURL },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = "http://localhost:3000/draft-room";
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const pageBMain = new FakeElement("main", null);
+  pageBMain.id = "draft-room-b";
+  pageBMain.setAttribute("data-gosx-revalidate-interval", "4s");
+  pageBMain.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+  parsedDocs.set("__PAGE_B__", buildNavigatedDocument({
+    title: "Draft room B",
+    bodyNodes: [pageBMain],
+  }));
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  // The first tick on page A records the version=1 baseline.
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 1);
+
+  // The second tick on page A starts a poll this test holds open.
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 2);
+
+  // Navigate to page B while that poll is still in flight. finalizeNavigation
+  // re-runs setupPageRevalidation, which must bump the generation counter so
+  // the still-pending page-A poll can no longer write page B's baseline.
+  assert.equal(await env.context.__gosx.navigation.navigate(pageBURL, { replace: false }), true);
+  await flushAsyncWork();
+  assert.equal(timers.count(), 1, "page B also declares periodic revalidation");
+
+  // Resolve the stale page-A poll with a changed body. Without the
+  // generation guard this would wrongly seed page B's baseline and skip
+  // page B's own first (baseline-only) tick.
+  resolveStalePoll({ text: '{"version":2}' });
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === pageBURL).length,
+    1,
+    "the stale poll must not trigger a revalidate navigation",
+  );
+
+  // Page B's own first tick must still behave like a fresh baseline read.
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 3);
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === pageBURL).length,
+    1,
+    "page B's first tick only records its own baseline",
+  );
+});
+
+test("declarative revalidation logs one warning and stays disabled for an interval past the 32-bit timer bound", () => {
+  const main = new FakeElement("main", null);
+  // 2147484s = 2147484000ms, one second's worth of interval steps past the
+  // 32-bit setInterval/setTimeout delay bound (2147483647ms).
+  main.setAttribute("data-gosx-revalidate-interval", "2147484s");
+  const env = createContext({ elements: [main] });
+  const timers = installManualTimers(env.context);
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(timers.count(), 0);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-revalidate-interval/);
+});
+
+test("declarative revalidation clamps an interval over 1 hour and warns once", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const main = new FakeElement("main", null);
+  main.id = "scoreboard";
+  main.setAttribute("data-gosx-revalidate-interval", "90m");
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [url]: { text: "__SCOREBOARD_REFRESH__", url },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "scoreboard";
+  freshMain.setAttribute("data-gosx-revalidate-interval", "90m");
+  parsedDocs.set("__SCOREBOARD_REFRESH__", buildNavigatedDocument({
+    title: "Scoreboard",
+    bodyNodes: [freshMain],
+  }));
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(timers.count(), 1);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-revalidate-interval/);
+  assert.match(env.consoleLogs.warn[0], /1 hour/);
+  assert.equal(
+    timers.runInterval(60 * 60 * 1000),
+    1,
+    "the 90-minute interval must be clamped to a 1 hour timer delay",
+  );
+});
+
+test("declarative revalidation skips a tick while the previous poll has not settled", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const versionURL = "http://localhost:3000/api/league/version";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  main.setAttribute("data-gosx-revalidate-src", "/api/league/version");
+  let versionCalls = 0;
+  let resolveVersion;
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [versionURL]: () => {
+        versionCalls += 1;
+        return new Promise((resolve) => { resolveVersion = resolve; });
+      },
+    },
+  });
+  env.context.location.href = url;
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 1, "the first tick starts a poll this test holds open");
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 1, "a second tick must not start an overlapping poll while the first is in flight");
+
+  resolveVersion({ text: '{"version":1}' });
+  await flushAsyncWork();
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(versionCalls, 2, "once the first poll settles, the next tick starts a new one");
+});
+
+test("declarative revalidation runs one immediate tick when a full interval elapsed while the document was hidden", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const main = new FakeElement("main", null);
+  main.id = "scoreboard";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [url]: { text: "__SCOREBOARD_REFRESH__", url },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "scoreboard";
+  freshMain.setAttribute("data-gosx-revalidate-interval", "4s");
+  parsedDocs.set("__SCOREBOARD_REFRESH__", buildNavigatedDocument({
+    title: "Scoreboard",
+    bodyNodes: [freshMain],
+  }));
+
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+
+  clock.advance(4000);
+  env.document.visibilityState = "visible";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === url).length,
+    1,
+    "one full interval elapsed while hidden, so visibility recovery runs an immediate tick",
+  );
+
+  // A second visible event without an intervening hidden period must not
+  // fire another catch-up tick.
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === url).length,
+    1,
+    "the catch-up tick fires at most once per hidden period",
+  );
+});
+
+test("declarative revalidation skips the catch-up tick when less than a full interval elapsed while hidden", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [url]: { text: "__SCOREBOARD_REFRESH__", url },
+    },
+  });
+  env.context.location.href = url;
+
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  env.document.visibilityState = "hidden";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+
+  clock.advance(2000);
+  env.document.visibilityState = "visible";
+  env.document.dispatchEvent({ type: "visibilitychange" });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 0, "under one interval elapsed while hidden, so no catch-up tick runs");
+});
+
+test("declarative revalidation skips a tick while a managed form submission is in flight", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const actionURL = "http://localhost:3000/scoreboard/__actions/save";
+  const main = new FakeElement("main", null);
+  main.id = "scoreboard";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+
+  let resolveAction;
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main, form],
+    fetchRoutes: {
+      [actionURL]: () => new Promise((resolve) => { resolveAction = resolve; }),
+      [url]: { text: "__SCOREBOARD_REFRESH__", url },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "scoreboard";
+  freshMain.setAttribute("data-gosx-revalidate-interval", "4s");
+  parsedDocs.set("__SCOREBOARD_REFRESH__", buildNavigatedDocument({
+    title: "Scoreboard",
+    bodyNodes: [freshMain],
+  }));
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(timers.count(), 1);
+
+  const submitListener = env.document.eventListeners.get("submit")[0];
+  submitListener({
+    type: "submit",
+    target: form,
+    submitter: null,
+    defaultPrevented: false,
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === url).length,
+    0,
+    "a pending managed form submission must skip the tick entirely",
+  );
+
+  resolveAction({ text: "{}" });
+  await flushAsyncWork();
+
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(
+    env.fetchCalls.filter((call) => call.url === url).length,
+    1,
+    "once the submission settles, the next tick runs normally",
+  );
+});
+
 test("navigation runtime sends typed beacons once per soft navigation path", async () => {
   function beaconScript() {
     const script = new FakeElement("script", null);
