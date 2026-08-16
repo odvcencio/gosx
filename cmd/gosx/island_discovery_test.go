@@ -80,7 +80,7 @@ func Counter() Node {
 `)
 
 	stale := manifest.StaleIslands(dir)
-	if len(stale) != 1 || stale[0] != "Counter" {
-		t.Fatalf("changed island stale report = %v, want [Counter]", stale)
+	if len(stale) != 1 || stale[0].Name != "Counter" {
+		t.Fatalf("changed island stale report = %+v, want [Counter]", stale)
 	}
 }

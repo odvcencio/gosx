@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -54,7 +53,7 @@ type hashedWriteOptions struct {
 	CompressedSidecars bool
 }
 
-// contentHash returns the first 8 hex chars of sha256. Delegates to
+// contentHash returns the first 16 hex chars (8 bytes) of sha256. Delegates to
 // buildmanifest.ContentHash so every content hash the build writes —
 // hashed asset filenames and island SourceHash entries alike — comes from
 // one algorithm; a server comparing them later must never see two schemes.
@@ -157,6 +156,68 @@ func removeFileIfExists(path string) error {
 	return nil
 }
 
+// writeIslandManifestAssets serializes and content-hash-writes each already-
+// discovered island program under islandDir, and returns the IslandAsset
+// manifest entries for them — including SourceFile/SourceHash, which let a
+// server started later (issue #166) detect that an island's .gsx source
+// changed since this build without re-running the compiler pipeline: it
+// re-hashes the file at SourceFile and compares against SourceHash. Store
+// the path project-relative so it stays stable across machines and matches
+// the manifest.SourceRoot / effectiveRuntimeRoot a server resolves it
+// against. Best-effort: an island whose source lives outside the project
+// tree (an imported package elsewhere on disk) still gets a "../"-relative
+// path.
+//
+// RunBuildWithOptions calls this as its real island+manifest stage.
+// Factored out so a test can exercise the real manifest-writing and
+// SourceFile-recording code without paying for the wasm runtime compile
+// RunBuildWithOptions also performs — see
+// TestWarnStaleIslandsEndToEndAfterRealBuildPipeline.
+func writeIslandManifestAssets(dir, islandDir string, dev bool, islandProgs []*IslandProgramSource) ([]IslandAsset, error) {
+	fmt.Println("\n  Islands:")
+	islandExt := ".gxi" // GoSX Island — binary prod format
+	if dev {
+		islandExt = ".json"
+	}
+
+	islands := make([]IslandAsset, 0, len(islandProgs))
+	for _, prog := range islandProgs {
+		var data []byte
+		var err error
+		format := "bin"
+		if dev {
+			data, err = program.EncodeJSON(prog.Program)
+			format = "json"
+		} else {
+			data, err = program.EncodeBinary(prog.Program)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("serialize %s: %w", prog.Name, err)
+		}
+
+		asset, err := writeHashed(islandDir, prog.Name, islandExt, data)
+		if err != nil {
+			return nil, fmt.Errorf("write island %s: %w", prog.Name, err)
+		}
+
+		sourceFile := ""
+		if rel, relErr := filepath.Rel(dir, prog.SourceFile); relErr == nil {
+			sourceFile = filepath.ToSlash(rel)
+		}
+
+		islands = append(islands, IslandAsset{
+			Name:        prog.Name,
+			Format:      format,
+			HashedAsset: asset,
+			SourceFile:  sourceFile,
+			SourceHash:  prog.SourceHash,
+		})
+
+		fmt.Printf("    %s → %s (%d bytes)\n", prog.Name, asset.File, asset.Size)
+	}
+	return islands, nil
+}
+
 // RunBuild orchestrates the full GoSX build pipeline.
 //
 // Output structure (prod):
@@ -218,6 +279,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 
 	manifest := BuildManifest{}
+	// SourceRoot records this build's project root so a server started later
+	// on the same host can resolve IslandAsset.SourceFile against it
+	// directly, instead of guessing the project root from wherever it found
+	// build.json — see buildmanifest.Manifest.SourceRoot and
+	// server.resolveIslandSourceRoot (issue #166).
+	manifest.SourceRoot = dir
 	mode := "prod"
 	if opts.Dev {
 		mode = "dev"
@@ -262,55 +329,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// ── Tier 3: Island programs (content-hashed) ────────────────────────
 
-	fmt.Println("\n  Islands:")
-	islandFormat := "json"
-	islandExt := ".gxi" // GoSX Island — binary prod format
-	if opts.Dev {
-		islandExt = ".json"
+	islandAssets, err := writeIslandManifestAssets(dir, islandDir, opts.Dev, islandProgs)
+	if err != nil {
+		return err
 	}
-
-	for _, prog := range islandProgs {
-		var data []byte
-		var err error
-		if opts.Dev {
-			data, err = program.EncodeJSON(prog.Program)
-			islandFormat = "json"
-		} else {
-			data, err = program.EncodeBinary(prog.Program)
-			islandFormat = "bin"
-		}
-		if err != nil {
-			return fmt.Errorf("serialize %s: %w", prog.Name, err)
-		}
-
-		asset, err := writeHashed(islandDir, prog.Name, islandExt, data)
-		if err != nil {
-			return fmt.Errorf("write island %s: %w", prog.Name, err)
-		}
-
-		// SourceFile/SourceHash let a server started later (issue #166)
-		// detect that this island's .gsx source changed since this build,
-		// without re-running the compiler pipeline: it re-hashes the file
-		// at SourceFile and compares against SourceHash. Store the path
-		// project-relative so it stays stable across machines and matches
-		// the root a server passes to SetRuntimeRoot. Best-effort: an
-		// island whose source lives outside the project tree (an imported
-		// package elsewhere on disk) still gets a "../"-relative path.
-		sourceFile := ""
-		if rel, relErr := filepath.Rel(dir, prog.SourceFile); relErr == nil {
-			sourceFile = filepath.ToSlash(rel)
-		}
-
-		manifest.Islands = append(manifest.Islands, IslandAsset{
-			Name:        prog.Name,
-			Format:      islandFormat,
-			HashedAsset: asset,
-			SourceFile:  sourceFile,
-			SourceHash:  prog.SourceHash,
-		})
-
-		fmt.Printf("    %s → %s (%d bytes)\n", prog.Name, asset.File, asset.Size)
-	}
+	manifest.Islands = append(manifest.Islands, islandAssets...)
 
 	// ── Tier 3: Sidecar CSS (content-hashed) ────────────────────────────
 
@@ -609,13 +632,9 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// ── Build manifest ──────────────────────────────────────────────────
 
-	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
+	manifestPath, err := writeBuildManifest(distDir, &manifest)
 	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
-	}
-	manifestPath := filepath.Join(distDir, "build.json")
-	if err := os.WriteFile(manifestPath, manifestJSON, 0644); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
+		return err
 	}
 
 	// Build the application binary when the target directory is a runnable app.

@@ -110,8 +110,8 @@ func TestManifestStaleIslandsReportsChangedSource(t *testing.T) {
 	}
 
 	stale := manifest.StaleIslands(dir)
-	if len(stale) != 1 || stale[0] != "Counter" {
-		t.Fatalf("changed source stale report = %v, want [Counter]", stale)
+	if len(stale) != 1 || stale[0].Name != "Counter" || stale[0].SourceFile != "counter.gsx" {
+		t.Fatalf("changed source stale report = %+v, want one StaleIsland{Name: Counter, SourceFile: counter.gsx}", stale)
 	}
 }
 
@@ -155,6 +155,46 @@ func TestManifestStaleIslandsSkipsMissingSourceTree(t *testing.T) {
 	// shipping dist/ without app source) — skip silently, not an error.
 	if stale := manifest.StaleIslands(t.TempDir()); len(stale) != 0 {
 		t.Fatalf("missing source file reported stale: %v", stale)
+	}
+}
+
+// TestContentHashLength locks in the documented length: 16 hex characters
+// (8 bytes) of the sha256 digest, not 8 hex characters.
+func TestContentHashLength(t *testing.T) {
+	if got := ContentHash([]byte("gosx")); len(got) != 16 {
+		t.Fatalf("ContentHash length = %d, want 16 (got %q)", len(got), got)
+	}
+}
+
+// TestManifestStaleIslandsRejectsEscapingSourceFile asserts StaleIslands
+// skips any island whose recorded SourceFile is not local to sourceRoot —
+// for example a ".." path that would otherwise let hashing escape the
+// resolved root — instead of reading whatever it points at.
+func TestManifestStaleIslandsRejectsEscapingSourceFile(t *testing.T) {
+	dir := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "secret.gsx")
+	if err := os.WriteFile(outsidePath, []byte("package app\n"), 0644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	rel, err := filepath.Rel(dir, outsidePath)
+	if err != nil {
+		t.Fatalf("relativize: %v", err)
+	}
+
+	manifest := &Manifest{Islands: []IslandAsset{
+		{
+			Name:        "Counter",
+			Format:      "bin",
+			HashedAsset: HashedAsset{File: "Counter.55555555.gxi", Hash: "55555555", Size: 50},
+			SourceFile:  filepath.ToSlash(rel), // "../<tmp>/secret.gsx" — escapes dir
+			SourceHash:  "deadbeef",            // deliberately wrong; must never be reached
+		},
+	}}
+
+	if stale := manifest.StaleIslands(dir); len(stale) != 0 {
+		t.Fatalf("escaping SourceFile reported stale: %v", stale)
 	}
 }
 
