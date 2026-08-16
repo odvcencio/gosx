@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.41.1 (2026-08-16)
+
+### The render loop runs for time-driven materials
+
+- **A material that declares a `time` uniform now counts as an animation
+  source.** `sceneAnimationState` enumerated transitions, autoRotate, compute
+  particles, water, model animations, and spin — but not the per-frame clock
+  fed to authored materials. A scene whose motion lives entirely in the
+  shader clock (a starfield whose layer spin was removed, with twinkle and
+  depth-wrap driven by `user.time`) reported "static" after one frame and
+  froze on screen. Detection is structural — a `customUniforms` map or a
+  `shaderLayout` uniform field named `time` on the raw wire scene — and the
+  loop reports the new reason `material-clock`. Reduced-motion still stops
+  the loop, and genuinely static scenes still rest.
+
 ## v0.41.0 (2026-08-15)
 
 Client resource cost. Every change in this release reduces what a GoSX page
