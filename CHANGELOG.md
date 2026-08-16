@@ -7,6 +7,23 @@ failure that used to be silent or widens a strict surface without giving up
 its guarantee. The batch began as an audit from one production app
 (gridiron-2000); all eight filed issues land here.
 
+### The render loop runs for time-driven materials
+
+- **A material that declares a `time` uniform now counts as an animation
+  source.** `sceneAnimationState` enumerated transitions, autoRotate, compute
+  particles, water, model animations, and spin — but not the per-frame clock
+  fed to authored materials. A scene whose motion lives entirely in the
+  shader clock (a starfield whose layer spin was removed, with twinkle and
+  depth-wrap driven by `user.time`) reported "static" after one frame and
+  froze on screen. Detection is structural — a `customUniforms` map or a
+  `shaderLayout` uniform field named `time` on the raw wire scene — and the
+  loop reports the new reason `material-clock`. Reduced-motion still stops
+  the loop, and genuinely static scenes still rest.
+
+- **The visual harness's local Chrome launch carries the WebGPU-on-
+  SwiftShader flags**, so `--require-backend webgpu` can pass on a headless
+  box instead of silently exercising the WebGL fallback.
+
 ### Strict components: concatenation, boolean If, and a fail-open fix
 
 - **String concatenation in strict expressions.** A strict component may now
