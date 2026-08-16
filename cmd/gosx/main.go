@@ -397,6 +397,9 @@ func cmdCheck() {
 }
 
 func runCheck(file string, stderr io.Writer) error {
+	if err := checkVersionSkew(filepath.Dir(file)); err != nil {
+		return err
+	}
 	source, err := os.ReadFile(file)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", file, err)

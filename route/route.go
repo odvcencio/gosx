@@ -187,6 +187,7 @@ type Router struct {
 	errorLayout    LayoutFunc
 	revalidator    *server.Revalidator
 	observers      []server.RequestObserver
+	fileRouteDirs  []fileRouteDirSource
 }
 
 type handlerRoute struct {
@@ -290,6 +291,7 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 	if r == nil {
 		return nil, fmt.Errorf("route router is nil")
 	}
+	r.logUnregisteredFileModuleWarnings()
 	mux := http.NewServeMux()
 	for _, extra := range r.handlers {
 		var h http.Handler = extra.handler

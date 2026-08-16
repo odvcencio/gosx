@@ -250,6 +250,9 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 	dir = absDir
 
+	if err := checkVersionSkew(dir); err != nil {
+		return err
+	}
 	if err := syncModulesPackage(dir); err != nil {
 		return err
 	}

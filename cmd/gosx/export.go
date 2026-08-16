@@ -17,6 +17,9 @@ func RunExport(dir string) error {
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
+	if err := checkVersionSkew(absDir); err != nil {
+		return err
+	}
 
 	isMain, err := isMainPackage(absDir)
 	if err != nil {
