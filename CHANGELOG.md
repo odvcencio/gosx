@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+### Strict components: props-root hop-0 promoted and unexported fields now fail closed (gosx#195)
+
+- **`resolveStrictSelectorPath` no longer defers a hop-0 unknown field on
+  the props root.** The generated check program compiles in the same
+  package as the `.gsx` file, so Go resolved a promoted or unexported
+  props field there without complaint. The component compiled, checked
+  clean, and rendered differently between the map-backed file renderer
+  and the generated Go. The lowerer now reports the field with the same
+  B1-style message an `<Each>` binding root already used (gosx#182/#184):
+  `struct %s declares no visible field %s; promoted, unexported, and
+  unknown fields cannot cross the file renderer boundary`. Fixes #195.
+- **The old deferral covered two cases; only one still needs it.**
+  `validateStrictRenderedProps` already refuses a component when the
+  props struct's schema is not declared in the same file, before it calls
+  `resolveStrictSelectorPath` for any path. A genuinely absent field still
+  fails at the package checker, as before. A promoted or unexported field
+  on an already-known struct now fails at compile time, instead of
+  passing silently.
+- New tests cover both field shapes, plus an accept case for a legitimate
+  direct field and a mixed read set:
+  - `TestCompileStrictServerRejectsPromotedPropsHopZeroField`
+  - `TestCompileStrictServerRejectsUnexportedPropsHopZeroField`
+  - `TestCompileStrictServerAcceptsDirectScalarPropsHopZeroField`
+  - `TestCompileStrictServerRejectsMixedValidAndPromotedPropsReads`
+  - `TestStrictcheckRejectsPromotedPropsHopZeroField` and
+    `TestStrictcheckRejectsUnexportedPropsHopZeroField`
+    (real-Go-compiler-backed, mirroring
+    `TestStrictcheckRejectsPromotedEachBindingHopZeroField`)
+- **Scope note.** This fix covers a direct props read
+  (`resolveStrictSelectorPath`, including a concat or `<If cond>`
+  operand). `resolveStrictEachSourceType` (an `<Each of>` loop source) and
+  `resolveStrictSpreadForwardType` (an E2 spread source) still defer a
+  hop-0 unknown props field the same old way. They share the same guard
+  and the same latent gap; gosx#195 names only the direct-read case. A
+  follow-up issue should track the other two.
+
 ## v0.43.0 (2026-08-16)
 
 The strict surface grows loops and spreads, and the runtime grows time. Seven
