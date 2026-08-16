@@ -290,6 +290,16 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 		return err
 	}
 	r.Add(routes...)
+	// Remembered for Build/BuildChecked, which re-checks the registry at build
+	// time rather than here: registration in the shared registry usually runs
+	// from package init() blocks that execute before AddDir either way, but
+	// checking at build time keeps the diagnostic tied to where a developer
+	// actually observes the empty-data symptom.
+	r.fileRouteDirs = append(r.fileRouteDirs, fileRouteDirSource{
+		root:     root,
+		registry: registrar.moduleRegistry,
+		pages:    bundle.Pages,
+	})
 	return nil
 }
 
