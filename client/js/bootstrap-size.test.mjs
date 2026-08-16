@@ -506,7 +506,12 @@ const budgets = [
   // migration. The transpiled sources shift esbuild's identifier mangling
   // order, so a few minified names change length. The output stays
   // semantically identical: total bundle growth is 8 bytes over 1.69 MB.
-  { file: "bootstrap.js", raw: 1_526_702, gzip: 413_638, brotli: 332_200 },
+  // Bumped raw 1_526_702 -> 1_530_000, gzip 413_638 -> 415_000, brotli
+  // 332_200 -> 333_300 for the split-GLB point overlay merge (gltf baseSrc
+  // fetch + name-keyed patch), quantized _POINT_SIZE decode, and the
+  // memoized manifest parse with opt-in data-gosx-release text drop.
+  // Measured: 1_529_671 / 414_563 / 332_950, plus rounding headroom.
+  { file: "bootstrap.js", raw: 1_530_000, gzip: 415_000, brotli: 333_300 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -562,7 +567,11 @@ const budgets = [
   // 33_519 for the O-series propagation merge (Stack 04's dual navigation
   // dispatch/guard folded in with Stack 05's mailbox work). Measured:
   // 141_682 / 38_310 / 33_519.
-  { file: "bootstrap-runtime.js", raw: 141_682, gzip: 38_323, brotli: 33_519 },
+  // Bumped raw 141_682 -> 142_000, gzip 38_323 -> 38_500, brotli 33_519 ->
+  // 33_700 for the memoized manifest parse (window.__gosx_manifest) and the
+  // opt-in data-gosx-release text drop. Measured: 141_870 / 38_407 / 33_558,
+  // plus rounding headroom.
+  { file: "bootstrap-runtime.js", raw: 142_000, gzip: 38_500, brotli: 33_700 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -881,7 +890,11 @@ const budgets = [
   //
   // Bumped raw 533_809 -> 533_817 for the bootstrap-src TypeScript
   // migration (esbuild identifier-mangling shift, semantically identical).
-  { file: "bootstrap-feature-scene3d.js", raw: 533_817, gzip: 147_802, brotli: 122_610 },
+  // Bumped raw 533_817 -> 534_500, gzip 147_802 -> 148_200, brotli 122_610
+  // -> 123_000 for the memoized-manifest water shader source path
+  // (mount-backend prefers window.__gosx_manifest over a DOM re-parse).
+  // Measured: 533_909 / 147_844 / 122_634, plus rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 534_500, gzip: 148_200, brotli: 123_000 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1048,7 +1061,11 @@ const budgets = [
   // and gzip headroom unchanged. Measured: 384_977 / 93_123 / 77_915.
   // Final build includes the environment-map bindings: 386_741 / 93_538 /
   // 78_254.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 386_741, gzip: 93_538, brotli: 78_254 },
+  // Bumped raw 386_741 -> 388_000, gzip 93_538 -> 94_000, brotli 78_254 ->
+  // 78_800 for the memoized-manifest water shader ingest (ingestManifestValue
+  // reads window.__gosx_manifest before falling back to a DOM text re-parse).
+  // Measured: 387_272 / 93_709 / 78_460, plus rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 388_000, gzip: 94_000, brotli: 78_800 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1067,7 +1084,12 @@ const budgets = [
   // Final integrated measurement: 29_276 / 11_004 / 9_772.
   // Bumped brotli 9_800 -> 9_801 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 29_276 / 11_005 / 9_801.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 29_500, gzip: 11_100, brotli: 9_801 },
+  // Bumped raw 29_500 -> 32_000, gzip 11_100 -> 11_900, brotli 9_801 ->
+  // 10_600 for split scene loading: the point-overlay collector and merge
+  // (gosx.baseSrc follow + name-keyed patch of colors/positions/sizes) and
+  // the quantized _POINT_SIZE decode via extras pointSizeScale. Measured:
+  // 31_308 / 11_635 / 10_374, plus rounding headroom.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 32_000, gzip: 11_900, brotli: 10_600 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
@@ -1263,9 +1285,14 @@ const routeBudgets = [
     // 62_334 for the O-series propagation merge (Stack 04's dual navigation
     // dispatch/guard folded in with Stack 05's mailbox work). Measured:
     // 251_555 / 70_828 / 62_334.
-    raw: 251_555,
-    gzip: 70_850,
-    brotli: 62_334,
+    //
+    // Bumped raw 251_555 -> 251_800, gzip 70_850 -> 71_000, brotli 62_334 ->
+    // 62_500: bootstrap-runtime.js now memoizes the manifest parse, publishes
+    // it as window.__gosx_manifest, and honors the opt-in data-gosx-release
+    // text drop. Measured: 251_676 / 70_934 / 62_385, plus rounding headroom.
+    raw: 251_800,
+    gzip: 71_000,
+    brotli: 62_500,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1378,9 +1405,14 @@ const routeBudgets = [
     // Bumped raw 1_214_379 -> 1_214_387 for the bootstrap-src TypeScript
     // migration. The cause is the same identifier-mangling shift recorded on
     // the bootstrap.js budget above.
-    raw: 1_214_387,
-    gzip: 322_997,
-    brotli: 272_806,
+    //
+    // Bumped raw 1_214_387 -> 1_216_500, gzip 322_997 -> 323_700, brotli
+    // 272_806 -> 273_500 for the split-GLB point overlay merge and quantized
+    // _POINT_SIZE decode in the gltf surface, plus the memoized manifest
+    // parse in bootstrap-runtime.js. Measured: 1_215_328 raw.
+    raw: 1_216_500,
+    gzip: 323_700,
+    brotli: 273_500,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1461,9 +1493,14 @@ const routeBudgets = [
     // Bumped raw 1_038_427 -> 1_038_441 for the O-series propagation merge.
     // gzip and brotli headroom widened. Measured: 1_038_441 / 287_478 /
     // 243_846.
-    raw: 1_041_014,
-    gzip: 288_224,
-    brotli: 244_554,
+    //
+    // Bumped raw 1_041_014 -> 1_043_000, gzip 288_224 -> 289_000, brotli
+    // 244_554 -> 245_300 for the split-GLB overlay merge, quantized
+    // _POINT_SIZE decode, memoized manifest parse, and the scene3d water
+    // source memo path. Measured: 1_041_424 raw.
+    raw: 1_043_000,
+    gzip: 289_000,
+    brotli: 245_300,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1538,9 +1575,14 @@ const routeBudgets = [
     // Bumped raw 1_423_404 -> 1_423_418 for the O-series propagation merge.
     // gzip and brotli headroom widened. Measured: 1_423_418 / 380_601 /
     // 321_761.
-    raw: 1_427_755,
-    gzip: 381_762,
-    brotli: 322_808,
+    //
+    // Bumped raw 1_427_755 -> 1_430_000, gzip 381_762 -> 382_700, brotli
+    // 322_808 -> 323_700 for the split-GLB overlay merge, quantized
+    // _POINT_SIZE decode, memoized manifest parse, and the water source memo
+    // paths in both backends. Measured: 1_428_696 raw.
+    raw: 1_430_000,
+    gzip: 382_700,
+    brotli: 323_700,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1619,9 +1661,14 @@ const routeBudgets = [
     // 233_174 -> 233_266 for the O-series propagation merge (Stack 04's dual
     // navigation dispatch/guard folded in with Stack 05's mailbox work).
     // Measured: 1_057_706 / 278_511 / 233_266.
-    raw: 1_062_110,
-    gzip: 279_663,
-    brotli: 234_301,
+    //
+    // Bumped raw 1_062_110 -> 1_064_000, gzip 279_663 -> 280_400, brotli
+    // 234_301 -> 235_000 for the split-GLB overlay merge, quantized
+    // _POINT_SIZE decode, and memoized manifest parse. Measured: 1_063_051
+    // raw.
+    raw: 1_064_000,
+    gzip: 280_400,
+    brotli: 235_000,
   },
 
 ];
