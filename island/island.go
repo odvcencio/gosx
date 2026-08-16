@@ -1447,7 +1447,11 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 	b.WriteByte('<')
 	b.WriteString(safeTag)
 
-	for _, attr := range renderResolvedAttrs(&node, path) {
+	attrs := renderResolvedAttrs(&node, path)
+	if strings.EqualFold(node.Tag, "form") {
+		attrs = expandIslandManagedFormAttrs(attrs)
+	}
+	for _, attr := range attrs {
 		safeName := html.EscapeString(attr.Name)
 		if attr.Bool {
 			b.WriteByte(' ')
@@ -1471,6 +1475,71 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 	b.WriteString("</")
 	b.WriteString(safeTag)
 	b.WriteByte('>')
+}
+
+// expandIslandManagedFormAttrs applies the data-gosx-managed shorthand
+// expansion to a resolved <form> element's attributes (gosx#179 F2). Before
+// this, the island renderer was a third form-rendering surface that never
+// expanded the shorthand: it copied a resolved node's attributes straight
+// through, so a served island form kept the raw shorthand attribute
+// instead of the managed-form contract. The browser navigation runtime
+// still intercepted it — see managedFormShorthandTruthy in
+// client/runtime/host/navigation.ts — so the form was never left both
+// un-expanded and un-managed, but the server HTML did not match the other
+// two render paths' output.
+//
+// This mirrors node.go's expandManagedFormAttrs: it calls the same shared
+// truthy rule (gosx.ManagedFormShorthandTruthy) and inserts the same
+// default contract attributes in place of the shorthand attribute, only
+// filling in a contract attribute the author has not already written.
+// Like the other two render paths, it does not add
+// gosx.ManagedFormModeAttr — the HTML method attribute, if present, stays
+// authoritative for the navigation runtime. If the shorthand attribute is
+// absent, or present but not truthy, attrs is returned unchanged.
+func expandIslandManagedFormAttrs(attrs []vm.ResolvedAttr) []vm.ResolvedAttr {
+	idx := -1
+	for i, attr := range attrs {
+		if attr.Name == gosx.ManagedFormShorthandAttr {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return attrs
+	}
+	shorthand := attrs[idx]
+	var value any
+	if !shorthand.Bool {
+		value = shorthand.Value
+	}
+	if !gosx.ManagedFormShorthandTruthy(shorthand.Bool, value) {
+		return attrs
+	}
+
+	have := make(map[string]bool, len(attrs))
+	for _, attr := range attrs {
+		have[attr.Name] = true
+	}
+
+	defaults := []vm.ResolvedAttr{
+		{Name: gosx.ManagedFormAttr, Bool: true},
+		{Name: gosx.ManagedFormStateAttr, Value: "idle"},
+		{Name: gosx.EnhancementAttr, Value: "form"},
+		{Name: gosx.EnhancementLayerAttr, Value: "bootstrap"},
+		{Name: gosx.RuntimeFallbackAttr, Value: "native-form"},
+	}
+	var fill []vm.ResolvedAttr
+	for _, d := range defaults {
+		if !have[d.Name] {
+			fill = append(fill, d)
+		}
+	}
+
+	out := make([]vm.ResolvedAttr, 0, len(attrs)-1+len(fill))
+	out = append(out, attrs[:idx]...)
+	out = append(out, fill...)
+	out = append(out, attrs[idx+1:]...)
+	return out
 }
 
 func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {

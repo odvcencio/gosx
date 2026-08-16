@@ -284,26 +284,13 @@ func expandManagedFormAttrs(attrs []nodeAttr) []nodeAttr {
 }
 
 // managedFormShorthandTruthy reports whether a ManagedFormShorthandAttr
-// value opts the element in. A bare attribute (BoolAttr, presence=true) and
-// any non-empty value other than "false" (case-insensitive) are truthy, so
-// both `data-gosx-managed` and `data-gosx-managed="true"` work from .gsx
-// templates; `data-gosx-managed="false"` is an explicit opt-out.
+// value opts the element in. It delegates to ManagedFormShorthandTruthy
+// (runtime_contract.go), the single shared definition of the truthy rule
+// used by both this Node render path and the route package's .gsx render
+// path, so `data-gosx-managed` and `data-gosx-managed="true"` opt in and
+// `data-gosx-managed="false"` opts out the same way in either surface.
 func managedFormShorthandTruthy(attr nodeAttr) bool {
-	if attr.presence {
-		return true
-	}
-	switch v := attr.value.(type) {
-	case bool:
-		return v
-	case string:
-		v = strings.TrimSpace(v)
-		if v == "" {
-			return false
-		}
-		return !strings.EqualFold(v, "false")
-	default:
-		return true
-	}
+	return ManagedFormShorthandTruthy(attr.presence, attr.value)
 }
 
 func renderAttrHTML(b *strings.Builder, attr nodeAttr) {

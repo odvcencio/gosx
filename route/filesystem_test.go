@@ -2281,6 +2281,65 @@ func Page() Node {
 	}
 }
 
+// TestRouterAddDirServesPageWithManagedFormShorthand is the httptest
+// end-to-end assertion gosx#179 F7 asks for: a real page file, served over
+// the same file-based router a dev/prod server uses, whose form carries
+// only the data-gosx-managed shorthand. This closes the exact wrong-layer
+// loop that produced #179 — earlier server-render tests in this package
+// call RenderProgramComponent directly, which proved the file-program
+// renderer expands the shorthand but not that a request through the full
+// file router actually reaches that code path.
+func TestRouterAddDirServesPageWithManagedFormShorthand(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "page.gsx", `package docs
+
+func Page() Node {
+	return <main>
+		<form method="post" action="/save" data-gosx-managed>
+			<input name="q"></input>
+		</form>
+	</main>
+}
+`)
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument(ctx.Title("Docs"), ctx.Head(), body)
+	})
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := router.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	for _, want := range []string{
+		`method="post"`,
+		`action="/save"`,
+		gosx.ManagedFormStateAttr + `="idle"`,
+		gosx.EnhancementAttr + `="form"`,
+		gosx.EnhancementLayerAttr + `="bootstrap"`,
+		gosx.RuntimeFallbackAttr + `="native-form"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in served page html, got %q", want, body)
+		}
+	}
+	if !strings.Contains(body, " "+gosx.ManagedFormAttr+" ") && !strings.Contains(body, " "+gosx.ManagedFormAttr+">") {
+		t.Fatalf("expected the bare %s attribute in served page html, got %q", gosx.ManagedFormAttr, body)
+	}
+	if strings.Contains(body, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("expected shorthand attribute stripped from served html, got %q", body)
+	}
+}
+
 func TestRouterAddDirComposesDefaultAndNestedFileLayoutsWithRouteGroups(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs

@@ -1108,6 +1108,120 @@ func TestRenderIslandFromProgramRendersDynamicAttrs(t *testing.T) {
 	}
 }
 
+// hasIslandManagedFormAttr reports whether html contains the bare
+// gosx.ManagedFormAttr contract attribute as its own attribute, not merely
+// as a prefix of a longer attribute sharing the same name (for example
+// data-gosx-form-state) — see hasManagedFormAttr in
+// route/managed_form_shorthand_test.go for the same rule applied to the
+// file-program renderer's output.
+func hasIslandManagedFormAttr(html string) bool {
+	return strings.Contains(html, " "+gosx.ManagedFormAttr+" ") ||
+		strings.Contains(html, " "+gosx.ManagedFormAttr+">")
+}
+
+// TestRenderIslandFromProgramExpandsManagedFormShorthand covers gosx#179
+// F2: the island renderer was a third form render surface that never
+// expanded data-gosx-managed. renderResolvedNodeInto (called through
+// RenderIslandFromProgram -> renderProgramHTML -> RenderResolvedHTML) used
+// to copy a resolved <form> node's attributes straight through, so an
+// island form authored with the shorthand served with the raw attribute
+// instead of the managed-form contract, unlike the same shorthand on a
+// .gsx page rendered outside an island (route/fileprogram.go) or through
+// the Go Node API (node.go). The navigation runtime still intercepted the
+// unexpanded form client-side, so this was never a fail-open bug — only a
+// mismatch between what the three render surfaces served.
+func TestRenderIslandFromProgramExpandsManagedFormShorthand(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetProgramDir("/gosx/islands")
+
+	prog := &program.Program{
+		Name: "ShorthandForm",
+		Nodes: []program.Node{
+			{ // 0: form root, bare shorthand
+				Kind: program.NodeElement,
+				Tag:  "form",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "method", Value: "post"},
+					{Kind: program.AttrStatic, Name: "action", Value: "/x/__actions/y"},
+					{Kind: program.AttrBool, Name: "data-gosx-managed"},
+				},
+				Children: []program.NodeID{1},
+			},
+			{ // 1: input
+				Kind: program.NodeElement,
+				Tag:  "input",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "name", Value: "q"},
+				},
+			},
+		},
+		Root: 0,
+	}
+
+	node := r.RenderIslandFromProgram(prog, nil)
+	html := gosx.RenderHTML(node)
+
+	for _, want := range []string{
+		`method="post"`,
+		`action="/x/__actions/y"`,
+		gosx.ManagedFormStateAttr + `="idle"`,
+		gosx.EnhancementAttr + `="form"`,
+		gosx.EnhancementLayerAttr + `="bootstrap"`,
+		gosx.RuntimeFallbackAttr + `="native-form"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("expected %q in island-rendered managed-shorthand form html %q", want, html)
+		}
+	}
+	if !hasIslandManagedFormAttr(html) {
+		t.Fatalf("expected the bare %s attribute in island-rendered form html %q", gosx.ManagedFormAttr, html)
+	}
+	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("expected shorthand attribute removed from island output, got %q", html)
+	}
+	// The shorthand must not add a mode attribute — the HTML method
+	// attribute stays authoritative, matching node.go's and the
+	// file-program renderer's expansion rule.
+	if strings.Contains(html, gosx.ManagedFormModeAttr) {
+		t.Fatalf("expected no %s from the shorthand alone, got %q", gosx.ManagedFormModeAttr, html)
+	}
+}
+
+// TestRenderIslandFromProgramManagedFormShorthandFalseOptsOut is the
+// island-render counterpart to the .gsx and Node-API opt-out tests: a
+// falsy shorthand value must not expand, and must survive unchanged.
+func TestRenderIslandFromProgramManagedFormShorthandFalseOptsOut(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetProgramDir("/gosx/islands")
+
+	prog := &program.Program{
+		Name: "ShorthandFormOptOut",
+		Nodes: []program.Node{
+			{
+				Kind: program.NodeElement,
+				Tag:  "form",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "action", Value: "/x/__actions/y"},
+					{Kind: program.AttrStatic, Name: "data-gosx-managed", Value: "false"},
+				},
+			},
+		},
+		Root: 0,
+	}
+
+	node := r.RenderIslandFromProgram(prog, nil)
+	html := gosx.RenderHTML(node)
+
+	if !strings.Contains(html, `data-gosx-managed="false"`) {
+		t.Fatalf("expected the literal opt-out attribute in island output, got %q", html)
+	}
+	if hasIslandManagedFormAttr(html) {
+		t.Fatalf("expected no expansion for data-gosx-managed=\"false\" in island output, got %q", html)
+	}
+}
+
 func TestLoadDefaultBuildManifestRespectsSetManifestRoot(t *testing.T) {
 	// Create a temp dir with a build.json
 	dir := t.TempDir()

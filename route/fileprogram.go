@@ -124,14 +124,37 @@ func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, en
 
 func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	tag := html.EscapeString(node.Tag)
-	formContract := fileAutoManagedFormContract(node.Attrs, env, strings.EqualFold(node.Tag, "form"))
+	isForm := strings.EqualFold(node.Tag, "form")
+	formContract := fileAutoManagedFormContract(node.Attrs, env, isForm)
+	// gosx#179: a <form data-gosx-managed> shorthand attribute expands the
+	// same way here as it does through node.go's RenderHTML (Go Node API
+	// path) and the island package's resolved-tree renderer — see
+	// fileManagedFormShorthandTruthy and gosx.ManagedFormShorthandTruthy,
+	// the shared truthy rule all three render paths call. Unlike the
+	// method-based auto-detection above, the shorthand does not set a
+	// mode: the HTML method attribute, if present, stays authoritative
+	// for the navigation runtime.
+	shorthandManaged := isForm && fileManagedFormShorthandTruthy(node.Attrs, env)
+	if shorthandManaged {
+		formContract.Managed = true
+	}
 	b.WriteByte('<')
 	b.WriteString(tag)
 	attrs := node.Attrs
-	if formContract.Managed {
-		attrs = managedFormAttrs(node.Attrs)
+	// excludeSpreadKey filters the shorthand key back out of a
+	// {...extra}-supplied spread map, matching stripManagedFormShorthandAttr's
+	// removal of a directly-written shorthand attribute above (gosx#179 F4).
+	// Only set once the shorthand has actually expanded — an opted-out or
+	// absent shorthand must stay visible in the output exactly as authored.
+	excludeSpreadKey := ""
+	if shorthandManaged {
+		attrs = stripManagedFormShorthandAttr(attrs)
+		excludeSpreadKey = gosx.ManagedFormShorthandAttr
 	}
-	r.renderAttrs(b, attrs, env)
+	if formContract.Managed {
+		attrs = managedFormAttrs(attrs, formContract.Mode)
+	}
+	r.renderAttrs(b, attrs, env, excludeSpreadKey)
 	r.writeManagedFormContract(b, node.Attrs, env, formContract)
 	// Match node.go's renderNodeHTML: only self-close a void element that has
 	// no children. The old branch dropped children silently.
@@ -472,7 +495,13 @@ func (r *fileProgramRenderer) writeManagedForm(b *strings.Builder, node *ir.Node
 	if action := strings.TrimSpace(opts.defaultAction); action != "" && attrValue(node.Attrs, env, "action") == nil {
 		fmt.Fprintf(b, ` action="%s"`, html.EscapeString(action))
 	}
-	r.renderAttrs(b, managedFormAttrs(node.Attrs), env)
+	// The <Form>/<ActionForm> builtins are always managed, so an author-
+	// written data-gosx-managed shorthand alongside them is always noise —
+	// strip it (both a directly-written and a {...extra}-supplied copy)
+	// instead of rendering it beside the full contract it did nothing to
+	// produce (gosx#179 F9).
+	attrs := stripManagedFormShorthandAttr(node.Attrs)
+	r.renderAttrs(b, managedFormAttrs(attrs, contract.Mode), env, gosx.ManagedFormShorthandAttr)
 	r.writeManagedFormContract(b, node.Attrs, env, contract)
 	b.WriteByte('>')
 	r.writeChildren(b, node.Children, env)
@@ -1080,9 +1109,14 @@ func (r *fileProgramRenderer) renderChildren(children []ir.NodeID, env fileRende
 	return b.String()
 }
 
-func (r *fileProgramRenderer) renderAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
+// renderAttrs writes attrs as HTML attribute text. excludeSpreadKey, when
+// non-empty, drops a matching key out of any {...spread} attribute's
+// evaluated map before it renders (gosx#179 F4) — used to keep an already-
+// expanded data-gosx-managed shorthand from surviving into the output when
+// it was only supplied through a spread instead of written directly.
+func (r *fileProgramRenderer) renderAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string) {
 	for _, attr := range attrs {
-		renderFileAttr(b, attr, env)
+		renderFileAttr(b, attr, env, excludeSpreadKey)
 	}
 }
 
@@ -1122,7 +1156,7 @@ func writeFileAttrName(b *strings.Builder, name string) {
 	b.WriteString(name)
 }
 
-func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv) {
+func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv, excludeSpreadKey string) {
 	name := html.EscapeString(attr.Name)
 	switch attr.Kind {
 	case ir.AttrStatic:
@@ -1132,14 +1166,14 @@ func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv) {
 	case ir.AttrBool:
 		writeFileAttrName(b, name)
 	case ir.AttrSpread:
-		renderFileSpreadAttrs(b, evalFileExpr(attr.Expr, env))
+		renderFileSpreadAttrs(b, evalFileExpr(attr.Expr, env), excludeSpreadKey)
 	}
 }
 
-func renderFileSpreadAttrs(b *strings.Builder, value any) {
+func renderFileSpreadAttrs(b *strings.Builder, value any, excludeKey string) {
 	for _, entry := range sortedSpreadProps(value) {
 		normalized := normalizeFileAttrName(entry.Key)
-		if normalized == "" {
+		if normalized == "" || normalized == excludeKey {
 			continue
 		}
 		renderFileEvaluatedAttr(b, normalized, entry.Value)
@@ -1613,11 +1647,54 @@ func normalizeFileAttrName(name string) string {
 	}
 }
 
-func managedFormAttrs(attrs []ir.Attr) []ir.Attr {
+// managedFormAttrs drops the attributes the managed-form contract writes
+// itself so they are not duplicated: actionName (an ActionForm prop, never
+// real HTML) always, and server.NavigationFormModeAttr only when the
+// contract computed its own mode (contractMode != ""), because that mode
+// is about to be written by writeManagedFormContract. When contractMode is
+// "" — the common case for the data-gosx-managed shorthand, which never
+// computes a mode of its own (gosx#179 F1) — an author-written
+// data-gosx-form-mode is left in attrs untouched, so it survives into the
+// output instead of silently disappearing.
+func managedFormAttrs(attrs []ir.Attr, contractMode string) []ir.Attr {
 	out := make([]ir.Attr, 0, len(attrs))
 	for _, attr := range attrs {
 		switch strings.TrimSpace(attr.Name) {
-		case "actionName", server.NavigationFormModeAttr:
+		case "actionName":
+			continue
+		case server.NavigationFormModeAttr:
+			if contractMode != "" {
+				continue
+			}
+		}
+		out = append(out, attr)
+	}
+	return out
+}
+
+// fileManagedFormShorthandTruthy reports whether attrs carries a truthy
+// gosx.ManagedFormShorthandAttr (data-gosx-managed). attrValue already
+// resolves a static value, a dynamic {expr} attribute expression, an
+// AttrBool presence attribute, and a spread attribute to the same "value
+// present or not" shape, so this covers every way the shorthand can appear
+// in a .gsx template. attrValue returns nil when the attribute is absent,
+// or when a dynamic expression evaluated to nil; gosx.ManagedFormShorthandTruthy
+// treats a nil value as "not present" and returns false — the same rule
+// node.go and the island renderer apply, so this function delegates the
+// whole judgment (including the nil case) to the one shared definition
+// instead of special-casing nil here too.
+func fileManagedFormShorthandTruthy(attrs []ir.Attr, env fileRenderEnv) bool {
+	return gosx.ManagedFormShorthandTruthy(false, attrValue(attrs, env, gosx.ManagedFormShorthandAttr))
+}
+
+// stripManagedFormShorthandAttr removes the data-gosx-managed attribute
+// from attrs. Called only once the shorthand has expanded, matching
+// node.go's rule that the shorthand attribute itself does not survive into
+// the rendered output.
+func stripManagedFormShorthandAttr(attrs []ir.Attr) []ir.Attr {
+	out := make([]ir.Attr, 0, len(attrs))
+	for _, attr := range attrs {
+		if attr.Name == gosx.ManagedFormShorthandAttr {
 			continue
 		}
 		out = append(out, attr)
