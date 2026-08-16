@@ -23,6 +23,7 @@ const {
   scene3DCommandFetchRoutes,
   FakeElement,
   FakeFormData,
+  FakeFile,
   createContext,
   runScript,
   flushAsyncWork,
@@ -3904,6 +3905,67 @@ test("navigation runtime exposes programmatic managed action submission", async 
     ["csrf_token", "root-token"],
   ]);
   assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
+});
+
+// Pins the field report behind gosx#187: the managed-form fetch submission
+// must carry an uploaded file straight through, since serializeForm() in
+// navigation.ts builds FormData from the live form element (new
+// FormData(form)) and passes that FormData object as the fetch body with no
+// intermediate stringification. A regression that read only text inputs, or
+// that stringified a File before sending it, must fail this test.
+test("managed form submission carries a selected file straight through to fetch", async () => {
+  const actionURL = "http://localhost:3000/team/__actions/avatar";
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+
+  const nameField = new FakeElement("input", null);
+  nameField.setAttribute("name", "teamName");
+  nameField.value = "Falcons";
+  form.appendChild(nameField);
+
+  const fileField = new FakeElement("input", null);
+  fileField.setAttribute("type", "file");
+  fileField.setAttribute("name", "avatar");
+  const avatar = new FakeFile("avatar.png", "image/png", 2048);
+  fileField.files = [avatar];
+  form.appendChild(fileField);
+
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]: { text: '{"ok":true}', url: actionURL },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(env.fetchCalls[0].url, actionURL);
+
+  const body = env.fetchCalls[0].init.body;
+  assert.ok(
+    body instanceof FakeFormData,
+    "the managed form submission must send FormData as the fetch body",
+  );
+  assert.deepEqual(body.values, [
+    ["teamName", "Falcons"],
+    ["avatar", avatar],
+  ]);
+
+  const uploaded = body.get("avatar");
+  assert.equal(uploaded, avatar, "the file entry must remain the File object, not a stringified copy");
+  assert.equal(uploaded.name, "avatar.png");
+  assert.equal(uploaded.type, "image/png");
+  assert.equal(uploaded.size, 2048);
 });
 
 test("managed forms suppress duplicate submissions until their request settles", async () => {

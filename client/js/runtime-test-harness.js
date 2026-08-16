@@ -1965,6 +1965,20 @@ function buildSkinnedGLBBytes() {
   return Array.from(glb);
 }
 
+// FakeFile stands in for a browser File (a Blob subclass) inside the sandbox
+// DOM. It carries only the fields the runtime and its tests inspect — name,
+// MIME type, and byte size — never real bytes, since the fake fetch layer
+// never reads a request body.
+class FakeFile {
+  constructor(name, type, size) {
+    this.name = String(name || "");
+    this.type = String(type || "");
+    this.size = Number.isFinite(size) ? size : 0;
+    this.lastModified = Date.now();
+    this.__isFakeFile = true;
+  }
+}
+
 class FakeFormData {
   constructor(form) {
     this.values = [];
@@ -1974,6 +1988,10 @@ class FakeFormData {
   }
 
   append(name, value) {
+    if (value && typeof value === "object" && value.__isFakeFile) {
+      this.values.push([String(name), value]);
+      return;
+    }
     this.values.push([String(name), String(value == null ? "" : value)]);
   }
 
@@ -1997,7 +2015,12 @@ class FakeFormData {
       return;
     }
     const tag = node.tagName;
-    if ((tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") && node.hasAttribute("name")) {
+    if (tag === "INPUT" && node.getAttribute("type") === "file" && node.hasAttribute("name")) {
+      const files = Array.isArray(node.files) ? node.files : [];
+      for (const file of files) {
+        this.append(node.getAttribute("name"), file);
+      }
+    } else if ((tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") && node.hasAttribute("name")) {
       this.append(node.getAttribute("name"), node.value || node.getAttribute("value") || "");
     }
     for (const child of node.children) {
@@ -5523,6 +5546,7 @@ module.exports = {
   buildPointLineGLBBytes,
   buildSkinnedGLBBytes,
   FakeFormData,
+  FakeFile,
   createConsoleSpy,
   numberOr,
   createComputedStyleSnapshot,
