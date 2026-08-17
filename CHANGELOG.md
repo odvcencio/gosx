@@ -46,6 +46,43 @@
   grammar, a static `data-gosx-watch` value with no `"="`, and a static
   `data-gosx-watch-effect` value with an unrecognized token**, before the
   page ever serves.
+## v0.45.2 (2026-08-17)
+
+### Fixed: a WebGL scene stayed dead after an unrecovered context loss
+
+- **The render watchdog now rebuilds WebGL renderers.** Chrome does not
+  guarantee `webglcontextrestored` after an involuntary context loss; a page
+  is expected to rebuild on its own. Scene3D waited for the event forever.
+  Two paths ended permanently degraded:
+  - The "lost" stub renderer stayed installed with a black canvas.
+  - The loss ladder swapped in the Canvas2D stand-in on a replacement canvas
+    (a context-tainted canvas cannot hand back a 2d context), which detached
+    the original canvas's listeners — so a later restored event had no
+    audience, and nothing retried WebGL.
+  The watchdog poll now retries a real WebGL renderer for WebGL-preferring
+  scenes stuck on the "lost" stub or the Canvas2D stand-in: capped at 4
+  attempts with 4s→32s backoff, spent only while the tab is visible and the
+  scene can render. A still-lost context on the current canvas forces the
+  replacement-canvas path — building on a lost context would "succeed" into
+  a renderer that draws nothing. Also recovers a transient failure of the
+  INITIAL WebGL context creation, which used to settle on Canvas2D for the
+  life of the page.
+- Observed in production as the m31labs.dev content-route starfield loading
+  into a dead background that never came back without a hard reload.
+
+## v0.45.1 (2026-08-17)
+
+### Fixed: the WebGPU render watchdog counted hidden-tab time as a stall
+
+- **Hidden time resets the stall baseline.** A hidden tab stalls
+  requestAnimationFrame by design, and the watchdog's own poll interval is
+  throttled while hidden. Counting that time toward the 6.5s stall threshold
+  meant a tab return could fire the watchdog before the first resumed frame
+  presented — swapping in a fresh renderer and replaying the scene's entry
+  reveal from opacity zero. Observed in production as the m31labs galaxy
+  cyclically "re-loading" on every return to the tab. A genuine stall must
+  now accumulate entirely while the tab is visible; real visible-tab stalls
+  still recover exactly as before, pinned by a new backend-selection test.
 
 ## v0.45.0 (2026-08-16)
 
