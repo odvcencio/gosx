@@ -32,6 +32,74 @@ func Page() Node {
 				. The source is a checked-in PNG rendered by the GoSX native scene harness.
 			</p>
 		</div>
+		<h2 id="builtin">The &lt;Image&gt; builtin</h2>
+		<p>
+			<span class="inline-code">&lt;Image&gt;</span>
+			is the JSX tag form of the same helper, checked at build time instead of only at render time. Every
+			<span class="inline-code">&lt;Image&gt;</span>
+			requires a non-empty
+			<span class="inline-code">alt</span>
+			.
+		</p>
+		<CodeBlock lang="gsx" source={data.builtinLocalSample} />
+		<p>
+			A local source (a root-relative path such as
+			<span class="inline-code">/photos/harbor.jpg</span>
+			) needs no
+			<span class="inline-code">width</span>
+			or
+			<span class="inline-code">height</span>
+			:
+			<span class="inline-code">gosx check</span>
+			reads the file under
+			<span class="inline-code">public/</span>
+			and the renderer injects its intrinsic dimensions automatically. A local source naming no file under
+			<span class="inline-code">public/</span>
+			fails
+			<span class="inline-code">gosx check</span>
+			.
+		</p>
+		<CodeBlock lang="gsx" source={data.builtinExternalSample} />
+		<p>
+			An external source (an
+			<span class="inline-code">http://</span>
+			or
+			<span class="inline-code">https://</span>
+			URL) is never proxied or resized this release — it renders exactly as given. Because its dimensions cannot be probed at build time, an external (or otherwise dynamic) source requires an explicit
+			<span class="inline-code">width</span>
+			and
+			<span class="inline-code">height</span>
+			; omitting either fails
+			<span class="inline-code">gosx check</span>
+			too.
+		</p>
+		<p>
+			When
+			<span class="inline-code">gosx build</span>
+			has generated responsive variants for a local source (see
+			<a href="#formats">Formats &amp; Sizing</a>
+			), the rendered
+			<span class="inline-code">&lt;Image&gt;</span>
+			becomes a
+			<span class="inline-code">&lt;picture&gt;</span>
+			element: a WebP
+			<span class="inline-code">&lt;source&gt;</span>
+			plus an
+			<span class="inline-code">&lt;img&gt;</span>
+			fallback in the source's own format, both with a real srcset. Without a prior build — for example during
+			<span class="inline-code">gosx dev</span>
+			— it falls back to the request-time optimizer described above, so a page under active development always renders.
+		</p>
+		<p>
+			<span class="inline-code">&lt;Image&gt;</span>
+			is not supported inside an island component: an island re-renders on the client from its own program and cannot rebuild this server-rendered markup. Use a plain
+			<span class="inline-code">&lt;img&gt;</span>
+			element inside an island instead, with
+			<span class="inline-code">width</span>
+			and
+			<span class="inline-code">height</span>
+			set explicitly.
+		</p>
 		<h2 id="responsive">Responsive images</h2>
 		<CodeBlock lang="go" source={data.responsiveSample} />
 		<p>

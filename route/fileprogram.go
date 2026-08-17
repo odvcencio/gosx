@@ -566,6 +566,20 @@ func (r *fileProgramRenderer) writeManagedForm(b *strings.Builder, node *ir.Node
 	b.WriteString("</form>")
 }
 
+// renderImage renders the <Image> builtin tag. It emits a manifest-backed
+// <picture> (gosx#201) when gosx build's imagepipe stage (gosx#200)
+// recorded build-time variants for this src; otherwise it falls straight
+// through, unchanged, to the #199-fixed server.Image path — the runtime
+// optimizer URL, or a plain passthrough <img> for a source server.Image
+// does not optimize. Dev mode (no prior `gosx build`) always takes the
+// fallback: there is no manifest to read yet, so nothing here ever blocks
+// or changes dev-mode rendering.
+//
+// The format allowlist check runs once, here, before either path, so a bad
+// Format value panics identically regardless of which one a given src
+// would otherwise take (buildManifestImagePicture also declines a src that
+// names an explicit Format, but that decision must never depend on whether
+// the value was valid first).
 func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) string {
 	props := server.ImageProps{
 		Src:           stringValue(attrValue(node.Attrs, env, "src")),
@@ -582,11 +596,18 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 		Quality:       int(numericValue(attrValue(node.Attrs, env, "quality"))),
 		Format:        stringValue(attrValue(node.Attrs, env, "format")),
 	}
+	if err := server.ValidateProducibleImageFormat(props.Format); err != nil {
+		panic(err)
+	}
 
 	extra := imageExtraAttrs(node.Attrs, env)
 	args := make([]any, 0, len(extra))
 	if len(extra) > 0 {
 		args = append(args, gosx.Attrs(extra...))
+	}
+
+	if picture, ok := buildManifestImagePicture(props, args); ok {
+		return gosx.RenderHTML(picture)
 	}
 	return gosx.RenderHTML(server.Image(props, args...))
 }

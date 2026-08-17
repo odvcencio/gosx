@@ -474,7 +474,26 @@ func validateIslandNode(node *Node, scope *ExprScope) []Diagnostic {
 }
 
 func unsupportedIslandComponentDiagnostic(node *Node) (Diagnostic, bool) {
-	if node == nil || node.Kind != NodeComponent || !isUnsupportedIslandComponentRef(node.Tag) {
+	if node == nil || node.Kind != NodeComponent {
+		return Diagnostic{}, false
+	}
+	// <Image> gets its own message rather than falling through to the
+	// generic one below (gosx#201): an island re-renders client-side from
+	// its own program, which cannot rebuild the manifest-driven <picture>
+	// markup <Image> emits on the server (route/fileprogram.go) without
+	// shipping the whole buildmanifest.Manifest.Images bucket to the
+	// client -- out of scope for this release. One tag name must not mean
+	// two contracts, so <Image> is rejected inside an island outright, not
+	// silently downgraded to a plain <img> the way it used to be lowered
+	// (see islandElementAlias in ir/island.go, which no longer aliases it).
+	if node.Tag == "Image" {
+		return Diagnostic{
+			Span:    node.Span,
+			Message: "<Image> is not supported inside island components",
+			Hint:    "an island cannot rebuild <Image>'s server-rendered <picture> markup on the client; use a plain <img> element inside the island instead, and set width and height explicitly to avoid layout shift",
+		}, true
+	}
+	if !isUnsupportedIslandComponentRef(node.Tag) {
 		return Diagnostic{}, false
 	}
 	return Diagnostic{
