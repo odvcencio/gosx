@@ -10,13 +10,19 @@ import (
 	"m31labs.dev/gosx/server"
 )
 
-// manifestImageTestJSON is a build.json fixture carrying three
+// manifestImageTestJSON is a build.json fixture carrying four
 // buildmanifest.Manifest.Images entries this file's tests exercise:
 //
 //   - /manifest-hero.jpg: a JPEG source with both webp and jpeg variants at
-//     three widths -- the common "full <picture>" case.
+//     three widths -- only possible when a project has registered its own
+//     WebP imagepipe.Encoder (gosx ships none); still the full <picture>
+//     case whenever a manifest does carry it.
 //   - /manifest-only.webp: a WebP source with only webp variants -- imagepipe
 //     never generates a redundant same-format fallback for one.
+//   - /manifest-native-only.png: a PNG source with only png variants -- what
+//     an ordinary `gosx build` (no registered WebP encoder) actually
+//     produces for a raster source today; must render a plain <img>, never
+//     a <picture> with an empty <source>.
 //
 // Every source path here is unique to this file (the "manifest-" prefix),
 // so registering it as the process-global App (server.registerImageManifestLookup,
@@ -48,6 +54,15 @@ const manifestImageTestJSON = `{
       "variants": [
         {"width": 300, "format": "webp", "file": "only-300w.11111112.webp", "hash": "11111112", "size": 700},
         {"width": 600, "format": "webp", "file": "only-600w.11111113.webp", "hash": "11111113", "size": 1400}
+      ]
+    },
+    {
+      "source": "/manifest-native-only.png",
+      "width": 640,
+      "height": 480,
+      "variants": [
+        {"width": 320, "format": "png", "file": "native-320w.22222221.png", "hash": "22222221", "size": 500},
+        {"width": 640, "format": "png", "file": "native-640w.22222222.png", "hash": "22222222", "size": 900}
       ]
     }
   ]
@@ -186,6 +201,32 @@ func TestFileRendererImageWebPSourceSkipsPictureWrapper(t *testing.T) {
 		`srcset="/gosx/assets/images/only-300w.11111112.webp 300w, /gosx/assets/images/only-600w.11111113.webp 600w"`,
 		`width="600"`,
 		`height="300"`,
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Fatalf("expected %q in %q", snippet, html)
+		}
+	}
+}
+
+// TestFileRendererImageNativeOnlySourceSkipsPictureWrapper covers the
+// default shape gosx build now produces for every JPEG/PNG source with no
+// WebP imagepipe.Encoder registered (cmd/gosx ships none): a manifest entry
+// with only native-format variants, no "webp"-format entry at all. The
+// renderer must still emit a plain <img> with a real srcset, never a
+// <picture> wrapping an empty <source type="image/webp">.
+func TestFileRendererImageNativeOnlySourceSkipsPictureWrapper(t *testing.T) {
+	buildManifestApp(t)
+	html := compileImageFixture(t, `src="/manifest-native-only.png" alt="Native only"`)
+
+	if strings.Contains(html, "<picture>") || strings.Contains(html, "<source") {
+		t.Fatalf("expected a plain <img>, no <picture>/<source> wrapper for a native-only source, got %q", html)
+	}
+	for _, snippet := range []string{
+		`<img`,
+		`src="/gosx/assets/images/native-640w.22222222.png"`,
+		`srcset="/gosx/assets/images/native-320w.22222221.png 320w, /gosx/assets/images/native-640w.22222222.png 640w"`,
+		`width="640"`,
+		`height="480"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)

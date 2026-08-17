@@ -23,28 +23,42 @@ var imagePipeSourceExtensions = map[string]bool{
 }
 
 // imagePipeNativeFormat returns the output format that best matches ext's
-// own source encoding -- the format a caller that never asked for WebP
-// explicitly would still expect a resized variant to keep. It mirrors
+// own source encoding -- the format a caller that registered no extra
+// encoder would still expect a resized variant to keep. It mirrors
 // selectTargetImageFormat's source side in server/image.go: GIF sources
-// resize to PNG (a GIF's own format is not one Process encodes to), and an
-// unrecognized extension has no native fallback.
+// resize to PNG (a GIF's own format is not one Encode builds in), WebP
+// sources also resize to PNG by default (gosx ships no WebP encoder --
+// register one with imagepipe.RegisterEncoder(imagepipe.FormatWebP, ...) to
+// keep a WebP source's own format instead), and an unrecognized extension
+// has no native fallback.
 func imagePipeNativeFormat(ext string) (imagepipe.Format, bool) {
 	switch strings.ToLower(ext) {
 	case ".jpg", ".jpeg":
 		return imagepipe.FormatJPEG, true
 	case ".png":
 		return imagepipe.FormatPNG, true
-	case ".gif":
+	case ".gif", ".webp":
 		return imagepipe.FormatPNG, true
 	default:
 		return "", false
 	}
 }
 
+// imagePipeExtraFormats lists every non-native output format this stage
+// asks imagepipe.Process for when -- and only when -- imagepipe.Encoder is
+// registered for it (imagepipe.EncoderRegistered). Nothing in this module
+// calls imagepipe.RegisterEncoder: gosx ships no wasm runtime, no FFI shim,
+// and no WebP encoder in-tree (see package imagepipe's own doc comment). A
+// build of this stage that does call RegisterEncoder for one of these
+// formats -- before stageImageVariants runs, from the same process --
+// picks it up automatically, with no further change to this file.
+var imagePipeExtraFormats = []imagepipe.Format{imagepipe.FormatWebP}
+
 // stageImageVariants walks projectDir/public for raster images, resizes
 // each down the AutoImageWidths ladder capped at its own intrinsic width,
-// encodes every rung to WebP (plus, for JPEG/PNG/GIF sources, that same
-// native format as a fallback), and writes the hashed results into
+// encodes every rung to its own native format (plus any extra format named
+// in imagePipeExtraFormats with a registered Encoder -- none by default),
+// and writes the hashed results into
 // distDir/assets/images -- beside the runtime, island, and CSS asset
 // buckets gosx build already writes under distDir/assets, and right next
 // to the public/ copy stageDeploymentBundle just performed (issue #200).
@@ -111,8 +125,10 @@ func stageImageVariants(projectDir, distDir string) ([]buildmanifest.ImageAsset,
 }
 
 // processImagePipeSource probes, resizes, and encodes one source image and
-// writes its variants into imagesDir. ok is false (with a nil error) only
-// when the source has no usable ladder rungs; err is non-nil when the
+// writes its variants into imagesDir. ok is false (with a nil error) when
+// the source has no usable ladder rungs, or no output format applies to it
+// at all (an extension imagePipeNativeFormat does not recognize, with no
+// imagePipeExtraFormats encoder registered either); err is non-nil when the
 // source could not be probed, decoded, or its variants could not be
 // written.
 func processImagePipeSource(srcPath, source, ext, imagesDir string, candidates []int) (buildmanifest.ImageAsset, bool, error) {
@@ -129,9 +145,17 @@ func processImagePipeSource(srcPath, source, ext, imagesDir string, candidates [
 		return buildmanifest.ImageAsset{}, false, nil
 	}
 
-	formats := []imagepipe.Format{imagepipe.FormatWebP}
+	var formats []imagepipe.Format
 	if native, ok := imagePipeNativeFormat(ext); ok {
 		formats = append(formats, native)
+	}
+	for _, extra := range imagePipeExtraFormats {
+		if imagepipe.EncoderRegistered(extra) {
+			formats = append(formats, extra)
+		}
+	}
+	if len(formats) == 0 {
+		return buildmanifest.ImageAsset{}, false, nil
 	}
 
 	_, variants, err := imagepipe.Process(srcPath, widths, formats, imagepipe.EncodeOptions{})

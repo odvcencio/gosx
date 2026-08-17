@@ -54,10 +54,14 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 
 	switch {
 	case len(webp) > 0 && len(native) > 0:
-		// The common case: a WebP <source> (smaller, modern) plus an <img>
-		// fallback in the source's own original format — every browser
-		// without WebP <picture> support still gets a real, correctly
-		// sized image via the <img> alone.
+		// A source with both a WebP rung and a same-source native-format
+		// rung: only possible when a project has registered its own WebP
+		// imagepipe.Encoder (gosx ships none — see cmd/gosx's
+		// imagePipeExtraFormats and package imagepipe's own doc comment).
+		// A WebP <source> (smaller, modern) plus an <img> fallback in the
+		// source's own original format — every browser without WebP
+		// <picture> support still gets a real, correctly sized image via
+		// the <img> alone.
 		source := gosx.El("source", gosx.Attrs(
 			gosx.Attr("type", "image/webp"),
 			gosx.Attr("srcset", imageSrcsetValue(webp)),
@@ -65,20 +69,22 @@ func buildManifestImagePicture(props server.ImageProps, extra []any) (gosx.Node,
 		))
 		return gosx.El("picture", source, manifestImageOnly(base, sizes, native, extra)), true
 	case len(native) > 0:
-		// A source imagepipe could not also encode to WebP (none observed
-		// today — every raster extension it walks has a WebP encoder path
-		// — but a manifest is on-disk data a future build could vary).
-		// Its native-format variants alone already improve on the #199
-		// fallback: real hashed files, no per-request resize.
+		// The default case with no WebP encoder registered: every raster
+		// source resizes to its own native format only (cmd/gosx's
+		// imagePipeNativeFormat), so this is what an ordinary gosx build
+		// produces for a JPEG or PNG source. A plain <img>, not a
+		// <picture> — real hashed files, no per-request resize, and no
+		// empty <source> to render around.
 		return manifestImageOnly(base, sizes, native, extra), true
 	case len(webp) > 0:
-		// A WebP-native source (imagepipe never generates a redundant
-		// same-format fallback for one — see cmd/gosx's
-		// imagePipeNativeFormat). Its own WebP variants already ARE the
-		// "original format", so they render on a plain <img> — the same
-		// top-level element shape a non-manifest render already produces
-		// — rather than a <picture> wrapping one <source type="image/webp">
-		// and an <img> naming the identical bytes twice.
+		// A WebP-native source with no same-source native-format rung
+		// alongside it (cmd/gosx never generates a redundant same-format
+		// fallback for one — see imagePipeNativeFormat). Its own WebP
+		// variants already ARE the "original format", so they render on a
+		// plain <img> — the same top-level element shape a non-manifest
+		// render already produces — rather than a <picture> wrapping one
+		// <source type="image/webp"> and an <img> naming the identical
+		// bytes twice.
 		return manifestImageOnly(base, sizes, webp, extra), true
 	default:
 		return gosx.Node{}, false

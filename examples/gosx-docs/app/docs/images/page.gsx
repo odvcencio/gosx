@@ -80,13 +80,17 @@ func Page() Node {
 			<a href="#formats">Formats &amp; Sizing</a>
 			), the rendered
 			<span class="inline-code">&lt;Image&gt;</span>
-			becomes a
-			<span class="inline-code">&lt;picture&gt;</span>
-			element: a WebP
-			<span class="inline-code">&lt;source&gt;</span>
-			plus an
+			becomes a plain
 			<span class="inline-code">&lt;img&gt;</span>
-			fallback in the source's own format, both with a real srcset. Without a prior build — for example during
+			with a real srcset in the source's own format — GoSX ships no WebP encoder, so a JPEG source keeps a JPEG ladder and a PNG source keeps a PNG ladder. A project that registers its own WebP
+			<span class="inline-code">imagepipe.Encoder</span>
+			gets a
+			<span class="inline-code">&lt;picture&gt;</span>
+			element instead: a WebP
+			<span class="inline-code">&lt;source&gt;</span>
+			plus that same native-format
+			<span class="inline-code">&lt;img&gt;</span>
+			fallback. Without a prior build — for example during
 			<span class="inline-code">gosx dev</span>
 			— it falls back to the request-time optimizer described above, so a page under active development always renders.
 		</p>
@@ -133,7 +137,11 @@ func Page() Node {
 		<p>
 			A GIF source without an explicit output format is encoded as PNG by the current format selection. Request
 			<span class="inline-code">gif</span>
-			when GIF output is required. WebP and AVIF encoding are not part of the built-in v0.39 handler.
+			when GIF output is required. WebP and AVIF encoding are not part of the built-in
+			<span class="inline-code">gosx</span>
+			handler at all: GoSX ships no WebP or AVIF encoder (no wasm runtime, no FFI shim). The build-time
+			<span class="inline-code">imagepipe.RegisterEncoder</span>
+			extension point adds either back for a project willing to take on that encoder's own dependency itself.
 		</p>
 		<h2 id="serving">Serving and direct URLs</h2>
 		<CodeBlock lang="go" source={data.urlSample} />

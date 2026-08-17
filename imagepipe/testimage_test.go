@@ -1,6 +1,7 @@
 package imagepipe
 
 import (
+	"encoding/base64"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -60,14 +61,27 @@ func writeTestJPEG(t *testing.T, dir, name string, width, height int) string {
 	return path
 }
 
-// writeTestWebP writes a deterministic test image to dir/name.webp (via
-// this package's own Encode, so the fixture always matches whatever
-// encoder version go.mod pins) and returns the full path.
-func writeTestWebP(t *testing.T, dir, name string, width, height int) string {
+// gopherDocWebpBase64 is gopher-doc.1bpp.lossless.webp (75x100) from the
+// golang.org/x/image/webp package's own test corpus (BSD-3-Clause,
+// https://cs.opensource.google/go/x/image, LICENSE), already a transitive
+// build input via the golang.org/x/image module dependency this package
+// blank-imports for WebP decoding. Embedded here (and, separately, in
+// server/image_test.go) so a webp probe/decode test is self-contained and
+// does not depend on the module cache layout -- and, since Encode
+// no longer has a built-in WebP path (gosx ships none; see RegisterEncoder),
+// does not depend on one being registered either.
+const gopherDocWebpBase64 = "UklGRrIBAABXRUJQVlA4TKUBAAAvSsAYAA8w//M///MfeJAkbXvaSG7m8Q3GfYSBJekwQztm/IcZlgwnmWImn2BK7aFmBtnVir6q//8VOkFE/xm4baTIu8c48ArEo6+B3zFKYln3pqClSCKX0begFTAXFOLXHSyF8cCNcZEG4OywuA4KVVfJCiArU7GAgJI8+lJP/OKMT/fBAjevg1cYB7YVkFuWga2lyPi5I0HFy5YTpWIHg0RZpkniRVW9odHAKOwosWuOGdxIyn2OvaCDvhg/we6TwadPBPbqBV58MsLmMJ8yZnOWk8SRz4N+QoyPL+MnamzMvcE1rHNEr91F9GKZPVUcS9w7PhhH36suB9qPeYb/oLk6cuTiJ0wOK3m5h1cKjW6EVZCYMK7dxcKCBdgP9HkKr9gkAO2P8GKZGWVdIAatQa+1IDpt6qyorVwdy01xdW8Jkfk6xjEXmVQQ+HQdFr6OKhIN34dXWq0+0qr6EJSCeeVLH9+gvGTLyqM65PQ44ihzlTXxQKjKbAvshXgir7Lil9w4L2bvMycmjQcqXaMCO6BlY28i+FOLzbfI1vEqxAhotocAAA=="
+
+// writeTestWebP writes the embedded gopherDocWebpBase64 fixture (a real,
+// fixed 75x100 WebP file) to dir/name.webp and returns the full path.
+// It ignores width/height -- a probe/decode-only test cares that the file
+// is a genuine WebP with positive dimensions, not a chosen size, and this
+// package's own Encode has no built-in WebP path to generate one to size.
+func writeTestWebP(t *testing.T, dir, name string) string {
 	t.Helper()
-	data, err := Encode(newTestImage(width, height), FormatWebP, EncodeOptions{})
+	data, err := base64.StdEncoding.DecodeString(gopherDocWebpBase64)
 	if err != nil {
-		t.Fatalf("encode test WebP: %v", err)
+		t.Fatalf("decode embedded webp fixture: %v", err)
 	}
 	path := filepath.Join(dir, name+".webp")
 	if err := os.WriteFile(path, data, 0644); err != nil {

@@ -76,9 +76,10 @@ func registerImageManifestLookup(a *App) {
 
 // lookupImageManifestAsset reads only the buildmanifest.Manifest.Images
 // bucket this App already loaded (via runtimeBuildManifest) for every other
-// hashed asset it serves. It never touches package imagepipe or its WebP
-// encoder -- both are cmd/gosx-only (and, as of gosx#201, strictcheck's own
-// check-time stage); see TestServerPackageTreeNeverImportsImagepipe.
+// hashed asset it serves. It never touches package imagepipe -- build-time
+// only (and, as of gosx#201, strictcheck's own check-time stage) -- or any
+// encoder a project may have registered with it; see
+// TestServerPackageTreeNeverImportsImagepipe.
 func (a *App) lookupImageManifestAsset(src string) (buildmanifest.ImageAsset, bool) {
 	if a == nil || strings.TrimSpace(src) == "" {
 		return buildmanifest.ImageAsset{}, false

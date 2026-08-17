@@ -7,12 +7,15 @@ import (
 )
 
 // staticExportManifestJSON is a minimal build.json body carrying one
-// buildmanifest.Manifest.Images entry: /hero.png at 1200x800, with webp and
-// jpeg variants at width 320 plus a webp variant at its own intrinsic width
-// 1200. It exists so this file's tests never need package imagepipe (or its
-// encoder) to prove the resolver reads recorded manifest data correctly --
-// exactly the isolation TestServerPackageTreeNeverImportsImagepipe (repo
-// root) enforces.
+// buildmanifest.Manifest.Images entry: /hero.png at 1200x800, with jpeg and
+// webp variants at width 320 (jpeg listed first -- gosx build's own
+// generation order lists a source's native format first; a webp entry at
+// all only occurs when a project has registered its own WebP
+// imagepipe.Encoder, since gosx ships none in-tree) plus a jpeg variant at
+// its own intrinsic width 1200. It exists so this file's tests never need
+// package imagepipe (or a registered encoder) to prove the resolver reads
+// recorded manifest data correctly -- exactly the isolation
+// TestServerPackageTreeNeverImportsImagepipe (repo root) enforces.
 const staticExportManifestJSON = `{
   "runtime": {"wasm": {"file": "gosx-runtime.11111111.wasm", "hash": "11111111", "size": 10}},
   "islands": [],
@@ -23,9 +26,9 @@ const staticExportManifestJSON = `{
       "width": 1200,
       "height": 800,
       "variants": [
-        {"width": 320, "format": "webp", "file": "hero-320w.aaaaaaaa.webp", "hash": "aaaaaaaa", "size": 1000},
         {"width": 320, "format": "jpeg", "file": "hero-320w.bbbbbbbb.jpg", "hash": "bbbbbbbb", "size": 1500},
-        {"width": 1200, "format": "webp", "file": "hero-1200w.cccccccc.webp", "hash": "cccccccc", "size": 9000}
+        {"width": 320, "format": "webp", "file": "hero-320w.aaaaaaaa.webp", "hash": "aaaaaaaa", "size": 1000},
+        {"width": 1200, "format": "jpeg", "file": "hero-1200w.cccccccc.jpg", "hash": "cccccccc", "size": 9000}
       ]
     }
   ]
@@ -57,13 +60,14 @@ func TestStaticExportImageVariantResolvesRealVariantFromManifest(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 
-	// No format requested defaults to webp -- the build pipeline's own
-	// default output.
+	// No format requested matches the first variant recorded at that width
+	// -- gosx build's own native format, since it ships no WebP encoder
+	// and so never lists webp first.
 	got, ok = app.staticExportImageVariant("/hero.png", ImageTransform{Width: 320})
 	if !ok {
 		t.Fatal("expected a matching variant for /hero.png at 320px with no format")
 	}
-	if want := "/gosx/assets/images/hero-320w.aaaaaaaa.webp"; got != want {
+	if want := "/gosx/assets/images/hero-320w.bbbbbbbb.jpg"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 
@@ -72,7 +76,7 @@ func TestStaticExportImageVariantResolvesRealVariantFromManifest(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a matching variant for /hero.png at its own intrinsic width 1200px")
 	}
-	if want := "/gosx/assets/images/hero-1200w.cccccccc.webp"; got != want {
+	if want := "/gosx/assets/images/hero-1200w.cccccccc.jpg"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
