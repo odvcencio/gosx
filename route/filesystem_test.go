@@ -623,8 +623,17 @@ func Page() Node {
 	html := gosx.RenderHTML(node)
 	for _, snippet := range []string{
 		`class="demo-image"`,
+		// The bare "src" fallback keeps the full requested box (width and
+		// height together): it is the single non-srcset URL a browser
+		// without srcset support loads, so it renders exactly the declared
+		// width x height.
 		`src="/_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=960"`,
-		`srcset="/_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=320 320w, /_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=640 640w, /_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=960 960w"`,
+		// Ladder entries carry width only (gosx#199): copying h=624 into the
+		// 320w and 640w candidates would request that height at every
+		// narrower width and distort the image, since the source is not
+		// 960x624 at those widths. Height is left to derive proportionally
+		// at request time.
+		`srcset="/_gosx/image?src=%2Fpaper-card.png&amp;w=320 320w, /_gosx/image?src=%2Fpaper-card.png&amp;w=640 640w, /_gosx/image?src=%2Fpaper-card.png&amp;w=960 960w"`,
 		`width="960"`,
 		`height="624"`,
 		`alt="Sample artwork"`,
