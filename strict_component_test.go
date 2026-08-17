@@ -1679,6 +1679,86 @@ component C(props: RowProps) {
 	}
 }
 
+// TestCompileStrictServerRejectsPromotedPropsHopZeroField and
+// TestCompileStrictServerRejectsUnexportedPropsHopZeroField cover gosx#195:
+// a HOP-0 read on the PROPS root itself (a direct field of the props
+// struct, not a nested one) used to return the silent strictHopUnknownField
+// kind, deferring to the package checker. That deferral was false here too
+// — the generated check program compiles in the SAME package as the .gsx
+// file's declarations, so Go resolves a promoted or unexported props field
+// exactly as it resolves a declared one. Before the fix this compiled
+// clean, strictcheck accepted it, the boundary schema omitted the field,
+// and the file renderer and the transpiled Go diverged on props.Label
+// silently — the props-root mirror of gosx#182/#184's M-2 finding for an
+// <Each> binding root. Both must now fail closed at compile time with the
+// same B1-style message TestCompileStrictEachRejectsPromotedBindingHopZeroField
+// and TestCompileStrictEachRejectsUnexportedBindingHopZeroField prove for a
+// binding root.
+func TestCompileStrictServerRejectsPromotedPropsHopZeroField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Base struct { Label string }
+type Props struct { Base; Points string }
+component C(props: Props) {
+	return <section><span>{props.Label}</span></section>
+}
+`))
+	want := "strict component C cannot resolve props.Label: struct Props declares no visible field Label; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictServerRejectsUnexportedPropsHopZeroField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Props struct { label string; Points string }
+component C(props: Props) {
+	return <section><span>{props.label}</span></section>
+}
+`))
+	want := "strict component C cannot resolve props.label: struct Props declares no visible field label; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictServerAcceptsDirectScalarPropsHopZeroField is the accept
+// half of gosx#195's fix: Points is declared directly on Props (not
+// promoted through Base, not unexported), so a hop-0 read of it must keep
+// compiling clean — the fix rejects only a promoted or unexported hop-0
+// field, never a legitimately declared one.
+func TestCompileStrictServerAcceptsDirectScalarPropsHopZeroField(t *testing.T) {
+	source := []byte(`package app
+type Base struct { Label string }
+type Props struct { Base; Points string }
+component C(props: Props) {
+	return <section><span>{props.Points}</span></section>
+}
+`)
+	if _, err := Compile(source); err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+}
+
+// TestCompileStrictServerRejectsMixedValidAndPromotedPropsReads closes the
+// loop gosx#195's review probe opened: a read set that mixes one
+// legitimate direct scalar field with one promoted hop-0 field must still
+// fail closed on the promoted field, proving the fix fires per-path across
+// a component's whole read set, not only when the promoted field is the
+// sole read.
+func TestCompileStrictServerRejectsMixedValidAndPromotedPropsReads(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Base struct { Label string }
+type Props struct { Base; Points string }
+component C(props: Props) {
+	return <section><span>{props.Points}</span><b>{props.Label}</b></section>
+}
+`))
+	want := "strict component C cannot resolve props.Label: struct Props declares no visible field Label; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
 func TestCompileStrictEachBindingConcatAndCondBothPolarities(t *testing.T) {
 	// Accept: exact string/bool leaves.
 	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {
