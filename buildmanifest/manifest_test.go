@@ -1,8 +1,10 @@
 package buildmanifest
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -195,6 +197,108 @@ func TestManifestStaleIslandsRejectsEscapingSourceFile(t *testing.T) {
 
 	if stale := manifest.StaleIslands(dir); len(stale) != 0 {
 		t.Fatalf("escaping SourceFile reported stale: %v", stale)
+	}
+}
+
+// TestManifestImagesAdditiveOnOlderJSON proves issue #200's additive
+// promise: a manifest written before the Images field existed has no
+// "images" key at all, and must decode with Images == nil rather than
+// erroring or defaulting to an empty-but-non-nil slice that would make a
+// caller's presence check lie.
+func TestManifestImagesAdditiveOnOlderJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "build.json")
+	data := []byte(`{
+  "runtime": {"wasm": {"file": "gosx-runtime.11111111.wasm", "hash": "11111111", "size": 10}},
+  "islands": [],
+  "css": []
+}`)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	manifest, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if manifest.Images != nil {
+		t.Fatalf("Images = %#v, want nil for a manifest predating issue #200", manifest.Images)
+	}
+	if _, ok := manifest.ImageAssetBySource("/photo.jpg"); ok {
+		t.Fatal("ImageAssetBySource unexpectedly found an asset in a nil Images bucket")
+	}
+	if _, ok := manifest.ImageVariant("/photo.jpg", 800, "webp"); ok {
+		t.Fatal("ImageVariant unexpectedly found a variant in a nil Images bucket")
+	}
+}
+
+// TestManifestImagesRoundTrip proves a Manifest with Images populated
+// survives a JSON marshal/unmarshal cycle byte-for-byte at the field level,
+// and that ImageAssetBySource/ImageVariant read the round-tripped data
+// correctly.
+func TestManifestImagesRoundTrip(t *testing.T) {
+	original := &Manifest{
+		Runtime: RuntimeAssets{WASM: HashedAsset{File: "gosx-runtime.11111111.wasm", Hash: "11111111", Size: 10}},
+		Images: []ImageAsset{
+			{
+				Source: "/hero.jpg",
+				Width:  1200,
+				Height: 800,
+				Variants: []ImageVariantAsset{
+					{Width: 320, Format: "webp", HashedAsset: HashedAsset{File: "hero-320w.aaaaaaaa.webp", Hash: "aaaaaaaa", Size: 1000}},
+					{Width: 320, Format: "jpeg", HashedAsset: HashedAsset{File: "hero-320w.bbbbbbbb.jpg", Hash: "bbbbbbbb", Size: 1500}},
+					{Width: 1200, Format: "webp", HashedAsset: HashedAsset{File: "hero-1200w.cccccccc.webp", Hash: "cccccccc", Size: 9000}},
+				},
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var decoded Manifest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(original.Images, decoded.Images) {
+		t.Fatalf("round-tripped Images = %+v, want %+v", decoded.Images, original.Images)
+	}
+
+	asset, ok := decoded.ImageAssetBySource("/hero.jpg")
+	if !ok {
+		t.Fatal("expected an image asset for /hero.jpg after round trip")
+	}
+	if asset.Width != 1200 || asset.Height != 800 {
+		t.Fatalf("asset dims = %dx%d, want 1200x800", asset.Width, asset.Height)
+	}
+
+	webp320, ok := decoded.ImageVariant("/hero.jpg", 320, "webp")
+	if !ok || webp320.File != "hero-320w.aaaaaaaa.webp" {
+		t.Fatalf("ImageVariant(320, webp) = %+v, ok=%v, want hero-320w.aaaaaaaa.webp", webp320, ok)
+	}
+
+	// An empty format defaults to webp -- gosx build's own default output.
+	defaulted, ok := decoded.ImageVariant("/hero.jpg", 320, "")
+	if !ok || defaulted.File != webp320.File {
+		t.Fatalf("ImageVariant(320, \"\") = %+v, ok=%v, want the same webp variant %+v", defaulted, ok, webp320)
+	}
+
+	jpeg320, ok := decoded.ImageVariant("/hero.jpg", 320, "jpeg")
+	if !ok || jpeg320.File != "hero-320w.bbbbbbbb.jpg" {
+		t.Fatalf("ImageVariant(320, jpeg) = %+v, ok=%v, want hero-320w.bbbbbbbb.jpg", jpeg320, ok)
+	}
+
+	if _, ok := decoded.ImageVariant("/hero.jpg", 1920, "webp"); ok {
+		t.Fatal("ImageVariant matched a width (1920) gosx build never generated -- the ladder never upscales past 1200")
+	}
+	if _, ok := decoded.ImageVariant("/missing.jpg", 320, "webp"); ok {
+		t.Fatal("ImageVariant matched a source path with no recorded ImageAsset")
+	}
+
+	if got := decoded.ImageURL("/gosx/assets", webp320); got != "/gosx/assets/images/hero-320w.aaaaaaaa.webp" {
+		t.Fatalf("ImageURL = %q, want /gosx/assets/images/hero-320w.aaaaaaaa.webp", got)
 	}
 }
 

@@ -531,6 +531,7 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 	if !a.hasRoute("GET /gosx/") {
 		mux.Handle("GET /gosx/", http.HandlerFunc(a.serveRuntimeAsset))
 	}
+	registerStaticExportImageResolver(a)
 	if imageDir := a.effectiveImageDir(); imageDir != "" && !a.hasRoute(defaultImageEndpoint) {
 		mux.Handle("GET "+defaultImageEndpoint, ImageHandler(imageDir))
 	}
