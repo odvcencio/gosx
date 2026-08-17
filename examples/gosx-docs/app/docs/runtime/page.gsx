@@ -349,6 +349,136 @@ func Page() Node {
 				value with any unrecognized token, before the page ever serves.
 			</p>
 		</section>
+		<section id="declarative-reorder">
+			<h2>Declarative reorder</h2>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-reorder</span>
+				to a container and
+				<span class="inline-code">data-gosx-reorder-item</span>
+				to each direct child that can move, set to that item's identity. Mark one descendant
+				<span class="inline-code">data-gosx-reorder-handle</span>
+				— the item itself is the handle when none is marked. Name the endpoint a drop or a keyboard commit posts to with
+				<span class="inline-code">data-gosx-reorder-action</span>
+				, in the same
+				<span class="inline-code">"METHOD /url"</span>
+				grammar
+				<span class="inline-code">data-gosx-action</span>
+				uses.
+			</p>
+			{CodeBlock("gosx", `<ol data-gosx-reorder data-gosx-reorder-action="POST /api/board/reorder">
+	    <li data-gosx-reorder-item="42">
+	        <span data-gosx-reorder-handle aria-label="Reorder">⠿</span>
+	        Player Name
+	    </li>
+	</ol>`)}
+			<p>
+				A drop posts the moved item's identity and its zero-based target index as
+				<span class="inline-code">item_id</span>
+				and
+				<span class="inline-code">index</span>
+				by default. Override the field names with
+				<span class="inline-code">data-gosx-reorder-item-field</span>
+				and
+				<span class="inline-code">data-gosx-reorder-index-field</span>
+				on the container.
+			</p>
+			<p>
+				The runtime owns the full interaction, the reason a sortable list is a framework primitive and not a downstream widget:
+			</p>
+			<ul>
+				<li>
+					Pointer Events with
+					<span class="inline-code">setPointerCapture</span>
+					— one path for mouse and touch. The handle gets
+					<span class="inline-code">touch-action: none</span>
+					so a touch drag is not raced by the browser's own scroll gesture; every other pixel of the page keeps native scroll.
+				</li>
+				<li>
+					The reorder is optimistic: the DOM updates on drop, before the action response returns. A failed action reverts the list to its pre-drag order and surfaces the failure through the same
+					<span class="inline-code">data-gosx-form-state</span>
+					/
+					<span class="inline-code">data-gosx-pending</span>
+					attributes and live-region announcement managed forms already use.
+				</li>
+				<li>
+					Periodic revalidation (see
+					<span class="inline-code">data-gosx-revalidate-interval</span>
+					above) pauses for the whole gesture — pointerdown or grab through drop, cancel, or
+					<span class="inline-code">pointercancel</span>
+					— and resumes the moment it ends. Only the framework can coordinate this against its own revalidation loop.
+				</li>
+				<li>
+					A second grab anywhere in the same container while a drop's action submission is still in flight is refused outright. The list never changes and no second request is issued.
+				</li>
+				<li>
+					Escape and
+					<span class="inline-code">pointercancel</span>
+					cancel a pointer drag cleanly: the list returns to its pre-drag order and nothing is submitted.
+				</li>
+			</ul>
+			<p>
+				Keyboard reorder replaces a downstream app's arrow buttons on the same contract, not a decorative fallback:
+			</p>
+			<ul>
+				<li>
+					Space or Enter on the handle grabs the item.
+				</li>
+				<li>
+					Arrow Up and Arrow Down move it one position while grabbed.
+				</li>
+				<li>
+					Space drops it and posts the managed action.
+				</li>
+				<li>
+					Escape cancels and restores the original order.
+				</li>
+			</ul>
+			<p>
+				Each step announces to an
+				<span class="inline-code">aria-live</span>
+				region: a grab announces the item and its position ("Grabbed Player Name. Position 1 of 12. Use arrow keys to move, space to drop, escape to cancel."), each arrow move announces the new position ("Moved to position 4 of 12."), and a drop confirms it.
+			</p>
+			<p>
+				Style state with these class hooks — the runtime writes no inline style except
+				<span class="inline-code">transform</span>
+				on the lifted element while it tracks the pointer:
+			</p>
+			<ul>
+				<li>
+					<span class="inline-code">gosx-reorder--dragging</span>
+					on the container while a gesture, pointer or keyboard, is active.
+				</li>
+				<li>
+					<span class="inline-code">gosx-reorder-item--lifted</span>
+					on the item being pointer-dragged. Give it
+					<span class="inline-code">position: absolute</span>
+					with no
+					<span class="inline-code">top</span>
+					or
+					<span class="inline-code">left</span>
+					— an absolutely positioned box with neither keeps its static, in-flow position, so it starts exactly where the runtime's
+					<span class="inline-code">translateY</span>
+					expects.
+				</li>
+				<li>
+					<span class="inline-code">gosx-reorder-item--placeholder</span>
+					on the clone that marks the item's live target slot during a pointer drag.
+				</li>
+				<li>
+					<span class="inline-code">gosx-reorder-item--grabbed</span>
+					on the item during a keyboard grab.
+				</li>
+			</ul>
+			<p>
+				<span class="inline-code">data-gosx-reorder</span>
+				requires the navigation runtime (
+				<span class="inline-code">app.EnableNavigation()</span>
+				or
+				<span class="inline-code">server.NavigationScript()</span>
+				above) — periodic revalidation, the pause it pauses, and the managed-form error surface it reverts through all live there.
+			</p>
+		</section>
 		<section id="lifecycle-scripts">
 			<h2>Managed and lifecycle scripts</h2>
 			<p>

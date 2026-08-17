@@ -62,6 +62,30 @@
   const WATCH_EFFECT_ATTR = "data-gosx-watch-effect";
   const WATCH_TITLE_ATTR = "data-gosx-watch-title";
   const WATCH_TITLE_FLASH_INTERVAL_MS = 1000;
+  // Declarative reorder (data-gosx-reorder, gosx#212). See the "Declarative
+  // reorder" section below for the full contract; these are the attribute,
+  // class, and field-name constants it reads and writes.
+  const REORDER_CONTAINER_ATTR = "data-gosx-reorder";
+  const REORDER_ACTION_ATTR = "data-gosx-reorder-action";
+  const REORDER_ITEM_ATTR = "data-gosx-reorder-item";
+  const REORDER_HANDLE_ATTR = "data-gosx-reorder-handle";
+  const REORDER_HANDLE_READY_ATTR = "data-gosx-reorder-handle-ready";
+  const REORDER_ITEM_FIELD_ATTR = "data-gosx-reorder-item-field";
+  const REORDER_INDEX_FIELD_ATTR = "data-gosx-reorder-index-field";
+  const REORDER_PLACEHOLDER_ATTR = "data-gosx-reorder-placeholder";
+  const REORDER_DEFAULT_ITEM_FIELD = "item_id";
+  const REORDER_DEFAULT_INDEX_FIELD = "index";
+  const REORDER_DRAGGING_CLASS = "gosx-reorder--dragging";
+  const REORDER_LIFTED_CLASS = "gosx-reorder-item--lifted";
+  const REORDER_PLACEHOLDER_CLASS = "gosx-reorder-item--placeholder";
+  const REORDER_GRABBED_CLASS = "gosx-reorder-item--grabbed";
+  // The auto-scroll edge zone, in CSS pixels measured inward from each end of
+  // the container's own border box, and the fastest scroll speed a pointer
+  // pinned at the very edge of that zone reaches (pixels per tick — see
+  // REORDER_AUTOSCROLL_TICK_MS below).
+  const REORDER_AUTOSCROLL_EDGE_PX = 48;
+  const REORDER_AUTOSCROLL_MAX_PX = 18;
+  const REORDER_AUTOSCROLL_TICK_MS = 16;
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
@@ -2468,6 +2492,39 @@
     return navigationState.phase === "pending" || pendingManagedForms.size > 0;
   }
 
+  // revalidateSuspendCount backs suspendRevalidation (gosx#212): an active
+  // reorder drag holds one of these for its whole gesture (pointerdown/grab
+  // through drop, cancel, or pointercancel) so a periodic-revalidation DOM
+  // swap can never land mid-drag and pull the dragged element out from under
+  // the user's pointer or focus. It is a count, not a flag, so two callers
+  // that both need revalidation held off (unlikely today — only one reorder
+  // gesture can be active at a time — but a real future caller might exist)
+  // compose instead of one release accidentally waking the tick for the
+  // other.
+  let revalidateSuspendCount = 0;
+
+  function revalidationSuspended() {
+    return revalidateSuspendCount > 0;
+  }
+
+  // suspendRevalidation is the ONLY supported way to hold off periodic
+  // revalidation from outside this file — it is deliberately not exposed on
+  // navigationAPI: every current caller (the reorder section below) lives in
+  // this same closure and can call it directly. Returns a release function;
+  // call it exactly once when the interaction that needed quiet ends. A
+  // leaked suspension (a release that is never called) disables periodic
+  // revalidation for the rest of the page's life, so every caller releases
+  // from a finally-equivalent cleanup path, never only from the success path.
+  function suspendRevalidation() {
+    revalidateSuspendCount += 1;
+    let released = false;
+    return function releaseRevalidation() {
+      if (released) return;
+      released = true;
+      revalidateSuspendCount = Math.max(0, revalidateSuspendCount - 1);
+    };
+  }
+
   // A JS timer's delay is a 32-bit signed int internally; a larger value
   // does not error, it just fires almost immediately (or never, depending
   // on the engine) instead of after the requested delay. Reject a
@@ -2575,7 +2632,12 @@
   }
 
   function runRevalidateTick() {
-    if (documentIsHidden() || focusedControlBlocksRevalidation() || navigationOrFormSubmissionInFlight()) {
+    if (
+      documentIsHidden()
+      || focusedControlBlocksRevalidation()
+      || navigationOrFormSubmissionInFlight()
+      || revalidationSuspended()
+    ) {
       return;
     }
     if (!revalidateSrc) {
@@ -3832,6 +3894,753 @@
       }
     }
   }
+
+  // Declarative reorder (data-gosx-reorder, gosx#212)
+  //
+  // A container marks itself REORDER_CONTAINER_ATTR; each direct child that
+  // can move carries REORDER_ITEM_ATTR set to that item's identity, and one
+  // element inside the item (or the item itself, if none is marked) is its
+  // drag handle, REORDER_HANDLE_ATTR. The container also carries
+  // REORDER_ACTION_ATTR — the SAME "METHOD /url" spec data-gosx-action uses
+  // (see actions.ts) — naming the endpoint a drop or a keyboard commit posts
+  // the new order to. It is a dedicated attribute, not a literal
+  // data-gosx-action, because actions.ts already delegates plain clicks on
+  // any data-gosx-action element; a reorder container is very often a
+  // clickable, non-form element, and sharing the attribute would fire a
+  // spurious empty click-triggered action from the SAME element.
+  //
+  // Unlike countdown and revalidate above, dragging itself needs no
+  // per-navigation setup/teardown pair: every drag listener below is a
+  // single document-level delegated handler (the same pattern actions.ts
+  // uses for its click and submit listeners), so it keeps working after a
+  // soft-navigation DOM swap with nothing to re-scan — the delegated
+  // listener reads live attributes off whatever element the event landed
+  // on, on every event, forever. Handle PREPARATION (tabindex, role,
+  // aria-grabbed, touch-action) is the one piece that cannot wait for a
+  // first interaction — see prepareAllReorderHandles below, called on page
+  // load and after every soft navigation the same way actions.ts's own
+  // refreshBindings is.
+  //
+  // Only one reorder gesture — pointer or keyboard — is ever active at a
+  // time across the whole page; a grab attempt while one is already active,
+  // or while its container's own action submission is still in flight (the
+  // gosx#212 "second drag during an in-flight submit" case; see
+  // reorderContainerPending), is refused outright. This is a documented
+  // BLOCK policy, not a queue: the refused gesture never starts, and the
+  // list the user sees never differs from the order the last accepted
+  // gesture committed (or reverted to).
+  //
+  // Pointer drag never moves the real item element in the DOM while the
+  // gesture is in progress. It moves a placeholder — a clone of the item,
+  // marked REORDER_PLACEHOLDER_CLASS and REORDER_PLACEHOLDER_ATTR, with
+  // REORDER_ITEM_ATTR stripped so it is invisible to every function in this
+  // section that reads "the items" (reorderItems, the index math, the
+  // announcements) — through the list as the pointer crosses sibling
+  // midpoints. The real item stays exactly where it started, marked
+  // REORDER_LIFTED_CLASS, and follows the pointer with exactly one inline
+  // style: `transform: translateY(...)`. Author CSS for that class supplies
+  // `position: absolute` (with no top/left — an absolutely positioned box
+  // with neither keeps its static, in-flow position, so it starts exactly
+  // where translateY(0) should be) so the item leaves no gap of its own
+  // alongside the placeholder's gap. On drop, the real item replaces the
+  // placeholder at whatever slot the placeholder last reached; on cancel,
+  // the placeholder is simply discarded and the item — which never moved —
+  // needs no repositioning at all.
+  //
+  // Keyboard reorder has no pointer to float a lifted element toward, so it
+  // skips the lift/placeholder split entirely and just moves the real item
+  // one slot per arrow press, live, via insertBefore/insertAfter — the
+  // browser's own reflow is the only "animation" a keyboard reorder needs.
+  //
+  // Revalidation is paused (see suspendRevalidation above) for the full
+  // gesture: pointerdown/grab through drop, cancel, or pointercancel. It
+  // resumes the moment the gesture ends, not after the follow-up action
+  // submission settles — a revalidation DOM swap after the user's finger or
+  // pointer has already left the list is no longer a hazard the way one
+  // mid-drag is; pendingManagedForms-style protection for the submission
+  // itself is unnecessary because nothing else touches the container's
+  // FORM_STATE_ATTR/FORM_PENDING_ATTR pair while it is set (see
+  // reorderContainerPending).
+  // ---------------------------------------------------------------------
+
+  // reorderTargetIndex is the pure pointer-position -> target-index function
+  // gosx#212 requires (see client/js's reorder unit tests). `pointerY` is a
+  // viewport-space Y coordinate — the same space PointerEvent.clientY and
+  // Element.getBoundingClientRect() both use, so a scrolled container needs
+  // no special handling here: its items' rects already reflect the scroll
+  // position, the same way they reflect anything else about layout. `rects`
+  // lists every OTHER item in the sortable list — everything except the one
+  // being dragged — in current top-to-bottom order, each as { top, height }.
+  //
+  // The rule is a midpoint crossing: the dragged item belongs immediately
+  // before the first remaining item whose vertical midpoint the pointer has
+  // not yet reached. The return value is an insertion index into `rects`:
+  // 0 places the dragged item before rects[0], rects.length places it after
+  // the last one. An empty `rects` (a single-item list, dragging the only
+  // item) always returns 0 — there is nowhere else it could go.
+  function reorderTargetIndex(pointerY, rects) {
+    const list = rects || [];
+    for (let i = 0; i < list.length; i += 1) {
+      const rect = list[i];
+      const midpoint = rect.top + rect.height / 2;
+      if (pointerY < midpoint) {
+        return i;
+      }
+    }
+    return list.length;
+  }
+
+  // activeReorderDrag holds the in-progress POINTER drag, or null.
+  let activeReorderDrag = null;
+  // activeReorderKeyboard holds the in-progress KEYBOARD grab, or null.
+  let activeReorderKeyboard = null;
+
+  function addManagedClass(node, className) {
+    if (!node || !node.setAttribute || !node.getAttribute) return;
+    const current = String(node.getAttribute("class") || "").split(/\s+/).filter(Boolean);
+    if (current.indexOf(className) < 0) {
+      current.push(className);
+      node.setAttribute("class", current.join(" "));
+    }
+  }
+
+  function removeManagedClass(node, className) {
+    if (!node || !node.setAttribute || !node.getAttribute) return;
+    const current = String(node.getAttribute("class") || "").split(/\s+/).filter(Boolean);
+    const next = current.filter(function(name) { return name !== className; });
+    if (next.length !== current.length) {
+      node.setAttribute("class", next.join(" "));
+    }
+  }
+
+  function reorderContainerTruthy(value) {
+    // Mirrors managedFormShorthandTruthy's rule (gosx#179): a bare attribute
+    // and "" are truthy, "false" opts out, anything else is truthy.
+    return managedFormShorthandTruthy(value);
+  }
+
+  function isReorderContainer(node) {
+    return !!(node
+      && node.hasAttribute
+      && node.hasAttribute(REORDER_CONTAINER_ATTR)
+      && reorderContainerTruthy(node.getAttribute(REORDER_CONTAINER_ATTR)));
+  }
+
+  // reorderItems lists CONTAINER's direct children that carry
+  // REORDER_ITEM_ATTR, in current DOM order. A pointer-drag placeholder has
+  // that attribute stripped at creation (see beginReorderPointerDrag), so it
+  // never appears here — every caller below can treat this list as "the
+  // real, identity-bearing items" with no further filtering.
+  function reorderItems(container) {
+    return toArray(container && container.children).filter(function(child) {
+      return child.nodeType === 1 && child.hasAttribute && child.hasAttribute(REORDER_ITEM_ATTR);
+    });
+  }
+
+  // closestReorderAncestor walks up from `node` (inclusive) the same way
+  // closestLink above walks up to find a managed link — this file's
+  // established idiom for "nearest ancestor with attribute X" — rather than
+  // the native Element.closest(), which not every embedding DOM guarantees.
+  function closestReorderAncestor(node, attrName) {
+    let current = node;
+    while (current) {
+      if (current.hasAttribute && current.hasAttribute(attrName)) {
+        return current;
+      }
+      current = current.parentNode;
+    }
+    return null;
+  }
+
+  function reorderHandleFromTarget(target) {
+    return closestReorderAncestor(target, REORDER_HANDLE_ATTR);
+  }
+
+  function reorderItemFromHandle(handle) {
+    return closestReorderAncestor(handle, REORDER_ITEM_ATTR);
+  }
+
+  function reorderContainerFromItem(item) {
+    return item && item.parentNode && item.parentNode.nodeType === 1 ? item.parentNode : null;
+  }
+
+  // reorderHandleForTarget resolves an event target (a pointerdown target or
+  // a focused keydown target) to { handle, item, container }, or null if the
+  // target is not part of any sortable list. A descendant explicitly marked
+  // REORDER_HANDLE_ATTR is always the handle; failing that, the item itself
+  // is the handle ONLY when it declares no dedicated handle anywhere in its
+  // subtree — a click on an item's body text is not a drag gesture when that
+  // item has its own handle element elsewhere.
+  function reorderHandleForTarget(target) {
+    const explicitHandle = reorderHandleFromTarget(target);
+    if (explicitHandle) {
+      const item = reorderItemFromHandle(explicitHandle);
+      const container = reorderContainerFromItem(item);
+      if (item && container && isReorderContainer(container)) {
+        return { handle: explicitHandle, item: item, container: container };
+      }
+      return null;
+    }
+    const item = closestReorderAncestor(target, REORDER_ITEM_ATTR);
+    if (!item || (item.querySelector && item.querySelector("[" + REORDER_HANDLE_ATTR + "]"))) {
+      return null;
+    }
+    const container = reorderContainerFromItem(item);
+    if (!container || !isReorderContainer(container)) return null;
+    return { handle: item, item: item, container: container };
+  }
+
+  // prepareReorderHandle runs the first time a handle is ever resolved
+  // (pointer or keyboard), not on every scan — REORDER_HANDLE_READY_ATTR
+  // marks it done. It never runs twice for the same element, even across a
+  // soft navigation that leaves the element in place.
+  function prepareReorderHandle(handle) {
+    if (!handle || (handle.hasAttribute && handle.hasAttribute(REORDER_HANDLE_READY_ATTR))) {
+      return;
+    }
+    handle.setAttribute(REORDER_HANDLE_READY_ATTR, "true");
+    if (!handle.hasAttribute("tabindex")) {
+      handle.setAttribute("tabindex", "0");
+    }
+    if (!handle.hasAttribute("role")) {
+      handle.setAttribute("role", "button");
+    }
+    if (!handle.hasAttribute("aria-roledescription")) {
+      handle.setAttribute("aria-roledescription", "Sortable item");
+    }
+    handle.setAttribute("aria-grabbed", "false");
+    // touch-action: none is required so a touch-drag on the handle is not
+    // raced by the browser's own scroll-gesture recognizer before
+    // setPointerCapture can claim the pointer (gosx#212). It is scoped to
+    // the handle element only — every other pixel of the page, including
+    // the rest of a sortable item outside its handle, keeps native scroll
+    // behavior untouched. This is a functional/behavioral style, not a
+    // visual one, so it sits outside the "transform only" rule that governs
+    // REORDER_LIFTED_CLASS positioning below.
+    if (handle.style) {
+      handle.style.touchAction = "none";
+    }
+  }
+
+  function reorderHandleForItem(item) {
+    if (!item) return null;
+    const explicit = item.querySelector ? item.querySelector("[" + REORDER_HANDLE_ATTR + "]") : null;
+    return explicit || item;
+  }
+
+  // prepareAllReorderHandles eagerly prepares every handle on the page —
+  // page load, every soft navigation, and every DOMContentLoaded replay (the
+  // same three call sites actions.ts's own refreshBindings uses; see its
+  // doc comment) — so a keyboard-only user can Tab to a handle that has
+  // never received a pointer or keydown event. Grabbing and dragging stay
+  // pure delegated listeners with no scan of their own (see this section's
+  // opening comment); this is the one piece of the contract — a11y
+  // reachability — that genuinely cannot wait for a first interaction.
+  // prepareReorderHandle's own REORDER_HANDLE_READY_ATTR guard makes a
+  // repeat scan free for every element already prepared.
+  function prepareAllReorderHandles() {
+    for (const container of collectElements(document.body, isReorderContainer)) {
+      for (const item of reorderItems(container)) {
+        prepareReorderHandle(reorderHandleForItem(item));
+      }
+    }
+  }
+
+  function reorderItemLabel(item) {
+    const explicit = item && item.getAttribute && item.getAttribute("aria-label");
+    if (explicit) return normalizeTextValue(explicit);
+    return normalizeTextValue(item && item.textContent) || "item";
+  }
+
+  function reorderAnnouncement(verb, item, container) {
+    const items = reorderItems(container);
+    const index = items.indexOf(item);
+    const total = items.length || 1;
+    const position = index < 0 ? total : index + 1;
+    const label = reorderItemLabel(item);
+    switch (verb) {
+      case "grab":
+        return "Grabbed " + label + ". Position " + position + " of " + total
+          + ". Use arrow keys to move, space to drop, escape to cancel.";
+      case "move":
+        return "Moved to position " + position + " of " + total + ".";
+      case "drop":
+        return "Dropped " + label + " at position " + position + " of " + total + ".";
+      default:
+        return "";
+    }
+  }
+
+  function reorderContainerPending(container) {
+    return !!(container && container.getAttribute && container.getAttribute(FORM_PENDING_ATTR) === "true");
+  }
+
+  function reorderFieldName(container, attrName, fallback) {
+    const value = container && container.getAttribute && container.getAttribute(attrName);
+    const trimmed = String(value || "").trim();
+    return trimmed || fallback;
+  }
+
+  // parseReorderActionSpec reads REORDER_ACTION_ATTR using the exact
+  // "METHOD /url" / "/url" grammar data-gosx-action uses (see actions.ts
+  // parseAction). It prefers the live actions.ts parser through the public
+  // facade when that module is loaded (the common case — actions.ts ships in
+  // every bootstrap bundle) and falls back to an inline equivalent so
+  // reorder still works if a page somehow loads navigation.ts without it.
+  function parseReorderActionSpec(container) {
+    const raw = String((container && container.getAttribute && container.getAttribute(REORDER_ACTION_ATTR)) || "").trim();
+    if (window.__gosx && window.__gosx.actions && typeof window.__gosx.actions.parse === "function") {
+      return window.__gosx.actions.parse(raw, "POST");
+    }
+    const space = raw.indexOf(" ");
+    if (space > 0) {
+      return { method: raw.slice(0, space).toUpperCase(), url: raw.slice(space + 1).trim() };
+    }
+    return { method: "POST", url: raw };
+  }
+
+  // submitReorderAction is a lean, dedicated POST/PUT/PATCH transport for
+  // gosx#212 — deliberately NOT submitForm/submitAction. Those exist to
+  // progressively enhance a real, user-visible <form>, and on a network
+  // failure they fall back to a native form submission that navigates the
+  // whole page — exactly wrong for a background reorder POST the user never
+  // sees as a form. This function instead reports failure back to its caller
+  // (commitReorderResult), which reverts the optimistic DOM move and
+  // surfaces the error through the SAME FORM_STATE_ATTR/FORM_PENDING_ATTR/
+  // announceNavigation vocabulary managed forms use (see
+  // setManagedFormPending, captureManagedFormState, restoreManagedFormState
+  // above) — never through a page navigation.
+  async function submitReorderAction(container, method, url, fieldPairs) {
+    const target = navigationURLParts(url);
+    if (!target) {
+      return { ok: false, error: new Error("data-gosx-reorder-action has no URL: " + JSON.stringify(url)) };
+    }
+    const body = new URLSearchParams();
+    for (const pair of fieldPairs) {
+      body.append(pair[0], pair[1]);
+    }
+    const csrfToken = csrfTokenFromElement(container) || csrfTokenFromMeta();
+    let response = null;
+    try {
+      response = await gosxRuntimeRequest(target.href, {
+        method: method,
+        headers: Object.assign(
+          { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
+          csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+        ),
+        body: body,
+      });
+    } catch (error) {
+      return { ok: false, error: error };
+    }
+    let result = null;
+    try {
+      result = await parseJSONResponse(response);
+    } catch (_error) {
+      result = null;
+    }
+    const failed = !response.ok || !!(result && result.ok === false);
+    return { ok: !failed, response: response, result: result };
+  }
+
+  // restoreReorderItemPosition puts `item` back at `index` among `parent`'s
+  // OTHER current child nodes — an index, not a nextSibling reference: this
+  // file's fake-DOM test harness (and, more importantly, DocumentFragment
+  // nodes elsewhere in this file) do not reliably expose Node.nextSibling,
+  // so childIndex-style array lookups are this file's established idiom for
+  // "the node originally after this position" (see childIndex above).
+  function restoreReorderItemPosition(item, parent, index) {
+    if (!item || !parent) return;
+    const siblings = toArray(parent.childNodes).filter(function(node) { return node !== item; });
+    const before = index != null && index >= 0 && index < siblings.length ? siblings[index] : null;
+    if (before) {
+      parent.insertBefore(item, before);
+    } else {
+      parent.appendChild(item);
+    }
+  }
+
+  // commitReorderResult runs once per completed gesture (pointer drop or
+  // keyboard drop), AFTER the real item element already sits at its new DOM
+  // position — the optimistic reorder gosx#212 asks for. `originalParent`/
+  // `originalIndex` are the item's pre-gesture position, read back only if
+  // the submission fails.
+  async function commitReorderResult(container, item, originalParent, originalIndex) {
+    const spec = parseReorderActionSpec(container);
+    if (!spec.url) {
+      reportNavigationFailure("reorder action", new Error(REORDER_ACTION_ATTR + " is missing a URL"), {
+        source: windowLocationHref(),
+      });
+      return;
+    }
+
+    const items = reorderItems(container);
+    const index = items.indexOf(item);
+    const itemField = reorderFieldName(container, REORDER_ITEM_FIELD_ATTR, REORDER_DEFAULT_ITEM_FIELD);
+    const indexField = reorderFieldName(container, REORDER_INDEX_FIELD_ATTR, REORDER_DEFAULT_INDEX_FIELD);
+    const itemIdentity = String((item.getAttribute && item.getAttribute(REORDER_ITEM_ATTR)) || "");
+
+    const previousState = captureManagedFormState(container);
+    setManagedFormPending(container);
+    dispatchManagedEvent("gosx:reorder:submit", {
+      detail: { container: container, item: item, itemId: itemIdentity, index: index },
+    });
+
+    const outcome = await submitReorderAction(container, spec.method, spec.url, [
+      [itemField, itemIdentity],
+      [indexField, String(index)],
+    ]);
+
+    restoreManagedFormState(container, previousState);
+
+    if (!outcome.ok) {
+      restoreReorderItemPosition(item, originalParent, originalIndex);
+      container.setAttribute(FORM_STATE_ATTR, "error");
+      announceNavigation("Reorder failed. Order restored.");
+      dispatchManagedEvent("gosx:reorder:error", {
+        detail: {
+          container: container,
+          item: item,
+          itemId: itemIdentity,
+          index: index,
+          response: outcome.response || null,
+        },
+      });
+      reportNavigationFailure(
+        "reorder action",
+        outcome.error || new Error("reorder action failed with status " + (outcome.response ? outcome.response.status : 0)),
+        {
+          source: spec.url,
+          telemetry: { method: spec.method, url: spec.url, itemId: itemIdentity, index: index },
+        },
+      );
+      return;
+    }
+
+    container.setAttribute(FORM_STATE_ATTR, "success");
+    dispatchManagedEvent("gosx:reorder:result", {
+      detail: { container: container, item: item, itemId: itemIdentity, index: index, result: outcome.result || null },
+    });
+  }
+
+  // --- keyboard reorder ---------------------------------------------------
+
+  function beginKeyboardReorder(handle) {
+    const item = reorderItemFromHandle(handle) || handle;
+    const container = reorderContainerFromItem(item);
+    if (!container || !item || activeReorderKeyboard || activeReorderDrag || reorderContainerPending(container)) {
+      return;
+    }
+    activeReorderKeyboard = {
+      handle: handle,
+      item: item,
+      container: container,
+      originalParent: item.parentNode,
+      originalIndex: toArray(item.parentNode.childNodes).indexOf(item),
+      releaseRevalidation: suspendRevalidation(),
+    };
+    addManagedClass(container, REORDER_DRAGGING_CLASS);
+    addManagedClass(item, REORDER_GRABBED_CLASS);
+    handle.setAttribute("aria-grabbed", "true");
+    announceNavigation(reorderAnnouncement("grab", item, container));
+  }
+
+  function moveKeyboardReorder(step) {
+    const state = activeReorderKeyboard;
+    if (!state) return;
+    const items = reorderItems(state.container);
+    const index = items.indexOf(state.item);
+    const targetIndex = index + step;
+    if (index < 0 || targetIndex < 0 || targetIndex >= items.length) {
+      return;
+    }
+    if (step < 0) {
+      state.container.insertBefore(state.item, items[targetIndex]);
+    } else {
+      const after = items[targetIndex + 1] || null;
+      if (after) {
+        state.container.insertBefore(state.item, after);
+      } else {
+        state.container.appendChild(state.item);
+      }
+    }
+    announceNavigation(reorderAnnouncement("move", state.item, state.container));
+  }
+
+  function commitKeyboardReorder() {
+    const state = activeReorderKeyboard;
+    if (!state) return;
+    activeReorderKeyboard = null;
+    removeManagedClass(state.container, REORDER_DRAGGING_CLASS);
+    removeManagedClass(state.item, REORDER_GRABBED_CLASS);
+    state.handle.setAttribute("aria-grabbed", "false");
+    state.releaseRevalidation();
+    announceNavigation(reorderAnnouncement("drop", state.item, state.container));
+    focusElement(state.handle, true);
+    commitReorderResult(state.container, state.item, state.originalParent, state.originalIndex);
+  }
+
+  function cancelKeyboardReorder() {
+    const state = activeReorderKeyboard;
+    if (!state) return;
+    activeReorderKeyboard = null;
+    restoreReorderItemPosition(state.item, state.originalParent, state.originalIndex);
+    removeManagedClass(state.container, REORDER_DRAGGING_CLASS);
+    removeManagedClass(state.item, REORDER_GRABBED_CLASS);
+    state.handle.setAttribute("aria-grabbed", "false");
+    state.releaseRevalidation();
+    announceNavigation("Reorder cancelled.");
+    focusElement(state.handle, true);
+  }
+
+  // --- pointer reorder -----------------------------------------------------
+
+  function reorderAutoScrollDelta(clientY, containerRect) {
+    if (!containerRect || containerRect.height <= 0) return 0;
+    if (clientY <= containerRect.top) return -REORDER_AUTOSCROLL_MAX_PX;
+    if (clientY >= containerRect.bottom) return REORDER_AUTOSCROLL_MAX_PX;
+    const topZoneEnd = containerRect.top + REORDER_AUTOSCROLL_EDGE_PX;
+    if (clientY < topZoneEnd) {
+      const depth = (topZoneEnd - clientY) / REORDER_AUTOSCROLL_EDGE_PX;
+      return -Math.max(1, Math.round(depth * REORDER_AUTOSCROLL_MAX_PX));
+    }
+    const bottomZoneStart = containerRect.bottom - REORDER_AUTOSCROLL_EDGE_PX;
+    if (clientY > bottomZoneStart) {
+      const depth = (clientY - bottomZoneStart) / REORDER_AUTOSCROLL_EDGE_PX;
+      return Math.max(1, Math.round(depth * REORDER_AUTOSCROLL_MAX_PX));
+    }
+    return 0;
+  }
+
+  function reorderAutoScrollTick() {
+    const state = activeReorderDrag;
+    if (!state) return;
+    const containerRect = state.container.getBoundingClientRect();
+    const delta = reorderAutoScrollDelta(state.lastClientY, containerRect);
+    if (delta !== 0 && state.container && typeof state.container.scrollTop === "number") {
+      state.container.scrollTop += delta;
+    }
+  }
+
+  function updateReorderPointerDrag(event) {
+    const state = activeReorderDrag;
+    if (!state || event.pointerId !== state.pointerId) return;
+    state.lastClientY = event.clientY;
+    state.item.style.transform = "translateY(" + (event.clientY - state.startClientY) + "px)";
+
+    const others = reorderItems(state.container).filter(function(candidate) {
+      return candidate !== state.item;
+    });
+    const rects = others.map(function(candidate) {
+      const rect = candidate.getBoundingClientRect();
+      return { top: rect.top, height: rect.height };
+    });
+    const targetIndex = reorderTargetIndex(event.clientY, rects);
+    if (targetIndex === state.currentIndex) {
+      return;
+    }
+    state.currentIndex = targetIndex;
+    if (targetIndex >= others.length) {
+      state.container.appendChild(state.placeholder);
+    } else {
+      state.container.insertBefore(state.placeholder, others[targetIndex]);
+    }
+  }
+
+  function clearReorderTransform(item) {
+    if (!item || !item.style) return;
+    item.style.transform = "";
+  }
+
+  function endReorderPointerDrag(event, commit) {
+    const state = activeReorderDrag;
+    if (!state) return;
+    if (event && event.pointerId !== state.pointerId) return;
+    activeReorderDrag = null;
+
+    if (state.scrollIntervalHandle != null) {
+      clearInterval(state.scrollIntervalHandle);
+    }
+    if (state.handle.removeEventListener) {
+      state.handle.removeEventListener("pointermove", state.onMove);
+      state.handle.removeEventListener("pointerup", state.onUp);
+      state.handle.removeEventListener("pointercancel", state.onCancel);
+      state.handle.removeEventListener("lostpointercapture", state.onCancel);
+    }
+    try {
+      if (typeof state.handle.releasePointerCapture === "function") {
+        state.handle.releasePointerCapture(state.pointerId);
+      }
+    } catch (_error) {}
+
+    removeManagedClass(state.container, REORDER_DRAGGING_CLASS);
+    removeManagedClass(state.item, REORDER_LIFTED_CLASS);
+    clearReorderTransform(state.item);
+    state.releaseRevalidation();
+
+    if (!commit) {
+      if (state.placeholder.parentNode) {
+        state.placeholder.parentNode.removeChild(state.placeholder);
+      }
+      announceNavigation("Reorder cancelled.");
+      focusElement(state.handle, true);
+      return;
+    }
+
+    // Move the real item into the placeholder's slot, then discard the
+    // placeholder — insertBefore + removeChild rather than replaceChild,
+    // which not every embedding DOM in this codebase's test surfaces
+    // implements.
+    const placeholderParent = state.placeholder.parentNode;
+    if (placeholderParent) {
+      placeholderParent.insertBefore(state.item, state.placeholder);
+      placeholderParent.removeChild(state.placeholder);
+    }
+    announceNavigation(reorderAnnouncement("drop", state.item, state.container));
+    focusElement(state.handle, true);
+    commitReorderResult(state.container, state.item, state.originalParent, state.originalIndex);
+  }
+
+  function beginReorderPointerDrag(event, handle, item, container) {
+    if (activeReorderDrag || activeReorderKeyboard || reorderContainerPending(container)) {
+      return;
+    }
+    if (typeof event.pointerId !== "number" && typeof event.pointerId !== "string") {
+      return;
+    }
+
+    // Captured BEFORE the placeholder is inserted, so this is the item's true
+    // pre-gesture position — the position restoreReorderItemPosition returns
+    // it to if the follow-up submission fails (see commitReorderResult).
+    const originalParent = item.parentNode;
+    const originalIndex = toArray(originalParent.childNodes).indexOf(item);
+
+    const placeholder = item.cloneNode(true);
+    if (placeholder.removeAttribute) {
+      placeholder.removeAttribute("id");
+      placeholder.removeAttribute(REORDER_ITEM_ATTR);
+    }
+    addManagedClass(placeholder, REORDER_PLACEHOLDER_CLASS);
+    if (placeholder.setAttribute) {
+      placeholder.setAttribute("aria-hidden", "true");
+      placeholder.setAttribute(REORDER_PLACEHOLDER_ATTR, "true");
+    }
+    originalParent.insertBefore(placeholder, item);
+
+    activeReorderDrag = {
+      pointerId: event.pointerId,
+      handle: handle,
+      item: item,
+      container: container,
+      placeholder: placeholder,
+      originalParent: originalParent,
+      originalIndex: originalIndex,
+      startClientY: event.clientY,
+      lastClientY: event.clientY,
+      currentIndex: -1,
+      scrollIntervalHandle: null,
+      releaseRevalidation: suspendRevalidation(),
+      onMove: null,
+      onUp: null,
+      onCancel: null,
+    };
+
+    addManagedClass(container, REORDER_DRAGGING_CLASS);
+    addManagedClass(item, REORDER_LIFTED_CLASS);
+    item.style.transform = "translateY(0px)";
+
+    try {
+      if (typeof handle.setPointerCapture === "function") {
+        handle.setPointerCapture(event.pointerId);
+      }
+    } catch (_error) {}
+
+    const onMove = function(moveEvent) { updateReorderPointerDrag(moveEvent); };
+    const onUp = function(upEvent) { endReorderPointerDrag(upEvent, true); };
+    const onCancel = function(cancelEvent) { endReorderPointerDrag(cancelEvent || event, false); };
+    activeReorderDrag.onMove = onMove;
+    activeReorderDrag.onUp = onUp;
+    activeReorderDrag.onCancel = onCancel;
+    if (handle.addEventListener) {
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onCancel);
+      handle.addEventListener("lostpointercapture", onCancel);
+    }
+    activeReorderDrag.scrollIntervalHandle = setInterval(reorderAutoScrollTick, REORDER_AUTOSCROLL_TICK_MS);
+
+    announceNavigation(reorderAnnouncement("grab", item, container));
+  }
+
+  document.addEventListener("pointerdown", function(event) {
+    if (event.isPrimary === false) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const resolved = reorderHandleForTarget(event.target);
+    if (!resolved) return;
+    prepareReorderHandle(resolved.handle);
+    event.preventDefault();
+    beginReorderPointerDrag(event, resolved.handle, resolved.item, resolved.container);
+  });
+
+  document.addEventListener("keydown", function(event) {
+    const key = event.key;
+    if (activeReorderKeyboard) {
+      if (key === "Escape") {
+        event.preventDefault();
+        cancelKeyboardReorder();
+        return;
+      }
+      if (key === " " || key === "Spacebar") {
+        event.preventDefault();
+        commitKeyboardReorder();
+        return;
+      }
+      if (key === "ArrowUp") {
+        event.preventDefault();
+        moveKeyboardReorder(-1);
+        return;
+      }
+      if (key === "ArrowDown") {
+        event.preventDefault();
+        moveKeyboardReorder(1);
+        return;
+      }
+      return;
+    }
+    if (key !== " " && key !== "Spacebar" && key !== "Enter") return;
+    const resolved = reorderHandleForTarget(event.target);
+    if (!resolved) return;
+    prepareReorderHandle(resolved.handle);
+    event.preventDefault();
+    beginKeyboardReorder(resolved.handle);
+  });
+
+  // A soft navigation mid-gesture is an edge case (revalidation is already
+  // paused for the whole gesture, and nothing else initiates navigation
+  // without the user releasing the pointer or keyboard first), but this
+  // guards it anyway: neither cleanup path assumes its nodes are still
+  // attached to the current document, and both always release their
+  // revalidation suspension.
+  document.addEventListener("gosx:navigate", function() {
+    if (activeReorderDrag) {
+      endReorderPointerDrag(null, false);
+    }
+    if (activeReorderKeyboard) {
+      cancelKeyboardReorder();
+    }
+    prepareAllReorderHandles();
+  });
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", prepareAllReorderHandles, { once: true });
+  }
+  prepareAllReorderHandles();
+
+  const reorderAPI = {
+    targetIndexForPointer: reorderTargetIndex,
+    autoScrollDeltaForPointer: reorderAutoScrollDelta,
+  };
+  gosxHost.reorder = reorderAPI;
+  window.__gosx.reorder = Object.assign(window.__gosx.reorder || {}, reorderAPI);
 
   function revalidateNavigation(options) {
     // Force a same-URL revalidation through the normal navigation lifecycle.
