@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.45.1 (2026-08-17)
+
+### Fixed: the WebGPU render watchdog counted hidden-tab time as a stall
+
+- **Hidden time resets the stall baseline.** A hidden tab stalls
+  requestAnimationFrame by design, and the watchdog's own poll interval is
+  throttled while hidden. Counting that time toward the 6.5s stall threshold
+  meant a tab return could fire the watchdog before the first resumed frame
+  presented — swapping in a fresh renderer and replaying the scene's entry
+  reveal from opacity zero. Observed in production as the m31labs galaxy
+  cyclically "re-loading" on every return to the tab. A genuine stall must
+  now accumulate entirely while the tab is visible; real visible-tab stalls
+  still recover exactly as before, pinned by a new backend-selection test.
+
 ## v0.45.0 (2026-08-16)
 
 The module graph goes pure. gosx ships no wasm runtimes and no FFI shims:
