@@ -293,3 +293,86 @@ component C(props: RowProps) {
 		t.Fatalf("error = %v, want to contain %q", err, want)
 	}
 }
+
+// TestStrictcheckRejectsPromotedPropsHopZeroField and
+// TestStrictcheckRejectsUnexportedPropsHopZeroField are gosx#195's
+// real-Go-compiler-backed proof, mirroring
+// TestStrictcheckRejectsPromotedEachBindingHopZeroField for the PROPS root
+// instead of an <Each> binding root: before the fix, the projected check
+// program compiled clean here too — the promoted or unexported field
+// resolves fine in real Go, same package — which is exactly why the old
+// "the package checker backstops it" reasoning was false for this root as
+// well. strictcheck must reject both at the strict-syntax stage (the same
+// diagnostic gosx.Compile produces), never reach the Go compiler at all.
+func TestStrictcheckRejectsPromotedPropsHopZeroField(t *testing.T) {
+	source := `package app
+type Base struct { Label string }
+type Props struct { Base; Points string }
+component C(props: Props) {
+	return <section><span>{props.Label}</span></section>
+}
+`
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	goMod := "module example.test/promotedpropshopzero\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => " + filepath.ToSlash(root) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goSum, err := os.ReadFile("go.sum")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), goSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "promotedpropshopzero.gsx")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = strictcheck.CheckFileWithOptions(context.Background(), path, strictcheck.Options{GOFLAGS: "-mod=mod"})
+	if err == nil {
+		t.Fatal("strictcheck unexpectedly accepted a promoted field read at the props root's hop 0")
+	}
+	if want := "declares no visible field Label"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestStrictcheckRejectsUnexportedPropsHopZeroField(t *testing.T) {
+	source := `package app
+type Props struct { label string; Points string }
+component C(props: Props) {
+	return <section><span>{props.label}</span></section>
+}
+`
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	goMod := "module example.test/unexportedpropshopzero\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => " + filepath.ToSlash(root) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goSum, err := os.ReadFile("go.sum")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), goSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "unexportedpropshopzero.gsx")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = strictcheck.CheckFileWithOptions(context.Background(), path, strictcheck.Options{GOFLAGS: "-mod=mod"})
+	if err == nil {
+		t.Fatal("strictcheck unexpectedly accepted an unexported field read at the props root's hop 0")
+	}
+	if want := "declares no visible field label"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}

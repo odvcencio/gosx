@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+### Strict components: props-root hop-0 promoted and unexported fields now fail closed (gosx#195)
+
+- **`resolveStrictSelectorPath` no longer defers a hop-0 unknown field on
+  the props root.** The generated check program compiles in the same
+  package as the `.gsx` file, so Go resolved a promoted or unexported
+  props field there without complaint. The component compiled, checked
+  clean, and rendered differently between the map-backed file renderer
+  and the generated Go. The lowerer now reports the field with the same
+  B1-style message an `<Each>` binding root already used (gosx#182/#184):
+  `struct %s declares no visible field %s; promoted, unexported, and
+  unknown fields cannot cross the file renderer boundary`. Fixes #195.
+- **The old deferral covered two cases; only one still needs it.**
+  `validateStrictRenderedProps` already refuses a component when the
+  props struct's schema is not declared in the same file, before it calls
+  `resolveStrictSelectorPath` for any path. A genuinely absent field still
+  fails at the package checker, as before. A promoted or unexported field
+  on an already-known struct now fails at compile time, instead of
+  passing silently.
+- New tests cover both field shapes, plus an accept case for a legitimate
+  direct field and a mixed read set:
+  - `TestCompileStrictServerRejectsPromotedPropsHopZeroField`
+  - `TestCompileStrictServerRejectsUnexportedPropsHopZeroField`
+  - `TestCompileStrictServerAcceptsDirectScalarPropsHopZeroField`
+  - `TestCompileStrictServerRejectsMixedValidAndPromotedPropsReads`
+  - `TestStrictcheckRejectsPromotedPropsHopZeroField` and
+    `TestStrictcheckRejectsUnexportedPropsHopZeroField`
+    (real-Go-compiler-backed, mirroring
+    `TestStrictcheckRejectsPromotedEachBindingHopZeroField`)
+- **Scope note.** This fix covers a direct props read
+  (`resolveStrictSelectorPath`, including a concat or `<If cond>`
+  operand). `resolveStrictEachSourceType` (an `<Each of>` loop source) and
+  `resolveStrictSpreadForwardType` (an E2 spread source) still defer a
+  hop-0 unknown props field the same old way. They share the same guard
+  and the same latent gap; gosx#195 names only the direct-read case. A
+  follow-up issue should track the other two.
+
+### Fixes
+
+- **`route`: deterministic attribute order for an unresolved component
+  reference.** `defaultRenderedComponent` renders the
+  `<div data-gosx-component="Tag" ...>` fallback for a `<Component/>`
+  reference gosx does not resolve locally. It iterated its attribute map
+  in Go's randomized map order. Two renders of the same compiled program
+  could emit the same attributes in a different order. This broke
+  byte-identity goldens and churned HTTP caches and ETags on unchanged
+  content. Attribute names now sort before emission. Output is
+  byte-identical across repeated renders. Fixes #188.
+- **`route`: drop an attribute name smuggled through a `{...spread}` map
+  key.** `html.EscapeString` does not escape a space or an `=`. A spread
+  map key such as `x onmouseover=alert(1) y` rendered as three attributes —
+  `x`, `onmouseover=alert(1)`, and `y` — from one map entry, because
+  `normalizeFileAttrName` only trimmed whitespace and mapped `className`
+  to `class`. Every `{...spread}` call site now validates each key with
+  `validRenderAttrName`, the same helper #185's render-profile
+  `AttrWriter` path already uses, and drops an invalid key instead of
+  emitting it. This is inert, not fail-closed: the render-profile path
+  still fails closed on an invalid name, because a profile is trusted
+  code and a bad name there is a bug in it. A spread commonly carries
+  request or database data an author never wrote. One bad key must not
+  fail an otherwise-valid render. Fixes #189.
+
 ### Added: first-class file uploads through the action layer
 
 - **`ctx.Files(name)` and `ctx.File(name)` read uploaded files from an
