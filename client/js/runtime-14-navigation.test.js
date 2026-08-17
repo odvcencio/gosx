@@ -31,6 +31,7 @@ const {
   buildNavigatedDocument,
   installManualClock,
   installManualTimers,
+  createFakeAudioContextHarness,
 } = require("./runtime-test-harness.js");
 
 const hubConnectionsSource = [
@@ -5349,7 +5350,7 @@ test("countdown warn class toggles when the remainder crosses the threshold", ()
   const el = new FakeElement("span", null);
   el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:35Z");
   el.setAttribute("data-gosx-countdown-format", "mm:ss");
-  el.setAttribute("data-gosx-countdown-warn", "30s");
+  el.setAttribute("data-gosx-countdown-warn", "30s:is-warn");
   const env = createContext({ elements: [el] });
   const clock = installManualClock(env.context, 0);
   const timers = installManualTimers(env.context);
@@ -5360,19 +5361,19 @@ test("countdown warn class toggles when the remainder crosses the threshold", ()
     timers.runInterval(1000);
   }
   // remainder = 31s: still above the 30s threshold.
-  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("gosx-countdown--warn"), false);
+  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("is-warn"), false);
 
   clock.advance(1000);
   timers.runInterval(1000);
   // remainder = 30s: at the threshold, the warn class applies.
-  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("gosx-countdown--warn"), true);
+  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("is-warn"), true);
 });
 
-test("countdown accepts a bare-seconds data-gosx-countdown-warn value", () => {
+test("countdown accepts a bare-seconds threshold in a data-gosx-countdown-warn pair", () => {
   const el = new FakeElement("span", null);
   el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:05Z");
   el.setAttribute("data-gosx-countdown-format", "mm:ss");
-  el.setAttribute("data-gosx-countdown-warn", "10");
+  el.setAttribute("data-gosx-countdown-warn", "10:is-warn");
   const env = createContext({ elements: [el] });
   const clock = installManualClock(env.context, 0);
   const timers = installManualTimers(env.context);
@@ -5381,7 +5382,59 @@ test("countdown accepts a bare-seconds data-gosx-countdown-warn value", () => {
   clock.advance(1000);
   timers.runInterval(1000);
 
-  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("gosx-countdown--warn"), true);
+  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("is-warn"), true);
+});
+
+test("countdown warn accepts several independent threshold:class tiers, each toggling its own class", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:35Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-warn", "30s:is-warn,10s:is-critical");
+  const env = createContext({ elements: [el] });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const classes = () => (el.getAttribute("class") || "").split(/\s+/);
+
+  for (let i = 0; i < 5; i += 1) {
+    clock.advance(1000);
+    timers.runInterval(1000);
+  }
+  // remainder = 30s: only the 30s tier is active.
+  assert.equal(classes().includes("is-warn"), true);
+  assert.equal(classes().includes("is-critical"), false);
+
+  for (let i = 0; i < 20; i += 1) {
+    clock.advance(1000);
+    timers.runInterval(1000);
+  }
+  // remainder = 10s: both tiers are active at once — they are independent,
+  // not mutually exclusive.
+  assert.equal(classes().includes("is-warn"), true);
+  assert.equal(classes().includes("is-critical"), true);
+});
+
+test("an invalid pair anywhere in data-gosx-countdown-warn disables every tier for that countdown", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:35Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  // The second pair has no class token — the whole attribute is disabled,
+  // not just that one pair, matching every other countdown attribute's
+  // fail-closed handling of a bad value.
+  el.setAttribute("data-gosx-countdown-warn", "30s:is-warn,10s:");
+  const env = createContext({ elements: [el] });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  for (let i = 0; i < 5; i += 1) {
+    clock.advance(1000);
+    timers.runInterval(1000);
+  }
+  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("is-warn"), false);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-countdown-warn/);
 });
 
 test("countdown clamps a passed remainder to zero and holds \"0:00\"", () => {
@@ -5828,7 +5881,7 @@ test("countdown warn class write is skipped until the threshold actually crosses
   const el = new FakeElement("span", null);
   el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:35Z");
   el.setAttribute("data-gosx-countdown-format", "mm:ss");
-  el.setAttribute("data-gosx-countdown-warn", "30s");
+  el.setAttribute("data-gosx-countdown-warn", "30s:is-warn");
   el.setAttribute("class", "  pick-clock   big  ");
   const env = createContext({ elements: [el] });
   const clock = installManualClock(env.context, 0);
@@ -5846,5 +5899,463 @@ test("countdown warn class write is skipped until the threshold actually crosses
   clock.advance(1000);
   timers.runInterval(1000);
   // remainder = 30s: the threshold crosses, so this tick's write is real.
-  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("gosx-countdown--warn"), true);
+  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("is-warn"), true);
+});
+
+// ---------------------------------------------------------------------
+// Countdown urgency cues (data-gosx-countdown-cue, gosx#213)
+// ---------------------------------------------------------------------
+
+test("a countdown cue is silent when no user gesture has primed the shared AudioContext yet", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:05Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-cue", "5s:beep");
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({ elements: [el], AudioContext: audio.AudioContext });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  // No pointerdown/keydown has ever fired, so the shared AudioContext was
+  // never constructed — the threshold crossing below must stay silent.
+  clock.advance(1000);
+  timers.runInterval(1000);
+
+  assert.equal(audio.instances.length, 0, "an unprimed page must never construct the shared AudioContext");
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog(), []);
+});
+
+test("a pointerdown gesture primes the shared AudioContext, and the cue plays once the threshold crosses", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:05Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-cue", "5s:beep");
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({ elements: [el], AudioContext: audio.AudioContext });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  env.document.dispatchEvent({ type: "pointerdown" });
+  assert.equal(audio.instances.length, 1, "the first pointerdown must construct exactly one shared AudioContext");
+
+  // remainder = 5s at the very first tick: the threshold crosses immediately.
+  clock.advance(1000);
+  timers.runInterval(1000);
+
+  const log = env.context.__gosx.navigation.debugCueLog();
+  assert.equal(log.length, 1);
+  assert.equal(log[0].cue, "beep");
+  const oscillators = audio.instances[0].oscillators;
+  assert.equal(oscillators.length, 1, "\"beep\" schedules exactly one tone");
+  assert.equal(oscillators[0].type, "sine");
+  assert.equal(oscillators[0].frequency.value, 880);
+  assert.equal(oscillators[0].startCalls.length, 1);
+  assert.equal(oscillators[0].stopCalls.length, 1);
+});
+
+test("a keydown gesture primes the shared AudioContext just like a pointerdown", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:05Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-cue", "5s:beep");
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({ elements: [el], AudioContext: audio.AudioContext });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  env.document.dispatchEvent({ type: "keydown" });
+  clock.advance(1000);
+  timers.runInterval(1000);
+
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue), ["beep"]);
+});
+
+test("a \"chime\" cue schedules two tones, a rising fifth, back to back", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:05Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-cue", "5s:chime");
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({ elements: [el], AudioContext: audio.AudioContext });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  env.document.dispatchEvent({ type: "pointerdown" });
+  clock.advance(1000);
+  timers.runInterval(1000);
+
+  const oscillators = audio.instances[0].oscillators;
+  assert.equal(oscillators.length, 2, "\"chime\" schedules two tones");
+  assert.equal(oscillators[0].frequency.value, 660);
+  assert.equal(oscillators[1].frequency.value, 990);
+  assert.ok(oscillators[1].startCalls[0] >= oscillators[0].startCalls[0], "the second note starts no earlier than the first");
+});
+
+test("a suspended AudioContext is resumed on the priming gesture, and the cue still plays", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:05Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-cue", "5s:beep");
+  const audio = createFakeAudioContextHarness({ state: "suspended" });
+  const env = createContext({ elements: [el], AudioContext: audio.AudioContext });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  env.document.dispatchEvent({ type: "pointerdown" });
+  assert.equal(audio.instances[0].resumeCalls, 1, "priming a suspended context must call resume() once");
+
+  clock.advance(1000);
+  timers.runInterval(1000);
+
+  assert.equal(env.context.__gosx.navigation.debugCueLog().length, 1, "a cue attempt still schedules audio on a context resume() has not settled yet");
+});
+
+test("countdown cue accepts several independent threshold:cue tiers, each firing once at its own threshold", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:35Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-cue", "30s:chime,10s:beep");
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({ elements: [el], AudioContext: audio.AudioContext });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.dispatchEvent({ type: "pointerdown" });
+
+  for (let i = 0; i < 5; i += 1) {
+    clock.advance(1000);
+    timers.runInterval(1000);
+  }
+  // remainder = 30s: only the "chime" tier has crossed.
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue), ["chime"]);
+
+  for (let i = 0; i < 20; i += 1) {
+    clock.advance(1000);
+    timers.runInterval(1000);
+  }
+  // remainder = 10s: the "beep" tier has now also crossed, exactly once.
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue), ["chime", "beep"]);
+
+  for (let i = 0; i < 15; i += 1) {
+    clock.advance(1000);
+    timers.runInterval(1000);
+  }
+  // Both tiers stay crossed as the remainder keeps falling to zero — neither
+  // must fire a second time.
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue), ["chime", "beep"]);
+});
+
+test("a countdown cue does not replay when a revalidation swap rebuilds a fresh state for the same still-elapsed target", async () => {
+  const url = "http://localhost:3000/draft-room";
+  function draftRoom() {
+    const main = new FakeElement("main", null);
+    main.id = "draft-room";
+    main.setAttribute("data-gosx-revalidate-interval", "4s");
+    const clockEl = new FakeElement("span", null);
+    clockEl.setAttribute("data-gosx-countdown", "1970-01-01T00:00:01Z");
+    clockEl.setAttribute("data-gosx-countdown-format", "mm:ss");
+    clockEl.setAttribute("data-gosx-countdown-cue", "1s:beep");
+    main.appendChild(clockEl);
+    return main;
+  }
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({
+    elements: [draftRoom()],
+    AudioContext: audio.AudioContext,
+    fetchRoutes: { [url]: { text: "__DRAFT_ROOM_REFRESH__", url } },
+    // Every parse returns a FRESH document that still carries the same
+    // 1-second countdown target — the server has not advanced past it yet.
+    parseHTML() {
+      return buildNavigatedDocument({ title: "Draft room", bodyNodes: [draftRoom()] });
+    },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.dispatchEvent({ type: "pointerdown" });
+
+  clock.advance(1000); // countdown now at zero; the cue crosses once.
+  for (let i = 0; i < 6; i += 1) {
+    timers.runInterval(1000);
+    await flushAsyncWork();
+    clock.advance(1000);
+  }
+
+  assert.deepEqual(
+    env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue),
+    ["beep"],
+    "the cue's own threshold key has already fired for this target instant; every later rescan of the same instant must not replay it",
+  );
+});
+
+test("an unrecognized cue name anywhere in data-gosx-countdown-cue disables every tier for that countdown", () => {
+  const el = new FakeElement("span", null);
+  el.setAttribute("data-gosx-countdown", "1970-01-01T00:00:05Z");
+  el.setAttribute("data-gosx-countdown-format", "mm:ss");
+  el.setAttribute("data-gosx-countdown-cue", "5s:klaxon");
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({ elements: [el], AudioContext: audio.AudioContext });
+  const clock = installManualClock(env.context, 0);
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.dispatchEvent({ type: "pointerdown" });
+
+  clock.advance(1000);
+  timers.runInterval(1000);
+
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog(), []);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-countdown-cue/);
+});
+
+// ---------------------------------------------------------------------
+// Attention watcher (data-gosx-watch, gosx#214)
+// ---------------------------------------------------------------------
+
+test("a watch condition already true the first time it is seen fires its effects immediately, re-arms on false, and never replays an unchanged swap", async () => {
+  const url = "http://localhost:3000/draft-room";
+  let onClockValue = "false";
+  function buildDraftRoom() {
+    const main = new FakeElement("main", null);
+    main.id = "draft-room";
+    const panel = new FakeElement("div", null);
+    panel.id = "on-clock-panel";
+    panel.setAttribute("data-on-clock", onClockValue);
+    panel.setAttribute("data-gosx-watch", "data-on-clock=true");
+    panel.setAttribute("data-gosx-watch-effect", "class:is-active,class:is-glowing@#side-panel,title,cue:chime");
+    panel.setAttribute("data-gosx-watch-title", "It's your pick!");
+    const side = new FakeElement("div", null);
+    side.id = "side-panel";
+    main.appendChild(panel);
+    main.appendChild(side);
+    return main;
+  }
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({
+    elements: [buildDraftRoom()],
+    AudioContext: audio.AudioContext,
+    fetchRoutes: { [url]: { text: "__DRAFT_ROOM__", url } },
+    parseHTML() {
+      return buildNavigatedDocument({ title: "Draft Room", bodyNodes: [buildDraftRoom()] });
+    },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  env.document.title = "Draft Room";
+  // The "title" effect below schedules a real setInterval unless the
+  // timers are replaced with this manual double — installed even though
+  // this test never advances them, purely so the flash's interval never
+  // becomes a live background timer past the end of the test.
+  installManualTimers(env.context);
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.dispatchEvent({ type: "pointerdown" });
+
+  const panelClasses = () => (env.document.getElementById("on-clock-panel").getAttribute("class") || "").split(/\s+/);
+  const sideClasses = () => (env.document.getElementById("side-panel").getAttribute("class") || "").split(/\s+/);
+
+  // Boot: data-on-clock="false" — the condition is false, nothing fires.
+  assert.equal(panelClasses().includes("is-active"), false);
+  assert.equal(env.document.title, "Draft Room");
+  assert.equal(env.context.__gosx.navigation.debugCueLog().length, 0);
+
+  // Swap 1: data-on-clock flips to "true" — the FIRST sighting of an
+  // already-true condition, the primary gosx#214 scenario (a revalidation
+  // swap that introduces a freshly-true attribute) — fires every effect
+  // once.
+  onClockValue = "true";
+  assert.equal(await env.context.__gosx.navigation.revalidate(), true);
+  await flushAsyncWork();
+
+  assert.equal(panelClasses().includes("is-active"), true, "the self class effect must apply");
+  assert.equal(sideClasses().includes("is-glowing"), true, "the selector-target class effect must apply");
+  assert.equal(env.document.title, "It's your pick!", "the title effect must flash the configured message");
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue), ["chime"]);
+
+  // Swap 2: data-on-clock stays "true" — an unchanged swap must not replay
+  // any one-shot effect, even though setupPageWatchers rebuilds a fresh
+  // record for a fresh DOM node exactly like swap 1 did.
+  assert.equal(await env.context.__gosx.navigation.revalidate(), true);
+  await flushAsyncWork();
+
+  assert.equal(panelClasses().includes("is-active"), true, "a level-tied class effect stays applied");
+  assert.equal(env.document.title, "It's your pick!", "an unchanged swap must not restart the flash");
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue), ["chime"], "an unchanged swap must not replay the cue");
+
+  // Swap 3: data-on-clock clears to "false" — the true-to-false edge stops
+  // the title flash (restoring the ORIGINAL title captured before swap 1)
+  // and removes both class effects; no cue fires on this edge.
+  onClockValue = "false";
+  assert.equal(await env.context.__gosx.navigation.revalidate(), true);
+  await flushAsyncWork();
+
+  assert.equal(panelClasses().includes("is-active"), false);
+  assert.equal(sideClasses().includes("is-glowing"), false);
+  assert.equal(env.document.title, "Draft Room", "the condition clearing must restore the exact original title");
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue), ["chime"]);
+
+  // Swap 4: data-on-clock flips back to "true" — proves the watcher
+  // re-armed: every effect fires again, including a second cue.
+  onClockValue = "true";
+  assert.equal(await env.context.__gosx.navigation.revalidate(), true);
+  await flushAsyncWork();
+
+  assert.equal(panelClasses().includes("is-active"), true);
+  assert.equal(env.document.title, "It's your pick!");
+  assert.deepEqual(env.context.__gosx.navigation.debugCueLog().map((entry) => entry.cue), ["chime", "chime"]);
+});
+
+test("a title flash stops and restores the original title on window focus, independent of the condition", () => {
+  const el = new FakeElement("div", null);
+  el.id = "on-clock-panel";
+  el.setAttribute("data-on-clock", "true");
+  el.setAttribute("data-gosx-watch", "data-on-clock=true");
+  el.setAttribute("data-gosx-watch-effect", "title");
+  el.setAttribute("data-gosx-watch-title", "It's your pick!");
+  const env = createContext({ elements: [el] });
+  env.document.title = "Draft Room";
+  // See the previous test's own comment: without this, the "title" effect's
+  // setInterval is a real, live background timer for the rest of the run.
+  installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(env.document.title, "It's your pick!", "an already-true condition fires on the very first evaluation, at boot");
+
+  env.context.dispatchEvent({ type: "focus" });
+
+  assert.equal(env.document.title, "Draft Room", "window focus must restore the original title even while the condition is still true");
+});
+
+test("a watch condition can reference another element's attribute or text content by selector", () => {
+  const viewer = new FakeElement("div", null);
+  viewer.id = "viewer";
+  viewer.setAttribute("data-seat-id", "seat-7");
+  viewer.textContent = "seat-7";
+
+  const attrWatcher = new FakeElement("div", null);
+  attrWatcher.id = "attr-watcher";
+  attrWatcher.setAttribute("data-seat", "seat-7");
+  attrWatcher.setAttribute("data-gosx-watch", "data-seat=@#viewer[data-seat-id]");
+  attrWatcher.setAttribute("data-gosx-watch-effect", "class:matches-seat");
+
+  const textWatcher = new FakeElement("div", null);
+  textWatcher.id = "text-watcher";
+  textWatcher.setAttribute("data-seat", "seat-7");
+  textWatcher.setAttribute("data-gosx-watch", "data-seat=@#viewer");
+  textWatcher.setAttribute("data-gosx-watch-effect", "class:matches-seat");
+
+  const mismatchWatcher = new FakeElement("div", null);
+  mismatchWatcher.id = "mismatch-watcher";
+  mismatchWatcher.setAttribute("data-seat", "seat-9");
+  mismatchWatcher.setAttribute("data-gosx-watch", "data-seat=@#viewer[data-seat-id]");
+  mismatchWatcher.setAttribute("data-gosx-watch-effect", "class:matches-seat");
+
+  const env = createContext({ elements: [viewer, attrWatcher, textWatcher, mismatchWatcher] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  const classes = (el) => (el.getAttribute("class") || "").split(/\s+/);
+  assert.equal(classes(attrWatcher).includes("matches-seat"), true, "an [attrName] reference compares against the target's attribute");
+  assert.equal(classes(textWatcher).includes("matches-seat"), true, "a bare @selector reference compares against the target's trimmed textContent");
+  assert.equal(classes(mismatchWatcher).includes("matches-seat"), false, "a non-matching value must never fire");
+});
+
+test("an invalid data-gosx-watch value disables the watcher and warns once", () => {
+  const el = new FakeElement("div", null);
+  el.setAttribute("data-gosx-watch", "no-equals-sign-here");
+  el.setAttribute("data-gosx-watch-effect", "class:is-active");
+  const env = createContext({ elements: [el] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("is-active"), false);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-watch/);
+});
+
+test("an unrecognized data-gosx-watch-effect token is dropped on its own; the rest of the list still applies", () => {
+  const el = new FakeElement("div", null);
+  el.setAttribute("data-on-clock", "true");
+  el.setAttribute("data-gosx-watch", "data-on-clock=true");
+  el.setAttribute("data-gosx-watch-effect", "class:is-active,cue:klaxon,flash-lights");
+  const env = createContext({ elements: [el] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal((el.getAttribute("class") || "").split(/\s+/).includes("is-active"), true, "a valid token elsewhere in the same list must still apply");
+  assert.equal(env.consoleLogs.warn.length, 2, "one warning for the bad cue name, one for the unrecognized token");
+});
+
+test("cross-swap transition memory is keyed by id when present; a positional fallback can spuriously replay a cue when watcher order shifts", async () => {
+  const url = "http://localhost:3000/draft-room";
+  let onClockValue = "false";
+  let extraWatcherPresent = false;
+  function buildDoc() {
+    const main = new FakeElement("main", null);
+    main.id = "draft-room";
+    if (extraWatcherPresent) {
+      // A brand-new watcher, always false, inserted BEFORE the two below —
+      // every watcher after it shifts one position to the right.
+      const extra = new FakeElement("div", null);
+      extra.setAttribute("data-flag", "false");
+      extra.setAttribute("data-gosx-watch", "data-flag=true");
+      main.appendChild(extra);
+    }
+    const withId = new FakeElement("div", null);
+    withId.id = "stable-watcher";
+    withId.setAttribute("data-on-clock", onClockValue);
+    withId.setAttribute("data-gosx-watch", "data-on-clock=true");
+    withId.setAttribute("data-gosx-watch-effect", "cue:beep");
+    main.appendChild(withId);
+
+    const noId = new FakeElement("div", null);
+    noId.setAttribute("data-on-clock", onClockValue);
+    noId.setAttribute("data-gosx-watch", "data-on-clock=true");
+    noId.setAttribute("data-gosx-watch-effect", "cue:beep");
+    main.appendChild(noId);
+    return main;
+  }
+  const audio = createFakeAudioContextHarness();
+  const env = createContext({
+    elements: [buildDoc()],
+    AudioContext: audio.AudioContext,
+    fetchRoutes: { [url]: { text: "__DRAFT_ROOM__", url } },
+    parseHTML() {
+      return buildNavigatedDocument({ title: "Draft Room", bodyNodes: [buildDoc()] });
+    },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.dispatchEvent({ type: "pointerdown" });
+
+  // Both watchers flip false-to-true on this swap: each fires its cue once.
+  onClockValue = "true";
+  assert.equal(await env.context.__gosx.navigation.revalidate(), true);
+  await flushAsyncWork();
+  assert.equal(env.context.__gosx.navigation.debugCueLog().length, 2);
+
+  // The swap under test: data-on-clock stays "true" on both watchers —
+  // an unchanged condition, which must never replay a cue — but a new,
+  // unrelated watcher is inserted before them, shifting the no-id
+  // watcher's position in document order.
+  extraWatcherPresent = true;
+  assert.equal(await env.context.__gosx.navigation.revalidate(), true);
+  await flushAsyncWork();
+
+  assert.equal(
+    env.context.__gosx.navigation.debugCueLog().length,
+    3,
+    "the id-keyed watcher's condition never changed (2 total), but the no-id watcher's position shifted to a key with " +
+    "no prior memory, so its unchanged condition is spuriously treated as a fresh transition (3 total) — the documented " +
+    "cost of the positional fallback; give a watch element a stable id when its position in the document can change",
+  );
 });

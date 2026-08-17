@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased
+
+### Added: countdown urgency tiers, synthesized audio cues, and an attention watcher
+
+- **`data-gosx-countdown-warn` now takes a comma-separated list of
+  `threshold:class` pairs** (gosx#213), for example
+  `"30s:is-warn,10s:is-critical"`. Each tier toggles its own class
+  independently, at or below its own threshold, recomputed every tick — a
+  countdown that resets to a later target re-arms every tier for free.
+  This replaces the old single-duration form that always toggled one
+  fixed class (`gosx-countdown--warn`); a bare duration with no class is
+  no longer valid. `NavigationCountdownWarnClass` is removed from
+  `server/navigation_contract.go`.
+- **`data-gosx-countdown-cue` plays a short synthesized WebAudio tone**
+  the first time the remaining time crosses at or below a threshold, using
+  the same comma-separated `threshold:cue` pair grammar, with a cue name
+  from a fixed, tiny vocabulary: `"beep"` or `"chime"`. Every tone is
+  synthesized — there are no audio asset files. The runtime shares one
+  `AudioContext` for the whole page, constructed on the visitor's first
+  pointerdown or keydown and never before, so a threshold crossed before
+  that first gesture stays silent. Each threshold fires its cue exactly
+  once per downward crossing, and a countdown that resets re-arms it.
+- **`data-gosx-watch` declares a condition over one of its own attributes**
+  (gosx#214): `"<attrName>=<value>"` compares that attribute's live value
+  against a literal, or against another element's trimmed text content
+  (`"<attrName>=@<selector>"`) or named attribute
+  (`"<attrName>=@<selector>[<attrName>]"`). `data-gosx-watch-effect`
+  declares a comma-separated effect list run on a false-to-true
+  transition: `"class:<name>"` (optionally targeting another element with
+  `"class:<name>@<selector>"`) and `"title"` (flashing `document.title`
+  with the message from `data-gosx-watch-title`, until window focus or
+  the condition clears) are level-tied and re-evaluated on every rescan;
+  `"cue:<name>"` shares the countdown cue machinery above and is
+  edge-triggered, firing exactly once per false-to-true transition. A
+  watch condition is evaluated at page boot and after every soft
+  navigation or revalidation swap — the same rescan lifecycle
+  `data-gosx-countdown` follows — not through a live DOM observer.
+  Cross-swap transition memory is keyed by the watch element's `id` when
+  it has one, or by its position among `data-gosx-watch` elements in
+  document order otherwise; a watcher with no `id` whose position can
+  shift between renders can have its memory misattributed.
+- **`gosx check` now rejects a static `data-gosx-countdown-warn` or
+  `data-gosx-countdown-cue` value outside the threshold:token pairs
+  grammar, a static `data-gosx-watch` value with no `"="`, and a static
+  `data-gosx-watch-effect` value with an unrecognized token**, before the
+  page ever serves.
+
 ## v0.45.0 (2026-08-16)
 
 The module graph goes pure. gosx ships no wasm runtimes and no FFI shims:

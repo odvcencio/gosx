@@ -395,10 +395,10 @@ func Page() Node {
 }
 
 // TestValidateRejectsInvalidCountdownWarn covers gosx#178 review finding
-// m14: a static data-gosx-countdown-warn value outside the small
-// declarative duration subset (a bare integer, or whole h/m/s components)
-// disables the warn threshold silently at run time — Validate now catches
-// it at check time.
+// m14, updated for gosx#213's threshold:class pairs grammar: a static
+// data-gosx-countdown-warn value with no ":" pair at all disables every
+// warn threshold silently at run time — Validate now catches it at check
+// time.
 func TestValidateRejectsInvalidCountdownWarn(t *testing.T) {
 	source := []byte(`package main
 
@@ -415,9 +415,161 @@ func Page() Node {
 	if len(diags) != 1 {
 		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
 	}
-	want := `invalid data-gosx-countdown-warn value "soon": must be a bare integer number of seconds, or whole h/m/s components such as "30s" or "1m30s"`
+	want := `invalid data-gosx-countdown-warn value "soon": must be a comma-separated list of threshold:class pairs`
 	if diags[0].Message != want {
 		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsInvalidCountdownWarnPair covers gosx#213: a
+// threshold:class pair with a valid threshold but a bad piece elsewhere in
+// the comma-separated list (here, a second pair with no class token at
+// all) fails the WHOLE value, not just that one pair — matching
+// parseCountdownTierPairs' fail-closed-as-a-whole behavior in
+// navigation.ts exactly.
+func TestValidateRejectsInvalidCountdownWarnPair(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-warn="30s:is-warn,10s:"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-countdown-warn value "30s:is-warn,10s:": must be a comma-separated list of threshold:class pairs`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsInvalidCountdownCue covers gosx#213's
+// data-gosx-countdown-cue: a cue name outside the fixed "beep"/"chime"
+// vocabulary disables every cue threshold silently at run time — Validate
+// now catches it at check time.
+func TestValidateRejectsInvalidCountdownCue(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-cue="10s:klaxon"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-countdown-cue value "10s:klaxon": must be a comma-separated list of threshold:cue pairs using "beep" or "chime"`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateAllowsValidCountdownWarnAndCue proves gosx#213's two pairs
+// attributes do not false-positive on well-formed multi-tier values.
+func TestValidateAllowsValidCountdownWarnAndCue(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-warn="30s:is-warn,10s:is-critical" data-gosx-countdown-cue="10s:beep"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for valid countdown warn/cue attributes, got %+v", diags)
+	}
+}
+
+// TestValidateRejectsInvalidWatchCondition covers gosx#214:
+// data-gosx-watch with no "=" cannot be parsed into an attrName/valueRef
+// pair, and disables the watcher silently at run time — Validate now
+// catches it at check time.
+func TestValidateRejectsInvalidWatchCondition(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <div data-gosx-watch="no-equals-sign-here"></div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-watch value "no-equals-sign-here": must be "<attrName>=<value>"`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsInvalidWatchEffect covers gosx#214's
+// data-gosx-watch-effect: an unrecognized token shape fails the whole
+// value at check time, even though the browser runtime only drops that
+// one token at run time (see isValidWatchEffectValue's own doc comment for
+// why check time is stricter here).
+func TestValidateRejectsInvalidWatchEffect(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <div data-gosx-watch="data-on-clock=true" data-gosx-watch-effect="class:is-active,flash-lights"></div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-watch-effect value "class:is-active,flash-lights": must be a comma-separated list of "class:<name>", "title", or "cue:<name>" tokens`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateAllowsValidWatchConditionAndEffect proves gosx#214's two
+// attributes do not false-positive on every well-formed shape: a literal
+// condition, a selector-attribute reference condition, and every effect
+// token kind.
+func TestValidateAllowsValidWatchConditionAndEffect(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <main>
+		<div data-gosx-watch="data-on-clock=true" data-gosx-watch-effect="class:is-active,class:is-glowing@#panel,title,cue:chime" data-gosx-watch-title="It's your pick!"></div>
+		<div data-gosx-watch="data-seat=@#viewer[data-seat-id]"></div>
+	</main>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for valid watch condition/effect attributes, got %+v", diags)
 	}
 }
 
@@ -453,7 +605,7 @@ func TestValidateAllowsValidCountdownSegmentWarnThen(t *testing.T) {
 	source := []byte(`package main
 
 func Page() Node {
-	return <div data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-warn="1m30s" data-gosx-countdown-then="revalidate">
+	return <div data-gosx-countdown="2026-08-22T16:00:00-04:00" data-gosx-countdown-warn="1m30s:is-warn" data-gosx-countdown-then="revalidate">
 		<b data-gosx-countdown-segment="days"></b>
 		<b data-gosx-countdown-segment="hours"></b>
 		<b data-gosx-countdown-segment="minutes"></b>
