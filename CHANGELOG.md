@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.44.0 (2026-08-16)
+
+Images become a first-class citizen, and the fail-open hunt reaches the
+renderer's corners. The <Image> builtin gains a check-time contract (alt
+required, local files probed for intrinsic dimensions, external sources
+declare theirs) and manifest-driven <picture> output with build-time WebP
+variants from the new imagepipe package. Actions gain first-class file
+uploads with a configurable body cap. Renderer output is now deterministic
+(sorted attribute emission, twice over), spread map keys cannot smuggle
+attributes, Mount routes populate path wildcards, and the last hop-0
+selector deferrals fail closed.
 
 ### `<Image>`: a check-time contract and `<picture>` output (gosx#201)
 
