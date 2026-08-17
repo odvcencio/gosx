@@ -62,6 +62,42 @@ const (
 	NavigationCountdownWarnAttr    = "data-gosx-countdown-warn"
 	NavigationCountdownThenAttr    = "data-gosx-countdown-then"
 	NavigationCountdownWarnClass   = "gosx-countdown--warn"
+
+	// NavigationReorderAttr declares a sortable list (gosx#212). Each direct
+	// child that can move carries NavigationReorderItemAttr set to that
+	// item's identity; a descendant of the item (or the item itself, if none
+	// is marked) carries NavigationReorderHandleAttr and is the pointer and
+	// keyboard drag handle. NavigationReorderActionAttr, on the container,
+	// names the managed action a drop or a keyboard commit posts the new
+	// order to, in the same "METHOD /url" grammar data-gosx-action uses — a
+	// dedicated attribute, not data-gosx-action itself, because a reorder
+	// container is very often a clickable, non-form element and sharing the
+	// attribute would let the declarative-actions click handler fire a
+	// spurious empty action from the same element. The POST carries the
+	// moved item's identity and its zero-based target index under
+	// NavigationReorderDefaultItemField/NavigationReorderDefaultIndexField,
+	// or the field names NavigationReorderItemFieldAttr/
+	// NavigationReorderIndexFieldAttr declare instead. The runtime owns the
+	// full interaction: Pointer Events with setPointerCapture, an optimistic
+	// DOM reorder that reverts through the same NavigationFormStateAttr /
+	// "data-gosx-pending" error surface managed forms already use on
+	// failure, a keyboard path (grab with Space or Enter, move with arrows, drop
+	// with Space, cancel with Escape) with aria-live announcements, and its
+	// own periodic-revalidation pause for the whole gesture. See the client
+	// runtime guide's "Declarative reorder" section for the full contract.
+	NavigationReorderAttr              = "data-gosx-reorder"
+	NavigationReorderActionAttr        = "data-gosx-reorder-action"
+	NavigationReorderItemAttr          = "data-gosx-reorder-item"
+	NavigationReorderHandleAttr        = "data-gosx-reorder-handle"
+	NavigationReorderItemFieldAttr     = "data-gosx-reorder-item-field"
+	NavigationReorderIndexFieldAttr    = "data-gosx-reorder-index-field"
+	NavigationReorderPlaceholderAttr   = "data-gosx-reorder-placeholder"
+	NavigationReorderDraggingClass     = "gosx-reorder--dragging"
+	NavigationReorderLiftedClass       = "gosx-reorder-item--lifted"
+	NavigationReorderPlaceholderClass  = "gosx-reorder-item--placeholder"
+	NavigationReorderGrabbedClass      = "gosx-reorder-item--grabbed"
+	NavigationReorderDefaultItemField  = "item_id"
+	NavigationReorderDefaultIndexField = "index"
 )
 
 // NormalizeNavigationLinkCurrentPolicy normalizes the declarative "current"
