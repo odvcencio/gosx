@@ -62,7 +62,7 @@ func Image(props ImageProps, args ...any) gosx.Node {
 	// Fail closed at render time: a format the handler cannot produce would
 	// otherwise ship as a fmt= URL that 400s only when a browser requests it
 	// (gosx#199). Check before any URL is built.
-	if err := validateProducibleImageFormat(props.Format); err != nil {
+	if err := ValidateProducibleImageFormat(props.Format); err != nil {
 		panic(err)
 	}
 	props.Src = AssetURL(props.Src)
@@ -516,10 +516,16 @@ func normalizeImageFormat(format string) string {
 // so nothing renders a fmt= value the handler would reject at request time.
 var producibleImageFormats = []string{"jpeg", "png", "gif"}
 
-// validateProducibleImageFormat rejects an Image format prop the optimizer
+// ValidateProducibleImageFormat rejects an Image format prop the optimizer
 // handler could never encode. An empty format defers to the source format
 // and always passes.
-func validateProducibleImageFormat(format string) error {
+//
+// Exported (gosx#201) so strictcheck's check-time <Image> contract can reject
+// the same unproducible format value before a render ever happens, using the
+// exact same allowlist and message this render-time check already uses —
+// one source of truth for both call sites, never two allowlists that could
+// drift apart.
+func ValidateProducibleImageFormat(format string) error {
 	format = strings.TrimSpace(format)
 	if format == "" {
 		return nil

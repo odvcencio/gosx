@@ -16,18 +16,27 @@ func init() {
 				"tags":        []string{"images", "resize", "responsive", "cache"},
 				"toc": []map[string]string{
 					{"href": "#helper", "label": "Image Helper"},
+					{"href": "#builtin", "label": "<Image> Builtin"},
 					{"href": "#responsive", "label": "Responsive Images"},
 					{"href": "#formats", "label": "Formats & Sizing"},
 					{"href": "#serving", "label": "Serving"},
 					{"href": "#caching", "label": "Caching"},
 				},
-				"imageSample":      "node := server.Image(server.ImageProps{\n\tSrc:      \"/photos/harbor.jpg\",\n\tAlt:      \"Harbor at dusk\",\n\tWidth:    1200,\n\tHeight:   800,\n\tQuality:  82,\n\tPriority: true,\n})",
-				"responsiveSample": "node := server.Image(server.ImageProps{\n\tSrc:        \"/photos/harbor.jpg\",\n\tAlt:        \"Harbor at dusk\",\n\tResponsive: true,\n\tWidth:      1200,\n\tWidths:     []int{320, 640, 960, 1200},\n\tSizes:      \"(max-width: 720px) 100vw, 720px\",\n})",
-				"urlSample":        "url := server.ImageURL(\"/photos/harbor.jpg\", server.ImageTransform{\n\tWidth:   640,\n\tQuality: 78,\n\tFormat:  \"jpeg\",\n})",
+				"imageSample": "node := server.Image(server.ImageProps{\n\tSrc:      \"/photos/harbor.jpg\",\n\tAlt:      \"Harbor at dusk\",\n\tWidth:    1200,\n\tHeight:   800,\n\tQuality:  82,\n\tPriority: true,\n})",
+				// Width and Height are both set, at the source's own 8:5
+				// aspect ratio (960x600) -- an example that omits Height
+				// leaves the emitted <img> with no height attribute at
+				// all, which reserves no layout box before the image
+				// loads (layout-shift-prone; flagged in review).
+				"responsiveSample":      "node := server.Image(server.ImageProps{\n\tSrc:        \"/photos/harbor.jpg\",\n\tAlt:        \"Harbor at dusk\",\n\tResponsive: true,\n\tWidth:      1200,\n\tHeight:     750,\n\tWidths:     []int{320, 640, 960, 1200},\n\tSizes:      \"(max-width: 720px) 100vw, 720px\",\n})",
+				"urlSample":             "url := server.ImageURL(\"/photos/harbor.jpg\", server.ImageTransform{\n\tWidth:   640,\n\tQuality: 78,\n\tFormat:  \"jpeg\",\n})",
+				"builtinLocalSample":    `<Image src="/photos/harbor.jpg" alt="Harbor at dusk" />`,
+				"builtinExternalSample": `<Image src="https://cdn.example.com/harbor.jpg" alt="Harbor at dusk" width={1200} height={800} />`,
 				"liveImage": server.Image(server.ImageProps{
 					Src:        "/checkers-native-preview.png",
 					Alt:        "Native GoSX Chinese Checkers renderer preview",
 					Width:      960,
+					Height:     600,
 					Responsive: true,
 					Widths:     []int{320, 640, 960},
 					Sizes:      "(max-width: 720px) 100vw, 720px",

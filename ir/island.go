@@ -334,6 +334,9 @@ func (l *islandLowerer) lowerNode(srcID NodeID) (program.NodeID, error) {
 			}
 			break
 		}
+		if srcNode.Tag == "Image" {
+			return 0, unsupportedIslandComponentImageError()
+		}
 		if tag, ok := islandElementAlias(srcNode.Tag); ok {
 			node.Kind = program.NodeElement
 			node.Tag = tag
@@ -600,15 +603,31 @@ func isConditionalComponent(tag string) bool {
 	}
 }
 
+// islandElementAlias no longer maps "Image" to "img" (gosx#201): see
+// unsupportedIslandComponentImageError below, and
+// unsupportedIslandComponentDiagnostic in ir/validate.go, for why <Image>
+// is rejected inside an island instead of silently downgraded to a plain
+// <img>.
 func islandElementAlias(tag string) (string, bool) {
 	switch tag {
 	case "Link":
 		return "a", true
-	case "Image":
-		return "img", true
 	default:
 		return "", false
 	}
+}
+
+// unsupportedIslandComponentImageError carries the same message text
+// unsupportedIslandComponentDiagnostic (ir/validate.go) uses for the same
+// rejection, formatted as a plain error instead of a Diagnostic: ir.Validate
+// gates every gosx.Compile call (see compile.go), so a program reaching
+// lowerNode below has almost always already failed there first. This
+// message exists for the paths that call LowerIsland directly against a
+// program Validate never ran over -- for example
+// route/fileprogram.go's dev-mode islandProgram lookup -- so <Image> still
+// fails closed even then, not just at compile time.
+func unsupportedIslandComponentImageError() error {
+	return fmt.Errorf("<Image> is not supported inside island components: an island cannot rebuild <Image>'s server-rendered <picture> markup on the client; use a plain <img> element inside the island instead, and set width and height explicitly to avoid layout shift")
 }
 
 func eachAttrSource(attrs []Attr, names ...string) string {

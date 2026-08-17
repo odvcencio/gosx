@@ -66,7 +66,11 @@ func CheckFileWithOptions(ctx context.Context, path string, opts Options) error 
 	if err != nil {
 		return err
 	}
-	return checkPackage(ctx, files, opts)
+	// findProjectRoot's best-effort go.mod search (gosx#201) is the only way
+	// this entry point ever learns a project root: unlike CheckTreeWithOptions,
+	// a single-file/package check receives no root parameter of its own.
+	root := findProjectRoot(filepath.Dir(path))
+	return checkPackage(ctx, files, opts, root)
 }
 
 // CheckPackage checks every distinct .gsx package found directly in dir.
@@ -88,7 +92,8 @@ func CheckPackageWithOptions(ctx context.Context, dir string, opts Options) erro
 		}
 		paths = append(paths, filepath.Join(dir, entry.Name()))
 	}
-	return checkSourcePackages(ctx, paths, opts)
+	root := findProjectRoot(dir)
+	return checkSourcePackages(ctx, paths, opts, root)
 }
 
 // checkPackage runs every built-in strictcheck stage over files, then runs
@@ -110,8 +115,8 @@ func CheckPackageWithOptions(ctx context.Context, dir string, opts Options) erro
 // resolution, or transpilation still has a fully compiled *ir.Program for
 // every file a lint can check (see LintFile.Program). Their findings join
 // into every return path, including every one of those early-error paths.
-func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Options) error {
-	builtinErr := runBuiltinChecks(ctx, files, opts)
+func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Options, root string) error {
+	builtinErr := runBuiltinChecks(ctx, files, opts, root)
 	extraErr := runExtraLints(files, opts.ExtraLints)
 	switch {
 	case builtinErr != nil && extraErr != nil:
@@ -124,13 +129,24 @@ func checkPackage(ctx context.Context, files []transpile.PackageFile, opts Optio
 }
 
 // runBuiltinChecks runs every built-in strictcheck stage over files: strict
-// render-entry validation, import-name resolution, IR-to-Go projection, and
-// the Go compiler pass over that projection. It returns the first failing
-// stage's error, or nil once every stage passes (or is skipped because the
-// package has no strict syntax). No extra lint (Options.ExtraLints) runs
-// inside this function; see checkPackage for why that ordering matters.
-func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts Options) error {
+// render-entry validation, the check-time <Image> contract, import-name
+// resolution, IR-to-Go projection, and the Go compiler pass over that
+// projection. It returns the first failing stage's error, or nil once every
+// stage passes (or is skipped because the package has no strict syntax). No
+// extra lint (Options.ExtraLints) runs inside this function; see
+// checkPackage for why that ordering matters.
+func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts Options, root string) error {
 	if err := validateStrictRenderEntries(files); err != nil {
+		return err
+	}
+	// validateImageContract runs beside validateStrictRenderEntries, before
+	// the packageHasStrict early return below, and for the same reason
+	// (gosx#201): the real consumer surface (gridiron-2000) compiles as
+	// legacy syntax, so a check placed after that return would never run
+	// for it. <Image> is a builtin tag available to legacy and strict
+	// components alike; its contract must not depend on strict syntax being
+	// present anywhere in the package.
+	if err := validateImageContract(files, root); err != nil {
 		return err
 	}
 	if !packageHasStrict(files) {
@@ -354,6 +370,15 @@ func CheckTree(ctx context.Context, root string) error {
 // CheckTreeWithOptions checks a tree with an explicit Go command environment.
 // Generated/dependency/fixture/dot/nested-Git trees are skipped. Route segment
 // directories beginning with one or two underscores remain first-class.
+//
+// root doubles as the project root the check-time <Image> contract's local-
+// source rule (gosx#201) resolves public/ against — true for every real
+// caller today (cmd/gosx's checkStrictProject always passes the directory
+// holding go.mod, dist/, app/, and public/; see buildmanifest.Manifest.
+// SourceRoot's doc comment for the same convention). A caller that instead
+// names a subdirectory simply finds no public/ there, and that one rule
+// degrades to a no-op for the run — see validateImageContract — rather than
+// reporting a false positive.
 func CheckTreeWithOptions(ctx context.Context, root string, opts Options) error {
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -378,7 +403,7 @@ func CheckTreeWithOptions(ctx context.Context, root string, opts Options) error 
 	if err != nil {
 		return err
 	}
-	return checkSourcePackages(ctx, sources, opts)
+	return checkSourcePackages(ctx, sources, opts, abs)
 }
 
 // checkSourcePackages checks every distinct package found among paths and
@@ -386,7 +411,7 @@ func CheckTreeWithOptions(ctx context.Context, root string, opts Options) error 
 // a lint finding is a package error like any other now, and CheckTree /
 // CheckPackage covering several offending packages must surface all of
 // them, not just whichever sorts first.
-func checkSourcePackages(ctx context.Context, paths []string, opts Options) error {
+func checkSourcePackages(ctx context.Context, paths []string, opts Options, root string) error {
 	sort.Strings(paths)
 	seen := make(map[string]struct{})
 	var errs []error
@@ -404,7 +429,7 @@ func checkSourcePackages(ctx context.Context, paths []string, opts Options) erro
 			continue
 		}
 		seen[key] = struct{}{}
-		if err := checkPackage(ctx, files, opts); err != nil {
+		if err := checkPackage(ctx, files, opts, root); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -431,4 +456,40 @@ func shouldSkipDir(root, path, name string) bool {
 	}
 	_, err := os.Lstat(filepath.Join(path, ".git"))
 	return err == nil
+}
+
+// findProjectRoot returns the nearest ancestor of dir (dir included) that
+// contains a go.mod file, or "" if none is found before reaching the
+// filesystem root. This is the only project-root signal CheckFileWithOptions
+// and CheckPackageWithOptions have (gosx#201): unlike CheckTreeWithOptions,
+// neither receives an explicit project-root parameter of its own, and
+// go.mod is the standard, dependency-free marker every real gosx project
+// already has at its root (see buildmanifest.Manifest.SourceRoot's doc
+// comment for the same "directory holding dist/, app/, and go.mod"
+// convention CheckTreeWithOptions's own root parameter follows).
+//
+// A "" result is not an error: validateImageContract treats an unknown root
+// the same way it treats a root with no public/ directory under it -- the
+// local-source-must-exist rule degrades to a no-op rather than reporting a
+// false positive it cannot actually prove.
+func findProjectRoot(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	for {
+		if isFileStrictcheck(filepath.Join(abs, "go.mod")) {
+			return abs
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return ""
+		}
+		abs = parent
+	}
+}
+
+func isFileStrictcheck(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }

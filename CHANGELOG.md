@@ -2,6 +2,88 @@
 
 ## Unreleased
 
+### `<Image>`: a check-time contract and `<picture>` output (gosx#201)
+
+- **`strictcheck` gains a check-time `<Image>` contract, on top of the
+  #199/#200 pipeline.** `validateImageContract` runs beside
+  `validateStrictRenderEntries` in `runBuiltinChecks`, before the
+  `packageHasStrict` early return — the same placement, for the same
+  reason: the real consumer surface (gridiron-2000) compiles as legacy
+  syntax, so a check placed after that return would never run for it.
+  Four rules, each independently testable:
+  - Missing or empty `alt` errors.
+  - A local (root-relative) static `src` naming no readable image file
+    under `public/` errors. The check reads the file with
+    `imagepipe.Probe` (SVG is checked for existence only, since gosx never
+    optimizes SVG), the same way the renderer will at request time.
+  - An external (`http`/`https`, or protocol-relative `//`) or dynamic
+    (non-literal, or unresolvable through a spread) `src` missing an
+    explicit `width` or `height` errors. A local `src` needs neither: the
+    renderer injects intrinsic (or ladder-derived) dimensions
+    automatically — the one step next/image still asks an author to
+    perform, deleted for a local, build-time-known source.
+  - A `format` value outside the producible set errors, reusing
+    `server.ValidateProducibleImageFormat`'s exact allowlist and message
+    (newly exported for this purpose) so check-time and render-time can
+    never disagree.
+  - A node carrying a spread attribute (`{...props}`) is exempt from the
+    alt and dimension requirements by name: the spread might supply
+    either in a way this check cannot see (the real, already-tested
+    `route/filesystem_test.go` fixture pattern this exception exists to
+    keep passing).
+- **`route`'s file-router `<Image>` builtin now emits a manifest-backed
+  `<picture>` when gosx build has generated variants for its `src`.** A
+  new `route/image_picture.go` reads `buildmanifest.Manifest.Images`
+  through a new `server.LookupImageManifestAsset` (a process-global lookup
+  an `App` registers on `Build()`, mirroring the existing "local"
+  `ImageResolver` registry's convention) and, when variants exist, emits a
+  WebP `<source>` with `srcset`+`sizes` and an `<img>` fallback in the
+  source's own format with its own `srcset`, injected width/height
+  (intrinsic by default; an explicit `width` or `height` derives the
+  other proportionally; both explicit wins verbatim), `loading="lazy"
+  decoding="async"`, and priority flipping to `eager`+`fetchpriority="high"`
+  per #199's existing semantics. A WebP-native source (no redundant
+  same-format fallback ever exists for one) renders a plain `<img>`, no
+  `<picture>` wrapper. **This is new behavior for the `<Image>` JSX tag
+  only** — `server.Image`, the Go helper a `page.server.go` file calls
+  directly, keeps its existing single-`<img>` contract unchanged.
+  - **Fails open, never blocks a render.** No manifest registered (dev
+    mode with no prior `gosx build`), no entry for this `src`, or an
+    explicit `Format`/`Quality` prop naming an encode parameter a
+    pre-built variant cannot honor — every one of these falls straight
+    through, unmodified, to the existing #199-fixed `server.Image` path
+    (the runtime optimizer URL, or plain passthrough). A page under
+    active development always renders.
+- **`<Image>` is rejected inside island components, not silently
+  downgraded to a plain `<img>`.** `ir/island.go`'s `islandElementAlias`
+  no longer maps `"Image"` to `"img"`; `LowerIsland` now returns a
+  dedicated error, and `ir.Validate`'s
+  `unsupportedIslandComponentDiagnostic` reports the same message as a
+  `Diagnostic` — reachable from `gosx.Compile` itself (see `compile.go`),
+  so the rejection surfaces at check time, before `strictcheck` or any
+  other stage even sees the program. One tag name must not mean two
+  contracts: an island re-renders client-side from its own program and
+  cannot rebuild `<Image>`'s manifest-driven `<picture>` markup without
+  shipping the whole manifest to the client — out of scope this release.
+  The message points at the escape hatch: a plain `<img>` inside the
+  island, with `width` and `height` set explicitly.
+- **Docs.** The images docs page
+  (`examples/gosx-docs/app/docs/images/`) gains a `<Image>` builtin
+  section stating the local/external rule plainly: external images are
+  never proxied or resized this release, and require explicit `width` and
+  `height`. The page's own responsive example previously omitted
+  `Height`, leaving the emitted `<img>` with no `height` attribute at
+  all — a layout-shift-prone example this fix corrects, in both the code
+  sample and the live rendered image.
+- New tests: `strictcheck/image_test.go` (accept/reject tables covering
+  every rule and exact message, plus an island-nested `<Image>`
+  end-to-end through `CheckFile`), `route/image_picture_test.go`
+  (`<picture>` markup shape, the no-manifest and explicit-format/quality
+  fallbacks, priority semantics, external `src`, extra-attribute
+  placement), and `ir/island_test.go` /
+  `TestValidateIslandRejectsImage` (the island rejection, at both the
+  `ir.Validate` and `LowerIsland` layers).
+
 ### Strict components: `<Each of>` and tier-1 spread-forward hop-0 fields now fail closed (gosx#206)
 
 - **`resolveStrictEachSourceType` no longer defers a hop-0 unknown field

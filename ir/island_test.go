@@ -335,6 +335,45 @@ func TestValidateIslandUnsupportedComponentRefRejected(t *testing.T) {
 	}
 }
 
+// TestValidateIslandRejectsImage covers gosx#201's check-time rule: an
+// <Image> reference inside an island component fails ir.Validate with a
+// dedicated message naming the plain <img> escape hatch, not the generic
+// "not supported inside island components yet" text
+// TestValidateIslandUnsupportedComponentRefRejected exercises for other
+// tags. ir.Validate runs inside gosx.Compile (see compile.go), so this is
+// the check-time surface that gates every real .gsx compile, including
+// strictcheck's own (transpile.LoadPackage -> gosx.Compile) and the
+// file-router's per-request dev-mode compile (route/filelayout.go).
+func TestValidateIslandRejectsImage(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeComponent,
+		Tag:  "Image",
+		Attrs: []Attr{
+			{Kind: AttrStatic, Name: "src", Value: "/hero.png"},
+			{Kind: AttrStatic, Name: "alt", Value: "Hero"},
+		},
+	})
+	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
+
+	diags := Validate(prog)
+	found := false
+	for _, d := range diags {
+		if strings.Contains(d.Message, "<Image> is not supported inside island components") {
+			found = true
+			if !strings.Contains(d.Hint, "plain <img>") {
+				t.Fatalf("expected the plain <img> escape hatch named in the hint, got %q", d.Hint)
+			}
+		}
+		if strings.Contains(d.Message, "not supported inside island components yet") {
+			t.Fatalf("expected the dedicated <Image> message, not the generic one, got %q", d.Message)
+		}
+	}
+	if !found {
+		t.Fatal("expected a diagnostic rejecting <Image> inside an island component")
+	}
+}
+
 func TestValidateIslandAcceptsSignalAliasExprsFromComponentScope(t *testing.T) {
 	prog := &Program{}
 	prog.Nodes = append(prog.Nodes, Node{
@@ -466,16 +505,7 @@ func TestLowerIslandElementAliasComponents(t *testing.T) {
 			Children: []NodeID{1},
 		},
 		Node{Kind: NodeText, Text: "Docs"},
-		Node{
-			Kind: NodeComponent,
-			Tag:  "Image",
-			Attrs: []Attr{
-				{Kind: AttrStatic, Name: "src", Value: "/hero.png"},
-				{Kind: AttrStatic, Name: "alt", Value: "Hero"},
-			},
-		},
 	)
-	prog.Nodes[0].Children = append(prog.Nodes[0].Children, 2)
 	prog.Components = append(prog.Components, Component{Name: "Aliases", Root: 0, IsIsland: true})
 
 	island, err := LowerIsland(prog, 0)
@@ -486,9 +516,68 @@ func TestLowerIslandElementAliasComponents(t *testing.T) {
 	if root.Kind != program.NodeElement || root.Tag != "a" {
 		t.Fatalf("expected Link to lower to <a>, got kind=%s tag=%q", root.Kind, root.Tag)
 	}
-	image := island.Nodes[root.Children[1]]
-	if image.Kind != program.NodeElement || image.Tag != "img" {
-		t.Fatalf("expected Image to lower to <img>, got kind=%s tag=%q", image.Kind, image.Tag)
+}
+
+// TestLowerIslandRejectsImage covers gosx#201: <Image> inside an island
+// component is rejected outright, not silently downgraded to a plain <img>
+// the way islandElementAlias used to lower it (see
+// TestLowerIslandElementAliasComponents above, which no longer includes an
+// <Image> case). An island re-renders client-side from its own program and
+// cannot rebuild the manifest-driven <picture> markup <Image> emits on the
+// server, so one tag name must not mean two contracts.
+func TestLowerIslandRejectsImage(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes,
+		Node{
+			Kind: NodeComponent,
+			Tag:  "Image",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "src", Value: "/hero.png"},
+				{Kind: AttrStatic, Name: "alt", Value: "Hero"},
+			},
+		},
+	)
+	prog.Components = append(prog.Components, Component{Name: "HasImage", Root: 0, IsIsland: true})
+
+	_, err := LowerIsland(prog, 0)
+	if err == nil {
+		t.Fatal("expected LowerIsland to reject <Image> inside an island component")
+	}
+	for _, snippet := range []string{"<Image>", "not supported inside island components", "plain <img>"} {
+		if !strings.Contains(err.Error(), snippet) {
+			t.Fatalf("expected %q in error, got %v", snippet, err)
+		}
+	}
+}
+
+// TestLowerIslandRejectsImageNestedInsideAnotherElement proves the
+// rejection fires for an <Image> anywhere in the island's node tree, not
+// only when it is the root node.
+func TestLowerIslandRejectsImageNestedInsideAnotherElement(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes,
+		Node{
+			Kind:     NodeElement,
+			Tag:      "div",
+			Children: []NodeID{1},
+		},
+		Node{
+			Kind: NodeComponent,
+			Tag:  "Image",
+			Attrs: []Attr{
+				{Kind: AttrStatic, Name: "src", Value: "/hero.png"},
+				{Kind: AttrStatic, Name: "alt", Value: "Hero"},
+			},
+		},
+	)
+	prog.Components = append(prog.Components, Component{Name: "WrapsImage", Root: 0, IsIsland: true})
+
+	_, err := LowerIsland(prog, 0)
+	if err == nil {
+		t.Fatal("expected LowerIsland to reject a nested <Image> inside an island component")
+	}
+	if !strings.Contains(err.Error(), "<Image>") {
+		t.Fatalf("expected <Image> named in the error, got %v", err)
 	}
 }
 
