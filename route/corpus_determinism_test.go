@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx"
@@ -78,4 +79,52 @@ func TestRepositoryCorpusRendersDeterministically(t *testing.T) {
 		t.Skip("no component in the corpus rendered with a bare env; skipping corpus determinism check")
 	}
 	t.Logf("rendered %d components from %d .gsx files with matching bytes across two renders", rendered, len(files))
+}
+
+// TestScene3DMountAttrsRenderDeterministically is the corpus-level proof for
+// gosx#204, the engine-mount sibling of gosx#188. It renders a Scene3D page
+// through DefaultFileRenderer — the file-based render path `gosx export`
+// drives — twenty times and byte-compares every render against the first.
+//
+// TestRepositoryCorpusRendersDeterministically above cannot reach this bug
+// class: RenderProgramComponent's bare env leaves renderEngine nil, so
+// every <Scene3D>/<Surface> tag in the corpus degrades to its DOM fallback
+// and never calls island.Renderer.RenderEngine. Before the fix,
+// RenderEngine iterated cfg.MountAttrs — a map[string]any built by
+// engineComponentProps (route/fileprogram.go) — in Go's randomized map
+// order when writing the data-gosx-engine-* mount attributes, so repeated
+// exports of the same source produced byte-different HTML (the divergence
+// gosx#204 reported on examples/gosx-docs). After the fix, they do not.
+func TestScene3DMountAttrsRenderDeterministically(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" role="img" title="Scene" data-testid="s3d" aria-label="scene" />
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	render := func() string {
+		ctx := &RouteContext{}
+		node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		return gosx.RenderHTML(node)
+	}
+
+	first := render()
+	if !strings.Contains(first, `data-gosx-engine="GoSXScene3D"`) {
+		t.Fatalf("expected Scene3D engine mount markup, got %s", first)
+	}
+	for i := 1; i < 20; i++ {
+		got := render()
+		if got != first {
+			t.Fatalf("render %d differs from render 0 (nondeterministic mount attribute order):\n render 0: %s\n render %d: %s", i, first, i, got)
+		}
+	}
 }

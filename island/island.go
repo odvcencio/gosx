@@ -17,6 +17,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1136,7 +1137,20 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		attrs = append(attrs, gosx.Attr("data-gosx-scene3d-poster", poster.Poster))
 	}
 	mountStyle := ""
-	for name, value := range cfg.MountAttrs {
+	// mountNames iterates in sorted order (gosx#204, mirroring gosx#188): Go's
+	// map iteration order is randomized per run, so two renders of the same
+	// cfg.MountAttrs previously emitted the data-gosx-engine-* mount
+	// attributes in a different order each time — byte-identity goldens and
+	// exports (gosx export on examples/gosx-docs) churned on unchanged
+	// content. Sorting names before emission makes the output deterministic
+	// across runs and processes.
+	mountNames := make([]string, 0, len(cfg.MountAttrs))
+	for name := range cfg.MountAttrs {
+		mountNames = append(mountNames, name)
+	}
+	sort.Strings(mountNames)
+	for _, name := range mountNames {
+		value := cfg.MountAttrs[name]
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue

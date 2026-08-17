@@ -2,6 +2,73 @@
 
 ## Unreleased
 
+### Strict components: `<Each of>` and tier-1 spread-forward hop-0 fields now fail closed (gosx#206)
+
+- **`resolveStrictEachSourceType` no longer defers a hop-0 unknown field
+  on an `<Each of>` loop source.** Before the fix, `gosx.Compile` accepted
+  a promoted or unexported field used as a loop source with no
+  diagnostic. The function returned `""` for the unresolved element type,
+  so the transpiled loop callback fell back to an `any`-typed binding.
+  Every field read on the loop variable then failed the later `go build`
+  of the generated program with a confusing `row.Label undefined (type
+  any has no field or method Label)`, not a clear gosx diagnostic — the
+  same file-renderer/generated-Go divergence class gosx#195 fixed for a
+  direct props read. The lowerer now reports the field at `gosx.Compile`
+  time, with the same B1-style message: `struct %s declares no visible
+  field %s; promoted, unexported, and unknown fields cannot cross the
+  file renderer boundary`.
+- **`resolveStrictSpreadForwardType` no longer defers a hop-0 unknown
+  field on a tier-1 (`{...props.Field}`) spread-forward source.** Every
+  reachable spread-forward read is also a tier-1 spread call, so
+  `validateStrictToStrictSpreadCall`'s own type check already rejected a
+  promoted or unexported source with a generic "is not renderable"
+  diagnostic — this deferral never let the component compile clean. It
+  did leave the function silently reporting nothing of its own for a
+  shape the B1-style message exists to name. It now names the field too,
+  so the diagnostic no longer depends on a sibling check.
+- Both functions carried the identical `case strictHopUnknownField:
+  return` gosx#195 removed from `resolveStrictSelectorPath` — gosx#195's
+  own scope note named them as the remaining deferral. Doc comments on
+  `strictHopUnknownField`, `walkStrictHops`, and `strictHopMessage` are
+  corrected: every `walkStrictHops` caller now reports a hop-0 unknown
+  field; none defer to the package checker.
+- New tests cover both field shapes at both positions:
+  - `TestCompileStrictEachRejectsPromotedSourceHopZeroField`
+  - `TestCompileStrictEachRejectsUnexportedSourceHopZeroField`
+  - `TestCompileStrictSpreadForwardRejectsPromotedSourceHopZeroField`
+  - `TestCompileStrictSpreadForwardRejectsUnexportedSourceHopZeroField`
+  - `TestStrictcheckRejectsPromotedEachSourceHopZeroField` and
+    `TestStrictcheckRejectsUnexportedEachSourceHopZeroField`
+    (real-Go-compiler-backed)
+  - `TestStrictcheckRejectsPromotedSpreadForwardSourceHopZeroField` and
+    `TestStrictcheckRejectsUnexportedSpreadForwardSourceHopZeroField`
+    (real-Go-compiler-backed)
+
+  Fixes #206.
+
+### `route`: engine-mount attribute order is now deterministic (gosx#204)
+
+- **`island.Renderer.RenderEngine` no longer emits `data-gosx-engine-*`
+  mount attributes in Go's randomized map order.** `RenderEngine` iterated
+  `cfg.MountAttrs` (a `map[string]any` `engineComponentProps`, in
+  `route/fileprogram.go`, builds from a component's static attributes and
+  spread props) directly when writing the mount `<div>`'s attributes. Two
+  renders of the same `<Scene3D>` or `<Surface>` tag could emit the same
+  attributes in a different order — the same class of bug gosx#188 fixed
+  for `defaultRenderedComponent`, in the engine-mount path instead of the
+  unresolved-component-reference fallback. Attribute names now sort
+  before emission, mirroring gosx#188's fix exactly. Output is
+  byte-identical across repeated exports.
+- `route/corpus_determinism_test.go`'s existing corpus test cannot reach
+  this path: `RenderProgramComponent`'s bare env leaves `renderEngine`
+  nil, so every engine tag in the corpus degrades to its DOM fallback. A
+  new test, `TestScene3DMountAttrsRenderDeterministically`, renders a
+  Scene3D page through `DefaultFileRenderer` — the file-based path `gosx
+  export` drives — twenty times and byte-compares every render against
+  the first.
+
+  Fixes #204.
+
 ### Strict components: props-root hop-0 promoted and unexported fields now fail closed (gosx#195)
 
 - **`resolveStrictSelectorPath` no longer defers a hop-0 unknown field on
@@ -36,7 +103,8 @@
   `resolveStrictSpreadForwardType` (an E2 spread source) still defer a
   hop-0 unknown props field the same old way. They share the same guard
   and the same latent gap; gosx#195 names only the direct-read case. A
-  follow-up issue should track the other two.
+  follow-up issue should track the other two. (Both now fail closed too;
+  see gosx#206 above.)
 
 ### Fixes
 
