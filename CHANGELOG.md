@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.46.0 (2026-08-17)
 
 ### Added: countdown urgency tiers, synthesized audio cues, and an attention watcher
 
