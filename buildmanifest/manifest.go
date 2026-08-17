@@ -133,8 +133,12 @@ type ImageAsset struct {
 // ImageVariantAsset is one hashed, build-time-generated output image: a
 // single (width, format) rung of an ImageAsset's responsive ladder.
 type ImageVariantAsset struct {
-	Width  int    `json:"width"`
-	Format string `json:"format"` // "webp", "jpeg", or "png"
+	Width int `json:"width"`
+	// Format is imagepipe.Format's string value: "jpeg" or "png" for a
+	// stock `gosx build` (its only built-in encoders), or any other value
+	// (for example "webp") a project's own registered imagepipe.Encoder
+	// produced -- gosx ships no such encoder in-tree.
+	Format string `json:"format"`
 	HashedAsset
 }
 
@@ -348,23 +352,26 @@ func (m *Manifest) ImageAssetBySource(source string) (ImageAsset, bool) {
 }
 
 // ImageVariant returns the hashed build-time output for a source image at
-// the given width and format. An empty format resolves to "webp" -- gosx
-// build's own default output encoding -- so a caller that never named an
-// explicit format still lands on the smaller encoding gosx build already
-// produced. It returns false if source has no recorded ImageAsset, or that
-// asset has no variant at exactly this width and format; gosx build never
-// upscales, so a width above the source's intrinsic Width never matches.
+// the given width and, if named, format. An empty format matches the first
+// variant recorded at width, in gosx build's own generation order -- by
+// default that is the source's own native format (imagepipe ships no WebP
+// encoder; see cmd/gosx's imagePipeNativeFormat and imagePipeExtraFormats),
+// so a caller that never named an explicit format still lands on whatever
+// gosx build actually produced for it. It returns false if source has no
+// recorded ImageAsset, or that asset has no matching variant at exactly
+// this width; gosx build never upscales, so a width above the source's
+// intrinsic Width never matches.
 func (m *Manifest) ImageVariant(source string, width int, format string) (ImageVariantAsset, bool) {
 	format = strings.ToLower(strings.TrimSpace(format))
-	if format == "" {
-		format = "webp"
-	}
 	asset, ok := m.ImageAssetBySource(source)
 	if !ok {
 		return ImageVariantAsset{}, false
 	}
 	for _, variant := range asset.Variants {
-		if variant.Width == width && variant.Format == format {
+		if variant.Width != width {
+			continue
+		}
+		if format == "" || variant.Format == format {
 			return variant, true
 		}
 	}

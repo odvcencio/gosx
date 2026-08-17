@@ -245,9 +245,15 @@ func TestManifestImagesRoundTrip(t *testing.T) {
 				Width:  1200,
 				Height: 800,
 				Variants: []ImageVariantAsset{
-					{Width: 320, Format: "webp", HashedAsset: HashedAsset{File: "hero-320w.aaaaaaaa.webp", Hash: "aaaaaaaa", Size: 1000}},
+					// jpeg listed first at width 320: gosx build's own
+					// generation order lists the source's native format
+					// first (imagePipeNativeFormat), then any extra
+					// registered-encoder format after it -- webp here only
+					// because a project registered its own WebP Encoder;
+					// gosx ships none in-tree.
 					{Width: 320, Format: "jpeg", HashedAsset: HashedAsset{File: "hero-320w.bbbbbbbb.jpg", Hash: "bbbbbbbb", Size: 1500}},
-					{Width: 1200, Format: "webp", HashedAsset: HashedAsset{File: "hero-1200w.cccccccc.webp", Hash: "cccccccc", Size: 9000}},
+					{Width: 320, Format: "webp", HashedAsset: HashedAsset{File: "hero-320w.aaaaaaaa.webp", Hash: "aaaaaaaa", Size: 1000}},
+					{Width: 1200, Format: "jpeg", HashedAsset: HashedAsset{File: "hero-1200w.cccccccc.jpg", Hash: "cccccccc", Size: 9000}},
 				},
 			},
 		},
@@ -274,31 +280,35 @@ func TestManifestImagesRoundTrip(t *testing.T) {
 		t.Fatalf("asset dims = %dx%d, want 1200x800", asset.Width, asset.Height)
 	}
 
-	webp320, ok := decoded.ImageVariant("/hero.jpg", 320, "webp")
-	if !ok || webp320.File != "hero-320w.aaaaaaaa.webp" {
-		t.Fatalf("ImageVariant(320, webp) = %+v, ok=%v, want hero-320w.aaaaaaaa.webp", webp320, ok)
-	}
-
-	// An empty format defaults to webp -- gosx build's own default output.
-	defaulted, ok := decoded.ImageVariant("/hero.jpg", 320, "")
-	if !ok || defaulted.File != webp320.File {
-		t.Fatalf("ImageVariant(320, \"\") = %+v, ok=%v, want the same webp variant %+v", defaulted, ok, webp320)
-	}
-
 	jpeg320, ok := decoded.ImageVariant("/hero.jpg", 320, "jpeg")
 	if !ok || jpeg320.File != "hero-320w.bbbbbbbb.jpg" {
 		t.Fatalf("ImageVariant(320, jpeg) = %+v, ok=%v, want hero-320w.bbbbbbbb.jpg", jpeg320, ok)
 	}
 
-	if _, ok := decoded.ImageVariant("/hero.jpg", 1920, "webp"); ok {
+	webp320, ok := decoded.ImageVariant("/hero.jpg", 320, "webp")
+	if !ok || webp320.File != "hero-320w.aaaaaaaa.webp" {
+		t.Fatalf("ImageVariant(320, webp) = %+v, ok=%v, want hero-320w.aaaaaaaa.webp", webp320, ok)
+	}
+
+	// An empty format matches the first variant recorded at that width --
+	// gosx build's own native format, since it always lists that one
+	// first (see imagePipeNativeFormat); a caller that never names an
+	// explicit format still lands on whatever gosx build actually
+	// generated, not a format gosx ships no built-in encoder for.
+	defaulted, ok := decoded.ImageVariant("/hero.jpg", 320, "")
+	if !ok || defaulted.File != jpeg320.File {
+		t.Fatalf("ImageVariant(320, \"\") = %+v, ok=%v, want the native jpeg variant %+v", defaulted, ok, jpeg320)
+	}
+
+	if _, ok := decoded.ImageVariant("/hero.jpg", 1920, "jpeg"); ok {
 		t.Fatal("ImageVariant matched a width (1920) gosx build never generated -- the ladder never upscales past 1200")
 	}
-	if _, ok := decoded.ImageVariant("/missing.jpg", 320, "webp"); ok {
+	if _, ok := decoded.ImageVariant("/missing.jpg", 320, "jpeg"); ok {
 		t.Fatal("ImageVariant matched a source path with no recorded ImageAsset")
 	}
 
-	if got := decoded.ImageURL("/gosx/assets", webp320); got != "/gosx/assets/images/hero-320w.aaaaaaaa.webp" {
-		t.Fatalf("ImageURL = %q, want /gosx/assets/images/hero-320w.aaaaaaaa.webp", got)
+	if got := decoded.ImageURL("/gosx/assets", jpeg320); got != "/gosx/assets/images/hero-320w.bbbbbbbb.jpg" {
+		t.Fatalf("ImageURL = %q, want /gosx/assets/images/hero-320w.bbbbbbbb.jpg", got)
 	}
 }
 

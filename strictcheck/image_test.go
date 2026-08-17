@@ -206,12 +206,19 @@ func TestImageContractRejectsUnproducibleFormat(t *testing.T) {
 	requireImageDiagnostic(t, err, `gosx: Image format "avif" is not a producible output format (want jpeg, png, or gif)`)
 }
 
+// TestImageContractRejectsUnproducibleFormatWebP covers gosx's excision of
+// its WebP encoder dependency: format="webp" still fails check-time, but
+// the message now names the real situation honestly -- gosx ships no
+// built-in WebP encoder, and points at the registered-Encoder extension
+// point (imagepipe.RegisterEncoder), rather than treating "webp" as just
+// another unrecognized format value like TestImageContractRejectsUnproducibleFormat's
+// "avif".
 func TestImageContractRejectsUnproducibleFormatWebP(t *testing.T) {
 	dir := newTestModule(t)
 	writeTestPNG(t, filepath.Join(dir, "public", "hero.png"), 4, 4)
 
 	err := checkImageFixture(t, dir, `<Image src="/hero.png" alt="Hero" format="webp" />`)
-	requireImageDiagnostic(t, err, `gosx: Image format "webp" is not a producible output format (want jpeg, png, or gif)`)
+	requireImageDiagnostic(t, err, `gosx: Image format "webp" is not producible: gosx ships no built-in WebP encoder (want jpeg, png, or gif); register an imagepipe.Encoder for build-time WebP variants, or omit format to use the source's own format`)
 }
 
 // TestImageContractAccumulatesMultipleViolationsOnOneNode proves every

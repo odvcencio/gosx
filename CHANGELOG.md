@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Remove the WebP encoder dependency: no wasm runtime, no FFI shim
+
+gosx ships no wasm runtimes and no FFI shims. WebP encoding is now an
+external-encoder extension point, not a built-in dependency. This policy
+also covers every future codec: a foreign runtime or an FFI shim does not
+enter this module's build graph for one, ever, by default.
+
+- **`imagepipe` no longer depends on `github.com/gen2brain/webp`.** That
+  package pulled in `tetratelabs/wazero` (a wasm runtime) and
+  `ebitengine/purego` (an FFI shim) as transitive dependencies. Neither
+  module now appears anywhere in `go mod graph`; a new repo-root test,
+  `TestModuleGraphExcludesForeignRuntimes`, checks this on every run.
+- **`imagepipe.Encode` builds in only JPEG and PNG.** A new
+  `imagepipe.Encoder` interface, together with `imagepipe.RegisterEncoder`
+  and `imagepipe.EncoderRegistered`, adds any other output format —
+  including WebP — as an opt-in registration, not a built-in. `Encode`
+  returns a clear error for a format with no registered `Encoder`; the
+  error names `RegisterEncoder` as the way to add one.
+- **The WebP decoder stays.** `golang.org/x/image/webp` is a `golang.org`
+  module: pure Go, decode-only, with no wasm runtime and no FFI shim. A
+  project's existing WebP source images still probe, decode, and resize
+  the same way they always did.
+- **`gosx build`'s image variant stage generates native-format ladders by
+  default.** A JPEG source now gets a JPEG ladder; a PNG source gets a PNG
+  ladder. `cmd/gosx` registers no WebP `Encoder` in-tree, so a stock build
+  produces no WebP variant at all. A project that registers its own WebP
+  `Encoder` before the build stage runs gets WebP variants back
+  automatically, with no change to `cmd/gosx` itself.
+- **The `<Image>` renderer keeps working with no WebP variant present.** A
+  manifest entry that carries only native-format variants renders a plain
+  `<img>` with a real `srcset` — never a `<picture>` wrapped around an
+  empty WebP `<source>`.
+- **`strictcheck` still rejects `format="webp"`, with an honest message.**
+  The check-time and render-time messages both name the real cause — gosx
+  ships no built-in WebP encoder — and point at
+  `imagepipe.RegisterEncoder` as the extension point, instead of treating
+  `webp` as just another unrecognized format string.
+- **The `gosx` CLI binary shrinks by roughly 2.9 to 3.6 MB**, depending on
+  link flags (measured against v0.44.0 with `go build`: 63,240,864 bytes
+  before this change, 59,485,208 bytes after; stripped with `-ldflags
+  "-s -w"`: 50,411,880 bytes before, 47,386,889 bytes after).
+
 ## v0.44.0 (2026-08-16)
 
 Images become a first-class citizen, and the fail-open hunt reaches the

@@ -1,13 +1,16 @@
 package imagepipe
 
-import "testing"
+import (
+	"image"
+	"testing"
+)
 
 func TestProcessReturnsIntrinsicDimensionsAndOneVariantPerWidthFormatPair(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestPNG(t, dir, "source", 1200, 800)
 
 	widths := Ladder(1200, gosxDefaultCandidates)
-	formats := []Format{FormatWebP, FormatPNG}
+	formats := []Format{FormatJPEG, FormatPNG}
 
 	dims, variants, err := Process(path, widths, formats, EncodeOptions{})
 	if err != nil {
@@ -65,7 +68,7 @@ func TestProcessSingleWidthMatchingIntrinsicProducesOneVariantPerFormat(t *testi
 	dir := t.TempDir()
 	path := writeTestJPEG(t, dir, "same-width", 500, 500)
 
-	dims, variants, err := Process(path, []int{500}, []Format{FormatWebP, FormatJPEG}, EncodeOptions{})
+	dims, variants, err := Process(path, []int{500}, []Format{FormatPNG, FormatJPEG}, EncodeOptions{})
 	if err != nil {
 		t.Fatalf("Process: %v", err)
 	}
@@ -74,5 +77,43 @@ func TestProcessSingleWidthMatchingIntrinsicProducesOneVariantPerFormat(t *testi
 	}
 	if len(variants) != 2 {
 		t.Fatalf("got %d variants, want 2", len(variants))
+	}
+}
+
+// TestProcessFailsOnAFormatWithNoRegisteredEncoder proves Process (via
+// Encode) never silently drops or substitutes an unproducible format: with
+// no Encoder registered for FormatWebP, a caller that asks Process for it
+// gets a clear error, not a shorter variants slice.
+func TestProcessFailsOnAFormatWithNoRegisteredEncoder(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestPNG(t, dir, "no-webp-encoder", 100, 100)
+
+	_, _, err := Process(path, []int{100}, []Format{FormatWebP}, EncodeOptions{})
+	if err == nil {
+		t.Fatal("expected Process to error on FormatWebP with no registered encoder")
+	}
+}
+
+// TestProcessUsesARegisteredEncoderForANonBuiltInFormat proves Process
+// routes a non-built-in format through Encode's own RegisterEncoder
+// registry exactly as a direct Encode call would -- the pluggable seam
+// works through Process, not just through Encode in isolation.
+func TestProcessUsesARegisteredEncoderForANonBuiltInFormat(t *testing.T) {
+	t.Cleanup(func() { UnregisterEncoder(FormatWebP) })
+	if err := RegisterEncoder(FormatWebP, EncoderFunc(func(image.Image, EncodeOptions) ([]byte, error) {
+		return []byte("stub-webp-bytes"), nil
+	})); err != nil {
+		t.Fatalf("RegisterEncoder: %v", err)
+	}
+
+	dir := t.TempDir()
+	path := writeTestPNG(t, dir, "with-webp-encoder", 100, 100)
+
+	_, variants, err := Process(path, []int{100}, []Format{FormatWebP}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("Process with a registered webp encoder: %v", err)
+	}
+	if len(variants) != 1 || string(variants[0].Data) != "stub-webp-bytes" {
+		t.Fatalf("variants = %+v, want one FormatWebP variant with the registered encoder's own bytes", variants)
 	}
 }

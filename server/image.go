@@ -510,10 +510,11 @@ func normalizeImageFormat(format string) string {
 
 // producibleImageFormats lists the output formats the optimizer handler can
 // encode (encodeImageVariant). Registering the WebP decoder (gosx#199) makes
-// WebP a decodable SOURCE format, but it stays out of this list: there is no
-// WebP encoder here, so it can never be a producible OUTPUT format. Image
-// checks a requested format against this exact list before it builds a URL,
-// so nothing renders a fmt= value the handler would reject at request time.
+// WebP a decodable SOURCE format, but it stays out of this list: this
+// request-time handler only ever builds in stdlib encoders, so it can never
+// be a producible OUTPUT format here. Image checks a requested format
+// against this exact list before it builds a URL, so nothing renders a
+// fmt= value the handler would reject at request time.
 var producibleImageFormats = []string{"jpeg", "png", "gif"}
 
 // ValidateProducibleImageFormat rejects an Image format prop the optimizer
@@ -530,7 +531,17 @@ func ValidateProducibleImageFormat(format string) error {
 	if format == "" {
 		return nil
 	}
-	if !slices.Contains(producibleImageFormats, normalizeImageFormat(format)) {
+	normalized := normalizeImageFormat(format)
+	if normalized == "webp" {
+		// Name the real situation, not just the allowlist: gosx ships no
+		// WebP encoder at all (no wasm runtime, no FFI shim), for this
+		// request-time handler or for the build-time imagepipe stage
+		// either — WebP encoding is a registered-Encoder extension point
+		// (imagepipe.RegisterEncoder), not something either path builds
+		// in by default.
+		return fmt.Errorf("gosx: Image format %q is not producible: gosx ships no built-in WebP encoder (want jpeg, png, or gif); register an imagepipe.Encoder for build-time WebP variants, or omit format to use the source's own format", format)
+	}
+	if !slices.Contains(producibleImageFormats, normalized) {
 		return fmt.Errorf("gosx: Image format %q is not a producible output format (want jpeg, png, or gif)", format)
 	}
 	return nil

@@ -11,7 +11,7 @@ func TestProbeReportsIntrinsicDimensionsAndFormat(t *testing.T) {
 	}{
 		{"png", writeTestPNG(t, dir, "png-src", 1200, 800), "png"},
 		{"jpeg", writeTestJPEG(t, dir, "jpeg-src", 640, 480), "jpeg"},
-		{"webp", writeTestWebP(t, dir, "webp-src", 320, 240), "webp"},
+		{"webp", writeTestWebP(t, dir, "webp-src"), "webp"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -140,9 +140,10 @@ func (a *App) resolveLocalImageURL(src string, transform ImageTransform) (string
 // build's imagepipe stage already generated for src at transform.Width,
 // reading only the buildmanifest.Manifest.Images bucket this App already
 // loaded (via runtimeBuildManifest) for every other hashed asset it serves.
-// It never touches package imagepipe or its WebP encoder -- both are
-// cmd/gosx-only; see TestServerPackageTreeNeverImportsImagepipe at the
-// repo root for the enforced isolation proof.
+// It never touches package imagepipe -- build-time only -- or any encoder
+// a project may have registered with it; see
+// TestServerPackageTreeNeverImportsImagepipe at the repo root for the
+// enforced isolation proof.
 func (a *App) staticExportImageVariant(src string, transform ImageTransform) (string, bool) {
 	if a == nil {
 		return "", false
