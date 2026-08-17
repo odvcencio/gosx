@@ -1334,3 +1334,91 @@ test("bootstrap defers offscreen shared-runtime Scene3D rerenders until the moun
   const last = renderArgs[renderArgs.length - 1];
   assert.deepEqual(last.slice(2, 4), [320, 180]);
 });
+
+test("Scene3D webgl loss recovery rebuilds without a contextrestored event", async () => {
+  // Chrome does not guarantee `webglcontextrestored` after an involuntary
+  // loss, and in a real browser the Canvas2D stand-in lands on a REPLACEMENT
+  // canvas (the original is context-tainted), detaching the only restored
+  // listener with it. Before the recovery watchdog either path left the
+  // scene degraded forever. The watchdog must rebuild a real WebGL renderer
+  // on its own — on a fresh canvas when the original context stays lost —
+  // with no restored event ever firing.
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-loss-recovery";
+  let now = 0;
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    performanceNow: () => now,
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-loss-recovery",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-loss-recovery",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            forceWebGL: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+
+  const originalCanvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const lostGL = originalCanvas.getContext("webgl");
+  originalCanvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+
+  // The original context never comes back: getContext keeps handing out the
+  // same lost context, exactly like a browser that never restores.
+  lostGL.isContextLost = () => true;
+
+  // Hidden-tab time must not spend recovery attempts.
+  env.context.document.visibilityState = "hidden";
+  now = 60000;
+  timers.runInterval(2000);
+  now = 120000;
+  timers.runInterval(2000);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+
+  env.context.document.visibilityState = "visible";
+  now = 130000;
+  timers.runInterval(2000); // arms the eligibility baseline
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  now = 134100;
+  timers.runInterval(2000); // first attempt after the 4s base delay
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  const recoveredCanvas = mount.children[0];
+  assert.notEqual(recoveredCanvas, originalCanvas);
+  const recoveredGL = recoveredCanvas.getContext("webgl");
+  assert.notEqual(recoveredGL, lostGL);
+  assert.ok(
+    recoveredGL.ops.some((entry) => entry[0] === "bufferData" && entry[3] > 0),
+    "recovered renderer must upload geometry buffers to the fresh GL context",
+  );
+});

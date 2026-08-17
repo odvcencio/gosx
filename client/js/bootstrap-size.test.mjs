@@ -514,7 +514,13 @@ const budgets = [
   // Bumped raw 1_530_000 -> 1_531_500 for the material-clock animation
   // source (sceneHasTimeDrivenMaterials): a time-uniform material now keeps
   // the render loop running so shader-clock scenes stop freezing.
-  { file: "bootstrap.js", raw: 1_531_500, gzip: 415_400, brotli: 333_600 },
+  // Bumped raw 1_531_500 -> 1_533_000, gzip 415_400 -> 415_700, brotli
+  // 333_600 -> 334_000 for the WebGL loss-recovery watchdog: a
+  // WebGL-preferring scene stuck on the lost stub or the Canvas2D stand-in
+  // now rebuilds a real WebGL renderer with capped, backed-off attempts —
+  // `webglcontextrestored` is not guaranteed after an involuntary loss.
+  // Measured: 1_531_976 / 415_197 / 333_609.
+  { file: "bootstrap.js", raw: 1_533_000, gzip: 415_700, brotli: 334_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -899,7 +905,10 @@ const budgets = [
   // Measured: 533_909 / 147_844 / 122_634, plus rounding headroom.
   // Bumped raw 534_500 -> 535_500 for the material-clock animation source
   // in mount.ts (raw-props uniform scan feeding sceneAnimationState).
-  { file: "bootstrap-feature-scene3d.js", raw: 535_500, gzip: 148_500, brotli: 123_300 },
+  // Bumped raw 535_500 -> 537_000, gzip 148_500 -> 148_800, brotli 123_300
+  // -> 123_500 for the WebGL loss-recovery watchdog. Measured: 535_969 /
+  // 148_477 / 123_144.
+  { file: "bootstrap-feature-scene3d.js", raw: 537_000, gzip: 148_800, brotli: 123_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1415,9 +1424,13 @@ const routeBudgets = [
     // 272_806 -> 273_500 for the split-GLB point overlay merge and quantized
     // _POINT_SIZE decode in the gltf surface, plus the memoized manifest
     // parse in bootstrap-runtime.js. Measured: 1_215_328 raw.
-    raw: 1_216_500,
-    gzip: 323_700,
-    brotli: 273_500,
+    //
+    // Bumped raw 1_216_500 -> 1_218_500, gzip 323_700 -> 324_300, brotli
+    // 273_500 -> 274_100 for the WebGL loss-recovery watchdog in the scene
+    // mount. Measured: 1_217_388 / 323_925 / 273_646.
+    raw: 1_218_500,
+    gzip: 324_300,
+    brotli: 274_100,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1503,7 +1516,11 @@ const routeBudgets = [
     // 244_554 -> 245_300 for the split-GLB overlay merge, quantized
     // _POINT_SIZE decode, memoized manifest parse, and the scene3d water
     // source memo path. Measured: 1_041_424 raw.
-    raw: 1_043_000,
+    //
+    // Bumped raw 1_043_000 -> 1_045_000 for the WebGL loss-recovery
+    // watchdog. gzip and brotli headroom held. Measured: 1_043_484 /
+    // 288_976 / 245_188.
+    raw: 1_045_000,
     gzip: 289_000,
     brotli: 245_300,
   },
@@ -1585,7 +1602,11 @@ const routeBudgets = [
     // 322_808 -> 323_700 for the split-GLB overlay merge, quantized
     // _POINT_SIZE decode, memoized manifest parse, and the water source memo
     // paths in both backends. Measured: 1_428_696 raw.
-    raw: 1_430_000,
+    //
+    // Bumped raw 1_430_000 -> 1_432_000 for the WebGL loss-recovery
+    // watchdog. gzip and brotli headroom held. Measured: 1_430_756 /
+    // 382_685 / 323_648.
+    raw: 1_432_000,
     gzip: 382_700,
     brotli: 323_700,
   },
@@ -1671,9 +1692,13 @@ const routeBudgets = [
     // 234_301 -> 235_000 for the split-GLB overlay merge, quantized
     // _POINT_SIZE decode, and memoized manifest parse. Measured: 1_063_051
     // raw.
-    raw: 1_064_000,
-    gzip: 280_400,
-    brotli: 235_000,
+    //
+    // Bumped raw 1_064_000 -> 1_066_000, gzip 280_400 -> 280_900, brotli
+    // 235_000 -> 235_500 for the WebGL loss-recovery watchdog. Measured:
+    // 1_065_111 / 280_593 / 235_162.
+    raw: 1_066_000,
+    gzip: 280_900,
+    brotli: 235_500,
   },
 
 ];

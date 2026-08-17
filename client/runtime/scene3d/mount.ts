@@ -924,7 +924,11 @@
     }
 
     function checkSceneRenderWatchdog() {
-      if (disposed || !ctx.mount || !renderer || renderer.kind !== "webgpu") {
+      if (disposed || !ctx.mount || !renderer) {
+        return;
+      }
+      if (renderer.kind !== "webgpu") {
+        checkSceneWebGLLossRecovery();
         return;
       }
       const animation = sceneAnimationState();
@@ -1093,6 +1097,124 @@
           swapped: swapped,
         });
       }, WEBGL_VOLUNTARY_RESTORE_WATCHDOG_MS);
+    }
+
+    // Watchdog-driven recovery for a WebGL-preferring scene stuck without
+    // its GPU backend. Two ways to get stuck for good, both real on content
+    // routes (fixed-position ForceWebGL starfields):
+    //   - An involuntary context loss installs the "lost" stub and recovery
+    //     then waits on `webglcontextrestored` — an event Chrome only
+    //     guarantees when IT chooses to restore. After a GPU process crash
+    //     the page is expected to rebuild on its own; nothing here did.
+    //   - The loss ladder swapped in the Canvas2D stand-in. In a real
+    //     browser the original canvas is context-tainted, so the stand-in
+    //     lives on a REPLACEMENT canvas and commitSceneCanvasReplacement
+    //     detached the original's listeners — a later restored event on the
+    //     original canvas has no audience, and nothing retries WebGL.
+    // The poll retries a real WebGL renderer with capped, backed-off
+    // attempts whenever such a scene is visible: first on the current
+    // canvas, then on a fresh replacement canvas (a 2d-tainted stand-in can
+    // never hand back a webgl context). Also covers a transient failure of
+    // the INITIAL WebGL context creation, which used to settle on Canvas2D
+    // permanently.
+    const SCENE_WEBGL_RECOVERY_BASE_DELAY_MS = 4000;
+    const SCENE_WEBGL_RECOVERY_MAX_DELAY_MS = 32000;
+    const SCENE_WEBGL_RECOVERY_MAX_ATTEMPTS = 4;
+    let webglRecoveryEligibleSince = 0;
+    let webglRecoveryAttempts = 0;
+    let webglRecoveryNextDelayMS = SCENE_WEBGL_RECOVERY_BASE_DELAY_MS;
+
+    function sceneWebGLLossRecoveryWanted() {
+      if (!renderer || (renderer.kind !== "lost" && renderer.kind !== "canvas")) {
+        return false;
+      }
+      const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+      if (!(webglPreference === "prefer" || webglPreference === "force")) {
+        return false;
+      }
+      if (!sceneBackendCapsAllowsKind(sceneBackendCapsOf(props), "webgl")) {
+        return false;
+      }
+      // The chunk-loading ladder owns the not-yet-fetched case.
+      return !!sceneWebGLRendererFactory();
+    }
+
+    function checkSceneWebGLLossRecovery() {
+      if (!sceneWebGLLossRecoveryWanted()) {
+        webglRecoveryEligibleSince = 0;
+        webglRecoveryAttempts = 0;
+        webglRecoveryNextDelayMS = SCENE_WEBGL_RECOVERY_BASE_DELAY_MS;
+        return;
+      }
+      // Mirror the WebGPU stall watchdog's hidden-tab rule: attempts spend
+      // only while the tab is visible and the scene can render, so a long
+      // background stay cannot exhaust the attempt budget unseen.
+      const recoveryHidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      if (recoveryHidden || !sceneCanRender()) {
+        webglRecoveryEligibleSince = 0;
+        return;
+      }
+      if (webglRecoveryAttempts >= SCENE_WEBGL_RECOVERY_MAX_ATTEMPTS) {
+        return;
+      }
+      const now = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      if (webglRecoveryEligibleSince <= 0) {
+        webglRecoveryEligibleSince = now;
+        return;
+      }
+      if (now - webglRecoveryEligibleSince < webglRecoveryNextDelayMS) {
+        return;
+      }
+      webglRecoveryEligibleSince = now;
+      webglRecoveryAttempts += 1;
+      webglRecoveryNextDelayMS = Math.min(webglRecoveryNextDelayMS * 2, SCENE_WEBGL_RECOVERY_MAX_DELAY_MS);
+      // A canvas whose context is still lost hands back the SAME lost
+      // context from getContext — building on it would "succeed" into a
+      // renderer that draws nothing and disarm this watchdog. Probe first;
+      // a dead or foreign-typed context forces the replacement-canvas path.
+      let currentCanvasUsable = true;
+      try {
+        const currentGL = canvas && typeof canvas.getContext === "function"
+          ? (canvas.getContext("webgl2") || canvas.getContext("webgl"))
+          : null;
+        currentCanvasUsable = !!currentGL
+          && !(typeof currentGL.isContextLost === "function" && currentGL.isContextLost());
+      } catch (_e) {
+        currentCanvasUsable = false;
+      }
+      let recovered = null;
+      if (currentCanvasUsable) {
+        recovered = createFallbackSceneWebGLRenderer("webgl-loss-recovery");
+      } else {
+        const nextCanvas = prepareSceneReplacementCanvas();
+        const result = createSceneWebGLResult(nextCanvas, props, capability, "webgl-loss-recovery");
+        recovered = result && result.renderer ? { canvas: nextCanvas, result: result } : null;
+      }
+      const webglRenderer = recovered && recovered.result ? recovered.result.renderer : null;
+      if (webglRenderer) {
+        if (recovered.canvas !== canvas) {
+          commitSceneCanvasReplacement(recovered.canvas, "webgl-loss-recovery");
+        }
+        if (swapRenderer(webglRenderer, "")) {
+          gosxSceneEmit("info", "webgl-loss-recovered", {
+            attempts: webglRecoveryAttempts,
+          });
+          webglRecoveryEligibleSince = 0;
+          webglRecoveryAttempts = 0;
+          webglRecoveryNextDelayMS = SCENE_WEBGL_RECOVERY_BASE_DELAY_MS;
+          viewportDirty = true;
+          renderLatestSceneBundle("webgl-loss-recovery");
+          scheduleRenderWithViewport("webgl-loss-recovery");
+          return;
+        }
+        if (typeof webglRenderer.dispose === "function") {
+          webglRenderer.dispose();
+        }
+      }
+      gosxSceneEmit("warn", "webgl-loss-recovery-attempt-failed", {
+        attempt: webglRecoveryAttempts,
+        max: SCENE_WEBGL_RECOVERY_MAX_ATTEMPTS,
+      });
     }
 
     // Viewport-dirty flag: when false, renderFrame skips the per-frame
