@@ -205,56 +205,176 @@ func (v *validator) validateAttr(node *Node, attr *Attr) {
 	}
 }
 
-// The five data-gosx-countdown-* attributes with a fixed value vocabulary
-// (gosx#178). These string values are pinned against server/navigation_contract.go
-// and client/runtime/host/navigation.ts by server/navigation_contract_countdown_test.go
-// (gosx#178 review finding m11).
+// The data-gosx-countdown-* attributes with a fixed value vocabulary
+// (gosx#178, extended by gosx#213). These string values are pinned against
+// server/navigation_contract.go and client/runtime/host/navigation.ts by
+// server/navigation_contract_countdown_test.go (gosx#178 review finding
+// m11).
 const (
 	countdownInstantAttr = "data-gosx-countdown"
 	countdownFormatAttr  = "data-gosx-countdown-format"
 	countdownSegmentAttr = "data-gosx-countdown-segment"
 	countdownWarnAttr    = "data-gosx-countdown-warn"
+	countdownCueAttr     = "data-gosx-countdown-cue"
 	countdownThenAttr    = "data-gosx-countdown-then"
 )
 
-// countdownWarnIntegerPattern and countdownWarnDurationPattern mirror the
-// small declarative duration subset parseCountdownWarnSeconds accepts in
-// client/runtime/host/navigation.ts: a bare non-negative integer as whole
-// seconds, or whole hour/minute/second components combined in one value
-// (for example "30s" or "1m30s"). This is not a general Go duration parser
-// — see parseRevalidateInterval's own comment in navigation.ts for the
-// same small-subset rationale applied to data-gosx-revalidate-interval.
-var (
-	countdownWarnIntegerPattern  = regexp.MustCompile(`^[0-9]+$`)
-	countdownWarnDurationPattern = regexp.MustCompile(`^(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+)s)?$`)
+// data-gosx-watch and its two companion attributes (gosx#214), pinned the
+// same way against server/navigation_contract.go and
+// client/runtime/host/navigation.ts by
+// server/navigation_contract_countdown_test.go.
+const (
+	watchAttr       = "data-gosx-watch"
+	watchEffectAttr = "data-gosx-watch-effect"
 )
 
-// isValidCountdownWarnValue reports whether value parses under the small
-// declarative duration subset described above.
-func isValidCountdownWarnValue(value string) bool {
-	if countdownWarnIntegerPattern.MatchString(value) {
+// countdownThresholdIntegerPattern and countdownThresholdDurationPattern
+// mirror the small declarative duration subset
+// parseCountdownThresholdSeconds accepts in client/runtime/host/navigation.ts:
+// a bare non-negative integer as whole seconds, or whole hour/minute/second
+// components combined in one value (for example "30s" or "1m30s"). This is
+// not a general Go duration parser — see parseRevalidateInterval's own
+// comment in navigation.ts for the same small-subset rationale applied to
+// data-gosx-revalidate-interval. Shared by data-gosx-countdown-warn and
+// data-gosx-countdown-cue (gosx#213): both attributes use this as the
+// threshold half of a "threshold:token" pair.
+var (
+	countdownThresholdIntegerPattern  = regexp.MustCompile(`^[0-9]+$`)
+	countdownThresholdDurationPattern = regexp.MustCompile(`^(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+)s)?$`)
+	// countdownWarnClassTokenPattern rejects only what could never work as
+	// one class in a space-joined class attribute: embedded whitespace.
+	// This is deliberately not a full CSS identifier grammar — see
+	// isValidCountdownWarnClassToken in navigation.ts for the identical
+	// rule applied client-side.
+	countdownWarnClassTokenPattern = regexp.MustCompile(`^\S+$`)
+)
+
+// isValidCountdownThresholdValue reports whether value parses under the
+// small declarative duration subset described above.
+func isValidCountdownThresholdValue(value string) bool {
+	if countdownThresholdIntegerPattern.MatchString(value) {
 		return true
 	}
-	m := countdownWarnDurationPattern.FindStringSubmatch(value)
+	m := countdownThresholdDurationPattern.FindStringSubmatch(value)
 	return m != nil && (m[1] != "" || m[2] != "" || m[3] != "")
 }
 
-// validateStaticCountdownAttr flags a static data-gosx-countdown-* value
-// outside its documented vocabulary: an instant that is not valid RFC3339,
-// a format outside the two render modes the countdown runtime supports
-// ("dhms" and "mm:ss"), a segment name outside the four the runtime fills
-// (days|hours|minutes|seconds), a warn duration outside the small
-// declarative subset above, or a then action other than "revalidate". This
-// follows the same fail-closed principle as the ".length" rule above: a
-// bad value here renders a silently inert (or silently ignored) countdown
-// today, with nothing at the terminal to explain why, so Validate now
-// catches it at check time instead.
+// countdownCueNames is the fixed, tiny synthesized tone vocabulary
+// data-gosx-countdown-cue and data-gosx-watch-effect's "cue:<name>" token
+// both draw from (gosx#213 / gosx#214) — see "Shared synthesized audio
+// cues" in client/runtime/host/navigation.ts for what each name actually
+// sounds like.
+var countdownCueNames = map[string]bool{"beep": true, "chime": true}
+
+// isValidCountdownTierPairsValue reports whether value parses under the
+// shared "threshold:token[,threshold:token]..." grammar
+// data-gosx-countdown-warn and data-gosx-countdown-cue both use
+// (gosx#213): a comma-separated list of pairs, each a valid threshold (see
+// isValidCountdownThresholdValue) and a token isValidToken accepts. This
+// mirrors parseCountdownTierPairs in navigation.ts exactly, including its
+// fail-closed-as-a-whole behavior: a single malformed pair fails the
+// entire value, not just that pair.
+func isValidCountdownTierPairsValue(value string, isValidToken func(string) bool) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	for _, rawPair := range strings.Split(trimmed, ",") {
+		pair := strings.TrimSpace(rawPair)
+		splitAt := strings.Index(pair, ":")
+		if splitAt <= 0 || splitAt == len(pair)-1 {
+			return false
+		}
+		threshold := pair[:splitAt]
+		token := strings.TrimSpace(pair[splitAt+1:])
+		if !isValidCountdownThresholdValue(threshold) || token == "" || !isValidToken(token) {
+			return false
+		}
+	}
+	return true
+}
+
+func isValidCountdownWarnClassToken(token string) bool {
+	return countdownWarnClassTokenPattern.MatchString(token)
+}
+
+func isValidCountdownCueToken(token string) bool {
+	return countdownCueNames[token]
+}
+
+// isValidWatchConditionValue reports whether value parses as a
+// data-gosx-watch condition: "<attrName>=<valueRef>", split at the first
+// "=", with a non-empty attrName. valueRef itself is not further validated
+// statically — a literal is arbitrary author text, and a "@<selector>"
+// or "@<selector>[<attrName>]" reference's selector is not something
+// `gosx check` can usefully validate ahead of the DOM it will run against.
+// This mirrors parseWatchCondition in navigation.ts's own top-level shape
+// check.
+func isValidWatchConditionValue(value string) bool {
+	splitAt := strings.Index(value, "=")
+	if splitAt <= 0 {
+		return false
+	}
+	return strings.TrimSpace(value[:splitAt]) != ""
+}
+
+// watchEffectTokenPattern validates one data-gosx-watch-effect token:
+// "title" bare, "class:<name>" optionally followed by "@<selector>", or
+// "cue:<name>". Mirrors parseWatchEffects in navigation.ts's own token
+// grammar. The named capture groups let isValidWatchEffectValue below
+// single out a "cue:<name>" token to also check its name against
+// countdownCueNames — the two other shapes accept any non-empty value for
+// their own free-form parts (a class name, a selector).
+var watchEffectTokenPattern = regexp.MustCompile(`^(?:title|class:[^\s@]+(?:@\S+)?|cue:(?P<cue>\S+))$`)
+
+// isValidWatchEffectValue reports whether every comma-separated token in
+// value matches watchEffectTokenPattern above, with a cue token's name
+// additionally checked against the fixed tone vocabulary. Unlike
+// data-gosx-countdown-warn/-cue's pairs, an unrecognized token here is not
+// fail-closed-as-a-whole at RUN time (see parseWatchEffects' own doc
+// comment in navigation.ts for why) — but `gosx check` still rejects the
+// whole value at CHECK time, the same as it does for a countdown pair
+// list: an author-visible diagnostic before the page ever serves beats a
+// console.warn a real user session might silently drop one effect from.
+func isValidWatchEffectValue(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	for _, rawToken := range strings.Split(trimmed, ",") {
+		token := strings.TrimSpace(rawToken)
+		match := watchEffectTokenPattern.FindStringSubmatch(token)
+		if match == nil {
+			return false
+		}
+		cueIdx := watchEffectTokenPattern.SubexpIndex("cue")
+		if cueName := match[cueIdx]; cueName != "" && !countdownCueNames[cueName] {
+			return false
+		}
+	}
+	return true
+}
+
+// validateStaticCountdownAttr flags a static data-gosx-countdown-*,
+// data-gosx-watch, or data-gosx-watch-effect value outside its documented
+// vocabulary: an instant that is not valid RFC3339, a format outside the
+// two render modes the countdown runtime supports ("dhms" and "mm:ss"), a
+// segment name outside the four the runtime fills
+// (days|hours|minutes|seconds), a warn or cue value outside the shared
+// threshold:token pairs grammar (gosx#213), a then action other than
+// "revalidate", a watch condition with no "=", or a watch effect list with
+// an unrecognized token (gosx#214). This follows the same fail-closed
+// principle as the ".length" rule above: a bad value here renders a
+// silently inert (or silently ignored) countdown or watcher today, with
+// nothing at the terminal to explain why, so Validate now catches it at
+// check time instead.
 //
 // A dynamic expression value ({...}) is exempt — attr.Kind is AttrExpr for
 // those, and this method only runs from the AttrStatic case in validateAttr
 // and from validateComponentRef. Its value is known only at render or run
 // time, and the browser runtime already fails inert (leaves the element or
-// segment untouched) on a bad value it discovers there.
+// segment untouched, or the watcher/countdown disabled) on a bad value it
+// discovers there.
 func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 	switch attr.Name {
 	case countdownInstantAttr:
@@ -284,11 +404,19 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 			})
 		}
 	case countdownWarnAttr:
-		if !isValidCountdownWarnValue(attr.Value) {
+		if !isValidCountdownTierPairsValue(attr.Value, isValidCountdownWarnClassToken) {
 			v.diags = append(v.diags, Diagnostic{
 				Span:    node.Span,
-				Message: fmt.Sprintf("invalid %s value %q: must be a bare integer number of seconds, or whole h/m/s components such as \"30s\" or \"1m30s\"", countdownWarnAttr, attr.Value),
-				Hint:    `this is a small declarative duration subset, not a general Go duration parser`,
+				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of threshold:class pairs", countdownWarnAttr, attr.Value),
+				Hint:    `for example "30s:is-warn,10s:is-critical"; each threshold is a bare integer number of seconds, or whole h/m/s components such as "30s" or "1m30s"`,
+			})
+		}
+	case countdownCueAttr:
+		if !isValidCountdownTierPairsValue(attr.Value, isValidCountdownCueToken) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of threshold:cue pairs using \"beep\" or \"chime\"", countdownCueAttr, attr.Value),
+				Hint:    `for example "10s:beep"; each threshold is a bare integer number of seconds, or whole h/m/s components such as "30s" or "1m30s"`,
 			})
 		}
 	case countdownThenAttr:
@@ -297,6 +425,22 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 				Span:    node.Span,
 				Message: fmt.Sprintf("invalid %s value %q: must be \"revalidate\"", countdownThenAttr, attr.Value),
 				Hint:    `"revalidate" fires one revalidation of the page's revalidate root the first time the countdown reaches zero`,
+			})
+		}
+	case watchAttr:
+		if !isValidWatchConditionValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be \"<attrName>=<value>\"", watchAttr, attr.Value),
+				Hint:    `compare against a literal ("data-on-clock=true") or another element ("data-seat=@#viewer[data-seat-id]")`,
+			})
+		}
+	case watchEffectAttr:
+		if !isValidWatchEffectValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of \"class:<name>\", \"title\", or \"cue:<name>\" tokens", watchEffectAttr, attr.Value),
+				Hint:    `a "cue:<name>" token's name must be "beep" or "chime"; a "class:<name>" token may add "@<selector>" to target another element`,
 			})
 		}
 	}

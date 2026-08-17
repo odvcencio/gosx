@@ -34,19 +34,22 @@ func compileCountdownFixture(t *testing.T, body string) string {
 }
 
 // TestFileRendererCountdownCompactAttrsSurviveRender covers the compact
-// render mode (gosx#178): data-gosx-countdown, data-gosx-countdown-format,
-// data-gosx-countdown-warn and data-gosx-countdown-then must all reach the
+// render mode (gosx#178, warn/cue grammar updated for gosx#213):
+// data-gosx-countdown, data-gosx-countdown-format, data-gosx-countdown-warn,
+// data-gosx-countdown-cue and data-gosx-countdown-then must all reach the
 // served HTML untouched, alongside the server-rendered initial text the
 // runtime keeps moving after the first tick.
 func TestFileRendererCountdownCompactAttrsSurviveRender(t *testing.T) {
 	html := compileCountdownFixture(t, "\t\t<span data-gosx-countdown=\"2026-08-22T16:00:00-04:00\" "+
-		"data-gosx-countdown-format=\"mm:ss\" data-gosx-countdown-warn=\"30s\" "+
+		"data-gosx-countdown-format=\"mm:ss\" data-gosx-countdown-warn=\"30s:is-warn,10s:is-critical\" "+
+		"data-gosx-countdown-cue=\"10s:beep\" "+
 		"data-gosx-countdown-then=\"revalidate\">15:00</span>")
 
 	for _, want := range []string{
 		`data-gosx-countdown="2026-08-22T16:00:00-04:00"`,
 		`data-gosx-countdown-format="mm:ss"`,
-		`data-gosx-countdown-warn="30s"`,
+		`data-gosx-countdown-warn="30s:is-warn,10s:is-critical"`,
+		`data-gosx-countdown-cue="10s:beep"`,
 		`data-gosx-countdown-then="revalidate"`,
 		">15:00<",
 	} {
@@ -157,5 +160,63 @@ func TestCompileRejectsInvalidStaticCountdownSegment(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "data-gosx-countdown-segment") {
 		t.Fatalf("expected the segment diagnostic in the compile error, got %v", err)
+	}
+}
+
+// TestCompileRejectsInvalidStaticCountdownCue is the same end-to-end proof
+// for data-gosx-countdown-cue (gosx#213).
+func TestCompileRejectsInvalidStaticCountdownCue(t *testing.T) {
+	src := "package docs\n\n" +
+		"func Page() Node {\n" +
+		"\treturn <main>\n" +
+		"\t\t<span data-gosx-countdown=\"2026-08-22T16:00:00-04:00\" data-gosx-countdown-cue=\"10s:klaxon\"></span>\n" +
+		"\t</main>\n" +
+		"}\n"
+	_, err := gosx.Compile([]byte(src))
+	if err == nil {
+		t.Fatal("expected compile to reject an invalid data-gosx-countdown-cue value")
+	}
+	if !strings.Contains(err.Error(), "data-gosx-countdown-cue") {
+		t.Fatalf("expected the cue diagnostic in the compile error, got %v", err)
+	}
+}
+
+// TestFileRendererWatchAttrsSurviveRender covers data-gosx-watch,
+// data-gosx-watch-effect and data-gosx-watch-title (gosx#214): all three
+// must reach the served HTML untouched, the same round-trip
+// TestFileRendererCountdownCompactAttrsSurviveRender proves for the
+// countdown attributes above.
+func TestFileRendererWatchAttrsSurviveRender(t *testing.T) {
+	html := compileCountdownFixture(t, "\t\t<div data-gosx-watch=\"data-on-clock=true\" "+
+		"data-gosx-watch-effect=\"class:is-active,title,cue:chime\" "+
+		"data-gosx-watch-title=\"It&#39;s your pick!\" data-on-clock=\"false\"></div>")
+
+	for _, want := range []string{
+		`data-gosx-watch="data-on-clock=true"`,
+		`data-gosx-watch-effect="class:is-active,title,cue:chime"`,
+		`data-on-clock="false"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("expected %q in rendered watch html %q", want, html)
+		}
+	}
+}
+
+// TestCompileRejectsInvalidStaticWatchCondition is the compile-path proof
+// for data-gosx-watch (gosx#214), mirroring
+// TestCompileRejectsInvalidStaticCountdownInstant above.
+func TestCompileRejectsInvalidStaticWatchCondition(t *testing.T) {
+	src := "package docs\n\n" +
+		"func Page() Node {\n" +
+		"\treturn <main>\n" +
+		"\t\t<div data-gosx-watch=\"no-equals-sign-here\"></div>\n" +
+		"\t</main>\n" +
+		"}\n"
+	_, err := gosx.Compile([]byte(src))
+	if err == nil {
+		t.Fatal("expected compile to reject an invalid data-gosx-watch value")
+	}
+	if !strings.Contains(err.Error(), "data-gosx-watch") {
+		t.Fatalf("expected the watch diagnostic in the compile error, got %v", err)
 	}
 }

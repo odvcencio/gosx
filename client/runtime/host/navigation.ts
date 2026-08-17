@@ -42,11 +42,26 @@
   const COUNTDOWN_ATTR = "data-gosx-countdown";
   const COUNTDOWN_FORMAT_ATTR = "data-gosx-countdown-format";
   const COUNTDOWN_SEGMENT_ATTR = "data-gosx-countdown-segment";
+  // COUNTDOWN_WARN_ATTR and COUNTDOWN_CUE_ATTR (gosx#213) share one
+  // grammar: a comma-separated list of threshold:token pairs. -warn's
+  // token is a CSS class the runtime toggles on the countdown root at or
+  // below the threshold; -cue's token is a name from the fixed synthesized
+  // tone vocabulary (see "Shared synthesized audio cues" below), fired
+  // once the first time the remainder crosses at or below the threshold.
+  // Before gosx#213 COUNTDOWN_WARN_ATTR took one bare duration and always
+  // toggled a single fixed class (gosx-countdown--warn); that single-value
+  // form is no longer accepted; see the CHANGELOG entry for gosx#213.
   const COUNTDOWN_WARN_ATTR = "data-gosx-countdown-warn";
+  const COUNTDOWN_CUE_ATTR = "data-gosx-countdown-cue";
   const COUNTDOWN_THEN_ATTR = "data-gosx-countdown-then";
-  const COUNTDOWN_WARN_CLASS = "gosx-countdown--warn";
   const COUNTDOWN_SEGMENT_NAMES = ["days", "hours", "minutes", "seconds"];
   const COUNTDOWN_TICK_MS = 1000;
+  // data-gosx-watch (gosx#214): see "Attention watcher" below for the full
+  // grammar and lifecycle.
+  const WATCH_ATTR = "data-gosx-watch";
+  const WATCH_EFFECT_ATTR = "data-gosx-watch-effect";
+  const WATCH_TITLE_ATTR = "data-gosx-watch-title";
+  const WATCH_TITLE_FLASH_INTERVAL_MS = 1000;
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
@@ -128,6 +143,41 @@
   // countdown's own trigger causes.
   const countdownFiredTargets = new Set();
   let countdownThenLastFiredAt = -Infinity;
+  // countdownCueFiredKeys backs data-gosx-countdown-cue (gosx#213): a
+  // one-shot-per-crossing Set exactly like countdownFiredTargets above,
+  // keyed by "<targetMs>|<thresholdSeconds>|<cueName>" instead of just
+  // targetMs, since one countdown can carry several independently-firing
+  // cue tiers. A fixed targetMs's remainder only ever counts down, never
+  // back up, so once a tier's key is in this Set it can never legitimately
+  // need to fire again FOR THAT INSTANT — a rescan that rebuilds a fresh
+  // state record for the same still-elapsed instant (see
+  // countdownFiredTargets' own doc comment for why that happens) must not
+  // replay it. A genuinely new instant (the countdown resets to a later
+  // target) mints an entirely new key, which is what "re-arms when the
+  // countdown resets" means here. Deliberately never reset by
+  // countdownGeneration, for the same reason countdownFiredTargets never
+  // is.
+  const countdownCueFiredKeys = new Set();
+  // watchRoots/watchGeneration mirror countdownRoots/countdownGeneration:
+  // one record per data-gosx-watch element, rebuilt by setupPageWatchers on
+  // every boot and soft navigation. See setupPageWatchers' own doc comment.
+  let watchRoots = [];
+  let watchGeneration = 0;
+  // watchActiveState survives across watchGeneration the same way
+  // countdownCueFiredKeys survives across countdownGeneration: a watcher's
+  // DOM node is destroyed and rebuilt fresh on every revalidation swap (see
+  // replaceBody), so "was this condition already true" cannot live on the
+  // node itself. Keyed by each record's own key (its id, or its position
+  // among data-gosx-watch elements when it has none — see buildWatchState).
+  const watchActiveState = new Map();
+  // titleFlashHandle/titleFlashOriginalTitle/titleFlashOwnerKey back
+  // data-gosx-watch-effect's "title" effect (gosx#214). document.title is
+  // one shared global resource, so only one watcher flashes it at a time;
+  // a later transition takes ownership from an earlier still-flashing one
+  // rather than stacking. See startTitleFlash/stopTitleFlash below.
+  let titleFlashHandle = null;
+  let titleFlashOriginalTitle = null;
+  let titleFlashOwnerKey = null;
   gosxHost.navigationScriptCache = scriptCache;
   gosxHost.navigationPageCache = pageCache;
   gosxHostCompatibility.install("__gosx_loaded_scripts", scriptCache);
@@ -2381,6 +2431,9 @@
     // setupPageRevalidation's doc comment.
     setupPageRevalidation();
     setupPageCountdowns();
+    // setupPageWatchers (gosx#214) follows the exact same rescan lifecycle
+    // — see its own doc comment above.
+    setupPageWatchers();
   }
 
   // documentIsHidden prefers the real, read-only document.hidden a browser
@@ -2605,6 +2658,167 @@
   }
 
   // ---------------------------------------------------------------------
+  // Shared synthesized audio cues (data-gosx-countdown-cue and
+  // data-gosx-watch's "cue" effect, gosx#213 / gosx#214)
+  //
+  // One AudioContext for the whole runtime, constructed lazily on the
+  // page's first user gesture — a pointerdown or a keydown, whichever
+  // comes first, through the once-listeners registered near the bottom of
+  // this file — and never before, so construction never races a browser's
+  // autoplay gate with nothing to resume it. Both data-gosx-countdown-cue
+  // below and data-gosx-watch's "cue" effect (see "Attention watcher")
+  // call the same playCountdownCue entry point against the same context
+  // and the same fixed, tiny tone vocabulary; there is exactly one audio
+  // subsystem here, not two kept in sync by hand.
+  //
+  // This is deliberately independent of window.__gosx.arcadeAudio
+  // (client/js/bootstrap-src/30c2-tail-arcade-audio.ts): arcadeAudio ships
+  // only inside the islands/hubs bootstrap bundle, while this file is the
+  // always-on navigation runtime every page loads — a plain countdown-only
+  // page must get its cues without depending on a bundle it may never
+  // load.
+  // ---------------------------------------------------------------------
+
+  const AUDIO_CUE_NAMES = { beep: true, chime: true };
+  const AUDIO_CUE_DEBUG_LOG_LIMIT = 200;
+  let audioCueContext = null;
+  // audioCueDebugLog is the small, honest test hook the runtime exposes
+  // for proving a cue actually fired instead of a test only trusting that
+  // playCountdownCue was CALLED: window.__gosx.navigation.debugCueLog()
+  // returns a copy of every {cue, at} entry recorded the moment a named
+  // tone was actually scheduled (never for a call that no-opped for want
+  // of a primed context or an unrecognized name). Capped at
+  // AUDIO_CUE_DEBUG_LOG_LIMIT entries, oldest dropped first, the same
+  // bounded-growth shape missingPatchPathWarnings uses in patch.ts.
+  const audioCueDebugLog = [];
+
+  function audioCueContextConstructor() {
+    return (typeof window !== "undefined" && (window.AudioContext || window.webkitAudioContext)) || null;
+  }
+
+  // primeAudioCueContext is the pointerdown/keydown once-listener body. It
+  // is the ONLY place that ever constructs audioCueContext — playCountdownCue
+  // below never does — so a cue threshold crossed before the visitor's
+  // first gesture stays silent instead of constructing a context nothing
+  // has unlocked yet.
+  function primeAudioCueContext() {
+    if (audioCueContext) {
+      resumeAudioCueContextIfSuspended();
+      return;
+    }
+    const Ctor = audioCueContextConstructor();
+    if (!Ctor) return;
+    try {
+      audioCueContext = new Ctor();
+    } catch (_e) {
+      audioCueContext = null;
+      return;
+    }
+    resumeAudioCueContextIfSuspended();
+  }
+
+  // resumeAudioCueContextIfSuspended is best-effort and fire-and-forget:
+  // AudioContext#resume() returns a promise this runtime never awaits, so
+  // a call site right after this can still observe state === "suspended"
+  // for one more tick even on a successful resume. playCountdownCue below
+  // schedules its tone regardless — a still-suspended context safely
+  // queues a scheduled node in every browser gosx targets, and a context a
+  // browser has permanently blocked drops the audio there, not here.
+  function resumeAudioCueContextIfSuspended() {
+    if (!audioCueContext) return;
+    if (audioCueContext.state === "suspended" && typeof audioCueContext.resume === "function") {
+      try {
+        audioCueContext.resume();
+      } catch (_e) {
+        // Best-effort: a later gesture or cue attempt tries again.
+      }
+    }
+  }
+
+  function recordAudioCueDebug(name) {
+    audioCueDebugLog.push({ cue: name, at: Date.now() });
+    if (audioCueDebugLog.length > AUDIO_CUE_DEBUG_LOG_LIMIT) {
+      audioCueDebugLog.shift();
+    }
+  }
+
+  // scheduleAudioCueTone plays one sine tone with a short linear gain
+  // envelope — a 5ms attack, then a decay to silence by the tone's own end
+  // — so it starts and stops with no audible click. startOffset is
+  // seconds from now, on the SAME context.currentTime base every tone in
+  // one playNamedCue call shares, so a multi-tone cue's notes land in the
+  // sequence its own definition below describes.
+  function scheduleAudioCueTone(context, frequency, startOffset, duration) {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = "sine";
+    const startAt = context.currentTime + startOffset;
+    if (oscillator.frequency && typeof oscillator.frequency.setValueAtTime === "function") {
+      oscillator.frequency.setValueAtTime(frequency, startAt);
+    } else if (oscillator.frequency) {
+      oscillator.frequency.value = frequency;
+    }
+    const peakAt = startAt + 0.005;
+    const endAt = startAt + duration;
+    if (gain.gain && typeof gain.gain.setValueAtTime === "function") {
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.linearRampToValueAtTime(0.25, peakAt);
+      gain.gain.linearRampToValueAtTime(0.0001, endAt);
+    } else if (gain.gain) {
+      gain.gain.value = 0.25;
+    }
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(startAt);
+    oscillator.stop(endAt + 0.02);
+  }
+
+  // playNamedCue holds the fixed, tiny synthesized tone vocabulary
+  // data-gosx-countdown-cue and data-gosx-watch's "cue" effect both draw
+  // from (gosx#213 / gosx#214): "beep" is one short tone; "chime" is two,
+  // a rising fifth (660Hz then 990Hz), for a friendlier two-note alert.
+  // Every duration and frequency here is deliberately hard-coded — this is
+  // not a general sound design API, just the two names the two
+  // declarative attributes need. Returns whether name was recognized (and
+  // therefore actually scheduled), so playCountdownCue below only logs a
+  // debug entry for a cue that really played.
+  function playNamedCue(context, name) {
+    if (name === "beep") {
+      scheduleAudioCueTone(context, 880, 0, 0.14);
+      return true;
+    }
+    if (name === "chime") {
+      scheduleAudioCueTone(context, 660, 0, 0.12);
+      scheduleAudioCueTone(context, 990, 0.11, 0.16);
+      return true;
+    }
+    return false;
+  }
+
+  // playCountdownCue is the single entry point data-gosx-countdown-cue
+  // (below) and data-gosx-watch's "cue" effect (see "Attention watcher")
+  // both call. It is a silent no-op — never a thrown error, never a
+  // console warning — when no AudioContext has been primed yet, when
+  // construction failed, or when this browser exposes no AudioContext at
+  // all: a page nobody has clicked or typed into yet is the expected
+  // common case for a countdown or a watcher whose threshold or condition
+  // is reached before the visitor's first gesture, not a bug to report.
+  function playCountdownCue(name) {
+    if (!audioCueContext) return;
+    resumeAudioCueContextIfSuspended();
+    if (typeof audioCueContext.createOscillator !== "function" || typeof audioCueContext.createGain !== "function") return;
+    let played = false;
+    try {
+      played = playNamedCue(audioCueContext, name);
+    } catch (_e) {
+      played = false;
+    }
+    if (played) {
+      recordAudioCueDebug(name);
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // Declarative countdown (data-gosx-countdown, gosx#178)
   //
   // The author writes the element's initial text (compact) or each
@@ -2715,12 +2929,15 @@
     return Number.isFinite(ms) ? ms : null;
   }
 
-  // parseCountdownWarnSeconds accepts the same small Go-style duration
-  // subset parseRevalidateInterval does above (whole-number amounts),
-  // extended to combine hour/minute/second components in one value
-  // ("1m30s") and to accept a bare integer as whole seconds ("30"), per
-  // gosx#178.
-  function parseCountdownWarnSeconds(value) {
+  // parseCountdownThresholdSeconds accepts the same small Go-style
+  // duration subset parseRevalidateInterval does above (whole-number
+  // amounts), extended to combine hour/minute/second components in one
+  // value ("1m30s") and to accept a bare integer as whole seconds ("30"),
+  // per gosx#178. Named for what it now parses generically — one
+  // threshold half of a data-gosx-countdown-warn or data-gosx-countdown-cue
+  // pair (gosx#213) — rather than only the warn attribute, which used to
+  // be its only caller.
+  function parseCountdownThresholdSeconds(value) {
     const trimmed = String(value == null ? "" : value).trim();
     if (!trimmed) return null;
     if (/^[0-9]+$/.test(trimmed)) {
@@ -2731,6 +2948,52 @@
       return null;
     }
     return Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0);
+  }
+
+  // isValidCountdownWarnClassToken accepts any non-empty, whitespace-free
+  // token as a CSS class name for data-gosx-countdown-warn (gosx#213):
+  // this is not a full CSS identifier grammar, just enough to reject a
+  // token that could never work as one attribute-value class (embedded
+  // whitespace would silently become two class names, or none, once
+  // written through setAttribute("class", ...)).
+  function isValidCountdownWarnClassToken(token) {
+    return !/\s/.test(token);
+  }
+
+  // isValidCountdownCueToken accepts only a name from the fixed
+  // synthesized tone vocabulary (see "Shared synthesized audio cues"
+  // above) for data-gosx-countdown-cue (gosx#213).
+  function isValidCountdownCueToken(token) {
+    return Object.prototype.hasOwnProperty.call(AUDIO_CUE_NAMES, token);
+  }
+
+  // parseCountdownTierPairs parses the shared "threshold:token[,threshold:
+  // token]..." grammar data-gosx-countdown-warn and data-gosx-countdown-cue
+  // both use (gosx#213): a comma-separated list of pairs, each a threshold
+  // (parseCountdownThresholdSeconds' small duration subset) and a token
+  // the caller's own isValidToken predicate accepts — a CSS class for
+  // -warn, a fixed cue name for -cue.
+  //
+  // Returns null — not a partial list — the instant ANY pair in the value
+  // fails to parse. Partial application of a tier ladder (some thresholds
+  // live, one silently dropped) is a worse silent surprise than dropping
+  // the whole declaration and warning once: the same fail-closed choice
+  // buildCountdownState already makes for every other countdown attribute
+  // below.
+  function parseCountdownTierPairs(value, isValidToken) {
+    const trimmed = String(value == null ? "" : value).trim();
+    if (!trimmed) return null;
+    const tiers = [];
+    for (const rawPair of trimmed.split(",")) {
+      const pair = rawPair.trim();
+      const splitAt = pair.indexOf(":");
+      if (splitAt <= 0 || splitAt === pair.length - 1) return null;
+      const seconds = parseCountdownThresholdSeconds(pair.slice(0, splitAt));
+      const token = pair.slice(splitAt + 1).trim();
+      if (seconds == null || !token || !isValidToken(token)) return null;
+      tiers.push({ seconds: seconds, token: token });
+    }
+    return tiers;
   }
 
   function countdownPad2(n) {
@@ -2759,32 +3022,37 @@
     return minutes + ":" + countdownPad2(seconds);
   }
 
-  function countdownClassNames(el) {
+  function elementClassNames(el) {
     return String((el.getAttribute && el.getAttribute("class")) || "").split(/\s+/).filter(Boolean);
   }
 
-  // setCountdownWarnClass adds or removes gosx-countdown--warn by editing
-  // the class attribute directly rather than through element.classList —
+  // setElementClassActive adds or removes one named class by editing the
+  // class attribute directly rather than through element.classList —
   // matching every other DOM-attribute read/write in this file, and
   // keeping the toggle testable through the same getAttribute/setAttribute
   // surface the rest of the runtime's test doubles already implement.
+  // Shared by data-gosx-countdown-warn's tiers below and data-gosx-watch's
+  // "class" effect (gosx#213 / gosx#214) — both are the same "toggle one
+  // class by name on some element" operation.
   //
   // It compares against the CURRENT state before writing anything: most
-  // ticks call this with the same `active` value as the tick before, and a
-  // real DOM write on every one of them would both burn a style/layout
-  // recalculation for nothing and re-serialize the class attribute (author
-  // whitespace collapsed to single spaces) even though nothing changed. A
-  // real toggle still normalizes the attribute the same way it always did.
-  function setCountdownWarnClass(el, active) {
+  // calls pass the same `active` value as the call before (a countdown
+  // tick re-asserting a tier that has not changed, or a watcher rescan
+  // re-asserting a still-true condition), and a real DOM write on every
+  // one of them would both burn a style/layout recalculation for nothing
+  // and re-serialize the class attribute (author whitespace collapsed to
+  // single spaces) even though nothing changed. A real toggle still
+  // normalizes the attribute the same way it always did.
+  function setElementClassActive(el, className, active) {
     if (!el || typeof el.getAttribute !== "function" || typeof el.setAttribute !== "function") return;
-    const classes = countdownClassNames(el);
-    const idx = classes.indexOf(COUNTDOWN_WARN_CLASS);
+    const classes = elementClassNames(el);
+    const idx = classes.indexOf(className);
     const has = idx !== -1;
     if (active === has) {
       return;
     }
     if (active) {
-      classes.push(COUNTDOWN_WARN_CLASS);
+      classes.push(className);
     } else {
       classes.splice(idx, 1);
     }
@@ -2926,15 +3194,38 @@
       }
     }
 
-    let warnSeconds = null;
+    // warnTiers and cueTiers (gosx#213) share parseCountdownTierPairs'
+    // fail-closed-as-a-whole behavior: an empty array here means "this
+    // countdown has no live tiers of this kind", whether because the
+    // author never wrote the attribute or because what they wrote failed
+    // to parse.
+    let warnTiers = [];
     if (root.hasAttribute(COUNTDOWN_WARN_ATTR)) {
       const rawWarn = root.getAttribute(COUNTDOWN_WARN_ATTR);
-      warnSeconds = parseCountdownWarnSeconds(rawWarn);
-      if (warnSeconds == null) {
+      const parsedWarn = parseCountdownTierPairs(rawWarn, isValidCountdownWarnClassToken);
+      if (parsedWarn == null) {
         console.warn(
           "[gosx] invalid " + COUNTDOWN_WARN_ATTR + " value " + JSON.stringify(String(rawWarn || ""))
-          + "; the warn threshold is disabled for this countdown",
+          + "; must be a comma-separated list of threshold:class pairs, such as \"30s:is-warn,10s:is-critical\""
+          + "; the warn thresholds are disabled for this countdown",
         );
+      } else {
+        warnTiers = parsedWarn;
+      }
+    }
+
+    let cueTiers = [];
+    if (root.hasAttribute(COUNTDOWN_CUE_ATTR)) {
+      const rawCue = root.getAttribute(COUNTDOWN_CUE_ATTR);
+      const parsedCue = parseCountdownTierPairs(rawCue, isValidCountdownCueToken);
+      if (parsedCue == null) {
+        console.warn(
+          "[gosx] invalid " + COUNTDOWN_CUE_ATTR + " value " + JSON.stringify(String(rawCue || ""))
+          + "; must be a comma-separated list of threshold:cue pairs using \"beep\" or \"chime\", such as \"10s:beep\""
+          + "; the cue thresholds are disabled for this countdown",
+        );
+      } else {
+        cueTiers = parsedCue;
       }
     }
 
@@ -2944,7 +3235,8 @@
       hasSegments: hasSegments,
       segments: segments,
       format: format,
-      warnSeconds: warnSeconds,
+      warnTiers: warnTiers,
+      cueTiers: cueTiers,
       then: thenRevalidate,
     };
   }
@@ -3048,8 +3340,22 @@
     const remainderMs = Math.max(0, state.targetMs - nowMs);
     const remainderSeconds = Math.floor(remainderMs / 1000);
     renderCountdownState(state, remainderSeconds);
-    if (state.warnSeconds != null) {
-      setCountdownWarnClass(state.root, remainderSeconds <= state.warnSeconds);
+    // warnTiers are level-triggered, recomputed every tick from the
+    // current remainder — a countdown that resets to a later target
+    // re-arms every tier for free, with no crossing memory needed at all.
+    for (const tier of state.warnTiers) {
+      setElementClassActive(state.root, tier.token, remainderSeconds <= tier.seconds);
+    }
+    // cueTiers are edge-triggered: see countdownCueFiredKeys' own doc
+    // comment for why a (targetMs, threshold, cue) key, not a per-tick
+    // level comparison, is what "fires once per downward crossing" means
+    // here.
+    for (const tier of state.cueTiers) {
+      if (remainderSeconds > tier.seconds) continue;
+      const cueKey = state.targetMs + "|" + tier.seconds + "|" + tier.token;
+      if (countdownCueFiredKeys.has(cueKey)) continue;
+      countdownCueFiredKeys.add(cueKey);
+      playCountdownCue(tier.token);
     }
     if (state.then && remainderMs <= 0 && !countdownFiredTargets.has(state.targetMs)) {
       if (triggerCountdownThen()) {
@@ -3124,6 +3430,409 @@
     countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
   }
 
+  // ---------------------------------------------------------------------
+  // Attention watcher (data-gosx-watch, gosx#214)
+  //
+  // An element declares a condition over one of its own attributes with
+  // data-gosx-watch="<attrName>=<valueRef>": <attrName> is read live off
+  // the watch element itself, and <valueRef> is either a literal string
+  // (compared verbatim) or a reference to another element's live content
+  // or attribute, written "@<selector>" (that element's trimmed
+  // textContent) or "@<selector>[<attrName>]" (that element's own named
+  // attribute). See parseWatchCondition below for the exact grammar. This
+  // is deliberately the smallest condition contract that covers the first
+  // consumer — gridiron-2000's draft pick clock, whose data-on-clock
+  // attribute the SERVER already renders as "true" or "false" per viewer,
+  // so the common case is the plain literal form
+  // data-gosx-watch="data-on-clock=true" — while still covering a
+  // same-page cross-element comparison (for example against another
+  // element's rendered seat id) without requiring the app to pre-compute
+  // a boolean for every such comparison server-side.
+  //
+  // data-gosx-watch-effect declares what happens on a false-to-true
+  // transition, a comma-separated list of:
+  //   - "class:<name>"            add <name> to the watch element itself.
+  //   - "class:<name>@<selector>" add <name> to the FIRST element matched
+  //                               by <selector> instead.
+  //   - "title"                   flash document.title with the message
+  //                               from data-gosx-watch-title on the same
+  //                               element, until window focus or the
+  //                               condition returns to false, then restore
+  //                               the original title exactly.
+  //   - "cue:<name>"              play a named cue from the shared
+  //                               synthesized tone vocabulary above
+  //                               ("beep" or "chime").
+  // "class" and "title" effects both track the condition directly — level-
+  // triggered, re-evaluated on every rescan, the same model
+  // data-gosx-countdown-warn's tiers use for their own class toggle. A
+  // class effect is unaffected by anything BUT this runtime (nothing else
+  // here ever touches an author-added class), so "re-evaluated every
+  // rescan" and "fired once on the edge, undone once on the reverse edge"
+  // are externally indistinguishable for it. document.title is different:
+  // a soft navigation applies the incoming page's own <title> before
+  // watchers evaluate (the same way a real browser navigation updates the
+  // tab title), so "title" MUST re-assert itself on every rescan where the
+  // condition is still true, or an unrelated swap silently overwrites an
+  // in-progress flash — see startTitleFlash's own doc comment. Only "cue"
+  // is genuinely one-shot: an audible alert firing again on a swap whose
+  // condition merely stays true would be a real, user-visible bug, so it
+  // fires exactly once, strictly on the false-to-true edge.
+  // An unrecognized or malformed token is dropped on its own, with one
+  // console.warn — unlike data-gosx-countdown-warn/-cue's pairs, these are
+  // independent side effects rather than one coherent tier ladder, so a
+  // broken "cue:bogus" token should not also disable a valid "class:..."
+  // token in the same list.
+  //
+  // SCOPE: a watch condition is evaluated exactly twice per page
+  // lifetime-unit — once at setupPageWatchers' own call (page boot, and
+  // again after every soft navigation or revalidation swap; see
+  // finalizeNavigation and the initial-document replay below) — the same
+  // rescan lifecycle data-gosx-countdown follows, and matches the issue's
+  // own first consumer exactly ("...becomes true...after a revalidation
+  // swap"). It is NOT a live MutationObserver: this runtime already runs
+  // on pages with high-frequency DOM writes of their own (Scene3D/WebGL
+  // telemetry, in-place patch ops — see patch.ts), and an unfiltered
+  // subtree attribute observer sitting under all of that is a real,
+  // ongoing cost for a condition this contract only promises to notice
+  // "after a swap". An attribute changed by hand-authored script with no
+  // swap in between is not observed until the next one.
+  // ---------------------------------------------------------------------
+
+  const WATCH_CUE_NAMES = AUDIO_CUE_NAMES;
+
+  function safeQuerySelector(selector) {
+    if (!selector || typeof document.querySelector !== "function") return null;
+    try {
+      return document.querySelector(selector);
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  // parseWatchCondition splits data-gosx-watch's value at the FIRST "="
+  // (an attribute name cannot itself contain "="). A valueRef beginning
+  // with "@" is a selector reference, optionally followed by "[<attrName>]"
+  // to read that target's named attribute instead of its textContent; any
+  // other valueRef is a literal, compared verbatim including the empty
+  // string. Returns null for a value with no "=" or an empty attrName —
+  // buildWatchState below disables the whole watcher and warns once, the
+  // same fail-closed shape every other declarative attribute in this file
+  // uses for a value it cannot parse at all.
+  function parseWatchCondition(rawValue) {
+    const raw = String(rawValue == null ? "" : rawValue);
+    const splitAt = raw.indexOf("=");
+    if (splitAt <= 0) return null;
+    const attrName = raw.slice(0, splitAt).trim();
+    if (!attrName) return null;
+    const rawValueRef = raw.slice(splitAt + 1);
+    if (rawValueRef.charAt(0) !== "@") {
+      return { attrName: attrName, selector: null, refAttr: null, literal: rawValueRef };
+    }
+    const ref = rawValueRef.slice(1);
+    const bracket = ref.indexOf("[");
+    if (bracket === -1) {
+      if (!ref) return null;
+      return { attrName: attrName, selector: ref, refAttr: null, literal: null };
+    }
+    if (bracket === 0 || ref.charAt(ref.length - 1) !== "]") return null;
+    const selector = ref.slice(0, bracket);
+    const refAttr = ref.slice(bracket + 1, ref.length - 1).trim();
+    if (!selector || !refAttr) return null;
+    return { attrName: attrName, selector: selector, refAttr: refAttr, literal: null };
+  }
+
+  // resolveWatchValueRef reads the LIVE comparison value a condition's
+  // valueRef currently points at: the literal string itself, or a fresh
+  // document.querySelector lookup's textContent/attribute. A selector that
+  // currently matches nothing resolves to null, which evaluateWatchCondition
+  // below treats as "never equal" rather than throwing — a target that has
+  // not rendered yet (or was removed) is an ordinary false condition, not
+  // an error.
+  function resolveWatchValueRef(condition) {
+    if (condition.selector == null) return condition.literal;
+    const target = safeQuerySelector(condition.selector);
+    if (!target) return null;
+    if (condition.refAttr) {
+      return typeof target.getAttribute === "function" ? target.getAttribute(condition.refAttr) : null;
+    }
+    const text = target.textContent;
+    return text == null ? null : String(text).trim();
+  }
+
+  // evaluateWatchCondition is the whole condition contract: strict string
+  // equality between the watch element's own live attrName attribute and
+  // the resolved valueRef. A missing attrName attribute (getAttribute
+  // returns null) never matches anything, including a literal empty
+  // string — an absent attribute and an explicitly empty one are
+  // different states, and only the latter is "equal to \"\"".
+  function evaluateWatchCondition(record) {
+    const condition = record.condition;
+    const el = record.root;
+    if (!el || typeof el.getAttribute !== "function") return false;
+    const current = el.getAttribute(condition.attrName);
+    if (current == null) return false;
+    const expected = resolveWatchValueRef(condition);
+    if (expected == null) return false;
+    return current === expected;
+  }
+
+  // parseWatchEffects parses data-gosx-watch-effect's comma-separated
+  // token list. Each token is validated and normalized independently;
+  // an unrecognized or malformed token is dropped with one console.warn,
+  // and every other valid token in the same list still applies — see this
+  // section's own doc comment above for why that differs from
+  // parseCountdownTierPairs' fail-the-whole-attribute choice.
+  function parseWatchEffects(rawValue, root) {
+    const raw = String(rawValue == null ? "" : rawValue);
+    const effects = [];
+    for (const rawToken of raw.split(",")) {
+      const token = rawToken.trim();
+      if (!token) continue;
+      if (token === "title") {
+        const message = root.getAttribute && root.getAttribute(WATCH_TITLE_ATTR);
+        if (!message) {
+          console.warn(
+            "[gosx] " + WATCH_EFFECT_ATTR + " \"title\" has no " + WATCH_TITLE_ATTR
+            + " on this element; the title effect is disabled",
+          );
+          continue;
+        }
+        effects.push({ kind: "title", message: message });
+        continue;
+      }
+      if (token.indexOf("class:") === 0) {
+        const rest = token.slice("class:".length);
+        const at = rest.indexOf("@");
+        const name = (at === -1 ? rest : rest.slice(0, at)).trim();
+        const selector = at === -1 ? null : rest.slice(at + 1).trim();
+        if (!name || (at !== -1 && !selector)) {
+          console.warn(
+            "[gosx] invalid " + WATCH_EFFECT_ATTR + " token " + JSON.stringify(token) + "; this effect is disabled",
+          );
+          continue;
+        }
+        effects.push({ kind: "class", name: name, selector: selector });
+        continue;
+      }
+      if (token.indexOf("cue:") === 0) {
+        const name = token.slice("cue:".length).trim();
+        if (!Object.prototype.hasOwnProperty.call(WATCH_CUE_NAMES, name)) {
+          console.warn(
+            "[gosx] invalid " + WATCH_EFFECT_ATTR + " cue name " + JSON.stringify(name)
+            + "; must be \"beep\" or \"chime\"",
+          );
+          continue;
+        }
+        effects.push({ kind: "cue", name: name });
+        continue;
+      }
+      console.warn("[gosx] unrecognized " + WATCH_EFFECT_ATTR + " token " + JSON.stringify(token) + "; this effect is disabled");
+    }
+    return effects;
+  }
+
+  function findWatchRootElements() {
+    const found = [];
+    walkElements(document.body, function(node) {
+      if (node.hasAttribute && node.hasAttribute(WATCH_ATTR)) {
+        found.push(node);
+      }
+      return true;
+    });
+    return found;
+  }
+
+  // buildWatchState turns one data-gosx-watch element into the internal
+  // record evaluateWatchRecord reads, or null for a condition that fails
+  // to parse at all.
+  //
+  // record.key is what watchActiveState (module-level, never reset by
+  // watchGeneration) uses to remember whether this watcher was already
+  // active across a rescan: the watch element's own id when it has one
+  // ("id:" prefix), or its position among data-gosx-watch elements in
+  // document order otherwise ("pos:" prefix). A DOM node carrying
+  // data-gosx-watch does not survive a revalidation swap (replaceBody
+  // clones a fresh document's body contents wholesale — see replaceBody
+  // above), so node identity itself cannot back this memory across a
+  // swap; id or document position are the two stable-enough proxies for
+  // "the same logical watcher" available with no further author
+  // cooperation. An app whose watch elements have no id AND whose count
+  // or order can change between renders will not get correct cross-swap
+  // transition memory from the positional fallback — give a watch element
+  // a stable id whenever its position in the document can change.
+  function buildWatchState(root, index) {
+    const rawCondition = root.getAttribute(WATCH_ATTR);
+    const condition = parseWatchCondition(rawCondition);
+    if (!condition) {
+      console.warn(
+        "[gosx] invalid " + WATCH_ATTR + " value " + JSON.stringify(String(rawCondition || ""))
+        + "; must be \"<attrName>=<value>\" or \"<attrName>=@<selector>[<attrName>]\""
+        + "; this watcher is disabled",
+      );
+      return null;
+    }
+    const effects = root.hasAttribute(WATCH_EFFECT_ATTR)
+      ? parseWatchEffects(root.getAttribute(WATCH_EFFECT_ATTR), root)
+      : [];
+    const key = root.id ? ("id:" + root.id) : ("pos:" + index);
+    return { root: root, key: key, condition: condition, effects: effects };
+  }
+
+  function applyWatchClassEffect(record, effect, active) {
+    const target = effect.selector ? safeQuerySelector(effect.selector) : record.root;
+    if (!target) return;
+    setElementClassActive(target, effect.name, active);
+  }
+
+  // startTitleFlash begins alternating document.title between `message`
+  // and the pre-flash original every WATCH_TITLE_FLASH_INTERVAL_MS, the
+  // classic "New message!" tab-flash pattern. Only one flash runs at a
+  // time (document.title is one shared global) — a later watcher's
+  // false-to-true transition takes ownership and replaces the message,
+  // but the ORIGINAL title captured here is only ever the one seen before
+  // the FIRST flash of the current run, never an already-flashing value.
+  //
+  // Called on every evaluation where the owning record's condition is
+  // active, not only on the false-to-true edge (see applyWatchTitleEffect
+  // below): a soft navigation applies the incoming document's own <title>
+  // BEFORE setupPageWatchers runs (the same way a real browser navigation
+  // updates the tab title), which would otherwise silently overwrite an
+  // in-progress flash on every swap where the condition merely STAYS
+  // true. A call for the CURRENT owner while already flashing is cheap
+  // and idempotent: it only re-asserts `message`, without disturbing
+  // titleFlashOriginalTitle or restarting the blink cycle.
+  function startTitleFlash(ownerKey, message) {
+    if (typeof document === "undefined" || typeof document.title !== "string") return;
+    if (titleFlashOwnerKey === ownerKey && titleFlashHandle != null) {
+      document.title = message;
+      return;
+    }
+    if (titleFlashHandle == null) {
+      titleFlashOriginalTitle = document.title;
+    } else {
+      clearInterval(titleFlashHandle);
+    }
+    titleFlashOwnerKey = ownerKey;
+    let showingMessage = true;
+    document.title = message;
+    titleFlashHandle = setInterval(function() {
+      showingMessage = !showingMessage;
+      document.title = showingMessage ? message : titleFlashOriginalTitle;
+    }, WATCH_TITLE_FLASH_INTERVAL_MS);
+  }
+
+  // stopTitleFlash restores the original title exactly and clears the
+  // timer, but only if `ownerKey` is still the flash's current owner — a
+  // stale stop request (for example a watcher whose condition already
+  // cleared once, arriving after another watcher has since taken over the
+  // flash) must not cut off the CURRENT owner's alert.
+  function stopTitleFlash(ownerKey) {
+    if (titleFlashOwnerKey !== ownerKey) return;
+    if (titleFlashHandle != null) {
+      clearInterval(titleFlashHandle);
+      titleFlashHandle = null;
+    }
+    if (titleFlashOriginalTitle != null) {
+      document.title = titleFlashOriginalTitle;
+    }
+    titleFlashOwnerKey = null;
+    titleFlashOriginalTitle = null;
+  }
+
+  function onTitleFlashWindowFocus() {
+    if (titleFlashOwnerKey != null) {
+      stopTitleFlash(titleFlashOwnerKey);
+    }
+  }
+
+  // applyWatchTitleEffect is "title"'s half of evaluateWatchRecord's
+  // per-effect dispatch below — level-tied to `active`, exactly like
+  // applyWatchClassEffect, and for the same reason startTitleFlash's own
+  // doc comment above explains: unlike a CSS class (nothing else in this
+  // runtime ever touches one an author added), document.title is reset by
+  // navigation itself on every swap, so "only fire on the edge" would lose
+  // the flash on the very next swap where the condition simply stays true.
+  function applyWatchTitleEffect(record, effect, active) {
+    if (active) {
+      startTitleFlash(record.key, effect.message);
+    } else if (titleFlashOwnerKey === record.key) {
+      stopTitleFlash(record.key);
+    }
+  }
+
+  // evaluateWatchRecord is the entire per-watcher evaluation
+  // setupPageWatchers below runs once per record, at page boot and after
+  // every soft navigation/revalidation swap (see this section's own scope
+  // note above). "class" and "title" effects are level-tied — reapplied
+  // every call from the current `active` value, regardless of whether it
+  // differs from the last evaluation. Only "cue" is genuinely
+  // edge-triggered: an audible alert must never replay on a swap whose
+  // condition merely stays true, so it fires exactly once, on the specific
+  // false-to-true edge watchActiveState's remembered value reveals.
+  function evaluateWatchRecord(record) {
+    const active = evaluateWatchCondition(record);
+    const wasActive = watchActiveState.get(record.key) === true;
+    for (const effect of record.effects) {
+      if (effect.kind === "class") {
+        applyWatchClassEffect(record, effect, active);
+      } else if (effect.kind === "title") {
+        applyWatchTitleEffect(record, effect, active);
+      }
+    }
+    if (active && !wasActive) {
+      for (const effect of record.effects) {
+        if (effect.kind === "cue") {
+          playCountdownCue(effect.name);
+        }
+      }
+    }
+    watchActiveState.set(record.key, active);
+  }
+
+  function teardownPageWatchers() {
+    watchRoots = [];
+  }
+
+  // setupPageWatchers scans for every data-gosx-watch element on page boot
+  // and after every soft navigation (see finalizeNavigation and the
+  // initial-document replay below) — the same lifecycle setupPageCountdowns
+  // follows just above, and the mechanism this section's own scope note
+  // documents. Each record is built AND evaluated in the same pass: this
+  // is what lets a watcher whose condition is already true the first time
+  // it is ever seen (the primary gosx#214 scenario — a revalidation swap
+  // that introduces a freshly-true data-on-clock attribute) fire its
+  // effects immediately, since watchActiveState.get(key) reads undefined
+  // (never "already active") for a key it has not seen before.
+  function setupPageWatchers() {
+    // Every call — page boot and every soft navigation — starts a new
+    // generation, even one that ends up finding no watch roots at all.
+    // See watchGeneration's declaration for why.
+    watchGeneration += 1;
+    teardownPageWatchers();
+    const records = [];
+    const roots = findWatchRootElements();
+    for (let i = 0; i < roots.length; i += 1) {
+      // Mirrors setupPageCountdowns' own try/catch below: one bad watcher
+      // must degrade to "this watcher is disabled", never take down the
+      // rest of the navigation runtime's boot.
+      let record = null;
+      try {
+        record = buildWatchState(roots[i], i);
+      } catch (error) {
+        reportNavigationFailure("watch setup", error, { source: windowLocationHref() });
+      }
+      if (record) records.push(record);
+    }
+    watchRoots = records;
+    for (const record of watchRoots) {
+      try {
+        evaluateWatchRecord(record);
+      } catch (error) {
+        reportNavigationFailure("watch evaluate", error, { source: windowLocationHref() });
+      }
+    }
+  }
+
   function revalidateNavigation(options) {
     // Force a same-URL revalidation through the normal navigation lifecycle.
     // The returned promise rejects without mutating the current document when
@@ -3154,6 +3863,7 @@
     prefetchManagedLinks("render");
     setupPageRevalidation();
     setupPageCountdowns();
+    setupPageWatchers();
     const actions = window.__gosx && window.__gosx.actions;
     if (actions && typeof actions.refreshBindings === "function") {
       actions.refreshBindings();
@@ -3218,7 +3928,21 @@
   document.addEventListener("visibilitychange", onRevalidateVisibilityChange);
   if (typeof window.addEventListener === "function") {
     window.addEventListener("popstate", onPopState);
+    // onTitleFlashWindowFocus (gosx#214) stops the current data-gosx-watch
+    // title flash, if any, the moment the visitor focuses this tab/window
+    // again — one of the two documented ways a flash ends, alongside its
+    // owning condition returning to false (see stopTitleFlash's callers).
+    window.addEventListener("focus", onTitleFlashWindowFocus);
   }
+  // primeAudioCueContext (gosx#213) constructs the shared AudioContext on
+  // the page's first user gesture and never before — a pointerdown or a
+  // keydown, whichever comes first. Each listener is `once`: it removes
+  // itself after its own first firing, so a page the visitor only ever
+  // clicks on still primes audio, and one that only ever types still
+  // primes audio, with no listener left registered past the first of
+  // either.
+  document.addEventListener("pointerdown", primeAudioCueContext, { once: true, passive: true });
+  document.addEventListener("keydown", primeAudioCueContext, { once: true, passive: true });
 
   setNavigationState({
     phase: "idle",
@@ -3228,6 +3952,7 @@
   prefetchManagedLinks("render");
   setupPageRevalidation();
   setupPageCountdowns();
+  setupPageWatchers();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", refreshInitialDocumentNavigation, { once: true });
   }
@@ -3240,6 +3965,26 @@
     refresh: refreshNavigationState,
     refreshState: refreshNavigationState,
     revalidate: revalidateNavigation,
+    // debugCueLog is a small, honest test/debug hook (gosx#213): a copy of
+    // every {cue, at} entry recorded the moment a named tone actually
+    // played (see recordAudioCueDebug above), not merely requested.
+    // Array.from (rather than .slice()) rebuilds the copy through
+    // whatever Array constructor this script's own execution realm
+    // exposes as the global "Array" identifier — for the embedded
+    // navigation runtime that is the same realm as everything else on the
+    // page, but it also keeps a caller executing this script inside a
+    // separate realm (for example a test harness's vm context) from
+    // handing back an array a strict cross-realm equality check would
+    // reject over prototype identity alone.
+    debugCueLog: function() {
+      return Array.from(audioCueDebugLog);
+    },
+    // debugWatchActive is the same kind of hook for gosx#214: whether
+    // watchActiveState currently remembers `key` (a watch record's own
+    // "id:<id>" or "pos:<index>" key, see buildWatchState) as active.
+    debugWatchActive: function(key) {
+      return watchActiveState.get(key) === true;
+    },
   };
   // Keep the original global for compatibility while publishing the
   // navigation runtime through the shared GoSX namespace. This lets optional

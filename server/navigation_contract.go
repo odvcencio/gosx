@@ -43,8 +43,21 @@ const (
 	// selects the compact render ("dhms" or "mm:ss") on the same element;
 	// NavigationCountdownSegmentAttr marks a descendant the runtime fills
 	// instead, leaving the rest of the element's markup to the app.
-	// NavigationCountdownWarnAttr toggles NavigationCountdownWarnClass at a
-	// threshold; NavigationCountdownThenAttr set to "revalidate" fires one
+	//
+	// NavigationCountdownWarnAttr and NavigationCountdownCueAttr (gosx#213)
+	// share one grammar: a comma-separated list of threshold:token pairs
+	// (for example "30s:is-warn,10s:is-critical"). -warn's token is a CSS
+	// class the runtime toggles on the countdown root at or below the
+	// threshold, re-evaluated every tick; -cue's token is a name from the
+	// runtime's fixed synthesized tone vocabulary ("beep" or "chime"),
+	// fired once the first time the remainder crosses at or below the
+	// threshold, played through one AudioContext shared by the whole
+	// runtime and primed on the page's first user gesture. Before gosx#213
+	// NavigationCountdownWarnAttr took one bare duration and always
+	// toggled a single fixed class; that single-value form is no longer
+	// accepted.
+	//
+	// NavigationCountdownThenAttr set to "revalidate" fires one
 	// revalidation of the page's revalidate root (see
 	// NavigationRevalidateIntervalAttr) when the countdown first reaches
 	// zero, and does nothing while the page has no active revalidation
@@ -52,16 +65,36 @@ const (
 	// that is not a valid RFC3339 instant, a static
 	// NavigationCountdownFormatAttr outside its two supported values, a
 	// static NavigationCountdownSegmentAttr outside its four supported
-	// names, a static NavigationCountdownWarnAttr outside its small
-	// duration subset, and a static NavigationCountdownThenAttr other than
-	// "revalidate" (see ir/validate.go); a dynamic expression value is
-	// checked at run time instead, and fails inert there.
+	// names, a static NavigationCountdownWarnAttr or NavigationCountdownCueAttr
+	// with a malformed pair list, and a static NavigationCountdownThenAttr
+	// other than "revalidate" (see ir/validate.go); a dynamic expression
+	// value is checked at run time instead, and fails inert there.
 	NavigationCountdownAttr        = "data-gosx-countdown"
 	NavigationCountdownFormatAttr  = "data-gosx-countdown-format"
 	NavigationCountdownSegmentAttr = "data-gosx-countdown-segment"
 	NavigationCountdownWarnAttr    = "data-gosx-countdown-warn"
+	NavigationCountdownCueAttr     = "data-gosx-countdown-cue"
 	NavigationCountdownThenAttr    = "data-gosx-countdown-then"
-	NavigationCountdownWarnClass   = "gosx-countdown--warn"
+
+	// NavigationWatchAttr declares a condition over one of the watch
+	// element's own attributes (gosx#214):
+	// "<attrName>=<value>" compares that attribute's live value against a
+	// literal, or "<attrName>=@<selector>" / "<attrName>=@<selector>[<attrName>]"
+	// against another element's trimmed text content or named attribute.
+	// NavigationWatchEffectAttr declares a comma-separated effect list run
+	// on a false-to-true transition of that condition: "class:<name>" (or
+	// "class:<name>@<selector>" for a selector target) and "title" (using
+	// the message from NavigationWatchTitleAttr, until window focus or the
+	// condition returns to false) are level-tied and re-evaluated on every
+	// rescan; "cue:<name>" (the same synthesized tone vocabulary
+	// NavigationCountdownCueAttr uses) is edge-triggered and fires exactly
+	// once per false-to-true transition. A watch condition is evaluated at
+	// page boot and after every soft navigation or revalidation swap — the
+	// same rescan lifecycle NavigationCountdownAttr follows — not via a
+	// live DOM observer.
+	NavigationWatchAttr       = "data-gosx-watch"
+	NavigationWatchEffectAttr = "data-gosx-watch-effect"
+	NavigationWatchTitleAttr  = "data-gosx-watch-title"
 )
 
 // NormalizeNavigationLinkCurrentPolicy normalizes the declarative "current"

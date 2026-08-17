@@ -191,14 +191,37 @@ func Page() Node {
 			</p>
 			<p>
 				Add
-				<span class="inline-code">data-gosx-countdown-warn="30s"</span>
-				to add the class
-				<span class="inline-code">gosx-countdown--warn</span>
-				once the remaining time drops to the threshold or below. This is a small declarative duration subset, not a general Go duration parser: whole hour/minute/second components combined in one value, such as
+				<span class="inline-code">
+					data-gosx-countdown-warn="30s:is-warn,10s:is-critical"
+				</span>
+				to toggle one or more author-named classes as the remaining time drops to their own threshold or below. The value is a comma-separated list of
+				<span class="inline-code">threshold:class</span>
+				pairs; every pair is independent — a countdown can carry
+				<span class="inline-code">is-warn</span>
+				and
+				<span class="inline-code">is-critical</span>
+				at once once it passes both thresholds. Each threshold is the same small declarative duration subset
+				<span class="inline-code">data-gosx-revalidate-interval</span>
+				uses, extended to combine hour/minute/second components in one value (
 				<span class="inline-code">"30s"</span>
 				or
 				<span class="inline-code">"1m30s"</span>
-				, or a bare non-negative integer as whole seconds.
+				) or accept a bare non-negative integer as whole seconds. A countdown that resets to a later target re-arms every tier for free — the classes are recomputed from the current remainder on every tick, not remembered from before.
+			</p>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-countdown-cue="10s:beep"</span>
+				to play a short synthesized tone the first time the remaining time crosses at or below a threshold. The value is the same comma-separated
+				<span class="inline-code">threshold:cue</span>
+				pair grammar
+				<span class="inline-code">data-gosx-countdown-warn</span>
+				uses, with a cue name from the runtime's fixed, tiny tone vocabulary:
+				<span class="inline-code">"beep"</span>
+				(one short tone) or
+				<span class="inline-code">"chime"</span>
+				(two tones, a rising fifth). Every tone is synthesized with WebAudio — there are no audio asset files. The runtime shares one
+				<span class="inline-code">AudioContext</span>
+				for the whole page, constructed on the visitor's first pointerdown or keydown and never before, so a threshold crossed before that first gesture stays silent instead of fighting a browser's autoplay gate. Each threshold fires its cue exactly once per downward crossing; a countdown that resets to a later target re-arms it.
 			</p>
 			<p>
 				Add
@@ -224,11 +247,106 @@ func Page() Node {
 				<span class="inline-code">data-gosx-countdown-segment</span>
 				value outside the four supported names, a static
 				<span class="inline-code">data-gosx-countdown-warn</span>
-				value outside the duration subset above, and a static
+				or
+				<span class="inline-code">data-gosx-countdown-cue</span>
+				value outside the threshold:token pairs grammar above, and a static
 				<span class="inline-code">data-gosx-countdown-then</span>
 				value other than
 				<span class="inline-code">"revalidate"</span>
 				, before the page ever serves.
+			</p>
+		</section>
+		<section id="attention-watcher">
+			<h2>Attention watcher</h2>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-watch="data-on-clock=true"</span>
+				to react when server-rendered state flips a condition, with no bespoke observer script. The value is
+				<span class="inline-code">&lt;attrName&gt;=&lt;value&gt;</span>
+				: the watch element's own
+				<span class="inline-code">&lt;attrName&gt;</span>
+				attribute is compared, live, against
+				<span class="inline-code">&lt;value&gt;</span>
+				. The common case renders the comparison value server-side per viewer — a draft pick clock's on-clock panel carries
+				<span class="inline-code">data-on-clock="true"</span>
+				exactly when it is this viewer's turn, so the watcher only ever compares against the literal
+				<span class="inline-code">"true"</span>
+				.
+			</p>
+			<p>
+				To compare against another element instead of a literal, write
+				<span class="inline-code">&lt;attrName&gt;=@&lt;selector&gt;</span>
+				(that element's trimmed text content) or
+				<span class="inline-code">
+					&lt;attrName&gt;=@&lt;selector&gt;[&lt;attrName&gt;]
+				</span>
+				(that element's own named attribute):
+			</p>
+			{CodeBlock("gosx", `<div id="viewer" data-seat-id="seat-7"></div>
+	<div data-gosx-watch="data-seat=@#viewer[data-seat-id]" data-seat="seat-7"></div>`)}
+			<p>
+				Add
+				<span class="inline-code">
+					data-gosx-watch-effect="class:is-active,title,cue:chime"
+				</span>
+				to declare what happens on a false-to-true transition of the condition, a comma-separated list of:
+			</p>
+			<ul>
+				<li>
+					<span class="inline-code">class:&lt;name&gt;</span>
+					adds
+					<span class="inline-code">&lt;name&gt;</span>
+					to the watch element itself, or to
+					<span class="inline-code">class:&lt;name&gt;@&lt;selector&gt;</span>
+					's target instead. The class is present exactly when the condition is true, removed when it returns to false.
+				</li>
+				<li>
+					<span class="inline-code">title</span>
+					flashes
+					<span class="inline-code">document.title</span>
+					with the message from
+					<span class="inline-code">data-gosx-watch-title</span>
+					on the same element, alternating with the original title every second, until window focus or the condition returns to false — then the original title is restored exactly.
+				</li>
+				<li>
+					<span class="inline-code">cue:&lt;name&gt;</span>
+					plays a named cue from the same shared synthesized tone vocabulary
+					<span class="inline-code">data-gosx-countdown-cue</span>
+					uses. Unlike
+					<span class="inline-code">class</span>
+					and
+					<span class="inline-code">title</span>
+					, a cue is genuinely one-shot: it fires exactly once, strictly on the false-to-true edge, never again while the condition merely stays true.
+				</li>
+			</ul>
+			<p>
+				A watch condition is evaluated at page boot and after every soft navigation or revalidation swap — the same rescan lifecycle
+				<span class="inline-code">data-gosx-countdown</span>
+				follows — not through a live DOM observer. A condition already true the very first time a watcher is seen (the common case: a revalidation swap that introduces a freshly-true attribute) fires its effects immediately.
+			</p>
+			<p>
+				Cross-swap transition memory — "did this watcher already fire, so an unchanged swap must not replay its cue" — is keyed by the watch element's
+				<span class="inline-code">id</span>
+				when it has one, or by its position among
+				<span class="inline-code">data-gosx-watch</span>
+				elements in document order otherwise. A watch element whose position in the document can change between renders, and that has no
+				<span class="inline-code">id</span>
+				, can have its memory misattributed to a different watcher at the same position — give it a stable
+				<span class="inline-code">id</span>
+				whenever that is possible.
+			</p>
+			<p>
+				An unrecognized token in
+				<span class="inline-code">data-gosx-watch-effect</span>
+				is dropped on its own, with one console warning; the rest of the list still applies.
+				<span class="inline-code">gosx check</span>
+				rejects a static
+				<span class="inline-code">data-gosx-watch</span>
+				value with no
+				<span class="inline-code">"="</span>
+				and a static
+				<span class="inline-code">data-gosx-watch-effect</span>
+				value with any unrecognized token, before the page ever serves.
 			</p>
 		</section>
 		<section id="lifecycle-scripts">

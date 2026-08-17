@@ -2649,6 +2649,109 @@ function installManualClock(context, startAt) {
   };
 }
 
+// createFakeAudioContextHarness builds a minimal WebAudio double for the
+// shared cue engine navigation.ts's data-gosx-countdown-cue and
+// data-gosx-watch "cue" effect both use (gosx#213 / gosx#214). It tracks
+// every constructed instance (a test passes the returned .AudioContext
+// class through createContext's `AudioContext` option) and every
+// oscillator each one creates, so a test can assert not just that a cue
+// call happened but which tone actually played: its type, its frequency,
+// and how many oscillators one playNamedCue call scheduled.
+//
+// state defaults to "running" — a context constructed synchronously
+// inside a real user-gesture handler, which is the only place
+// primeAudioCueContext ever constructs one, starts running in every
+// browser gosx targets. Pass { state: "suspended" } to model the rarer
+// case (for example a backgrounded tab) a test wants to exercise
+// resumeAudioCueContextIfSuspended against.
+function createFakeAudioContextHarness(options) {
+  const opts = options || {};
+  const instances = [];
+
+  class FakeCueAudioParam {
+    constructor(initial) {
+      this.value = initial;
+      this.calls = [];
+    }
+
+    setValueAtTime(value, time) {
+      this.value = value;
+      this.calls.push({ method: "setValueAtTime", value, time });
+    }
+
+    linearRampToValueAtTime(value, time) {
+      this.value = value;
+      this.calls.push({ method: "linearRampToValueAtTime", value, time });
+    }
+  }
+
+  class FakeCueAudioNode {
+    constructor(kind) {
+      this.kind = kind;
+      this.connections = [];
+    }
+
+    connect(target) {
+      this.connections.push(target);
+      return target;
+    }
+  }
+
+  class FakeCueOscillator extends FakeCueAudioNode {
+    constructor() {
+      super("oscillator");
+      this.type = "";
+      this.frequency = new FakeCueAudioParam(440);
+      this.startCalls = [];
+      this.stopCalls = [];
+    }
+
+    start(at) {
+      this.startCalls.push(at);
+    }
+
+    stop(at) {
+      this.stopCalls.push(at);
+    }
+  }
+
+  class FakeCueGain extends FakeCueAudioNode {
+    constructor() {
+      super("gain");
+      this.gain = new FakeCueAudioParam(1);
+    }
+  }
+
+  class FakeCueAudioContext {
+    constructor() {
+      this.state = opts.state || "running";
+      this.currentTime = 0;
+      this.destination = new FakeCueAudioNode("destination");
+      this.oscillators = [];
+      this.resumeCalls = 0;
+      instances.push(this);
+    }
+
+    createOscillator() {
+      const oscillator = new FakeCueOscillator();
+      this.oscillators.push(oscillator);
+      return oscillator;
+    }
+
+    createGain() {
+      return new FakeCueGain();
+    }
+
+    resume() {
+      this.resumeCalls += 1;
+      this.state = "running";
+      return Promise.resolve();
+    }
+  }
+
+  return { AudioContext: FakeCueAudioContext, instances: instances };
+}
+
 function runScript(source, context, filename) {
   vm.runInContext(source, context, { filename });
 }
@@ -5555,6 +5658,7 @@ module.exports = {
   flushSceneInitialFrameBoundary,
   installManualTimers,
   installManualClock,
+  createFakeAudioContextHarness,
   runScript,
   flushAsyncWork,
   sharedSignalValue,
