@@ -376,3 +376,185 @@ component C(props: Props) {
 		t.Fatalf("error = %v, want to contain %q", err, want)
 	}
 }
+
+// TestStrictcheckRejectsPromotedEachSourceHopZeroField and
+// TestStrictcheckRejectsUnexportedEachSourceHopZeroField are gosx#206's
+// real-Go-compiler-backed proof for the <Each of> loop-source position:
+// resolveStrictEachSourceType carried the identical
+// case strictHopUnknownField: return deferral gosx#195 removed from
+// resolveStrictSelectorPath. Before the fix, the projected check program
+// compiled clean here — the promoted or unexported field resolves fine in
+// real Go, same package — and gosx.Compile itself accepted the source
+// (see TestCompileStrictEachRejectsPromotedSourceHopZeroField's sibling
+// lowerer-level proof). strictcheck must reject both at the strict-syntax
+// stage, never reach the Go compiler at all.
+func TestStrictcheckRejectsPromotedEachSourceHopZeroField(t *testing.T) {
+	source := `package app
+type Base struct { Rows []Row }
+type Row struct { Label string }
+type RowProps struct { Base; Other string }
+component C(props: RowProps) {
+	return <section><Each of={props.Rows} as="row"><span>{row.Label}</span></Each></section>
+}
+`
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	goMod := "module example.test/promotedeachsourcehopzero\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => " + filepath.ToSlash(root) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goSum, err := os.ReadFile("go.sum")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), goSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "promotedeachsourcehopzero.gsx")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = strictcheck.CheckFileWithOptions(context.Background(), path, strictcheck.Options{GOFLAGS: "-mod=mod"})
+	if err == nil {
+		t.Fatal("strictcheck unexpectedly accepted a promoted field read as an <Each of> loop source's hop 0")
+	}
+	if want := "declares no visible field Rows"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestStrictcheckRejectsUnexportedEachSourceHopZeroField(t *testing.T) {
+	source := `package app
+type Row struct { Label string }
+type RowProps struct { rows []Row; Other string }
+component C(props: RowProps) {
+	return <section><Each of={props.rows} as="row"><span>{row.Label}</span></Each></section>
+}
+`
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	goMod := "module example.test/unexportedeachsourcehopzero\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => " + filepath.ToSlash(root) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goSum, err := os.ReadFile("go.sum")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), goSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "unexportedeachsourcehopzero.gsx")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = strictcheck.CheckFileWithOptions(context.Background(), path, strictcheck.Options{GOFLAGS: "-mod=mod"})
+	if err == nil {
+		t.Fatal("strictcheck unexpectedly accepted an unexported field read as an <Each of> loop source's hop 0")
+	}
+	if want := "declares no visible field rows"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestStrictcheckRejectsPromotedSpreadForwardSourceHopZeroField and
+// TestStrictcheckRejectsUnexportedSpreadForwardSourceHopZeroField are
+// gosx#206's real-Go-compiler-backed proof for the tier-1 spread-forward
+// position: resolveStrictSpreadForwardType carried the identical dead
+// deferral case. For this position, validateStrictToStrictSpreadCall's own
+// tierOneSpreadSourceType check already rejects a promoted or unexported
+// hop-0 source with its own "is not renderable" diagnostic — the deferral
+// never let the component compile clean — but resolveStrictSpreadForwardType
+// itself reported nothing of its own for a shape strictHopMessage's
+// B1-style wording exists to name. strictcheck's error must now name the
+// field, not only the generic "not renderable" shape.
+func TestStrictcheckRejectsPromotedSpreadForwardSourceHopZeroField(t *testing.T) {
+	source := `package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+type Base struct { Away TeamMarkProps }
+type MatchupProps struct { Base; Other string }
+component Matchup(props: MatchupProps) {
+	return <div><TeamMark {...props.Away}></TeamMark></div>
+}
+`
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	goMod := "module example.test/promotedspreadforwardhopzero\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => " + filepath.ToSlash(root) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goSum, err := os.ReadFile("go.sum")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), goSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "promotedspreadforwardhopzero.gsx")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = strictcheck.CheckFileWithOptions(context.Background(), path, strictcheck.Options{GOFLAGS: "-mod=mod"})
+	if err == nil {
+		t.Fatal("strictcheck unexpectedly accepted a promoted field read as a tier-1 spread-forward source's hop 0")
+	}
+	if want := "declares no visible field Away"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestStrictcheckRejectsUnexportedSpreadForwardSourceHopZeroField(t *testing.T) {
+	source := `package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+type MatchupProps struct { away TeamMarkProps; Other string }
+component Matchup(props: MatchupProps) {
+	return <div><TeamMark {...props.away}></TeamMark></div>
+}
+`
+	root, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	goMod := "module example.test/unexportedspreadforwardhopzero\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.0.0\nreplace m31labs.dev/gosx => " + filepath.ToSlash(root) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goSum, err := os.ReadFile("go.sum")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.sum"), goSum, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "unexportedspreadforwardhopzero.gsx")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = strictcheck.CheckFileWithOptions(context.Background(), path, strictcheck.Options{GOFLAGS: "-mod=mod"})
+	if err == nil {
+		t.Fatal("strictcheck unexpectedly accepted an unexported field read as a tier-1 spread-forward source's hop 0")
+	}
+	if want := "declares no visible field away"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}

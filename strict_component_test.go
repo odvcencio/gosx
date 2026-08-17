@@ -1759,6 +1759,92 @@ component C(props: Props) {
 	}
 }
 
+// TestCompileStrictEachRejectsPromotedSourceHopZeroField and
+// TestCompileStrictEachRejectsUnexportedSourceHopZeroField cover gosx#206:
+// a HOP-0 read on the PROPS root used as an <Each of> loop SOURCE (not the
+// loop binding's own field, which gosx#182/#184 already covers) used to
+// return the silent strictHopUnknownField kind, deferring to the package
+// checker — the identical deferral gosx#195 removed from
+// resolveStrictSelectorPath, left live in resolveStrictEachSourceType.
+// That deferral was false here too: the generated check program compiles
+// in the SAME package as the .gsx file's declarations, so Go resolves a
+// promoted or unexported props field exactly as it resolves a declared
+// one. Both must now fail closed at compile time with the same B1-style
+// message.
+func TestCompileStrictEachRejectsPromotedSourceHopZeroField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Base struct { Rows []Row }
+type Row struct { Label string }
+type RowProps struct { Base; Other string }
+component C(props: RowProps) {
+	return <section><Each of={props.Rows} as="row"><span>{row.Label}</span></Each></section>
+}
+`))
+	want := "strict component C cannot resolve props.Rows: struct RowProps declares no visible field Rows; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictEachRejectsUnexportedSourceHopZeroField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type Row struct { Label string }
+type RowProps struct { rows []Row; Other string }
+component C(props: RowProps) {
+	return <section><Each of={props.rows} as="row"><span>{row.Label}</span></Each></section>
+}
+`))
+	want := "strict component C cannot resolve props.rows: struct RowProps declares no visible field rows; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+// TestCompileStrictSpreadForwardRejectsPromotedSourceHopZeroField and
+// TestCompileStrictSpreadForwardRejectsUnexportedSourceHopZeroField cover
+// gosx#206's other remaining position: a HOP-0 read on the PROPS root used
+// as a tier-1 ({...props.Field}) spread-forward SOURCE. Same latent gap as
+// the <Each of> source above, same fix: resolveStrictSpreadForwardType now
+// reports it instead of deferring to the package checker.
+func TestCompileStrictSpreadForwardRejectsPromotedSourceHopZeroField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+type Base struct { Away TeamMarkProps }
+type MatchupProps struct { Base; Other string }
+component Matchup(props: MatchupProps) {
+	return <div><TeamMark {...props.Away}></TeamMark></div>
+}
+`))
+	want := "strict component Matchup cannot resolve props.Away: struct MatchupProps declares no visible field Away; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
+func TestCompileStrictSpreadForwardRejectsUnexportedSourceHopZeroField(t *testing.T) {
+	_, err := Compile([]byte(`package app
+type TeamMarkProps struct {
+	Tone string
+}
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+type MatchupProps struct { away TeamMarkProps; Other string }
+component Matchup(props: MatchupProps) {
+	return <div><TeamMark {...props.away}></TeamMark></div>
+}
+`))
+	want := "strict component Matchup cannot resolve props.away: struct MatchupProps declares no visible field away; promoted, unexported, and unknown fields cannot cross the file renderer boundary"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
+	}
+}
+
 func TestCompileStrictEachBindingConcatAndCondBothPolarities(t *testing.T) {
 	// Accept: exact string/bool leaves.
 	_, err := Compile([]byte(breakdownRowFixturePrelude + `component Row(props: RowProps) {

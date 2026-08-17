@@ -1370,19 +1370,29 @@ const (
 	//     declared one — there is no compiler backstop. This caller
 	//     reports it, reusing strictHopUnknownFieldDeep's wording with the
 	//     binding root substituted (gosx#182/#184).
-	//   - The props root (resolveStrictSelectorPath): reports it the same
-	//     way (gosx#195). validateStrictRenderedProps already refuses to
-	//     call resolveStrictSelectorPath at all unless the props struct's
-	//     schema is declared same-file (l.structTypes has it) — see its
-	//     own early "struct schema is not declared" gate — so the props
-	//     struct is always as fully known here as an <Each> element
-	//     struct is. Deferring an unknown field to the package checker was
-	//     sound only for a genuinely absent field, which IS a compile
-	//     error there; for a promoted or unexported field it was not — Go
-	//     resolves those too, same package, no backstop. That silent
-	//     deferral was gosx#195's bug: a promoted or unexported hop-0
-	//     props read compiled, checked clean, and rendered differently on
-	//     the map-backed file renderer and the generated Go.
+	//   - The props root, a direct read (resolveStrictSelectorPath):
+	//     reports it the same way (gosx#195). validateStrictRenderedProps
+	//     already refuses to call resolveStrictSelectorPath at all unless
+	//     the props struct's schema is declared same-file (l.structTypes
+	//     has it) — see its own early "struct schema is not declared"
+	//     gate — so the props struct is always as fully known here as an
+	//     <Each> element struct is. Deferring an unknown field to the
+	//     package checker was sound only for a genuinely absent field,
+	//     which IS a compile error there; for a promoted or unexported
+	//     field it was not — Go resolves those too, same package, no
+	//     backstop. That silent deferral was gosx#195's bug: a promoted or
+	//     unexported hop-0 props read compiled, checked clean, and
+	//     rendered differently on the map-backed file renderer and the
+	//     generated Go.
+	//   - The props root, an <Each of> loop source (resolveStrictEachSourceType)
+	//     and an E2 spread-forward source (resolveStrictSpreadForwardType):
+	//     both resolve against the same same-file props schema
+	//     resolveStrictSelectorPath does, under the identical
+	//     validateStrictRenderedProps gate, so gosx#195's fix applied to
+	//     one props-root caller and not the other two left the identical
+	//     bug live for a promoted or unexported field used as a loop
+	//     source or a spread source. Both now report it the same way
+	//     (gosx#206).
 	strictHopUnknownField
 	// strictHopUnknownFieldDeep is gosx#183's B1 fix, generalized: an
 	// unknown field at hop i>0 gets no compiler backstop. Field promotion
@@ -1424,8 +1434,8 @@ type strictHopResult struct {
 // scalar-cannot-be-selected-through, undeclared-struct, and depth-cap rules
 // to either root. Unknown-field handling splits by hop, not by root: an
 // unknown field at hop 0 is the root's own field (strictHopUnknownField —
-// see its doc comment for which callers report it and which still defer);
-// an unknown field at any later hop — promoted, unexported, or genuinely
+// see its doc comment for the full list of callers that report it); an
+// unknown field at any later hop — promoted, unexported, or genuinely
 // absent — always fails closed here (gosx#183's B1 fix), since no compiler
 // backstop catches it for either root shape past hop 0 (see
 // strictHopUnknownFieldDeep).
@@ -1440,10 +1450,9 @@ func (l *lowerer) walkStrictHops(rootLabel, rootType string, path []string) stri
 		if !known {
 			if i == 0 {
 				// The root's own field. failField/failType are populated
-				// the same way as the i>0 branch below so a caller that
-				// reports this kind (an <Each> binding root, or, as of
-				// gosx#195, the props root — see strictHopUnknownField's
-				// doc comment) can format the identical message.
+				// the same way as the i>0 branch below so every caller —
+				// see strictHopUnknownField's doc comment for the current
+				// list — can format the identical message.
 				return strictHopResult{pathText: pathText, failKind: strictHopUnknownField, failField: field, failType: currentType}
 			}
 			// gosx#183's B1 fix, generalized to any root: a promoted,
@@ -1479,9 +1488,11 @@ func (l *lowerer) walkStrictHops(rootLabel, rootType string, path []string) stri
 // failure is about the schema shape, not what the path is used for.
 // strictHopUnknownField (hop 0) reaches this function through every caller
 // that reports it instead of deferring — an <Each> binding root
-// (validateEachBindingRead, gosx#182/#184) and the props root
-// (resolveStrictSelectorPath, gosx#195) — see strictHopUnknownField's own
-// doc comment for the full list.
+// (validateEachBindingRead, gosx#182/#184), a direct props read
+// (resolveStrictSelectorPath, gosx#195), an <Each of> loop source
+// (resolveStrictEachSourceType, gosx#206), and an E2 spread-forward source
+// (resolveStrictSpreadForwardType, gosx#206) — see strictHopUnknownField's
+// own doc comment for the full list.
 //
 // strictHopUnknownFieldDeep and (when a caller reports it)
 // strictHopUnknownField both reuse gosx#183's B1 wording verbatim,
@@ -1598,6 +1609,24 @@ func (l *lowerer) isStrictEachLoopableSliceType(typeName string) bool {
 // the body assumes — exactly the class of gap this whole design exists to
 // close. No acceptance component needs a nested of source, so this widens
 // only alongside the boundary support, not ahead of it.
+//
+// A hop-0 unknown field on the props root — promoted, unexported, or
+// genuinely absent — used to be left to the package checker, the same
+// deferral gosx#195 removed from resolveStrictSelectorPath. That deferral
+// really did let gosx.Compile accept the component with no diagnostic at
+// all here: this function returned "" and the caller (see below) simply
+// skipped populating l.strictEachElems for the path, so the transpiled
+// loop callback fell back to an "any"-typed loop binding — legal Go on
+// its own, but every same-file read of a loop field on it (row.Label)
+// then failed the SEPARATE, later `go build` of the generated program
+// with a confusing "row.Label undefined (type any has no field or method
+// Label)", not this function's own clear B1-style message, and only when
+// something downstream of gosx.Compile actually built the generated Go —
+// exactly the class of file-renderer/generated-Go divergence gosx#195
+// fixed for a direct props read. gosx#195 fixed only that caller and left
+// this <Each of> source caller deferring the identical field shapes; it
+// now reports them here, at gosx.Compile time, with the same B1-style
+// message (gosx#206).
 func (l *lowerer) resolveStrictEachSourceType(n *gotreesitter.Node, componentName, propsType string, path []string) string {
 	if len(path) != 1 {
 		l.errorf(n, "strict component %s cannot loop over props.%s; <Each> resolves loop sources one field deep in this release, not a nested selector", componentName, strings.Join(path, "."))
@@ -1605,8 +1634,6 @@ func (l *lowerer) resolveStrictEachSourceType(n *gotreesitter.Node, componentNam
 	}
 	res := l.walkStrictHops("props", propsBaseType(propsType), path)
 	switch res.failKind {
-	case strictHopUnknownField:
-		return ""
 	case strictHopOK:
 		elem, msg := admitStrictEachElemType(componentName, res.pathText, res.leafType, l.structTypes)
 		if msg != "" {
@@ -1654,11 +1681,29 @@ func admitStrictEachElemType(componentName, pathText, leafType string, structTyp
 // reads under it, since the callee (not this read-tracking pass) owns which
 // fields it actually needs. A pointer or scalar leaf fails closed with the
 // same "cannot forward" shape either way.
+//
+// A hop-0 unknown field on the props root — promoted, unexported, or
+// genuinely absent — used to return silently here (the same
+// case strictHopUnknownField: return deferral gosx#195 removed from
+// resolveStrictSelectorPath), instead of reporting the B1-style message
+// every other walkStrictHops caller reports. For THIS caller specifically,
+// every reachable spread-forward read is also a tier-1 spread call
+// (isSpreadForwardTag requires a same-file strict callee), so
+// validateStrictToStrictSpreadCall's own tierOneSpreadSourceType check —
+// which shares walkStrictHops and fails closed unconditionally on any
+// non-OK hop, without a per-caller deferral — already rejected the same
+// promoted or unexported source with its own "is not renderable"
+// diagnostic; the deferral here never let an affected component compile
+// clean. It DID leave this function silently reporting nothing of its
+// own for a shape strictHopMessage's B1-style wording exists to name, the
+// same latent gap gosx#195's fix left unaddressed in this caller
+// (verified during #195: no test relies on the deferred-accept
+// behavior). It now reports the field here too (gosx#206), so this
+// caller's own diagnostic no longer depends on a sibling check to name
+// the actual cause.
 func (l *lowerer) resolveStrictSpreadForwardType(n *gotreesitter.Node, componentName, propsType string, path []string) {
 	res := l.walkStrictHops("props", propsBaseType(propsType), path)
 	switch res.failKind {
-	case strictHopUnknownField:
-		return
 	case strictHopOK:
 		trimmed := strings.TrimSpace(res.leafType)
 		if _, isStruct := l.structTypes[trimmed]; !isStruct {
