@@ -567,6 +567,7 @@
     let renderWatchdogRecoveries = 0;
     let renderWatchdogFallbacks = 0;
     let renderWatchdogActiveReason = "";
+    let renderWatchdogSawHidden = false;
     // renderWatchdogDeviceLostInfo: { reason, message, adapterInfo } read off
     // the OLD renderer's diagnostics().deviceLostInfo (see 16a-scene-webgpu.js's
     // lastDeviceLostInfo) the moment recoverSceneWebGPURenderer decides to
@@ -935,6 +936,24 @@
         return;
       }
       const now = typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
+      // A hidden tab stalls requestAnimationFrame BY DESIGN, and the interval
+      // that drives this check is itself throttled while hidden. Counting
+      // that time as a stall meant every tab return could fire the watchdog
+      // before the first resumed frame presented — swapping in a fresh
+      // renderer and replaying the whole scene reveal (entry fades from
+      // opacity zero), which read as the page cyclically re-loading. Hidden
+      // time resets the baseline instead; a real stall must accumulate its
+      // 6.5 seconds entirely while the tab is visible.
+      const watchdogHidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+      if (watchdogHidden || renderWatchdogSawHidden) {
+        renderWatchdogSawHidden = watchdogHidden;
+        const hiddenProgress = readSceneWebGPUProgress();
+        renderWatchdogLastSeq = hiddenProgress.seq;
+        renderWatchdogLastAt = hiddenProgress.at;
+        renderWatchdogLastAdvanceAt = now;
+        publishSceneRenderWatchdogState("", 0);
+        return;
+      }
       const progress = readSceneWebGPUProgress();
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const failureReason = rendererReportsWebGPUFailure(diagnostics);

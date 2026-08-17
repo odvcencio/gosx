@@ -316,6 +316,125 @@ test("Scene3D WebGPU render watchdog recreates stalled animated renderer", async
   assert.equal(disposeCount, 1);
 });
 
+test("Scene3D WebGPU render watchdog ignores hidden-tab time", async () => {
+  // A hidden tab stalls requestAnimationFrame by design. Before the
+  // visibility guard, the watchdog counted that time as a render stall, so
+  // every tab return could swap in a fresh renderer and replay the scene's
+  // entry reveal — observed in production as the galaxy cyclically
+  // "re-loading". Hidden time must reset the stall baseline instead.
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgpu-watchdog";
+  let now = 0;
+  let createCount = 0;
+  let disposeCount = 0;
+  const env = createContext({
+    elements: [mount],
+    enableWebGPU: true,
+    enableWebGL2: true,
+    performanceNow: () => now,
+    navigatorGPU: {
+      requestAdapter: async () => ({
+        requestDevice: async () => ({
+          lost: new Promise(() => {}),
+          features: new Set(),
+          limits: {},
+        }),
+      }),
+      getPreferredCanvasFormat: () => "rgba8unorm",
+    },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": {
+        text: bootstrapFeatureEnginesSource,
+      },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": {
+        text: `
+          window.__gosx_scene3d_webgpu_api = {
+            createRenderer: function() {
+              createCount += 1;
+              return {
+                kind: "webgpu",
+                diagnostics: function() { return { ready: true }; },
+                render: function() {},
+                dispose: function() { disposeCount += 1; }
+              };
+            }
+          };
+        `,
+      },
+    },
+    manifest: {
+      runtime: { path: "/gosx/runtime.wasm" },
+      engines: [
+        {
+          id: "gosx-engine-webgpu-watchdog",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgpu-watchdog",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 320,
+            height: 180,
+            preferWebGPU: true,
+            autoRotate: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  Object.defineProperty(env.context, "createCount", {
+    configurable: true,
+    get: () => createCount,
+    set: (value) => { createCount = value; },
+  });
+  Object.defineProperty(env.context, "disposeCount", {
+    configurable: true,
+    get: () => disposeCount,
+    set: (value) => { disposeCount = value; },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(createCount, 1);
+
+  // The tab goes hidden; rAF stops; minutes pass across watchdog polls.
+  env.context.document.visibilityState = "hidden";
+  now = 8000;
+  timers.runInterval(2000);
+  now = 120000;
+  timers.runInterval(2000);
+
+  // The tab returns. The first poll can run before any resumed frame
+  // presents; it must reset the baseline, not swap the renderer.
+  env.context.document.visibilityState = "visible";
+  now = 120050;
+  timers.runInterval(2000);
+  now = 122000;
+  timers.runInterval(2000);
+
+  assert.equal(createCount, 1, "hidden-tab time must not trigger a renderer swap");
+  assert.equal(disposeCount, 0);
+  assert.notEqual(mount.getAttribute("data-gosx-scene3d-render-watchdog"), "recovering");
+
+  // A REAL stall while visible must still recover.
+  now = 130000;
+  timers.runInterval(2000);
+  now = 140000;
+  timers.runInterval(2000);
+  assert.equal(createCount, 2, "a genuine visible-tab stall must still swap the renderer");
+});
+
 test("Scene3D WebGPU device loss falls back to WebGL on a replacement canvas", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgpu-device-lost";
