@@ -20,10 +20,13 @@ concurrency:
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
+# Verification is split into parallel jobs so release wall-clock tracks the
+# slowest partition instead of the serial sum. Platform builds start after
+# validate alone; publish is the gate that requires every test job.
 jobs:
-  verify:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,6 +53,39 @@ jobs:
           go run ./cmd/gosx release check --root .
           curl --fail --silent --show-error 'https://m31labs.dev/gosx?go-get=1' \
             | grep -F 'm31labs.dev/gosx git https://github.com/odvcencio/gosx'
+
+  test-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Keep release verification aligned with the CI package partition.
+      - name: Partition validation and unit tests
+        run: |
+          set -euo pipefail
+          make test-ci-partitions
+          make test-unit
+
+  test-cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Install TinyGo
         env:
@@ -80,17 +116,32 @@ jobs:
           printf 'GOSX_TINYGO_GOROOT=%s\n' "${compat_root}" >>"${GITHUB_ENV}"
           tinygo version
 
-      - name: Test, vet, and build
+      # cmd/gosx runs real TinyGo production builds and needs the explicit
+      # 15-minute Go timeout carried by test-cli; a plain `go test ./...`
+      # silently restores Go's 10-minute package timeout.
+      - name: CLI production-build tests
         run: |
           set -euo pipefail
-          # Keep release verification aligned with the CI package partition.
-          # cmd/gosx runs real TinyGo production builds and needs the explicit
-          # 15-minute Go timeout carried by test-cli; a plain `go test ./...`
-          # silently restores Go's 10-minute package timeout.
-          make test-ci-partitions
-          make test-unit
           make test-cli
-          # Generated Danmuji test cases run under go test; vet production files only.
+          CGO_ENABLED=0 go build ./cmd/gosx
+
+  vet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Generated Danmuji test cases run under go test; vet production files only.
+      - name: Vet production files
+        run: |
+          set -euo pipefail
           while IFS= read -r pkg; do
             dir="$(GOFLAGS=-buildvcs=false go list -f '{{.Dir}}' "${pkg}")"
             files="$(GOFLAGS=-buildvcs=false go list -f '{{range .GoFiles}}{{.}}{{"\n"}}{{end}}' "${pkg}")"
@@ -98,10 +149,9 @@ jobs:
               (cd "${dir}" && printf '%s\n' "${files}" | xargs env GOFLAGS=-buildvcs=false go vet)
             fi
           done < <(GOFLAGS=-buildvcs=false go list ./...)
-          CGO_ENABLED=0 go build ./cmd/gosx
 
   build:
-    needs: verify
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -137,7 +187,7 @@ jobs:
           path: release-artifacts/
 
   publish:
-    needs: build
+    needs: [validate, test-unit, test-cli, vet, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
