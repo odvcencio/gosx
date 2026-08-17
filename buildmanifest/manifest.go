@@ -16,6 +16,14 @@ type Manifest struct {
 	Islands     []IslandAsset       `json:"islands"`
 	CSS         []CSSAsset          `json:"css"`
 	SceneAssets *SceneAssetManifest `json:"sceneAssets,omitempty"`
+	// Images holds the build-time responsive/format variants gosx build's
+	// imagepipe stage generated for every source image under a project's
+	// public/ directory (issue #200). It is additive: a manifest written
+	// before this field existed decodes with Images == nil, and every
+	// method that reads it (ImageAssetBySource, ImageVariant) treats a nil
+	// or empty slice as "no build-time variants recorded" rather than an
+	// error.
+	Images []ImageAsset `json:"images,omitempty"`
 
 	// SourceRoot is the absolute project root `gosx build` ran from when it
 	// wrote this manifest (the directory holding `dist/`, `app/`, and
@@ -93,6 +101,40 @@ type IslandAsset struct {
 type CSSAsset struct {
 	Component string `json:"component"`
 	Source    string `json:"source,omitempty"`
+	HashedAsset
+}
+
+// ImageAsset describes the build-time responsive variants gosx build's
+// imagepipe stage generated for one source image.
+type ImageAsset struct {
+	// Source is the root-relative, slash-separated public URL of the
+	// original image gosx build probed and resized -- for example
+	// "/photo.jpg" for a file at <project>/public/photo.jpg. It is the
+	// same string server.AssetURL(props.Src) produces for that image, so a
+	// runtime lookup by request src never needs path translation.
+	Source string `json:"source"`
+	// Width and Height are the source image's intrinsic pixel dimensions,
+	// as image.DecodeConfig reported them before any resize.
+	Width int `json:"width"`
+	// Height is the source's intrinsic pixel height. It is never
+	// propagated onto individual ImageVariantAsset entries below -- a
+	// variant's own aspect-correct height is implied by its Width and this
+	// intrinsic Width/Height ratio, not recorded as a separate srcset
+	// dimension (issue #200; compare the height/aspect-ratio bug in
+	// server/image.go's own srcset entries, issue #199).
+	Height int `json:"height"`
+	// Variants holds one entry per (width, format) rung gosx build
+	// generated for this source. Every Variant.Width is <= Width above --
+	// the ladder that produced these rungs (imagepipe.Ladder) never
+	// upscales.
+	Variants []ImageVariantAsset `json:"variants,omitempty"`
+}
+
+// ImageVariantAsset is one hashed, build-time-generated output image: a
+// single (width, format) rung of an ImageAsset's responsive ladder.
+type ImageVariantAsset struct {
+	Width  int    `json:"width"`
+	Format string `json:"format"` // "webp", "jpeg", or "png"
 	HashedAsset
 }
 
@@ -274,6 +316,11 @@ func (m *Manifest) CSSURL(assetBaseURL string, asset CSSAsset) string {
 	return AssetURL(assetBaseURL, "css", asset.File)
 }
 
+// ImageURL returns the public URL for a build-time image variant.
+func (m *Manifest) ImageURL(assetBaseURL string, asset ImageVariantAsset) string {
+	return AssetURL(assetBaseURL, "images", asset.File)
+}
+
 // CSSAssetBySource returns the hashed CSS asset for a source-relative path, if any.
 func (m *Manifest) CSSAssetBySource(source string) (CSSAsset, bool) {
 	for _, asset := range m.CSS {
@@ -282,6 +329,46 @@ func (m *Manifest) CSSAssetBySource(source string) (CSSAsset, bool) {
 		}
 	}
 	return CSSAsset{}, false
+}
+
+// ImageAssetBySource returns the recorded image asset for a source's
+// root-relative public URL, if gosx build generated variants for it. It
+// returns false, always, for a manifest written before issue #200 (Images
+// is nil).
+func (m *Manifest) ImageAssetBySource(source string) (ImageAsset, bool) {
+	if m == nil {
+		return ImageAsset{}, false
+	}
+	for _, asset := range m.Images {
+		if asset.Source == source {
+			return asset, true
+		}
+	}
+	return ImageAsset{}, false
+}
+
+// ImageVariant returns the hashed build-time output for a source image at
+// the given width and format. An empty format resolves to "webp" -- gosx
+// build's own default output encoding -- so a caller that never named an
+// explicit format still lands on the smaller encoding gosx build already
+// produced. It returns false if source has no recorded ImageAsset, or that
+// asset has no variant at exactly this width and format; gosx build never
+// upscales, so a width above the source's intrinsic Width never matches.
+func (m *Manifest) ImageVariant(source string, width int, format string) (ImageVariantAsset, bool) {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if format == "" {
+		format = "webp"
+	}
+	asset, ok := m.ImageAssetBySource(source)
+	if !ok {
+		return ImageVariantAsset{}, false
+	}
+	for _, variant := range asset.Variants {
+		if variant.Width == width && variant.Format == format {
+			return variant, true
+		}
+	}
+	return ImageVariantAsset{}, false
 }
 
 // AssetURL joins the mounted public asset root with a build output file.

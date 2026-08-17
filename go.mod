@@ -18,6 +18,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
 	github.com/chromedp/chromedp v0.15.1
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/gen2brain/webp v0.5.5
 	github.com/odvcencio/corkscrewdb v0.2.0
 	github.com/odvcencio/mdpp v0.2.5
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
@@ -27,6 +28,8 @@ require (
 )
 
 require (
+	github.com/ebitengine/purego v0.8.3 // indirect
+	github.com/tetratelabs/wazero v1.9.0 // indirect
 	m31labs.dev/mll v0.1.0 // indirect
 	m31labs.dev/prism v0.1.3 // indirect
 	m31labs.dev/turboquant v0.2.0 // indirect

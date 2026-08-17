@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+### Added: build-time image variant pipeline (`imagepipe`)
+
+- **A new build-only package, `m31labs.dev/gosx/imagepipe`, probes,
+  resizes, and encodes responsive image variants.** `Probe` reads
+  intrinsic dimensions through `image.DecodeConfig` (JPEG, PNG, GIF, and
+  WebP, the last via a blank import of `golang.org/x/image/webp`).
+  `Resize` scales with `golang.org/x/image/draw`'s Catmull-Rom
+  resampler — the same one `server/image.go`'s request-time optimizer
+  uses — and refuses to upscale. `Encode` writes WebP (lossy, via
+  `github.com/gen2brain/webp`, libwebp under wazero), JPEG, or PNG.
+  `Ladder` caps `server.AutoImageWidths`' candidate widths at a source's
+  own intrinsic width, matching what the runtime `<img>` srcset already
+  asks for. `Process` ties every stage together for one source path.
+  Refs #200.
+- **`github.com/gen2brain/webp` is pinned to v0.5.5, not v0.6.x.**
+  v0.6.x's 2.69 MB wasm2go-transpiled source drives the arm64 Go
+  compiler to 14.4 GB resident and an OOM kill; v0.5.5 cross-compiles to
+  linux/arm64, darwin/arm64, windows/amd64, and js/wasm in roughly 5s
+  each under 235 MB. Hugo made the same wazero call
+  (`internal/warpc`). The only new transitive dependencies are
+  `github.com/tetratelabs/wazero` (the WASM runtime) and
+  `github.com/ebitengine/purego` (the encoder's optional dynamic-library
+  fast path).
+- **`buildmanifest.Manifest` grows an `Images` bucket.** Each
+  `ImageAsset` records a source image's root-relative public URL and
+  intrinsic width/height, plus one hashed `ImageVariantAsset` per
+  (width, format) rung `gosx build` generated. The field is additive —
+  `json:"images,omitempty"` — so a manifest written before this change
+  decodes with `Images == nil`. `Manifest.ImageVariant` looks up a
+  variant by source, width, and format (an empty format defaults to
+  `"webp"`).
+- **`gosx build` generates variants for every image under `public/`.**
+  The new stage runs beside the existing `public/` copy in
+  `stageDeploymentBundle`: it walks `public/`, resizes each image down
+  its own `AutoImageWidths`-derived ladder (never past its intrinsic
+  width), encodes WebP plus the source's native format at every rung,
+  and writes the hashed results into `dist/assets/images` through the
+  same `writeHashedWithoutCompressedSidecars` helper every other build
+  output already uses — gzip/brotli sidecars would waste build time
+  recompressing already-compressed image bytes. A source `gosx build`
+  cannot probe is skipped with a warning, not a failed build.
+- **Static exports serve real image variants instead of the original
+  file repeated at every width.** During `GOSX_STATIC_EXPORT=1`,
+  `server`'s image resolver now looks up a matching build-time variant
+  in the already-loaded `buildmanifest.Manifest.Images` bucket before
+  falling back to its previous passthrough behavior. This is a pure
+  addition — the previous passthrough function is unmodified and still
+  the fallback — reading only plain manifest data, never `imagepipe` or
+  its encoder.
+- **`server` still never imports `imagepipe` or its WebP encoder.**
+  Every gosx app imports `server`; the encoder measured roughly 4.2 MB
+  added to a linked `cmd/gosx` binary, a cost a deployed application
+  binary must never pay for a build-time-only feature.
+  `TestServerPackageTreeNeverImportsImagepipe` (repo root) enforces the
+  boundary with a `go list -json` direct-import check over the `server`
+  package tree, mirroring gsxmail's `structural_isolation_test.go`
+  pattern for the same kind of encoder/render-path boundary.
+
 ### Added: first-class file uploads through the action layer
 
 - **`ctx.Files(name)` and `ctx.File(name)` read uploaded files from an
