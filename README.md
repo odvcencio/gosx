@@ -2,7 +2,7 @@
 
 A Go-native web platform. Write `.gsx` components with strict typed declarations or ordinary Go-function syntax, compile through a real compiler pipeline, render on the server by default, and hydrate interactive islands with WebAssembly. No app-side JavaScript toolchain. No CGo. A deliberately small dependency budget.
 
-Current release: **v0.44.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.45.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -847,7 +847,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.44.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.45.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

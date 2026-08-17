@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## v0.45.0 (2026-08-16)
+
+The module graph goes pure. gosx ships no wasm runtimes and no FFI shims:
+the wazero-backed WebP encoder leaves the tree, replaced by a pluggable
+encoder registry on imagepipe (JPEG and PNG stay built in), and a
+regression test keeps foreign runtimes out of the graph permanently. A
+pure-Go VP8 encoder is in development as its own constellation project
+(m31labs.dev/tqwebp) and will fill the registry when it lands.
 
 ### Remove the WebP encoder dependency: no wasm runtime, no FFI shim
 
