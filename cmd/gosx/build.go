@@ -633,22 +633,31 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// .gosx/cache/surfaces/. See ADR 0003 (supersedure) and ADR 0005
 	// (buildsurface deletion) in the m31labs-gosx hyphae space.
 
-	// ── Build manifest ──────────────────────────────────────────────────
-
-	manifestPath, err := writeBuildManifest(distDir, &manifest)
-	if err != nil {
-		return err
-	}
-
 	// Build the application binary when the target directory is a runnable app.
 	serverBinaryPath := filepath.Join(distDir, "server", "app"+targetExecutableExt())
 	builtServer, err := buildServerBinaryIfPresent(dir, serverBinaryPath)
 	if err != nil {
 		return fmt.Errorf("build server binary: %w", err)
 	}
-	if err := stageDeploymentBundle(dir, distDir, builtServer, serverBinaryPath); err != nil {
+	if err := stageDeploymentBundle(dir, distDir, &manifest, builtServer, serverBinaryPath); err != nil {
 		return fmt.Errorf("stage deployment bundle: %w", err)
 	}
+
+	// ── Build manifest ──────────────────────────────────────────────────
+	//
+	// Written after stageDeploymentBundle (not before, as every other tier
+	// above): stageDeploymentBundle's own image variant stage populates
+	// manifest.Images, and the static prerender subprocess started just
+	// below reads build.json at startup to resolve real image variant URLs
+	// during GOSX_STATIC_EXPORT (server/image_resolver.go, issue #200) --
+	// so build.json must already carry Images by the time that subprocess
+	// launches.
+
+	manifestPath, err := writeBuildManifest(distDir, &manifest)
+	if err != nil {
+		return err
+	}
+
 	staticPages := 0
 	if !opts.Dev && builtServer {
 		exportManifest, err := prerenderStaticBundle(staticExportOptions{
@@ -716,6 +725,10 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	)+countRuntimeVariantAssets(manifest.Runtime.WASMVariants))
 	fmt.Printf("  Tier 3 (islands): %d programs + %d CSS, immutable CDN\n",
 		len(manifest.Islands), len(manifest.CSS))
+	if len(manifest.Images) > 0 {
+		fmt.Printf("  Tier 3 (images): %d sources, %d variants, immutable CDN\n",
+			len(manifest.Images), countImageVariantAssets(manifest.Images))
+	}
 	fmt.Printf("  Manifest: %s\n", manifestPath)
 	if releaseArtifacts.Package != "" {
 		fmt.Printf("  MSIX: %s\n", releaseArtifacts.Package)
@@ -755,6 +768,14 @@ func countRuntimeVariantAssets(variants map[string]buildmanifest.RuntimeVariantA
 		if strings.TrimSpace(asset.File) != "" {
 			count++
 		}
+	}
+	return count
+}
+
+func countImageVariantAssets(images []buildmanifest.ImageAsset) int {
+	count := 0
+	for _, asset := range images {
+		count += len(asset.Variants)
 	}
 	return count
 }
@@ -987,7 +1008,7 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 	return true, nil
 }
 
-func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverBinaryPath string) error {
+func stageDeploymentBundle(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string) error {
 	if err := copyDirIfPresent(filepath.Join(projectDir, "app"), filepath.Join(distDir, "app")); err != nil {
 		return err
 	}
@@ -1005,6 +1026,23 @@ func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverB
 	if err := copyDirIfPresent(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public")); err != nil {
 		return err
 	}
+
+	// ── Tier 3: Image variants (content-hashed) ──────────────────────────
+	//
+	// Beside the public copy just above: probe every raster image gosx
+	// build just copied into dist/public, resize it down the
+	// AutoImageWidths ladder capped at its own intrinsic width, and encode
+	// each rung to WebP (plus its native format) via imagepipe. Those
+	// hashed outputs are what a static export serves in place of the old
+	// passthrough at server/image_resolver.go (issue #200).
+	imageAssets, err := stageImageVariants(projectDir, distDir)
+	if err != nil {
+		return fmt.Errorf("stage image variants: %w", err)
+	}
+	if manifest != nil {
+		manifest.Images = imageAssets
+	}
+
 	if err := copyFileIfPresent(filepath.Join(projectDir, ".env.example"), filepath.Join(distDir, ".env.example")); err != nil {
 		return err
 	}

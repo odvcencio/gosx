@@ -69,6 +69,64 @@
 
   Fixes #204.
 
+### Added: build-time image variant pipeline (`imagepipe`)
+
+- **A new build-only package, `m31labs.dev/gosx/imagepipe`, probes,
+  resizes, and encodes responsive image variants.** `Probe` reads
+  intrinsic dimensions through `image.DecodeConfig` (JPEG, PNG, GIF, and
+  WebP, the last via a blank import of `golang.org/x/image/webp`).
+  `Resize` scales with `golang.org/x/image/draw`'s Catmull-Rom
+  resampler — the same one `server/image.go`'s request-time optimizer
+  uses — and refuses to upscale. `Encode` writes WebP (lossy, via
+  `github.com/gen2brain/webp`, libwebp under wazero), JPEG, or PNG.
+  `Ladder` caps `server.AutoImageWidths`' candidate widths at a source's
+  own intrinsic width, matching what the runtime `<img>` srcset already
+  asks for. `Process` ties every stage together for one source path.
+  Refs #200.
+- **`github.com/gen2brain/webp` is pinned to v0.5.5, not v0.6.x.**
+  v0.6.x's 2.69 MB wasm2go-transpiled source drives the arm64 Go
+  compiler to 14.4 GB resident and an OOM kill; v0.5.5 cross-compiles to
+  linux/arm64, darwin/arm64, windows/amd64, and js/wasm in roughly 5s
+  each under 235 MB. Hugo made the same wazero call
+  (`internal/warpc`). The only new transitive dependencies are
+  `github.com/tetratelabs/wazero` (the WASM runtime) and
+  `github.com/ebitengine/purego` (the encoder's optional dynamic-library
+  fast path).
+- **`buildmanifest.Manifest` grows an `Images` bucket.** Each
+  `ImageAsset` records a source image's root-relative public URL and
+  intrinsic width/height, plus one hashed `ImageVariantAsset` per
+  (width, format) rung `gosx build` generated. The field is additive —
+  `json:"images,omitempty"` — so a manifest written before this change
+  decodes with `Images == nil`. `Manifest.ImageVariant` looks up a
+  variant by source, width, and format (an empty format defaults to
+  `"webp"`).
+- **`gosx build` generates variants for every image under `public/`.**
+  The new stage runs beside the existing `public/` copy in
+  `stageDeploymentBundle`: it walks `public/`, resizes each image down
+  its own `AutoImageWidths`-derived ladder (never past its intrinsic
+  width), encodes WebP plus the source's native format at every rung,
+  and writes the hashed results into `dist/assets/images` through the
+  same `writeHashedWithoutCompressedSidecars` helper every other build
+  output already uses — gzip/brotli sidecars would waste build time
+  recompressing already-compressed image bytes. A source `gosx build`
+  cannot probe is skipped with a warning, not a failed build.
+- **Static exports serve real image variants instead of the original
+  file repeated at every width.** During `GOSX_STATIC_EXPORT=1`,
+  `server`'s image resolver now looks up a matching build-time variant
+  in the already-loaded `buildmanifest.Manifest.Images` bucket before
+  falling back to its previous passthrough behavior. This is a pure
+  addition — the previous passthrough function is unmodified and still
+  the fallback — reading only plain manifest data, never `imagepipe` or
+  its encoder.
+- **`server` still never imports `imagepipe` or its WebP encoder.**
+  Every gosx app imports `server`; the encoder measured roughly 4.2 MB
+  added to a linked `cmd/gosx` binary, a cost a deployed application
+  binary must never pay for a build-time-only feature.
+  `TestServerPackageTreeNeverImportsImagepipe` (repo root) enforces the
+  boundary with a `go list -json` direct-import check over the `server`
+  package tree, mirroring gsxmail's `structural_isolation_test.go`
+  pattern for the same kind of encoder/render-path boundary.
+
 ### Strict components: props-root hop-0 promoted and unexported fields now fail closed (gosx#195)
 
 - **`resolveStrictSelectorPath` no longer defers a hop-0 unknown field on
@@ -170,6 +228,46 @@
   to the page router exactly as before. Non-wildcard mounts, subtree
   mounts, and the 404 fall-through keep their existing behavior. Refs
   #194.
+- **`<Image priority />` and `<Image responsive />` now reach
+  `server.ImageProps` instead of leaking as literal HTML attributes.**
+  The file-program renderer's consumed-attribute set for `<Image>`
+  omitted `priority` and `responsive`, so both fell through to
+  `imageExtraAttrs` and rendered as bare `priority`/`responsive`
+  attributes on the `<img>` tag. `priority` never flipped
+  `loading="eager"` or `fetchpriority="high"`; `responsive` never
+  triggered the automatic width ladder or the `sizes="100vw"` default.
+  Both attributes now wire into `ImageProps.Priority` and
+  `ImageProps.Responsive` and no longer appear in the rendered markup.
+  Refs #199.
+- **A responsive `<Image>` srcset no longer distorts every entry
+  narrower than the full box.** The srcset ladder copied
+  `ImageProps.Height` into every candidate width, so a 320w entry cut
+  from a 1200x800 source requested a literal 320x800 variant instead of
+  a proportional one. Ladder entries now carry width only; height
+  derives proportionally at request time. The `<img>` tag's own
+  `width`/`height` attributes are unaffected. Refs #199.
+- **`Image` rejects an output format the optimizer handler cannot
+  produce at render time, not at request time.** `format="webp"`
+  previously rendered a `fmt=webp` URL that only failed once a browser
+  requested it, since the handler allows only jpeg, png, and gif as
+  output. `Image` now validates `Format` against that same allowlist
+  before it builds any URL and panics with a clear message on a bad
+  value, so the mistake surfaces at render time. Refs #199.
+- **The image optimizer's error responses no longer leak the host
+  filesystem path.** A missing or unreadable source wrapped the
+  resolved absolute path in the `os.Open`/`os.Stat` error and wrote it
+  straight into the HTTP response body. The handler now returns a
+  generic message (`image not found` or `image optimizer failed to
+  process image`) and logs the real error, path included, through
+  `server.Logger()`. Refs #199.
+- **The image optimizer decodes WebP sources and resizes them.**
+  `golang.org/x/image/webp` is now blank-imported, registering the
+  decoder with the standard `image` package, so `image.Decode` and
+  `image.DecodeConfig` both handle `.webp` sources. `.webp` is added to
+  the optimizer's resize-eligible extensions. WebP still has no Go
+  encoder, so a WebP source with no explicit `format` falls back to
+  png output, the same way a gif source already does; `format="webp"`
+  stays rejected as an output format. Refs #199.
 
 ## v0.43.0 (2026-08-16)
 

@@ -138,7 +138,8 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	serverBinaryPath := filepath.Join(distDir, "server", "app")
 	mustWriteFile(t, serverBinaryPath, "binary")
 
-	if err := stageDeploymentBundle(projectDir, distDir, true, serverBinaryPath); err != nil {
+	manifest := &BuildManifest{}
+	if err := stageDeploymentBundle(projectDir, distDir, manifest, true, serverBinaryPath); err != nil {
 		t.Fatal(err)
 	}
 

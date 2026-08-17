@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"golang.org/x/image/draw"
+	_ "golang.org/x/image/webp" // register the WebP decoder (gosx#199)
 
 	"m31labs.dev/gosx"
 )
@@ -58,6 +59,12 @@ func ImageURL(src string, transform ImageTransform) string {
 // Image renders an optimized image tag for local public assets and falls back
 // to a plain <img> for unsupported sources such as remote URLs or SVGs.
 func Image(props ImageProps, args ...any) gosx.Node {
+	// Fail closed at render time: a format the handler cannot produce would
+	// otherwise ship as a fmt= URL that 400s only when a browser requests it
+	// (gosx#199). Check before any URL is built.
+	if err := validateProducibleImageFormat(props.Format); err != nil {
+		panic(err)
+	}
 	props.Src = AssetURL(props.Src)
 	src := props.Src
 	widths := normalizeResponsiveWidths(props.Widths)
@@ -95,9 +102,16 @@ func Image(props ImageProps, args ...any) gosx.Node {
 	if len(widths) > 0 && shouldOptimize {
 		srcset := make([]string, 0, len(widths))
 		for _, width := range widths {
+			// Ladder entries carry width only. Propagating props.Height here
+			// would request that exact height at every narrower width too,
+			// and targetImageSize would honor both dimensions literally
+			// instead of deriving height proportionally — distorting every
+			// entry narrower than the full box (gosx#199). The width/height
+			// attributes on the emitted <img> still carry the full box for
+			// layout; only the candidate URLs stay width-only so each one
+			// preserves the source aspect ratio.
 			srcset = append(srcset, fmt.Sprintf("%s %dw", ImageURLWithResolver(props.Resolver, props.Src, ImageTransform{
 				Width:   width,
-				Height:  props.Height,
 				Quality: props.Quality,
 				Format:  props.Format,
 			}), width))
@@ -162,11 +176,7 @@ func ImageHandler(rootDir string) http.Handler {
 		if r.Method == http.MethodHead {
 			contentType, err := imageVariantContentType(path, req.Format)
 			if err != nil {
-				status := http.StatusBadRequest
-				if os.IsNotExist(err) {
-					status = http.StatusNotFound
-				}
-				http.Error(w, err.Error(), status)
+				respondImageOptimizerError(w, path, req, err)
 				return
 			}
 			w.Header().Set("Content-Type", contentType)
@@ -185,13 +195,7 @@ func ImageHandler(rootDir string) http.Handler {
 
 		variant, err := renderImageVariant(path, req)
 		if err != nil {
-			status := http.StatusInternalServerError
-			if os.IsNotExist(err) {
-				status = http.StatusNotFound
-			} else if isImageClientError(err) {
-				status = http.StatusBadRequest
-			}
-			http.Error(w, err.Error(), status)
+			respondImageOptimizerError(w, path, req, err)
 			return
 		}
 
@@ -444,7 +448,7 @@ func shouldOptimizeImageSource(src string) bool {
 	}
 
 	switch ext := strings.ToLower(path.Ext(parsed.Path)); ext {
-	case ".png", ".jpg", ".jpeg", ".gif":
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
 		return true
 	default:
 		return false
@@ -504,10 +508,32 @@ func normalizeImageFormat(format string) string {
 	}
 }
 
+// producibleImageFormats lists the output formats the optimizer handler can
+// encode (encodeImageVariant). Registering the WebP decoder (gosx#199) makes
+// WebP a decodable SOURCE format, but it stays out of this list: there is no
+// WebP encoder here, so it can never be a producible OUTPUT format. Image
+// checks a requested format against this exact list before it builds a URL,
+// so nothing renders a fmt= value the handler would reject at request time.
+var producibleImageFormats = []string{"jpeg", "png", "gif"}
+
+// validateProducibleImageFormat rejects an Image format prop the optimizer
+// handler could never encode. An empty format defers to the source format
+// and always passes.
+func validateProducibleImageFormat(format string) error {
+	format = strings.TrimSpace(format)
+	if format == "" {
+		return nil
+	}
+	if !slices.Contains(producibleImageFormats, normalizeImageFormat(format)) {
+		return fmt.Errorf("gosx: Image format %q is not a producible output format (want jpeg, png, or gif)", format)
+	}
+	return nil
+}
+
 func selectTargetImageFormat(sourceFormat, requestedFormat string) (string, error) {
 	if requestedFormat != "" {
 		format := normalizeImageFormat(requestedFormat)
-		if !slices.Contains([]string{"jpeg", "png", "gif"}, format) {
+		if !slices.Contains(producibleImageFormats, format) {
 			return "", fmt.Errorf("unsupported image format %q", requestedFormat)
 		}
 		return format, nil
@@ -519,6 +545,10 @@ func selectTargetImageFormat(sourceFormat, requestedFormat string) (string, erro
 	case "png":
 		return "png", nil
 	case "gif":
+		return "png", nil
+	case "webp":
+		// WebP is decodable but not encodable here, so a WebP source with no
+		// explicit target format falls back to png, same as gif (gosx#199).
 		return "png", nil
 	default:
 		return "", fmt.Errorf("unsupported source image format %q", sourceFormat)
@@ -560,4 +590,24 @@ func isImageClientError(err error) bool {
 		}
 	}
 	return false
+}
+
+// respondImageOptimizerError writes a client-safe error response and logs the
+// real error server-side. os.Open/os.Stat failures wrap the resolved host
+// filesystem path in err.Error() (e.g. "open /home/app/public/x.png: no such
+// file or directory"); that string must never reach the response body
+// (gosx#199). isImageClientError already vets a fixed set of path-free,
+// caller-facing messages (bad src, unsupported format, oversized request),
+// so only those are echoed back verbatim.
+func respondImageOptimizerError(w http.ResponseWriter, path string, req imageRequest, err error) {
+	switch {
+	case os.IsNotExist(err):
+		Logger().Error("gosx: image optimizer source not found", "path", path, "src", req.Src, "err", err)
+		http.Error(w, "image not found", http.StatusNotFound)
+	case isImageClientError(err):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	default:
+		Logger().Error("gosx: image optimizer failed to process image", "path", path, "src", req.Src, "err", err)
+		http.Error(w, "image optimizer failed to process image", http.StatusInternalServerError)
+	}
 }
