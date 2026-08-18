@@ -181,6 +181,43 @@ const (
 	NavigationLiveIntervalAttr   = "data-gosx-live-interval"
 	NavigationLiveBindAttr       = "data-gosx-live-bind"
 	NavigationLiveFlashClassAttr = "data-gosx-live-flash-class"
+	// NavigationFilterAttr, on an input, names the list it filters
+	// (gosx#215): an element id, or — when no element has that id — a CSS
+	// selector. Each row inside that target (any descendant, not only a
+	// direct child) carries NavigationFilterTextAttr with the text to
+	// search; the runtime reads this attribute rather than the row's own
+	// rendered text, so the server can normalize case and fold in search
+	// terms that never render visibly. Filtering is a case-insensitive
+	// substring match against the input's trimmed, lower-cased value,
+	// debounced 150ms after the last keystroke; an empty input matches
+	// every row. A row containing the focused control, or currently under
+	// the pointer, is never hidden mid-interaction. NavigationFilterHiddenClass
+	// is a class hook the runtime toggles; the application's own CSS
+	// decides what a hidden row looks like. NavigationFilterAnnounceAttr
+	// (any truthy value) opts an input into an "N of M shown" live-region
+	// announcement after every apply. A filter is rebuilt, and its query
+	// re-applied, at page boot and after every soft navigation or
+	// revalidation swap — the same rescan lifecycle NavigationWatchAttr
+	// follows.
+	NavigationFilterAttr         = "data-gosx-filter"
+	NavigationFilterTextAttr     = "data-gosx-filter-text"
+	NavigationFilterAnnounceAttr = "data-gosx-filter-announce"
+	NavigationFilterHiddenClass  = "gosx-filter-row--hidden"
+
+	// NavigationHeartbeatAttr, on an element (or on <body> itself),
+	// declares a same-origin endpoint the runtime pings with a plain GET,
+	// credentials included, on the NavigationHeartbeatIntervalAttr period
+	// (gosx#216) — the same whole-second/whole-minute duration grammar
+	// NavigationRevalidateIntervalAttr accepts. The ping runs only while
+	// the document is visible: it pauses entirely while hidden, and fires
+	// one immediate catch-up ping on visibility return if at least one
+	// full interval elapsed while hidden. At most one ping is ever in
+	// flight; an interval tick or catch-up that lands while the previous
+	// ping has not settled is skipped outright. Both a network failure and
+	// a non-2xx response are silent — presence detection must never
+	// surface a console error for a dropped connection.
+	NavigationHeartbeatAttr         = "data-gosx-heartbeat"
+	NavigationHeartbeatIntervalAttr = "data-gosx-heartbeat-interval"
 )
 
 // NormalizeNavigationLinkCurrentPolicy normalizes the declarative "current"
