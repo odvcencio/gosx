@@ -84,6 +84,19 @@ type lowerer struct {
 	currentStrictComponent string
 	currentStrictPropsType string
 
+	// currentLegacyComponent and currentLegacyPropsName name the legacy
+	// (func-spelled) component whose body lowerGSXNode is currently
+	// walking, and the identifier that component declares for its props
+	// parameter. Both are empty outside legacy lowering, and
+	// currentLegacyPropsName is empty for a legacy component that declares
+	// no parameter at all (func Page() Node). E2 tier 2
+	// (validateLegacyToStrictCall) needs the pair to prove gosx#229's
+	// rejection: a spread whose source is the enclosing legacy component's
+	// own props can never satisfy a strict callee, and naming the caller in
+	// the diagnostic needs the caller's own name here.
+	currentLegacyComponent string
+	currentLegacyPropsName string
+
 	// strictEachElems records, per strict component and per depth-1
 	// props-rooted <Each of> path, the same-file element struct name that
 	// path's loopable-type check (section 2.3) resolved — populated by
@@ -1307,6 +1320,7 @@ func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentNam
 	baseType := propsBaseType(propsType)
 	if _, declared := l.structTypes[baseType]; !declared {
 		l.errorf(n, "strict component %s renders props fields from %s, whose struct schema is not declared in this .gsx file; declare the renderer-visible props struct beside the component", componentName, propsType)
+		l.hintLast(sameFileSchemaHint)
 		return
 	}
 	paths := make([]string, 0, len(reads))
@@ -1518,6 +1532,40 @@ func strictHopMessage(componentName string, res strictHopResult) string {
 	}
 }
 
+// sameFileSchemaHint answers the question the same-file struct rule always
+// raises, and gosx#230's ask 1 asked out loud: the .gsx file compiles into
+// the sibling .go file's own package, so why can the props struct not live
+// there?
+//
+// Because the Go compiler is not the only reader of that struct. The
+// map-backed file renderer (route/fileprogram.go) executes the IR itself
+// and never compiles Go, so it resolves every rendered field from schema
+// data the IR carries — Component.PropsFields, PropsPaths, and PropsSlices.
+// The lowerer builds that data from the type declarations of the one .gsx
+// file it is given: ir.Lower takes a parse tree and a byte slice, holds no
+// path, opens no file, and is called per file by the LSP and by the dev
+// renderer as well as by the build. A type declared in a sibling .go file
+// is therefore invisible at the exact moment the schema is built, and a
+// component whose schema is missing cannot be proved at any boundary.
+//
+// gosx#230's real cost — a nested type forced to be both .gsx-local and
+// identical to the sibling .go converter's type — is removed at the other
+// end instead, by proving a spread's nested struct fields structurally
+// (route's requireStrictSpreadStructField). The two types no longer have to
+// match, so they no longer have to be the same declaration.
+const sameFileSchemaHint = "ir.Lower reads one .gsx file, so the file renderer never sees a sibling .go type; declare the renderer-visible struct here and let the .go converter keep its own type"
+
+// strictHopHint returns the remedy for a hop failure whose message cannot
+// carry it. Only an undeclared intermediate struct has one: every other
+// kind (too deep, a pointer, a scalar, an unknown field) is a defect in the
+// path itself, not a question about where a type may be declared.
+func strictHopHint(res strictHopResult) string {
+	if res.failKind == strictHopUndeclaredStruct {
+		return sameFileSchemaHint
+	}
+	return ""
+}
+
 // resolveStrictSelectorPath walks a props-rooted field path (see
 // strictcomponent.ServerPropPath) against the same-file struct schema,
 // reporting exactly one diagnostic when any hop cannot preserve Go's
@@ -1572,6 +1620,7 @@ func (l *lowerer) resolveStrictSelectorPath(n *gotreesitter.Node, componentName,
 		}
 	default:
 		l.errorf(n, "%s", strictHopMessage(componentName, res))
+		l.hintLast(strictHopHint(res))
 	}
 }
 
@@ -1643,6 +1692,7 @@ func (l *lowerer) resolveStrictEachSourceType(n *gotreesitter.Node, componentNam
 		return elem
 	default:
 		l.errorf(n, "%s", strictHopMessage(componentName, res))
+		l.hintLast(strictHopHint(res))
 		return ""
 	}
 }
@@ -1711,6 +1761,7 @@ func (l *lowerer) resolveStrictSpreadForwardType(n *gotreesitter.Node, component
 		}
 	default:
 		l.errorf(n, "%s", strictHopMessage(componentName, res))
+		l.hintLast(strictHopHint(res))
 	}
 }
 
@@ -1926,18 +1977,68 @@ func singleSpreadShape(attrs []Attr) (Attr, bool) {
 // other shape (no attributes, named attributes, multiple spreads, spread
 // plus named attributes) keeps the v0.39 cross-style ban, with an updated
 // message for the named-attributes case that names the supported spelling.
+//
+// Shape is not the only thing provable here. One single-spread SOURCE —
+// the enclosing legacy component's own props identifier — is statically
+// known to fail at that renderer boundary, whatever the data is
+// (validateLegacyPropsSpread, gosx#229).
 func (l *lowerer) validateLegacyToStrictCall(n *gotreesitter.Node, tag string, attrs []Attr, children []NodeID) {
 	if len(attrs) == 0 {
 		l.errorf(n, "legacy component cannot call strict component %s; component styles may coexist but calls must stay within one style", tag)
 		return
 	}
-	if _, ok := singleSpreadShape(attrs); ok {
+	if spread, ok := singleSpreadShape(attrs); ok {
 		if len(children) > 0 {
 			l.errorf(n, "strict component %s does not accept positional children", tag)
 		}
+		l.validateLegacyPropsSpread(n, tag, spread)
 		return
 	}
 	l.errorf(n, "legacy component cannot call strict component %s with named attributes; pass one {...source} spread and the renderer will prove it at the boundary", tag)
+}
+
+// validateLegacyPropsSpread rejects gosx#229: a legacy body spreading its
+// OWN props identifier into a strict callee. Shape alone accepts that call
+// (validateLegacyToStrictCall above), and the source expression carries no
+// declared type a legacy body could be checked against, so before this rule
+// the composition compiled, checked, and transpiled clean, then failed at
+// every render — total, data-independent, and only on a code path that runs
+// once real data exists.
+//
+// The failure is provable from three facts the lowerer already holds: the
+// callee is a same-file strict component (the caller checked
+// l.strictNames), the enclosing component is legacy (l.strict is false), and
+// the spread source is that component's own props parameter. A legacy render
+// frame binds props to the reduced map[string]any the file renderer builds
+// out of the call site's attributes (localComponentProps' non-strict branch,
+// route/fileprogram.go) — never a Go struct, even when a struct value
+// produced the attributes — and strictSpreadProps proves field coverage on
+// struct values only, because a map can omit a key where the generated-Go
+// twin would synthesize a typed zero. Full transpile refuses the same call
+// outright (emitTypedAttrsForType). So no execution path accepts this
+// composition, and rejecting it turns a guaranteed render-time failure into
+// a compile-time diagnostic with a source position.
+//
+// The rule is deliberately narrow. It fires only on the bare props
+// identifier, so the two shapes that DO render keep compiling: a struct-
+// typed FIELD of props ({...props.Away}) survives the shallow flatten with
+// its own type intact, and any other expression (a local, a loader value, a
+// page's data binding) is unconstrained by this rule. It says nothing about
+// a legacy component whose props parameter is spelled anything other than
+// "props" either: the file renderer binds the identifier "props" literally,
+// so a differently spelled parameter is not in scope at render time at all,
+// which is a separate defect with a separate cause.
+func (l *lowerer) validateLegacyPropsSpread(n *gotreesitter.Node, tag string, spread Attr) {
+	propsName := strings.TrimSpace(l.currentLegacyPropsName)
+	if propsName != "props" || strings.TrimSpace(spread.Expr) != propsName {
+		return
+	}
+	caller := strings.TrimSpace(l.currentLegacyComponent)
+	if caller == "" {
+		return
+	}
+	l.errorf(n, "legacy component %s cannot spread props into strict component %s; a legacy render frame binds props to map[string]any, and the strict spread boundary proves field coverage on struct values only", caller, tag)
+	l.hintLast("spread a struct-typed field instead (for example {...props.Team}), or declare " + caller + " as a strict component so props keeps its declared type")
 }
 
 // validateStrictToStrictSpreadCall validates E2 tier 1 (design spec section
@@ -2149,8 +2250,17 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	// Extract props type from parameters
 	propsName, propsType := l.extractProps(n)
 
-	// Lower the GSX tree
+	// Lower the GSX tree. The caller context (name plus props identifier)
+	// stays set for the whole walk so a strict call site inside this body
+	// can name the enclosing legacy component and recognize its props
+	// binding — see validateLegacyPropsSpread (gosx#229).
+	prevLegacyComponent := l.currentLegacyComponent
+	prevLegacyPropsName := l.currentLegacyPropsName
+	l.currentLegacyComponent = name
+	l.currentLegacyPropsName = propsName
 	rootID := l.lowerGSXNode(gsxRoot)
+	l.currentLegacyComponent = prevLegacyComponent
+	l.currentLegacyPropsName = prevLegacyPropsName
 
 	// Analyze the function body for signal/computed/handler declarations.
 	// This extracts the component scope needed for island lowering.
@@ -2576,7 +2686,7 @@ func (l *lowerer) validateEachBindingRead(span Span, componentName string, scope
 		}
 		scope.recordRead(root, path, res.leafType)
 	default:
-		l.errs = append(l.errs, Diagnostic{Span: span, Message: strictHopMessage(componentName, res)})
+		l.errs = append(l.errs, Diagnostic{Span: span, Message: strictHopMessage(componentName, res), Hint: strictHopHint(res)})
 	}
 }
 

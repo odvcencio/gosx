@@ -1994,6 +1994,61 @@ func requireStrictStructValue(value any, typeName string, paths map[string]strin
 	if rt.Kind() != reflect.Struct || rt.PkgPath() == "" || rt.Name() != typeName {
 		return nil, fmt.Errorf("runtime value has type %s, want exact struct %s", rt, typeName)
 	}
+	return proveStrictStructPaths(rv, typeName, paths)
+}
+
+// requireStrictSpreadStructField is requireStrictStructValue's structural
+// counterpart, and gosx#230's relaxation: it proves a nested struct-typed
+// field of a SPREAD source by the fields the renderer reads, not by the
+// declared type's name.
+//
+// Why the two differ. A named attribute at a strict call site has a
+// generated-Go twin — transpile emits CalleeProps{Team: expr}, and the Go
+// compiler proves expr's type is exactly the declared field type. Keeping
+// the nominal check in requireStrictStructValue therefore costs nothing and
+// keeps the file renderer and that twin in step. A spread from a LEGACY
+// caller has no twin at all: full transpile refuses a spread at a strict
+// callee (emitTypedAttrsForType), so this boundary is the only authority,
+// and the declared nested type name proves nothing about the value it is
+// compared against. A spread from a strict caller already had its whole
+// source type proved identical to the callee's props type at compile time
+// (validateStrictToStrictSpreadCall), so every nested field type is
+// identical by construction and the name check is a no-op there.
+//
+// The nominal check was not merely useless for a legacy source; it was a
+// contradiction (gosx#230). A strict component's nested struct type must be
+// declared in its own .gsx file (walkStrictHops resolves hops through the
+// same-file schema only), while this check demanded the runtime value carry
+// that same type name — which only the sibling .go converter can construct.
+// No single type satisfied both rules, so authors flattened nested models
+// into scalar fields to avoid the rule entirely. Proving the nested value by
+// the fields the renderer actually reads removes the contradiction without
+// weakening the proof: paths carries every leaf the renderer reads under
+// this root, each already resolved to its exact declared scalar type, and
+// every one of them must still resolve on the runtime value. A root with no
+// leaves under it is a spread-forward source (the callee, not this read
+// tracker, owns which fields it needs); the strict callee it forwards into
+// re-proves the same value against its own fields at its own boundary, so
+// nothing is accepted unproved, only proved by its consumer.
+func requireStrictSpreadStructField(value any, typeName string, paths map[string]string) (any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	rv := reflect.ValueOf(value)
+	rt := rv.Type()
+	if rt.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("runtime value has type %s, want a struct carrying the fields %s declares", rt, typeName)
+	}
+	return proveStrictStructPaths(rv, typeName, paths)
+}
+
+// proveStrictStructPaths walks every read path under one struct-typed root
+// and proves its leaf against the declared scalar type. It is the shared
+// half of the nominal (requireStrictStructValue) and structural
+// (requireStrictSpreadStructField) boundaries: the two differ only in what
+// they demand of the root value's own type, never in how they prove the
+// fields under it.
+func proveStrictStructPaths(rv reflect.Value, typeName string, paths map[string]string) (any, error) {
 	for subPath, leafType := range paths {
 		fv := rv
 		for _, segment := range strings.Split(subPath, ".") {
@@ -2025,7 +2080,7 @@ func requireStrictStructValue(value any, typeName string, paths map[string]strin
 			return nil, fmt.Errorf("path %s.%s: %w", typeName, subPath, err)
 		}
 	}
-	return value, nil
+	return rv.Interface(), nil
 }
 
 // strictComponentSliceAttrValue handles a rendered prop whose declared type
@@ -2148,7 +2203,10 @@ func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) 
 //  3. every rendered read (PropsFields' roots, dispatched by their own
 //     declared type — scalar, "[]T" loop source, or nested-selector
 //     struct) is present on the source with a matching value, never
-//     zero-filled;
+//     zero-filled. A nested-selector struct root is proved STRUCTURALLY,
+//     by the leaves the renderer reads under it rather than by the
+//     declared type's name (gosx#230) — see
+//     requireStrictSpreadStructField;
 //  4. the proved values are written through setComponentProp, so body-side
 //     alias resolution behaves exactly as an explicit call does.
 func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
@@ -2202,7 +2260,11 @@ func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
 				err = fmt.Errorf("strict component %s has no loop schema for slice field %s", comp.Name, field)
 			}
 		default:
-			proved, err = requireStrictStructValue(raw, fieldType, strictStructPropsPaths(comp, field))
+			// gosx#230: a nested struct field of a spread source is proved
+			// structurally, the same way this loop already proves every
+			// top-level field — see requireStrictSpreadStructField for why a
+			// spread and a named attribute answer to different rules here.
+			proved, err = requireStrictSpreadStructField(raw, fieldType, strictStructPropsPaths(comp, field))
 		}
 		if err != nil {
 			return nil, fmt.Errorf("prop %s (%s): %w", field, fieldType, err)

@@ -163,6 +163,13 @@ func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts O
 	if len(generated) == 0 {
 		return nil
 	}
+	// Runs before goCheck (gosx#230): a name written on both the .gsx and a
+	// sibling .go side reaches the Go compiler as a bare "redeclared in this
+	// block" pointing at a temporary projection file the author never wrote.
+	// This stage names both declarations at their own source positions.
+	if err := validatePackageDeclCollisions(files, generated); err != nil {
+		return err
+	}
 	return goCheck(ctx, files, generated, opts)
 }
 
