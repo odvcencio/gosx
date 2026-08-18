@@ -54,9 +54,14 @@ func Counter(props CounterProps) Node {
 }
 ```
 
-Both component styles can live in the same file. In v0.39, component calls
-stay within their declaration style; this keeps legacy dynamic composition
-from bypassing strict prop checks. The strict
+Both component styles can live in the same file. A component call stays
+within its declaration style, with one exception: a **typed legacy**
+component — `func Name(props T) Node` whose `T` is a struct declared in the
+same `.gsx` file — declares the same prop contract a strict component does,
+so it takes part in strict calls in both directions. A component that
+declares no such type (`props any`, an attribute list, or a type from
+another file) is an **untyped legacy** component and keeps the cross-style
+ban, because nothing about its props can be checked. The strict
 `component Name(props: GoType) { ... }` form uses an ordinary Go type as its
 prop contract, so the package check catches unknown fields and incompatible
 values. `component` supplies the `Node` result type; it does not make returns
@@ -77,22 +82,41 @@ and server rendering observe the same zero values.
 ### Spreading a value into a strict component
 
 A strict component accepts one `{...source}` spread instead of named
-attributes. Two callers may write one:
+attributes. Three callers may write one, one per component category:
 
 - A **strict** caller spreads a value whose declared type is exactly the
   callee's props type. The compiler proves the type; the generated Go call
   is emitted verbatim.
-- A **legacy** caller spreads any expression. A legacy expression carries no
-  declared type, so the renderer proves the value at the boundary: the
-  source must be a struct, and every field the callee renders must be
-  present with a matching type.
+- A **typed legacy** caller — `func Name(props T) Node`, `T` a struct
+  declared in the same file — spreads its whole `props`, a field of it, or
+  any other expression. A whole-`props` forward is proved at the
+  declaration: `T` must declare every field the callee renders, with the
+  same declared type. Any other expression is proved at the renderer
+  boundary, as below.
+- An **untyped legacy** caller spreads any expression. That expression
+  carries no declared type, so the renderer proves the value at the
+  boundary: the source must be a struct, and every field the callee renders
+  must be present with a matching type.
 
-A legacy component **cannot** spread its own `props` into a strict
-component. A legacy render frame binds `props` to a `map[string]any` built
-from the call site's attributes, and the strict boundary proves struct
+An untyped legacy component **cannot** spread its own `props` into a strict
+component. An untyped legacy render frame binds `props` to a `map[string]any`
+built from the call site's attributes, and the strict boundary proves struct
 values only, so that composition fails on every render. The compiler rejects
-it and names both components and the spread site. Spread a struct-typed
-field of `props` instead, or declare the caller as a strict component.
+it and names both components and the spread site. Write the props struct
+down and the same code compiles as a typed legacy component; alternatively,
+spread a struct-typed field of `props`, or declare the caller as a strict
+component.
+
+A typed legacy component keeps the legacy render frame's flattened map
+binding, so its body observes its props exactly as it always has: children
+arrive under `props.Children`, an attribute the struct does not name still
+arrives, and a caller may spread a map into it. Writing the props type down
+widens what the component may compose with; it does not change what the
+component sees.
+
+A strict body may call a typed legacy component, by one spread or by named
+attributes, under the same rules a strict callee answers to. It may not call
+an untyped legacy component.
 
 A nested struct field inside a spread is proved **structurally**, by the
 fields the callee renders under it, not by the declared type's name. A

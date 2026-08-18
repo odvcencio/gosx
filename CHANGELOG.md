@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Added: a typed legacy component is treated as strict instead of flattened
+
+- **`func Name(props T) Node`, where `T` is a struct declared in the same
+  `.gsx` file, is now a TYPED legacy component** (gosx#240). It carries the
+  same `PropsFields` and `PropsPaths` schema a strict component carries, and
+  it takes part in strict spread boundaries in both directions: it may
+  forward its whole `props` into a strict callee, and a strict body may call
+  it, by one spread or by named attributes. Every one of those compositions
+  was a compile error before this release, so the change only widens what
+  compiles.
+- There are now three component categories, not two. A strict
+  `component Name(props: T)`, a typed legacy `func Name(props T) Node`, and
+  an UNTYPED legacy component — `props any`, an attribute list, a props type
+  declared in another file, a props parameter spelled something other than
+  `props`, or no parameter at all. The untyped category keeps every v0.48
+  rule, including gosx#229's rejection: there is no declared type to recover,
+  so nothing about its props can be proved.
+- **A whole-`props` forward is proved at the DECLARATION, not at the call
+  site.** The caller's props struct must declare every field the strict
+  callee renders, with the same declared type; the diagnostic names the
+  field, its type, and the read that needs it. Because the proof does not
+  depend on how any caller invokes the component, the same body renders from
+  every one of its call sites — a struct spread, a map spread, named
+  attributes, or named attributes with one omitted, where the boundary
+  supplies the Go zero value generated Go would supply.
+- **A typed legacy component keeps the legacy render frame's flattened map
+  binding.** Its body observes its props exactly as it did in v0.48:
+  `props.Children` still arrives, an attribute the struct does not name
+  still arrives, and a caller may still spread a map into it. Writing the
+  props type down widens what the component may compose with; it does not
+  change what the component sees. Binding the struct instead would have
+  broken all three.
+- gosx#229's diagnostic now reads `untyped legacy component X cannot spread
+  props into strict component Y`, because that is what it now means. Its
+  hint names the new remedy first: declare the props parameter with a struct
+  type declared in this file. The strict-calls-legacy ban reads `strict
+  component cannot call untyped legacy component X` for the same reason.
+- One residual gap, and it fails closed with a message that names the field
+  and the remedy: a typed legacy frame entered by named attributes cannot
+  synthesize a zero value for a forwarded field whose declared type is a
+  struct or a slice, only for a builtin scalar.
 ### Added: a body-attribute surface, so a body-level primitive needs no wrapper div
 
 - **`Context.BodyAttrs` / `PageState.BodyAttrs` set attributes on the

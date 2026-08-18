@@ -74,6 +74,18 @@ type lowerer struct {
 	structTypes   map[string]map[string]string
 	strictServer  bool
 
+	// legacyProps records every legacy (func-spelled) renderer's declared
+	// props type text, and typedLegacyProps the subset whose base type is a
+	// struct declared in this same .gsx file (gosx#240). A name in
+	// typedLegacyProps is a TYPED legacy component: it carries the same
+	// schema a strict component does, so it participates in strict spread
+	// boundaries in both directions. A name in legacyProps but not in
+	// typedLegacyProps is an UNTYPED legacy component (`props any`, an
+	// AttrList, or a type declared elsewhere), which keeps every v0.48
+	// rule, including gosx#229's rejection.
+	legacyProps      map[string]string
+	typedLegacyProps map[string]string
+
 	// currentStrictComponent and currentStrictPropsType name the strict
 	// component whose body lowerGSXNode is currently walking (empty
 	// outside strict lowering). E2 tier 1 (validateStrictToStrictSpreadCall)
@@ -1023,10 +1035,12 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictReads = make(map[string]map[string]strictReadClass)
 	l.structFields = make(map[string]map[string]string)
 	l.structTypes = make(map[string]map[string]string)
+	l.legacyProps = make(map[string]string)
+	l.typedLegacyProps = make(map[string]string)
 	// Pass 1: every same-file strict component's name and props type,
-	// every legacy (non-strict) top-level renderer function's name, and
-	// every declared struct's field schema — nothing here depends on
-	// declaration order among components.
+	// every legacy (non-strict) top-level renderer function's name and
+	// declared props type, and every declared struct's field schema —
+	// nothing here depends on declaration order among components.
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
 		switch l.nodeType(child) {
@@ -1034,7 +1048,16 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 			name := l.childByField(child, "name")
 			body := l.childByField(child, "body")
 			if name != nil && body != nil && l.findGSXReturn(body) != nil {
-				l.legacyNames[l.text(name)] = struct{}{}
+				componentName := l.text(name)
+				l.legacyNames[componentName] = struct{}{}
+				propsName, propsType := l.extractProps(child)
+				// The file renderer binds the identifier "props"
+				// literally, so a differently spelled parameter is not in
+				// scope at render time — such a component has no props
+				// schema this pass can honor.
+				if strings.TrimSpace(propsName) == "props" && strings.TrimSpace(propsType) != "" {
+					l.legacyProps[componentName] = propsType
+				}
 			}
 		case "gosx_component_declaration":
 			name := l.childByField(child, "name")
@@ -1050,20 +1073,46 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 			l.collectStructSchemas(child)
 		}
 	}
-	// Pass 2: each strict component's prop reads, now that l.strictNames
-	// holds every same-file strict component regardless of where in the
-	// file it is declared.
+	// Pass 1b (gosx#240): promote each legacy renderer whose declared props
+	// type is a struct declared in THIS file to a typed legacy component.
+	// It runs after the whole of pass 1 for the same reason pass 2 does:
+	// l.structTypes must hold every same-file struct before any component
+	// is classified, so a props struct declared below its own component
+	// classifies exactly as one declared above it. A props type declared in
+	// a sibling .go file stays untyped here, matching the same-file schema
+	// rule strict components already answer to
+	// (validateStrictRenderedProps).
+	for componentName, propsType := range l.legacyProps {
+		if _, declared := l.structTypes[propsBaseType(propsType)]; declared {
+			l.typedLegacyProps[componentName] = propsType
+		}
+	}
+	// Pass 2: each strict and each typed legacy component's prop reads, now
+	// that l.strictNames holds every same-file strict component regardless
+	// of where in the file it is declared.
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
-		if l.nodeType(child) != "gosx_component_declaration" {
-			continue
-		}
-		name := l.childByField(child, "name")
-		if name == nil {
-			continue
-		}
-		componentName := l.text(name)
-		if _, hasProps := l.strictProps[componentName]; !hasProps {
+		var componentName string
+		switch l.nodeType(child) {
+		case "gosx_component_declaration":
+			name := l.childByField(child, "name")
+			if name == nil {
+				continue
+			}
+			componentName = l.text(name)
+			if _, hasProps := l.strictProps[componentName]; !hasProps {
+				continue
+			}
+		case "function_declaration":
+			name := l.childByField(child, "name")
+			if name == nil {
+				continue
+			}
+			componentName = l.text(name)
+			if _, typed := l.typedLegacyProps[componentName]; !typed {
+				continue
+			}
+		default:
 			continue
 		}
 		l.strictReads[componentName] = l.collectStrictPropReads(child)
@@ -1860,13 +1909,25 @@ func (l *lowerer) normalizeStrictComponentAttrs(tag string, attrs []Attr) {
 func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, attrs []Attr, children []NodeID) {
 	_, strictCallee := l.strictNames[tag]
 	_, legacyCallee := l.legacyNames[tag]
-	if l.strict && legacyCallee {
-		l.errorf(n, "strict component cannot call legacy component %s; component styles may coexist but calls must stay within one style", tag)
+	_, typedLegacyCallee := l.typedLegacyProps[tag]
+	if l.strict && legacyCallee && !typedLegacyCallee {
+		l.errorf(n, "strict component cannot call untyped legacy component %s; component styles may coexist but calls must stay within one style", tag)
+		l.hintLast("declare " + tag + "'s props parameter with a struct type declared in this file, or declare " + tag + " as a strict component")
 		return
 	}
 	if !l.strict && strictCallee {
 		l.validateLegacyToStrictCall(n, tag, attrs, children)
 		return
+	}
+	// gosx#240: inside a strict body a TYPED legacy callee answers to the
+	// callee-side rules a strict callee answers to — the explicit-supply
+	// rule, the single-spread shape, and the tier-1 identity proof. The
+	// widening is one-directional on purpose. Every shape below was an
+	// outright error before this release, so admitting some of them cannot
+	// change any program that compiles today, whereas imposing the same
+	// rules on a LEGACY caller would newly reject calls that work now.
+	if l.strict && typedLegacyCallee {
+		strictCallee = true
 	}
 	if l.strictServer && tag == "If" && !strictCallee {
 		l.validateStrictConditionalCall(n, attrs)
@@ -1890,12 +1951,13 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 		l.validateStrictToStrictSpreadCall(n, tag, attrs, children)
 		return
 	}
-	if _, acceptsProps := l.strictProps[tag]; !acceptsProps && len(attrs) > 0 {
+	calleePropsType, acceptsProps := l.calleePropsType(tag)
+	if !acceptsProps && len(attrs) > 0 {
 		l.errorf(n, "strict component %s does not accept props", tag)
 	}
 	if required := l.strictReads[tag]; len(required) > 0 {
 		supplied := make(map[string]struct{}, len(attrs))
-		aliases := l.structFields[propsBaseType(l.strictProps[tag])]
+		aliases := l.structFields[propsBaseType(calleePropsType)]
 		hasUnknownSameFileAttr := false
 		for _, attr := range attrs {
 			name := attr.Name
@@ -1997,37 +2059,52 @@ func (l *lowerer) validateLegacyToStrictCall(n *gotreesitter.Node, tag string, a
 	l.errorf(n, "legacy component cannot call strict component %s with named attributes; pass one {...source} spread and the renderer will prove it at the boundary", tag)
 }
 
-// validateLegacyPropsSpread rejects gosx#229: a legacy body spreading its
-// OWN props identifier into a strict callee. Shape alone accepts that call
-// (validateLegacyToStrictCall above), and the source expression carries no
-// declared type a legacy body could be checked against, so before this rule
-// the composition compiled, checked, and transpiled clean, then failed at
-// every render — total, data-independent, and only on a code path that runs
-// once real data exists.
+// calleePropsType reports the declared props type of a same-file callee the
+// strict rules apply to — a strict component, or (gosx#240) a typed legacy
+// one. The two categories declare their schema the same way, so every
+// callee-side rule reads the type through this one lookup instead of
+// naming l.strictProps directly.
+func (l *lowerer) calleePropsType(tag string) (string, bool) {
+	if propsType, ok := l.strictProps[tag]; ok {
+		return propsType, true
+	}
+	propsType, ok := l.typedLegacyProps[tag]
+	return propsType, ok
+}
+
+// validateLegacyPropsSpread rules on gosx#229's shape: a legacy body
+// spreading its OWN props identifier into a strict callee. Shape alone
+// accepts that call (validateLegacyToStrictCall above), so this is where
+// the two legacy categories part.
 //
-// The failure is provable from three facts the lowerer already holds: the
-// callee is a same-file strict component (the caller checked
-// l.strictNames), the enclosing component is legacy (l.strict is false), and
-// the spread source is that component's own props parameter. A legacy render
-// frame binds props to the reduced map[string]any the file renderer builds
-// out of the call site's attributes (localComponentProps' non-strict branch,
-// route/fileprogram.go) — never a Go struct, even when a struct value
-// produced the attributes — and strictSpreadProps proves field coverage on
-// struct values only, because a map can omit a key where the generated-Go
-// twin would synthesize a typed zero. Full transpile refuses the same call
-// outright (emitTypedAttrsForType). So no execution path accepts this
-// composition, and rejecting it turns a guaranteed render-time failure into
-// a compile-time diagnostic with a source position.
+// An UNTYPED legacy component (`props any`, an AttrList, a props type from
+// another file, or a props parameter spelled something other than "props")
+// is rejected, unchanged from v0.48. The source expression carries no
+// declared type anything could be checked against, so before that rule the
+// composition compiled, checked, and transpiled clean, then failed at every
+// render — total, data-independent, and only on a code path that runs once
+// real data exists. An untyped legacy render frame binds props to the
+// reduced map[string]any the file renderer builds out of the call site's
+// attributes (localComponentProps, route/fileprogram.go) — never a Go
+// struct, even when a struct value produced the attributes — and
+// strictSpreadProps proves field coverage on struct values only, because a
+// map can omit a key where the generated-Go twin would synthesize a typed
+// zero.
 //
-// The rule is deliberately narrow. It fires only on the bare props
-// identifier, so the two shapes that DO render keep compiling: a struct-
-// typed FIELD of props ({...props.Away}) survives the shallow flatten with
-// its own type intact, and any other expression (a local, a loader value, a
-// page's data binding) is unconstrained by this rule. It says nothing about
-// a legacy component whose props parameter is spelled anything other than
-// "props" either: the file renderer binds the identifier "props" literally,
-// so a differently spelled parameter is not in scope at render time at all,
-// which is a separate defect with a separate cause.
+// A TYPED legacy component is retrofitted instead of rejected (gosx#240).
+// Its props type is a struct declared in this same file, so the lowerer can
+// prove the forward at the DECLARATION: validateTypedLegacyPropsForward
+// checks the caller's own struct declares every field the callee renders,
+// with the same declared type. That proof does not depend on how any caller
+// invokes the typed legacy component, so it holds identically at every one
+// of its call sites — the property that made this retrofit acceptable where
+// preserving a raw value beside the flattened map was not.
+//
+// The rule is deliberately narrow in both directions. It fires only on the
+// bare props identifier, so the shapes that already render keep compiling: a
+// struct-typed FIELD of props ({...props.Away}) survives the shallow flatten
+// with its own type intact, and any other expression (a local, a loader
+// value, a page's data binding) is unconstrained by this rule.
 func (l *lowerer) validateLegacyPropsSpread(n *gotreesitter.Node, tag string, spread Attr) {
 	propsName := strings.TrimSpace(l.currentLegacyPropsName)
 	if propsName != "props" || strings.TrimSpace(spread.Expr) != propsName {
@@ -2037,8 +2114,67 @@ func (l *lowerer) validateLegacyPropsSpread(n *gotreesitter.Node, tag string, sp
 	if caller == "" {
 		return
 	}
-	l.errorf(n, "legacy component %s cannot spread props into strict component %s; a legacy render frame binds props to map[string]any, and the strict spread boundary proves field coverage on struct values only", caller, tag)
-	l.hintLast("spread a struct-typed field instead (for example {...props.Team}), or declare " + caller + " as a strict component so props keeps its declared type")
+	if callerProps, typed := l.typedLegacyProps[caller]; typed {
+		l.validateTypedLegacyPropsForward(n, caller, callerProps, tag)
+		return
+	}
+	l.errorf(n, "untyped legacy component %s cannot spread props into strict component %s; an untyped legacy render frame binds props to map[string]any, and the strict spread boundary proves field coverage on struct values only", caller, tag)
+	l.hintLast("declare " + caller + "'s props parameter with a struct type declared in this file, or declare " + caller + " as a strict component so props keeps its declared type")
+}
+
+// validateTypedLegacyPropsForward is gosx#240's declaration-level proof for
+// a typed legacy body forwarding its whole props value into a strict
+// callee. Both schemas are structs declared in this one file, so the check
+// is exact: for every field the callee renders, the caller's props struct
+// must declare a field of the same name and the same declared type.
+//
+// Type identity, rather than the render boundary's structural rule for a
+// nested struct (gosx#230), is the right demand here for two reasons. The
+// caller forwards its WHOLE props value, so the callee reads the caller's
+// own fields by name and there is no converter type in between. And both
+// names resolve in the same file, so an identical spelling is an identical
+// type — the check costs an author nothing that is not already true.
+//
+// A callee whose props type is not declared in this file has no schema to
+// compare against. validateStrictRenderedProps already reports that on the
+// callee's own declaration, so this stays silent rather than reporting the
+// same defect a second time at every call site.
+func (l *lowerer) validateTypedLegacyPropsForward(n *gotreesitter.Node, caller, callerPropsType, tag string) {
+	reads := l.strictReads[tag]
+	if len(reads) == 0 {
+		return
+	}
+	calleePropsType := l.strictProps[tag]
+	calleeFields := l.structTypes[propsBaseType(calleePropsType)]
+	if len(calleeFields) == 0 {
+		return
+	}
+	callerFields := l.structTypes[propsBaseType(callerPropsType)]
+	roots := make(map[string]struct{}, len(reads))
+	for path := range reads {
+		root, _, _ := strings.Cut(path, ".")
+		roots[root] = struct{}{}
+	}
+	ordered := make([]string, 0, len(roots))
+	for root := range roots {
+		ordered = append(ordered, root)
+	}
+	sort.Strings(ordered)
+	for _, root := range ordered {
+		want, declared := calleeFields[root]
+		if !declared {
+			continue
+		}
+		got, present := callerFields[root]
+		if !present {
+			l.errorf(n, "typed legacy component %s cannot spread props into strict component %s: %s does not declare field %s (%s), which %s renders as props.%s", caller, tag, callerPropsType, root, want, tag, root)
+			l.hintLast("add " + root + " " + want + " to " + callerPropsType + ", or spread a struct-typed field of props instead (for example {...props.Team})")
+			continue
+		}
+		if got != want {
+			l.errorf(n, "typed legacy component %s cannot spread props into strict component %s: field %s is %s on %s and %s on %s; a whole-props forward needs the declared types to match", caller, tag, root, got, callerPropsType, want, calleePropsType)
+		}
+	}
 }
 
 // validateStrictToStrictSpreadCall validates E2 tier 1 (design spec section
@@ -2057,7 +2193,7 @@ func (l *lowerer) validateStrictToStrictSpreadCall(n *gotreesitter.Node, tag str
 	if len(children) > 0 {
 		l.errorf(n, "strict component %s does not accept positional children", tag)
 	}
-	calleeProps := l.strictProps[tag]
+	calleeProps, _ := l.calleePropsType(tag)
 	if strings.TrimSpace(calleeProps) == "" {
 		l.errorf(n, "strict component %s does not accept props", tag)
 		return
@@ -2270,15 +2406,30 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	// itself rather than as a component that mysteriously is not an island.
 	l.checkDirectiveTypos(n)
 
+	// gosx#240: a legacy component whose props parameter names a struct
+	// declared in this same file carries the same schema a strict one does.
+	// PropsFields and PropsPaths are a declaration-level property here, the
+	// same as for a strict component: they describe what this body reads,
+	// never how a caller invokes it, so every call site of this component
+	// sees one answer.
+	_, propsTyped := l.typedLegacyProps[name]
+	var propsFields, propsPaths map[string]string
+	if propsTyped {
+		propsFields, propsPaths = l.copyStrictPropTypes(propsType, l.strictReads[name])
+	}
+
 	comp := Component{
-		Name:      name,
-		PropsType: propsType,
-		PropsName: propsName,
-		Syntax:    ComponentSyntaxLegacy,
-		Root:      rootID,
-		IsIsland:  l.hasIslandDirective(n),
-		Scope:     scope,
-		Span:      l.span(n),
+		Name:        name,
+		PropsType:   propsType,
+		PropsName:   propsName,
+		PropsFields: propsFields,
+		PropsPaths:  propsPaths,
+		PropsTyped:  propsTyped,
+		Syntax:      ComponentSyntaxLegacy,
+		Root:        rootID,
+		IsIsland:    l.hasIslandDirective(n),
+		Scope:       scope,
+		Span:        l.span(n),
 	}
 
 	// Check for engine directive

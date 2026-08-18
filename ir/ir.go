@@ -111,6 +111,29 @@ type Component struct {
 	// `component Name(props: Type)` declarations.
 	Syntax ComponentSyntax
 
+	// PropsTyped is true when PropsType names a struct declared in the
+	// same .gsx file. It is the third component category gosx#240 adds: a
+	// strict component, a TYPED legacy component (Syntax is
+	// ComponentSyntaxLegacy and PropsTyped is true), and an UNTYPED legacy
+	// component (PropsTyped is false — `props any`, an AttrList, a type
+	// from another file, or no props parameter at all).
+	//
+	// A typed legacy component declares the same schema a strict one does,
+	// so it carries PropsFields and PropsPaths and it takes part in strict
+	// spread boundaries in both directions. It keeps the legacy render
+	// frame's flattened map binding, because every existing legacy body
+	// reads props through that map — the retrofit widens which
+	// compositions compile, it does not change how a legacy body observes
+	// its props.
+	//
+	// A strict component leaves this false: Syntax already says its props
+	// are typed, and no consumer needs a second way to ask.
+	//
+	// The zero value (false) is the untyped legacy meaning, so a program
+	// serialized before this field existed decodes unchanged, matching the
+	// ComponentSyntax zero-value convention above.
+	PropsTyped bool
+
 	// Root is the index of the root node in Program.Nodes.
 	Root NodeID
 
