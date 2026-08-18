@@ -188,6 +188,11 @@ func Page() Node {
 			<span class="inline-code">untyped legacy</span>
 			component and keeps the cross-style ban, because nothing about its props can be checked.
 		</p>
+		<p>
+			A typed legacy component keeps the legacy render frame's flattened map binding, so its body observes its props exactly as it always has: children arrive under
+			<span class="inline-code">props.Children</span>
+			, an attribute the struct does not name still arrives, and a caller may spread a map into it. Writing the props type down widens what the component may compose with; it does not change what the component sees.
+		</p>
 		<CodeBlock lang="gosx" source={data.legacySample} />
 		<p>
 			Legacy bodies can declare locals and use the established
@@ -208,7 +213,37 @@ func Page() Node {
 		</p>
 		<CodeBlock lang="gosx" source={data.attributesSample} />
 		<p>
-			A strict component call is intentionally narrower than an HTML element: pass named attributes that match the props struct, or the single proven spread described above. Positional child content stays rejected either way; use a legacy caller-and-callee chain when component composition needs nested Node content.
+			A strict component call is intentionally narrower than an HTML element: pass named attributes that match the props struct, or the single proven spread described above.
+		</p>
+		<h2 id="children">Children</h2>
+		<p>
+			A strict component places the markup its caller wrote. Write
+			<span class="inline-code">{"{children}"}</span>
+			in the body, and pass child content at the call site. All three call shapes accept children: a strict caller's named attributes, a strict caller's single spread, and a legacy caller's single spread.
+		</p>
+		<p>
+			A typed legacy callee answers the same rule, because a strict body may call one. Its body places children through the same
+			<span class="inline-code">{"{children}"}</span>
+			hole. That hole is separate from the older
+			<span class="inline-code">props.Children</span>
+			channel a legacy body may also read: the channel carries the children whether or not the props struct declares the field, and it is unchanged.
+		</p>
+		<p>
+			Children are not a prop. They never enter the props schema, no boundary proof reads them, and the explicit-supply rule does not cover them. They arrive as one already-rendered node: the caller rendered them, in the caller's scope, so every element and every props read inside them already passed the caller's own compile, check, and render proofs. Nothing is deferred across the call.
+		</p>
+		<p>
+			The one operation on children is emission. A body may write
+			<span class="inline-code">{"{children}"}</span>
+			more than once, and each hole emits the markup again. Every other use stays rejected: a field read, a concatenation operand, an
+			<span class="inline-code">If</span>
+			condition, an
+			<span class="inline-code">Each</span>
+			source, an
+			<span class="inline-code">Each</span>
+			binding named children, and an attribute value. An attribute value is written inside quotes, so rendered markup there would produce broken HTML.
+		</p>
+		<p>
+			A component that renders no children rejects child content with a diagnostic that names both remedies, rather than dropping the content silently.
 		</p>
 		<p>
 			Strict markup also accepts the familiar aliases

@@ -86,6 +86,33 @@ type lowerer struct {
 	legacyProps      map[string]string
 	typedLegacyProps map[string]string
 
+	// childrenHoles records, per same-file component name, whether that
+	// component's body places the caller's children with a {children}
+	// expression hole — the single owner of the "renders children" predicate
+	// inside ir (see Component.AcceptsChildren). It is filled for the WHOLE
+	// file by collectStrictSchemas before any body is lowered, because
+	// validateStrictComponentCall must read a callee's flag from inside the
+	// CALLER's body walk, and a callee may be declared later in the file.
+	// Deriving it from the built IR instead would make a legal call fail or
+	// pass purely on declaration order — the same order-dependence bug
+	// collectStrictSchemas' two-pass split already fixed once for
+	// l.strictNames (gosx#182/#184 M-3).
+	//
+	// It covers all three component categories, not only strict ones. The
+	// file renderer binds children the same way for every same-file callee
+	// (writeLocalComponent), and gosx#240 made a TYPED legacy component a
+	// legal callee inside a strict body, so a rule that read only strict
+	// declarations would tell an author to write {children} in a body that
+	// already has it.
+	//
+	// What it does NOT record is the legacy props.Children channel. A legacy
+	// body may also read its children out of the render props map, because
+	// componentProps injects that key whether or not the props struct
+	// declares it. That contract is older, separate, and deliberately kept
+	// (see TestTypedLegacyComponentKeepsItsMapBinding); it is not a
+	// {children} hole and this map does not claim it is.
+	childrenHoles map[string]bool
+
 	// currentStrictComponent and currentStrictPropsType name the strict
 	// component whose body lowerGSXNode is currently walking (empty
 	// outside strict lowering). E2 tier 1 (validateStrictToStrictSpreadCall)
@@ -1037,10 +1064,12 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.structTypes = make(map[string]map[string]string)
 	l.legacyProps = make(map[string]string)
 	l.typedLegacyProps = make(map[string]string)
+	l.childrenHoles = make(map[string]bool)
 	// Pass 1: every same-file strict component's name and props type,
 	// every legacy (non-strict) top-level renderer function's name and
-	// declared props type, and every declared struct's field schema —
-	// nothing here depends on declaration order among components.
+	// declared props type, every component's {children} hole, and every
+	// declared struct's field schema — nothing here depends on declaration
+	// order among components.
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
 		switch l.nodeType(child) {
@@ -1058,6 +1087,16 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 				if strings.TrimSpace(propsName) == "props" && strings.TrimSpace(propsType) != "" {
 					l.legacyProps[componentName] = propsType
 				}
+				// A legacy body places children through the same {children}
+				// hole a strict one does — writeLocalComponent binds the
+				// name for every same-file callee, whatever its category.
+				// gosx#240 made a typed legacy component a legal callee
+				// inside a strict body, so this pass must see legacy bodies
+				// or the children arity rule would refuse a call the
+				// renderer executes correctly.
+				if l.componentRendersChildren(child) {
+					l.childrenHoles[componentName] = true
+				}
 			}
 		case "gosx_component_declaration":
 			name := l.childByField(child, "name")
@@ -1067,6 +1106,14 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 				l.strictNames[componentName] = struct{}{}
 				if propsType != "" {
 					l.strictProps[componentName] = propsType
+				}
+				// Pass 1, not pass 1b or pass 2: the flag depends on nothing
+				// but this declaration's own body — not on the struct table
+				// pass 1b needs, and not on the whole-file strict name set
+				// pass 2 needs — and every caller's shape check needs it
+				// complete for the file regardless of declaration order.
+				if l.componentRendersChildren(child) {
+					l.childrenHoles[componentName] = true
 				}
 			}
 		case "type_declaration":
@@ -1117,6 +1164,50 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 		}
 		l.strictReads[componentName] = l.collectStrictPropReads(child)
 	}
+}
+
+// componentRendersChildren reports whether decl's body contains at least one
+// {children} child expression hole — the whole of Component.AcceptsChildren's
+// definition, computed from the CST so it is available before any body is
+// lowered.
+//
+// It deliberately does NOT descend into an attribute. An attribute value can
+// itself be a jsx_expression_container (lowerAttr's third case), so a walk
+// that counted every container would read class={children} as a children
+// placement — and that expression is rejected, by
+// ValidateServerChildExpressionScope's attribute-position twin, precisely
+// because rendered markup cannot go inside an HTML attribute value. Counting
+// it would declare a component to accept children that can never place them.
+//
+// Multiple holes stay one flag. The flag answers "does this body place the
+// caller's children", not "how many times".
+func (l *lowerer) componentRendersChildren(decl *gotreesitter.Node) bool {
+	body := l.childByField(decl, "body")
+	if body == nil {
+		return false
+	}
+	found := false
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil || found {
+			return
+		}
+		switch l.nodeType(node) {
+		case "jsx_attribute", "jsx_spread_attribute":
+			return
+		case "jsx_expression_container":
+			exprNode := l.childByField(node, "expression")
+			if exprNode != nil && strictcomponent.IsChildrenExpression(l.text(exprNode)) {
+				found = true
+				return
+			}
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(body)
+	return found
 }
 
 // collectStrictPropReads records every props field path (dot-joined, e.g.
@@ -2003,9 +2094,37 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 			}
 		}
 	}
-	if len(children) > 0 {
-		l.errorf(n, "strict component %s does not accept positional children", tag)
+	l.validateStrictCalleeChildren(n, tag, children)
+}
+
+// validateStrictCalleeChildren is the ONE arity rule for children at a callee
+// the strict rules apply to, shared by all three call shapes (named
+// attributes, a strict caller's single spread, a legacy caller's single
+// spread). A callee that places children accepts them; a callee that does not
+// rejects them, with a message that names both remedies instead of truncating
+// the content silently.
+//
+// Since gosx#240 a TYPED legacy component reaches this rule too, because a
+// strict body may now call one. It answers the same question there: the flag
+// comes from l.childrenHoles, which reads every same-file component
+// declaration, so a legacy body that writes {children} accepts children and
+// one that does not is told to add it — advice that is true, because
+// writeLocalComponent binds the name for every same-file callee.
+//
+// The rule is arity only. It proves nothing about the children themselves and
+// has nothing to prove: they are markup the CALLER owns, rendered by the
+// caller's renderer, in the caller's env, against the caller's program,
+// before the callee is entered. Every read inside them already passed the
+// caller's own lower-time, check-time, and render-time proofs, so no
+// obligation crosses the call.
+func (l *lowerer) validateStrictCalleeChildren(n *gotreesitter.Node, tag string, children []NodeID) {
+	if len(children) == 0 {
+		return
 	}
+	if l.childrenHoles[tag] {
+		return
+	}
+	l.errorf(n, "strict component %s renders no children; remove the child content or render {children} in %s's body", tag, tag)
 }
 
 // attrHasSpread reports whether attrs contains at least one spread
@@ -2050,9 +2169,7 @@ func (l *lowerer) validateLegacyToStrictCall(n *gotreesitter.Node, tag string, a
 		return
 	}
 	if spread, ok := singleSpreadShape(attrs); ok {
-		if len(children) > 0 {
-			l.errorf(n, "strict component %s does not accept positional children", tag)
-		}
+		l.validateStrictCalleeChildren(n, tag, children)
 		l.validateLegacyPropsSpread(n, tag, spread)
 		return
 	}
@@ -2190,9 +2307,7 @@ func (l *lowerer) validateStrictToStrictSpreadCall(n *gotreesitter.Node, tag str
 		l.errorf(n, "strict component call %s accepts at most one spread attribute and no other attributes", tag)
 		return
 	}
-	if len(children) > 0 {
-		l.errorf(n, "strict component %s does not accept positional children", tag)
-	}
+	l.validateStrictCalleeChildren(n, tag, children)
 	calleeProps, _ := l.calleePropsType(tag)
 	if strings.TrimSpace(calleeProps) == "" {
 		l.errorf(n, "strict component %s does not accept props", tag)
@@ -2425,11 +2540,15 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 		PropsFields: propsFields,
 		PropsPaths:  propsPaths,
 		PropsTyped:  propsTyped,
-		Syntax:      ComponentSyntaxLegacy,
-		Root:        rootID,
-		IsIsland:    l.hasIslandDirective(n),
-		Scope:       scope,
-		Span:        l.span(n),
+		// Read, never recomputed: collectStrictSchemas already decided this
+		// for every component in the file, whatever its category, and every
+		// call-site rule read the same map. One owner.
+		AcceptsChildren: l.childrenHoles[name],
+		Syntax:          ComponentSyntaxLegacy,
+		Root:            rootID,
+		IsIsland:        l.hasIslandDirective(n),
+		Scope:           scope,
+		Span:            l.span(n),
 	}
 
 	// Check for engine directive
@@ -2506,11 +2625,15 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 		PropsName:   propsName,
 		PropsFields: propsFields,
 		PropsPaths:  propsPaths,
-		Syntax:      ComponentSyntaxStrict,
-		Root:        rootID,
-		IsIsland:    isIsland,
-		Scope:       scope,
-		Span:        l.span(n),
+		// Read, never recomputed: collectStrictSchemas already decided this
+		// for every strict component in the file, and every call-site rule
+		// read the same map. One owner.
+		AcceptsChildren: l.childrenHoles[componentName],
+		Syntax:          ComponentSyntaxStrict,
+		Root:            rootID,
+		IsIsland:        isIsland,
+		Scope:           scope,
+		Span:            l.span(n),
 	}
 	if isEngine {
 		comp.IsEngine = true
@@ -2729,7 +2852,12 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 		seen[id] = true
 		node := &l.prog.Nodes[id]
 		if node.Kind == NodeExpr {
-			l.validateStrictServerExpression(node.Span, node.Text, componentName, propsType, scope)
+			// CHILD position. A NodeExpr is only ever built from a
+			// jsx_expression_container in child position (lowerExprContainer);
+			// an attribute expression is stored on Attr.Expr instead and takes
+			// the attribute branch below. That split is what lets the two
+			// positions admit different identifier sets.
+			l.validateStrictServerChildExpression(node.Span, node.Text, componentName, propsType, scope)
 		}
 		isBuiltinIf := node.Kind == NodeComponent && node.Tag == "If" && !ifShadowed
 		isBuiltinEach := node.Kind == NodeComponent && node.Tag == "Each" && !eachShadowed
@@ -2749,6 +2877,11 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 				continue
 			}
 			if attr.Kind == AttrExpr {
+				// ATTRIBUTE position. This entry point does not admit
+				// children: an attribute value is written inside quotes, and
+				// splicing rendered markup there produces broken HTML that no
+				// escaping rule can repair. See
+				// ValidateServerChildExpressionScope's doc comment.
 				l.validateStrictServerExpression(node.Span, attr.Expr, componentName, propsType, scope)
 			}
 			// AttrSpread is not revalidated as an ordinary expression here:
@@ -2776,15 +2909,36 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 
 func (l *lowerer) validateStrictServerExpression(span Span, source, componentName, propsType string, scope *eachScope) {
 	if err := strictcomponent.ValidateServerExpressionScope(source, scope.strictScope()); err != nil {
-		l.errs = append(l.errs, Diagnostic{
-			Span:    span,
-			Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
-			Hint:    "use literals or props field selection; compute, index, and call methods before rendering",
-		})
+		l.reportStrictServerExpression(span, source, err)
 		return
 	}
 	l.validateStrictBindingReadTypes(span, source, componentName, scope)
 	l.validateStrictExpressionTypes(span, source, componentName, propsType, scope)
+}
+
+// validateStrictServerChildExpression is validateStrictServerExpression for a
+// whole child expression hole. It differs in the validator entry point only,
+// so the two type passes below stay shared and no rule is duplicated.
+//
+// Both type passes are no-ops for a bare children: it holds no selector, so
+// ServerExpressionRootedPaths reports no path, and it is no `+` chain, so
+// ServerConcatRootedPaths reports none either. There is nothing to type-check
+// in an already-rendered node.
+func (l *lowerer) validateStrictServerChildExpression(span Span, source, componentName, propsType string, scope *eachScope) {
+	if err := strictcomponent.ValidateServerChildExpressionScope(source, scope.strictScope()); err != nil {
+		l.reportStrictServerExpression(span, source, err)
+		return
+	}
+	l.validateStrictBindingReadTypes(span, source, componentName, scope)
+	l.validateStrictExpressionTypes(span, source, componentName, propsType, scope)
+}
+
+func (l *lowerer) reportStrictServerExpression(span Span, source string, err error) {
+	l.errs = append(l.errs, Diagnostic{
+		Span:    span,
+		Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
+		Hint:    "use literals or props field selection; compute, index, and call methods before rendering",
+	})
 }
 
 // validateStrictBindingReadTypes is a props read's counterpart for a loop
@@ -3079,7 +3233,10 @@ func (l *lowerer) strictEachShape(node *Node, scope *eachScope) (itemName, index
 			ok = false
 			continue
 		}
-		if binding == "props" || binding == "children" {
+		// The reservation predates the children feature and is what makes it
+		// safe: a loop binding may not shadow the identifier a body uses to
+		// place its caller's markup.
+		if binding == "props" || binding == strictcomponent.ChildrenBinding {
 			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q is reserved; choose another name", binding)})
 			ok = false
 			continue

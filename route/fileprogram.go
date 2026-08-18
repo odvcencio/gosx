@@ -1140,10 +1140,39 @@ func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRender
 	return true, defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), childrenHTML)
 }
 
+// writeLocalComponent renders a strict component whose BODY and whose CALL
+// NODE both belong to r.prog — every same-file call today.
+//
+// It renders the children first, on r, and then hands the resulting node to
+// writeLocalComponentWithChildren. The split is not cosmetic. node.Children
+// are ir.NodeID values, and writeNode resolves each one through
+// r.prog.NodeAt: a node ID is an index into ONE program's Nodes slice and
+// means nothing in another. Any caller whose call node and callee body live
+// in different programs must therefore render the children on the renderer
+// that owns the CALL node, and pass the finished node across, rather than
+// hand the whole node to a renderer bound to the callee's program — that
+// would index the wrong slice and render unrelated markup, or panic on an
+// out-of-range index.
+//
+// Attribute expressions carry no such hazard: localComponentProps evaluates
+// them through env, which holds values, funcs, and a scope chain, and no node
+// IDs.
 func (r *fileProgramRenderer) writeLocalComponent(b *strings.Builder, comp *ir.Component, node *ir.Node, env fileRenderEnv) {
 	// Children render into their own string because the component body may
 	// reference them through the `children` binding.
 	childrenNode := gosx.RawHTML(r.renderChildren(node.Children, env))
+	r.writeLocalComponentWithChildren(b, comp, node, env, childrenNode)
+}
+
+// writeLocalComponentWithChildren renders comp's body with childrenNode
+// already rendered by whichever renderer owns the call node. r must own
+// comp's BODY, because writeNode resolves comp.Root against r.prog.
+//
+// childrenNode is one opaque gosx.Node. The callee places it and does nothing
+// else with it: it cannot read a field of it, count it, or branch on it.
+// Children are not a prop — they are bound beside props, never inside it, and
+// no boundary proof reads them.
+func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder, comp *ir.Component, node *ir.Node, env fileRenderEnv, childrenNode gosx.Node) {
 	props, rawSource, err := localComponentProps(comp, node.Attrs, env, childrenNode)
 	if err != nil {
 		r.err = fmt.Errorf("render strict component %s: %w", comp.Name, err)
@@ -1893,10 +1922,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 			if err != nil {
 				return nil, nil, err
 			}
-			if !children.IsZero() {
-				setComponentProp(props, "children", children)
-				setComponentProp(props, "Children", children)
-			}
+			setStrictComponentChildren(comp, props, children)
 			return props, nil, nil
 		}
 		source := evalFileExpr(attrs[0].Expr, env)
@@ -1916,10 +1942,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 		if err != nil {
 			return nil, nil, err
 		}
-		if !children.IsZero() {
-			setComponentProp(props, "children", children)
-			setComponentProp(props, "Children", children)
-		}
+		setStrictComponentChildren(comp, props, children)
 		return props, source, nil
 	}
 	if len(comp.PropsFields) == 0 {
@@ -1953,11 +1976,48 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 		}
 		setComponentProp(props, attr.Name, value)
 	}
-	if !children.IsZero() {
-		setComponentProp(props, "children", children)
-		setComponentProp(props, "Children", children)
-	}
+	setStrictComponentChildren(comp, props, children)
 	return props, nil, nil
+}
+
+// setStrictComponentChildren writes the children node into a STRICT callee's
+// runtime props map, and refuses to overwrite a field that callee's schema
+// proves.
+//
+// Why the refusal. The "children"/"Children" map keys are the LEGACY
+// components' contract (componentProps). A strict body never reads them:
+// writeLocalComponent binds the node in the render SCOPE, beside props, and
+// {children} resolves there. So for a strict callee this write can never
+// serve the body — it can only collide.
+//
+// The collision is a real proof loss. A callee that declares and reads
+// `Children string` has that field proved against comp.PropsFields, and the
+// unguarded write replaced the proved string with a gosx.Node. The defect
+// predates children (the write ran with an empty RawHTML node even when the
+// call passed none, so the field rendered empty), but admitting children
+// would upgrade it from "renders empty" to "renders the caller's markup
+// where a proved string belongs". Children are not a prop, and this is what
+// makes that statement true rather than nearly true.
+//
+// All three strict props-map builders route through here: the single-spread
+// shape, the explicit-attrs shape, and gosx#240's typed-frame shape. It is
+// deliberately NOT used by componentProps or typedLegacyComponentProps. A
+// LEGACY callee's props.Children is the children, by an older contract that
+// gosx#240 kept on purpose (TestTypedLegacyComponentKeepsItsMapBinding), and
+// componentProps injects that key for the named-attribute shape too — so
+// guarding only the spread shape would make one legacy call shape disagree
+// with the other, which is the opposite of what the retrofit promises.
+func setStrictComponentChildren(comp *ir.Component, props map[string]any, children gosx.Node) {
+	if children.IsZero() {
+		return
+	}
+	for _, name := range []string{"children", "Children"} {
+		if _, _, proved := resolvePropsFieldAlias(comp.PropsFields, name); proved {
+			return
+		}
+	}
+	setComponentProp(props, "children", children)
+	setComponentProp(props, "Children", children)
 }
 
 func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {

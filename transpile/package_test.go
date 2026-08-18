@@ -57,7 +57,7 @@ component Page() {
 	for _, want := range []string{
 		`clock "time"`,
 		`gx "m31labs.dev/gosx"`,
-		`func Badge(props BadgeProps) gx.Node`,
+		`func Badge(props BadgeProps, children ...gx.Node) gx.Node`,
 		`Badge(BadgeProps{Label: "ready", When: true})`,
 		`const BadgeLimit = 3`,
 	} {
@@ -83,7 +83,7 @@ component Page() {
 	if err != nil {
 		t.Fatalf("StrictProjection: %v", err)
 	}
-	if !strings.Contains(got, `. "m31labs.dev/gosx"`) || !strings.Contains(got, `func Page() Node`) {
+	if !strings.Contains(got, `. "m31labs.dev/gosx"`) || !strings.Contains(got, `func Page(children ...Node) Node`) {
 		t.Fatalf("dot import style lost:\n%s", got)
 	}
 }

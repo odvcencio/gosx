@@ -24,10 +24,10 @@ component Page() {
 	}
 	for _, want := range []string{
 		`import gosx "m31labs.dev/gosx"`,
-		`func Card(props CardProps) gosx.Node`,
+		`func Card(props CardProps, children ...gosx.Node) gosx.Node`,
 		`gosx.Attr("class", "card")`,
 		`gosx.Attr("for", "field")`,
-		`func Page() gosx.Node`,
+		`func Page(children ...gosx.Node) gosx.Node`,
 		`Card(CardProps{Label: "Ready"})`,
 	} {
 		if !strings.Contains(out, want) {
@@ -64,7 +64,7 @@ func TestTranspileStrictComponentRespectsExistingGoSXImportStyle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Transpile: %v", err)
 			}
-			if !strings.Contains(out, "func Page() "+tc.result) || !strings.Contains(out, tc.el) {
+			if !strings.Contains(out, "func Page(children ..."+tc.result+") "+tc.result) || !strings.Contains(out, tc.el) {
 				t.Fatalf("import style not respected:\n%s", out)
 			}
 		})
@@ -82,7 +82,7 @@ component Page() {
 	if err != nil {
 		t.Fatalf("Transpile: %v", err)
 	}
-	if !strings.Contains(out, `import gosxgen1 "m31labs.dev/gosx"`) || !strings.Contains(out, `func Page() gosxgen1.Node`) {
+	if !strings.Contains(out, `import gosxgen1 "m31labs.dev/gosx"`) || !strings.Contains(out, `func Page(children ...gosxgen1.Node) gosxgen1.Node`) {
 		t.Fatalf("collision-safe alias missing:\n%s", out)
 	}
 }
@@ -283,7 +283,7 @@ component Row(props: RowProps) {
 		t.Fatalf("Transpile: %v", err)
 	}
 	for _, want := range []string{
-		`func Row(props RowProps) gosx.Node`,
+		`func Row(props RowProps, children ...gosx.Node) gosx.Node`,
 		`gosx.Attr("class", "player-" + props.Player.Name)`,
 		`gosx.If(props.Player.Ready, gosx.Fragment(gosx.Expr(props.Player.Team.City)))`,
 	} {
@@ -317,7 +317,7 @@ component Row(props: RowProps) {
 	if err != nil {
 		t.Fatalf("Transpile: %v", err)
 	}
-	if !strings.Contains(out, `func Row(props RowProps) gosx.Node`) {
+	if !strings.Contains(out, `func Row(props RowProps, children ...gosx.Node) gosx.Node`) {
 		t.Fatalf("missing typed func signature:\n%s", out)
 	}
 	if !strings.Contains(out, `gosx.Expr(props.Player.Name)`) {

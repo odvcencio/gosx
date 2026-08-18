@@ -107,6 +107,41 @@ type Component struct {
 	// matching the ComponentSyntax zero-value convention above.
 	PropsSlices map[string]SlicePropSchema
 
+	// AcceptsChildren is true when this component's body places the caller's
+	// children, that is when it contains at least one {children} expression
+	// hole. It is the ONE owner of the "renders children" predicate: the
+	// lowerer computes it from the CST, the call-site rules read it, and the
+	// Go projection never recomputes it (transpile emits the variadic
+	// parameter unconditionally, so it needs no predicate of its own and the
+	// two can never drift).
+	//
+	// What it does NOT record: anything about the children's type, count, or
+	// contents. Children are not a prop. They never enter PropsFields,
+	// PropsPaths, or PropsSlices, no boundary proof reads them, and the
+	// explicit-supply rule does not cover them. They arrive as one opaque
+	// gosx.Node the CALLER already rendered and already proved.
+	//
+	// The zero value is false, which is exactly right for every program
+	// serialized before this field existed: children were rejected at every
+	// strict callee then, so such a program accepted none.
+	//
+	// It is set for all three component categories, because the file
+	// renderer binds children the same way for every same-file callee
+	// (writeLocalComponent) and gosx#240 made a TYPED legacy component a
+	// legal callee inside a strict body. A strict caller's children rule
+	// therefore has to ask the same question of a legacy callee, and get a
+	// true answer.
+	//
+	// It does NOT record the legacy props.Children channel. A legacy body
+	// may also read its children out of the runtime props map, because
+	// componentProps injects the "children" and "Children" keys whether or
+	// not the props struct declares them. That contract is older, separate,
+	// and deliberately kept by gosx#240 — this field says nothing about it.
+	// A strict body cannot reach that channel at all: props.Children fails
+	// the field walk at lower time unless the author declares such a field,
+	// and a gosx.Node-typed props field is a separate feature.
+	AcceptsChildren bool
+
 	// Syntax distinguishes legacy `func` components from strict
 	// `component Name(props: Type)` declarations.
 	Syntax ComponentSyntax

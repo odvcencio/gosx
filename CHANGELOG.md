@@ -63,6 +63,7 @@
   and the remedy: a typed legacy frame entered by named attributes cannot
   synthesize a zero value for a forwarded field whose declared type is a
   struct or a slice, only for a builtin scalar.
+
 ### Added: a body-attribute surface, so a body-level primitive needs no wrapper div
 
 - **`Context.BodyAttrs` / `PageState.BodyAttrs` set attributes on the
@@ -83,6 +84,80 @@
   functions get the same body attributes the built-in renderer does.
 - See `NavigationHeartbeatAttr`'s doc comment (`server/navigation_contract.go`)
   for the wrapper-div-to-`BodyAttrs` migration.
+
+### Added: a strict component accepts children
+
+- **A strict component can now place the markup its caller wrote.** Write
+  `{children}` in the body, and pass child content at the call site:
+
+  ```go
+  component Panel(props: PanelProps) {
+      return <section class={"panel tone-" + props.Tone}>
+          <h2 class="panel__title">{props.Title}</h2>
+          <div class="panel__body">{children}</div>
+      </section>
+  }
+
+  component Dashboard(props: DashboardProps) {
+      return <Panel Title={props.Heading} Tone={props.Tone}>
+          <p>{props.Summary}</p>
+      </Panel>
+  }
+  ```
+
+  All three call shapes accept children: a strict caller's named attributes,
+  a strict caller's single spread, and a legacy caller's single spread. This
+  is a same-file capability. It needs no import and no shared directory.
+
+- **Children are not a prop, and this is exact.** They never enter
+  `PropsFields`, `PropsPaths`, or `PropsSlices`. No boundary proof reads
+  them, and the explicit-supply rule does not cover them. The renderer binds
+  them beside `props`, never inside it.
+
+- **Children arrive already rendered and already proved.** By the time the
+  callee sees them they are one opaque `gosx.Node`. The CALLER rendered
+  them, in the caller's scope, so every element and every props read inside
+  them already passed the caller's own compile, check, and render proofs.
+  Nothing is deferred across the call, because nothing is left to prove.
+
+- **The one operation on children is emission.** A body may write
+  `{children}` more than once, and each hole emits the markup again, exactly
+  as `gosx.Expr(children)` does in generated Go. Every other use stays
+  refused: `{children.Field}`, `{"prefix " + children}`,
+  `<If cond={children}>`, `<Each of={children}>`, `<Each as="children">`,
+  and `class={children}`. The last one matters most — an attribute value is
+  written inside quotes, so rendered markup there would produce broken HTML.
+  The attribute position uses a separate validator entry point and reports
+  "children renders as element content, not as an attribute value".
+
+- **A callee that renders no children rejects child content**, instead of
+  truncating it silently: "strict component Panel renders no children;
+  remove the child content or render `{children}` in Panel's body". The
+  predicate has one owner, `ir.Component.AcceptsChildren`, computed from the
+  body before any call site is checked, so the answer does not depend on
+  declaration order.
+
+- **A typed legacy callee answers the same rule**, because a strict body may
+  call one (gosx#240). Its body places children through the same
+  `{children}` hole, and the file renderer binds the name for every same-file
+  callee whatever its category. That hole is separate from the older
+  `props.Children` channel a legacy body may also read: the channel carries
+  the children whether or not the props struct declares the field, and it is
+  unchanged. A legacy caller invoking a legacy callee is unconstrained, as
+  before.
+
+### Changed: every strict component projects a variadic children parameter
+
+- **`emitStrictComponent` now emits
+  `func Name(props NameProps, children ...gosx.Node) gosx.Node`** for every
+  strict component, whether or not its body places children. A variadic
+  parameter accepts zero arguments, so every existing call site keeps
+  compiling and every existing render is byte-identical. Emitting it
+  conditionally would need `transpile` to decide "renders children" for
+  itself — it walks the CST with no `ir.Program` in hand — and two
+  implementations of one predicate drift. Arity stays a gosx-level rule with
+  a single owner and a diagnostic better than Go's "too many arguments".
+- A consumer that asserts on the projected signature text must update it.
 
 ## v0.48.0 (2026-08-18)
 
