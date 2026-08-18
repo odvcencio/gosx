@@ -134,6 +134,26 @@ func Spread(attrs map[string]any) AttrList {
 	return list
 }
 
+// RenderAttrs renders an attribute list the same way El renders an
+// element's own attributes: the same escaping, and the same boolean and
+// presence-attribute rules renderAttrHTML applies everywhere else. It is
+// for a caller that builds an HTML tag's opening angle bracket directly, as
+// a string, instead of through a Node tree — for example gosx/server's
+// document shell, which writes the <html> and <body> tags by hand for
+// performance (see server/document_attrs.go) and uses RenderAttrs to fold
+// in app-supplied attributes (Context.BodyAttrs) without a second,
+// divergent escaping rule.
+func RenderAttrs(attrs AttrList) string {
+	if len(attrs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, attr := range attrs {
+		renderAttrHTML(&b, attr)
+	}
+	return b.String()
+}
+
 // Props is an alias for Attrs used when passing props to components.
 func Props(pairs ...any) AttrList {
 	return Attrs(pairs...)

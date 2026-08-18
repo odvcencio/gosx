@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added: a body-attribute surface, so a body-level primitive needs no wrapper div
+
+- **`Context.BodyAttrs` / `PageState.BodyAttrs` set attributes on the
+  rendered `<body>` element** (gosx#236). `data-gosx-heartbeat` is
+  documented as settable on `<body>` itself, but `HTMLDocument` had no way
+  to reach it, so an app wrapped its whole page body in a `gosx.El("div",
+  ...)` carrying the attributes, plus a `display:contents` CSS rule to keep
+  the div out of layout. `BodyAttrs` accumulates across calls, the same
+  rule `AddHead` follows, and escapes values through `gosx.RenderAttrs` —
+  the same helper `gosx.El` uses for every other element's attributes.
+- **`HTMLDocumentWithBodyAttrs`** is the direct-call sibling for a page that
+  builds its document by calling `HTMLDocument` itself (for example a
+  `router.SetLayout` callback), rather than through `App.renderPage`'s
+  `DocumentContext` pipeline, which picks up `BodyAttrs` automatically.
+- **`DocumentBodyAttrs`** — the existing helper for a custom `App.SetDocument`
+  function building `<body>` through `gosx.El` — now includes app-supplied
+  body attributes alongside the framework's own, so custom document
+  functions get the same body attributes the built-in renderer does.
+- See `NavigationHeartbeatAttr`'s doc comment (`server/navigation_contract.go`)
+  for the wrapper-div-to-`BodyAttrs` migration.
+
 ## v0.48.0 (2026-08-18)
 
 ### Fixed: a strict spread from a non-strict component is rejected at compile time

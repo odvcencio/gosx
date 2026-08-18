@@ -68,6 +68,11 @@ type DocumentContext struct {
 	Navigation    bool
 	Head          gosx.Node
 	Body          gosx.Node
+	// BodyAttrs carries attributes contributed through Context.BodyAttrs /
+	// PageState.BodyAttrs onto the rendered <body> element, in addition to
+	// the framework's own body attributes (see document_attrs.go). See
+	// gosx#236.
+	BodyAttrs gosx.AttrList
 	// Nonce is the per-request Content-Security-Policy script nonce, if any.
 	// GoSX's document shell attaches it to script elements it emits directly.
 	Nonce string
@@ -135,6 +140,7 @@ func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, 
 		Metadata:   metadata,
 		Navigation: navigation,
 		Body:       body,
+		BodyAttrs:  c.BodyAttrsValue(),
 		Nonce:      c.Nonce(),
 	}
 	if runtime := c.RuntimeState(); runtime != nil {
