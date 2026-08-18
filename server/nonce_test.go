@@ -42,11 +42,20 @@ func TestNavigationScriptWithNonceEscapesAttributeValue(t *testing.T) {
 func TestNavigationRuntimePropagatesNonceToDynamicManagedScripts(t *testing.T) {
 	html := gosx.RenderHTML(NavigationScriptWithNonce("nav-nonce"))
 
+	// The navigation runtime ships minified (gosx#221): buildInlineAsset
+	// (cmd/buildbootstrap) safely renames the local identifiers this test
+	// used to match verbatim — currentDocumentNonce, applyCurrentNonce,
+	// effectiveLoad — because they are function-scoped inside navigation.ts's
+	// top-level IIFE. What minification never touches is a string literal or
+	// a property name, so this test now looks for those: the nonce-carrying
+	// selector strings and the `.nonce` assignment currentDocumentNonce/
+	// applyCurrentNonce compile down to. See "Nonce propagation" in
+	// client/runtime/host/navigation.ts for the readable source.
 	for _, snippet := range []string{
-		`function currentDocumentNonce()`,
-		`const effectiveLoad = load === "dom" || currentDocumentNonce() ? "dom" : "eval";`,
-		`script.nonce = nonce;`,
-		`applyCurrentNonce(script);`,
+		`script[nonce][data-gosx-navigation]`,
+		`script[nonce][data-gosx-document-contract]`,
+		`script[nonce][data-gosx-script]`,
+		`.nonce=`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected navigation runtime to include %q in %q", snippet, html)

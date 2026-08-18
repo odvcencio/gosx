@@ -50,6 +50,18 @@ func Page() Node {
 	    ctx.AddHead(server.NavigationScript())
 	    return server.HTMLDocument(ctx.Title("My App"), ctx.Head(), body)
 	})`)}
+			<p>
+				<span class="inline-code">NavigationScript()</span>
+				writes the runtime inline into the page head, so it runs before any other script fetches. It ships pre-minified:
+				<span class="inline-code">cmd/buildbootstrap</span>
+				builds and commits
+				<span class="inline-code">
+					client/runtime/host/navigation-runtime.min.js
+				</span>
+				from the readable source, and its
+				<span class="inline-code">--check</span>
+				mode fails the build when the committed file drifts from that source.
+			</p>
 		</section>
 		<section id="page-transitions">
 			<h2>What a managed transition owns</h2>

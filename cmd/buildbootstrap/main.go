@@ -553,6 +553,29 @@ var outputs = []output{
 	},
 }
 
+// inlineAssets lists artifacts this tool prepares for direct Go embedding
+// rather than for a fetched <script src> bundle. server.NavigationScript
+// (server/navigation.go) inlines the navigation runtime straight into every
+// page's <head> so it runs before any other script fetches — it must stay
+// out of the outputs bundle graph above, which is why navigation.ts is a
+// named exemption in TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph.
+//
+// An inline asset gets the same concatenate/erase-types/minify treatment as
+// a bundle (buildBundle), but the build writes only the minified .min.js
+// file next to its .ts sources: no .map, no .gz/.br sidecars, and it never
+// joins chunks.json, because nothing ever fetches it over the network —
+// client/runtime/host/navigation_asset.go go:embeds it straight into the Go
+// binary that server.NavigationScript then writes inline into the page.
+var inlineAssets = []output{
+	{
+		name: "../runtime/host/navigation-runtime.min.js",
+		sources: []source{
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/navigation.ts"),
+		},
+	},
+}
+
 const base64Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 // normalizeNewlines converts \r\n and bare \r to \n, matching the mjs
@@ -1061,6 +1084,20 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 	}
 }
 
+// buildInlineAsset builds one inlineAssets entry down to its minified code
+// only. Unlike buildBundle for a client/js/ bundle, an inline asset never
+// carries a sourceMappingURL trailer (debugSourcemaps is always false):
+// nothing ever fetches the artifact at a URL, so a dangling comment
+// referencing a .map file this build never writes would only confuse a
+// reader working from the served page's inline <script> tag.
+func buildInlineAsset(dir string, entry output, minifier string) (string, error) {
+	built, err := buildBundle(dir, entry, minifier, false)
+	if err != nil {
+		return "", err
+	}
+	return built.code, nil
+}
+
 // findClientJS resolves the client/js directory: an explicit -dir wins,
 // otherwise walk up from the working directory looking for
 // client/js/bootstrap-src (so the tool works from the repo root or any
@@ -1171,6 +1208,17 @@ func run() error {
 				recordStale(entry.name)
 			}
 		}
+		for _, entry := range inlineAssets {
+			next, err := buildInlineAsset(dir, entry, *minifier)
+			if err != nil {
+				return err
+			}
+			assetPath := filepath.Join(dir, entry.name)
+			current, _ := os.ReadFile(assetPath)
+			if string(current) != next {
+				recordStale(entry.name)
+			}
+		}
 		if len(stale) > 0 {
 			return fmt.Errorf("bootstrap runtime assets are out of date (%s). Run `go run ./cmd/buildbootstrap`", strings.Join(stale, ", "))
 		}
@@ -1193,6 +1241,16 @@ func run() error {
 			return err
 		}
 		if err := writeCompressedSidecars(bundlePath, built.code); err != nil {
+			return err
+		}
+	}
+	for _, entry := range inlineAssets {
+		code, err := buildInlineAsset(dir, entry, *minifier)
+		if err != nil {
+			return err
+		}
+		assetPath := filepath.Join(dir, entry.name)
+		if err := os.WriteFile(assetPath, []byte(code), 0o644); err != nil {
 			return err
 		}
 	}

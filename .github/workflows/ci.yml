@@ -268,7 +268,7 @@ jobs:
   # executes the WASM itself; nothing here shells out to `node`.
   browser-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository

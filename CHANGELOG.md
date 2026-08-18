@@ -30,6 +30,23 @@
   elapsed while hidden, and never runs a second ping while one is
   already in flight. Both a network failure and a non-2xx response are
   silent.
+### Fixed: minify the embedded navigation runtime script
+
+- **The inline navigation runtime now ships minified, not raw** (gosx#221).
+  `server.NavigationScript()` writes the runtime straight into every page's
+  `<head>`. Its two sources, `client/runtime/host/compatibility.ts` and
+  `client/runtime/host/navigation.ts`, grew to about 198 KB raw across
+  gosx#212 through gosx#216, which pushed `/docs/getting-started` past the
+  perf-budget ceiling (`js_total_kb` 1617 KB against 1550 KB).
+  `cmd/buildbootstrap` now builds a committed artifact,
+  `client/runtime/host/navigation-runtime.min.js`, from those two sources
+  with esbuild (already a `cmd/buildbootstrap` dependency; no new
+  dependency reaches the `gosx` module). `navigation_asset.go` embeds that
+  artifact instead of the raw sources. The minified artifact is about
+  63 KB, a 68% cut. `cmd/buildbootstrap --check` now also verifies this
+  artifact and fails the build when it drifts from its sources.
+  Regenerate it with `go generate ./client/runtime/host` or
+  `make build-bootstrap`.
 
 ## v0.46.0 (2026-08-17)
 
