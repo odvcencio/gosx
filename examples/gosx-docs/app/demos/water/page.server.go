@@ -33,6 +33,13 @@ func init() {
 	)
 }
 
+// addWaterDemoPreloadHead builds one <link rel=preload> per cubemap face
+// and adds it to the response head. Load is a plain Go function, not a
+// .gsx page, so this loop cannot render markup declaratively. It reaches
+// for gosx.El because server has no cross-origin preload-link helper,
+// only the fixed server.ScenePosterPreload. A general
+// server.PreloadLink(href, as string, extra ...gosx.Attribute) helper
+// would remove this local El use.
 func addWaterDemoPreloadHead(ctx *route.RouteContext) {
 	if ctx == nil {
 		return

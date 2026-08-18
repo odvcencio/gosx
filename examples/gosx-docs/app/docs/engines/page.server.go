@@ -21,6 +21,12 @@ func init() {
 					{"href": "#go-wasm", "label": "Go WASM"},
 					{"href": "#lifecycle", "label": "Lifecycle"},
 				},
+				// mountSample is teaching text, rendered through CodeBlock on the
+				// page. It shows a ctx.Engine call site, real Go code that would
+				// live in a Load function. Its fallback argument uses gosx.El on
+				// purpose: a one-node inline fallback is the idiom this same
+				// package already uses in Go glue code, for example in
+				// server.ScenePosterPreload.
 				"mountSample":      "raw, err := json.Marshal(ChartProps{Series: values})\nif err != nil {\n\treturn nil\n}\n\nreturn ctx.Engine(engine.Config{\n\tName:         \"Chart\",\n\tKind:         engine.KindSurface,\n\tMountID:      \"sales-chart\",\n\tProps:        raw,\n\tCapabilities: []engine.Capability{engine.CapCanvas, engine.CapPointer},\n\tMountAttrs: map[string]any{\n\t\t\"class\":      \"chart-surface\",\n\t\t\"aria-label\": \"Sales chart\",\n\t},\n}, gosx.El(\"p\", gosx.Text(\"Chart unavailable\")))",
 				"webgpuSample":     "required := engine.RequireWebGPU(\n\tengine.CapWebGPUTimestampQuery,\n\tengine.WebGPULimit(\"maxComputeWorkgroupsPerDimension\", 256),\n)\n\ncfg := engine.Config{\n\tName:                 \"ParticleLab\",\n\tKind:                 engine.KindSurface,\n\tMountID:              \"particles\",\n\tCapabilities:         []engine.Capability{engine.CapCanvas, engine.CapAnimation},\n\tRequiredCapabilities: required,\n}",
 				"wasmConfigSample": "cfg := engine.Config{\n\tName:     \"Chart\",\n\tKind:     engine.KindSurface,\n\tMountID:  \"chart\",\n\tRuntime:  engine.RuntimeGoWASM,\n\tWASMPath: \"/engines/chart.wasm\",\n}",
