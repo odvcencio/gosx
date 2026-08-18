@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.47.1 (2026-08-18)
+
+### Fixed: the release version constant
+
+- `internal/version.Current` and `Number` were left at `v0.45.2` through the
+  v0.46.0 and v0.47.0 releases. Both releases therefore shipped a CLI that
+  refused to operate on a project pinned to its own version, and downstream
+  projects had to set `GOSX_SKIP_VERSION_CHECK` to build. The constants now
+  read `v0.47.1`, and the README advertises the same tag.
+- `TestREADMEDeclaresCurrentRelease` pins the README against `Current` and
+  fails on any stale release string, so a bump that misses one file can no
+  longer pass silently.
+
 ## v0.47.0 (2026-08-18)
 
 ### Added: live-bound regions
