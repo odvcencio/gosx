@@ -5,9 +5,20 @@ package main
 // the comment on CounterPage and KitchenSinkPage in main.go for why — but
 // everything in this file is ordinary markup with no per-request data, so it
 // renders through route.RenderProgramComponent (gosx#226) instead of El.
+//
+// Card is the exception: its content — a header from this file, plus a
+// Go-computed island node and, for the counter card, a no-JS fallback — is
+// only known at request time. Before gosx#246 gave strict components a
+// {children} hole, and RenderProgramComponentNode a way to splice a
+// Go-computed node into it, the card div itself had to be a gosx.El call in
+// main.go (see chromeCard in chrome.go).
 
 component CounterIntro() {
 	return <h1>Counter (Island Demo)</h1>
+}
+
+component Card() {
+	return <div class="card">{children}</div>
 }
 
 component CounterCardHeader() {

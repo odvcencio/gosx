@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+### Added: a Go caller can place a Go-computed node in a .gsx render entry's children slot
+
+- **`RenderProgramComponent` takes a new `children ...gosx.Node` parameter**
+  (gosx#226, gosx#246). A Go handler that renders a `.gsx`-authored component
+  through `RenderProgramComponent` can now pass one or more Go-computed
+  nodes — an island's rendered HTML, most often — for the component to place
+  wherever its body writes `{children}`. Before this, only a nested
+  `<Component>...</Component>` call inside another component's body could
+  reach that hole; a Go caller rendering the entry component itself had no
+  way in, and built the surrounding markup by hand with `gosx.El` instead.
+- **The added parameter is variadic, so no existing call changes.** A call
+  that passes no children reproduces the exact prior behavior: an
+  unresolved `children` identifier still fails soft to empty. Passing
+  children against a legacy (non-strict) component fails closed with an
+  error, since a legacy render entry has no `{children}` hole to bind them
+  to.
+- **Children stay unproven by design, exactly as gosx#246 defined them at a
+  nested call site.** They never enter `PropsFields`, `PropsPaths`, or
+  `PropsSlices`, and `setStrictComponentChildren`'s refusal to overwrite a
+  proved props field still holds — the render entry proves `Props` through
+  `strictSpreadProps` directly against the caller's struct, never through a
+  map `EntryChildren` could write into, so a declared `Children` props
+  field and Go-supplied entry children coexist without conflict.
+- **`RenderProgramComponentNode` returns a `gosx.Node` instead of a
+  string**, so the result composes directly into a `gosx.El(...)` tree
+  instead of forcing a caller to wrap the rendered string in `gosx.RawHTML`
+  by hand. It wraps the render with `gosx.RawHTML` exactly once; nothing
+  re-renders or re-escapes the result.
+- **`examples/dashboard`'s chrome.gsx gains a `Card` component**, and
+  `main.go`'s `chromeCard` helper calls `RenderProgramComponentNode` to
+  splice a chrome header, an island node, and (for the counter page) a
+  no-JS fallback into it. This converts the 9 `gosx.El("div", class="card",
+  ...)` call sites the framework's own examples audit attributed to this
+  gap, dropping `examples/dashboard`'s raw element-building call count from
+  58 to 49.
+- **This does not close the remaining 7 call sites the same audit
+  attributed to "layout chrome needing head and body injection hooks."**
+  `Layout` in `examples/dashboard/main.go` needs three separate injection
+  points — a per-route title and a per-request preload-hints node inside
+  `<head>`, the page content inside `<body>`, and an island manifest script
+  at the end of `<body>`, after content the file renderer has not finished
+  writing when `<head>` closes. `RenderProgramComponent` and
+  `RenderProgramComponentNode` bind one `children` slot, repeatable but
+  always the same content on each repeat (gosx#246's own two-holes test
+  pins this). One slot cannot address three distinct injection points.
+  Named, multiple slots are a separate, unimplemented capability; `Layout`,
+  `Sidebar`, and `Footer` still build their markup with `gosx.El`.
+
 ## v0.49.0 (2026-08-18)
 
 ### Fixed: LoadFileProgram's documented fragment pattern broke under a `-trimpath` build

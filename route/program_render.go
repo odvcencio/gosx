@@ -67,20 +67,67 @@ type ProgramRenderEnv struct {
 // nested call to it is: see ProgramRenderEnv.Props for the typed-props
 // contract this requires.
 //
+// children places one or more Go-computed gosx.Node values wherever component's
+// body writes {children} (gosx#226, gosx#246) — the same "one opaque node,
+// emitted where written" contract a nested <Component>...</Component> call's
+// children get, not a prop: children are never proved against component's
+// declared schema, and cannot overwrite a proved props field. Passing no
+// children reproduces every pre-#246 call's behavior exactly: an unresolved
+// "children" identifier fails soft to empty, the same as today. Passing
+// children against a legacy (non-strict) component fails closed with an
+// error, since a legacy render entry has no {children} hole to bind them to.
+//
 // When env.Profile is set and its Validate hook reports any diagnostic,
 // RenderProgramComponent returns a *RenderProfileError and an empty string;
 // no partial HTML is ever returned alongside that error.
-func RenderProgramComponent(prog *ir.Program, component string, env ProgramRenderEnv) (string, error) {
+func RenderProgramComponent(prog *ir.Program, component string, env ProgramRenderEnv, children ...gosx.Node) (string, error) {
 	html, _, err := renderFileProgramHTML(prog, component, fileRenderOptions{
 		EvalEnv: fileRenderEnv{
 			values:       env.Values,
 			funcs:        env.Funcs,
 			renderIsland: env.RenderIsland,
 		},
-		EntryProps: env.Props,
-		Profile:    env.Profile,
+		EntryProps:    env.Props,
+		EntryChildren: entryChildrenNode(children),
+		Profile:       env.Profile,
 	})
 	return html, err
+}
+
+// RenderProgramComponentNode is RenderProgramComponent's Node-returning
+// sibling (gosx#226, gosx#246): it renders the same way, but returns a
+// gosx.Node instead of a string, so the result composes directly into a
+// gosx.El(...) tree instead of forcing a caller to wrap a rendered string in
+// gosx.RawHTML by hand — the pattern examples/dashboard's chrome() helper
+// used before this function existed (see examples/dashboard/chrome.go).
+//
+// The returned Node wraps the rendered HTML with gosx.RawHTML, the same
+// wrapping RenderProgramComponent's own callers were already doing, and the
+// same wrapping writeLocalComponent uses internally for a nested call's own
+// children — the render still happens exactly once; nothing here re-renders
+// or re-escapes it. On error, the returned Node is the zero Node, and the
+// caller must not render it: like RenderProgramComponent, no partial HTML is
+// ever returned alongside an error.
+func RenderProgramComponentNode(prog *ir.Program, component string, env ProgramRenderEnv, children ...gosx.Node) (gosx.Node, error) {
+	html, err := RenderProgramComponent(prog, component, env, children...)
+	if err != nil {
+		return gosx.Node{}, err
+	}
+	return gosx.RawHTML(html), nil
+}
+
+// entryChildrenNode folds a RenderProgramComponent caller's children slice
+// into the single gosx.Node fileRenderOptions.EntryChildren carries,
+// matching writeLocalComponentWithChildren's own childrenNode parameter
+// shape. An empty slice folds to the zero Node on purpose: EntryChildren's
+// own doc comment names the zero Node as the "no children supplied" sentinel,
+// so a caller that passes none must produce that same sentinel, not a bound
+// empty Fragment, to keep every pre-existing call byte-identical.
+func entryChildrenNode(children []gosx.Node) gosx.Node {
+	if len(children) == 0 {
+		return gosx.Node{}
+	}
+	return gosx.Fragment(children...)
 }
 
 // LoadFileProgram compiles the .gsx file at path and returns its IR program,
