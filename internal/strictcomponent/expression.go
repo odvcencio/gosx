@@ -60,6 +60,42 @@ func (s Scope) isBinding(name string) bool {
 	return s.isItem(name) || s.isIndex(name)
 }
 
+// ChildrenBinding is the one identifier a strict body may use to place the
+// markup its caller supplied. Four seams read this constant, so the spelling
+// cannot drift between them:
+//
+//   - the file renderer binds this exact name beside props
+//     (writeLocalComponent, route/fileprogram.go);
+//   - the lowerer reserves it against an <Each> binding, so no loop can
+//     shadow it (ir/lower.go);
+//   - the lowerer's AcceptsChildren pass looks for it, through
+//     IsChildrenExpression below;
+//   - the Go projection spells the variadic parameter of every strict
+//     component with it (emitStrictComponent, transpile/transpile.go).
+const ChildrenBinding = "children"
+
+// exprPosition names the syntactic slot an expression occupies. The strict
+// contract admits a different identifier set per slot, so the slot is an
+// explicit input to validation rather than a property of the source text.
+//
+// The two slots differ in exactly one identifier, children:
+//
+//   - positionChild is a whole child expression hole, {children}. Its value
+//     is written into element CONTENT, where markup is legal.
+//   - positionAttribute is an attribute value, class={children}. Its value is
+//     written into an HTML ATTRIBUTE, where markup is not legal — emitting a
+//     rendered node there would splice tags inside quotes and produce broken,
+//     unescapable output.
+//
+// positionAttribute is the zero value, so any caller that does not state a
+// position keeps the pre-children behavior and fails closed.
+type exprPosition uint8
+
+const (
+	positionAttribute exprPosition = iota
+	positionChild
+)
+
 // ValidateServerExpression accepts exactly the expression shapes implemented
 // by the file renderer for strict server components. The v0.39 contract is
 // intentionally small: literals and one direct props field (with parentheses).
@@ -87,18 +123,56 @@ func ValidateServerExpression(source string) error {
 // admit a selector chain rooted at any name in scope alongside props — the
 // #182 (`<Each>`) extension. See Scope's doc comment for the Items/Indices
 // distinction.
+//
+// This is the ATTRIBUTE-position entry point. It does not admit the children
+// identifier; use ValidateServerChildExpressionScope for a child expression
+// hole. Keeping the two apart is what stops class={children} from splicing
+// rendered markup into an HTML attribute value.
 func ValidateServerExpressionScope(source string, scope Scope) error {
+	return validateAt(source, scope, positionAttribute)
+}
+
+// ValidateServerChildExpressionScope is ValidateServerExpressionScope for a
+// whole child expression hole, {expr}, the one position that also admits the
+// bare identifier children.
+//
+// What the admission grants, exactly: emission. children is a single opaque
+// gosx.Node the caller already rendered. The callee cannot read a field of
+// it, index it, count it, concatenate it, or branch on it — every one of
+// those shapes is rejected by a rule this function does not touch
+// (rootedSelectorPath, classifyConcatOperand, ValidateServerCondExpression).
+// It is not a prop: it never enters PropsFields, PropsPaths, or PropsSlices,
+// and no boundary proof reads it.
+//
+// A body may write {children} more than once. Each occurrence emits the same
+// markup again, matching gosx.Expr(children) in the Go projection.
+func ValidateServerChildExpressionScope(source string, scope Scope) error {
+	return validateAt(source, scope, positionChild)
+}
+
+// IsChildrenExpression reports whether source is exactly the children
+// identifier, with parentheses transparent. It is the single spelling test
+// for "this expression hole places the caller's children", so the lowerer's
+// AcceptsChildren pass and this validator can never disagree about what
+// children looks like.
+func IsChildrenExpression(source string) bool {
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return false
+	}
+	ident, ok := unwrapParens(expr).(*ast.Ident)
+	return ok && ident.Name == ChildrenBinding
+}
+
+func validateAt(source string, scope Scope, pos exprPosition) error {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
 		return fmt.Errorf("invalid Go expression: %w", err)
 	}
-	if err := validate(expr, source, scope); err != nil {
-		return err
-	}
-	return nil
+	return validate(expr, source, scope, pos)
 }
 
-func validate(expr ast.Expr, source string, scope Scope) error {
+func validate(expr ast.Expr, source string, scope Scope, pos exprPosition) error {
 	switch node := expr.(type) {
 	case *ast.BasicLit:
 		return validateLiteral(node)
@@ -110,6 +184,11 @@ func validate(expr ast.Expr, source string, scope Scope) error {
 			return fmt.Errorf("nil is not supported because GoSX expression and file renderers serialize it differently")
 		case "props":
 			return fmt.Errorf("bare props is not supported; select a props field")
+		case ChildrenBinding:
+			if pos == positionChild {
+				return nil
+			}
+			return fmt.Errorf("children renders as element content, not as an attribute value")
 		default:
 			if scope.isIndex(node.Name) {
 				// An Each index binding is always a plain int — the same
@@ -124,7 +203,7 @@ func validate(expr ast.Expr, source string, scope Scope) error {
 			return fmt.Errorf("identifier %q is not available to the strict server renderer", node.Name)
 		}
 	case *ast.ParenExpr:
-		return validate(node.X, source, scope)
+		return validate(node.X, source, scope, pos)
 	case *ast.SelectorExpr:
 		if _, _, ok := rootedSelectorPath(node, scope); !ok {
 			return fmt.Errorf("selector must be a field chain rooted at props, with every step a plain field access; anything else cannot preserve Go nil-pointer behavior")
@@ -151,6 +230,11 @@ func validate(expr ast.Expr, source string, scope Scope) error {
 // of each. The renderer's applyFileBinaryOp takes the string branch whenever
 // either side of `+` is a Go string (route/exprlower.go), so this is the one
 // binary shape the file renderer and generated Go execute identically.
+//
+// It takes no exprPosition on purpose: children is never a concat operand,
+// in any position. A rendered node has no string value to add, so
+// {"prefix " + children} keeps falling into classifyConcatOperand's default
+// branch and its existing "not renderable" message.
 func validateConcatChain(node *ast.BinaryExpr, source string, scope Scope) error {
 	hasStringLiteral := false
 	hasPropsField := false

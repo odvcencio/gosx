@@ -567,7 +567,10 @@ func TestCompileStrictCalleeRejectsDynamicCallShape(t *testing.T) {
 	}{
 		{name: "spread", call: `<Badge {...props} />`, message: "does not accept props"},
 		{name: "attribute", call: `<Badge bogus="x" />`, message: "does not accept props"},
-		{name: "children", call: `<Badge>child</Badge>`, message: "does not accept positional children"},
+		// Badge's body places no {children} hole, so its AcceptsChildren is
+		// false and the call is rejected — but now with a message that names
+		// both remedies instead of a flat refusal.
+		{name: "children", call: `<Badge>child</Badge>`, message: "renders no children; remove the child content or render {children} in Badge's body"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

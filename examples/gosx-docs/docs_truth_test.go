@@ -117,8 +117,14 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 		{
 			page: "components",
 			required: []string{
-				"Positional child content stays rejected either way",
+				"A strict component places the markup its caller wrote",
+				"Children are not a prop",
 				"gosx export .",
+			},
+			forbidden: []string{
+				// Children shipped. A doc that still says they are rejected
+				// would be worse than no doc at all.
+				"Positional child content stays rejected either way",
 			},
 		},
 		{

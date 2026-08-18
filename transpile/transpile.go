@@ -627,6 +627,26 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 		}
 	}
 
+	// Every strict component takes children, unconditionally.
+	//
+	// A variadic parameter accepts zero arguments, so every call site that
+	// passes none keeps compiling unchanged. The alternative — emit the
+	// parameter only for a body that renders children — would need transpile
+	// to decide "renders children" for itself, because transpile walks the
+	// CST with no ir.Program in hand. Two implementations of one predicate
+	// drift, and the drift would show up as a projected signature that does
+	// not match the checked contract. So arity stays a gosx-level rule with a
+	// single owner, ir.Component.AcceptsChildren, and it reports a message
+	// that names the remedy instead of Go's "too many arguments".
+	//
+	// The parameter is spelled children because the body's {children} hole
+	// projects to gosx.Expr(children) (emitExprContainer), and gosx.Expr
+	// fragments a []Node.
+	if params != "" {
+		params += ", "
+	}
+	params += strictcomponent.ChildrenBinding + " ..." + t.gosxRef("Node")
+
 	prevPropsType := t.currentPropsType
 	t.currentPropsType = t.propsTypes[t.text(nameNode)]
 	t.strict++
