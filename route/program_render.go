@@ -3,6 +3,7 @@ package route
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/ir"
@@ -97,13 +98,46 @@ func RenderProgramComponent(prog *ir.Program, component string, env ProgramRende
 // Page/Layout entry never renders directly, with RenderProgramComponent.
 //
 // path resolves relative to the process's current working directory, same as
-// os.Open; pass an absolute path (for example, one built from the source
-// file's own directory: filepath.Join(filepath.Dir(sourceFile), "page.gsx"))
-// to make it independent of the working directory the binary starts in.
+// os.Open; pass an absolute path to make it independent of the working
+// directory the binary starts in.
+//
+// Do not build that absolute path from runtime.Caller's own file value: a
+// `-trimpath` build — `gosx build`'s default, and the shape of most
+// container images — replaces that value with the calling module's own
+// declared path, not a path that exists on the machine running the binary,
+// so path resolves to a file that was never there (gosx#239). This mistake
+// passes every local check: a plain `go run` or `go build` still records the
+// real path, so it only surfaces once something builds with -trimpath.
+// LoadFileProgramHere resolves a sibling of the calling file without this
+// problem; prefer it when path is a sibling of the calling source file.
 func LoadFileProgram(path string) (*ir.Program, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", path, err)
 	}
 	return loadCachedGSXProgram(abs)
+}
+
+// LoadFileProgramHere compiles the .gsx (or .html) file named name in the
+// same directory as the calling source file and returns its IR program,
+// through the same cache LoadFileProgram uses (gosx#226).
+//
+// Use this in place of building a path from runtime.Caller and
+// filepath.Dir yourself, the pattern the "Rendering a fragment from a Go
+// handler" example used before this function existed: see LoadFileProgram's
+// own doc comment for why that pattern breaks under a `-trimpath` build
+// (gosx#239). LoadFileProgramHere resolves the calling file the same
+// trimpath-safe way RegisterFileModuleHere resolves a page's sibling .gsx
+// file, so it does not have that problem.
+//
+// name is a bare file name, such as "page.gsx" — a sibling of the calling
+// file, not a path elsewhere in the tree. For that, resolve an absolute path
+// yourself and call LoadFileProgram directly.
+func LoadFileProgramHere(name string) (*ir.Program, error) {
+	_, file, _, ok := runtime.Caller(1)
+	if !ok {
+		return nil, fmt.Errorf("load %s: could not resolve the calling file", name)
+	}
+	dir := filepath.Dir(resolveCallerFilePath(file))
+	return LoadFileProgram(filepath.Join(dir, name))
 }
