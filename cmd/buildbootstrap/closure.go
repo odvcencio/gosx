@@ -140,10 +140,16 @@ func chunkFreeIdentifiers(dir string, entry output) ([]string, error) {
 }
 
 // verifyChunkClosure fails when any chunk reads an identifier that neither the
-// chunk nor the browser supplies.
+// chunk nor the browser supplies. It checks both the fetched bundle graph
+// (outputs) and the inline-embed assets (inlineAssets): an inline asset is
+// still one script the browser evaluates on its own, so it needs the same
+// closure guarantee.
 func verifyChunkClosure(dir string) error {
 	var report []string
-	for _, entry := range outputs {
+	entries := make([]output, 0, len(outputs)+len(inlineAssets))
+	entries = append(entries, outputs...)
+	entries = append(entries, inlineAssets...)
+	for _, entry := range entries {
 		free, err := chunkFreeIdentifiers(dir, entry)
 		if err != nil {
 			return err
