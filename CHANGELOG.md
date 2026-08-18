@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### Added: a body-attribute surface, so a body-level primitive needs no wrapper div
+
+- **`Context.BodyAttrs` / `PageState.BodyAttrs` set attributes on the
+  rendered `<body>` element** (gosx#236). `data-gosx-heartbeat` is
+  documented as settable on `<body>` itself, but `HTMLDocument` had no way
+  to reach it, so an app wrapped its whole page body in a `gosx.El("div",
+  ...)` carrying the attributes, plus a `display:contents` CSS rule to keep
+  the div out of layout. `BodyAttrs` accumulates across calls, the same
+  rule `AddHead` follows, and escapes values through `gosx.RenderAttrs` —
+  the same helper `gosx.El` uses for every other element's attributes.
+- **`HTMLDocumentWithBodyAttrs`** is the direct-call sibling for a page that
+  builds its document by calling `HTMLDocument` itself (for example a
+  `router.SetLayout` callback), rather than through `App.renderPage`'s
+  `DocumentContext` pipeline, which picks up `BodyAttrs` automatically.
+- **`DocumentBodyAttrs`** — the existing helper for a custom `App.SetDocument`
+  function building `<body>` through `gosx.El` — now includes app-supplied
+  body attributes alongside the framework's own, so custom document
+  functions get the same body attributes the built-in renderer does.
+- See `NavigationHeartbeatAttr`'s doc comment (`server/navigation_contract.go`)
+  for the wrapper-div-to-`BodyAttrs` migration.
+
+### Added: a typed, defaulted viewport meta tag
+
+- **Every document now gets the standard responsive viewport meta tag
+  (`width=device-width, initial-scale=1`) by default** (gosx#237). gosx
+  ships a mobile drawer and responsive docs; a consumer should not have to
+  remember the boilerplate tag that makes them work. The default applies
+  uniformly across the App-default document pipeline, a custom
+  `App.SetDocument` or `App.SetLayout`, and the free-function
+  `HTMLDocument`/`HTMLDocumentWithLanguage`/`HTMLDocumentWithNonce` family.
+- **`Metadata.Viewport`** overrides the content for a page that needs
+  non-standard viewport behavior, for example a fixed-scale canvas page
+  adding `maximum-scale=1, user-scalable=no`.
+- **A hand-written viewport meta tag is deduplicated, not doubled.** A page
+  that already calls `ctx.AddHead` with its own `<meta name="viewport"
+  ...>`, or passes one directly in `HTMLDocument`'s `head` argument, keeps
+  working unchanged — the default is skipped, not added alongside it, so
+  no consumer that had already worked around the missing default ends up
+  with two viewport tags.
+
 ## v0.48.0 (2026-08-18)
 
 ### Fixed: a strict spread from a non-strict component is rejected at compile time

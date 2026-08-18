@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"log/slog"
@@ -802,6 +803,36 @@ func HTMLDocumentWithNonce(title string, nonce string, head gosx.Node, body gosx
 	return gosx.RawHTML(renderDocument(title, nonce, head, body))
 }
 
+// HTMLDocumentWithBodyAttrs wraps content in a full HTML5 document, adding
+// bodyAttrs to the rendered <body> element (gosx#236).
+//
+// This is the direct-call sibling of Context.BodyAttrs / PageState.BodyAttrs
+// for a page that renders through HTMLDocument directly rather than through
+// App.renderPage's DocumentContext pipeline — for example a file-routed
+// app's router.SetLayout callback, which calls HTMLDocument itself:
+//
+//	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
+//	    ctx.BodyAttrs(
+//	        gosx.Attr(server.NavigationHeartbeatAttr, "/api/league/version"),
+//	        gosx.Attr(server.NavigationHeartbeatIntervalAttr, "4s"),
+//	    )
+//	    return server.HTMLDocumentWithBodyAttrs(ctx.Title(appName), ctx.Head(), body, ctx.BodyAttrsValue())
+//	})
+//
+// head is still expected to carry ctx.Head()'s own accumulated content —
+// bodyAttrs is the parallel channel for what ctx accumulated for <body>
+// instead of <head>. This replaces wrapping body in a gosx.El div solely to
+// carry attributes, plus a display:contents rule to keep that div out of
+// layout — see NavigationHeartbeatAttr's doc comment for the full migration.
+func HTMLDocumentWithBodyAttrs(title string, head gosx.Node, body gosx.Node, bodyAttrs gosx.AttrList) gosx.Node {
+	return gosx.RawHTML(renderDocumentWithContext(&DocumentContext{
+		Title:     title,
+		Head:      head,
+		Body:      body,
+		BodyAttrs: bodyAttrs,
+	}))
+}
+
 func renderDocument(title string, nonce string, head gosx.Node, body gosx.Node) string {
 	return renderDocumentWithContext(&DocumentContext{
 		Title: title,
@@ -835,7 +866,25 @@ func renderDocumentWithContext(doc *DocumentContext) string {
 	b.WriteString(htmlAttrs)
 	b.WriteString(">\n<head>\n")
 	b.WriteString("<meta charset=\"utf-8\">\n")
-	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
+	// gosx#237: a page reached through PageState.Head() (the App-driven
+	// default path, a custom layout, or a custom document function)
+	// already has its viewport meta tag inside headHTML by now — Metadata
+	// resolves one, defaulted or overridden, unconditionally. This is the
+	// backstop for the free-function callers below Metadata entirely
+	// (HTMLDocument/HTMLDocumentWithLanguage/HTMLDocumentWithNonce called
+	// with a hand-built head Node and no *Context in the loop at all), and
+	// it defers to whatever headHTML already carries either way — so a
+	// caller that wrote its own viewport tag, migrated or not, never gets a
+	// second one alongside it.
+	if !strings.Contains(headHTML, viewportMetaMarker) {
+		viewport := DefaultViewport
+		if doc != nil {
+			viewport = resolveViewport(doc.Metadata.Viewport)
+		}
+		b.WriteString(`<meta name="viewport" content="`)
+		b.WriteString(html.EscapeString(viewport))
+		b.WriteString("\">\n")
+	}
 	b.WriteString("<title>")
 	b.WriteString(title)
 	b.WriteString("</title>\n")
