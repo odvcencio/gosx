@@ -6,8 +6,19 @@
 // with NO per-page JS, so GoSX apps stay fully declarative (this mirrors the
 // data-gosx-motion subsystem in 05-document-env.ts — attribute-driven, global
 // observer/listener, zero app script). Self-contained IIFE; the listeners
-// resolve runtime globals (window.__gosx_set_shared_signal) lazily so load order
-// relative to the tail is immaterial.
+// resolve runtime globals (window.__gosx_set_shared_signal,
+// window.__gosx_notify_shared_signal) lazily so load order relative to the
+// tail is immaterial.
+//
+// A shared-signal write (data-gosx-set, data-gosx-action-signal) never
+// depends on a WASM engine being on the page (gosx#233). setSignal below
+// prefers the engine's own window.__gosx_set_shared_signal when the page
+// installed one, and falls back to window.__gosx_notify_shared_signal — the
+// same JS-only writer 00-textlayout.js already uses for its own
+// shared-signal store — the moment that hook is absent or reports an error.
+// Every subscriber, whether it reads through
+// window.__gosx_subscribe_shared_signal (regions.ts, navigation.ts) or the
+// engine's own store, sees the same value either way.
 //
 //   data-gosx-action="POST /url"    element/button → fetch(url, {Accept: json}); no reload.
 //   <form data-gosx-action[="..."]>  submit → fetch URLSearchParams(FormData);
@@ -15,9 +26,10 @@
 //   data-gosx-reset                  on a data-gosx-action form → clear text inputs on 2xx.
 //   data-gosx-submit-on="change"     input → el.form.requestSubmit() on change.
 //   data-gosx-set="$signal"          element → on click, set the shared signal to
-//                                    data-gosx-set-value (or "").
+//                                    data-gosx-set-value (or ""). No WASM engine required.
 //   data-gosx-action-event="name"    dispatch the result under a custom event name.
-//   data-gosx-action-signal="$name"  write result.value to a shared signal.
+//   data-gosx-action-signal="$name"  write result.value to a shared signal. No WASM
+//                                    engine required.
 //   data-gosx-action-target="#id"     replace a target with result.html.
 //   data-gosx-toggle-target="#id"     toggle an attribute on another element.
 //   data-gosx-toggle-attribute="open" attribute name (defaults to data-gosx-open).
@@ -47,15 +59,42 @@
   if (typeof document === "undefined" || gosxHost.state.declarativeActions) return;
   gosxHost.state.declarativeActions = true;
 
+  // notifySharedSignalFallback is the JS-only half of the shared-signal
+  // write path (gosx#233). window.__gosx_notify_shared_signal is
+  // 00-textlayout.js's own store writer — the same one it uses when ITS
+  // engine hook is absent — so a subscriber reached through
+  // window.__gosx_subscribe_shared_signal sees an identical update whether
+  // a WASM engine ever mounted or not. 00-textlayout.js loads before
+  // actions.ts in every bundle that carries this file (bootstrap.js,
+  // bootstrap-lite.js, bootstrap-runtime.js — see cmd/buildbootstrap's
+  // outputs), so the guard below only ever fires for a page that loads
+  // actions.ts through some other path.
+  function notifySharedSignalFallback(name, valueJSON) {
+    var notify = window.__gosx_notify_shared_signal;
+    if (typeof notify === "function") {
+      notify(name, valueJSON);
+      return;
+    }
+    console.warn("[gosx] no shared signal writer installed; \"" + name + "\" was not written");
+  }
+
   function setSignal(name, value) {
     if (!name) return;
-    if (typeof window.__gosx_set_shared_signal === "function") {
+    var valueJSON = JSON.stringify(value);
+    var setSharedSignal = window.__gosx_set_shared_signal;
+    if (typeof setSharedSignal === "function") {
       try {
-        window.__gosx_set_shared_signal(name, JSON.stringify(value));
+        var result = setSharedSignal(name, valueJSON);
+        if (typeof result === "string" && result !== "") {
+          console.warn("[gosx] declarative set", name, result);
+          notifySharedSignalFallback(name, valueJSON);
+        }
+        return;
       } catch (e) {
         console.warn("[gosx] declarative set", name, e);
       }
     }
+    notifySharedSignalFallback(name, valueJSON);
   }
 
   function isMutatingMethod(method) {
