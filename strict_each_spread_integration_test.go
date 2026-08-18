@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	gosx "m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/strictcheck"
 )
 
@@ -155,9 +156,17 @@ func Page() Node {
 
 // teamMarkFixtureCallSitesSource is the design spec's section 6
 // post-extension TeamMark source (app/page.gsx): a concat-only strict
-// body, called with {...props.away}/{...props.home} from a legacy
-// MiniMatchup and {...props} from a legacy StandingRow — the two spread
-// shapes the gridiron TeamMark call sites need.
+// body, called with {...props.Away}/{...props.Home} from a legacy
+// MiniMatchup and with {...props} from a STRICT StandingRow — the two
+// spread shapes the gridiron TeamMark call sites need.
+//
+// StandingRow was a legacy component here until gosx#229. That spelling
+// compiled and checked clean and could never render: a legacy render frame
+// binds props to a map, and the strict spread boundary proves struct values
+// only, so every execution of the row failed. The fixture now carries the
+// shape that renders — the same fix the gosx#229 diagnostic recommends —
+// and TestGridironAcceptanceTeamMarkCallSitesCompileAndCheck renders it to
+// prove the claim instead of asserting it.
 const teamMarkFixtureCallSitesSource = `package app
 
 type TeamMarkProps struct {
@@ -187,14 +196,14 @@ func MiniMatchup(props MiniMatchupProps) Node {
 	</div>
 }
 
-func StandingRow(props TeamMarkProps) Node {
+component StandingRow(props: TeamMarkProps) {
 	return <div class="standing-row"><TeamMark {...props}></TeamMark></div>
 }
 
 func Page() Node {
 	return <div>
-		<MiniMatchup away={MatchupSide{Tone: "red", Abbreviation: "NE", Name: "Patriots"}} home={MatchupSide{Tone: "blue", Abbreviation: "BUF", Name: "Bills"}}></MiniMatchup>
-		<StandingRow tone="red" abbreviation="NE"></StandingRow>
+		<MiniMatchup away={data.away} home={data.home}></MiniMatchup>
+		<StandingRow {...data.away}></StandingRow>
 	</div>
 }
 `
@@ -237,13 +246,51 @@ func TestGridironAcceptanceDraftTeamCompilesAndChecks(t *testing.T) {
 	checkFixtureInRealModule(t, "draftteam", "draftteam.gsx", draftTeamFixtureSource)
 }
 
+// gridironFixtureSide stands in for the loader value a sibling
+// page.server.go builds. Its type name deliberately differs from the .gsx
+// file's own MatchupSide: gosx#230 proves a spread source structurally, by
+// the fields the renderer reads, so a converter type never has to be
+// renamed into the .gsx schema's spelling.
+type gridironFixtureSide struct {
+	Tone         string
+	Abbreviation string
+	Name         string
+}
+
 // TestGridironAcceptanceTeamMarkCallSitesCompileAndCheck is the E2
 // acceptance fixture for design spec section 6's TeamMark row: both call
-// shapes gridiron needs (a spread over a nested field, and a spread over a
-// legacy body's own whole typed props parameter) compile and check clean.
+// shapes gridiron needs (a legacy body's spread over a nested struct field,
+// and a strict body's spread over its own whole props) compile, check, and
+// render.
+//
+// The render half is gosx#229's regression net. The legacy-body spelling
+// this fixture carried before compiled and checked clean here for three
+// releases while failing every render, because nothing in this test ever
+// rendered it.
 func TestGridironAcceptanceTeamMarkCallSitesCompileAndCheck(t *testing.T) {
-	if _, err := gosx.Compile([]byte(teamMarkFixtureCallSitesSource)); err != nil {
+	prog, err := gosx.Compile([]byte(teamMarkFixtureCallSitesSource))
+	if err != nil {
 		t.Fatalf("Compile: %v", err)
+	}
+	html, err := route.RenderProgramComponent(prog, "Page", route.ProgramRenderEnv{
+		Values: map[string]any{
+			"data": map[string]any{
+				"away": gridironFixtureSide{Tone: "red", Abbreviation: "NE", Name: "Patriots"},
+				"home": gridironFixtureSide{Tone: "blue", Abbreviation: "BUF", Name: "Bills"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	for _, want := range []string{
+		`<span class="team-mark tone-red" aria-hidden="true">NE</span>`,
+		`<span class="team-mark tone-blue" aria-hidden="true">BUF</span>`,
+		`<div class="standing-row">`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("rendered HTML %q does not contain %q", html, want)
+		}
 	}
 	checkFixtureInRealModule(t, "teammarkcallsites", "teammark.gsx", teamMarkFixtureCallSitesSource)
 }

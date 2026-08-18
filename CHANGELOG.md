@@ -2,6 +2,77 @@
 
 ## Unreleased
 
+### Fixed: a strict spread from a non-strict component is rejected at compile time
+
+- **A legacy component that spreads its own `props` into a strict component
+  is now a compile error** (gosx#229). The composition can never render: a
+  legacy render frame binds `props` to the `map[string]any` the file
+  renderer builds from the call site's attributes, and the strict spread
+  boundary proves field coverage on struct values only, so every execution
+  of that path failed with `render strict component X: spread source has
+  type map[string]interface {}`. Full transpile refused the same call
+  outright, so no execution path ever accepted it. The rule lives in the IR
+  validation pass, so one implementation lights it up in `gosx check`, in
+  the build gate, and in the editor through the LSP. The diagnostic names
+  the legacy caller, the strict callee, and the spread site, and its hint
+  names both remedies.
+- The rule is narrow by construction. It fires only on the bare `props`
+  identifier of the enclosing legacy component. A struct-typed FIELD of
+  those props (`{...props.Away}`) keeps compiling and rendering, because the
+  field value survives the shallow flatten with its own type; so does a
+  legacy-to-legacy spread, a page entry spreading a loader value, a strict
+  caller's named attributes, and a strict caller's own `{...props}` forward.
+- One acceptance fixture changed. `strict_each_spread_integration_test.go`
+  carried a legacy `StandingRow(props TeamMarkProps)` bare-spreading into a
+  strict `TeamMark`, blessed as a supported call shape. That shape compiled
+  and checked clean and could never render; the fixture now carries the
+  strict spelling and renders it, so the claim is proved rather than
+  asserted.
+
+### Changed: a spread proves nested struct fields structurally
+
+- **A nested struct-typed field inside a spread is now proved by the fields
+  the callee renders under it, not by the declared type's name**
+  (gosx#230). Consumers can rely on this relaxation: a sibling `.go`
+  converter may build its own type and spread it into a strict component
+  whose `.gsx` file declares a differently named nested struct. Two rules
+  used to contradict each other — a nested type had to be declared in the
+  `.gsx` file, and had to be identical to the type the `.go` converter
+  built — which forced authors to flatten nested models into scalar fields
+  purely to avoid the second rule.
+- The relaxation applies to a spread only. A named attribute at a strict
+  call site keeps the exact-type rule, because transpile emits a composite
+  literal whose field type the Go compiler proves; keeping the two in step
+  costs nothing there. A legacy caller's spread has no generated-Go twin at
+  all, so the renderer boundary is its only authority, and the type name
+  proves nothing about the value. Nothing is accepted unproved: every read
+  path under the root must still resolve to its exact declared scalar type,
+  a map is still rejected, and a root the callee forwards on is re-proved by
+  the strict callee that consumes it.
+
+### Added: a positioned diagnostic for a .gsx/.go name collision
+
+- **`gosx check` reports a package-level name that a strict `.gsx` file and
+  a sibling `.go` file both declare** (gosx#230), instead of letting the Go
+  compiler report `redeclared in this block` against a temporary projection
+  file the author never wrote. A strict `component MatchupCard` compiles to
+  a package-level `func MatchupCard`, and a `.gsx` `type` declaration
+  compiles to itself, so both collide with a same-named `.go` declaration.
+  The diagnostic names both declarations with their own source positions.
+  It skips a sibling file the build never compiles: a `_test.go` file, a
+  file of another package, and a file whose build constraint excludes it.
+
+### Changed: the same-file schema rule says why
+
+- **The two diagnostics that require a strict component's props struct, and
+  every struct its body reaches, to be declared in the same `.gsx` file now
+  carry the reason** (gosx#230). The `.gsx` file compiles into the sibling
+  `.go` file's package, so a same-package type looks like it should be
+  reachable. It is not, because the Go compiler is not the only reader: the
+  file renderer executes the IR and never compiles Go, so it resolves every
+  rendered field from schema data the compiler writes into the IR, and the
+  compiler builds that data from the one `.gsx` file it is given. The rule
+  itself is unchanged.
 ### Fixed: data-gosx-action-signal no longer requires a WASM engine
 
 - **`data-gosx-set` and `data-gosx-action-signal` now write a shared signal

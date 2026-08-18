@@ -74,6 +74,46 @@ ambiguous aliases must use exact Go spelling. Every field the callee renders
 must be supplied explicitly, including `0`, `false`, and `""`, so generated Go
 and server rendering observe the same zero values.
 
+### Spreading a value into a strict component
+
+A strict component accepts one `{...source}` spread instead of named
+attributes. Two callers may write one:
+
+- A **strict** caller spreads a value whose declared type is exactly the
+  callee's props type. The compiler proves the type; the generated Go call
+  is emitted verbatim.
+- A **legacy** caller spreads any expression. A legacy expression carries no
+  declared type, so the renderer proves the value at the boundary: the
+  source must be a struct, and every field the callee renders must be
+  present with a matching type.
+
+A legacy component **cannot** spread its own `props` into a strict
+component. A legacy render frame binds `props` to a `map[string]any` built
+from the call site's attributes, and the strict boundary proves struct
+values only, so that composition fails on every render. The compiler rejects
+it and names both components and the spread site. Spread a struct-typed
+field of `props` instead, or declare the caller as a strict component.
+
+A nested struct field inside a spread is proved **structurally**, by the
+fields the callee renders under it, not by the declared type's name. A
+sibling `.go` file may therefore build its own converter type and spread it
+in; the type does not have to match the name the `.gsx` file declares, and a
+nested model never has to be flattened into scalar fields to satisfy the
+check. A named attribute keeps the exact-type rule, because its generated Go
+call site is a composite literal the Go compiler proves.
+
+A strict component's props struct, and every struct its body reaches by
+field access, must be declared in the same `.gsx` file. The reason is the
+file renderer: it executes the IR and never compiles Go, so it resolves each
+rendered field from schema data the compiler writes into the IR, and the
+compiler builds that data from the one `.gsx` file it reads. A type declared
+in a sibling `.go` file is invisible at that moment.
+
+A strict `component Name` compiles to a package-level Go `func Name`, and a
+`.gsx` type declaration compiles to itself. `gosx check` reports a name a
+sibling `.go` file in the same package already declares, naming both
+declarations and their positions.
+
 In v0.39, islands and engines continue to use the legacy Go-function spelling.
 The `//gosx:island` directive marks a legacy component for client-side
 hydration. The compiler extracts signals, computed values, and handlers from
