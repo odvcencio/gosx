@@ -650,3 +650,130 @@ func Page() Node {
 		t.Fatalf("expected the RFC3339 diagnostic routed through the component reference, got %q", diags[0].Message)
 	}
 }
+
+// TestValidateRejectsInvalidLiveInterval and
+// TestValidateRejectsInvalidRegionInterval cover gosx#217's live-bound
+// regions: data-gosx-live-interval and data-gosx-region-interval share
+// data-gosx-revalidate-interval's own whole-seconds/whole-minutes subset,
+// so a value outside it (here, whole hours) fails the same way.
+func TestValidateRejectsInvalidLiveInterval(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <div data-gosx-live-src="/api/live/week" data-gosx-live-interval="1h"></div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-live-interval value "1h": must be a whole number of seconds or minutes`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+func TestValidateRejectsInvalidRegionInterval(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <div data-gosx-region-src="/api/wire/events" data-gosx-region-interval="not-a-duration"></div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-region-interval value "not-a-duration": must be a whole number of seconds or minutes`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsInvalidLiveBind covers a data-gosx-live-bind key with
+// an embedded space, which parseLiveBindKey in navigation.ts also rejects
+// at run time.
+func TestValidateRejectsInvalidLiveBind(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-live-bind="score t42"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-live-bind value "score t42": must be a "."-separated chain of non-empty keys`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateRejectsInvalidLiveFlashClass covers a data-gosx-live-flash-class
+// value with embedded whitespace, the same rule
+// isValidCountdownWarnClassToken already applies to a countdown warn class.
+func TestValidateRejectsInvalidLiveFlashClass(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <span data-gosx-live-bind="score:t42" data-gosx-live-flash-class="score flash"></span>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-live-flash-class value "score flash": must be one class name with no embedded whitespace`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+// TestValidateAllowsValidLiveAndRegionAttrs proves gosx#217's attributes do
+// not false-positive on every well-formed shape: a live text binding with a
+// flat key, a live text binding with a nested dot-separated key and a flash
+// class, and a region fragment refresh pair.
+func TestValidateAllowsValidLiveAndRegionAttrs(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <main>
+		<div data-gosx-live-src="/api/live/week" data-gosx-live-interval="10s">
+			<span data-gosx-live-bind="score:t42" data-gosx-live-flash-class="score-flash">0.0</span>
+			<span data-gosx-live-bind="status.mode">SCHEDULED</span>
+		</div>
+		<div data-gosx-region-src="/api/wire/events" data-gosx-region-interval="20s"></div>
+	</main>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	diags := ir.Validate(prog)
+	if len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for valid live/region attributes, got %+v", diags)
+	}
+}

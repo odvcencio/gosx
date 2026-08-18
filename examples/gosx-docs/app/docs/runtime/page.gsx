@@ -479,6 +479,85 @@ func Page() Node {
 				above) — periodic revalidation, the pause it pauses, and the managed-form error surface it reverts through all live there.
 			</p>
 		</section>
+		<section id="live-bound-regions">
+			<h2>Live-bound regions</h2>
+			<p>
+				Two declarative shapes close the gap that otherwise forces bespoke polling JavaScript downstream: a tiny, high-frequency value (a live score) binds straight to a polled JSON source; a growing or reordering list the server already renders (an activity feed) refreshes as a fragment instead of being rebuilt from JSON in the browser.
+			</p>
+			<h3>Live text binding</h3>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-live-src</span>
+				and
+				<span class="inline-code">data-gosx-live-interval</span>
+				to a region root, and
+				<span class="inline-code">data-gosx-live-bind</span>
+				to each descendant whose text should track one key from the polled object.
+			</p>
+			{CodeBlock("gosx", `<div data-gosx-live-src="/api/live/week" data-gosx-live-interval="10s">
+	    <span data-gosx-live-bind="score:t42" data-gosx-live-flash-class="score-flash">0.0</span>
+	    <span data-gosx-live-bind="status.mode">SCHEDULED</span>
+	</div>`)}
+			<p>
+				A bind key is a top-level key, or a
+				<span class="inline-code">"."</span>
+				-separated chain through nested objects, into the polled JSON — never through an array. There is no path language beyond that: an app that needs to key off a record identity (a team, a matchup) names its own flat key server-side, the same way the polled object's shape is already the app's own choice. Only a string, number, or boolean value is bindable; a missing key, a null value, or an object or array value leaves the element's current text untouched rather than blanking it.
+			</p>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-live-flash-class</span>
+				to a bound element to retrigger a CSS animation class whenever its resolved text actually changes — the same remove-then-re-add-after-a-reflow trick a hand-written score ticker already uses, now with zero application JavaScript.
+			</p>
+			<p>
+				Many independent live regions can exist on one page, each on its own timer, because each is free to poll a different source at a different cadence. Unlike periodic revalidation above, a live region fires its first tick immediately at setup rather than waiting out a full interval — the tick's own action is a cheap text patch, not a decision about whether a much heavier full-page revalidation is worth doing.
+			</p>
+			<h3>Periodic region refresh</h3>
+			<p>
+				A region already refreshes on a signal change or a hub event (see
+				<span class="inline-code">data-gosx-region</span>
+				,
+				<span class="inline-code">data-gosx-region-url</span>
+				,
+				<span class="inline-code">data-gosx-region-signal</span>
+				, and
+				<span class="inline-code">data-gosx-region-on</span>
+				). Add
+				<span class="inline-code">data-gosx-region-interval</span>
+				to refresh it on a plain timer too — the same whole-seconds/whole-minutes duration
+				<span class="inline-code">data-gosx-revalidate-interval</span>
+				accepts, composing with the other triggers rather than replacing them.
+			</p>
+			{CodeBlock("gosx", `<ul data-gosx-region data-gosx-region-url="/api/wire/events" data-gosx-region-interval="20s">
+	    <!-- server-rendered <li> items -->
+	</ul>`)}
+			<p>
+				The server renders the fragment as ordinary HTML; the runtime replaces the region's children with the fetched markup. A growing or reordering list the server is already positioned to render belongs here, not rebuilt from a JSON payload in application JavaScript.
+			</p>
+			<p>
+				A tick from the interval trigger alone skips, and retries next tick, while the document is hidden, a navigation is in flight, or the region contains the document's focused element or an element under an active pointer. A signal or hub-event trigger answers its own discrete, user-caused event immediately regardless — picking an option and having its own region refresh right away, even while that same element keeps focus, is the whole point of that trigger.
+			</p>
+			<p>
+				Every trigger kind shares one fetch path: it sends
+				<span class="inline-code">If-None-Match</span>
+				once a response has carried an
+				<span class="inline-code">ETag</span>
+				and treats a 304 as unchanged, and it restores the region element's own
+				<span class="inline-code">scrollTop</span>
+				/
+				<span class="inline-code">scrollLeft</span>
+				across a swap — useful when the region itself is a scrolling container, such as an activity feed with its own internal scroll.
+			</p>
+			<p>
+				<span class="inline-code">data-gosx-live-interval</span>
+				and
+				<span class="inline-code">data-gosx-region-interval</span>
+				reject a value outside the whole-seconds/whole-minutes subset at
+				<span class="inline-code">gosx check</span>
+				time, and
+				<span class="inline-code">data-gosx-live-bind</span>
+				rejects an empty or whitespace-containing key the same way.
+			</p>
+		</section>
 		<section id="lifecycle-scripts">
 			<h2>Managed and lifecycle scripts</h2>
 			<p>

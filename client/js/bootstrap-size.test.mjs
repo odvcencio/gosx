@@ -520,7 +520,13 @@ const budgets = [
   // now rebuilds a real WebGL renderer with capped, backed-off attempts —
   // `webglcontextrestored` is not guaranteed after an involuntary loss.
   // Measured: 1_531_976 / 415_197 / 333_609.
-  { file: "bootstrap.js", raw: 1_533_000, gzip: 415_700, brotli: 334_000 },
+  // Bumped raw 1_533_000 -> 1_535_000, gzip 415_700 -> 416_300, brotli
+  // 334_000 -> 334_600 for live-bound regions (gosx#217): declarative
+  // data-gosx-live-* text binding in navigation.ts, plus periodic polling,
+  // ETag conditional requests, and scroll preservation added to the
+  // existing data-gosx-region fragment-swap primitive in regions.ts.
+  // Measured: 1_534_529 / 416_028 / 334_368.
+  { file: "bootstrap.js", raw: 1_535_000, gzip: 416_300, brotli: 334_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -580,7 +586,12 @@ const budgets = [
   // 33_700 for the memoized manifest parse (window.__gosx_manifest) and the
   // opt-in data-gosx-release text drop. Measured: 141_870 / 38_407 / 33_558,
   // plus rounding headroom.
-  { file: "bootstrap-runtime.js", raw: 142_000, gzip: 38_500, brotli: 33_700 },
+  // Bumped raw 142_000 -> 145_000, gzip 38_500 -> 39_500, brotli 33_700 ->
+  // 34_500 for live-bound regions (gosx#217): declarative
+  // data-gosx-live-* text binding — periodic polling, its region-scoped
+  // interaction guard, and ETag/body-diff conditional requests. Measured:
+  // 144_189 / 39_212 / 34_215, plus rounding headroom.
+  { file: "bootstrap-runtime.js", raw: 145_000, gzip: 39_500, brotli: 34_500 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -621,7 +632,13 @@ const budgets = [
   // propagation merge (Stack 04's dual navigation dispatch/guard folded in
   // with Stack 05's mailbox work). Brotli headroom unchanged. Measured:
   // 105_622 / 27_965 / 24_830.
-  { file: "bootstrap-lite.js", raw: 105_622, gzip: 27_965, brotli: 24_841 },
+  // Bumped raw 105_622 -> 108_500, gzip 27_965 -> 29_200, brotli 24_841 ->
+  // 26_100 for live-bound regions (gosx#217): declarative
+  // data-gosx-live-* text binding in navigation.ts, plus periodic polling,
+  // ETag conditional requests, and scroll preservation added to the
+  // existing data-gosx-region fragment-swap primitive in regions.ts — both
+  // ride in the lite bundle. Measured: 107_874 / 28_741 / 25_605.
+  { file: "bootstrap-lite.js", raw: 108_500, gzip: 29_200, brotli: 26_100 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1304,9 +1321,16 @@ const routeBudgets = [
     // 62_500: bootstrap-runtime.js now memoizes the manifest parse, publishes
     // it as window.__gosx_manifest, and honors the opt-in data-gosx-release
     // text drop. Measured: 251_676 / 70_934 / 62_385, plus rounding headroom.
-    raw: 251_800,
-    gzip: 71_000,
-    brotli: 62_500,
+    // Bumped raw 251_800 -> 254_500, gzip 71_000 -> 72_200, brotli 62_500 ->
+    // 63_500 for live-bound regions (gosx#217): declarative
+    // data-gosx-live-* text binding in navigation.ts (bootstrap-runtime.js),
+    // plus periodic polling, ETag conditional requests, and scroll
+    // preservation added to the existing data-gosx-region fragment-swap
+    // primitive in regions.ts (bootstrap-feature-engines.js). Measured:
+    // 253_960 / 71_709 / 63_054, plus rounding headroom.
+    raw: 254_500,
+    gzip: 72_200,
+    brotli: 63_500,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1428,9 +1452,13 @@ const routeBudgets = [
     // Bumped raw 1_216_500 -> 1_218_500, gzip 323_700 -> 324_300, brotli
     // 273_500 -> 274_100 for the WebGL loss-recovery watchdog in the scene
     // mount. Measured: 1_217_388 / 323_925 / 273_646.
-    raw: 1_218_500,
-    gzip: 324_300,
-    brotli: 274_100,
+    // Bumped raw 1_218_500 -> 1_221_000, gzip 324_300 -> 325_200, brotli
+    // 274_100 -> 274_900 for live-bound regions (gosx#217) carried by
+    // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
+    // 1_219_707 / 324_730 / 274_303, plus rounding headroom.
+    raw: 1_221_000,
+    gzip: 325_200,
+    brotli: 274_900,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1520,9 +1548,13 @@ const routeBudgets = [
     // Bumped raw 1_043_000 -> 1_045_000 for the WebGL loss-recovery
     // watchdog. gzip and brotli headroom held. Measured: 1_043_484 /
     // 288_976 / 245_188.
-    raw: 1_045_000,
-    gzip: 289_000,
-    brotli: 245_300,
+    // Bumped raw 1_045_000 -> 1_047_500, gzip 289_000 -> 290_500, brotli
+    // 245_300 -> 246_500 for live-bound regions (gosx#217) carried by
+    // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
+    // 1_045_803 / 289_781 / 245_845, plus rounding headroom.
+    raw: 1_047_500,
+    gzip: 290_500,
+    brotli: 246_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1606,9 +1638,13 @@ const routeBudgets = [
     // Bumped raw 1_430_000 -> 1_432_000 for the WebGL loss-recovery
     // watchdog. gzip and brotli headroom held. Measured: 1_430_756 /
     // 382_685 / 323_648.
-    raw: 1_432_000,
-    gzip: 382_700,
-    brotli: 323_700,
+    // Bumped raw 1_432_000 -> 1_434_500, gzip 382_700 -> 384_000, brotli
+    // 323_700 -> 324_800 for live-bound regions (gosx#217) carried by
+    // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
+    // 1_433_075 / 383_490 / 324_305, plus rounding headroom.
+    raw: 1_434_500,
+    gzip: 384_000,
+    brotli: 324_800,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1696,9 +1732,15 @@ const routeBudgets = [
     // Bumped raw 1_064_000 -> 1_066_000, gzip 280_400 -> 280_900, brotli
     // 235_000 -> 235_500 for the WebGL loss-recovery watchdog. Measured:
     // 1_065_111 / 280_593 / 235_162.
-    raw: 1_066_000,
-    gzip: 280_900,
-    brotli: 235_500,
+    // Bumped raw 1_066_000 -> 1_068_000, gzip 280_900 -> 281_800, brotli
+    // 235_500 -> 236_200 for live-bound regions' data-gosx-live-* text
+    // binding (gosx#217), carried by bootstrap-runtime.js — this route
+    // does not load bootstrap-feature-engines.js, so it does not carry the
+    // regions.ts polling addition. Measured: 1_067_430 / 281_398 / 235_819,
+    // plus rounding headroom.
+    raw: 1_068_000,
+    gzip: 281_800,
+    brotli: 236_200,
   },
 
 ];
