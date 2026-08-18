@@ -93,6 +93,14 @@
   const LIVE_INTERVAL_ATTR = "data-gosx-live-interval";
   const LIVE_BIND_ATTR = "data-gosx-live-bind";
   const LIVE_FLASH_CLASS_ATTR = "data-gosx-live-flash-class";
+  // LIVE_SIGNAL_ATTR and LIVE_ON_ATTR (gosx#228) are the manual-refresh
+  // triggers, mirroring data-gosx-region's own -signal/-on grammar in
+  // regions.ts exactly (same shared-signal subscription, same
+  // "gosx:hub:event" listener matched against a space/comma-separated name
+  // list) rather than inventing a second trigger vocabulary. See the "Live
+  // region manual refresh" comment ahead of setupLiveRegions below.
+  const LIVE_SIGNAL_ATTR = "data-gosx-live-signal";
+  const LIVE_ON_ATTR = "data-gosx-live-on";
   // Declarative list filter (data-gosx-filter, gosx#215). See "Declarative
   // list filter" below for the full contract; these are the attribute,
   // class-hook, and timing constants it reads and writes.
@@ -5065,6 +5073,20 @@
 
   document.addEventListener("keydown", function(event) {
     const key = event.key;
+    // gosx#223: Escape must abort a POINTER drag too, not only a keyboard
+    // grab — a real PointerEvent gesture has no pointerId of its own to
+    // match against here, so endReorderPointerDrag is called the same way
+    // the gosx:navigate listener below already calls it (event = null,
+    // commit = false), which skips the pointerId check and runs the exact
+    // teardown pointercancel runs: DOM reverted, lift/placeholder classes
+    // cleared, pointer capture released, revalidation resumed, no submit.
+    if (activeReorderDrag) {
+      if (key === "Escape") {
+        event.preventDefault();
+        endReorderPointerDrag(null, false);
+      }
+      return;
+    }
     if (activeReorderKeyboard) {
       if (key === "Escape") {
         event.preventDefault();
@@ -5172,6 +5194,35 @@
   // response whose body is byte-identical to the last one even without
   // an `ETag` — the same body-diff short-circuit pollRevalidateSrc above
   // already uses for the page-wide poll.
+  //
+  // Manual refresh (gosx#228): LIVE_SIGNAL_ATTR and LIVE_ON_ATTR give a
+  // live region the same trigger vocabulary data-gosx-region already has —
+  // see regions.ts's own RegionSignalAttr/RegionEventsAttr — instead of
+  // interval polling being the only way to force a fetch. A managed
+  // action's result can update a shared signal a region declares with
+  // LIVE_SIGNAL_ATTR, or broadcast a hub event a region names in
+  // LIVE_ON_ATTR (space/comma-separated), and either one refetches that one
+  // region immediately: the "Sync now" control an app used to need bespoke
+  // JS for is just a managed action wired to the signal or hub event a live
+  // region is already listening for. Both are optional and compose with
+  // LIVE_INTERVAL_ATTR and with each other; LIVE_INTERVAL_ATTR itself is no
+  // longer required — a region with only a signal or event trigger polls
+  // never and refreshes only on that trigger. A signal- or
+  // hub-event-triggered refresh is a deliberately different case from the
+  // interval poll above: an explicit, discrete, user-caused trigger is not
+  // a background poll, so it is allowed to land even while the document is
+  // hidden, a navigation is in flight, or the region holds focus or an
+  // active pointer — the same distinction regions.ts's own docs draw
+  // between its interval trigger and its signal/hub-event triggers (see
+  // runLiveRegionFetch vs. runLiveRegionIntervalTick below). The one guard
+  // every trigger kind shares, manual or not, is record.inFlight: a region
+  // already mid-fetch never starts a second, overlapping one:
+  // record.inFlight simply stays a boolean skip-if-busy latch here (unlike
+  // regions.ts's own AbortController-backed abort-and-restart for a signal
+  // or hub-event trigger) — a live region's own tick is a cheap read-only
+  // GET with no per-request state to discard, so a trigger that lands
+  // mid-fetch is dropped rather than restarted, and whichever fetch is
+  // already in flight is left to finish and apply normally.
   let liveRegionRecords = [];
 
   // activeLivePointerTarget tracks the element under a currently-held
@@ -5219,13 +5270,40 @@
     return elementContainsNode(root, activeLivePointerTarget);
   }
 
+  // A candidate root is any element carrying LIVE_INTERVAL_ATTR (unchanged:
+  // this is also how a -interval set with no -src still reaches
+  // createLiveRegionRecord's own "requires data-gosx-live-src" warning
+  // below) OR LIVE_SRC_ATTR, LIVE_SIGNAL_ATTR, or LIVE_ON_ATTR alone — a
+  // live region no longer needs an interval at all when a signal or
+  // hub-event trigger is its only refresh source (gosx#228).
   function findLiveRegionRoots() {
     const found = [];
     walkElements(document.body, function(node) {
-      if (node.hasAttribute && node.hasAttribute(LIVE_INTERVAL_ATTR)) found.push(node);
+      if (
+        node.hasAttribute
+        && (
+          node.hasAttribute(LIVE_SRC_ATTR)
+          || node.hasAttribute(LIVE_INTERVAL_ATTR)
+          || node.hasAttribute(LIVE_SIGNAL_ATTR)
+          || node.hasAttribute(LIVE_ON_ATTR)
+        )
+      ) {
+        found.push(node);
+      }
       return true;
     });
     return found;
+  }
+
+  // splitLiveEvents mirrors regions.ts's own splitEvents byte for byte —
+  // this file resolves runtime globals independently of that one (see this
+  // section's own header comment), so the small parse is duplicated here
+  // rather than imported.
+  function splitLiveEvents(spec) {
+    return String(spec || "")
+      .split(/[\s,]+/)
+      .map(function(segment) { return segment.trim(); })
+      .filter(Boolean);
   }
 
   function findLiveBindElements(root) {
@@ -5318,16 +5396,24 @@
     }
   }
 
-  // createLiveRegionRecord validates root's LIVE_SRC_ATTR/LIVE_INTERVAL_ATTR
-  // pair and returns a fresh per-region poll record, or null (logging one
-  // console warning) for a missing or malformed pair — the same
-  // "disabled, not an error" handling setupPageRevalidation gives a bad
-  // data-gosx-revalidate-interval.
+  // createLiveRegionRecord validates root's LIVE_SRC_ATTR (always required)
+  // and returns a fresh per-region record, or null (logging one console
+  // warning) when it is missing or cross-origin — the same "disabled, not
+  // an error" handling setupPageRevalidation gives a bad
+  // data-gosx-revalidate-interval. LIVE_INTERVAL_ATTR is now optional
+  // (gosx#228): an invalid value disables only the periodic-poll trigger
+  // (warns, leaves intervalMs null) rather than the whole region, so a
+  // malformed -interval never silently breaks a working -signal or -on
+  // trigger on the same root. LIVE_SIGNAL_ATTR/LIVE_ON_ATTR need no
+  // validation of their own here, the same way RegionSignalAttr/
+  // RegionEventsAttr need none in regions.ts — an absent or unmatched
+  // signal name/event name simply never fires, same as a hub the page never
+  // connects.
   function createLiveRegionRecord(root) {
     const rawSrc = root.getAttribute(LIVE_SRC_ATTR);
     if (!rawSrc) {
       console.warn(
-        "[gosx] " + LIVE_INTERVAL_ATTR + " requires " + LIVE_SRC_ATTR + " on the same element; "
+        "[gosx] a live region requires " + LIVE_SRC_ATTR + " on the same element; "
         + "this live region is disabled",
       );
       return null;
@@ -5343,45 +5429,54 @@
     const src = parsedSrc ? parsedSrc.href : "";
     if (!src) return null;
     const rawInterval = root.getAttribute(LIVE_INTERVAL_ATTR);
-    let intervalMs = parseRevalidateInterval(rawInterval);
-    if (intervalMs == null) {
-      console.warn(
-        "[gosx] invalid " + LIVE_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval || ""))
-        + "; this live region is disabled",
-      );
-      return null;
+    let intervalMs = null;
+    if (rawInterval) {
+      intervalMs = parseRevalidateInterval(rawInterval);
+      if (intervalMs == null) {
+        console.warn(
+          "[gosx] invalid " + LIVE_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval))
+          + "; periodic refresh is disabled for this live region",
+        );
+      } else if (intervalMs > REVALIDATE_INTERVAL_CLAMP_MS) {
+        intervalMs = REVALIDATE_INTERVAL_CLAMP_MS;
+      }
     }
-    if (intervalMs > REVALIDATE_INTERVAL_CLAMP_MS) intervalMs = REVALIDATE_INTERVAL_CLAMP_MS;
     return {
       root: root,
       src: src,
       intervalMs: intervalMs,
+      signalName: root.getAttribute(LIVE_SIGNAL_ATTR) || "",
+      onEvents: splitLiveEvents(root.getAttribute(LIVE_ON_ATTR)),
       etag: "",
       lastBody: null,
       inFlight: false,
       disposed: false,
       hiddenSince: null,
       timerHandle: null,
+      unsubscribe: null,
+      hubListener: null,
     };
   }
 
-  // runLiveRegionTick is the per-record counterpart to runRevalidateTick +
-  // pollRevalidateSrc above, generalized to many independent records
-  // instead of one shared module-level poll. record.disposed (set by
+  // runLiveRegionFetch is the one fetch+apply path every trigger kind
+  // shares — the live-region counterpart to regions.ts's fetchRegion. Its
+  // only guard is record.inFlight ("no overlapping fetch", gosx#228): a
+  // manual trigger (LIVE_SIGNAL_ATTR change, a matched LIVE_ON_ATTR
+  // "gosx:hub:event", or the public refresh() API below) calls this
+  // directly, deliberately bypassing the document-hidden /
+  // navigation-in-flight / focused-or-pointed-at guards
+  // runLiveRegionIntervalTick applies below — an explicit, discrete,
+  // user-caused trigger is not a background poll, and must land the moment
+  // it fires even while the tab is hidden or the region holds focus, the
+  // same contract regions.ts documents for its own -signal/-on triggers
+  // bypassing regionPollBlocked. record.disposed (set by
   // teardownLiveRegions, which always runs before a fresh setupLiveRegions
   // scan) stands in for revalidateGeneration's staleness check: a fetch
   // started before a soft navigation that resolves after it discards its
   // response instead of writing it into a record no longer on
   // liveRegionRecords.
-  async function runLiveRegionTick(record) {
+  async function runLiveRegionFetch(record) {
     if (record.disposed || record.inFlight) return;
-    if (
-      documentIsHidden()
-      || navigationOrFormSubmissionInFlight()
-      || liveRegionInteractionActive(record.root)
-    ) {
-      return;
-    }
     record.inFlight = true;
     try {
       const headers = { Accept: "application/json" };
@@ -5418,19 +5513,53 @@
     }
   }
 
+  // runLiveRegionIntervalTick is the interval trigger's own wrapper around
+  // runLiveRegionFetch — the live-region counterpart to regions.ts's
+  // pollRegionTick/regionPollBlocked split. This is the ONLY path that
+  // applies the "never disturb a background tab or an interaction in
+  // progress" guard (documentIsHidden / navigationOrFormSubmissionInFlight
+  // / liveRegionInteractionActive): it is what the periodic setInterval
+  // below calls, what setupLiveRegions' own immediate first tick calls, and
+  // what the visibility-recovery catch-up calls — every one of them an
+  // unattended, repeatable background trigger, never a discrete user
+  // action. A LIVE_SIGNAL_ATTR change or a matched LIVE_ON_ATTR event calls
+  // runLiveRegionFetch directly instead, skipping this guard entirely (see
+  // that function's own doc comment for why).
+  function runLiveRegionIntervalTick(record) {
+    if (
+      documentIsHidden()
+      || navigationOrFormSubmissionInFlight()
+      || liveRegionInteractionActive(record.root)
+    ) {
+      return;
+    }
+    return runLiveRegionFetch(record);
+  }
+
   function teardownLiveRegions() {
     for (const record of liveRegionRecords) {
       record.disposed = true;
       if (record.timerHandle != null) clearInterval(record.timerHandle);
+      if (typeof record.unsubscribe === "function") record.unsubscribe();
+      if (record.hubListener) document.removeEventListener("gosx:hub:event", record.hubListener);
     }
     liveRegionRecords = [];
   }
 
-  // setupLiveRegions scans for every LIVE_INTERVAL_ATTR element on page
-  // boot and after every soft navigation (see finalizeNavigation and the
+  // setupLiveRegions scans for every live-region root (LIVE_SRC_ATTR,
+  // LIVE_INTERVAL_ATTR, LIVE_SIGNAL_ATTR, or LIVE_ON_ATTR) on page boot and
+  // after every soft navigation (see finalizeNavigation and the
   // initial-document replay below) — the same rescan lifecycle
   // setupPageRevalidation follows for the page-wide poll, generalized to
-  // many roots.
+  // many roots. Wiring the LIVE_SIGNAL_ATTR subscription and the
+  // LIVE_ON_ATTR "gosx:hub:event" listener here, exactly mirrors
+  // regions.ts's own bindRegion (gosx#228): same
+  // window.__gosx_subscribe_shared_signal call shape, same event-name
+  // match against event.detail.event. The immediate first tick, and the
+  // periodic setInterval, are both skipped when intervalMs is null — a
+  // region with only a signal or hub-event trigger fetches on that trigger
+  // alone and never polls, the same way a data-gosx-region with -signal or
+  // -on but no -interval never polls in regions.ts.
   function setupLiveRegions() {
     teardownLiveRegions();
     const roots = findLiveRegionRoots();
@@ -5441,22 +5570,59 @@
       const record = createLiveRegionRecord(root);
       if (!record) continue;
       records.push(record);
-      runLiveRegionTick(record);
-      record.timerHandle = setInterval(function() {
-        runLiveRegionTick(record);
-      }, record.intervalMs);
+      if (record.signalName && typeof window.__gosx_subscribe_shared_signal === "function") {
+        record.unsubscribe = window.__gosx_subscribe_shared_signal(
+          record.signalName,
+          function() { runLiveRegionFetch(record); },
+          { immediate: false },
+        );
+      }
+      if (record.onEvents.length) {
+        record.hubListener = function(event) {
+          const eventName = event && event.detail && event.detail.event;
+          if (eventName && record.onEvents.indexOf(eventName) >= 0) runLiveRegionFetch(record);
+        };
+        document.addEventListener("gosx:hub:event", record.hubListener);
+      }
+      if (record.intervalMs != null) {
+        runLiveRegionIntervalTick(record);
+        record.timerHandle = setInterval(function() {
+          runLiveRegionIntervalTick(record);
+        }, record.intervalMs);
+      }
     }
     liveRegionRecords = records;
+  }
+
+  // liveRegionRefresh is the public manual-refresh entry point (gosx#228),
+  // mirroring regions.ts's own exported refresh(element) — see
+  // window.__gosx.live below. It looks up an already-scanned record rather
+  // than lazily binding one (unlike regions.ts's refresh, which can bind
+  // on demand): every live region root is already discovered by
+  // setupLiveRegions' own rescan lifecycle, the same one every other
+  // declarative feature in this file follows, so there is no "not yet
+  // scanned" case to cover here. Calling it on an element that carries no
+  // live-region attribute at all, or before the runtime has scanned the
+  // page, resolves false rather than throwing.
+  function liveRegionRefresh(element) {
+    const record = liveRegionRecords.find(function(candidate) { return candidate.root === element; });
+    if (!record) return Promise.resolve(false);
+    return runLiveRegionFetch(record).then(function() { return true; });
   }
 
   // onLiveRegionsVisibilityChange runs a catch-up tick, per record, the
   // moment the document becomes visible again if at least one full
   // interval elapsed while it was hidden — the same reasoning
   // onRevalidateVisibilityChange documents above, generalized to many
-  // independently-timed records instead of one shared interval.
+  // independently-timed records instead of one shared interval. A record
+  // with no interval (a signal- or hub-event-only live region, gosx#228)
+  // has no polling cadence to catch up on, so it is skipped here entirely
+  // — its manual triggers keep working while hidden regardless, through
+  // runLiveRegionFetch directly (see that function's own doc comment).
   function onLiveRegionsVisibilityChange() {
     const hidden = documentIsHidden();
     for (const record of liveRegionRecords) {
+      if (record.intervalMs == null) continue;
       if (hidden) {
         if (record.hiddenSince == null) record.hiddenSince = Date.now();
         continue;
@@ -5465,12 +5631,93 @@
       record.hiddenSince = null;
       if (hiddenSince == null) continue;
       if (Date.now() - hiddenSince >= record.intervalMs) {
-        runLiveRegionTick(record);
+        runLiveRegionIntervalTick(record);
       }
     }
   }
 
   document.addEventListener("visibilitychange", onLiveRegionsVisibilityChange);
+
+  const liveAPI = {
+    refresh: liveRegionRefresh,
+  };
+  gosxHost.live = liveAPI;
+  window.__gosx.live = Object.assign(window.__gosx.live || {}, liveAPI);
+
+  // ---------------------------------------------------------------------
+  // Region-bootstrap diagnostic (data-gosx-region, gosx#227)
+  //
+  // data-gosx-region lives in regions.ts, which ships only inside a
+  // BOOTSTRAP bundle — never in this lean NavigationScript()/
+  // app.EnableNavigation() payload every page already loads regardless. A
+  // page that renders data-gosx-region without also opting into a
+  // bootstrap bundle (ctx.Runtime().EnableBootstrap(), or any of the
+  // other PageRuntime calls that imply it — an island, an engine, a hub)
+  // gets a region that is SILENTLY INERT: the server-rendered initial
+  // content is correct, but nothing ever fetches RegionURLAttr, on any
+  // trigger, ever — no error and no warning reaches a production
+  // console. This is genuinely not knowable statically (see
+  // runtime_contract.go's RegionAttr doc comment for the full reasoning:
+  // whether a page ends up with an active PageRuntime is a runtime side
+  // effect of executing arbitrary page and layout Go code — conditional
+  // logic, shared helpers, feature flags — not a property `gosx check`
+  // can read off the compiled template IR it inspects, which never even
+  // looks at the paired .server.go file or the resolved layout chain).
+  // So this is a runtime, dev-console-only safety net instead of a
+  // build-time or check-time one: once the page has had a fair chance to
+  // finish loading — giving a real bootstrap bundle, if the page
+  // declares one, time to fetch, execute, and mount regions.ts — warn
+  // exactly once — the diagnostic's own regionBootstrapWarned latch below
+  // makes checkRegionBootstrapDiagnostic idempotent regardless of how many
+  // times it is invoked — if a data-gosx-region element is present in the
+  // DOM but window.__gosx.regions (the marker regions.ts itself installs
+  // once it mounts) never appeared.
+  //
+  // Scoped deliberately to the INITIAL page load only, via window `load`:
+  // once a real bootstrap bundle mounts once in a session it stays
+  // mounted (this runtime never tears a loaded feature library back down
+  // on a later soft navigation), so "never mounted" is a property of the
+  // whole session, correctly observed once, near the moment a real
+  // bootstrap bundle would reasonably have finished fetching, executing,
+  // and installing window.__gosx.regions. A soft-navigated-to page is
+  // deliberately NOT re-checked here: doing so on a useful timescale would
+  // mean racing an asynchronously-fetched bootstrap script with no
+  // reliable "it's had long enough" signal to wait for, trading one
+  // silent failure mode for an unreliable, possibly-noisy one.
+  //
+  // REGION_DIAGNOSTIC_ATTR intentionally duplicates the literal string
+  // RegionAttr holds in package gosx's runtime_contract.go rather than
+  // importing it — this file has no dependency on that Go package, the
+  // same "resolves runtime globals independently, small values duplicated
+  // rather than imported" convention the live-region section above
+  // documents for its own REGION_POLL_MAX_INTERVAL_MS.
+  const REGION_DIAGNOSTIC_ATTR = "data-gosx-region";
+  let regionBootstrapWarned = false;
+
+  function checkRegionBootstrapDiagnostic() {
+    if (regionBootstrapWarned) return;
+    if (typeof console === "undefined" || typeof console.warn !== "function") return;
+    if (!document || typeof document.querySelector !== "function") return;
+    if (window.__gosx && window.__gosx.regions) return;
+    if (!document.querySelector("[" + REGION_DIAGNOSTIC_ATTR + "]")) return;
+    regionBootstrapWarned = true;
+    console.warn(
+      "[gosx] found " + REGION_DIAGNOSTIC_ATTR + " on this page, but its region runtime never "
+      + "loaded. " + REGION_DIAGNOSTIC_ATTR + " lives in the bootstrap bundle, not in the lean "
+      + "navigation runtime every page loads by default — call ctx.Runtime().EnableBootstrap() "
+      + "(or otherwise opt this page or its layout into a bootstrap bundle) so the region "
+      + "actually refreshes. Until then its server-rendered content is correct but never "
+      + "updates. See the client runtime guide's \"Live-bound regions\" section "
+      + "(\"Periodic region refresh\").",
+    );
+  }
+
+  // A real browser fires window `load` exactly once, well past the point
+  // any bootstrap bundle the page did request would reasonably have
+  // fetched, executed, and mounted regions.ts.
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("load", checkRegionBootstrapDiagnostic);
+  }
 
   function revalidateNavigation(options) {
     // Force a same-URL revalidation through the normal navigation lifecycle.

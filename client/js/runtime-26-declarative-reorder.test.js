@@ -600,3 +600,79 @@ test("pointer: pointercancel cancels an active drag and leaves the order untouch
   assert.equal(lastAnnouncement(env), "Reorder cancelled.");
   assert.equal(env.fetchCalls.length, 0);
 });
+
+test("pointer: Escape cancels an active drag the same way pointercancel does (gosx#223)", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { container, items } = buildList(env, 3, { handle: true });
+  withRect(container, { top: 0, bottom: 400, height: 400 });
+  withRect(items[0], { top: 0, height: 40, bottom: 40 });
+  withRect(items[1], { top: 40, height: 40, bottom: 80 });
+  withRect(items[2], { top: 80, height: 40, bottom: 120 });
+
+  const handle = items[0].__handle;
+  const pointerId = 9;
+  env.document.dispatchEvent({
+    type: "pointerdown",
+    target: handle,
+    pointerId,
+    pointerType: "mouse",
+    button: 0,
+    isPrimary: true,
+    clientY: 20,
+    preventDefault() {},
+  });
+  assert.equal(handle._capturedPointerID, pointerId, "the drag captures the pointer on lift");
+
+  // Drag past item[2]'s midpoint, same as the pointercancel test above, so
+  // the placeholder has actually moved before Escape has to undo it.
+  handle.dispatchEvent({ type: "pointermove", pointerId, clientY: 105 });
+  assert.equal(container.getAttribute("class"), "gosx-reorder--dragging");
+  assert.equal(items[0].getAttribute("class"), "gosx-reorder-item--lifted");
+  assert.notEqual(items[0].style.transform, "");
+
+  const escapeEvent = await keydown(env, handle, "Escape");
+  assert.equal(escapeEvent.defaultPrevented, true, "Escape must not also trigger a browser default action");
+
+  // Exactly pointercancel's own teardown: DOM reverted to the pre-drag
+  // order, no placeholder left behind, lift class and inline transform
+  // cleared, pointer capture released, and no action submitted.
+  assert.deepEqual(
+    container.children.map((c) => c.getAttribute("data-gosx-reorder-item")),
+    ["item-0", "item-1", "item-2"],
+    "Escape discards the placeholder and never moves the real item",
+  );
+  assert.equal(container.children.some((c) => c.hasAttribute("data-gosx-reorder-placeholder")), false);
+  assert.equal(container.getAttribute("class"), "", "the dragging class is cleared");
+  assert.equal(items[0].getAttribute("class"), "", "the lifted class is cleared");
+  assert.equal(items[0].style.transform, "", "the inline transform is cleared");
+  assert.equal(handle._capturedPointerID, null, "pointer capture is released");
+
+  await flushAsyncWork();
+  assert.equal(lastAnnouncement(env), "Reorder cancelled.");
+  assert.equal(env.fetchCalls.length, 0, "Escape never submits the managed action");
+
+  // A later pointerup for the same gesture (a real browser can still
+  // deliver one after Escape already tore the drag down) must be a no-op —
+  // activeReorderDrag is already null, so endReorderPointerDrag's own
+  // early-return guard is what this proves.
+  handle.dispatchEvent({ type: "pointerup", pointerId, clientY: 105 });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 0, "a stale pointerup after Escape submits nothing");
+});
+
+test("pointer: Escape is ignored with no active pointer drag, so a keyboard grab elsewhere still starts normally", async () => {
+  const env = createContext({ elements: [], fetchRoutes: {} });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const { items } = buildList(env, 2, { handle: true });
+  const handle = items[0].__handle;
+
+  // No pointer drag and no keyboard grab active: Escape is simply not this
+  // listener's concern (it never calls preventDefault, and nothing throws).
+  const escapeEvent = await keydown(env, handle, "Escape");
+  assert.equal(escapeEvent.defaultPrevented, false);
+
+  // The handle is still perfectly usable afterward.
+  await keydown(env, handle, " ");
+  assert.equal(handle.getAttribute("aria-grabbed"), "true");
+});

@@ -550,11 +550,19 @@ func Page() Node {
 			<p>
 				Add
 				<span class="inline-code">data-gosx-live-src</span>
-				and
-				<span class="inline-code">data-gosx-live-interval</span>
 				to a region root, and
 				<span class="inline-code">data-gosx-live-bind</span>
-				to each descendant whose text should track one key from the polled object.
+				to each descendant whose text should track one key from the polled object. Refresh it on
+				<span class="inline-code">data-gosx-live-interval</span>
+				, a plain timer, or — a declarative manual-refresh trigger, gosx#228 — on
+				<span class="inline-code">data-gosx-live-signal</span>
+				(a shared signal change) or
+				<span class="inline-code">data-gosx-live-on</span>
+				(a space/comma-separated hub event list), the exact same trigger grammar
+				<span class="inline-code">data-gosx-region-signal</span>
+				and
+				<span class="inline-code">data-gosx-region-on</span>
+				use below. All three compose; none is required on its own, but at least one must be present or the region never refreshes past its server-rendered initial text.
 			</p>
 			{CodeBlock("gosx", `<div data-gosx-live-src="/api/live/week" data-gosx-live-interval="10s">
 	    <span data-gosx-live-bind="score:t42" data-gosx-live-flash-class="score-flash">0.0</span>
@@ -571,9 +579,50 @@ func Page() Node {
 				to a bound element to retrigger a CSS animation class whenever its resolved text actually changes — the same remove-then-re-add-after-a-reflow trick a hand-written score ticker already uses, now with zero application JavaScript.
 			</p>
 			<p>
-				Many independent live regions can exist on one page, each on its own timer, because each is free to poll a different source at a different cadence. Unlike periodic revalidation above, a live region fires its first tick immediately at setup rather than waiting out a full interval — the tick's own action is a cheap text patch, not a decision about whether a much heavier full-page revalidation is worth doing.
+				Many independent live regions can exist on one page, each on its own timer, because each is free to poll a different source at a different cadence. Unlike periodic revalidation above, an interval-triggered live region fires its first tick immediately at setup rather than waiting out a full interval — the tick's own action is a cheap text patch, not a decision about whether a much heavier full-page revalidation is worth doing. A region declaring only a signal or hub-event trigger, with no interval, fires no tick at setup either — it stays on its server-rendered text until that trigger first fires.
+			</p>
+			<p>
+				A signal or hub-event trigger — a discrete, user-caused refresh, not a background poll — is deliberately allowed to land even while the document is hidden, a navigation is in flight, or the region holds focus or an active pointer: an app replacing a hand-written "Sync now" button wires it to a managed action whose result updates the signal (or that broadcasts the hub event) a live region already names, with no application JavaScript written to make it happen. Every trigger — interval, signal, hub event, or the public
+				<span class="inline-code">window.__gosx.live.refresh(element)</span>
+				escape hatch — shares one guard: a region already mid-fetch never starts a second, overlapping one; a trigger that lands mid-fetch is dropped, not queued.
 			</p>
 			<h3>Periodic region refresh</h3>
+			<p>
+				<strong>
+					<span class="inline-code">data-gosx-region</span>
+					requires a bootstrap bundle.
+				</strong>
+				Unlike every other primitive on this page,
+				<span class="inline-code">data-gosx-region</span>
+				lives in
+				<span class="inline-code">client/runtime/host/regions.ts</span>
+				, which ships only inside a bootstrap bundle — never in the lean
+				<span class="inline-code">NavigationScript()</span>
+				/
+				<span class="inline-code">app.EnableNavigation()</span>
+				payload this page's own
+				<span class="inline-code">client-navigation</span>
+				section installs and every page already loads regardless. Call
+				<span class="inline-code">ctx.Runtime().EnableBootstrap()</span>
+				on the page (or its layout) before using
+				<span class="inline-code">data-gosx-region</span>
+				:
+			</p>
+			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+	    ctx.Runtime().EnableBootstrap()
+	    return map[string]any{"title": "Wire"}, nil
+	}`)}
+			<p>
+				Without a bootstrap bundle,
+				<span class="inline-code">data-gosx-region</span>
+				and every
+				<span class="inline-code">data-gosx-region-*</span>
+				attribute is SILENTLY INERT: the server-rendered initial content is correct HTML, but nothing ever fetches or refreshes it, on any trigger, ever — no error reaches production. This is not statically knowable (whether a page ends up with an active bootstrap runtime is a runtime side effect of the page's or its layout's own Go code, not a property the compiled template can expose), so the one safety net is a runtime, dev-console warning the navigation runtime itself emits once, after the page loads, when it finds
+				<span class="inline-code">data-gosx-region</span>
+				in the DOM with no region runtime installed. Registering an island, an engine, or a hub on the same page also opts it into a bootstrap bundle, the same as
+				<span class="inline-code">EnableBootstrap()</span>
+				itself.
+			</p>
 			<p>
 				A region already refreshes on a signal change or a hub event (see
 				<span class="inline-code">data-gosx-region</span>
@@ -618,6 +667,75 @@ func Page() Node {
 				time, and
 				<span class="inline-code">data-gosx-live-bind</span>
 				rejects an empty or whitespace-containing key the same way.
+			</p>
+			<h3>Rendering a fragment from a Go handler</h3>
+			<p>
+				A
+				<span class="inline-code">data-gosx-region-url</span>
+				endpoint must render the same markup a page's own component already produces — otherwise the polled fragment and the page drift apart. Load the page's compiled program with
+				<span class="inline-code">route.LoadFileProgram</span>
+				and render one component from it with
+				<span class="inline-code">route.RenderProgramComponent</span>
+				, from a plain
+				<span class="inline-code">http.Handler</span>
+				in the same package as the page. This works for a component the page's own
+				<span class="inline-code">Page</span>
+				entry never renders directly, not only for
+				<span class="inline-code">Page</span>
+				itself.
+			</p>
+			{CodeBlock("gosx", `// page.gsx
+	type SignalCardProps struct {
+	    Label string
+	    Value string
+	}
+
+	component SignalCard(props: SignalCardProps) {
+	    return <li class="signal-card">{props.Label}: {props.Value}</li>
+	}
+
+	component Page() {
+	    return <ul data-gosx-region data-gosx-region-url="/wire/signal" data-gosx-region-interval="20s">
+	        <SignalCard label="Passing Yards" value="317" />
+	    </ul>
+	}`)}
+			{CodeBlock("go", `// page.server.go — same package as page.gsx
+	var pagePath = filepath.Join(thisDir, "page.gsx")
+
+	func ServeSignalFragment(w http.ResponseWriter, r *http.Request) {
+	    prog, err := route.LoadFileProgram(pagePath)
+	    if err != nil {
+	        http.Error(w, err.Error(), http.StatusInternalServerError)
+	        return
+	    }
+	    html, err := route.RenderProgramComponent(prog, "SignalCard", route.ProgramRenderEnv{
+	        Props: SignalCardProps{Label: "Passing Yards", Value: currentValue()},
+	    })
+	    if err != nil {
+	        http.Error(w, err.Error(), http.StatusInternalServerError)
+	        return
+	    }
+	    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	    w.Write([]byte(html))
+	}`)}
+			<p>
+				<span class="inline-code">route.LoadFileProgram</span>
+				reads through the same stat-keyed program cache a file-routed page renders through, so an edit to
+				<span class="inline-code">page.gsx</span>
+				reaches the fragment handler exactly the way it reaches the page's own hot reload — there is no second, independently-stale copy of the compiled component to fall behind.
+			</p>
+			<p>
+				A
+				<span class="inline-code">component</span>
+				declaration keeps its strict props boundary at this entry point: pass
+				<span class="inline-code">route.ProgramRenderEnv.Props</span>
+				a real
+				<span class="inline-code">SignalCardProps</span>
+				value, and the renderer proves every rendered field's presence and declared type before it renders — the same proof a nested strict-component call from inside another component's own body already runs on every render. A
+				<span class="inline-code">map[string]any</span>
+				never satisfies that proof, no matter how it is shaped, and a
+				<span class="inline-code">nil</span>
+				Props value fails closed with a named error instead of rendering.
 			</p>
 		</section>
 		<section id="declarative-filter">

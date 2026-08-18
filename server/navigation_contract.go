@@ -177,10 +177,33 @@ const (
 	// RegionURLAttr) instead of a second, competing fragment mechanism
 	// living here — see that constant's own doc comment for the full
 	// contract.
+	//
+	// NavigationLiveSignalAttr and NavigationLiveOnAttr (gosx#228) give a
+	// live region a manual-refresh trigger, mirroring RegionSignalAttr and
+	// RegionEventsAttr in package gosx's own runtime_contract.go exactly: a
+	// shared signal named by NavigationLiveSignalAttr, or a hub event named
+	// (space/comma-separated) in NavigationLiveOnAttr, forces one immediate
+	// fetch of that one region — a managed action's result updating the
+	// signal, or broadcasting the hub event, is the declarative "Sync now"
+	// control that previously needed bespoke JavaScript. Both compose with
+	// NavigationLiveIntervalAttr and with each other; NavigationLiveIntervalAttr
+	// is no longer required — a live region naming only a signal or an event
+	// trigger polls never and refreshes only on that trigger. A signal- or
+	// hub-event-triggered refresh is deliberately allowed even while the
+	// document is hidden, a navigation is in flight, or the region holds
+	// focus or an active pointer: it is a discrete, user-caused trigger, not
+	// a background poll, the same distinction package gosx's own
+	// RegionIntervalAttr doc comment draws for RegionSignalAttr/
+	// RegionEventsAttr. Every
+	// trigger kind — interval, signal, event, or the public
+	// window.__gosx.live.refresh(element) API — shares one guard: a region
+	// already mid-fetch never starts a second, overlapping one.
 	NavigationLiveSrcAttr        = "data-gosx-live-src"
 	NavigationLiveIntervalAttr   = "data-gosx-live-interval"
 	NavigationLiveBindAttr       = "data-gosx-live-bind"
 	NavigationLiveFlashClassAttr = "data-gosx-live-flash-class"
+	NavigationLiveSignalAttr     = "data-gosx-live-signal"
+	NavigationLiveOnAttr         = "data-gosx-live-on"
 	// NavigationFilterAttr, on an input, names the list it filters
 	// (gosx#215): an element id, or — when no element has that id — a CSS
 	// selector. Each row inside that target (any descendant, not only a

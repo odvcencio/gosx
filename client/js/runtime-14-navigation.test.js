@@ -6359,3 +6359,51 @@ test("cross-swap transition memory is keyed by id when present; a positional fal
     "cost of the positional fallback; give a watch element a stable id when its position in the document can change",
   );
 });
+
+// --- region-bootstrap diagnostic (gosx#227) ---------------------------------
+
+test("window load warns once when data-gosx-region is present but no region runtime ever mounted", () => {
+  const region = new FakeElement("div", null);
+  region.setAttribute("data-gosx-region", "true");
+  region.setAttribute("data-gosx-region-url", "/api/wire/events");
+  const env = createContext({ elements: [region] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(env.consoleLogs.warn.length, 0, "the diagnostic only runs on window load, not at script load");
+  env.context.dispatchEvent({ type: "load" });
+
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-region/);
+  assert.match(env.consoleLogs.warn[0], /EnableBootstrap/);
+
+  // A second `load` (a real browser fires it once, but this proves the
+  // check itself is idempotent rather than relying on the listener firing
+  // only once) must not warn again — regions.ts still never mounted, so
+  // there is nothing new to say.
+  env.context.dispatchEvent({ type: "load" });
+  assert.equal(env.consoleLogs.warn.length, 1);
+});
+
+test("window load never warns when no data-gosx-region element is present", () => {
+  const env = createContext({ elements: [] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.context.dispatchEvent({ type: "load" });
+
+  assert.equal(env.consoleLogs.warn.length, 0);
+});
+
+test("window load never warns when the region runtime already mounted before load fired", () => {
+  const region = new FakeElement("div", null);
+  region.setAttribute("data-gosx-region", "true");
+  region.setAttribute("data-gosx-region-url", "/api/wire/events");
+  const env = createContext({ elements: [region] });
+  // Simulates regions.ts (part of a real bootstrap bundle) having already
+  // mounted and installed window.__gosx.regions before window `load` fires —
+  // compatibility.ts's own `window.__gosx || (window.__gosx = {})` init
+  // preserves this pre-seeded object rather than replacing it.
+  env.context.__gosx = { regions: { mount: () => {} } };
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.context.dispatchEvent({ type: "load" });
+
+  assert.equal(env.consoleLogs.warn.length, 0, "a correctly bootstrapped page never warns");
+});

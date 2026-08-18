@@ -279,6 +279,15 @@ type fileRenderOptions struct {
 	// its own to set it from, so a file-routed page or layout cannot
 	// install a render profile today (gosx#185 m6).
 	Profile *RenderProfile
+	// EntryProps supplies the typed props value for a strict component
+	// rendered as the render entry (gosx#226). Only RenderProgramComponent
+	// sets this field, from ProgramRenderEnv.Props: renderFileNode, the
+	// entry point a file-routed page or layout renders through, has no
+	// Props field of its own to set it from, so a file-routed page or
+	// layout still cannot render with typed root props — a file-routed
+	// entry's data comes from ctx.Data and a DataLoader, not a Go-typed
+	// caller. See renderFileProgramHTML's strict-entry branch.
+	EntryProps any
 }
 
 func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {

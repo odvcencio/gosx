@@ -61,8 +61,32 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 	if !ok {
 		return "", false, fmt.Errorf("component %q not found", component)
 	}
+	entryEnv := opts.EvalEnv
 	if comp.Syntax == ir.ComponentSyntaxStrict && strings.TrimSpace(comp.PropsType) != "" {
-		return "", false, fmt.Errorf("strict render entry %s accepts props %s, but the file renderer has no root props binding; use a zero-props Page/Layout entry", comp.Name, comp.PropsType)
+		// gosx#226: a strict component rendered as the render entry (not as a
+		// nested <Component/> call inside some other component's body) has no
+		// caller-side attribute list for localComponentProps to prove props
+		// from. opts.EntryProps is the only other place a typed value can
+		// come from — RenderProgramComponent sets it from
+		// ProgramRenderEnv.Props. A nil EntryProps reproduces the original,
+		// unconditional refusal byte-for-byte: this render entry always
+		// required a props binding, and until a caller supplies one there is
+		// still none to prove.
+		if opts.EntryProps == nil {
+			return "", false, fmt.Errorf("strict render entry %s accepts props %s, but the file renderer has no root props binding; use a zero-props Page/Layout entry", comp.Name, comp.PropsType)
+		}
+		// strictSpreadProps is the exact same boundary proof a nested
+		// <Component {...props}/> call re-runs on every render (see
+		// localComponentProps): reflect kind must be exactly Struct (a map
+		// is rejected — it cannot prove field coverage), and every rendered
+		// field is re-checked against its declared leaf type. Rendering a
+		// strict component as an entry point goes through this same proof,
+		// never around it.
+		props, err := strictSpreadProps(comp, opts.EntryProps)
+		if err != nil {
+			return "", false, fmt.Errorf("render strict entry %s: %w", comp.Name, err)
+		}
+		entryEnv = entryEnv.withValue("props", props)
 	}
 	// One builder carries the whole document. The renderer used to allocate a
 	// fresh strings.Builder per element and let the parent copy the child's
@@ -70,7 +94,7 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 	// allocated 1,085,241 B to emit 5,556 bytes.
 	var b strings.Builder
 	b.Grow(fileProgramRenderSizeHint(prog))
-	renderer.writeNode(&b, comp.Root, opts.EvalEnv)
+	renderer.writeNode(&b, comp.Root, entryEnv)
 	if renderer.err != nil {
 		return "", renderer.replaced, renderer.err
 	}
