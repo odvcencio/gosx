@@ -55,11 +55,40 @@ function makeRegion(attrs, commandScripts) {
 // nodes. `engines` is a real Map (engineID -> {component, handle}), mirroring
 // window.__gosx.engines exactly, so sceneCommandEngineHandles()'s
 // `.forEach` works unmodified.
+// installManualTimers gives a test control over regions.ts's own
+// setInterval(...) calls (gosx#217's periodic region polling) instead of a
+// real background timer, the same manual-timer control
+// client/js/runtime-test-harness.js's installManualTimers gives the
+// navigation-runtime test suite. Always installed — a test that never
+// polls simply never calls run(), and the returned handle map stays empty.
+function installManualTimers(ctx) {
+  let nextHandle = 1;
+  const intervals = new Map();
+  ctx.setInterval = (cb, delay) => {
+    const handle = nextHandle++;
+    intervals.set(handle, { cb, delay: Number(delay || 0) });
+    return handle;
+  };
+  ctx.clearInterval = (handle) => { intervals.delete(handle); };
+  return {
+    count: () => intervals.size,
+    run: (delay) => {
+      const targetDelay = Number(delay || 0);
+      const entries = Array.from(intervals.entries()).filter(([, timer]) => timer.delay === targetDelay);
+      for (const [handle, timer] of entries) {
+        if (intervals.has(handle)) timer.cb();
+      }
+      return entries.length;
+    },
+  };
+}
+
 function runModule(regions, payload, opts) {
   opts = opts || {};
   const subs = [];
   const hubListeners = [];
   const readyListeners = [];
+  const pointerListeners = { pointerdown: [], pointerup: [], pointercancel: [] };
   const fetches = [];
   const warnings = [];
   const telemetry = [];
@@ -68,16 +97,31 @@ function runModule(regions, payload, opts) {
   const ctx = {
     console: { ...console, warn: (...args) => warnings.push(args) },
     encodeURIComponent,
-    fetch: (u, fetchOpts) => {
+    fetch: async (u, fetchOpts) => {
       fetches.push({ u, opts: fetchOpts });
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve(payload && payload.json),
-        text: () => Promise.resolve(payload && payload.text),
-      });
+      // `payload` is either the flat {json, text} shape every pre-gosx#217
+      // test still passes, a function of (url, fetchOpts, callIndex) a
+      // gosx#217 test uses to vary status/headers/body across repeated
+      // polls (an ETag round-trip, a 304, a changing body), or — awaited
+      // here — a Promise that function returns to hold a fetch open (the
+      // "never overlapping" in-flight test below).
+      const resolved = (await (typeof payload === "function" ? payload(u, fetchOpts, fetches.length) : payload)) || {};
+      const status = resolved.status != null ? resolved.status : 200;
+      const ok = resolved.ok != null ? resolved.ok : (status >= 200 && status < 300);
+      const headerMap = resolved.headers || {};
+      return {
+        ok,
+        status,
+        headers: { get: (name) => (headerMap[name] !== undefined ? headerMap[name] : null) },
+        json: () => Promise.resolve(resolved.json),
+        text: () => Promise.resolve(resolved.text),
+      };
     },
     document: {
       readyState: "complete",
+      activeElement: null,
+      hidden: !!opts.hidden,
+      body: {},
       querySelectorAll: (selector) => {
         if (selector === "[data-gosx-region]") return regions;
         if (selector === SCENE_COMMANDS_SELECTOR) return initialCommandScripts;
@@ -86,6 +130,7 @@ function runModule(regions, payload, opts) {
       addEventListener: (type, fn) => {
         if (type === "gosx:hub:event") hubListeners.push(fn);
         if (type === "gosx:ready") readyListeners.push(fn);
+        if (pointerListeners[type]) pointerListeners[type].push(fn);
       },
       removeEventListener: () => {},
       createElement: (tagName) => {
@@ -119,6 +164,7 @@ function runModule(regions, payload, opts) {
       __gosx: {
         engines,
         ...(opts.transport ? { transport: opts.transport } : {}),
+        ...(opts.navigation ? { navigation: opts.navigation } : {}),
       },
       ...(opts.replaceRuntimeContent ? {
         __gosx_replace_runtime_content: opts.replaceRuntimeContent,
@@ -126,10 +172,14 @@ function runModule(regions, payload, opts) {
     },
   };
   ctx.window.document = ctx.document;
+  const timers = installManualTimers(ctx);
   vm.createContext(ctx);
   vm.runInContext(scene3dBridgeSrc, ctx);
   vm.runInContext(moduleSrc, ctx);
-  return { subs, hubListeners, readyListeners, fetches, warnings, telemetry, engines, context: ctx };
+  const firePointer = (type, target) => {
+    for (const fn of pointerListeners[type] || []) fn({ target });
+  };
+  return { subs, hubListeners, readyListeners, fetches, warnings, telemetry, engines, timers, firePointer, context: ctx };
 }
 
 // makeEngineHandle returns a fake mounted-engine record + its handle's
@@ -464,4 +514,191 @@ test("initial-load scan applies immediately when the engine is already mounted (
   await tick();
 
   assert.deepEqual(asJSON(engine.calls), [commands]);
+});
+
+// -----------------------------------------------------------------------
+// gosx#217: periodic region polling (data-gosx-region-interval), the
+// interaction guard it alone observes, and the ETag/scroll behavior every
+// trigger kind now shares.
+// -----------------------------------------------------------------------
+
+test("data-gosx-region-interval fetches immediately at bind time and again on its own interval", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+  });
+  const { fetches, timers } = runModule([region], { text: "<ul>wire</ul>" });
+  await tick();
+  await tick();
+
+  assert.equal(fetches.length, 1, "the immediate first tick fetches without waiting a full interval");
+  assert.equal(region.innerHTML, "<ul>wire</ul>");
+  assert.equal(timers.count(), 1);
+
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 2);
+});
+
+test("an invalid data-gosx-region-interval warns once and disables only the interval trigger", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-signal": "$wire",
+    "data-gosx-region-interval": "not-a-duration",
+  });
+  const { subs, fetches, warnings, timers } = runModule([region], { text: "<ul>wire</ul>" });
+
+  assert.equal(timers.count(), 0, "no timer starts for an invalid interval");
+  assert.match(String(warnings[0][0]), /data-gosx-region-interval/);
+  // The region itself is not disabled — its other trigger still works.
+  assert.equal(subs.length, 1);
+  subs[0].fn("obj-1");
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1);
+});
+
+test("a poll tick skips while the region contains the document's focused element, and resumes once it clears", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+  });
+  const { fetches, timers, context } = runModule([region], { text: "<ul>wire</ul>" });
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1, "the immediate first tick is unaffected by a focus that starts later");
+
+  context.document.activeElement = region;
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1, "a focused region blocks its own poll tick");
+
+  context.document.activeElement = null;
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 2, "the tick resumes once focus clears");
+});
+
+test("a poll tick skips while a pointer is held down inside the region, and resumes after pointerup", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+  });
+  const { fetches, timers, firePointer } = runModule([region], { text: "<ul>wire</ul>" });
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1);
+
+  firePointer("pointerdown", region);
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 1, "an active pointer inside the region blocks its poll tick");
+
+  firePointer("pointerup", region);
+  timers.run(20000);
+  await tick();
+  await tick();
+  assert.equal(fetches.length, 2, "the tick resumes once the pointer releases");
+});
+
+test("a poll tick skips while the document is hidden", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+  });
+  const { fetches } = runModule([region], { text: "<ul>wire</ul>" }, { hidden: true });
+  await tick();
+  await tick();
+
+  assert.equal(fetches.length, 0, "a hidden document blocks even the immediate first tick");
+});
+
+test("a poll tick skips while a navigation is in flight", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+  });
+  const navigation = { getState: () => ({ phase: "pending" }) };
+  const { fetches } = runModule([region], { text: "<ul>wire</ul>" }, { navigation });
+  await tick();
+  await tick();
+
+  assert.equal(fetches.length, 0, "an in-flight navigation blocks the poll tick");
+});
+
+test("a poll tick never starts a second fetch while one from a previous tick is still in flight", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+  });
+  let resolveFetch;
+  const { fetches, timers } = runModule([region], () => new Promise((resolve) => { resolveFetch = resolve; }));
+  await tick();
+  assert.equal(fetches.length, 1, "the immediate first tick started one fetch");
+
+  timers.run(20000);
+  await tick();
+  assert.equal(fetches.length, 1, "a tick during an in-flight poll fetch starts no second one");
+
+  resolveFetch({ text: "<ul>wire</ul>" });
+  await tick();
+  await tick();
+});
+
+test("a region sends If-None-Match once a response carries an ETag, and a 304 leaves its content untouched", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+  });
+  let calls = 0;
+  const { fetches, timers } = runModule([region], () => {
+    calls += 1;
+    if (calls === 1) return { text: "<ul>wire v1</ul>", headers: { ETag: '"v1"' } };
+    return { status: 304, text: "" };
+  });
+  await tick();
+  await tick();
+  assert.equal(region.innerHTML, "<ul>wire v1</ul>");
+
+  timers.run(20000);
+  await tick();
+  await tick();
+
+  assert.equal(calls, 2);
+  assert.equal(fetches[1].opts.headers["If-None-Match"], '"v1"');
+  assert.equal(region.innerHTML, "<ul>wire v1</ul>", "a 304 leaves the previously-swapped content untouched");
+});
+
+test("a region restores its own scrollTop and scrollLeft across a swap", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-on": "change",
+  });
+  region.scrollTop = 120;
+  region.scrollLeft = 4;
+  const { hubListeners } = runModule([region], { text: "<ul>wire</ul>" });
+  hubListeners[0]({ detail: { event: "change" } });
+  await tick();
+  await tick();
+
+  assert.equal(region.innerHTML, "<ul>wire</ul>");
+  assert.equal(region.scrollTop, 120);
+  assert.equal(region.scrollLeft, 4);
+});
+
+test("a soft-navigation dispose clears a region's poll timer", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/api/wire/events",
+    "data-gosx-region-interval": "20s",
+  });
+  const { timers, context } = runModule([region], { text: "<ul>wire</ul>" });
+  await tick();
+  assert.equal(timers.count(), 1);
+
+  context.window.__gosx_dispose_declarative_regions(context.document);
+  assert.equal(timers.count(), 0, "disposal clears the poll timer along with the rest of the region's bindings");
 });

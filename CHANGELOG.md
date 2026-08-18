@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Added: live-bound regions
+
+- **`data-gosx-live-src` and `data-gosx-live-interval` declare a live-bound
+  text region** (gosx#217): the runtime polls a same-origin JSON object on
+  the given interval and patches the text of every descendant carrying
+  `data-gosx-live-bind`, a top-level key or a `.`-separated chain through
+  nested objects into that object. Only a string, number, or boolean value
+  is bindable; a missing key, a null value, or an object or array value
+  leaves the element's current text untouched. `data-gosx-live-flash-class`
+  retriggers a CSS animation class whenever a bound element's resolved text
+  actually changes. Many independent live regions can exist on one page,
+  each on its own timer; each fires an immediate first tick at setup,
+  subject to the same hidden-tab, in-flight-navigation, and
+  interaction guards periodic revalidation already uses, extended here with
+  a region-scoped check: a tick skips, and retries next tick, while the
+  region contains the document's focused element or an element under an
+  active pointer.
+- **`data-gosx-region-interval` adds periodic polling to the existing
+  `data-gosx-region` fragment-swap primitive** (gosx#217), composing with
+  its signal- and hub-event-driven triggers rather than replacing them. The
+  interval trigger alone observes the interaction guard above; a signal or
+  hub-event refresh still answers its own discrete, user-caused event
+  immediately. Every trigger now sends `If-None-Match` once a response has
+  carried an `ETag`, treats a 304 as unchanged, and restores the region
+  element's own `scrollTop`/`scrollLeft` across a swap.
+- **`gosx check` rejects a static `data-gosx-live-interval` or
+  `data-gosx-region-interval` value outside the whole-seconds/whole-minutes
+  duration subset, and a static `data-gosx-live-bind` value with an empty
+  or whitespace-containing key segment**, before the page ever serves.
 ### Added: declarative list filter and a visibility-aware heartbeat ping
 
 - **`data-gosx-filter` filters a list from a single input**, with no

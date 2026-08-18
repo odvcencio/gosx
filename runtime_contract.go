@@ -44,6 +44,23 @@ const (
 	RegionEventsAttr     = "data-gosx-region-on"
 	RegionFieldAttr      = "data-gosx-region-field"
 	RegionAllowEmptyAttr = "data-gosx-region-allow-empty"
+	// RegionIntervalAttr declares periodic polling for a data-gosx-region
+	// fragment (gosx#217), composing with its existing signal- and
+	// hub-event-driven triggers rather than replacing them: a region can
+	// refresh on a signal change, a hub event, AND an interval, all backed
+	// by the same RegionURLAttr fetch and swap. The value is the same
+	// whole-seconds/whole-minutes duration subset
+	// NavigationRevalidateIntervalAttr uses ("4s", "2m"). Unlike a
+	// signal or hub trigger — a discrete, user-caused event the region
+	// answers immediately — an interval-triggered refresh skips a tick
+	// entirely, and retries next tick, while the region contains the
+	// document's focused element or an element under an active pointer;
+	// this guard applies only to the interval trigger, never to a signal
+	// or hub-event refresh, so an existing "select an option, region
+	// updates immediately" pattern keeps working unchanged even while that
+	// select retains focus. See the client runtime guide's "Live-bound
+	// regions" section for the full contract.
+	RegionIntervalAttr = "data-gosx-region-interval"
 )
 
 // ProgressiveEnhancementOptions describes a browser enhancement while
@@ -235,10 +252,12 @@ func Action(tag string, opts ActionOptions, args ...any) Node {
 // may refresh after a signal or hub event. The initial children remain the
 // progressive-enhancement fallback.
 type RegionOptions struct {
-	URL        string
-	Signal     string
-	Events     []string
-	Field      string
+	URL      string
+	Signal   string
+	Events   []string
+	Field    string
+	Interval string
+
 	AllowEmpty bool
 }
 
@@ -266,6 +285,9 @@ func RegionAttrs(opts RegionOptions) AttrList {
 	}
 	if value := strings.TrimSpace(opts.Field); value != "" {
 		attrs = append(attrs, Attr(RegionFieldAttr, value))
+	}
+	if value := strings.TrimSpace(opts.Interval); value != "" {
+		attrs = append(attrs, Attr(RegionIntervalAttr, value))
 	}
 	if opts.AllowEmpty {
 		attrs = append(attrs, BoolAttr(RegionAllowEmptyAttr))

@@ -132,6 +132,55 @@ const (
 	NavigationReorderDefaultItemField  = "item_id"
 	NavigationReorderDefaultIndexField = "index"
 
+	// NavigationLiveSrcAttr and NavigationLiveIntervalAttr declare a
+	// live-bound text region (gosx#217): the runtime polls a same-origin JSON
+	// object on NavigationLiveIntervalAttr's period (the same duration grammar
+	// NavigationRevalidateIntervalAttr uses) and patches the text of every
+	// descendant that carries NavigationLiveBindAttr. A bind value is a
+	// top-level key into the polled object, or a dot-separated chain of keys
+	// through nested objects (never through an array) for one level of
+	// grouping, for example "score:t42" or "status.mode" — there is no path
+	// language beyond that: an app that needs to key off a record identity
+	// (a team, a matchup) names its own flat key server-side, the same way
+	// the polled object's shape is already the app's own choice. Only a
+	// string, number, or boolean value is bindable; a missing key, a null
+	// value, or an object/array value leaves the element's current text
+	// untouched rather than blanking it. NavigationLiveFlashClassAttr, on the
+	// same bound element, names a class the runtime removes and re-adds
+	// (retriggering a CSS animation) whenever that element's resolved text
+	// actually changes, including on the region's first tick if the
+	// server-rendered text was already stale.
+	//
+	// This is the regional, high-frequency sibling of
+	// NavigationRevalidateIntervalAttr's page-wide fingerprint poll: many
+	// independent live regions can exist on one page, each on its own timer,
+	// and each fires an immediate tick at setup (subject to the same guards)
+	// rather than waiting out a full interval, because the tick's own action
+	// here is the cheap text patch itself, not a decision about whether a
+	// much heavier full-page revalidation is worth doing. A region that
+	// finds the document's focused element, or an element under an active
+	// pointer, anywhere inside it skips that tick entirely and retries next
+	// tick — the same "never disturb an interaction in progress" contract
+	// NavigationReorderAttr's own periodic-revalidation pause enforces for
+	// its drag gesture, scoped here to the one live region instead of the
+	// whole page. It also sends `If-None-Match` once a response has carried
+	// an `ETag`, and skips re-applying a response whose body is
+	// byte-identical to the last one even without an `ETag` — the same
+	// body-diff short-circuit NavigationRevalidateSrcAttr's own poll
+	// already uses.
+	//
+	// A structurally growing or reordering list the server is already
+	// positioned to render (an activity feed, a signal wire) is the other
+	// gosx#217 shape: RegionIntervalAttr, in package gosx's own
+	// runtime_contract.go, adds periodic polling to the existing
+	// data-gosx-region fragment-swap primitive (RegionAttr /
+	// RegionURLAttr) instead of a second, competing fragment mechanism
+	// living here — see that constant's own doc comment for the full
+	// contract.
+	NavigationLiveSrcAttr        = "data-gosx-live-src"
+	NavigationLiveIntervalAttr   = "data-gosx-live-interval"
+	NavigationLiveBindAttr       = "data-gosx-live-bind"
+	NavigationLiveFlashClassAttr = "data-gosx-live-flash-class"
 	// NavigationFilterAttr, on an input, names the list it filters
 	// (gosx#215): an element id, or — when no element has that id — a CSS
 	// selector. Each row inside that target (any descendant, not only a

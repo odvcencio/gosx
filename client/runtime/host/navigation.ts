@@ -86,6 +86,13 @@
   const REORDER_AUTOSCROLL_EDGE_PX = 48;
   const REORDER_AUTOSCROLL_MAX_PX = 18;
   const REORDER_AUTOSCROLL_TICK_MS = 16;
+  // Live-bound text regions (data-gosx-live-*, gosx#217). See "Live-bound
+  // regions" below for the full contract; these are the attribute
+  // constants it reads.
+  const LIVE_SRC_ATTR = "data-gosx-live-src";
+  const LIVE_INTERVAL_ATTR = "data-gosx-live-interval";
+  const LIVE_BIND_ATTR = "data-gosx-live-bind";
+  const LIVE_FLASH_CLASS_ATTR = "data-gosx-live-flash-class";
   // Declarative list filter (data-gosx-filter, gosx#215). See "Declarative
   // list filter" below for the full contract; these are the attribute,
   // class-hook, and timing constants it reads and writes.
@@ -2511,6 +2518,10 @@
     // follow the exact same rescan lifecycle — see their own doc comments
     // above.
     setupPageWatchers();
+    // setupLiveRegions (gosx#217) follows the exact same rescan lifecycle,
+    // generalized to many independently-timed roots — see its own doc
+    // comment above.
+    setupLiveRegions();
     setupPageFilters();
   }
 
@@ -5112,6 +5123,355 @@
   gosxHost.reorder = reorderAPI;
   window.__gosx.reorder = Object.assign(window.__gosx.reorder || {}, reorderAPI);
 
+  // ---------------------------------------------------------------------
+  // Live-bound regions (data-gosx-live-*, gosx#217)
+  //
+  // A live region declares LIVE_SRC_ATTR (a same-origin JSON object) and
+  // LIVE_INTERVAL_ATTR (the same whole-seconds/whole-minutes duration
+  // subset parseRevalidateInterval accepts) on its own root. Every
+  // descendant carrying LIVE_BIND_ATTR — the root itself counts as its own
+  // descendant here — has its text kept in sync with one key from that
+  // object: a bare top-level key ("mode"), or a "."-separated chain
+  // through nested objects for one level of grouping ("status.mode").
+  // There is no array-index or selector syntax; a record keyed by an
+  // identity the app cares about (a team, a matchup) is the app's own flat
+  // key server-side ("score:t42"), the same way the polled object's shape
+  // is already the app's choice. Only a string, number, or boolean value
+  // is bindable — a missing key, a null value, or an object/array value
+  // leaves the element's current text untouched rather than blanking it.
+  // LIVE_FLASH_CLASS_ATTR, on the same bound element, names a class the
+  // runtime removes and re-adds (retriggering a CSS animation) whenever
+  // that element's resolved text actually changes.
+  //
+  // Unlike REVALIDATE_INTERVAL_ATTR's single page-wide root, MANY
+  // independent live regions can exist on one page — findLiveRegionRoots
+  // below returns every one — each on its own timer, because each is
+  // free to poll a different source at a different cadence (a fast score
+  // tick, a slower roster note). And unlike the page-wide poll, each
+  // fires its first tick immediately at setup (subject to the same
+  // guards below), rather than waiting out a full interval, because the
+  // tick's own action here is the cheap text patch itself, not a
+  // decision about whether a much heavier full-page revalidation is
+  // worth doing.
+  //
+  // A tick skips entirely, with no fetch and no DOM write, in the same
+  // cases a page-wide revalidate tick does (document hidden, a
+  // navigation or form submission in flight), plus one more scoped to
+  // the region itself: the document's focused element, or an element
+  // under an active pointer, anywhere inside the region root. This is
+  // the same "never disturb an interaction in progress" contract
+  // REORDER_CONTAINER_ATTR's own periodic-revalidation pause
+  // (suspendRevalidation above) enforces for its drag gesture, scoped
+  // here to the one region instead of the whole page — patching a
+  // sibling's score text should never stall because a manager is filling
+  // in a form somewhere else on the page, but it must never land under a
+  // pointer or a focused control it would otherwise disturb.
+  //
+  // Each region also sends `If-None-Match` once a response has carried
+  // an `ETag`, treating a 304 as "unchanged", and skips re-applying a
+  // response whose body is byte-identical to the last one even without
+  // an `ETag` — the same body-diff short-circuit pollRevalidateSrc above
+  // already uses for the page-wide poll.
+  let liveRegionRecords = [];
+
+  // activeLivePointerTarget tracks the element under a currently-held
+  // pointer, document-wide, for the interaction guard below — one
+  // delegated listener pair for every live region, not one per region,
+  // mirroring the reorder section's own single delegated pointerdown
+  // listener pattern above. Installed lazily, at most once, the first time
+  // setupLiveRegions actually finds a live region — never on a page that
+  // carries no data-gosx-live-interval element at all, so a page without
+  // this feature adds no listener overhead for it.
+  let activeLivePointerTarget = null;
+  let livePointerListenersInstalled = false;
+
+  function clearActiveLivePointerTarget() {
+    activeLivePointerTarget = null;
+  }
+
+  function ensureLivePointerListeners() {
+    if (livePointerListenersInstalled) return;
+    livePointerListenersInstalled = true;
+    document.addEventListener("pointerdown", function(event) {
+      activeLivePointerTarget = (event && event.target) || null;
+    }, { passive: true });
+    document.addEventListener("pointerup", clearActiveLivePointerTarget, { passive: true });
+    document.addEventListener("pointercancel", clearActiveLivePointerTarget, { passive: true });
+  }
+
+  function elementContainsNode(root, node) {
+    if (!root || !node) return false;
+    if (root === node) return true;
+    return !root.contains || root.contains(node);
+  }
+
+  // liveRegionInteractionActive is the region-scoped counterpart to
+  // focusedControlBlocksRevalidation above: true while the document's own
+  // focused element (ignoring the default "nothing focused" state, where
+  // document.activeElement reads as <body> and would otherwise match
+  // every region) or the element under an active pointer sits anywhere
+  // inside root.
+  function liveRegionInteractionActive(root) {
+    const active = document.activeElement;
+    if (active && active !== document.body && elementContainsNode(root, active)) {
+      return true;
+    }
+    return elementContainsNode(root, activeLivePointerTarget);
+  }
+
+  function findLiveRegionRoots() {
+    const found = [];
+    walkElements(document.body, function(node) {
+      if (node.hasAttribute && node.hasAttribute(LIVE_INTERVAL_ATTR)) found.push(node);
+      return true;
+    });
+    return found;
+  }
+
+  function findLiveBindElements(root) {
+    const found = [];
+    walkElements(root, function(node) {
+      if (node.hasAttribute && node.hasAttribute(LIVE_BIND_ATTR)) found.push(node);
+      return true;
+    });
+    return found;
+  }
+
+  // resolveLiveBindValue walks a "."-separated key chain through plain
+  // objects only — never through an array, and never past a missing key
+  // — mirroring isValidLiveBindKeyValue's own shape check in
+  // ir/validate.go.
+  function resolveLiveBindValue(payload, key) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return undefined;
+    }
+    let cursor = payload;
+    for (const segment of String(key || "").split(".")) {
+      if (!segment || cursor == null || typeof cursor !== "object" || Array.isArray(cursor)) {
+        return undefined;
+      }
+      if (!Object.prototype.hasOwnProperty.call(cursor, segment)) {
+        return undefined;
+      }
+      cursor = cursor[segment];
+    }
+    return cursor;
+  }
+
+  // liveBindTextValue stringifies only the three JSON scalar kinds a text
+  // node can meaningfully show; null, an object, and an array all return
+  // null so the caller leaves the element's current text alone instead of
+  // rendering "null", "[object Object]", or a JSON dump.
+  function liveBindTextValue(value) {
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return null;
+  }
+
+  // flashLiveBindElement removes then re-adds className, editing the class
+  // attribute directly rather than through element.classList — the same
+  // getAttribute/setAttribute convention setElementClassActive above
+  // documents for every other class read/write in this file. Unlike
+  // setElementClassActive, this write is unconditional: a flash must
+  // restart its CSS animation even when className was already present from
+  // a still-running previous flash, so there is no "already has it, skip"
+  // short-circuit here.
+  function flashLiveBindElement(node, className) {
+    if (!className || !node || typeof node.getAttribute !== "function" || typeof node.setAttribute !== "function") {
+      return;
+    }
+    const withoutFlashClass = elementClassNames(node).filter(function(name) {
+      return name !== className;
+    });
+    node.setAttribute("class", withoutFlashClass.join(" "));
+    // A real browser needs one reflow between the remove and the re-add for
+    // the class's CSS animation to restart. Reading an undefined property
+    // on a detached or synthetic element (a test double) is a harmless
+    // no-op rather than a throw, so this needs no extra guard.
+    void node.offsetWidth;
+    withoutFlashClass.push(className);
+    node.setAttribute("class", withoutFlashClass.join(" "));
+  }
+
+  // applyLiveBindPayload patches every LIVE_BIND_ATTR descendant of root
+  // from one polled JSON object, comparing each element's NEXT text
+  // directly against its CURRENT text (not a remembered "last applied"
+  // value) — the same compare-then-flash-only-on-change contract the
+  // gridiron-2000 score sync this feature replaces already used, so a
+  // region's very first tick can still apply (silently, unless the value
+  // actually differs from what the server rendered) without a separate
+  // "baseline" concept. Malformed JSON is a silent failure, same as any
+  // other poll body this file cannot use — the next tick tries again.
+  function applyLiveBindPayload(root, rawBody) {
+    let payload;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (_error) {
+      return;
+    }
+    for (const node of findLiveBindElements(root)) {
+      const next = liveBindTextValue(resolveLiveBindValue(payload, node.getAttribute(LIVE_BIND_ATTR)));
+      if (next == null) continue;
+      if (String(node.textContent || "").trim() === next) continue;
+      node.textContent = next;
+      flashLiveBindElement(node, node.getAttribute(LIVE_FLASH_CLASS_ATTR));
+    }
+  }
+
+  // createLiveRegionRecord validates root's LIVE_SRC_ATTR/LIVE_INTERVAL_ATTR
+  // pair and returns a fresh per-region poll record, or null (logging one
+  // console warning) for a missing or malformed pair — the same
+  // "disabled, not an error" handling setupPageRevalidation gives a bad
+  // data-gosx-revalidate-interval.
+  function createLiveRegionRecord(root) {
+    const rawSrc = root.getAttribute(LIVE_SRC_ATTR);
+    if (!rawSrc) {
+      console.warn(
+        "[gosx] " + LIVE_INTERVAL_ATTR + " requires " + LIVE_SRC_ATTR + " on the same element; "
+        + "this live region is disabled",
+      );
+      return null;
+    }
+    if (!isSameOriginNavigation(rawSrc, windowLocationHref())) {
+      console.warn(
+        "[gosx] " + LIVE_SRC_ATTR + " must be same-origin: " + JSON.stringify(String(rawSrc))
+        + "; this live region is disabled",
+      );
+      return null;
+    }
+    const parsedSrc = navigationURLParts(rawSrc);
+    const src = parsedSrc ? parsedSrc.href : "";
+    if (!src) return null;
+    const rawInterval = root.getAttribute(LIVE_INTERVAL_ATTR);
+    let intervalMs = parseRevalidateInterval(rawInterval);
+    if (intervalMs == null) {
+      console.warn(
+        "[gosx] invalid " + LIVE_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval || ""))
+        + "; this live region is disabled",
+      );
+      return null;
+    }
+    if (intervalMs > REVALIDATE_INTERVAL_CLAMP_MS) intervalMs = REVALIDATE_INTERVAL_CLAMP_MS;
+    return {
+      root: root,
+      src: src,
+      intervalMs: intervalMs,
+      etag: "",
+      lastBody: null,
+      inFlight: false,
+      disposed: false,
+      hiddenSince: null,
+      timerHandle: null,
+    };
+  }
+
+  // runLiveRegionTick is the per-record counterpart to runRevalidateTick +
+  // pollRevalidateSrc above, generalized to many independent records
+  // instead of one shared module-level poll. record.disposed (set by
+  // teardownLiveRegions, which always runs before a fresh setupLiveRegions
+  // scan) stands in for revalidateGeneration's staleness check: a fetch
+  // started before a soft navigation that resolves after it discards its
+  // response instead of writing it into a record no longer on
+  // liveRegionRecords.
+  async function runLiveRegionTick(record) {
+    if (record.disposed || record.inFlight) return;
+    if (
+      documentIsHidden()
+      || navigationOrFormSubmissionInFlight()
+      || liveRegionInteractionActive(record.root)
+    ) {
+      return;
+    }
+    record.inFlight = true;
+    try {
+      const headers = { Accept: "application/json" };
+      if (record.etag) headers["If-None-Match"] = record.etag;
+      let response;
+      try {
+        response = await gosxRuntimeRequest(record.src, { headers: headers, cache: "no-store" });
+      } catch (_error) {
+        return; // Fetch errors skip silently; the next tick tries again.
+      }
+      if (record.disposed) return;
+      if (response && response.status === 304) return;
+      if (!response || !response.ok) return;
+      let body;
+      try {
+        body = await response.text();
+      } catch (_error) {
+        return;
+      }
+      if (record.disposed) return;
+      const nextEtag = response.headers && typeof response.headers.get === "function"
+        ? (response.headers.get("ETag") || "")
+        : "";
+      if (nextEtag) record.etag = nextEtag;
+      if (body === record.lastBody) return;
+      record.lastBody = body;
+      try {
+        applyLiveBindPayload(record.root, body);
+      } catch (error) {
+        reportNavigationFailure("live region apply", error, { source: record.src });
+      }
+    } finally {
+      record.inFlight = false;
+    }
+  }
+
+  function teardownLiveRegions() {
+    for (const record of liveRegionRecords) {
+      record.disposed = true;
+      if (record.timerHandle != null) clearInterval(record.timerHandle);
+    }
+    liveRegionRecords = [];
+  }
+
+  // setupLiveRegions scans for every LIVE_INTERVAL_ATTR element on page
+  // boot and after every soft navigation (see finalizeNavigation and the
+  // initial-document replay below) — the same rescan lifecycle
+  // setupPageRevalidation follows for the page-wide poll, generalized to
+  // many roots.
+  function setupLiveRegions() {
+    teardownLiveRegions();
+    const roots = findLiveRegionRoots();
+    if (roots.length === 0) return;
+    ensureLivePointerListeners();
+    const records = [];
+    for (const root of roots) {
+      const record = createLiveRegionRecord(root);
+      if (!record) continue;
+      records.push(record);
+      runLiveRegionTick(record);
+      record.timerHandle = setInterval(function() {
+        runLiveRegionTick(record);
+      }, record.intervalMs);
+    }
+    liveRegionRecords = records;
+  }
+
+  // onLiveRegionsVisibilityChange runs a catch-up tick, per record, the
+  // moment the document becomes visible again if at least one full
+  // interval elapsed while it was hidden — the same reasoning
+  // onRevalidateVisibilityChange documents above, generalized to many
+  // independently-timed records instead of one shared interval.
+  function onLiveRegionsVisibilityChange() {
+    const hidden = documentIsHidden();
+    for (const record of liveRegionRecords) {
+      if (hidden) {
+        if (record.hiddenSince == null) record.hiddenSince = Date.now();
+        continue;
+      }
+      const hiddenSince = record.hiddenSince;
+      record.hiddenSince = null;
+      if (hiddenSince == null) continue;
+      if (Date.now() - hiddenSince >= record.intervalMs) {
+        runLiveRegionTick(record);
+      }
+    }
+  }
+
+  document.addEventListener("visibilitychange", onLiveRegionsVisibilityChange);
+
   function revalidateNavigation(options) {
     // Force a same-URL revalidation through the normal navigation lifecycle.
     // The returned promise rejects without mutating the current document when
@@ -5144,6 +5504,7 @@
     setupPageHeartbeat();
     setupPageCountdowns();
     setupPageWatchers();
+    setupLiveRegions();
     setupPageFilters();
     const actions = window.__gosx && window.__gosx.actions;
     if (actions && typeof actions.refreshBindings === "function") {
@@ -5246,6 +5607,7 @@
   setupPageHeartbeat();
   setupPageCountdowns();
   setupPageWatchers();
+  setupLiveRegions();
   setupPageFilters();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", refreshInitialDocumentNavigation, { once: true });

@@ -228,6 +228,26 @@ const (
 	watchEffectAttr = "data-gosx-watch-effect"
 )
 
+// data-gosx-live-* (gosx#217), pinned the same way against
+// server/navigation_contract.go and client/runtime/host/navigation.ts, and
+// data-gosx-region-interval (gosx#217), pinned against RegionIntervalAttr in
+// runtime_contract.go and client/runtime/host/regions.ts. liveIntervalAttr
+// and regionIntervalAttr are each the interval half of a "poll a
+// same-origin source on an interval" pair, the same shape
+// data-gosx-revalidate-interval declares; data-gosx-live-src and
+// data-gosx-region-url are free-form same-origin URLs, checked only at run
+// time (isSameOriginNavigation), the same as data-gosx-revalidate-src —
+// neither has a const in this file, since neither is in the vocabulary
+// this file checks statically. liveBindAttr is the one live-region value
+// with a shape this file can usefully reject ahead of time: a JSON key (or
+// dot-separated key chain), never empty and never containing whitespace.
+const (
+	liveIntervalAttr   = "data-gosx-live-interval"
+	liveBindAttr       = "data-gosx-live-bind"
+	liveFlashClassAttr = "data-gosx-live-flash-class"
+	regionIntervalAttr = "data-gosx-region-interval"
+)
+
 // countdownThresholdIntegerPattern and countdownThresholdDurationPattern
 // mirror the small declarative duration subset
 // parseCountdownThresholdSeconds accepts in client/runtime/host/navigation.ts:
@@ -247,6 +267,19 @@ var (
 	// isValidCountdownWarnClassToken in navigation.ts for the identical
 	// rule applied client-side.
 	countdownWarnClassTokenPattern = regexp.MustCompile(`^\S+$`)
+	// pollIntervalValuePattern mirrors parseRevalidateInterval's own small
+	// declarative subset in navigation.ts exactly: a whole number of seconds
+	// or minutes only ("4s", "90s", "2m"), not the wider hour/minute/second
+	// combination countdownThresholdDurationPattern above accepts — this
+	// file does not statically validate data-gosx-revalidate-interval
+	// itself (see the const block's own comment above), but
+	// data-gosx-live-interval and data-gosx-region-interval share its exact
+	// grammar, so they share this pattern.
+	pollIntervalValuePattern = regexp.MustCompile(`^[0-9]+(?:s|m)$`)
+	// liveBindKeyPattern matches liveBindAttr's own shape check in
+	// navigation.ts: one or more non-empty, whitespace-free segments joined
+	// by ".".
+	liveBindKeyPattern = regexp.MustCompile(`^[^\s.]+(?:\.[^\s.]+)*$`)
 )
 
 // isValidCountdownThresholdValue reports whether value parses under the
@@ -355,19 +388,43 @@ func isValidWatchEffectValue(value string) bool {
 	return true
 }
 
+// isValidPollIntervalValue reports whether value parses under
+// pollIntervalValuePattern above (gosx#217): the same "whole seconds or
+// whole minutes only" subset parseRevalidateInterval accepts in
+// navigation.ts, shared by data-gosx-live-interval and
+// data-gosx-region-interval.
+func isValidPollIntervalValue(value string) bool {
+	return pollIntervalValuePattern.MatchString(strings.TrimSpace(value))
+}
+
+// isValidLiveBindKeyValue reports whether value parses as a
+// data-gosx-live-bind key (gosx#217): one or more non-empty,
+// whitespace-free segments joined by "." — a top-level key, or a chain of
+// nested-object keys, into the region's polled JSON object. There is no
+// array-index or selector syntax here; see NavigationLiveBindAttr's own
+// doc comment in server/navigation_contract.go for why the grammar stays
+// this small.
+func isValidLiveBindKeyValue(value string) bool {
+	return liveBindKeyPattern.MatchString(strings.TrimSpace(value))
+}
+
 // validateStaticCountdownAttr flags a static data-gosx-countdown-*,
-// data-gosx-watch, or data-gosx-watch-effect value outside its documented
-// vocabulary: an instant that is not valid RFC3339, a format outside the
-// two render modes the countdown runtime supports ("dhms" and "mm:ss"), a
-// segment name outside the four the runtime fills
-// (days|hours|minutes|seconds), a warn or cue value outside the shared
+// data-gosx-watch, data-gosx-watch-effect, data-gosx-live-*, or
+// data-gosx-region-interval value outside its documented vocabulary: an instant
+// that is not valid RFC3339, a format outside the two render modes the
+// countdown runtime supports ("dhms" and "mm:ss"), a segment name outside
+// the four the runtime fills (days|hours|minutes|seconds), a warn or cue
+// value outside the shared
 // threshold:token pairs grammar (gosx#213), a then action other than
-// "revalidate", a watch condition with no "=", or a watch effect list with
-// an unrecognized token (gosx#214). This follows the same fail-closed
-// principle as the ".length" rule above: a bad value here renders a
-// silently inert (or silently ignored) countdown or watcher today, with
-// nothing at the terminal to explain why, so Validate now catches it at
-// check time instead.
+// "revalidate", a watch condition with no "=", a watch effect list with an
+// unrecognized token (gosx#214), a live or region interval outside the
+// whole-seconds/whole-minutes subset data-gosx-revalidate-interval uses, a
+// live bind key with an empty or whitespace-containing segment, or a live
+// flash class with embedded whitespace (gosx#217). This follows the same
+// fail-closed principle as the ".length" rule above: a bad value here
+// renders a silently inert (or silently ignored) countdown, watcher, or
+// live/region poll today, with nothing at the terminal to explain why, so
+// Validate now catches it at check time instead.
 //
 // A dynamic expression value ({...}) is exempt — attr.Kind is AttrExpr for
 // those, and this method only runs from the AttrStatic case in validateAttr
@@ -441,6 +498,29 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 				Span:    node.Span,
 				Message: fmt.Sprintf("invalid %s value %q: must be a comma-separated list of \"class:<name>\", \"title\", or \"cue:<name>\" tokens", watchEffectAttr, attr.Value),
 				Hint:    `a "cue:<name>" token's name must be "beep" or "chime"; a "class:<name>" token may add "@<selector>" to target another element`,
+			})
+		}
+	case liveIntervalAttr, regionIntervalAttr:
+		if !isValidPollIntervalValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a whole number of seconds or minutes", attr.Name, attr.Value),
+				Hint:    `for example "4s" or "2m" — the same subset data-gosx-revalidate-interval accepts`,
+			})
+		}
+	case liveBindAttr:
+		if !isValidLiveBindKeyValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be a \".\"-separated chain of non-empty keys", liveBindAttr, attr.Value),
+				Hint:    `for example "score:t42" or "status.mode" — no embedded whitespace, no array index`,
+			})
+		}
+	case liveFlashClassAttr:
+		if !isValidCountdownWarnClassToken(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be one class name with no embedded whitespace", liveFlashClassAttr, attr.Value),
 			})
 		}
 	}
