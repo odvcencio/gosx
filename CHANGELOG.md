@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.48.0 (2026-08-18)
 
 ### Fixed: a strict spread from a non-strict component is rejected at compile time
 
