@@ -72,16 +72,16 @@
 
   ```go
   component Panel(props: PanelProps) {
-  	return <section class={"panel tone-" + props.Tone}>
-  		<h2 class="panel__title">{props.Title}</h2>
-  		<div class="panel__body">{children}</div>
-  	</section>
+      return <section class={"panel tone-" + props.Tone}>
+          <h2 class="panel__title">{props.Title}</h2>
+          <div class="panel__body">{children}</div>
+      </section>
   }
 
   component Dashboard(props: DashboardProps) {
-  	return <Panel Title={props.Heading} Tone={props.Tone}>
-  		<p>{props.Summary}</p>
-  	</Panel>
+      return <Panel Title={props.Heading} Tone={props.Tone}>
+          <p>{props.Summary}</p>
+      </Panel>
   }
   ```
 
