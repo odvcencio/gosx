@@ -273,6 +273,10 @@ func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, 
 		return
 	}
 
+	if r.writeSharedComponent(b, node, env) {
+		return
+	}
+
 	if comp, ok := r.components[node.Tag]; ok {
 		switch {
 		case comp.IsIsland:

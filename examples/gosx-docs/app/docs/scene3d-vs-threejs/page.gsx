@@ -1,5 +1,7 @@
 package docs
 
+import ui "../../ui"
+
 func Page() Node {
 	return <div>
 		<section id="summary">
@@ -11,10 +13,10 @@ func Page() Node {
 				If you want the short answer: three.js covers far more of browser 3D rendering, while Scene3D integrates a typed scene model with server rendering, routing, signals, hubs, capability verdicts, and browser-free tooling. Compare bytes from the exact applications you would ship.
 			</p>
 			<div class="vs-stat-row">
-				{StatCard("Typed Go", "scene authoring and lowering")}
-				{StatCard("3", "browser rendering backends")}
-				{StatCard("glTF 2.0", "the focused model-loader contract")}
-				{StatCard("Per route", "manifest-backed byte accounting")}
+				<ui.StatCard Value="Typed Go" Label="scene authoring and lowering" />
+				<ui.StatCard Value="3" Label="browser rendering backends" />
+				<ui.StatCard Value="glTF 2.0" Label="the focused model-loader contract" />
+				<ui.StatCard Value="Per route" Label="manifest-backed byte accounting" />
 			</div>
 		</section>
 		<section id="overlap">

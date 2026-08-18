@@ -21,6 +21,33 @@ type PackageFile struct {
 	Program *ir.Program
 }
 
+// LoadPackageDir loads every .gsx file in dir belonging to one package, the
+// way LoadPackage does from a specific file, but from a directory alone —
+// the shape a shared import names (an ordinary directory, e.g. "./ui"), not
+// a specific file. It picks the alphabetically first .gsx file in dir as
+// the package reference and delegates to LoadPackage, so a directory loaded
+// this way and the identical directory loaded by naming one of its files
+// directly can never resolve two different package sets.
+func LoadPackageDir(dir string) ([]PackageFile, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var first string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".gsx") {
+			continue
+		}
+		if first == "" || entry.Name() < first {
+			first = entry.Name()
+		}
+	}
+	if first == "" {
+		return nil, fmt.Errorf("no .gsx files found in %s", dir)
+	}
+	return LoadPackage(filepath.Join(dir, first))
+}
+
 // LoadPackage reads and compiles every .gsx file in the same directory and
 // package as path. The target file selects the package; an alphabetically
 // earlier route helper with a different package can never redirect the load.
@@ -312,8 +339,22 @@ func TranspilePackage(files []PackageFile) (map[string]string, error) {
 }
 
 // TranspilePackageWithImportNames projects a package using package identifiers
-// resolved by the Go tool in the target module/workspace.
+// resolved by the Go tool in the target module/workspace. It carries no
+// shared-import resolution (see TranspilePackageWithSharedImports): a
+// package with no shared import is unaffected either way, and a package
+// that does have one fails closed with errUnresolvedSharedCall's message
+// naming gosx check, exactly as it did before shared imports existed.
 func TranspilePackageWithImportNames(files []PackageFile, importNames map[string]string) (map[string]string, error) {
+	return TranspilePackageWithSharedImports(files, importNames, nil)
+}
+
+// TranspilePackageWithSharedImports projects a package using package
+// identifiers resolved by the Go tool, and resolves every shared (./ or
+// ../ prefixed) import through sharedImports — the map gosx check
+// (strictcheck) builds by loading each shared directory with
+// LoadPackageDir and CollectSharedComponents. A nil or empty sharedImports
+// reproduces TranspilePackageWithImportNames exactly.
+func TranspilePackageWithSharedImports(files []PackageFile, importNames map[string]string, sharedImports map[string]SharedImport) (map[string]string, error) {
 	if err := ValidateStrictPackageBoundaries(files); err != nil {
 		return nil, err
 	}
@@ -327,7 +368,12 @@ func TranspilePackageWithImportNames(files []PackageFile, importNames map[string
 
 	out := make(map[string]string, len(files))
 	for _, file := range files {
-		generated, _, err := StrictProjectionWithImportNames(file, importNames)
+		generated, err := Transpile(file.Source, Options{
+			SourceFile:       file.Path,
+			strictProjection: true,
+			importNames:      importNames,
+			SharedImports:    sharedImports,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("transpile %s: %w", file.Path, err)
 		}

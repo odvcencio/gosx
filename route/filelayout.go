@@ -288,6 +288,19 @@ type fileRenderOptions struct {
 	// entry's data comes from ctx.Data and a DataLoader, not a Go-typed
 	// caller. See renderFileProgramHTML's strict-entry branch.
 	EntryProps any
+	// SourceDir is the absolute directory of the .gsx file being rendered.
+	// A shared (./ or ../ prefixed) import resolves relative to it — see
+	// writeSharedComponent. ir.Program carries no reliable directory of its
+	// own at render time (Program.Dir is empty unless the build pipeline
+	// sets it, and the compiled-program cache keys on content hash alone,
+	// so two files with byte-identical content could share one cached
+	// Program and one wrong Dir — see loadCachedGSXProgram), so this field
+	// is how renderGSXFile threads the one directory it actually knows.
+	// Empty for a program rendered through RenderProgramComponent, which
+	// has no file path of its own to set it from: a shared call inside such
+	// a program fails clearly at render time rather than resolving against
+	// the wrong directory.
+	SourceDir string
 }
 
 func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
@@ -327,6 +340,13 @@ func renderGSXFile(path string, opts fileRenderOptions, scopeID string) (gosx.No
 	if err != nil {
 		return gosx.Node{}, err
 	}
+
+	// opts.SourceDir resolves a shared (./ or ../ prefixed) import; see
+	// writeSharedComponent and fileRenderOptions.SourceDir's doc comment.
+	// path is absolute here (every caller of renderFileNode already resolves
+	// one — FileLayoutWithOptionsAndRegistry, and the file router's own page
+	// resolution), so filepath.Dir needs no further Abs call.
+	opts.SourceDir = filepath.Dir(path)
 
 	htmlOut, replaced, err := renderFileProgramHTML(prog, component, opts)
 	if err != nil {

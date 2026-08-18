@@ -2032,6 +2032,10 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 		return
 	}
 	if l.strictServer && IsComponent(tag) && !strictCallee {
+		if l.isSharedComponentTag(tag) {
+			l.validateSharedComponentCallShape(n, tag, attrs)
+			return
+		}
 		l.errorf(n, "strict server component %s is not renderable; v0.39 strict server components may call only same-file strict components", tag)
 		return
 	}
@@ -2095,6 +2099,51 @@ func (l *lowerer) validateStrictComponentCall(n *gotreesitter.Node, tag string, 
 		}
 	}
 	l.validateStrictCalleeChildren(n, tag, children)
+}
+
+// isSharedComponentTag reports whether tag is a dotted component tag whose
+// alias names a shared (./ or ../ prefixed) import recorded in this file's
+// own Program.Imports (lowerImportSpec runs before any component, so
+// l.prog.Imports is already complete — see isImportAlias's doc comment for
+// the same guarantee).
+//
+// This is a purely syntactic, file-local signal. Lower performs no file
+// I/O — the LSP runs it synchronously on every keystroke with no debounce,
+// so adding I/O here would be paid per keystroke (shared components design,
+// section 6) — so this function can say only that the call SHAPE reaches
+// through a shared import, never that the target directory actually
+// declares a matching strict component. gosx check (strictcheck) resolves
+// the target directory and proves that, through the real Go compiler.
+func (l *lowerer) isSharedComponentTag(tag string) bool {
+	alias, _, ok := SplitMemberTag(tag)
+	if !ok {
+		return false
+	}
+	for _, imp := range l.prog.Imports {
+		if imp.Alias == alias {
+			return IsSharedImportPath(imp.Path)
+		}
+	}
+	return false
+}
+
+// validateSharedComponentCallShape proves call SHAPE only for a shared
+// (./ or ../ prefixed) import call: single spread versus named attributes,
+// the one rule every strict callee answers to regardless of where its body
+// lives (singleSpreadShape). It never inspects the target directory's
+// declared props — Lower has no way to read them (see isSharedComponentTag)
+// — so a named-attribute call always passes here; gosx check proves field
+// names and types against the target's real Go declaration, and the file
+// renderer re-proves spread coverage at the render boundary
+// (strictSpreadProps), exactly as it already does for a same-file strict
+// callee.
+func (l *lowerer) validateSharedComponentCallShape(n *gotreesitter.Node, tag string, attrs []Attr) {
+	if !attrHasSpread(attrs) {
+		return
+	}
+	if _, ok := singleSpreadShape(attrs); !ok {
+		l.errorf(n, "shared component call %s accepts at most one spread attribute and no other attributes", tag)
+	}
 }
 
 // validateStrictCalleeChildren is the ONE arity rule for children at a callee

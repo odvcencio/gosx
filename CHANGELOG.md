@@ -1,5 +1,83 @@
 # Changelog
 
+## Unreleased
+
+### Added: a shared component call executes end to end for a strict caller
+
+- **A strict caller's shared component call now renders.** WP4 (v0.49.0)
+  proved the Go projection type-checks a call through a relative import
+  (`import ui "./ui"`; `<ui.TeamMark Tone={props.Tone}/>`), but `ir.Lower`
+  still refused the call outright for a strict caller, and the file
+  renderer had no way to execute one even where it compiled. Both gaps are
+  closed. `TeamMark`, the app that motivated this work, no longer needs a
+  separate, already-drifted copy in every page directory that renders it.
+- **`ir.Lower` accepts the call by SHAPE alone**, never by field: a dotted
+  tag whose alias names a relative (`./` or `../`) import in the file's own
+  `Program.Imports` is admitted, and only its spread-versus-named-attribute
+  shape is checked (`ir.SplitMemberTag`, `ir.IsSharedImportPath`). Lower
+  performs no file I/O — the LSP runs it on every keystroke with no
+  debounce — so it cannot and does not check whether the target directory
+  declares a matching component; that proof belongs to `gosx check`.
+- **`gosx check` (strictcheck) resolves a shared import through the real Go
+  compiler.** It loads the target directory (`transpile.LoadPackageDir`),
+  builds its component map (`transpile.CollectSharedComponents`), and adds
+  the target's own projected Go to `goCheck`'s overlay at a virtual path
+  inside the target's real directory, so `go list` resolves its true Go
+  import path and the caller's rewritten import statement resolves against
+  real declarations. A shared import that resolves outside the project's
+  `app/` directory is rejected with a diagnostic naming the import and both
+  directories: `gosx build` stages only `app/`, `content/`, and `public/`
+  into the deployment bundle, so a shared component elsewhere would
+  type-check locally and then not ship.
+- **The file renderer loads and executes the target component.**
+  `route.fileProgramRenderer.writeSharedComponent` resolves the target
+  directory relative to the rendering `.gsx` file's own directory
+  (`fileRenderOptions.SourceDir`, threaded from the file router's existing
+  path), compiles every `.gsx` file there through the same stat-keyed cache
+  a page renders through, and renders the resolved component on a second
+  renderer bound to its own `ir.Program` — `writeLocalComponentWithChildren`
+  requires this, because a node ID means nothing outside the `Nodes` slice
+  that owns it. Following PR #246's contract, children render on the
+  PARENT renderer (which owns the call node) before the finished node
+  crosses to the child renderer. A shared call carrying children into a
+  component that does not place `{children}` fails closed with the same
+  message a same-file call gives, rather than silently dropping the
+  content — `ir.Lower` cannot prove this for a shared call (no I/O), and
+  the Go compiler cannot catch it either (every strict component projects
+  a variadic `children` parameter that accepts any number of arguments), so
+  this is the one point that ever proves it.
+- **`transpile.TranspilePackageWithSharedImports`** and
+  **`transpile.LoadPackageDir`** are new exported entry points; every
+  existing exported function keeps its old signature and behavior
+  unchanged with a nil or absent shared-imports argument.
+- Known, accepted limitation: an editor's live diagnostics can lag `gosx
+  check` for a field typo at a shared call site, because resolving the
+  target directory on every keystroke (the LSP's synchronous, no-debounce
+  loop) is worse than a brief lag. `gosx check` and the build gate remain
+  authoritative.
+
+### Changed: examples/gosx-docs's StatCard, CapabilityTag, and Tooltip move to `.gsx`
+
+- **`StatCard` and `CapabilityTag` are now shared `.gsx` components** in
+  `examples/gosx-docs/app/ui/`, reached the same way `<ui.TeamMark/>` is:
+  an ordinary relative import. `StatCard`'s 7 existing call sites moved
+  from `{StatCard(value, label)}` to `<ui.StatCard Value={value}
+  Label={label}/>`; `CapabilityTag` had no call sites to move.
+- **`Tooltip` also moved**, and keeps no Go-callable form: its trigger
+  content only has a channel through `{children}`, which binds at a
+  nested call site inside another component's body, never at a Go-side
+  render entry.
+- **`CodeBlock` stays hand-built in Go.** Its job is embedding
+  already-rendered, syntax-highlighted HTML as raw markup, and a strict
+  component has no channel for that: a typed props field may only be a
+  scalar or a same-file struct, never a `gosx.Node`, and `{children}` binds
+  only at a nested call site, never at a Go-side render entry
+  (`route.ProgramRenderEnv` carries no `Children` field). `CodeBlock`'s 103
+  call sites all render it as an entry, so neither channel is open to it.
+  `examples/gosx-docs/app/components.go`'s own raw (`gosx.El`-family)
+  element-building call count drops from 13 to 7 as a result: 6 eliminated
+  (`StatCard` 3, `CapabilityTag` 1, `Tooltip` 2), `CodeBlock`'s 7 remain.
+
 ## v0.49.0 (2026-08-18)
 
 ### Fixed: LoadFileProgram's documented fragment pattern broke under a `-trimpath` build
