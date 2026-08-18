@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fixed: data-gosx-action-signal no longer requires a WASM engine
+
+- **`data-gosx-set` and `data-gosx-action-signal` now write a shared signal
+  even when the page loads no WASM engine** (gosx#233). `actions.ts`'s
+  `setSignal` wrote through `window.__gosx_set_shared_signal` only — the
+  setter a WASM engine installs — and did nothing when that hook was
+  absent: no error, no warning, and every `window.__gosx_subscribe_shared_signal`
+  listener stayed silent. With `data-gosx-live-signal` (gosx#228) and the
+  pre-existing `data-gosx-region-signal`, that meant a documented refresh
+  trigger could do nothing at all on a page with no engine. `setSignal` now
+  falls back to `window.__gosx_notify_shared_signal` — the same JS-only
+  writer `client/js/bootstrap-src/00-textlayout.js` already uses for its
+  own shared-signal store — whenever the engine hook is absent or reports
+  an error. An installed engine still wins and is called exactly once; the
+  fallback never runs alongside it, so a subscriber never sees a write
+  twice.
+
 ### Added: render a page's own component from a Go handler
 
 - **`route.RenderProgramComponent` renders a strict component as the render
