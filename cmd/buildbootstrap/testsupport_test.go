@@ -104,11 +104,38 @@ func chunk(name string, rels ...string) output {
 // useOutputs replaces the package chunk table for one test and restores it
 // afterwards. The table is a package variable, so every entry point the tool
 // exposes (run, verifyChunkClosure, chunksManifestJSON) then sees the fixture.
+//
+// It also clears inlineAssets to nil. The real inlineAssets table names
+// client/runtime/host sources outside every synthetic fixture directory, so
+// a fixture test that left it in place would fail on a missing file that has
+// nothing to do with what the test is checking. A test that means to cover
+// inlineAssets uses useInlineAssets instead.
 func useOutputs(t *testing.T, entries ...output) {
 	t.Helper()
-	previous := outputs
+	previousOutputs := outputs
+	previousInline := inlineAssets
 	outputs = entries
-	t.Cleanup(func() { outputs = previous })
+	inlineAssets = nil
+	t.Cleanup(func() {
+		outputs = previousOutputs
+		inlineAssets = previousInline
+	})
+}
+
+// useInlineAssets replaces the package inline-asset table for one test and
+// restores it afterwards, the same way useOutputs does for outputs. It also
+// clears outputs to nil so a test that means to cover inlineAssets alone
+// does not also have to satisfy the real bundle graph.
+func useInlineAssets(t *testing.T, entries ...output) {
+	t.Helper()
+	previousOutputs := outputs
+	previousInline := inlineAssets
+	outputs = nil
+	inlineAssets = entries
+	t.Cleanup(func() {
+		outputs = previousOutputs
+		inlineAssets = previousInline
+	})
 }
 
 // runTool calls the tool's entry point with the given command line, the way the
