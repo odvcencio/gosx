@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"log"
 	"log/slog"
@@ -866,25 +865,7 @@ func renderDocumentWithContext(doc *DocumentContext) string {
 	b.WriteString(htmlAttrs)
 	b.WriteString(">\n<head>\n")
 	b.WriteString("<meta charset=\"utf-8\">\n")
-	// gosx#237: a page reached through PageState.Head() (the App-driven
-	// default path, a custom layout, or a custom document function)
-	// already has its viewport meta tag inside headHTML by now — Metadata
-	// resolves one, defaulted or overridden, unconditionally. This is the
-	// backstop for the free-function callers below Metadata entirely
-	// (HTMLDocument/HTMLDocumentWithLanguage/HTMLDocumentWithNonce called
-	// with a hand-built head Node and no *Context in the loop at all), and
-	// it defers to whatever headHTML already carries either way — so a
-	// caller that wrote its own viewport tag, migrated or not, never gets a
-	// second one alongside it.
-	if !strings.Contains(headHTML, viewportMetaMarker) {
-		viewport := DefaultViewport
-		if doc != nil {
-			viewport = resolveViewport(doc.Metadata.Viewport)
-		}
-		b.WriteString(`<meta name="viewport" content="`)
-		b.WriteString(html.EscapeString(viewport))
-		b.WriteString("\">\n")
-	}
+	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	b.WriteString("<title>")
 	b.WriteString(title)
 	b.WriteString("</title>\n")

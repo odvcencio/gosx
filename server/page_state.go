@@ -30,12 +30,6 @@ type PageState struct {
 	// add time; Head reads it instead of re-rendering every head node on
 	// every call. See headContainsNavigationScriptMarker.
 	hasNavigationScript bool
-	// hasViewportMeta mirrors hasNavigationScript for the viewport meta tag
-	// (gosx#237): AddHead sets it once, at add time, when a caller already
-	// added its own `<meta name="viewport" ...>` node, so Head can skip the
-	// metadata-resolved default instead of emitting both. See
-	// headContainsViewportMetaMarker.
-	hasViewportMeta bool
 }
 
 // NewPageState creates an empty shared page-state container.
@@ -225,9 +219,7 @@ func (s *PageState) SetNavigationHead(fn func(nonce string) gosx.Node) {
 //
 // Each added node is checked for the navigation script marker here, once,
 // instead of at every later Head() call. See headContainsNavigationScriptMarker
-// and hasNavigationScript. gosx#237: the same per-node check also looks for a
-// hand-written viewport meta tag, so Head() does not add the metadata-resolved
-// default on top of one a caller already wrote.
+// and hasNavigationScript.
 func (s *PageState) AddHead(nodes ...gosx.Node) {
 	if s == nil {
 		return
@@ -239,9 +231,6 @@ func (s *PageState) AddHead(nodes ...gosx.Node) {
 		s.head = append(s.head, node)
 		if !s.hasNavigationScript && headContainsNavigationScriptMarker(node) {
 			s.hasNavigationScript = true
-		}
-		if !s.hasViewportMeta && headContainsViewportMetaMarker(node) {
-			s.hasViewportMeta = true
 		}
 	}
 }
@@ -300,7 +289,7 @@ func (s *PageState) Head() gosx.Node {
 		return gosx.Text("")
 	}
 	nodes := []gosx.Node{}
-	if metaHead := s.metadata.head(SiteMetadata{}, s.requestPath, !s.hasViewportMeta); !metaHead.IsZero() {
+	if metaHead := s.metadata.head(SiteMetadata{}, s.requestPath); !metaHead.IsZero() {
 		nodes = append(nodes, metaHead)
 	}
 	nodes = append(nodes, s.head...)
@@ -473,23 +462,4 @@ const navigationScriptAttrMarker = `<script ` + NavigationScriptAttr + `="true"`
 // instead of duplicating it.
 func headContainsNavigationScriptMarker(node gosx.Node) bool {
 	return strings.Contains(gosx.RenderHTML(node), navigationScriptAttrMarker)
-}
-
-// viewportMetaMarker matches the literal opening tag a viewport meta tag
-// renders as — both server.renderMetaTag's own attribute order (name,
-// then content) and the equivalent hand-written
-// gosx.Attrs(gosx.Attr("name", "viewport"), gosx.Attr("content", ...))
-// call gosx#237 replaces. See viewportMetaMarker's sibling constant,
-// navigationScriptAttrMarker, above for why the match anchors to the tag
-// opener rather than the bare attribute value.
-const viewportMetaMarker = `<meta name="viewport"`
-
-// headContainsViewportMetaMarker reports whether one head node already
-// carries a viewport meta tag. AddHead calls this once per node, at add
-// time, mirroring headContainsNavigationScriptMarker: a caller that has not
-// migrated off a hand-written AddHead(gosx.El("meta", ...viewport...)) call
-// keeps working unchanged — Head() skips the metadata-resolved default
-// instead of emitting a second tag alongside it.
-func headContainsViewportMetaMarker(node gosx.Node) bool {
-	return strings.Contains(gosx.RenderHTML(node), viewportMetaMarker)
 }

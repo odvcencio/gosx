@@ -30,12 +30,6 @@ type Metadata struct {
 	Manifest     string
 	Verification *Verification
 	ThemeColor   []ThemeColor
-	// Viewport overrides the responsive viewport meta tag content. Every
-	// document gets a viewport tag by default (DefaultViewport) — most
-	// pages never set this field. Set it only for a page that needs
-	// non-standard content, for example a fixed-scale canvas page adding
-	// maximum-scale=1, user-scalable=no. See gosx#237.
-	Viewport string
 
 	OpenGraph *OpenGraph
 	Twitter   *Twitter
@@ -44,11 +38,6 @@ type Metadata struct {
 	Other  []MetaTag
 	Links  []LinkTag
 }
-
-// DefaultViewport is the responsive viewport meta tag content every
-// document gets when no page sets Metadata.Viewport, and when nothing has
-// already added its own viewport meta tag through AddHead. See gosx#237.
-const DefaultViewport = "width=device-width, initial-scale=1"
 
 // Title describes title inheritance and formatting rules.
 type Title struct {
@@ -196,11 +185,6 @@ type ResolvedMetadata struct {
 	Manifest     string
 	Verification []MetaTag
 	ThemeColor   []MetaTag
-	// Viewport is the resolved viewport meta tag content: Metadata.Viewport
-	// when set, DefaultViewport otherwise. Head renders it unless the
-	// caller asked it suppressed (see headChecked's includeViewport
-	// parameter) because a caller-supplied viewport tag is already present.
-	Viewport string
 
 	OpenGraph ResolvedOpenGraph
 	Twitter   ResolvedTwitter
@@ -321,15 +305,11 @@ func (s SiteMetadata) Metadata() Metadata {
 // Validation errors are logged and the best-effort resolved metadata is still
 // rendered; callers that need diagnostics should use HeadChecked.
 func (m Metadata) Head() gosx.Node {
-	return m.head(SiteMetadata{}, "", true)
+	return m.head(SiteMetadata{}, "")
 }
 
-// head renders metadata into head nodes. includeViewport is false when the
-// caller (PageState.Head) has already seen a hand-written viewport meta tag
-// among its own AddHead nodes, so the resolved default is not duplicated —
-// see gosx#237 and PageState.hasViewportMeta.
-func (m Metadata) head(site SiteMetadata, requestPath string, includeViewport bool) gosx.Node {
-	node, err := m.headChecked(site, requestPath, includeViewport)
+func (m Metadata) head(site SiteMetadata, requestPath string) gosx.Node {
+	node, err := m.headChecked(site, requestPath)
 	if err != nil {
 		log.Printf("gosx metadata error: %v", err)
 	}
@@ -339,14 +319,11 @@ func (m Metadata) head(site SiteMetadata, requestPath string, includeViewport bo
 // HeadChecked renders metadata into head nodes and returns validation errors
 // instead of panicking.
 func (m Metadata) HeadChecked() (gosx.Node, error) {
-	return m.headChecked(SiteMetadata{}, "", true)
+	return m.headChecked(SiteMetadata{}, "")
 }
 
-func (m Metadata) headChecked(site SiteMetadata, requestPath string, includeViewport bool) (gosx.Node, error) {
+func (m Metadata) headChecked(site SiteMetadata, requestPath string) (gosx.Node, error) {
 	resolved, err := resolveMetadata(mergeMetadata(site.Metadata(), m), requestPath)
-	if !includeViewport {
-		resolved.Viewport = ""
-	}
 	return resolved.Head(), err
 }
 
@@ -355,9 +332,6 @@ func (m Metadata) headChecked(site SiteMetadata, requestPath string, includeView
 func (m ResolvedMetadata) Head() gosx.Node {
 	nodes := []gosx.Node{}
 
-	if m.Viewport != "" {
-		nodes = append(nodes, renderMetaTag(MetaTag{Name: "viewport", Content: m.Viewport}))
-	}
 	if m.CanonicalURL != "" {
 		nodes = append(nodes, LinkTag{Rel: "canonical", Href: m.CanonicalURL}.Node())
 	}
@@ -421,7 +395,6 @@ func (m Metadata) IsZero() bool {
 		strings.TrimSpace(m.Manifest) == "" &&
 		(m.Verification == nil || isZeroVerification(*m.Verification)) &&
 		len(m.ThemeColor) == 0 &&
-		strings.TrimSpace(m.Viewport) == "" &&
 		(m.OpenGraph == nil || isZeroOpenGraph(*m.OpenGraph)) &&
 		(m.Twitter == nil || isZeroTwitter(*m.Twitter)) &&
 		len(m.JSONLD) == 0 &&
@@ -460,9 +433,6 @@ func mergeMetadata(parent, child Metadata) Metadata {
 	out.Verification = mergeVerification(parent.Verification, child.Verification)
 	if len(child.ThemeColor) > 0 {
 		out.ThemeColor = append(cloneThemeColors(parent.ThemeColor), cloneThemeColors(child.ThemeColor)...)
-	}
-	if value := strings.TrimSpace(child.Viewport); value != "" {
-		out.Viewport = value
 	}
 	out.OpenGraph = mergeOpenGraph(parent.OpenGraph, child.OpenGraph)
 	out.Twitter = mergeTwitter(parent.Twitter, child.Twitter)
@@ -511,7 +481,6 @@ func resolveMetadata(meta Metadata, requestPath string) (ResolvedMetadata, error
 	resolved.Manifest = resolveMetadataURL(base, meta.Manifest)
 	resolved.Verification = resolveVerification(meta.Verification)
 	resolved.ThemeColor = resolveThemeColor(meta.ThemeColor)
-	resolved.Viewport = resolveViewport(meta.Viewport)
 	resolved.OpenGraph = resolveOpenGraph(base, meta.OpenGraph, resolved)
 	resolved.Twitter = resolveTwitter(base, meta.Twitter, resolved)
 
@@ -666,16 +635,6 @@ func resolveThemeColor(colors []ThemeColor) []MetaTag {
 		})
 	}
 	return tags
-}
-
-// resolveViewport returns the caller's override, trimmed, or DefaultViewport
-// when unset. Every page gets a viewport tag; Metadata.Viewport only
-// changes its content. See gosx#237.
-func resolveViewport(viewport string) string {
-	if trimmed := strings.TrimSpace(viewport); trimmed != "" {
-		return trimmed
-	}
-	return DefaultViewport
 }
 
 func resolveOpenGraph(base *neturl.URL, input *OpenGraph, meta ResolvedMetadata) ResolvedOpenGraph {
@@ -1192,7 +1151,6 @@ func cloneMetadata(meta Metadata) Metadata {
 		Manifest:     meta.Manifest,
 		Verification: cloneVerification(meta.Verification),
 		ThemeColor:   cloneThemeColors(meta.ThemeColor),
-		Viewport:     meta.Viewport,
 		OpenGraph:    cloneOpenGraph(meta.OpenGraph),
 		Twitter:      cloneTwitter(meta.Twitter),
 		JSONLD:       cloneAnySlice(meta.JSONLD),
@@ -1212,7 +1170,6 @@ func cloneResolvedMetadata(meta ResolvedMetadata) ResolvedMetadata {
 		Manifest:     meta.Manifest,
 		Verification: cloneMetaTags(meta.Verification),
 		ThemeColor:   cloneMetaTags(meta.ThemeColor),
-		Viewport:     meta.Viewport,
 		OpenGraph:    cloneResolvedOpenGraph(meta.OpenGraph),
 		Twitter:      cloneResolvedTwitter(meta.Twitter),
 		JSONLD:       cloneAnySlice(meta.JSONLD),

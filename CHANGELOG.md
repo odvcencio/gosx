@@ -23,25 +23,6 @@
 - See `NavigationHeartbeatAttr`'s doc comment (`server/navigation_contract.go`)
   for the wrapper-div-to-`BodyAttrs` migration.
 
-### Added: a typed, defaulted viewport meta tag
-
-- **Every document now gets the standard responsive viewport meta tag
-  (`width=device-width, initial-scale=1`) by default** (gosx#237). gosx
-  ships a mobile drawer and responsive docs; a consumer should not have to
-  remember the boilerplate tag that makes them work. The default applies
-  uniformly across the App-default document pipeline, a custom
-  `App.SetDocument` or `App.SetLayout`, and the free-function
-  `HTMLDocument`/`HTMLDocumentWithLanguage`/`HTMLDocumentWithNonce` family.
-- **`Metadata.Viewport`** overrides the content for a page that needs
-  non-standard viewport behavior, for example a fixed-scale canvas page
-  adding `maximum-scale=1, user-scalable=no`.
-- **A hand-written viewport meta tag is deduplicated, not doubled.** A page
-  that already calls `ctx.AddHead` with its own `<meta name="viewport"
-  ...>`, or passes one directly in `HTMLDocument`'s `head` argument, keeps
-  working unchanged — the default is skipped, not added alongside it, so
-  no consumer that had already worked around the missing default ends up
-  with two viewport tags.
-
 ## v0.48.0 (2026-08-18)
 
 ### Fixed: a strict spread from a non-strict component is rejected at compile time

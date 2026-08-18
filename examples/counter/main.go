@@ -74,11 +74,10 @@ func counterPage(counterProgram *program.Program, count int) gosx.Node {
 		),
 	)
 
-	// HTMLDocument emits the standard responsive viewport meta tag by
-	// default (gosx#237); no need to add one here.
 	return server.HTMLDocument(
 		"GoSX Counter",
 		gosx.Fragment(
+			gosx.RawHTML(`<meta name="viewport" content="width=device-width, initial-scale=1">`),
 			gosx.RawHTML(`<link rel="stylesheet" href="/counter.css">`),
 			islands.PageHead(),
 		),
