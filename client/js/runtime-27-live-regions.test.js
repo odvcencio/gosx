@@ -411,3 +411,161 @@ test("a hidden tab catches up with one tick once it becomes visible again, past 
 
   assert.equal(score.textContent, "5.5", "one full interval elapsed while hidden, so visibility recovery ran an immediate tick");
 });
+
+// --- manual refresh: signal and hub-event triggers (gosx#228) --------------
+
+test("data-gosx-live-signal refreshes on a shared-signal change, needs no interval, and starts no timer", async () => {
+  const url = "http://localhost:3000/api/live/week";
+  const { root, score } = buildLiveRegion({ src: url, interval: "" });
+  root.removeAttribute("data-gosx-live-interval");
+  root.setAttribute("data-gosx-live-signal", "$syncTick");
+  const subs = [];
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: { [url]: () => ({ text: JSON.stringify({ "score:t42": 8.1 }) }) },
+  });
+  env.context.__gosx_subscribe_shared_signal = (name, fn, opts) => {
+    subs.push({ name, fn, opts });
+    return () => {};
+  };
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(subs.length, 1);
+  assert.equal(subs[0].name, "$syncTick");
+  assert.equal(subs[0].opts.immediate, false);
+  assert.equal(timers.count(), 0, "a signal-only live region polls never");
+  assert.equal(env.fetchCalls.length, 0, "no interval means no immediate first tick either");
+
+  subs[0].fn("1");
+  await flushAsyncWork();
+  assert.equal(score.textContent, "8.1");
+  assert.equal(env.fetchCalls.length, 1);
+});
+
+test("data-gosx-live-signal still refreshes while the document is hidden — a signal change is a user action, not a background poll", async () => {
+  const url = "http://localhost:3000/api/live/week";
+  const { root, score } = buildLiveRegion({ src: url, interval: "" });
+  root.removeAttribute("data-gosx-live-interval");
+  root.setAttribute("data-gosx-live-signal", "$syncTick");
+  const subs = [];
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: { [url]: () => ({ text: JSON.stringify({ "score:t42": 3.3 }) }) },
+  });
+  env.context.__gosx_subscribe_shared_signal = (name, fn, opts) => {
+    subs.push({ name, fn, opts });
+    return () => {};
+  };
+  env.document.visibilityState = "hidden";
+
+  installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  subs[0].fn("1");
+  await flushAsyncWork();
+  assert.equal(score.textContent, "3.3", "the signal trigger lands even though the document is hidden");
+});
+
+test("data-gosx-live-on refreshes on a matched gosx:hub:event and ignores an unmatched one", async () => {
+  const url = "http://localhost:3000/api/live/week";
+  const { root, score } = buildLiveRegion({ src: url, interval: "" });
+  root.removeAttribute("data-gosx-live-interval");
+  root.setAttribute("data-gosx-live-on", "sync-now, other-event");
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: { [url]: () => ({ text: JSON.stringify({ "score:t42": 6.6 }) }) },
+  });
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+  assert.equal(timers.count(), 0, "an on-event-only live region polls never");
+
+  env.document.dispatchEvent({ type: "gosx:hub:event", detail: { event: "unrelated" } });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 0, "an unmatched hub event name triggers nothing");
+
+  env.document.dispatchEvent({ type: "gosx:hub:event", detail: { event: "sync-now" } });
+  await flushAsyncWork();
+  assert.equal(score.textContent, "6.6");
+  assert.equal(env.fetchCalls.length, 1);
+});
+
+test("data-gosx-live-on still refreshes while the document is hidden, the same as data-gosx-live-signal", async () => {
+  const url = "http://localhost:3000/api/live/week";
+  const { root, score } = buildLiveRegion({ src: url, interval: "" });
+  root.removeAttribute("data-gosx-live-interval");
+  root.setAttribute("data-gosx-live-on", "sync-now");
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: { [url]: () => ({ text: JSON.stringify({ "score:t42": 4.4 }) }) },
+  });
+  env.document.visibilityState = "hidden";
+
+  installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  env.document.dispatchEvent({ type: "gosx:hub:event", detail: { event: "sync-now" } });
+  await flushAsyncWork();
+  assert.equal(score.textContent, "4.4", "the hub-event trigger lands even though the document is hidden");
+});
+
+test("a manual trigger never overlaps an in-flight fetch, and the interval poll shares the same guard", async () => {
+  const url = "http://localhost:3000/api/live/week";
+  const { root, score } = buildLiveRegion({ src: url, interval: "10s" });
+  root.setAttribute("data-gosx-live-on", "sync-now");
+  let resolveFetch;
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: {
+      [url]: () => new Promise((resolve) => { resolveFetch = resolve; }),
+    },
+  });
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await Promise.resolve();
+  assert.equal(env.fetchCalls.length, 1, "the interval trigger's own immediate first tick started one fetch");
+
+  // A manual trigger that lands while that fetch is still in flight is
+  // dropped outright — the existing fetch is left to finish and apply,
+  // not restarted — and the interval tick behind it is skipped by the
+  // same record.inFlight guard.
+  env.document.dispatchEvent({ type: "gosx:hub:event", detail: { event: "sync-now" } });
+  timers.runInterval(10000);
+  await Promise.resolve();
+  assert.equal(env.fetchCalls.length, 1, "no second fetch starts while the first is still in flight");
+
+  resolveFetch({ text: JSON.stringify({ "score:t42": 2.2 }) });
+  await flushAsyncWork();
+  assert.equal(score.textContent, "2.2", "the one in-flight fetch still applies once it settles");
+});
+
+test("window.__gosx.live.refresh(element) triggers a fetch directly and resolves true; an unknown element resolves false", async () => {
+  const url = "http://localhost:3000/api/live/week";
+  const { root, score } = buildLiveRegion({ src: url, interval: "" });
+  root.removeAttribute("data-gosx-live-interval");
+  root.setAttribute("data-gosx-live-signal", "$unused");
+  const env = createContext({
+    elements: [root],
+    fetchRoutes: { [url]: () => ({ text: JSON.stringify({ "score:t42": 5.1 }) }) },
+  });
+  env.context.__gosx_subscribe_shared_signal = () => () => {};
+
+  installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  const notARoot = new FakeElement("div", null);
+  assert.equal(await env.context.__gosx.live.refresh(notARoot), false);
+
+  assert.equal(await env.context.__gosx.live.refresh(root), true);
+  await flushAsyncWork();
+  assert.equal(score.textContent, "5.1");
+  assert.equal(env.fetchCalls.length, 1);
+});
