@@ -36,6 +36,18 @@ type Options struct {
 	// ordinary callers should transpile the complete source file.
 	strictProjection bool
 	importNames      map[string]string
+
+	// SharedImports resolves a shared (./ or ../ prefixed) import to its Go
+	// projection facts: the Go import path substituted for the relative
+	// source text, and the props shape of every strict component the
+	// target directory declares. gosx check (strictcheck) is the intended
+	// producer, built from the target directory's own loaded programs
+	// (shared components design, section 5.2); transpile never walks a
+	// directory to build this map itself (design rule 1: no file input or
+	// output). A shared import this map has no entry for still parses, but
+	// any call through it fails with a message naming gosx check rather
+	// than emitting Go that cannot type-check.
+	SharedImports map[string]SharedImport
 }
 
 // Transpile converts GoSX source into valid Go code that uses the gosx/node package.
@@ -63,6 +75,7 @@ func Transpile(source []byte, opts Options) (string, error) {
 		imports:          make(map[string]string),
 		strictProjection: opts.strictProjection,
 		importNames:      opts.importNames,
+		sharedImports:    opts.SharedImports,
 	}
 
 	result := t.emit(root)
@@ -109,6 +122,9 @@ type transpiler struct {
 	injectGosx       bool
 	strictProjection bool
 	importNames      map[string]string
+	// sharedImports resolves a shared import's raw source path text (e.g.
+	// "./ui") to its Go projection facts. See Options.SharedImports.
+	sharedImports map[string]SharedImport
 }
 
 func (t *transpiler) text(n *gotreesitter.Node) string {
@@ -134,6 +150,8 @@ func (t *transpiler) emit(n *gotreesitter.Node) string {
 	switch t.nodeType(n) {
 	case "source_file":
 		return t.emitSourceFile(n)
+	case "import_declaration":
+		return t.emitImportDeclaration(n)
 	case "gosx_component_declaration":
 		return t.emitStrictComponent(n)
 	case "jsx_element":
@@ -236,6 +254,67 @@ func (t *transpiler) emitStrictSourceFile(n *gotreesitter.Node) string {
 	return b.String()
 }
 
+// emitImportDeclaration re-emits an import declaration for the ordinary
+// (non-strict-projection) transpile output, rewriting every shared (./ or
+// ../ prefixed) spec that Options.SharedImports resolves to its Go import
+// path, with an explicit alias so the emitted meaning does not depend on
+// the resolved package's own declared identifier. transpile has no
+// filesystem access of its own (design rule 1), so a shared spec this
+// file's resolver has no entry for passes through unrewritten; any call
+// site that actually uses it fails separately with a message naming gosx
+// check (errUnresolvedSharedCall), so the unrewritten text never reaches a
+// caller as successful output. A declaration with no shared spec, or run
+// with no SharedImports at all, is untouched byte-for-byte.
+func (t *transpiler) emitImportDeclaration(n *gotreesitter.Node) string {
+	original := t.text(n)
+	if len(t.sharedImports) == 0 {
+		return original
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), t.sourceFile, "package gosximportrewrite\n"+original, parser.ImportsOnly)
+	if err != nil {
+		return original
+	}
+	changed := false
+	specs := make([]string, 0, len(file.Imports))
+	for _, spec := range file.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			continue
+		}
+		alias := ""
+		explicit := spec.Name != nil
+		if explicit {
+			alias = spec.Name.Name
+		}
+		emitPath := importPath
+		if target, ok := t.sharedImports[importPath]; ok && strings.TrimSpace(target.GoImportPath) != "" {
+			emitPath = target.GoImportPath
+			if !explicit {
+				alias = t.defaultImportName(importPath)
+			}
+			changed = true
+		}
+		if alias != "" {
+			specs = append(specs, alias+" "+strconv.Quote(emitPath))
+		} else {
+			specs = append(specs, strconv.Quote(emitPath))
+		}
+	}
+	if !changed {
+		return original
+	}
+	if len(specs) == 1 && !strings.Contains(original, "(") {
+		return "import " + specs[0]
+	}
+	var b strings.Builder
+	b.WriteString("import (\n")
+	for _, spec := range specs {
+		b.WriteString("\t" + spec + "\n")
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+
 type projectionImport struct {
 	alias string
 	path  string
@@ -264,6 +343,17 @@ func (t *transpiler) strictProjectionImports(n *gotreesitter.Node, body string) 
 				alias = spec.Name.Name
 				explicit = true
 			}
+			// A shared (./ or ../ prefixed) spec projects to its resolved Go
+			// import path — the alias itself is unaffected, since it is
+			// derived (here and at the call site, via t.imports) from the
+			// same relative path text either way. Retaining the import below
+			// is what keeps the alias valid as the shared call's selector
+			// root (shared components design, section 5.2).
+			emitPath := importPath
+			if target, ok := t.sharedImports[importPath]; ok && strings.TrimSpace(target.GoImportPath) != "" {
+				emitPath = target.GoImportPath
+				explicit = true
+			}
 			switch alias {
 			case "_":
 				// Side-effect imports cannot affect structural type checking.
@@ -284,7 +374,7 @@ func (t *transpiler) strictProjectionImports(n *gotreesitter.Node, body string) 
 			if explicit || alias == "." {
 				emitAlias = alias
 			}
-			imports = append(imports, projectionImport{alias: emitAlias, path: importPath})
+			imports = append(imports, projectionImport{alias: emitAlias, path: emitPath})
 		}
 	}
 	return imports
@@ -720,9 +810,24 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 		if propsType, ok := t.typedPropsType(tag); ok {
 			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, openNode), children)
 		}
+		if rawPath, shared := t.sharedImportPath(memberTagAlias(tag)); shared {
+			t.errUnresolvedSharedCall(openNode, tag, rawPath)
+			return ""
+		}
 		return t.emitComponentCall(tag, t.emitAttrs(openNode), children)
 	}
 	return t.emitElementCall(tag, t.emitHTMLAttrs(openNode), children)
+}
+
+// memberTagAlias returns tag's alias segment for a dotted tag ("ui" for
+// "ui.TeamMark"), or "" for a bare tag. It is a thin wrapper over
+// splitMemberTag for call sites that only need the alias.
+func memberTagAlias(tag string) string {
+	alias, _, ok := splitMemberTag(tag)
+	if !ok {
+		return ""
+	}
+	return alias
 }
 
 // isStrictConditionalTag reports whether tag resolves to the strict <If>
@@ -1009,6 +1114,10 @@ func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 		if propsType, ok := t.typedPropsType(tag); ok {
 			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, n), nil)
 		}
+		if rawPath, shared := t.sharedImportPath(memberTagAlias(tag)); shared {
+			t.errUnresolvedSharedCall(n, tag, rawPath)
+			return ""
+		}
 		return t.emitComponentCall(tag, t.emitAttrs(n), nil)
 	}
 	return t.emitElementCall(tag, t.emitHTMLAttrs(n), nil)
@@ -1097,9 +1206,95 @@ func (t *transpiler) emitComponentCall(tag string, attrs []string, children []st
 func (t *transpiler) typedPropsType(tag string) (string, bool) {
 	propsType := strings.TrimSpace(t.propsTypes[tag])
 	if propsType == "" || isAttrListPropsType(propsType) {
+		if sharedType, ok := t.sharedPropsType(tag); ok {
+			return sharedType, true
+		}
 		return t.gosxUIPropsType(tag)
 	}
 	return propsType, true
+}
+
+// isSharedImportPath reports whether path is a shared import per the shared
+// components design section 4.1: a "./"- or "../"-prefixed relative
+// directory reference, never a legal Go import path in module mode.
+func isSharedImportPath(path string) bool {
+	return strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../")
+}
+
+// sharedImportPath reports whether alias names a shared import in this
+// file and, if so, returns its raw (unrewritten) source path text — the key
+// Options.SharedImports resolves against.
+func (t *transpiler) sharedImportPath(alias string) (string, bool) {
+	raw, ok := t.imports[alias]
+	if !ok || !isSharedImportPath(raw) {
+		return "", false
+	}
+	return raw, true
+}
+
+// isSharedCallTag reports whether tag's alias names a shared import in this
+// file, regardless of whether Options.SharedImports resolves it. This is
+// the distinction that separates "this call needs gosx check" from "this
+// call is an ordinary dotted tag resolved through a Go binding" — the two
+// rows section 6.1 of the shared components design keeps apart.
+func (t *transpiler) isSharedCallTag(tag string) bool {
+	alias, _, ok := splitMemberTag(tag)
+	if !ok {
+		return false
+	}
+	_, shared := t.sharedImportPath(alias)
+	return shared
+}
+
+// sharedComponent resolves tag's callee component from
+// Options.SharedImports, which gosx check builds from the shared
+// directory's own loaded programs (design section 5.2). transpile has no
+// filesystem access of its own to try harder (design rule 1), so it
+// reports ok only when both the import path and the component name are
+// present in the supplied map.
+func (t *transpiler) sharedComponent(tag string) (SharedComponent, bool) {
+	alias, component, ok := splitMemberTag(tag)
+	if !ok {
+		return SharedComponent{}, false
+	}
+	rawPath, shared := t.sharedImportPath(alias)
+	if !shared {
+		return SharedComponent{}, false
+	}
+	target, ok := t.sharedImports[rawPath]
+	if !ok {
+		return SharedComponent{}, false
+	}
+	comp, ok := target.Components[component]
+	if !ok || strings.TrimSpace(comp.PropsType) == "" {
+		return SharedComponent{}, false
+	}
+	return comp, true
+}
+
+// sharedPropsType resolves tag's callee props type the same way
+// gosxUIPropsType resolves a m31labs.dev/gosx/ui call: alias qualified onto
+// the props type name, so emitTypedComponentCall's composite literal reads
+// as an ordinary qualified Go type, exactly like the call itself.
+func (t *transpiler) sharedPropsType(tag string) (string, bool) {
+	alias, _, ok := splitMemberTag(tag)
+	if !ok {
+		return "", false
+	}
+	comp, ok := t.sharedComponent(tag)
+	if !ok {
+		return "", false
+	}
+	return alias + "." + comp.PropsType, true
+}
+
+// errUnresolvedSharedCall reports the one outcome the shared components
+// design requires of gosx transpile with no resolver (or an incomplete
+// one): a message naming gosx check as the supported path, instead of
+// emitting Go that cannot type-check. rawPath is the shared import's own
+// source text (e.g. "./ui"), which names the resolver gap precisely.
+func (t *transpiler) errUnresolvedSharedCall(n *gotreesitter.Node, tag, rawPath string) {
+	t.errorf(n, "shared component %s cannot be projected without a resolved Go import for %q; gosx transpile does not resolve a ./ or ../ import on its own — run gosx check, which resolves and type-checks a shared .gsx import", tag, rawPath)
 }
 
 func (t *transpiler) gosxUIPropsType(tag string) (string, bool) {
@@ -1167,6 +1362,9 @@ func (t *transpiler) emitTypedAttrsForTag(tag string, n *gotreesitter.Node) []st
 	if t.isGoSXUITag(tag) {
 		return t.emitGoSXUIAttrs(tag, n)
 	}
+	if comp, ok := t.sharedComponent(tag); ok {
+		return t.emitTypedAttrsWithAliases(tag, comp.Fields, n)
+	}
 	return t.emitTypedAttrsForType(tag, t.propsTypes[tag], n)
 }
 
@@ -1178,20 +1376,34 @@ func (t *transpiler) emitTypedAttrsForType(tag, propsType string, n *gotreesitte
 	if idx := strings.Index(baseType, "["); idx >= 0 {
 		baseType = baseType[:idx]
 	}
-	aliases := t.propsFields[baseType]
+	return t.emitTypedAttrsWithAliases(tag, t.propsFields[baseType], n)
+}
+
+// emitTypedAttrsWithAliases projects a typed call's named attributes into
+// composite-literal fields against aliases, and applies the shared spread
+// refusal. A same-file struct call (emitTypedAttrsForType, aliases from
+// t.propsFields) and a shared cross-directory struct call
+// (emitTypedAttrsForTag, aliases from Options.SharedImports) both resolve
+// through this one function, so the two call shapes cannot drift apart —
+// there is exactly one boundary, matching how route/fileprogram.go's
+// localComponentProps already proves both call kinds through one function
+// at render time.
+func (t *transpiler) emitTypedAttrsWithAliases(tag string, aliases map[string]string, n *gotreesitter.Node) []string {
 	var attrs []string
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
 		switch t.nodeType(child) {
 		case "jsx_spread_attribute":
-			if _, strictCallee := t.strictNames[tag]; strictCallee {
-				// E2 tier 2 (design spec section 3.3, non-goal 3.5): a
-				// legacy body's spread into a strict callee is proved only
-				// at the file-renderer boundary (strictSpreadProps,
-				// route/fileprogram.go); full transpile has no equivalent
-				// run-time re-proof, so it keeps failing here, with a
-				// message that names the supported path instead of the
-				// unproven one.
+			_, strictCallee := t.strictNames[tag]
+			if strictCallee || t.isSharedCallTag(tag) {
+				// E2 tier 2 (design spec section 3.3, non-goal 3.5), and its
+				// cross-directory counterpart (shared components design,
+				// section 5.1 R2): a spread into a strict callee — same-file
+				// or shared — is proved only at the file-renderer boundary
+				// (strictSpreadProps, route/fileprogram.go), never by
+				// transpile. Full transpile has no equivalent proof, so it
+				// keeps failing here, naming the supported path instead of
+				// the unproven one.
 				t.errorf(child, "spread attributes at a strict component call site are proven by the file renderer boundary, not by gosx transpile; render %s through gosx's file router, or call it with explicit typed attributes from a strict body", tag)
 				continue
 			}

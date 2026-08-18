@@ -76,6 +76,85 @@ func LoadPackage(path string) ([]PackageFile, error) {
 	return files, nil
 }
 
+// SharedImport supplies a shared call's projection facts for one shared
+// (./ or ../ prefixed) import: the Go import path substituted for the
+// relative source text, and the props shape of every strict component the
+// target directory declares. gosx check (strictcheck, a later work
+// package) is the intended producer, built from the target directory's own
+// loaded programs (shared components design, section 5.2). See
+// Options.SharedImports and CollectSharedComponents.
+type SharedImport struct {
+	// GoImportPath replaces the shared import's relative path text in both
+	// the projected import declaration and every qualified call through
+	// its alias.
+	GoImportPath string
+	// Components resolves the props type and field-name aliases of every
+	// strict component the target directory exports, keyed by component
+	// name.
+	Components map[string]SharedComponent
+}
+
+// SharedComponent is one shared strict component's Go-facing call shape:
+// its props struct's bare type name, and the field-name aliases
+// (collectStructFieldsFromTypeDecl's own lower-camel rule) used to resolve
+// an attribute name to its exact exported Go field — the identical
+// resolution a same-file struct call already runs.
+type SharedComponent struct {
+	// PropsType is the props struct's bare (unqualified) type name, e.g.
+	// "TeamMarkProps". The caller's alias is prepended at the call site
+	// (transpiler.sharedPropsType), so this field never carries a package
+	// qualifier of its own.
+	PropsType string
+	// Fields maps an attribute spelling — exact or lower-camel — to its
+	// exact exported Go field name, matching t.propsFields' alias
+	// convention. An empty value marks an ambiguous lower-camel spelling,
+	// which projection rejects the same way a same-file call already does.
+	Fields map[string]string
+}
+
+// CollectSharedComponents builds a shared directory's component map from
+// its already-loaded package files, using the identical extraction a
+// same-file typed call already runs (collectComponentProps,
+// collectStructFieldsFromTypeDecl) so a shared call resolves through the
+// same rules as a same-file call and the two projections cannot drift
+// apart. A legacy component (a func, not a `component` declaration) is
+// omitted: shared components design section 4.3 admits only a strict
+// component as a shared call target.
+func CollectSharedComponents(files []PackageFile) map[string]SharedComponent {
+	components := make(map[string]SharedComponent)
+	for _, file := range files {
+		tree, lang, err := gosx.Parse(file.Source)
+		if err != nil {
+			continue
+		}
+		root := tree.RootNode()
+		if root.HasError() {
+			continue
+		}
+		ft := &transpiler{src: file.Source, lang: lang}
+		ft.collectStructFields(root)
+		ft.collectComponentProps(root)
+		for name := range ft.strictNames {
+			propsType := strings.TrimSpace(ft.propsTypes[name])
+			if propsType == "" {
+				continue
+			}
+			baseType := propsType
+			if idx := strings.LastIndex(baseType, "."); idx >= 0 {
+				baseType = baseType[idx+1:]
+			}
+			if idx := strings.Index(baseType, "["); idx >= 0 {
+				baseType = baseType[:idx]
+			}
+			components[name] = SharedComponent{
+				PropsType: propsType,
+				Fields:    ft.propsFields[baseType],
+			}
+		}
+	}
+	return components
+}
+
 func sourcePackageName(source []byte) (string, bool) {
 	tree, lang, err := gosx.Parse(source)
 	if err != nil {
