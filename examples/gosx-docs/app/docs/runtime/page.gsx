@@ -155,6 +155,48 @@ func Page() Node {
 			</p>
 			{CodeBlock("gosx", `<body data-gosx-heartbeat="/api/presence/ping" data-gosx-heartbeat-interval="30s">`)}
 			<p>
+				A page component never renders
+				<span class="inline-code">body</span>
+				directly — the document shell does. Set a body-level attribute with
+				<span class="inline-code">Context.BodyAttrs</span>
+				instead of wrapping the page body in a
+				<span class="inline-code">gosx.El</span>
+				div solely to carry it:
+			</p>
+			{CodeBlock("go", `ctx.BodyAttrs(
+	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
+	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
+	)
+	return server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)`)}
+			<p>
+				That is the whole change. It replaces this pattern, which existed only because
+				<span class="inline-code">HTMLDocument</span>
+				had no body-attribute hook: a wrapper div carrying the two attributes, plus a
+				<span class="inline-code">display: contents</span>
+				CSS rule so the div does not disturb layout — a rule a consumer forgetting to write gets a layout bug from, with no diagnostic.
+			</p>
+			{CodeBlock("go", `heartbeatShell := gosx.El("div", gosx.Attrs(
+	    gosx.Attr("class", "gosx-heartbeat-shell"),
+	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
+	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
+	), body)
+	return server.HTMLDocument(ctx.Title(appName), ctx.Head(), heartbeatShell)`)}
+			<p>
+				A page that renders its document by calling
+				<span class="inline-code">HTMLDocument</span>
+				directly (for example a
+				<span class="inline-code">router.SetLayout</span>
+				callback) calls
+				<span class="inline-code">HTMLDocumentWithBodyAttrs</span>
+				instead, passing
+				<span class="inline-code">ctx.BodyAttrsValue()</span>
+				as the extra argument. A page rendered through the default
+				<span class="inline-code">App.renderPage</span>
+				pipeline needs only the
+				<span class="inline-code">ctx.BodyAttrs</span>
+				call — the pipeline reads the accumulated attributes automatically.
+			</p>
+			<p>
 				The runtime sends a same-origin
 				<span class="inline-code">GET</span>
 				, with credentials, on the declared interval. The interval accepts whole seconds or whole minutes only, the same grammar

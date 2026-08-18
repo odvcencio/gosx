@@ -1,7 +1,7 @@
 package app
 
 func Page() Node {
-	return <div>
+	return <>
 		<h1>Dashboard</h1>
 		<div class="grid">
 			<div class="card">
@@ -60,5 +60,5 @@ func Page() Node {
 				</tbody>
 			</table>
 		</div>
-	</div>
+	</>
 }

@@ -1,11 +1,11 @@
 package users
 
 func Page() Node {
-	return <div>
+	return <>
 		<h1>Users</h1>
 		<div class="search-bar">
 			<form method="get" action="/users" class="search-form">
-				<input type="text" name="q" placeholder="Search users..." value={data.query}></input>
+				<input type="text" name="q" placeholder="Search users..." value={data.Query} />
 				<button type="submit" class="btn btn-primary">Search</button>
 			</form>
 			<a href="/users/new" class="btn btn-primary">+ New User</a>
@@ -22,74 +22,29 @@ func Page() Node {
 					</tr>
 				</thead>
 				<tbody>
-					<tr>
-						<td>Alice Johnson</td>
-						<td>alice@example.com</td>
-						<td>Admin</td>
-						<td>
-							<span class="badge badge-active">Active</span>
-						</td>
-						<td>
-							<button class="btn btn-danger btn-sm">Delete</button>
-						</td>
-					</tr>
-					<tr>
-						<td>Bob Smith</td>
-						<td>bob@example.com</td>
-						<td>Editor</td>
-						<td>
-							<span class="badge badge-active">Active</span>
-						</td>
-						<td>
-							<button class="btn btn-danger btn-sm">Delete</button>
-						</td>
-					</tr>
-					<tr>
-						<td>Carol Williams</td>
-						<td>carol@example.com</td>
-						<td>Viewer</td>
-						<td>
-							<span class="badge badge-inactive">Inactive</span>
-						</td>
-						<td>
-							<button class="btn btn-danger btn-sm">Delete</button>
-						</td>
-					</tr>
-					<tr>
-						<td>Dave Brown</td>
-						<td>dave@example.com</td>
-						<td>Editor</td>
-						<td>
-							<span class="badge badge-active">Active</span>
-						</td>
-						<td>
-							<button class="btn btn-danger btn-sm">Delete</button>
-						</td>
-					</tr>
-					<tr>
-						<td>Eve Davis</td>
-						<td>eve@example.com</td>
-						<td>Admin</td>
-						<td>
-							<span class="badge badge-active">Active</span>
-						</td>
-						<td>
-							<button class="btn btn-danger btn-sm">Delete</button>
-						</td>
-					</tr>
-					<tr>
-						<td>Frank Miller</td>
-						<td>frank@example.com</td>
-						<td>Viewer</td>
-						<td>
-							<span class="badge badge-inactive">Inactive</span>
-						</td>
-						<td>
-							<button class="btn btn-danger btn-sm">Delete</button>
-						</td>
-					</tr>
+					<Each of={data.Users} as="u">
+						<tr>
+							<td>{u.Name}</td>
+							<td>{u.Email}</td>
+							<td>{u.Role}</td>
+							<td>
+								<If cond={u.Active}>
+									<span class="badge badge-active">Active</span>
+								</If>
+								<If cond={!u.Active}>
+									<span class="badge badge-inactive">Inactive</span>
+								</If>
+							</td>
+							<td>
+								<button class="btn btn-danger btn-sm">Delete</button>
+							</td>
+						</tr>
+					</Each>
 				</tbody>
 			</table>
+			<If cond={data.Empty}>
+				<p class="empty-state">No users found matching your search.</p>
+			</If>
 		</div>
-	</div>
+	</>
 }

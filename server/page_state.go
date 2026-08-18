@@ -19,6 +19,7 @@ type PageState struct {
 	status         int
 	metadata       Metadata
 	head           []gosx.Node
+	bodyAttrs      gosx.AttrList
 	deferred       *DeferredRegistry
 	cache          *CacheState
 	runtime        *PageRuntime
@@ -232,6 +233,40 @@ func (s *PageState) AddHead(nodes ...gosx.Node) {
 			s.hasNavigationScript = true
 		}
 	}
+}
+
+// BodyAttrs appends attributes to the rendered <body> element.
+//
+// Multiple calls accumulate rather than clobber, the same rule AddHead
+// follows for head nodes: a layout can set a heartbeat attribute and a
+// nested page can add another, and both reach the final <body> tag.
+// Escaping runs through gosx.RenderAttrs — the same helper El uses for
+// every other element's attributes — so a value set here carries the same
+// guarantees an attribute written directly on a gosx.El node would.
+//
+// This exists because HTMLDocument owns the <body> element; application
+// code never renders it directly, so it has had no supported way to put an
+// attribute there. The first consumer is a body-level
+// NavigationHeartbeatAttr — the client runtime's element scan walks
+// document.body itself, not just its children (see findElement in
+// client/runtime/host/navigation.ts), so an attribute set here is exactly
+// as visible to the runtime as one set on any other element. Before this,
+// the only way to reach <body> was to render the whole page body inside a
+// wrapper gosx.El carrying the attributes and a `display:contents` rule to
+// keep it out of layout — see the migration note on NavigationHeartbeatAttr.
+func (s *PageState) BodyAttrs(pairs ...any) {
+	if s == nil {
+		return
+	}
+	s.bodyAttrs = append(s.bodyAttrs, gosx.Attrs(pairs...)...)
+}
+
+// BodyAttrsValue returns the accumulated body attributes.
+func (s *PageState) BodyAttrsValue() gosx.AttrList {
+	if s == nil {
+		return nil
+	}
+	return s.bodyAttrs
 }
 
 // Head renders metadata and appended head nodes into a fragment.
