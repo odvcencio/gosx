@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed: a strict body calling a typed legacy component failed `gosx check`
+
+- **The strict projection now carries a typed legacy component as a signature
+  with a stub body** (gosx#240). That change made the composition legal at
+  lower time and correct at render time, but the projection retained only
+  strict declarations, so the projected Go named a function it did not carry
+  and the Go compiler reported `undefined: <Name>` against the author's own
+  component. Two seams accepted the composition and the third refused it.
+- **The body stays a stub on purpose.** `emitStrictSourceFile` omits legacy
+  bodies because they name `data`, `request`, and application helpers that
+  ordinary Go cannot resolve, and the legacy runtime interprets them later.
+  Only the caller's reference must resolve during the package type check, and
+  a signature carries that. Emitting the real body would reintroduce the
+  unresolvable identifiers the projection exists to avoid.
+- **An untyped legacy component stays omitted.** A strict body cannot call one
+  at all, so no projected reference to it can exist. That call still fails at
+  lower time with the diagnostic that names the remedy, never with a bare
+  undefined-symbol error from the Go compiler.
+
 ## v0.49.0 (2026-08-18)
 
 ### Fixed: LoadFileProgram's documented fragment pattern broke under a `-trimpath` build

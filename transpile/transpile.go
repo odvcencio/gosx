@@ -220,6 +220,31 @@ func (t *transpiler) emitStrictSourceFile(n *gotreesitter.Node) string {
 				declaration = fmt.Sprintf("//line %s:%d\n%s", filepathForLineDirective(t.sourceFile), child.StartPoint().Row+1, declaration)
 			}
 			declarations = append(declarations, declaration)
+		case "function_declaration":
+			// A TYPED legacy component reaches the projection as a signature
+			// with a stub body (gosx#244). A strict body may call one, and
+			// lower time and render time both handle that, but the projection
+			// dropped the declaration entirely — so the Go compiler reported
+			// `undefined: <Name>` against the author's own component and the
+			// composition failed at `gosx check` alone.
+			//
+			// The body is a stub on purpose. This function's own doc comment
+			// records why legacy declarations are omitted: their bodies name
+			// data, request, and application helpers that ordinary Go cannot
+			// resolve, and the legacy runtime interprets them later. Only the
+			// caller's reference needs to type-check here, and a signature
+			// carries that. Emitting the real body would reintroduce exactly
+			// the unresolvable identifiers this projection exists to avoid.
+			//
+			// An UNTYPED legacy component stays omitted: a strict body cannot
+			// call one at all (ir.Lower rejects it with its own diagnostic),
+			// so no projected reference to it can exist.
+			if stub := t.emitTypedLegacyStub(child); stub != "" {
+				if t.sourceFile != "" {
+					stub = fmt.Sprintf("//line %s:%d\n%s", filepathForLineDirective(t.sourceFile), child.StartPoint().Row+1, stub)
+				}
+				declarations = append(declarations, stub)
+			}
 		}
 	}
 
@@ -744,6 +769,51 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 	t.strict--
 	t.currentPropsType = prevPropsType
 	return "func " + t.text(nameNode) + "(" + params + ") " + t.gosxRef("Node") + " " + body
+}
+
+// emitTypedLegacyStub projects a typed legacy component as a signature with a
+// stub body, so a strict caller's reference to it resolves during the package
+// type check. It returns "" for anything that is not a typed legacy component,
+// which leaves the declaration omitted exactly as before.
+//
+// A typed legacy component is a legacy func whose props parameter names a
+// struct declared in this same file — the same rule ir.Lower applies when it
+// sets ir.Component.PropsTyped. propsFields carries every same-file struct, so
+// membership there is the same-file test.
+//
+// The signature mirrors emitStrictComponent's exactly, variadic children
+// included, so a strict call site projects to one call shape whichever category
+// it resolves to. A variadic parameter accepts zero arguments, so a childless
+// call still matches.
+func (t *transpiler) emitTypedLegacyStub(funcDecl *gotreesitter.Node) string {
+	nameNode := t.childByField(funcDecl, "name")
+	if nameNode == nil {
+		return ""
+	}
+	name := t.text(nameNode)
+	if !isComponent(name) {
+		return ""
+	}
+	// Only a strict component in this same file can reference the stub, and
+	// resolveGoSXQualifier sets injectGosx from hasStrict — so without a
+	// strict declaration here there is no caller to serve and no gosx import
+	// to qualify the signature's Node type against. Emitting anyway produced
+	// `undefined: gosx` for a file carrying only a props-bearing legacy
+	// island, which reaches this projection because a sibling file in its
+	// package is strict.
+	if !t.hasStrict {
+		return ""
+	}
+	propsType := t.propsTypes[name]
+	if propsType == "" {
+		return ""
+	}
+	if _, sameFile := t.propsFields[propsType]; !sameFile {
+		return ""
+	}
+	node := t.gosxRef("Node")
+	params := "props " + propsType + ", " + strictcomponent.ChildrenBinding + " ..." + node
+	return "func " + name + "(" + params + ") " + node + " { return " + node + "{} }"
 }
 
 func (t *transpiler) extractPropsType(funcDecl *gotreesitter.Node) string {
