@@ -174,7 +174,19 @@ func Page() Node {
 			binding.
 		</p>
 		<p>
-			Both declaration styles may coexist in one file, but v0.39 keeps component calls within the same style. This prevents a dynamic legacy call from bypassing a strict component's typed prop contract.
+			Both declaration styles may coexist in one file. A component call stays within its declaration style, with one exception: a
+			<span class="inline-code">typed legacy</span>
+			component —
+			<span class="inline-code">func Name(props T) Node</span>
+			whose
+			<span class="inline-code">T</span>
+			is a struct declared in the same
+			<span class="inline-code">.gsx</span>
+			file — declares the same prop contract a strict component does, so it takes part in strict calls in both directions. A component that declares no such type (
+			<span class="inline-code">props any</span>
+			, an attribute list, or a type from another file) is an
+			<span class="inline-code">untyped legacy</span>
+			component and keeps the cross-style ban, because nothing about its props can be checked.
 		</p>
 		<CodeBlock lang="gosx" source={data.legacySample} />
 		<p>

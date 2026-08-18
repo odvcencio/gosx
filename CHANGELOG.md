@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Fixed: LoadFileProgram's documented fragment pattern broke under a `-trimpath` build
+
+- **`route.LoadFileProgramHere` resolves a page's sibling `.gsx` file without
+  depending on `runtime.Caller`'s raw path** (gosx#239). A `-trimpath` build
+  replaces that path with the calling module's declared path, which does not
+  exist on the machine that runs the binary. `gosx build` passes `-trimpath`
+  on every build, so the documented "Rendering a fragment from a Go handler"
+  pattern broke in every production build, not only some.
+- `RegisterFileModuleHere` carried the same weakness in its `.gsx`/`.html`
+  extension guess: it called `os.Stat` on the same unreachable path and
+  silently fell back to `.gsx`. A `.gsx` page kept working by coincidence; an
+  `.html` page lost its registered `Load`, `Render`, and `Actions` hooks
+  under `-trimpath`. Both now resolve through the same trimpath-safe path.
+- `LoadFileProgram` is unchanged and still takes an absolute path. Its doc
+  comment now states plainly why building that path from `runtime.Caller`
+  breaks under `-trimpath`, and points callers to `LoadFileProgramHere`
+  instead.
+- The fragment-handler docs page and the `examples/dashboard` chrome pattern
+  now use `route.LoadFileProgramHere`.
+
 ### Added: a typed legacy component is treated as strict instead of flattened
 
 - **`func Name(props T) Node`, where `T` is a struct declared in the same

@@ -304,7 +304,7 @@ func fileModuleSourceHere(skip int) string {
 	if !ok {
 		return ""
 	}
-	return fileModuleSourceFromFile(file)
+	return fileModuleSourceFromFile(resolveCallerFilePath(file))
 }
 
 func fileModuleSourceFromFile(file string) string {

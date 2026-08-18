@@ -715,12 +715,16 @@ func Page() Node {
 				A
 				<span class="inline-code">data-gosx-region-url</span>
 				endpoint must render the same markup a page's own component already produces — otherwise the polled fragment and the page drift apart. Load the page's compiled program with
-				<span class="inline-code">route.LoadFileProgram</span>
+				<span class="inline-code">route.LoadFileProgramHere</span>
 				and render one component from it with
 				<span class="inline-code">route.RenderProgramComponent</span>
 				, from a plain
 				<span class="inline-code">http.Handler</span>
-				in the same package as the page. This works for a component the page's own
+				in the same package as the page.
+				<span class="inline-code">route.LoadFileProgramHere</span>
+				finds the page's own
+				<span class="inline-code">.gsx</span>
+				file next to the handler in every build, including a deployed binary. This works for a component the page's own
 				<span class="inline-code">Page</span>
 				entry never renders directly, not only for
 				<span class="inline-code">Page</span>
@@ -742,10 +746,8 @@ func Page() Node {
 	    </ul>
 	}`)}
 			{CodeBlock("go", `// page.server.go — same package as page.gsx
-	var pagePath = filepath.Join(thisDir, "page.gsx")
-
 	func ServeSignalFragment(w http.ResponseWriter, r *http.Request) {
-	    prog, err := route.LoadFileProgram(pagePath)
+	    prog, err := route.LoadFileProgramHere("page.gsx")
 	    if err != nil {
 	        http.Error(w, err.Error(), http.StatusInternalServerError)
 	        return
@@ -761,7 +763,7 @@ func Page() Node {
 	    w.Write([]byte(html))
 	}`)}
 			<p>
-				<span class="inline-code">route.LoadFileProgram</span>
+				<span class="inline-code">route.LoadFileProgramHere</span>
 				reads through the same stat-keyed program cache a file-routed page renders through, so an edit to
 				<span class="inline-code">page.gsx</span>
 				reaches the fragment handler exactly the way it reaches the page's own hot reload — there is no second, independently-stale copy of the compiled component to fall behind.

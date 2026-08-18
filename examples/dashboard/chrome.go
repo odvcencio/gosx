@@ -2,8 +2,6 @@ package main
 
 import (
 	"log"
-	"path/filepath"
-	"runtime"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/ir"
@@ -18,9 +16,7 @@ import (
 var chromeProgram = mustLoadChromeProgram()
 
 func mustLoadChromeProgram() *ir.Program {
-	_, thisFile, _, _ := runtime.Caller(0)
-	path := filepath.Join(filepath.Dir(thisFile), "chrome.gsx")
-	prog, err := route.LoadFileProgram(path)
+	prog, err := route.LoadFileProgramHere("chrome.gsx")
 	if err != nil {
 		log.Fatalf("load chrome.gsx: %v", err)
 	}
