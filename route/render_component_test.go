@@ -77,6 +77,11 @@ func TestRenderProgramComponentStrictEntryMatchesNestedRenderByteForByte(t *test
 // boundary still rejects a map at the entry point, the same way it rejects
 // one at a nested {...props} call site: a map cannot prove field coverage,
 // no matter how the render was reached.
+//
+// gosx#248 gives this specific case (a map at the render entry, the shape
+// every existing file-routed Load hook returns) its own diagnostic, ahead
+// of strictSpreadProps' generic struct-kind message: it names the
+// component, its declared props type, and what to return instead of a map.
 func TestRenderProgramComponentStrictEntryRejectsMapProps(t *testing.T) {
 	prog, err := gosx.Compile([]byte(signalCardFixtureSource))
 	if err != nil {
@@ -88,8 +93,10 @@ func TestRenderProgramComponentStrictEntryRejectsMapProps(t *testing.T) {
 	if err == nil {
 		t.Fatal("RenderProgramComponent unexpectedly accepted a map for strict typed props")
 	}
-	if !strings.Contains(err.Error(), "maps cannot prove field coverage") {
-		t.Fatalf("error = %v, want the strict map-rejection boundary message", err)
+	for _, want := range []string{"strict render entry SignalCard", "props SignalCardProps", "return a SignalCardProps value", "instead of a map"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %v, want it to contain %q", err, want)
+		}
 	}
 }
 

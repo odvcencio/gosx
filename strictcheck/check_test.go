@@ -478,7 +478,13 @@ component Page() {
 	}
 }
 
-func TestCheckFileRejectsPropsBearingStrictRenderEntry(t *testing.T) {
+// TestCheckFileAllowsPropsBearingStrictPageRenderEntry proves gosx#248's
+// narrowing: a strict Page render entry that declares props now passes
+// CheckFile, because renderFilePage binds it from this file's own Load hook
+// (see route/filesystem.go and TestRenderFilePageBindsLoadReturnToStrictProps).
+// A wrong-shaped or missing Load return still fails, but at render time, not
+// here — see the strictSpreadProps-backed tests in route/fileprogram_test.go.
+func TestCheckFileAllowsPropsBearingStrictPageRenderEntry(t *testing.T) {
 	dir := newTestModule(t)
 	path := filepath.Join(dir, "page.gsx")
 	mustWrite(t, path, `package main
@@ -487,8 +493,28 @@ component Page(props: PageProps) {
 	return <main>{props.Title}</main>
 }
 `)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile error = %v, want a props-bearing Page entry to pass", err)
+	}
+}
+
+// TestCheckFileRejectsPropsBearingStrictLayoutRenderEntry proves the
+// narrowed refusal still applies to a layout: no code path calls a layout's
+// own module's Load hook, so a layout's EntryProps is always nil (see
+// route/filelayout.go's renderFileLayout), and validateStrictRenderEntries
+// still catches this statically instead of deferring to a render-time
+// failure that would fire on every request.
+func TestCheckFileRejectsPropsBearingStrictLayoutRenderEntry(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "layout.gsx")
+	mustWrite(t, path, `package main
+type LayoutProps struct { Title string }
+component Layout(props: LayoutProps) {
+	return <main>{props.Title}</main>
+}
+`)
 	err := CheckFile(context.Background(), path)
-	if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+	if err == nil || !strings.Contains(err.Error(), "layout has no Load hook wired to its own root props") {
 		t.Fatalf("CheckFile error = %v", err)
 	}
 }

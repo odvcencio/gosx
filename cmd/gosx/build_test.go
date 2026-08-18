@@ -569,16 +569,27 @@ func TestRunBuildStrictGateRunsBeforeDistWrites(t *testing.T) {
 	}
 }
 
-func TestRunBuildRejectsPropsBearingStrictEntryBeforeDistWrites(t *testing.T) {
+// TestRunBuildRejectsPropsBearingStrictLayoutEntryBeforeDistWrites proves
+// the narrowed gate (gosx#248) still refuses a props-bearing strict layout
+// before any dist write: no code path calls a layout's own module's Load
+// hook, so a layout's EntryProps is always nil. A props-bearing strict Page
+// entry, by contrast, now passes this gate — see route/fileprogram_test.go
+// and examples/basic for the render-time proof.
+func TestRunBuildRejectsPropsBearingStrictLayoutEntryBeforeDistWrites(t *testing.T) {
 	dir := newInvalidStrictStarter(t, "build-root-props-gate")
 	mustWriteFile(t, filepath.Join(dir, "app", "page.gsx"), `package app
-type PageProps struct { Title string }
-component Page(props: PageProps) {
+component Page() {
+	return <main>ok</main>
+}
+`)
+	mustWriteFile(t, filepath.Join(dir, "app", "layout.gsx"), `package app
+type LayoutProps struct { Title string }
+component Layout(props: LayoutProps) {
 	return <main>{props.Title}</main>
 }
 `)
 	err := RunBuild(dir, false)
-	if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+	if err == nil || !strings.Contains(err.Error(), "layout has no Load hook wired to its own root props") {
 		t.Fatalf("RunBuild error = %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {

@@ -554,6 +554,15 @@ func renderFilePage(ctx *RouteContext, page FilePage, module FileModule, renderF
 	if renderFn == nil {
 		return renderFileNode(page.FilePath, fileRenderOptions{
 			EvalEnv: filePageRenderEnv(ctx, page, module),
+			// EntryProps threads this page's own Load return value to a
+			// strict Page/not-found/error entry that declares props
+			// (gosx#248): ctx.Data already holds it, set by
+			// prepareFileRouteContext before this renders. A legacy
+			// component never reads EntryProps (see
+			// renderFileProgramHTML's strict-entry branch), so this is a
+			// no-op for every non-strict page and does not change what
+			// ctx.Data itself renders through data.X.
+			EntryProps: ctx.Data,
 		})
 	}
 	return renderFn(ctx, page)

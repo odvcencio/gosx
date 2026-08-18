@@ -325,12 +325,17 @@ func alwaysLint(name string) Lint {
 // before any lint sees the package.
 func TestCheckFileJoinsLintFindingsWhenRenderEntryValidationFails(t *testing.T) {
 	dir := newTestModule(t)
-	path := filepath.Join(dir, "page.gsx")
+	// A layout entry, not a page: gosx#248 narrowed validateStrictRenderEntries
+	// to refuse only a props-bearing strict Layout entry (no code path calls a
+	// layout's own module's Load hook, so its EntryProps is always nil). A
+	// props-bearing Page entry now passes this check, so it can no longer
+	// stand in for "the first early-return path fails" here.
+	path := filepath.Join(dir, "layout.gsx")
 	mustWrite(t, path, `package main
 
-type PageProps struct { Title string }
+type LayoutProps struct { Title string }
 
-component Page(props: *PageProps) {
+component Layout(props: *LayoutProps) {
 	return <div>{props.Title}</div>
 }
 `)
@@ -339,7 +344,7 @@ component Page(props: *PageProps) {
 		t.Fatal("expected an error")
 	}
 	message := err.Error()
-	if !strings.Contains(message, "file routes do not bind root props") {
+	if !strings.Contains(message, "layout has no Load hook wired to its own root props") {
 		t.Fatalf("missing the render-entry built-in error: %s", message)
 	}
 	if !strings.Contains(message, "EM999") {
