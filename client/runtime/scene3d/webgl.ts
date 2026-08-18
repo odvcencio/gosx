@@ -8179,12 +8179,21 @@
     // applyPointsAuthoredCustomUniforms: uploads entry.customUniforms to the
     // authored program. Uses the shaderLayout fields to determine byte count;
     // simple name → value binding via getUniformLocation.
-    function applyPointsAuthoredCustomUniforms(prog, uniforms) {
-      if (!uniforms || typeof uniforms !== "object") return;
-      var keys = Object.keys(uniforms);
-      for (var k = 0; k < keys.length; k++) {
-        var name = keys[k];
-        var val = uniforms[name];
+    //
+    // `time` is a reserved auto-uniform, exactly as in the WGSL/selena packer
+    // (sceneSelenaUniformData): it always resolves from the per-frame clock,
+    // never from the authored value. The wire ships `time: 0` as a
+    // declaration placeholder; uploading it verbatim froze every shader-clock
+    // effect (twinkle, depth wrap, impulses) on WebGL while the same material
+    // animated on WebGPU — the content-route starfields were the canonical
+    // casualty.
+    function applyPointsAuthoredCustomUniforms(prog, uniforms, frameTimeSeconds) {
+      if (uniforms && typeof uniforms === "object") {
+        var keys = Object.keys(uniforms);
+        for (var k = 0; k < keys.length; k++) {
+          var name = keys[k];
+          if (name === "time") continue;
+          var val = uniforms[name];
         var loc = gl.getUniformLocation(prog.program, name);
         if (loc == null) continue;
         if (typeof val === "number") {
@@ -8202,6 +8211,13 @@
             break;
           }
         }
+        }
+      }
+      // Force the frame clock last so nothing the author shipped can shadow
+      // it — the WebGL mirror of the WGSL packer's reserved-name rule.
+      var timeLoc = gl.getUniformLocation(prog.program, "time");
+      if (timeLoc != null && typeof frameTimeSeconds === "number") {
+        gl.uniform1f(timeLoc, frameTimeSeconds);
       }
     }
 
@@ -8397,7 +8413,7 @@
         }
         // Upload authored custom uniforms if using an authored program.
         if (usedAuthored) {
-          applyPointsAuthoredCustomUniforms(pp, entry.customUniforms);
+          applyPointsAuthoredCustomUniforms(pp, entry.customUniforms, timeSeconds);
         }
 
         var px = sceneNumber(entry.x, 0);

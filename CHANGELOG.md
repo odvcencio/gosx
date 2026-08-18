@@ -129,6 +129,22 @@
 - `TestREADMEDeclaresCurrentRelease` pins the README against `Current` and
   fails on any stale release string, so a bump that misses one file can no
   longer pass silently.
+## v0.47.1 (2026-08-17)
+
+### Fixed: authored point materials never received the frame clock on WebGL
+
+- **`time` is now a reserved auto-uniform on the WebGL authored-points
+  path.** The WGSL packer has always resolved `time` from the per-frame
+  clock and ignored the authored value; the WebGL path uploaded
+  `entry.customUniforms` verbatim instead — the wire's `time: 0`
+  declaration placeholder, on every frame. Every shader-clock effect
+  (twinkle, depth wrap, per-star impulses) was frozen on WebGL while the
+  identical material animated on WebGPU. The render loop itself ran
+  (material-clock), so the scene re-rendered an unchanged frame at full
+  frame rate.
+- Observed in production as the m31labs.dev content-route starfield
+  (ForceWebGL) showing no twinkle and no motion while the homepage
+  (WebGPU) animated with the same material constants.
 
 ## v0.47.0 (2026-08-18)
 

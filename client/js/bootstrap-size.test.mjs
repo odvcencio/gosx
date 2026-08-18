@@ -846,7 +846,11 @@ const budgets = [
   // 211_969 / 58_395 / 49_669.
   // Bumped brotli 49_983 -> 50_018 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 213_368 / 58_765 / 50_018.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 213_368, gzip: 58_765, brotli: 50_018 },
+  // Bumped raw 213_368 -> 214_000, gzip 58_765 -> 59_000, brotli 50_018
+  // -> 50_200 for the reserved `time` auto-uniform on the authored
+  // points path: the frame clock now overrides the authored placeholder,
+  // matching the WGSL packer. Measured: 213_478 / 58_799 / 50_056.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 214_000, gzip: 59_000, brotli: 50_200 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js

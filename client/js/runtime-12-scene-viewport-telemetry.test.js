@@ -1422,3 +1422,96 @@ test("Scene3D webgl loss recovery rebuilds without a contextrestored event", asy
     "recovered renderer must upload geometry buffers to the fresh GL context",
   );
 });
+
+test("webgl authored points feed the frame clock to the time uniform", async () => {
+  // `time` is a reserved auto-uniform: the WGSL packer always resolves it
+  // from the per-frame clock and ignores the authored placeholder. The WebGL
+  // authored-points path used to upload entry.customUniforms verbatim —
+  // `time: 0` on every frame — so every shader-clock effect (twinkle, depth
+  // wrap, impulses) froze on WebGL while the same material animated on
+  // WebGPU. The content-route starfields were the canonical casualty.
+  let now = 0;
+  const env = createContext({
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    performanceNow: () => now,
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const backend = api.sceneBackendRegistry.select({
+    webgl: true,
+    webgl2: true,
+    webgpu: false,
+    canvas: false,
+    canvas2d: false,
+  });
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 180;
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  assert.equal(renderer && renderer.type, "webgl-pbr");
+
+  const point = {
+    id: "clock-stars",
+    count: 2,
+    positions: [0, 0, 0, 1, 0, -4],
+    sizes: [1, 1],
+    colors: ["#ffffff", "#88ccff"],
+    size: 1,
+    opacity: 1,
+    blendMode: "additive",
+    depthWrite: false,
+    attenuation: false,
+    customVertex: "#version 300 es\nin vec3 a_position;\nuniform mat4 u_viewMatrix;\nuniform mat4 u_projectionMatrix;\nuniform float time;\nvoid main() { gl_Position = u_projectionMatrix * u_viewMatrix * vec4(a_position + vec3(time, 0.0, 0.0), 1.0); gl_PointSize = 2.0; }",
+    customFragment: "#version 300 es\nprecision highp float;\nout vec4 fragColor;\nvoid main() { fragColor = vec4(1.0); }",
+    customUniforms: { time: 0, twinkleBoost: 0.5 },
+    shaderBackend: "custom",
+  };
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    background: "#000000",
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    points: [point],
+    instancedMeshes: [],
+    computeParticles: [],
+    objects: [],
+    meshObjects: [],
+    materials: [],
+    labels: [],
+    sprites: [],
+    lights: [],
+    positions: new Float32Array(0),
+    colors: new Float32Array(0),
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+    worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0,
+    worldVertexCount: 0,
+    postEffects: [],
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  now = 1500;
+  renderer.render(bundle, viewport);
+  now = 3000;
+  renderer.render(bundle, viewport);
+
+  const gl = canvas.getContext("webgl2");
+  const timeWrites = gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
+    .map((entry) => entry[2]);
+  assert.deepEqual(timeWrites, [1.5, 3], "time must carry the frame clock each frame, never the authored 0");
+  const boostWrites = gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "twinkleBoost")
+    .map((entry) => entry[2]);
+  assert.deepEqual(boostWrites, [0.5, 0.5], "non-reserved authored uniforms must still upload");
+});
