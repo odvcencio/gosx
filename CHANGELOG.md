@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Added: declarative list filter and a visibility-aware heartbeat ping
+
+- **`data-gosx-filter` filters a list from a single input**, with no
+  bespoke JavaScript (gosx#215). The value names the list: an element
+  `id`, or — when no element has that `id` — a CSS selector. Each row
+  carries `data-gosx-filter-text`, the text the runtime searches; it
+  never reads a row's own rendered text, so the server can normalize
+  case and fold in search terms that never render visibly. Filtering is
+  a case-insensitive substring match against the input's trimmed value,
+  applied 150ms after the last keystroke; an empty input shows every
+  row. A row is never hidden while it holds the focused control or the
+  pointer sits over it. `gosx-filter-row--hidden` is the class hook the
+  application's own CSS styles; `data-gosx-filter-announce` opts an
+  input into an "N of M shown" live-region announcement. A filter is
+  rebuilt, and its typed query re-applied, at page boot and after every
+  soft navigation or revalidation swap — the same rescan lifecycle
+  `data-gosx-watch` follows.
+- **`data-gosx-heartbeat` sends a periodic, visibility-aware presence
+  ping**, with no bespoke timer (gosx#216). `data-gosx-heartbeat`, on an
+  element or on `body` itself, names a same-origin endpoint;
+  `data-gosx-heartbeat-interval` sets the period, the same whole-second
+  or whole-minute grammar `data-gosx-revalidate-interval` accepts. The
+  runtime sends a same-origin `GET`, with credentials, on that interval
+  while the document is visible: it pauses entirely while hidden, fires
+  one immediate catch-up ping on visibility return if a full interval
+  elapsed while hidden, and never runs a second ping while one is
+  already in flight. Both a network failure and a non-2xx response are
+  silent.
 ### Fixed: minify the embedded navigation runtime script
 
 - **The inline navigation runtime now ships minified, not raw** (gosx#221).

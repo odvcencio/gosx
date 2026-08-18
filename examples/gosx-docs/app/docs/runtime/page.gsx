@@ -142,6 +142,56 @@ func Page() Node {
 				Teardown is automatic. A soft navigation to a page without the attribute clears the interval. A soft navigation to a page with the attribute reads it again.
 			</p>
 		</section>
+		<section id="visibility-heartbeat">
+			<h2>Visibility-aware heartbeat</h2>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-heartbeat</span>
+				and
+				<span class="inline-code">data-gosx-heartbeat-interval</span>
+				to an element, or to
+				<span class="inline-code">body</span>
+				itself, for a periodic presence ping with zero application JavaScript.
+			</p>
+			{CodeBlock("gosx", `<body data-gosx-heartbeat="/api/presence/ping" data-gosx-heartbeat-interval="30s">`)}
+			<p>
+				The runtime sends a same-origin
+				<span class="inline-code">GET</span>
+				, with credentials, on the declared interval. The interval accepts whole seconds or whole minutes only, the same grammar
+				<span class="inline-code">data-gosx-revalidate-interval</span>
+				accepts, for example
+				<span class="inline-code">"30s"</span>
+				or
+				<span class="inline-code">"2m"</span>
+				.
+			</p>
+			<p>
+				The ping runs only while the document is visible:
+			</p>
+			<ul>
+				<li>
+					It pauses entirely while the document is hidden — no tick fires, no request goes out.
+				</li>
+				<li>
+					It fires one immediate catch-up ping on visibility return, if at least one full interval elapsed while hidden.
+				</li>
+				<li>
+					At most one ping is ever in flight. A tick or a catch-up that lands while the previous ping has not settled is skipped outright, never queued or raced.
+				</li>
+			</ul>
+			<p>
+				Both a network failure and a non-2xx response are silent. A presence signal must never surface a console error for a visitor's dropped connection.
+			</p>
+			<p>
+				A cross-origin
+				<span class="inline-code">data-gosx-heartbeat</span>
+				or an invalid
+				<span class="inline-code">data-gosx-heartbeat-interval</span>
+				logs one console warning and disables the heartbeat for the page. Teardown is automatic, on the same soft-navigation lifecycle
+				<span class="inline-code">data-gosx-revalidate-interval</span>
+				follows.
+			</p>
+		</section>
 		<section id="declarative-countdown">
 			<h2>Declarative countdown</h2>
 			<p>
@@ -489,6 +539,55 @@ func Page() Node {
 				or
 				<span class="inline-code">server.NavigationScript()</span>
 				above) — periodic revalidation, the pause it pauses, and the managed-form error surface it reverts through all live there.
+			</p>
+		</section>
+		<section id="declarative-filter">
+			<h2>Declarative list filter</h2>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-filter</span>
+				to an input, set to the list it filters: an element
+				<span class="inline-code">id</span>
+				, or — when no element has that
+				<span class="inline-code">id</span>
+				— a CSS selector. Mark each row with
+				<span class="inline-code">data-gosx-filter-text</span>
+				, the text the runtime searches.
+			</p>
+			{CodeBlock("gosx", `<input type="search" data-gosx-filter="draft-pool-list" placeholder="Search the pool">
+	<ul id="draft-pool-list">
+	    <li data-gosx-filter-text="patrick mahomes qb kc">Patrick Mahomes</li>
+	    <li data-gosx-filter-text="josh allen qb buf">Josh Allen</li>
+	</ul>`)}
+			<p>
+				The runtime reads
+				<span class="inline-code">data-gosx-filter-text</span>
+				, never a row's own rendered text — the server can normalize case, and fold in search terms (a team, a position) that never render visibly.
+			</p>
+			<p>
+				Filtering is a case-insensitive substring match against the input's trimmed value, applied 150ms after the last keystroke. An empty input shows every row.
+			</p>
+			<p>
+				The runtime never fights the visitor. A row is never hidden while it holds the focused control, or while the pointer sits over it — the guard is re-checked on every apply, so the row hides on the next keystroke or rescan once the interaction has actually ended.
+			</p>
+			<p>
+				Style hidden rows with this class hook — the application's own CSS decides what a hidden row looks like:
+			</p>
+			<ul>
+				<li>
+					<span class="inline-code">gosx-filter-row--hidden</span>
+					on a row that fails the current match and is not under active interaction.
+				</li>
+			</ul>
+			<p>
+				Add
+				<span class="inline-code">data-gosx-filter-announce</span>
+				to the input for an "N of M shown" live-region announcement after every apply.
+			</p>
+			<p>
+				A filter is rebuilt, and its query re-applied, at page boot and after every soft navigation or revalidation swap — the same rescan lifecycle
+				<span class="inline-code">data-gosx-watch</span>
+				follows. The runtime remembers the typed query across a swap and restores it onto the freshly-rendered input, so the visitor's search survives a re-render of the underlying list.
 			</p>
 		</section>
 		<section id="lifecycle-scripts">

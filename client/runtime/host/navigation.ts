@@ -86,6 +86,18 @@
   const REORDER_AUTOSCROLL_EDGE_PX = 48;
   const REORDER_AUTOSCROLL_MAX_PX = 18;
   const REORDER_AUTOSCROLL_TICK_MS = 16;
+  // Declarative list filter (data-gosx-filter, gosx#215). See "Declarative
+  // list filter" below for the full contract; these are the attribute,
+  // class-hook, and timing constants it reads and writes.
+  const FILTER_ATTR = "data-gosx-filter";
+  const FILTER_TEXT_ATTR = "data-gosx-filter-text";
+  const FILTER_ANNOUNCE_ATTR = "data-gosx-filter-announce";
+  const FILTER_HIDDEN_CLASS = "gosx-filter-row--hidden";
+  const FILTER_DEBOUNCE_MS = 150;
+  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216). See
+  // "Visibility-aware heartbeat" below for the full contract.
+  const HEARTBEAT_ATTR = "data-gosx-heartbeat";
+  const HEARTBEAT_INTERVAL_ATTR = "data-gosx-heartbeat-interval";
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
@@ -202,6 +214,43 @@
   let titleFlashHandle = null;
   let titleFlashOriginalTitle = null;
   let titleFlashOwnerKey = null;
+  // filterRoots/filterGeneration mirror watchRoots/watchGeneration: one
+  // record per data-gosx-filter input, rebuilt by setupPageFilters on every
+  // boot and soft navigation — see its own doc comment below.
+  let filterRoots = [];
+  let filterGeneration = 0;
+  // filterQueryState survives across filterGeneration the same way
+  // watchActiveState survives across watchGeneration above: a revalidation
+  // swap destroys and rebuilds the filter input's own DOM node wholesale
+  // (replaceBody clones a fresh document's body contents — see replaceBody
+  // below), so the text a visitor already typed cannot live on the node
+  // itself. Keyed by each record's own key (its id, or its position among
+  // data-gosx-filter elements when it has none — see buildFilterState).
+  const filterQueryState = new Map();
+  // filterHoverRow is the one data-gosx-filter-text row the pointer
+  // currently sits over, kept live by the delegated onFilterPointerOver /
+  // onFilterPointerOut listeners below — see rowIsFilterGuarded's own doc
+  // comment for why. null when the pointer is over no row at all.
+  let filterHoverRow = null;
+  // heartbeatTimerHandle/heartbeatSrc/heartbeatIntervalMs/heartbeatHiddenSince
+  // mirror the periodic-revalidation state above almost exactly (gosx#216):
+  // a same-origin poll on an interval, paused while the document is hidden,
+  // with one catch-up tick on visibility return if a full interval elapsed
+  // while hidden. See setupPageHeartbeat's own doc comment for what
+  // differs from periodic revalidation.
+  let heartbeatTimerHandle = null;
+  let heartbeatSrc = "";
+  let heartbeatIntervalMs = 0;
+  let heartbeatHiddenSince = null;
+  // True while a heartbeat GET's fetch await is unresolved — guards against
+  // an interval tick or a visibility catch-up starting a second overlapping
+  // ping, exactly like revalidatePollInFlight above.
+  let heartbeatPingInFlight = false;
+  // Bumped by every setupPageHeartbeat call, the same way revalidateGeneration
+  // is bumped by setupPageRevalidation: a ping's fetch that settles after
+  // navigation has moved on to a page with a different (or no) heartbeat
+  // must not clear heartbeatPingInFlight for the generation current now.
+  let heartbeatGeneration = 0;
   gosxHost.navigationScriptCache = scriptCache;
   gosxHost.navigationPageCache = pageCache;
   gosxHostCompatibility.install("__gosx_loaded_scripts", scriptCache);
@@ -2454,10 +2503,15 @@
     // fetched a new document or reconciled the already-current page — see
     // setupPageRevalidation's doc comment.
     setupPageRevalidation();
-    setupPageCountdowns();
-    // setupPageWatchers (gosx#214) follows the exact same rescan lifecycle
+    // setupPageHeartbeat (gosx#216) follows the exact same rescan lifecycle
     // — see its own doc comment above.
+    setupPageHeartbeat();
+    setupPageCountdowns();
+    // setupPageWatchers (gosx#214) and setupPageFilters (gosx#215) both
+    // follow the exact same rescan lifecycle — see their own doc comments
+    // above.
     setupPageWatchers();
+    setupPageFilters();
   }
 
   // documentIsHidden prefers the real, read-only document.hidden a browser
@@ -2717,6 +2771,152 @@
 
     revalidateIntervalMs = intervalMs;
     revalidateTimerHandle = setInterval(runRevalidateTick, intervalMs);
+  }
+
+  // ---------------------------------------------------------------------
+  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216)
+  //
+  // HEARTBEAT_ATTR, on an element (or on <body> itself — findElement below
+  // walks the root it is given too, so body qualifies with no special
+  // case), names a same-origin endpoint the runtime pings with a plain GET
+  // while the document is visible. HEARTBEAT_INTERVAL_ATTR, alongside it
+  // on the same element, is the ping period in the same small duration
+  // grammar data-gosx-revalidate-interval accepts (parseRevalidateInterval
+  // above): a bare whole-second or whole-minute literal ("30s", "2m").
+  // Anything else, under one second, or past the 32-bit timer bound leaves
+  // the heartbeat disabled with one console.warn — the same fail-closed
+  // shape every other declarative attribute in this file uses for a value
+  // it cannot parse at all. Unlike data-gosx-revalidate-interval, an
+  // over-long value is not clamped to a 1-hour ceiling: a heartbeat GET is
+  // a cheap, single small request, not a full-page re-render, so there is
+  // no equivalent cost runaway to guard against beyond the shared parser's
+  // own 32-bit timer bound.
+  //
+  // The lifecycle mirrors periodic revalidation immediately above almost
+  // exactly: paused entirely while the document is hidden
+  // (runHeartbeatTick's own documentIsHidden() guard), one immediate
+  // catch-up ping on visibility return if at least one full interval
+  // elapsed while hidden (onHeartbeatVisibilityChange, mirroring
+  // onRevalidateVisibilityChange), and never more than one ping in flight
+  // at a time — an interval tick or a catch-up that lands while the
+  // previous ping's fetch has not settled is skipped outright rather than
+  // queued or raced (heartbeatPingInFlight, mirroring
+  // revalidatePollInFlight). Unlike revalidation, a ping never mutates the
+  // page: this is presence detection, not content staleness, so its
+  // response is read and discarded, and BOTH a network failure and a
+  // non-2xx response are silent by contract — presence is a best-effort
+  // signal a visitor's dropped connection or a transient server error must
+  // never surface as a console error for.
+  // ---------------------------------------------------------------------
+
+  function findHeartbeatElement() {
+    return findElement(document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute(HEARTBEAT_ATTR);
+    });
+  }
+
+  function teardownPageHeartbeat() {
+    if (heartbeatTimerHandle != null) {
+      clearInterval(heartbeatTimerHandle);
+    }
+    heartbeatTimerHandle = null;
+    heartbeatSrc = "";
+    heartbeatIntervalMs = 0;
+    heartbeatHiddenSince = null;
+  }
+
+  // pingHeartbeat is the whole GET: no headers, no body, credentials
+  // "same-origin" so an authenticated session's cookies ride along the way
+  // any other same-origin fetch on this page would. Both branches of the
+  // settle — success or failure — only ever clear heartbeatPingInFlight,
+  // and only for the generation that started this ping; see
+  // heartbeatGeneration's own declaration for why a stale settle must not
+  // touch state a later setupPageHeartbeat call now owns.
+  function pingHeartbeat() {
+    if (heartbeatPingInFlight) {
+      return;
+    }
+    heartbeatPingInFlight = true;
+    const generation = heartbeatGeneration;
+    gosxRuntimeRequest(heartbeatSrc, {
+      method: "GET",
+      credentials: "same-origin",
+      cache: "no-store",
+    }).catch(function() {
+      // Silent by contract — see this section's own doc comment above.
+    }).then(function() {
+      if (generation !== heartbeatGeneration) return;
+      heartbeatPingInFlight = false;
+    });
+  }
+
+  function runHeartbeatTick() {
+    if (documentIsHidden()) {
+      return;
+    }
+    pingHeartbeat();
+  }
+
+  // onHeartbeatVisibilityChange mirrors onRevalidateVisibilityChange above:
+  // one immediate catch-up ping the moment the document becomes visible
+  // again, if at least one full interval elapsed while it was hidden —
+  // runHeartbeatTick's own documentIsHidden() guard otherwise means a tab
+  // backgrounded for hours only pings once it is looked at again.
+  function onHeartbeatVisibilityChange() {
+    if (!heartbeatSrc) return;
+    if (documentIsHidden()) {
+      if (heartbeatHiddenSince == null) {
+        heartbeatHiddenSince = Date.now();
+      }
+      return;
+    }
+    const hiddenSince = heartbeatHiddenSince;
+    heartbeatHiddenSince = null;
+    if (hiddenSince == null || !heartbeatIntervalMs) {
+      return;
+    }
+    if (Date.now() - hiddenSince >= heartbeatIntervalMs) {
+      pingHeartbeat();
+    }
+  }
+
+  // setupPageHeartbeat scans for the FIRST element carrying HEARTBEAT_ATTR
+  // on page boot and after every soft navigation (see finalizeNavigation
+  // and the initial-document replay below) — the same lifecycle
+  // setupPageRevalidation follows just above, tearing down any previous
+  // timer first so a page without the attribute, or with new attribute
+  // values, always gets a fresh read.
+  function setupPageHeartbeat() {
+    heartbeatGeneration += 1;
+    teardownPageHeartbeat();
+    const target = findHeartbeatElement();
+    if (!target) {
+      return;
+    }
+    const rawSrc = target.getAttribute(HEARTBEAT_ATTR);
+    if (!rawSrc || !isSameOriginNavigation(rawSrc, windowLocationHref())) {
+      console.warn(
+        "[gosx] " + HEARTBEAT_ATTR + " must be a same-origin URL: " + JSON.stringify(String(rawSrc || ""))
+        + "; the heartbeat is disabled for this page",
+      );
+      return;
+    }
+    const parsedSrc = navigationURLParts(rawSrc);
+    if (!parsedSrc) {
+      return;
+    }
+    const rawInterval = target.getAttribute(HEARTBEAT_INTERVAL_ATTR);
+    const intervalMs = parseRevalidateInterval(rawInterval);
+    if (intervalMs == null) {
+      console.warn(
+        "[gosx] invalid " + HEARTBEAT_INTERVAL_ATTR + " value " + JSON.stringify(String(rawInterval || ""))
+        + "; the heartbeat is disabled for this page",
+      );
+      return;
+    }
+    heartbeatSrc = parsedSrc.href;
+    heartbeatIntervalMs = intervalMs;
+    heartbeatTimerHandle = setInterval(runHeartbeatTick, intervalMs);
   }
 
   // ---------------------------------------------------------------------
@@ -3895,6 +4095,276 @@
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Declarative list filter (data-gosx-filter, gosx#215)
+  //
+  // An input declares FILTER_ATTR set to the list it filters: an element
+  // id, or (when no element carries that id) a CSS selector — the same
+  // "try an id first, fall back to a selector" convenience
+  // resolveFilterTarget below gives an author who does not want to write
+  // "#" for the common case. Each row inside that target — any descendant,
+  // not only a direct child, so a <table>/<tbody>/<tr> shape works exactly
+  // like a flat list — carries FILTER_TEXT_ATTR with the text to search;
+  // the runtime reads this attribute, never a row's own rendered
+  // textContent, so the server can normalize case, whitespace, and fold in
+  // search terms (a player's team or position) that never render visibly.
+  //
+  // Filtering itself is a case-insensitive substring match against the
+  // trimmed, lower-cased input value, applied FILTER_DEBOUNCE_MS after the
+  // last keystroke (via the delegated "input" listener below) so a fast
+  // typist does not force a reflow on every character. An empty input
+  // (after trimming) matches every row — "shows all" is the literal empty
+  // case of the same match rule, not a special path.
+  //
+  // A row that would be hidden is instead left alone — never fought out
+  // from under the visitor — while it is under active interaction:
+  // rowIsFilterGuarded below covers a row containing the focused control
+  // (document.activeElement) and a row the pointer currently sits over
+  // (filterHoverRow, kept live by the delegated "mouseover"/"mouseout"
+  // listeners below — the same delegation shape onMouseOver above already
+  // uses for prefetch, rather than a live ":hover" match this runtime
+  // would otherwise have to re-derive per row on every apply). The guard
+  // is re-checked on every apply, not cached — so the very next apply
+  // (another keystroke, or the next rescan) hides a once-guarded row as
+  // soon as the interaction has actually ended by then. Leaving an
+  // interaction does not itself trigger a fresh apply; the row waits for
+  // whatever apply comes next.
+  //
+  // FILTER_HIDDEN_CLASS is a class hook, exactly like the reorder section's
+  // own class hooks below: the runtime toggles the class, the application's
+  // own CSS decides what a hidden row actually looks like (display: none,
+  // an animated collapse, or something else entirely). FILTER_ANNOUNCE_ATTR
+  // (any truthy value under managedFormShorthandTruthy's rule) opts an
+  // input into an "N of M shown" live-region announcement after every
+  // apply, reusing the shared aria-live region announceNavigation already
+  // maintains — the cheapest possible accessible count, one shared region
+  // rather than a second one this feature would otherwise have to own.
+  //
+  // Like data-gosx-watch, a filter is rebuilt from scratch at page boot and
+  // after every soft navigation or revalidation swap (setupPageFilters,
+  // called from finalizeNavigation and the initial-document replay below)
+  // — replaceBody clones a fresh document's body contents wholesale, so
+  // neither the input's typed value nor the rows' hidden state survives a
+  // swap on their own. filterQueryState (module-level, keyed the same way
+  // watchActiveState is — see its own declaration above) remembers the
+  // query text ACROSS that rebuild: setupPageFilters restores it onto the
+  // freshly-rendered input's own .value and re-applies it against the
+  // freshly-rendered rows in the same pass, so a swap mid-search neither
+  // loses what the visitor already typed nor reverts an already-filtered
+  // list back to showing everything.
+  // ---------------------------------------------------------------------
+
+  // resolveFilterTarget tries `value` as an element id first (the common,
+  // no-punctuation-required case: data-gosx-filter="draft-pool-list") and
+  // falls back to a CSS selector (data-gosx-filter=".draft-pool tbody")
+  // when no element has that id. Returns null for an empty value or one
+  // that matches nothing either way.
+  function resolveFilterTarget(rawValue) {
+    const value = String(rawValue == null ? "" : rawValue).trim();
+    if (!value) return null;
+    if (typeof document.getElementById === "function") {
+      const byId = document.getElementById(value);
+      if (byId) return byId;
+    }
+    return safeQuerySelector(value);
+  }
+
+  function findFilterInputElements() {
+    return collectElements(document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute(FILTER_ATTR);
+    });
+  }
+
+  // buildFilterState turns one data-gosx-filter input into the internal
+  // record applyFilterRecord below reads, or null for a target that fails
+  // to resolve at all. record.key mirrors buildWatchState's own key
+  // (gosx#214): the input's own id ("id:" prefix) when it has one, or its
+  // position among data-gosx-filter inputs in document order otherwise
+  // ("pos:" prefix) — see filterQueryState's declaration above for why
+  // this key, not the DOM node, is what carries the query across a swap.
+  function buildFilterState(input, index) {
+    const rawTarget = input.getAttribute(FILTER_ATTR);
+    const target = resolveFilterTarget(rawTarget);
+    if (!target) {
+      console.warn(
+        "[gosx] " + FILTER_ATTR + " target " + JSON.stringify(String(rawTarget || ""))
+        + " does not match any element id or selector; this filter is disabled",
+      );
+      return null;
+    }
+    const key = input.id ? ("id:" + input.id) : ("pos:" + index);
+    const rawQuery = filterQueryState.has(key) ? filterQueryState.get(key) : "";
+    return {
+      input: input,
+      target: target,
+      key: key,
+      rawQuery: rawQuery,
+      announce: input.hasAttribute(FILTER_ANNOUNCE_ATTR)
+        && managedFormShorthandTruthy(input.getAttribute(FILTER_ANNOUNCE_ATTR)),
+      debounceHandle: null,
+    };
+  }
+
+  function normalizeFilterQuery(raw) {
+    return String(raw == null ? "" : raw).trim().toLowerCase();
+  }
+
+  function filterRowsOf(target) {
+    return collectElements(target, function(node) {
+      return node.hasAttribute && node.hasAttribute(FILTER_TEXT_ATTR);
+    });
+  }
+
+  // closestFilterRow walks up from `node` to the nearest ancestor (or
+  // `node` itself) carrying FILTER_TEXT_ATTR — mirrors closestLink's own
+  // ancestor walk above, applied to filter rows instead of managed links.
+  function closestFilterRow(node) {
+    let current = node;
+    while (current) {
+      if (current.hasAttribute && current.hasAttribute(FILTER_TEXT_ATTR)) {
+        return current;
+      }
+      current = current.parentNode;
+    }
+    return null;
+  }
+
+  // onFilterPointerOver keeps filterHoverRow live: every "mouseover" (which
+  // bubbles and re-fires as the pointer crosses each descendant) recomputes
+  // the current row from the live event target, so this stays correct
+  // through a drag or a scroll with no polling of its own.
+  function onFilterPointerOver(event) {
+    filterHoverRow = closestFilterRow(event.target);
+  }
+
+  // onFilterPointerOut clears filterHoverRow only when the pointer has
+  // actually left the current row — not on every "mouseout" a move between
+  // two descendants OF THE SAME row also fires. event.relatedTarget is the
+  // element the pointer is entering; if that element (or one of its
+  // ancestors) is still the same row, onFilterPointerOver above already
+  // re-asserts it as part of the same pointer move and there is nothing to
+  // clear here.
+  function onFilterPointerOut(event) {
+    if (closestFilterRow(event.relatedTarget) === filterHoverRow) {
+      return;
+    }
+    filterHoverRow = null;
+  }
+
+  // rowIsFilterGuarded reports whether `row` is under active interaction
+  // right now — see this section's own doc comment above for why a
+  // guarded row is left alone rather than hidden.
+  function rowIsFilterGuarded(row) {
+    const active = document.activeElement;
+    if (active && typeof row.contains === "function" && row.contains(active)) {
+      return true;
+    }
+    return row === filterHoverRow;
+  }
+
+  // applyFilterRecord is the whole match-and-hide pass for one filter
+  // input: read every row's FILTER_TEXT_ATTR, compare it against the
+  // record's current query, and toggle FILTER_HIDDEN_CLASS accordingly — a
+  // row that fails the match but is currently guarded (see
+  // rowIsFilterGuarded above) keeps its current visibility instead of
+  // being hidden out from under the visitor. Called after every debounced
+  // keystroke and once per record on every rescan (setupPageFilters
+  // below), so an empty query (or a guard that has since cleared) always
+  // converges to the correct shown/hidden state within one apply.
+  function applyFilterRecord(record) {
+    if (!record.target) return;
+    const rows = filterRowsOf(record.target);
+    const query = normalizeFilterQuery(record.rawQuery);
+    let shown = 0;
+    for (const row of rows) {
+      const text = String((row.getAttribute && row.getAttribute(FILTER_TEXT_ATTR)) || "").toLowerCase();
+      const matches = !query || text.indexOf(query) !== -1;
+      const hide = !matches && !rowIsFilterGuarded(row);
+      setElementClassActive(row, FILTER_HIDDEN_CLASS, hide);
+      if (!hide) shown += 1;
+    }
+    if (record.announce) {
+      announceNavigation(shown + " of " + rows.length + " shown");
+    }
+  }
+
+  function findFilterRecordForInput(node) {
+    for (const record of filterRoots) {
+      if (record.input === node) return record;
+    }
+    return null;
+  }
+
+  // onFilterInput is the delegated "input" listener every data-gosx-filter
+  // input shares (see the document.addEventListener call near the bottom
+  // of this file), the same delegation shape onClick/onMouseOver/onFocusIn
+  // already use. The raw value is remembered — both on the record and in
+  // filterQueryState, so a swap mid-debounce still carries the visitor's
+  // latest keystroke — immediately; only the actual match-and-hide pass
+  // (applyFilterRecord) waits out FILTER_DEBOUNCE_MS of quiet.
+  function onFilterInput(event) {
+    const record = findFilterRecordForInput(event.target);
+    if (!record) return;
+    const raw = String(event.target.value == null ? "" : event.target.value);
+    record.rawQuery = raw;
+    filterQueryState.set(record.key, raw);
+    if (record.debounceHandle != null) {
+      clearTimeout(record.debounceHandle);
+    }
+    record.debounceHandle = setTimeout(function() {
+      record.debounceHandle = null;
+      applyFilterRecord(record);
+    }, FILTER_DEBOUNCE_MS);
+  }
+
+  function teardownPageFilters() {
+    for (const record of filterRoots) {
+      if (record.debounceHandle != null) {
+        clearTimeout(record.debounceHandle);
+      }
+    }
+    filterRoots = [];
+  }
+
+  // setupPageFilters scans for every data-gosx-filter input on page boot
+  // and after every soft navigation (see finalizeNavigation and the
+  // initial-document replay below) — the same rescan lifecycle
+  // setupPageWatchers follows just above. Each record restores its
+  // remembered query (filterQueryState) onto the freshly-rendered input's
+  // own .value and re-applies it against the freshly-rendered rows in the
+  // same pass — see this section's own doc comment for why both halves of
+  // that are necessary.
+  function setupPageFilters() {
+    filterGeneration += 1;
+    teardownPageFilters();
+    const inputs = findFilterInputElements();
+    const records = [];
+    for (let i = 0; i < inputs.length; i += 1) {
+      // Mirrors setupPageWatchers' own try/catch above: one bad filter
+      // must degrade to "this filter is disabled", never take down the
+      // rest of the navigation runtime's boot.
+      let record = null;
+      try {
+        record = buildFilterState(inputs[i], i);
+      } catch (error) {
+        reportNavigationFailure("filter setup", error, { source: windowLocationHref() });
+      }
+      if (!record) continue;
+      if (record.rawQuery && typeof record.input.value !== "undefined") {
+        record.input.value = record.rawQuery;
+      }
+      records.push(record);
+    }
+    filterRoots = records;
+    for (const record of filterRoots) {
+      try {
+        applyFilterRecord(record);
+      } catch (error) {
+        reportNavigationFailure("filter apply", error, { source: windowLocationHref() });
+      }
+    }
+  }
+
   // Declarative reorder (data-gosx-reorder, gosx#212)
   //
   // A container marks itself REORDER_CONTAINER_ATTR; each direct child that
@@ -4671,8 +5141,10 @@
     refreshNavigationState();
     prefetchManagedLinks("render");
     setupPageRevalidation();
+    setupPageHeartbeat();
     setupPageCountdowns();
     setupPageWatchers();
+    setupPageFilters();
     const actions = window.__gosx && window.__gosx.actions;
     if (actions && typeof actions.refreshBindings === "function") {
       actions.refreshBindings();
@@ -4734,7 +5206,18 @@
   document.addEventListener("mouseover", onMouseOver);
   document.addEventListener("focusin", onFocusIn);
   document.addEventListener("submit", onSubmit);
+  // onFilterInput (gosx#215) is the delegated listener for every
+  // data-gosx-filter input — see its own doc comment above.
+  document.addEventListener("input", onFilterInput);
+  // onFilterPointerOver/Out (gosx#215) keep filterHoverRow live, alongside
+  // — not instead of — onMouseOver above, which is unrelated (prefetch).
+  document.addEventListener("mouseover", onFilterPointerOver);
+  document.addEventListener("mouseout", onFilterPointerOut);
   document.addEventListener("visibilitychange", onRevalidateVisibilityChange);
+  // onHeartbeatVisibilityChange (gosx#216) runs alongside, not instead of,
+  // onRevalidateVisibilityChange above — the two features pause and catch
+  // up independently of each other.
+  document.addEventListener("visibilitychange", onHeartbeatVisibilityChange);
   if (typeof window.addEventListener === "function") {
     window.addEventListener("popstate", onPopState);
     // onTitleFlashWindowFocus (gosx#214) stops the current data-gosx-watch
@@ -4760,8 +5243,10 @@
   }, "init");
   prefetchManagedLinks("render");
   setupPageRevalidation();
+  setupPageHeartbeat();
   setupPageCountdowns();
   setupPageWatchers();
+  setupPageFilters();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", refreshInitialDocumentNavigation, { once: true });
   }
