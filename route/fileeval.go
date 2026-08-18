@@ -53,7 +53,36 @@ type fileRenderEnv struct {
 	// right value instead of an artificially reduced map. See
 	// localComponentProps' single-spread branch.
 	strictSpreadSource any
+
+	// propsFrame records which component category owns the "props" binding
+	// currently in scope (gosx#240). strictSpreadSource alone no longer
+	// answers that: a typed legacy frame now carries a raw source too, and
+	// a nil source means "this frame came from named attributes" for both
+	// categories. writeLocalComponent overwrites it on every local
+	// component call, exactly as it overwrites strictSpreadSource, so it is
+	// never stale.
+	propsFrame propsFrameKind
 }
+
+// propsFrameKind names the component category that built the "props"
+// binding in scope. It exists so the strict spread boundary can tell a
+// typed legacy frame's flattened map (which its own declared schema makes
+// provable) from an untyped one (which nothing makes provable), and from a
+// strict frame's reduced map.
+type propsFrameKind uint8
+
+const (
+	// propsFrameNone is a page or layout entry, an untyped legacy frame, or
+	// any scope outside a local component call. Its props binding carries
+	// no declared schema.
+	propsFrameNone propsFrameKind = iota
+	// propsFrameStrict is a strict component's own render frame.
+	propsFrameStrict
+	// propsFrameTypedLegacy is a typed legacy component's render frame:
+	// a flattened map like every legacy frame, but backed by a props
+	// struct declared in the same .gsx file.
+	propsFrameTypedLegacy
+)
 
 // fileRenderScope is one copy-on-write binding in the render environment.
 //
