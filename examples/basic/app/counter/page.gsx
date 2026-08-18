@@ -4,7 +4,9 @@ func Page() Node {
 	return <div class="container">
 		<h1>Counter</h1>
 		<nav>
-			<a href="/">Home</a> | <a href="/counter">Counter</a>
+			<a href="/">Home</a>
+			|
+			<a href="/counter">Counter</a>
 		</nav>
 		<hr />
 		<div class="counter">
