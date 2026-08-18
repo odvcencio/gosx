@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+### Added: render a page's own component from a Go handler
+
+- **`route.RenderProgramComponent` renders a strict component as the render
+  entry, with typed props** (gosx#226). A `component Foo(props: FooProps)`
+  declaration compiles to an `ir.Component` the file-program renderer only
+  reaches by name inside a compiled `*ir.Program` — not a linkable Go
+  symbol — so a hand-written `http.Handler` in the same package as a
+  `page.gsx` file had no supported way to render one of that page's own
+  components into a fragment. `ProgramRenderEnv.Props` now supplies the
+  typed props value; the renderer proves it at the exact boundary a nested
+  `<Foo {...props}/>` call already runs on every render (`strictSpreadProps`):
+  a `nil` Props value still fails closed with the original "no root props
+  binding" error, and a `map[string]any` — however it is shaped — still
+  cannot prove field coverage. Rendering a strict component this way
+  produces byte-for-byte the same markup a nested call to it produces.
+- **`route.LoadFileProgram` loads a `.gsx` file's compiled program through
+  the file router's own stat-keyed cache** (gosx#226), the same cache a
+  file-routed page or layout renders through. A fragment handler that
+  calls it renders through the identical cached program the page itself
+  uses — an edit to the `.gsx` file reaches both the same way, with no
+  second, independently-stale compile path to drift out of sync.
+- This closes the fragment-endpoint gap `data-gosx-region` needs: a
+  `data-gosx-region-url` handler can now render the page's own component
+  instead of hand-mirroring its markup with the low-level `El`/`Attrs`/
+  `Text` API. See the runtime docs' "Rendering a fragment from a Go
+  handler" section, beside `data-gosx-region`.
+
 ## v0.47.1 (2026-08-18)
 
 ### Fixed: the release version constant

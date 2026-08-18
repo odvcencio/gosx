@@ -619,6 +619,75 @@ func Page() Node {
 				<span class="inline-code">data-gosx-live-bind</span>
 				rejects an empty or whitespace-containing key the same way.
 			</p>
+			<h3>Rendering a fragment from a Go handler</h3>
+			<p>
+				A
+				<span class="inline-code">data-gosx-region-url</span>
+				endpoint must render the same markup a page's own component already produces — otherwise the polled fragment and the page drift apart. Load the page's compiled program with
+				<span class="inline-code">route.LoadFileProgram</span>
+				and render one component from it with
+				<span class="inline-code">route.RenderProgramComponent</span>
+				, from a plain
+				<span class="inline-code">http.Handler</span>
+				in the same package as the page. This works for a component the page's own
+				<span class="inline-code">Page</span>
+				entry never renders directly, not only for
+				<span class="inline-code">Page</span>
+				itself.
+			</p>
+			{CodeBlock("gosx", `// page.gsx
+	type SignalCardProps struct {
+	    Label string
+	    Value string
+	}
+
+	component SignalCard(props: SignalCardProps) {
+	    return <li class="signal-card">{props.Label}: {props.Value}</li>
+	}
+
+	component Page() {
+	    return <ul data-gosx-region data-gosx-region-url="/wire/signal" data-gosx-region-interval="20s">
+	        <SignalCard label="Passing Yards" value="317" />
+	    </ul>
+	}`)}
+			{CodeBlock("go", `// page.server.go — same package as page.gsx
+	var pagePath = filepath.Join(thisDir, "page.gsx")
+
+	func ServeSignalFragment(w http.ResponseWriter, r *http.Request) {
+	    prog, err := route.LoadFileProgram(pagePath)
+	    if err != nil {
+	        http.Error(w, err.Error(), http.StatusInternalServerError)
+	        return
+	    }
+	    html, err := route.RenderProgramComponent(prog, "SignalCard", route.ProgramRenderEnv{
+	        Props: SignalCardProps{Label: "Passing Yards", Value: currentValue()},
+	    })
+	    if err != nil {
+	        http.Error(w, err.Error(), http.StatusInternalServerError)
+	        return
+	    }
+	    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	    w.Write([]byte(html))
+	}`)}
+			<p>
+				<span class="inline-code">route.LoadFileProgram</span>
+				reads through the same stat-keyed program cache a file-routed page renders through, so an edit to
+				<span class="inline-code">page.gsx</span>
+				reaches the fragment handler exactly the way it reaches the page's own hot reload — there is no second, independently-stale copy of the compiled component to fall behind.
+			</p>
+			<p>
+				A
+				<span class="inline-code">component</span>
+				declaration keeps its strict props boundary at this entry point: pass
+				<span class="inline-code">route.ProgramRenderEnv.Props</span>
+				a real
+				<span class="inline-code">SignalCardProps</span>
+				value, and the renderer proves every rendered field's presence and declared type before it renders — the same proof a nested strict-component call from inside another component's own body already runs on every render. A
+				<span class="inline-code">map[string]any</span>
+				never satisfies that proof, no matter how it is shaped, and a
+				<span class="inline-code">nil</span>
+				Props value fails closed with a named error instead of rendering.
+			</p>
 		</section>
 		<section id="declarative-filter">
 			<h2>Declarative list filter</h2>
