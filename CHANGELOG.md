@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.47.0 (2026-08-18)
 
 ### Added: live-bound regions
 
