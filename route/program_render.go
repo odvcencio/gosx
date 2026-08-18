@@ -1,6 +1,9 @@
 package route
 
 import (
+	"fmt"
+	"path/filepath"
+
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/ir"
 	islandprogram "m31labs.dev/gosx/island/program"
@@ -12,6 +15,23 @@ import (
 //   - Values / Funcs bind identifiers and functions referenced by {expr} (e.g.
 //     Funcs["strings"] = map[string]any{"ToUpper": strings.ToUpper}). Unresolved
 //     identifiers render empty rather than erroring, so missing bindings fail soft.
+//   - Props supplies the typed props value when component is a strict
+//     component (gosx#226): a `component Foo(props: FooProps)` declaration
+//     compiles to an ir.Component with a declared PropsType, and — same as
+//     a nested `<Foo {...props}/>` call inside another component's body —
+//     rendering it as the entry component must prove a real struct value,
+//     not a map. RenderProgramComponent proves Props at that identical
+//     boundary (see strictSpreadProps): a nil Props, any map[string]any
+//     (including one shaped exactly like FooProps — a map can omit keys
+//     and has no field types to check ahead of the values, so it never
+//     proves coverage), or a struct missing a rendered field or holding
+//     one of the wrong type all fail closed with a descriptive error
+//     instead of rendering. A same-shaped struct under a different Go type
+//     name is accepted, matching a generated-Go spread caller's own
+//     boundary (strictSpreadProps proves field coverage, not the source
+//     struct's own type identity — see TestStrictSpreadProps). Ignored for
+//     a legacy (non-strict) component, and for a strict component with no
+//     declared props.
 //   - RenderIsland turns a local //gosx:island child (referenced as <Name/>) into
 //     a hydrated server-rendered mount — pass server.PageRuntime.Island or
 //     island.(*Renderer).RenderIslandFromProgram. When nil, island children
@@ -24,6 +44,7 @@ import (
 type ProgramRenderEnv struct {
 	Values       map[string]any
 	Funcs        map[string]any
+	Props        any
 	RenderIsland func(*islandprogram.Program, any) gosx.Node
 	Profile      *RenderProfile
 }
@@ -34,10 +55,16 @@ type ProgramRenderEnv struct {
 //
 // It is the public entry to the file-program renderer that powers file-based
 // pages, for callers that compile and render components directly — e.g. a slide
-// deck that lowers each slide to a generated component — instead of from on-disk
-// page files. A single compiled source may declare the rendered component plus
-// any sibling components and islands it references; cross-references resolve here
-// at render time.
+// deck that lowers each slide to a generated component, or a plain http.Handler
+// in the same package as a page.gsx file rendering one of that page's own
+// components into a fragment (gosx#226, see LoadFileProgram) — instead of from
+// on-disk page files. A single compiled source may declare the rendered
+// component plus any sibling components and islands it references;
+// cross-references resolve here at render time.
+//
+// component is a strict component's own render entry exactly the same way a
+// nested call to it is: see ProgramRenderEnv.Props for the typed-props
+// contract this requires.
 //
 // When env.Profile is set and its Validate hook reports any diagnostic,
 // RenderProgramComponent returns a *RenderProfileError and an empty string;
@@ -49,7 +76,34 @@ func RenderProgramComponent(prog *ir.Program, component string, env ProgramRende
 			funcs:        env.Funcs,
 			renderIsland: env.RenderIsland,
 		},
-		Profile: env.Profile,
+		EntryProps: env.Props,
+		Profile:    env.Profile,
 	})
 	return html, err
+}
+
+// LoadFileProgram compiles the .gsx file at path and returns its IR program,
+// through the same stat-keyed cache (gosx#226) a file-routed page or layout
+// renders through (route/filelayout.go's gsxCompileCache): a request that
+// hits this file again before its next edit gets the cached *ir.Program back
+// without re-parsing, and an edit invalidates the cache exactly the way it
+// invalidates a running page's own hot reload — there is no second,
+// independently-stale cache for a caller of this function to fall behind.
+//
+// This is the other half of gosx#226's fix: a plain http.Handler in the same
+// package as a page.gsx file — for example, a fragment endpoint that data-
+// gosx-region polls — loads that file's compiled program with this function
+// and renders any component it declares, including one the page's own
+// Page/Layout entry never renders directly, with RenderProgramComponent.
+//
+// path resolves relative to the process's current working directory, same as
+// os.Open; pass an absolute path (for example, one built from the source
+// file's own directory: filepath.Join(filepath.Dir(sourceFile), "page.gsx"))
+// to make it independent of the working directory the binary starts in.
+func LoadFileProgram(path string) (*ir.Program, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s: %w", path, err)
+	}
+	return loadCachedGSXProgram(abs)
 }
