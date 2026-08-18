@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.49.0 (2026-08-18)
 
 ### Fixed: LoadFileProgram's documented fragment pattern broke under a `-trimpath` build
 
@@ -158,6 +158,40 @@
   implementations of one predicate drift. Arity stays a gosx-level rule with
   a single owner and a diagnostic better than Go's "too many arguments".
 - A consumer that asserts on the projected signature text must update it.
+
+### Added: a shared component projects across a directory boundary
+
+- **`transpile` resolves a call to a strict component declared in another
+  directory**, reached through an ordinary relative import (`./ui` or
+  `../ui`). `SharedImport` carries one such import's projection facts: the Go
+  import path substituted for the relative source text, and the props shape of
+  every strict component the target directory declares.
+  `CollectSharedComponents` builds that map from the target's already-loaded
+  package files, using the identical extraction a same-file typed call runs,
+  so a shared call and a same-file call resolve through one set of rules and
+  the two projections cannot drift apart.
+- **A shared call is held to the same boundary as a same-file call.** The
+  existing strict-spread refusal applies unchanged at a shared call site, and
+  attribute names resolve to exported Go fields through the same lower-camel
+  aliasing. A legacy component is not a valid shared call target: only a
+  strict component carries the schema the boundary proves against.
+- This is the projection half. `gosx check` is the intended producer of
+  `SharedImport`, and until that lands a strict caller's shared call still
+  meets the compiler's existing same-file constraint.
+
+### Changed: the bundled examples author pages in .gsx, not raw element calls
+
+- **`examples/basic` and `examples/dashboard` now build their pages from
+  file-routed `.gsx`** rather than composing `gosx.El` trees by hand
+  (gosx#238). The examples are where the framework's own habits are read, and
+  they had been demonstrating the escape hatch.
+- The dashboard example was doing worse than that: it already shipped five
+  file-routed `.gsx` pages that `main.go` never mounted, so it hand-built the
+  same pages beside them and the `.gsx` versions were unreachable. Wiring the
+  router removed 52 element-building call sites outright. Running the
+  example's own routes also surfaced a settings form posting to an
+  unregistered action, which returned 404, and a create-user form missing its
+  field-error and value-preservation bindings. Both are fixed.
 
 ## v0.48.0 (2026-08-18)
 
