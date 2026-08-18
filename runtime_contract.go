@@ -32,12 +32,12 @@ const (
 	// forms. See ManagedFormShorthandTruthy for the shared truthy rule.
 	ManagedFormShorthandAttr = "data-gosx-managed"
 
-	ActionAttr           = "data-gosx-action"
-	ActionResetAttr      = "data-gosx-reset"
-	ActionSubmitOnAttr   = "data-gosx-submit-on"
-	ActionEventAttr      = "data-gosx-action-event"
-	ActionSignalAttr     = "data-gosx-action-signal"
-	ActionTargetAttr     = "data-gosx-action-target"
+	ActionAttr         = "data-gosx-action"
+	ActionResetAttr    = "data-gosx-reset"
+	ActionSubmitOnAttr = "data-gosx-submit-on"
+	ActionEventAttr    = "data-gosx-action-event"
+	ActionSignalAttr   = "data-gosx-action-signal"
+	ActionTargetAttr   = "data-gosx-action-target"
 	// RegionAttr, on a container, marks it a server-fragment region
 	// (gosx#227): the bootstrap runtime fetches RegionURLAttr and swaps the
 	// response in as that container's new children on a signal change
