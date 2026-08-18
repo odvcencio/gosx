@@ -38,6 +38,33 @@ const (
 	ActionEventAttr      = "data-gosx-action-event"
 	ActionSignalAttr     = "data-gosx-action-signal"
 	ActionTargetAttr     = "data-gosx-action-target"
+	// RegionAttr, on a container, marks it a server-fragment region
+	// (gosx#227): the bootstrap runtime fetches RegionURLAttr and swaps the
+	// response in as that container's new children on a signal change
+	// (RegionSignalAttr), a hub event (RegionEventsAttr), or an interval
+	// (RegionIntervalAttr). This REQUIRES THE BOOTSTRAP RUNTIME —
+	// client/runtime/host/regions.ts — which does NOT ship in the lean
+	// NavigationScript()/app.EnableNavigation() payload every page already
+	// loads. A page must additionally call ctx.Runtime().EnableBootstrap()
+	// (or otherwise opt into a bootstrap bundle — registering an island, an
+	// engine, or a hub on the same page already implies it too; see
+	// PageRuntime's own methods in server/runtime.go). The initial,
+	// server-rendered children inside a RegionAttr element are correct HTML
+	// either way, but without a bootstrap bundle loaded, RegionAttr and
+	// every other data-gosx-region-* attribute is SILENTLY INERT: no error
+	// reaches production, and no build-time or `gosx check`-time diagnostic
+	// can catch it either — whether a page ends up with an active
+	// PageRuntime is a runtime side effect of executing the page's (or its
+	// layout's) own arbitrary Go code, not a property statically knowable
+	// from the compiled template IR `gosx check` inspects, which never even
+	// reads the paired .server.go file. The one line of defense is a
+	// runtime, dev-console warning: checkRegionBootstrapDiagnostic in
+	// navigation.ts (part of the lean payload, so it always loads) warns
+	// once, after the page finishes loading, if it finds a RegionAttr
+	// element but window.__gosx.regions — the marker regions.ts itself
+	// installs — never appeared. See the client runtime guide's
+	// "Live-bound regions" section (the "Periodic region refresh" heading)
+	// for the full contract and a worked EnableBootstrap() example.
 	RegionAttr           = "data-gosx-region"
 	RegionURLAttr        = "data-gosx-region-url"
 	RegionSignalAttr     = "data-gosx-region-signal"
