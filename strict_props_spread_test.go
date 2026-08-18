@@ -55,7 +55,10 @@ func ScoreTeam(props any) Node {
 	</div>
 }
 `)
-	want := "legacy component ScoreTeam cannot spread props into strict component TeamMark; a legacy render frame binds props to map[string]any, and the strict spread boundary proves field coverage on struct values only"
+	// gosx#240 narrowed the rule to the case it is unavoidable for, so the
+	// message says "untyped legacy component" where it used to say "legacy
+	// component": a typed legacy component is retrofitted now, not rejected.
+	want := "untyped legacy component ScoreTeam cannot spread props into strict component TeamMark; an untyped legacy render frame binds props to map[string]any, and the strict spread boundary proves field coverage on struct values only"
 	if diag.Message != want {
 		t.Fatalf("message = %q, want %q", diag.Message, want)
 	}
@@ -69,13 +72,296 @@ func ScoreTeam(props any) Node {
 	}
 }
 
-// TestCompileRejectsTypedLegacyPropsSpreadIntoStrict covers the second
-// spelling of the same defect. A declared props struct changes nothing at
-// render time: the file renderer binds a legacy frame's props to the map it
-// builds from the call site's attributes, whatever the declaration says, so
-// this spelling failed exactly as the `props any` one did. It was an
-// accepted acceptance fixture before gosx#229.
-func TestCompileRejectsTypedLegacyPropsSpreadIntoStrict(t *testing.T) {
+// --- gosx#240: the typed legacy retrofit -----------------------------------
+
+// TestTypedLegacyPropsSpreadIntoStrictRenders is gosx#240's headline shape,
+// and the exact composition gosx#229 rejected under the name
+// TestCompileRejectsTypedLegacyPropsSpreadIntoStrict. A legacy component
+// that declares a props STRUCT declared in the same file now carries the
+// schema a strict component carries, so its whole-props forward is proved at
+// the declaration and renders. The test asserts HTML rather than a clean
+// compile: the rejection it replaces existed because the composition
+// compiled and then failed at every render.
+func TestTypedLegacyPropsSpreadIntoStrictRenders(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+
+type TeamMarkProps struct {
+	Tone         string
+	Abbreviation string
+}
+
+component TeamMark(props: TeamMarkProps) {
+	return <span class={"tone-" + props.Tone}>{props.Abbreviation}</span>
+}
+
+type ScoreTeamProps struct {
+	Tone         string
+	Abbreviation string
+}
+
+func ScoreTeam(props ScoreTeamProps) Node {
+	return <div class="score-team"><TeamMark {...props}></TeamMark></div>
+}
+
+func Page() Node {
+	return <div><ScoreTeam {...data.away}></ScoreTeam></div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if comp := mustFindComponent(t, prog, "ScoreTeam"); !comp.PropsTyped {
+		t.Fatal("ScoreTeam.PropsTyped = false, want true")
+	}
+	html := mustRenderPage(t, prog, map[string]any{
+		"data": map[string]any{"away": strictSpreadTestSide{Tone: "red", Abbreviation: "NE"}},
+	})
+	want := `<div class="score-team"><span class="tone-red">NE</span></div>`
+	if !strings.Contains(html, want) {
+		t.Fatalf("rendered HTML %q does not contain %q", html, want)
+	}
+}
+
+// TestTypedLegacyPropsSpreadRendersFromEveryCallShape is the property that
+// made this retrofit acceptable where preserving a raw value beside the
+// flattened map was not (gosx#229's adjacent question): the proof is made at
+// the DECLARATION, so it does not turn on how any caller invokes the
+// component. The same ScoreTeam body renders whether its caller spreads one
+// struct into it or names its attributes one by one, including when the
+// caller omits an attribute and Go would supply the zero value.
+func TestTypedLegacyPropsSpreadRendersFromEveryCallShape(t *testing.T) {
+	const prelude = `package app
+
+type TeamMarkProps struct {
+	Tone         string
+	Abbreviation string
+}
+
+component TeamMark(props: TeamMarkProps) {
+	return <span class={"tone-" + props.Tone}>{props.Abbreviation}</span>
+}
+
+type ScoreTeamProps struct {
+	Tone         string
+	Abbreviation string
+}
+
+func ScoreTeam(props ScoreTeamProps) Node {
+	return <div class="score-team"><TeamMark {...props}></TeamMark></div>
+}
+`
+	for _, tc := range []struct {
+		name string
+		page string
+		want string
+	}{
+		{
+			name: "named attributes",
+			page: `<div><ScoreTeam tone="blue" abbreviation="BUF"></ScoreTeam></div>`,
+			want: `<div class="score-team"><span class="tone-blue">BUF</span></div>`,
+		},
+		{
+			name: "one omitted attribute takes the Go zero value",
+			page: `<div><ScoreTeam tone="blue"></ScoreTeam></div>`,
+			want: `<div class="score-team"><span class="tone-blue"></span></div>`,
+		},
+		{
+			name: "single struct spread",
+			page: `<div><ScoreTeam {...data.away}></ScoreTeam></div>`,
+			want: `<div class="score-team"><span class="tone-red">NE</span></div>`,
+		},
+		{
+			name: "single map spread",
+			page: `<div><ScoreTeam {...data.raw}></ScoreTeam></div>`,
+			want: `<div class="score-team"><span class="tone-gold">GB</span></div>`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := gosx.Compile([]byte(prelude + "\nfunc Page() Node {\n\treturn " + tc.page + "\n}\n"))
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			html := mustRenderPage(t, prog, map[string]any{
+				"data": map[string]any{
+					"away": strictSpreadTestSide{Tone: "red", Abbreviation: "NE"},
+					"raw":  map[string]any{"Tone": "gold", "Abbreviation": "GB"},
+				},
+			})
+			if !strings.Contains(html, tc.want) {
+				t.Fatalf("rendered HTML %q does not contain %q", html, tc.want)
+			}
+		})
+	}
+}
+
+// TestTypedLegacyComponentNestsInsideStrictComponent covers the other
+// direction of the same boundary: a strict body may now call a typed legacy
+// component, by one spread or by named attributes. Both shapes were an
+// outright cross-style error before gosx#240.
+func TestTypedLegacyComponentNestsInsideStrictComponent(t *testing.T) {
+	const prelude = `package app
+
+type SideProps struct {
+	Tone         string
+	Abbreviation string
+}
+
+func ScoreTeam(props SideProps) Node {
+	return <b class={"tone-" + props.Tone}>{props.Abbreviation}</b>
+}
+`
+	for _, tc := range []struct {
+		name string
+		call string
+	}{
+		{name: "spread", call: `<ScoreTeam {...props}></ScoreTeam>`},
+		{name: "named attributes", call: `<ScoreTeam tone={props.Tone} abbreviation={props.Abbreviation}></ScoreTeam>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := gosx.Compile([]byte(prelude + `
+component Shell(props: SideProps) {
+	return <div class="shell">` + tc.call + `</div>
+}
+
+func Page() Node {
+	return <div><Shell {...data.away}></Shell></div>
+}
+`))
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			html := mustRenderPage(t, prog, map[string]any{
+				"data": map[string]any{"away": strictSpreadTestSide{Tone: "red", Abbreviation: "NE"}},
+			})
+			want := `<div class="shell"><b class="tone-red">NE</b></div>`
+			if !strings.Contains(html, want) {
+				t.Fatalf("rendered HTML %q does not contain %q", html, want)
+			}
+		})
+	}
+}
+
+// TestTypedLegacyAndStrictNestBothWaysInOneTree renders one page whose tree
+// alternates the two spellings — strict, then typed legacy, then strict —
+// so the retrofit is proved as composition rather than as two separate one
+// hop cases.
+func TestTypedLegacyAndStrictNestBothWaysInOneTree(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+
+type SideProps struct {
+	Tone         string
+	Abbreviation string
+}
+
+component TeamMark(props: SideProps) {
+	return <span class={"tone-" + props.Tone}>{props.Abbreviation}</span>
+}
+
+func ScoreTeam(props SideProps) Node {
+	return <b class="score-team"><TeamMark {...props}></TeamMark></b>
+}
+
+component Shell(props: SideProps) {
+	return <div class="shell"><ScoreTeam {...props}></ScoreTeam></div>
+}
+
+func Page() Node {
+	return <div><Shell {...data.away}></Shell></div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html := mustRenderPage(t, prog, map[string]any{
+		"data": map[string]any{"away": strictSpreadTestSide{Tone: "red", Abbreviation: "NE"}},
+	})
+	want := `<div class="shell"><b class="score-team"><span class="tone-red">NE</span></b></div>`
+	if !strings.Contains(html, want) {
+		t.Fatalf("rendered HTML %q does not contain %q", html, want)
+	}
+}
+
+// TestTypedLegacyPropsSpreadInsideEachRenders is the shape both production
+// instances of gosx#229 actually had — the strict call sits inside a loop —
+// spelled with a declared props struct. It rejected at compile time before
+// gosx#240 and renders now.
+func TestTypedLegacyPropsSpreadInsideEachRenders(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+
+type TeamMarkProps struct {
+	Tone string
+}
+
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+
+type MatchupCardProps struct {
+	Tone string
+	Rows []int
+}
+
+func MatchupCard(props MatchupCardProps) Node {
+	return <div class="card">
+		<Each of={props.Rows} as="row">
+			<TeamMark {...props}></TeamMark>
+		</Each>
+	</div>
+}
+
+func Page() Node {
+	return <div><MatchupCard tone="red" rows={data.rows}></MatchupCard></div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html := mustRenderPage(t, prog, map[string]any{
+		"data": map[string]any{"rows": []int{1, 2}},
+	})
+	if got := strings.Count(html, "<span>red</span>"); got != 2 {
+		t.Fatalf("rendered HTML %q has %d marks, want 2", html, got)
+	}
+}
+
+// TestCompileRejectsTypedLegacyForwardMissingField proves the retrofit is a
+// proof, not a waiver. A whole-props forward reads the CALLER's own fields,
+// so the caller's struct must declare every field the callee renders. The
+// diagnostic names the field, its type, and the read that needs it.
+func TestCompileRejectsTypedLegacyForwardMissingField(t *testing.T) {
+	diag := legacyPropsSpreadDiagnostic(t, `package app
+
+type TeamMarkProps struct {
+	Tone         string
+	Abbreviation string
+}
+
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}{props.Abbreviation}</span>
+}
+
+type ScoreTeamProps struct {
+	Tone string
+}
+
+func ScoreTeam(props ScoreTeamProps) Node {
+	return <div><TeamMark {...props}></TeamMark></div>
+}
+`)
+	want := "typed legacy component ScoreTeam cannot spread props into strict component TeamMark: ScoreTeamProps does not declare field Abbreviation (string), which TeamMark renders as props.Abbreviation"
+	if diag.Message != want {
+		t.Fatalf("message = %q, want %q", diag.Message, want)
+	}
+	if !strings.Contains(diag.Hint, "add Abbreviation string to ScoreTeamProps") {
+		t.Fatalf("hint = %q, want the add-the-field remedy", diag.Hint)
+	}
+}
+
+// TestCompileRejectsTypedLegacyForwardTypeMismatch is the same proof for a
+// field that is declared but declared differently. Both names resolve in one
+// file, so an identical spelling is an identical type and the check costs an
+// author nothing that is not already true.
+func TestCompileRejectsTypedLegacyForwardTypeMismatch(t *testing.T) {
 	diag := legacyPropsSpreadDiagnostic(t, `package app
 
 type TeamMarkProps struct {
@@ -86,14 +372,110 @@ component TeamMark(props: TeamMarkProps) {
 	return <span>{props.Tone}</span>
 }
 
-func StandingRow(props TeamMarkProps) Node {
-	return <div class="standing-row"><TeamMark {...props}></TeamMark></div>
+type ScoreTeamProps struct {
+	Tone int
+}
+
+func ScoreTeam(props ScoreTeamProps) Node {
+	return <div><TeamMark {...props}></TeamMark></div>
 }
 `)
-	want := "legacy component StandingRow cannot spread props into strict component TeamMark"
-	if !strings.HasPrefix(diag.Message, want) {
-		t.Fatalf("message = %q, want prefix %q", diag.Message, want)
+	want := "typed legacy component ScoreTeam cannot spread props into strict component TeamMark: field Tone is int on ScoreTeamProps and string on TeamMarkProps; a whole-props forward needs the declared types to match"
+	if diag.Message != want {
+		t.Fatalf("message = %q, want %q", diag.Message, want)
 	}
+}
+
+// TestCompileRejectsPropsSpreadFromAnotherFilesPropsType pins the retrofit's
+// boundary. "Typed" means a struct declared in THIS .gsx file, the same
+// same-file schema rule a strict component answers to: a props type declared
+// in a sibling .go file has no schema the lowerer can prove against, so it
+// stays an untyped legacy component and keeps the gosx#229 rejection.
+func TestCompileRejectsPropsSpreadFromAnotherFilesPropsType(t *testing.T) {
+	diag := legacyPropsSpreadDiagnostic(t, `package app
+
+type TeamMarkProps struct {
+	Tone string
+}
+
+component TeamMark(props: TeamMarkProps) {
+	return <span>{props.Tone}</span>
+}
+
+func ScoreTeam(props ExternalProps) Node {
+	return <div><TeamMark {...props}></TeamMark></div>
+}
+`)
+	if !strings.HasPrefix(diag.Message, "untyped legacy component ScoreTeam cannot spread props into strict component TeamMark") {
+		t.Fatalf("message = %q", diag.Message)
+	}
+}
+
+// TestTypedLegacyComponentKeepsItsMapBinding is gosx#240's compatibility
+// guard, and the reason the retrofit changes what a typed legacy component
+// may COMPOSE with without changing how its body observes its props. A
+// legacy body reads props through the flattened map the file renderer
+// builds from the call site, and real programs depend on three properties
+// of that map that a struct binding would have taken away:
+//
+//  1. children arrive under props.Children, which no props struct declares
+//     (cmd/gosx/templates/docs/app/page.gsx does exactly this);
+//  2. an attribute the declared struct does not name still arrives;
+//  3. a spread source may be a map, not only a struct.
+//
+// All three keep working for a typed legacy component. The retrofit adds a
+// schema; it does not replace the binding.
+func TestTypedLegacyComponentKeepsItsMapBinding(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+
+type CardProps struct {
+	Title string
+}
+
+func Card(props CardProps) Node {
+	return <section class="card"><h3>{props.Title}</h3><em>{props.Kicker}</em>{props.Children}</section>
+}
+
+func Spread(props CardProps) Node {
+	return <p>{props.Title}|{props.Extra}</p>
+}
+
+func Page() Node {
+	return <div>
+		<Card title="T" kicker="K"><b>body</b></Card>
+		<Spread {...data.card}></Spread>
+	</div>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if comp := mustFindComponent(t, prog, "Card"); !comp.PropsTyped {
+		t.Fatal("Card.PropsTyped = false, want true")
+	}
+	html := mustRenderPage(t, prog, map[string]any{
+		"data": map[string]any{"card": map[string]any{"Title": "T2", "Extra": "E"}},
+	})
+	for _, want := range []string{
+		`<section class="card"><h3>T</h3><em>K</em><b>body</b></section>`,
+		`<p>T2|E</p>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("rendered HTML %q does not contain %q", html, want)
+		}
+	}
+}
+
+// mustFindComponent returns the named component of prog, or fails.
+func mustFindComponent(t *testing.T, prog *ir.Program, name string) ir.Component {
+	t.Helper()
+	for _, comp := range prog.Components {
+		if comp.Name == name {
+			return comp
+		}
+	}
+	t.Fatalf("component %s not found in %#v", name, prog.Components)
+	return ir.Component{}
 }
 
 // TestCompileRejectsSelfClosingLegacyPropsSpreadIntoStrict pins the rule to

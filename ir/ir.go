@@ -125,19 +125,49 @@ type Component struct {
 	// serialized before this field existed: children were rejected at every
 	// strict callee then, so such a program accepted none.
 	//
-	// It is a STRICT-component field. A legacy component leaves it false and
-	// no rule reads it there: a legacy body receives children through the
-	// runtime props map ("children" and "Children", localComponentProps),
-	// which is a separate, older contract this field does not touch. A
-	// strict body cannot reach that map — props.Children fails the field
-	// walk at lower time unless the author declares such a field, and a
-	// gosx.Node-typed props field is a separate feature. The two paths do
-	// not interact.
+	// It is set for all three component categories, because the file
+	// renderer binds children the same way for every same-file callee
+	// (writeLocalComponent) and gosx#240 made a TYPED legacy component a
+	// legal callee inside a strict body. A strict caller's children rule
+	// therefore has to ask the same question of a legacy callee, and get a
+	// true answer.
+	//
+	// It does NOT record the legacy props.Children channel. A legacy body
+	// may also read its children out of the runtime props map, because
+	// componentProps injects the "children" and "Children" keys whether or
+	// not the props struct declares them. That contract is older, separate,
+	// and deliberately kept by gosx#240 — this field says nothing about it.
+	// A strict body cannot reach that channel at all: props.Children fails
+	// the field walk at lower time unless the author declares such a field,
+	// and a gosx.Node-typed props field is a separate feature.
 	AcceptsChildren bool
 
 	// Syntax distinguishes legacy `func` components from strict
 	// `component Name(props: Type)` declarations.
 	Syntax ComponentSyntax
+
+	// PropsTyped is true when PropsType names a struct declared in the
+	// same .gsx file. It is the third component category gosx#240 adds: a
+	// strict component, a TYPED legacy component (Syntax is
+	// ComponentSyntaxLegacy and PropsTyped is true), and an UNTYPED legacy
+	// component (PropsTyped is false — `props any`, an AttrList, a type
+	// from another file, or no props parameter at all).
+	//
+	// A typed legacy component declares the same schema a strict one does,
+	// so it carries PropsFields and PropsPaths and it takes part in strict
+	// spread boundaries in both directions. It keeps the legacy render
+	// frame's flattened map binding, because every existing legacy body
+	// reads props through that map — the retrofit widens which
+	// compositions compile, it does not change how a legacy body observes
+	// its props.
+	//
+	// A strict component leaves this false: Syntax already says its props
+	// are typed, and no consumer needs a second way to ask.
+	//
+	// The zero value (false) is the untyped legacy meaning, so a program
+	// serialized before this field existed decodes unchanged, matching the
+	// ComponentSyntax zero-value convention above.
+	PropsTyped bool
 
 	// Root is the index of the root node in Program.Nodes.
 	Root NodeID

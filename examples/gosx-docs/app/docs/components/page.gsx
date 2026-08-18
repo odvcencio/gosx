@@ -174,7 +174,24 @@ func Page() Node {
 			binding.
 		</p>
 		<p>
-			Both declaration styles may coexist in one file, but v0.39 keeps component calls within the same style. This prevents a dynamic legacy call from bypassing a strict component's typed prop contract.
+			Both declaration styles may coexist in one file. A component call stays within its declaration style, with one exception: a
+			<span class="inline-code">typed legacy</span>
+			component —
+			<span class="inline-code">func Name(props T) Node</span>
+			whose
+			<span class="inline-code">T</span>
+			is a struct declared in the same
+			<span class="inline-code">.gsx</span>
+			file — declares the same prop contract a strict component does, so it takes part in strict calls in both directions. A component that declares no such type (
+			<span class="inline-code">props any</span>
+			, an attribute list, or a type from another file) is an
+			<span class="inline-code">untyped legacy</span>
+			component and keeps the cross-style ban, because nothing about its props can be checked.
+		</p>
+		<p>
+			A typed legacy component keeps the legacy render frame's flattened map binding, so its body observes its props exactly as it always has: children arrive under
+			<span class="inline-code">props.Children</span>
+			, an attribute the struct does not name still arrives, and a caller may spread a map into it. Writing the props type down widens what the component may compose with; it does not change what the component sees.
 		</p>
 		<CodeBlock lang="gosx" source={data.legacySample} />
 		<p>
@@ -203,6 +220,13 @@ func Page() Node {
 			A strict component places the markup its caller wrote. Write
 			<span class="inline-code">{"{children}"}</span>
 			in the body, and pass child content at the call site. All three call shapes accept children: a strict caller's named attributes, a strict caller's single spread, and a legacy caller's single spread.
+		</p>
+		<p>
+			A typed legacy callee answers the same rule, because a strict body may call one. Its body places children through the same
+			<span class="inline-code">{"{children}"}</span>
+			hole. That hole is separate from the older
+			<span class="inline-code">props.Children</span>
+			channel a legacy body may also read: the channel carries the children whether or not the props struct declares the field, and it is unchanged.
 		</p>
 		<p>
 			Children are not a prop. They never enter the props schema, no boundary proof reads them, and the explicit-supply rule does not cover them. They arrive as one already-rendered node: the caller rendered them, in the caller's scope, so every element and every props read inside them already passed the caller's own compile, check, and render proofs. Nothing is deferred across the call.

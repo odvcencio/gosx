@@ -802,6 +802,36 @@ func HTMLDocumentWithNonce(title string, nonce string, head gosx.Node, body gosx
 	return gosx.RawHTML(renderDocument(title, nonce, head, body))
 }
 
+// HTMLDocumentWithBodyAttrs wraps content in a full HTML5 document, adding
+// bodyAttrs to the rendered <body> element (gosx#236).
+//
+// This is the direct-call sibling of Context.BodyAttrs / PageState.BodyAttrs
+// for a page that renders through HTMLDocument directly rather than through
+// App.renderPage's DocumentContext pipeline — for example a file-routed
+// app's router.SetLayout callback, which calls HTMLDocument itself:
+//
+//	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
+//	    ctx.BodyAttrs(
+//	        gosx.Attr(server.NavigationHeartbeatAttr, "/api/league/version"),
+//	        gosx.Attr(server.NavigationHeartbeatIntervalAttr, "4s"),
+//	    )
+//	    return server.HTMLDocumentWithBodyAttrs(ctx.Title(appName), ctx.Head(), body, ctx.BodyAttrsValue())
+//	})
+//
+// head is still expected to carry ctx.Head()'s own accumulated content —
+// bodyAttrs is the parallel channel for what ctx accumulated for <body>
+// instead of <head>. This replaces wrapping body in a gosx.El div solely to
+// carry attributes, plus a display:contents rule to keep that div out of
+// layout — see NavigationHeartbeatAttr's doc comment for the full migration.
+func HTMLDocumentWithBodyAttrs(title string, head gosx.Node, body gosx.Node, bodyAttrs gosx.AttrList) gosx.Node {
+	return gosx.RawHTML(renderDocumentWithContext(&DocumentContext{
+		Title:     title,
+		Head:      head,
+		Body:      body,
+		BodyAttrs: bodyAttrs,
+	}))
+}
+
 func renderDocument(title string, nonce string, head gosx.Node, body gosx.Node) string {
 	return renderDocumentWithContext(&DocumentContext{
 		Title: title,

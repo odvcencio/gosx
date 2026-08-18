@@ -1,3 +1,22 @@
+// Package docs implements the GoSX documentation site.
+//
+// This file holds the site's shared component library: CodeBlock,
+// StatCard, CapabilityTag, and Tooltip. Each one stays on the low-level
+// gosx.El/Attrs/Text API by necessity, not as a style example.
+//
+// modules.go binds each function, by compile-time Go identifier, into
+// every page's route.FileTemplateBindings.Funcs and .Components maps.
+// That binding lets other .gsx pages call these functions as tags, for
+// example `<CodeBlock lang="go" source={...} />`, or as plain calls, for
+// example `{CodeBlock("go", "...")}`.
+//
+// A Funcs or Components map entry must be a real, linkable Go function
+// value. The file router has no supported way to bind a .gsx-authored
+// component into that map by name. A component defined inside one
+// page.gsx file is visible only to that page, not to every page that
+// wants to reuse it. Until GoSX ships a shared, cross-page .gsx component
+// surface, this package stays Go, for the same reason server/page.go and
+// server/metadata_render.go stay Go.
 package docs
 
 import (

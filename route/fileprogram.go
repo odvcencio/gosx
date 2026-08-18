@@ -1183,8 +1183,10 @@ func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder
 	// Always overwrite, never inherit from env: rawSource is nil unless
 	// THIS call just proved it (single-spread shape), so an explicit-attrs
 	// call correctly clears whatever an enclosing strict frame left set,
-	// rather than leaking it into this unrelated component's own body.
+	// rather than leaking it into this unrelated component's own body. The
+	// frame kind is overwritten for the same reason.
 	scope.strictSpreadSource = rawSource
+	scope.propsFrame = componentPropsFrameKind(comp)
 	r.writeNode(b, comp.Root, scope)
 }
 
@@ -1801,16 +1803,95 @@ func componentProps(attrs []ir.Attr, env fileRenderEnv, children gosx.Node) map[
 	return props
 }
 
+// componentPropsFrameKind classifies the render frame a local component
+// call is about to open (gosx#240). See propsFrameKind.
+func componentPropsFrameKind(comp *ir.Component) propsFrameKind {
+	switch {
+	case comp == nil:
+		return propsFrameNone
+	case comp.Syntax == ir.ComponentSyntaxStrict:
+		return propsFrameStrict
+	case comp.PropsTyped:
+		return propsFrameTypedLegacy
+	default:
+		return propsFrameNone
+	}
+}
+
+// typedLegacyComponentProps builds a legacy callee's render-time props map.
+// The map itself is byte-for-byte what componentProps has always built, for
+// a typed and an untyped legacy callee alike: every legacy body reads its
+// props through that map, so gosx#240 widens which compositions compile
+// without changing how any legacy body observes its props.
+//
+// What a TYPED legacy callee gains is the second return value. A
+// single-spread call site hands the raw source value on, so a BARE
+// {...props} forward inside this callee's own body can be proved against
+// the value that built the frame instead of against the flattened map —
+// the same reuse a strict frame has had since gosx#182/#184 M-1. Before
+// this the lowerer rejected that forward outright (gosx#229), so nothing
+// that renders today reaches this.
+//
+// A bare {...props} spread that came from a STRICT caller is retargeted at
+// that caller's raw source, and fails closed when there is none. A strict
+// frame's own props map holds only the fields that frame renders
+// (strictSpreadProps), so forwarding the map itself would hand this callee
+// a value that is silently short of fields rather than one that is wrong in
+// a way anyone can see.
+func typedLegacyComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv, children gosx.Node) (map[string]any, any, error) {
+	if !comp.PropsTyped || len(attrs) != 1 || attrs[0].Kind != ir.AttrSpread {
+		return componentProps(attrs, env, children), nil, nil
+	}
+	source := evalFileExpr(attrs[0].Expr, env)
+	if strings.TrimSpace(attrs[0].Expr) == "props" && env.propsFrame == propsFrameStrict {
+		if env.strictSpreadSource == nil {
+			return nil, nil, fmt.Errorf("typed legacy component %s: the enclosing strict frame's props came from named attributes, so its whole props value is not available to forward; call the enclosing strict component with one {...source} spread", comp.Name)
+		}
+		source = env.strictSpreadSource
+	}
+	props := make(map[string]any, 8)
+	mergeComponentProps(props, source)
+	if !children.IsZero() {
+		setComponentProp(props, "children", children)
+		setComponentProp(props, "Children", children)
+	}
+	return props, structSpreadSource(source), nil
+}
+
+// structSpreadSource returns value when it indirects to a Go struct, and nil
+// otherwise. A legacy call site may spread a map, a slice, or a scalar —
+// none of which the strict boundary can prove — so only a struct is worth
+// carrying forward as this frame's raw source. Returning nil for the rest
+// sends a bare {...props} forward to strictSpreadPropsFromTypedFrame, which
+// proves the frame's own flattened map instead of failing on the kind check
+// with a value that was never going to satisfy it. A strict frame's raw
+// source is already always a struct, because strictSpreadProps rejects
+// every other kind before the frame opens.
+func structSpreadSource(value any) any {
+	if value == nil {
+		return nil
+	}
+	rv, ok := indirectReflectValue(reflect.ValueOf(value))
+	if !ok || rv.Kind() != reflect.Struct {
+		return nil
+	}
+	return value
+}
+
 // localComponentProps builds a strict callee's render-time props map, and
 // also returns the raw source value a single-spread call proved it from —
-// nil for an explicit-attrs call, or when comp is not a strict component.
-// The caller (writeLocalComponent) threads that raw value into the render
-// env as strictSpreadSource, purely so a BARE {...props} forward inside
-// THIS callee's own body (if it has one) can reuse it — see
-// fileRenderEnv.strictSpreadSource's doc comment (gosx#182/#184 M-1).
+// nil for an explicit-attrs call. The caller (writeLocalComponent) threads
+// that raw value into the render env as strictSpreadSource, purely so a
+// BARE {...props} forward inside THIS callee's own body (if it has one) can
+// reuse it — see fileRenderEnv.strictSpreadSource's doc comment
+// (gosx#182/#184 M-1). A legacy callee answers to
+// typedLegacyComponentProps instead.
 func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv, children gosx.Node) (map[string]any, any, error) {
-	if comp == nil || comp.Syntax != ir.ComponentSyntaxStrict {
+	if comp == nil {
 		return componentProps(attrs, env, children), nil, nil
+	}
+	if comp.Syntax != ir.ComponentSyntaxStrict {
+		return typedLegacyComponentProps(comp, attrs, env, children)
 	}
 	// The single-spread shape (design spec section 3.1) is the only spread
 	// shape validateStrictComponentCall admits at a strict callee, for
@@ -1824,8 +1905,28 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 	// to fail closed here — an empty read set makes every per-field proof
 	// vacuous, not the nil/kind checks themselves.
 	if len(attrs) == 1 && attrs[0].Kind == ir.AttrSpread {
+		bareProps := strings.TrimSpace(attrs[0].Expr) == "props"
+		if bareProps && env.strictSpreadSource == nil && env.propsFrame == propsFrameTypedLegacy {
+			// gosx#240: a TYPED legacy frame reached by named attributes
+			// has no raw source, but it does have a declared struct type,
+			// and the lowerer proved at that declaration that the type
+			// carries every field this callee renders
+			// (validateTypedLegacyPropsForward). The frame's own map is
+			// therefore a faithful reading of a value of that type, so it
+			// is proved key by key here instead of failing the struct-kind
+			// check. This is what keeps the retrofit unconditional: the
+			// same body renders whether its caller spread a struct into it
+			// or named its attributes one by one.
+			frame, _ := evalFileExpr("props", env).(map[string]any)
+			props, err := strictSpreadPropsFromTypedFrame(comp, frame)
+			if err != nil {
+				return nil, nil, err
+			}
+			setStrictComponentChildren(comp, props, children)
+			return props, nil, nil
+		}
 		source := evalFileExpr(attrs[0].Expr, env)
-		if strings.TrimSpace(attrs[0].Expr) == "props" && env.strictSpreadSource != nil {
+		if bareProps && env.strictSpreadSource != nil {
 			// A bare props forward: "props" in scope is always the reduced
 			// map[string]any this function built for the CURRENT frame,
 			// which strictSpreadProps below always rejects on the struct-
@@ -1890,13 +1991,22 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 // serve the body — it can only collide.
 //
 // The collision is a real proof loss. A callee that declares and reads
-// `Children string` has that field proved against comp.PropsFields by the
-// loop above, and the unguarded write replaced the proved string with a
-// gosx.Node. The defect predates children (the write ran with an empty
-// RawHTML node even when the call passed none, so the field rendered empty),
-// but admitting children would upgrade it from "renders empty" to "renders
-// the caller's markup where a proved string belongs". Children are not a
-// prop, and this is what makes that statement true rather than nearly true.
+// `Children string` has that field proved against comp.PropsFields, and the
+// unguarded write replaced the proved string with a gosx.Node. The defect
+// predates children (the write ran with an empty RawHTML node even when the
+// call passed none, so the field rendered empty), but admitting children
+// would upgrade it from "renders empty" to "renders the caller's markup
+// where a proved string belongs". Children are not a prop, and this is what
+// makes that statement true rather than nearly true.
+//
+// All three strict props-map builders route through here: the single-spread
+// shape, the explicit-attrs shape, and gosx#240's typed-frame shape. It is
+// deliberately NOT used by componentProps or typedLegacyComponentProps. A
+// LEGACY callee's props.Children is the children, by an older contract that
+// gosx#240 kept on purpose (TestTypedLegacyComponentKeepsItsMapBinding), and
+// componentProps injects that key for the named-attribute shape too — so
+// guarding only the spread shape would make one legacy call shape disagree
+// with the other, which is the opposite of what the retrofit promises.
 func setStrictComponentChildren(comp *ir.Component, props map[string]any, children gosx.Node) {
 	if children.IsZero() {
 		return
@@ -2350,6 +2460,117 @@ func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
 		setComponentProp(props, field, proved)
 	}
 	return props, nil
+}
+
+// strictSpreadPropsFromTypedFrame is strictSpreadProps' counterpart for the
+// one map source the strict boundary accepts (gosx#240): the flattened
+// props map of an enclosing TYPED legacy frame, forwarded whole by a bare
+// {...props} spread.
+//
+// strictSpreadProps rejects every map because a map can omit a key where
+// the generated-Go twin synthesizes a typed zero, and because a map carries
+// no field types to check ahead of its values. Both objections are answered
+// here, and only here:
+//
+//   - The enclosing frame's props parameter has a struct type declared in
+//     the same .gsx file, and the lowerer proved at that declaration that
+//     the type declares every field this callee renders, with the callee's
+//     own declared type (ir/lower.go's validateTypedLegacyPropsForward). An
+//     absent key therefore means the frame's own caller omitted the
+//     attribute, which is exactly the case where Go supplies the zero
+//     value — so zero-filling a builtin scalar here reproduces the twin
+//     rather than diverging from it.
+//   - Every value present is proved against the callee's declared type by
+//     the same three dispatches strictSpreadProps uses.
+//
+// A field whose declared type is not a builtin scalar cannot be
+// zero-synthesized from a type name alone, so an absent one fails closed
+// with a message that names the field and the remedy. That is the single
+// residual gap, and it is narrower than the strict frame's own
+// (localComponentProps' PropsFields-empty branch): it needs a non-scalar
+// field AND an omitted attribute, not merely a named-attribute call.
+func strictSpreadPropsFromTypedFrame(comp *ir.Component, frame map[string]any) (map[string]any, error) {
+	fields := make([]string, 0, len(comp.PropsFields))
+	for field := range comp.PropsFields {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+
+	props := make(map[string]any, len(fields)+4)
+	for _, field := range fields {
+		fieldType := comp.PropsFields[field]
+		raw, supplied := lookupTemplatePropValue(frame, field)
+		if !supplied {
+			zero, ok := strictScalarZeroValue(fieldType)
+			if !ok {
+				return nil, fmt.Errorf("prop %s (%s): the enclosing typed legacy frame did not receive this field, and only a builtin scalar has a zero value this boundary can synthesize; call the enclosing component with one {...source} spread, or pass %s explicitly", field, fieldType, field)
+			}
+			setComponentProp(props, field, zero)
+			continue
+		}
+		var proved any
+		var err error
+		switch {
+		case strictScalarFieldType(fieldType):
+			proved, err = requireStrictScalarType(raw, fieldType)
+		case strings.HasPrefix(strings.TrimSpace(fieldType), "[]"):
+			if schema, hasSchema := comp.PropsSlices[field]; hasSchema {
+				proved, err = requireStrictSliceValue(raw, schema)
+			} else {
+				err = fmt.Errorf("strict component %s has no loop schema for slice field %s", comp.Name, field)
+			}
+		default:
+			proved, err = requireStrictSpreadStructField(raw, fieldType, strictStructPropsPaths(comp, field))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("prop %s (%s): %w", field, fieldType, err)
+		}
+		setComponentProp(props, field, proved)
+	}
+	return props, nil
+}
+
+// strictScalarZeroValue returns the Go zero value of one of the renderer's
+// exact scalar builtins, typed the way requireStrictScalarType demands it.
+// It reports false for every other type name, including a slice or a
+// same-file struct: those have a zero value in Go, but not one this
+// boundary can build from a type NAME, and guessing would be worse than
+// failing closed.
+func strictScalarZeroValue(fieldType string) (any, bool) {
+	switch strings.TrimSpace(fieldType) {
+	case "string":
+		return "", true
+	case "bool":
+		return false, true
+	case "int":
+		return int(0), true
+	case "int8":
+		return int8(0), true
+	case "int16":
+		return int16(0), true
+	case "int32", "rune":
+		return int32(0), true
+	case "int64":
+		return int64(0), true
+	case "uint":
+		return uint(0), true
+	case "uint8", "byte":
+		return uint8(0), true
+	case "uint16":
+		return uint16(0), true
+	case "uint32":
+		return uint32(0), true
+	case "uint64":
+		return uint64(0), true
+	case "uintptr":
+		return uintptr(0), true
+	case "float32":
+		return float32(0), true
+	case "float64":
+		return float64(0), true
+	default:
+		return nil, false
+	}
 }
 
 func strictGoConstant(source string) (constant.Value, bool) {

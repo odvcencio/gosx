@@ -3,6 +3,8 @@ package transpile
 import (
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx"
 )
 
 // TestStrictComponentSignatureIsAlwaysVariadic pins B4's decision. transpile
@@ -91,6 +93,54 @@ component Page(props: PanelProps) {
 		t.Fatalf("Transpile: %v", err)
 	}
 	want := `Panel(PanelProps{Title: props.Title}, gosx.El("b", gosx.Text("content")))`
+	if !strings.Contains(out, want) {
+		t.Fatalf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestSharedCallWithChildrenMatchesTheVariadicSignature proves the
+// cross-package contract WP4 (#245) depends on: a cross-directory shared call
+// that carries children projects to a call the always-variadic signature
+// accepts, with the children appended after the qualified props literal.
+//
+// WP4's own suite shipped no children case, and the two halves land in the
+// same release, so the assertion belongs here — this is the side that chose
+// the signature.
+func TestSharedCallWithChildrenMatchesTheVariadicSignature(t *testing.T) {
+	sharedSource := []byte(`package ui
+
+type PanelProps struct {
+	Title string
+}
+
+component Panel(props: PanelProps) {
+	return <section><h2>{props.Title}</h2><div>{children}</div></section>
+}
+`)
+	prog, err := gosx.Compile(sharedSource)
+	if err != nil {
+		t.Fatalf("compile shared source: %v", err)
+	}
+	shared := CollectSharedComponents([]PackageFile{{Path: "ui/panel.gsx", Source: sharedSource, Program: prog}})
+
+	out, err := Transpile([]byte(`package app
+
+import (
+	"m31labs.dev/gosx"
+	ui "./ui"
+)
+
+func Page(title string) gosx.Node {
+	return <div><ui.Panel Title={title}><b>CALLER</b></ui.Panel></div>
+}
+`), Options{
+		SourceFile:    "page.gsx",
+		SharedImports: map[string]SharedImport{"./ui": {GoImportPath: "example.test/app/ui", Components: shared}},
+	})
+	if err != nil {
+		t.Fatalf("Transpile: %v", err)
+	}
+	want := `ui.Panel(ui.PanelProps{Title: title}, gosx.El("b", gosx.Text("CALLER")))`
 	if !strings.Contains(out, want) {
 		t.Fatalf("missing %q in:\n%s", want, out)
 	}

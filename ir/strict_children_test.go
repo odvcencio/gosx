@@ -3,20 +3,7 @@ package ir_test
 import (
 	"strings"
 	"testing"
-
-	"m31labs.dev/gosx/ir"
 )
-
-func componentByName(t *testing.T, prog *ir.Program, name string) *ir.Component {
-	t.Helper()
-	for i := range prog.Components {
-		if prog.Components[i].Name == name {
-			return &prog.Components[i]
-		}
-	}
-	t.Fatalf("component %s not found in %d components", name, len(prog.Components))
-	return nil
-}
 
 // TestAcceptsChildrenRecordsTheChildrenHole proves the IR field's whole
 // definition: a body that places {children} accepts children, and a body
@@ -292,5 +279,91 @@ component Panel(props: PanelProps) {
 	}
 	if !strings.Contains(err.Error(), `strict <Each> binding "children" is reserved`) {
 		t.Fatalf("error = %v, want the reserved-name refusal", err)
+	}
+}
+
+// TestTypedLegacyCalleeAcceptsChildrenFromAStrictBody covers the gosx#240
+// interaction. A strict body may now call a TYPED legacy component, so the
+// children arity rule reaches a legacy callee. It must answer the same
+// question there, and answer it truthfully: the file renderer binds children
+// for every same-file callee, so a legacy body that writes {children} does
+// render them.
+//
+// Before this reconciliation the rule read only strict declarations, so the
+// first case below was refused with advice the author had already followed.
+func TestTypedLegacyCalleeAcceptsChildrenFromAStrictBody(t *testing.T) {
+	const withHole = `package app
+
+type CardProps struct {
+	Title string
+}
+
+func Card(props CardProps) Node {
+	return <section><h3>{props.Title}</h3><div>{children}</div></section>
+}
+
+component Page(props: CardProps) {
+	return <Card Title={props.Title}><i>x</i></Card>
+}
+`
+	const withoutHole = `package app
+
+type CardProps struct {
+	Title string
+}
+
+func Card(props CardProps) Node {
+	return <section><h3>{props.Title}</h3></section>
+}
+
+component Page(props: CardProps) {
+	return <Card Title={props.Title}><i>x</i></Card>
+}
+`
+	prog, err := parse(t, []byte(withHole))
+	if err != nil {
+		t.Fatalf("Lower rejected children at a typed legacy callee that places them: %v", err)
+	}
+	if !componentByName(t, prog, "Card").AcceptsChildren {
+		t.Fatal("Card.AcceptsChildren = false, want true for a legacy body with a {children} hole")
+	}
+
+	_, err = parse(t, []byte(withoutHole))
+	if err == nil {
+		t.Fatal("Lower accepted children at a typed legacy callee that places none")
+	}
+	const want = "strict component Card renders no children; remove the child content or render {children} in Card's body"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want it to contain %q", err, want)
+	}
+}
+
+// TestLegacyToLegacyChildrenStayUnconstrained pins the boundary of the rule.
+// It applies where the strict callee rules apply. A legacy caller invoking a
+// legacy callee never reached those rules, before or after gosx#240, so
+// children there stay entirely unconstrained — including the older
+// props.Children channel, which no {children} hole is needed to use.
+func TestLegacyToLegacyChildrenStayUnconstrained(t *testing.T) {
+	prog, err := parse(t, []byte(`package app
+
+type CardProps struct {
+	Title string
+}
+
+func Card(props CardProps) Node {
+	return <section><h3>{props.Title}</h3>{props.Children}</section>
+}
+
+func Page(props CardProps) Node {
+	return <Card Title={props.Title}><i>x</i></Card>
+}
+`))
+	if err != nil {
+		t.Fatalf("Lower constrained a legacy-to-legacy call: %v", err)
+	}
+	// props.Children is the legacy channel, not a {children} hole. The flag
+	// reports holes only, and says nothing about that channel.
+	if componentByName(t, prog, "Card").AcceptsChildren {
+		t.Fatal("Card.AcceptsChildren = true; props.Children is not a {children} hole")
 	}
 }

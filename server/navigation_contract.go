@@ -239,6 +239,32 @@ const (
 	// ping has not settled is skipped outright. Both a network failure and
 	// a non-2xx response are silent — presence detection must never
 	// surface a console error for a dropped connection.
+	//
+	// A body-level heartbeat is set through Context.BodyAttrs (gosx#236),
+	// not by wrapping the page body in a gosx.El div solely to carry the
+	// attribute:
+	//
+	//	// Before: a div that exists only to carry two attributes, plus a
+	//	// CSS rule (display:contents) to keep it out of layout.
+	//	heartbeatShell := gosx.El("div", gosx.Attrs(
+	//	    gosx.Attr("class", "gosx-heartbeat-shell"),
+	//	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/league/version"),
+	//	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "4s"),
+	//	), body)
+	//	return server.HTMLDocument(ctx.Title(appName), ctx.Head(), heartbeatShell)
+	//
+	//	// After: no wrapper, no CSS rule. ctx.BodyAttrs accumulates onto
+	//	// the <body> element HTMLDocument already renders.
+	//	ctx.BodyAttrs(
+	//	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/league/version"),
+	//	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "4s"),
+	//	)
+	//	return server.HTMLDocumentWithBodyAttrs(ctx.Title(appName), ctx.Head(), body, ctx.BodyAttrsValue())
+	//
+	// A page rendered through App.renderPage's default document pipeline
+	// (no router.SetLayout call building the document itself) needs only
+	// the ctx.BodyAttrs call — App.renderPage reads the accumulated
+	// attributes automatically through DocumentContext.BodyAttrs.
 	NavigationHeartbeatAttr         = "data-gosx-heartbeat"
 	NavigationHeartbeatIntervalAttr = "data-gosx-heartbeat-interval"
 )

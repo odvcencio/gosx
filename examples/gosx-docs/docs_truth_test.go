@@ -119,12 +119,20 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 			required: []string{
 				"A strict component places the markup its caller wrote",
 				"Children are not a prop",
+				// The three component categories gosx#240 introduced. The
+				// page has to name them, or it contradicts README.md.
+				"typed legacy",
+				"untyped legacy",
 				"gosx export .",
 			},
 			forbidden: []string{
 				// Children shipped. A doc that still says they are rejected
 				// would be worse than no doc at all.
 				"Positional child content stays rejected either way",
+				// gosx#240 replaced the two-category rule this sentence
+				// stated. A typed legacy component now takes part in strict
+				// calls in both directions.
+				"v0.39 keeps component calls within the same style",
 			},
 		},
 		{
