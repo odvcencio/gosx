@@ -1,6 +1,6 @@
 # GoSX
 
-A Go-native web platform. Write `.gsx` components with strict typed declarations or ordinary Go-function syntax, compile through a real compiler pipeline, render on the server by default, and hydrate interactive islands with WebAssembly. No app-side JavaScript toolchain. No CGo. A deliberately small dependency budget.
+A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
 Current release: **v0.49.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
@@ -23,10 +23,6 @@ type GreetingProps struct {
     Name string
 }
 
-type CounterProps struct {
-    Initial int
-}
-
 // Strict typed server component: renders to HTML, zero JavaScript.
 component Greeting(props: GreetingProps) {
     return <div class="greeting">
@@ -39,10 +35,11 @@ component WelcomePage() {
     return <main><Greeting name="GoSX" /></main>
 }
 
-// Legacy Go-function style: still supported, here as an island.
+// Islands hydrate client-side, so they still use the Go-function form.
+// See "Legacy component syntax" below.
 //gosx:island
-func Counter(props CounterProps) Node {
-    count := signal.New(props.Initial)
+func Counter(initial int) Node {
+    count := signal.New(initial)
     increment := func() { count.Update(func(n int) int { return n + 1 }) }
     decrement := func() { count.Update(func(n int) int { return n - 1 }) }
 
@@ -54,69 +51,32 @@ func Counter(props CounterProps) Node {
 }
 ```
 
-Both component styles can live in the same file. A component call stays
-within its declaration style, with one exception: a **typed legacy**
-component — `func Name(props T) Node` whose `T` is a struct declared in the
-same `.gsx` file — declares the same prop contract a strict component does,
-so it takes part in strict calls in both directions. A component that
-declares no such type (`props any`, an attribute list, or a type from
-another file) is an **untyped legacy** component and keeps the cross-style
-ban, because nothing about its props can be checked. The strict
-`component Name(props: GoType) { ... }` form uses an ordinary Go type as its
-prop contract, so the package check catches unknown fields and incompatible
-values. `component` supplies the `Node` result type; it does not make returns
-implicit. Strict server bodies currently contain one top-level GSX return and
-use a deliberately small renderer-safe expression surface. Each expression is
-either a quoted string, `true` or `false`, an ungrouped non-negative base-10
-integer in the `int64` range, a finite ungrouped decimal float, or one direct
-field on `props` whose same-file type is an exact built-in scalar. The original
-`func Name(props GoType) Node { ... }` form remains supported for existing and
-dynamic components.
+`component Name(props: Type) { ... }` is the one way GoSX teaches to declare
+a server component. `Type` is an ordinary Go struct declared in the same
+`.gsx` file, so the package check catches an unknown field or an
+incompatible value. `component` supplies the `Node` result type; it does not
+make the return implicit. A strict body currently contains one top-level GSX
+return, with a deliberately small, renderer-safe expression surface. A
+`props` field expression accepts only:
 
-Strict same-file calls accept an exported Go field name or its TSX-like
-lower-camel alias (`Label`/`label`, `HTMLFor`/`htmlFor`, `URL`/`url`);
-ambiguous aliases must use exact Go spelling. Every field the callee renders
-must be supplied explicitly, including `0`, `false`, and `""`, so generated Go
-and server rendering observe the same zero values.
+- a quoted string
+- `true` or `false`
+- an ungrouped non-negative base-10 integer in the `int64` range
+- a finite ungrouped decimal float
+- one direct field whose same-file type is an exact built-in scalar
+
+A same-file strict call accepts an exported Go field name or its TSX-like
+lower-camel alias (`Label`/`label`, `HTMLFor`/`htmlFor`, `URL`/`url`). An
+ambiguous alias needs the exact Go spelling. Supply every field the callee
+renders explicitly, including `0`, `false`, and `""`, so the generated Go
+and the server rendering observe the same zero values.
 
 ### Spreading a value into a strict component
 
 A strict component accepts one `{...source}` spread instead of named
-attributes. Three callers may write one, one per component category:
-
-- A **strict** caller spreads a value whose declared type is exactly the
-  callee's props type. The compiler proves the type; the generated Go call
-  is emitted verbatim.
-- A **typed legacy** caller — `func Name(props T) Node`, `T` a struct
-  declared in the same file — spreads its whole `props`, a field of it, or
-  any other expression. A whole-`props` forward is proved at the
-  declaration: `T` must declare every field the callee renders, with the
-  same declared type. Any other expression is proved at the renderer
-  boundary, as below.
-- An **untyped legacy** caller spreads any expression. That expression
-  carries no declared type, so the renderer proves the value at the
-  boundary: the source must be a struct, and every field the callee renders
-  must be present with a matching type.
-
-An untyped legacy component **cannot** spread its own `props` into a strict
-component. An untyped legacy render frame binds `props` to a `map[string]any`
-built from the call site's attributes, and the strict boundary proves struct
-values only, so that composition fails on every render. The compiler rejects
-it and names both components and the spread site. Write the props struct
-down and the same code compiles as a typed legacy component; alternatively,
-spread a struct-typed field of `props`, or declare the caller as a strict
-component.
-
-A typed legacy component keeps the legacy render frame's flattened map
-binding, so its body observes its props exactly as it always has: children
-arrive under `props.Children`, an attribute the struct does not name still
-arrives, and a caller may spread a map into it. Writing the props type down
-widens what the component may compose with; it does not change what the
-component sees.
-
-A strict body may call a typed legacy component, by one spread or by named
-attributes, under the same rules a strict callee answers to. It may not call
-an untyped legacy component.
+attributes. A strict caller spreads a value whose declared type is exactly
+the callee's props type. The compiler proves the type and emits the
+generated Go call verbatim.
 
 A nested struct field inside a spread is proved **structurally**, by the
 fields the callee renders under it, not by the declared type's name. A
@@ -138,11 +98,63 @@ A strict `component Name` compiles to a package-level Go `func Name`, and a
 sibling `.go` file in the same package already declares, naming both
 declarations and their positions.
 
-In v0.39, islands and engines continue to use the legacy Go-function spelling.
-The `//gosx:island` directive marks a legacy component for client-side
-hydration. The compiler extracts signals, computed values, and handlers from
-the Go source, compiles expressions to VM instructions, and serializes an
-island program. Server components emit static HTML with no client-side cost.
+### Islands and engines still use the function form
+
+In v0.49, islands and engines have no strict spelling; both continue to use
+`func Name(...) Node`. The `//gosx:island` directive marks a component for
+client-side hydration. The compiler extracts signals, computed values, and
+handlers from the Go source, compiles expressions to VM instructions, and
+serializes an island program. Server components emit static HTML with no
+client-side cost.
+
+### Legacy component syntax (deprecated)
+
+Earlier GoSX releases also accepted `func Name(props T) Node` as a
+component declaration, in two forms:
+
+- A **typed legacy** component, where `T` is a struct declared in the same
+  `.gsx` file. It carries the same prop contract a strict component does.
+- An **untyped legacy** component, where `T` is `any`, an attribute list, or
+  a type declared elsewhere (`props any` is the common case). Nothing about
+  its props can be checked.
+
+Both forms still compile, check, and render today, so existing code keeps
+working. `gosx check` now warns on a `func Name(props any) Node`
+declaration. This untyped legacy form is deprecated, and GoSX removes it
+before v1.0. A typed legacy component gets no warning yet, but new code
+should not add either form; declare `component Name(props: Type)` instead.
+
+To convert an untyped legacy component, declare its props as a struct in
+the same file, then switch the declaration:
+
+```gsx
+// Before: untyped legacy, no schema, deprecated.
+func Card(props any) Node {
+    return <div>{props.Label}</div>
+}
+
+// After: strict, checked by the Go compiler.
+type CardProps struct {
+    Label string
+}
+
+component Card(props: CardProps) {
+    return <div>{props.Label}</div>
+}
+```
+
+A strict caller cannot call an untyped legacy component at all. It can call
+a typed legacy component only through the rules a strict callee follows.
+
+An untyped legacy component cannot spread its own `props` into a strict
+component either. An untyped legacy render frame binds `props` to a
+`map[string]any`. The strict boundary proves struct values only, so that
+composition fails on every render. Converting the callee to a typed legacy
+or strict component removes the restriction.
+
+An island or an engine component cannot convert to strict syntax today (see
+"Islands and engines still use the function form" above). Leave its
+declaration as `func Name(...) Node`, whether or not its props are typed.
 
 ## Philosophy
 

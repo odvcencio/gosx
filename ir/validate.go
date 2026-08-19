@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+// Severity distinguishes a diagnostic that must block compilation from one
+// that only advises the author. The zero value is SeverityError, so every
+// Diagnostic literal written before Severity existed keeps failing exactly
+// as it always did — this field is additive and changes no existing
+// behavior on its own.
+type Severity uint8
+
+const (
+	SeverityError Severity = iota
+	SeverityWarning
+)
+
 // Diagnostic represents a validation error or warning.
 type Diagnostic struct {
 	Span    Span
@@ -21,6 +33,13 @@ type Diagnostic struct {
 	// checker (see strictcheck.Lint) can surface that checker's own rule
 	// codes without a second, differently-shaped diagnostic type.
 	Code string
+
+	// Severity marks whether this diagnostic must block compilation
+	// (SeverityError, the zero value) or only advises the author
+	// (SeverityWarning). Validate's own diagnostics all leave this at the
+	// zero value; ValidateWarnings is the one built-in source of
+	// SeverityWarning diagnostics today.
+	Severity Severity
 }
 
 func (d Diagnostic) String() string {
@@ -44,6 +63,9 @@ func (d Diagnostic) String() string {
 		s += d.Span.File + ":"
 	}
 	s += fmt.Sprintf("%d:%d: ", d.Span.StartLine, d.Span.StartCol)
+	if d.Severity == SeverityWarning {
+		s += "warning: "
+	}
 	if d.Code != "" {
 		s += d.Code + ": "
 	}
@@ -61,6 +83,56 @@ func Validate(prog *Program) []Diagnostic {
 	v := &validator{prog: prog}
 	v.validate()
 	return v.diags
+}
+
+// ValidateWarnings runs advisory checks over the IR program and returns
+// SeverityWarning diagnostics only. Unlike Validate, nothing here blocks
+// compilation: gosx.Compile does not call this function, and a caller that
+// wants these findings (gosx check, the language server) reports them
+// itself and keeps going regardless of what it finds.
+func ValidateWarnings(prog *Program) []Diagnostic {
+	var diags []Diagnostic
+	if prog == nil {
+		return diags
+	}
+	for i := range prog.Components {
+		diags = append(diags, untypedLegacyPropsWarning(&prog.Components[i])...)
+	}
+	return diags
+}
+
+// untypedLegacyPropsWarning flags a component declared as untyped legacy:
+// `func Name(props any) Node`. This is step one of retiring legacy
+// component syntax — the goal is one component shape, `component
+// Name(props: NameProps)` — and the untyped form is the one with no schema
+// proof at all, so it is the first flagged.
+//
+// The check is deliberately narrow, matching only a props type of exactly
+// "any": a legacy component that takes no props (PropsType == ""), or a
+// TYPED legacy component whose props struct is declared in this file
+// (Component.PropsTyped), is excluded — see the zero-props census in
+// gosx's untyped-legacy-warning change for why zero-props legacy functions
+// stay silent here. An engine or island component is excluded too, because
+// strict syntax rejects both outright today (see the "strict engine
+// declarations are not supported" and "strict island declarations are not
+// supported" diagnostics in lowerStrictComponentDecl) — the warning must
+// never recommend a form the compiler itself refuses.
+func untypedLegacyPropsWarning(comp *Component) []Diagnostic {
+	if comp.Syntax != ComponentSyntaxLegacy || comp.PropsTyped || comp.IsEngine || comp.IsIsland {
+		return nil
+	}
+	if strings.TrimSpace(comp.PropsType) != "any" {
+		return nil
+	}
+	return []Diagnostic{{
+		Span:     comp.Span,
+		Severity: SeverityWarning,
+		Message: fmt.Sprintf(
+			"component %s is declared as untyped legacy (func %s(%s any) Node); this form is deprecated and will be removed before v1.0",
+			comp.Name, comp.Name, comp.PropsName,
+		),
+		Hint: fmt.Sprintf("declare component %s(props: %sProps) with the struct in this file instead", comp.Name, comp.Name),
+	}}
 }
 
 type validator struct {
