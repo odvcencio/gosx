@@ -182,6 +182,25 @@ func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts O
 	return goCheck(ctx, files, generated, sharedOverlay, opts)
 }
 
+// validateStrictRenderEntries refuses a strict render entry's declared props
+// exactly where the file render path cannot bind them (gosx#248).
+//
+// A Page, index, not-found, or error entry CAN bind them: renderFilePage
+// passes ctx.Data — set from this file's own Load hook before the entry
+// renders — as EntryProps, and renderFileProgramHTML's strict-entry branch
+// proves it through strictSpreadProps, the same boundary proof a nested
+// <Component {...props}/> call re-runs. A Load hook that returns nothing, a
+// map, or the wrong struct still fails, but at render time against the
+// real returned value, not here: this static check has no visibility into
+// a sibling *.server.go file's Load return type, and the render-time proof
+// gives a strictly more accurate answer than a guess made here ever could.
+//
+// A Layout entry cannot: no code path calls a layout's own module's Load
+// hook (see route/filelayout.go's renderFileLayout — it reads the page's
+// ctx.Data for Bindings, never invokes its own module.Load), so a layout's
+// EntryProps is always nil today. That refusal stays, and stays here,
+// because it is the one case this check can still decide for certain
+// without ever running the render path.
 func validateStrictRenderEntries(files []transpile.PackageFile) error {
 	for _, file := range files {
 		if file.Program == nil || len(file.Program.Components) == 0 {
@@ -190,11 +209,12 @@ func validateStrictRenderEntries(files []transpile.PackageFile) error {
 		if !strictFileRouteName(file.Path) {
 			continue
 		}
-		components := file.Program.Components
-		preferred := []string{"Page"}
-		if strings.EqualFold(strings.TrimSuffix(filepath.Base(file.Path), filepath.Ext(file.Path)), "layout") {
-			preferred = []string{"Layout", "Page"}
+		isLayout := strings.EqualFold(strings.TrimSuffix(filepath.Base(file.Path), filepath.Ext(file.Path)), "layout")
+		if !isLayout {
+			continue
 		}
+		components := file.Program.Components
+		preferred := []string{"Layout", "Page"}
 		entry := &components[0]
 		for _, name := range preferred {
 			found := false
@@ -210,7 +230,7 @@ func validateStrictRenderEntries(files []transpile.PackageFile) error {
 			}
 		}
 		if entry.Syntax == ir.ComponentSyntaxStrict && strings.TrimSpace(entry.PropsType) != "" {
-			return fmt.Errorf("%s: strict render entry %s accepts props %s, but file routes do not bind root props; use a zero-props Page/Layout entry", file.Path, entry.Name, entry.PropsType)
+			return fmt.Errorf("%s: strict render entry %s accepts props %s, but a file-routed layout has no Load hook wired to its own root props; declare props on a Page/not-found/error entry instead, or make %s a zero-props Layout and read request data through a Page entry's Load", file.Path, entry.Name, entry.PropsType, entry.Name)
 		}
 	}
 	return nil
