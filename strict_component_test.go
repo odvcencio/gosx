@@ -1915,22 +1915,40 @@ func TestCompileStrictEachSerializationRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCompileAcceptsStrictIslandRejectsStrictEngine covers the split verdict
+// for the two client directives on a strict component. A strict island
+// compiles: its props cross to the client exactly as an ordinary strict
+// component's props are proved server-side (localComponentProps), then
+// travel to the browser as the same JSON map every island already ships. A
+// strict engine still fails closed: the file renderer has no typed dispatch
+// for a surface's per-frame host calls, so a strict engine body cannot be
+// executed faithfully — see TestCompileRejectsStrictClientDirectiveComponents.
+func TestCompileAcceptsStrictIslandRejectsStrictEngine(t *testing.T) {
+	source := []byte("package app\n//gosx:island\ncomponent Client() {\nreturn <button>count</button>\n}\n")
+	prog, err := Compile(source)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(prog.Components) != 1 {
+		t.Fatalf("components = %d, want 1", len(prog.Components))
+	}
+	comp := prog.Components[0]
+	if comp.Syntax != ir.ComponentSyntaxStrict {
+		t.Fatalf("Syntax = %v, want ComponentSyntaxStrict", comp.Syntax)
+	}
+	if !comp.IsIsland {
+		t.Fatalf("IsIsland = false, want true")
+	}
+	if _, err := ir.LowerIsland(prog, 0); err != nil {
+		t.Fatalf("LowerIsland: %v", err)
+	}
+}
+
 func TestCompileRejectsStrictClientDirectiveComponents(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		directive string
-		root      string
-		want      string
-	}{
-		{name: "island", directive: "//gosx:island", root: `<button>count</button>`, want: "strict island declarations are not supported"},
-		{name: "engine", directive: "//gosx:engine surface", root: `<canvas />`, want: "strict engine declarations are not supported"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			source := []byte("package app\n" + tc.directive + "\ncomponent Client() {\nreturn " + tc.root + "\n}\n")
-			_, err := Compile(source)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %v", err)
-			}
-		})
+	source := []byte("package app\n//gosx:engine surface\ncomponent Client() {\nreturn <canvas />\n}\n")
+	_, err := Compile(source)
+	want := "strict engine declarations are not yet supported"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want to contain %q", err, want)
 	}
 }
