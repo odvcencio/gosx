@@ -1280,27 +1280,46 @@ func (t *transpiler) emitElementCall(tag string, attrs []string, children []stri
 	return b.String()
 }
 
+// isProplessStrictComponent reports whether tag names a same-file strict
+// component (t.strictNames) with no declared props type. emitStrictComponent
+// emits such a component's Go signature with no leading props parameter at
+// all, so no value — Props() included — belongs in that argument position
+// at any nested call site. A strict component WITH a declared props type
+// never reaches emitComponentCall in the first place (emitGSXElement routes
+// it through emitTypedComponentCall via typedPropsType), so this check
+// only ever needs to rule the propless case in or out.
+func (t *transpiler) isProplessStrictComponent(tag string) bool {
+	if _, ok := t.strictNames[tag]; !ok {
+		return false
+	}
+	return strings.TrimSpace(t.propsTypes[tag]) == ""
+}
+
 func (t *transpiler) emitComponentCall(tag string, attrs []string, children []string) string {
 	slots := t.slotNames[tag]
+	proplessStrict := t.isProplessStrictComponent(tag)
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s(", tag)
 
 	// wroteArg tracks whether the call has written its first argument yet,
 	// so the slot loop below can prepend its own separating comma correctly
-	// whether or not Props(...) came first. len(attrs) > 0 || len(children)
-	// > 0 is unchanged from before gosx#249 on purpose: this call shape (no
-	// typedPropsType match — see emitGSXElement) is shared between a
-	// propless strict callee and an untyped legacy one, and only the
-	// latter's declared parameter can actually receive an AttrList value.
-	// Whether Props(...) belongs here at all for the former is a
-	// pre-existing question this change does not touch; len(slots) > 0 is
-	// deliberately NOT one of this gate's conditions, so a propless
-	// component that declares only named slots (no attrs, no children)
-	// keeps compiling instead of gaining a new, gosx#249-only instance of
-	// that same question.
+	// whether or not Props(...) came first.
+	//
+	// Props(...) belongs here only for an UNTYPED LEGACY callee — this call
+	// shape (no typedPropsType match — see emitGSXElement) is reached by
+	// both a propless strict callee and an untyped legacy one, but only
+	// the legacy callee's declared parameter (`props any` or `props
+	// gosx.AttrList`) can actually receive an AttrList value. A propless
+	// strict callee has no leading parameter at all (emitStrictComponent
+	// emits none when the component declares no props), so passing one
+	// positionally there either fails to compile or, worse, silently
+	// binds to the wrong parameter. This was a pre-existing bug — see the
+	// CHANGELOG entry naming it and TestCheckFileAllowsProplessStrictCalleeWithChildren
+	// (strictcheck/check_test.go), which fails on the unfixed code and
+	// passes here — independent of and predating gosx#249's named slots.
 	wroteArg := false
-	if len(attrs) > 0 || len(children) > 0 {
+	if !proplessStrict && (len(attrs) > 0 || len(children) > 0) {
 		b.WriteString(t.gosxRef("Props") + "(")
 		b.WriteString(strings.Join(attrs, ", "))
 		b.WriteByte(')')

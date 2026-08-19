@@ -141,10 +141,9 @@
   before this change): a propless strict component's nested call site
   wrongly received a `gosx.Props()` `AttrList` argument whenever the call
   passed slots or children. This change closes the slots-only instance of
-  that bug (a propless component with only named slots, called with no
-  attributes and no children, now projects correctly) and leaves the
-  pre-existing children-only instance exactly as it was — untouched, not
-  this change's scope.
+  that bug; the pre-existing children-only instance is closed separately,
+  below ("Fixed: a propless strict component's nested call site rejected
+  children and slots").
 - **Deliberately out of scope this release: a caller-side `slot="Name"`
   attribute for a `.gsx`-to-`.gsx` nested call** (`<Layout><div
   slot="Title">...</div></Layout>`). The binding mechanism (a reserved
@@ -180,6 +179,28 @@
   whitespace-only text node between tags to one space — ir/lower.go's
   `lowerText`) against a pre-conversion hand-written compact HTML string;
   no document structure changed.
+
+### Fixed: a propless strict component's nested call site rejected children and slots
+
+- **`emitComponentCall`'s Go projection (transpile/transpile.go) no longer
+  passes a stray `gosx.Props()` argument to a propless strict callee.**
+  `emitStrictComponent` emits no leading props parameter for a strict
+  component that declares none, but `emitComponentCall` unconditionally
+  supplied a `gosx.Props()` `AttrList` value as the first argument at any
+  nested call site whose children (or, after the named-slots change
+  above, named slots) were non-empty — a type error `gosx check` reported
+  as `cannot use gosx.Props() ... as gosx.Node value`. This predates named
+  slots and is independent of them:
+  `TestCheckFileAllowsProplessStrictCalleeWithChildren`
+  (strictcheck/check_test.go) reproduces it with no slots at all, fails on
+  unmodified `origin/main`, and passes with this fix.
+- **The fix distinguishes a propless strict callee from an untyped legacy
+  one** (`isProplessStrictComponent`): only the latter's declared
+  parameter (`props any` or `props gosx.AttrList`) can receive a
+  `gosx.Props()` value, so only it still receives one. A strict callee
+  with a declared props type never reaches this code path at all
+  (`emitGSXElement` routes it through `emitTypedComponentCall`), so this
+  narrows an existing rule rather than adding a new one.
 
 ## v0.49.0 (2026-08-18)
 
