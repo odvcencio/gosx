@@ -409,8 +409,15 @@ func runCheck(file string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := strictcheck.CheckFile(context.Background(), file); err != nil {
-		return err
+	// Warnings (gosx#249) are collected and printed regardless of whether
+	// the check itself passes or fails below -- a warning never changes
+	// this command's exit code; see strictcheck.Options.Warnings' doc
+	// comment for why that split exists.
+	var warnings []ir.Diagnostic
+	checkErr := strictcheck.CheckFileWithOptions(context.Background(), file, strictcheck.Options{Warnings: &warnings})
+	printCheckWarnings(stderr, warnings)
+	if checkErr != nil {
+		return checkErr
 	}
 	for i, component := range prog.Components {
 		if !component.IsIsland {
@@ -420,12 +427,12 @@ func runCheck(file string, stderr io.Writer) error {
 			return fmt.Errorf("lower island %s: %w", component.Name, err)
 		}
 	}
-	// Advisory findings (for example an untyped legacy component) are
-	// printed but never fail the check: ir.ValidateWarnings never blocks
-	// compilation, unlike ir.Validate's diagnostics — see its doc comment.
-	for _, diag := range ir.ValidateWarnings(prog) {
-		fmt.Fprintln(stderr, diag.String())
-	}
+	// Advisory findings (an untyped legacy component, gosx#249's own
+	// checks 1/2/4/5) already printed above by printCheckWarnings:
+	// strictcheck.CheckFileWithOptions' Warnings collection runs
+	// ir.ValidateWarnings per file (see strictcheck/warnings.go), so a
+	// second, direct ir.ValidateWarnings(prog) call here would print every
+	// one of those findings twice.
 	fmt.Fprintf(stderr, "ok: %d components\n", len(prog.Components))
 	for _, c := range prog.Components {
 		fmt.Fprintf(stderr, "  %s", c.Name)

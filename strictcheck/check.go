@@ -52,6 +52,27 @@ type Options struct {
 	//     complete. gosx's lsp package does not feed it ExtraLints results
 	//     today, so it is unaffected; this note is for a consumer that does.
 	ExtraLints []Lint
+
+	// Warnings, when non-nil, receives every warning-severity
+	// (ir.SeverityWarning) diagnostic found across the run, appended in the
+	// order each check produces them. A warning is never part of the
+	// returned error and never fails a build -- see ir.ValidateWarnings'
+	// doc comment for why that split exists. The zero value (nil) means
+	// the caller does not want warnings collected; every warning-only
+	// check below still runs (its findings are cheap to compute alongside
+	// the error-severity work already sharing its file reads), but its
+	// results are discarded rather than appended anywhere.
+	Warnings *[]ir.Diagnostic
+}
+
+// addWarnings appends diags to opts.Warnings if the caller asked to collect
+// them (see the Warnings field's doc comment); a nil Warnings pointer is a
+// deliberate no-op, not an error.
+func addWarnings(opts Options, diags []ir.Diagnostic) {
+	if opts.Warnings == nil || len(diags) == 0 {
+		return
+	}
+	*opts.Warnings = append(*opts.Warnings, diags...)
 }
 
 // CheckFile checks the complete .gsx package containing path.
@@ -149,6 +170,22 @@ func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts O
 	if err := validateImageContract(files, root); err != nil {
 		return err
 	}
+	// The whole-application correctness checks below (gosx#249) share
+	// validateImageContract's placement and reasoning exactly: every one
+	// targets ordinary legacy .gsx syntax (a file-routed page's <form>, its
+	// data.X reads, its data-gosx-* attributes), so none of them may sit
+	// behind the packageHasStrict return either. addFileGosxWarnings is
+	// error-free by construction (ir.ValidateWarnings never returns a
+	// SeverityError diagnostic); the other three return an error only for
+	// their own error-severity finding (gosx#249's check 1, the
+	// unregistered form action) or never at all (checks 2 and 4 are
+	// warning-only and report through opts.Warnings instead).
+	addFileGosxWarnings(files, opts)
+	if err := validateFormActionContract(files, opts); err != nil {
+		return err
+	}
+	validateRequiredReachabilityContract(files, root, opts)
+	validateDataLoaderKeysContract(files, opts)
 	if !packageHasStrict(files) {
 		return nil
 	}
@@ -410,6 +447,14 @@ func CheckTreeWithOptions(ctx context.Context, root string, opts Options) error 
 	if err != nil {
 		return err
 	}
+	// validateRouteMountContract (gosx#249, check 3) is the one whole-app
+	// check that cannot run per package the way runBuiltinChecks' other
+	// checks do: knowing whether a page is reached needs every AddDir call
+	// in the whole tree, which only CheckTreeWithOptions has gathered.
+	// CheckFileWithOptions and CheckPackageWithOptions never call it, so a
+	// single-file "gosx check" cannot see an unmounted-page finding --
+	// intentional; see that function's own doc comment.
+	validateRouteMountContract(abs, sources, opts)
 	return checkSourcePackages(ctx, sources, opts, abs)
 }
 

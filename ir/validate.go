@@ -98,6 +98,11 @@ func ValidateWarnings(prog *Program) []Diagnostic {
 	for i := range prog.Components {
 		diags = append(diags, untypedLegacyPropsWarning(&prog.Components[i])...)
 	}
+	// navigationAttrNameWarnings (ir/validate_warnings.go, gosx#249) is the
+	// other built-in source of SeverityWarning diagnostics: a static
+	// "data-gosx-*" attribute name close to, but not exactly, one of the
+	// declarative navigation primitives.
+	diags = append(diags, navigationAttrNameWarnings(prog)...)
 	return diags
 }
 
@@ -320,6 +325,29 @@ const (
 	regionIntervalAttr = "data-gosx-region-interval"
 )
 
+// revalidateIntervalAttr and heartbeatIntervalAttr (gosx#216, gosx#217)
+// share liveIntervalAttr and regionIntervalAttr's exact whole-seconds/
+// whole-minutes grammar (see isValidPollIntervalValue below), pinned
+// against NavigationRevalidateIntervalAttr and NavigationHeartbeatIntervalAttr
+// in server/navigation_contract.go and their shared parseRevalidateInterval
+// parser in client/runtime/host/navigation.ts.
+//
+// linkCurrentPolicyAttr and prefetchAttr (gosx#210) are the two enumerated
+// data-gosx-link companion values: NormalizeNavigationLinkCurrentPolicy in
+// server/navigation_contract.go silently coerces anything outside
+// {auto,page,ancestor,none} to "none", and NormalizeNavigationLinkPrefetch
+// silently accepts anything at all once it sees a non-empty value, so
+// neither one fails at run time on a bad value the way a missing key or a
+// 404 does — this is the same "renders, does the wrong thing, says
+// nothing" shape gosx#213's countdown pairs check was written for, applied
+// to the link contract instead of the countdown one.
+const (
+	revalidateIntervalAttr = "data-gosx-revalidate-interval"
+	heartbeatIntervalAttr  = "data-gosx-heartbeat-interval"
+	linkCurrentPolicyAttr  = "data-gosx-link-current-policy"
+	prefetchAttr           = "data-gosx-prefetch"
+)
+
 // countdownThresholdIntegerPattern and countdownThresholdDurationPattern
 // mirror the small declarative duration subset
 // parseCountdownThresholdSeconds accepts in client/runtime/host/navigation.ts:
@@ -480,6 +508,32 @@ func isValidLiveBindKeyValue(value string) bool {
 	return liveBindKeyPattern.MatchString(strings.TrimSpace(value))
 }
 
+// isValidLinkCurrentPolicyValue reports whether value is one of the four
+// policies NormalizeNavigationLinkCurrentPolicy recognizes by name
+// (case-insensitively, surrounding whitespace ignored) rather than
+// silently folding into its "none" default.
+func isValidLinkCurrentPolicyValue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "auto", "page", "ancestor", "none":
+		return true
+	default:
+		return false
+	}
+}
+
+// isValidPrefetchValue reports whether value is one of the four prefetch
+// policies NormalizeNavigationLinkPrefetch's own switch names
+// (case-insensitively, surrounding whitespace ignored), rather than
+// falling into that function's pass-through default branch.
+func isValidPrefetchValue(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "off", "intent", "render", "force":
+		return true
+	default:
+		return false
+	}
+}
+
 // validateStaticCountdownAttr flags a static data-gosx-countdown-*,
 // data-gosx-watch, data-gosx-watch-effect, data-gosx-live-*, or
 // data-gosx-region-interval value outside its documented vocabulary: an instant
@@ -491,12 +545,15 @@ func isValidLiveBindKeyValue(value string) bool {
 // "revalidate", a watch condition with no "=", a watch effect list with an
 // unrecognized token (gosx#214), a live or region interval outside the
 // whole-seconds/whole-minutes subset data-gosx-revalidate-interval uses, a
-// live bind key with an empty or whitespace-containing segment, or a live
-// flash class with embedded whitespace (gosx#217). This follows the same
+// live bind key with an empty or whitespace-containing segment, a live
+// flash class with embedded whitespace (gosx#217), a revalidate or
+// heartbeat interval outside that same whole-seconds/whole-minutes subset,
+// a link current-policy outside {auto,page,ancestor,none}, or a prefetch
+// policy outside {off,intent,render,force}. This follows the same
 // fail-closed principle as the ".length" rule above: a bad value here
-// renders a silently inert (or silently ignored) countdown, watcher, or
-// live/region poll today, with nothing at the terminal to explain why, so
-// Validate now catches it at check time instead.
+// renders a silently inert (or silently mis-normalized) countdown,
+// watcher, live/region poll, or link today, with nothing at the terminal
+// to explain why, so Validate now catches it at check time instead.
 //
 // A dynamic expression value ({...}) is exempt — attr.Kind is AttrExpr for
 // those, and this method only runs from the AttrStatic case in validateAttr
@@ -572,12 +629,28 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 				Hint:    `a "cue:<name>" token's name must be "beep" or "chime"; a "class:<name>" token may add "@<selector>" to target another element`,
 			})
 		}
-	case liveIntervalAttr, regionIntervalAttr:
+	case liveIntervalAttr, regionIntervalAttr, revalidateIntervalAttr, heartbeatIntervalAttr:
 		if !isValidPollIntervalValue(attr.Value) {
 			v.diags = append(v.diags, Diagnostic{
 				Span:    node.Span,
 				Message: fmt.Sprintf("invalid %s value %q: must be a whole number of seconds or minutes", attr.Name, attr.Value),
 				Hint:    `for example "4s" or "2m" — the same subset data-gosx-revalidate-interval accepts`,
+			})
+		}
+	case linkCurrentPolicyAttr:
+		if !isValidLinkCurrentPolicyValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be \"auto\", \"page\", \"ancestor\", or \"none\"", linkCurrentPolicyAttr, attr.Value),
+				Hint:    `NormalizeNavigationLinkCurrentPolicy silently treats any other value as "none"; write one of the four recognized values instead`,
+			})
+		}
+	case prefetchAttr:
+		if !isValidPrefetchValue(attr.Value) {
+			v.diags = append(v.diags, Diagnostic{
+				Span:    node.Span,
+				Message: fmt.Sprintf("invalid %s value %q: must be \"off\", \"intent\", \"render\", or \"force\"", prefetchAttr, attr.Value),
+				Hint:    `NormalizeNavigationLinkPrefetch does not reject an unrecognized value at run time, so a typo here silently disables prefetch instead of failing loudly`,
 			})
 		}
 	case liveBindAttr:
