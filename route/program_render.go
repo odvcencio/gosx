@@ -48,6 +48,43 @@ type ProgramRenderEnv struct {
 	Props        any
 	RenderIsland func(*islandprogram.Program, any) gosx.Node
 	Profile      *RenderProfile
+	// IslandPreloadHints and IslandPageHead compute the two framework-filled
+	// named slots a strict component may declare — {slotPreloadHints} and
+	// {slotPageHead} (gosx#249) — from the same island runtime RenderIsland
+	// renders through. Unlike Slots below, neither is a caller-authored
+	// value: this env supplies the two callbacks, and the renderer decides
+	// when to call them and what to bind the result to, the same way it
+	// binds children. A nested <Layout>{content}</Layout> call inside a
+	// compiled program's own body renders content (and every RenderIsland
+	// call it makes) BEFORE calling either of these, so the value they
+	// return reflects every island content registered — see
+	// writeLocalComponentWithChildren (route/fileprogram.go). Each is
+	// called only for a component that actually declares the matching slot
+	// (ir.Component.AcceptsSlot), so a page with no island runtime, or a
+	// component that never places {slotPreloadHints}/{slotPageHead}, pays
+	// nothing for it. Nil is the default: no pre-gosx#249 caller sets
+	// these, so none takes a new branch.
+	IslandPreloadHints func() gosx.Node
+	IslandPageHead     func() gosx.Node
+	// Slots supplies named-slot values for a strict render entry that
+	// declares more than the one anonymous children hole (gosx#249) — a
+	// per-route title and an end-of-body script are two different
+	// injection points a layout-shaped component needs, and repeating
+	// {children} cannot express that (TestStrictComponentRendersChildrenTwice
+	// pins every repeat to the same content). Keyed by slot name ("Title",
+	// not "slotTitle" — see strictcomponent.SlotBindingName for the
+	// reserved identifier a name binds to in the component's body).
+	//
+	// A nil or empty Slots reproduces every pre-gosx#249 call's behavior
+	// exactly, the same "take no new branch" contract Children keeps
+	// (RenderProgramComponent's own doc comment). A key naming a slot the
+	// entry component's body does not declare fails closed with a
+	// descriptive error; a slot the body declares but this map does not
+	// supply stays unresolved and renders empty, exactly like an
+	// unsupplied {children} does today. Slots are unproven, the same way
+	// Children is: never entering PropsFields, PropsPaths, or PropsSlices,
+	// and never overwriting a proved props field.
+	Slots map[string]gosx.Node
 }
 
 // RenderProgramComponent renders the named component of a compiled program (from
@@ -83,12 +120,15 @@ type ProgramRenderEnv struct {
 func RenderProgramComponent(prog *ir.Program, component string, env ProgramRenderEnv, children ...gosx.Node) (string, error) {
 	html, _, err := renderFileProgramHTML(prog, component, fileRenderOptions{
 		EvalEnv: fileRenderEnv{
-			values:       env.Values,
-			funcs:        env.Funcs,
-			renderIsland: env.RenderIsland,
+			values:             env.Values,
+			funcs:              env.Funcs,
+			renderIsland:       env.RenderIsland,
+			islandPreloadHints: env.IslandPreloadHints,
+			islandPageHead:     env.IslandPageHead,
 		},
 		EntryProps:    env.Props,
 		EntryChildren: entryChildrenNode(children),
+		EntrySlots:    env.Slots,
 		Profile:       env.Profile,
 	})
 	return html, err

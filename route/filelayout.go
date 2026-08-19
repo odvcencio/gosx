@@ -317,6 +317,24 @@ type fileRenderOptions struct {
 	// behavior byte for byte, not a bound empty Fragment. See
 	// renderFileProgramHTML's strict-entry branch.
 	EntryChildren gosx.Node
+	// EntrySlots supplies named-slot values for a strict component rendered
+	// as the render entry (gosx#249). Only RenderProgramComponent sets this
+	// field, from ProgramRenderEnv.Slots. Keyed by slot name ("Title", not
+	// "slotTitle" — see strictcomponent.SlotBindingName for the reserved
+	// identifier a name binds to).
+	//
+	// A nil or empty map means "no slots supplied", the same "take no new
+	// branch" contract EntryChildren's zero-Node sentinel keeps: every
+	// caller that predates this field reproduces prior behavior exactly.
+	// A key naming a slot comp's body does not declare (ir.Component.
+	// AcceptsSlot) fails closed with a descriptive error instead of
+	// silently rendering nothing — see renderFileProgramHTML's strict-entry
+	// branch, and validateStrictCalleeChildren's arity-rule precedent for
+	// why an unrecognized supply is an error rather than a silent no-op. A
+	// slot comp's body declares but this map does not supply stays
+	// unresolved, rendering empty, exactly the way an unsupplied
+	// {children} does today.
+	EntrySlots map[string]gosx.Node
 }
 
 func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {

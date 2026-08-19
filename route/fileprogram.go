@@ -19,6 +19,7 @@ import (
 	gosxcss "m31labs.dev/gosx/css"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/strictcomponent"
 	"m31labs.dev/gosx/ir"
 	islandprogram "m31labs.dev/gosx/island/program"
 	gosxscene "m31labs.dev/gosx/scene"
@@ -120,6 +121,34 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 			return "", false, fmt.Errorf("render entry %s is not a strict component; children only bind to a strict render entry (see RenderProgramComponent)", comp.Name)
 		}
 		entryEnv = entryEnv.withValue("children", opts.EntryChildren)
+	}
+	// gosx#249: a strict component rendered as the render entry has no
+	// caller-side slot="Name" markup for writeLocalComponent to partition,
+	// the same gap EntryChildren closes for the anonymous children hole.
+	// opts.EntrySlots is the only other place a named-slot value can come
+	// from — RenderProgramComponent builds it from ProgramRenderEnv.Slots.
+	//
+	// A nil or empty EntrySlots means "no slots supplied" — see its doc
+	// comment — so every caller that predates this field takes no new
+	// branch here. A key naming a slot comp's body does not declare fails
+	// closed instead of silently doing nothing, the same arity-rule
+	// precedent validateStrictCalleeChildren (ir/lower.go) sets for a
+	// caller-side children supply the callee cannot place.
+	if len(opts.EntrySlots) > 0 {
+		if comp.Syntax != ir.ComponentSyntaxStrict {
+			return "", false, fmt.Errorf("render entry %s is not a strict component; slots only bind to a strict render entry (see RenderProgramComponent)", comp.Name)
+		}
+		names := make([]string, 0, len(opts.EntrySlots))
+		for name := range opts.EntrySlots {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if !comp.AcceptsSlot(name) {
+				return "", false, fmt.Errorf("render entry %s declares no slot named %q; declare {%s} in its body or remove this slot from ProgramRenderEnv.Slots", comp.Name, name, strictcomponent.SlotBindingName(name))
+			}
+			entryEnv = entryEnv.withValue(strictcomponent.SlotBindingName(name), opts.EntrySlots[name])
+		}
 	}
 	// One builder carries the whole document. The renderer used to allocate a
 	// fresh strings.Builder per element and let the parent copy the child's
@@ -1206,18 +1235,47 @@ func (r *fileProgramRenderer) writeLocalComponent(b *strings.Builder, comp *ir.C
 	// Children render into their own string because the component body may
 	// reference them through the `children` binding.
 	childrenNode := gosx.RawHTML(r.renderChildren(node.Children, env))
-	r.writeLocalComponentWithChildren(b, comp, node, env, childrenNode)
+	// gosx#249's caller-side supply: each named slot the lowerer
+	// partitioned out of node.Children (a static slot="Name" attribute on
+	// a direct child — ir/lower.go's partitionCallSlots) renders here too,
+	// on the SAME renderer that owns the call node, for the identical
+	// reason childrenNode does — see this function's own doc comment: a
+	// slot child's NodeID is an index into the CALLER's program, and only
+	// r (bound to that program at this call) can resolve it; the callee's
+	// own renderer, in the cross-program case, cannot.
+	slotNodes := r.renderCallSlots(node.Slots, env)
+	r.writeLocalComponentWithChildren(b, comp, node, env, childrenNode, slotNodes)
+}
+
+// renderCallSlots renders each named-slot child in slots — keyed by slot
+// name, valued by a NodeID into r's own program — into its own gosx.Node,
+// the same way renderChildren renders the default children group: markup
+// the CALLER owns, rendered by the caller's renderer, in the caller's env,
+// against the caller's program, before the callee is entered.
+func (r *fileProgramRenderer) renderCallSlots(slots map[string]ir.NodeID, env fileRenderEnv) map[string]gosx.Node {
+	if len(slots) == 0 {
+		return nil
+	}
+	out := make(map[string]gosx.Node, len(slots))
+	for name, childID := range slots {
+		out[name] = gosx.RawHTML(r.renderChildren([]ir.NodeID{childID}, env))
+	}
+	return out
 }
 
 // writeLocalComponentWithChildren renders comp's body with childrenNode
-// already rendered by whichever renderer owns the call node. r must own
-// comp's BODY, because writeNode resolves comp.Root against r.prog.
+// and slotNodes already rendered by whichever renderer owns the call node.
+// r must own comp's BODY, because writeNode resolves comp.Root against
+// r.prog.
 //
 // childrenNode is one opaque gosx.Node. The callee places it and does nothing
 // else with it: it cannot read a field of it, count it, or branch on it.
 // Children are not a prop — they are bound beside props, never inside it, and
-// no boundary proof reads them.
-func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder, comp *ir.Component, node *ir.Node, env fileRenderEnv, childrenNode gosx.Node) {
+// no boundary proof reads them. slotNodes (gosx#249) is childrenNode's
+// named-plural counterpart, keyed by slot name ("Title", not "slotTitle"):
+// each entry is one opaque gosx.Node the caller already rendered, bound the
+// same way and proved nothing about, the same way.
+func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder, comp *ir.Component, node *ir.Node, env fileRenderEnv, childrenNode gosx.Node, slotNodes map[string]gosx.Node) {
 	props, rawSource, err := localComponentProps(comp, node.Attrs, env, childrenNode)
 	if err != nil {
 		r.err = fmt.Errorf("render strict component %s: %w", comp.Name, err)
@@ -1225,6 +1283,45 @@ func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder
 	}
 	scope := env.withValue("props", props)
 	scope = scope.withValue("children", childrenNode)
+	// gosx#249: each caller-supplied named slot, bound beside children.
+	// validateStrictCalleeSlots (ir/lower.go) already proved every key here
+	// names a slot comp's body declares, so no runtime re-check is needed
+	// — unlike the Go-entry EntrySlots path, which has no compile-time
+	// visibility into a Go caller's map and re-proves it at render time.
+	//
+	// Bound BEFORE the two framework-filled slots below, on purpose: a
+	// later binding shadows an earlier one (fileRenderScope's own doc
+	// comment), so if a caller's markup ever supplies slot="PreloadHints"
+	// or slot="PageHead" — the two reserved, framework-computed names — the
+	// framework's own value still wins. Those two names are never
+	// caller-suppliable in practice (nothing renders such a call from
+	// authored .gsx source), but this ordering keeps the invariant true
+	// regardless.
+	for name, value := range slotNodes {
+		scope = scope.withValue(strictcomponent.SlotBindingName(name), value)
+	}
+	// gosx#249: the two framework-filled named slots, bound only for a
+	// callee that actually declares them (AcceptsSlot) and only when env
+	// carries an island-capable runtime (islandPreloadHints/islandPageHead
+	// non-nil — see newFileRenderEnv). childrenNode above is already fully
+	// rendered by the time this function runs (writeLocalComponent renders
+	// the call site's children BEFORE calling this function — see its own
+	// doc comment), so any island the caller's children registered through
+	// env.renderIsland has already reached the page runtime's manifest.
+	// Computing these two values HERE, after childrenNode but before
+	// r.writeNode walks comp.Root below, is what lets a pure .gsx-to-.gsx
+	// nested call (<Layout>{page content with an island}</Layout>, all in
+	// one compiled program, no Go glue) place an end-of-body island
+	// manifest that reflects every island its children rendered: the
+	// renderer computes and binds the value, the same way it binds
+	// children, so no strict expression ever has to compute a value that
+	// depends on a sibling's render order.
+	if env.islandPreloadHints != nil && comp.AcceptsSlot("PreloadHints") {
+		scope = scope.withValue(strictcomponent.SlotBindingName("PreloadHints"), env.islandPreloadHints())
+	}
+	if env.islandPageHead != nil && comp.AcceptsSlot("PageHead") {
+		scope = scope.withValue(strictcomponent.SlotBindingName("PageHead"), env.islandPageHead())
+	}
 	// Always overwrite, never inherit from env: rawSource is nil unless
 	// THIS call just proved it (single-spread shape), so an explicit-attrs
 	// call correctly clears whatever an enclosing strict frame left set,

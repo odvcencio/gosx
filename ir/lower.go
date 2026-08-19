@@ -113,6 +113,22 @@ type lowerer struct {
 	// {children} hole and this map does not claim it is.
 	childrenHoles map[string]bool
 
+	// slotHoles records, per same-file component name, the sorted set of
+	// named slots that component's body declares — every {slotName}
+	// expression hole it contains (gosx#249), childrenHoles' counterpart for
+	// a named, additional injection point. Filled by collectStrictSchemas
+	// the same pass, and for the same reason: a caller's slot-arity rule
+	// must read a callee's declared set from inside the CALLER's own body
+	// walk, and a callee may be declared later in the file.
+	//
+	// Unlike childrenHoles, this is populated for strict components only:
+	// the design brief scopes named slots to strict components ("A strict
+	// component accepts exactly one children slot" is the problem it
+	// solves), and a legacy component already reads an arbitrary value out
+	// of its flattened props map with no reserved-identifier scheme to
+	// collide with.
+	slotHoles map[string][]string
+
 	// currentStrictComponent and currentStrictPropsType name the strict
 	// component whose body lowerGSXNode is currently walking (empty
 	// outside strict lowering). E2 tier 1 (validateStrictToStrictSpreadCall)
@@ -1065,6 +1081,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.legacyProps = make(map[string]string)
 	l.typedLegacyProps = make(map[string]string)
 	l.childrenHoles = make(map[string]bool)
+	l.slotHoles = make(map[string][]string)
 	// Pass 1: every same-file strict component's name and props type,
 	// every legacy (non-strict) top-level renderer function's name and
 	// declared props type, every component's {children} hole, and every
@@ -1114,6 +1131,9 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 				// complete for the file regardless of declaration order.
 				if l.componentRendersChildren(child) {
 					l.childrenHoles[componentName] = true
+				}
+				if slots := l.componentDeclaredSlots(child); len(slots) > 0 {
+					l.slotHoles[componentName] = slots
 				}
 			}
 		case "type_declaration":
@@ -1208,6 +1228,53 @@ func (l *lowerer) componentRendersChildren(decl *gotreesitter.Node) bool {
 	}
 	walk(body)
 	return found
+}
+
+// componentDeclaredSlots reports the sorted, de-duplicated set of named
+// slots decl's body declares — every {slotName} child expression hole it
+// contains (strictcomponent.IsSlotExpression), the slot counterpart to
+// componentRendersChildren. It shares that function's CST walk shape,
+// including the same deliberate refusal to descend into an attribute value
+// (see componentRendersChildren's doc comment for why: class={slotFoo}
+// would otherwise register a slot placement that can never render markup).
+//
+// Unlike componentRendersChildren it does not stop at the first match: a
+// layout-shaped component may declare more than one named slot, and every
+// one of them must reach l.slotHoles so validateStrictCalleeSlots-shaped
+// callers and the runtime EntrySlots check both see the complete set.
+func (l *lowerer) componentDeclaredSlots(decl *gotreesitter.Node) []string {
+	body := l.childByField(decl, "body")
+	if body == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var names []string
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		switch l.nodeType(node) {
+		case "jsx_attribute", "jsx_spread_attribute":
+			return
+		case "jsx_expression_container":
+			exprNode := l.childByField(node, "expression")
+			if exprNode != nil {
+				if name, ok := strictcomponent.IsSlotExpression(l.text(exprNode)); ok {
+					if _, dup := seen[name]; !dup {
+						seen[name] = struct{}{}
+						names = append(names, name)
+					}
+				}
+			}
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(body)
+	sort.Strings(names)
+	return names
 }
 
 // collectStrictPropReads records every props field path (dot-joined, e.g.
@@ -2176,6 +2243,45 @@ func (l *lowerer) validateStrictCalleeChildren(n *gotreesitter.Node, tag string,
 	l.errorf(n, "strict component %s renders no children; remove the child content or render {children} in %s's body", tag, tag)
 }
 
+// validateStrictCalleeSlots is validateStrictCalleeChildren's named-slot
+// counterpart (gosx#249): every slot name a caller supplies through a
+// static slot="Name" attribute on a direct child must be one the callee
+// actually declares (l.slotHoles), the same arity precedent — a caller
+// error, not a silent no-op, when a callee cannot place what it is
+// handed. It answers this independently of props shape, so it is called
+// once, from lowerGSXElement, rather than duplicated across
+// validateStrictComponentCall's three call shapes the way
+// validateStrictCalleeChildren is: a named slot is supplied only through
+// a direct child's own attribute, never through the call's own attribute
+// list, so which of the three prop-shapes the call uses (named
+// attributes, a strict caller's single spread, a legacy caller's single
+// spread) has nothing to do with which slots it filled.
+//
+// l.slotHoles is populated for a strict component only (gosx#249 scopes
+// named slots to strict components, the same scope AcceptsChildren's own
+// legacy-inclusive comment explicitly does NOT extend to slots), so a
+// slot supplied to a legacy or unresolved callee always fails this check
+// — l.slotHoles[tag] is empty for one, so nothing is ever "declared".
+func (l *lowerer) validateStrictCalleeSlots(n *gotreesitter.Node, tag string, slots map[string]NodeID) {
+	if len(slots) == 0 {
+		return
+	}
+	declared := make(map[string]struct{}, len(l.slotHoles[tag]))
+	for _, name := range l.slotHoles[tag] {
+		declared[name] = struct{}{}
+	}
+	names := make([]string, 0, len(slots))
+	for name := range slots {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, ok := declared[name]; !ok {
+			l.errorf(n, "strict component %s declares no slot named %q; declare {%s} in %s's body or remove this slot", tag, name, strictcomponent.SlotBindingName(name), tag)
+		}
+	}
+}
+
 // attrHasSpread reports whether attrs contains at least one spread
 // attribute — the trigger for validateStrictComponentCall's E2 branches.
 func attrHasSpread(attrs []Attr) bool {
@@ -2681,6 +2787,7 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 		// for every strict component in the file, and every call-site rule
 		// read the same map. One owner.
 		AcceptsChildren: l.childrenHoles[componentName],
+		AcceptsSlots:    l.slotHoles[componentName],
 		Syntax:          ComponentSyntaxStrict,
 		Root:            rootID,
 		IsIsland:        isIsland,
@@ -3287,8 +3394,12 @@ func (l *lowerer) strictEachShape(node *Node, scope *eachScope) (itemName, index
 		}
 		// The reservation predates the children feature and is what makes it
 		// safe: a loop binding may not shadow the identifier a body uses to
-		// place its caller's markup.
-		if binding == "props" || binding == strictcomponent.ChildrenBinding {
+		// place its caller's markup. strictcomponent.IsSlotBindingName
+		// extends the same protection to a named slot (gosx#249): a loop
+		// binding spelled slotFoo would otherwise shadow a real slot
+		// placement inside the loop the same way a binding named "children"
+		// would shadow children.
+		if binding == "props" || binding == strictcomponent.ChildrenBinding || strictcomponent.IsSlotBindingName(binding) {
 			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q is reserved; choose another name", binding)})
 			ok = false
 			continue
@@ -3520,8 +3631,10 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 
 	tag := l.extractTagName(openNode)
 	attrs := l.extractAttrs(openNode)
-	children := l.extractChildren(n)
+	rawChildren := l.extractChildren(n)
+	children, slots := l.partitionCallSlots(IsComponent(tag), rawChildren)
 	l.validateStrictComponentCall(n, tag, attrs, children)
+	l.validateStrictCalleeSlots(n, tag, slots)
 	l.validateStrictHTMLElement(n, tag, attrs)
 	if l.strict && !IsComponent(tag) {
 		normalizeStrictHTMLAttrs(attrs)
@@ -3551,6 +3664,7 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 		Tag:      tag,
 		Attrs:    attrs,
 		Children: children,
+		Slots:    slots,
 		IsStatic: l.isStaticNode(attrs, children),
 		Span:     l.span(n),
 	}
@@ -3645,7 +3759,14 @@ func normalizeStrictHTMLAttrs(attrs []Attr) {
 }
 
 func (l *lowerer) lowerFragment(n *gotreesitter.Node) NodeID {
-	children := l.extractChildren(n)
+	rawChildren := l.extractChildren(n)
+	// A Fragment is never a component call (isComponentCall false
+	// unconditionally): partitionCallSlots still runs, so a slot="Name" on
+	// a Fragment's own direct child is reported instead of silently
+	// joining the Fragment's children — see partitionCallSlots' doc
+	// comment on why an intervening Fragment disqualifies a slot the same
+	// way an intervening plain HTML element does.
+	children, _ := l.partitionCallSlots(false, rawChildren)
 	node := Node{
 		Kind:     NodeFragment,
 		Children: children,
@@ -3875,6 +3996,98 @@ func (l *lowerer) extractChildren(n *gotreesitter.Node) []NodeID {
 		}
 	}
 	return children
+}
+
+// partitionCallSlots splits rawChildren — n's own already-lowered direct
+// children — into the default children group and named-slot children
+// (gosx#249's caller-side supply), following a static slot="Name"
+// attribute on each direct child.
+//
+// isComponentCall must be IsComponent(tag) for the element rawChildren
+// belongs to: a Fragment and an ordinary HTML element both call this
+// (lowerFragment, lowerGSXElement) with isComponentCall false, since
+// neither is a call a named slot can bind against — nothing anywhere
+// reads a slots map keyed to a Fragment or a <div>. A slot found there is
+// reported, never silently dropped: an author who mistypes the nesting —
+// wraps a slot-tagged element in a plain HTML element or a Fragment
+// before handing it to the component call, so the tagged element is no
+// longer a DIRECT child of the call — deserves to hear about it, not have
+// the element silently join the anonymous children group instead.
+//
+// A slot's own "slot" attribute is stripped from its rendered Attrs
+// either way, valid or not: it is gosx's routing marker, never a real
+// HTML attribute a browser should see. An invalid one still fails the
+// whole compile, so what its element renders as does not matter, but a
+// valid one must never leak "slot" into the output.
+func (l *lowerer) partitionCallSlots(isComponentCall bool, rawChildren []NodeID) (children []NodeID, slots map[string]NodeID) {
+	children = rawChildren
+	for _, childID := range rawChildren {
+		if int(childID) >= len(l.prog.Nodes) {
+			continue
+		}
+		child := &l.prog.Nodes[childID]
+		idx, attr, ok := findSlotAttr(child.Attrs)
+		if !ok {
+			continue
+		}
+		child.Attrs = append(child.Attrs[:idx:idx], child.Attrs[idx+1:]...)
+		// child.Span, not the call site's own span: a diagnostic about a
+		// mistagged element should point at that element, not at whatever
+		// happens to enclose it.
+		errAt := func(format string, args ...any) {
+			l.errs = append(l.errs, Diagnostic{Span: child.Span, Message: fmt.Sprintf(format, args...)})
+		}
+
+		if !isComponentCall {
+			errAt("slot attribute is only meaningful on a direct child of a component call; this element is not one")
+			continue
+		}
+		if attr.Kind != AttrStatic {
+			errAt("slot must be a static string literal; a computed slot name is not supported because the caller-supplied value would have to be evaluated before the callee's children are known, which reintroduces the ordering problem named slots close")
+			continue
+		}
+		name := strings.TrimSpace(attr.Value)
+		if !strictcomponent.IsSlotBindingName(strictcomponent.SlotBindingName(name)) {
+			errAt("slot name %q is not valid; use a non-empty, upper-case-initial name (e.g. slot=\"Title\")", attr.Value)
+			continue
+		}
+		if _, dup := slots[name]; dup {
+			errAt("slot %q is supplied more than once at this call", name)
+			continue
+		}
+		if slots == nil {
+			slots = make(map[string]NodeID)
+		}
+		slots[name] = childID
+		children = removeNodeID(children, childID)
+	}
+	return children, slots
+}
+
+// findSlotAttr reports the index and value of the first "slot" attribute
+// in attrs, if any.
+func findSlotAttr(attrs []Attr) (idx int, attr Attr, ok bool) {
+	for i, a := range attrs {
+		if a.Name == "slot" {
+			return i, a, true
+		}
+	}
+	return 0, Attr{}, false
+}
+
+// removeNodeID returns ids with id's first occurrence removed, preserving
+// the relative order of every other element.
+func removeNodeID(ids []NodeID, id NodeID) []NodeID {
+	out := make([]NodeID, 0, len(ids))
+	removed := false
+	for _, existing := range ids {
+		if !removed && existing == id {
+			removed = true
+			continue
+		}
+		out = append(out, existing)
+	}
+	return out
 }
 
 func (l *lowerer) isStaticNode(attrs []Attr, children []NodeID) bool {

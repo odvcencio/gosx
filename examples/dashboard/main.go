@@ -118,7 +118,7 @@ func main() {
 				isl := newIslands()
 				countStr := ctx.Query("count")
 				count, _ := strconv.Atoi(countStr)
-				return Layout("Dashboard", isl, CounterPage(count, isl))
+				return chromeLayout("Dashboard", isl, CounterPage(count, isl))
 			},
 			Handler: func(ctx *route.RouteContext) gosx.Node {
 				return gosx.Text("") // content built in layout
@@ -128,7 +128,7 @@ func main() {
 			Pattern: "/kitchen-sink",
 			Layout: func(ctx *route.RouteContext, content gosx.Node) gosx.Node {
 				isl := newIslands()
-				return Layout("Dashboard", isl, KitchenSinkPage(isl))
+				return chromeLayout("Dashboard", isl, KitchenSinkPage(isl))
 			},
 			Handler: func(ctx *route.RouteContext) gosx.Node {
 				return gosx.Text("")
@@ -197,69 +197,64 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
-// Layout wraps all pages with shared navigation and structure.
-func Layout(title string, islands *island.Renderer, content gosx.Node) gosx.Node {
-	// Preload hints go in <head> — browser starts WASM download during HTML parse
-	preloadHTML := ""
+// chromeLayout wraps content with layout.gsx's Layout component: the
+// shared navigation, document shell, and island hydration hooks every
+// /counter and /kitchen-sink response needs (gosx#249). Sidebar nests
+// inside Layout's own body with no data of its own to supply — see
+// layout.gsx. Footer needs one per-request value (chromeFooter's message,
+// built with time.Now()), which a strict .gsx expression cannot compute,
+// so it renders through chromeFooter here and folds into the same
+// Fragment as content, matching this file's pre-conversion nesting of
+// content and the footer together inside the layout's main element.
+//
+// islands, when non-nil, has already registered every island content
+// contains by the time this function runs: content is a fully built
+// gosx.Node BEFORE chromeLayout is called (CounterPage/KitchenSinkPage run
+// as an argument to this call, and Go evaluates a function's arguments
+// before the call), so PreloadHints and PageHead already reflect it here —
+// the same "content built first, then the layout wraps it" order
+// route.LayoutFunc's own contract guarantees for a file-routed layout
+// (route/filesystem.go's applyLayoutFuncs), not a special case this
+// function has to arrange for itself.
+func chromeLayout(title string, islands *island.Renderer, content gosx.Node) gosx.Node {
+	preloadHints := gosx.Text("")
+	pageHead := gosx.Text("")
 	if islands != nil {
-		preloadHTML = gosx.RenderHTML(islands.PreloadHints())
+		preloadHints = islands.PreloadHints()
+		pageHead = islands.PageHead()
 	}
-
-	return gosx.RawHTML(fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>%s</title>
-<link rel="stylesheet" href="/static/styles.css">
-%s</head>
-<body>
-`, title, preloadHTML) + gosx.RenderHTML(
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "layout")),
-			Sidebar(),
-			gosx.El("main", gosx.Attrs(gosx.Attr("class", "main")),
-				content,
-				Footer(),
-			),
-		),
-	) + "\n" + func() string {
-		if islands != nil {
-			return gosx.RenderHTML(islands.PageHead())
-		}
-		return ""
-	}() + "\n</body>\n</html>")
+	html, err := route.RenderProgramComponent(layoutProgram, "Layout", route.ProgramRenderEnv{
+		Slots: map[string]gosx.Node{
+			"Title":        gosx.Text(title),
+			"PreloadHints": preloadHints,
+			"PageHead":     pageHead,
+		},
+	}, gosx.Fragment(content, chromeFooter()))
+	if err != nil {
+		log.Fatalf("render layout.gsx Layout: %v", err)
+	}
+	// <!DOCTYPE html> has no .gsx element spelling — a doctype is not a tag
+	// — so it is prepended here, in Go, the one part of the pre-conversion
+	// document shell layout.gsx's Layout component does not itself express.
+	return gosx.RawHTML("<!DOCTYPE html>\n" + html)
 }
 
-// Sidebar renders the navigation sidebar.
-func Sidebar() gosx.Node {
-	type navItem struct {
-		href  string
-		label string
+// chromeFooter renders layout.gsx's Footer component with the one
+// per-request value it needs: a version-and-timestamp line built with
+// time.Now(), which a strict .gsx expression cannot call (calls are
+// categorically unsupported in a strict server expression — see
+// strictcomponent.validate's CallExpr case). Message is a proved prop, not
+// a slot: it is scalar data, not markup, and a slot's contract carries
+// only "one opaque gosx.Node" the same way children's does.
+func chromeFooter() gosx.Node {
+	message := fmt.Sprintf("GoSX v%s — Server rendered at %s", gosx.Version, time.Now().Format("15:04:05"))
+	node, err := route.RenderProgramComponentNode(layoutProgram, "Footer", route.ProgramRenderEnv{
+		Props: struct{ Message string }{Message: message},
+	})
+	if err != nil {
+		log.Fatalf("render layout.gsx Footer: %v", err)
 	}
-	items := []navItem{
-		{"/", "Home"},
-		{"/users", "Users"},
-		{"/users/new", "New User"},
-		{"/counter", "Counter"},
-		{"/kitchen-sink", "Kitchen Sink"},
-		{"/settings", "Settings"},
-	}
-
-	return gosx.El("aside", gosx.Attrs(gosx.Attr("class", "sidebar")),
-		gosx.El("h2", gosx.Text("GoSX Dashboard")),
-		gosx.El("nav",
-			gosx.Map(items, func(item navItem, _ int) gosx.Node {
-				return gosx.El("a", gosx.Attrs(gosx.Attr("href", item.href)), gosx.Text(item.label))
-			}),
-		),
-	)
-}
-
-// Footer renders the page footer.
-func Footer() gosx.Node {
-	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "footer")),
-		gosx.Text(fmt.Sprintf("GoSX v%s — Server rendered at %s", gosx.Version, time.Now().Format("15:04:05"))),
-	)
+	return node
 }
 
 // CounterPage demonstrates an interactive island compiled from counter.gsx.

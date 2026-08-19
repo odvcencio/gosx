@@ -921,3 +921,30 @@ component Page() {
 		t.Fatalf("CheckFile: %v", err)
 	}
 }
+
+// TestCheckFileAllowsProplessStrictCalleeWithChildren is the regression
+// test for a pre-existing bug in emitComponentCall's nested-call
+// projection (transpile/transpile.go): a propless strict callee has no
+// leading props parameter in its Go signature (emitStrictComponent emits
+// none when the component declares no props), but emitComponentCall
+// unconditionally emitted a gosx.Props() AttrList argument at any nested
+// call site whose children were non-empty — confirmed broken on
+// unmodified origin/main before this fix, independent of and predating
+// gosx#249's named slots.
+func TestCheckFileAllowsProplessStrictCalleeWithChildren(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+
+component Card() {
+	return <div>{children}</div>
+}
+
+component Page() {
+	return <Card><p>hello</p></Card>
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile: %v", err)
+	}
+}

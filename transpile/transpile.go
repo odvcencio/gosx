@@ -110,6 +110,20 @@ type transpiler struct {
 	// ir.Component (transpile.go works from the CST directly, not the IR).
 	structFieldTypes map[string]map[string]string
 	strictNames      map[string]struct{} // same-file gosx_component_declaration names, props or not
+	// slotNames records, per same-file strict component name, the sorted
+	// set of named slots that component's body declares (gosx#249) —
+	// transpile's own CST-walk-based twin of ir/lower.go's l.slotHoles,
+	// needed because emitStrictComponent must place a gosx.Node parameter
+	// for each BEFORE the variadic children parameter (Go forbids a
+	// parameter after "...T"), and emitComponentCall must supply a value
+	// for each at every nested call site. Two independent implementations
+	// of "which slots does this body declare" is an accepted, pre-existing
+	// risk in this file: transpile has no ir.Program to read a decided
+	// answer from (see emitStrictComponent's children-arity comment for
+	// why that same tradeoff was made once already), so this walks the CST
+	// directly through componentDeclaredSlots, the same shape
+	// ir/lower.go's componentDeclaredSlots uses.
+	slotNames map[string][]string
 	// currentPropsType is the props type of the strict component whose body
 	// is currently being emitted (empty outside strict emission) — needed
 	// to resolve a same-file <Each of> or spread source's element/struct
@@ -712,11 +726,61 @@ func (t *transpiler) collectComponentProps(n *gotreesitter.Node) {
 				t.strictNames = make(map[string]struct{})
 			}
 			t.strictNames[name] = struct{}{}
+			if bodyNode := t.childByField(child, "body"); bodyNode != nil {
+				if slots := t.componentDeclaredSlots(bodyNode); len(slots) > 0 {
+					if t.slotNames == nil {
+						t.slotNames = make(map[string][]string)
+					}
+					t.slotNames[name] = slots
+				}
+			}
 		}
 		if propsType := t.extractPropsType(child); propsType != "" {
 			t.propsTypes[name] = propsType
 		}
 	}
+}
+
+// componentDeclaredSlots reports the sorted, de-duplicated set of named
+// slots bodyNode declares — every {slotName} child expression hole it
+// contains (strictcomponent.IsSlotExpression). It mirrors
+// ir/lower.go's lowerer.componentDeclaredSlots, including the same
+// deliberate refusal to descend into an attribute value (an attribute
+// expression can never place rendered markup, so counting one here would
+// wrongly declare a parameter for a slot the body can never actually
+// place).
+func (t *transpiler) componentDeclaredSlots(bodyNode *gotreesitter.Node) []string {
+	if bodyNode == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var names []string
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		switch t.nodeType(node) {
+		case "jsx_attribute", "jsx_spread_attribute":
+			return
+		case "jsx_expression_container":
+			exprNode := t.childByField(node, "expression")
+			if exprNode != nil {
+				if name, ok := strictcomponent.IsSlotExpression(t.text(exprNode)); ok {
+					if _, dup := seen[name]; !dup {
+						seen[name] = struct{}{}
+						names = append(names, name)
+					}
+				}
+			}
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(bodyNode)
+	sort.Strings(names)
+	return names
 }
 
 func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
@@ -740,6 +804,20 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 				params = t.text(paramName) + " " + t.text(paramType)
 			}
 		}
+	}
+
+	// Each named slot this body declares (a {slotName} child expression
+	// hole) takes its own gosx.Node parameter (gosx#249), positioned before
+	// the variadic children parameter below — Go forbids a parameter after
+	// "...T", so a slot param can never follow it. componentDeclaredSlots
+	// walks the same body this function is about to emit, so the parameter
+	// list and the body's own {slotName} references can never name a
+	// different slot set.
+	for _, slot := range t.componentDeclaredSlots(bodyNode) {
+		if params != "" {
+			params += ", "
+		}
+		params += strictcomponent.SlotBindingName(slot) + " " + t.gosxRef("Node")
 	}
 
 	// Every strict component takes children, unconditionally.
@@ -884,7 +962,14 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 		return t.emitStrictEach(openNode, n)
 	}
 
-	children := t.emitChildren(n)
+	// emitChildrenAndSlots partitions any statically slot-tagged direct
+	// child out of children (gosx#249). slots is only ever consulted by
+	// the two component-call branches below — <If>/<Each> (handled above)
+	// and a plain HTML element (emitElementCall) never declare a slot to
+	// route one into, so discarding it there is correct: ir.Lower already
+	// rejects a slot="Name" attribute reaching either shape before this
+	// function runs (see emitChildrenAndSlots' doc comment).
+	children, slots := t.emitChildrenAndSlots(n)
 
 	if t.isStrictConditionalTag(tag) {
 		if cond, ok := t.strictConditionalCondExpr(openNode); ok {
@@ -898,15 +983,40 @@ func (t *transpiler) emitGSXElement(n *gotreesitter.Node) string {
 
 	if isComponent(tag) {
 		if propsType, ok := t.typedPropsType(tag); ok {
-			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, openNode), children)
+			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, openNode), children, t.orderedSlotArgs(tag, slots))
 		}
 		if rawPath, shared := t.sharedImportPath(memberTagAlias(tag)); shared {
 			t.errUnresolvedSharedCall(openNode, tag, rawPath)
 			return ""
 		}
-		return t.emitComponentCall(tag, t.emitAttrs(openNode), children)
+		return t.emitComponentCall(tag, t.emitAttrs(openNode), children, t.orderedSlotArgs(tag, slots))
 	}
 	return t.emitElementCall(tag, t.emitHTMLAttrs(openNode), children)
+}
+
+// orderedSlotArgs projects slots — a call site's statically slot-tagged
+// children, keyed by slot name — into positional Go argument text, one
+// entry per slot tag declares (t.slotNames, sorted the same way
+// emitStrictComponent orders its own slot parameters), so the returned
+// slice lines up 1:1 with those parameters regardless of what the call
+// site did or did not supply. A slot the call site did not tag falls back
+// to the zero gosx.Node{} — the same "declared but not supplied" sentinel
+// the render-entry EntrySlots path (route/fileprogram.go) leaves
+// unresolved, which renders empty.
+func (t *transpiler) orderedSlotArgs(tag string, slots map[string]string) []string {
+	declared := t.slotNames[tag]
+	if len(declared) == 0 {
+		return nil
+	}
+	args := make([]string, len(declared))
+	for i, name := range declared {
+		if value, ok := slots[name]; ok {
+			args[i] = value
+			continue
+		}
+		args[i] = t.gosxRef("Node") + "{}"
+	}
+	return args
 }
 
 // memberTagAlias returns tag's alias segment for a dotted tag ("ui" for
@@ -1201,14 +1311,19 @@ func (t *transpiler) emitSelfClosing(n *gotreesitter.Node) string {
 	}
 
 	if isComponent(tag) {
+		// A self-closing tag has no children at all, so no direct child
+		// can ever carry a static slot="Name" attribute here — nil slots
+		// (orderedSlotArgs' zero value) correctly produces one zero
+		// gosx.Node{} per slot tag declares, and none where it declares
+		// none.
 		if propsType, ok := t.typedPropsType(tag); ok {
-			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, n), nil)
+			return t.emitTypedComponentCall(tag, propsType, t.emitTypedAttrsForTag(tag, n), nil, t.orderedSlotArgs(tag, nil))
 		}
 		if rawPath, shared := t.sharedImportPath(memberTagAlias(tag)); shared {
 			t.errUnresolvedSharedCall(n, tag, rawPath)
 			return ""
 		}
-		return t.emitComponentCall(tag, t.emitAttrs(n), nil)
+		return t.emitComponentCall(tag, t.emitAttrs(n), nil, t.orderedSlotArgs(tag, nil))
 	}
 	return t.emitElementCall(tag, t.emitHTMLAttrs(n), nil)
 }
@@ -1272,20 +1387,73 @@ func (t *transpiler) emitElementCall(tag string, attrs []string, children []stri
 	return b.String()
 }
 
-func (t *transpiler) emitComponentCall(tag string, attrs []string, children []string) string {
+// isProplessStrictComponent reports whether tag names a same-file strict
+// component (t.strictNames) with no declared props type. emitStrictComponent
+// emits such a component's Go signature with no leading props parameter at
+// all, so no value — Props() included — belongs in that argument position
+// at any nested call site. A strict component WITH a declared props type
+// never reaches emitComponentCall in the first place (emitGSXElement routes
+// it through emitTypedComponentCall via typedPropsType), so this check
+// only ever needs to rule the propless case in or out.
+func (t *transpiler) isProplessStrictComponent(tag string) bool {
+	if _, ok := t.strictNames[tag]; !ok {
+		return false
+	}
+	return strings.TrimSpace(t.propsTypes[tag]) == ""
+}
+
+func (t *transpiler) emitComponentCall(tag string, attrs []string, children []string, slotArgs []string) string {
+	proplessStrict := t.isProplessStrictComponent(tag)
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s(", tag)
 
-	if len(attrs) > 0 || len(children) > 0 {
+	// wroteArg tracks whether the call has written its first argument yet,
+	// so the slot loop below can prepend its own separating comma correctly
+	// whether or not Props(...) came first.
+	//
+	// Props(...) belongs here only for an UNTYPED LEGACY callee — this call
+	// shape (no typedPropsType match — see emitGSXElement) is reached by
+	// both a propless strict callee and an untyped legacy one, but only
+	// the legacy callee's declared parameter (`props any` or `props
+	// gosx.AttrList`) can actually receive an AttrList value. A propless
+	// strict callee has no leading parameter at all (emitStrictComponent
+	// emits none when the component declares no props), so passing one
+	// positionally there either fails to compile or, worse, silently
+	// binds to the wrong parameter. This was a pre-existing bug — see the
+	// CHANGELOG entry naming it and TestCheckFileAllowsProplessStrictCalleeWithChildren
+	// (strictcheck/check_test.go), which fails on the unfixed code and
+	// passes here — independent of and predating gosx#249's named slots.
+	wroteArg := false
+	if !proplessStrict && (len(attrs) > 0 || len(children) > 0) {
 		b.WriteString(t.gosxRef("Props") + "(")
 		b.WriteString(strings.Join(attrs, ", "))
 		b.WriteByte(')')
+		wroteArg = true
+	}
+
+	// A callee that declares one or more named slots (gosx#249) takes a
+	// gosx.Node parameter for each, positioned before its variadic children
+	// parameter (emitStrictComponent). slotArgs (orderedSlotArgs,
+	// emitGSXElement) already lines up 1:1 with those parameters — a
+	// statically slot-tagged child's own projection where the call site
+	// supplied one, the zero gosx.Node{} where it did not — so this loop
+	// only ever places what it is given, in the order it is given.
+	for _, arg := range slotArgs {
+		if wroteArg {
+			b.WriteString(", ")
+		}
+		b.WriteString(arg)
+		wroteArg = true
 	}
 
 	for _, child := range children {
 		if child != "" {
-			b.WriteString(", ")
+			if wroteArg {
+				b.WriteString(", ")
+			}
 			b.WriteString(child)
+			wroteArg = true
 		}
 	}
 
@@ -1399,7 +1567,7 @@ func (t *transpiler) gosxUIPropsType(tag string) (string, bool) {
 	return alias + "." + propsType, true
 }
 
-func (t *transpiler) emitTypedComponentCall(tag, propsType string, attrs []string, children []string) string {
+func (t *transpiler) emitTypedComponentCall(tag, propsType string, attrs []string, children []string, slotArgs []string) string {
 	var b strings.Builder
 	literalType, pointer := typedPropsLiteralType(propsType)
 	b.WriteString(tag)
@@ -1416,6 +1584,29 @@ func (t *transpiler) emitTypedComponentCall(tag, propsType string, attrs []strin
 		b.WriteString(attr)
 	}
 	b.WriteByte('}')
+
+	// A callee that declares one or more named slots (gosx#249) takes a
+	// gosx.Node parameter for each, positioned before its variadic
+	// children parameter (emitStrictComponent), right after the props
+	// literal above. slotArgs (orderedSlotArgs, emitGSXElement/
+	// emitSelfClosing) already lines up 1:1 with those parameters.
+	//
+	// Before this loop existed, every child — slot-tagged or not — sat in
+	// the plain children slice below in document order, and this function
+	// appended them all positionally after the props literal with no
+	// awareness that some belonged in an earlier, named parameter
+	// position instead. That call still compiled whenever the total
+	// argument count matched (a slot count of N plus the true children
+	// count still fills N+variadic parameters), so a caller's markup
+	// order alone — not its slot="Name" tags — silently decided which
+	// child filled which slot. See staticSlotName's doc comment
+	// (transpile.go) for the same defect in emitComponentCall's sibling
+	// path, and TestCheckFileTypedComponentRoutesSlotByNameNotPosition
+	// (strictcheck/check_test.go) for the regression test.
+	for _, arg := range slotArgs {
+		b.WriteString(", ")
+		b.WriteString(arg)
+	}
 
 	for _, child := range children {
 		if child != "" {
@@ -1689,7 +1880,30 @@ func (t *transpiler) emitAttrValue(n *gotreesitter.Node) (string, bool, bool) {
 }
 
 func (t *transpiler) emitChildren(n *gotreesitter.Node) []string {
-	var children []string
+	children, _ := t.emitChildrenAndSlots(n)
+	return children
+}
+
+// emitChildrenAndSlots is emitChildren's slot-aware twin (gosx#249): it
+// additionally partitions a statically slot-tagged direct child's own
+// projection out of the returned children list and into slots, keyed by
+// slot name, mirroring ir/lower.go's partitionCallSlots at the CST level.
+//
+// It does not duplicate that function's validation. strictcheck.CheckFile
+// always runs ir.Lower before this projection (checkPackage's builtin
+// stage order — validateStrictRenderEntries and the transpile pass both
+// read a *ir.Program lowering already built, so a program that reaches
+// this function has already passed partitionCallSlots' checks: a
+// non-static slot value, a slot on a call that is not a component, or a
+// slot the callee does not declare all fail lowering first, with a
+// clearer message than a Go compiler error would give, and
+// strictcheck.CheckFile returns that failure without ever reaching this
+// function. This function's only job, for an already-proved-valid
+// program, is routing a static slot supply to the right Go parameter
+// position instead of leaving it in the shared children group by
+// argument-count coincidence — see staticSlotName's doc comment for what
+// went wrong before this split existed.
+func (t *transpiler) emitChildrenAndSlots(n *gotreesitter.Node) (children []string, slots map[string]string) {
 	for i := 0; i < int(n.NamedChildCount()); i++ {
 		child := n.NamedChild(i)
 		typ := t.nodeType(child)
@@ -1701,9 +1915,17 @@ func (t *transpiler) emitChildren(n *gotreesitter.Node) []string {
 			typ == "jsx_expression_container" || typ == "jsx_fragment" ||
 			typ == "jsx_text" {
 			result := t.emit(child)
-			if result != "" {
-				children = append(children, result)
+			if result == "" {
+				continue
 			}
+			if name, ok := t.staticSlotName(child); ok {
+				if slots == nil {
+					slots = make(map[string]string)
+				}
+				slots[name] = result
+				continue
+			}
+			children = append(children, result)
 			continue
 		}
 		// Any other jsx_* child is a node kind this function does not know how
@@ -1714,7 +1936,59 @@ func (t *transpiler) emitChildren(n *gotreesitter.Node) []string {
 			t.errorf(child, "unhandled GSX child node %q; transpiler and grammar are out of sync", typ)
 		}
 	}
-	return children
+	return children, slots
+}
+
+// staticSlotName reports child's slot="Name" attribute value, when child
+// carries one spelled as a plain string literal. ok is false for a child
+// with no slot attribute at all, or one whose slot value is not a static
+// string literal — ir.Lower already rejects the latter shape before this
+// function is ever reached (see emitChildrenAndSlots' doc comment), so
+// returning ok=false for it here just keeps such a child in the ordinary
+// children group, in a projection the build never reaches anyway.
+//
+// Before this function existed, a slot-tagged child's own projection sat
+// in the plain children list like any other, and the call-site emitters
+// (emitComponentCall, emitTypedComponentCall) appended every child
+// positionally after the callee's declared slot parameters — filling
+// slotTitle with whichever child happened to come first in document
+// order, not the one actually marked slot="Title". That call still
+// compiled (argument count and type both matched by coincidence whenever
+// the slot count matched the non-slot child count), so nothing caught it
+// except reading the generated source by hand.
+func (t *transpiler) staticSlotName(child *gotreesitter.Node) (name string, ok bool) {
+	var attrsHost *gotreesitter.Node
+	switch t.nodeType(child) {
+	case "jsx_element":
+		attrsHost = t.childByField(child, "open")
+	case "jsx_self_closing_element":
+		attrsHost = child
+	default:
+		return "", false
+	}
+	if attrsHost == nil {
+		return "", false
+	}
+	for i := 0; i < int(attrsHost.NamedChildCount()); i++ {
+		a := attrsHost.NamedChild(i)
+		if t.nodeType(a) != "jsx_attribute" {
+			continue
+		}
+		nameNode := t.childByField(a, "name")
+		if nameNode == nil || t.text(nameNode) != "slot" {
+			continue
+		}
+		valueNode := t.childByField(a, "value")
+		if valueNode == nil || t.nodeType(valueNode) != "jsx_string_literal" {
+			return "", false
+		}
+		raw := t.text(valueNode)
+		if len(raw) >= 2 {
+			raw = raw[1 : len(raw)-1]
+		}
+		return raw, true
+	}
+	return "", false
 }
 
 func (t *transpiler) extractTagName(n *gotreesitter.Node) string {

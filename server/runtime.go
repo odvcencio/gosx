@@ -261,6 +261,37 @@ func (r *PageRuntime) HeadWithNonce(nonce string) gosx.Node {
 	return gosx.Fragment(nodes...)
 }
 
+// PreloadHints renders <link rel="preload"/rel="prefetch"> hints for every
+// island, engine, and hub this page runtime has registered so far — the
+// half of Head/HeadWithNonce that belongs in <head>, split out on its own
+// (gosx#249) so a caller that needs to place it separately from the
+// manifest/bootstrap script — a strict .gsx layout's {slotPreloadHints}
+// versus its {slotPageHead}, most often — can bind each to its own named
+// slot without also getting the other's markup bundled in.
+func (r *PageRuntime) PreloadHints() gosx.Node {
+	if r == nil || !r.active {
+		return gosx.Text("")
+	}
+	return r.renderer.PreloadHints()
+}
+
+// PageHead renders the hydration manifest and bootstrap script for every
+// island, engine, and hub this page runtime has registered so far, with no
+// CSP nonce attached. See PageHeadWithNonce and PreloadHints' doc comment
+// for why this is split out from the combined Head/HeadWithNonce.
+func (r *PageRuntime) PageHead() gosx.Node {
+	return r.PageHeadWithNonce("")
+}
+
+// PageHeadWithNonce is PageHead, attaching nonce to GoSX-owned script
+// elements when nonce is non-empty.
+func (r *PageRuntime) PageHeadWithNonce(nonce string) gosx.Node {
+	if r == nil || !r.active {
+		return gosx.Text("")
+	}
+	return r.renderer.PageHeadWithNonce(nonce)
+}
+
 // Active reports whether the page registered any runtime engines.
 func (r *PageRuntime) Active() bool {
 	return r != nil && r.active
