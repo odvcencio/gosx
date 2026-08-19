@@ -126,35 +126,52 @@ component Page(props: PageProps) {
 	}
 }
 
-func TestRunCheckAndRenderRejectStrictClientDirectiveComponents(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		directive string
-		want      string
-	}{
-		{name: "island", directive: "//gosx:island", want: "strict island declarations are not supported"},
-		{name: "engine", directive: "//gosx:engine surface", want: "strict engine declarations are not supported"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := newInvalidStrictStarter(t, "check-render-strict-"+tc.name)
-			path := filepath.Join(dir, "app", "page.gsx")
-			mustWriteFile(t, path, "package app\n"+tc.directive+"\ncomponent Page() {\nreturn <canvas />\n}\n")
-			for _, check := range []struct {
-				name string
-				fn   func() error
-			}{
-				{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
-				{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
-			} {
-				t.Run(check.name, func(t *testing.T) {
-					err := check.fn()
-					if err == nil || !strings.Contains(err.Error(), tc.want) {
-						t.Fatalf("error = %v", err)
-					}
-				})
+// TestRunCheckAndRenderAcceptStrictIslandRejectStrictEngine covers the split
+// verdict cmd/gosx check and render must agree on: a strict island now
+// passes both (LowerIsland — the same island-lowering gate check runs for
+// every IsIsland component — succeeds, and rendering produces real HTML), a
+// strict engine still fails both, with an updated, version-accurate reason.
+func TestRunCheckAndRenderAcceptStrictIslandRejectStrictEngine(t *testing.T) {
+	t.Run("island", func(t *testing.T) {
+		dir := newInvalidStrictStarter(t, "check-render-strict-island")
+		path := filepath.Join(dir, "app", "page.gsx")
+		mustWriteFile(t, path, "package app\n//gosx:island\ncomponent Page() {\nreturn <canvas />\n}\n")
+		t.Run("check", func(t *testing.T) {
+			var out bytes.Buffer
+			if err := runCheck(path, &out); err != nil {
+				t.Fatalf("runCheck: %v", err)
 			}
 		})
-	}
+		t.Run("render", func(t *testing.T) {
+			var out bytes.Buffer
+			if err := runRender(path, "", &out); err != nil {
+				t.Fatalf("runRender: %v", err)
+			}
+			if !strings.Contains(out.String(), "<canvas") {
+				t.Fatalf("rendered output = %q, want it to contain <canvas", out.String())
+			}
+		})
+	})
+	t.Run("engine", func(t *testing.T) {
+		dir := newInvalidStrictStarter(t, "check-render-strict-engine")
+		path := filepath.Join(dir, "app", "page.gsx")
+		mustWriteFile(t, path, "package app\n//gosx:engine surface\ncomponent Page() {\nreturn <canvas />\n}\n")
+		want := "strict engine declarations are not yet supported"
+		for _, check := range []struct {
+			name string
+			fn   func() error
+		}{
+			{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
+			{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
+		} {
+			t.Run(check.name, func(t *testing.T) {
+				err := check.fn()
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %v, want to contain %q", err, want)
+				}
+			})
+		}
+	})
 }
 
 func TestRunCheckRejectsLegacyCallerIntoStrictCalleeBeforePropTyping(t *testing.T) {

@@ -274,7 +274,15 @@ func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, 
 	// that declaration authoritative even when its name collides with a layout
 	// replacement or one of the legacy renderer builtins; otherwise generated Go
 	// and file rendering would execute different components.
-	if comp, ok := r.components[node.Tag]; ok && comp.Syntax == ir.ComponentSyntaxStrict {
+	//
+	// A strict ISLAND is excluded here on purpose. Its call site still owns
+	// the same-file declaration, but rendering it inline through
+	// writeLocalComponent would emit its body as ordinary server HTML and
+	// skip env.island entirely — no hydration script, no client VM program,
+	// no props payload. The switch below routes IsIsland to
+	// renderLocalIsland instead, which builds the proven props map through
+	// the same localComponentProps boundary and hands it to env.island.
+	if comp, ok := r.components[node.Tag]; ok && comp.Syntax == ir.ComponentSyntaxStrict && !comp.IsIsland && !comp.IsEngine {
 		r.writeLocalComponent(b, comp, node, env)
 		return
 	}
