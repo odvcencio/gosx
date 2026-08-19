@@ -243,17 +243,19 @@ func defaultDocsBindings(ctx *route.RouteContext, page route.FilePage) route.Fil
 			"docsIndexCurrent":   DocsIndexAriaCurrent(currentPath),
 			"site":               SiteBuildInfo(),
 		},
+		// StatCard, CapabilityTag, and Tooltip are no longer bound here: all
+		// three moved to app/ui/*.gsx (see app/components.go's top-of-file
+		// comment) with no Go-callable adapter left behind, and every
+		// existing StatCard call site moved with it, to
+		// <ui.StatCard Value={...} Label={...}/>. A page that wants one of
+		// the three now imports the shared component directly: import ui
+		// "./ui" (or the matching ../ depth) and <ui.CapabilityTag Label=
+		// "..."/>.
 		Funcs: map[string]any{
-			"CodeBlock":     CodeBlock,
-			"StatCard":      StatCard,
-			"CapabilityTag": CapabilityTag,
-			"Tooltip":       Tooltip,
+			"CodeBlock": CodeBlock,
 		},
 		Components: map[string]any{
-			"CodeBlock":     CodeBlock,
-			"StatCard":      StatCard,
-			"CapabilityTag": CapabilityTag,
-			"Tooltip":       Tooltip,
+			"CodeBlock": CodeBlock,
 		},
 	}
 }

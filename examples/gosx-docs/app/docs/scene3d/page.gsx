@@ -1,5 +1,7 @@
 package docs
 
+import ui "../../ui"
+
 func Page() Node {
 	return <div>
 		<section id="scene-graph">
@@ -1670,9 +1672,9 @@ func Page() Node {
 				flattens the graph and builds a bounding-volume hierarchy (BVH). Build it once, then trace per ray. It holds a snapshot, so rebuild it after the graph changes.
 			</p>
 			<div class="scene3d-stat-row">
-				{StatCard("58,075 → 1,257 ns", "1,000-node graph, per ray")}
-				{StatCard("107,661 → 560 ns", "10,000-instance mesh, per ray")}
-				{StatCard("1 alloc", "per ray, either path")}
+				<ui.StatCard Value="58,075 → 1,257 ns" Label="1,000-node graph, per ray" />
+				<ui.StatCard Value="107,661 → 560 ns" Label="10,000-instance mesh, per ray" />
+				<ui.StatCard Value="1 alloc" Label="per ray, either path" />
 			</div>
 			{CodeBlock("go", `accel := scene.NewSceneAccelerator(props.Graph, scene.PointThreshold(0.25))
 

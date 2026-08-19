@@ -1,38 +1,45 @@
 // Package docs implements the GoSX documentation site.
 //
-// This file holds the site's shared component library: CodeBlock,
-// StatCard, CapabilityTag, and Tooltip. Each one stays on the low-level
-// gosx.El/Attrs/Text API by necessity, not as a style example.
+// This file used to hold the site's whole shared component library, hand
+// built on the low-level gosx.El/Attrs/Text API because a .gsx component
+// could not be shared across pages. Three of its four components — every
+// one with a typed-props shape a strict component can actually declare —
+// now live in app/ui/*.gsx, a shared component directory reached through
+// the shared-components design (import ui "./ui"; <ui.StatCard .../>):
+// StatCard, CapabilityTag, and Tooltip. Their 7 call sites (StatCard was
+// the only one of the three anything actually called) moved with them,
+// from the old {StatCard(value, label)} expression-call form to
+// <ui.StatCard Value={value} Label={label}/>.
 //
-// modules.go binds each function, by compile-time Go identifier, into
-// every page's route.FileTemplateBindings.Funcs and .Components maps.
-// That binding lets other .gsx pages call these functions as tags, for
-// example `<CodeBlock lang="go" source={...} />`, or as plain calls, for
-// example `{CodeBlock("go", "...")}`.
+// A Go-callable adapter that forwarded to the .gsx source was considered
+// and rejected: a props struct declared inside a .gsx file is not a real
+// Go type until gosx build transpiles it, so no plain .go file — this one
+// included — can name it, and moving the struct to a companion .go file
+// instead would leave ir.Lower (which never reads a sibling file) unable
+// to see it, degrading the strict component back to untyped attribute
+// handling. Real call-site migration was the only option that keeps both
+// halves genuinely typed.
 //
-// A Funcs or Components map entry must be a real, linkable Go function
-// value. The file router has no supported way to bind a .gsx-authored
-// component into that map by name. A component defined inside one
-// page.gsx file is visible only to that page, not to every page that
-// wants to reuse it. Until GoSX ships a shared, cross-page .gsx component
-// surface, this package stays Go, for the same reason server/page.go and
-// server/metadata_render.go stay Go.
+// CodeBlock stays hand-built. Its core job is embedding ALREADY-RENDERED,
+// syntax-highlighted HTML (the highlight package's own output) as raw
+// markup, and a strict component has no channel for that: a typed props
+// field may only be a scalar or a same-file struct, never a gosx.Node (see
+// ir.strictRendererScalarType), and {children} — the one place a gosx.Node
+// DOES pass through unescaped — binds only at a nested call site inside
+// another component's body. CodeBlock's 103 call sites all supply a plain
+// (lang, source string) pair, not pre-rendered markup, so in principle a
+// typed Lang/Source props call could still work; the blocker is scale, not
+// architecture — rewriting 103 call sites, many holding multi-line/
+// multi-language literal source samples as page content, was judged too
+// large a mechanical change for this conversion to also carry safely.
 package docs
 
 import (
-	"strconv"
 	"strings"
-	"sync/atomic"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/highlight"
 )
-
-var tooltipID atomic.Int64
-
-func tooltipCounter() int {
-	return int(tooltipID.Add(1))
-}
 
 // CodeBlock renders a syntax-highlighted code sample in a dark glass panel.
 func CodeBlock(lang, source string) gosx.Node {
@@ -168,30 +175,4 @@ func removeCodeIndentColumns(line string, columns int) string {
 		}
 	}
 	return ""
-}
-
-// StatCard renders a proof-point stat card.
-func StatCard(value, label string) gosx.Node {
-	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "stat-card glass-panel")),
-		gosx.El("span", gosx.Attrs(gosx.Attr("class", "stat-card__value")), gosx.Text(value)),
-		gosx.El("span", gosx.Attrs(gosx.Attr("class", "stat-card__label")), gosx.Text(label)),
-	)
-}
-
-// CapabilityTag renders a small tag badge.
-func CapabilityTag(label string) gosx.Node {
-	return gosx.El("span", gosx.Attrs(gosx.Attr("class", "cap-tag")), gosx.Text(label))
-}
-
-// Tooltip renders a trigger element with an accessible tooltip overlay.
-func Tooltip(trigger gosx.Node, content string) gosx.Node {
-	id := "tip-" + strconv.Itoa(tooltipCounter())
-	return gosx.El("span", gosx.Attrs(gosx.Attr("class", "tooltip-trigger"), gosx.Attr("aria-describedby", id)),
-		trigger,
-		gosx.El("span", gosx.Attrs(
-			gosx.Attr("id", id),
-			gosx.Attr("class", "tooltip glass-panel"),
-			gosx.Attr("role", "tooltip"),
-		), gosx.Text(content)),
-	)
 }

@@ -156,7 +156,16 @@ func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts O
 	if err != nil {
 		return err
 	}
-	generated, err := transpile.TranspilePackageWithImportNames(files, importNames)
+	// resolveSharedImports loads every shared (./ or ../ prefixed) import
+	// files declares — the directory walk and real Go import path
+	// TranspilePackageWithImportNames's package.go doc comment describes as
+	// "the intended producer" of transpile.SharedImport. A package with no
+	// shared import gets nil back and nothing below changes.
+	sharedImports, sharedOverlay, err := resolveSharedImports(ctx, files, opts, root)
+	if err != nil {
+		return err
+	}
+	generated, err := transpile.TranspilePackageWithSharedImports(files, importNames, sharedImports)
 	if err != nil {
 		return err
 	}
@@ -170,7 +179,7 @@ func runBuiltinChecks(ctx context.Context, files []transpile.PackageFile, opts O
 	if err := validatePackageDeclCollisions(files, generated); err != nil {
 		return err
 	}
-	return goCheck(ctx, files, generated, opts)
+	return goCheck(ctx, files, generated, sharedOverlay, opts)
 }
 
 // validateStrictRenderEntries refuses a strict render entry's declared props
@@ -284,8 +293,18 @@ func resolveImportNames(ctx context.Context, files []transpile.PackageFile, opts
 	return names, nil
 }
 
-func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[string]string, opts Options) error {
-	if len(files) == 0 || len(generated) == 0 {
+// goCheck type-checks files' own projection through the real Go compiler,
+// over an overlay that also carries every shared import's target directory
+// (sharedOverlay, from resolveSharedImports): a virtual .go path already
+// resolved to live inside the TARGET's own real directory, mapped to that
+// target file's generated Go text. Placing those virtual files there — not
+// beside files' own projection — is what lets `go list` resolve the
+// target's real Go import path and the caller's rewritten import statement
+// (transpile.emitImportDeclaration) actually resolve against real
+// declarations, exactly as if the target directory had been `gosx check`ed
+// on its own first.
+func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[string]string, sharedOverlay map[string]string, opts Options) error {
+	if len(files) == 0 || (len(generated) == 0 && len(sharedOverlay) == 0) {
 		return nil
 	}
 	dir := filepath.Dir(files[0].Path)
@@ -300,8 +319,8 @@ func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[s
 		sourcePaths = append(sourcePaths, sourcePath)
 	}
 	sort.Strings(sourcePaths)
-	overlay := make(map[string]string, len(sourcePaths))
-	usedVirtual := make(map[string]struct{}, len(sourcePaths))
+	overlay := make(map[string]string, len(sourcePaths)+len(sharedOverlay))
+	usedVirtual := make(map[string]struct{}, len(sourcePaths)+len(sharedOverlay))
 	for i, sourcePath := range sourcePaths {
 		tempPath := filepath.Join(tempDir, "projection_"+strconv.Itoa(i)+".go")
 		if err := os.WriteFile(tempPath, []byte(generated[sourcePath]), 0o600); err != nil {
@@ -309,6 +328,18 @@ func goCheck(ctx context.Context, files []transpile.PackageFile, generated map[s
 		}
 		virtual := uniqueVirtualGoPath(dir, i, usedVirtual)
 		usedVirtual[virtual] = struct{}{}
+		overlay[virtual] = tempPath
+	}
+	sharedVirtualPaths := make([]string, 0, len(sharedOverlay))
+	for virtual := range sharedOverlay {
+		sharedVirtualPaths = append(sharedVirtualPaths, virtual)
+	}
+	sort.Strings(sharedVirtualPaths)
+	for i, virtual := range sharedVirtualPaths {
+		tempPath := filepath.Join(tempDir, "shared_"+strconv.Itoa(i)+".go")
+		if err := os.WriteFile(tempPath, []byte(sharedOverlay[virtual]), 0o600); err != nil {
+			return err
+		}
 		overlay[virtual] = tempPath
 	}
 	overlayPath := filepath.Join(tempDir, "overlay.json")
