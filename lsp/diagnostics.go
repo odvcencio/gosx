@@ -11,9 +11,24 @@ import (
 	"m31labs.dev/gosx/ir"
 )
 
+// Severity values follow the LSP DiagnosticSeverity enum (textDocument/
+// publishDiagnostics): 1 is Error, 2 is Warning. Only these two are used
+// today; gosx has no Information (3) or Hint (4) diagnostics.
 const (
-	SeverityError = 1
+	SeverityError   = 1
+	SeverityWarning = 2
 )
+
+// severityFromIR maps an ir.Severity onto the matching LSP severity value.
+// ir.SeverityError (the zero value) maps to SeverityError, so every
+// existing built-in diagnostic — none of which sets ir.Diagnostic.Severity
+// — keeps its current LSP severity unchanged.
+func severityFromIR(sev ir.Severity) int {
+	if sev == ir.SeverityWarning {
+		return SeverityWarning
+	}
+	return SeverityError
+}
 
 // Position is an LSP line/character coordinate.
 type Position struct {

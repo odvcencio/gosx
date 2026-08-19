@@ -101,6 +101,26 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 		}
 		entryEnv = entryEnv.withValue("props", props)
 	}
+	// gosx#226, gosx#246: a strict component rendered as the render entry has
+	// no caller-side <Component>...</Component> children for writeLocalComponent
+	// to render, the same gap EntryProps closes for props. opts.EntryChildren is
+	// the only other place a children node can come from — RenderProgramComponent
+	// builds it from its own children ...gosx.Node parameter. Checked
+	// independently of the props branch above: a bare strict component (no
+	// PropsType at all) can still declare {children} in its body and accept
+	// them.
+	//
+	// A zero EntryChildren means "no children supplied" (see its doc comment),
+	// so every caller that predates this field — including every file-routed
+	// page and layout, which never sets it — takes no new branch here and
+	// reproduces the prior unresolved-identifier "children" behavior
+	// byte-for-byte, not a bound empty Fragment.
+	if !opts.EntryChildren.IsZero() {
+		if comp.Syntax != ir.ComponentSyntaxStrict {
+			return "", false, fmt.Errorf("render entry %s is not a strict component; children only bind to a strict render entry (see RenderProgramComponent)", comp.Name)
+		}
+		entryEnv = entryEnv.withValue("children", opts.EntryChildren)
+	}
 	// One builder carries the whole document. The renderer used to allocate a
 	// fresh strings.Builder per element and let the parent copy the child's
 	// string, which cost O(nodes x depth) byte traffic — a depth-100 page

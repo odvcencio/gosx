@@ -28,7 +28,7 @@ func Page() Node {
 		<div class="page-topper">
 			<span class="eyebrow">Language pipeline</span>
 			<p class="lede">
-				A single parser and IR serve both GSX component spellings. Strict declarations add a fail-closed typed boundary; legacy Go-function components preserve the established dynamic route and island model.
+				A single parser and IR serve both GSX component spellings. Strict declarations add a fail-closed typed boundary and are the only spelling GoSX teaches. The legacy Go-function form still parses for existing code, islands, engines, and loader-bound routes.
 			</p>
 		</div>
 		<h2 id="source-model">GSX source model</h2>
@@ -44,7 +44,9 @@ func Page() Node {
 		<CodeBlock lang="gosx" source={data.strictSample} />
 		<CodeBlock lang="gosx" source={data.legacySample} />
 		<p>
-			The two spellings lower into the same component and node representation. Existing legacy source remains valid; adopting strict components is opt-in and local. Calls stay within one declaration style in v0.39, keeping dynamic legacy attributes from bypassing strict Go prop checks.
+			The two spellings lower into the same component and node representation. Existing legacy source remains valid, but new code should declare
+			<span class="inline-code">component Name(props: Type)</span>
+			instead. Calls stay within one declaration style in v0.39, keeping dynamic legacy attributes from bypassing strict Go prop checks.
 		</p>
 		<h2 id="strict-validation">Strict validation</h2>
 		<p>

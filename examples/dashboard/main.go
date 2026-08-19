@@ -301,11 +301,7 @@ func CounterPage(count int, islands *island.Renderer) gosx.Node {
 
 	return gosx.Fragment(
 		chrome("CounterIntro"),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("CounterCardHeader"),
-			islandNode,
-			noscriptFallback,
-		),
+		chromeCard(chrome("CounterCardHeader"), islandNode, noscriptFallback),
 		chrome("CounterHowItWorksCard"),
 	)
 }
@@ -512,47 +508,14 @@ func main() {
 
 	return gosx.Fragment(
 		chrome("KitchenSinkIntro"),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("KSCounterHeader"),
-			counterIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("KSTabsHeader"),
-			tabsIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("KSToggleHeader"),
-			toggleIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("KSTodoHeader"),
-			todoIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("KSFormHeader"),
-			formIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("KSPriceHeader"),
-			derivedIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("KSListHeader"),
-			listIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			chrome("KSEditorHeader"),
-			editorIsland,
-			editorScript,
-		),
+		chromeCard(chrome("KSCounterHeader"), counterIsland),
+		chromeCard(chrome("KSTabsHeader"), tabsIsland),
+		chromeCard(chrome("KSToggleHeader"), toggleIsland),
+		chromeCard(chrome("KSTodoHeader"), todoIsland),
+		chromeCard(chrome("KSFormHeader"), formIsland),
+		chromeCard(chrome("KSPriceHeader"), derivedIsland),
+		chromeCard(chrome("KSListHeader"), listIsland),
+		chromeCard(chrome("KSEditorHeader"), editorIsland, editorScript),
 	)
 }
 

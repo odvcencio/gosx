@@ -43,6 +43,49 @@ func Page(item Item, ok bool) Node {
 	}
 }
 
+// TestRunCheckWarnsOnUntypedLegacyComponent covers step one of retiring
+// legacy component syntax: an untyped legacy component (`func Name(props
+// any) Node`) must produce a warning naming the component and the strict
+// replacement, but must not fail the check — 7 such declarations exist in
+// this repo today and must keep checking, compiling, and rendering exactly
+// as they do now.
+func TestRunCheckWarnsOnUntypedLegacyComponent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "page.gsx")
+	writeTempFile(t, dir, "page.gsx", `package main
+
+func FeatureCard(props any) Node {
+	return <div class="card">{props}</div>
+}
+
+func Page() Node {
+	return <FeatureCard>hi</FeatureCard>
+}
+`)
+
+	var stderr bytes.Buffer
+	if err := runCheck(path, &stderr); err != nil {
+		t.Fatalf("runCheck failed: %v", err)
+	}
+
+	output := stderr.String()
+	if !strings.Contains(output, "warning:") {
+		t.Fatalf("expected a warning line, got: %q", output)
+	}
+	if !strings.Contains(output, "FeatureCard") {
+		t.Fatalf("expected the warning to name FeatureCard, got: %q", output)
+	}
+	if !strings.Contains(output, "component FeatureCard(props: FeatureCardProps)") {
+		t.Fatalf("expected the warning to point at the strict replacement, got: %q", output)
+	}
+	if !strings.Contains(output, "v1.0") {
+		t.Fatalf("expected the warning to say the form is removed before v1.0, got: %q", output)
+	}
+	if !strings.Contains(output, "ok: 2 components") {
+		t.Fatalf("expected check to still pass, got: %q", output)
+	}
+}
+
 func TestRunCheckReportsReadError(t *testing.T) {
 	var stderr bytes.Buffer
 	err := runCheck(filepath.Join(t.TempDir(), "missing.gsx"), &stderr)

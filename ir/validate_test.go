@@ -777,3 +777,79 @@ func Page() Node {
 		t.Fatalf("expected no diagnostics for valid live/region attributes, got %+v", diags)
 	}
 }
+
+// TestValidateWarningsFlagsUntypedLegacyProps covers step one of retiring
+// legacy component syntax: an untyped legacy component (`func Name(props
+// any) Node`) gets one SeverityWarning diagnostic naming the component and
+// the strict replacement. ir.Validate itself must stay silent — the
+// warning must never become a compile-blocking error.
+func TestValidateWarningsFlagsUntypedLegacyProps(t *testing.T) {
+	source := []byte(`package main
+
+func FeatureCard(props any) Node {
+	return <div class="card">{props}</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	if diags := ir.Validate(prog); len(diags) != 0 {
+		t.Fatalf("expected ir.Validate to stay silent on an untyped legacy component, got %+v", diags)
+	}
+
+	warnings := ir.ValidateWarnings(prog)
+	if len(warnings) != 1 {
+		t.Fatalf("expected exactly one warning, got %+v", warnings)
+	}
+	warning := warnings[0]
+	if warning.Severity != ir.SeverityWarning {
+		t.Fatalf("expected SeverityWarning, got %v", warning.Severity)
+	}
+	if !strings.Contains(warning.Message, "FeatureCard") {
+		t.Fatalf("expected the warning to name FeatureCard, got %q", warning.Message)
+	}
+	if !strings.Contains(warning.Message, "v1.0") {
+		t.Fatalf("expected the warning to say the form is removed before v1.0, got %q", warning.Message)
+	}
+	if !strings.Contains(warning.Hint, "component FeatureCard(props: FeatureCardProps)") {
+		t.Fatalf("expected the hint to name the strict replacement, got %q", warning.Hint)
+	}
+}
+
+// TestValidateWarningsSilentOnZeroPropsAndTypedLegacy covers the boundary
+// of the untyped-legacy warning: a zero-props legacy function, a TYPED
+// legacy component (its props struct declared in the same file), and a
+// strict component must all stay silent. Warning on zero-props legacy
+// functions is out of scope for this step — see the zero-props census in
+// gosx's untyped-legacy-warning change.
+func TestValidateWarningsSilentOnZeroPropsAndTypedLegacy(t *testing.T) {
+	source := []byte(`package main
+
+type CardProps struct {
+	Title string
+}
+
+func Page() Node {
+	return <div>{"hi"}</div>
+}
+
+func Card(props CardProps) Node {
+	return <div>{props.Title}</div>
+}
+
+component Strict(props: CardProps) {
+	return <div>{props.Title}</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+
+	warnings := ir.ValidateWarnings(prog)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings for zero-props, typed legacy, or strict components, got %+v", warnings)
+	}
+}
