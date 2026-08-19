@@ -119,9 +119,16 @@
 - **Every check accumulates I/O-heavy work in `strictcheck`
   (`gosx check`, the build gate), never in `ir.Lower`'s per-keystroke
   path.** The LSP runs `ir.Validate`/`ir.ValidateWarnings` — no file I/O —
-  on every keystroke, unchanged. A whole-project check that reads the
-  stylesheet, the action registry, or the route tree runs only through
-  `strictcheck`, which the CLI invokes explicitly.
+  on every keystroke, unchanged: this covers check 5 in full. `lsp` gains
+  a second cadence for the checks that do need file I/O: `textDocument/
+  didSave` now runs `lsp.AnalyzeProject` (checks 1, 2, and 4 — the ones
+  scoped to one package directory) and republishes the combined
+  diagnostic set; the server's `initialize` response now advertises save
+  support (`textDocumentSync.save`) so a real client actually sends the
+  notification. Check 3 (route mount) still needs every `.gsx` file and
+  every `router.AddDir` call in the whole project tree, a cost this
+  package does not ask an editor to pay on every save, so it remains
+  `gosx check`/build-gate only.
 - **Run across this repository, every finding sits in
   `cmd/gosx/templates/docs/`** — a scaffold `gosx init` copies into a new
   project, backed by `*.gotmpl` sources rather than a live `*.server.go`
