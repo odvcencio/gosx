@@ -60,8 +60,16 @@ func validateDataLoaderKeysContract(files []transpile.PackageFile, opts Options)
 //     Load field cannot be resolved with confidence: the whole file
 //     abstains (ok=false), matching gosx#249's "only report with
 //     confidence" rule.
+//
+// A "*.server.gotmpl" in either searched directory abstains first (see
+// hasUnrenderedServerGoTemplate): its real Load is template syntax this
+// scan cannot read, so "no *.server.go found" is not the same fact here
+// as "confidently, always nil".
 func resolveDataKeysForFile(gsxPath string) (map[string]bool, bool) {
 	dirs := candidateServerGoDirs(filepath.Dir(gsxPath))
+	if hasUnrenderedServerGoTemplate(dirs) {
+		return nil, false
+	}
 	registrations, ok := collectFileModuleRegistrations(dirs)
 	if !ok {
 		return nil, false

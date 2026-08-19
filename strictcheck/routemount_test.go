@@ -115,3 +115,44 @@ func mount(router *route.Router, dynamicDir string) {
 		t.Fatalf("expected an unresolvable AddDir target to abstain the whole run, got: %+v", warnings)
 	}
 }
+
+// TestRouteMountContractAbstainsOnUnrenderedMainTemplate reconstructs the
+// gosx#249 scaffold defect: cmd/gosx/templates/docs ships "main.gotmpl"
+// at its root, never a real "main.go" -- `gosx init` renders the
+// template into a real file only when scaffolding a new project. Before
+// this test existed, this scan found no AddDir call anywhere under the
+// scaffold and reported every one of its pages as unmounted.
+func TestRouteMountContractAbstainsOnUnrenderedMainTemplate(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "main.gotmpl"), mainGoWithAddDir())
+	mustWrite(t, filepath.Join(dir, "app", "docs", "page.gsx"), formPageFixture(`<p>Docs</p>`))
+
+	warnings := checkTreeWarnings(t, dir)
+	if hasWarningContaining(warnings, "not reached by any router.AddDir mount") {
+		t.Fatalf("expected a main.gotmpl ancestor to abstain, got: %+v", warnings)
+	}
+}
+
+// TestRouteMountContractStillWarnsBesideAnUnrelatedMainTemplate proves
+// the abstention in TestRouteMountContractAbstainsOnUnrenderedMainTemplate
+// is scoped to pages actually below the templated directory: a page in a
+// resolvably-mounted tree elsewhere in the same project keeps being
+// checked normally.
+func TestRouteMountContractStillWarnsBesideAnUnrelatedMainTemplate(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "scaffold", "main.gotmpl"), mainGoWithAddDir())
+	mustWrite(t, filepath.Join(dir, "scaffold", "app", "page.gsx"), formPageFixture(`<p>Scaffold</p>`))
+	mustWrite(t, filepath.Join(dir, "main.go"), mainGoWithAddDir())
+	mustWrite(t, filepath.Join(dir, "app", "page.gsx"), formPageFixture(`<p>Home</p>`))
+	mustWrite(t, filepath.Join(dir, "orphan", "page.gsx"), formPageFixture(`<p>Orphaned</p>`))
+
+	warnings := checkTreeWarnings(t, dir)
+	if !hasWarningContaining(warnings, "not reached by any router.AddDir mount") {
+		t.Fatalf("expected the real orphan page to still be flagged, got: %+v", warnings)
+	}
+	for _, w := range warnings {
+		if w.Span.File == filepath.Join(dir, "scaffold", "app", "page.gsx") {
+			t.Fatalf("did not expect the templated scaffold's own page to be flagged, got: %+v", warnings)
+		}
+	}
+}

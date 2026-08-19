@@ -97,6 +97,34 @@ func TestDataLoaderKeysWarnsWhenNoLoadAtAll(t *testing.T) {
 	}
 }
 
+// TestDataLoaderKeysAbstainsOnUnrenderedServerGoTemplate reconstructs the
+// gosx#249 scaffold defect: cmd/gosx/templates/docs ships
+// "page.server.gotmpl" beside each "page.gsx" that needs one, never a
+// real "page.server.go". Before this test existed, the "no Load hook
+// exists" branch (see TestDataLoaderKeysWarnsWhenNoLoadAtAll) could not
+// tell that apart from a real, rendered project with no loader at all,
+// and reported the framework's own scaffold as broken.
+func TestDataLoaderKeysAbstainsOnUnrenderedServerGoTemplate(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(`<p>{data.features}</p>`))
+	mustWrite(t, filepath.Join(dir, "page.server.gotmpl"), `package main
+
+import "m31labs.dev/gosx/route"
+
+func init() {
+	route.RegisterFileModuleHere(route.FileModuleOptions{
+		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			return map[string]any{"features": nil}, nil
+		},
+	})
+}
+`)
+	warnings := checkFileWarnings(t, filepath.Join(dir, "page.gsx"))
+	if hasWarningContaining(warnings, "data.features") {
+		t.Fatalf("expected a page.server.gotmpl sibling to abstain, got: %+v", warnings)
+	}
+}
+
 // TestDataLoaderKeysAbstainsOnNonLiteralReturn proves the honesty rule
 // (gosx#249): a Load hook that returns anything this scan cannot read as a
 // complete literal map (here, a call to a helper) must not be flagged --

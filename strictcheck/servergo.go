@@ -234,6 +234,37 @@ func candidateServerGoDirs(gsxDir string) []string {
 	return []string{gsxDir, parent}
 }
 
+// hasUnrenderedServerGoTemplate reports whether any of dirs contains a
+// "*.server.gotmpl" file: a scaffold's own unrendered Go source for what
+// becomes a "*.server.go" file only once rendered (by `gosx init`, or a
+// project's own generator) -- never before. Its real Actions/Load content
+// is template syntax, not Go, so this scan cannot read it, and "found no
+// *.server.go here" must not be read as "confidently registers nothing"
+// when one of these sits right beside where that file would be.
+//
+// gosx#249 confirmed this exact shape in
+// cmd/gosx/templates/docs/app/docs/forms/page.server.gotmpl and its six
+// siblings: every one of them registers real Actions and a real Load once
+// `gosx init` renders it, and check 1 and check 4 were reporting all
+// fourteen of those pages as broken before this existed — a scaffold gosx
+// itself ships, found broken by the very tool meant to keep a real
+// application from shipping broken, is exactly the "first impression is a
+// wall of noise" outcome that gets a check turned off.
+func hasUnrenderedServerGoTemplate(dirs []string) bool {
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".server.gotmpl") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // collectFileModuleRegistrations scans every "*.server.go" file in each of
 // dirs and resolves every route.FileModuleOptions/FileModule registration
 // it finds to its exact target .gsx path: RegisterFileModuleHere,

@@ -57,8 +57,17 @@ func validateFormActionContract(files []transpile.PackageFile, opts Options) err
 // (ok=true, empty map) is a real, meaningful finding: nothing registers
 // any action for gsxPath at all, so ANY actionPath(...) reference found in
 // it is unregistered.
+//
+// A "*.server.gotmpl" in either searched directory abstains first (see
+// hasUnrenderedServerGoTemplate): its real Actions are template syntax
+// this scan cannot read, so "no *.server.go found" is not the same fact
+// here as "confidently registers nothing".
 func registeredFileActionNamesForFile(gsxPath string) (map[string]bool, bool) {
-	registrations, ok := collectFileModuleRegistrations(candidateServerGoDirs(filepath.Dir(gsxPath)))
+	dirs := candidateServerGoDirs(filepath.Dir(gsxPath))
+	if hasUnrenderedServerGoTemplate(dirs) {
+		return nil, false
+	}
+	registrations, ok := collectFileModuleRegistrations(dirs)
 	if !ok {
 		return nil, false
 	}

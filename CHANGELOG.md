@@ -129,13 +129,26 @@
   every `router.AddDir` call in the whole project tree, a cost this
   package does not ask an editor to pay on every save, so it remains
   `gosx check`/build-gate only.
-- **Run across this repository, every finding sits in
-  `cmd/gosx/templates/docs/`** — a scaffold `gosx init` copies into a new
-  project, backed by `*.gotmpl` sources rather than a live `*.server.go`
-  or `main.go`, so the finding is real but does not describe a running
-  application. No example application (`examples/basic`, `examples/
-  dashboard`, `examples/goetrope-watch`, `examples/gosx-docs`) produced a
-  finding.
+- **A `*.gotmpl` sibling abstains a check the same way an unresolvable
+  registration call does.** `cmd/gosx/templates/docs/` — the scaffold
+  `gosx init` copies into a new project — ships `page.server.gotmpl`
+  beside every `page.gsx` that needs one, `main.gotmpl` at its root, and
+  no live `*.server.go` or `main.go` at all: `gosx init` renders each
+  template into a real file only when scaffolding a new project, never
+  before. Checks 1 and 4 (`strictcheck.hasUnrenderedServerGoTemplate`,
+  `strictcheck/servergo.go`) abstain when a `*.server.gotmpl` sits where
+  the expected `*.server.go` would; check 3
+  (`strictcheck.hasUnrenderedMainTemplate`, `strictcheck/routemount.go`)
+  abstains for a page below a directory holding an unrendered
+  `main.gotmpl`. Before this existed, the first `gosx check` run across
+  this repository reported 3 errors and 11 warnings, every one inside
+  that same scaffold, all false — the framework's own tooling reporting
+  its own scaffold as broken, which is exactly the "first impression is
+  noise" outcome a check that stays trustworthy must avoid. Run again
+  after fixing it, all five checks produce zero findings across this
+  entire repository; the checks landing beside this one (`ir.
+  ValidateWarnings`' own untyped-legacy-component check) are unaffected
+  and continue reporting normally.
 
 ### Added: a Go caller can place a Go-computed node in a .gsx render entry's children slot
 

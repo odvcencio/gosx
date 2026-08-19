@@ -51,12 +51,51 @@ func validateRouteMountContract(root string, sources []string, opts Options) {
 		if mounted[clean] {
 			continue
 		}
+		if hasUnrenderedMainTemplate(filepath.Dir(clean), root) {
+			// gosx#249: a "main.gotmpl" between this page and root is a
+			// scaffold's own unrendered Go source for what becomes the
+			// main.go that calls router.AddDir once rendered -- never
+			// before. This scan cannot read a router.AddDir call out of
+			// template syntax, so this page is not confidently unmounted;
+			// see hasUnrenderedMainTemplate's own doc comment.
+			continue
+		}
 		addWarnings(opts, []ir.Diagnostic{{
 			Span:     ir.Span{File: src, StartLine: 1, StartCol: 1},
 			Severity: ir.SeverityWarning,
 			Message:  fmt.Sprintf("gosx: %s is not reached by any router.AddDir mount found in this project", filepath.Base(src)),
 			Hint:     "mount its directory tree with router.AddDir, or remove/rename it if it is intentionally unrouted (a work-in-progress page, a scaffold template, and so on)",
 		}})
+	}
+}
+
+// hasUnrenderedMainTemplate walks from dir up to (and including) root
+// looking for a "main.gotmpl" file: a scaffold's own unrendered Go source
+// for what becomes the "main.go" that calls router.AddDir only once
+// rendered (by `gosx init`, or a project's own generator) -- gosx#249
+// confirmed this exact shape in cmd/gosx/templates/docs/main.gotmpl,
+// which sits two directories above the seven page.gsx files it would
+// mount once rendered. This scan cannot read a router.AddDir call out of
+// template syntax, so a page below a directory holding one of these is
+// not confidently unmounted -- the same "the Go side is templated here,
+// stay silent" rule hasUnrenderedServerGoTemplate applies to checks 1 and
+// 4 (servergo.go), applied to check 3's own missing fact (a mount, not a
+// registration).
+func hasUnrenderedMainTemplate(dir, root string) bool {
+	root = filepath.Clean(root)
+	dir = filepath.Clean(dir)
+	for {
+		if info, err := os.Stat(filepath.Join(dir, "main.gotmpl")); err == nil && !info.IsDir() {
+			return true
+		}
+		if dir == root {
+			return false
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
 	}
 }
 

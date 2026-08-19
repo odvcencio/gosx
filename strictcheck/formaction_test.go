@@ -91,6 +91,34 @@ func TestFormActionContractRejectsUnregisteredAction(t *testing.T) {
 	}
 }
 
+// TestFormActionContractAbstainsOnUnrenderedServerGoTemplate reconstructs
+// the gosx#249 scaffold defect: cmd/gosx/templates/docs ships
+// "page.server.gotmpl" beside each "page.gsx" that needs one, never a
+// real "page.server.go" -- `gosx init` renders the template into a real
+// file only when scaffolding a new project. Before this test existed,
+// this scan read "no page.server.go here" as "confidently registers
+// nothing" and reported the framework's own scaffold as broken.
+func TestFormActionContractAbstainsOnUnrenderedServerGoTemplate(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
+		`<form method="post" action={actionPath("signIn")}></form>`))
+	mustWrite(t, filepath.Join(dir, "page.server.gotmpl"), `package main
+
+import "m31labs.dev/gosx/route"
+
+func init() {
+	route.RegisterFileModuleHere(route.FileModuleOptions{
+		Actions: route.FileActions{
+			"signIn": nil,
+		},
+	})
+}
+`)
+	if err := CheckFile(context.Background(), filepath.Join(dir, "page.gsx")); err != nil {
+		t.Fatalf("expected a page.server.gotmpl sibling to abstain, got %v", err)
+	}
+}
+
 func TestFormActionContractRejectsUnregisteredFormactionOnButton(t *testing.T) {
 	dir := newTestModule(t)
 	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
