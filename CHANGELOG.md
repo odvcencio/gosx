@@ -77,6 +77,24 @@
   `examples/gosx-docs/app/components.go`'s own raw (`gosx.El`-family)
   element-building call count drops from 13 to 7 as a result: 6 eliminated
   (`StatCard` 3, `CapabilityTag` 1, `Tooltip` 2), `CodeBlock`'s 7 remain.
+### Fixed: a strict body calling a typed legacy component failed `gosx check`
+
+- **The strict projection now carries a typed legacy component as a signature
+  with a stub body** (gosx#240). That change made the composition legal at
+  lower time and correct at render time, but the projection retained only
+  strict declarations, so the projected Go named a function it did not carry
+  and the Go compiler reported `undefined: <Name>` against the author's own
+  component. Two seams accepted the composition and the third refused it.
+- **The body stays a stub on purpose.** `emitStrictSourceFile` omits legacy
+  bodies because they name `data`, `request`, and application helpers that
+  ordinary Go cannot resolve, and the legacy runtime interprets them later.
+  Only the caller's reference must resolve during the package type check, and
+  a signature carries that. Emitting the real body would reintroduce the
+  unresolvable identifiers the projection exists to avoid.
+- **An untyped legacy component stays omitted.** A strict body cannot call one
+  at all, so no projected reference to it can exist. That call still fails at
+  lower time with the diagnostic that names the remedy, never with a bare
+  undefined-symbol error from the Go compiler.
 ### Added: `gosx check` warns on an untyped legacy component
 
 - **`gosx check` now warns on a `func Name(props any) Node` declaration.**
@@ -153,6 +171,40 @@
   pins this). One slot cannot address three distinct injection points.
   Named, multiple slots are a separate, unimplemented capability; `Layout`,
   `Sidebar`, and `Footer` still build their markup with `gosx.El`.
+
+### Added: a strict island now compiles, checks, renders, and hydrates
+
+- **`component Name(props: NameProps)` now compiles with a `//gosx:island`
+  directive.** Lowering no longer rejects it. The v0.39-era refusal was
+  stale: the island lowerer, the client virtual machine (VM), and the
+  render boundary already supported it.
+- Two real gaps blocked it, not the whole pipeline. `ir/lower.go` rejected
+  the declaration outright. `route/fileprogram.go` also dispatched every
+  strict component through the same-file inline renderer before the island
+  branch could ever run.
+- Typed props cross the client boundary as plain JSON, the same as a legacy
+  island. The server proves field coverage and leaf types through
+  `localComponentProps`, the same boundary an ordinary strict component
+  uses.
+- The client VM needed no change. It already exposes every serialized prop
+  key as a flat name and as a field of a reserved `props` object
+  (`client/vm/island.go`'s `parseProps`). A strict island's `props.Field`
+  reads resolve through that existing binding.
+- `gosx check` proves a strict island exactly as it proves a legacy one. It
+  runs `ir.LowerIsland` for every island component, regardless of syntax.
+- `examples/hotswap/counter.gsx` now uses the strict spelling. It renders
+  HTML byte-identical to its legacy-syntax predecessor.
+- A new browser test, `e2e/strict_island_prod_e2e_test.go`, builds a strict
+  island with `gosx build --prod` and serves the production bundle. It
+  drives a real Chrome browser through a click that increments the
+  hydrated counter, proving hydration, not just compilation.
+- **`//gosx:engine` stays rejected.** The file renderer has no typed
+  dispatch for an engine surface's per-frame host calls. A strict engine
+  body cannot execute faithfully yet. The refusal message no longer cites
+  v0.39. It names the real, current reason.
+- Every existing legacy island and engine keeps working unchanged. No
+  exported API was removed or altered; this release only adds a new,
+  previously-rejected declaration shape.
 
 ## v0.49.0 (2026-08-18)
 
