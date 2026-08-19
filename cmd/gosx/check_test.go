@@ -144,12 +144,18 @@ component Page(props: Props) {
 	}
 }
 
-func TestRunCheckAndRenderRejectPropsBearingStrictEntry(t *testing.T) {
+// TestRunCheckAndRenderRejectPropsBearingStrictLayoutEntry proves the
+// narrowed gate (gosx#248) still refuses a props-bearing strict entry where
+// the render path genuinely cannot bind it: a layout. No code path calls a
+// layout's own module's Load hook, so a layout's EntryProps is always nil.
+// A props-bearing strict Page entry, by contrast, now passes — see
+// TestRunCheckAndRenderAcceptPropsBearingStrictPageEntry.
+func TestRunCheckAndRenderRejectPropsBearingStrictLayoutEntry(t *testing.T) {
 	dir := newInvalidStrictStarter(t, "check-render-root-props-gate")
-	path := filepath.Join(dir, "app", "page.gsx")
+	path := filepath.Join(dir, "app", "layout.gsx")
 	mustWriteFile(t, path, `package app
-type PageProps struct { Title string }
-component Page(props: PageProps) {
+type LayoutProps struct { Title string }
+component Layout(props: LayoutProps) {
 	return <main>{props.Title}</main>
 }
 `)
@@ -162,10 +168,40 @@ component Page(props: PageProps) {
 	} {
 		t.Run(check.name, func(t *testing.T) {
 			err := check.fn()
-			if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+			if err == nil || !strings.Contains(err.Error(), "layout has no Load hook wired to its own root props") {
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+// TestRunCheckAcceptsPropsBearingStrictPageEntry proves gosx#248's
+// narrowing: `gosx check` now accepts a strict Page entry that declares
+// props, because renderFilePage binds it from this file's own Load hook at
+// request time (see route/filesystem.go).
+//
+// `gosx render` still refuses the same file, but for a different, correct
+// reason: it renders through route.RenderProgramComponent with an empty
+// ProgramRenderEnv, a standalone preview path with no Load hook and no HTTP
+// request to draw ctx.Data from — so EntryProps is genuinely nil here, the
+// same "no root props binding" refusal ProgramRenderEnv.Props documents for
+// any caller that renders a props-declaring strict entry without supplying
+// Props (see TestRenderProgramComponentRejectsStrictRootProps).
+func TestRunCheckAcceptsPropsBearingStrictPageEntry(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "check-render-root-props-accept")
+	path := filepath.Join(dir, "app", "page.gsx")
+	mustWriteFile(t, path, `package app
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`)
+	if err := runCheck(path, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runCheck error = %v, want a props-bearing Page entry to pass", err)
+	}
+	err := runRender(path, "", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "no root props binding") {
+		t.Fatalf("runRender error = %v, want the no-Props-supplied refusal", err)
 	}
 }
 

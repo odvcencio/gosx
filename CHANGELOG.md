@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Added: a strict file-routed Page/not-found/error entry can declare typed root props
+
+- **`component Page(props: PageProps)` now renders its file module's own
+  `Load` return value as typed, proven props** (gosx#248). Before this
+  change, a strict render entry that declared props always failed to
+  render: the file renderer had no root props binding. A zero-props strict
+  entry could compile, but could not read its own loader's data either —
+  `data`, `request`, and `params` stay legacy-only reflective bindings, so a
+  strict page had no supported way to use `Load`'s result at all.
+- `renderFilePage` (`route/filesystem.go`) now passes `ctx.Data` — set from
+  this page's own `Load` hook before it renders — as `EntryProps` to
+  `renderFileNode`. A legacy (non-strict) entry never reads `EntryProps`, so
+  this changes nothing for it: it stays byte-identical.
+- The typed value is proved through `strictSpreadProps`, the exact boundary
+  a nested `<Component {...props}/>` call already runs on every render: the
+  reflect kind must be exactly `Struct`, and every rendered field is
+  re-checked against its declared leaf type.
+- A `Load` hook that returns `map[string]any` — every existing app's
+  shape — now fails closed with a message naming the component, its
+  declared props type, and what to return instead of a map. It never
+  silently coerces the map into a struct. A `Load` hook that returns the
+  wrong struct type, or one missing a rendered field, also fails closed,
+  and the message names the file and the component, not just the mismatch.
+- `strictcheck.CheckFile`'s blanket refusal of a props-bearing strict
+  render entry is narrowed to what the render path actually cannot bind: a
+  `layout.gsx` entry. No code path calls a layout's own module's `Load`
+  hook, so a layout's `EntryProps` is always `nil`; a Page, index,
+  not-found, or error entry can bind them and now passes this check.
+- `examples/dashboard/app/page.gsx`'s root page converts to
+  `component Page(props: PageProps)`, reading its existing `Load` hook's
+  data through typed props instead of the `data` binding. Its rendered
+  output is byte-identical to the pre-conversion legacy page (see
+  `TestDashboardRootPageStrictPropsMatchLegacyBytes`).
 ### Fixed: a strict body calling a typed legacy component failed `gosx check`
 
 - **The strict projection now carries a typed legacy component as a signature
