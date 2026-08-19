@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.48.2 (2026-08-18)
+
+### Fixed: an inline authored material on a points layer never reached the GPU
+
+- **Points normalization now carries the authored shader through.**
+  `normalizeScenePointsEntry` rebuilds each layer from an explicit
+  whitelist, and that whitelist carried only `material` — the string name of
+  an entry in `scene.materials`. The mesh, instanced-mesh and model
+  normalizers all carry `customVertex`, `customFragment`, their WGSL twins,
+  `customUniforms`, `shaderBackend` and `shaderLayout`; points did not, and
+  `sceneStatePointsWithMaterials` only re-attaches NAMED materials. A layer
+  that authored its shader INLINE therefore reached the renderer stripped,
+  and both backends fell through to the builtin points program.
+- **Nothing reported a failure.** The shader was never handed to the GPU, so
+  there was no compile or link error to log, and the render loop still ran
+  because `sceneHasTimeDrivenMaterials` reads the RAW props scene. The layer
+  drew a correct-looking but frozen field forever.
+- Measured on the affected page before the fix: across 531 draw calls the
+  authored starfield GLSL was never passed to `gl.shaderSource` and the
+  `time` uniform was never uploaded. After: the shader compiles, `time`
+  advances (1.07s to 15.48s over one capture), and roughly 0.6% of the frame
+  changes between samples, growing with the interval as the depth wrap
+  carries stars forward.
+- `customUniforms` is cloned per normalization, so the per-frame material
+  clock cannot write back into the authored props.
+
 ## v0.48.1 (2026-08-18)
 
 ### Fixed: soft navigation re-executed runtime chunks over a config change

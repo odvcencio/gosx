@@ -530,7 +530,12 @@ const budgets = [
   // page restored from the back-forward cache resumes with dead sockets and
   // is not guaranteed to deliver the close event that schedules a reconnect.
   // gzip and brotli headroom held. Measured: 1_535_025 / 416_204 / 334_129.
-  { file: "bootstrap.js", raw: 1_536_500, gzip: 416_300, brotli: 334_600 },
+  // Bumped gzip 416_300 -> 416_800, brotli 334_600 -> 334_900 for carrying
+  // inline authored materials through points normalization (a points layer
+  // that authors its shader inline used to reach the renderer stripped and
+  // silently drew with the builtin program). Measured: 1_536_391 / 416_362 /
+  // 334_439.
+  { file: "bootstrap.js", raw: 1_536_500, gzip: 416_800, brotli: 334_900 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -933,7 +938,9 @@ const budgets = [
   // Bumped raw 535_500 -> 537_000, gzip 148_500 -> 148_800, brotli 123_300
   // -> 123_500 for the WebGL loss-recovery watchdog. Measured: 535_969 /
   // 148_477 / 123_144.
-  { file: "bootstrap-feature-scene3d.js", raw: 537_000, gzip: 148_800, brotli: 123_500 },
+  // Bumped raw 537_000 -> 538_500 for inline authored point materials
+  // surviving normalization. Measured: 537_029.
+  { file: "bootstrap-feature-scene3d.js", raw: 538_500, gzip: 148_800, brotli: 123_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1467,7 +1474,10 @@ const routeBudgets = [
     // 274_100 -> 274_900 for live-bound regions (gosx#217) carried by
     // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
     // 1_219_707 / 324_730 / 274_303, plus rounding headroom.
-    raw: 1_221_000,
+    // Bumped raw 1_221_000 -> 1_222_500 for carrying inline authored
+    // materials through points normalization. gzip and brotli headroom held.
+    // Measured: 1_221_032 / 324_904 / 274_501.
+    raw: 1_222_500,
     gzip: 325_200,
     brotli: 274_900,
   },
@@ -1653,7 +1663,9 @@ const routeBudgets = [
     // 323_700 -> 324_800 for live-bound regions (gosx#217) carried by
     // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
     // 1_433_075 / 383_490 / 324_305, plus rounding headroom.
-    raw: 1_434_500,
+    // Bumped raw 1_434_500 -> 1_436_000 for inline authored point
+    // materials surviving normalization. Measured: 1_434_510.
+    raw: 1_436_000,
     gzip: 384_000,
     brotli: 324_800,
   },
@@ -1749,7 +1761,9 @@ const routeBudgets = [
     // does not load bootstrap-feature-engines.js, so it does not carry the
     // regions.ts polling addition. Measured: 1_067_430 / 281_398 / 235_819,
     // plus rounding headroom.
-    raw: 1_068_000,
+    // Bumped raw 1_068_000 -> 1_070_000 for inline authored point
+    // materials surviving normalization. Measured: 1_068_755.
+    raw: 1_070_000,
     gzip: 281_800,
     brotli: 236_200,
   },
