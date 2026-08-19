@@ -586,25 +586,31 @@ func Counter(props CounterProps) Node {
 	}
 }
 
-func TestCheckFileRejectsStrictClientDirectiveComponents(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		directive string
-		want      string
-	}{
-		{name: "island", directive: "//gosx:island", want: "strict island declarations are not supported"},
-		{name: "engine", directive: "//gosx:engine surface", want: "strict engine declarations are not supported"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := newTestModule(t)
-			path := filepath.Join(dir, "client.gsx")
-			mustWrite(t, path, "package main\n"+tc.directive+"\ncomponent Client() {\nreturn <canvas />\n}\n")
-			err := CheckFile(context.Background(), path)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("CheckFile error = %v", err)
-			}
-		})
-	}
+// TestCheckFileAcceptsStrictIslandRejectsStrictEngine covers the split
+// verdict: strictcheck.CheckFile now passes a strict island (its props cross
+// to the client the same way an ordinary strict component's props are
+// proved server-side, then travel to the browser as plain JSON), and still
+// fails a strict engine, whose per-frame host calls the file renderer has no
+// typed dispatch for.
+func TestCheckFileAcceptsStrictIslandRejectsStrictEngine(t *testing.T) {
+	t.Run("island", func(t *testing.T) {
+		dir := newTestModule(t)
+		path := filepath.Join(dir, "client.gsx")
+		mustWrite(t, path, "package main\n//gosx:island\ncomponent Client() {\nreturn <canvas />\n}\n")
+		if err := CheckFile(context.Background(), path); err != nil {
+			t.Fatalf("CheckFile error = %v", err)
+		}
+	})
+	t.Run("engine", func(t *testing.T) {
+		dir := newTestModule(t)
+		path := filepath.Join(dir, "client.gsx")
+		mustWrite(t, path, "package main\n//gosx:engine surface\ncomponent Client() {\nreturn <canvas />\n}\n")
+		want := "strict engine declarations are not yet supported"
+		err := CheckFile(context.Background(), path)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("CheckFile error = %v, want to contain %q", err, want)
+		}
+	})
 }
 
 func TestCheckTreeSkipsGeneratedHiddenAndNestedGitButChecksUnderscoreRoutes(t *testing.T) {

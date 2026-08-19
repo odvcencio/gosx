@@ -2581,13 +2581,16 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	l.checkDirectiveTypos(n)
 	isIsland := l.hasIslandDirective(n)
 	engineKind, isEngine := l.parseEngineDirective(n)
-	if isIsland {
-		l.errorf(n, "strict island declarations are not supported in v0.39; island VM semantics do not yet preserve typed server-component behavior")
-		l.hintLast("declare this island with the legacy func Name(...) Node style")
-		return
-	}
+	// A strict island's props cross the client boundary through the same
+	// proof a strict server component uses (localComponentProps /
+	// strictSpreadProps in route/fileprogram.go), then travel to the
+	// browser as the same flat JSON map every island already ships — the
+	// client VM already exposes that map under both its flat keys and a
+	// reserved "props" object binding (client/vm/island.go's parseProps),
+	// so a strict island body's props.Field selectors resolve with no VM
+	// change. See CHANGELOG.md for the full writeup.
 	if isEngine {
-		l.errorf(n, "strict engine declarations are not supported in v0.39; the file renderer cannot execute typed engine components faithfully")
+		l.errorf(n, "strict engine declarations are not yet supported: the file renderer has no typed dispatch for an engine surface's per-frame host calls, so a strict engine body cannot be executed faithfully")
 		l.hintLast("declare this engine with the legacy func Name(...) Node style")
 		return
 	}
