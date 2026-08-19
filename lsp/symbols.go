@@ -83,11 +83,20 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 	idx.indexComponentRefs()
 
 	raw := ir.Validate(prog)
-	diags := make([]Diagnostic, 0, len(raw))
+	warnings := ir.ValidateWarnings(prog)
+	diags := make([]Diagnostic, 0, len(raw)+len(warnings))
 	for _, diag := range raw {
 		diags = append(diags, Diagnostic{
 			Range:    rangeFromSpan(diag.Span),
-			Severity: SeverityError,
+			Severity: severityFromIR(diag.Severity),
+			Source:   diagnosticSource(path),
+			Message:  diagnosticMessage(diag),
+		})
+	}
+	for _, diag := range warnings {
+		diags = append(diags, Diagnostic{
+			Range:    rangeFromSpan(diag.Span),
+			Severity: severityFromIR(diag.Severity),
 			Source:   diagnosticSource(path),
 			Message:  diagnosticMessage(diag),
 		})

@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Added: `gosx check` warns on an untyped legacy component
+
+- **`gosx check` now warns on a `func Name(props any) Node` declaration.**
+  This is step one of retiring legacy component syntax. GoSX has three
+  component shapes today: strict, typed legacy, and untyped legacy. The
+  plan collapses them to one. The warning names the component and states
+  that this form is deprecated and removed before v1.0. It also names the
+  strict replacement: `component Name(props: NameProps)`, with the struct
+  declared in the same file.
+- The warning does not fail the check. Every existing untyped legacy
+  component keeps compiling, checking, and rendering exactly as before.
+  `gosx check` still exits 0 on a file that declares one.
+- `ir.Diagnostic` gains a `Severity` field (`SeverityError`, the zero
+  value, or `SeverityWarning`). The new `ir.ValidateWarnings` function
+  returns advisory findings that never block `gosx.Compile` or `gosx
+  check`, unlike `ir.Validate`'s diagnostics. The Language Server Protocol
+  (LSP) server maps `SeverityWarning` onto the LSP `Warning` severity, so
+  an editor renders it as a warning, not an error.
+- A zero-props legacy function (`func Page() Node`, with no props
+  parameter at all) does not warn. It is the dominant page and layout
+  entry shape today, with about 72 declarations in this repository alone.
+  Most of them read route-loader data or route parameters, which a
+  zero-props strict component cannot reach yet. Warning on it now would
+  bury the untyped legacy signal this change targets.
+- `README.md` and the `examples/gosx-docs` docs site now teach the strict
+  `component Name(props: Type)` form as the one way to declare a
+  component. The legacy Go-function form appears only in a clearly marked
+  deprecation note with conversion guidance. It also appears in the pages
+  that document islands and engines, which still require it.
 ### Added: a Go caller can place a Go-computed node in a .gsx render entry's children slot
 
 - **`RenderProgramComponent` takes a new `children ...gosx.Node` parameter**

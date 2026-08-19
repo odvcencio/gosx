@@ -420,6 +420,12 @@ func runCheck(file string, stderr io.Writer) error {
 			return fmt.Errorf("lower island %s: %w", component.Name, err)
 		}
 	}
+	// Advisory findings (for example an untyped legacy component) are
+	// printed but never fail the check: ir.ValidateWarnings never blocks
+	// compilation, unlike ir.Validate's diagnostics — see its doc comment.
+	for _, diag := range ir.ValidateWarnings(prog) {
+		fmt.Fprintln(stderr, diag.String())
+	}
 	fmt.Fprintf(stderr, "ok: %d components\n", len(prog.Components))
 	for _, c := range prog.Components {
 		fmt.Fprintf(stderr, "  %s", c.Name)

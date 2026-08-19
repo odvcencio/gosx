@@ -5,14 +5,20 @@ func Page() Node {
 		<div class="page-topper">
 			<span class="eyebrow">Authoring model</span>
 			<p class="lede">
-				GoSX supports two component spellings in the same
+				GoSX teaches one component spelling: a strict, typed form. Declare a
 				<span class="inline-code">.gsx</span>
-				file: a strict, typed form for deliberately small server components and the established Go-function form for routes, islands, and richer bodies.
+				component with
+				<span class="inline-code">component Name(props: Type)</span>
+				, and the project-aware CLI checks its props as Go types.
 			</p>
 		</div>
-		<h2 id="two-styles">Two authoring styles</h2>
+		<h2 id="two-styles">One authoring style</h2>
 		<p>
-			Both styles lower to the same GoSX component IR. Choosing a style changes the source contract and validation boundary; it does not create a second renderer or runtime.
+			Every new component uses
+			<span class="inline-code">component Name(props: Type)</span>
+			. GoSX still runs the older Go-function spelling,
+			<span class="inline-code">func Name(...) Node</span>
+			, for islands, engines, and loader-bound routes. See "Legacy components (deprecated)" below for that spelling. This page does not teach it to a new author.
 		</p>
 		<section class="feature-grid">
 			<div class="card">
@@ -24,11 +30,10 @@ func Page() Node {
 				</p>
 			</div>
 			<div class="card">
-				<strong>Legacy and flexible</strong>
+				<strong>Legacy (deprecated)</strong>
 				<p>
-					Use
 					<span class="inline-code">func Name(...) Node</span>
-					for route data bindings, local statements, helpers, structural builtins, and existing applications.
+					still runs, but it is deprecated for ordinary server components. Islands, engines, and loader-bound routes still need it. See below.
 				</p>
 			</div>
 		</section>
@@ -167,11 +172,21 @@ func Page() Node {
 			<span class="inline-code">false</span>
 			, and an empty string; omission is rejected so Go and the server renderer observe the same zero values.
 		</p>
-		<h2 id="legacy-components">Legacy components</h2>
+		<h2 id="legacy-components">Legacy components (deprecated)</h2>
 		<p>
-			The Go-function spelling remains fully supported and is the compatibility path for existing source. It is also the documented route form when a loader exposes the dynamic
+			This section is a migration note, not something to write in new code. The Go-function spelling still compiles, checks, and renders, so existing source keeps working. It is also today's only route form when a loader exposes the dynamic
 			<span class="inline-code">data</span>
 			binding.
+		</p>
+		<p>
+			<span class="inline-code">gosx check</span>
+			now warns on an
+			<span class="inline-code">untyped legacy</span>
+			component:
+			<span class="inline-code">func Name(props any) Node</span>
+			. This form is deprecated, and GoSX removes it before v1.0. Declare its props as a same-file struct, then switch to
+			<span class="inline-code">component Name(props: Type)</span>
+			.
 		</p>
 		<p>
 			Both declaration styles may coexist in one file. A component call stays within its declaration style, with one exception: a
@@ -274,19 +289,21 @@ func Page() Node {
 			<span class="inline-code">gosx render</span>
 			as the executable source of truth for strict diagnostics.
 		</p>
-		<h2 id="choosing">Choosing a style</h2>
+		<h2 id="choosing">When legacy is still necessary</h2>
+		<p>
+			Declare every new server component with
+			<span class="inline-code">component Name(props: Type)</span>
+			. The legacy Go-function form remains necessary in three cases only, all structural limits of the current release, not a style choice.
+		</p>
 		<ul>
 			<li>
-				Start strict for small, presentational, same-file server components with stable prop types.
+				A route reads loader data, route params, structural control flow, or a helper-rich body that the strict expression subset does not cover yet.
 			</li>
 			<li>
-				Use legacy pages for loader data, route params, layouts, structural control flow, and helper-rich bodies.
+				A component hydrates client-side as an island. Strict islands are not supported yet.
 			</li>
 			<li>
-				Keep existing legacy components as-is; migration is optional and can happen one local component at a time.
-			</li>
-			<li>
-				Use islands only for browser interaction, not as a workaround for a server component that needs richer Go logic.
+				A component runs as an engine (canvas, WebGL, WebGPU, or a background worker). Strict engines are not supported yet.
 			</li>
 		</ul>
 	</article>

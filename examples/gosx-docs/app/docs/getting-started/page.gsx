@@ -86,23 +86,36 @@ func Page() Node {
 				<span class="inline-code">page.server.go</span>
 				sibling registers a server module that supplies data to the template through the
 				<span class="inline-code">data</span>
-				binding.
+				binding. Loader data is not available to a strict component yet. A route that reads
+				<span class="inline-code">data</span>
+				keeps the older
+				<span class="inline-code">func Page() Node</span>
+				form below; see "Component Syntax" further down.
 			</p>
 			{CodeBlock("go", "// app/page.server.go\npackage app\n\nimport (\n\t\"log\"\n\n\t\"m31labs.dev/gosx/route\"\n)\n\nfunc init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\treturn map[string]any{\n\t\t\t\t\"greeting\": \"Hello from the server\",\n\t\t\t}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
 			{CodeBlock("gsx", "// app/page.gsx\npackage app\n\nfunc Page() Node {\n\treturn <div>\n\t\t<h1>{data.greeting}</h1>\n\t</div>\n}")}
 		</section>
 		<section id="authoring-styles" class="docs-section-block">
-			<h2>Choose an Authoring Style</h2>
+			<h2>Component Syntax</h2>
 			<p>
-				GoSX supports strict typed components and the established Go-function form side by side. Keep route pages that read loader
-				<span class="inline-code">data</span>
-				in the legacy form shown above. Use the TSX-like strict form for small same-file components with explicit Go prop types.
+				Declare every component with the strict, typed form:
+				<span class="inline-code">component Name(props: Type)</span>
+				. The project-aware CLI checks
+				<span class="inline-code">props</span>
+				as an ordinary Go type.
 			</p>
 			{CodeBlock("gsx", "package app\n\ntype BadgeProps struct {\n\tLabel string\n\tCount int\n}\n\ncomponent Badge(props: BadgeProps) {\n\treturn <span className=\"badge\">\n\t\t{props.Label}: {props.Count}\n\t</span>\n}\n\ncomponent Page() {\n\treturn <main><Badge label=\"Inbox\" count={0} /></main>\n}")}
 			<p>
-				Strict server components deliberately allow one top-level GSX return and narrow renderer-safe expressions. Calls use exact or unambiguous lower-camel prop names and explicitly pass every field the callee renders, even zero values. Use the legacy form for local statements, structural control flow, helpers, renderer builtins, client directives, or dynamic route bindings. See
+				A strict server component allows one top-level GSX return and a narrow, renderer-safe expression set. A call uses an exact or unambiguous lower-camel prop name. It passes every field the callee renders explicitly, even a zero value.
+			</p>
+			<p>
+				The older
+				<span class="inline-code">func Name(...) Node</span>
+				form is deprecated for ordinary components; GoSX removes its untyped variant before v1.0.
+				<span class="inline-code">gosx check</span>
+				already warns on it. It remains necessary today only for loader-bound routes (as above), islands, and engines. See
 				<a href="/docs/components" data-gosx-link="true">Components</a>
-				for the exact boundary.
+				for the exact boundary and the migration note.
 			</p>
 		</section>
 		<section id="dev-server" class="docs-section-block">
@@ -129,7 +142,7 @@ func Page() Node {
 			<ul>
 				<li>
 					<a href="/docs/components" data-gosx-link="true">Components</a>
-					— Strict typed and legacy authoring styles, props, and renderer boundaries.
+					— Strict component syntax, props, renderer boundaries, and the legacy migration note.
 				</li>
 				<li>
 					<a href="/docs/routing" data-gosx-link="true">Routing</a>
