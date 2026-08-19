@@ -144,14 +144,9 @@
   that bug; the pre-existing children-only instance is closed separately,
   below ("Fixed: a propless strict component's nested call site rejected
   children and slots").
-- **Deliberately out of scope this release: a caller-side `slot="Name"`
-  attribute for a `.gsx`-to-`.gsx` nested call** (`<Layout><div
-  slot="Title">...</div></Layout>`). The binding mechanism (a reserved
-  `slot<Name>` identifier, resolved generically through the existing
-  render-scope lookup) generalizes to it directly, but this change does
-  not wire caller-side attribute parsing or partitioning for it. Today a
-  named slot is supplied only from a Go caller (`ProgramRenderEnv.Slots`)
-  or filled by the renderer for the two reserved island-runtime names.
+- **A caller-side `slot="Name"` attribute for a `.gsx`-to-`.gsx` nested
+  call is implemented separately, below** ("Added: a `.gsx` page can fill
+  a named slot on a `.gsx`-to-`.gsx` nested call, with no Go glue").
 - **`examples/dashboard`'s `Layout`, `Sidebar`, and `Footer` convert to a
   new `layout.gsx`**, dropping the raw `gosx.El` call count from 49 to 42
   (all 7 of the layout-chrome sites the prior entry named). `Sidebar` and
@@ -201,6 +196,118 @@
   with a declared props type never reaches this code path at all
   (`emitGSXElement` routes it through `emitTypedComponentCall`), so this
   narrows an existing rule rather than adding a new one.
+
+### Added: a `.gsx` page can fill a named slot on a `.gsx`-to-`.gsx` nested call, with no Go glue
+
+- **A static `slot="Name"` attribute on a direct child of a nested
+  component call fills that named slot** — `<Layout><div
+  slot="Title">Standings</div><p>page content</p></Layout>` places
+  `<div>Standings</div>` (the whole tagged element, not just its inner
+  text — the same "one opaque `gosx.Node`" contract every other slot
+  supply already keeps) in Layout's `{slotTitle}` hole, and folds `<p>page
+  content</p>` into the ordinary `{children}` group. This is the `.gsx`
+  page composing a `.gsx` layout the owner named when this task was
+  redirected: before this change, a named slot was reachable only from a
+  Go caller through `ProgramRenderEnv.Slots`, so a pure `.gsx`-to-`.gsx`
+  composition could hand a layout its default children and nothing more.
+- **The child's own `slot` attribute is stripped before it renders** —
+  `ir/lower.go`'s `partitionCallSlots` removes it from the element's
+  `Attrs` whether the slot supply is valid or not, so it never leaks into
+  the output as a stray HTML attribute.
+- **A slot name must be a static string literal.** `slot={someExpr}` fails
+  to compile: "slot must be a static string literal... a computed slot
+  name... would have to be evaluated before the callee's children are
+  known, which reintroduces the ordering problem named slots close." A
+  computed name would need its value at partition time, before the
+  callee's children (and therefore its render order) are settled — exactly
+  the ordering problem the framework-filled `slotPreloadHints`/
+  `slotPageHead` slots (the prior entry) close by keeping that computation
+  inside the renderer, never inside a `.gsx` expression. No case surfaced
+  during this work where a literal name was insufficient; if one exists,
+  it is not in this codebase's own examples or test suite.
+- **`slot="Name"` is meaningful only on a DIRECT child of a component
+  call.** Two mistakes both fail closed with the same diagnostic instead
+  of silently joining the default children group: a slot on a plain HTML
+  element's own child (`<div><span slot="Title">x</span></div>`, no
+  enclosing component call at all), and a slot buried one level too deep
+  — wrapped in a plain HTML element or a Fragment before it ever reaches
+  the component call (`<Layout><div><span
+  slot="Title">x</span></div></Layout>`). An author who mistypes the
+  nesting is told so, at the exact element the mistake is on
+  (`partitionCallSlots` reports the child's own span, not the enclosing
+  call's).
+- **A slot supplied but not declared by the callee fails closed at
+  compile time** (`validateStrictCalleeSlots`, ir/lower.go) — the same
+  arity precedent `validateStrictCalleeChildren` already sets for
+  children, now provable statically here because `ir.Lower` has full
+  visibility into both the caller's supply and the callee's declared set
+  within one compiled program. A slot the callee declares but the call
+  site does not tag stays an unresolved scope identifier and renders
+  empty, exactly like an unsupplied `{children}` does today.
+- **Order at the call site never matters.** A slot-tagged child binds by
+  name, not by position among its siblings —
+  `TestCallerSideSlotOrderIndependent` (route/named_slots_test.go) proves
+  placing the tagged child first or last produces byte-identical output.
+  This matters because the OLD, unpartitioned children projection did not
+  have this property (see the next two points): `transpile.go`'s call-site
+  emission had to change to make it true.
+- **Fixed a second, closely related bug this feature's own implementation
+  surfaced: `emitTypedComponentCall`'s Go projection (a strict callee WITH
+  a declared props type) appended every child — slot-tagged or not — to
+  its call positionally, with no awareness that a slot-tagged child
+  belonged in an earlier, named parameter position.** That call still
+  compiled whenever the argument count matched (a slot count of N plus the
+  true children count still fills N-plus-variadic parameters), so a
+  caller's markup ORDER, not its `slot="Name"` tags, silently decided
+  which child filled which slot — confirmed with a reproduction where
+  swapping two children's order silently swapped which one bound to
+  `slotTitle`.
+  `TestTranspileTypedComponentCallRoutesSlotByName`
+  (transpile/named_slots_test.go) is the regression test.
+  `emitComponentCall` (the propless-strict / untyped-legacy call shape)
+  had the identical defect; `TestTranspileEmitComponentCallRoutesSlotByName`
+  covers it too. Both are fixed together, in `emitChildrenAndSlots`
+  (transpile.go): it partitions a statically slot-tagged direct child's
+  own projection out of the children list at the CST level, mirroring
+  `partitionCallSlots`, and `orderedSlotArgs` places each one in the exact
+  parameter position `emitStrictComponent` declared it in — a
+  declared-but-unsupplied slot still gets its zero `gosx.Node{}`, in
+  position, the same as before this feature added call-site syntax.
+  Neither call-site emitter duplicates `ir.Lower`'s validation
+  (non-static, non-direct-descendant, undeclared): `strictcheck.CheckFile`
+  always lowers before it transpiles (`checkPackage`'s builtin stage
+  order), so a program that reaches either emitter has already passed
+  those checks.
+- **`examples/dashboard/chrome.gsx` converts `CounterHowItWorksCard` to
+  this mechanism** — the proof this entry is checked against. It is a
+  same-file, same-program nested `<HeaderCard>` call with no
+  `RenderProgramComponent` anywhere in that specific path: `HeaderCard` is
+  a new component (`<div class="card">{slotHeader}{children}</div>`), left
+  separate from the existing `Card` component on purpose — adding a second
+  hole to `Card` itself and letting `gosx fmt` reformat its body onto
+  separate lines would have put a stray whitespace-only text node around
+  every existing `chromeCard` call's content (`ir/lower.go`'s `lowerText`
+  collapses one to a space), a real behavior change for markup this
+  conversion had no reason to touch. `CounterHowItWorksCard`'s own `<h3>`
+  heading moves to `slot="Header"`; its five `<p>` steps stay ordinary
+  children. The raw `gosx.El(` count in `examples/dashboard` does not
+  move: `chrome.gsx` was already `.gsx`, not `gosx.El`-based, before this
+  conversion — it stays at 42 (see the prior entry for the 49-to-42 move).
+- **The converted component's rendered output was diffed against the
+  pre-conversion output**, both in isolation (`CounterHowItWorksCard`
+  rendered alone through `RenderProgramComponent`) and for the full
+  `/counter` and `/kitchen-sink` page responses (a second worktree at the
+  pre-conversion commit, both dashboard servers run, both pages captured).
+  After masking the wall-clock timestamp and normalizing insignificant
+  whitespace runs to a single space, both diffs are empty: same tags, same
+  attributes, same text, same nesting, same order, everywhere on the page,
+  not only around the converted card. The unnormalized diff is two spots
+  of extra whitespace (three collapsed spaces where the pre-conversion
+  output had one, in two places) — `gosx fmt`'s canonical formatting of
+  `HeaderCard`'s new `{slotHeader}{children}` body onto separate lines,
+  and of the call site's own slot-tagged child onto its own line, each
+  adding one more whitespace-only text node than the pre-conversion
+  single-`<div class="card">` version had. No document structure changed.
 
 ## v0.49.0 (2026-08-18)
 

@@ -280,7 +280,7 @@ func TestChildrenResolveAgainstTheCallersProgram(t *testing.T) {
 		// call node, then hand the finished node across.
 		var right strings.Builder
 		childrenNode := gosx.RawHTML(parent.renderChildren(callNode.Children, env))
-		child.writeLocalComponentWithChildren(&right, comp, callNode, env, childrenNode)
+		child.writeLocalComponentWithChildren(&right, comp, callNode, env, childrenNode, nil)
 		want := "<section>CALLER OWNS THIS</section>"
 		if right.String() != want {
 			t.Fatalf("html = %q, want %q", right.String(), want)
@@ -305,7 +305,7 @@ func TestChildrenResolveAgainstTheCallersProgram(t *testing.T) {
 
 		var right strings.Builder
 		childrenNode := gosx.RawHTML(parent.renderChildren(callNode.Children, env))
-		child.writeLocalComponentWithChildren(&right, comp, callNode, env, childrenNode)
+		child.writeLocalComponentWithChildren(&right, comp, callNode, env, childrenNode, nil)
 		want := "<section>CALLER OWNS THIS</section>"
 		if right.String() != want {
 			t.Fatalf("html = %q, want %q", right.String(), want)
@@ -338,7 +338,7 @@ func TestSameFileChildrenPathStaysByteIdentical(t *testing.T) {
 
 	var split strings.Builder
 	childrenNode := gosx.RawHTML(r.renderChildren(callNode.Children, env))
-	r.writeLocalComponentWithChildren(&split, &caller.Components[0], callNode, env, childrenNode)
+	r.writeLocalComponentWithChildren(&split, &caller.Components[0], callNode, env, childrenNode, nil)
 
 	if single.String() != split.String() {
 		t.Fatalf("writeLocalComponent = %q, writeLocalComponentWithChildren = %q, want identical", single.String(), split.String())

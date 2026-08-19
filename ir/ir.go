@@ -340,6 +340,21 @@ type Node struct {
 	// Children holds indices into Program.Nodes.
 	Children []NodeID
 
+	// Slots holds, for a NodeComponent call node only, the caller-supplied
+	// named-slot children a static slot="Name" attribute on a direct child
+	// element partitioned out of Children (gosx#249's caller-side supply).
+	// Keyed by slot name ("Title", not "slotTitle" — see
+	// strictcomponent.SlotBindingName for the reserved identifier a name
+	// binds to). A slot-tagged child's own NodeID lives here instead of in
+	// Children, so the default children group never repeats it.
+	//
+	// The zero value (nil) is "no named slots supplied at this call site",
+	// exactly right for every program serialized before this field
+	// existed and for every call that supplies none — such a call takes no
+	// new branch anywhere this field is read (route/fileprogram.go's
+	// writeLocalComponent).
+	Slots map[string]NodeID
+
 	// IsStatic is true when this subtree contains no expressions or dynamic content.
 	// The renderer can skip hydration for static subtrees.
 	IsStatic bool

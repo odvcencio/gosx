@@ -11,7 +11,20 @@ package main
 // only known at request time. Before gosx#246 gave strict components a
 // {children} hole, and RenderProgramComponentNode a way to splice a
 // Go-computed node into it, the card div itself had to be a gosx.El call in
-// main.go (see chromeCard in chrome.go).
+// main.go (see chromeCard in chrome.go). Card itself is left exactly as it
+// was: adding a second hole to it and letting gosx fmt reformat its body
+// onto separate lines would put a stray whitespace-only text node around
+// every existing chromeCard call's content (ir/lower.go's lowerText
+// collapses one to a space) — a real behavior change for markup this
+// conversion has no reason to touch.
+//
+// HeaderCard is CounterHowItWorksCard's own shell instead (gosx#249): a
+// caller-side slot="Header" attribute on a direct child, filled through a
+// same-file, same-program nested <HeaderCard> call — no
+// RenderProgramComponent anywhere in that path — because
+// CounterHowItWorksCard's whole heading-plus-steps body is static prose
+// with no per-request data. See the CHANGELOG entry for this change for
+// the rendered-bytes proof this conversion is checked against.
 
 component CounterIntro() {
 	return <h1>Counter (Island Demo)</h1>
@@ -19,6 +32,13 @@ component CounterIntro() {
 
 component Card() {
 	return <div class="card">{children}</div>
+}
+
+component HeaderCard() {
+	return <div class="card">
+		{slotHeader}
+		{children}
+	</div>
 }
 
 component CounterCardHeader() {
@@ -32,8 +52,8 @@ component CounterCardHeader() {
 }
 
 component CounterHowItWorksCard() {
-	return <div class="card">
-		<h3>How It Works</h3>
+	return <HeaderCard>
+		<h3 slot="Header">How It Works</h3>
 		<p>
 			1. counter.gsx is compiled to an IslandProgram at server startup
 		</p>
@@ -49,7 +69,7 @@ component CounterHowItWorksCard() {
 		<p>
 			5. Signal updates trigger reconciliation and DOM patching
 		</p>
-	</div>
+	</HeaderCard>
 }
 
 component KitchenSinkIntro() {

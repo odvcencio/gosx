@@ -238,3 +238,219 @@ func TestFrameworkFilledSlotReflectsIslandsRegisteredByChildren(t *testing.T) {
 		t.Fatalf("end-of-body manifest does not name the Counter island: %q", manifestScript)
 	}
 }
+
+// TestCallerSideSlotAttributeFillsANamedSlot is the caller-side counterpart
+// to TestStrictComponentAcceptsANamedSlot: a static slot="Name" attribute
+// on a direct child at a nested .gsx-to-.gsx call site — no Go glue
+// anywhere in the path — partitions that child out of the default children
+// group and into the named slot it names (gosx#249's caller-side supply,
+// ir/lower.go's partitionCallSlots). The whole tagged element becomes the
+// slot's value, matching the web-platform slot="" convention: the caller
+// projects the element itself, not just its inner text.
+func TestCallerSideSlotAttributeFillsANamedSlot(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+component Layout() {
+	return <div><h1>{slotTitle}</h1><main>{children}</main></div>
+}
+component Page() {
+	return <Layout><div slot="Title">Standings</div><p>page content</p></Layout>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := `<div><h1><div>Standings</div></h1><main><p>page content</p></main></div>`
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+// TestCallerSideSlotOrderIndependent proves the slot-tagged child binds by
+// NAME, not by its position among its siblings: placing it after an
+// ordinary child must produce the identical result placing it before one
+// does (TestCallerSideSlotAttributeFillsANamedSlot) — a position-based
+// implementation would swap which child fills the slot and which fills
+// children.
+func TestCallerSideSlotOrderIndependent(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+component Layout() {
+	return <div><h1>{slotTitle}</h1><main>{children}</main></div>
+}
+component Page() {
+	return <Layout><p>page content</p><div slot="Title">Standings</div></Layout>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := `<div><h1><div>Standings</div></h1><main><p>page content</p></main></div>`
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+// TestCallerSideMultipleSlotsAndChildrenCoexist proves several named
+// slots and the default children group all resolve correctly from one
+// call site, each holding only the content tagged for it.
+func TestCallerSideMultipleSlotsAndChildrenCoexist(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+component Layout() {
+	return <div><h1>{slotTitle}</h1><nav>{slotNav}</nav><main>{children}</main></div>
+}
+component Page() {
+	return <Layout><div slot="Title">Standings</div><i>middle</i><div slot="Nav">Links</div><b>end</b></Layout>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := `<div><h1><div>Standings</div></h1><nav><div>Links</div></nav><main><i>middle</i><b>end</b></main></div>`
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+// TestCallerSideSlotMustBeAStaticStringLiteral proves the design brief's
+// explicit restriction: a computed slot="{expr}" name fails to compile
+// with a diagnostic naming the reason, rather than silently falling back
+// to the default children group or evaluating the expression at an
+// ordering-unsafe time.
+func TestCallerSideSlotMustBeAStaticStringLiteral(t *testing.T) {
+	_, err := gosx.Compile([]byte(`package app
+component Layout() {
+	return <div>{slotTitle}{children}</div>
+}
+component Page(props: struct{ Name string }) {
+	return <Layout>
+		<div slot={props.Name}>x</div>
+	</Layout>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "slot must be a static string literal") {
+		t.Fatalf("Compile error = %v, want a static-literal diagnostic", err)
+	}
+}
+
+// TestCallerSideSlotOnNonDirectDescendantFailsClosed proves a slot="Name"
+// buried one level too deep — wrapped in a plain HTML element before it
+// ever reaches the component call — is reported, not silently absorbed
+// into the default children group: an author who mistypes the nesting
+// deserves to hear about it.
+func TestCallerSideSlotOnNonDirectDescendantFailsClosed(t *testing.T) {
+	_, err := gosx.Compile([]byte(`package app
+component Layout() {
+	return <div>{slotTitle}{children}</div>
+}
+component Page() {
+	return <Layout>
+		<div><span slot="Title">x</span></div>
+	</Layout>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "only meaningful on a direct child of a component call") {
+		t.Fatalf("Compile error = %v, want a not-a-direct-child diagnostic", err)
+	}
+}
+
+// TestCallerSideSlotOnPlainHTMLElementFailsClosed is the same rule for a
+// slot="Name" attribute with no enclosing component call anywhere: a
+// plain HTML element's own direct child cannot address a slot, since
+// nothing at that level ever reads a slots map.
+func TestCallerSideSlotOnPlainHTMLElementFailsClosed(t *testing.T) {
+	_, err := gosx.Compile([]byte(`package app
+component Page() {
+	return <div><span slot="Title">x</span></div>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), "only meaningful on a direct child of a component call") {
+		t.Fatalf("Compile error = %v, want a not-a-direct-child diagnostic", err)
+	}
+}
+
+// TestCallerSideSlotSuppliedButNotDeclaredFailsClosed is the caller-side
+// counterpart to TestNamedSlotSuppliedButNotDeclaredFailsClosed: a
+// slot="Name" the callee's body never places is a caller error at COMPILE
+// time here (ir.Lower has full static visibility into both sides of a
+// same-program call), rather than the Go-entry path's runtime check.
+func TestCallerSideSlotSuppliedButNotDeclaredFailsClosed(t *testing.T) {
+	_, err := gosx.Compile([]byte(`package app
+component Layout() {
+	return <div>{children}</div>
+}
+component Page() {
+	return <Layout>
+		<div slot="Title">x</div>
+	</Layout>
+}
+`))
+	if err == nil || !strings.Contains(err.Error(), `declares no slot named "Title"`) {
+		t.Fatalf("Compile error = %v, want a declares-no-slot diagnostic", err)
+	}
+}
+
+// TestCallerSideSlotDeclaredButNotSuppliedRendersEmpty is the caller-side
+// counterpart to TestNamedSlotDeclaredButNotSuppliedRendersEmpty: a slot
+// the callee declares but no call-site child tags stays an unresolved
+// scope identifier and renders empty, the same as an unsupplied
+// {children} does.
+func TestCallerSideSlotDeclaredButNotSuppliedRendersEmpty(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+component Layout() {
+	return <div><h1>[{slotTitle}]</h1><main>{children}</main></div>
+}
+component Page() {
+	return <Layout><p>content</p></Layout>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := `<div><h1>[]</h1><main><p>content</p></main></div>`
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
+
+// TestExistingChildrenOnlyCallsStayByteIdentical proves the caller-side
+// slot mechanism changes nothing for any call that never uses slot="Name"
+// — the exact call shape every strict component call used before this
+// change, still projected the same way (TestStrictComponentRendersChildrenTwice
+// and the rest of strict_children_test.go already pin the byte-identical
+// contract this test names for the record).
+func TestExistingChildrenOnlyCallsStayByteIdentical(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package app
+component Panel() {
+	return <section>{children}</section>
+}
+component Page() {
+	return <Panel><p>wrapped</p><b>markup</b></Panel>
+}
+`))
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent: %v", err)
+	}
+	want := `<section><p>wrapped</p><b>markup</b></section>`
+	if html != want {
+		t.Fatalf("html = %q, want %q", html, want)
+	}
+}
