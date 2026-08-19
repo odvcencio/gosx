@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/strictcomponent"
 	"m31labs.dev/gosx/ir"
 )
 
@@ -154,9 +155,26 @@ func (r *fileProgramRenderer) writeSharedComponent(b *strings.Builder, node *ir.
 		r.err = fmt.Errorf("render shared component %s: %s renders no children; remove the child content or render {children} in %s's body", node.Tag, node.Tag, name)
 		return true
 	}
+	// A named slot gets the same render-time proof the children check above
+	// gets, and for the same reason: ir.Lower's validateStrictCalleeSlots
+	// proves this at compile time for a same-file call, but it performs no
+	// I/O and so never loads a shared target's ir.Component. Without this a
+	// slot aimed at a callee that declares no such hole would be dropped in
+	// silence.
+	for slotName := range node.Slots {
+		if !target.comp.AcceptsSlot(slotName) {
+			r.err = fmt.Errorf("render shared component %s: %s declares no slot named %q; declare {%s} in its body or remove the slot=%q attribute", node.Tag, name, slotName, strictcomponent.SlotBindingName(slotName), slotName)
+			return true
+		}
+	}
 	childrenNode := gosx.RawHTML(r.renderChildren(node.Children, env))
+	// Children and slots are both rendered on r — the CALLER's renderer, in
+	// the caller's env, against the caller's program — before the callee is
+	// entered. A slot child's NodeID indexes the caller's program, so the
+	// child renderer built below could not resolve it. See renderCallSlots.
+	slotNodes := r.renderCallSlots(node.Slots, env)
 	child := newFileProgramRenderer(target.prog, fileRenderOptions{Profile: r.opts.Profile})
-	child.writeLocalComponentWithChildren(b, target.comp, node, env, childrenNode)
+	child.writeLocalComponentWithChildren(b, target.comp, node, env, childrenNode, slotNodes)
 	if child.err != nil {
 		r.err = child.err
 	}
