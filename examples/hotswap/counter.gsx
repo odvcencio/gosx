@@ -1,5 +1,7 @@
 package main
 
+import "m31labs.dev/gosx/signal"
+
 // Counter is the island you edit to see hot-swap in action.
 //
 // Run `gosx dev` in this directory, open the page, bump the count a few times,
@@ -13,8 +15,16 @@ package main
 //   - change `count.Get() + 1` to `+ 5` and `- 1` to `- 5` (handler swap)
 //   - add a class to the <div> (attribute swap)
 //
+// Counter is declared with the strict `component` syntax rather than the
+// legacy `func Name(...) Node` style. Lowering, `gosx check`, server
+// rendering, and client hydration all treat a strict island exactly like a
+// legacy one — this file is proof of that, not a special case: the compiled
+// island program main.go loads through compileIsland is byte-identical in
+// shape to what the legacy spelling produced, and the hot-swap flow above
+// still works unchanged.
+//
 //gosx:island
-func Counter() Node {
+component Counter() {
 	count := signal.New(0)
 	increment := func() { count.Set(count.Get() + 1) }
 	decrement := func() { count.Set(count.Get() - 1) }

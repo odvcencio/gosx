@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+### Added: a strict file-routed Page/not-found/error entry can declare typed root props
+
+- **`component Page(props: PageProps)` now renders its file module's own
+  `Load` return value as typed, proven props** (gosx#248). Before this
+  change, a strict render entry that declared props always failed to
+  render: the file renderer had no root props binding. A zero-props strict
+  entry could compile, but could not read its own loader's data either —
+  `data`, `request`, and `params` stay legacy-only reflective bindings, so a
+  strict page had no supported way to use `Load`'s result at all.
+- `renderFilePage` (`route/filesystem.go`) now passes `ctx.Data` — set from
+  this page's own `Load` hook before it renders — as `EntryProps` to
+  `renderFileNode`. A legacy (non-strict) entry never reads `EntryProps`, so
+  this changes nothing for it: it stays byte-identical.
+- The typed value is proved through `strictSpreadProps`, the exact boundary
+  a nested `<Component {...props}/>` call already runs on every render: the
+  reflect kind must be exactly `Struct`, and every rendered field is
+  re-checked against its declared leaf type.
+- A `Load` hook that returns `map[string]any` — every existing app's
+  shape — now fails closed with a message naming the component, its
+  declared props type, and what to return instead of a map. It never
+  silently coerces the map into a struct. A `Load` hook that returns the
+  wrong struct type, or one missing a rendered field, also fails closed,
+  and the message names the file and the component, not just the mismatch.
+- `strictcheck.CheckFile`'s blanket refusal of a props-bearing strict
+  render entry is narrowed to what the render path actually cannot bind: a
+  `layout.gsx` entry. No code path calls a layout's own module's `Load`
+  hook, so a layout's `EntryProps` is always `nil`; a Page, index,
+  not-found, or error entry can bind them and now passes this check.
+- `examples/dashboard/app/page.gsx`'s root page converts to
+  `component Page(props: PageProps)`, reading its existing `Load` hook's
+  data through typed props instead of the `data` binding. Its rendered
+  output is byte-identical to the pre-conversion legacy page (see
+  `TestDashboardRootPageStrictPropsMatchLegacyBytes`).
+### Fixed: a strict body calling a typed legacy component failed `gosx check`
+
+- **The strict projection now carries a typed legacy component as a signature
+  with a stub body** (gosx#240). That change made the composition legal at
+  lower time and correct at render time, but the projection retained only
+  strict declarations, so the projected Go named a function it did not carry
+  and the Go compiler reported `undefined: <Name>` against the author's own
+  component. Two seams accepted the composition and the third refused it.
+- **The body stays a stub on purpose.** `emitStrictSourceFile` omits legacy
+  bodies because they name `data`, `request`, and application helpers that
+  ordinary Go cannot resolve, and the legacy runtime interprets them later.
+  Only the caller's reference must resolve during the package type check, and
+  a signature carries that. Emitting the real body would reintroduce the
+  unresolvable identifiers the projection exists to avoid.
+- **An untyped legacy component stays omitted.** A strict body cannot call one
+  at all, so no projected reference to it can exist. That call still fails at
+  lower time with the diagnostic that names the remedy, never with a bare
+  undefined-symbol error from the Go compiler.
 ### Added: `gosx check` warns on an untyped legacy component
 
 - **`gosx check` now warns on a `func Name(props any) Node` declaration.**
@@ -308,6 +359,39 @@
   and of the call site's own slot-tagged child onto its own line, each
   adding one more whitespace-only text node than the pre-conversion
   single-`<div class="card">` version had. No document structure changed.
+### Added: a strict island now compiles, checks, renders, and hydrates
+
+- **`component Name(props: NameProps)` now compiles with a `//gosx:island`
+  directive.** Lowering no longer rejects it. The v0.39-era refusal was
+  stale: the island lowerer, the client virtual machine (VM), and the
+  render boundary already supported it.
+- Two real gaps blocked it, not the whole pipeline. `ir/lower.go` rejected
+  the declaration outright. `route/fileprogram.go` also dispatched every
+  strict component through the same-file inline renderer before the island
+  branch could ever run.
+- Typed props cross the client boundary as plain JSON, the same as a legacy
+  island. The server proves field coverage and leaf types through
+  `localComponentProps`, the same boundary an ordinary strict component
+  uses.
+- The client VM needed no change. It already exposes every serialized prop
+  key as a flat name and as a field of a reserved `props` object
+  (`client/vm/island.go`'s `parseProps`). A strict island's `props.Field`
+  reads resolve through that existing binding.
+- `gosx check` proves a strict island exactly as it proves a legacy one. It
+  runs `ir.LowerIsland` for every island component, regardless of syntax.
+- `examples/hotswap/counter.gsx` now uses the strict spelling. It renders
+  HTML byte-identical to its legacy-syntax predecessor.
+- A new browser test, `e2e/strict_island_prod_e2e_test.go`, builds a strict
+  island with `gosx build --prod` and serves the production bundle. It
+  drives a real Chrome browser through a click that increments the
+  hydrated counter, proving hydration, not just compilation.
+- **`//gosx:engine` stays rejected.** The file renderer has no typed
+  dispatch for an engine surface's per-frame host calls. A strict engine
+  body cannot execute faithfully yet. The refusal message no longer cites
+  v0.39. It names the real, current reason.
+- Every existing legacy island and engine keeps working unchanged. No
+  exported API was removed or altered; this release only adds a new,
+  previously-rejected declaration shape.
 
 ## v0.49.0 (2026-08-18)
 

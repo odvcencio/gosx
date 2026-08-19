@@ -144,12 +144,18 @@ component Page(props: Props) {
 	}
 }
 
-func TestRunCheckAndRenderRejectPropsBearingStrictEntry(t *testing.T) {
+// TestRunCheckAndRenderRejectPropsBearingStrictLayoutEntry proves the
+// narrowed gate (gosx#248) still refuses a props-bearing strict entry where
+// the render path genuinely cannot bind it: a layout. No code path calls a
+// layout's own module's Load hook, so a layout's EntryProps is always nil.
+// A props-bearing strict Page entry, by contrast, now passes — see
+// TestRunCheckAndRenderAcceptPropsBearingStrictPageEntry.
+func TestRunCheckAndRenderRejectPropsBearingStrictLayoutEntry(t *testing.T) {
 	dir := newInvalidStrictStarter(t, "check-render-root-props-gate")
-	path := filepath.Join(dir, "app", "page.gsx")
+	path := filepath.Join(dir, "app", "layout.gsx")
 	mustWriteFile(t, path, `package app
-type PageProps struct { Title string }
-component Page(props: PageProps) {
+type LayoutProps struct { Title string }
+component Layout(props: LayoutProps) {
 	return <main>{props.Title}</main>
 }
 `)
@@ -162,42 +168,89 @@ component Page(props: PageProps) {
 	} {
 		t.Run(check.name, func(t *testing.T) {
 			err := check.fn()
-			if err == nil || !strings.Contains(err.Error(), "file routes do not bind root props") {
+			if err == nil || !strings.Contains(err.Error(), "layout has no Load hook wired to its own root props") {
 				t.Fatalf("error = %v", err)
 			}
 		})
 	}
 }
 
-func TestRunCheckAndRenderRejectStrictClientDirectiveComponents(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		directive string
-		want      string
-	}{
-		{name: "island", directive: "//gosx:island", want: "strict island declarations are not supported"},
-		{name: "engine", directive: "//gosx:engine surface", want: "strict engine declarations are not supported"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := newInvalidStrictStarter(t, "check-render-strict-"+tc.name)
-			path := filepath.Join(dir, "app", "page.gsx")
-			mustWriteFile(t, path, "package app\n"+tc.directive+"\ncomponent Page() {\nreturn <canvas />\n}\n")
-			for _, check := range []struct {
-				name string
-				fn   func() error
-			}{
-				{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
-				{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
-			} {
-				t.Run(check.name, func(t *testing.T) {
-					err := check.fn()
-					if err == nil || !strings.Contains(err.Error(), tc.want) {
-						t.Fatalf("error = %v", err)
-					}
-				})
+// TestRunCheckAcceptsPropsBearingStrictPageEntry proves gosx#248's
+// narrowing: `gosx check` now accepts a strict Page entry that declares
+// props, because renderFilePage binds it from this file's own Load hook at
+// request time (see route/filesystem.go).
+//
+// `gosx render` still refuses the same file, but for a different, correct
+// reason: it renders through route.RenderProgramComponent with an empty
+// ProgramRenderEnv, a standalone preview path with no Load hook and no HTTP
+// request to draw ctx.Data from — so EntryProps is genuinely nil here, the
+// same "no root props binding" refusal ProgramRenderEnv.Props documents for
+// any caller that renders a props-declaring strict entry without supplying
+// Props (see TestRenderProgramComponentRejectsStrictRootProps).
+func TestRunCheckAcceptsPropsBearingStrictPageEntry(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "check-render-root-props-accept")
+	path := filepath.Join(dir, "app", "page.gsx")
+	mustWriteFile(t, path, `package app
+type PageProps struct { Title string }
+component Page(props: PageProps) {
+	return <main>{props.Title}</main>
+}
+`)
+	if err := runCheck(path, &bytes.Buffer{}); err != nil {
+		t.Fatalf("runCheck error = %v, want a props-bearing Page entry to pass", err)
+	}
+	err := runRender(path, "", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "no root props binding") {
+		t.Fatalf("runRender error = %v, want the no-Props-supplied refusal", err)
+	}
+}
+
+// TestRunCheckAndRenderAcceptStrictIslandRejectStrictEngine covers the split
+// verdict cmd/gosx check and render must agree on: a strict island now
+// passes both (LowerIsland — the same island-lowering gate check runs for
+// every IsIsland component — succeeds, and rendering produces real HTML), a
+// strict engine still fails both, with an updated, version-accurate reason.
+func TestRunCheckAndRenderAcceptStrictIslandRejectStrictEngine(t *testing.T) {
+	t.Run("island", func(t *testing.T) {
+		dir := newInvalidStrictStarter(t, "check-render-strict-island")
+		path := filepath.Join(dir, "app", "page.gsx")
+		mustWriteFile(t, path, "package app\n//gosx:island\ncomponent Page() {\nreturn <canvas />\n}\n")
+		t.Run("check", func(t *testing.T) {
+			var out bytes.Buffer
+			if err := runCheck(path, &out); err != nil {
+				t.Fatalf("runCheck: %v", err)
 			}
 		})
-	}
+		t.Run("render", func(t *testing.T) {
+			var out bytes.Buffer
+			if err := runRender(path, "", &out); err != nil {
+				t.Fatalf("runRender: %v", err)
+			}
+			if !strings.Contains(out.String(), "<canvas") {
+				t.Fatalf("rendered output = %q, want it to contain <canvas", out.String())
+			}
+		})
+	})
+	t.Run("engine", func(t *testing.T) {
+		dir := newInvalidStrictStarter(t, "check-render-strict-engine")
+		path := filepath.Join(dir, "app", "page.gsx")
+		mustWriteFile(t, path, "package app\n//gosx:engine surface\ncomponent Page() {\nreturn <canvas />\n}\n")
+		want := "strict engine declarations are not yet supported"
+		for _, check := range []struct {
+			name string
+			fn   func() error
+		}{
+			{name: "check", fn: func() error { return runCheck(path, &bytes.Buffer{}) }},
+			{name: "render", fn: func() error { return runRender(path, "", &bytes.Buffer{}) }},
+		} {
+			t.Run(check.name, func(t *testing.T) {
+				err := check.fn()
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %v, want to contain %q", err, want)
+				}
+			})
+		}
+	})
 }
 
 func TestRunCheckRejectsLegacyCallerIntoStrictCalleeBeforePropTyping(t *testing.T) {

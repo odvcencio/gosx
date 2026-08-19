@@ -76,6 +76,19 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 		if opts.EntryProps == nil {
 			return "", false, fmt.Errorf("strict render entry %s accepts props %s, but the file renderer has no root props binding; use a zero-props Page/Layout entry", comp.Name, comp.PropsType)
 		}
+		// gosx#248: a file-routed Load hook returns `any`, and every
+		// existing app returns map[string]any from it — the shape
+		// strictSpreadProps below always rejects, because a map cannot
+		// prove field coverage the way a struct's declared fields can. Name
+		// that specific, expected mistake here, before strictSpreadProps'
+		// generic struct-kind check, so the message tells the author what
+		// to return instead of just what was wrong: return a %s value (a
+		// struct or *%s) from Load, not a map. A legacy entry never reaches
+		// this branch (see comp.Syntax above), so a legacy Load hook
+		// returning map[string]any keeps rendering unchanged.
+		if rv, ok := indirectReflectValue(reflect.ValueOf(opts.EntryProps)); ok && rv.Kind() == reflect.Map {
+			return "", false, fmt.Errorf("strict render entry %s accepts props %s, but Load returned %s; return a %s value (a struct or *%s) instead of a map — the strict boundary proves declared struct fields, which a map cannot provide", comp.Name, comp.PropsType, rv.Type(), comp.PropsType, comp.PropsType)
+		}
 		// strictSpreadProps is the exact same boundary proof a nested
 		// <Component {...props}/> call re-runs on every render (see
 		// localComponentProps): reflect kind must be exactly Struct (a map
@@ -85,7 +98,7 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 		// never around it.
 		props, err := strictSpreadProps(comp, opts.EntryProps)
 		if err != nil {
-			return "", false, fmt.Errorf("render strict entry %s: %w", comp.Name, err)
+			return "", false, fmt.Errorf("render strict entry %s (props %s): %w", comp.Name, comp.PropsType, err)
 		}
 		entryEnv = entryEnv.withValue("props", props)
 	}
@@ -303,7 +316,15 @@ func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, 
 	// that declaration authoritative even when its name collides with a layout
 	// replacement or one of the legacy renderer builtins; otherwise generated Go
 	// and file rendering would execute different components.
-	if comp, ok := r.components[node.Tag]; ok && comp.Syntax == ir.ComponentSyntaxStrict {
+	//
+	// A strict ISLAND is excluded here on purpose. Its call site still owns
+	// the same-file declaration, but rendering it inline through
+	// writeLocalComponent would emit its body as ordinary server HTML and
+	// skip env.island entirely — no hydration script, no client VM program,
+	// no props payload. The switch below routes IsIsland to
+	// renderLocalIsland instead, which builds the proven props map through
+	// the same localComponentProps boundary and hands it to env.island.
+	if comp, ok := r.components[node.Tag]; ok && comp.Syntax == ir.ComponentSyntaxStrict && !comp.IsIsland && !comp.IsEngine {
 		r.writeLocalComponent(b, comp, node, env)
 		return
 	}
