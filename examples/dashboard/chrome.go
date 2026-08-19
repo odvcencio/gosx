@@ -34,3 +34,16 @@ func chrome(component string) gosx.Node {
 	}
 	return gosx.RawHTML(html)
 }
+
+// chromeCard renders chrome.gsx's Card component around children — a
+// request-time mix of a chrome() header, a Go-computed island node, and
+// sometimes a no-JS fallback — through RenderProgramComponentNode (gosx#226,
+// gosx#246). Before that function existed this div.card wrapper had to be
+// built by hand with gosx.El in main.go, once per card.
+func chromeCard(children ...gosx.Node) gosx.Node {
+	node, err := route.RenderProgramComponentNode(chromeProgram, "Card", route.ProgramRenderEnv{}, children...)
+	if err != nil {
+		log.Fatalf("render chrome.gsx Card: %v", err)
+	}
+	return node
+}

@@ -288,6 +288,22 @@ type fileRenderOptions struct {
 	// entry's data comes from ctx.Data and a DataLoader, not a Go-typed
 	// caller. See renderFileProgramHTML's strict-entry branch.
 	EntryProps any
+	// EntryChildren supplies the children node for a strict component
+	// rendered as the render entry (gosx#226, gosx#246). Only
+	// RenderProgramComponent sets this field, built from its own
+	// children ...gosx.Node parameter with gosx.Fragment: renderFileNode
+	// has no children parameter of its own to build it from, so a
+	// file-routed page or layout still cannot accept Go-supplied
+	// children — same limitation as EntryProps, for the same reason.
+	//
+	// The zero Node (EntryChildren.IsZero()) means "no children
+	// supplied", not "an empty children node": renderFileProgramHTML
+	// only binds the "children" scope value when this is non-zero, so a
+	// caller that never sets it — every existing caller before this
+	// field existed — reproduces the prior unresolved-identifier
+	// behavior byte for byte, not a bound empty Fragment. See
+	// renderFileProgramHTML's strict-entry branch.
+	EntryChildren gosx.Node
 }
 
 func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {

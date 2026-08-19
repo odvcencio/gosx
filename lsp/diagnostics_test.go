@@ -64,6 +64,33 @@ func alsoBroken() Node {
 	}
 }
 
+// TestAnalyzeWarnsOnUntypedLegacyComponent covers step one of retiring
+// legacy component syntax: an untyped legacy component (`func Name(props
+// any) Node`) must reach the editor as a SeverityWarning diagnostic, not a
+// SeverityError one — the file itself is otherwise valid, so Analyze must
+// not report it as broken.
+func TestAnalyzeWarnsOnUntypedLegacyComponent(t *testing.T) {
+	diags := Analyze("page.gsx", []byte(`package main
+
+func FeatureCard(props any) Node {
+	return <div class="card">{props}</div>
+}
+`))
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %d: %+v", len(diags), diags)
+	}
+	diag := diags[0]
+	if diag.Severity != SeverityWarning {
+		t.Fatalf("expected warning severity, got %d", diag.Severity)
+	}
+	if !strings.Contains(diag.Message, "FeatureCard") {
+		t.Fatalf("expected the diagnostic to name FeatureCard, got %q", diag.Message)
+	}
+	if !strings.Contains(diag.Message, "component FeatureCard(props: FeatureCardProps)") {
+		t.Fatalf("expected the diagnostic to point at the strict replacement, got %q", diag.Message)
+	}
+}
+
 func TestFormatSource(t *testing.T) {
 	formatted, err := FormatSource([]byte(`package main
 
