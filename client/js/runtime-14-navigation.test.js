@@ -6407,3 +6407,112 @@ test("window load never warns when the region runtime already mounted before loa
 
   assert.equal(env.consoleLogs.warn.length, 0, "a correctly bootstrapped page never warns");
 });
+
+test("navigation runtime keeps a managed chunk when only its per-route config attributes change", async () => {
+  // Head nodes used to be matched by full outerHTML. A runtime chunk that
+  // ships different per-route configuration on the SAME module URL therefore
+  // looked like a different script: Scene3D advertises only the sub-feature
+  // chunk URLs a route can need, so /products carries no
+  // data-gosx-scene3d-compute-url while the galaxy route does. The live node
+  // was dropped and the chunk re-fetched and re-executed — observed in
+  // production as a second 530 KB download plus "[gosx] engine factory
+  // already registered; late override rejected: GoSXScene3D", because the
+  // module publishes non-writable globals and registers engine factories and
+  // is explicitly not re-entrant (see loadManagedScript).
+  //
+  // Match managed scripts on module URL, and carry the incoming route's
+  // config onto the retained node: Scene3D resolves those sub-feature URLs
+  // lazily off the live tag, so a retained node must advertise the NEW
+  // route's URLs.
+  const parsedDocs = new Map();
+  const link = new FakeElement("a", null);
+  link.setAttribute("href", "/products");
+  link.setAttribute("data-gosx-link", "");
+  link.textContent = "Products";
+
+  const env = createContext({
+    elements: [link],
+    fetchRoutes: {
+      "http://localhost:3000/products": {
+        text: "__CONFIG_DOC__",
+        url: "http://localhost:3000/products",
+      },
+      "http://localhost:3000/feature-scene3d.js": {
+        text: "window.__execs.push('feature-scene3d');",
+        url: "http://localhost:3000/feature-scene3d.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  env.context.__execs = [];
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  env.context.__gosx_dispose_page = async function() {};
+
+  // The live document's chunk: already executed by the browser, and
+  // advertising the compute sub-chunk this route needs.
+  const liveScript = env.document.createElement("script");
+  liveScript.setAttribute("data-gosx-script", "feature-scene3d");
+  liveScript.setAttribute("src", "/feature-scene3d.js");
+  liveScript.setAttribute("data-gosx-script-loaded", "true");
+  liveScript.setAttribute("data-gosx-scene3d-webgl-url", "/webgl.js");
+  liveScript.setAttribute("data-gosx-scene3d-compute-url", "/compute.js");
+  appendManagedHead(env.document, [liveScript]);
+
+  // The next route ships the same module with different configuration: no
+  // compute chunk, and a newly needed animation chunk.
+  const nextScript = new FakeElement("script", null);
+  nextScript.setAttribute("data-gosx-script", "feature-scene3d");
+  nextScript.setAttribute("src", "/feature-scene3d.js");
+  nextScript.setAttribute("data-gosx-scene3d-webgl-url", "/webgl.js");
+  nextScript.setAttribute("data-gosx-scene3d-animation-url", "/animation.js");
+
+  const nextBody = new FakeElement("main", null);
+  nextBody.id = "products-page";
+
+  parsedDocs.set("__CONFIG_DOC__", buildNavigatedDocument({
+    title: "Products",
+    headNodes: [nextScript],
+    bodyNodes: [nextBody],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  // Appending the live chunk above already counts as one fetch in the fake
+  // document; only fetches this navigation adds may be attributed to it.
+  const fetchesBeforeNavigation = env.fetchCalls.length;
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/products");
+  await flushAsyncWork();
+
+  assert.deepEqual(env.context.__execs, [], "the chunk must not execute a second time");
+  assert.equal(
+    env.fetchCalls
+      .slice(fetchesBeforeNavigation)
+      .filter((call) => String(call.url).includes("/feature-scene3d.js")).length,
+    0,
+    "the chunk must not be re-fetched",
+  );
+
+  const headScripts = env.document.head.childNodes.filter(
+    (node) => node.tagName === "SCRIPT" && node.getAttribute("src") === "/feature-scene3d.js",
+  );
+  assert.equal(headScripts.length, 1, "exactly one managed chunk node stays in the head");
+  assert.equal(headScripts[0], liveScript, "the already-executed node is retained, not replaced");
+  assert.equal(
+    headScripts[0].getAttribute("data-gosx-scene3d-animation-url"),
+    "/animation.js",
+    "the incoming route's new sub-chunk URL must reach the retained node",
+  );
+  assert.equal(
+    headScripts[0].getAttribute("data-gosx-scene3d-compute-url"),
+    null,
+    "a sub-chunk URL the new route does not advertise must be cleared",
+  );
+  assert.equal(
+    headScripts[0].getAttribute("data-gosx-script-loaded"),
+    "true",
+    "loader bookkeeping the parsed document never carries must survive the sync",
+  );
+});

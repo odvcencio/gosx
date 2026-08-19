@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.48.1 (2026-08-18)
+
+### Fixed: soft navigation re-executed runtime chunks over a config change
+
+- **Managed head scripts are matched by module URL, not by their full tag.**
+  `replaceManagedHead` compared head nodes by `outerHTML`, so a chunk that
+  ships different per-route configuration on the SAME module URL looked like
+  a different script. Scene3D advertises only the sub-feature chunk URLs a
+  route can need, so a page without compute particles carries no
+  `data-gosx-scene3d-compute-url` while a page with them does. Navigating
+  between two such routes dropped the live node and re-fetched and
+  re-executed the chunk — a second 530 KB download of a module
+  `loadManagedScript` documents as "not a re-entrant module body", followed
+  by `[gosx] engine factory already registered; late override rejected:
+  GoSXScene3D`.
+- **The retained node now carries the incoming route's configuration.**
+  Scene3D resolves its sub-feature URLs lazily off the live tag
+  (`resolveSceneSubFeatureURL`), so a node retained across a navigation must
+  advertise the new route's URLs — otherwise a route needing a chunk the
+  previous route never listed would resolve an empty URL. Loader bookkeeping
+  the parsed document never carries (`data-gosx-script-loaded`,
+  `data-gosx-script-load`, `nonce`) survives the sync.
+
+### Fixed: hubs stayed dead after a back-forward cache restore
+
+- **`pageshow` revalidates every hub socket.** A page restored from the
+  back-forward cache resumes with its WebSockets already torn down (Chrome
+  reports "WebSocket connection failed: Page entered Back-Forward Cache" on
+  freeze). The socket's close event was the only thing that scheduled a
+  reconnect, and a frozen page is not guaranteed to deliver it, so live
+  regions and hub-bound signals could stop updating until a manual reload.
+  The runtime now reconnects from the socket's actual state instead of
+  trusting the event, and exposes `gosxHost.hubs.revalidate`.
+
 ## v0.48.0 (2026-08-18)
 
 ### Fixed: a strict spread from a non-strict component is rejected at compile time

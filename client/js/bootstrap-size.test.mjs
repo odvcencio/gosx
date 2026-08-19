@@ -526,7 +526,11 @@ const budgets = [
   // ETag conditional requests, and scroll preservation added to the
   // existing data-gosx-region fragment-swap primitive in regions.ts.
   // Measured: 1_534_529 / 416_028 / 334_368.
-  { file: "bootstrap.js", raw: 1_535_000, gzip: 416_300, brotli: 334_600 },
+  // Bumped raw 1_535_000 -> 1_536_500 for the pageshow hub revalidation: a
+  // page restored from the back-forward cache resumes with dead sockets and
+  // is not guaranteed to deliver the close event that schedules a reconnect.
+  // gzip and brotli headroom held. Measured: 1_535_025 / 416_204 / 334_129.
+  { file: "bootstrap.js", raw: 1_536_500, gzip: 416_300, brotli: 334_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1209,7 +1213,10 @@ const budgets = [
   { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  { file: "bootstrap-feature-hubs.js", raw: 44_189, gzip: 13_741, brotli: 12_347 },
+  // Bumped raw 44_189 -> 44_700, gzip 13_741 -> 13_950, brotli 12_347 ->
+  // 12_550 for the pageshow hub revalidation. Measured: 44_467 / 13_839 /
+  // 12_450.
+  { file: "bootstrap-feature-hubs.js", raw: 44_700, gzip: 13_950, brotli: 12_550 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact

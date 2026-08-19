@@ -474,7 +474,45 @@
     }
   }
 
+  // revalidateHubConnections repairs sockets the page lost while it was not
+  // running. A page restored from the back-forward cache resumes with every
+  // WebSocket already torn down — Chrome reports "WebSocket connection
+  // failed: Page entered Back-Forward Cache" on freeze. The socket's close
+  // event is the ONLY thing that schedules a reconnect (see
+  // scheduleHubReconnect), and a frozen page is not guaranteed to deliver
+  // it, which leaves every hub permanently dead: live regions and hub-bound
+  // signals stop updating until the reader reloads by hand. Check the actual
+  // socket state on pageshow instead of trusting the event to arrive.
+  //
+  // Deliberately not gated on event.persisted: the same repair is correct for
+  // any resume that dropped a socket without dispatching close, and it is a
+  // no-op when every socket is live (a first load has no hubs connected yet).
+  function revalidateHubConnections() {
+    const hubs = window.__gosx && window.__gosx.hubs;
+    if (!hubs || typeof hubs.forEach !== "function") return;
+    const stale = [];
+    hubs.forEach(function(record) {
+      if (!record || !record.entry) return;
+      const socket = record.socket;
+      // WebSocket.CLOSING === 2, CLOSED === 3. A null readyState is a test
+      // double that does not model the lifecycle; bindHubOutputs already
+      // treats that as live, so leave it alone.
+      const state = socket ? socket.readyState : 3;
+      if (state === 2 || state === 3) {
+        stale.push(record.entry);
+      }
+    });
+    for (const entry of stale) {
+      connectHub(entry);
+    }
+  }
+
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("pageshow", revalidateHubConnections);
+  }
+
   gosxHost.hubs = Object.assign(gosxHost.hubs || {}, {
     connect: connectHub,
     connectAll: connectAllHubs,
+    revalidate: revalidateHubConnections,
   });
