@@ -82,10 +82,19 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 	idx.indexComponents()
 	idx.indexComponentRefs()
 
-	raw := ir.Validate(prog)
+	// ir.Validate and ir.ValidateWarnings are siblings (see the latter's doc
+	// comment): the LSP is the one caller that always wants both, since an
+	// author benefits from seeing a warning-severity finding (for example a
+	// near-miss data-gosx-* attribute name, gosx#249) as they type just as
+	// much as an error -- neither pass performs file I/O, so running both on
+	// every keystroke keeps the same "no I/O in ir.Lower's synchronous path"
+	// constraint the fast path already holds. A whole-project check that
+	// does need I/O (the stylesheet, the action registry, the route tree)
+	// is out of scope here; see AnalyzeProject for where those land instead.
+	errs := ir.Validate(prog)
 	warnings := ir.ValidateWarnings(prog)
-	diags := make([]Diagnostic, 0, len(raw)+len(warnings))
-	for _, diag := range raw {
+	diags := make([]Diagnostic, 0, len(errs)+len(warnings))
+	for _, diag := range errs {
 		diags = append(diags, Diagnostic{
 			Range:    rangeFromSpan(diag.Span),
 			Severity: severityFromIR(diag.Severity),

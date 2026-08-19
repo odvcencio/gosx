@@ -18,6 +18,7 @@ import (
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 	"m31labs.dev/gosx/strictcheck"
@@ -755,11 +756,19 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 }
 
 func checkStrictProject(ctx context.Context, dir string) error {
-	return strictcheck.CheckTreeWithOptions(ctx, dir, strictcheck.Options{
-		Env:     execEnvWithoutGoFlags(),
-		GOWORK:  "off",
-		GOFLAGS: goModuleCommandFlags,
+	// Warnings (gosx#249) are collected and printed to stderr regardless of
+	// whether the build gate itself passes or fails -- a warning never
+	// changes this function's return value; see Options.Warnings' doc
+	// comment for why that split exists.
+	var warnings []ir.Diagnostic
+	err := strictcheck.CheckTreeWithOptions(ctx, dir, strictcheck.Options{
+		Env:      execEnvWithoutGoFlags(),
+		GOWORK:   "off",
+		GOFLAGS:  goModuleCommandFlags,
+		Warnings: &warnings,
 	})
+	printCheckWarnings(os.Stderr, warnings)
+	return err
 }
 
 func countRuntimeVariantAssets(variants map[string]buildmanifest.RuntimeVariantAsset) int {

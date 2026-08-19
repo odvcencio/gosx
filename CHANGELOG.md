@@ -157,6 +157,107 @@
   component. The legacy Go-function form appears only in a clearly marked
   deprecation note with conversion guidance. It also appears in the pages
   that document islands and engines, which still require it.
+
+### Added: whole-application static correctness checks, before build and in the editor (gosx#249)
+
+- **A new warning severity channel.** `ir.Diagnostic` carries a `Severity`
+  field (`SeverityError`, the zero value, or `SeverityWarning`).
+  `ir.ValidateWarnings` is a sibling of `ir.Validate`: it runs the same
+  no-I/O pass over one `*ir.Program`, but returns only warnings. Nothing in
+  the fatal compile path (`gosx.Compile`) calls it. `strictcheck.Options`
+  gains a `Warnings *[]ir.Diagnostic` field; a whole-project check appends
+  its warning-severity findings there instead of failing the build.
+  `cmd/gosx check` and the build gate (`gosx build`) both print collected
+  warnings to stderr and still exit 0. `lsp` maps a warning to LSP
+  `SeverityWarning` (2) and reports it beside every error.
+- **Check 1 — a form action must resolve to a registered action (error).**
+  `strictcheck.validateFormActionContract` (`strictcheck/formaction.go`)
+  reads a static `action`/`formaction` attribute holding
+  `actionPath("name")` and confirms `"name"` is a key in the page's
+  `route.FileActions`, read from a composite literal in a `*.server.go`
+  file. An unresolved name is a guaranteed 404: `route.RouteContext.
+  ActionPath` builds the URL with no such lookup. This is the
+  `examples/dashboard` defect from the framework owner's premise: a form
+  posting to an action nothing ever registered.
+- **Check 2 — a required control must stay reachable (warning, heuristic).**
+  `strictcheck.validateRequiredReachabilityContract`
+  (`strictcheck/requiredreach.go`) cross-references a `required` control's
+  class and id against every `*.css` file under the project's `public/`
+  directory for a rule this scan recognizes as hiding it (`display: none`,
+  `visibility: hidden`, `opacity: 0`, or the `position: absolute` plus
+  zero/1px clip-box "visually-hidden" idiom). A browser refuses to submit a
+  form holding a required control it cannot focus — silently, with no
+  request and no console error. Every message states plainly that the
+  match ignores the cascade, specificity, and ancestor combinators, and
+  says so is a heuristic to verify by hand.
+- **Check 3 — every routable page must be mounted (warning).** `strict
+  check.validateRouteMountContract` (`strictcheck/routemount.go`) resolves
+  every `router.AddDir` call in the project (the `runtime.Caller(0)` +
+  `filepath.Dir`/`filepath.Join` idiom, and `server.ResolveAppRoot`) to an
+  absolute directory, asks `route.ScanDir` — the framework's own
+  file-route discovery — what each one actually mounts, and flags a
+  `page.gsx`/`index.gsx` outside every mounted tree. If any `AddDir` call's
+  target cannot be resolved with confidence, the whole run stays silent
+  rather than risk a false positive: an unresolvable call could mount
+  anywhere.
+- **Check 4 — a template's `data.X` read must resolve to a loader key
+  (warning, heuristic).** `strictcheck.validateDataLoaderKeysContract`
+  (`strictcheck/dataloader.go`) reads a page's `Load` hook (also matched
+  across a `route.FileModuleFor(source, opts)` registration one directory
+  up, for a shared parent server file registering a dynamic child route),
+  and — only when every return path is a fully literal
+  `map[string]any{...}` — flags a `data.X` read whose `X` never appears.
+  A page with no `Load` hook at all resolves to a confidently empty key
+  set: `data` is never assigned, so every read is certain, always nil. A
+  `Load` built through a helper call, a merge, or a `Bindings` hook that
+  might overwrite `data` abstains instead of guessing.
+- **Check 5 — a `data-gosx-*` attribute must name a real primitive with a
+  well-formed value.** `ir.ValidateWarnings` flags a name within edit
+  distance 1 of a known declarative navigation primitive (`data-gosx-
+  reorder`, `-heartbeat`, `-filter`, `-link`, and the rest of the
+  `server/navigation_contract.go` and `runtime_contract.go` family) as a
+  likely typo (warning) — scoped to that one closed family, not every
+  `data-gosx-*` name in the framework, so an unrelated attribute (`data-
+  gosx-motion`, `-scene3d-*`) stays out of scope. `ir.Validate` gains
+  error-severity value-shape checks for `data-gosx-heartbeat-interval` and
+  `-revalidate-interval` (the shared whole-seconds/whole-minutes grammar),
+  `data-gosx-link-current-policy`, and `data-gosx-prefetch` (each a fixed
+  enum two existing normalizer functions already silently coerce an
+  unrecognized value into).
+- **Every check accumulates I/O-heavy work in `strictcheck`
+  (`gosx check`, the build gate), never in `ir.Lower`'s per-keystroke
+  path.** The LSP runs `ir.Validate`/`ir.ValidateWarnings` — no file I/O —
+  on every keystroke, unchanged: this covers check 5 in full. `lsp` gains
+  a second cadence for the checks that do need file I/O: `textDocument/
+  didSave` now runs `lsp.AnalyzeProject` (checks 1, 2, and 4 — the ones
+  scoped to one package directory) and republishes the combined
+  diagnostic set; the server's `initialize` response now advertises save
+  support (`textDocumentSync.save`) so a real client actually sends the
+  notification. Check 3 (route mount) still needs every `.gsx` file and
+  every `router.AddDir` call in the whole project tree, a cost this
+  package does not ask an editor to pay on every save, so it remains
+  `gosx check`/build-gate only.
+- **A `*.gotmpl` sibling abstains a check the same way an unresolvable
+  registration call does.** `cmd/gosx/templates/docs/` — the scaffold
+  `gosx init` copies into a new project — ships `page.server.gotmpl`
+  beside every `page.gsx` that needs one, `main.gotmpl` at its root, and
+  no live `*.server.go` or `main.go` at all: `gosx init` renders each
+  template into a real file only when scaffolding a new project, never
+  before. Checks 1 and 4 (`strictcheck.hasUnrenderedServerGoTemplate`,
+  `strictcheck/servergo.go`) abstain when a `*.server.gotmpl` sits where
+  the expected `*.server.go` would; check 3
+  (`strictcheck.hasUnrenderedMainTemplate`, `strictcheck/routemount.go`)
+  abstains for a page below a directory holding an unrendered
+  `main.gotmpl`. Before this existed, the first `gosx check` run across
+  this repository reported 3 errors and 11 warnings, every one inside
+  that same scaffold, all false — the framework's own tooling reporting
+  its own scaffold as broken, which is exactly the "first impression is
+  noise" outcome a check that stays trustworthy must avoid. Run again
+  after fixing it, all five checks produce zero findings across this
+  entire repository; the checks landing beside this one (`ir.
+  ValidateWarnings`' own untyped-legacy-component check) are unaffected
+  and continue reporting normally.
+
 ### Added: a Go caller can place a Go-computed node in a .gsx render entry's children slot
 
 - **`RenderProgramComponent` takes a new `children ...gosx.Node` parameter**
