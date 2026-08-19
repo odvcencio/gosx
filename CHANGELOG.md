@@ -79,6 +79,108 @@
   Named, multiple slots are a separate, unimplemented capability; `Layout`,
   `Sidebar`, and `Footer` still build their markup with `gosx.El`.
 
+### Added: named slots close the gap one `{children}` hole left (gosx#249)
+
+- **A strict component may now declare any number of named slots**, each a
+  bare reserved identifier `slot<Name>` (`{slotTitle}`, `{slotPageHead}`),
+  parallel to `children` but distinct from it and from every other named
+  slot. `internal/strictcomponent.IsSlotBindingName` names the one shape
+  every seam recognizes: `slot` followed by an upper-case-initial name. A
+  layout-shaped component can now express the three-plus injection points
+  one `{children}` hole could not — a per-route title, an island
+  preload-hints node, the page body, and an end-of-body hydration
+  manifest — each with its own name, none of them the same content
+  repeated (see `TestMultipleNamedSlotsAddressDistinctInjectionPoints`).
+- **A Go caller supplies a named slot through `ProgramRenderEnv.Slots
+  map[string]gosx.Node`**, keyed by slot name (`"Title"`, not
+  `"slotTitle"`), threaded to `fileRenderOptions.EntrySlots` the same way
+  `Children` reaches `EntryChildren`. A key naming a slot the render
+  entry's body never declares fails closed with a descriptive error,
+  following `validateStrictCalleeChildren`'s arity-rule precedent
+  (ir/lower.go) — supplying content a callee cannot place is a caller
+  error, not a silent no-op. A slot the body declares but `Slots` does not
+  supply stays an unresolved scope identifier and renders empty, exactly
+  the way an unsupplied `{children}` already does.
+- **Slots stay unproven, exactly as `{children}` already is.** A slot
+  value never enters `PropsFields`, `PropsPaths`, or `PropsSlices`; the
+  render entry proves `Props` directly against the caller's struct,
+  independent of any slot supplied beside it. A slot value is also
+  restricted to child-expression position, the same restriction
+  `{children}` already has (`class={slotFoo}` fails to check, for the same
+  reason `class={children}` does): a slot carries one opaque `gosx.Node`
+  the caller already rendered, not scalar data a caller could read a field
+  of.
+- **The end-of-body ordering case is closed for a pure `.gsx`-to-`.gsx`
+  nested call, with no Go glue and no relaxation of the no-function-calls
+  rule in strict expressions.** Two slot names, `PreloadHints` and
+  `PageHead`, are framework-filled: no caller writes a `.gsx` expression
+  or a `Slots` entry for them anywhere. `writeLocalComponentWithChildren`
+  (route/fileprogram.go) computes and binds them itself, immediately after
+  the call site's own children have fully rendered (any island those
+  children registered is already reflected) and before the callee's own
+  body walks — the identical two-step order `writeLocalComponent` already
+  used for `children` (render children first, walk the callee body
+  second), just with two more values computed in that same window. The
+  renderer fills a reserved hole; the `.gsx` author only writes a
+  placement, never a computation. `TestFrameworkFilledSlotReflectsIslandsRegisteredByChildren`
+  (route/named_slots_test.go) proves it end to end: the manifest script
+  placed at the very end of the body names the island the children
+  registered, and a snapshot taken before those children render proves the
+  two values genuinely differ — the ordering guarantee is load-bearing,
+  not incidental.
+- **`emitStrictComponent`'s Go projection places each slot parameter
+  before the variadic `children ...gosx.Node`** (transpile/transpile.go)
+  — Go forbids any parameter after `...T`, so a slot parameter can never
+  follow it. `strictcheck.CheckFile` transpiles through this path, so
+  `gosx check` depends on the ordering. `emitComponentCall`'s nested-call
+  projection supplies a zero `gosx.Node{}` for each declared slot a call
+  site does not otherwise resolve — this projection has no `slot="Name"`
+  call-site syntax yet, so every nested call takes the "declared but not
+  supplied" branch (see the next point). Fixing this exposed a latent
+  instance of a pre-existing, unrelated bug (confirmed present on `main`
+  before this change): a propless strict component's nested call site
+  wrongly received a `gosx.Props()` `AttrList` argument whenever the call
+  passed slots or children. This change closes the slots-only instance of
+  that bug (a propless component with only named slots, called with no
+  attributes and no children, now projects correctly) and leaves the
+  pre-existing children-only instance exactly as it was — untouched, not
+  this change's scope.
+- **Deliberately out of scope this release: a caller-side `slot="Name"`
+  attribute for a `.gsx`-to-`.gsx` nested call** (`<Layout><div
+  slot="Title">...</div></Layout>`). The binding mechanism (a reserved
+  `slot<Name>` identifier, resolved generically through the existing
+  render-scope lookup) generalizes to it directly, but this change does
+  not wire caller-side attribute parsing or partitioning for it. Today a
+  named slot is supplied only from a Go caller (`ProgramRenderEnv.Slots`)
+  or filled by the renderer for the two reserved island-runtime names.
+- **`examples/dashboard`'s `Layout`, `Sidebar`, and `Footer` convert to a
+  new `layout.gsx`**, dropping the raw `gosx.El` call count from 49 to 42
+  (all 7 of the layout-chrome sites the prior entry named). `Sidebar` and
+  `Footer` are now plain strict components — `Footer` takes a `Message`
+  prop rather than a slot, since its per-request value (built with
+  `time.Now()`, which a strict expression cannot call) is scalar data, not
+  markup a slot's element-content-only contract could carry. `Layout`
+  declares `{slotTitle}`, `{slotPreloadHints}`, `{children}`, and
+  `{slotPageHead}`; `main.go`'s `chromeLayout` supplies all four in one
+  `RenderProgramComponent` call, since `/counter` and `/kitchen-sink`'s
+  own page content is deliberately hand-written Go (it needs real
+  signals, handlers, and island VM opcodes a strict `.gsx` body cannot
+  express) — the same "content built first, then the layout wraps it"
+  order every `route.LayoutFunc` already guarantees, not a new ordering
+  arrangement this conversion had to invent.
+- **The converted layout's rendered `/counter` and `/kitchen-sink`
+  responses were diffed against the pre-conversion output.** After
+  masking the wall-clock timestamp and normalizing insignificant
+  inter-tag whitespace and void-element self-closing (`<meta ... />` vs
+  `<meta ...>` — HTML5 parses both identically), the two are
+  byte-identical: same doctype, same tags, same attributes, same nesting,
+  same text, same island manifest content, in the same order. The
+  unnormalized diff is whitespace-only, a side effect of `gosx fmt`'s
+  canonical multi-line formatting (each `.gsx` grammar collapses a
+  whitespace-only text node between tags to one space — ir/lower.go's
+  `lowerText`) against a pre-conversion hand-written compact HTML string;
+  no document structure changed.
+
 ## v0.49.0 (2026-08-18)
 
 ### Fixed: LoadFileProgram's documented fragment pattern broke under a `-trimpath` build

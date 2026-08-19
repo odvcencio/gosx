@@ -142,6 +142,37 @@ type Component struct {
 	// and a gosx.Node-typed props field is a separate feature.
 	AcceptsChildren bool
 
+	// AcceptsSlots names every slot this strict component's body declares —
+	// a named, additional caller-supplied injection point beside children,
+	// each placed by its own {slotName} expression hole (gosx#249). Unlike
+	// children, a strict component may declare any number of slots, each
+	// with its own name, because a layout-shaped component can need more
+	// than one distinct injection point (a per-route title and an end-of-
+	// body script are not the same content repeated — see
+	// TestStrictComponentRendersChildrenTwice for why repeating {children}
+	// cannot express that).
+	//
+	// Entries name the slot itself ("Title", not "slotTitle" — see
+	// strictcomponent.SlotBindingName for the reserved identifier a name
+	// binds to). Order matches emitStrictComponent's own parameter order
+	// (sorted), so a caller that needs a stable order for diagnostics or
+	// projection can rely on it without re-deriving it.
+	//
+	// The zero value (nil) is "declares no slots", exactly right for every
+	// program serialized before this field existed and for every component
+	// that never declares one — such a component behaves exactly as it did
+	// before named slots existed, and route/fileprogram.go's runtime check
+	// only ever consults this for a strict render entry that a caller
+	// supplied at least one named slot to (see RenderProgramComponent's
+	// Slots... no caller reaches this path with zero slots to check).
+	//
+	// It does NOT record anything about a slot's type, count, or contents,
+	// the same restriction AcceptsChildren documents: a slot value is one
+	// opaque gosx.Node the caller already rendered and already proved. It
+	// never enters PropsFields, PropsPaths, or PropsSlices, and no boundary
+	// proof reads it.
+	AcceptsSlots []string
+
 	// Syntax distinguishes legacy `func` components from strict
 	// `component Name(props: Type)` declarations.
 	Syntax ComponentSyntax
@@ -202,6 +233,21 @@ type Component struct {
 	// component's function body. Populated by the body analyzer when
 	// the source is a .gsx file with a full component body.
 	Scope *ComponentScope
+}
+
+// AcceptsSlot reports whether this component's body declares a named slot
+// called name (AcceptsSlots' membership test). route/fileprogram.go uses it
+// to decide whether to compute and bind a framework-filled slot value (the
+// island preload-hints and page-head slots) only for a component that
+// actually places it, instead of paying for the computation unconditionally
+// on every strict call.
+func (c *Component) AcceptsSlot(name string) bool {
+	for _, slot := range c.AcceptsSlots {
+		if slot == name {
+			return true
+		}
+	}
+	return false
 }
 
 // SlicePropSchema records the element struct type and the binding-relative

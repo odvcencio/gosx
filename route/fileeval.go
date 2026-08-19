@@ -29,6 +29,27 @@ type fileRenderEnv struct {
 	renderEngine    func(engine.Config, gosx.Node) gosx.Node
 	renderIsland    func(*islandprogram.Program, any) gosx.Node
 	enableBootstrap func()
+	// islandPreloadHints and islandPageHead compute the two framework-filled
+	// named slots a strict component may declare — {slotPreloadHints} and
+	// {slotPageHead} (gosx#249) — from the same page runtime renderIsland
+	// already mutates as island children render. Nil unless the caller
+	// wired an island-capable env (see newFileRenderEnv), in which case
+	// writeLocalComponentWithChildren calls them only after the call
+	// site's own children have fully rendered, so the values they return
+	// reflect every island those children registered.
+	//
+	// Neither is a caller-suppliable named slot the way Slots (gosx.Slots
+	// map[string]gosx.Node on ProgramRenderEnv) is: no author writes a
+	// value for these anywhere, at any call site, in any .gsx expression.
+	// The renderer computes them itself and binds them the same way it
+	// binds children — the "framework-filled slot" that lets a pure
+	// .gsx-to-.gsx layout composition place an end-of-body island manifest
+	// without a strict expression ever computing a value that depends on a
+	// sibling's render order (strict expressions still admit no function
+	// calls; this is the renderer filling a reserved hole, not the .gsx
+	// author computing one).
+	islandPreloadHints func() gosx.Node
+	islandPageHead     func() gosx.Node
 	// strictSpreadSource is the raw, already-boundary-proved value that
 	// localComponentProps used to build the CURRENT strict component
 	// render frame's own "props" binding — set only when that frame came
@@ -188,12 +209,14 @@ func (env fileRenderEnv) withValue(name string, value any) fileRenderEnv {
 // request, not per node, so it may pay the full map copy.
 func (env fileRenderEnv) withBindings(bindings FileTemplateBindings) fileRenderEnv {
 	next := fileRenderEnv{
-		values:          env.flattenedValues(),
-		funcs:           make(map[string]any, len(env.funcs)+len(bindings.Funcs)),
-		components:      make(map[string]any, len(env.components)+len(bindings.Components)),
-		renderEngine:    env.renderEngine,
-		renderIsland:    env.renderIsland,
-		enableBootstrap: env.enableBootstrap,
+		values:             env.flattenedValues(),
+		funcs:              make(map[string]any, len(env.funcs)+len(bindings.Funcs)),
+		components:         make(map[string]any, len(env.components)+len(bindings.Components)),
+		renderEngine:       env.renderEngine,
+		renderIsland:       env.renderIsland,
+		enableBootstrap:    env.enableBootstrap,
+		islandPreloadHints: env.islandPreloadHints,
+		islandPageHead:     env.islandPageHead,
 	}
 	for key, value := range env.funcs {
 		next.funcs[key] = value
@@ -270,6 +293,8 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		env.renderEngine = ctx.Engine
 		env.renderIsland = ctx.Runtime().Island
 		env.enableBootstrap = ctx.Runtime().EnableBootstrap
+		env.islandPreloadHints = ctx.Runtime().PreloadHints
+		env.islandPageHead = func() gosx.Node { return ctx.Runtime().PageHeadWithNonce(ctx.Nonce()) }
 		env.funcs["actionPath"] = func(name string) string {
 			return ctx.ActionPath(name)
 		}

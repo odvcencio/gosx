@@ -19,6 +19,7 @@ import (
 	gosxcss "m31labs.dev/gosx/css"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/strictcomponent"
 	"m31labs.dev/gosx/ir"
 	islandprogram "m31labs.dev/gosx/island/program"
 	gosxscene "m31labs.dev/gosx/scene"
@@ -107,6 +108,34 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 			return "", false, fmt.Errorf("render entry %s is not a strict component; children only bind to a strict render entry (see RenderProgramComponent)", comp.Name)
 		}
 		entryEnv = entryEnv.withValue("children", opts.EntryChildren)
+	}
+	// gosx#249: a strict component rendered as the render entry has no
+	// caller-side slot="Name" markup for writeLocalComponent to partition,
+	// the same gap EntryChildren closes for the anonymous children hole.
+	// opts.EntrySlots is the only other place a named-slot value can come
+	// from — RenderProgramComponent builds it from ProgramRenderEnv.Slots.
+	//
+	// A nil or empty EntrySlots means "no slots supplied" — see its doc
+	// comment — so every caller that predates this field takes no new
+	// branch here. A key naming a slot comp's body does not declare fails
+	// closed instead of silently doing nothing, the same arity-rule
+	// precedent validateStrictCalleeChildren (ir/lower.go) sets for a
+	// caller-side children supply the callee cannot place.
+	if len(opts.EntrySlots) > 0 {
+		if comp.Syntax != ir.ComponentSyntaxStrict {
+			return "", false, fmt.Errorf("render entry %s is not a strict component; slots only bind to a strict render entry (see RenderProgramComponent)", comp.Name)
+		}
+		names := make([]string, 0, len(opts.EntrySlots))
+		for name := range opts.EntrySlots {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if !comp.AcceptsSlot(name) {
+				return "", false, fmt.Errorf("render entry %s declares no slot named %q; declare {%s} in its body or remove this slot from ProgramRenderEnv.Slots", comp.Name, name, strictcomponent.SlotBindingName(name))
+			}
+			entryEnv = entryEnv.withValue(strictcomponent.SlotBindingName(name), opts.EntrySlots[name])
+		}
 	}
 	// One builder carries the whole document. The renderer used to allocate a
 	// fresh strings.Builder per element and let the parent copy the child's
@@ -1200,6 +1229,28 @@ func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder
 	}
 	scope := env.withValue("props", props)
 	scope = scope.withValue("children", childrenNode)
+	// gosx#249: the two framework-filled named slots, bound only for a
+	// callee that actually declares them (AcceptsSlot) and only when env
+	// carries an island-capable runtime (islandPreloadHints/islandPageHead
+	// non-nil — see newFileRenderEnv). childrenNode above is already fully
+	// rendered by the time this function runs (writeLocalComponent renders
+	// the call site's children BEFORE calling this function — see its own
+	// doc comment), so any island the caller's children registered through
+	// env.renderIsland has already reached the page runtime's manifest.
+	// Computing these two values HERE, after childrenNode but before
+	// r.writeNode walks comp.Root below, is what lets a pure .gsx-to-.gsx
+	// nested call (<Layout>{page content with an island}</Layout>, all in
+	// one compiled program, no Go glue) place an end-of-body island
+	// manifest that reflects every island its children rendered: the
+	// renderer computes and binds the value, the same way it binds
+	// children, so no strict expression ever has to compute a value that
+	// depends on a sibling's render order.
+	if env.islandPreloadHints != nil && comp.AcceptsSlot("PreloadHints") {
+		scope = scope.withValue(strictcomponent.SlotBindingName("PreloadHints"), env.islandPreloadHints())
+	}
+	if env.islandPageHead != nil && comp.AcceptsSlot("PageHead") {
+		scope = scope.withValue(strictcomponent.SlotBindingName("PageHead"), env.islandPageHead())
+	}
 	// Always overwrite, never inherit from env: rawSource is nil unless
 	// THIS call just proved it (single-spread shape), so an explicit-attrs
 	// call correctly clears whatever an enclosing strict frame left set,

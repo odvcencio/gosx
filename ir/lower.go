@@ -113,6 +113,22 @@ type lowerer struct {
 	// {children} hole and this map does not claim it is.
 	childrenHoles map[string]bool
 
+	// slotHoles records, per same-file component name, the sorted set of
+	// named slots that component's body declares — every {slotName}
+	// expression hole it contains (gosx#249), childrenHoles' counterpart for
+	// a named, additional injection point. Filled by collectStrictSchemas
+	// the same pass, and for the same reason: a caller's slot-arity rule
+	// must read a callee's declared set from inside the CALLER's own body
+	// walk, and a callee may be declared later in the file.
+	//
+	// Unlike childrenHoles, this is populated for strict components only:
+	// the design brief scopes named slots to strict components ("A strict
+	// component accepts exactly one children slot" is the problem it
+	// solves), and a legacy component already reads an arbitrary value out
+	// of its flattened props map with no reserved-identifier scheme to
+	// collide with.
+	slotHoles map[string][]string
+
 	// currentStrictComponent and currentStrictPropsType name the strict
 	// component whose body lowerGSXNode is currently walking (empty
 	// outside strict lowering). E2 tier 1 (validateStrictToStrictSpreadCall)
@@ -1065,6 +1081,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.legacyProps = make(map[string]string)
 	l.typedLegacyProps = make(map[string]string)
 	l.childrenHoles = make(map[string]bool)
+	l.slotHoles = make(map[string][]string)
 	// Pass 1: every same-file strict component's name and props type,
 	// every legacy (non-strict) top-level renderer function's name and
 	// declared props type, every component's {children} hole, and every
@@ -1114,6 +1131,9 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 				// complete for the file regardless of declaration order.
 				if l.componentRendersChildren(child) {
 					l.childrenHoles[componentName] = true
+				}
+				if slots := l.componentDeclaredSlots(child); len(slots) > 0 {
+					l.slotHoles[componentName] = slots
 				}
 			}
 		case "type_declaration":
@@ -1208,6 +1228,53 @@ func (l *lowerer) componentRendersChildren(decl *gotreesitter.Node) bool {
 	}
 	walk(body)
 	return found
+}
+
+// componentDeclaredSlots reports the sorted, de-duplicated set of named
+// slots decl's body declares — every {slotName} child expression hole it
+// contains (strictcomponent.IsSlotExpression), the slot counterpart to
+// componentRendersChildren. It shares that function's CST walk shape,
+// including the same deliberate refusal to descend into an attribute value
+// (see componentRendersChildren's doc comment for why: class={slotFoo}
+// would otherwise register a slot placement that can never render markup).
+//
+// Unlike componentRendersChildren it does not stop at the first match: a
+// layout-shaped component may declare more than one named slot, and every
+// one of them must reach l.slotHoles so validateStrictCalleeSlots-shaped
+// callers and the runtime EntrySlots check both see the complete set.
+func (l *lowerer) componentDeclaredSlots(decl *gotreesitter.Node) []string {
+	body := l.childByField(decl, "body")
+	if body == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var names []string
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		switch l.nodeType(node) {
+		case "jsx_attribute", "jsx_spread_attribute":
+			return
+		case "jsx_expression_container":
+			exprNode := l.childByField(node, "expression")
+			if exprNode != nil {
+				if name, ok := strictcomponent.IsSlotExpression(l.text(exprNode)); ok {
+					if _, dup := seen[name]; !dup {
+						seen[name] = struct{}{}
+						names = append(names, name)
+					}
+				}
+			}
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(body)
+	sort.Strings(names)
+	return names
 }
 
 // collectStrictPropReads records every props field path (dot-joined, e.g.
@@ -2629,6 +2696,7 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 		// for every strict component in the file, and every call-site rule
 		// read the same map. One owner.
 		AcceptsChildren: l.childrenHoles[componentName],
+		AcceptsSlots:    l.slotHoles[componentName],
 		Syntax:          ComponentSyntaxStrict,
 		Root:            rootID,
 		IsIsland:        isIsland,
@@ -3235,8 +3303,12 @@ func (l *lowerer) strictEachShape(node *Node, scope *eachScope) (itemName, index
 		}
 		// The reservation predates the children feature and is what makes it
 		// safe: a loop binding may not shadow the identifier a body uses to
-		// place its caller's markup.
-		if binding == "props" || binding == strictcomponent.ChildrenBinding {
+		// place its caller's markup. strictcomponent.IsSlotBindingName
+		// extends the same protection to a named slot (gosx#249): a loop
+		// binding spelled slotFoo would otherwise shadow a real slot
+		// placement inside the loop the same way a binding named "children"
+		// would shadow children.
+		if binding == "props" || binding == strictcomponent.ChildrenBinding || strictcomponent.IsSlotBindingName(binding) {
 			l.errs = append(l.errs, Diagnostic{Span: node.Span, Message: fmt.Sprintf("strict <Each> binding %q is reserved; choose another name", binding)})
 			ok = false
 			continue

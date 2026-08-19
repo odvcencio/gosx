@@ -74,6 +74,60 @@ func (s Scope) isBinding(name string) bool {
 //     component with it (emitStrictComponent, transpile/transpile.go).
 const ChildrenBinding = "children"
 
+// SlotBindingPrefix is the reserved prefix a named slot's bare identifier
+// carries in a strict component's body — "slot" followed by the slot's own
+// PascalCase name, e.g. slotTitle for a slot named "Title". A named slot is
+// children's counterpart for a strict component that needs more than one
+// caller-supplied injection point: children is the one anonymous hole every
+// strict component may place; a named slot is an additional, explicitly
+// named hole, bound the same way (beside props, never inside it, never
+// proved against the declared schema — see IsSlotBindingName).
+const SlotBindingPrefix = "slot"
+
+// IsSlotBindingName reports whether name is a valid named-slot binding
+// identifier: SlotBindingPrefix followed by a non-empty, upper-case-initial
+// name. It is the one shape test every seam that recognizes a slot binding
+// shares — the render scope lookup (route/fileprogram.go), the lowerer's
+// <Each> binding reservation and declared-slot collection (ir/lower.go),
+// and the Go projection's parameter emission (emitStrictComponent,
+// transpile/transpile.go) — so "what counts as a slot identifier" cannot
+// drift between them the way ChildrenBinding's single reserved spelling
+// cannot drift for children.
+//
+// The upper-case-initial rule keeps a slot binding visually distinct from
+// an ordinary lower-case identifier at a glance, and gives SlotName an
+// unambiguous inverse: slotTitle names a slot called "Title", not "title".
+func IsSlotBindingName(name string) bool {
+	if !strings.HasPrefix(name, SlotBindingPrefix) {
+		return false
+	}
+	rest := name[len(SlotBindingPrefix):]
+	if rest == "" {
+		return false
+	}
+	return rest[0] >= 'A' && rest[0] <= 'Z'
+}
+
+// SlotName reports the slot name a valid slot binding identifier names, e.g.
+// SlotName("slotTitle") returns ("Title", true). ok is false when binding is
+// not a valid slot binding identifier (IsSlotBindingName).
+func SlotName(binding string) (name string, ok bool) {
+	if !IsSlotBindingName(binding) {
+		return "", false
+	}
+	return binding[len(SlotBindingPrefix):], true
+}
+
+// SlotBindingName reports the reserved bare identifier a slot named name
+// binds to in a strict component's body, e.g. SlotBindingName("Title")
+// returns "slotTitle". It is SlotName's inverse and ChildrenBinding's
+// counterpart for a named slot: every seam that binds a slot value into
+// render scope, or declares one, spells the identifier through this one
+// function so the "slot" + PascalCase convention cannot drift between them.
+func SlotBindingName(name string) string {
+	return SlotBindingPrefix + name
+}
+
 // exprPosition names the syntactic slot an expression occupies. The strict
 // contract admits a different identifier set per slot, so the slot is an
 // explicit input to validation rather than a property of the source text.
@@ -164,6 +218,25 @@ func IsChildrenExpression(source string) bool {
 	return ok && ident.Name == ChildrenBinding
 }
 
+// IsSlotExpression reports whether source is exactly a named-slot binding
+// identifier (IsSlotBindingName), with parentheses transparent, and if so
+// returns the slot name (SlotName's inverse). It is the slot counterpart to
+// IsChildrenExpression: the single spelling test for "this expression hole
+// places a named slot's caller-supplied value", so the lowerer's declared-
+// slot collection and the Go projection's parameter emission can never
+// disagree about what a named slot looks like.
+func IsSlotExpression(source string) (name string, ok bool) {
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return "", false
+	}
+	ident, isIdent := unwrapParens(expr).(*ast.Ident)
+	if !isIdent {
+		return "", false
+	}
+	return SlotName(ident.Name)
+}
+
 func validateAt(source string, scope Scope, pos exprPosition) error {
 	expr, err := parser.ParseExpr(source)
 	if err != nil {
@@ -190,6 +263,12 @@ func validate(expr ast.Expr, source string, scope Scope, pos exprPosition) error
 			}
 			return fmt.Errorf("children renders as element content, not as an attribute value")
 		default:
+			if IsSlotBindingName(node.Name) {
+				if pos == positionChild {
+					return nil
+				}
+				return fmt.Errorf("%s renders as element content, not as an attribute value", node.Name)
+			}
 			if scope.isIndex(node.Name) {
 				// An Each index binding is always a plain int — the same
 				// parity class already proven for an int props field, so a

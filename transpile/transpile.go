@@ -110,6 +110,20 @@ type transpiler struct {
 	// ir.Component (transpile.go works from the CST directly, not the IR).
 	structFieldTypes map[string]map[string]string
 	strictNames      map[string]struct{} // same-file gosx_component_declaration names, props or not
+	// slotNames records, per same-file strict component name, the sorted
+	// set of named slots that component's body declares (gosx#249) —
+	// transpile's own CST-walk-based twin of ir/lower.go's l.slotHoles,
+	// needed because emitStrictComponent must place a gosx.Node parameter
+	// for each BEFORE the variadic children parameter (Go forbids a
+	// parameter after "...T"), and emitComponentCall must supply a value
+	// for each at every nested call site. Two independent implementations
+	// of "which slots does this body declare" is an accepted, pre-existing
+	// risk in this file: transpile has no ir.Program to read a decided
+	// answer from (see emitStrictComponent's children-arity comment for
+	// why that same tradeoff was made once already), so this walks the CST
+	// directly through componentDeclaredSlots, the same shape
+	// ir/lower.go's componentDeclaredSlots uses.
+	slotNames map[string][]string
 	// currentPropsType is the props type of the strict component whose body
 	// is currently being emitted (empty outside strict emission) — needed
 	// to resolve a same-file <Each of> or spread source's element/struct
@@ -687,11 +701,61 @@ func (t *transpiler) collectComponentProps(n *gotreesitter.Node) {
 				t.strictNames = make(map[string]struct{})
 			}
 			t.strictNames[name] = struct{}{}
+			if bodyNode := t.childByField(child, "body"); bodyNode != nil {
+				if slots := t.componentDeclaredSlots(bodyNode); len(slots) > 0 {
+					if t.slotNames == nil {
+						t.slotNames = make(map[string][]string)
+					}
+					t.slotNames[name] = slots
+				}
+			}
 		}
 		if propsType := t.extractPropsType(child); propsType != "" {
 			t.propsTypes[name] = propsType
 		}
 	}
+}
+
+// componentDeclaredSlots reports the sorted, de-duplicated set of named
+// slots bodyNode declares — every {slotName} child expression hole it
+// contains (strictcomponent.IsSlotExpression). It mirrors
+// ir/lower.go's lowerer.componentDeclaredSlots, including the same
+// deliberate refusal to descend into an attribute value (an attribute
+// expression can never place rendered markup, so counting one here would
+// wrongly declare a parameter for a slot the body can never actually
+// place).
+func (t *transpiler) componentDeclaredSlots(bodyNode *gotreesitter.Node) []string {
+	if bodyNode == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var names []string
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		switch t.nodeType(node) {
+		case "jsx_attribute", "jsx_spread_attribute":
+			return
+		case "jsx_expression_container":
+			exprNode := t.childByField(node, "expression")
+			if exprNode != nil {
+				if name, ok := strictcomponent.IsSlotExpression(t.text(exprNode)); ok {
+					if _, dup := seen[name]; !dup {
+						seen[name] = struct{}{}
+						names = append(names, name)
+					}
+				}
+			}
+		}
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(bodyNode)
+	sort.Strings(names)
+	return names
 }
 
 func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
@@ -715,6 +779,20 @@ func (t *transpiler) emitStrictComponent(n *gotreesitter.Node) string {
 				params = t.text(paramName) + " " + t.text(paramType)
 			}
 		}
+	}
+
+	// Each named slot this body declares (a {slotName} child expression
+	// hole) takes its own gosx.Node parameter (gosx#249), positioned before
+	// the variadic children parameter below — Go forbids a parameter after
+	// "...T", so a slot param can never follow it. componentDeclaredSlots
+	// walks the same body this function is about to emit, so the parameter
+	// list and the body's own {slotName} references can never name a
+	// different slot set.
+	for _, slot := range t.componentDeclaredSlots(bodyNode) {
+		if params != "" {
+			params += ", "
+		}
+		params += strictcomponent.SlotBindingName(slot) + " " + t.gosxRef("Node")
 	}
 
 	// Every strict component takes children, unconditionally.
@@ -1203,19 +1281,54 @@ func (t *transpiler) emitElementCall(tag string, attrs []string, children []stri
 }
 
 func (t *transpiler) emitComponentCall(tag string, attrs []string, children []string) string {
+	slots := t.slotNames[tag]
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s(", tag)
 
+	// wroteArg tracks whether the call has written its first argument yet,
+	// so the slot loop below can prepend its own separating comma correctly
+	// whether or not Props(...) came first. len(attrs) > 0 || len(children)
+	// > 0 is unchanged from before gosx#249 on purpose: this call shape (no
+	// typedPropsType match — see emitGSXElement) is shared between a
+	// propless strict callee and an untyped legacy one, and only the
+	// latter's declared parameter can actually receive an AttrList value.
+	// Whether Props(...) belongs here at all for the former is a
+	// pre-existing question this change does not touch; len(slots) > 0 is
+	// deliberately NOT one of this gate's conditions, so a propless
+	// component that declares only named slots (no attrs, no children)
+	// keeps compiling instead of gaining a new, gosx#249-only instance of
+	// that same question.
+	wroteArg := false
 	if len(attrs) > 0 || len(children) > 0 {
 		b.WriteString(t.gosxRef("Props") + "(")
 		b.WriteString(strings.Join(attrs, ", "))
 		b.WriteByte(')')
+		wroteArg = true
+	}
+
+	// A callee that declares one or more named slots (gosx#249) takes a
+	// gosx.Node parameter for each, positioned before its variadic children
+	// parameter (emitStrictComponent). This projection has no call-site
+	// slot syntax of its own yet — see the CHANGELOG entry for this
+	// change — so every nested call supplies the zero Node for each: the
+	// same "declared but not supplied" sentinel the render-entry EntrySlots
+	// path (route/fileprogram.go) leaves unresolved, which renders empty.
+	for range slots {
+		if wroteArg {
+			b.WriteString(", ")
+		}
+		b.WriteString(t.gosxRef("Node") + "{}")
+		wroteArg = true
 	}
 
 	for _, child := range children {
 		if child != "" {
-			b.WriteString(", ")
+			if wroteArg {
+				b.WriteString(", ")
+			}
 			b.WriteString(child)
+			wroteArg = true
 		}
 	}
 
