@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"log/slog"
@@ -780,78 +781,56 @@ func listenAddrHost(addr string) (string, bool) {
 	return addr, true
 }
 
-// HTMLDocument wraps content in a full HTML5 document.
-func HTMLDocument(title string, head gosx.Node, body gosx.Node) gosx.Node {
-	return HTMLDocumentWithNonce(title, "", head, body)
-}
-
-// HTMLDocumentWithLanguage wraps content in a full HTML5 document and sets
-// the document language. An empty language preserves HTMLDocument output.
-func HTMLDocumentWithLanguage(title string, language string, head gosx.Node, body gosx.Node) gosx.Node {
-	return gosx.RawHTML(renderDocumentWithContext(&DocumentContext{
-		Title:    title,
-		Language: strings.TrimSpace(language),
-		Head:     head,
-		Body:     body,
-	}))
-}
-
-// HTMLDocumentWithNonce wraps content in a full HTML5 document, threading a
-// per-request CSP nonce through GoSX-owned document shell scripts.
-func HTMLDocumentWithNonce(title string, nonce string, head gosx.Node, body gosx.Node) gosx.Node {
-	return gosx.RawHTML(renderDocument(title, nonce, head, body))
-}
-
-// HTMLDocumentWithBodyAttrs wraps content in a full HTML5 document, adding
-// bodyAttrs to the rendered <body> element (gosx#236).
+// HTMLDocument renders one complete HTML5 document from a document context.
 //
-// This is the direct-call sibling of Context.BodyAttrs / PageState.BodyAttrs
-// for a page that renders through HTMLDocument directly rather than through
-// App.renderPage's DocumentContext pipeline — for example a file-routed
-// app's router.SetLayout callback, which calls HTMLDocument itself:
-//
-//	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-//	    ctx.BodyAttrs(
-//	        gosx.Attr(server.NavigationHeartbeatAttr, "/api/league/version"),
-//	        gosx.Attr(server.NavigationHeartbeatIntervalAttr, "4s"),
-//	    )
-//	    return server.HTMLDocumentWithBodyAttrs(ctx.Title(appName), ctx.Head(), body, ctx.BodyAttrsValue())
-//	})
-//
-// head is still expected to carry ctx.Head()'s own accumulated content —
-// bodyAttrs is the parallel channel for what ctx accumulated for <body>
-// instead of <head>. This replaces wrapping body in a gosx.El div solely to
-// carry attributes, plus a display:contents rule to keep that div out of
-// layout — see NavigationHeartbeatAttr's doc comment for the full migration.
-func HTMLDocumentWithBodyAttrs(title string, head gosx.Node, body gosx.Node, bodyAttrs gosx.AttrList) gosx.Node {
-	return gosx.RawHTML(renderDocumentWithContext(&DocumentContext{
-		Title:     title,
-		Head:      head,
-		Body:      body,
-		BodyAttrs: bodyAttrs,
-	}))
+// The context is treated as immutable. A nonzero request-prepared Head carries
+// the framework contract and remains authoritative; direct or structurally
+// empty contexts receive exactly one framework-owned contract on a private
+// copy. This keeps custom document wrappers composable without teaching the
+// renderer to inspect or rewrite arbitrary RawHTML supplied by an application.
+func HTMLDocument(doc *DocumentContext) gosx.Node {
+	prepared := prepareDocumentContext(doc)
+	return gosx.RawHTML(renderDocumentHTML(&prepared))
 }
 
-func renderDocument(title string, nonce string, head gosx.Node, body gosx.Node) string {
-	return renderDocumentWithContext(&DocumentContext{
-		Title: title,
-		Nonce: nonce,
-		Head:  head,
-		Body:  body,
-	})
-}
-
-func renderDocumentWithContext(doc *DocumentContext) string {
-	title := ""
-	head := gosx.Text("")
-	body := gosx.Text("")
-	if doc != nil {
-		title = doc.Title
-		head = doc.Head
-		body = doc.Body
+func prepareDocumentContext(doc *DocumentContext) DocumentContext {
+	if doc == nil {
+		doc = &DocumentContext{}
 	}
+	prepared := *doc
+	headWasZero := prepared.Head.IsZero()
+	prepared.Head = normalizedDocumentNode(prepared.Head)
+	if !doc.documentContractPrepared || headWasZero {
+		contract := documentContractNode(&prepared)
+		if headWasZero {
+			prepared.Head = contract
+		} else {
+			prepared.Head = gosx.Fragment(prepared.Head, contract)
+		}
+		prepared.documentContractPrepared = true
+	}
+	return prepared
+}
+
+func normalizedDocumentNode(node gosx.Node) gosx.Node {
+	if node.IsZero() {
+		return gosx.Text("")
+	}
+	return node
+}
+
+func renderDocumentHTML(doc *DocumentContext) string {
+	if doc == nil {
+		doc = &DocumentContext{}
+	}
+	title := doc.Title
+	head := normalizedDocumentNode(doc.Head)
+	body := normalizedDocumentNode(doc.Body)
 	htmlAttrs := documentHTMLAttrs(doc)
 	bodyAttrs := documentBodyAttrs(doc)
+	// The viewport is owned and emitted by this document shell. Head remains an
+	// authoritative application-owned node tree; RawHTML is an explicit
+	// structure/trust escape hatch and is never parsed or rewritten here.
 	headHTML := gosx.RenderHTML(HeadOutlet(head))
 	bodyHTML := gosx.RenderHTML(body)
 
@@ -867,7 +846,7 @@ func renderDocumentWithContext(doc *DocumentContext) string {
 	b.WriteString("<meta charset=\"utf-8\">\n")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	b.WriteString("<title>")
-	b.WriteString(title)
+	b.WriteString(html.EscapeString(title))
 	b.WriteString("</title>\n")
 	b.WriteString(headHTML)
 	b.WriteString("\n</head>\n<body")
@@ -1019,7 +998,7 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 	case a.layout != nil:
 		return renderLegacyLayout(a.layout(pageTitle(ctx, pattern, defaultTitle), renderedBody), ctx.Head())
 	default:
-		return gosx.RawHTML(renderDocumentWithContext(doc))
+		return HTMLDocument(doc)
 	}
 }
 

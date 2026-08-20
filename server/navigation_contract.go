@@ -251,7 +251,11 @@ const (
 	//	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/league/version"),
 	//	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "4s"),
 	//	), body)
-	//	return server.HTMLDocument(ctx.Title(appName), ctx.Head(), heartbeatShell)
+	//	return server.HTMLDocument(&server.DocumentContext{
+	//		Request: ctx.Request, Status: ctx.StatusCode(),
+	//		Title: ctx.Title(appName), Head: ctx.Head(), Body: heartbeatShell,
+	//		Nonce: ctx.Nonce(),
+	//	})
 	//
 	//	// After: no wrapper, no CSS rule. ctx.BodyAttrs accumulates onto
 	//	// the <body> element HTMLDocument already renders.
@@ -259,7 +263,11 @@ const (
 	//	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/league/version"),
 	//	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "4s"),
 	//	)
-	//	return server.HTMLDocumentWithBodyAttrs(ctx.Title(appName), ctx.Head(), body, ctx.BodyAttrsValue())
+	//	return server.HTMLDocument(&server.DocumentContext{
+	//		Request: ctx.Request, Status: ctx.StatusCode(),
+	//		Title: ctx.Title(appName), Head: ctx.Head(), Body: body,
+	//		BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+	//	})
 	//
 	// A page rendered through App.renderPage's default document pipeline
 	// (no router.SetLayout call building the document itself) needs only

@@ -48,7 +48,11 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", `router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
 	    ctx.AddHead(server.NavigationScript())
-	    return server.HTMLDocument(ctx.Title("My App"), ctx.Head(), body)
+	    return server.HTMLDocument(&server.DocumentContext{
+	        Request: ctx.Request, Status: ctx.StatusCode(),
+	        Title: ctx.Title("My App"), Head: ctx.Head(), Body: body,
+	        BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+	    })
 	})`)}
 			<p>
 				<span class="inline-code">NavigationScript()</span>
@@ -167,7 +171,11 @@ func Page() Node {
 	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
 	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
 	)
-	return server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)`)}
+	return server.HTMLDocument(&server.DocumentContext{
+	    Request: ctx.Request, Status: ctx.StatusCode(),
+	    Title: ctx.Title(appName), Head: ctx.Head(), Body: body,
+	    BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+	})`)}
 			<p>
 				That is the whole change. It replaces this pattern, which existed only because
 				<span class="inline-code">HTMLDocument</span>
@@ -180,17 +188,25 @@ func Page() Node {
 	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
 	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
 	), body)
-	return server.HTMLDocument(ctx.Title(appName), ctx.Head(), heartbeatShell)`)}
+	return server.HTMLDocument(&server.DocumentContext{
+	    Request: ctx.Request, Status: ctx.StatusCode(),
+	    Title: ctx.Title(appName), Head: ctx.Head(), Body: heartbeatShell,
+	    Nonce: ctx.Nonce(),
+	})`)}
 			<p>
 				A page that renders its document by calling
 				<span class="inline-code">HTMLDocument</span>
 				directly (for example a
 				<span class="inline-code">router.SetLayout</span>
 				callback) calls
-				<span class="inline-code">HTMLDocumentWithBodyAttrs</span>
+				<span class="inline-code">HTMLDocument</span>
+				with a
+				<span class="inline-code">server.DocumentContext</span>
 				instead, passing
 				<span class="inline-code">ctx.BodyAttrsValue()</span>
-				as the extra argument. A page rendered through the default
+				as its
+				<span class="inline-code">BodyAttrs</span>
+				field. A page rendered through the default
 				<span class="inline-code">App.renderPage</span>
 				pipeline needs only the
 				<span class="inline-code">ctx.BodyAttrs</span>

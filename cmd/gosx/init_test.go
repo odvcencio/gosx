@@ -59,7 +59,9 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		`app.API("GET /api/health"`,
 		`rootHandler, err := router.BuildChecked()`,
 		`app.Mount("/", rootHandler)`,
-		`server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)`,
+		`server.HTMLDocument(&server.DocumentContext{`,
+		`Title:     ctx.Title(appName),`,
+		`BodyAttrs: ctx.BodyAttrsValue(),`,
 	} {
 		if !strings.Contains(mainGo, snippet) {
 			t.Fatalf("expected scaffold to contain %q", snippet)
@@ -194,7 +196,9 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		`AllowInsecure: strings.HasPrefix(publicBase, "http://"),`,
 		`docsapp.BindAuth(authn)`,
 		`route.FileLayout(filepath.Join(root, "app", "layout.gsx"))`,
-		`return server.HTMLDocument(ctx.Title("GoSX Docs"), ctx.Head(), body)`,
+		`return server.HTMLDocument(&server.DocumentContext{`,
+		`Title:     ctx.Title("GoSX Docs"),`,
+		`BodyAttrs: ctx.BodyAttrsValue(),`,
 		`router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{})`,
 		`app.Use(sessions.Middleware)`,
 		`app.Use(authn.Middleware)`,

@@ -56,7 +56,10 @@ func getBody(t *testing.T, handler http.Handler) string {
 // through app.EnableNavigation() with no manual AddHead call in the layout.
 func TestFileRoutedAppEnableNavigationInjectsScript(t *testing.T) {
 	_, handler := buildFileRoutedApp(t, func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocumentWithLanguage(ctx.Title("Test"), "en", ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request: ctx.Request, Status: ctx.StatusCode(), Title: ctx.Title("Test"), Language: "en",
+			Head: ctx.Head(), Body: body, BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+		})
 	})
 
 	html := getBody(t, handler)
@@ -72,7 +75,10 @@ func TestFileRoutedAppEnableNavigationInjectsScript(t *testing.T) {
 func TestFileRoutedAppManualNavigationScriptNotDuplicated(t *testing.T) {
 	_, handler := buildFileRoutedApp(t, func(ctx *RouteContext, body gosx.Node) gosx.Node {
 		ctx.AddHead(server.NavigationScript())
-		return server.HTMLDocumentWithLanguage(ctx.Title("Test"), "en", ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request: ctx.Request, Status: ctx.StatusCode(), Title: ctx.Title("Test"), Language: "en",
+			Head: ctx.Head(), Body: body, BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+		})
 	})
 
 	html := getBody(t, handler)
@@ -90,7 +96,10 @@ func TestFileRoutedAppManualNavigationScriptNotDuplicated(t *testing.T) {
 func TestFileRoutedAppMountBeforeEnableNavigationStillInjectsScript(t *testing.T) {
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocumentWithLanguage(ctx.Title("Test"), "en", ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request: ctx.Request, Status: ctx.StatusCode(), Title: ctx.Title("Test"), Language: "en",
+			Head: ctx.Head(), Body: body, BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+		})
 	})
 	router.Add(Route{
 		Pattern: "/",

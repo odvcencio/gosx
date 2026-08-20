@@ -25,7 +25,15 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("strict-island fixture"), ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request:   ctx.Request,
+			Status:    ctx.StatusCode(),
+			Title:     ctx.Title("strict-island fixture"),
+			Head:      ctx.Head(),
+			Body:      body,
+			BodyAttrs: ctx.BodyAttrsValue(),
+			Nonce:     ctx.Nonce(),
+		})
 	})
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
 		log.Fatal(err)

@@ -63,11 +63,11 @@ func TestNavigationRuntimePropagatesNonceToDynamicManagedScripts(t *testing.T) {
 	}
 }
 
-func TestNonceHelpersKeepEmptyNonceBackwardCompatible(t *testing.T) {
+func TestNonceHelpersKeepEmptyNonceStable(t *testing.T) {
 	if withEmpty, plain := gosx.RenderHTML(NavigationScriptWithNonce("")), gosx.RenderHTML(NavigationScript()); withEmpty != plain {
 		t.Fatalf("expected empty nonce navigation script to match plain output")
 	}
-	if withEmpty, plain := gosx.RenderHTML(HTMLDocumentWithNonce("Test Page", "", gosx.Text(""), gosx.Text("hello"))), gosx.RenderHTML(HTMLDocument("Test Page", gosx.Text(""), gosx.Text("hello"))); withEmpty != plain {
+	if withEmpty, plain := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Test Page", Nonce: "", Body: gosx.Text("hello")})), gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Test Page", Body: gosx.Text("hello")})); withEmpty != plain {
 		t.Fatalf("expected empty nonce HTML document to match plain output")
 	}
 }

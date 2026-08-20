@@ -76,6 +76,14 @@ type DocumentContext struct {
 	// Nonce is the per-request Content-Security-Policy script nonce, if any.
 	// GoSX's document shell attaches it to script elements it emits directly.
 	Nonce string
+
+	// documentContractPrepared is set only by the framework's request pipeline
+	// after it has appended the document contract to Head.  HTMLDocument uses
+	// this capability marker instead of trying to inspect arbitrary RawHTML in
+	// Head: a prepared/custom-delegated context owns its head exactly as given,
+	// while a direct context receives one framework-owned contract on a private
+	// copy of the context.
+	documentContractPrepared bool
 }
 
 // DeferredResolver resolves a streamed page fragment after the initial HTML
@@ -148,10 +156,8 @@ func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, 
 		doc.Bootstrap = doc.Runtime.Bootstrap
 		doc.RuntimeActive = doc.Runtime.Runtime
 	}
-	doc.Head = gosx.Fragment(
-		c.Head(),
-		documentContractNode(doc),
-	)
+	doc.Head = gosx.Fragment(c.Head(), documentContractNode(doc))
+	doc.documentContractPrepared = true
 	return doc
 }
 

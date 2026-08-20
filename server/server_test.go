@@ -295,7 +295,7 @@ func TestAppHeadDecoratorsRunInRegistrationOrder(t *testing.T) {
 }
 
 func TestHTMLDocument(t *testing.T) {
-	doc := HTMLDocument("Test Page", gosx.Text(""), gosx.Text("hello"))
+	doc := HTMLDocument(&DocumentContext{Title: "Test Page", Body: gosx.Text("hello")})
 	html := gosx.RenderHTML(doc)
 
 	if !strings.Contains(html, "<!DOCTYPE html>") {
@@ -317,14 +317,14 @@ func TestHTMLDocument(t *testing.T) {
 	}
 }
 
-func TestHTMLDocumentWithLanguage(t *testing.T) {
-	doc := HTMLDocumentWithLanguage("English Docs", " en-US ", gosx.Text(""), gosx.Text("hello"))
+func TestHTMLDocumentLanguageComposition(t *testing.T) {
+	doc := HTMLDocument(&DocumentContext{Title: "English Docs", Language: " en-US ", Body: gosx.Text("hello")})
 	html := gosx.RenderHTML(doc)
 
 	if !strings.Contains(html, `<html data-gosx-document="true" lang="en-US">`) {
 		t.Fatalf("expected language on the html element, got %q", html)
 	}
-	if withEmpty, plain := gosx.RenderHTML(HTMLDocumentWithLanguage("Docs", "", gosx.Text(""), gosx.Text("body"))), gosx.RenderHTML(HTMLDocument("Docs", gosx.Text(""), gosx.Text("body"))); withEmpty != plain {
+	if withEmpty, plain := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Body: gosx.Text("body")})), gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Language: " \t", Body: gosx.Text("body")})); withEmpty != plain {
 		t.Fatalf("expected empty language document to match plain output")
 	}
 }

@@ -316,7 +316,10 @@ func TestRouterErrorHandlerHandlesPanics(t *testing.T) {
 func TestRouterContextMetadataCanDriveLayout(t *testing.T) {
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Fallback"), ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request: ctx.Request, Status: ctx.StatusCode(), Title: ctx.Title("Fallback"), Head: ctx.Head(), Body: body,
+			BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+		})
 	})
 	router.Add(Route{
 		Pattern: "/docs",
@@ -359,7 +362,10 @@ func TestRouterContextMetadataCanDriveLayout(t *testing.T) {
 func TestRouterDeferredRegionStreamsIntoHTMLDocument(t *testing.T) {
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Deferred"), ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request: ctx.Request, Status: ctx.StatusCode(), Title: ctx.Title("Deferred"), Head: ctx.Head(), Body: body,
+			BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+		})
 	})
 	router.Add(Route{
 		Pattern: "/stream",

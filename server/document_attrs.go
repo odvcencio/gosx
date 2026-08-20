@@ -21,7 +21,7 @@ func documentHTMLAttrs(doc *DocumentContext) string {
 // documentBodyAttrs renders the framework's own body attributes plus any
 // app-supplied ones from Context.BodyAttrs (gosx#236), in that order, as a
 // single ` name="value"...` string for the hand-written <body> tag in
-// renderDocumentWithContext. App-supplied attributes go through
+// HTMLDocument. App-supplied attributes go through
 // gosx.RenderAttrs — not renderDocumentAttrValues's html.EscapeString-only
 // path — because they may carry non-string values (gosx.BoolAttr, a typed
 // value El would stringify); RenderAttrs is the same escaping renderAttrHTML

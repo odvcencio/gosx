@@ -27,7 +27,10 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Reload", ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request: ctx.Request, Status: ctx.StatusCode(), Title: "Reload", Head: ctx.Head(), Body: body,
+			BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+		})
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -63,7 +66,10 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Edit", ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request: ctx.Request, Status: ctx.StatusCode(), Title: "Edit", Head: ctx.Head(), Body: body,
+			BodyAttrs: ctx.BodyAttrsValue(), Nonce: ctx.Nonce(),
+		})
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)

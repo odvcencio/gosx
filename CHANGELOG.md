@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed: document composition has one explicit renderer
+
+- `server.HTMLDocument` now accepts a `*server.DocumentContext`, which is the
+  single document-shell entry point for titles, language, head content, body
+  content, body attributes, status, request metadata, and CSP nonce threading.
+- Titles are escaped as text, language values are trimmed and escaped, body
+  attributes compose with GoSX's framework attributes, and the framework owns
+  exactly one responsive viewport meta tag.
+- `HTMLDocument` treats its input context as immutable and retains a
+  request-prepared head. Direct contexts receive one framework-owned document
+  contract on a private copy, so custom renderers can delegate to
+  `HTMLDocument` without duplicating the contract or rewriting arbitrary
+  `RawHTML`.
+- The pre-v1 clean break removes the overloaded
+  `HTMLDocumentWithLanguage`, `HTMLDocumentWithNonce`, and
+  `HTMLDocumentWithBodyAttrs` helpers. Existing layouts should populate a
+  `server.DocumentContext` and call `server.HTMLDocument`.
+
 ### Added: a shared component call executes end to end for a strict caller
 
 - **A strict caller's shared component call now renders.** WP4 (v0.49.0)

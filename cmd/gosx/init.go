@@ -321,7 +321,15 @@ func main() {
 				{Rel: "stylesheet", Href: "/styles.css"},
 			},
 		})
-		return server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)
+		return server.HTMLDocument(&server.DocumentContext{
+			Request:   ctx.Request,
+			Status:    ctx.StatusCode(),
+			Title:     ctx.Title(appName),
+			Head:      ctx.Head(),
+			Body:      body,
+			BodyAttrs: ctx.BodyAttrsValue(),
+			Nonce:     ctx.Nonce(),
+		})
 	})
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
 		log.Fatal(err)
