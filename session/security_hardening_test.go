@@ -237,9 +237,10 @@ func TestSessionHostPrefixRequiresSecureRootPath(t *testing.T) {
 	}
 }
 
-// TestSessionOversizedCookieReportsError proves an oversized session reports a
-// clear error instead of writing a cookie the browser drops.
-func TestSessionOversizedCookieReportsError(t *testing.T) {
+// TestSessionOversizedCookieFailsClosed proves an oversized session reports a
+// clear error and replaces the pending success response instead of writing a
+// cookie the browser drops.
+func TestSessionOversizedCookieFailsClosed(t *testing.T) {
 	var reported []error
 	manager := MustNew("session-size-secret-value", Options{
 		OnError: func(err error) { reported = append(reported, err) },
@@ -257,6 +258,12 @@ func TestSessionOversizedCookieReportsError(t *testing.T) {
 
 	if cookies := res.Result().Cookies(); len(cookies) != 0 {
 		t.Fatalf("expected no cookie for an oversized session, got %d", len(cookies))
+	}
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", res.Code)
+	}
+	if res.Body.String() != sessionFailureBody {
+		t.Fatalf("body = %q, want generic terminal failure", res.Body.String())
 	}
 	if storeErr == nil {
 		t.Fatal("expected Store.Err to report the oversized session")
