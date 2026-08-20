@@ -65,6 +65,28 @@ var (
 	// ErrSessionTooLarge reports a session that exceeds MaxCookieSize. The
 	// manager refuses to write the cookie instead of losing the write later.
 	ErrSessionTooLarge = errors.New("session cookie exceeds the browser size limit")
+
+	// ErrInvalidCookie reports session cookie options or serialized state that
+	// cannot produce a valid Set-Cookie field. New rejects invalid static
+	// options; Commit repeats the validation at its transaction boundary.
+	ErrInvalidCookie = errors.New("invalid session cookie")
+
+	// ErrSessionCommitted reports a mutation attempted after the request's
+	// session was durably committed. A successful commit is terminal: allowing
+	// later changes would recreate the false-success window Commit closes.
+	ErrSessionCommitted = errors.New("session is already committed")
+
+	// ErrSessionMiddlewareRequired reports an explicit commit without the
+	// request-scoped Store and writer installed by Manager.Middleware.
+	ErrSessionMiddlewareRequired = errors.New("session middleware is required")
+
+	// ErrSessionWriterMismatch reports a Store committed through a response
+	// writer that does not belong to the same middleware invocation.
+	ErrSessionWriterMismatch = errors.New("response writer does not match the session request")
+
+	// ErrSessionCommitRequired reports a dirty session whose connection was
+	// about to be hijacked before its cookie was explicitly committed.
+	ErrSessionCommitRequired = errors.New("commit the session before hijacking the response")
 )
 
 // Options configures a cookie-backed session manager.
@@ -131,6 +153,17 @@ type Store struct {
 	dirty           bool
 	destroyed       bool
 	writeErr        error
+
+	// revision advances on every accepted mutation. Commit failures are
+	// cached by revision so an unchanged retry neither re-encodes nor reports
+	// the same error twice; changing the state permits a fresh attempt.
+	revision        uint64
+	attempted       bool
+	attemptRevision uint64
+	attemptErr      error
+	sealed          bool
+	terminal        bool
+	response        *responseWriter
 }
 
 // New creates a new cookie-backed session manager.
@@ -168,6 +201,9 @@ func New(secret string, opts Options) (*Manager, error) {
 	if err := validateHostPrefix(opts); err != nil {
 		return nil, err
 	}
+	if err := validateCookieOptions(opts); err != nil {
+		return nil, err
+	}
 	return &Manager{
 		secret:          []byte(secret),
 		previousSecrets: normalizePreviousSecrets(opts.PreviousSecrets),
@@ -175,6 +211,25 @@ func New(secret string, opts Options) (*Manager, error) {
 		now:             time.Now,
 		startedAt:       time.Now(),
 	}, nil
+}
+
+func validateCookieOptions(opts Options) error {
+	cookie := &http.Cookie{
+		Name:     opts.CookieName,
+		Value:    "validation",
+		Path:     opts.Path,
+		Domain:   opts.Domain,
+		Secure:   opts.Secure,
+		HttpOnly: opts.HTTPOnly,
+		SameSite: opts.SameSite,
+	}
+	if err := cookie.Valid(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidCookie, err)
+	}
+	if cookie.String() == "" {
+		return fmt.Errorf("%w: cookie options serialize to an empty header", ErrInvalidCookie)
+	}
+	return nil
 }
 
 // validateHostPrefix enforces the browser rules for the __Host- cookie name
@@ -221,12 +276,13 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		store := m.load(r)
 		ctx := context.WithValue(r.Context(), storeContextKey, store)
-		writer := &responseWriter{
+		core := &responseWriter{
 			ResponseWriter: w,
 			store:          store,
 		}
-		next.ServeHTTP(writer, r.WithContext(ctx))
-		writer.commitCookie()
+		store.response = core
+		next.ServeHTTP(wrapResponseWriter(core), r.WithContext(ctx))
+		core.finish()
 	})
 }
 
@@ -299,6 +355,17 @@ func Current(r *http.Request) *Store {
 	return store
 }
 
+// Commit synchronously persists and seals the current request's session.
+// Call it after the final session mutation and before writing a status or body
+// whenever the response claims persistence-dependent success.
+func Commit(w http.ResponseWriter, r *http.Request) error {
+	store := Current(r)
+	if store == nil {
+		return ErrSessionMiddlewareRequired
+	}
+	return store.Commit(w)
+}
+
 // Token returns the request CSRF token from the current session store.
 func Token(r *http.Request) string {
 	store := Current(r)
@@ -327,22 +394,21 @@ func FlashValues(r *http.Request) map[string][]any {
 }
 
 // AddFlash appends a flash value that will be available on the next request.
-func AddFlash(r *http.Request, key string, value any) bool {
+func AddFlash(r *http.Request, key string, value any) error {
 	store := Current(r)
 	if store == nil {
-		return false
+		return ErrSessionMiddlewareRequired
 	}
-	store.AddFlash(key, value)
-	return true
+	return store.AddFlash(key, value)
 }
 
 // Destroy marks the current request session for deletion.
-func Destroy(r *http.Request) {
+func Destroy(r *http.Request) error {
 	store := Current(r)
 	if store == nil {
-		return
+		return ErrSessionMiddlewareRequired
 	}
-	store.Destroy()
+	return store.Destroy()
 }
 
 // Value returns a session value by key.
@@ -392,25 +458,53 @@ func (s *Store) Decode(key string, dst any) bool {
 	return json.Unmarshal(data, dst) == nil
 }
 
-// Set stores a session value.
-func (s *Store) Set(key string, value any) {
+// Commit synchronously persists and seals this request's session. The supplied
+// writer must be the writer from the same Manager.Middleware invocation, or a
+// wrapper whose Unwrap chain reaches it. Commit never writes a response status.
+func (s *Store) Commit(w http.ResponseWriter) error {
 	if s == nil {
-		return
+		return ErrSessionMiddlewareRequired
+	}
+	if !writerContains(w, s.response) {
+		return ErrSessionWriterMismatch
+	}
+	return s.attemptCommit(w)
+}
+
+func (s *Store) beginMutation() error {
+	if s == nil {
+		return ErrSessionMiddlewareRequired
+	}
+	if s.sealed || s.terminal {
+		return ErrSessionCommitted
+	}
+	s.revision++
+	return nil
+}
+
+// Set stores a session value.
+func (s *Store) Set(key string, value any) error {
+	if err := s.beginMutation(); err != nil {
+		return err
 	}
 	if s.values == nil {
 		s.values = make(map[string]any)
 	}
 	s.values[key] = value
 	s.dirty = true
+	return nil
 }
 
 // Delete removes a session value.
-func (s *Store) Delete(key string) {
-	if s == nil || s.values == nil {
-		return
+func (s *Store) Delete(key string) error {
+	if err := s.beginMutation(); err != nil {
+		return err
 	}
-	delete(s.values, key)
+	if s.values != nil {
+		delete(s.values, key)
+	}
 	s.dirty = true
+	return nil
 }
 
 // Values returns a shallow copy of the store values.
@@ -426,9 +520,9 @@ func (s *Store) Values() map[string]any {
 }
 
 // AddFlash appends a flash value for the next request.
-func (s *Store) AddFlash(key string, value any) {
-	if s == nil {
-		return
+func (s *Store) AddFlash(key string, value any) error {
+	if err := s.beginMutation(); err != nil {
+		return err
 	}
 	if key == "" {
 		key = defaultFlashKey
@@ -438,6 +532,7 @@ func (s *Store) AddFlash(key string, value any) {
 	}
 	s.outgoingFlashes[key] = append(s.outgoingFlashes[key], value)
 	s.dirty = true
+	return nil
 }
 
 // Flashes returns the flash values loaded for this request.
@@ -469,15 +564,16 @@ func (s *Store) AllFlashes() map[string][]any {
 }
 
 // Destroy deletes the current session cookie.
-func (s *Store) Destroy() {
-	if s == nil {
-		return
+func (s *Store) Destroy() error {
+	if err := s.beginMutation(); err != nil {
+		return err
 	}
 	s.values = map[string]any{}
 	s.incomingFlashes = map[string][]any{}
 	s.outgoingFlashes = map[string][]any{}
 	s.dirty = true
 	s.destroyed = true
+	return nil
 }
 
 func (s *Store) ensureCSRFToken() string {
@@ -488,7 +584,9 @@ func (s *Store) ensureCSRFToken() string {
 		return token
 	}
 	token := randomToken(32)
-	s.Set(defaultCSRFKey, token)
+	if err := s.Set(defaultCSRFKey, token); err != nil {
+		return ""
+	}
 	return token
 }
 
@@ -522,8 +620,12 @@ func (m *Manager) load(r *http.Request) *Store {
 	}
 	if len(store.incomingFlashes) > 0 {
 		store.dirty = true
+		store.revision++
 	}
 	if refresh {
+		if !store.dirty {
+			store.revision++
+		}
 		store.dirty = true
 	}
 	return store
@@ -542,12 +644,18 @@ func (m *Manager) encode(store *Store) (string, error) {
 		Flashes:  store.outgoingFlashes,
 		IssuedAt: m.clock().UnixMilli(),
 	}
-	payload, err := json.Marshal(envelope)
-	if err != nil {
+	var payload bytes.Buffer
+	encoder := json.NewEncoder(&payload)
+	// Session payloads are signed (and optionally encrypted), not embedded in
+	// HTML. Avoid JSON's default \u00xx expansion for <, >, and &: it consumes
+	// scarce cookie bytes without adding protection at this transport layer.
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(envelope); err != nil {
 		return "", err
 	}
+	encodedPayload := bytes.TrimSuffix(payload.Bytes(), []byte{'\n'})
 	if m.opts.Encrypt {
-		encrypted, err := encryptSessionPayload(m.secret, payload)
+		encrypted, err := encryptSessionPayload(m.secret, encodedPayload)
 		if err != nil {
 			return "", err
 		}
@@ -555,8 +663,8 @@ func (m *Manager) encode(store *Store) (string, error) {
 		signature := sessionSignature(m.secret, []byte("v2."+body))
 		return "v2." + body + "." + base64.RawURLEncoding.EncodeToString(signature), nil
 	}
-	body := base64.RawURLEncoding.EncodeToString(payload)
-	signature := sessionSignature(m.secret, payload)
+	body := base64.RawURLEncoding.EncodeToString(encodedPayload)
+	signature := sessionSignature(m.secret, encodedPayload)
 	return body + "." + base64.RawURLEncoding.EncodeToString(signature), nil
 }
 
@@ -772,8 +880,24 @@ func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) error {
 	if w == nil || store == nil {
 		return nil
 	}
+	header, err := m.cookieHeader(store)
+	if err != nil {
+		return err
+	}
+	w.Header().Add("Set-Cookie", header)
+	return nil
+}
+
+// cookieHeader builds and validates the complete Set-Cookie value without
+// touching the response. This is the transaction's preflight boundary: every
+// failure remains recoverable until the caller adds the returned header.
+func (m *Manager) cookieHeader(store *Store) (string, error) {
+	if m == nil || store == nil {
+		return "", ErrSessionMiddlewareRequired
+	}
+	var cookie *http.Cookie
 	if store.destroyed || sessionEmpty(store) {
-		http.SetCookie(w, &http.Cookie{
+		cookie = &http.Cookie{
 			Name:     m.opts.CookieName,
 			Value:    "",
 			Path:     m.opts.Path,
@@ -783,31 +907,37 @@ func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) error {
 			Secure:   m.opts.Secure,
 			HttpOnly: m.opts.HTTPOnly,
 			SameSite: m.opts.SameSite,
-		})
-		return nil
+		}
+	} else {
+		encoded, err := m.encode(store)
+		if err != nil {
+			return "", err
+		}
+		cookie = &http.Cookie{
+			Name:     m.opts.CookieName,
+			Value:    encoded,
+			Path:     m.opts.Path,
+			Domain:   m.opts.Domain,
+			MaxAge:   int(m.opts.MaxAge / time.Second),
+			Expires:  m.clock().Add(m.opts.MaxAge),
+			Secure:   m.opts.Secure,
+			HttpOnly: m.opts.HTTPOnly,
+			SameSite: m.opts.SameSite,
+		}
 	}
-	encoded, err := m.encode(store)
-	if err != nil {
-		return err
+	if err := cookie.Valid(); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidCookie, err)
 	}
-	cookie := &http.Cookie{
-		Name:     m.opts.CookieName,
-		Value:    encoded,
-		Path:     m.opts.Path,
-		Domain:   m.opts.Domain,
-		MaxAge:   int(m.opts.MaxAge / time.Second),
-		Expires:  m.clock().Add(m.opts.MaxAge),
-		Secure:   m.opts.Secure,
-		HttpOnly: m.opts.HTTPOnly,
-		SameSite: m.opts.SameSite,
+	header := cookie.String()
+	if header == "" {
+		return "", fmt.Errorf("%w: cookie serialized to an empty header", ErrInvalidCookie)
 	}
 	// Report an oversized cookie. A browser drops a cookie above the RFC 6265
 	// budget without any signal, so the session would vanish at random.
-	if size := len(cookie.String()); size > MaxCookieSize {
-		return fmt.Errorf("%w: %d of %d bytes", ErrSessionTooLarge, size, MaxCookieSize)
+	if size := len(header); size > MaxCookieSize {
+		return "", fmt.Errorf("%w: %d of %d bytes", ErrSessionTooLarge, size, MaxCookieSize)
 	}
-	http.SetCookie(w, cookie)
-	return nil
+	return header, nil
 }
 
 func (m *Manager) reportError(err error) {
@@ -839,42 +969,91 @@ func sessionEmpty(store *Store) bool {
 
 type responseWriter struct {
 	http.ResponseWriter
-	store     *Store
-	committed bool
+	store       *Store
+	wroteHeader bool
+	failed      bool
 }
 
 func (w *responseWriter) WriteHeader(status int) {
-	w.commitCookie()
+	if status < 100 || status > 999 {
+		panic(fmt.Sprintf("invalid WriteHeader code %d", status))
+	}
+	if w.wroteHeader || w.failed {
+		return
+	}
+	// Informational responses do not end the handler's opportunity to mutate
+	// or commit its session. Status 101 switches protocols and is final.
+	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
+		// An earlier explicit Commit staged the session cookie. Go's server
+		// serializes current headers with each informational response, so hide
+		// every cookie for the 1xx write and restore it for the final response.
+		header := w.ResponseWriter.Header()
+		cookies := append([]string(nil), header.Values("Set-Cookie")...)
+		header.Del("Set-Cookie")
+		w.ResponseWriter.WriteHeader(status)
+		for _, cookie := range cookies {
+			header.Add("Set-Cookie", cookie)
+		}
+		return
+	}
+	if err := w.store.attemptCommit(w.ResponseWriter); err != nil {
+		w.failSessionResponse()
+		return
+	}
+	w.wroteHeader = true
 	w.ResponseWriter.WriteHeader(status)
 }
 
 func (w *responseWriter) Write(data []byte) (int, error) {
-	if !w.committed {
+	if w.failed {
+		return len(data), nil
+	}
+	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
+	}
+	if w.failed {
+		return len(data), nil
 	}
 	return w.ResponseWriter.Write(data)
 }
 
-func (w *responseWriter) Flush() {
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		if !w.committed {
-			w.WriteHeader(http.StatusOK)
-		}
-		flusher.Flush()
+func (w *responseWriter) flushError() error {
+	if !w.wroteHeader && !w.failed {
+		w.WriteHeader(http.StatusOK)
 	}
+	if flusher, ok := w.ResponseWriter.(interface{ FlushError() error }); ok {
+		return flusher.FlushError()
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+		return nil
+	}
+	return http.ErrNotSupported
 }
 
-func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+func (w *responseWriter) hijack() (net.Conn, *bufio.ReadWriter, error) {
 	hijacker, ok := w.ResponseWriter.(http.Hijacker)
 	if !ok {
 		return nil, nil, fmt.Errorf("response writer does not support hijacking")
 	}
-	return hijacker.Hijack()
+	if w.store != nil && !w.store.sealed {
+		if w.store.dirty {
+			return nil, nil, ErrSessionCommitRequired
+		}
+	}
+	conn, readWriter, err := hijacker.Hijack()
+	if err == nil && w.store != nil {
+		// A clean Store has no cookie work to lose. Seal only after the
+		// underlying hijack succeeds; a failed hijack leaves normal HTTP open.
+		w.store.sealed = true
+	}
+	return conn, readWriter, err
 }
 
-func (w *responseWriter) Push(target string, opts *http.PushOptions) error {
+func (w *responseWriter) push(target string, opts *http.PushOptions) error {
 	if pusher, ok := w.ResponseWriter.(http.Pusher); ok {
-		w.commitCookie()
+		// A pushed request has its own response. Pushing must not prematurely
+		// commit or seal the parent request's session.
 		return pusher.Push(target, opts)
 	}
 	return http.ErrNotSupported
@@ -884,19 +1063,187 @@ func (w *responseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-func (w *responseWriter) commitCookie() {
-	if w.committed {
+func (w *responseWriter) sessionCore() *responseWriter { return w }
+
+// wrapResponseWriter exposes only response capabilities the underlying writer
+// can actually perform. Flush capability includes the newer FlushError method;
+// the wrapper exposes both forms so handlers and http.ResponseController share
+// the same session preflight.
+func wrapResponseWriter(core *responseWriter) http.ResponseWriter {
+	_, flush := core.ResponseWriter.(http.Flusher)
+	if !flush {
+		_, flush = core.ResponseWriter.(interface{ FlushError() error })
+	}
+	_, hijack := core.ResponseWriter.(http.Hijacker)
+	_, push := core.ResponseWriter.(http.Pusher)
+
+	switch {
+	case flush && hijack && push:
+		return &flushHijackPushResponseWriter{responseWriter: core}
+	case flush && hijack:
+		return &flushHijackResponseWriter{responseWriter: core}
+	case flush && push:
+		return &flushPushResponseWriter{responseWriter: core}
+	case hijack && push:
+		return &hijackPushResponseWriter{responseWriter: core}
+	case flush:
+		return &flushResponseWriter{responseWriter: core}
+	case hijack:
+		return &hijackResponseWriter{responseWriter: core}
+	case push:
+		return &pushResponseWriter{responseWriter: core}
+	default:
+		return core
+	}
+}
+
+type flushResponseWriter struct{ *responseWriter }
+
+func (w *flushResponseWriter) Flush()            { _ = w.flushError() }
+func (w *flushResponseWriter) FlushError() error { return w.flushError() }
+
+type hijackResponseWriter struct{ *responseWriter }
+
+func (w *hijackResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.hijack()
+}
+
+type pushResponseWriter struct{ *responseWriter }
+
+func (w *pushResponseWriter) Push(target string, opts *http.PushOptions) error {
+	return w.push(target, opts)
+}
+
+type flushHijackResponseWriter struct{ *responseWriter }
+
+func (w *flushHijackResponseWriter) Flush()            { _ = w.flushError() }
+func (w *flushHijackResponseWriter) FlushError() error { return w.flushError() }
+func (w *flushHijackResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.hijack()
+}
+
+type flushPushResponseWriter struct{ *responseWriter }
+
+func (w *flushPushResponseWriter) Flush()            { _ = w.flushError() }
+func (w *flushPushResponseWriter) FlushError() error { return w.flushError() }
+func (w *flushPushResponseWriter) Push(target string, opts *http.PushOptions) error {
+	return w.push(target, opts)
+}
+
+type hijackPushResponseWriter struct{ *responseWriter }
+
+func (w *hijackPushResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.hijack()
+}
+func (w *hijackPushResponseWriter) Push(target string, opts *http.PushOptions) error {
+	return w.push(target, opts)
+}
+
+type flushHijackPushResponseWriter struct{ *responseWriter }
+
+func (w *flushHijackPushResponseWriter) Flush()            { _ = w.flushError() }
+func (w *flushHijackPushResponseWriter) FlushError() error { return w.flushError() }
+func (w *flushHijackPushResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return w.hijack()
+}
+func (w *flushHijackPushResponseWriter) Push(target string, opts *http.PushOptions) error {
+	return w.push(target, opts)
+}
+
+func (w *responseWriter) finish() {
+	if w == nil || w.wroteHeader || w.failed {
 		return
 	}
-	w.committed = true
-	if w.store == nil || !w.store.dirty {
+	if err := w.store.attemptCommit(w.ResponseWriter); err != nil {
+		w.failSessionResponse()
+	}
+}
+
+const sessionFailureBody = "Internal Server Error\n"
+
+func (w *responseWriter) failSessionResponse() {
+	if w == nil || w.wroteHeader || w.failed {
 		return
 	}
-	if err := w.store.manager.writeCookie(w.ResponseWriter, w.store); err != nil {
-		w.store.writeErr = err
-		w.store.manager.reportError(err)
+	w.failed = true
+	if w.store != nil {
+		w.store.terminal = true
 	}
-	w.store.dirty = false
+	header := w.ResponseWriter.Header()
+	header.Del("Location")
+	header.Del("Content-Length")
+	header.Del("Content-Encoding")
+	header.Del("Content-Range")
+	header.Del("Accept-Ranges")
+	header.Del("ETag")
+	header.Del("Last-Modified")
+	header.Del("Trailer")
+	header.Del("Set-Cookie")
+	header.Set("Content-Type", "text/plain; charset=utf-8")
+	header.Set("Cache-Control", "no-store")
+	header.Set("X-Content-Type-Options", "nosniff")
+	w.ResponseWriter.WriteHeader(http.StatusInternalServerError)
+	_, _ = io.WriteString(w.ResponseWriter, sessionFailureBody)
+}
+
+func (s *Store) attemptCommit(destination http.ResponseWriter) error {
+	if s == nil || s.manager == nil || s.response == nil {
+		return ErrSessionMiddlewareRequired
+	}
+	if s.sealed {
+		return nil
+	}
+	if s.terminal {
+		if s.attemptErr != nil {
+			return s.attemptErr
+		}
+		return ErrSessionCommitted
+	}
+	if s.attempted && s.attemptRevision == s.revision {
+		return s.attemptErr
+	}
+	s.attempted = true
+	s.attemptRevision = s.revision
+
+	if !s.dirty {
+		s.attemptErr = nil
+		s.writeErr = nil
+		s.sealed = true
+		return nil
+	}
+	if err := s.manager.writeCookie(destination, s); err != nil {
+		s.attemptErr = err
+		s.writeErr = err
+		s.manager.reportError(err)
+		return err
+	}
+
+	s.dirty = false
+	s.attemptErr = nil
+	s.writeErr = nil
+	s.sealed = true
+	return nil
+}
+
+func writerContains(w http.ResponseWriter, target *responseWriter) bool {
+	if w == nil || target == nil {
+		return false
+	}
+	current := w
+	for range 64 {
+		if carrier, ok := current.(interface{ sessionCore() *responseWriter }); ok && carrier.sessionCore() == target {
+			return true
+		}
+		unwrapper, ok := current.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return false
+		}
+		current = unwrapper.Unwrap()
+		if current == nil {
+			return false
+		}
+	}
+	return false
 }
 
 func csrfProtectedMethod(method string) bool {
