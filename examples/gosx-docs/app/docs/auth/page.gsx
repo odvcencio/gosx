@@ -30,6 +30,15 @@ func Page() Node {
 		<p>
 			Register session middleware before auth middleware. Both sign-in state and pending auth ceremonies are stored in the request session.
 		</p>
+		<p>
+			Built-in auth handlers explicitly call
+			<span class="inline-code">session.Commit(w, r)</span>
+			before JSON success or redirects. If you call
+			<span class="inline-code">Begin</span>
+			,
+			<span class="inline-code">Callback</span>
+			, or another low-level ceremony method yourself, commit after all mutations and before the response; a cookie-size failure becomes a terminal non-3xx 500.
+		</p>
 		<section id="session-demo" class="demo-well" aria-labelledby="session-demo-title">
 			<p class="demo-well__label">Live session-backed action</p>
 			<h3 id="session-demo-title">Sign in to this documentation route</h3>
@@ -147,6 +156,9 @@ func Page() Node {
 			Google and GitHub provider constructors fill their standard endpoints. Custom
 			<span class="inline-code">OAuthProvider</span>
 			values and user resolvers are supported. GoSX stores an expiring state record in the session, validates the callback, and uses PKCE S256 for the authorization-code exchange.
+		</p>
+		<p>
+			OAuth ceremony state is a direct, pre-v1 map keyed by random state, capped at two live entries. Each record stores the provider, verifier, canonical return path, and Unix-millisecond expiry; there is no legacy envelope or mixed-version decoder. Unknown callbacks leave other live tabs intact, while a matched state is consumed before callback checks and exchange work.
 		</p>
 		<h2 id="protected-routes">Protected routes</h2>
 		<CodeBlock lang="go" source={data.guardSample} />

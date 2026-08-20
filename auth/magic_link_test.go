@@ -37,7 +37,7 @@ func TestMagicLinkCallbackSignsIn(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))))
 
-	body := bytes.NewBufferString(`{"email":"ada@example.com","next":"/admin"}`)
+	body := bytes.NewBufferString(`{"email":"ada@example.com","next":"/draft//room/../admin?tab=1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/auth/magic-link/request", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -56,8 +56,8 @@ func TestMagicLinkCallbackSignsIn(t *testing.T) {
 	if callbackRes.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d", callbackRes.Code)
 	}
-	if location := callbackRes.Header().Get("Location"); location != "/admin" {
-		t.Fatalf("expected redirect to /admin, got %q", location)
+	if location := callbackRes.Header().Get("Location"); location != "/draft/admin?tab=1" {
+		t.Fatalf("expected exact canonical redirect, got %q", location)
 	}
 
 	var sessionCookie *http.Cookie
@@ -80,7 +80,58 @@ func TestMagicLinkCallbackSignsIn(t *testing.T) {
 	}
 }
 
-func TestMagicLinkSanitizesRedirectTarget(t *testing.T) {
+func TestMagicLinkCanonicalizesConfiguredTargetsAndRejectsUnsafeNext(t *testing.T) {
+	sessions := session.MustNew("magic-link-return-path-secret", session.Options{})
+	authn := New(sessions, Options{})
+	m := authn.MagicLinks(MagicLinkOptions{
+		BaseURL:     "https://app.example",
+		SuccessPath: "/success//flow/../done",
+		FailurePath: "//evil.example/failure",
+	})
+	if m.successPath != "/success/done" {
+		t.Fatalf("successPath = %q, want canonical configured path", m.successPath)
+	}
+	if m.failurePath != "/" {
+		t.Fatalf("failurePath = %q, want root fallback", m.failurePath)
+	}
+
+	var delivery MagicLinkDelivery
+	issue := sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		delivery, err = m.Issue(r, "ada@example.com", "/draft%0aLocation:%20/evil")
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	issue.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/issue", nil))
+	if delivery.Next != "/" {
+		t.Fatalf("unsafe Next = %q, want root fallback", delivery.Next)
+	}
+
+	var protocolDelivery MagicLinkDelivery
+	protocolIssue := sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		protocolDelivery, err = m.Issue(r, "ada@example.com", "//evil.example/steal")
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	protocolIssue.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/issue", nil))
+	if protocolDelivery.Next != "/" {
+		t.Fatalf("protocol-relative Next = %q, want root fallback", protocolDelivery.Next)
+	}
+
+	callback := sessions.Middleware(m.CallbackHandler())
+	res := httptest.NewRecorder()
+	callback.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/auth/magic-link?token="+delivery.Token, nil))
+	if location := res.Header().Get("Location"); location != "/" {
+		t.Fatalf("unsafe Next redirect = %q, want exact root fallback", location)
+	}
+}
+
+func TestMagicLinkUnsafeNextUsesRootFallback(t *testing.T) {
 	sessions := session.MustNew("magic-link-sanitize-secret", session.Options{})
 	authn := New(sessions, Options{})
 	magic := authn.MagicLinks(MagicLinkOptions{
@@ -103,16 +154,16 @@ func TestMagicLinkSanitizesRedirectTarget(t *testing.T) {
 	if res.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", res.Code)
 	}
-	if delivery.Next != "" {
-		t.Fatalf("expected unsafe next to be dropped, got %q", delivery.Next)
+	if delivery.Next != "/" {
+		t.Fatalf("expected unsafe next to use root fallback, got %q", delivery.Next)
 	}
 
 	callback := sessions.Middleware(magic.CallbackHandler())
 	callbackReq := httptest.NewRequest(http.MethodGet, "/auth/magic-link?token="+delivery.Token, nil)
 	callbackRes := httptest.NewRecorder()
 	callback.ServeHTTP(callbackRes, callbackReq)
-	if callbackRes.Header().Get("Location") != "/safe" {
-		t.Fatalf("expected fallback redirect, got %q", callbackRes.Header().Get("Location"))
+	if callbackRes.Header().Get("Location") != "/" {
+		t.Fatalf("expected invalid next redirect to root, got %q", callbackRes.Header().Get("Location"))
 	}
 }
 

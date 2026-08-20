@@ -17,8 +17,16 @@
 //
 // Require answers in whichever form the caller asked for. A request that wants
 // JSON gets 401 and {"error":"authentication required"}; anything else is
-// redirected to Options.LoginPath with the original path preserved, so the
-// visitor lands back where they were aiming.
+// redirected to Options.LoginPath with a canonical same-origin next target for
+// GET and HEAD requests. Mutation requests do not preserve their request URI,
+// because redirecting back to a non-idempotent operation would replay a flow
+// the browser cannot safely resume.
+//
+// SafeReturnPath is the shared return-target primitive used by Require and all
+// built-in sign-in flows. It accepts and canonicalizes only a bounded,
+// root-relative request URI (path plus optional query), returning ("", false)
+// for unsafe input. Callers must apply any application-specific route policy
+// to the canonical returned value and choose their own fallback.
 //
 // # Three ways to sign in, all optional
 //
@@ -38,6 +46,33 @@
 // RegisterHandler/LoginHandler) and the underlying calls (Issue/Consume,
 // Begin/Callback, BeginRegistration/FinishRegistration) for an application that
 // wants to own the routes and the responses.
+//
+// # Session commit boundary
+//
+// Built-in BeginHandler, CallbackHandler, magic-link handlers, and WebAuthn
+// handlers call session.Commit after their final session mutation and before
+// returning JSON or redirecting. A cookie-size or serialization failure is
+// therefore terminal: the session middleware emits a generic non-3xx 500 and
+// strips Location and stale response metadata instead of claiming success.
+//
+// When an application calls the lower-level Issue/Consume, Begin/Callback, or
+// WebAuthn ceremony methods and writes its own response, it must call
+// session.Commit(w, r) after all session mutations and before the first final
+// status or body byte. Automatic middleware finalization remains a fallback,
+// but custom wrappers should make this boundary explicit on every
+// persistence-dependent success path.
+//
+// OAuth ceremony state is one direct session map at the configured session
+// key, keyed by random OAuth state. Each record contains only Provider,
+// Verifier, canonical Next, and Unix-millisecond ExpiresAt; the key is not
+// duplicated in the record. The map is always capped at two live entries.
+// Begin prunes entries whose expiry is at or before now and evicts the oldest
+// expiry deterministically, breaking ties lexically by state. Callback looks
+// up an exact state, consumes a match before provider, expiry, code exchange,
+// or user-info work, and leaves unknown states untouched. Expired and
+// provider-mismatched matches are consumed. This is a deliberate pre-v1 clean
+// break: no envelope, version field, legacy decoder, mixed writer, or migration
+// path is supported, and in-flight ceremonies may be retried after an upgrade.
 //
 // # The memory stores are for development
 //

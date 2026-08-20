@@ -18,6 +18,14 @@ func Page() Node {
 			<span class="inline-code">user</span>
 			.
 		</p>
+		<p>
+			Built-in auth handlers commit session mutations with
+			<span class="inline-code">session.Commit(w, r)</span>
+			before JSON success or redirects. When you use low-level ceremony methods in a custom wrapper, commit after all mutations and before writing the response; a failed cookie write must remain a terminal non-3xx error.
+		</p>
+		<p>
+			OAuth uses one direct, pre-v1 map keyed by random state, capped at two live entries. Records contain the provider, verifier, canonical return path, and Unix-millisecond expiry; matched states are consumed before exchange work, while unknown states preserve other browser tabs.
+		</p>
 		<div class="note-grid">
 			<div class="note">
 				<strong>Current user</strong>

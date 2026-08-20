@@ -285,41 +285,6 @@ func TestWebAuthnForgedForwardedHostFailsOriginCheck(t *testing.T) {
 	}
 }
 
-// TestSanitizeRedirectTarget covers the open-redirect shapes that browsers
-// normalize, including the backslash form that passed before the fix.
-func TestSanitizeRedirectTarget(t *testing.T) {
-	cases := []struct {
-		name  string
-		value string
-		want  string
-	}{
-		{name: "empty", value: "", want: ""},
-		{name: "plain path", value: "/admin", want: "/admin"},
-		{name: "path with query", value: "/admin?tab=1", want: "/admin?tab=1"},
-		{name: "backslash host", value: `/\evil.example`, want: ""},
-		{name: "backslash slash host", value: `/\/evil.example`, want: ""},
-		{name: "double slash host", value: "//evil.example", want: ""},
-		{name: "absolute https", value: "https://evil.example", want: ""},
-		{name: "absolute http", value: "http://evil.example", want: ""},
-		{name: "encoded backslash", value: "/%5cevil.example", want: ""},
-		{name: "encoded backslash upper", value: "/%5Cevil.example", want: ""},
-		{name: "tab inside", value: "/\tevil.example", want: ""},
-		{name: "newline inside", value: "/admin\n/evil", want: ""},
-		{name: "carriage return", value: "/admin\r\nLocation:/evil", want: ""},
-		{name: "relative path", value: "admin", want: ""},
-		{name: "scheme relative with backslash", value: `\\evil.example`, want: ""},
-		{name: "javascript scheme", value: "javascript:alert(1)", want: ""},
-		{name: "userinfo", value: "/@evil.example", want: "/@evil.example"},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			if got := sanitizeRedirectTarget(testCase.value); got != testCase.want {
-				t.Fatalf("sanitizeRedirectTarget(%q) = %q, want %q", testCase.value, got, testCase.want)
-			}
-		})
-	}
-}
-
 // TestRedirectBackTargetDropsCrossSiteReferer proves a cross-site Referer
 // cannot steer the redirect that follows a magic-link request.
 func TestRedirectBackTargetDropsCrossSiteReferer(t *testing.T) {

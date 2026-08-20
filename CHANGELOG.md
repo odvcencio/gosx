@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed: OAuth and auth session transaction safety
+
+- OAuth ceremony state now uses the pre-v1 direct `auth.oauth` map keyed by random state. It stores only provider, verifier, canonical next path, and Unix-millisecond expiry, with two live entries, deterministic pruning/eviction, exact-match consumption, and no legacy envelope or mixed decoder.
+- Built-in OAuth, magic-link, and WebAuthn handlers commit their final session mutations before JSON success or redirects. Commit failures fail closed as terminal non-3xx responses without a stale `Location` header.
+- `auth.SafeReturnPath` is the shared bounded canonicalizer for OAuth, magic links, WebAuthn, and protected-route navigation; custom low-level wrappers must commit after all mutations and before their final response.
+
 ### Added: a shared component call executes end to end for a strict caller
 
 - **A strict caller's shared component call now renders.** WP4 (v0.49.0)
