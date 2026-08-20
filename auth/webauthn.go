@@ -329,6 +329,8 @@ func NewWebAuthn(manager *Manager, opts WebAuthnOptions) *WebAuthn {
 	if opts.FailurePath == "" {
 		opts.FailurePath = "/"
 	}
+	opts.SuccessPath = returnPathOr(opts.SuccessPath, "/")
+	opts.FailurePath = returnPathOr(opts.FailurePath, "/")
 	if opts.FlashKey == "" {
 		opts.FlashKey = "auth.webauthn"
 	}
@@ -400,7 +402,7 @@ func (w *WebAuthn) BeginRegistration(r *http.Request, user User, next string) (W
 		Kind:      webAuthnStateRegister,
 		Challenge: challenge,
 		User:      user,
-		Next:      sanitizeRedirectTarget(next),
+		Next:      requestedReturnPath(next),
 		ExpiresAt: w.now().Add(w.ttl),
 	}); err != nil {
 		return WebAuthnCreationOptions{}, err
@@ -496,11 +498,13 @@ func (w *WebAuthn) FinishRegistration(r *http.Request, payload WebAuthnRegistrat
 		return WebAuthnCredential{}, "", err
 	}
 	if w.manager != nil {
-		_ = w.manager.SignIn(r, state.User)
+		if !w.manager.SignIn(r, state.User) {
+			return WebAuthnCredential{}, "", fmt.Errorf("session middleware required before webauthn registration")
+		}
 	}
-	target := state.Next
-	if target == "" {
-		target = w.successPath
+	target := w.successPath
+	if state.Next != "" {
+		target = returnPathOr(state.Next, "/")
 	}
 	return credential, target, nil
 }
@@ -537,7 +541,7 @@ func (w *WebAuthn) BeginAuthentication(r *http.Request, login string, next strin
 		Kind:      webAuthnStateLogin,
 		Challenge: challenge,
 		User:      user,
-		Next:      sanitizeRedirectTarget(next),
+		Next:      requestedReturnPath(next),
 		ExpiresAt: w.now().Add(w.ttl),
 	}
 	options := WebAuthnRequestOptions{
@@ -634,9 +638,9 @@ func (w *WebAuthn) FinishAuthentication(r *http.Request, payload WebAuthnAuthent
 	if w.manager == nil || !w.manager.SignIn(r, credential.User) {
 		return User{}, "", fmt.Errorf("session middleware required before webauthn authentication")
 	}
-	target := state.Next
-	if target == "" {
-		target = w.successPath
+	target := w.successPath
+	if state.Next != "" {
+		target = returnPathOr(state.Next, "/")
 	}
 	return credential.User, target, nil
 }
@@ -658,6 +662,9 @@ func (w *WebAuthn) RegisterOptionsHandler() http.Handler {
 			writeWebAuthnError(wr, http.StatusBadRequest, err)
 			return
 		}
+		if err := commitSessionIfPresent(wr, r); err != nil {
+			return
+		}
 		writeWebAuthnJSON(wr, http.StatusOK, map[string]any{
 			"ok":      true,
 			"options": options,
@@ -675,13 +682,21 @@ func (w *WebAuthn) RegisterHandler() http.Handler {
 		}
 		credential, target, err := w.FinishRegistration(r, payload)
 		if err != nil {
+			if commitErr := commitSessionIfPresent(wr, r); commitErr != nil {
+				return
+			}
 			writeWebAuthnError(wr, http.StatusUnauthorized, err)
 			return
 		}
-		addMagicLinkFlash(r, w.flashKey, map[string]any{
+		if flashErr := addMagicLinkFlash(r, w.flashKey, map[string]any{
 			"status": "registered",
 			"id":     credential.ID,
-		})
+		}); flashErr != nil {
+			return
+		}
+		if err := commitSessionIfPresent(wr, r); err != nil {
+			return
+		}
 		writeWebAuthnJSON(wr, http.StatusOK, map[string]any{
 			"ok":         true,
 			"credential": credential,
@@ -703,6 +718,9 @@ func (w *WebAuthn) LoginOptionsHandler() http.Handler {
 			writeWebAuthnError(wr, http.StatusBadRequest, err)
 			return
 		}
+		if err := commitSessionIfPresent(wr, r); err != nil {
+			return
+		}
 		writeWebAuthnJSON(wr, http.StatusOK, map[string]any{
 			"ok":      true,
 			"options": options,
@@ -720,13 +738,21 @@ func (w *WebAuthn) LoginHandler() http.Handler {
 		}
 		user, target, err := w.FinishAuthentication(r, payload)
 		if err != nil {
+			if commitErr := commitSessionIfPresent(wr, r); commitErr != nil {
+				return
+			}
 			writeWebAuthnError(wr, http.StatusUnauthorized, err)
 			return
 		}
-		addMagicLinkFlash(r, w.flashKey, map[string]any{
+		if flashErr := addMagicLinkFlash(r, w.flashKey, map[string]any{
 			"status": "signed_in",
 			"email":  user.Email,
-		})
+		}); flashErr != nil {
+			return
+		}
+		if err := commitSessionIfPresent(wr, r); err != nil {
+			return
+		}
 		writeWebAuthnJSON(wr, http.StatusOK, map[string]any{
 			"ok":     true,
 			"user":   user,
@@ -740,8 +766,7 @@ func (w *WebAuthn) saveState(r *http.Request, state webAuthnState) error {
 	if store == nil {
 		return fmt.Errorf("session middleware required before webauthn")
 	}
-	store.Set(w.sessionKey, state)
-	return nil
+	return store.Set(w.sessionKey, state)
 }
 
 func (w *WebAuthn) consumeState(r *http.Request, kind webAuthnStateKind) (webAuthnState, error) {
@@ -753,7 +778,9 @@ func (w *WebAuthn) consumeState(r *http.Request, kind webAuthnStateKind) (webAut
 	if !store.Decode(w.sessionKey, &state) {
 		return webAuthnState{}, ErrWebAuthnChallengeInvalid
 	}
-	store.Delete(w.sessionKey)
+	if err := store.Delete(w.sessionKey); err != nil {
+		return webAuthnState{}, err
+	}
 	if state.Kind != kind {
 		return webAuthnState{}, ErrWebAuthnChallengeInvalid
 	}

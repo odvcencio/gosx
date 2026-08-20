@@ -186,6 +186,8 @@ func NewMagicLinks(manager *Manager, opts MagicLinkOptions) *MagicLinks {
 	if opts.FailurePath == "" {
 		opts.FailurePath = opts.Path
 	}
+	opts.SuccessPath = returnPathOr(opts.SuccessPath, "/")
+	opts.FailurePath = returnPathOr(opts.FailurePath, "/")
 	if opts.FlashKey == "" {
 		opts.FlashKey = "auth.magic_link"
 	}
@@ -253,7 +255,7 @@ func (m *MagicLinks) Issue(r *http.Request, email string, next string) (MagicLin
 		Token:     token,
 		Email:     email,
 		User:      user,
-		Next:      sanitizeRedirectTarget(next),
+		Next:      requestedReturnPath(next),
 		ExpiresAt: expiresAt,
 	}
 	if err := m.store.Save(record); err != nil {
@@ -302,9 +304,9 @@ func (m *MagicLinks) Consume(r *http.Request, token string) (User, string, error
 	if m.manager == nil || !m.manager.SignIn(r, record.User) {
 		return User{}, "", fmt.Errorf("session middleware required before magic link consume")
 	}
-	target := sanitizeRedirectTarget(record.Next)
-	if target == "" {
-		target = m.successPath
+	target := m.successPath
+	if record.Next != "" {
+		target = returnPathOr(record.Next, "/")
 	}
 	return record.User, target, nil
 }
@@ -330,6 +332,9 @@ func (m *MagicLinks) RequestHandler() http.Handler {
 		}
 
 		if requestWantsJSON(r) {
+			if err := commitSessionIfPresent(w, r); err != nil {
+				return
+			}
 			payload := map[string]any{
 				"ok":        true,
 				"email":     delivery.Email,
@@ -350,7 +355,12 @@ func (m *MagicLinks) RequestHandler() http.Handler {
 		if m.sender == nil {
 			flash["url"] = delivery.URL
 		}
-		addMagicLinkFlash(r, m.flashKey, flash)
+		if err := addMagicLinkFlash(r, m.flashKey, flash); err != nil {
+			return
+		}
+		if err := commitSessionIfPresent(w, r); err != nil {
+			return
+		}
 		http.Redirect(w, r, redirectBackTarget(r, m.failurePath), http.StatusSeeOther)
 	})
 }
@@ -361,18 +371,29 @@ func (m *MagicLinks) CallbackHandler() http.Handler {
 		user, target, err := m.Consume(r, r.URL.Query().Get("token"))
 		if err != nil {
 			if requestWantsJSON(r) {
+				if err := commitSessionIfPresent(w, r); err != nil {
+					return
+				}
 				writeMagicLinkError(w, r, http.StatusUnauthorized, err)
 				return
 			}
-			addMagicLinkFlash(r, m.flashKey, map[string]any{
+			if flashErr := addMagicLinkFlash(r, m.flashKey, map[string]any{
 				"status": "error",
 				"error":  err.Error(),
-			})
+			}); flashErr != nil {
+				return
+			}
+			if err := commitSessionIfPresent(w, r); err != nil {
+				return
+			}
 			http.Redirect(w, r, m.failurePath, http.StatusSeeOther)
 			return
 		}
 
 		if requestWantsJSON(r) {
+			if err := commitSessionIfPresent(w, r); err != nil {
+				return
+			}
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"ok":     true,
@@ -382,10 +403,15 @@ func (m *MagicLinks) CallbackHandler() http.Handler {
 			return
 		}
 
-		addMagicLinkFlash(r, m.flashKey, map[string]any{
+		if err := addMagicLinkFlash(r, m.flashKey, map[string]any{
 			"status": "signed_in",
 			"email":  user.Email,
-		})
+		}); err != nil {
+			return
+		}
+		if err := commitSessionIfPresent(w, r); err != nil {
+			return
+		}
 		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
 }
@@ -446,10 +472,11 @@ func writeMagicLinkError(w http.ResponseWriter, r *http.Request, status int, err
 	http.Error(w, err.Error(), status)
 }
 
-func addMagicLinkFlash(r *http.Request, key string, value any) {
+func addMagicLinkFlash(r *http.Request, key string, value any) error {
 	if store := session.Current(r); store != nil {
-		store.AddFlash(key, value)
+		return store.AddFlash(key, value)
 	}
+	return nil
 }
 
 // redirectBackTarget returns a same-site path to return the browser to. It
@@ -461,16 +488,16 @@ func redirectBackTarget(r *http.Request, fallback string) string {
 			return target
 		}
 		if r.URL != nil && r.URL.Path != "" {
-			return r.URL.Path
+			return returnPathOr(r.URL.Path, "/")
 		}
 	}
-	if fallback == "" {
-		return "/"
-	}
-	return fallback
+	return returnPathOr(fallback, "/")
 }
 
 func sameSiteRefererPath(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
 	referer := strings.TrimSpace(r.Header.Get("Referer"))
 	if referer == "" {
 		return ""
@@ -489,50 +516,7 @@ func sameSiteRefererPath(r *http.Request) string {
 	if parsed.RawQuery != "" {
 		target += "?" + parsed.RawQuery
 	}
-	return sanitizeRedirectTarget(target)
-}
-
-// sanitizeRedirectTarget keeps only a same-site path. It returns an empty
-// string for every other value, so the caller falls back to a safe path.
-//
-// A browser rewrites a backslash to a forward slash inside a URL path, so
-// "/\evil.example" becomes "//evil.example" and jumps to another host. The
-// function therefore rejects a backslash, a percent-encoded backslash, and
-// every control character, tab, or newline that hides the real target.
-func sanitizeRedirectTarget(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if strings.ContainsFunc(value, unsafeRedirectRune) {
-		return ""
-	}
-	if strings.Contains(strings.ToLower(value), "%5c") {
-		return ""
-	}
-	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") {
-		return ""
-	}
-	parsed, err := url.Parse(value)
-	if err != nil {
-		return ""
-	}
-	if parsed.Scheme != "" || parsed.Opaque != "" || parsed.Host != "" || parsed.User != nil {
-		return ""
-	}
-	return value
-}
-
-// unsafeRedirectRune reports a rune that must never reach a Location header.
-func unsafeRedirectRune(r rune) bool {
-	switch {
-	case r == '\\':
-		return true
-	case r <= 0x1f, r == 0x7f:
-		return true
-	default:
-		return false
-	}
+	return returnPathOr(target, "")
 }
 
 func randomMagicLinkToken() (string, error) {

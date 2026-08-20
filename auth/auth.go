@@ -65,6 +65,7 @@ func New(sessions *session.Manager, opts Options) *Manager {
 	if opts.LoginPath == "" {
 		opts.LoginPath = "/login"
 	}
+	opts.LoginPath = returnPathOr(opts.LoginPath, "/login")
 	return &Manager{
 		sessions:   sessions,
 		sessionKey: opts.SessionKey,
@@ -141,7 +142,11 @@ func (m *Manager) SignIn(r *http.Request, user User) bool {
 		m.observe(event)
 		return false
 	}
-	store.Set(m.sessionKey, user)
+	if err := store.Set(m.sessionKey, user); err != nil {
+		event.Error = err.Error()
+		m.observe(event)
+		return false
+	}
 	event.Success = true
 	m.observe(event)
 	return true
@@ -168,7 +173,11 @@ func (m *Manager) SignOut(r *http.Request) {
 		m.observe(event)
 		return
 	}
-	store.Delete(m.sessionKey)
+	if err := store.Delete(m.sessionKey); err != nil {
+		event.Error = err.Error()
+		m.observe(event)
+		return
+	}
 	event.Success = true
 	m.observe(event)
 }
@@ -217,11 +226,16 @@ func (m *Manager) unauthorized(w http.ResponseWriter, r *http.Request) {
 	target := m.loginPath
 	if r != nil && r.URL != nil {
 		values := url.Values{}
-		values.Set("next", r.URL.RequestURI())
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			next := returnPathOr(r.URL.RequestURI(), "/")
+			values.Set("next", next)
+		}
 		if strings.Contains(target, "?") {
-			target += "&" + values.Encode()
-		} else {
-			target += "?" + values.Encode()
+			if encoded := values.Encode(); encoded != "" {
+				target += "&" + encoded
+			}
+		} else if encoded := values.Encode(); encoded != "" {
+			target += "?" + encoded
 		}
 	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
@@ -243,6 +257,17 @@ func requestWantsJSON(r *http.Request) bool {
 	accept := r.Header.Get("Accept")
 	contentType := r.Header.Get("Content-Type")
 	return strings.Contains(accept, "application/json") || strings.HasPrefix(contentType, "application/json")
+}
+
+// commitSessionIfPresent seals the request session when a built-in auth
+// handler is running inside session middleware. Handlers remain useful in
+// isolation for configuration/errors, but every persistence-dependent success
+// response crosses the explicit commit boundary first.
+func commitSessionIfPresent(w http.ResponseWriter, r *http.Request) error {
+	if session.Current(r) == nil {
+		return nil
+	}
+	return session.Commit(w, r)
 }
 
 type sessionProvider struct {

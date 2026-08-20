@@ -22,10 +22,11 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 	authn := New(sessions, Options{LoginPath: "/login"})
 	store := NewMemoryWebAuthnStore()
 	webauthn := authn.WebAuthn(WebAuthnOptions{
-		RPID:   "localhost",
-		RPName: "GoSX Test",
-		Origin: "http://localhost:8080",
-		Store:  store,
+		RPID:        "localhost",
+		RPName:      "GoSX Test",
+		Origin:      "http://localhost:8080",
+		SuccessPath: "/configured//success/../done",
+		Store:       store,
 	})
 
 	registerOptions := sessions.Middleware(webauthn.RegisterOptionsHandler())
@@ -40,7 +41,7 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))))
 
-	registerReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/register/options", bytes.NewBufferString(`{"user":{"id":"user_ada","email":"ada@example.com","name":"Ada"}}`))
+	registerReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/register/options", bytes.NewBufferString(`{"user":{"id":"user_ada","email":"ada@example.com","name":"Ada"},"next":"/draft//room/../admin?tab=1"}`))
 	registerReq.Header.Set("Content-Type", "application/json")
 	registerReq.Header.Set("Accept", "application/json")
 	registerRes := httptest.NewRecorder()
@@ -94,6 +95,15 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 	if finishRegisterRes.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", finishRegisterRes.Code, finishRegisterRes.Body.String())
 	}
+	var registerResult struct {
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(finishRegisterRes.Body.Bytes(), &registerResult); err != nil {
+		t.Fatalf("decode register result: %v", err)
+	}
+	if registerResult.Target != "/draft/admin?tab=1" {
+		t.Fatalf("registration target = %q, want canonical target", registerResult.Target)
+	}
 	credential, err := store.Credential(encodeWebAuthnBytes(rawID))
 	if err != nil {
 		t.Fatalf("expected stored credential: %v", err)
@@ -102,7 +112,7 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected credential user %#v", credential.User)
 	}
 
-	loginReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/login/options", bytes.NewBufferString(`{"next":"/admin"}`))
+	loginReq := httptest.NewRequest(http.MethodPost, "/auth/webauthn/login/options", bytes.NewBufferString(`{"login":"user_ada","next":"https://evil.example/steal"}`))
 	loginReq.Header.Set("Content-Type", "application/json")
 	loginReq.Header.Set("Accept", "application/json")
 	loginRes := httptest.NewRecorder()
@@ -147,6 +157,15 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 	if finishLoginRes.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", finishLoginRes.Code, finishLoginRes.Body.String())
 	}
+	var loginResult struct {
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(finishLoginRes.Body.Bytes(), &loginResult); err != nil {
+		t.Fatalf("decode login result: %v", err)
+	}
+	if loginResult.Target != "/" {
+		t.Fatalf("authentication target = %q, want root fallback for unsafe next", loginResult.Target)
+	}
 	authCookie := firstCookie(finishLoginRes)
 	if authCookie == nil {
 		t.Fatal("expected auth cookie after passkey login")
@@ -158,6 +177,54 @@ func TestWebAuthnRegistrationAndAuthenticationRoundTrip(t *testing.T) {
 	protected.ServeHTTP(protectedRes, protectedReq)
 	if protectedRes.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", protectedRes.Code)
+	}
+}
+
+func TestWebAuthnCanonicalizesConfiguredAndRequestedTargets(t *testing.T) {
+	sessions := session.MustNew("webauthn-return-path-secret", session.Options{})
+	authn := New(sessions, Options{})
+	webauthn := authn.WebAuthn(WebAuthnOptions{
+		Origin:      "https://app.example",
+		RPID:        "app.example",
+		SuccessPath: "/success//flow/../done",
+		FailurePath: "https://evil.example/failure",
+	})
+	if webauthn.successPath != "/success/done" {
+		t.Fatalf("successPath = %q, want canonical configured path", webauthn.successPath)
+	}
+	if webauthn.failurePath != "/" {
+		t.Fatalf("failurePath = %q, want root fallback", webauthn.failurePath)
+	}
+
+	tests := []struct {
+		name string
+		next string
+		want string
+	}{
+		{name: "canonicalizes", next: "/draft//room/../admin?tab=1", want: "/draft/admin?tab=1"},
+		{name: "external falls back", next: "https://evil.example/steal", want: "/"},
+		{name: "protocol relative falls back", next: "//evil.example/steal", want: "/"},
+		{name: "control falls back", next: "/draft%0aLocation:%20/evil", want: "/"},
+		{name: "omitted remains omitted", next: "", want: ""},
+	}
+	for _, testCase := range tests {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			var state webAuthnState
+			handler := sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if _, err := webauthn.BeginRegistration(r, User{ID: "ada@example.com"}, testCase.next); err != nil {
+					t.Fatal(err)
+				}
+				if !session.Current(r).Decode(webauthn.sessionKey, &state) {
+					t.Fatal("webauthn state was not persisted")
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/begin", nil))
+			if state.Next != testCase.want {
+				t.Fatalf("state.Next = %q, want canonical %q", state.Next, testCase.want)
+			}
+		})
 	}
 }
 

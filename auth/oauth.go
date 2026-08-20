@@ -23,6 +23,8 @@ var (
 	ErrOAuthCodeMissing      = fmt.Errorf("oauth code is missing")
 )
 
+const oauthMaxLiveStates = 2
+
 // OAuthToken is the exchanged token payload returned by an OAuth provider.
 type OAuthToken struct {
 	AccessToken  string         `json:"access_token"`
@@ -89,11 +91,10 @@ type OAuth struct {
 }
 
 type oauthState struct {
-	Provider  string    `json:"provider"`
-	State     string    `json:"state"`
-	Verifier  string    `json:"verifier"`
-	Next      string    `json:"next,omitempty"`
-	ExpiresAt time.Time `json:"expiresAt"`
+	Provider  string `json:"provider"`
+	Verifier  string `json:"verifier"`
+	Next      string `json:"next,omitempty"`
+	ExpiresAt int64  `json:"expiresAt"`
 }
 
 // NewOAuth creates a batteries-included OAuth flow.
@@ -110,6 +111,8 @@ func NewOAuth(manager *Manager, opts OAuthOptions) *OAuth {
 	if opts.FailurePath == "" {
 		opts.FailurePath = "/"
 	}
+	opts.SuccessPath = returnPathOr(opts.SuccessPath, "/")
+	opts.FailurePath = returnPathOr(opts.FailurePath, "/")
 	if opts.FlashKey == "" {
 		opts.FlashKey = "auth.oauth"
 	}
@@ -152,21 +155,17 @@ func (o *OAuth) Begin(r *http.Request, providerName string, next string) (string
 	if err != nil {
 		return "", err
 	}
-	state, err := randomOAuthString(32)
-	if err != nil {
-		return "", err
-	}
 	verifier, err := randomOAuthString(48)
 	if err != nil {
 		return "", err
 	}
-	if err := o.saveState(r, oauthState{
+	state, err := o.saveState(r, oauthState{
 		Provider:  provider.Name,
-		State:     state,
 		Verifier:  verifier,
-		Next:      sanitizeRedirectTarget(next),
-		ExpiresAt: o.now().Add(o.ttl),
-	}); err != nil {
+		Next:      requestedReturnPath(next),
+		ExpiresAt: o.now().Add(o.ttl).UnixMilli(),
+	})
+	if err != nil {
 		return "", err
 	}
 	values := url.Values{}
@@ -196,11 +195,15 @@ func (o *OAuth) Begin(r *http.Request, providerName string, next string) (string
 
 // Callback completes the OAuth flow, signs the user in, and returns the user.
 func (o *OAuth) Callback(r *http.Request, providerName string) (User, string, error) {
-	provider, err := o.provider(providerName)
+	if o == nil {
+		return User{}, "", ErrOAuthProviderNotFound
+	}
+	providerName = strings.TrimSpace(providerName)
+	state, err := o.consumeState(r, providerName, r.URL.Query().Get("state"))
 	if err != nil {
 		return User{}, "", err
 	}
-	state, err := o.consumeState(r, provider.Name, r.URL.Query().Get("state"))
+	provider, err := o.provider(providerName)
 	if err != nil {
 		return User{}, "", err
 	}
@@ -219,9 +222,9 @@ func (o *OAuth) Callback(r *http.Request, providerName string) (User, string, er
 	if o.manager == nil || !o.manager.SignIn(r, user) {
 		return User{}, "", fmt.Errorf("session middleware required before oauth callback")
 	}
-	target := state.Next
-	if target == "" {
-		target = o.successPath
+	target := o.successPath
+	if state.Next != "" {
+		target = returnPathOr(state.Next, "/")
 	}
 	return user, target, nil
 }
@@ -232,6 +235,9 @@ func (o *OAuth) BeginHandler(providerName string) http.Handler {
 		target, err := o.Begin(r, providerName, r.URL.Query().Get("next"))
 		if err != nil {
 			writeOAuthError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		if err := commitSessionIfPresent(w, r); err != nil {
 			return
 		}
 		if requestWantsJSON(r) {
@@ -252,22 +258,35 @@ func (o *OAuth) CallbackHandler(providerName string) http.Handler {
 		user, target, err := o.Callback(r, providerName)
 		if err != nil {
 			if !requestWantsJSON(r) {
-				addMagicLinkFlash(r, o.flashKey, map[string]any{
+				if flashErr := addMagicLinkFlash(r, o.flashKey, map[string]any{
 					"status":   "error",
 					"provider": providerName,
 					"error":    err.Error(),
-				})
+				}); flashErr != nil {
+					return
+				}
+				if err := commitSessionIfPresent(w, r); err != nil {
+					return
+				}
 				http.Redirect(w, r, o.failurePath, http.StatusSeeOther)
+				return
+			}
+			if err := commitSessionIfPresent(w, r); err != nil {
 				return
 			}
 			writeOAuthError(w, r, http.StatusUnauthorized, err)
 			return
 		}
-		addMagicLinkFlash(r, o.flashKey, map[string]any{
+		if flashErr := addMagicLinkFlash(r, o.flashKey, map[string]any{
 			"status":   "signed_in",
 			"provider": providerName,
 			"email":    user.Email,
-		})
+		}); flashErr != nil {
+			return
+		}
+		if err := commitSessionIfPresent(w, r); err != nil {
+			return
+		}
 		if requestWantsJSON(r) {
 			writeOAuthJSON(w, http.StatusOK, map[string]any{
 				"ok":     true,
@@ -321,13 +340,61 @@ func (o *OAuth) provider(name string) (OAuthProvider, error) {
 	return provider, nil
 }
 
-func (o *OAuth) saveState(r *http.Request, state oauthState) error {
+func (o *OAuth) saveState(r *http.Request, state oauthState) (string, error) {
 	store := session.Current(r)
 	if store == nil {
-		return fmt.Errorf("session middleware required before oauth")
+		return "", fmt.Errorf("session middleware required before oauth")
 	}
-	store.Set(o.sessionKey, state)
-	return nil
+
+	states := make(map[string]oauthState)
+	var decoded map[string]oauthState
+	if store.Decode(o.sessionKey, &decoded) {
+		states = decoded
+		if states == nil {
+			states = make(map[string]oauthState)
+		}
+	}
+
+	now := o.now().UnixMilli()
+	for key, candidate := range states {
+		if now >= candidate.ExpiresAt {
+			delete(states, key)
+		}
+	}
+	for len(states) >= oauthMaxLiveStates {
+		delete(states, oldestOAuthState(states))
+	}
+
+	var stateKey string
+	for {
+		candidate, err := randomOAuthString(32)
+		if err != nil {
+			return "", err
+		}
+		if _, exists := states[candidate]; exists {
+			continue
+		}
+		stateKey = candidate
+		break
+	}
+	states[stateKey] = state
+	if err := store.Set(o.sessionKey, states); err != nil {
+		return "", err
+	}
+	return stateKey, nil
+}
+
+func oldestOAuthState(states map[string]oauthState) string {
+	var oldest string
+	var oldestExpiry int64
+	for key, state := range states {
+		if oldest == "" || state.ExpiresAt < oldestExpiry ||
+			(state.ExpiresAt == oldestExpiry && key < oldest) {
+			oldest = key
+			oldestExpiry = state.ExpiresAt
+		}
+	}
+	return oldest
 }
 
 func (o *OAuth) consumeState(r *http.Request, providerName, stateParam string) (oauthState, error) {
@@ -335,17 +402,31 @@ func (o *OAuth) consumeState(r *http.Request, providerName, stateParam string) (
 	if store == nil {
 		return oauthState{}, fmt.Errorf("session middleware required before oauth")
 	}
-	var state oauthState
-	if !store.Decode(o.sessionKey, &state) {
+	if stateParam == "" {
 		return oauthState{}, ErrOAuthStateInvalid
 	}
-	store.Delete(o.sessionKey)
-	stateValue := strings.TrimSpace(state.State)
-	stateParam = strings.TrimSpace(stateParam)
-	if state.Provider != providerName || stateValue == "" || !constantTimeStringEqual(stateValue, stateParam) {
+	var states map[string]oauthState
+	if !store.Decode(o.sessionKey, &states) || states == nil {
 		return oauthState{}, ErrOAuthStateInvalid
 	}
-	if !state.ExpiresAt.IsZero() && o.now().After(state.ExpiresAt) {
+	state, ok := states[stateParam]
+	if !ok {
+		return oauthState{}, ErrOAuthStateInvalid
+	}
+	delete(states, stateParam)
+	var err error
+	if len(states) == 0 {
+		err = store.Delete(o.sessionKey)
+	} else {
+		err = store.Set(o.sessionKey, states)
+	}
+	if err != nil {
+		return oauthState{}, err
+	}
+	if state.Provider != providerName {
+		return oauthState{}, ErrOAuthStateInvalid
+	}
+	if o.now().UnixMilli() >= state.ExpiresAt {
 		return oauthState{}, ErrOAuthStateExpired
 	}
 	return state, nil

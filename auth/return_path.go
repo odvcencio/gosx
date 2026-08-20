@@ -83,6 +83,28 @@ func SafeReturnPath(raw string) (string, bool) {
 	return target, true
 }
 
+// returnPathOr canonicalizes a caller-controlled return target and applies the
+// caller's fallback when it is unsafe. Keeping fallback selection at the call
+// site makes it explicit whether an invalid configured path or an invalid
+// requested destination should resolve to the root or another reviewed local
+// path.
+func returnPathOr(raw, fallback string) string {
+	if target, ok := SafeReturnPath(raw); ok {
+		return target
+	}
+	return fallback
+}
+
+// requestedReturnPath preserves an optional explicit destination. An omitted
+// destination remains omitted so a flow can use its configured success path;
+// a supplied but invalid destination falls back to the root.
+func requestedReturnPath(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	return returnPathOr(raw, "/")
+}
+
 func hasUnsafeRawReturnPathRune(value string) bool {
 	return strings.ContainsFunc(value, func(r rune) bool {
 		return unicode.IsSpace(r) || unicode.IsControl(r) || r == '\\'
