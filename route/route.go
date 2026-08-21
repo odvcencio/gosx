@@ -98,6 +98,7 @@ type RouteContext struct {
 	Data       any
 	parentData map[string]any
 	handlerErr error
+	pattern    string
 	server.PageState
 }
 
@@ -173,6 +174,25 @@ func (ctx *RouteContext) ActionForm(name string, args ...any) gosx.Node {
 		),
 	}, args...)
 	return server.Form(prefixed...)
+}
+
+// Document composes the complete native document context for this route.
+// It preserves request, route pattern, response status, title, language,
+// page identity/path, request ID, metadata, runtime, navigation, head,
+// body attributes, nonce, and the framework document contract. Pass the
+// returned context to server.HTMLDocument from a document-owning layout.
+func (ctx *RouteContext) Document(defaultTitle string, body gosx.Node) *server.DocumentContext {
+	if ctx == nil {
+		var state *server.PageState
+		return state.DocumentContext(nil, "", defaultTitle, body, false)
+	}
+	return ctx.PageState.DocumentContext(
+		ctx.Request,
+		ctx.pattern,
+		defaultTitle,
+		body,
+		ctx.NavigationEnabled(),
+	)
 }
 
 // Router builds an http.Handler from a route tree.
@@ -428,6 +448,7 @@ func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc,
 	return func(w http.ResponseWriter, req *http.Request) {
 		server.MarkObservedRequest(req, "page", pattern)
 		ctx := r.newRouteContext(req)
+		ctx.pattern = pattern
 		ctx.Params = extractParamsByNames(req, paramNames)
 
 		defer func() {
@@ -515,6 +536,7 @@ func (r *Router) renderNotFound(w http.ResponseWriter, req *http.Request) {
 	var node gosx.Node
 	rootNotFoundUsed := false
 	if scope, ok := r.matchNotFoundScope(req); ok {
+		ctx.pattern = scope.pattern
 		ctx.Params = extractPatternParams(scope.pattern, req.URL.Path)
 		if scope.handler != nil {
 			node = scope.handler(ctx)
@@ -544,6 +566,7 @@ func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts [
 	if ctx == nil {
 		ctx = r.newRouteContext(nil)
 	}
+	ctx.pattern = pattern
 	server.MarkObservedRequest(ctx.Request, "error", pattern)
 	if ctx.StatusCode() == 0 {
 		ctx.SetStatus(http.StatusInternalServerError)

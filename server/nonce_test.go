@@ -67,7 +67,7 @@ func TestNonceHelpersKeepEmptyNonceBackwardCompatible(t *testing.T) {
 	if withEmpty, plain := gosx.RenderHTML(navigationScriptWithNonce("")), gosx.RenderHTML(navigationScriptWithNonce("")); withEmpty != plain {
 		t.Fatalf("expected an empty navigation nonce to be deterministic")
 	}
-	if withEmpty, plain := gosx.RenderHTML(HTMLDocumentWithNonce("Test Page", "", gosx.Text(""), gosx.Text("hello"))), gosx.RenderHTML(HTMLDocument("Test Page", gosx.Text(""), gosx.Text("hello"))); withEmpty != plain {
+	if withEmpty, plain := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Test Page", Body: gosx.Text("hello")})), gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Test Page", Body: gosx.Text("hello")})); withEmpty != plain {
 		t.Fatalf("expected empty nonce HTML document to match plain output")
 	}
 }

@@ -76,6 +76,14 @@ type DocumentContext struct {
 	// Nonce is the per-request Content-Security-Policy script nonce, if any.
 	// GoSX's document shell attaches it to script elements it emits directly.
 	Nonce string
+
+	// documentContractPrepared is set only by the framework's request pipeline
+	// after it has appended the document contract to Head.  HTMLDocument uses
+	// this capability marker instead of trying to inspect arbitrary RawHTML in
+	// Head: a prepared/custom-delegated context owns its head exactly as given,
+	// while a direct context receives one framework-owned contract on a private
+	// copy of the context.
+	documentContractPrepared bool
 }
 
 // DeferredResolver resolves a streamed page fragment after the initial HTML
@@ -118,41 +126,51 @@ func newContext(r *http.Request) *Context {
 	return ctx
 }
 
-func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
-	c = ensureContext(c)
-	title := c.Title(defaultTitle)
-	path := documentContextPath(c.Request)
-	metadata := c.MetadataValue()
+// DocumentContext composes the complete native document state for a page.
+// The returned context carries every request and page field consumed by
+// HTMLDocument, including the framework-owned document contract in Head.
+// PageState has no implicit language default; callers choose one with
+// SetLanguage when their application serves a known locale.
+func (s *PageState) DocumentContext(request *http.Request, pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
+	if s == nil {
+		s = NewPageStateForRequest(request)
+	}
+	path := documentContextPath(request)
 	// A shared cache stores one body and replays it to every client, so the
 	// document must not name this request. Omit the request ID there.
 	requestID := ""
-	if !c.cache.SharedCacheable() {
-		requestID = RequestID(c.Request)
+	sharedCacheable := s.cache != nil && s.cache.SharedCacheable()
+	if !sharedCacheable {
+		requestID = RequestID(request)
 	}
 	doc := &DocumentContext{
-		Request:    c.Request,
+		Request:    request,
 		Pattern:    pattern,
-		Status:     c.StatusCode(),
-		Title:      title,
+		Status:     s.StatusCode(),
+		Title:      s.Title(defaultTitle),
+		Language:   s.Language(),
 		PageID:     documentPageID(pattern, path),
 		Path:       path,
 		RequestID:  requestID,
-		Metadata:   metadata,
+		Metadata:   s.MetadataValue(),
 		Navigation: navigation,
 		Body:       body,
-		BodyAttrs:  c.BodyAttrsValue(),
-		Nonce:      c.Nonce(),
+		BodyAttrs:  s.BodyAttrsValue(),
+		Nonce:      s.Nonce(),
 	}
-	if runtime := c.RuntimeState(); runtime != nil {
+	if runtime := s.RuntimeState(); runtime != nil {
 		doc.Runtime = runtime.Summary()
 		doc.Bootstrap = doc.Runtime.Bootstrap
 		doc.RuntimeActive = doc.Runtime.Runtime
 	}
-	doc.Head = gosx.Fragment(
-		c.Head(),
-		documentContractNode(doc),
-	)
+	doc.Head = gosx.Fragment(s.Head(), documentContractNode(doc))
+	doc.documentContractPrepared = true
 	return doc
+}
+
+func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
+	c = ensureContext(c)
+	return c.PageState.DocumentContext(c.Request, pattern, defaultTitle, body, navigation)
 }
 
 func ensureContext(c *Context) *Context {

@@ -27,7 +27,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Reload", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Reload", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -63,7 +63,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Edit", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Edit", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)

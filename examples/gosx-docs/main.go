@@ -82,7 +82,8 @@ func main() {
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>`))
-		return server.HTMLDocumentWithLanguage(ctx.Title("GoSX"), "en", ctx.Head(), body)
+		ctx.SetLanguage("en")
+		return server.HTMLDocument(ctx.Document("GoSX", body))
 	})
 
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {

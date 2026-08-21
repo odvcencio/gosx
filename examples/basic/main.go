@@ -28,7 +28,8 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("GoSX Example"), gosx.Node{}, body)
+		ctx.SetLanguage("en")
+		return server.HTMLDocument(ctx.Document("GoSX Example", body))
 	})
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
 		log.Fatal(err)

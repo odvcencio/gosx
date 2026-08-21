@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"m31labs.dev/gosx"
@@ -23,6 +24,7 @@ type PageState struct {
 	cache          *CacheState
 	runtime        *PageRuntime
 	nonce          string
+	language       string
 	navigationHead func(nonce string) gosx.Node
 }
 
@@ -170,6 +172,24 @@ func (s *PageState) SetNonce(nonce string) {
 	s.nonce = nonce
 }
 
+// SetLanguage records the BCP 47 language tag for the document shell.
+// Language is request-scoped; PageState deliberately has no implicit global
+// language default so applications can choose the locale they serve.
+func (s *PageState) SetLanguage(language string) {
+	if s == nil {
+		return
+	}
+	s.language = strings.TrimSpace(language)
+}
+
+// Language returns the document language configured for this page.
+func (s *PageState) Language() string {
+	if s == nil {
+		return ""
+	}
+	return s.language
+}
+
 // Nonce returns the per-request Content-Security-Policy script nonce set via
 // SetNonce, or an empty string when none was set.
 func (s *PageState) Nonce() string {
@@ -217,6 +237,12 @@ func (s *PageState) SetNavigationHead(fn func(nonce string) gosx.Node) {
 		return
 	}
 	s.navigationHead = fn
+}
+
+// NavigationEnabled reports whether the framework-owned navigation head
+// builder is attached to this page state.
+func (s *PageState) NavigationEnabled() bool {
+	return s != nil && s.navigationHead != nil
 }
 
 // AddHead appends arbitrary head nodes to the response document. The

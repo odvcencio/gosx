@@ -84,19 +84,18 @@ func TestAppRendersBodyLevelHeartbeatAttrsOnBody(t *testing.T) {
 	}
 }
 
-// TestHTMLDocumentWithBodyAttrsAddsAttrsToBody proves the gosx#236 fix for
-// the router.SetLayout call convention, which calls HTMLDocument directly —
-// the exact shape the issue's downstream app used.
-func TestHTMLDocumentWithBodyAttrsAddsAttrsToBody(t *testing.T) {
-	doc := HTMLDocumentWithBodyAttrs(
-		"League HQ",
-		gosx.Node{},
-		gosx.El("main", gosx.Text("dashboard")),
-		gosx.Attrs(
+// TestHTMLDocumentAddsBodyAttrsToBody proves the gosx#236 fix for the
+// router.SetLayout call convention, which calls HTMLDocument directly — the
+// exact shape the issue's downstream app used.
+func TestHTMLDocumentAddsBodyAttrsToBody(t *testing.T) {
+	doc := HTMLDocument(&DocumentContext{
+		Title: "League HQ",
+		Body:  gosx.El("main", gosx.Text("dashboard")),
+		BodyAttrs: gosx.Attrs(
 			gosx.Attr(NavigationHeartbeatAttr, "/api/league/version"),
 			gosx.Attr(NavigationHeartbeatIntervalAttr, "4s"),
 		),
-	)
+	})
 
 	html := gosx.RenderHTML(doc)
 	for _, want := range []string{
@@ -112,7 +111,7 @@ func TestHTMLDocumentWithBodyAttrsAddsAttrsToBody(t *testing.T) {
 // counterpart to TestDocumentAttrsShareContractWithRenderedDocumentAttrs: a
 // custom DocumentFunc built with gosx.El("body", DocumentBodyAttrs(doc), ...)
 // must render the exact same body attributes documentBodyAttrs (the raw
-// string path renderDocumentWithContext uses) produces, including
+// string path HTMLDocument uses) produces, including
 // app-supplied BodyAttrs.
 func TestDocumentBodyAttrsSharesContractWithRenderedBodyAttrs(t *testing.T) {
 	doc := &DocumentContext{
@@ -158,7 +157,7 @@ func TestDocumentBodyAttrsEscapesValues(t *testing.T) {
 }
 
 // TestCustomDocumentCanReuseBodyAttrs proves a custom App.SetDocument
-// function — which never calls renderDocumentWithContext — still receives
+// function — which never calls HTMLDocument — still receives
 // ctx.BodyAttrs through DocumentContext.BodyAttrs.
 func TestCustomDocumentCanReuseBodyAttrs(t *testing.T) {
 	app := New()

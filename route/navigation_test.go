@@ -56,7 +56,8 @@ func getBody(t *testing.T, handler http.Handler) string {
 // through app.EnableNavigation() with no manual AddHead call in the layout.
 func TestFileRoutedAppEnableNavigationInjectsScript(t *testing.T) {
 	_, handler := buildFileRoutedApp(t, func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocumentWithLanguage(ctx.Title("Test"), "en", ctx.Head(), body)
+		ctx.SetLanguage("en")
+		return server.HTMLDocument(ctx.Document("Test", body))
 	})
 
 	html := getBody(t, handler)
@@ -74,7 +75,8 @@ func TestFileRoutedAppEnableNavigationInjectsScript(t *testing.T) {
 func TestFileRoutedAppMountBeforeEnableNavigationStillInjectsScript(t *testing.T) {
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocumentWithLanguage(ctx.Title("Test"), "en", ctx.Head(), body)
+		ctx.SetLanguage("en")
+		return server.HTMLDocument(ctx.Document("Test", body))
 	})
 	router.Add(Route{
 		Pattern: "/",
@@ -101,7 +103,8 @@ func TestFileRoutedAppMountBeforeEnableNavigationStillInjectsScript(t *testing.T
 func TestSharedCacheableFileRouteStripsNonceBakedByHandlerScripts(t *testing.T) {
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocumentWithLanguage(ctx.Title("Shared route"), "en", ctx.Head(), body)
+		ctx.SetLanguage("en")
+		return server.HTMLDocument(ctx.Document("Shared route", body))
 	})
 	var issuedNonce string
 	router.Add(Route{

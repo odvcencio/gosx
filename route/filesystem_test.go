@@ -2141,7 +2141,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("TextBlock", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("TextBlock", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -2263,7 +2263,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Docs"), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2315,7 +2315,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Docs"), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2369,7 +2369,7 @@ func Layout() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Docs", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2429,7 +2429,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Docs", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2503,7 +2503,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Fallback"), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Fallback", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2592,7 +2592,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Docs", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2665,7 +2665,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Docs"), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -2739,7 +2739,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Crew", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Crew", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -2785,7 +2785,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Demo", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Demo", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2862,7 +2862,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Crew", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Crew", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -2928,7 +2928,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Docs", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -3490,7 +3490,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Demo", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Demo", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)

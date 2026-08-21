@@ -165,7 +165,8 @@ func Page() Node {
 	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
 	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
 	)
-	return server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)`)}
+	ctx.SetLanguage("en")
+	return server.HTMLDocument(ctx.Document(appName, body))`)}
 			<p>
 				That is the whole change. It replaces this pattern, which existed only because
 				<span class="inline-code">HTMLDocument</span>
@@ -178,21 +179,19 @@ func Page() Node {
 	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
 	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
 	), body)
-	return server.HTMLDocument(ctx.Title(appName), ctx.Head(), heartbeatShell)`)}
+	return server.HTMLDocument(ctx.Document(appName, heartbeatShell))`)}
 			<p>
 				A page that renders its document by calling
 				<span class="inline-code">HTMLDocument</span>
 				directly (for example a
 				<span class="inline-code">router.SetLayout</span>
 				callback) calls
-				<span class="inline-code">HTMLDocumentWithBodyAttrs</span>
-				instead, passing
-				<span class="inline-code">ctx.BodyAttrsValue()</span>
-				as the extra argument. A page rendered through the default
-				<span class="inline-code">App.renderPage</span>
-				pipeline needs only the
+				<span class="inline-code">ctx.Document</span>
+				and passes the result to
+				<span class="inline-code">HTMLDocument</span>
+				instead. The composed document preserves
 				<span class="inline-code">ctx.BodyAttrs</span>
-				call — the pipeline reads the accumulated attributes automatically.
+				and all other request-scoped state automatically.
 			</p>
 			<p>
 				The runtime sends a same-origin

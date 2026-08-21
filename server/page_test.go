@@ -192,3 +192,20 @@ func TestMetadataHeadCheckedReturnsValidationErrorsInsteadOfPanics(t *testing.T)
 	}()
 	_ = meta.Head()
 }
+
+func TestPageStateLanguageIsExplicitAndNilSafe(t *testing.T) {
+	state := NewPageState()
+	if got := state.Language(); got != "" {
+		t.Fatalf("new page state received an implicit language %q", got)
+	}
+	state.SetLanguage("  en-US  ")
+	if got := state.Language(); got != "en-US" {
+		t.Fatalf("language was not trimmed and preserved, got %q", got)
+	}
+
+	var nilState *PageState
+	nilState.SetLanguage("en")
+	if got := nilState.Language(); got != "" {
+		t.Fatalf("nil page state returned language %q", got)
+	}
+}
