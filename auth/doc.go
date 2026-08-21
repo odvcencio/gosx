@@ -12,6 +12,7 @@
 //	Manager.Middleware    wrap the handler tree; Current needs it
 //	Manager.Require       block anonymous visitors
 //	Manager.RequireRole   the same, restricted to one role
+//	RequireBearerToken    protect a handler with one static bearer token
 //	Current(r)            the User for this request, and whether there is one
 //	Manager.SignIn / SignOut  move a User in and out of the session
 //
@@ -64,4 +65,16 @@
 // failure is not a separate event type — it is the same event with Success
 // false and Error naming the cause, so an observer that filters on Type alone
 // still sees the failures.
+//
+// # Static bearer tokens
+//
+// RequireBearerToken is a small fail-closed guard for internal endpoints and
+// service-to-service routes that need one configured token but do not need a
+// user session. It accepts exactly one Authorization header in the form
+// "Bearer token" (the scheme is case-insensitive), compares the token using a
+// constant-time SHA-256 digest, and never logs or echoes credentials. An empty
+// configured token never authenticates. Set BearerOptions.HideWhenUnconfigured
+// when a missing deployment secret should look like a 404; a configured route
+// always answers 401 for missing, malformed, or wrong credentials and includes
+// an escaped WWW-Authenticate realm challenge.
 package auth
