@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.50.0 (2026-08-21)
+
+### Added: static bearer token middleware
+
+- `auth.RequireBearerToken` protects internal and service-to-service handlers
+  with one configured RFC 6750 bearer token. It requires exactly one
+  `Authorization` header, parses the token68 credential, and compares its
+  SHA-256 digest in constant time.
+- `auth.BearerOptions` controls the escaped `WWW-Authenticate` realm and can
+  hide an unconfigured optional route as a 404. Empty configuration never
+  authenticates, and rejected credentials are never logged or echoed.
 
 ### Changed: document composition has one explicit renderer
 

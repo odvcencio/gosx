@@ -18,7 +18,7 @@ import (
 )
 
 func BenchmarkRenderDocumentSimple(b *testing.B) {
-//line server/bench.dmj:16
+//line server/bench.dmj:18
 	ctx := benchSimplePageContext()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -28,7 +28,7 @@ func BenchmarkRenderDocumentSimple(b *testing.B) {
 }
 
 func BenchmarkRenderDocumentComplex(b *testing.B) {
-//line server/bench.dmj:26
+//line server/bench.dmj:28
 	ctx := benchComplexPageContext()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -38,7 +38,7 @@ func BenchmarkRenderDocumentComplex(b *testing.B) {
 }
 
 func BenchmarkWriteHtmlSimple(b *testing.B) {
-//line server/bench.dmj:36
+//line server/bench.dmj:38
 	node := benchSimplePageNode()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -49,7 +49,7 @@ func BenchmarkWriteHtmlSimple(b *testing.B) {
 }
 
 func BenchmarkWriteHtmlComplex(b *testing.B) {
-//line server/bench.dmj:47
+//line server/bench.dmj:49
 	node := benchComplexPageNode()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -60,7 +60,7 @@ func BenchmarkWriteHtmlComplex(b *testing.B) {
 }
 
 func BenchmarkRenderDeferredChunk(b *testing.B) {
-//line server/bench.dmj:58
+//line server/bench.dmj:60
 	slotID := "stream-slot-12"
 	html := "<div class=\"deferred\">Loaded content for the slot</div>"
 	b.ReportAllocs()
