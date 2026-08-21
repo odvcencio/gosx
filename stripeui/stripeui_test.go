@@ -13,7 +13,9 @@ func TestHeadRendersDirectStripeJSAndBridge(t *testing.T) {
 		`rel="preconnect"`,
 		`href="https://js.stripe.com"`,
 		`src="https://js.stripe.com/clover/stripe.js"`,
-		`data-gosx-script-load="dom"`,
+		`type="text/javascript"`,
+		`crossorigin="anonymous"`,
+		`referrerpolicy="no-referrer"`,
 		`src="/gosx/stripe-bridge.js"`,
 		`data-gosx-script="lifecycle"`,
 	} {

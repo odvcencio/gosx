@@ -526,7 +526,10 @@ const budgets = [
   // ETag conditional requests, and scroll preservation added to the
   // existing data-gosx-region fragment-swap primitive in regions.ts.
   // Measured: 1_534_529 / 416_028 / 334_368.
-  { file: "bootstrap.js", raw: 1_535_000, gzip: 416_300, brotli: 334_600 },
+  // Bumped raw 1_535_000 -> 1_537_000 and gzip 416_300 -> 417_000 for
+  // strict-CSP script metadata, active-document nonce propagation, and the
+  // managed script DOM loader. Measured: 1_535_760 / 416_501 / 334_319.
+  { file: "bootstrap.js", raw: 1_537_000, gzip: 417_000, brotli: 334_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1332,7 +1335,9 @@ const routeBudgets = [
     // preservation added to the existing data-gosx-region fragment-swap
     // primitive in regions.ts (bootstrap-feature-engines.js). Measured:
     // 253_960 / 71_709 / 63_054, plus rounding headroom.
-    raw: 254_500,
+    // Bumped raw 254_500 -> 255_000 for the same strict-CSP runtime script
+    // metadata and nonce propagation. Measured: 254_644 / 72_004 / 63_239.
+    raw: 255_000,
     gzip: 72_200,
     brotli: 63_500,
     maxMonolithFraction: 0.25,
@@ -1646,9 +1651,12 @@ const routeBudgets = [
     // 323_700 -> 324_800 for live-bound regions (gosx#217) carried by
     // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
     // 1_433_075 / 383_490 / 324_305, plus rounding headroom.
+    // Bumped brotli 324_800 -> 325_000 for strict-CSP script metadata in the
+    // shared runtime/engines surface. Measured: 1_434_234 / 383_976 / 324_816;
+    // raw and gzip remain inside their existing ceilings.
     raw: 1_434_500,
     gzip: 384_000,
-    brotli: 324_800,
+    brotli: 325_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1742,9 +1750,13 @@ const routeBudgets = [
     // does not load bootstrap-feature-engines.js, so it does not carry the
     // regions.ts polling addition. Measured: 1_067_430 / 281_398 / 235_819,
     // plus rounding headroom.
-    raw: 1_068_000,
-    gzip: 281_800,
-    brotli: 236_200,
+    // Bumped raw 1_068_000 -> 1_069_000, gzip 281_800 -> 282_000, and brotli
+    // 236_200 -> 236_500 for strict-CSP script metadata and active-document
+    // nonce propagation in bootstrap-runtime.js. Measured:
+    // 1_068_479 / 281_845 / 236_276.
+    raw: 1_069_000,
+    gzip: 282_000,
+    brotli: 236_500,
   },
 
 ];

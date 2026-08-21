@@ -383,6 +383,11 @@
     const promise = new Promise(function(resolve, reject) {
       const script = document.createElement("script");
       script.src = src;
+      script.setAttribute("src", src);
+      script.type = "text/javascript";
+      script.setAttribute("type", "text/javascript");
+      script.setAttribute("crossorigin", "anonymous");
+      script.setAttribute("referrerpolicy", "no-referrer");
       script.setAttribute("data-gosx-script", role || "managed-runtime");
       gosxApplyCurrentScriptNonce(script);
       script.onload = resolve;

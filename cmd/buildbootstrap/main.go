@@ -554,7 +554,7 @@ var outputs = []output{
 }
 
 // inlineAssets lists artifacts this tool prepares for direct Go embedding
-// rather than for a fetched <script src> bundle. server.NavigationScript
+// rather than for a fetched <script src> bundle. app.EnableNavigation
 // (server/navigation.go) inlines the navigation runtime straight into every
 // page's <head> so it runs before any other script fetches — it must stay
 // out of the outputs bundle graph above, which is why navigation.ts is a
@@ -565,7 +565,7 @@ var outputs = []output{
 // file next to its .ts sources: no .map, no .gz/.br sidecars, and it never
 // joins chunks.json, because nothing ever fetches it over the network —
 // client/runtime/host/navigation_asset.go go:embeds it straight into the Go
-// binary that server.NavigationScript then writes inline into the page.
+// binary that the framework-owned navigation head writes inline into the page.
 var inlineAssets = []output{
 	{
 		name: "../runtime/host/navigation-runtime.min.js",

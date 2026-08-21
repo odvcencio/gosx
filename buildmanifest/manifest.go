@@ -2,6 +2,7 @@ package buildmanifest
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -143,9 +144,10 @@ type ImageVariantAsset struct {
 }
 
 type HashedAsset struct {
-	File string `json:"file"`
-	Hash string `json:"hash"`
-	Size int64  `json:"size"`
+	File      string `json:"file"`
+	Hash      string `json:"hash"`
+	Size      int64  `json:"size"`
+	Integrity string `json:"integrity,omitempty"`
 }
 
 // SceneAssetManifest points at the build-time Scene3D asset optimization report.
@@ -252,6 +254,15 @@ func (m *Manifest) IslandAssetByName(componentName string) (IslandAsset, bool) {
 func ContentHash(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:8])
+}
+
+// ContentIntegrity returns the complete SHA-256 Subresource Integrity value
+// for data. ContentHash intentionally remains the short filename/cache key;
+// browser authorization needs the complete digest and therefore travels as a
+// separate manifest field.
+func ContentIntegrity(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
 }
 
 // StaleIsland names one island asset whose recorded SourceHash no longer

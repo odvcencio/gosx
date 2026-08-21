@@ -134,6 +134,13 @@
   const PAGE_CACHE_OPT_OUT_VALUE = "no-store";
   const scriptCache = gosxHost.navigationScriptCache || new Map();
   const pageCache = gosxHost.navigationPageCache || new Map();
+  // The CSP header authorizes the nonce from the document that booted this
+  // runtime. A fetched document's nonce belongs to a response header the live
+  // document never received, so it must never become the authorization source
+  // after a managed-head swap. Capture the active value exactly once, including
+  // the meaningful "no nonce" case.
+  let activeDocumentNonce = "";
+  let activeDocumentNonceCaptured = false;
   let navigationState = {
     phase: "idle",
     currentURL: String(window.location && window.location.href || ""),
@@ -316,7 +323,7 @@
     return String(script.nonce || script.getAttribute && script.getAttribute("nonce") || "");
   }
 
-  function currentDocumentNonce() {
+  function discoverDocumentNonce() {
     const current = scriptNonceValue(document.currentScript);
     if (current) return current;
     const selectors = [
@@ -333,12 +340,36 @@
     return "";
   }
 
-  function applyCurrentNonce(script) {
-    const nonce = currentDocumentNonce();
-    if (nonce && script) {
+  function currentDocumentNonce() {
+    if (!activeDocumentNonceCaptured) {
+      activeDocumentNonce = discoverDocumentNonce();
+      activeDocumentNonceCaptured = true;
+    }
+    return activeDocumentNonce;
+  }
+
+  function setScriptNonce(script, nonce) {
+    if (!script) return;
+    // Clear any nonce copied from a fetched document before applying the
+    // active document's authorization. Assigning both the property and the
+    // attribute matches browser nonce reflection while keeping test DOMs and
+    // older engines deterministic.
+    script.nonce = "";
+    if (script.removeAttribute) script.removeAttribute("nonce");
+    if (nonce) {
       script.nonce = nonce;
+      if (script.setAttribute) script.setAttribute("nonce", nonce);
     }
   }
+
+  function applyCurrentNonce(script) {
+    setScriptNonce(script, currentDocumentNonce());
+  }
+
+  // Run while this runtime is still document.currentScript. Waiting until a
+  // navigation needs the value would allow a fetched nonce inserted by the
+  // head replacement to win discovery.
+  currentDocumentNonce();
 
   function keepsLiteralURL(value) {
     return !value || value[0] === "#" || value.startsWith("data:") || value.startsWith("javascript:");
@@ -497,6 +528,11 @@
       return String(node.nodeType) + ":" + String(node.textContent || "");
     }
     const clone = cloneIntoDocument(node, baseURL);
+    if (isElement(clone, "SCRIPT")) {
+      // A per-response nonce is authorization, not document content. Ignore it
+      // when deciding whether an existing managed-head script can be retained.
+      setScriptNonce(clone, "");
+    }
     if (clone && typeof clone.outerHTML === "string") {
       return clone.outerHTML;
     }
@@ -555,6 +591,7 @@
   }
 
   async function replaceManagedHead(nextDoc, baseURL) {
+    const documentNonce = currentDocumentNonce();
     document.title = nextDoc.title || "";
 
     const currentMarkers = ensureHeadMarkers();
@@ -588,6 +625,9 @@
       }
 
       const clone = cloneIntoDocument(node, baseURL);
+      if (isElement(clone, "SCRIPT")) {
+        setScriptNonce(clone, documentNonce);
+      }
       if (isElement(clone, "SCRIPT") && clone.hasAttribute(SCRIPT_ROLE) && clone.getAttribute("src")) {
         clone.setAttribute("data-gosx-script-loaded", "pending");
       }
@@ -1499,9 +1539,15 @@
       }
       const executable = document.createElement("script");
       for (const attr of attributeEntries(script)) {
-        if (attr.name === NAV_INLINE_REPLAYED_ATTR) continue;
+        // The fetched document is untrusted with respect to the current
+        // response's authorization. Never carry its nonce into the live
+        // document; the active document's nonce is the only one that can
+        // satisfy the current CSP header.
+        if (attr.name === NAV_INLINE_REPLAYED_ATTR || attr.name === "nonce") continue;
         executable.setAttribute(attr.name, attr.value);
       }
+      executable.removeAttribute("nonce");
+      applyCurrentNonce(executable);
       executable.setAttribute(NAV_INLINE_REPLAYED_ATTR, "true");
       executable.textContent = script.textContent || "";
       script.setAttribute(NAV_INLINE_REPLAYED_ATTR, "true");
@@ -1516,10 +1562,14 @@
       if (!node || !node.childNodes) return;
       for (const child of toArray(node.childNodes)) {
         if (isElement(child, "SCRIPT") && child.hasAttribute(SCRIPT_ROLE) && child.getAttribute("src")) {
+          const attributes = {};
+          for (const name of ["type", "integrity", "crossorigin", "referrerpolicy"]) {
+            if (child.hasAttribute(name)) attributes[name] = child.getAttribute(name) || "";
+          }
           found.push({
             role: child.getAttribute(SCRIPT_ROLE),
             src: absolutizeURL(child.getAttribute("src"), baseURL),
-            load: child.getAttribute("data-gosx-script-load") || "",
+            attributes: attributes,
           });
         }
         walk(child);
@@ -1542,7 +1592,7 @@
     return null;
   }
 
-  function loadManagedScriptTag(role, src) {
+  function loadManagedScriptTag(role, src, attributes) {
     const existing = findLoadedScript(src);
     if (existing) {
       existing.setAttribute(SCRIPT_ROLE, existing.getAttribute(SCRIPT_ROLE) || role || "managed");
@@ -1551,7 +1601,14 @@
     return new Promise(function(resolve, reject) {
       const script = document.createElement("script");
       script.src = src;
+      script.setAttribute("src", src);
       script.async = false;
+      script.setAttribute("type", attributes && attributes.type ? attributes.type : "text/javascript");
+      script.setAttribute("crossorigin", attributes && attributes.crossorigin ? attributes.crossorigin : "anonymous");
+      script.setAttribute("referrerpolicy", attributes && attributes.referrerpolicy ? attributes.referrerpolicy : "no-referrer");
+      if (attributes && attributes.integrity) {
+        script.setAttribute("integrity", attributes.integrity);
+      }
       script.setAttribute(SCRIPT_ROLE, role || "managed");
       script.setAttribute("data-gosx-script-load", "dom");
       applyCurrentNonce(script);
@@ -1566,7 +1623,7 @@
     });
   }
 
-  async function loadManagedScript(role, src, load) {
+  async function loadManagedScript(role, src, attributes) {
     if (!src) return false;
     // gosxHost.lifecycle.bootstrapPage is a forwarding shim installed by
     // compatibility.ts on every page (see compatibility.ts), so it is always
@@ -1577,11 +1634,10 @@
     if (role === "bootstrap" && typeof gosxHostCompatibility.read("__gosx_bootstrap_page") === "function") {
       return false;
     }
-    const effectiveLoad = load === "dom" || currentDocumentNonce() ? "dom" : "eval";
-    const cacheKey = effectiveLoad + ":" + src;
+    const cacheKey = "dom:" + src;
     // The initial document already executed its deferred runtime chunks, but
     // the navigation cache starts empty. Reusing the exact same chunk on the
-    // next route must not fetch+eval it again: Scene3D deliberately publishes
+    // next route must not load it again: Scene3D deliberately publishes
     // several non-writable globals and is not a re-entrant module body.
     if (findLoadedScript(src)) {
       scriptCache.set(cacheKey, Promise.resolve());
@@ -1592,18 +1648,7 @@
       return false;
     }
 
-    const promise = effectiveLoad === "dom"
-      ? loadManagedScriptTag(role, src)
-      : (async function() {
-        const resp = await gosxRuntimeRequest(src);
-        if (!resp.ok) {
-          throw new Error("script fetch failed: " + src + " (" + resp.status + ")");
-        }
-        const source = await resp.text();
-        (0, eval)(String(source) + "\n//# sourceURL=" + src);
-        const marker = findLoadedScript(src, true);
-        if (marker) marker.setAttribute("data-gosx-script-loaded", "true");
-      })();
+    const promise = loadManagedScriptTag(role, src, attributes);
 
     scriptCache.set(cacheKey, promise);
     await promise;
@@ -1633,7 +1678,7 @@
 
     let bootstrapLoadedNow = false;
     for (const script of scripts) {
-      if (await loadManagedScript(script.role, script.src, script.load)) {
+      if (await loadManagedScript(script.role, script.src, script.attributes)) {
         bootstrapLoadedNow = true;
       }
     }
@@ -5648,8 +5693,8 @@
   // Region-bootstrap diagnostic (data-gosx-region, gosx#227)
   //
   // data-gosx-region lives in regions.ts, which ships only inside a
-  // BOOTSTRAP bundle — never in this lean NavigationScript()/
-  // app.EnableNavigation() payload every page already loads regardless. A
+  // BOOTSTRAP bundle — never in this lean framework-owned navigation
+  // payload every page already gets from app.EnableNavigation(). A
   // page that renders data-gosx-region without also opting into a
   // bootstrap bundle (ctx.Runtime().EnableBootstrap(), or any of the
   // other PageRuntime calls that imply it — an island, an engine, a hub)

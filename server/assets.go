@@ -48,16 +48,18 @@ const (
 	ManagedScriptRoleBootstrap          = "bootstrap"
 	ManagedScriptRoleLifecycle          = "lifecycle"
 	ManagedScriptRoleManaged            = "managed"
-
-	ManagedScriptLoadFetchEval = "fetch-eval"
-	ManagedScriptLoadDOM       = "dom"
 )
 
 // ManagedScriptOptions configures GoSX runtime metadata attached to an
-// externally loaded script asset.
+// externally loaded script asset. GoSX always loads managed scripts through a
+// real DOM script element; there is no fetch/eval mode because it cannot satisfy
+// strict CSP and does not preserve normal browser script semantics.
 type ManagedScriptOptions struct {
-	Role string
-	Load string
+	Role           string
+	Type           string
+	Integrity      string
+	CrossOrigin    string
+	ReferrerPolicy string
 }
 
 // ManagedScript renders a script tag with GoSX runtime ownership metadata so
@@ -71,10 +73,13 @@ func ManagedScript(src string, opts ManagedScriptOptions, args ...any) gosx.Node
 		gosx.Attrs(
 			gosx.Attr("src", AssetURL(src)),
 			gosx.Attr("data-gosx-script", normalizeManagedScriptRole(opts.Role)),
+			gosx.Attr("type", normalizeManagedScriptType(opts.Type)),
+			gosx.Attr("crossorigin", normalizeManagedScriptCrossOrigin(opts.CrossOrigin)),
+			gosx.Attr("referrerpolicy", normalizeManagedScriptReferrerPolicy(opts.ReferrerPolicy)),
 		),
 	}
-	if load := normalizeManagedScriptLoad(opts.Load); load != "" {
-		attrs = append(attrs, gosx.Attrs(gosx.Attr("data-gosx-script-load", load)))
+	if integrity := strings.TrimSpace(opts.Integrity); integrity != "" {
+		attrs = append(attrs, gosx.Attrs(gosx.Attr("integrity", integrity)))
 	}
 	attrs = append(attrs, args...)
 	return gosx.El("script", attrs...)
@@ -127,13 +132,23 @@ func normalizeManagedScriptRole(role string) string {
 	}
 }
 
-func normalizeManagedScriptLoad(load string) string {
-	switch strings.TrimSpace(strings.ToLower(load)) {
-	case "", ManagedScriptLoadFetchEval:
-		return ""
-	case ManagedScriptLoadDOM:
-		return ManagedScriptLoadDOM
-	default:
-		return ""
+func normalizeManagedScriptType(value string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
 	}
+	return "text/javascript"
+}
+
+func normalizeManagedScriptCrossOrigin(value string) string {
+	if value = strings.TrimSpace(strings.ToLower(value)); value != "" {
+		return value
+	}
+	return "anonymous"
+}
+
+func normalizeManagedScriptReferrerPolicy(value string) string {
+	if value = strings.TrimSpace(strings.ToLower(value)); value != "" {
+		return value
+	}
+	return "no-referrer"
 }

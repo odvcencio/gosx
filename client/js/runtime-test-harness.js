@@ -59,7 +59,7 @@ const navigationSource = [
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "navigation.ts"), "utf8"),
 ].join("\n");
 // navigationRuntimeMinifiedSource is the generated, committed artifact
-// client/runtime/host/navigation_asset.go go:embeds and server.NavigationScript
+// client/runtime/host/navigation_asset.go go:embeds for app.EnableNavigation
 // writes inline into every page (gosx#221). Every behavioral test in this
 // suite exercises navigationSource above (the readable .ts source) — this
 // minified copy exists only so navigation-runtime-minified.test.js can prove

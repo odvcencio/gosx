@@ -104,9 +104,9 @@ func Page() Node {
 		</p>
 		<h2 id="navigation">Managed navigation</h2>
 		<p>
-			Enable navigation on the server and include
-			<span class="inline-code">server.NavigationScript()</span>
-			in the document head. Links marked
+			Enable navigation on the server with
+			<span class="inline-code">app.EnableNavigation()</span>
+			at the composition root. Links marked
 			<span class="inline-code">data-gosx-link="true"</span>
 			can fetch the next server-rendered document and swap managed content while preserving the browser history contract.
 		</p>

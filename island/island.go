@@ -10,6 +10,7 @@ package island
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -598,54 +599,95 @@ func (r *Renderer) SetVideoHLSPath(path string) {
 }
 
 func (r *Renderer) compatRuntimeHash(path string) string {
+	if asset, ok := r.runtimeScriptAsset(path); ok {
+		return strings.TrimSpace(asset.Hash)
+	}
 	switch compatRuntimePath(path) {
 	case "/gosx/runtime.wasm":
 		return strings.TrimSpace(r.runtimeAssets.WASM.Hash)
 	case "/gosx/runtime-islands.wasm":
 		return strings.TrimSpace(r.runtimeAssets.WASMIslands.Hash)
-	case "/gosx/wasm_exec.js":
-		return strings.TrimSpace(r.runtimeAssets.WASMExec.Hash)
-	case "/gosx/standard-go-wasm_exec.js":
-		return strings.TrimSpace(r.runtimeAssets.StandardGoWASMExec.Hash)
-	case "/gosx/bootstrap.js":
-		return strings.TrimSpace(r.runtimeAssets.Bootstrap.Hash)
-	case "/gosx/bootstrap-lite.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapLite.Hash)
-	case "/gosx/bootstrap-runtime.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapRuntime.Hash)
-	case "/gosx/bootstrap-feature-islands.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureIslands.Hash)
-	case "/gosx/bootstrap-feature-engines.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureEngines.Hash)
-	case "/gosx/bootstrap-feature-hubs.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureHubs.Hash)
-	case "/gosx/bootstrap-feature-controllers.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureControllers.Hash)
-	case "/gosx/bootstrap-feature-scene3d.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3D.Hash)
-	case "/gosx/bootstrap-feature-scene3d-command.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DCommand.Hash)
-	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash)
-	case "/gosx/bootstrap-feature-scene3d-webgl.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGL.Hash)
-	case "/gosx/bootstrap-feature-scene3d-gltf.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DGLTF.Hash)
-	case "/gosx/bootstrap-feature-scene3d-animation.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DAnimation.Hash)
-	case "/gosx/bootstrap-feature-scene3d-compute.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DCompute.Hash)
-	case "/gosx/bootstrap-feature-scene3d-decompress.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DDecompress.Hash)
-	case "/gosx/bootstrap-feature-textlayout.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureTextlayout.Hash)
-	case "/gosx/patch.js":
-		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
-	case "/gosx/hls.min.js":
-		return strings.TrimSpace(r.runtimeAssets.VideoHLS.Hash)
 	default:
 		return ""
 	}
+}
+
+func (r *Renderer) compatRuntimeIntegrity(path string) string {
+	asset, ok := r.runtimeScriptAsset(path)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(asset.Integrity)
+}
+
+// runtimeScriptAsset resolves both stable compatibility URLs and the hashed
+// production URLs installed by ApplyBuildManifest. A resolved path is trusted
+// to carry an asset's digest only when it still ends in that manifest file;
+// a later caller that points a setter at unrelated bytes must not inherit stale
+// SRI metadata merely because it occupies the same renderer field.
+func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, bool) {
+	target := compatRuntimePath(path)
+	switch {
+	case runtimeScriptAssetPathMatches(target, "/gosx/wasm_exec.js", r.wasmExecPath, r.runtimeAssets.WASMExec):
+		return r.runtimeAssets.WASMExec, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/standard-go-wasm_exec.js", r.standardGoWASMExecPath, r.runtimeAssets.StandardGoWASMExec):
+		return r.runtimeAssets.StandardGoWASMExec, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap.js", r.bootstrapPath, r.runtimeAssets.Bootstrap):
+		return r.runtimeAssets.Bootstrap, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-lite.js", r.bootstrapLitePath, r.runtimeAssets.BootstrapLite):
+		return r.runtimeAssets.BootstrapLite, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-runtime.js", r.bootstrapRuntimePath, r.runtimeAssets.BootstrapRuntime):
+		return r.runtimeAssets.BootstrapRuntime, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-islands.js", r.bootstrapFeatureIslandsPath, r.runtimeAssets.BootstrapFeatureIslands):
+		return r.runtimeAssets.BootstrapFeatureIslands, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-engines.js", r.bootstrapFeatureEnginesPath, r.runtimeAssets.BootstrapFeatureEngines):
+		return r.runtimeAssets.BootstrapFeatureEngines, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-hubs.js", r.bootstrapFeatureHubsPath, r.runtimeAssets.BootstrapFeatureHubs):
+		return r.runtimeAssets.BootstrapFeatureHubs, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-controllers.js", r.bootstrapFeatureControllersPath, r.runtimeAssets.BootstrapFeatureControllers):
+		return r.runtimeAssets.BootstrapFeatureControllers, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d.js", r.bootstrapFeatureScene3dPath, r.runtimeAssets.BootstrapFeatureScene3D):
+		return r.runtimeAssets.BootstrapFeatureScene3D, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-command.js", r.bootstrapFeatureScene3dCommandPath, r.runtimeAssets.BootstrapFeatureScene3DCommand):
+		return r.runtimeAssets.BootstrapFeatureScene3DCommand, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgpu.js", r.bootstrapFeatureScene3dWebGPUPath, r.runtimeAssets.BootstrapFeatureScene3DWebGPU):
+		return r.runtimeAssets.BootstrapFeatureScene3DWebGPU, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgl.js", r.bootstrapFeatureScene3dWebGLPath, r.runtimeAssets.BootstrapFeatureScene3DWebGL):
+		return r.runtimeAssets.BootstrapFeatureScene3DWebGL, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-gltf.js", r.bootstrapFeatureScene3dGLTFPath, r.runtimeAssets.BootstrapFeatureScene3DGLTF):
+		return r.runtimeAssets.BootstrapFeatureScene3DGLTF, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-animation.js", r.bootstrapFeatureScene3dAnimationPath, r.runtimeAssets.BootstrapFeatureScene3DAnimation):
+		return r.runtimeAssets.BootstrapFeatureScene3DAnimation, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-compute.js", r.bootstrapFeatureScene3dComputePath, r.runtimeAssets.BootstrapFeatureScene3DCompute):
+		return r.runtimeAssets.BootstrapFeatureScene3DCompute, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-decompress.js", r.bootstrapFeatureScene3dDecompressPath, r.runtimeAssets.BootstrapFeatureScene3DDecompress):
+		return r.runtimeAssets.BootstrapFeatureScene3DDecompress, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-textlayout.js", r.bootstrapFeatureTextlayoutPath, r.runtimeAssets.BootstrapFeatureTextlayout):
+		return r.runtimeAssets.BootstrapFeatureTextlayout, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/patch.js", r.patchPath, r.runtimeAssets.Patch):
+		return r.runtimeAssets.Patch, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/hls.min.js", r.videoHLSPath, r.runtimeAssets.VideoHLS):
+		return r.runtimeAssets.VideoHLS, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/relay.js", r.relayPath, r.runtimeAssets.Relay):
+		return r.runtimeAssets.Relay, true
+	default:
+		return buildmanifest.HashedAsset{}, false
+	}
+}
+
+func runtimeScriptAssetPathMatches(target, canonical, resolved string, asset buildmanifest.HashedAsset) bool {
+	if target == canonical {
+		return true
+	}
+	resolvedPath := compatRuntimePath(resolved)
+	if target == "" || target != resolvedPath {
+		return false
+	}
+	file := strings.TrimLeft(strings.TrimSpace(asset.File), "/")
+	if file == "" {
+		return false
+	}
+	return target == "/"+file || strings.HasSuffix(target, "/"+file)
 }
 
 func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
@@ -658,7 +700,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -676,6 +718,35 @@ func compatRuntimePath(path string) string {
 		return strings.TrimSpace(path)
 	}
 	return strings.TrimSpace(parsed.Path)
+}
+
+// runtimeScriptAttrs returns the browser policy attributes shared by every
+// GoSX-owned external script. Runtime scripts are always DOM scripts during a
+// soft navigation; explicit type/cross-origin/referrer policy values keep the
+// browser's behavior deterministic instead of inheriting page defaults.
+//
+// Build manifests store content hashes as hex. Convert a complete SHA-256 hash
+// to the SRI form when one is available; compatibility/test hashes that are not
+// complete digests deliberately omit integrity rather than emitting a value the
+// browser would reject.
+func (r *Renderer) runtimeScriptAttrs(path string, nonce string) string {
+	attrs := ` type="text/javascript" crossorigin="anonymous" referrerpolicy="no-referrer"`
+	integrity := r.compatRuntimeIntegrity(path)
+	if integrity == "" {
+		integrity = sriIntegrity(r.compatRuntimeHash(path))
+	}
+	if integrity != "" {
+		attrs += ` integrity="` + html.EscapeString(integrity) + `"`
+	}
+	return attrs + cspNonceAttr(nonce)
+}
+
+func sriIntegrity(hash string) string {
+	raw, err := hex.DecodeString(strings.TrimSpace(hash))
+	if err != nil || len(raw) != sha256.Size {
+		return ""
+	}
+	return "sha256-" + base64.StdEncoding.EncodeToString(raw)
 }
 
 // ApplyBuildManifest wires hashed runtime and island asset URLs into the renderer.
@@ -932,25 +1003,26 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	// the relay's message listener is installed before any cross-frame
 	// signals arrive — see plan section C and client/js/relay.js.
 	if plan.PreviewRelay && r.relayPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"%s></script>`, html.EscapeString(r.relayPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"%s></script>`, html.EscapeString(r.relayPath), r.runtimeScriptAttrs(r.relayPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.StandardGoWASMExec && r.standardGoWASMExecPath != "" {
 		// wasm_exec.js declares globals that must execute as a real script. Mark
 		// the wrapped standard-Go shim for DOM loading during managed navigation
 		// so strict-CSP pages never fall back to indirect eval.
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="standard-go-wasm-exec" data-gosx-script-load="dom" src="%s"%s></script>`, html.EscapeString(r.standardGoWASMExecPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="standard-go-wasm-exec" data-gosx-script-load="dom" src="%s"%s></script>`, html.EscapeString(r.standardGoWASMExecPath), r.runtimeScriptAttrs(r.standardGoWASMExecPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.WASMExec && r.wasmExecPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"%s></script>`, html.EscapeString(r.wasmExecPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"%s></script>`, html.EscapeString(r.wasmExecPath), r.runtimeScriptAttrs(r.wasmExecPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.Patch && r.patchPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"%s></script>`, html.EscapeString(r.patchPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"%s></script>`, html.EscapeString(r.patchPath), r.runtimeScriptAttrs(r.patchPath, nonce)))
 		b.WriteByte('\n')
 	}
-	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"%s></script>`, plan.Mode, html.EscapeString(r.selectedBootstrapPath()), nonceAttr))
+	bootstrapPath := r.selectedBootstrapPath()
+	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"%s></script>`, plan.Mode, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		b.WriteByte('\n')
 		b.WriteString(`<script defer data-gosx-script="feature-scene3d"`)
@@ -1002,7 +1074,7 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		b.WriteString(` src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString(`"`)
-		b.WriteString(nonceAttr)
+		b.WriteString(r.runtimeScriptAttrs(scene3dPath, nonce))
 		b.WriteString(">\x3c/script>")
 
 		// WebGPU sub-feature: lazy-load only when navigator.gpu exists.
@@ -1034,7 +1106,17 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			// a syntax error, silently dropping the entire inline loader.
 			b.WriteString(`<script data-gosx-script="feature-scene3d-webgpu-loader"`)
 			b.WriteString(nonceAttr)
-			b.WriteString(`>if(navigator.gpu&&!window.__gosx_scene3d_webgpu_api&&!window.__gosx_scene3d_webgpu_feature_promise){var _n=document.currentScript&&(document.currentScript.nonce||document.currentScript.getAttribute('nonce'))||'';var _w=function(){if(window.__gosx_scene3d_webgpu_api||window.__gosx_scene3d_webgpu_feature_promise)return;window.__gosx_scene3d_webgpu_feature_promise=new Promise(function(r,j){var s=document.createElement('script');s.async=false;s.dataset.gosxScript='feature-scene3d-webgpu';if(_n){s.nonce=_n;}s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
+			b.WriteString(`>if(navigator.gpu&&!window.__gosx_scene3d_webgpu_api&&!window.__gosx_scene3d_webgpu_feature_promise){var _n=document.currentScript&&(document.currentScript.nonce||document.currentScript.getAttribute('nonce'))||'';var _w=function(){if(window.__gosx_scene3d_webgpu_api||window.__gosx_scene3d_webgpu_feature_promise)return;window.__gosx_scene3d_webgpu_feature_promise=new Promise(function(r,j){var s=document.createElement('script');s.async=false;s.type='text/javascript';s.setAttribute('crossorigin','anonymous');s.setAttribute('referrerpolicy','no-referrer');s.dataset.gosxScript='feature-scene3d-webgpu';if(_n){s.nonce=_n;}if(_n){s.setAttribute('nonce',_n);}`)
+			integrity := r.compatRuntimeIntegrity(webgpuPath)
+			if integrity == "" {
+				integrity = sriIntegrity(r.compatRuntimeHash(webgpuPath))
+			}
+			if integrity != "" {
+				b.WriteString(`s.setAttribute('integrity',`)
+				b.WriteString(htmlJSStringLiteral(integrity))
+				b.WriteString(`);`)
+			}
+			b.WriteString(`s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
 			b.WriteString(htmlJSStringLiteral(webgpuPath))
 			b.WriteString(";document.head.appendChild(s);});};")
 			b.WriteString("if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_w);}else{_w();}}")

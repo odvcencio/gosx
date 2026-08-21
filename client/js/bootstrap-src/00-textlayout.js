@@ -945,10 +945,16 @@
     textLayoutEngineLoad = new Promise(function(resolve) {
       const script = document.createElement("script");
       script.src = src;
+      script.setAttribute("src", src);
+      script.type = "text/javascript";
+      script.setAttribute("type", "text/javascript");
+      script.setAttribute("crossorigin", "anonymous");
+      script.setAttribute("referrerpolicy", "no-referrer");
       script.setAttribute("data-gosx-script", "feature-textlayout");
       const nonce = gosxBootstrapScriptNonce();
       if (nonce) {
         script.nonce = nonce;
+        script.setAttribute("nonce", nonce);
       }
       script.onload = function() {
         // The chunk registers itself when it holds no feature host. When a host

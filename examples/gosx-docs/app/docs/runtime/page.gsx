@@ -42,17 +42,15 @@ func Page() Node {
 				<span class="inline-code">server.App</span>
 				can call
 				<span class="inline-code">app.EnableNavigation()</span>
-				; a file-router layout can add
-				<span class="inline-code">server.NavigationScript()</span>
-				to its managed head.
+				; the same application setting wires a mounted file-router layout.
 			</p>
-			{CodeBlock("go", `router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-	    ctx.AddHead(server.NavigationScript())
-	    return server.HTMLDocument(ctx.Title("My App"), ctx.Head(), body)
-	})`)}
+			{CodeBlock("go", `app := server.New()
+	app.EnableNavigation()
+	app.Mount("/", router.Build())`)}
 			<p>
-				<span class="inline-code">NavigationScript()</span>
-				writes the runtime inline into the page head, so it runs before any other script fetches. It ships pre-minified:
+				The framework-owned navigation runtime is emitted once by
+				<span class="inline-code">app.EnableNavigation()</span>
+				and receives the request's CSP nonce. It ships pre-minified:
 				<span class="inline-code">cmd/buildbootstrap</span>
 				builds and commits
 				<span class="inline-code">
@@ -579,7 +577,7 @@ func Page() Node {
 				requires the navigation runtime (
 				<span class="inline-code">app.EnableNavigation()</span>
 				or
-				<span class="inline-code">server.NavigationScript()</span>
+				<span class="inline-code">app.EnableNavigation()</span>
 				above) — periodic revalidation, the pause it pauses, and the managed-form error surface it reverts through all live there.
 			</p>
 		</section>
@@ -639,7 +637,7 @@ func Page() Node {
 				lives in
 				<span class="inline-code">client/runtime/host/regions.ts</span>
 				, which ships only inside a bootstrap bundle — never in the lean
-				<span class="inline-code">NavigationScript()</span>
+				<span class="inline-code">app.EnableNavigation()</span>
 				/
 				<span class="inline-code">app.EnableNavigation()</span>
 				payload this page's own
@@ -847,11 +845,10 @@ func Page() Node {
 			<p>
 				Use
 				<span class="inline-code">ctx.ManagedScript</span>
-				for an ordinary runtime-owned helper. Its explicit role and load mode become navigation metadata.
+				for an ordinary runtime-owned helper. Managed scripts always load through a real DOM script element; GoSX adds explicit type, cross-origin, referrer-policy, and (for build-manifest assets) integrity metadata.
 			</p>
 			{CodeBlock("go", `ctx.ManagedScript(server.AssetURL("scripts/analytics.js"), server.ManagedScriptOptions{
 	    Role: server.ManagedScriptRoleManaged,
-	    Load: server.ManagedScriptLoadDOM,
 	})`)}
 		</section>
 		<section id="prefetch">

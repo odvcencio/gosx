@@ -111,6 +111,65 @@ func TestPageHeadWithBootstrapOnlyUsesLiteRuntime(t *testing.T) {
 	}
 }
 
+func TestPageHeadCarriesManifestSRIForRuntimeScripts(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		BootstrapLite: buildmanifest.HashedAsset{
+			File:      "bootstrap-lite.11111111.js",
+			Hash:      "11111111",
+			Integrity: "sha256-lite-integrity",
+		},
+		BootstrapRuntime: buildmanifest.HashedAsset{
+			File:      "bootstrap-runtime.22222222.js",
+			Hash:      "22222222",
+			Integrity: "sha256-runtime-integrity",
+		},
+		BootstrapFeatureEngines: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-engines.33333333.js",
+			Hash:      "33333333",
+			Integrity: "sha256-engines-integrity",
+		},
+		BootstrapFeatureScene3D: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-scene3d.44444444.js",
+			Hash:      "44444444",
+			Integrity: "sha256-scene-integrity",
+		},
+		BootstrapFeatureScene3DWebGPU: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-scene3d-webgpu.55555555.js",
+			Hash:      "55555555",
+			Integrity: "sha256-webgpu-integrity",
+		},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.EnableBootstrap()
+
+	liteHTML := gosx.RenderHTML(r.PageHead())
+	for _, want := range []string{
+		`src="/gosx/assets/runtime/bootstrap-lite.11111111.js"`,
+		`integrity="sha256-lite-integrity"`,
+	} {
+		if !strings.Contains(liteHTML, want) {
+			t.Fatalf("expected production lite runtime to include %q in %s", want, liteHTML)
+		}
+	}
+
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	runtimeHTML := gosx.RenderHTML(r.BootstrapScript())
+	for _, want := range []string{
+		`src="/gosx/assets/runtime/bootstrap-runtime.22222222.js"`,
+		`integrity="sha256-runtime-integrity"`,
+		`src="/gosx/assets/runtime/bootstrap-feature-scene3d.44444444.js"`,
+		`integrity="sha256-scene-integrity"`,
+		`s.setAttribute('integrity',"sha256-webgpu-integrity");`,
+	} {
+		if !strings.Contains(runtimeHTML, want) {
+			t.Fatalf("expected production runtime to include %q in %s", want, runtimeHTML)
+		}
+	}
+}
+
 func TestPageHeadWithIslands(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetBundle("main", "/gosx/runtime.wasm")

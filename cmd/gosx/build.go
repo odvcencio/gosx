@@ -62,6 +62,15 @@ func contentHash(data []byte) string {
 	return buildmanifest.ContentHash(data)
 }
 
+// withRuntimeIntegrity keeps the short content hash used in asset filenames
+// while recording the complete digest needed for browser SRI checks. Runtime
+// assets are the only manifest entries emitted into executable script tags;
+// island/CSS/image entries keep their smaller historical metadata surface.
+func withRuntimeIntegrity(asset HashedAsset, data []byte) HashedAsset {
+	asset.Integrity = buildmanifest.ContentIntegrity(data)
+	return asset
+}
+
 // writeHashed writes data to dir/name.hash.ext and returns the asset info.
 func writeHashed(dir, name, ext string, data []byte) (HashedAsset, error) {
 	return writeHashedWithOptions(dir, name, ext, data, hashedWriteOptions{CompressedSidecars: true})
@@ -540,6 +549,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				if err != nil {
 					return fmt.Errorf("write wasm_exec.js: %w", err)
 				}
+				asset = withRuntimeIntegrity(asset, data)
 				manifest.Runtime.WASMExec = asset
 				fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
 				wasmExecFound = true
@@ -560,6 +570,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err != nil {
 		return fmt.Errorf("write standard-Go wasm_exec.js: %w", err)
 	}
+	standardGoWASMExecAsset = withRuntimeIntegrity(standardGoWASMExecAsset, standardGoWASMExec)
 	manifest.Runtime.StandardGoWASMExec = standardGoWASMExecAsset
 	fmt.Printf("    %s (%d bytes, standard Go)\n", standardGoWASMExecAsset.File, standardGoWASMExecAsset.Size)
 
@@ -599,6 +610,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		if err != nil {
 			return fmt.Errorf("write %s: %w", js.name, err)
 		}
+		asset = withRuntimeIntegrity(asset, data)
 		*js.dest = asset
 		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
 		if mapData, err := os.ReadFile(js.path + ".map"); err == nil {

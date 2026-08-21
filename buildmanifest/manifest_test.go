@@ -8,6 +8,12 @@ import (
 	"testing"
 )
 
+func TestContentIntegrityUsesCompleteSHA256SRI(t *testing.T) {
+	if got, want := ContentIntegrity([]byte("hello")), "sha256-LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="; got != want {
+		t.Fatalf("ContentIntegrity(hello) = %q, want %q", got, want)
+	}
+}
+
 func TestLoadAndURLs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "build.json")

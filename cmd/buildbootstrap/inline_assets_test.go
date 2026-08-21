@@ -11,7 +11,7 @@ import (
 // inline_assets_test.go covers inlineAssets: the build-artifact class this
 // tool prepares for a Go source to go:embed directly, rather than for a
 // fetched <script src> bundle. gosx#221 added it so
-// client/runtime/host/navigation.ts (server.NavigationScript's inline
+// client/runtime/host/navigation.ts (app.EnableNavigation's inline
 // per-page navigation runtime) ships minified instead of raw, without
 // joining the fetched bundle graph in outputs (see the inlineAssets doc
 // comment in main.go for why navigation.ts stays out of that graph).

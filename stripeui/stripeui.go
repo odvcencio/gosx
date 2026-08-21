@@ -79,7 +79,6 @@ func Head(cfg RuntimeConfig) gosx.Node {
 	nodes = append(nodes,
 		server.ManagedScript(stripeJS, server.ManagedScriptOptions{
 			Role: server.ManagedScriptRoleManaged,
-			Load: server.ManagedScriptLoadDOM,
 		}, gosx.Attrs(gosx.BoolAttr("defer"))),
 		server.LifecycleScript(bridge, gosx.Attrs(gosx.BoolAttr("defer"))),
 	)

@@ -29,6 +29,15 @@
       var script = document.createElement("script");
       script.src = commandURL();
       script.async = true;
+      script.type = "text/javascript";
+      script.crossOrigin = "anonymous";
+      script.referrerPolicy = "no-referrer";
+      if (typeof script.setAttribute === "function") {
+        script.setAttribute("src", script.src);
+        script.setAttribute("type", "text/javascript");
+        script.setAttribute("crossorigin", "anonymous");
+        script.setAttribute("referrerpolicy", "no-referrer");
+      }
       if (typeof gosxApplyCurrentScriptNonce === "function") {
         gosxApplyCurrentScriptNonce(script);
       }

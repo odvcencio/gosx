@@ -363,8 +363,7 @@ type NavigationConfigurable interface {
 // EnableNavigation is set and handler implements NavigationConfigurable, Build
 // wires the navigation-runtime head builder into it (see registerMountRoutes),
 // so a file-routed app built with route.NewRouter and mounted here needs only
-// app.EnableNavigation() — no manual ctx.AddHead(server.NavigationScript())
-// in the layout. EnableNavigation and Mount may run in either order; only
+// app.EnableNavigation() in the composition root. EnableNavigation and Mount may run in either order; only
 // Build reads a.navigation, so both must run before Build.
 func (a *App) Mount(pattern string, handler http.Handler) {
 	pattern = strings.TrimSpace(pattern)
@@ -670,7 +669,7 @@ func (a *App) registerMountRoutes(mux *http.ServeMux) {
 		// to run before Build.
 		if a.navigation {
 			if configurable, ok := handler.(NavigationConfigurable); ok {
-				configurable.SetNavigationHead(NavigationScriptWithNonce)
+				configurable.SetNavigationHead(navigationScriptWithNonce)
 			}
 		}
 		mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -915,10 +914,12 @@ func (a *App) observeOperation(event OperationEvent) {
 
 func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
 	ctx = ensurePageContext(ctx)
+	requestNonce := ctx.Nonce()
 	// Drop the nonce before the render when a shared cache may store the body.
 	// One stored copy reaches many clients, so a per-request nonce in that copy
 	// would name a value the next client never received. documentContext drops
-	// the request ID on the same rule.
+	// the request ID on the same rule. Keep requestNonce separately so WriteHTML
+	// can also remove nonce attributes already baked into handler-created nodes.
 	if ctx.cache.SharedCacheable() {
 		ctx.SetNonce("")
 	}
@@ -937,8 +938,8 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 		Request:            ctx.Request,
 		Cache:              ctx.cache,
 		Revalidator:        a.Revalidator(),
-		CacheDigestExclude: []string{ctx.Nonce()},
-		Nonce:              ctx.Nonce(),
+		CacheDigestExclude: []string{requestNonce},
+		Nonce:              requestNonce,
 	})
 }
 
@@ -959,8 +960,8 @@ func ensurePageContext(ctx *Context) *Context {
 // nothing for this request. Decorators run in registration order, after the
 // runtime/navigation head assets (see decoratePageContext), for every page
 // rendered through App.renderPage — islands, engines, hubs, and the
-// navigation script all reach <head> the same way (ctx.runtime.Head() /
-// NavigationScript()); AddHeadDecorator is the same mechanism for
+// framework-owned navigation runtime all reach <head> the same way
+// (ctx.runtime.Head() / App.EnableNavigation()); AddHeadDecorator is the same mechanism for
 // app-supplied content.
 //
 // This exists so an app-level concern that must appear on every page (e.g. a
@@ -994,7 +995,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 	// Runtime head emission moved into PageState.Head() (lazy, at document
 	// render) so layout-registered engines reach the manifest.
 	if a.navigation {
-		ctx.SetNavigationHead(NavigationScriptWithNonce)
+		ctx.SetNavigationHead(navigationScriptWithNonce)
 	}
 	for _, decorate := range a.headDecorators {
 		if decorate == nil {

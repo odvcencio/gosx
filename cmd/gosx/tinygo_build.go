@@ -157,6 +157,7 @@ func writeTinyGoWASMExec(tinygoPath, runtimeDir string) (HashedAsset, error) {
 	if err != nil {
 		return HashedAsset{}, fmt.Errorf("write TinyGo wasm_exec.js: %w", err)
 	}
+	asset = withRuntimeIntegrity(asset, data)
 	return asset, nil
 }
 

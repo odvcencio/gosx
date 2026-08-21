@@ -248,13 +248,11 @@ func (r *Router) SetLayout(layout LayoutFunc) {
 	r.defaultLayout = layout
 }
 
-// SetNavigationHead registers the navigation-runtime head builder RouteContext
-// carries into PageState.Head. server.App.Mount calls this automatically (via
-// server.NavigationConfigurable) when the owning App has EnableNavigation set,
-// so a file-routed app needs only app.EnableNavigation() to get the runtime —
-// no manual ctx.AddHead(server.NavigationScript()) in the layout. A manual
-// AddHead call keeps working too: Head only injects when the script isn't
-// already present (see server.NavigationScriptAttr).
+// SetNavigationHead registers the framework-owned navigation-runtime head
+// builder RouteContext carries into PageState.Head. server.App.Mount calls
+// this automatically (via server.NavigationConfigurable) when the owning App
+// has EnableNavigation set, so a file-routed app needs only
+// app.EnableNavigation() in its composition root.
 func (r *Router) SetNavigationHead(fn func(nonce string) gosx.Node) {
 	r.navigationHead = fn
 }
@@ -469,9 +467,12 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 		ctx.SetStatus(defaultStatus)
 	}
 
+	requestNonce := ctx.Nonce()
 	// Drop the nonce before the layouts run when a shared cache may store the
 	// body. One stored copy reaches many clients, so a per-request nonce in that
-	// copy would name a value the next client never received.
+	// copy would name a value the next client never received. Keep requestNonce
+	// separately so WriteHTML can remove attributes already baked into the route
+	// handler's nodes before CachePublic was observed here.
 	if ctx.CacheState().SharedCacheable() {
 		ctx.SetNonce("")
 	}
@@ -496,8 +497,8 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 		Request:            ctx.Request,
 		Cache:              ctx.CacheState(),
 		Revalidator:        r.Revalidator(),
-		CacheDigestExclude: []string{ctx.Nonce()},
-		Nonce:              ctx.Nonce(),
+		CacheDigestExclude: []string{requestNonce},
+		Nonce:              requestNonce,
 	})
 }
 

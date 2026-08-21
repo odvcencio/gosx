@@ -1489,6 +1489,10 @@ test("navigation runtime loads patch, lifecycle, and managed scripts before page
   managedScript.id = "managed-script";
   managedScript.setAttribute("data-gosx-script", "managed");
   managedScript.setAttribute("src", "/managed.js");
+  managedScript.setAttribute("type", "module");
+  managedScript.setAttribute("integrity", "sha256-asset");
+  managedScript.setAttribute("crossorigin", "use-credentials");
+  managedScript.setAttribute("referrerpolicy", "same-origin");
 
   const nextBody = new FakeElement("main", null);
   nextBody.id = "runtime-page";
@@ -1513,10 +1517,78 @@ test("navigation runtime loads patch, lifecycle, and managed scripts before page
   ]);
   assert.equal(env.document.getElementById("runtime-page").textContent, "Runtime page");
   assert.equal(env.document.getElementById("managed-script"), null);
+  const loadedManagedScript = env.document.head.children.find(
+    (node) => node.getAttribute("data-gosx-script") === "managed",
+  );
+  assert.ok(loadedManagedScript);
+  assert.equal(loadedManagedScript.getAttribute("type"), "module");
+  assert.equal(loadedManagedScript.getAttribute("integrity"), "sha256-asset");
+  assert.equal(loadedManagedScript.getAttribute("crossorigin"), "use-credentials");
+  assert.equal(loadedManagedScript.getAttribute("referrerpolicy"), "same-origin");
   assert.deepEqual(
     Array.from(env.context.__gosx.document.get().assets.scripts, (entry) => entry.role),
     ["patch", "lifecycle"],
   );
+});
+
+test("managed head replacement preserves the active document nonce", async () => {
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      "http://localhost:3000/nonce-swap": {
+        text: "__NONCE_SWAP_DOC__",
+        url: "http://localhost:3000/nonce-swap",
+      },
+      "http://localhost:3000/managed.js": {
+        text: "window.__managedNonceScriptLoaded = true;",
+        url: "http://localhost:3000/managed.js",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+
+  const activeNavigationScript = new FakeElement("script", env.document);
+  activeNavigationScript.setAttribute("data-gosx-navigation", "true");
+  activeNavigationScript.setAttribute("nonce", "active-document-nonce");
+  activeNavigationScript.textContent = "navigation-runtime";
+  appendManagedHead(env.document, [activeNavigationScript]);
+
+  const fetchedNavigationScript = new FakeElement("script", null);
+  fetchedNavigationScript.setAttribute("data-gosx-navigation", "true");
+  fetchedNavigationScript.setAttribute("nonce", "fetched-document-nonce");
+  fetchedNavigationScript.textContent = "navigation-runtime";
+
+  const managedScript = new FakeElement("script", null);
+  managedScript.setAttribute("data-gosx-script", "managed");
+  managedScript.setAttribute("src", "/managed.js");
+
+  parsedDocs.set("__NONCE_SWAP_DOC__", buildNavigatedDocument({
+    title: "Nonce swap",
+    headNodes: [fetchedNavigationScript, managedScript],
+    bodyNodes: [new FakeElement("main", null)],
+  }));
+
+  env.context.__gosx_dispose_page = async function() {};
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await env.context.__gosx_page_nav.navigate("http://localhost:3000/nonce-swap");
+  await flushAsyncWork();
+
+  const liveNavigationScripts = env.document.head.children.filter(
+    (node) => node.hasAttribute("data-gosx-navigation"),
+  );
+  assert.equal(liveNavigationScripts.length, 1);
+  assert.equal(liveNavigationScripts[0], activeNavigationScript);
+  assert.equal(liveNavigationScripts[0].getAttribute("nonce"), "active-document-nonce");
+
+  const loadedManagedScript = env.document.head.children.find(
+    (node) => node.getAttribute("data-gosx-script") === "managed"
+      && node.getAttribute("data-gosx-script-loaded") === "true",
+  );
+  assert.ok(loadedManagedScript);
+  assert.equal(loadedManagedScript.getAttribute("nonce"), "active-document-nonce");
+  assert.equal(env.context.__managedNonceScriptLoaded, true);
 });
 
 test("navigation runtime injects the bootstrap script when window.__gosx_bootstrap_page is absent", async () => {
@@ -1591,6 +1663,10 @@ test("navigation runtime replays only opted-in inline scripts after page bootstr
 
   env.context.__scriptOrder = [];
   env.context.__bootstrapDone = false;
+  const activeNavigationScript = new FakeElement("script", env.document);
+  activeNavigationScript.setAttribute("data-gosx-navigation", "true");
+  activeNavigationScript.setAttribute("nonce", "active-document-nonce");
+  env.document.head.appendChild(activeNavigationScript);
   env.document.inlineScriptLoader = function(script) {
     runScript(script.textContent || "", env.context, "inline-navigation-replay.js");
   };
@@ -1623,6 +1699,7 @@ test("navigation runtime replays only opted-in inline scripts after page bootstr
   const replayScript = new FakeElement("script", null);
   replayScript.id = "replay-script";
   replayScript.setAttribute("data-gosx-navigation-replay", "true");
+  replayScript.setAttribute("nonce", "fetched-document-nonce");
   replayScript.textContent = [
     "window.__inlineReplayCount = (window.__inlineReplayCount || 0) + 1;",
     "window.__scriptOrder.push(window.__bootstrapDone ? 'replay-after-bootstrap' : 'replay-before-bootstrap');",
@@ -1640,7 +1717,9 @@ test("navigation runtime replays only opted-in inline scripts after page bootstr
   assert.deepEqual(env.context.__scriptOrder, ["dispose", "bootstrap", "replay-after-bootstrap"]);
   assert.equal(env.context.__inlineReplayCount, 1);
   assert.equal(env.document.getElementById("inline-replay-page").textContent, "Inline replay");
-  assert.equal(env.document.getElementById("replay-script").getAttribute("data-gosx-navigation-replayed"), "true");
+  const replayedScript = env.document.getElementById("replay-script");
+  assert.equal(replayedScript.getAttribute("data-gosx-navigation-replayed"), "true");
+  assert.equal(replayedScript.getAttribute("nonce"), "active-document-nonce");
 });
 
 test("navigation runtime replays pre-bootstrap inline scripts before page bootstrap", async () => {

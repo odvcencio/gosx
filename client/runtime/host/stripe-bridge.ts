@@ -102,7 +102,12 @@
 
       const script = document.createElement("script");
       script.src = src;
+      script.setAttribute("src", src);
       script.async = true;
+      script.type = "text/javascript";
+      script.setAttribute("type", "text/javascript");
+      script.setAttribute("crossorigin", "anonymous");
+      script.setAttribute("referrerpolicy", "no-referrer");
       script.setAttribute("data-gosx-script", "managed");
       script.setAttribute("data-gosx-script-load", "dom");
       script.onload = function() {

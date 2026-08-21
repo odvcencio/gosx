@@ -44,8 +44,9 @@ const (
 	// (RegionSignalAttr), a hub event (RegionEventsAttr), or an interval
 	// (RegionIntervalAttr). This REQUIRES THE BOOTSTRAP RUNTIME —
 	// client/runtime/host/regions.ts — which does NOT ship in the lean
-	// NavigationScript()/app.EnableNavigation() payload every page already
-	// loads. A page must additionally call ctx.Runtime().EnableBootstrap()
+	// framework-owned navigation payload every page gets from
+	// app.EnableNavigation(). A page must additionally call
+	// ctx.Runtime().EnableBootstrap()
 	// (or otherwise opt into a bootstrap bundle — registering an island, an
 	// engine, or a hub on the same page already implies it too; see
 	// PageRuntime's own methods in server/runtime.go). The initial,

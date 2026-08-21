@@ -970,7 +970,7 @@
 ### Fixed: minify the embedded navigation runtime script
 
 - **The inline navigation runtime now ships minified, not raw** (gosx#221).
-  `server.NavigationScript()` writes the runtime straight into every page's
+  the framework-owned navigation runtime writes straight into every page's
   `<head>`. Its two sources, `client/runtime/host/compatibility.ts` and
   `client/runtime/host/navigation.ts`, grew to about 198 KB raw across
   gosx#212 through gosx#216, which pushed `/docs/getting-started` past the

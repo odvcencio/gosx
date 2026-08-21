@@ -13,6 +13,29 @@
  * @property {(canvas: HTMLCanvasElement, props: object, capability: object) => object|null} create
  * @property {() => Promise<object|null>} load
  */
+
+// Every runtime chunk is loaded through a real DOM script element. Keep the
+// element's execution and request policy explicit so a strict-CSP page does not
+// depend on browser defaults. The caller still supplies the active document
+// nonce because a fetched page's nonce must never be reused after navigation.
+function gosxConfigureSceneScript(script, role, src) {
+  if (!script) return;
+  script.type = "text/javascript";
+  script.setAttribute("type", "text/javascript");
+  script.setAttribute("crossorigin", "anonymous");
+  script.setAttribute("referrerpolicy", "no-referrer");
+  if (role) {
+    script.setAttribute("data-gosx-script", role);
+  }
+  if (src) {
+    script.src = src;
+    script.setAttribute("src", src);
+  }
+  if (typeof gosxApplyCurrentScriptNonce === "function") {
+    gosxApplyCurrentScriptNonce(script);
+  }
+}
+
   // --------------------------------------------------------------------------
   // WebGL renderer factory resolution
   // --------------------------------------------------------------------------
@@ -1482,9 +1505,7 @@
     sceneWebGPUFeaturePromise = new Promise(function(resolve, reject) {
       var s = document.createElement("script");
       s.async = false;
-      s.dataset.gosxScript = "feature-scene3d-webgpu";
-      s.src = resolveSceneSubFeatureURL("gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
-      gosxApplyCurrentScriptNonce(s);
+      gosxConfigureSceneScript(s, "feature-scene3d-webgpu", resolveSceneSubFeatureURL("gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js"));
       s.onload = function() {
         if (window.__gosx_scene3d_webgpu_api) {
           resolve(window.__gosx_scene3d_webgpu_api);
@@ -1571,9 +1592,7 @@
     sceneWebGLFeaturePromise = new Promise(function(resolve, reject) {
       var s = document.createElement("script");
       s.async = false;
-      s.dataset.gosxScript = "feature-scene3d-webgl";
-      s.src = resolveSceneSubFeatureURL("gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js");
-      gosxApplyCurrentScriptNonce(s);
+      gosxConfigureSceneScript(s, "feature-scene3d-webgl", resolveSceneSubFeatureURL("gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js"));
       s.onload = function() {
         if (window.__gosx_scene3d_webgl_api) {
           resolve(window.__gosx_scene3d_webgl_api);
@@ -1710,9 +1729,7 @@
     sceneGLTFFeaturePromise = new Promise(function(resolve, reject) {
       var s = document.createElement("script");
       s.async = false;
-      s.dataset.gosxScript = "feature-scene3d-gltf";
-      s.src = resolveSceneSubFeatureURL("gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
-      gosxApplyCurrentScriptNonce(s);
+      gosxConfigureSceneScript(s, "feature-scene3d-gltf", resolveSceneSubFeatureURL("gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js"));
       s.onload = function() {
         if (window.__gosx_scene3d_gltf_api) {
           resolve(window.__gosx_scene3d_gltf_api);
@@ -1785,9 +1802,7 @@
     sceneAnimationFeaturePromise = new Promise(function(resolve, reject) {
       var s = document.createElement("script");
       s.async = false;
-      s.dataset.gosxScript = "feature-scene3d-animation";
-      s.src = resolveSceneSubFeatureURL("gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
-      gosxApplyCurrentScriptNonce(s);
+      gosxConfigureSceneScript(s, "feature-scene3d-animation", resolveSceneSubFeatureURL("gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js"));
       s.onload = function() {
         if (window.__gosx_scene3d_animation_api) {
           resolve(window.__gosx_scene3d_animation_api);
@@ -1840,9 +1855,7 @@
       }
       var s = document.createElement("script");
       s.async = false;
-      s.dataset.gosxScript = "feature-scene3d-compute";
-      s.src = url;
-      gosxApplyCurrentScriptNonce(s);
+      gosxConfigureSceneScript(s, "feature-scene3d-compute", url);
       s.onload = function() {
         if (window.__gosx_scene3d_compute_api) {
           resolve(window.__gosx_scene3d_compute_api);
@@ -1945,9 +1958,7 @@
       }
       var s = document.createElement("script");
       s.async = false;
-      s.dataset.gosxScript = "feature-scene3d-decompress";
-      s.src = url;
-      gosxApplyCurrentScriptNonce(s);
+      gosxConfigureSceneScript(s, "feature-scene3d-decompress", url);
       s.onload = function() {
         if (sceneDecompressAPIFunction("sceneDecompressProps")) {
           resolve(window.__gosx_scene3d_api);

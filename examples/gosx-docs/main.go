@@ -79,7 +79,6 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.AddHead(server.NavigationScript())
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>`))
