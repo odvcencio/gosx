@@ -12,8 +12,17 @@ func Page() Node {
 				<span class="cms-header__badge">Server Action</span>
 			</div>
 			<div class="cms-header__actions">
-				<span class="cms-header__unsaved" id="cms-unsaved-badge" role="status" aria-live="polite" hidden>
-					<span class="cms-header__status-dot cms-header__status-dot--unsaved" aria-hidden="true"></span>
+				<span
+					class="cms-header__unsaved"
+					id="cms-unsaved-badge"
+					role="status"
+					aria-live="polite"
+					hidden
+				>
+					<span
+					class="cms-header__status-dot cms-header__status-dot--unsaved"
+					aria-hidden="true"
+				></span>
 					Unsaved changes
 				</span>
 				<If cond={data.status.count > 0}>
@@ -92,7 +101,11 @@ func Page() Node {
 								<span class="cms-editor-block__type">{block.kind}</span>
 							</div>
 							<div class="cms-editor-block__fields">
-								<input type="hidden" name={"block_" + i + "_kind"} value={block.kind} />
+								<input
+									type="hidden"
+									name={"block_" + i + "_kind"}
+									value={block.kind}
+								 />
 								<If cond={block.kind == "hero"}>
 									<label class="cms-field">
 										<span>Title</span>
@@ -179,7 +192,10 @@ func Page() Node {
 				<h2 class="cms-panel-label">Live preview</h2>
 				<div class="cms-preview__canvas" id="cms-preview-canvas">
 					<Each of={data.blocks} as="block" index="i">
-						<div class={"cms-preview-block cms-preview-block--" + block.kind} data-block-index={i}>
+						<div
+							class={"cms-preview-block cms-preview-block--" + block.kind}
+							data-block-index={i}
+						>
 							<If cond={block.kind == "hero"}>
 								<div class="cms-preview-hero">
 									<h2 data-preview-field="title">{block.title}</h2>
@@ -213,7 +229,12 @@ func Page() Node {
 				<span id="cms-block-total">{len(data.blocks)}</span>
 				blocks in document
 			</span>
-			<span class="cms-statusbar__hint" id="cms-publish-feedback" role="status" aria-live="polite"></span>
+			<span
+				class="cms-statusbar__hint"
+				id="cms-publish-feedback"
+				role="status"
+				aria-live="polite"
+			></span>
 		</footer>
 		<div class="cms-sr-only" aria-live="polite" id="cms-announcer"></div>
 	</form>

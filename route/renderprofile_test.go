@@ -40,7 +40,7 @@ func TestRenderProfileNilIsByteIdenticalToNoProfile(t *testing.T) {
 		t.Fatalf("compile: %v", err)
 	}
 
-	const want = `<div id="card" class="a-b" disabled> <p>Tom &amp; Jerry</p> <img src="https://example.com/x.png" alt="pic" /> </div>`
+	const want = `<div id="card" class="a-b" disabled><p>Tom &amp; Jerry</p><img src="https://example.com/x.png" alt="pic" /></div>`
 
 	baseline, err := RenderProgramComponent(prog, "Page", ProgramRenderEnv{})
 	if err != nil {

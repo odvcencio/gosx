@@ -24,10 +24,18 @@ func Page() Node {
 						aria-describedby="play-preset-description"
 					>
 						<Each of={data.presets} as="p">
-							<option value={p.Slug} data-source={p.Source} data-description={p.Description}>{p.Title}</option>
+							<option
+								value={p.Slug}
+								data-source={p.Source}
+								data-description={p.Description}
+							>{p.Title}</option>
 						</Each>
 					</select>
-					<button class="play__reset-btn" type="button" aria-label="Reset to selected preset">Reset</button>
+					<button
+						class="play__reset-btn"
+						type="button"
+						aria-label="Reset to selected preset"
+					>Reset</button>
 				</div>
 				<p class="play__preset-description" id="play-preset-description">{data.presets[0].Description}</p>
 				<textarea

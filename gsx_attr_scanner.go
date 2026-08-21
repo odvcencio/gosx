@@ -4,7 +4,7 @@ package gosx
 
 import gotreesitter "github.com/odvcencio/gotreesitter"
 
-// External token names. GosxGrammar appends the three jsx_* externals to the
+// External token names. GosxGrammar appends the four jsx_* externals to the
 // base Go grammar, which owns _automatic_semicolon.
 //
 // Resolve these names against the language at run time. Do not hard-code the
@@ -17,13 +17,13 @@ import gotreesitter "github.com/odvcencio/gotreesitter"
 const (
 	gsxExternalNameAttributeExpression = "jsx_attribute_expression"
 	gsxExternalNameText                = "jsx_text"
-	gsxExternalNameRawText             = "jsx_raw_text"
+	gsxExternalNameScriptRawText       = "jsx_script_raw_text"
+	gsxExternalNameStyleRawText        = "jsx_style_raw_text"
 	gsxExternalNameAutoSemicolon       = "_automatic_semicolon"
 )
 
-// gsxScanner lexes GSX externals. The CST still exposes `jsx_*` token names
-// for compatibility with the generated grammar, but the scanner behavior is
-// GSX-specific and Go-native.
+// gsxScanner lexes GSX externals. The CST exposes the `jsx_*` token names used
+// by the GSX grammar, while the scanner behavior is GSX-specific and Go-native.
 //
 // The scanner also owns the base Go grammar's _automatic_semicolon token,
 // because a language carries exactly one external scanner and GoSX extends Go.
@@ -34,7 +34,8 @@ type gsxScanner struct {
 	// language does not declare that external.
 	idxAttributeExpression int
 	idxText                int
-	idxRawText             int
+	idxScriptRawText       int
+	idxStyleRawText        int
 	idxAutoSemicolon       int
 }
 
@@ -44,7 +45,8 @@ func newGSXScanner(lang *gotreesitter.Language) *gsxScanner {
 		lang:                   lang,
 		idxAttributeExpression: externalIndexByName(lang, gsxExternalNameAttributeExpression),
 		idxText:                externalIndexByName(lang, gsxExternalNameText),
-		idxRawText:             externalIndexByName(lang, gsxExternalNameRawText),
+		idxScriptRawText:       externalIndexByName(lang, gsxExternalNameScriptRawText),
+		idxStyleRawText:        externalIndexByName(lang, gsxExternalNameStyleRawText),
 		idxAutoSemicolon:       externalIndexByName(lang, gsxExternalNameAutoSemicolon),
 	}
 	return s
@@ -87,12 +89,17 @@ func (s *gsxScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validS
 	if s == nil || s.lang == nil {
 		return false
 	}
-	// Raw text is only valid immediately inside <script>/<style>, so the
-	// parser's validSymbols tells us when to swallow the body verbatim.
-	// Check it before the ordinary text scan: inside a raw-text element the
-	// `<` and `{` terminators of scanGSXText do not apply.
-	if gsxValid(validSymbols, s.idxRawText) {
-		if s.scanRawText(lexer) {
+	// Raw text is only valid immediately inside <script> or <style>, so the
+	// parser's validSymbols tells us which matching closing tag is allowed.
+	// Keeping separate external symbols is structural: a script body can
+	// contain `</style>` in a string without ending the script.
+	if gsxValid(validSymbols, s.idxScriptRawText) {
+		if s.scanRawText(lexer, "script", s.idxScriptRawText) {
+			return true
+		}
+	}
+	if gsxValid(validSymbols, s.idxStyleRawText) {
+		if s.scanRawText(lexer, "style", s.idxStyleRawText) {
 			return true
 		}
 	}
@@ -172,7 +179,7 @@ func (s *gsxScanner) scanAutomaticSemicolon(lexer *gotreesitter.ExternalLexer) b
 var rawTextCloseTags = []string{"script", "style"}
 
 // scanRawText consumes a <script>/<style> body together with its closing tag,
-// emitting the whole span as one jsx_raw_text token. `<` and `{` carry no GSX
+// emitting the whole span as one tag-specific raw-text token. `<` and `{` carry no GSX
 // meaning here — `if (a < b) { f(); }` is script source, not an element
 // followed by an expression hole.
 //
@@ -181,9 +188,9 @@ var rawTextCloseTags = []string{"script", "style"}
 // RawTextBody strips the tag back off for consumers.
 //
 // Returning false when no closing tag is found is essential: the parser can
-// offer jsx_raw_text in states that are not really inside a raw-text element,
+// offer a raw-text token in states that are not really inside a raw-text element,
 // and a greedy scan would otherwise swallow the rest of the file.
-func (s *gsxScanner) scanRawText(lexer *gotreesitter.ExternalLexer) bool {
+func (s *gsxScanner) scanRawText(lexer *gotreesitter.ExternalLexer, expected string, symbolIndex int) bool {
 	// A body whose first non-space character is `{` is a GSX expression hole,
 	// not script source: `<script>{ClientScript()}</script>` injects the value
 	// of a Go call. Declining here hands the position to
@@ -213,9 +220,9 @@ func (s *gsxScanner) scanRawText(lexer *gotreesitter.ExternalLexer) bool {
 		if ch == 0 {
 			return false
 		}
-		if ch == '<' && s.consumeRawTextCloseTag(lexer) {
+		if ch == '<' && s.consumeRawTextCloseTag(lexer, expected) {
 			lexer.MarkEnd()
-			lexer.SetResultSymbol(s.externalSymbol(s.idxRawText))
+			lexer.SetResultSymbol(s.externalSymbol(symbolIndex))
 			return true
 		}
 		lexer.Advance(false)
@@ -226,7 +233,7 @@ func (s *gsxScanner) scanRawText(lexer *gotreesitter.ExternalLexer) bool {
 // case-insensitive in HTML) and reports whether it matched. On a non-match the
 // lexer has still advanced; scanRawText treats those characters as body text,
 // which is correct because they were not a closing tag.
-func (s *gsxScanner) consumeRawTextCloseTag(lexer *gotreesitter.ExternalLexer) bool {
+func (s *gsxScanner) consumeRawTextCloseTag(lexer *gotreesitter.ExternalLexer, expected string) bool {
 	lexer.Advance(false) // '<'
 	if lexer.Lookahead() != '/' {
 		return false
@@ -249,7 +256,7 @@ func (s *gsxScanner) consumeRawTextCloseTag(lexer *gotreesitter.ExternalLexer) b
 		lexer.Advance(false)
 	}
 
-	if !isRawTextTag(string(name)) {
+	if !isRawTextTag(string(name), expected) {
 		return false
 	}
 	// Allow whitespace before `>`, as HTML does: `</script >`.
@@ -267,9 +274,12 @@ func (s *gsxScanner) consumeRawTextCloseTag(lexer *gotreesitter.ExternalLexer) b
 	return true
 }
 
-func isRawTextTag(name string) bool {
+func isRawTextTag(name, expected string) bool {
+	if expected == "" {
+		return false
+	}
 	for _, tag := range rawTextCloseTags {
-		if name == tag {
+		if name == tag && name == expected {
 			return true
 		}
 	}

@@ -624,6 +624,10 @@ Examples:
   gosx fmt ./app
   gosx fmt --check .
 
+The formatter canonicalizes safe tag gaps and structural-only GSX layout.
+Text, expressions, comments, attributes, raw strings, and script/style bodies
+remain opaque; malformed markup and invalid UTF-8 are rejected before writing.
+
 `)
 }
 

@@ -675,6 +675,18 @@ gosx perf budget perf.json budget.json # Check a saved report
 gosx size [--json] dist               # Report exact gzip sizes and feature chunks
 ```
 
+`gosx fmt` is a canonical GSX formatter, not a Go pretty-printer. It rewrites
+only grammar-safe gaps in tags and layout around structural-only child runs;
+attribute values, expressions, comments, text spans, raw strings, and complete
+`<script>`/`<style>` bodies remain opaque; long attribute lists wrap only
+between complete attribute nodes. The compiler and legacy transpiler
+share the same JSX-like text policy: blank layout lines disappear, indentation
+introduced by line breaks is removed, non-empty lines join with one space, and
+same-line spaces remain intentional separators (use `{ " " }` when a separator
+must be explicit). `gosx fmt --check` reports valid but noncanonical source,
+while invalid UTF-8 or recovered/malformed markup is rejected without writing
+output.
+
 Production builds require TinyGo on `PATH`, emit capability-linked `core`,
 `engine`, `collab`, and `full` runtime profiles (plus the legacy `islands`
 compatibility artifact), and write `.gz` sidecars for immutable runtime assets

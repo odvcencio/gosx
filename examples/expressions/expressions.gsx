@@ -33,10 +33,10 @@ func Expressions(props Catalog) Node {
 		</p>
 		// Chained filter + map with closures
 		<ul>
-			<Each of={items.filter(func(i){ return i.active }).map(func(i){ return i.name })} as="name">
-				<li>{name}</li>
-			</Each>
-		</ul>
+		<Each of={items.filter(func(i){ return i.active }).map(func(i){ return i.name })} as="name">
+			<li>{name}</li>
+		</Each>
+	</ul>
 		// String methods on a search query
 		<p>
 			Normalized query:

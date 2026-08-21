@@ -33,7 +33,8 @@ func TestExternalTokenIndicesResolveByName(t *testing.T) {
 	}{
 		{gsxExternalNameAttributeExpression, s.idxAttributeExpression},
 		{gsxExternalNameText, s.idxText},
-		{gsxExternalNameRawText, s.idxRawText},
+		{gsxExternalNameScriptRawText, s.idxScriptRawText},
+		{gsxExternalNameStyleRawText, s.idxStyleRawText},
 		{gsxExternalNameAutoSemicolon, s.idxAutoSemicolon},
 	} {
 		if tc.idx < 0 {

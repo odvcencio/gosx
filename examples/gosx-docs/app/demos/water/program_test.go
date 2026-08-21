@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
 func TestWaterDemoPreloadHead(t *testing.T) {
@@ -333,10 +335,6 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`name="gravity"`,
 		`name="densityEnabled"`,
 		`name="poolShape"`,
-		`name="cornerRadius" min="0" max="1" step="0.01" value="0.1"`,
-		`name="poolWidth" min="0.5" max="3" step="0.05" value="1"`,
-		`name="poolHeight" min="0.3" max="2" step="0.05" value="1"`,
-		`name="poolLength" min="0.5" max="3" step="0.05" value="1"`,
 		`radius={0.25}`,
 		`width={0.5}`,
 		`tubularSegments={64}`,
@@ -418,6 +416,28 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Fatalf("page.gsx missing %q", want)
 		}
+	}
+	assertWaterInputAttributeContract(t, pageBytes, "cornerRadius", map[string]string{
+		"min":   `"0"`,
+		"max":   `"1"`,
+		"step":  `"0.01"`,
+		"value": `"0.1"`,
+	})
+	for _, input := range []struct {
+		name string
+		min  string
+		max  string
+	}{
+		{name: "poolWidth", min: `"0.5"`, max: `"3"`},
+		{name: "poolHeight", min: `"0.3"`, max: `"2"`},
+		{name: "poolLength", min: `"0.5"`, max: `"3"`},
+	} {
+		assertWaterInputAttributeContract(t, pageBytes, input.name, map[string]string{
+			"min":   input.min,
+			"max":   input.max,
+			"step":  `"0.05"`,
+			"value": `"1"`,
+		})
 	}
 	if strings.Contains(page, `<Model`) || strings.Contains(page, `VertexGLSL={data.`) || strings.Contains(page, `FragmentGLSL={data.`) {
 		t.Fatal("water page eagerly embeds the Duck model or unused desktop GLSL payload")
@@ -796,6 +816,64 @@ func TestWaterDemoControlsContract(t *testing.T) {
 			t.Fatalf("program.go still contains route-side water approximation %q", stale)
 		}
 	}
+}
+
+// assertWaterInputAttributeContract checks an input element through the GSX
+// syntax tree so canonical formatter wrapping cannot turn a stable semantic
+// input contract into a brittle one-line source assertion.
+func assertWaterInputAttributeContract(t *testing.T, source []byte, inputName string, want map[string]string) {
+	t.Helper()
+	tree, lang, err := gosx.Parse(source)
+	if err != nil {
+		t.Fatalf("parse page.gsx for input %q: %v", inputName, err)
+	}
+	root := tree.RootNode()
+	found := false
+	var walk func(*gotreesitter.Node)
+	walk = func(node *gotreesitter.Node) {
+		if node == nil || found {
+			return
+		}
+		if node.Type(lang) == "jsx_self_closing_element" {
+			name := node.ChildByFieldName("name", lang)
+			if sourceNodeText(source, name) == "input" {
+				attrs := make(map[string]string)
+				for i := 0; i < node.NamedChildCount(); i++ {
+					attr := node.NamedChild(i)
+					if attr == nil || attr.Type(lang) != "jsx_attribute" {
+						continue
+					}
+					attrName := sourceNodeText(source, attr.ChildByFieldName("name", lang))
+					attrValue := sourceNodeText(source, attr.ChildByFieldName("value", lang))
+					if attrName != "" {
+						attrs[attrName] = attrValue
+					}
+				}
+				if attrs["name"] == `"`+inputName+`"` {
+					for attrName, wantValue := range want {
+						if got := attrs[attrName]; got != wantValue {
+							t.Fatalf("input name=%q attribute %s = %q, want %q", inputName, attrName, got, wantValue)
+						}
+					}
+					found = true
+				}
+			}
+		}
+		for i := 0; i < node.NamedChildCount(); i++ {
+			walk(node.NamedChild(i))
+		}
+	}
+	walk(root)
+	if !found {
+		t.Fatalf("page.gsx has no self-closing input with name=%q and required attributes", inputName)
+	}
+}
+
+func sourceNodeText(source []byte, node *gotreesitter.Node) string {
+	if node == nil || node.StartByte() > node.EndByte() || int(node.EndByte()) > len(source) {
+		return ""
+	}
+	return string(source[node.StartByte():node.EndByte()])
 }
 
 // TestWaterObjectShadowSignatureExcludesCamera is the M4 (water-parity-campaign)

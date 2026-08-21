@@ -28,7 +28,6 @@ package ir
 
 import (
 	"fmt"
-	"html"
 	"path"
 	"regexp"
 	"sort"
@@ -37,10 +36,17 @@ import (
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"m31labs.dev/gosx/internal/strictcomponent"
+	"m31labs.dev/gosx/internal/syntax"
 )
 
 // Lower converts a parsed GoSX CST into the component IR.
 func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) (*Program, error) {
+	// Lower is also used directly by editor/build consumers, not only through
+	// gosx.Compile. Keep those callers on the same structural markup contract:
+	// a recovered or crossed tag tree must never become a partial IR program.
+	if err := syntax.ValidateTree(root, source, lang); err != nil {
+		return nil, err
+	}
 	l := &lowerer{
 		src:           source,
 		srcStr:        string(source),
@@ -3672,7 +3678,7 @@ func (l *lowerer) lowerGSXElement(n *gotreesitter.Node) NodeID {
 }
 
 // lowerRawTextElement lowers <script>/<style>. The scanner hands back the body
-// and its closing tag as one jsx_raw_text token, so the body is emitted as a
+// and its closing tag as one tag-specific raw-text token, so the body is emitted as a
 // single NodeRawHTML child: script and stylesheet source must not be escaped,
 // or `&&` and CSS `>` selectors break.
 func (l *lowerer) lowerRawTextElement(n *gotreesitter.Node) NodeID {
@@ -3681,7 +3687,7 @@ func (l *lowerer) lowerRawTextElement(n *gotreesitter.Node) NodeID {
 		return l.prog.AddNode(Node{Kind: NodeFragment, Span: l.span(n)})
 	}
 
-	tag := strings.TrimPrefix(l.text(l.childByField(open, "name")), "<")
+	tag := strings.ToLower(strings.TrimPrefix(l.text(l.childByField(open, "name")), "<"))
 	attrs := l.extractAttrs(open)
 	if l.strict {
 		normalizeStrictHTMLAttrs(attrs)
@@ -3713,7 +3719,7 @@ func (l *lowerer) lowerRawTextElement(n *gotreesitter.Node) NodeID {
 }
 
 // trimRawTextCloseTag drops the closing tag the external scanner folds into the
-// jsx_raw_text token.
+// raw-text token.
 func trimRawTextCloseTag(raw string) string {
 	if idx := strings.LastIndex(raw, "</"); idx >= 0 {
 		return raw[:idx]
@@ -3870,21 +3876,10 @@ func (l *lowerer) buildIfComponent(whenExpr string, children []NodeID, fallbackE
 }
 
 func (l *lowerer) lowerText(n *gotreesitter.Node) NodeID {
-	text := l.text(n)
-	// Trim whitespace-only text nodes to just a space
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return l.prog.AddNode(Node{
-			Kind:     NodeText,
-			Text:     " ",
-			IsStatic: true,
-			Span:     l.span(n),
-		})
+	text := syntax.RenderText(l.text(n))
+	if text == "" {
+		return l.prog.AddNode(Node{Kind: NodeText, Text: "", IsStatic: true, Span: l.span(n)})
 	}
-	// Decode HTML entities (e.g. &rarr; → →) so the IR stores real UTF-8
-	// characters. The renderer's html.EscapeString pass will re-escape only
-	// the characters that actually need escaping (<, >, &, ").
-	text = html.UnescapeString(text)
 	return l.prog.AddNode(Node{
 		Kind:     NodeText,
 		Text:     text,

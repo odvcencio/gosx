@@ -278,11 +278,9 @@ component Page() {
 // test: it renders through renderFileProgramHTML and compares against the
 // generated-Go equivalent (a hand-written gosx.El/gosx.If tree matching
 // exactly what transpile.Transpile emits for this source), for both the true
-// and false branches of the cond. Single-line JSX avoids a pre-existing,
-// unrelated whitespace-handling difference between the transpile path (which
-// drops whitespace-only text children) and the IR/file-render path (which
-// renders them as a single space) — see the investigation note in this
-// change's report; that gap predates this change and is not part of it.
+// and false branches of the cond. The shared syntax text policy now applies
+// equally to strict lowering and legacy transpilation; the mixed multiline
+// execution gate lives in transpile/render_parity_test.go.
 func TestStrictConcatAndCondParityWithGeneratedGo(t *testing.T) {
 	const source = `package app
 type CardProps struct {

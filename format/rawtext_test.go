@@ -52,20 +52,10 @@ func TestSourceKeepsSingleLineScriptBodyVerbatim(t *testing.T) {
 	}
 }
 
-// TestSourceMultiLineScriptBodyIsIndented records a KNOWN LIMITATION rather
-// than a desired behavior.
-//
-// The formatter indents the interior lines of a multi-line raw-text body. For
-// most JS and CSS that is harmless, but inside a multi-line template literal
-// the added leading whitespace becomes part of the string the literal
-// produces. Nothing is lost or reordered, so `gosx fmt --check` stays stable
-// and idempotent; the body is simply re-indented.
-//
-// Until the formatter can reproduce raw-text spans without touching interior
-// lines, put multi-line template literals in a .js asset rather than an inline
-// <script>. This test exists so the limitation is visible and so a future fix
-// has an obvious place to flip the assertion.
-func TestSourceMultiLineScriptBodyIsIndented(t *testing.T) {
+// TestSourceMultiLineScriptBodyIsVerbatim proves the formatter never treats a
+// raw script body as markup. Interior indentation is observable in JavaScript
+// template literals, so the complete body span must survive byte-for-byte.
+func TestSourceMultiLineScriptBodyIsVerbatim(t *testing.T) {
 	t.Parallel()
 
 	body := "var msg = `line one\nline two`;"
@@ -77,15 +67,8 @@ func TestSourceMultiLineScriptBodyIsIndented(t *testing.T) {
 	}
 	out := string(formatted)
 
-	// Both lines must still be present: re-indentation is tolerated, loss is not.
-	for _, want := range []string{"var msg = `line one", "line two`;"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("multi-line script body lost %q, got:\n%s", want, out)
-		}
-	}
-	if strings.Contains(out, body) {
-		t.Log("multi-line raw-text bodies now round-trip verbatim; " +
-			"tighten this test into an exact-match assertion")
+	if !strings.Contains(out, body) {
+		t.Fatalf("multi-line script body changed byte-for-byte\n want: %q\n  got:\n%s", body, out)
 	}
 }
 

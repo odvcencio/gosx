@@ -11,7 +11,13 @@ func Layout() Node {
 				<a href="/demos" data-gosx-link="true" class="pill-link">Demos</a>
 				<form class="nav-search" action="/docs" method="get" role="search">
 					<label class="visually-hidden" for="site-search">Search documentation</label>
-					<input id="site-search" name="q" type="search" placeholder="Search docs" autocomplete="off" />
+					<input
+						id="site-search"
+						name="q"
+						type="search"
+						placeholder="Search docs"
+						autocomplete="off"
+					 />
 					<button type="submit">Search</button>
 				</form>
 				<a href="https://github.com/odvcencio/gosx" rel="noopener" class="pill-link">GitHub</a>
@@ -32,9 +38,19 @@ func Layout() Node {
 				<span class="pill-toggle__bar"></span>
 			</a>
 		</nav>
-		<div id="nav-overlay" class="nav-overlay" role="dialog" aria-modal="true" aria-label="Site navigation">
+		<div
+			id="nav-overlay"
+			class="nav-overlay"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Site navigation"
+		>
 			<div class="nav-overlay__inner">
-				<a class="nav-overlay__close" href="#main-content" aria-label="Close navigation menu">Close</a>
+				<a
+					class="nav-overlay__close"
+					href="#main-content"
+					aria-label="Close navigation menu"
+				>Close</a>
 				<form class="overlay-search" action="/docs" method="get" role="search">
 					<label for="overlay-site-search">Search all guides</label>
 					<div>
@@ -66,7 +82,11 @@ func Layout() Node {
 					<div class="nav-group">
 						<span class="nav-group__label">Project</span>
 						<a href="https://github.com/odvcencio/gosx" rel="noopener" class="nav-link">Source on GitHub</a>
-						<a href="https://github.com/odvcencio/gosx/releases/tag/v0.39.0" rel="noopener" class="nav-link">v0.39.0 release notes</a>
+						<a
+							href="https://github.com/odvcencio/gosx/releases/tag/v0.39.0"
+							rel="noopener"
+							class="nav-link"
+						>v0.39.0 release notes</a>
 						<a href="/api/site" class="nav-link">Running build metadata</a>
 					</div>
 				</div>
@@ -86,7 +106,11 @@ func Layout() Node {
 				<div class="site-footer__links" aria-label="Project links">
 					<a href="/docs" data-gosx-link="true" class="site-footer__link">Documentation</a>
 					<a href="/demos" data-gosx-link="true" class="site-footer__link">Live demos</a>
-					<a href="https://github.com/odvcencio/gosx" class="site-footer__link" rel="noopener">Source</a>
+					<a
+						href="https://github.com/odvcencio/gosx"
+						class="site-footer__link"
+						rel="noopener"
+					>Source</a>
 				</div>
 				<div class="site-footer__build">
 					<a href="/api/site" class="site-footer__version">

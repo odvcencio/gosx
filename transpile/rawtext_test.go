@@ -71,6 +71,26 @@ func TestInlineScriptBodyIsOpaque(t *testing.T) {
 	}
 }
 
+func TestRawCloseMatchingIsCaseInsensitiveAndTagSpecific(t *testing.T) {
+	t.Parallel()
+
+	script := `const css = "</style>"; const near = "</scriptx>"; /* </style> */ // </style>
+if (ok) { run(); }`
+	out := transpileBody(t, `<div><script>`+script+`</ScRiPt 	><span>after</span></div>`)
+	if got := rawHTMLArg(t, out); got != script {
+		t.Fatalf("mixed-case script body or embedded style close changed\n want: %q\n  got: %q", script, got)
+	}
+	if !strings.Contains(out, "after") {
+		t.Fatalf("matching script close did not leave following sibling available:\n%s", out)
+	}
+
+	style := `.a::before { content: "</script>"; } /* </script> */`
+	out = transpileBody(t, "<div><style>"+style+"</StYlE \r\n></div>")
+	if got := rawHTMLArg(t, out); got != style {
+		t.Fatalf("mixed-case style body or embedded script close changed\n want: %q\n  got: %q", style, got)
+	}
+}
+
 // TestScriptExpressionContainerStillInterpolates is the counterweight to
 // raw-text handling, and it exists because raw-text elements broke it.
 //
@@ -91,7 +111,7 @@ func TestScriptExpressionContainerStillInterpolates(t *testing.T) {
 		{"identifier", `<div><script>{scriptBody}</script></div>`},
 		{"padded with spaces", `<div><script> {ClientScript()} </script></div>`},
 		{"with attributes", `<div><script defer>{ClientScript()}</script></div>`},
-		{"style element", `<div><style>{CriticalCSS()}</style></div>`},
+		{"style element", `<div><style>{CriticalCSS()}</sTyLe></div>`},
 	}
 
 	for _, tc := range cases {

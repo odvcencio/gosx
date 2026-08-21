@@ -2,7 +2,10 @@ package checkers
 
 func Page() Node {
 	return <main class="checkers-showcase chinese-checkers" aria-labelledby="checkers-title">
-		<div class="checkers-showcase__scene" aria-label="Three-dimensional Chinese Checkers board scaffold">
+		<div
+			class="checkers-showcase__scene"
+			aria-label="Three-dimensional Chinese Checkers board scaffold"
+		>
 			<img
 				class="checkers-showcase__native-preview"
 				src="/checkers-native-preview.png"
@@ -52,7 +55,10 @@ func Page() Node {
 						<option value="imperial-jade" selected={data.material == "imperial-jade"}>Imperial Jade</option>
 						<option value="carved-wood" selected={data.material == "carved-wood"}>Carved Wood</option>
 						<option value="brushed-steel" selected={data.material == "brushed-steel"}>Brushed Steel</option>
-						<option value="midnight-lacquer" selected={data.material == "midnight-lacquer"}>Midnight Lacquer</option>
+						<option
+							value="midnight-lacquer"
+							selected={data.material == "midnight-lacquer"}
+						>Midnight Lacquer</option>
 						<option value="moon-porcelain" selected={data.material == "moon-porcelain"}>Moon Porcelain</option>
 					</select>
 				</label>

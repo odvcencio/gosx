@@ -94,7 +94,7 @@ func TestStrictIslandRendersProvenPropsServerSide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	const wantHTML = `<main><div id="gosx-island-0" data-gosx-island="Counter" data-gosx-enhance="island" data-gosx-enhance-layer="runtime" data-gosx-fallback="server"><div class="counter"> <span>Draft Pick</span> <button data-gosx-on-click="increment" data-gosx-handler="increment" data-gosx-path="0/3">7</button> </div></div></main>`
+	const wantHTML = `<main><div id="gosx-island-0" data-gosx-island="Counter" data-gosx-enhance="island" data-gosx-enhance-layer="runtime" data-gosx-fallback="server"><div class="counter"><span>Draft Pick</span><button data-gosx-on-click="increment" data-gosx-handler="increment" data-gosx-path="0/3">7</button></div></div></main>`
 	if html != wantHTML {
 		t.Fatalf("rendered HTML =\n%s\nwant\n%s", html, wantHTML)
 	}
@@ -133,13 +133,13 @@ func TestStrictIslandClientVMHydratesAndDispatches(t *testing.T) {
 	if isl == nil {
 		t.Fatalf("NewIsland returned nil")
 	}
-	if got := strings.TrimSpace(renderTreeText(isl.CurrentTree())); got != "Draft Pick 7" {
-		t.Fatalf("hydrated tree before dispatch = %q, want %q", got, "Draft Pick 7")
+	if got := strings.TrimSpace(renderTreeText(isl.CurrentTree())); got != "Draft Pick7" {
+		t.Fatalf("hydrated tree before dispatch = %q, want %q", got, "Draft Pick7")
 	}
 
 	isl.Dispatch("increment", "{}")
-	if got := strings.TrimSpace(renderTreeText(isl.CurrentTree())); got != "Draft Pick 8" {
-		t.Fatalf("hydrated tree after dispatch = %q, want %q", got, "Draft Pick 8")
+	if got := strings.TrimSpace(renderTreeText(isl.CurrentTree())); got != "Draft Pick8" {
+		t.Fatalf("hydrated tree after dispatch = %q, want %q", got, "Draft Pick8")
 	}
 }
 

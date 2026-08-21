@@ -158,6 +158,9 @@ func CollectSharedComponents(files []PackageFile) map[string]SharedComponent {
 		if root.HasError() {
 			continue
 		}
+		if err := gosx.ValidateMarkupTree(root, file.Source, lang); err != nil {
+			continue
+		}
 		ft := &transpiler{src: file.Source, lang: lang}
 		ft.collectStructFields(root)
 		ft.collectComponentProps(root)
@@ -188,6 +191,12 @@ func sourcePackageName(source []byte) (string, bool) {
 		return "", false
 	}
 	root := tree.RootNode()
+	if root.HasError() {
+		return "", false
+	}
+	if err := gosx.ValidateMarkupTree(root, source, lang); err != nil {
+		return "", false
+	}
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
 		if child.Type(lang) != "package_clause" {
@@ -239,6 +248,12 @@ func UnaliasedImportPaths(files []PackageFile) []string {
 			continue
 		}
 		root := tree.RootNode()
+		if root.HasError() {
+			continue
+		}
+		if err := gosx.ValidateMarkupTree(root, packageFile.Source, lang); err != nil {
+			continue
+		}
 		for i := 0; i < int(root.NamedChildCount()); i++ {
 			child := root.NamedChild(i)
 			if child.Type(lang) != "import_declaration" {

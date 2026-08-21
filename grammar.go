@@ -22,9 +22,9 @@ func GosxGrammar() *Grammar {
 			"jsx_self_closing_element",
 		)
 
-		// The generated CST keeps `jsx_*` node names for compatibility with the
-		// existing lowering, formatting, and transpile pipeline. The language
-		// surface, editor tooling, and public docs should still treat this as GSX.
+		// The generated CST keeps the established `jsx_*` node names consumed by
+		// lowering, formatting, and transpilation. The language surface, editor
+		// tooling, and public docs should still treat this as GSX.
 
 		// ---------------------------------------------------------------
 		// GSX element: <tag attr="val" attr={expr}>children</tag>
@@ -131,13 +131,15 @@ func GosxGrammar() *Grammar {
 		// lookahead and can.
 		g.Externals = append(g.Externals, Sym("jsx_text"))
 
-		// Body of a raw-text element (<script>/<style>). Produced by the
-		// external scanner, which runs it to the matching closing tag without
-		// interpreting `<` or `{`. HTML gives these two elements the same
-		// treatment: their content is script/stylesheet source, not markup.
-		// Without this, JS like `if (a < b) { f(); }` parses as a GSX element
-		// plus an expression hole and the body is silently corrupted.
-		g.Externals = append(g.Externals, Sym("jsx_raw_text"))
+		// Bodies of raw-text elements (<script>/<style>). Each tag gets its own
+		// external token so the scanner knows which case-insensitive closing tag
+		// is allowed to terminate the body. A single shared token cannot make
+		// that distinction: `</style>` inside a script string would otherwise
+		// terminate the script body.
+		g.Externals = append(g.Externals,
+			Sym("jsx_script_raw_text"),
+			Sym("jsx_style_raw_text"),
+		)
 
 		// Child can be: element, raw-text element, expression, text, or fragment
 		g.Define("_jsx_child",
@@ -194,15 +196,29 @@ func GosxGrammar() *Grammar {
 		// raw rule and every nested ordinary element (`<div><span>…`) fails.
 		// Longest-match lexing keeps `<span` on the ordinary path because
 		// `<script`/`<style` simply do not match it.
-		g.Define("jsx_raw_text_start_tag",
+		g.Define("jsx_script_raw_text_start_tag",
 			Token(Prec(1, Seq(
 				Str("<"),
-				Choice(Str("script"), Str("style")),
+				Str("script"),
+			))))
+		g.Define("jsx_style_raw_text_start_tag",
+			Token(Prec(1, Seq(
+				Str("<"),
+				Str("style"),
 			))))
 
-		g.Define("jsx_raw_opening_element",
+		g.Define("jsx_script_raw_opening_element",
 			Seq(
-				Field("name", Sym("jsx_raw_text_start_tag")),
+				Field("name", Sym("jsx_script_raw_text_start_tag")),
+				Repeat(Field("attributes", Choice(
+					Sym("jsx_attribute"),
+					Sym("jsx_spread_attribute"),
+				))),
+				Str(">"),
+			))
+		g.Define("jsx_style_raw_opening_element",
+			Seq(
+				Field("name", Sym("jsx_style_raw_text_start_tag")),
 				Repeat(Field("attributes", Choice(
 					Sym("jsx_attribute"),
 					Sym("jsx_spread_attribute"),
@@ -212,29 +228,42 @@ func GosxGrammar() *Grammar {
 
 		// <script>...</script> — body captured verbatim by the scanner.
 		//
-		// jsx_raw_text spans the body AND its closing tag, so this rule shares
-		// no sub-rule with jsx_element. That separation is deliberate: when the
-		// raw element ended with the ordinary jsx_closing_element, the LR
-		// generator merged the two "inside an element" states and then offered
-		// jsx_raw_text after every ordinary opening tag, which broke plain
-		// `<div>text</div>`. Owning the close here keeps the automata disjoint.
+		// Each raw-text token spans the body AND its matching closing tag, so
+		// these rules share no sub-rule with jsx_element. That separation is
+		// deliberate: when the raw element ended with the ordinary
+		// jsx_closing_element, the LR generator merged the two "inside an
+		// element" states and then offered raw text after every ordinary opening
+		// tag, which broke plain `<div>text</div>`.
 		// Two body shapes:
-		//   <script>if (a < b) { go(); }</script>   -> jsx_raw_text (script source)
+		//   <script>if (a < b) { go(); }</script>   -> jsx_script_raw_text
 		//   <script>{ClientScript()}</script>       -> expression hole (Go value)
 		// The scanner decides between them by declining raw text when the body
 		// opens with `{`, so only one of these alternatives is ever live at a
 		// given position. The raw-text alternative carries its own closing tag
 		// inside the token; the interpolated one needs an explicit close.
 		g.Define("jsx_raw_text_element",
-			Seq(
-				Field("open", Sym("jsx_raw_opening_element")),
-				Choice(
-					Field("children", Sym("jsx_raw_text")),
-					Seq(
-						Field("children", Sym("jsx_expression_container")),
+			Choice(
+				Seq(
+					Field("open", Sym("jsx_script_raw_opening_element")),
+					Choice(
+						Field("children", Sym("jsx_script_raw_text")),
+						Seq(
+							Field("children", Sym("jsx_expression_container")),
+							Field("close", Sym("jsx_closing_element")),
+						),
 						Field("close", Sym("jsx_closing_element")),
 					),
-					Field("close", Sym("jsx_closing_element")),
+				),
+				Seq(
+					Field("open", Sym("jsx_style_raw_opening_element")),
+					Choice(
+						Field("children", Sym("jsx_style_raw_text")),
+						Seq(
+							Field("children", Sym("jsx_expression_container")),
+							Field("close", Sym("jsx_closing_element")),
+						),
+						Field("close", Sym("jsx_closing_element")),
+					),
 				),
 			))
 

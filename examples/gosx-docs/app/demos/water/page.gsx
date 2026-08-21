@@ -256,9 +256,21 @@ func Page() Node {
 			</div>
 			<nav class="water-demo__quality" aria-label="Rendering quality">
 				<span>Quality</span>
-				<a href="?quality=hero" data-profile="hero" aria-current={data.diagQualityHeroCurrent}>Hero</a>
-				<a href="?quality=balanced" data-profile="balanced" aria-current={data.diagQualityBalancedCurrent}>Balanced</a>
-				<a href="?quality=battery" data-profile="battery" aria-current={data.diagQualityBatteryCurrent}>Battery</a>
+				<a
+					href="?quality=hero"
+					data-profile="hero"
+					aria-current={data.diagQualityHeroCurrent}
+				>Hero</a>
+				<a
+					href="?quality=balanced"
+					data-profile="balanced"
+					aria-current={data.diagQualityBalancedCurrent}
+				>Balanced</a>
+				<a
+					href="?quality=battery"
+					data-profile="battery"
+					aria-current={data.diagQualityBatteryCurrent}
+				>Battery</a>
 			</nav>
 			<p class="water-demo__gesture">
 				Draw across the surface to send light through the pool.
@@ -319,7 +331,11 @@ func Page() Node {
 				<a href="https://github.com/jeantimex" target="_blank" rel="noopener noreferrer">jeantimex</a>
 			</p>
 			<p>
-				<a href="https://github.com/jeantimex/threejs-water" target="_blank" rel="noopener noreferrer">jeantimex/threejs-water</a>
+				<a
+					href="https://github.com/jeantimex/threejs-water"
+					target="_blank"
+					rel="noopener noreferrer"
+				>jeantimex/threejs-water</a>
 			</p>
 			<p>
 				Ported to GoSX by
@@ -362,7 +378,10 @@ func Page() Node {
 						<span>Paused</span>
 					</label>
 				</fieldset>
-				<fieldset class="water-demo__control-group" data-gosx-scene3d-control-group="Object">
+				<fieldset
+					class="water-demo__control-group"
+					data-gosx-scene3d-control-group="Object"
+				>
 					<legend>Object</legend>
 					<label>
 						<span>Object</span>
@@ -386,7 +405,14 @@ func Page() Node {
 					</div>
 					<label data-gosx-scene3d-density-control="true">
 						<span>Density</span>
-						<input type="range" name="density" min="0.2" max="2" step="0.01" value="0.9" />
+						<input
+							type="range"
+							name="density"
+							min="0.2"
+							max="2"
+							step="0.01"
+							value="0.9"
+						 />
 					</label>
 				</fieldset>
 				<fieldset class="water-demo__control-group" data-gosx-scene3d-control-group="Pool">
@@ -400,22 +426,53 @@ func Page() Node {
 					</label>
 					<label data-gosx-scene3d-rounded-control="true">
 						<span>Corner Radius</span>
-						<input type="range" name="cornerRadius" min="0" max="1" step="0.01" value="0.1" />
+						<input
+							type="range"
+							name="cornerRadius"
+							min="0"
+							max="1"
+							step="0.01"
+							value="0.1"
+						 />
 					</label>
 					<label data-gosx-scene3d-pool-boundary-control="true">
 						<span>Pool Width</span>
-						<input type="range" name="poolWidth" min="0.5" max="3" step="0.05" value="1" />
+						<input
+							type="range"
+							name="poolWidth"
+							min="0.5"
+							max="3"
+							step="0.05"
+							value="1"
+						 />
 					</label>
 					<label data-gosx-scene3d-pool-boundary-control="true">
 						<span>Pool Depth</span>
-						<input type="range" name="poolHeight" min="0.3" max="2" step="0.05" value="1" />
+						<input
+							type="range"
+							name="poolHeight"
+							min="0.3"
+							max="2"
+							step="0.05"
+							value="1"
+						 />
 					</label>
 					<label data-gosx-scene3d-pool-boundary-control="true">
 						<span>Pool Length</span>
-						<input type="range" name="poolLength" min="0.5" max="3" step="0.05" value="1" />
+						<input
+							type="range"
+							name="poolLength"
+							min="0.5"
+							max="3"
+							step="0.05"
+							value="1"
+						 />
 					</label>
 				</fieldset>
-				<fieldset class="water-demo__control-group" data-gosx-scene3d-control-group="Lights">
+				<fieldset
+					class="water-demo__control-group"
+					data-gosx-scene3d-control-group="Lights"
+				>
 					<legend>Lights</legend>
 					<label class="water-demo__toggle">
 						<input type="checkbox" name="followCamera" />

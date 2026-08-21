@@ -97,7 +97,12 @@ func Page() Node {
 				<input type="hidden" name="next" value="/docs/auth" />
 				<label class="field">
 					<span>Email</span>
-					<input type="email" name="email" value={user.email} placeholder="you@example.com" />
+					<input
+						type="email"
+						name="email"
+						value={user.email}
+						placeholder="you@example.com"
+					 />
 				</label>
 				<button class="cta-link primary" type="submit">Issue docs demo link</button>
 			</form>

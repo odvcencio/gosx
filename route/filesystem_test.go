@@ -2153,7 +2153,7 @@ func Page() Node {
 
 	body := w.Body.String()
 	for _, snippet := range []string{
-		`data-gosx-text-layout-source="span text  paragraph text  div text  list text"`,
+		`data-gosx-text-layout-source="span text paragraph text div text list text"`,
 		`<span>span text </span>`,
 		`<p>paragraph text </p>`,
 		`<div>div text </div>`,

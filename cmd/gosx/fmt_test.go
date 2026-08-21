@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,8 +96,11 @@ func NavLink(props any) Node {
 	}
 
 	formatted := readFile(t, path)
-	if strings.Contains(formatted, "return <>\n\t<If") {
+	if !strings.Contains(formatted, "return <>\n\t\t<If") {
 		t.Fatalf("expected fragment children to stay nested under return indentation, got:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "\n\t</>\n") {
+		t.Fatalf("expected fragment close to align with return statement, got:\n%s", formatted)
 	}
 	if _, err := gosx.Compile([]byte(formatted)); err != nil {
 		t.Fatalf("formatted source should compile, got %v\n%s", err, formatted)
@@ -196,11 +200,9 @@ func Page() Node {
 	}
 
 	formatted := readFile(t, path)
-	if strings.Contains(formatted, "\n\t\t\t\t\t\t") {
-		t.Fatalf("expected wrapped text indentation drift to be removed, got:\n%s", formatted)
-	}
-	if !strings.Contains(formatted, "Routes, server actions, auth, client navigation, and Scene3D all live in the same codebase.") {
-		t.Fatalf("expected wrapped text to normalize to a single logical line, got:\n%s", formatted)
+	if !strings.Contains(formatted, "This example is a real GoSX app, not a brochure hung next to one.\n") ||
+		!strings.Contains(formatted, "same\n\t\t\t\t\t\t\tcodebase.") {
+		t.Fatalf("expected mixed text bytes to remain available to the semantic layer, got:\n%s", formatted)
 	}
 }
 
@@ -223,13 +225,11 @@ func TestRunFmtCheckLeavesRawStringCodeExamplesStable(t *testing.T) {
 	if strings.Count(formatted, `    return <Scene3D ariaLabel={title}>`) != 1 {
 		t.Fatalf("expected raw string example indentation to stay stable, got:\n%s", formatted)
 	}
-	if !strings.Contains(formatted, "title := \"Scene\"\n\n\n") {
-		t.Fatalf("expected empty and whitespace-only raw-string lines to normalize to zero width, got:\n%s", formatted)
-	}
-	for lineNumber, line := range strings.Split(formatted, "\n") {
-		if line != "" && strings.Trim(line, " \t\r") == "" {
-			t.Fatalf("line %d contains whitespace-only blank content %q:\n%s", lineNumber+1, line, formatted)
-		}
+	original := readFile(t, path)
+	start := strings.Index(original, "`")
+	end := strings.LastIndex(original, "`")
+	if start < 0 || end <= start || !strings.Contains(formatted, original[start:end+1]) {
+		t.Fatalf("raw string literal changed byte-for-byte:\n%s", formatted)
 	}
 
 	beforeSecondPass := formatted
@@ -239,5 +239,46 @@ func TestRunFmtCheckLeavesRawStringCodeExamplesStable(t *testing.T) {
 	}
 	if afterSecondPass := readFile(t, path); afterSecondPass != beforeSecondPass {
 		t.Fatalf("raw string formatting is not idempotent\nfirst:\n%s\nsecond:\n%s", beforeSecondPass, afterSecondPass)
+	}
+}
+
+func TestRunFmtLeavesInvalidFilesUnchanged(t *testing.T) {
+	tests := []struct {
+		name   string
+		source []byte
+	}{
+		{
+			name: "invalid utf8",
+			source: append([]byte("package main\n\nfunc Page() Node {\n\treturn <div>ok</div>\n}\n"),
+				0xff, 0xfe),
+		},
+		{
+			name:   "recovered markup",
+			source: []byte("package main\n\nfunc Page() Node {\n\treturn <div><span>broken</div>\n}\n"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "broken.gsx")
+			if err := os.WriteFile(path, tt.source, 0o600); err != nil {
+				t.Fatalf("write source: %v", err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read source: %v", err)
+			}
+			var stderr bytes.Buffer
+			if count, err := RunFmt(path, &stderr); err == nil || count != 0 {
+				t.Fatalf("RunFmt(%s) = count %d err %v, want an error and zero writes", tt.name, count, err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read source after fmt: %v", err)
+			}
+			if !bytes.Equal(after, before) {
+				t.Fatalf("RunFmt mutated rejected source\nbefore=%q\nafter=%q", before, after)
+			}
+		})
 	}
 }

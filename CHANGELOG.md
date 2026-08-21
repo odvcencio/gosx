@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Changed: GSX source validation, raw-text scanning, and canonical formatting
+
+- **All source consumers now share one structural markup validator.** `gosx.Compile`,
+  `format.Source`/`gosx fmt`, LSP analysis, package projection, and legacy
+  transpilation reject mismatched, crossed, missing, or orphan tags with a
+  located diagnostic before lowering or emitting partial output.
+- **Raw-text scanning is tag-specific and case-insensitive only where HTML says
+  it is.** Script bodies terminate only at a matching `</script...>` and style
+  bodies only at `</style...>`, including mixed-case names and horizontal
+  whitespace before `>`. Other raw-tag-looking bytes stay in the opaque body;
+  ordinary/component GSX tags remain case-sensitive. The old unused shared
+  `jsx_raw_text` external token is gone.
+- **Strict lowering and legacy transpilation use one JSX-like text policy.**
+  Blank layout lines disappear, indentation introduced by source line breaks is
+  removed, non-empty lines join with one space, and same-line spaces remain
+  intentional separators. The formatter preserves those text spans while
+  canonicalizing grammar-safe tag gaps and structural-only layout, so formatting
+  is convergent without changing strict or generated-Go HTML.
+- **`format.Options` was removed.** It had no effect; `format.Source` is the
+  honest API and rejects invalid UTF-8 or recovered syntax without producing
+  output. Raw bodies, strings, comments, expressions, entities, CRLF, and
+  punctuation adjacency remain source-opaque.
+
 ### Added: a shared component call executes end to end for a strict caller
 
 - **A strict caller's shared component call now renders.** WP4 (v0.49.0)

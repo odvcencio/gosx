@@ -9,7 +9,11 @@ func Error() Node {
 					An unexpected error occurred. Please try again.
 				</p>
 				<div class="error-page__actions">
-					<a href="/" data-gosx-link="true" class="error-page__link error-page__link--primary">Back to overview</a>
+					<a
+						href="/"
+						data-gosx-link="true"
+						class="error-page__link error-page__link--primary"
+					>Back to overview</a>
 				</div>
 			</div>
 		</div>

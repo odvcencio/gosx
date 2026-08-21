@@ -9,7 +9,11 @@ func NotFound() Node {
 				The page you're looking for doesn't exist or has been moved.
 			</p>
 			<div class="error-page__actions">
-				<a href="/" data-gosx-link="true" class="error-page__link error-page__link--primary">Back to overview</a>
+				<a
+					href="/"
+					data-gosx-link="true"
+					class="error-page__link error-page__link--primary"
+				>Back to overview</a>
 				<a href="/docs/getting-started" data-gosx-link="true" class="error-page__link">Getting started</a>
 			</div>
 		</div>

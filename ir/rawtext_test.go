@@ -37,8 +37,8 @@ func findNode(prog *Program, pred func(Node) bool) (Node, bool) {
 func TestLowerRawTextElementProducesRawHTML(t *testing.T) {
 	t.Parallel()
 
-	js := `if (a < b) { go({x: 1}); }`
-	prog := lowerSource(t, "package main\n\nfunc Page() Node {\n\treturn <div><script>"+js+"</script></div>\n}\n")
+	js := `if (a < b) { go({x: 1}); } // </style>`
+	prog := lowerSource(t, "package main\n\nfunc Page() Node {\n\treturn <div><script>"+js+"</sCrIpT></div>\n}\n")
 
 	script, ok := findNode(prog, func(n Node) bool { return n.Kind == NodeElement && n.Tag == "script" })
 	if !ok {

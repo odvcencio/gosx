@@ -73,6 +73,9 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 	if root.HasError() {
 		return idx, diagnosticsForError(gosx.DescribeParseError(root, source, lang))
 	}
+	if err := gosx.ValidateMarkupTree(root, source, lang); err != nil {
+		return idx, diagnosticsForError(err)
+	}
 
 	prog, err := ir.Lower(root, source, lang)
 	if err != nil {

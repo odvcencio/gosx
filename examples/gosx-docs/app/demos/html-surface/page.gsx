@@ -1,7 +1,11 @@
 package docs
 
 func Page() Node {
-	return <section class="html-surface" aria-label="HTML surfaces textured onto 3D geometry" role="region">
+	return <section
+		class="html-surface"
+		aria-label="HTML surfaces textured onto 3D geometry"
+		role="region"
+	>
 		<div class="html-surface__canvas">
 			<Scene3D {...data.scene} />
 		</div>

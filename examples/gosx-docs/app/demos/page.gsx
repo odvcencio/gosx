@@ -52,7 +52,11 @@ func Page() Node {
 					Drag to orbit · scroll or pinch to zoom
 				</p>
 				<div class="demos-showreel__actions">
-					<a class="demos-button demos-button--primary" href="/demos/scene3d" data-gosx-link="true">
+					<a
+						class="demos-button demos-button--primary"
+						href="/demos/scene3d"
+						data-gosx-link="true"
+					>
 						Enter Geometry Zoo
 						<span aria-hidden="true">↗</span>
 					</a>
@@ -105,7 +109,11 @@ func Page() Node {
 								Open demo
 								<span aria-hidden="true">→</span>
 							</a>
-							<a href={demoSourceURL(demo.SourcePath)} target="_blank" rel="noopener noreferrer">
+							<a
+								href={demoSourceURL(demo.SourcePath)}
+								target="_blank"
+								rel="noopener noreferrer"
+							>
 								Source
 								<span aria-hidden="true">↗</span>
 							</a>
@@ -124,7 +132,11 @@ func Page() Node {
 			<ul class="demos-more__list" role="list">
 				<Each of={data.additional} as="demo">
 					<li class="demo-row" data-demo={demo.Slug}>
-						<a class="demo-row__main" href={"/demos/" + demo.Slug} data-gosx-link="true">
+						<a
+							class="demo-row__main"
+							href={"/demos/" + demo.Slug}
+							data-gosx-link="true"
+						>
 							<span class="demo-row__title">{demo.Title}</span>
 							<span class="demo-row__tag">{demo.Tag}</span>
 						</a>

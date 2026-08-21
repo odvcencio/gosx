@@ -131,6 +131,9 @@ func Compile(source []byte) (*ir.Program, error) {
 	if err := requirePackageClause(root, lang); err != nil {
 		return nil, err
 	}
+	if err := ValidateMarkupTree(root, source, lang); err != nil {
+		return nil, err
+	}
 
 	prog, err := ir.Lower(root, source, lang)
 	if err != nil {

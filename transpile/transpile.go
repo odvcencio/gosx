@@ -24,6 +24,7 @@ import (
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/internal/strictcomponent"
+	"m31labs.dev/gosx/internal/syntax"
 )
 
 // Options controls transpiler behavior.
@@ -60,6 +61,9 @@ func Transpile(source []byte, opts Options) (string, error) {
 	root := tree.RootNode()
 	if root.HasError() {
 		return "", gosx.DescribeParseError(root, source, lang)
+	}
+	if err := gosx.ValidateMarkupTree(root, source, lang); err != nil {
+		return "", err
 	}
 	// Transpilation must apply the same semantic gate as the IR renderer. In
 	// particular, strict components may not contain Go statements that would
@@ -1271,9 +1275,10 @@ func (t *transpiler) emitRawTextElement(n *gotreesitter.Node) string {
 }
 
 // rawTextTagName turns the combined start-tag token (`<script`) into the tag
-// name. The grammar lexes `<` and the name together; see jsx_raw_text_start_tag.
+// name. The grammar lexes `<` and the name together; see the tag-specific
+// jsx_*_raw_text_start_tag rules.
 func rawTextTagName(startTag string) string {
-	name := strings.TrimPrefix(startTag, "<")
+	name := strings.ToLower(strings.TrimPrefix(startTag, "<"))
 	switch name {
 	case "script", "style":
 		return name
@@ -1282,7 +1287,7 @@ func rawTextTagName(startTag string) string {
 	}
 }
 
-// rawTextBody strips the closing tag from a jsx_raw_text token. The external
+// rawTextBody strips the closing tag from a tag-specific raw-text token. The external
 // scanner includes `</script>` in the token so the grammar needs no separate
 // closing rule, so it is removed here.
 func rawTextBody(raw string) string {
@@ -1358,9 +1363,8 @@ func (t *transpiler) emitExprContainer(n *gotreesitter.Node) string {
 }
 
 func (t *transpiler) emitGSXText(n *gotreesitter.Node) string {
-	text := t.text(n)
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
+	text := syntax.RenderText(t.text(n))
+	if text == "" {
 		return ""
 	}
 	return fmt.Sprintf("%s(%q)", t.gosxRef("Text"), text)

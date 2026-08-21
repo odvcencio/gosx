@@ -92,7 +92,11 @@ func Layout() Node {
 			<header class="demo-details__header">
 				<div>
 					<p class="demo-details__eyebrow">How this is GoSX</p>
-					<h2 id="demo-details-title" class="demo-details__title" data-gosx-bind-text="data-demo-title">{currentDemoTitle}</h2>
+					<h2
+						id="demo-details-title"
+						class="demo-details__title"
+						data-gosx-bind-text="data-demo-title"
+					>{currentDemoTitle}</h2>
 				</div>
 				<button
 					type="button"

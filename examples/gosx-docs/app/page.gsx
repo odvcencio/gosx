@@ -185,7 +185,11 @@ func Page() Node {
 				</div>
 				<div class="proof__grid">
 					<Each of={data.proofPoints} as="point">
-						<div data-gosx-motion data-gosx-motion-trigger="view" data-gosx-motion-preset="slide-up">
+						<div
+							data-gosx-motion
+							data-gosx-motion-trigger="view"
+							data-gosx-motion-preset="slide-up"
+						>
 							<StatCard value={point.value} label={point.label} />
 						</div>
 					</Each>
