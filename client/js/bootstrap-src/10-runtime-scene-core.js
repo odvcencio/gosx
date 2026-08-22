@@ -1700,6 +1700,32 @@
       qualityGroup: typeof item.qualityGroup === "string" && item.qualityGroup.trim()
         ? item.qualityGroup.trim()
         : (typeof current.qualityGroup === "string" ? current.qualityGroup : ""),
+      // Inline authored material. The mesh, instanced-mesh and model
+      // normalizers all carry these fields through; points did not, and
+      // sceneStatePointsWithMaterials only re-attaches NAMED materials
+      // (state.materials, keyed by a string point.material). A points layer
+      // that authored its own shader inline therefore reached the renderer
+      // stripped down to this whitelist, so both backends fell through to
+      // the BUILTIN points program: no twinkle, no depth wrap, no per-star
+      // impulse. Nothing reported a failure either — the shader was never
+      // handed to the GPU to fail — and the render loop still ran, because
+      // sceneHasTimeDrivenMaterials reads the RAW props scene. The result
+      // was a field that redrew an identical frame forever.
+      customVertex: typeof item.customVertex === "string" ? item.customVertex : (typeof current.customVertex === "string" ? current.customVertex : ""),
+      customFragment: typeof item.customFragment === "string" ? item.customFragment : (typeof current.customFragment === "string" ? current.customFragment : ""),
+      customVertexWGSL: typeof item.customVertexWGSL === "string" ? item.customVertexWGSL : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
+      customFragmentWGSL: typeof item.customFragmentWGSL === "string" ? item.customFragmentWGSL : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      shaderBackend: typeof item.shaderBackend === "string" ? item.shaderBackend : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
+      shaderSource: typeof item.shaderSource === "string" ? item.shaderSource : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
+      customUniforms: sceneIsPlainObject(item.customUniforms)
+        ? Object.assign({}, item.customUniforms)
+        : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
+      shaderLayout: sceneIsPlainObject(item.shaderLayout)
+        ? sceneCloneData(item.shaderLayout)
+        : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
+      shaderSourceFiles: sceneIsPlainObject(item.shaderSourceFiles)
+        ? sceneCloneData(item.shaderSourceFiles)
+        : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
       _transition: lifecycle.transition,
       _inState: lifecycle.inState,
       _outState: lifecycle.outState,

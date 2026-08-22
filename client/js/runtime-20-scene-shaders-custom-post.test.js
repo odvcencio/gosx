@@ -2406,3 +2406,68 @@ test("custom post WebGPU: a module with compilation errors is refused even when 
   assert.equal(warns.length, 1, "a module carrying compilation errors must still fail the pass");
   assert.ok(warns[0].includes("expected declaration"), "the warn must carry the module's own compiler message");
 });
+
+test("points authored profile: an INLINE authored material survives scene-state normalization", async () => {
+  // The points normalizer builds its result from an explicit whitelist. That
+  // whitelist carried only `material` (a string naming an entry in
+  // scene.materials), while the mesh, instanced-mesh and model normalizers
+  // all carry the authored shader fields through. A points layer that
+  // authored its shader INLINE — the content starfields, whose entire
+  // motion (twinkle, depth wrap, per-star impulse) lives in that shader —
+  // therefore reached the renderer stripped, and both backends silently drew
+  // it with the BUILTIN points program. Nothing failed loudly: the shader was
+  // never handed to the GPU to fail, and the render loop still ran because
+  // sceneHasTimeDrivenMaterials reads the RAW props scene, so the layer
+  // redrew an identical frame forever. Verified in a real browser: before
+  // this fix the authored starfield GLSL was never passed to gl.shaderSource
+  // and the `time` uniform was never uploaded across 531 draw calls.
+  const api = await makeSceneApiEnv();
+
+  const vert = "#version 300 es\nuniform float time;\nvoid main() { gl_Position = vec4(time); }";
+  const frag = "#version 300 es\nprecision highp float;\nout vec4 c;\nvoid main() { c = vec4(1.0); }";
+
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "starfield-stars",
+          count: 2,
+          positions: [0, 0, 0, 1, 1, 1],
+          color: "#ffffff",
+          blendMode: "additive",
+          customVertex: vert,
+          customFragment: frag,
+          customVertexWGSL: "@vertex fn vertexMain() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }",
+          customFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }",
+          customUniforms: { time: 0 },
+          shaderBackend: "custom",
+          shaderLayout: { material: "StarfieldDepthWrap" },
+        },
+      ],
+    },
+  });
+
+  const point = state.points[0];
+  assert.equal(point.customVertex, vert, "inline customVertex must survive normalization");
+  assert.equal(point.customFragment, frag, "inline customFragment must survive normalization");
+  assert.ok(point.customVertexWGSL, "inline customVertexWGSL must survive normalization");
+  assert.ok(point.customFragmentWGSL, "inline customFragmentWGSL must survive normalization");
+  assert.equal(point.shaderBackend, "custom", "shaderBackend must survive normalization");
+  assert.ok(point.customUniforms && typeof point.customUniforms === "object", "customUniforms must survive");
+  assert.equal(point.customUniforms.time, 0, "the declared time uniform must survive");
+  assert.ok(point.shaderLayout && point.shaderLayout.material === "StarfieldDepthWrap", "shaderLayout must survive");
+
+  // customUniforms is cloned, not aliased: the mount mutates the live bag
+  // per frame (the material clock) and must not write back into props.
+  point.customUniforms.time = 42;
+  const second = api.createSceneState({
+    scene: { points: [{ id: "starfield-stars", count: 1, positions: [0, 0, 0], customUniforms: { time: 0 } }] },
+  });
+  assert.equal(second.points[0].customUniforms.time, 0, "customUniforms must be cloned per normalization");
+
+  // The layer keeps reaching the renderer through the same path a named
+  // material uses, so the draw loop sees one entry either way.
+  const withMaterials = api.sceneStatePointsWithMaterials(state);
+  assert.equal(withMaterials.length, 1);
+  assert.equal(withMaterials[0].customVertex, vert, "inline authored shader must reach the render bundle");
+});

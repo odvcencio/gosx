@@ -539,6 +539,62 @@
     return serializeNodeSignature(clone || node);
   }
 
+  // Attributes the script loader owns on the LIVE node. The parsed
+  // next-document node never carries them, so a config sync must not treat
+  // their absence as "remove".
+  const MANAGED_SCRIPT_RUNTIME_ATTRS = ["data-gosx-script-loaded", "data-gosx-script-load", "nonce"];
+
+  // managedScriptModuleKey identifies a managed runtime chunk by MODULE URL
+  // rather than by its full attribute set. The same chunk legitimately
+  // carries different per-route config: Scene3D advertises only the
+  // sub-feature chunk URLs a given page can need, so /products ships no
+  // data-gosx-scene3d-compute-url while the galaxy route does. Matching head
+  // nodes on outerHTML made that config delta look like a different script,
+  // so the live node was dropped and the chunk re-fetched and re-executed —
+  // a module loadManagedScript itself documents as "not a re-entrant module
+  // body" (it publishes non-writable globals and registers engine factories,
+  // which then log "engine factory already registered"). Empty string means
+  // "not a managed script": fall back to the exact-signature match.
+  function managedScriptModuleKey(node, baseURL) {
+    if (!isElement(node, "SCRIPT")) return "";
+    if (!node.hasAttribute || !node.hasAttribute(SCRIPT_ROLE)) return "";
+    const src = node.getAttribute("src");
+    if (!src) return "";
+    return "managed-script:" + absolutizeURL(src, baseURL);
+  }
+
+  function headNodeMatchKey(node, baseURL) {
+    return managedScriptModuleKey(node, baseURL) || headNodeSignature(node, baseURL);
+  }
+
+  // syncManagedScriptConfig carries the incoming route's configuration onto
+  // the retained (already-executed) script node. Scene3D reads its
+  // sub-feature URLs lazily off the live tag at fetch time
+  // (resolveSceneSubFeatureURL queries
+  // script[data-gosx-script="feature-scene3d"].dataset), so a retained node
+  // must advertise the NEW route's URLs or a route that needs a chunk the
+  // previous route never listed would resolve an empty URL. src is left
+  // alone: the module key already proved it equal, and re-pointing a live
+  // script element is meaningless (a script executes once).
+  function syncManagedScriptConfig(liveNode, nextNode) {
+    if (!isElement(liveNode, "SCRIPT") || !isElement(nextNode, "SCRIPT")) return;
+    if (!liveNode.setAttribute || !liveNode.removeAttribute) return;
+    const owned = new Set(MANAGED_SCRIPT_RUNTIME_ATTRS);
+    const desired = new Map();
+    for (const entry of attributeEntries(nextNode)) {
+      desired.set(entry.name, entry.value);
+    }
+    for (const entry of attributeEntries(liveNode)) {
+      if (owned.has(entry.name) || entry.name === "src" || desired.has(entry.name)) continue;
+      liveNode.removeAttribute(entry.name);
+    }
+    for (const [name, value] of desired) {
+      if (owned.has(name) || name === "src") continue;
+      if (liveNode.getAttribute(name) === value) continue;
+      liveNode.setAttribute(name, value);
+    }
+  }
+
   function isStylesheetLink(node) {
     return isElement(node, "LINK")
       && /\bstylesheet\b/i.test(String(node.getAttribute("rel") || ""))
@@ -599,21 +655,23 @@
     const currentNodes = collectManagedHeadNodes(head);
     const currentBuckets = new Map();
     for (const node of currentNodes) {
-      const signature = headNodeSignature(node, window.location.href);
-      if (!currentBuckets.has(signature)) {
-        currentBuckets.set(signature, []);
+      const key = headNodeMatchKey(node, window.location.href);
+      if (!currentBuckets.has(key)) {
+        currentBuckets.set(key, []);
       }
-      currentBuckets.get(signature).push(node);
+      currentBuckets.get(key).push(node);
     }
 
     const nextNodes = collectManagedHeadNodes(nextDoc.head);
     const orderedNodes = [];
     const insertedNodes = [];
     for (const node of nextNodes) {
-      const signature = headNodeSignature(node, baseURL);
-      const bucket = currentBuckets.get(signature);
+      const key = headNodeMatchKey(node, baseURL);
+      const bucket = currentBuckets.get(key);
       if (bucket && bucket.length > 0) {
-        orderedNodes.push(bucket.shift());
+        const retained = bucket.shift();
+        syncManagedScriptConfig(retained, node);
+        orderedNodes.push(retained);
         continue;
       }
 
