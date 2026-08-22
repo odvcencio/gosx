@@ -253,6 +253,23 @@ func (c *Context) Redirect(url string) {
 	}
 }
 
+// RedirectWithMessage sends a browser-friendly redirect after a successful
+// action and carries a human-readable completion message through both
+// progressive-enhancement paths. Native form submissions flash the structured
+// result before redirecting; managed forms receive the same message in their
+// JSON result and can project it without a page reload.
+func (c *Context) RedirectWithMessage(url, message string) {
+	c.result = &Result{
+		OK:       true,
+		Message:  strings.TrimSpace(message),
+		Redirect: url,
+		Values:   cloneStrings(c.FormData),
+	}
+	if c.status == 0 {
+		c.status = http.StatusSeeOther
+	}
+}
+
 // ValidationFailure records field-level validation errors for the response.
 func (c *Context) ValidationFailure(message string, fieldErrors map[string]string) {
 	c.result = &Result{

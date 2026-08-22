@@ -4672,6 +4672,111 @@ test("managed form result projection can be explicitly disabled", async () => {
   assert.equal(env.document.querySelector("[data-gosx-announcer]"), null);
 });
 
+test("managed redirect results become dismissible visible feedback in the destination toast host", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/profile/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/profile/save": {
+        status: 303,
+        text: '{"ok":true,"message":"Profile saved.","redirect":"/profile"}',
+        url: "http://localhost:3000/profile/save",
+      },
+      "http://localhost:3000/profile": {
+        text: "__PROFILE_PAGE__",
+        url: "http://localhost:3000/profile",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  installManualTimers(env.context);
+
+  const toastHost = new FakeElement("div", null);
+  toastHost.setAttribute("data-gosx-toast-host", "");
+  toastHost.setAttribute("aria-live", "polite");
+  const main = new FakeElement("main", null);
+  main.textContent = "Profile";
+  parsedDocs.set("__PROFILE_PAGE__", buildNavigatedDocument({
+    title: "Profile",
+    bodyNodes: [toastHost, main],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  const liveHost = env.document.querySelector("[data-gosx-toast-host]");
+  const toast = liveHost.querySelector("[data-gosx-toast]");
+  assert.ok(toast);
+  assert.equal(toast.getAttribute("data-gosx-toast-kind"), "success");
+  assert.equal(toast.getAttribute("role"), "status");
+  assert.equal(toast.querySelector(".gosx-toast__message").textContent, "Profile saved.");
+  assert.equal(env.context.location.href, "http://localhost:3000/profile");
+  assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:toast:show"), true);
+
+  const dismiss = toast.querySelector("[data-gosx-toast-dismiss]");
+  env.document.eventListeners.get("click")[0]({
+    type: "click",
+    target: dismiss,
+    preventDefault() {},
+  });
+  assert.equal(liveHost.querySelector("[data-gosx-toast]"), null);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:toast:dismiss");
+});
+
+test("managed action failures remain inline and also surface as persistent alert toasts", async () => {
+  const host = new FakeElement("div", null);
+  host.setAttribute("data-gosx-toast-host", "");
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/profile/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const status = new FakeElement("p", null);
+  status.setAttribute("class", "form-status");
+  form.appendChild(status);
+
+  const env = createContext({
+    elements: [host, form],
+    fetchRoutes: {
+      "http://localhost:3000/profile/save": {
+        ok: false,
+        status: 422,
+        text: '{"ok":false,"message":"Choose a valid team."}',
+      },
+    },
+  });
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  const toast = host.querySelector("[data-gosx-toast]");
+  assert.ok(toast);
+  assert.equal(toast.getAttribute("data-gosx-toast-kind"), "error");
+  assert.equal(toast.getAttribute("role"), "alert");
+  assert.equal(status.textContent, "Choose a valid team.");
+  assert.equal(timers.count(), 0, "error feedback must not schedule auto-dismissal");
+  assert.equal(host.querySelector("[data-gosx-toast]"), toast);
+});
+
 test("managed form result projection skips a form detached while its action is pending", async () => {
   const form = new FakeElement("form", null);
   form.setAttribute("action", "/detached");

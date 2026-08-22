@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added: one structured result can drive redirects and visible action feedback
+
+- `action.Context.RedirectWithMessage` carries the same completion message
+  through native POST-redirect-GET and managed-form JSON responses. Apps no
+  longer need a separate session flash merely to explain a successful redirect.
+- Pages can render a `data-gosx-toast-host` to opt into visible managed-action
+  feedback. Success notices dismiss automatically after six seconds, errors
+  remain until dismissed, both use accessible status semantics, and stable
+  `gosx-toast*` classes let the application own presentation.
+- Redirect-backed managed actions project their toast only after soft
+  navigation settles, so feedback lands in the destination page instead of an
+  outgoing DOM tree that is about to be replaced.
+
 ## v0.52.1 (2026-08-22)
 
 ### Added: a screen-space pixel floor for compute particles and named materials

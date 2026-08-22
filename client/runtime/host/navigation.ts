@@ -117,6 +117,15 @@
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
   const MANAGED_FOCUS_ATTR = "data-gosx-focus-managed";
+  // A page opts into visible managed-action feedback by rendering one toast
+  // host. The runtime owns semantics and lifecycle; applications own visual
+  // styling through the stable gosx-toast class hooks.
+  const TOAST_HOST_ATTR = "data-gosx-toast-host";
+  const TOAST_ATTR = "data-gosx-toast";
+  const TOAST_KIND_ATTR = "data-gosx-toast-kind";
+  const TOAST_DISMISS_ATTR = "data-gosx-toast-dismiss";
+  const TOAST_SUCCESS_LIFETIME_MS = 6000;
+  const TOAST_MAX_VISIBLE = 4;
   const NAV_INLINE_REPLAY_ATTR = "data-gosx-navigation-replay";
   const NAV_INLINE_REPLAYED_ATTR = "data-gosx-navigation-replayed";
   const URL_ATTRS = ["href", "src", "action", "poster"];
@@ -153,6 +162,7 @@
   let activeNavigationURL = "";
   let announceSeq = 0;
   let formErrorSeq = 0;
+  let toastSeq = 0;
   let navigationFrameSequence = 0;
   // A Set (not a WeakSet) so its size doubles as the "a managed form
   // submission is in flight" signal periodic revalidation reads — see
@@ -1440,6 +1450,95 @@
     return text;
   }
 
+  function managedToastHost() {
+    return findElement(document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute(TOAST_HOST_ATTR);
+    });
+  }
+
+  function removeManagedToast(toast, reason) {
+    if (!toast || !toast.parentNode) return false;
+    const host = toast.parentNode;
+    host.removeChild(toast);
+    dispatchManagedEvent("gosx:toast:dismiss", {
+      detail: {
+        id: toast.getAttribute ? String(toast.getAttribute("id") || "") : "",
+        reason: String(reason || "dismiss"),
+      },
+    });
+    return true;
+  }
+
+  function managedToastDismissTarget(node) {
+    let current = node;
+    while (current && current !== document.body) {
+      if (current.hasAttribute && current.hasAttribute(TOAST_DISMISS_ATTR)) return current;
+      current = current.parentNode;
+    }
+    return null;
+  }
+
+  function managedToastForDismiss(button) {
+    let current = button;
+    while (current && current !== document.body) {
+      if (current.hasAttribute && current.hasAttribute(TOAST_ATTR)) return current;
+      current = current.parentNode;
+    }
+    return null;
+  }
+
+  function presentManagedFormToast(response, result) {
+    const host = managedToastHost();
+    if (!host) return null;
+
+    const fieldErrors = result && result.fieldErrors && typeof result.fieldErrors === "object"
+      ? Object.keys(result.fieldErrors)
+      : [];
+    const failed = !response || !response.ok || !!(result && result.ok === false) || fieldErrors.length > 0;
+    const message = normalizeTextValue(result && result.message) || (failed ? "Action failed." : "");
+    if (!message) return null;
+
+    toastSeq += 1;
+    const toast = document.createElement("div");
+    const id = "gosx-toast-" + toastSeq;
+    toast.setAttribute("id", id);
+    toast.setAttribute(TOAST_ATTR, "");
+    toast.setAttribute(TOAST_KIND_ATTR, failed ? "error" : "success");
+    toast.setAttribute("class", "gosx-toast gosx-toast--" + (failed ? "error" : "success"));
+    toast.setAttribute("role", failed ? "alert" : "status");
+
+    const copy = document.createElement("span");
+    copy.setAttribute("class", "gosx-toast__message");
+    copy.textContent = message;
+    toast.appendChild(copy);
+
+    const dismiss = document.createElement("button");
+    dismiss.setAttribute("type", "button");
+    dismiss.setAttribute("class", "gosx-toast__dismiss");
+    dismiss.setAttribute(TOAST_DISMISS_ATTR, "");
+    dismiss.setAttribute("aria-label", "Dismiss notification");
+    dismiss.textContent = "×";
+    toast.appendChild(dismiss);
+    host.appendChild(toast);
+
+    const visible = collectElements(host, function(node) {
+      return node.hasAttribute && node.hasAttribute(TOAST_ATTR);
+    });
+    while (visible.length > TOAST_MAX_VISIBLE) {
+      removeManagedToast(visible.shift(), "overflow");
+    }
+
+    dispatchManagedEvent("gosx:toast:show", {
+      detail: { id: id, kind: failed ? "error" : "success", message: message },
+    });
+    if (!failed && typeof setTimeout === "function") {
+      setTimeout(function() {
+        removeManagedToast(toast, "timeout");
+      }, TOAST_SUCCESS_LIFETIME_MS);
+    }
+    return toast;
+  }
+
   function customAnnouncement(root) {
     const node = findElement(root, function(candidate) {
       return candidate.hasAttribute && candidate.hasAttribute(ANNOUNCE_ATTR);
@@ -2221,6 +2320,14 @@
           }
         }
       }
+    }
+    try {
+      // This runs after a redirect-backed soft navigation settles, so the
+      // result is projected into the destination page's host rather than the
+      // outgoing host that body replacement just detached.
+      presentManagedFormToast(response, result);
+    } catch (err) {
+      reportManagedActionResponseFailure("form action toast", err, url.href, method);
     }
     try {
       dispatchManagedFormResult(url.href, method, response, result);
@@ -5878,6 +5985,12 @@
   }
 
   function onClick(event) {
+    const toastDismiss = managedToastDismissTarget(event.target);
+    if (toastDismiss) {
+      event.preventDefault();
+      removeManagedToast(managedToastForDismiss(toastDismiss), "dismiss");
+      return;
+    }
     const anchor = closestLink(event.target);
     if (!shouldHandleLink(anchor, event)) return;
     event.preventDefault();

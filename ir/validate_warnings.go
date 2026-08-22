@@ -62,6 +62,7 @@ var navigationPrimitiveAttrs = []string{
 	"data-gosx-form-mode",
 	"data-gosx-form-state",
 	"data-gosx-form-project",
+	"data-gosx-toast-host",
 	"data-gosx-action",
 	"data-gosx-reset",
 	"data-gosx-submit-on",

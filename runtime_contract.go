@@ -31,6 +31,10 @@ const (
 	// pages, and the island package's resolved-tree renderer for island
 	// forms. See ManagedFormShorthandTruthy for the shared truthy rule.
 	ManagedFormShorthandAttr = "data-gosx-managed"
+	// ToastHostAttr opts a page into visible managed-action feedback. The
+	// navigation runtime appends accessible, dismissible toast elements to the
+	// first host after an action settles; the application owns their styling.
+	ToastHostAttr = "data-gosx-toast-host"
 
 	ActionAttr         = "data-gosx-action"
 	ActionResetAttr    = "data-gosx-reset"
