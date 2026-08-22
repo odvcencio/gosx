@@ -109,8 +109,10 @@ func Page() Node {
 				Render one
 				<span class="inline-code">data-gosx-toast-host</span>
 				in your layout to make managed-action messages visibly float. The runtime supplies accessible status and dismiss behavior; style the stable
-				<span class="inline-code">gosx-toast</span>,
-				<span class="inline-code">gosx-toast--success</span>, and
+				<span class="inline-code">gosx-toast</span>
+				,
+				<span class="inline-code">gosx-toast--success</span>
+				, and
 				<span class="inline-code">gosx-toast--error</span>
 				classes to match your product.
 			</p>
