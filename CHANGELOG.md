@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.50.1 (2026-08-22)
+
+### Added: static CSRF coverage for mutating file actions
+
+- **Check 1a — a mutating file-action form must carry a CSRF control
+  (error).** The same check now recognizes a static POST, PUT, PATCH, or
+  DELETE `<form action={actionPath("name")}>` and requires a descendant
+  form control named `csrf_token` when the complete tree is statically
+  visible. Plain elements and fragments may sit between the form and the
+  control. Component calls, expression holes, spreads, raw HTML, and dynamic
+  control names produce a warning instead of an error because they may render
+  the token at runtime.
+  GET forms and native/external actions remain outside this file-action
+  contract. The diagnostic mirrors `session.Manager.Protect`'s form-field
+  fallback so a deployed action cannot silently fail solely because its
+  page omitted the token.
+- Authentication and forms documentation plus the docs templates now explain
+  the session.Manager.Protect pairing and the csrf_token control contract.
+
+### Fixed: duplicate form attributes follow browser behavior
+
+- Strict form-action analysis now uses the first direct action and method
+  attributes, so later duplicates cannot hide a mutating file action or change
+  a native/GET classification.
+- Regression coverage now exercises duplicate attributes and every unsafe
+  method.
+
 ## v0.50.0 (2026-08-21)
 
 ### Added: static bearer token middleware
@@ -211,18 +238,6 @@
   ActionPath` builds the URL with no such lookup. This is the
   `examples/dashboard` defect from the framework owner's premise: a form
   posting to an action nothing ever registered.
-- **Check 1a — a mutating file-action form must carry a CSRF control
-  (error).** The same check now recognizes a static POST, PUT, PATCH, or
-  DELETE `<form action={actionPath("name")}>` and requires a descendant
-  form control named `csrf_token` when the complete tree is statically
-  visible. Plain elements and fragments may sit between the form and the
-  control. Component calls, expression holes, spreads, raw HTML, and dynamic
-  control names produce a warning instead of an error because they may render
-  the token at runtime.
-  GET forms and native/external actions remain outside this file-action
-  contract. The diagnostic mirrors `session.Manager.Protect`'s form-field
-  fallback so a deployed action cannot silently fail solely because its
-  page omitted the token.
 - **Check 2 — a required control must stay reachable (warning, heuristic).**
   `strictcheck.validateRequiredReachabilityContract`
   (`strictcheck/requiredreach.go`) cross-references a `required` control's

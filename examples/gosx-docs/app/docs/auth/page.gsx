@@ -180,7 +180,9 @@ func Page() Node {
 			binding.
 		</p>
 		<p>
-			For mutating file-action forms, <span class="inline-code">gosx check</span> catches a missing
+			For mutating file-action forms,
+			<span class="inline-code">gosx check</span>
+			catches a missing
 			<span class="inline-code">csrf_token</span>
 			control when the full descendant tree is static. GET and native/external forms are not part of this check, and dynamic component descendants remain the application's responsibility.
 		</p>
