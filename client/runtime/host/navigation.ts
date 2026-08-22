@@ -1491,10 +1491,7 @@
     const host = managedToastHost();
     if (!host) return null;
 
-    const fieldErrors = result && result.fieldErrors && typeof result.fieldErrors === "object"
-      ? Object.keys(result.fieldErrors)
-      : [];
-    const failed = !response || !response.ok || !!(result && result.ok === false) || fieldErrors.length > 0;
+    const failed = managedActionFailed(response, result);
     const message = normalizeTextValue(result && result.message) || (failed ? "Action failed." : "");
     if (!message) return null;
 
@@ -2057,11 +2054,25 @@
       detail: {
         action: action,
         method: method,
-        ok: !!(response && response.ok),
+        ok: !managedActionFailed(response, result),
         status: response ? response.status : 0,
         result: result,
       },
     });
+  }
+
+  // A managed redirect intentionally returns a structured action Result with
+  // HTTP 303. Fetch's response.ok is false for every 3xx status even when the
+  // action contract says {ok:true}, so the parsed result is authoritative when
+  // it carries a boolean ok field. Transport status remains the fallback for
+  // non-action or malformed responses; field errors always fail the action.
+  function managedActionFailed(response, result) {
+    const fieldErrors = result && result.fieldErrors && typeof result.fieldErrors === "object"
+      ? Object.keys(result.fieldErrors)
+      : [];
+    if (fieldErrors.length > 0) return true;
+    if (result && typeof result.ok === "boolean") return result.ok === false;
+    return !response || !response.ok;
   }
 
   async function parseJSONResponse(response) {
@@ -2230,7 +2241,7 @@
       }
     }
 
-    const failed = !response || !response.ok || !!(result && result.ok === false) || names.length > 0;
+    const failed = managedActionFailed(response, result);
     const message = normalizeTextValue(result && result.message);
     const announcement = message || (failed ? "Action failed." : "Action completed.");
     if (status) status.textContent = announcement;

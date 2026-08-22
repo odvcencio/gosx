@@ -4684,6 +4684,7 @@ test("managed redirect results become dismissible visible feedback in the destin
     elements: [form],
     fetchRoutes: {
       "http://localhost:3000/profile/save": {
+        ok: false,
         status: 303,
         text: '{"ok":true,"message":"Profile saved.","redirect":"/profile"}',
         url: "http://localhost:3000/profile/save",
@@ -4725,6 +4726,8 @@ test("managed redirect results become dismissible visible feedback in the destin
   assert.equal(toast.getAttribute("role"), "status");
   assert.equal(toast.querySelector(".gosx-toast__message").textContent, "Profile saved.");
   assert.equal(env.context.location.href, "http://localhost:3000/profile");
+  const resultEvent = env.document.dispatchedEvents.find((event) => event.type === "gosx:form:result");
+  assert.equal(resultEvent.detail.ok, true, "structured action truth wins over Fetch response.ok for HTTP 303");
   assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:toast:show"), true);
 
   const dismiss = toast.querySelector("[data-gosx-toast-dismiss]");
