@@ -109,6 +109,9 @@ func Page() Node {
 								Source
 								<span aria-hidden="true">↗</span>
 							</a>
+							<Each of={demoGuides(demo.Slug)} as="guide">
+								<a class="demo-feature__guide" href={guide.Href} data-gosx-link="true">{guide.Title} guide</a>
+							</Each>
 						</footer>
 					</article>
 				</Each>
@@ -129,6 +132,11 @@ func Page() Node {
 							<span class="demo-row__tag">{demo.Tag}</span>
 						</a>
 						<span class={"demo-row__status demo-row__status--" + demo.Status}>{demo.Status}</span>
+						<span class="demo-row__guides">
+							<Each of={demoGuides(demo.Slug)} as="guide">
+								<a class="demo-row__guide" href={guide.Href} data-gosx-link="true">{guide.Title} guide</a>
+							</Each>
+						</span>
 						<a
 							class="demo-row__source"
 							href={demoSourceURL(demo.SourcePath)}

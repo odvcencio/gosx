@@ -296,6 +296,34 @@
   border-radius: 0.25em;
 }
 
+/* Live proof link: guides whose capability a catalog demo exercises point
+   straight at it. Hidden entirely when the catalog maps no demo. */
+.docs-header__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-top: var(--space-sm);
+  padding: 0.35em 0.8em;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: var(--text-small);
+  text-decoration: none;
+}
+
+.docs-header__live-kicker {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.docs-header__live:hover,
+.docs-header__live:active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* ------------------------------------------------------------
    Route-local Scene3D teaching surface
    ------------------------------------------------------------ */
