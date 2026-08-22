@@ -211,13 +211,13 @@ func orreryProcessionClip(indexOf func(string) int) scene.AnimationClip {
 		Channels: []scene.AnimationChannel{
 			orreryPlanetChannel("orrery-planet-cinder", indexOf, orreryOrbitSpec{
 				Radius: orreryCinderRadius, PeriodSeconds: 6, SamplesPerRevolution: 16, Phase: 0,
-			}),
+			}, scene.Vec3(orreryCinderRadius, orreryHeartY, 0)),
 			orreryPlanetChannel("orrery-planet-porcelain", indexOf, orreryOrbitSpec{
 				Radius: orreryPorcelainRadius, PeriodSeconds: 8, SamplesPerRevolution: 16, Phase: math.Pi / 3,
-			}),
+			}, scene.Vec3(-orreryPorcelainRadius, orreryHeartY, 0)),
 			orreryPlanetChannel("orrery-planet-verdigris", indexOf, orreryOrbitSpec{
 				Radius: orreryVerdigrisRadius, PeriodSeconds: 12, SamplesPerRevolution: 20, Phase: 2 * math.Pi / 3,
-			}),
+			}, scene.Vec3(0, orreryHeartY, orreryVerdigrisRadius)),
 			orreryTransitChannel(indexOf("orrery-transit-moon")),
 		},
 	}
@@ -233,7 +233,12 @@ type orreryOrbitSpec struct {
 // orreryPlanetChannel samples one closed circular orbit across the full
 // demonstration cycle. The first and last keys carry the same pose, so the
 // track loops seamlessly; periods divide the cycle, so revolutions close.
-func orreryPlanetChannel(nodeID string, indexOf func(string) int, spec orreryOrbitSpec) scene.AnimationChannel {
+//
+// Channel translation values are composed by the shared runtime as offsets
+// from the node's AUTHORED pose (see AnimationChannel docs), so every key here
+// stores orbitPoint(t) − park: the rendered planet rides the declared circle
+// exactly, whatever pose the node authors, and the loop closes bit-exactly.
+func orreryPlanetChannel(nodeID string, indexOf func(string) int, spec orreryOrbitSpec, park scene.Vector3) scene.AnimationChannel {
 	revolutions := orreryCycleSeconds / spec.PeriodSeconds
 	keys := int(revolutions) * spec.SamplesPerRevolution
 	times := make([]float64, keys+1)
@@ -249,9 +254,9 @@ func orreryPlanetChannel(nodeID string, indexOf func(string) int, spec orreryOrb
 		t := orreryCycleSeconds * float64(i) / float64(keys)
 		theta := spec.Phase + 2*math.Pi*float64(i)/float64(keys)*revolutions
 		times[i] = t
-		values[3*i] = spec.Radius * math.Cos(theta)
-		values[3*i+1] = orreryHeartY
-		values[3*i+2] = spec.Radius * math.Sin(theta)
+		values[3*i] = spec.Radius*math.Cos(theta) - park.X
+		values[3*i+1] = orreryHeartY - park.Y
+		values[3*i+2] = spec.Radius*math.Sin(theta) - park.Z
 	}
 	return scene.AnimationChannel{
 		TargetNode: indexOf(nodeID), Property: "translation", Interpolation: "LINEAR",
@@ -266,7 +271,8 @@ func orreryMoonPark() scene.Vector3 {
 
 // orreryTransitChannel crosses the moon between the viewer and the heart. The
 // mid-transit key time equals the heart-flare and halo-pulse key times, so
-// light answers alignment on the same deterministic beat (13.2 s).
+// light answers alignment on the same deterministic beat (13.2 s). Values are
+// offsets from the moon's authored parking pose, matching the planet channels.
 func orreryTransitChannel(target int) scene.AnimationChannel {
 	mid := scene.Vec3(-0.18, orreryHeartY+0.08, 0.52)
 	rise := scene.Vec3(mid.X, mid.Y, 2.6)
@@ -276,7 +282,7 @@ func orreryTransitChannel(target int) scene.AnimationChannel {
 	times := []float64{0, orreryTransitRise - 0.3, orreryTransitRise, orreryTransitMid, orreryTransitExit, orreryTransitExit + 0.3, orreryCycleSeconds}
 	values := make([]float64, 0, 3*len(vecs))
 	for _, v := range vecs {
-		values = append(values, v.X, v.Y, v.Z)
+		values = append(values, v.X-park.X, v.Y-park.Y, v.Z-park.Z)
 	}
 	return scene.AnimationChannel{
 		TargetNode: target, Property: "translation", Interpolation: "LINEAR",

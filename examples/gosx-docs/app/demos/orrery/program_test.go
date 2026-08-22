@@ -147,6 +147,9 @@ func TestLodestarMeridianChoreographyIsStableAndDeterministic(t *testing.T) {
 		if got := channel.TargetNode; got != meshIndex[want.nodeID] {
 			t.Errorf("%s targets node %d, want stable index %d", want.nodeID, got, meshIndex[want.nodeID])
 		}
+		if got := channel.TargetID; got != want.nodeID {
+			t.Errorf("%s TargetID = %q, want the stable lowering-resolved ID", want.nodeID, got)
+		}
 		if channel.Property != "translation" || channel.Interpolation != "LINEAR" {
 			t.Errorf("%s channel = %q/%q, want LINEAR translation", want.nodeID, channel.Property, channel.Interpolation)
 		}
@@ -166,8 +169,14 @@ func TestLodestarMeridianChoreographyIsStableAndDeterministic(t *testing.T) {
 		if !reflect.DeepEqual(first, last) {
 			t.Errorf("%s loop does not close: first %v last %v", want.nodeID, first, last)
 		}
+		// Channel values are composed by the shared runtime as offsets from
+		// the planet's authored pose, so compose them back before checking
+		// the rendered orbit.
+		parkX, parkY, parkZ := lodestarMeridianPlanetPark(want.nodeID)
 		for k := 0; k < len(channel.Times); k++ {
-			x, y, z := channel.Values[3*k], channel.Values[3*k+1], channel.Values[3*k+2]
+			x := parkX + channel.Values[3*k]
+			y := parkY + channel.Values[3*k+1]
+			z := parkZ + channel.Values[3*k+2]
 			if math.Abs(y-orreryHeartY) > 1e-9 {
 				t.Errorf("%s key %d left the ecliptic plane (y=%.6f)", want.nodeID, k, y)
 			}
@@ -188,7 +197,10 @@ func TestLodestarMeridianChoreographyIsStableAndDeterministic(t *testing.T) {
 	if !reflect.DeepEqual(moon.Times, wantTimes) {
 		t.Fatalf("transit key times = %#v, want %#v", moon.Times, wantTimes)
 	}
-	midX, midY, midZ := moon.Values[3*3], moon.Values[3*3+1], moon.Values[3*3+2]
+	// Compose the moon's mid-transit key with its authored parking pose: the
+	// rendered pose must align with the heart at 13.2 s.
+	parkX, parkY, parkZ := orreryMoonPark().X, orreryMoonPark().Y, orreryMoonPark().Z
+	midX, midY, midZ := parkX+moon.Values[3*3], parkY+moon.Values[3*3+1], parkZ+moon.Values[3*3+2]
 	if midX != -0.18 || midY != orreryHeartY+0.08 || midZ != 0.52 {
 		t.Errorf("mid-transit pose = (%.3f, %.3f, %.3f)", midX, midY, midZ)
 	}
@@ -289,5 +301,21 @@ func TestLodestarMeridianExpandedGeometryStaysWithinDeclaredBudget(t *testing.T)
 	}
 	if expandedVertices <= 0 || expandedVertices > orreryExpandedVertexBudget {
 		t.Fatalf("expanded renderer-facing vertices = %d, budget = %d", expandedVertices, orreryExpandedVertexBudget)
+	}
+}
+
+// lodestarMeridianPlanetPark returns a planet's authored parking pose so tests
+// can compose clip offsets back into world space exactly as the shared runtime
+// bundle path does.
+func lodestarMeridianPlanetPark(nodeID string) (float64, float64, float64) {
+	switch nodeID {
+	case "orrery-planet-cinder":
+		return orreryCinderRadius, orreryHeartY, 0
+	case "orrery-planet-porcelain":
+		return -orreryPorcelainRadius, orreryHeartY, 0
+	case "orrery-planet-verdigris":
+		return 0, orreryHeartY, orreryVerdigrisRadius
+	default:
+		panic("lodestar meridian: unknown planet park " + nodeID)
 	}
 }

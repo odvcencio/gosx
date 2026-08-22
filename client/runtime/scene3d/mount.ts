@@ -98,6 +98,18 @@
     let wasmMatMotionPropRefs = null;
     let wasmMatMotionF64 = null;
     let wasmMatMotionU8 = null;
+    // Pausable scene clock for declarative choreography (graph AnimationClips,
+    // motion/material programs, spin/drift). It accumulates clamped per-frame
+    // deltas ONLY while playing, so pausing freezes every declared animation
+    // exactly and resuming continues from the frozen pose — never a wall-clock
+    // jump (no discontinuity, no runaway catch-up delta after a backgrounded
+    // tab). Camera controls keep their own wall-clock paths.
+    let sceneClockSeconds = 0;
+    let sceneClockLastFrameMs = null;
+    let sceneAnimationPaused = false;
+    let sceneAnimationToggle = null;
+    let sceneAnimationToggleBound = false;
+    const sceneAnimationStateAttr = "data-gosx-scene3d-animation-state";
 
     function sceneAnimationState() {
       if (motion.reducedMotion) {
@@ -238,6 +250,55 @@
     setAttrValue(ctx.mount, "data-gosx-scene3d-pick-signals", scenePickSignalNamespace(props));
     setAttrValue(ctx.mount, "data-gosx-scene3d-event-signals", sceneEventSignalNamespace(props));
     applySceneCapabilityState(ctx.mount, props, capability);
+    // Generic pause/resume contract: a control element carrying
+    // data-gosx-scene3d-animation-toggle inside the mount's
+    // data-gosx-scene3d-control-scope ancestor drives this scene's animation
+    // clock. The runtime owns the state and mirrors it truthfully onto both
+    // the mount (data-gosx-scene3d-animation-state: playing | paused |
+    // reduced-motion) and the control (same attribute plus aria-pressed, and
+    // disabled under reduced motion, where the loop never runs). Pages style
+    // or label the two states declaratively; no page-authored JS.
+    function sceneAnimationMode() {
+      if (motion.reducedMotion === true) return "reduced-motion";
+      return sceneAnimationPaused ? "paused" : "playing";
+    }
+    function publishSceneAnimationState() {
+      const mode = sceneAnimationMode();
+      setAttrValue(ctx.mount, sceneAnimationStateAttr, mode);
+      if (!sceneAnimationToggle) return;
+      setAttrValue(sceneAnimationToggle, sceneAnimationStateAttr, mode);
+      if (motion.reducedMotion === true) {
+        sceneAnimationToggle.setAttribute("disabled", "disabled");
+      } else {
+        sceneAnimationToggle.removeAttribute("disabled");
+      }
+      sceneAnimationToggle.setAttribute("aria-pressed", sceneAnimationPaused ? "true" : "false");
+    }
+    function onSceneAnimationToggleClick() {
+      if (motion.reducedMotion === true) return;
+      sceneAnimationPaused = !sceneAnimationPaused;
+      publishSceneAnimationState();
+      scheduleRender("animation-toggle");
+    }
+    function bindSceneAnimationToggle() {
+      if (sceneAnimationToggleBound || typeof document === "undefined" || !ctx.mount.closest) return;
+      const scope = ctx.mount.closest("[data-gosx-scene3d-control-scope]");
+      if (!scope || typeof scope.querySelectorAll !== "function") return;
+      const toggles = scope.querySelectorAll("[data-gosx-scene3d-animation-toggle]");
+      for (let i = 0; i < toggles.length; i += 1) {
+        const candidate = toggles[i];
+        if (candidate.__gosxScene3DAnimationOwner) continue;
+        candidate.__gosxScene3DAnimationOwner = ctx.mount;
+        sceneAnimationToggle = candidate;
+        break;
+      }
+      if (sceneAnimationToggle && typeof sceneAnimationToggle.addEventListener === "function") {
+        sceneAnimationToggle.addEventListener("click", onSceneAnimationToggleClick);
+        sceneAnimationToggleBound = true;
+      }
+      publishSceneAnimationState();
+    }
+    bindSceneAnimationToggle();
     if (!ctx.mount.style.position) {
       ctx.mount.style.position = "relative";
     }
@@ -2809,7 +2870,22 @@
         return;
       }
       sceneAdvanceScrollCamera(sceneState._scrollCamera);
-      const timeSeconds = now / 1000;
+      // Advance the pausable scene clock. Deltas clamp at 250 ms so a
+      // backgrounded tab cannot fast-forward the choreography on return;
+      // while paused (or under reduced motion) the clock simply stops, and
+      // every declared-animation consumer below samples the frozen time.
+      const frameDeltaSeconds = sceneClockLastFrameMs == null
+        ? 0
+        : Math.max(0, Math.min(0.25, (now - sceneClockLastFrameMs) / 1000));
+      sceneClockLastFrameMs = now;
+      if (!sceneAnimationPaused && motion.reducedMotion !== true) {
+        sceneClockSeconds += frameDeltaSeconds;
+      }
+      const timeSeconds = sceneClockSeconds;
+      // Publish the scene clock for tests, QA diffing, and honest telemetry:
+      // both render paths (wasm runtime bundle and JS fall-through) sample it,
+      // so a frozen value proves the pause contract observably.
+      setAttrValue(ctx.mount, "data-gosx-scene3d-animation-clock", timeSeconds.toFixed(3));
       const modelAnimationDelta = lastModelAnimationTimeSeconds == null
         ? 0
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
@@ -3326,6 +3402,14 @@
       },
       dispose() {
         disposed = true;
+        if (sceneAnimationToggle) {
+          if (typeof sceneAnimationToggle.removeEventListener === "function") {
+            sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);
+          }
+          if (sceneAnimationToggle.__gosxScene3DAnimationOwner === ctx.mount) {
+            delete sceneAnimationToggle.__gosxScene3DAnimationOwner;
+          }
+        }
         if (revealSent && revealClass && document.documentElement) {
           document.documentElement.classList.remove(revealClass);
         }

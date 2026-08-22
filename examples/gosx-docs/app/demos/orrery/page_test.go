@@ -2,6 +2,7 @@ package docs
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -141,5 +142,39 @@ func TestOrreryChoreographyCopyMatchesTheDeclaredCycle(t *testing.T) {
 	}
 	if !strings.Contains(page, "17 stable nodes") || !strings.Contains(page, "4 animation channels in 1 clip") {
 		t.Error("budget list must match the declared scene budgets")
+	}
+}
+
+// TestOrreryPauseControlUsesSharedRuntimeContract keeps the keyboard pause
+// control on the generic Scene3D runtime contract (the runtime owns state and
+// mirrors it onto mount + control) and the stylesheet on shared tokens only.
+func TestOrreryPauseControlUsesSharedRuntimeContract(t *testing.T) {
+	page := readOrreryPageSource(t)
+	for _, marker := range []string{
+		`data-gosx-scene3d-animation-toggle`,
+		`aria-pressed="false"`,
+		`orrery__pause-label-pause`,
+		`orrery__pause-label-play`,
+	} {
+		if !strings.Contains(page, marker) {
+			t.Errorf("pause control binding missing %q", marker)
+		}
+	}
+	if strings.Contains(page, `<script`) {
+		t.Fatal("pause/resume must come from the shared runtime, not bespoke script")
+	}
+
+	css := readOrreryCSS(t)
+	if strings.Contains(css, "--space-2xs") {
+		t.Error("page.css references undefined design token --space-2xs")
+	}
+	// The page defines no local palette: every color must flow through shared
+	// tokens or color-mix over them, so any literal hex is a defect.
+	hexColor := regexp.MustCompile(`#[0-9a-fA-F]{3,8}\b`)
+	if match := hexColor.FindString(css); match != "" {
+		t.Errorf("page.css uses raw component hex %q; use shared tokens or color-mix", match)
+	}
+	if !strings.Contains(css, "align-items: start") {
+		t.Error("layout must size items to content (align-items: start) so no dead stretched canvas region appears")
 	}
 }

@@ -19,7 +19,7 @@ func Page() Node {
 					<span>a clockwork star-system engine</span>
 				</h1>
 				<p class="orrery__copy">
-					A levitating lodestone heart, three glass armatures, and three planets riding keyframed circles — every moving part is declared as Scene3D animation data, so the whole demonstration plays with zero bespoke JavaScript and zero assets.
+					A levitating lodestone heart, three glass armatures, and three planets riding keyframed circles — every moving part is declared as Scene3D animation data and played by the shared GoSX scene runtime, with no page-authored animation code and zero assets.
 				</p>
 				<ol class="orrery__phases" aria-label="Demonstration cycle phases">
 					<li>
@@ -62,8 +62,12 @@ func Page() Node {
 					<li>512px shadow</li>
 				</ul>
 				<p class="orrery__motion-note">
-					This scene animates continuously by design. Under the reduced-motion preference, GoSX suppresses this canvas's animation loop and renders the composed opening pose as a still.
+					This scene animates continuously by design. Pause or resume the clockwork with the control below — the runtime freezes the scene clock exactly and continues from the same pose. Under the reduced-motion preference, GoSX suppresses this canvas's animation loop entirely and renders the composed opening pose as a still.
 				</p>
+				<button type="button" class="orrery__pause" data-gosx-scene3d-animation-toggle aria-pressed="false">
+					<span class="orrery__pause-label orrery__pause-label-pause">Pause the clockwork</span>
+					<span class="orrery__pause-label orrery__pause-label-play">Resume the clockwork</span>
+				</button>
 				<p class="orrery__controls">
 					Drag or swipe to orbit · scroll or pinch to zoom
 					<span>

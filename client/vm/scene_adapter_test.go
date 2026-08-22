@@ -1594,11 +1594,11 @@ func TestClipTranslationMovesObject(t *testing.T) {
 	anims := clipTranslationAnims("mover", 0) // no looping; raw lerp over [0,1]
 	sc := newSpinScratch()
 
-	clip0 := objectClipTRS(obj, 0, anims, 0, sc)
+	clip0 := objectClipTRS(obj, 0, -1, anims, 0, sc)
 	if !clip0.HasT {
 		t.Fatalf("expected clip translation present at t=0, got %+v", clip0)
 	}
-	clipHalf := objectClipTRS(obj, 0, anims, 0.5, sc)
+	clipHalf := objectClipTRS(obj, 0, -1, anims, 0.5, sc)
 	if math.Abs(clipHalf.T[0]-3) > 1e-9 || math.Abs(clipHalf.T[1]) > 1e-9 || math.Abs(clipHalf.T[2]) > 1e-9 {
 		t.Fatalf("expected clip T ~[3,0,0] at t=0.5, got %v", clipHalf.T)
 	}
@@ -1679,7 +1679,7 @@ func TestClipRotationRotatesVertex(t *testing.T) {
 	}}
 	sc := newSpinScratch()
 	const ts = 0.5
-	clip := objectClipTRS(obj, 0, anims, ts, sc)
+	clip := objectClipTRS(obj, 0, -1, anims, ts, sc)
 	if !clip.HasR {
 		t.Fatalf("expected clip rotation present, got %+v", clip)
 	}
@@ -1716,7 +1716,7 @@ func TestClipScaleScalesExtent(t *testing.T) {
 	// exercises the active scale without hitting the loop boundary.
 	const ts = 0.5
 	const wantScale = 1.5
-	clip := objectClipTRS(obj, 0, anims, ts, sc)
+	clip := objectClipTRS(obj, 0, -1, anims, ts, sc)
 	if !clip.HasS {
 		t.Fatalf("expected clip scale present, got %+v", clip)
 	}
@@ -1754,7 +1754,7 @@ func TestClipRotationComposesWithSpin(t *testing.T) {
 		}},
 	}}
 	sc := newSpinScratch()
-	clip := objectClipTRS(obj, 0, anims, ts, sc)
+	clip := objectClipTRS(obj, 0, -1, anims, ts, sc)
 	if !clip.HasR {
 		t.Fatalf("expected clip rotation present, got %+v", clip)
 	}
@@ -1782,7 +1782,7 @@ func TestClipNonBreakingForUntargetedObjects(t *testing.T) {
 	// Spinning object, not targeted by any clip channel.
 	const ts = 0.37
 	spinner := sceneObject{ID: "spinner", Kind: "box", Width: 1.4, Height: 0.8, Depth: 1.1, X: 0.5, Y: -0.25, Z: 0.75, SpinY: 0.9}
-	spinClip := objectClipTRS(spinner, 0, anims, ts, sc)
+	spinClip := objectClipTRS(spinner, 0, -1, anims, ts, sc)
 	if spinClip != (clipTRS{}) {
 		t.Fatalf("untargeted spinning object must yield zero clipTRS, got %+v", spinClip)
 	}
@@ -1802,7 +1802,7 @@ func TestClipNonBreakingForUntargetedObjects(t *testing.T) {
 
 	// Static object, not targeted.
 	static := sceneObject{ID: "static", Kind: "box", Width: 1, Height: 1, Depth: 1, X: 1, Y: 2, Z: 3, RotationY: 0.4}
-	staticClip := objectClipTRS(static, 1, anims, ts, sc)
+	staticClip := objectClipTRS(static, 1, -1, anims, ts, sc)
 	if staticClip != (clipTRS{}) {
 		t.Fatalf("untargeted static object must yield zero clipTRS, got %+v", staticClip)
 	}
@@ -1822,8 +1822,8 @@ func TestClipLoopsAtDuration(t *testing.T) {
 	anims := clipTranslationAnims("looper", 1) // duration 1 -> loops
 	sc := newSpinScratch()
 
-	clipHalf := objectClipTRS(obj, 0, anims, 0.5, sc)
-	clipWrapped := objectClipTRS(obj, 0, anims, 1.5, sc)
+	clipHalf := objectClipTRS(obj, 0, -1, anims, 0.5, sc)
+	clipWrapped := objectClipTRS(obj, 0, -1, anims, 1.5, sc)
 	if math.Abs(clipHalf.T[0]-clipWrapped.T[0]) > 1e-9 ||
 		math.Abs(clipHalf.T[1]-clipWrapped.T[1]) > 1e-9 ||
 		math.Abs(clipHalf.T[2]-clipWrapped.T[2]) > 1e-9 {

@@ -185,6 +185,14 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 	// materialIndexByKey deduplicates materials by their identity Key so the
 	// per-object lookup is O(1) instead of an O(materials) DeepEqual scan.
 	materialIndexByKey := make(map[string]int, len(objects))
+	// Material-uniform motion (SceneIR.MaterialMotionProgram) is evaluated once
+	// per frame and its writes are applied to the matching objects' material
+	// fields BEFORE the per-object material packing below, so both render
+	// backends observe declared MaterialAnims choreography through this single
+	// shared path. No-op when the scene ships no program.
+	if matMotion := materialMotionForFrame(props, spinSc); matMotion != nil {
+		applyMaterialMotionFrame(matMotion, objects, timeSeconds)
+	}
 	for objectIdx := range objects {
 		object := objects[objectIdx]
 		vertexOffset := len(bundle.WorldPositions) / 3
@@ -261,7 +269,7 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 	result := sceneAppendResult{}
 	spinQ := spinQuatWithScratch(*object, timeSeconds, spinSc)
 	result.SpinQ = spinQ
-	clip := objectClipTRS(*object, objIndex, animations, timeSeconds, spinSc)
+	clip := objectClipTRS(*object, objIndex, nodeIndex, animations, timeSeconds, spinSc)
 	result.ClipTRS = clip
 	// Textured plane surfaces emit no world line segments; bake/cache only applies
 	// to the line-geometry path, so handle the textured case using motion semantics.
