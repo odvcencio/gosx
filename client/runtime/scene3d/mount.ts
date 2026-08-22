@@ -103,7 +103,10 @@
     // deltas ONLY while playing, so pausing freezes every declared animation
     // exactly and resuming continues from the frozen pose — never a wall-clock
     // jump (no discontinuity, no runaway catch-up delta after a backgrounded
-    // tab). Camera controls keep their own wall-clock paths.
+    // tab). While paused the loop itself stops (see sceneAnimationState), and
+    // the toggle drops sceneClockLastFrameMs so neither the pause settle frame
+    // nor the first resumed frame can credit paused wall time. Camera controls
+    // keep their own wall-clock paths.
     let sceneClockSeconds = 0;
     let sceneClockLastFrameMs = null;
     let sceneAnimationPaused = false;
@@ -114,6 +117,14 @@
     function sceneAnimationState() {
       if (motion.reducedMotion) {
         return { wants: false, reason: "reduced-motion" };
+      }
+      // A user-paused declarative scene stops the loop outright: wants
+      // flips false with reason "paused", so the settle render scheduled by
+      // the toggle is the last frame until resume and the mount reports
+      // render-loop=stopped / reason=paused / wants-animation=false instead
+      // of burning requestAnimationFrame work at a frozen clock.
+      if (sceneAnimationPaused) {
+        return { wants: false, reason: "paused" };
       }
       if (ctx.mount && ctx.mount.__gosxScene3DCSSDynamic && Date.now() < sceneCSSAnimationUntil) {
         return { wants: true, reason: "css-transition" };
@@ -257,7 +268,12 @@
     // the mount (data-gosx-scene3d-animation-state: playing | paused |
     // reduced-motion) and the control (same attribute plus aria-pressed, and
     // disabled under reduced motion, where the loop never runs). Pages style
-    // or label the two states declaratively; no page-authored JS.
+    // or label the two states declaratively; no page-authored JS. Pausing
+    // also STOPS the declarative render loop — after the toggle's settle
+    // render the mount reports data-gosx-scene3d-render-loop="stopped" with
+    // -reason="paused" and -wants-animation="false" — so a paused scene
+    // costs no requestAnimationFrame work instead of spinning at a frozen
+    // clock; resume schedules a render and walks the loop back up.
     function sceneAnimationMode() {
       if (motion.reducedMotion === true) return "reduced-motion";
       return sceneAnimationPaused ? "paused" : "playing";
@@ -277,6 +293,13 @@
     function onSceneAnimationToggleClick() {
       if (motion.reducedMotion === true) return;
       sceneAnimationPaused = !sceneAnimationPaused;
+      // Both directions drop the stale per-frame timestamp. After PAUSING,
+      // the settle render must not credit the tail of the last played
+      // interval to the frozen clock; after RESUMING, the first frame must
+      // not credit the whole paused wall gap (the 250 ms clamp would turn
+      // it into a free jump). The clock continues from its frozen pose at
+      // delta zero and only real played intervals advance it.
+      sceneClockLastFrameMs = null;
       publishSceneAnimationState();
       scheduleRender("animation-toggle");
     }

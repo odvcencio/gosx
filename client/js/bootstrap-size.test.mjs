@@ -535,7 +535,15 @@ const budgets = [
   // runtime surface so modal focus, Escape, Tab, inert background, and
   // navigation teardown do not require application JavaScript. Measured:
   // 1_540_600 / 417_606 / 335_287, plus narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_542_000, gzip: 418_200, brotli: 335_900 },
+  //
+  // Bumped raw 1_542_000 -> 1_543_200 and brotli 335_900 -> 336_400 for the
+  // declarative-pause loop stop in Scene3D mount.ts (a paused scene drains
+  // its requestAnimationFrame chain instead of spinning at a frozen clock).
+  // Measured before the change 1_542_685 / 418_126 / 335_795 — the raw
+  // ceiling was already breached on the base commit — and after
+  // 1_542_723 / 418_132 / 336_044; the brotli move is lost shared-context
+  // drift from re-minification, not new payload.
+  { file: "bootstrap.js", raw: 1_543_200, gzip: 418_200, brotli: 336_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -942,7 +950,14 @@ const budgets = [
   // Bumped raw 535_500 -> 537_000, gzip 148_500 -> 148_800, brotli 123_300
   // -> 123_500 for the WebGL loss-recovery watchdog. Measured: 535_969 /
   // 148_477 / 123_144.
-  { file: "bootstrap-feature-scene3d.js", raw: 538_929, gzip: 148_800, brotli: 123_500 },
+  //
+  // Bumped raw 538_929 -> 539_600, gzip 148_800 -> 149_400, brotli 123_500
+  // -> 123_900 for the declarative-pause loop stop in mount.ts: the paused
+  // gate in sceneAnimationState plus the toggle's stale-timestamp reset.
+  // Measured before the change 539_146 / 149_115 / 123_641 — every ceiling
+  // here was already breached on the base commit — and after
+  // 539_182 / 149_117 / 123_601.
+  { file: "bootstrap-feature-scene3d.js", raw: 539_600, gzip: 149_400, brotli: 123_900 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1580,7 +1595,15 @@ const routeBudgets = [
     // Measured: 1_048_022 / 290_324 / 246_238.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_051_244 / 291_270 / 247_081, plus narrow headroom.
-    raw: 1_052_800,
+    //
+    // Bumped raw 1_052_800 -> 1_053_800 for the declarative-pause loop stop
+    // in Scene3D mount.ts: a paused scene now drains its requestAnimationFrame
+    // chain instead of spinning at a frozen clock, which adds the paused gate
+    // to the animation-source scan plus the toggle's stale-timestamp reset.
+    // Measured before the change 1_053_419 / 291_777 / 247_503 — the raw
+    // ceiling was already breached on the base commit — and after
+    // 1_053_455 / 291_779 / 247_463, so only raw moves.
+    raw: 1_053_800,
     gzip: 291_800,
     brotli: 247_600,
   },
@@ -1677,7 +1700,12 @@ const routeBudgets = [
     // Measured: 1_435_294 / 384_033 / 324_698.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_438_516 / 384_979 / 325_541, plus narrow headroom.
-    raw: 1_440_000,
+    //
+    // Bumped raw 1_440_000 -> 1_441_200 for the declarative-pause loop stop
+    // in Scene3D mount.ts. Measured before the change 1_440_691 / 385_486 /
+    // 325_963 — the raw ceiling was already breached on the base commit —
+    // and after 1_440_727 / 385_488 / 325_923, so only raw moves.
+    raw: 1_441_200,
     gzip: 385_500,
     brotli: 326_100,
   },
@@ -1780,7 +1808,12 @@ const routeBudgets = [
     // Bumped for the restored client fixes. Measured: 1_069_539 / 281_902 / 236_158.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_072_761 / 282_848 / 237_001, plus narrow headroom.
-    raw: 1_074_300,
+    //
+    // Bumped raw 1_074_300 -> 1_075_500 for the declarative-pause loop stop
+    // in Scene3D mount.ts. Measured before the change 1_074_864 / 283_342 /
+    // 237_403 — the raw ceiling was already breached on the base commit —
+    // and after 1_074_900 / 283_344 / 237_363, so only raw moves.
+    raw: 1_075_500,
     gzip: 283_400,
     brotli: 237_600,
   },

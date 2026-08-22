@@ -73,28 +73,29 @@ func TestOrreryDeclarativeAnimationPauseResume(t *testing.T) {
 	}
 	page.waitFor(t, `!!document.querySelector("[data-gosx-scene3d-mounted]")`, 30*time.Second, "[data-gosx-scene3d-mounted]")
 
-	readState := func() (mode, clock, loop, loopReason string) {
+	readState := func() (mode, clock, loop, loopReason, wants string) {
 		var out struct {
 			Mode       string `json:"mode"`
 			Clock      string `json:"clock"`
 			Loop       string `json:"loop"`
 			LoopReason string `json:"loopReason"`
+			Wants      string `json:"wants"`
 		}
 		page.eval(t, `(() => {
       const el = document.querySelector("[data-gosx-scene3d-mounted]");
       if (!el) return null;
-      return { mode: el.getAttribute("data-gosx-scene3d-animation-state"), clock: el.getAttribute("data-gosx-scene3d-animation-clock"), loop: el.getAttribute("data-gosx-scene3d-render-loop"), loopReason: el.getAttribute("data-gosx-scene3d-render-loop-reason") };
+      return { mode: el.getAttribute("data-gosx-scene3d-animation-state"), clock: el.getAttribute("data-gosx-scene3d-animation-clock"), loop: el.getAttribute("data-gosx-scene3d-render-loop"), loopReason: el.getAttribute("data-gosx-scene3d-render-loop-reason"), wants: el.getAttribute("data-gosx-scene3d-render-loop-wants-animation") };
     })()`, &out)
-		t.Logf("[orrery] mode=%q clock=%q loop=%q reason=%q", out.Mode, out.Clock, out.Loop, out.LoopReason)
-		return out.Mode, out.Clock, out.Loop, out.LoopReason
+		t.Logf("[orrery] mode=%q clock=%q loop=%q reason=%q wants=%q", out.Mode, out.Clock, out.Loop, out.LoopReason, out.Wants)
+		return out.Mode, out.Clock, out.Loop, out.LoopReason, out.Wants
 	}
 
 	page.waitFor(t, `(function(){var el=document.querySelector("[data-gosx-scene3d-mounted]");return el && el.getAttribute("data-gosx-scene3d-animation-state")==="playing";})()`,
 		30*time.Second, "animation-state=playing")
 
-	modeA, clockA, _, _ := readState()
+	modeA, clockA, _, _, _ := readState()
 	time.Sleep(1200 * time.Millisecond)
-	modeB, clockB, _, _ := readState()
+	modeB, clockB, _, _, _ := readState()
 	if modeA != "playing" || modeB != "playing" {
 		t.Fatalf("ordinary motion mode expected playing, got %q -> %q\n\nConsole:\n%s", modeA, modeB, page.Console())
 	}
@@ -134,11 +135,26 @@ func TestOrreryDeclarativeAnimationPauseResume(t *testing.T) {
 	page.waitFor(t, `(function(){var m=document.querySelector("[data-gosx-scene3d-mounted]");var b=document.querySelector("`+toggleSelector+`");return m&&b&&m.getAttribute("data-gosx-scene3d-animation-state")==="paused"&&b.getAttribute("aria-pressed")==="true";})()`,
 		10*time.Second, "paused state after Enter")
 
-	_, frozenClock, loopPaused, _ := readState()
+	// The paused loop must STOP rather than keep burning requestAnimationFrame
+	// work at a frozen clock: after the toggle's settle render the mount
+	// reports the stopped paused loop truthfully.
+	page.waitFor(t, `(function(){var m=document.querySelector("[data-gosx-scene3d-mounted]");return m&&m.getAttribute("data-gosx-scene3d-render-loop")==="stopped"&&m.getAttribute("data-gosx-scene3d-render-loop-reason")==="paused"&&m.getAttribute("data-gosx-scene3d-render-loop-wants-animation")==="false";})()`,
+		10*time.Second, "stopped paused render loop after Enter")
+
+	modePaused, frozenClock, loopPaused, loopReasonPaused, wantsPaused := readState()
 	time.Sleep(800 * time.Millisecond)
-	modePaused, clockWhilePaused, _, _ := readState()
-	if modePaused != "paused" {
-		t.Fatalf("expected paused mode to persist, got %q", modePaused)
+	modePaused2, clockWhilePaused, loopPaused2, _, _ := readState()
+	if modePaused != "paused" || modePaused2 != "paused" {
+		t.Fatalf("expected paused mode to persist, got %q -> %q", modePaused, modePaused2)
+	}
+	if loopPaused != "stopped" || loopPaused2 != "stopped" {
+		t.Fatalf("a user-paused declarative scene must stop the render loop, got %q -> %q", loopPaused, loopPaused2)
+	}
+	if loopReasonPaused != "paused" {
+		t.Fatalf("stopped paused render-loop reason must be \"paused\", got %q", loopReasonPaused)
+	}
+	if wantsPaused != "false" {
+		t.Fatalf("wants-animation must read false while the paused loop is stopped, got %q", wantsPaused)
 	}
 	if clockWhilePaused != frozenClock {
 		t.Fatalf("clock advanced while paused (%q -> %q): pause must freeze the scene clock exactly",
@@ -151,11 +167,15 @@ func TestOrreryDeclarativeAnimationPauseResume(t *testing.T) {
 	}
 	page.waitFor(t, `(function(){var m=document.querySelector("[data-gosx-scene3d-mounted]");var b=document.querySelector("`+toggleSelector+`");return m&&b&&m.getAttribute("data-gosx-scene3d-animation-state")==="playing"&&b.getAttribute("aria-pressed")==="false";})()`,
 		10*time.Second, "playing state after Space")
+	page.waitFor(t, `(function(){var m=document.querySelector("[data-gosx-scene3d-mounted]");return m&&m.getAttribute("data-gosx-scene3d-render-loop")==="active";})()`,
+		10*time.Second, "render loop active again after Space")
 
 	time.Sleep(600 * time.Millisecond)
-	_, resumedClock, loopResumed, loopReasonResumed := readState()
-	t.Logf("[orrery] post-resume loop=%q reason=%q", loopResumed, loopReasonResumed)
-	_ = loopPaused
+	_, resumedClock, loopResumed, loopReasonResumed, wantsResumed := readState()
+	t.Logf("[orrery] post-resume loop=%q reason=%q wants=%q", loopResumed, loopReasonResumed, wantsResumed)
+	if loopResumed != "active" {
+		t.Fatalf("resume must return the render loop to active, got %q", loopResumed)
+	}
 	if resumedClock == clockWhilePaused {
 		t.Fatalf("clock did not resume after unpausing (stuck at %q)", resumedClock)
 	}
