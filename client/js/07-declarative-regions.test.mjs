@@ -42,6 +42,8 @@ function makeRegion(attrs, commandScripts) {
     _attrs: attrs,
     innerHTML: "",
     getAttribute(n) { return n in this._attrs ? this._attrs[n] : null; },
+    setAttribute(n, value) { this._attrs[n] = String(value); },
+    removeAttribute(n) { delete this._attrs[n]; },
     hasAttribute(n) { return n in this._attrs; },
     querySelectorAll(selector) {
       return selector === SCENE_COMMANDS_SELECTOR ? (commandScripts || []) : [];
@@ -92,10 +94,17 @@ function runModule(regions, payload, opts) {
   const fetches = [];
   const warnings = [];
   const telemetry = [];
+  const dispatchedEvents = [];
   const engines = opts.engines || new Map();
   const initialCommandScripts = opts.initialCommandScripts || [];
   const ctx = {
     console: { ...console, warn: (...args) => warnings.push(args) },
+    CustomEvent: class CustomEvent {
+      constructor(type, init) {
+        this.type = type;
+        this.detail = init && init.detail;
+      }
+    },
     encodeURIComponent,
     fetch: async (u, fetchOpts) => {
       fetches.push({ u, opts: fetchOpts });
@@ -133,6 +142,10 @@ function runModule(regions, payload, opts) {
         if (pointerListeners[type]) pointerListeners[type].push(fn);
       },
       removeEventListener: () => {},
+      dispatchEvent: (event) => {
+        dispatchedEvents.push(event);
+        return true;
+      },
       createElement: (tagName) => {
         const tag = String(tagName || "").toLowerCase();
         if (tag !== "script") return {};
@@ -179,7 +192,7 @@ function runModule(regions, payload, opts) {
   const firePointer = (type, target) => {
     for (const fn of pointerListeners[type] || []) fn({ target });
   };
-  return { subs, hubListeners, readyListeners, fetches, warnings, telemetry, engines, timers, firePointer, context: ctx };
+  return { subs, hubListeners, readyListeners, fetches, warnings, telemetry, dispatchedEvents, engines, timers, firePointer, context: ctx };
 }
 
 // makeEngineHandle returns a fake mounted-engine record + its handle's
@@ -311,6 +324,81 @@ test("hub-event region refetches static URL and injects raw body; ignores other 
   await tick();
   await tick();
   assert.equal(region.innerHTML, "<ul>tree</ul>");
+});
+
+test("4xx and 5xx region responses retain SSR DOM, expose sanitized error state, and recover", async () => {
+  const region = makeRegion({
+    "data-gosx-region-url": "/tree",
+    "data-gosx-region-on": "change",
+  });
+  region.innerHTML = "<p>server truth</p>";
+  let bodyReads = 0;
+  const responses = [
+    {
+      status: 404,
+      ok: false,
+      get text() {
+        bodyReads += 1;
+        return "private not-found body";
+      },
+    },
+    {
+      status: 503,
+      ok: false,
+      get text() {
+        bodyReads += 1;
+        return "private upstream body";
+      },
+    },
+    {
+      status: 200,
+      ok: true,
+      get text() {
+        bodyReads += 1;
+        return "<p>recovered</p>";
+      },
+    },
+  ];
+  const { hubListeners, dispatchedEvents, telemetry } = runModule(
+    [region],
+    () => responses.shift(),
+  );
+
+  assert.equal(region.getAttribute("data-gosx-region-state"), "ready");
+  assert.equal(region.getAttribute("aria-busy"), null);
+  for (const status of [404, 503]) {
+    hubListeners[0]({ detail: { event: "change" } });
+    assert.equal(region.getAttribute("data-gosx-region-state"), "pending");
+    assert.equal(region.getAttribute("aria-busy"), "true");
+    assert.equal(region.innerHTML, "<p>server truth</p>");
+    await tick();
+    await tick();
+
+    assert.equal(region.getAttribute("data-gosx-region-state"), "error");
+    assert.equal(region.getAttribute("aria-busy"), null);
+    assert.equal(region.getAttribute("data-gosx-region-request"), null);
+    assert.equal(region.innerHTML, "<p>server truth</p>");
+    const errors = dispatchedEvents.filter((event) => event.type === "gosx:region:error");
+    const detail = errors[errors.length - 1].detail;
+    assert.deepEqual(Object.keys(detail).sort(), ["element", "status", "url"]);
+    assert.equal(detail.status, status);
+    assert.equal(detail.url, "/tree");
+    assert.doesNotMatch(JSON.stringify(detail), /private not-found|private upstream/);
+  }
+  assert.equal(bodyReads, 0, "non-2xx bodies must never be read");
+  assert.deepEqual(
+    telemetry.filter((event) => event.message === "region refresh rejected").map((event) => event.fields.status),
+    [404, 503],
+  );
+
+  hubListeners[0]({ detail: { event: "change" } });
+  assert.equal(region.getAttribute("aria-busy"), "true");
+  await tick();
+  await tick();
+  assert.equal(region.innerHTML, "<p>recovered</p>");
+  assert.equal(region.getAttribute("data-gosx-region-state"), "ready");
+  assert.equal(region.getAttribute("aria-busy"), null);
+  assert.equal(bodyReads, 1, "only the successful response body is consumed");
 });
 
 test("regions delegate fragment replacement to the core runtime DOM lifecycle", async () => {

@@ -698,6 +698,21 @@ func Page() Node {
 				across a swap — useful when the region itself is a scrolling container, such as an activity feed with its own internal scroll.
 			</p>
 			<p>
+				A refresh sets
+				<span class="inline-code">data-gosx-region-state="pending"</span>
+				and
+				<span class="inline-code">aria-busy="true"</span>
+				until it settles. A 2xx response replaces the fragment and moves to
+				<span class="inline-code">ready</span>
+				; a 304 moves to ready without replacing it. A 4xx or 5xx response preserves the server-rendered or last successful DOM, moves to
+				<span class="inline-code">error</span>
+				, and clears both the busy and request markers. It also dispatches
+				<span class="inline-code">gosx:region:error</span>
+				with exactly
+				<span class="inline-code">&#123;element, url, status&#125;</span>
+				— never the response body, headers, or status text. A later successful trigger replaces the retained content and recovers the region to ready.
+			</p>
+			<p>
 				<span class="inline-code">data-gosx-live-interval</span>
 				and
 				<span class="inline-code">data-gosx-region-interval</span>

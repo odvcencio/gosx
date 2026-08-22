@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed: declarative regions retain the last good DOM on HTTP errors
+
+- A `data-gosx-region` refresh that receives a 4xx or 5xx response now moves
+  from `pending` to `error` without replacing its server-rendered or last
+  successful fragment. Busy and request markers clear when the request settles,
+  and a later successful refresh recovers the region to `ready` normally.
+- `gosx:region:error` reports the region element, request URL, and numeric HTTP
+  status without exposing the response, response body, headers, or status text.
+  Authored-source and generated-minified runtime suites hold the contract.
+
 ## v0.53.0 (2026-08-22)
 
 ### Added: one structured result can drive redirects and visible action feedback

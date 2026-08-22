@@ -218,8 +218,30 @@
   function setRegionState(el, state, url) {
     if (!el || typeof el.setAttribute !== "function") return;
     el.setAttribute("data-gosx-region-state", state);
+    if (state === "pending") {
+      el.setAttribute("aria-busy", "true");
+    } else if (typeof el.removeAttribute === "function") {
+      el.removeAttribute("aria-busy");
+    }
     if (url) el.setAttribute("data-gosx-region-request", url);
     else if (typeof el.removeAttribute === "function") el.removeAttribute("data-gosx-region-request");
+  }
+
+  function regionHTTPStatus(response) {
+    var status = Number(response && response.status);
+    if (!Number.isFinite(status) || status < 100 || status > 599) return 0;
+    return Math.floor(status);
+  }
+
+  // Region error events are an application observation surface, not a
+  // response-inspection escape hatch. Never attach a Response, body, Error,
+  // headers, or status text; status is the only transport-derived field.
+  function emitRegionError(el, url, status) {
+    emit("gosx:region:error", {
+      element: el,
+      url: url,
+      status: status,
+    });
   }
 
   function regionRequestController(record) {
@@ -263,7 +285,9 @@
     return fetcher(url, request)
       .then(function (response) {
         if (response && response.status === 304) return { notModified: true };
-        if (!response || !response.ok) return null;
+        if (!response || !response.ok) {
+          return { httpError: true, status: regionHTTPStatus(response) };
+        }
         var nextEtag = response.headers && typeof response.headers.get === "function"
           ? (response.headers.get("ETag") || "")
           : "";
@@ -274,6 +298,12 @@
       })
       .then(function (result) {
         if (record.disposed || (controller && controller.signal.aborted) || result == null) return;
+        if (result.httpError) {
+          setRegionState(el, "error", "");
+          emitRegionError(el, url, result.status);
+          observeRegion("error", "region refresh rejected", { url: url, status: result.status });
+          return;
+        }
         if (result.notModified) {
           setRegionState(el, "ready", "");
           observeRegion("debug", "region refresh not modified", { url: url });
@@ -348,7 +378,7 @@
         } else {
           console.warn("[gosx] region refresh", url, err);
         }
-        emit("gosx:region:error", { element: el, url: url, error: err });
+        emitRegionError(el, url, 0);
         observeRegion("error", "region refresh failed", { url: url });
       });
   }
