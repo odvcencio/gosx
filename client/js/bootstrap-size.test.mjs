@@ -529,7 +529,9 @@ const budgets = [
   // Bumped raw 1_535_000 -> 1_537_000 and gzip 416_300 -> 417_000 for
   // strict-CSP script metadata, active-document nonce propagation, and the
   // managed script DOM loader. Measured: 1_535_760 / 416_501 / 334_319.
-  { file: "bootstrap.js", raw: 1_537_000, gzip: 417_000, brotli: 334_600 },
+  // Bumped for the four client fixes restored after main was squashed.
+  // Measured: 1_537_175 / 416_632 / 334_727.
+  { file: "bootstrap.js", raw: 1_538_675, gzip: 417_132, brotli: 335_227 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -932,7 +934,7 @@ const budgets = [
   // Bumped raw 535_500 -> 537_000, gzip 148_500 -> 148_800, brotli 123_300
   // -> 123_500 for the WebGL loss-recovery watchdog. Measured: 535_969 /
   // 148_477 / 123_144.
-  { file: "bootstrap-feature-scene3d.js", raw: 537_000, gzip: 148_800, brotli: 123_500 },
+  { file: "bootstrap-feature-scene3d.js", raw: 538_929, gzip: 148_800, brotli: 123_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1212,7 +1214,7 @@ const budgets = [
   { file: "bootstrap-feature-controllers.js", raw: 15_324, gzip: 4_022, brotli: 3_591 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
-  { file: "bootstrap-feature-hubs.js", raw: 44_189, gzip: 13_741, brotli: 12_347 },
+  { file: "bootstrap-feature-hubs.js", raw: 45_967, gzip: 14_239, brotli: 12_850 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
@@ -1465,9 +1467,12 @@ const routeBudgets = [
     // 274_100 -> 274_900 for live-bound regions (gosx#217) carried by
     // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
     // 1_219_707 / 324_730 / 274_303, plus rounding headroom.
-    raw: 1_221_000,
-    gzip: 325_200,
-    brotli: 274_900,
+    // Bumped for the restored client fixes. Measured: 1_221_816 / 325_234 / 274_642.
+    // Bumped for the four client fixes restored after the main squash.
+    // Measured: 1_435_294 / 384_033 / 324_698.
+    raw: 1_436_794,
+    gzip: 384_433,
+    brotli: 325_098,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1561,9 +1566,11 @@ const routeBudgets = [
     // 245_300 -> 246_500 for live-bound regions (gosx#217) carried by
     // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
     // 1_045_803 / 289_781 / 245_845, plus rounding headroom.
-    raw: 1_047_500,
-    gzip: 290_500,
-    brotli: 246_500,
+    // Bumped for the four client fixes restored after the main squash.
+    // Measured: 1_048_022 / 290_324 / 246_238.
+    raw: 1_049_522,
+    gzip: 290_724,
+    brotli: 246_638,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1654,9 +1661,11 @@ const routeBudgets = [
     // Bumped brotli 324_800 -> 325_000 for strict-CSP script metadata in the
     // shared runtime/engines surface. Measured: 1_434_234 / 383_976 / 324_816;
     // raw and gzip remain inside their existing ceilings.
-    raw: 1_434_500,
-    gzip: 384_000,
-    brotli: 325_000,
+    // Bumped for the four client fixes restored after the main squash.
+    // Measured: 1_435_294 / 384_033 / 324_698.
+    raw: 1_437_000,
+    gzip: 384_600,
+    brotli: 325_200,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1754,9 +1763,10 @@ const routeBudgets = [
     // 236_200 -> 236_500 for strict-CSP script metadata and active-document
     // nonce propagation in bootstrap-runtime.js. Measured:
     // 1_068_479 / 281_845 / 236_276.
-    raw: 1_069_000,
-    gzip: 282_000,
-    brotli: 236_500,
+    // Bumped for the restored client fixes. Measured: 1_069_539 / 281_902 / 236_158.
+    raw: 1_071_039,
+    gzip: 282_302,
+    brotli: 236_558,
   },
 
 ];

@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.51.0 (2026-08-21)
+
+### Fixed: four client fixes were lost when main was squashed
+
+main was reset to a single orphan commit on 2026-08-18, detaching 1744
+commits of history and every release tag. v0.50.x was then built on that
+snapshot, which predates four client fixes, so releases regressed. This
+release reattaches the history — every tag from v0.45.2 through v0.50.1 is
+reachable from main again — and restores the two fixes the snapshot never
+carried.
+
+- **An inline authored material on a points layer never reached the GPU.**
+  Points normalization rebuilt each layer from a whitelist that carried only
+  a named `material` string, while the mesh, instanced-mesh and model
+  normalizers carried the authored shader through. A layer authoring its
+  shader inline arrived stripped, and both backends silently drew it with the
+  builtin points program. Nothing failed loudly: the shader was never handed
+  to the GPU to fail, and the render loop still ran because the animation gate
+  reads the raw props scene. Measured on the affected page: 531 draw calls,
+  zero authored shader uploads, zero `time` uniform uploads.
+- **Soft navigation re-executed runtime chunks over a config change.**
+  Managed head scripts were matched by full `outerHTML`, so the same module
+  carrying different per-route configuration looked like a different script
+  and was re-fetched and re-executed. Managed scripts now match on module URL,
+  and the retained node receives the incoming route's configuration, which the
+  scene runtime reads lazily off the live tag.
+- **Hubs stayed dead after a back-forward-cache restore.** Only the socket's
+  close event scheduled a reconnect, and a frozen page is not guaranteed to
+  deliver it. `pageshow` now revalidates from the socket's actual state.
+
+### Known: the bootstrap TypeScript migration is unfinished
+
+31 of the 70 `bootstrap-src` sources are still `.js`. They are all
+deliberately unbalanced prefix/suffix fragments that are concatenated into a
+chunk, so no TypeScript parser can read them standalone; the 39 already
+migrated were exactly the balanced ones. Finishing the migration requires
+moving the bundler's transpile boundary from per-source to per-chunk, which
+changes source-map generation, and is tracked separately.
+
 ## v0.50.1 (2026-08-22)
 
 ### Added: static CSRF coverage for mutating file actions
