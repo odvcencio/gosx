@@ -120,17 +120,19 @@ const (
 func mutatingFileActionName(node *ir.Node) (string, bool) {
 	var action ir.Attr
 	var method ir.Attr
+	var hasAction bool
 	var hasMethod bool
 	for _, attr := range node.Attrs {
 		switch {
-		case strings.EqualFold(attr.Name, "action"):
+		case strings.EqualFold(attr.Name, "action") && !hasAction:
 			action = attr
-		case strings.EqualFold(attr.Name, "method"):
+			hasAction = true
+		case strings.EqualFold(attr.Name, "method") && !hasMethod:
 			method = attr
 			hasMethod = true
 		}
 	}
-	if action.Kind != ir.AttrExpr {
+	if !hasAction || action.Kind != ir.AttrExpr {
 		return "", false
 	}
 	name, ok := actionPathCallArg(action.Expr)

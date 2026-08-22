@@ -109,6 +109,72 @@ func TestFormActionContractPreservesExternalNativeForms(t *testing.T) {
 	}
 }
 
+// Browsers use the first duplicate direct form attribute. Keep the CSRF
+// classifier aligned with that effective value so a later duplicate cannot
+// disguise a mutating file action or turn a native/GET form into a false
+// positive.
+func TestFormActionContractUsesFirstDuplicateDirectAttributes(t *testing.T) {
+	tests := []struct {
+		name    string
+		form    string
+		wantErr bool
+	}{
+		{
+			name:    "later get does not disguise post",
+			form:    `<form method="post" method="get" action={actionPath("save")}></form>`,
+			wantErr: true,
+		},
+		{
+			name:    "later native action does not disguise file action",
+			form:    `<form method="post" action={actionPath("save")} action="/native"></form>`,
+			wantErr: true,
+		},
+		{
+			name: "first get remains nonmutating",
+			form: `<form method="get" method="post" action={actionPath("save")}></form>`,
+		},
+		{
+			name: "first native action remains outside file action contract",
+			form: `<form method="post" action="/native" action={actionPath("save")}></form>`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := newTestModule(t)
+			mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(tt.form))
+			mustWrite(t, filepath.Join(dir, "page.server.go"), registeredActionFixture("save"))
+			err := CheckFile(context.Background(), filepath.Join(dir, "page.gsx"))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected the effective mutating file action without csrf_token to be rejected")
+				}
+				if !strings.Contains(err.Error(), `actionPath("save")`) || !strings.Contains(err.Error(), "csrf_token") {
+					t.Fatalf("expected the CSRF diagnostic for save, got: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected the first effective attribute to keep this form outside the CSRF check, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestFormActionContractRejectsEveryUnsafeMethodWithoutCSRF(t *testing.T) {
+	for _, method := range []string{"post", "put", "patch", "delete"} {
+		t.Run(method, func(t *testing.T) {
+			dir := newTestModule(t)
+			form := `<form method="` + method + `" action={actionPath("save")}></form>`
+			mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(form))
+			mustWrite(t, filepath.Join(dir, "page.server.go"), registeredActionFixture("save"))
+			err := CheckFile(context.Background(), filepath.Join(dir, "page.gsx"))
+			if err == nil || !strings.Contains(err.Error(), "csrf_token") {
+				t.Fatalf("expected %s file action without csrf_token to be rejected, got: %v", method, err)
+			}
+		})
+	}
+}
+
 // TestFormActionContractAbstainsOnUnknownNestedAndDynamicDescendants proves
 // that a component call and an expression hole are boundaries: either could
 // render a csrf_token control at runtime, so the check must not guess that it
