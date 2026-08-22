@@ -983,15 +983,17 @@ type ParticleForceIR struct {
 
 // ParticleMaterialIR describes the material for a GPU particle system.
 type ParticleMaterialIR struct {
-	Color       string  `json:"color,omitempty"`
-	ColorEnd    string  `json:"colorEnd,omitempty"`
-	Style       string  `json:"style,omitempty"`
-	Size        float64 `json:"size,omitempty"`
-	SizeEnd     float64 `json:"sizeEnd,omitempty"`
-	Opacity     float64 `json:"opacity,omitempty"`
-	OpacityEnd  float64 `json:"opacityEnd,omitempty"`
-	BlendMode   string  `json:"blendMode,omitempty"`
-	Attenuation bool    `json:"attenuation,omitempty"`
+	Color        string  `json:"color,omitempty"`
+	ColorEnd     string  `json:"colorEnd,omitempty"`
+	Style        string  `json:"style,omitempty"`
+	Size         float64 `json:"size,omitempty"`
+	SizeEnd      float64 `json:"sizeEnd,omitempty"`
+	Opacity      float64 `json:"opacity,omitempty"`
+	OpacityEnd   float64 `json:"opacityEnd,omitempty"`
+	BlendMode    string  `json:"blendMode,omitempty"`
+	Attenuation  bool    `json:"attenuation,omitempty"`
+	MinPixelSize float64 `json:"minPixelSize,omitempty"`
+	MaxPixelSize float64 `json:"maxPixelSize,omitempty"`
 }
 
 // AnimationClipIR is the typed compatibility record for one procedural

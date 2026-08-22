@@ -359,15 +359,17 @@ type IRParticleForce struct {
 }
 
 type IRParticleMaterial struct {
-	Color       string  `json:"color,omitempty"`
-	ColorEnd    string  `json:"colorEnd,omitempty"`
-	Style       string  `json:"style,omitempty"`
-	Size        float64 `json:"size,omitempty"`
-	SizeEnd     float64 `json:"sizeEnd,omitempty"`
-	Opacity     float64 `json:"opacity,omitempty"`
-	OpacityEnd  float64 `json:"opacityEnd,omitempty"`
-	BlendMode   string  `json:"blendMode,omitempty"`
-	Attenuation bool    `json:"attenuation,omitempty"`
+	Color        string  `json:"color,omitempty"`
+	ColorEnd     string  `json:"colorEnd,omitempty"`
+	Style        string  `json:"style,omitempty"`
+	Size         float64 `json:"size,omitempty"`
+	SizeEnd      float64 `json:"sizeEnd,omitempty"`
+	Opacity      float64 `json:"opacity,omitempty"`
+	OpacityEnd   float64 `json:"opacityEnd,omitempty"`
+	BlendMode    string  `json:"blendMode,omitempty"`
+	Attenuation  bool    `json:"attenuation,omitempty"`
+	MinPixelSize float64 `json:"minPixelSize,omitempty"`
+	MaxPixelSize float64 `json:"maxPixelSize,omitempty"`
 }
 
 type IRSpriteNode struct {
@@ -1272,15 +1274,17 @@ func forcesToIR(forces []ParticleForceIR) []IRParticleForce {
 
 func particleMaterialToIR(material ParticleMaterialIR) IRParticleMaterial {
 	return IRParticleMaterial{
-		Color:       material.Color,
-		ColorEnd:    material.ColorEnd,
-		Style:       material.Style,
-		Size:        material.Size,
-		SizeEnd:     material.SizeEnd,
-		Opacity:     material.Opacity,
-		OpacityEnd:  material.OpacityEnd,
-		BlendMode:   material.BlendMode,
-		Attenuation: material.Attenuation,
+		Color:        material.Color,
+		ColorEnd:     material.ColorEnd,
+		Style:        material.Style,
+		Size:         material.Size,
+		SizeEnd:      material.SizeEnd,
+		Opacity:      material.Opacity,
+		OpacityEnd:   material.OpacityEnd,
+		BlendMode:    material.BlendMode,
+		Attenuation:  material.Attenuation,
+		MinPixelSize: material.MinPixelSize,
+		MaxPixelSize: material.MaxPixelSize,
 	}
 }
 

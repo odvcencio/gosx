@@ -1022,3 +1022,49 @@ test("bootstrap preserves Scene3D instanced primitive parameters", async () => {
   assert.equal(cylinder.normals.length, cylinder.vertexCount * 3);
   assert.equal(cone.uvs.length, cone.vertexCount * 2);
 });
+
+test("bootstrap carries a screen-space pixel floor onto points and compute particles", async () => {
+  // Attenuation scales a sprite by distance, so any moving system sweeps each
+  // sprite's projected size every frame. A sprite that dips below one pixel
+  // stops covering a pixel and winks on and off against the pixel grid, which
+  // reads as flicker. Point layers have always had MinPixelSize; compute
+  // particles and named materials did not, so the only way to stop a
+  // scintillating particle system was to disable Attenuation and lose the
+  // depth cue with it. Both now carry the floor.
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+
+  // A named material may declare the floor for the layers bound to it. A
+  // GLB-derived layer has no Points struct of its own, so this is the only
+  // route it has.
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ name: "gas", minPixelSize: 1.05, maxPixelSize: 12 }],
+      points: [{ id: "galaxy-gas", count: 1, material: "gas", attenuation: true }],
+    },
+  });
+  const withMaterials = api.sceneStatePointsWithMaterials(state);
+  assert.equal(withMaterials[0].minPixelSize, 1.05, "named material must set the point layer's floor");
+  assert.equal(withMaterials[0].maxPixelSize, 12, "named material must set the point layer's cap");
+
+  // A compute particle material carries it too, so a particle system can keep
+  // attenuation on and still be steady.
+  const computeState = api.createSceneState({
+    scene: {
+      computeParticles: [
+        {
+          id: "forge",
+          count: 8,
+          emitter: { kind: "sphere", radius: 4 },
+          material: { color: "#ffffff", size: 9.4, attenuation: true, minPixelSize: 1.4, maxPixelSize: 10 },
+        },
+      ],
+    },
+  });
+  const system = computeState.computeParticles[0];
+  assert.equal(system.material.attenuation, true, "attenuation stays available");
+  assert.equal(system.material.minPixelSize, 1.4, "compute particle material must carry the floor");
+  assert.equal(system.material.maxPixelSize, 10, "compute particle material must carry the cap");
+});

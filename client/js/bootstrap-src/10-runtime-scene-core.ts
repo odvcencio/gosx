@@ -1946,6 +1946,8 @@
       opacityEnd: sceneClampNumberOrCSSVar(item.opacityEnd, sceneNumber(current.opacityEnd, sceneNumber(current.opacity, 1)), 0, 1),
       blendMode: normalizeSceneMaterialBlendMode(item.blendMode || current.blendMode, "flat", sceneNumber(item.opacity, sceneNumber(current.opacity, 1))),
       attenuation: sceneBool(Object.prototype.hasOwnProperty.call(item, "attenuation") ? item.attenuation : current.attenuation, false),
+      minPixelSize: sceneClampNumberOrCSSVar(item.minPixelSize, sceneNumber(current.minPixelSize, 0), 0, Number.POSITIVE_INFINITY),
+      maxPixelSize: sceneClampNumberOrCSSVar(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0), 0, Number.POSITIVE_INFINITY),
     };
   }
 
@@ -2286,6 +2288,12 @@
       shaderSource: typeof item.shaderSource === "string" ? item.shaderSource.trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
       shaderSourceFiles: sceneIsPlainObject(item.shaderSourceFiles) ? sceneCloneData(item.shaderSourceFiles) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
       depthWrite: Object.prototype.hasOwnProperty.call(item, "depthWrite") ? sceneBool(item.depthWrite, true) : current.depthWrite,
+      // Screen-space floor/cap a named material may declare for the point
+      // layers bound to it. A GLB-derived layer carries no Points struct of
+      // its own, so the material is its only route to a pixel floor — and
+      // without one an attenuated layer scintillates as it moves.
+      minPixelSize: sceneNumber(item.minPixelSize, sceneNumber(current.minPixelSize, 0)),
+      maxPixelSize: sceneNumber(item.maxPixelSize, sceneNumber(current.maxPixelSize, 0)),
       variantKey: typeof item._variantKey === "string" ? item._variantKey : (typeof current.variantKey === "string" ? current.variantKey : ""),
       _colorSpecified: colorSpecified || current._colorSpecified === true,
       _opacitySpecified: opacitySpecified || current._opacitySpecified === true,
@@ -2946,6 +2954,12 @@
       blendMode: material._blendModeSpecified ? material.blendMode : point.blendMode,
       depthWrite: material._depthWriteSpecified ? material.depthWrite : point.depthWrite,
       attenuation: material.attenuation != null ? material.attenuation : point.attenuation,
+      // A named <Material> may declare a screen-space floor for the point
+      // layers it is bound to. Without this a GLB-derived layer could not be
+      // floored at all, because its render properties come from the material
+      // rather than from a Points struct.
+      minPixelSize: material.minPixelSize != null ? material.minPixelSize : point.minPixelSize,
+      maxPixelSize: material.maxPixelSize != null ? material.maxPixelSize : point.maxPixelSize,
       // Authored-shader envelope: profile fields win over point defaults (empty string = not authored).
       customVertex: typeof material.customVertex === "string" && material.customVertex ? material.customVertex : (point.customVertex || ""),
       customFragment: typeof material.customFragment === "string" && material.customFragment ? material.customFragment : (point.customFragment || ""),

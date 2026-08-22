@@ -8327,6 +8327,12 @@
         computeEntry.opacity = 1;
         computeEntry.blendMode = material.blendMode;
         computeEntry.attenuation = !!material.attenuation;
+        // Screen-space floor/cap for the synthetic points entry. Attenuation
+        // sweeps a sprite's projected size as particles move, and a sprite
+        // that dips under a pixel winks frame to frame; the floor is what
+        // stops that scintillation without giving up the depth cue.
+        computeEntry.minPixelSize = sceneNumber(material.minPixelSize, 0);
+        computeEntry.maxPixelSize = sceneNumber(material.maxPixelSize, 0);
         computeEntry.customVertex = typeof sourceEntry.renderVertex === "string" ? sourceEntry.renderVertex : "";
         computeEntry.customFragment = typeof sourceEntry.renderFragment === "string" ? sourceEntry.renderFragment : "";
         computeEntry.customUniforms = sourceEntry.renderUniforms && typeof sourceEntry.renderUniforms === "object"

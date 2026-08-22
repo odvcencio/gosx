@@ -912,6 +912,17 @@ type ParticleMaterial struct {
 	OpacityEnd  float64
 	BlendMode   MaterialBlendMode
 	Attenuation bool
+	// MinPixelSize is a screen-space floor for particle sprites, matching
+	// Points.MinPixelSize. Attenuation scales a sprite by distance, so a
+	// moving system sweeps each sprite's projected size every frame; any
+	// sprite that dips below one pixel stops covering a pixel and winks on
+	// and off against the pixel grid. That scintillation reads as flicker,
+	// and until this field existed the only workaround was to disable
+	// Attenuation entirely and lose the depth cue with it.
+	MinPixelSize float64
+	// MaxPixelSize caps sprite growth as particles approach the camera,
+	// matching Points.MaxPixelSize. Zero leaves the size uncapped.
+	MaxPixelSize float64
 }
 
 // Label lowers into one legacy scene label.
@@ -3036,15 +3047,17 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 		},
 		Forces: forces,
 		Material: ParticleMaterialIR{
-			Color:       strings.TrimSpace(cp.Material.Color),
-			ColorEnd:    strings.TrimSpace(cp.Material.ColorEnd),
-			Style:       strings.TrimSpace(string(cp.Material.Style)),
-			Size:        cp.Material.Size,
-			SizeEnd:     cp.Material.SizeEnd,
-			Opacity:     cp.Material.Opacity,
-			OpacityEnd:  cp.Material.OpacityEnd,
-			BlendMode:   strings.TrimSpace(string(cp.Material.BlendMode)),
-			Attenuation: cp.Material.Attenuation,
+			Color:        strings.TrimSpace(cp.Material.Color),
+			ColorEnd:     strings.TrimSpace(cp.Material.ColorEnd),
+			Style:        strings.TrimSpace(string(cp.Material.Style)),
+			Size:         cp.Material.Size,
+			SizeEnd:      cp.Material.SizeEnd,
+			Opacity:      cp.Material.Opacity,
+			OpacityEnd:   cp.Material.OpacityEnd,
+			BlendMode:    strings.TrimSpace(string(cp.Material.BlendMode)),
+			Attenuation:  cp.Material.Attenuation,
+			MinPixelSize: cp.Material.MinPixelSize,
+			MaxPixelSize: cp.Material.MaxPixelSize,
 		},
 		Bounds:         cp.Bounds,
 		Transition:     lowerTransition(cp.Transition),

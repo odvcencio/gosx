@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.52.1 (2026-08-22)
+
+### Added: a screen-space pixel floor for compute particles and named materials
+
+Attenuation scales a point sprite by distance, so any moving system sweeps
+each sprite's projected size every frame. A sprite that dips below one pixel
+stops covering a pixel and winks on and off against the pixel grid. That
+scintillation reads as flicker, and viewers describe it as a render error
+rather than as motion.
+
+Point layers have always had `Points.MinPixelSize` for this. Two paths had
+no equivalent:
+
+- **Compute particles.** `scene.ParticleMaterial` carried no floor, so the
+  only way to steady a scintillating particle system was to switch
+  `Attenuation` off and lose the depth cue with it. It now carries
+  `MinPixelSize` and `MaxPixelSize`, lowered through the IR to the runtime.
+  The WebGPU backend already read `material.minPixelSize`; it was waiting on
+  a field the Go API never exposed, so that path needed no change.
+- **Named materials.** A GLB-derived point layer has no `Points` struct of
+  its own — its render properties come from the `<Material>` it binds to —
+  and neither the material normalizer nor named-material application carried
+  `minPixelSize`. Such a layer therefore could not be floored at all. Both
+  now carry it.
+
+Neither field changes existing scenes: zero means unfloored, the previous
+behaviour.
+
 ## v0.52.0 (2026-08-22)
 
 ### Added: accessible disclosure is framework substrate
