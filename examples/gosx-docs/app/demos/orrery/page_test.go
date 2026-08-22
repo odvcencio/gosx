@@ -92,9 +92,9 @@ func TestOrreryPublishesAnHonestInteractionContract(t *testing.T) {
 }
 
 // TestOrreryOverlayNeverObstructsCanvasInput proves by construction that the
-// overlay is a grid sibling of the canvas (not an absolutely positioned card
-// floating above it), so pointer and keyboard canvas input stay unobstructed
-// at every viewport.
+// overlay is a document-flow sibling of the full-width canvas (not an
+// absolutely positioned card floating above it), so pointer and keyboard
+// canvas input stay unobstructed at every viewport.
 func TestOrreryOverlayNeverObstructsCanvasInput(t *testing.T) {
 	page := readOrreryPageSource(t)
 	canvasAt := strings.Index(page, `class="orrery__canvas"`)
@@ -107,16 +107,19 @@ func TestOrreryOverlayNeverObstructsCanvasInput(t *testing.T) {
 	}
 
 	css := readOrreryCSS(t)
-	if !strings.Contains(css, "grid-template-columns: minmax(0, 1fr) minmax(18rem, 23rem);") {
-		t.Error("desktop layout must place the overlay beside the canvas as a grid column")
+	if !strings.Contains(css, "grid-template-columns: minmax(0, 1fr);") {
+		t.Error("layout must keep the canvas and overlay in a single full-width document-flow column")
+	}
+	if !strings.Contains(css, "aspect-ratio: 16 / 9;") || !strings.Contains(css, "min-height: 0;") {
+		t.Error("hero canvas must preserve its authored ratio without a dead minimum-height tail")
 	}
 	narrow := strings.Index(css, "@media (max-width: 900px)")
 	if narrow < 0 {
 		t.Fatal("narrow layout must be defined")
 	}
 	tail := css[narrow:]
-	if !strings.Contains(tail, "grid-template-columns: minmax(0, 1fr);") {
-		t.Error("narrow layouts must stack the overlay into document flow below the canvas")
+	if !strings.Contains(tail, ".orrery__overlay") || !strings.Contains(tail, "grid-template-columns: minmax(0, 1fr);") {
+		t.Error("narrow layouts must stack the compact overlay content")
 	}
 	if strings.Contains(css, "position: absolute") {
 		t.Error("the meridian overlay must never float over the canvas")

@@ -85,6 +85,102 @@ func objectWorldSample(bundle *rootengine.RenderBundle, object rootengine.Render
 	return [3]float64{bundle.WorldPositions[lo], bundle.WorldPositions[lo+1], bundle.WorldPositions[lo+2]}
 }
 
+func meshObjectWorldSample(bundle *rootengine.RenderBundle, object rootengine.RenderObject) [3]float64 {
+	lo := object.VertexOffset * 3
+	return [3]float64{bundle.WorldMeshPositions[lo], bundle.WorldMeshPositions[lo+1], bundle.WorldMeshPositions[lo+2]}
+}
+
+func TestSharedBundleSolidMeshStreams(t *testing.T) {
+	node := resolvedNode{Kind: "mesh", Props: map[string]any{
+		"id": "solid", "geometry": "sphere", "radius": 0.5,
+		"segments": 12, "wireframe": false,
+	}}
+	bundle := buildRenderBundleCached(map[string]any{}, []resolvedNode{node}, 320, 240, 0, newSpinScratch(), nil)
+	if got := len(bundle.MeshObjects); got != 1 {
+		t.Fatalf("expected exactly one mesh object for solid sphere, got %d", got)
+	}
+	object := bundle.MeshObjects[0]
+	if object.VertexCount <= 0 || object.VertexCount%3 != 0 {
+		t.Fatalf("invalid solid sphere vertex count %d", object.VertexCount)
+	}
+	if object.VertexOffset < 0 || object.VertexOffset+object.VertexCount > len(bundle.WorldMeshPositions)/3 {
+		t.Fatalf("mesh range out of bounds: offset=%d count=%d vertices=%d", object.VertexOffset, object.VertexCount, len(bundle.WorldMeshPositions)/3)
+	}
+	vertices := len(bundle.WorldMeshPositions) / 3
+	if bundle.WorldMeshVertexCount != vertices {
+		t.Fatalf("WorldMeshVertexCount = %d, want %d", bundle.WorldMeshVertexCount, vertices)
+	}
+	if len(bundle.WorldMeshNormals) != vertices*3 {
+		t.Fatalf("normals length %d, want %d", len(bundle.WorldMeshNormals), vertices*3)
+	}
+	if len(bundle.WorldMeshUVs) != vertices*2 {
+		t.Fatalf("UV length %d, want %d", len(bundle.WorldMeshUVs), vertices*2)
+	}
+	if len(bundle.WorldMeshColors) != vertices*4 {
+		t.Fatalf("color length %d, want %d", len(bundle.WorldMeshColors), vertices*4)
+	}
+
+	box := resolvedNode{Kind: "mesh", Props: map[string]any{
+		"id": "solid-box", "geometry": "box", "width": 1.0, "height": 1.0,
+		"depth": 1.0, "wireframe": false,
+	}}
+	boxBundle := buildRenderBundleCached(map[string]any{}, []resolvedNode{box}, 320, 240, 0, newSpinScratch(), nil)
+	if len(boxBundle.WorldMeshNormals) == 0 {
+		t.Fatal("expected solid box normals")
+	}
+	for i := 0; i+2 < len(boxBundle.WorldMeshNormals); i += 3 {
+		components := [3]float64{
+			math.Abs(boxBundle.WorldMeshNormals[i]),
+			math.Abs(boxBundle.WorldMeshNormals[i+1]),
+			math.Abs(boxBundle.WorldMeshNormals[i+2]),
+		}
+		axisCount := 0
+		zeroCount := 0
+		for _, component := range components {
+			if component >= 0.999 {
+				axisCount++
+			}
+			if component <= 0.001 {
+				zeroCount++
+			}
+		}
+		if axisCount != 1 || zeroCount != 2 {
+			t.Fatalf("box normal %d is not face-aligned: %v", i/3, components)
+		}
+	}
+}
+
+func TestSharedBundleWireframeStaysLineOnly(t *testing.T) {
+	node := resolvedNode{Kind: "mesh", Props: map[string]any{
+		"id": "wire", "geometry": "sphere", "radius": 0.5,
+		"segments": 12, "wireframe": true,
+	}}
+	bundle := buildRenderBundleCached(map[string]any{}, []resolvedNode{node}, 320, 240, 0, newSpinScratch(), nil)
+	if got := len(bundle.MeshObjects); got != 0 {
+		t.Fatalf("expected zero mesh objects for explicit wireframe, got %d", got)
+	}
+	if len(bundle.Objects) == 0 || len(bundle.WorldPositions) == 0 {
+		t.Fatal("expected explicit wireframe to retain line objects and world positions")
+	}
+}
+
+func TestSharedBundleSolidMeshAnimationAdvances(t *testing.T) {
+	props := declarativeAnimFixture(t)
+	nodes := declarativeAnimNodes()
+	nodes[2].Props["wireframe"] = false
+	nodes[3].Props["wireframe"] = false
+	sc := newSpinScratch()
+	b0 := buildRenderBundleCached(props, nodes, 480, 360, 0, sc, nil)
+	b6 := buildRenderBundleCached(props, nodes, 480, 360, 6, sc, nil)
+	planet0 := bundleObjectByID(t, b0.MeshObjects, "orrery-planet")
+	planet6 := bundleObjectByID(t, b6.MeshObjects, "orrery-planet")
+	pos0 := meshObjectWorldSample(&b0, planet0)
+	pos6 := meshObjectWorldSample(&b6, planet6)
+	if pos0 == pos6 {
+		t.Fatalf("expected animated mesh world position to differ, got %v", pos0)
+	}
+}
+
 // TestDeclarativeGraphClipAnimatesOnSharedBundlePath is the runtime regression
 // for the browser QA finding: a declarative AnimationClip transform target must
 // actually move on the shared render-bundle path even when its authored index

@@ -18,7 +18,7 @@
 .orrery__layout {
 	display: grid;
 	flex: 1;
-	grid-template-columns: minmax(0, 1fr) minmax(18rem, 23rem);
+	grid-template-columns: minmax(0, 1fr);
 	gap: var(--space-md);
 	/* Items size to their own content and stack from the top, so leftover
 	   viewport height stays page background below the composition instead of
@@ -27,10 +27,30 @@
 	align-content: start;
 }
 
+.orrery__intro {
+	display: grid;
+	grid-template-columns: minmax(18rem, 0.8fr) minmax(20rem, 1.2fr);
+	gap: var(--space-xs) var(--space-xl);
+	padding-left: var(--space-md);
+	border-left: 3px solid var(--demo-accent);
+}
+
+.orrery__intro .orrery__eyebrow,
+.orrery__intro h1 {
+	grid-column: 1;
+}
+
+.orrery__intro .orrery__copy {
+	grid-column: 2;
+	grid-row: 1 / span 2;
+	align-self: end;
+}
+
 .orrery__canvas {
 	position: relative;
 	min-width: 0;
-	min-height: clamp(320px, 58vh, 680px);
+	min-height: 0;
+	aspect-ratio: 16 / 9;
 	border: 1px solid var(--color-border-strong);
 	background: linear-gradient(160deg, color-mix(in srgb, var(--demo-accent) 7%, var(--color-canvas)), var(--color-canvas));
 	overflow: hidden;
@@ -63,12 +83,19 @@
 }
 
 .orrery__overlay {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: var(--space-lg);
 	min-width: 0;
 	align-self: start;
 	padding: var(--space-md);
 	border: 1px solid var(--color-border-strong);
-	border-left: 3px solid var(--demo-accent);
+	border-top: 3px solid var(--demo-accent);
 	background: color-mix(in srgb, var(--color-canvas) 88%, transparent);
+}
+
+.orrery__details {
+	min-width: 0;
 }
 
 .orrery__eyebrow,
@@ -115,11 +142,10 @@
 
 .orrery__phases {
 	display: grid;
-	gap: var(--space-sm);
-	margin: 0 0 var(--space-sm);
-	padding: var(--space-sm) 0;
-	border-top: 1px solid var(--color-border);
-	border-bottom: 1px solid var(--color-border);
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--space-md);
+	margin: 0;
+	padding: 0;
 	list-style: none;
 }
 
@@ -247,13 +273,27 @@
 		grid-template-columns: minmax(0, 1fr);
 	}
 
+	.orrery__intro,
+	.orrery__overlay {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.orrery__intro .orrery__copy {
+		grid-column: 1;
+		grid-row: auto;
+	}
+
 	.orrery__canvas {
-		min-height: clamp(280px, 48vh, 460px);
+		min-height: 0;
 	}
 
 	.orrery__overlay {
 		border-left: 1px solid var(--color-border-strong);
 		border-top: 3px solid var(--demo-accent);
+	}
+
+	.orrery__phases {
+		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.orrery h1 {

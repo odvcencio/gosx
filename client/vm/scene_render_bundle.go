@@ -12,7 +12,97 @@ import (
 
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/motion"
+	"m31labs.dev/gosx/scene/geom"
 )
+
+func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, objIndex, nodeIndex, materialIndex int, material rootengine.RenderMaterial, lights []sceneLight, animations []rootengine.RenderAnimation, timeSeconds float64, camTrig rotTrig, litCtx lightingContext, spinSc *spinScratch) (sceneAppendResult, bool) {
+	var result sceneAppendResult
+	if material.Wireframe || sceneObjectHasTexturedSurface(object, material) {
+		return result, false
+	}
+
+	var params geom.Params
+	switch object.Kind {
+	case "cube":
+		params = geom.Params{Kind: geom.KindCube, Size: object.Size}
+	case "box":
+		params = geom.Params{Kind: geom.KindBox, Width: object.Width, Height: object.Height, Depth: object.Depth}
+	case "plane":
+		params = geom.Params{Kind: geom.KindPlane, Width: object.Width, Height: object.Depth}
+	case "pyramid":
+		params = geom.Params{Kind: geom.KindPyramid, Width: object.Width, Height: object.Height, Depth: object.Depth}
+	case "sphere":
+		params = geom.Params{Kind: geom.KindSphere, Radius: object.Radius, Segments: object.Segments}
+	default:
+		return result, false
+	}
+
+	mesh := geom.Build(params, geom.AllAttributes)
+	if mesh == nil {
+		return result, false
+	}
+	expanded := mesh.Expanded()
+	if expanded == nil {
+		return result, false
+	}
+
+	spinQ := spinQuatWithScratch(object, timeSeconds, spinSc)
+	clip := objectClipTRS(object, objIndex, nodeIndex, animations, timeSeconds, spinSc)
+	baseRGBA := sceneColorRGBA(material.Color, [4]float64{1, 1, 1, 1})
+	vertexOffset := len(bundle.WorldMeshPositions) / 3
+
+	for i := 0; i+2 < len(expanded.Positions); i += 3 {
+		localPoint := point3{X: expanded.Positions[i], Y: expanded.Positions[i+1], Z: expanded.Positions[i+2]}
+		world := translatePoint(localPoint, object, spinQ, clip, timeSeconds)
+		bundle.WorldMeshPositions = append(bundle.WorldMeshPositions, world.X, world.Y, world.Z)
+		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, world)
+
+		normal := sceneObjectWorldNormal(object, localPoint, spinQ, clip)
+		if i+2 < len(expanded.Normals) {
+			normal = sceneObjectLocalNormalToWorld(object, point3{
+				X: expanded.Normals[i], Y: expanded.Normals[i+1], Z: expanded.Normals[i+2],
+			}, spinQ, clip)
+		}
+		bundle.WorldMeshNormals = append(bundle.WorldMeshNormals, normal.X, normal.Y, normal.Z)
+
+		uvIndex := (i / 3) * 2
+		if uvIndex+1 < len(expanded.UVs) {
+			bundle.WorldMeshUVs = append(bundle.WorldMeshUVs, expanded.UVs[uvIndex], expanded.UVs[uvIndex+1])
+		} else {
+			bundle.WorldMeshUVs = append(bundle.WorldMeshUVs, 0, 0)
+		}
+
+		lit := sceneLitColorRGBAResolved(baseRGBA, material, world, normal, lights, litCtx)
+		alpha := clamp(lit[3]*material.Opacity, 0, 1)
+		bundle.WorldMeshColors = append(bundle.WorldMeshColors, lit[0], lit[1], lit[2], alpha)
+	}
+
+	vertexCount := len(bundle.WorldMeshPositions)/3 - vertexOffset
+	if vertexCount <= 0 {
+		return result, false
+	}
+
+	depthNear, depthFar, depthCenter := renderBoundsDepthMetricsTrig(result.Bounds, camera, camTrig)
+	result.ViewCulled = result.HasBounds && renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
+	bundle.MeshObjects = append(bundle.MeshObjects, rootengine.RenderObject{
+		ID:            object.ID,
+		Kind:          object.Kind,
+		Pickable:      object.Pickable,
+		MaterialIndex: materialIndex,
+		RenderPass:    material.RenderPass,
+		VertexOffset:  vertexOffset,
+		VertexCount:   vertexCount,
+		Static:        object.Static,
+		Bounds:        result.Bounds,
+		DepthNear:     depthNear,
+		DepthFar:      depthFar,
+		DepthCenter:   depthCenter,
+		ViewCulled:    result.ViewCulled,
+	})
+	result.SpinQ = spinQ
+	result.ClipTRS = clip
+	return result, true
+}
 
 func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64, spinSc *spinScratch) rootengine.RenderBundle {
 	return buildRenderBundleCached(props, nodes, width, height, timeSeconds, spinSc, nil)
@@ -195,9 +285,12 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 	}
 	for objectIdx := range objects {
 		object := objects[objectIdx]
-		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, materialIndexByKey, object)
 		material := bundle.Materials[materialIndex]
+		if _, ok := appendSolidSceneObject(&bundle, camera, width, height, object, objectIdx, objectNodeIndex[objectIdx], materialIndex, material, lights, animations, timeSeconds, camTrig, litCtx, spinSc); ok {
+			continue
+		}
+		vertexOffset := len(bundle.WorldPositions) / 3
 		appendResult := appendSceneObjectCached(&bundle, camera, width, height, &object, objectIdx, material, lights, environment, animations, timeSeconds, camTrig, litCtx, bakeStore, objectNodeIndex[objectIdx], litSig, spinSc)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
@@ -231,9 +324,10 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 	for _, sprite := range sprites {
 		appendSceneSprite(&bundle, camera, width, height, sprite, timeSeconds)
 	}
-	bundle.ObjectCount = len(bundle.Objects)
+	bundle.ObjectCount = len(bundle.Objects) + len(bundle.MeshObjects)
 	bundle.VertexCount = len(bundle.Positions) / 2
 	bundle.WorldVertexCount = len(bundle.WorldPositions) / 3
+	bundle.WorldMeshVertexCount = len(bundle.WorldMeshPositions) / 3
 	bundle.Passes = buildRenderPassBundles(bundle)
 	return bundle
 }
@@ -1394,7 +1488,10 @@ func sceneLightingActive(lights []sceneLight, environment sceneEnvironment) bool
 }
 
 func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat, clip clipTRS) point3 {
-	normal := sceneObjectLocalNormal(object, point)
+	return sceneObjectLocalNormalToWorld(object, sceneObjectLocalNormal(object, point), spinQ, clip)
+}
+
+func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ motion.Quat, clip clipTRS) point3 {
 	// Base orientation, then clip rotation, then spin quaternion. Normals are
 	// directions: static leaf scale applies as the inverse-scale (then
 	// renormalized) so non-uniform scale keeps lighting correct; no translation
