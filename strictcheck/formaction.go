@@ -34,6 +34,13 @@ func validateFormActionContract(files []transpile.PackageFile, opts Options) err
 		if file.Program == nil {
 			continue
 		}
+		// CSRF coverage is independent of the registration scan below. A
+		// page.server.go may be dynamic (and therefore outside the action-name
+		// check's proof), while the page's own form tree still gives us a
+		// statically provable missing token.
+		csrfErrors, csrfWarnings := formCSRFDiagnostics(file)
+		diags = append(diags, csrfErrors...)
+		addWarnings(opts, csrfWarnings)
 		registered, resolved := registeredFileActionNamesForFile(file.Path)
 		if !resolved {
 			// A dynamic Actions construction, or an unresolvable
@@ -45,6 +52,178 @@ func validateFormActionContract(files []transpile.PackageFile, opts Options) err
 		diags = append(diags, formActionDiagnostics(file, registered)...)
 	}
 	return ir.NewDiagnosticsError("form-action", diags)
+}
+
+// formCSRFDiagnostics reports a missing CSRF form control only when the form's
+// mutating action and complete descendant tree are statically visible. File
+// actions are protected by session.Manager.Protect for POST, PUT, PATCH, and
+// DELETE requests; a native GET form and an external/native action are outside
+// this check. A dynamic/unknown descendant gets a warning rather than an
+// error, because it may provide the token at render time.
+func formCSRFDiagnostics(file transpile.PackageFile) ([]ir.Diagnostic, []ir.Diagnostic) {
+	var diags []ir.Diagnostic
+	var warnings []ir.Diagnostic
+	for _, comp := range file.Program.Components {
+		for _, id := range collectImageContractNodeIDs(file.Program, comp.Root) {
+			if int(id) >= len(file.Program.Nodes) {
+				continue
+			}
+			node := &file.Program.Nodes[id]
+			if node.Kind != ir.NodeElement || !strings.EqualFold(node.Tag, "form") {
+				continue
+			}
+			actionName, ok := mutatingFileActionName(node)
+			if !ok {
+				continue
+			}
+			state := formCSRFDescendantState(file.Program, node.Children)
+			if state == formCSRFUnknown {
+				span := node.Span
+				span.File = file.Path
+				warnings = append(warnings, ir.Diagnostic{
+					Severity: ir.SeverityWarning,
+					Span:     span,
+					Message:  fmt.Sprintf("gosx: could not prove that mutating file-action form actionPath(%q) includes a descendant control named %q", actionName, defaultCSRFField),
+					Hint:     "verify the rendered form includes a hidden csrf_token control; dynamic components, expression content, spreads, and raw HTML are outside this static check",
+				})
+				continue
+			}
+			if state != formCSRFMissing {
+				continue
+			}
+			span := node.Span
+			span.File = file.Path
+			diags = append(diags, ir.Diagnostic{
+				Span:    span,
+				Message: fmt.Sprintf("gosx: mutating file-action form actionPath(%q) is missing a descendant control named %q", actionName, defaultCSRFField),
+				Hint:    "add <input type=\"hidden\" name=\"csrf_token\" value={csrf.token}></input> inside the form, or keep the token in a statically visible descendant",
+			})
+		}
+	}
+	return diags, warnings
+}
+
+const defaultCSRFField = "csrf_token"
+
+type formCSRFState uint8
+
+const (
+	formCSRFMissing formCSRFState = iota
+	formCSRFPresent
+	formCSRFUnknown
+)
+
+// mutatingFileActionName returns the static actionPath name for a form whose
+// method is one of the unsafe methods protected by session.Manager.Protect.
+// An absent method is HTML's GET default; an expression or an unfamiliar
+// method is deliberately unknown rather than assumed to mutate.
+func mutatingFileActionName(node *ir.Node) (string, bool) {
+	var action ir.Attr
+	var method ir.Attr
+	var hasMethod bool
+	for _, attr := range node.Attrs {
+		switch {
+		case strings.EqualFold(attr.Name, "action"):
+			action = attr
+		case strings.EqualFold(attr.Name, "method"):
+			method = attr
+			hasMethod = true
+		}
+	}
+	if action.Kind != ir.AttrExpr {
+		return "", false
+	}
+	name, ok := actionPathCallArg(action.Expr)
+	if !ok || !hasMethod || method.Kind != ir.AttrStatic {
+		return "", false
+	}
+	switch strings.ToLower(strings.TrimSpace(method.Value)) {
+	case "post", "put", "patch", "delete":
+		return name, true
+	default:
+		return "", false
+	}
+}
+
+// formCSRFDescendantState walks only the form's own element tree. A
+// component, expression hole, raw HTML node, spread, or dynamic control name
+// may provide a token this IR cannot prove, so it returns formCSRFUnknown and
+// the caller emits a warning rather than an error. Plain fragments and
+// ordinary elements remain transparent, which catches the Gridiron shape even
+// when a hidden input is nested under a static wrapper.
+func formCSRFDescendantState(prog *ir.Program, roots []ir.NodeID) formCSRFState {
+	seen := make(map[ir.NodeID]bool)
+	var walk func(ir.NodeID) formCSRFState
+	walk = func(id ir.NodeID) formCSRFState {
+		if seen[id] {
+			return formCSRFUnknown
+		}
+		seen[id] = true
+		if int(id) >= len(prog.Nodes) {
+			return formCSRFUnknown
+		}
+		node := &prog.Nodes[id]
+		switch node.Kind {
+		case ir.NodeComponent, ir.NodeExpr, ir.NodeRawHTML:
+			return formCSRFUnknown
+		case ir.NodeText:
+			return formCSRFMissing
+		case ir.NodeFragment:
+			return walkFormCSRFChildren(walk, node.Children)
+		case ir.NodeElement:
+			state := formCSRFControlState(node)
+			if state == formCSRFPresent || state == formCSRFUnknown {
+				return state
+			}
+			return walkFormCSRFChildren(walk, node.Children)
+		default:
+			return formCSRFUnknown
+		}
+	}
+
+	return walkFormCSRFChildren(walk, roots)
+}
+
+func walkFormCSRFChildren(walk func(ir.NodeID) formCSRFState, children []ir.NodeID) formCSRFState {
+	unknown := false
+	for _, child := range children {
+		switch walk(child) {
+		case formCSRFPresent:
+			return formCSRFPresent
+		case formCSRFUnknown:
+			unknown = true
+		}
+	}
+	if unknown {
+		return formCSRFUnknown
+	}
+	return formCSRFMissing
+}
+
+// formCSRFControlState identifies a statically present token control, or an
+// otherwise dynamic form control whose spread/name might supply one.
+func formCSRFControlState(node *ir.Node) formCSRFState {
+	switch strings.ToLower(node.Tag) {
+	case "input", "select", "textarea", "button":
+	default:
+		return formCSRFMissing
+	}
+	for _, attr := range node.Attrs {
+		if attr.Kind == ir.AttrSpread {
+			return formCSRFUnknown
+		}
+		if !strings.EqualFold(attr.Name, "name") {
+			continue
+		}
+		if attr.Kind != ir.AttrStatic {
+			return formCSRFUnknown
+		}
+		if attr.Value == defaultCSRFField {
+			return formCSRFPresent
+		}
+		return formCSRFMissing
+	}
+	return formCSRFMissing
 }
 
 // registeredFileActionNamesForFile returns the complete set of action

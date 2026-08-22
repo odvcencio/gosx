@@ -43,6 +43,11 @@ func Page() Node {
 				<span class="inline-code">page.server.go</span>
 				, the CSRF token comes from the framework session middleware, and the submitted values round-trip through a normal browser redirect.
 			</p>
+			<p>
+				For mutating file-action forms, <span class="inline-code">gosx check</span> catches a missing
+				<span class="inline-code">csrf_token</span>
+				control when its descendants are statically visible. GET and native/external forms stay outside this check, and dynamic component descendants remain application-owned.
+			</p>
 		</section>
 	</article>
 }

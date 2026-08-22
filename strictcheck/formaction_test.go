@@ -5,10 +5,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx/ir"
 )
 
 func formPageFixture(formTag string) string {
 	return "package main\n\nfunc Page() Node {\n\treturn " + formTag + "\n}\n"
+}
+
+func registeredActionFixture(name string) string {
+	return `package main
+
+import "m31labs.dev/gosx/route"
+
+func init() {
+	route.RegisterFileModuleHere(route.FileModuleOptions{
+		Actions: route.FileActions{
+			"` + name + `": nil,
+		},
+	})
+}
+`
 }
 
 // --- Accepts -----------------------------------------------------------
@@ -16,7 +33,7 @@ func formPageFixture(formTag string) string {
 func TestFormActionContractAcceptsRegisteredAction(t *testing.T) {
 	dir := newTestModule(t)
 	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
-		`<form method="post" action={actionPath("createUser")}><button type="submit">Go</button></form>`))
+		`<form method="post" action={actionPath("createUser")}><input type="hidden" name="csrf_token" value={csrf.token}></input><button type="submit">Go</button></form>`))
 	mustWrite(t, filepath.Join(dir, "page.server.go"), `package main
 
 import "m31labs.dev/gosx/route"
@@ -42,6 +59,102 @@ func TestFormActionContractAcceptsNoActionsAtAllOnAStaticForm(t *testing.T) {
 	}
 }
 
+// TestFormActionContractAcceptsStaticCSRFTokenInGridironShape is the positive
+// half of the Gridiron regression: static wrappers do not hide a descendant
+// token from the check.
+func TestFormActionContractAcceptsStaticCSRFTokenInGridironShape(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
+		`<form class="claim-team" method="post" action={actionPath("claimTeam")}><div class="claim-team__fields"><input type="hidden" name="csrf_token" value={csrf.token}></input><button type="submit">Claim team</button></div></form>`))
+	mustWrite(t, filepath.Join(dir, "page.server.go"), registeredActionFixture("claimTeam"))
+	if err := CheckFile(context.Background(), filepath.Join(dir, "page.gsx")); err != nil {
+		t.Fatalf("expected a statically visible csrf_token control to be accepted, got %v", err)
+	}
+}
+
+// TestFormActionContractRejectsGridironClaimFormWithoutCSRF is the exact
+// failure shape that motivated this check: a mutating actionPath form has a
+// real button, but no descendant control that session.Manager.Protect can
+// read from the submitted body.
+func TestFormActionContractRejectsGridironClaimFormWithoutCSRF(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
+		`<form class="claim-team" method="post" action={actionPath("claimTeam")}><div class="claim-team__fields"><button type="submit">Claim team</button></div></form>`))
+	mustWrite(t, filepath.Join(dir, "page.server.go"), registeredActionFixture("claimTeam"))
+	err := CheckFile(context.Background(), filepath.Join(dir, "page.gsx"))
+	if err == nil {
+		t.Fatal("expected a mutating Gridiron-shaped form without csrf_token to be rejected")
+	}
+	if !strings.Contains(err.Error(), `actionPath("claimTeam")`) || !strings.Contains(err.Error(), `csrf_token`) {
+		t.Fatalf("expected the diagnostic to name claimTeam and csrf_token, got: %v", err)
+	}
+}
+
+func TestFormActionContractPreservesGETActionPathForms(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
+		`<form method="get" action={actionPath("search")}><input name="query"></input></form>`))
+	mustWrite(t, filepath.Join(dir, "page.server.go"), registeredActionFixture("search"))
+	if err := CheckFile(context.Background(), filepath.Join(dir, "page.gsx")); err != nil {
+		t.Fatalf("expected GET actionPath form without csrf_token to remain valid, got %v", err)
+	}
+}
+
+func TestFormActionContractPreservesExternalNativeForms(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
+		`<form method="post" action="https://payments.example.test/charge"><button type="submit">Pay</button></form>`))
+	if err := CheckFile(context.Background(), filepath.Join(dir, "page.gsx")); err != nil {
+		t.Fatalf("expected an external/native form to remain out of scope, got %v", err)
+	}
+}
+
+// TestFormActionContractAbstainsOnUnknownNestedAndDynamicDescendants proves
+// that a component call and an expression hole are boundaries: either could
+// render a csrf_token control at runtime, so the check must not guess that it
+// is missing.
+func TestFormActionContractAbstainsOnUnknownNestedAndDynamicDescendants(t *testing.T) {
+	dir := newTestModule(t)
+	mustWrite(t, filepath.Join(dir, "page.gsx"), `package main
+
+func Page() Node {
+	return <section>
+		<form method="post" action={actionPath("nestedFields")}><ClaimFields /></form>
+		<form method="post" action={actionPath("dynamicFields")}>{children}</form>
+	</section>
+}
+
+func ClaimFields() Node {
+	return <div></div>
+}
+`)
+	mustWrite(t, filepath.Join(dir, "page.server.go"), `package main
+
+import "m31labs.dev/gosx/route"
+
+func init() {
+	route.RegisterFileModuleHere(route.FileModuleOptions{
+		Actions: route.FileActions{
+			"nestedFields":  nil,
+			"dynamicFields": nil,
+		},
+	})
+}
+`)
+	var warnings []ir.Diagnostic
+	if err := CheckFileWithOptions(context.Background(), filepath.Join(dir, "page.gsx"), Options{Warnings: &warnings}); err != nil {
+		t.Fatalf("expected unknown nested/dynamic descendants to abstain, got %v", err)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("expected one safe CSRF warning per unknown descendant boundary, got %d: %+v", len(warnings), warnings)
+	}
+	for _, warning := range warnings {
+		if warning.Severity != ir.SeverityWarning || !strings.Contains(warning.Message, "csrf_token") {
+			t.Fatalf("expected csrf warning diagnostics, got %+v", warnings)
+		}
+	}
+}
+
 // TestFormActionContractAbstainsOnDynamicActionsConstruction proves the
 // "only report with confidence" rule (gosx#249): a page.server.go that
 // builds its Actions map through a helper call, not a literal, must not be
@@ -50,7 +163,7 @@ func TestFormActionContractAcceptsNoActionsAtAllOnAStaticForm(t *testing.T) {
 func TestFormActionContractAbstainsOnDynamicActionsConstruction(t *testing.T) {
 	dir := newTestModule(t)
 	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
-		`<form method="post" action={actionPath("createUser")}></form>`))
+		`<form method="post" action={actionPath("createUser")}><input type="hidden" name="csrf_token" value={csrf.token}></input></form>`))
 	mustWrite(t, filepath.Join(dir, "page.server.go"), `package main
 
 import "m31labs.dev/gosx/route"
@@ -101,7 +214,7 @@ func TestFormActionContractRejectsUnregisteredAction(t *testing.T) {
 func TestFormActionContractAbstainsOnUnrenderedServerGoTemplate(t *testing.T) {
 	dir := newTestModule(t)
 	mustWrite(t, filepath.Join(dir, "page.gsx"), formPageFixture(
-		`<form method="post" action={actionPath("signIn")}></form>`))
+		`<form method="post" action={actionPath("signIn")}><input type="hidden" name="csrf_token" value={csrf.token}></input></form>`))
 	mustWrite(t, filepath.Join(dir, "page.server.gotmpl"), `package main
 
 import "m31labs.dev/gosx/route"

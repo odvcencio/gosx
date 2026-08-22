@@ -55,6 +55,18 @@
 // when the middleware did not run, which is indistinguishable from an anonymous
 // visitor.
 //
+// # CSRF-protected mutations
+//
+// Authentication pages commonly mutate a session through a file action. Keep
+// session.Manager.Protect in the middleware chain for those unsafe methods and
+// put the request token in the form as a hidden `csrf_token` control whose
+// value is the file-template `csrf.token` binding. `gosx check` reports a
+// missing token when a mutating `action={actionPath("...")}` form has a
+// complete, statically visible descendant tree. GET and native/external forms
+// stay outside that contract, and component or expression boundaries remain
+// the application's responsibility when their rendered fields cannot be
+// proved at check time.
+//
 // # Watching what happens
 //
 // Manager.UseObserver installs an Observer that receives an AuthEvent.

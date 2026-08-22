@@ -57,6 +57,11 @@ func Page() Node {
 				<span class="inline-code">csrf_token</span>
 				. The framework validates the token before running the action handler and rejects mismatched requests with a 403.
 			</p>
+			<p>
+				For a mutating file action, <span class="inline-code">gosx check</span> also catches a statically provable missing token inside
+				<span class="inline-code">actionPath(...)</span>
+				forms. Static wrappers are fine; GET or native/external forms and fields supplied through dynamic component boundaries remain application-owned.
+			</p>
 			{CodeBlock("gsx", "<input type=\"hidden\" name=\"csrf_token\" value={csrf.token} />")}
 			<p>
 				The token is automatically available as
