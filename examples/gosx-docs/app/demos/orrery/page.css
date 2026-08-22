@@ -1,0 +1,223 @@
+/* Lodestar Meridian (/demos/orrery).
+   The canvas and its editorial overlay are grid siblings, so overlay text can
+   never obstruct pointer or keyboard input on the canvas at any viewport. */
+
+.orrery {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-md);
+	min-height: 100%;
+	min-width: 0;
+	padding: var(--space-lg);
+	background:
+		radial-gradient(circle at 24% 18%, color-mix(in srgb, var(--demo-accent) 7%, transparent), transparent 42%),
+		var(--demo-bg);
+}
+
+.orrery__layout {
+	display: grid;
+	flex: 1;
+	grid-template-columns: minmax(0, 1fr) minmax(18rem, 23rem);
+	gap: var(--space-md);
+	align-items: stretch;
+}
+
+.orrery__canvas {
+	position: relative;
+	min-width: 0;
+	min-height: clamp(320px, 58vh, 680px);
+	border: 1px solid var(--color-border-strong);
+	background: linear-gradient(160deg, #101017, var(--color-canvas));
+	overflow: hidden;
+}
+
+.orrery__canvas canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.orrery__canvas .gosx-scene3d-unsupported {
+	display: grid;
+	min-height: 100%;
+	padding: var(--space-lg);
+	place-items: center;
+	text-align: center;
+	color: var(--color-text-secondary);
+	font-family: var(--font-mono);
+	font-size: var(--type-xs);
+	letter-spacing: 0.04em;
+}
+
+.orrery__canvas .gosx-scene3d-unsupported p {
+	max-width: 34rem;
+	margin: 0;
+	padding: var(--space-sm);
+	border: 1px solid var(--color-border);
+	background: color-mix(in srgb, var(--color-canvas) 84%, transparent);
+}
+
+.orrery__overlay {
+	min-width: 0;
+	align-self: start;
+	padding: var(--space-md);
+	border: 1px solid var(--color-border-strong);
+	border-left: 3px solid var(--demo-accent);
+	background: color-mix(in srgb, var(--color-canvas) 88%, transparent);
+}
+
+.orrery__eyebrow,
+.orrery__runtime,
+.orrery__quality,
+.orrery__budgets,
+.orrery__controls,
+.orrery__phase-time {
+	margin: 0;
+	font-family: var(--font-mono);
+	font-size: var(--type-xs);
+	letter-spacing: 0.07em;
+}
+
+.orrery__eyebrow,
+.orrery__phase-time {
+	color: var(--demo-accent);
+	text-transform: uppercase;
+}
+
+.orrery h1 {
+	margin: var(--space-xs) 0;
+	color: var(--demo-fg);
+	font-family: var(--font-display);
+	font-size: var(--type-2xl);
+	line-height: 0.98;
+	letter-spacing: -0.035em;
+}
+
+.orrery h1 span {
+	display: block;
+	color: var(--color-text-secondary);
+	font-size: var(--type-lg);
+	letter-spacing: 0;
+}
+
+.orrery__copy {
+	margin: 0 0 var(--space-sm);
+	color: var(--color-text-secondary);
+	font-family: var(--font-body);
+	font-size: var(--type-sm);
+	line-height: 1.5;
+}
+
+.orrery__phases {
+	display: grid;
+	gap: var(--space-sm);
+	margin: 0 0 var(--space-sm);
+	padding: var(--space-sm) 0;
+	border-top: 1px solid var(--color-border);
+	border-bottom: 1px solid var(--color-border);
+	list-style: none;
+}
+
+.orrery__phases li {
+	color: var(--color-text-secondary);
+	font-family: var(--font-body);
+	font-size: var(--type-xs);
+	line-height: 1.45;
+}
+
+.orrery__phase-time {
+	display: block;
+	margin-bottom: 2px;
+}
+
+.orrery__telemetry {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-sm);
+	margin-bottom: var(--space-sm);
+}
+
+.orrery__runtime,
+.orrery__quality {
+	display: flex;
+	flex: 1;
+	gap: var(--space-xs);
+	color: var(--demo-muted);
+	text-transform: uppercase;
+}
+
+.orrery__runtime output,
+.orrery__quality output {
+	color: var(--demo-accent);
+}
+
+.orrery__budgets {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-xs);
+	margin: 0 0 var(--space-sm);
+	color: var(--color-text-secondary);
+	list-style: none;
+}
+
+.orrery__budgets li:not(:last-child)::after {
+	content: "·";
+	margin-left: var(--space-xs);
+	color: var(--demo-accent);
+}
+
+.orrery__motion-note {
+	margin: 0 0 var(--space-sm);
+	color: var(--color-text-secondary);
+	font-family: var(--font-body);
+	font-size: var(--type-xs);
+	line-height: 1.45;
+}
+
+.orrery__controls {
+	color: var(--demo-accent);
+	text-transform: uppercase;
+	opacity: 0.78;
+}
+
+.orrery__controls span {
+	display: block;
+	margin-top: var(--space-2xs);
+	color: var(--color-text-secondary);
+	letter-spacing: 0.035em;
+	text-transform: none;
+}
+
+@media (max-width: 900px) {
+	.orrery {
+		padding: var(--space-md);
+	}
+
+	.orrery__layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.orrery__canvas {
+		min-height: clamp(280px, 48vh, 460px);
+	}
+
+	.orrery__overlay {
+		border-left: 1px solid var(--color-border-strong);
+		border-top: 3px solid var(--demo-accent);
+	}
+
+	.orrery h1 {
+		font-size: var(--type-xl);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.orrery *,
+	.orrery *::before,
+	.orrery *::after {
+		scroll-behavior: auto;
+		transition-duration: 0s;
+		animation-duration: 0s;
+	}
+}
