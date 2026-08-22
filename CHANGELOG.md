@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.51.1 (2026-08-21)
+
+### Fixed: a version-pinned golden broke every release
+
+The dashboard strict-props conversion test normalized the footer's live
+clock to TIME but pinned the framework version the same footer stamps, so
+the golden stopped matching the moment the version was bumped and the
+v0.51.0 release failed its own test-unit gate. The version is incidental
+to what that golden proves — that the conversion renders identical BYTES —
+so it is now normalized to VERSION exactly like the clock. Releases no
+longer require hand-editing a golden.
+
+Carries the same client fixes as v0.51.0, whose release never published.
+
 ## v0.51.0 (2026-08-21)
 
 ### Fixed: four client fixes were lost when main was squashed
