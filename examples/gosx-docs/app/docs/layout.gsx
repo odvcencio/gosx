@@ -75,6 +75,13 @@ func Layout() Node {
 								<span class="docs-tag">{tag}</span>
 							</Each>
 						</div>
+						<If cond={docsLiveDemo != nil}>
+							<a class="docs-header__live" href={docsLiveDemo.href} data-gosx-link="true">
+								<span class="docs-header__live-kicker">See it live</span>
+								<span class="docs-header__live-title">{docsLiveDemo.title}</span>
+								<span aria-hidden="true">↗</span>
+							</a>
+						</If>
 					</header>
 					<Slot />
 					<footer class="docs-footer">
