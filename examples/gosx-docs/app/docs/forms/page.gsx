@@ -100,6 +100,12 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", "// Redirect safely and explain what changed.\nctx.RedirectWithMessage(\"/subscribe/confirmed\", \"Subscription confirmed.\")")}
 			<p>
+				Most actions never need to inspect their transport mode. When application code genuinely must branch, call
+				<span class="inline-code">action.WantsJSON(ctx.Request)</span>
+				to share GoSX's authoritative managed-action negotiation instead of parsing request headers again.
+			</p>
+			{CodeBlock("go", "if action.WantsJSON(ctx.Request) {\n    // Managed action: return structured feedback.\n}")}
+			<p>
 				Render one
 				<span class="inline-code">data-gosx-toast-host</span>
 				in your layout to make managed-action messages visibly float. The runtime supplies accessible status and dismiss behavior; style the stable

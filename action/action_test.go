@@ -420,6 +420,43 @@ func TestServeHandlerWithOptionsZeroFallsBackToPackageDefault(t *testing.T) {
 	}
 }
 
+func TestWantsJSON(t *testing.T) {
+	tests := []struct {
+		name          string
+		contentType   string
+		accept        string
+		requestedWith string
+		nilRequest    bool
+		want          bool
+	}{
+		{name: "nil request", nilRequest: true, want: true},
+		{name: "JSON Accept", accept: "application/json", want: true},
+		{name: "JSON content type", contentType: "application/json; charset=utf-8", want: true},
+		{name: "managed X-Requested-With", requestedWith: "XMLHttpRequest", want: true},
+		{
+			name:        "native form",
+			contentType: "application/x-www-form-urlencoded",
+			accept:      "text/html,application/xhtml+xml",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if !tt.nilRequest {
+				req = httptest.NewRequest(http.MethodPost, "/account/__actions/save", nil)
+				req.Header.Set("Content-Type", tt.contentType)
+				req.Header.Set("Accept", tt.accept)
+				req.Header.Set("X-Requested-With", tt.requestedWith)
+			}
+			if got := WantsJSON(req); got != tt.want {
+				t.Fatalf("WantsJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRegistryHTTPStructuredValidationError(t *testing.T) {
 	r := NewRegistry()
 	r.Register("submit", func(ctx *Context) error {

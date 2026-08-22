@@ -546,7 +546,7 @@ func writeResponse(w http.ResponseWriter, req *http.Request, status int, result 
 }
 
 func shouldRedirect(req *http.Request, status int, result Result) bool {
-	if wantsJSON(req) {
+	if WantsJSON(req) {
 		return false
 	}
 	if result.Redirect != "" {
@@ -559,7 +559,7 @@ func shouldRedirect(req *http.Request, status int, result Result) bool {
 }
 
 func shouldFlashRedirect(req *http.Request) bool {
-	return !wantsJSON(req) && session.Current(req) != nil
+	return !WantsJSON(req) && session.Current(req) != nil
 }
 
 func redirectTarget(req *http.Request, result Result) string {
@@ -578,7 +578,11 @@ func redirectTarget(req *http.Request, result Result) string {
 	return req.Header.Get("Referer")
 }
 
-func wantsJSON(req *http.Request) bool {
+// WantsJSON reports whether req negotiated GoSX's managed-action JSON
+// response contract. Applications that branch around progressive enhancement
+// should use this function instead of duplicating Accept, Content-Type, or
+// X-Requested-With parsing. A nil request is treated as managed.
+func WantsJSON(req *http.Request) bool {
 	if req == nil {
 		return true
 	}

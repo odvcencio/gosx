@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.53.0 (2026-08-22)
+
 ### Added: one structured result can drive redirects and visible action feedback
 
 - `action.Context.RedirectWithMessage` carries the same completion message
@@ -14,6 +16,18 @@
 - Redirect-backed managed actions project their toast only after soft
   navigation settles, so feedback lands in the destination page instead of an
   outgoing DOM tree that is about to be replaced.
+
+- `action.WantsJSON` is now the public authority for managed-action request
+  negotiation. Applications that genuinely need to branch can share GoSX's
+  `Accept`, `Content-Type`, and `X-Requested-With` interpretation instead of
+  reimplementing it.
+
+### Fixed: structured action failures stay failures across HTTP redirects
+
+- Managed navigation now treats a structured result's `ok` field as
+  authoritative even when the fetch followed an HTTP redirect to a successful
+  page response. Validation and action failures therefore cannot be silently
+  promoted to success by transport status.
 
 ## v0.52.1 (2026-08-22)
 
