@@ -11,7 +11,7 @@ import (
 
 // CanvasBoardEventKind identifies the interaction a CanvasBoardEvent carries.
 // The integer values are pinned to the JS bootstrap protocol (the canvas2d
-// branch in client/js/bootstrap-src/26b-feature-engines-prefix.js dispatches
+// branch in client/js/bootstrap-src/26b-feature-engines-prefix.ts dispatches
 // these via __gosx_canvas_event) so the two sides stay in lockstep without a
 // separate enum on the wire.
 //
@@ -20,10 +20,10 @@ import (
 // presence check passes while the browser sends a code Go reads as unknown.
 // See internal/claimcheck for the checker.
 //
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_canvas_event`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_EVENT_PAN = 1;`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_EVENT_NAV = 5;`
-//	gosx:claim count=5 client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_EVENT_[A-Z]+ = [0-9]+;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_canvas_event`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_EVENT_PAN = 1;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_EVENT_NAV = 5;`
+//	gosx:claim count=5 client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_EVENT_[A-Z]+ = [0-9]+;`
 type CanvasBoardEventKind int
 
 const (
@@ -67,10 +67,10 @@ const (
 // A wrong code does not crash. It turns an arrow key into a move in another
 // direction, which a reader blames on the cost model in NavFrom.
 //
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_NAV_UP = 0;`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_NAV_RIGHT = 3;`
-//	gosx:claim count=4 client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_NAV_[A-Z]+ = [0-9]+;`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `case "ArrowUp": return CANVAS_NAV_UP;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_NAV_UP = 0;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_NAV_RIGHT = 3;`
+//	gosx:claim count=4 client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_NAV_[A-Z]+ = [0-9]+;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `case "ArrowUp": return CANVAS_NAV_UP;`
 type CanvasNavDirection int
 
 const (

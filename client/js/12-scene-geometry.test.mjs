@@ -30,7 +30,7 @@ function extractFunction(source, name) {
 
 function loadGeometry() {
   const geometrySource = fs.readFileSync(path.join(sourceDir, "12-scene-geometry.ts"), "utf8");
-  const coreSource = fs.readFileSync(path.join(sourceDir, "10-runtime-scene-core.js"), "utf8");
+  const coreSource = fs.readFileSync(path.join(sourceDir, "10-runtime-scene-core.ts"), "utf8");
   const utilsSource = fs.readFileSync(path.join(sourceDir, "10-runtime-scene-utils.ts"), "utf8");
   const script = [
     "globalThis.__geometry = (function() {",

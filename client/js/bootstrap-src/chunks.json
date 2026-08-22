@@ -4,10 +4,10 @@
     {
       "name": "bootstrap.js",
       "sources": [
-        "bootstrap-src/00-textlayout.js",
-        "bootstrap-src/01a-textlayout-inline-prefix.js",
+        "bootstrap-src/00-textlayout.ts",
+        "bootstrap-src/01a-textlayout-inline-prefix.ts",
         "bootstrap-src/01-textlayout-engine.ts",
-        "bootstrap-src/01b-textlayout-inline-suffix.js",
+        "bootstrap-src/01b-textlayout-inline-suffix.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
         "../runtime/host/compatibility.ts",
@@ -25,7 +25,7 @@
         "bootstrap-src/26-runtime-blocks.ts",
         "bootstrap-src/10-runtime-primitives.ts",
         "bootstrap-src/10-runtime-scene-utils.ts",
-        "bootstrap-src/10-runtime-scene-core.js",
+        "bootstrap-src/10-runtime-scene-core.ts",
         "bootstrap-src/11-scene-math.ts",
         "bootstrap-src/11-scene-base64.ts",
         "bootstrap-src/11a-scene-decompress.ts",
@@ -77,13 +77,13 @@
         "bootstrap-src/30h-tail-capability-probe.ts",
         "../runtime/host/hydration.ts",
         "bootstrap-src/30j-tail-runtime-ready.ts",
-        "bootstrap-src/30k-tail-init.js"
+        "bootstrap-src/30k-tail-init.ts"
       ]
     },
     {
       "name": "bootstrap-lite.js",
       "sources": [
-        "bootstrap-src/00-textlayout.js",
+        "bootstrap-src/00-textlayout.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
         "../runtime/host/compatibility.ts",
@@ -93,13 +93,13 @@
         "../runtime/host/stream.ts",
         "../runtime/host/dom.ts",
         "bootstrap-src/26-runtime-blocks.ts",
-        "bootstrap-src/25-lite-tail.js"
+        "bootstrap-src/25-lite-tail.ts"
       ]
     },
     {
       "name": "bootstrap-runtime.js",
       "sources": [
-        "bootstrap-src/00-textlayout.js",
+        "bootstrap-src/00-textlayout.ts",
         "bootstrap-src/04-telemetry.ts",
         "bootstrap-src/05-document-env.ts",
         "../runtime/host/compatibility.ts",
@@ -115,25 +115,25 @@
         "bootstrap-src/26-runtime-blocks.ts",
         "bootstrap-src/10-runtime-scene-utils.ts",
         "bootstrap-src/10-runtime-primitives.ts",
-        "bootstrap-src/26-runtime-tail.js"
+        "bootstrap-src/26-runtime-tail.ts"
       ]
     },
     {
       "name": "bootstrap-feature-islands.js",
       "sources": [
-        "bootstrap-src/26a-feature-islands-prefix.js",
+        "bootstrap-src/26a-feature-islands-prefix.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/host/events.ts",
         "../runtime/host/disposal.ts",
         "bootstrap-src/30h-tail-capability-probe.ts",
         "../runtime/host/hydration.ts",
-        "bootstrap-src/26a-feature-islands-suffix.js"
+        "bootstrap-src/26a-feature-islands-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-engines.js",
       "sources": [
-        "bootstrap-src/26b-feature-engines-prefix.js",
+        "bootstrap-src/26b-feature-engines-prefix.ts",
         "../runtime/host/compatibility.ts",
         "bootstrap-src/26b1-canvas2d-painter.ts",
         "bootstrap-src/26b2-canvas-board-labels.ts",
@@ -141,45 +141,45 @@
         "bootstrap-src/30h-tail-capability-probe.ts",
         "bootstrap-src/30b-tail-engine-mounting.ts",
         "../runtime/host/engine-disposal.ts",
-        "bootstrap-src/26b-feature-engines-suffix.js"
+        "bootstrap-src/26b-feature-engines-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-hubs.js",
       "sources": [
-        "bootstrap-src/26c-feature-hubs-prefix.js",
+        "bootstrap-src/26c-feature-hubs-prefix.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/host/hubs.ts",
         "bootstrap-src/30c1-tail-hub-fight-input.ts",
         "bootstrap-src/30c2-tail-arcade-audio.ts",
         "../runtime/host/hub-disposal.ts",
-        "bootstrap-src/26c-feature-hubs-suffix.js"
+        "bootstrap-src/26c-feature-hubs-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-controllers.js",
       "sources": [
-        "bootstrap-src/26h-feature-controllers-prefix.js",
+        "bootstrap-src/26h-feature-controllers-prefix.ts",
         "../runtime/host/compatibility.ts",
         "../runtime/host/controllers.ts",
-        "bootstrap-src/26h-feature-controllers-suffix.js"
+        "bootstrap-src/26h-feature-controllers-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
-        "bootstrap-src/26i-feature-textlayout-prefix.js",
+        "bootstrap-src/26i-feature-textlayout-prefix.ts",
         "bootstrap-src/01-textlayout-engine.ts",
-        "bootstrap-src/26i-feature-textlayout-suffix.js"
+        "bootstrap-src/26i-feature-textlayout-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d.js",
       "sources": [
-        "bootstrap-src/26d-feature-scene3d-prefix.js",
+        "bootstrap-src/26d-feature-scene3d-prefix.ts",
         "../runtime/scene3d/command-bridge.ts",
         "bootstrap-src/10-runtime-primitives.ts",
-        "bootstrap-src/10-runtime-scene-core.js",
+        "bootstrap-src/10-runtime-scene-core.ts",
         "bootstrap-src/11-scene-math.ts",
         "bootstrap-src/11-scene-base64.ts",
         "bootstrap-src/12-scene-geometry.ts",
@@ -206,18 +206,18 @@
         "../runtime/scene3d/mount-controls.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount.ts",
-        "bootstrap-src/26d-feature-scene3d-suffix.js"
+        "bootstrap-src/26d-feature-scene3d-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-webgl.js",
       "sources": [
-        "bootstrap-src/26j-feature-scene3d-webgl-prefix.js",
+        "bootstrap-src/26j-feature-scene3d-webgl-prefix.ts",
         "bootstrap-src/15a1-scene-texture-budget.ts",
         "bootstrap-src/16b-scene-hdr.ts",
         "bootstrap-src/16e-scene-webgl-legacy.ts",
         "../runtime/scene3d/webgl.ts",
-        "bootstrap-src/26j-feature-scene3d-webgl-suffix.js"
+        "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ]
     },
     {
@@ -229,45 +229,45 @@
     {
       "name": "bootstrap-feature-scene3d-webgpu.js",
       "sources": [
-        "bootstrap-src/26e-feature-scene3d-webgpu-prefix.js",
+        "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
-        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.js"
+        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-compute.js",
       "sources": [
-        "bootstrap-src/26k-feature-scene3d-compute-prefix.js",
+        "bootstrap-src/26k-feature-scene3d-compute-prefix.ts",
         "../runtime/scene3d/compute.ts",
-        "bootstrap-src/26k-feature-scene3d-compute-suffix.js"
+        "bootstrap-src/26k-feature-scene3d-compute-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-decompress.js",
       "sources": [
-        "bootstrap-src/26l-feature-scene3d-decompress-prefix.js",
+        "bootstrap-src/26l-feature-scene3d-decompress-prefix.ts",
         "bootstrap-src/11a-scene-decompress.ts",
         "bootstrap-src/11b-scene-points-generate.ts",
-        "bootstrap-src/26l-feature-scene3d-decompress-suffix.js"
+        "bootstrap-src/26l-feature-scene3d-decompress-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-gltf.js",
       "sources": [
-        "bootstrap-src/26f-feature-scene3d-gltf-prefix.js",
+        "bootstrap-src/26f-feature-scene3d-gltf-prefix.ts",
         "bootstrap-src/19a-scene-ktx2.ts",
         "../runtime/scene3d/gltf.ts",
-        "bootstrap-src/26f-feature-scene3d-gltf-suffix.js"
+        "bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-animation.js",
       "sources": [
-        "bootstrap-src/26g-feature-scene3d-animation-prefix.js",
+        "bootstrap-src/26g-feature-scene3d-animation-prefix.ts",
         "../runtime/scene3d/animation.ts",
-        "bootstrap-src/26g-feature-scene3d-animation-suffix.js"
+        "bootstrap-src/26g-feature-scene3d-animation-suffix.ts"
       ]
     },
     {

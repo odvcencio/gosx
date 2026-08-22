@@ -31,7 +31,7 @@ const {
 } = require("./runtime-test-harness.js");
 
 test("typed Scene3D host stages progressive model previews and publishes terminal lifecycle states", () => {
-  const coreSource = readBootstrapSrc("10-runtime-scene-core.js");
+  const coreSource = readBootstrapSrc("10-runtime-scene-core.ts");
 
   assert.match(coreSource, /const progressive = Boolean\(current\.progressive && previewSrc && fullSrc\)/);
   assert.match(coreSource, /src: progressive \? previewSrc/);

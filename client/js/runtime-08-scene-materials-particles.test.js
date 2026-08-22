@@ -733,7 +733,7 @@ test("bootstrap gates Scene3D viewport refreshes to viewport-shaped environment 
 });
 
 test("bootstrap skips redundant runtime style and attribute writes", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "00-textlayout.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "00-textlayout.ts"), "utf8");
 
   assert.match(source, /style\.getPropertyValue\(name\) === next/);
   assert.match(source, /style\.setProperty\(name,\s*next\)/);
@@ -743,7 +743,7 @@ test("bootstrap skips redundant runtime style and attribute writes", () => {
 
 test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
   const builder = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const utils = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-utils.ts"), "utf8");
   const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.ts"), "utf8");
 
@@ -759,10 +759,10 @@ test("bootstrap derives selective runtime utilities from the Scene3D core source
   // Scene3D route downloads those helpers once, not twice.
   assert.deepEqual(
     bootstrapChunkSources("bootstrap-feature-scene3d.js").filter((s) => s.includes("10-runtime-scene")),
-    ["bootstrap-src/10-runtime-scene-core.js"],
+    ["bootstrap-src/10-runtime-scene-core.ts"],
   );
   const scene3dPrefix = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26d-feature-scene3d-prefix.js"), "utf8",
+    path.join(__dirname, "bootstrap-src", "26d-feature-scene3d-prefix.ts"), "utf8",
   );
   for (const name of [
     "browserCapabilitySupported", "cancelEngineFrame", "engineCapabilityStatus", "engineFrame",

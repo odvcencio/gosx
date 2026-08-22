@@ -33,7 +33,7 @@ const moduleSrc = fs.readFileSync(
   "utf8"
 );
 
-// Verbatim from bootstrap-src/00-textlayout.js.
+// Verbatim from bootstrap-src/00-textlayout.ts.
 const helperSrc = `
   function setStyleValue(style, name, value) {
     if (!style || typeof name !== "string") {

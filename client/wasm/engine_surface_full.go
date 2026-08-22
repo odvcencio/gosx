@@ -2,7 +2,7 @@
 
 // Engine-surface JS bridge — the missing wire between the server-side
 // data-gosx-engine-bytecode attribute and the Bridge.HydrateEngineSurface
-// path. The JS bootstrap (client/js/bootstrap-src/26b-feature-engines-prefix.js)
+// path. The JS bootstrap (client/js/bootstrap-src/26b-feature-engines-prefix.ts)
 // fetches the bytecode JSON the placeholder references, then calls
 // __gosx_hydrate_engine_surface to spin up the in-VM CanvasHostReceiver
 // against the surface's <canvas> element. From there:
@@ -27,10 +27,10 @@
 // compiles it and no Go test can reach these globals. The claims below check
 // the browser side as text, which works under every build tag.
 //
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_hydrate_engine_surface`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_dispatch_engine_surface_event`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_tick_engine_surface`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_dispose_engine_surface`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_hydrate_engine_surface`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_dispatch_engine_surface_event`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_tick_engine_surface`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_dispose_engine_surface`
 
 package main
 

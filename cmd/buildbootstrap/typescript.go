@@ -37,6 +37,100 @@ func languageForSource(src source) (sourceLanguage, error) {
 	}
 }
 
+// outputIsAllTypeScript reports whether every source in a chunk is
+// TypeScript. Only such a chunk may be transpiled as ONE unit.
+//
+// That distinction is what lets a bootstrap source be a FRAGMENT: the
+// prefix/suffix pairs that wrap a feature chunk (26a-feature-islands-prefix
+// opens two scopes, -suffix closes them) are not parseable on their own, so
+// per-source transpilation rejects them with "Unexpected end of file" and
+// they had to stay JavaScript. Concatenated, the chunk is balanced and the
+// TypeScript parser accepts it.
+//
+// A chunk holding even one JavaScript source keeps per-source transpilation:
+// feeding a .js file through the TypeScript parser silently reinterprets
+// `a < b > (c)` as a generic-argument call and drops the comparison.
+func outputIsAllTypeScript(entry output) (bool, error) {
+	if len(entry.sources) == 0 {
+		return false, nil
+	}
+	for _, src := range entry.sources {
+		language, err := languageForSource(src)
+		if err != nil {
+			return false, err
+		}
+		if language != sourceTypeScript {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// transpileChunkBody erases TypeScript types from one already-concatenated
+// chunk body and returns the erased code plus esbuild's mappings from the
+// erased text back to that concatenated body. Callers map a concatenated
+// line back to its (source, line) with chunkSectionOffsets.
+func transpileChunkBody(entry output, body string, labels []string, sectionStartLines []int) (code string, mappings string, err error) {
+	result := esbuild.Transform(body, esbuild.TransformOptions{
+		Charset:       esbuild.CharsetUTF8,
+		LegalComments: esbuild.LegalCommentsNone,
+		Loader:        esbuild.LoaderTS,
+		Sourcefile:    entry.name,
+		Target:        esbuild.ES2020,
+		Sourcemap:     esbuild.SourceMapExternal,
+	})
+	if len(result.Errors) > 0 {
+		// Report the position in the file that AUTHORED the line, not an
+		// offset into the concatenated chunk. Without this a syntax error in
+		// one fragment would name only the bundle.
+		first := result.Errors[0]
+		if first.Location != nil && len(labels) == len(sectionStartLines) && len(labels) > 0 {
+			section, within := sectionForJoinedLine(sectionStartLines, first.Location.Line-1)
+			return "", "", fmt.Errorf("transpile %s:%d:%d: %s", labels[section], within+1, first.Location.Column+1, first.Text)
+		}
+		return "", "", fmt.Errorf("transpile chunk %s: %s", entry.name, first.Text)
+	}
+	var parsed struct {
+		Mappings string `json:"mappings"`
+	}
+	if err := json.Unmarshal(result.Map, &parsed); err != nil {
+		return "", "", fmt.Errorf("decode transpile map for chunk %s: %w", entry.name, err)
+	}
+	return string(result.Code), parsed.Mappings, nil
+}
+
+// joinChunkSources concatenates chunk bodies exactly as the bundle does and
+// returns the starting line of each section in the joined text, so a line in
+// the joined body resolves back to the source that authored it.
+func joinChunkSources(bodies []string) (joined string, sectionStartLines []int) {
+	var b strings.Builder
+	line := 0
+	for index, body := range bodies {
+		if index > 0 {
+			b.WriteByte('\n')
+			line++
+		}
+		sectionStartLines = append(sectionStartLines, line)
+		b.WriteString(body)
+		line += strings.Count(body, "\n")
+	}
+	return b.String(), sectionStartLines
+}
+
+// sectionForJoinedLine returns the index of the source that owns a line in
+// the joined chunk body, and that line's offset within it.
+func sectionForJoinedLine(sectionStartLines []int, joinedLine int) (section int, lineWithin int) {
+	section = 0
+	for i, start := range sectionStartLines {
+		if joinedLine >= start {
+			section = i
+			continue
+		}
+		break
+	}
+	return section, joinedLine - sectionStartLines[section]
+}
+
 func (language sourceLanguage) esbuildLoader() esbuild.Loader {
 	if language == sourceTypeScript {
 		return esbuild.LoaderTS
@@ -167,6 +261,29 @@ func transpileTypedChunk(entry output, sourceBodies []string) (string, error) {
 	if len(sourceBodies) != len(entry.sources) {
 		return "", fmt.Errorf("transpile %s: got %d source bodies for %d sources", entry.name, len(sourceBodies), len(entry.sources))
 	}
+	// An all-TypeScript chunk transpiles as one unit so its sources may be
+	// fragments; see outputIsAllTypeScript. Any chunk holding a JavaScript
+	// source keeps per-source transpilation.
+	allTypeScript, err := outputIsAllTypeScript(entry)
+	if err != nil {
+		return "", err
+	}
+	if allTypeScript {
+		joined, starts := joinChunkSources(sourceBodies)
+		labels := make([]string, 0, len(entry.sources))
+		for _, src := range entry.sources {
+			labels = append(labels, src.label)
+		}
+		code, _, err := transpileChunkBody(entry, joined, labels, starts)
+		if err != nil {
+			return "", err
+		}
+		if !strings.HasSuffix(code, "\n") {
+			code += "\n"
+		}
+		return code, nil
+	}
+
 	var b strings.Builder
 	for index, src := range entry.sources {
 		code, _, err := transpileSource(src, sourceBodies[index])

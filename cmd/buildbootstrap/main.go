@@ -69,7 +69,7 @@ import (
 const (
 	textLayoutEngineFile     = "bootstrap-src/01-textlayout-engine.ts"
 	runtimeSceneUtilsFile    = "bootstrap-src/10-runtime-scene-utils.ts"
-	runtimeSceneCoreFile     = "bootstrap-src/10-runtime-scene-core.js"
+	runtimeSceneCoreFile     = "bootstrap-src/10-runtime-scene-core.ts"
 	runtimePrimitivesFile    = "bootstrap-src/10-runtime-primitives.ts"
 	tailEventDelegationFile  = "../runtime/host/events.ts"
 	tailEngineMountingFile   = "bootstrap-src/30b-tail-engine-mounting.ts"
@@ -83,7 +83,7 @@ const (
 	tailCapabilityProbeFile  = "bootstrap-src/30h-tail-capability-probe.ts"
 	tailHydrationFile        = "../runtime/host/hydration.ts"
 	tailRuntimeReadyFile     = "bootstrap-src/30j-tail-runtime-ready.ts"
-	tailInitFile             = "bootstrap-src/30k-tail-init.js"
+	tailInitFile             = "bootstrap-src/30k-tail-init.ts"
 	videoSyncFallbackFile    = "bootstrap-src/28-video-sync-fallback.ts"
 	scene3DCommandBridgeFile = "../runtime/scene3d/command-bridge.ts"
 	controllersFile          = "../runtime/host/controllers.ts"
@@ -112,15 +112,15 @@ var outputs = []output{
 	{
 		name: "bootstrap.js",
 		sources: []source{
-			sourceFile("bootstrap-src/00-textlayout.js"),
+			sourceFile("bootstrap-src/00-textlayout.ts"),
 			// The monolith keeps the text-layout engine inline. 01a/01b wrap it
 			// in its own IIFE, exactly like the lazily fetched
 			// bootstrap-feature-textlayout.js chunk, so one engine code path
 			// serves both. The engine reads its shared helpers from
 			// window.__gosx_runtime_api, which 00-textlayout.js assigns last.
-			sourceFile("bootstrap-src/01a-textlayout-inline-prefix.js"),
+			sourceFile("bootstrap-src/01a-textlayout-inline-prefix.ts"),
 			sourceFile(textLayoutEngineFile),
-			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.js"),
+			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
 			sourceFile(hostCompatibilityFile),
@@ -224,7 +224,7 @@ var outputs = []output{
 	{
 		name: "bootstrap-lite.js",
 		sources: []source{
-			sourceFile("bootstrap-src/00-textlayout.js"),
+			sourceFile("bootstrap-src/00-textlayout.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
 			sourceFile(hostCompatibilityFile),
@@ -234,13 +234,13 @@ var outputs = []output{
 			sourceFile("../runtime/host/stream.ts"),
 			sourceFile("../runtime/host/dom.ts"),
 			sourceFile("bootstrap-src/26-runtime-blocks.ts"),
-			sourceFile("bootstrap-src/25-lite-tail.js"),
+			sourceFile("bootstrap-src/25-lite-tail.ts"),
 		},
 	},
 	{
 		name: "bootstrap-runtime.js",
 		sources: []source{
-			sourceFile("bootstrap-src/00-textlayout.js"),
+			sourceFile("bootstrap-src/00-textlayout.ts"),
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
 			sourceFile(hostCompatibilityFile),
@@ -256,13 +256,13 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26-runtime-blocks.ts"),
 			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimePrimitivesFile),
-			sourceFile("bootstrap-src/26-runtime-tail.js"),
+			sourceFile("bootstrap-src/26-runtime-tail.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-islands.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26a-feature-islands-prefix.js"),
+			sourceFile("bootstrap-src/26a-feature-islands-prefix.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile(tailEventDelegationFile),
 			sourceFile(tailIslandDisposeFile),
@@ -272,13 +272,13 @@ var outputs = []output{
 			// extract range contained the probe extract range.
 			sourceFile(tailCapabilityProbeFile),
 			sourceFile(tailHydrationFile),
-			sourceFile("bootstrap-src/26a-feature-islands-suffix.js"),
+			sourceFile("bootstrap-src/26a-feature-islands-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-engines.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26b-feature-engines-prefix.js"),
+			sourceFile("bootstrap-src/26b-feature-engines-prefix.ts"),
 			sourceFile(hostCompatibilityFile),
 			// 26b1 installs window.__gosx_paint_canvas_bundle — the standalone 2D
 			// painter the canvas2d surface-kind render loop (in 26b-prefix's
@@ -298,13 +298,13 @@ var outputs = []output{
 			sourceFile(tailCapabilityProbeFile),
 			sourceFile(tailEngineMountingFile),
 			sourceFile(tailEngineDisposeFile),
-			sourceFile("bootstrap-src/26b-feature-engines-suffix.js"),
+			sourceFile("bootstrap-src/26b-feature-engines-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-hubs.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26c-feature-hubs-prefix.js"),
+			sourceFile("bootstrap-src/26c-feature-hubs-prefix.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile(tailHubConnectionsFile),
 			// 30c1 is one application's fighting-game controller set. It ships
@@ -313,16 +313,16 @@ var outputs = []output{
 			sourceFile(tailHubFightInputFile),
 			sourceFile(tailArcadeAudioFile),
 			sourceFile(tailHubDisconnectFile),
-			sourceFile("bootstrap-src/26c-feature-hubs-suffix.js"),
+			sourceFile("bootstrap-src/26c-feature-hubs-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-controllers.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26h-feature-controllers-prefix.js"),
+			sourceFile("bootstrap-src/26h-feature-controllers-prefix.ts"),
 			sourceFile(hostCompatibilityFile),
 			sourceFile(controllersFile),
-			sourceFile("bootstrap-src/26h-feature-controllers-suffix.js"),
+			sourceFile("bootstrap-src/26h-feature-controllers-suffix.ts"),
 		},
 	},
 	{
@@ -334,15 +334,15 @@ var outputs = []output{
 		// manifest mounts a Scene3D engine, which lays out labels.
 		name: "bootstrap-feature-textlayout.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26i-feature-textlayout-prefix.js"),
+			sourceFile("bootstrap-src/26i-feature-textlayout-prefix.ts"),
 			sourceFile(textLayoutEngineFile),
-			sourceFile("bootstrap-src/26i-feature-textlayout-suffix.js"),
+			sourceFile("bootstrap-src/26i-feature-textlayout-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-scene3d.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26d-feature-scene3d-prefix.js"),
+			sourceFile("bootstrap-src/26d-feature-scene3d-prefix.ts"),
 			sourceFile(scene3DCommandBridgeFile),
 			sourceFile(runtimePrimitivesFile),
 			// 10-runtime-scene-utils.ts is NOT here any more. This chunk
@@ -430,7 +430,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
-			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.js"),
+			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.ts"),
 		},
 	},
 	{
@@ -441,7 +441,7 @@ var outputs = []output{
 		// bridged symbols.
 		name: "bootstrap-feature-scene3d-webgl.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-prefix.js"),
+			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-prefix.ts"),
 			// 15a1 and 16b-scene-hdr.ts follow the renderer that reads them.
 			// 16-scene-webgl.js is the only caller of sceneAllocateTextureUnits,
 			// sceneResolveIBLRenderTargetMode and sceneParseRadianceHDR, so a
@@ -457,7 +457,7 @@ var outputs = []output{
 			// reach either one.
 			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
 			sourceFile("../runtime/scene3d/webgl.ts"),
-			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.js"),
+			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
 	},
 	{
@@ -469,7 +469,7 @@ var outputs = []output{
 	{
 		name: "bootstrap-feature-scene3d-webgpu.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-prefix.js"),
+			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts"),
 			// 16b-scene-compute.js is NOT here any more. It used to ship in
 			// this chunk AND in bootstrap-feature-scene3d.js, so a Chromium
 			// Scene3D page downloaded the same 27_651 minified bytes twice.
@@ -478,7 +478,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
-			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.js"),
+			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
 	},
 	{
@@ -488,9 +488,9 @@ var outputs = []output{
 		// its own chunk rather than a passenger on one backend.
 		name: "bootstrap-feature-scene3d-compute.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26k-feature-scene3d-compute-prefix.js"),
+			sourceFile("bootstrap-src/26k-feature-scene3d-compute-prefix.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
-			sourceFile("bootstrap-src/26k-feature-scene3d-compute-suffix.js"),
+			sourceFile("bootstrap-src/26k-feature-scene3d-compute-suffix.ts"),
 		},
 	},
 	{
@@ -499,16 +499,16 @@ var outputs = []output{
 		// files call each other, so they share one chunk.
 		name: "bootstrap-feature-scene3d-decompress.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-prefix.js"),
+			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-prefix.ts"),
 			sourceFile("bootstrap-src/11a-scene-decompress.ts"),
 			sourceFile("bootstrap-src/11b-scene-points-generate.ts"),
-			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-suffix.js"),
+			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-scene3d-gltf.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-prefix.js"),
+			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-prefix.ts"),
 			// 19a holds the KTX2 reader and the block uploader. It must load
 			// before 19-scene-gltf.js, which reads sceneKTX2UploadPathReady
 			// before it swaps an image URI for a block variant. It ships in
@@ -516,15 +516,15 @@ var outputs = []output{
 			// it, and a second copy would be a second download.
 			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
 			sourceFile("../runtime/scene3d/gltf.ts"),
-			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.js"),
+			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-scene3d-animation.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26g-feature-scene3d-animation-prefix.js"),
+			sourceFile("bootstrap-src/26g-feature-scene3d-animation-prefix.ts"),
 			sourceFile("../runtime/scene3d/animation.ts"),
-			sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.js"),
+			sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.ts"),
 		},
 	},
 	{
@@ -861,6 +861,21 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 		raw       string
 		compacted compacted
 	}
+
+	// An all-TypeScript chunk transpiles as ONE unit. Its sources may then be
+	// FRAGMENTS — the prefix/suffix pairs that wrap a feature chunk are not
+	// parseable alone, which is the only reason they stayed JavaScript — and
+	// the concatenated chunk is what the parser sees. The per-source path
+	// below still runs for any chunk holding a JavaScript source, so a .js
+	// file is never promoted to the TypeScript parser.
+	allTypeScript, err := outputIsAllTypeScript(entry)
+	if err != nil {
+		return builtBundle{}, err
+	}
+	if allTypeScript {
+		return buildCompactedTypeScriptChunk(dir, entry)
+	}
+
 	sections := make([]section, 0, len(entry.sources))
 	for _, src := range entry.sources {
 		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
@@ -952,6 +967,65 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 	}
 	m := compactedMapJSON(entry.name, sources, sourcesContent, encodeMappings(lines))
 	return builtBundle{code: joined, m: m}, nil
+}
+
+// buildCompactedTypeScriptChunk builds a chunk whose sources are all
+// TypeScript by transpiling the CONCATENATED body once, then attributing
+// every surviving line back to the source that authored it.
+//
+// The per-source path cannot do this: esbuild rejects an unbalanced
+// fragment on its own. Concatenating first is what allows a bootstrap
+// source to be a fragment and still be TypeScript.
+//
+// Source maps keep per-file granularity exactly as before. Each source stays
+// its own sources[]/sourcesContent[] entry; a compacted row resolves through
+// the chunk's erase map to a line in the joined body, and then through the
+// section offsets to (source, line within that source).
+func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error) {
+	labels := make([]string, 0, len(entry.sources))
+	raws := make([]string, 0, len(entry.sources))
+	for _, src := range entry.sources {
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
+		if err != nil {
+			return builtBundle{}, err
+		}
+		// No per-source parse gate here. A fragment cannot be parsed alone,
+		// and the tree-sitter grammar rejects constructs esbuild accepts
+		// (a computed-member assignment inside a for-of, for one), so gating
+		// on it would fail the build on valid code. esbuild parses the
+		// assembled chunk below and its errors are attributed back to the
+		// authoring file and line by transpileChunkBody.
+		labels = append(labels, src.label)
+		raws = append(raws, normalizeNewlines(string(data)))
+	}
+
+	joinedRaw, sectionStartLines := joinChunkSources(raws)
+	erased, mappings, err := transpileChunkBody(entry, joinedRaw, labels, sectionStartLines)
+	if err != nil {
+		return builtBundle{}, err
+	}
+	erasedToJoined, err := firstOriginalLinePerGeneratedLine(mappings)
+	if err != nil {
+		return builtBundle{}, fmt.Errorf("decode transpile map for chunk %s: %w", entry.name, err)
+	}
+
+	compactedChunk := compactSource(erased)
+	lines := make([]*mappingLine, 0, len(compactedChunk.lineMap))
+	lastJoined := 0
+	for _, erasedLine := range compactedChunk.lineMap {
+		if erasedLine >= 0 && erasedLine < len(erasedToJoined) && erasedToJoined[erasedLine] >= 0 {
+			lastJoined = erasedToJoined[erasedLine]
+		}
+		sectionIndex, lineWithin := sectionForJoinedLine(sectionStartLines, lastJoined)
+		lines = append(lines, &mappingLine{source: sectionIndex, originalLine: lineWithin})
+	}
+
+	code := compactedChunk.code
+	if !strings.HasSuffix(code, "\n") {
+		code += "\n"
+	}
+	m := compactedMapJSON(entry.name, labels, raws, encodeMappings(lines))
+	return builtBundle{code: code, m: m}, nil
 }
 
 // minifyESBuild minifies with esbuild's Go library, composing the compacted

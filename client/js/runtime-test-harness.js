@@ -2133,7 +2133,7 @@ function createContext(options) {
 
   const routes = new Map();
   // The text-layout engine now ships as a lazily fetched chunk instead of
-  // riding in every bundle (see bootstrap-src/00-textlayout.js). Serve it by
+  // riding in every bundle (see bootstrap-src/00-textlayout.ts). Serve it by
   // default: any page with a data-gosx-text-layout element, and any page whose
   // manifest mounts a Scene3D engine, asks for it. A test can still override
   // the route through options.fetchRoutes.
@@ -3123,7 +3123,7 @@ const SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE = {
 function loadSceneWaterClockAPI() {
   // sceneNumber sits in the runtime-utils file and the water clock sits in the
   // scene core file. The bundles load them next to each other, so join them.
-  const core = readBootstrapSrc("10-runtime-scene-utils.ts", "10-runtime-scene-core.js");
+  const core = readBootstrapSrc("10-runtime-scene-utils.ts", "10-runtime-scene-core.ts");
   const start = core.indexOf("function sceneNumber(value, fallback)");
   const end = core.indexOf("function sceneNumberOrCSSVar", start);
   assert.notEqual(start, -1, "sceneNumber anchor missing from scene core");
@@ -3215,7 +3215,7 @@ const CUSTOM_POST_TIME_LAYOUT_FIXTURE = {
 // so ladder-driven harness tests exercise the exact same normalization the
 // full bootstrap bundle runs.
 function sceneCoreSourceRange(startAnchor, endAnchor) {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const start = source.indexOf(startAnchor);
   const end = source.indexOf(endAnchor, start);
   assert.notEqual(start, -1, "10-runtime-scene-core.js anchor missing: " + startAnchor);

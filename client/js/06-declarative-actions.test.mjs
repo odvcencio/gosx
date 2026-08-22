@@ -28,7 +28,7 @@ const moduleSrc = [
 // it (see cmd/buildbootstrap/main.go). This slice needs only its public
 // window.* surface, so it closes the IIFE itself right after the file.
 const textLayoutSourceStandalone = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "00-textlayout.js"), "utf8"
+  path.join(__dirname, "bootstrap-src", "00-textlayout.ts"), "utf8"
 ) + "\n})();\n";
 const integratedModuleSrc = [
   textLayoutSourceStandalone,

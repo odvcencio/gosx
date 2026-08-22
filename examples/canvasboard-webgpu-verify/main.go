@@ -26,7 +26,7 @@
 //   - bootstrap-feature-scene3d-webgpu.js: publishes window.__gosx_scene3d_webgpu_api
 //     .createRenderer — REQUIRED for canvas2d WebGPU path; without it
 //     _canvasSurfaceWebGPUFactory() returns null and the board falls back
-//     (client/js/bootstrap-src/26b-feature-engines-prefix.js:541-548)
+//     (client/js/bootstrap-src/26b-feature-engines-prefix.ts:541-548)
 //
 // # Manifest structure
 //

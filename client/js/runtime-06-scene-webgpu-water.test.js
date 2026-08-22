@@ -195,7 +195,7 @@ test("bootstrap uploads Scene3D point pixel clamps to WebGL", async () => {
 });
 
 test("bootstrap preserves Scene3D point maxPixelSize from GLB extras", () => {
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const gltf = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "gltf.ts"), "utf8");
 
   assert.match(core, /maxPixelSize: sceneClampNumberOrCSSVar\(item\.maxPixelSize/);
@@ -266,7 +266,7 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
 
 test("Scene3D WebGPU water supports compound sphere object displacement", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
 
   // The hand-written data-prop-authored compute pipeline tier
   // (sceneWaterAuthoredComputePipeline and its sceneWaterAuthoredComputeField/
@@ -967,7 +967,7 @@ test("Scene3D WebGPU water consumes caustic reflection refraction optics flags",
 
 test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const mount = readSceneMountSrc();
 
   assert.match(webgpu, /SCENE_WATER_CAUSTICS_VERTEX_SOURCE/);
@@ -1057,7 +1057,7 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
 
 test("Scene3D WebGPU water renders upstream-style object texture targets", () => {
   const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const mount = readSceneMountSrc();
   const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.ts"), "utf8");
   const waterPage = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "page.gsx"), "utf8");
@@ -1397,8 +1397,8 @@ test("Scene3D static GLB models can receive live motion patches", () => {
 });
 
 test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
-  const prefix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.js"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const prefix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.ts"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   assert.match(prefix, /var clamp01 = sceneApi\.clamp01/);

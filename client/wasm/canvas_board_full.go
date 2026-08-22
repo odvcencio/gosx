@@ -31,8 +31,8 @@
 // claims below fail instead.
 //
 //	gosx:claim has client/js/bootstrap-src/26b1-canvas2d-painter.ts `__gosx_render_canvas`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_tick_canvas`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_dispose_canvas`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_tick_canvas`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_dispose_canvas`
 
 package main
 

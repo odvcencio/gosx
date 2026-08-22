@@ -449,7 +449,7 @@ func TestRuntimeJSONStaticPhaseClassifierExamples(t *testing.T) {
 		},
 		{
 			name:        "text layout shared value",
-			src:         SourceFile{Path: "client/js/bootstrap-src/00-textlayout.js", SourceKind: "scoreboard", Language: "javascript"},
+			src:         SourceFile{Path: "client/js/bootstrap-src/00-textlayout.ts", SourceKind: "scoreboard", Language: "javascript"},
 			body:        `function parseSharedSignalJSON(valueJSON){ return JSON.parse(valueJSON); }`,
 			op:          "value-json",
 			status:      "ambiguous",
