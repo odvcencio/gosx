@@ -3,6 +3,17 @@
 // Actions are explicit, named event handlers that can be client-callable
 // or server-callable. They replace arbitrary closure serialization with
 // a tractable binding model.
+//
+// # Error handling
+//
+// A handler that wants full control over the client-facing result and
+// status code returns a *ResultError (see Error and Validation). GoSX
+// sends that result unchanged.
+//
+// A handler that returns any other error gets a fail-closed default: GoSX
+// logs the error through ErrorLogger and sends UnsafeErrorMessage to the
+// client instead of the error's own text. To choose the text a client
+// sees, implement SafeMessager on the error type.
 package action
 
 import (
@@ -10,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -112,6 +124,38 @@ func Redirect(url string) *ResultError {
 type resultProvider interface {
 	ActionResult() Result
 	StatusCode() int
+}
+
+// SafeMessager marks an error whose text is safe to show an end user. An
+// application error type satisfies this interface the same way it already
+// satisfies the package's other structural contracts: implement the method,
+// with no import of this package required.
+//
+// GoSX checks for SafeMessager only on an error that does not already carry
+// a structured result (see resultFromError). Wrap an internal error with a
+// type that implements SafeMessage to choose the text a browser sees.
+type SafeMessager interface {
+	// SafeMessage returns the text GoSX may send to a browser in
+	// Result.Message. Return only text that is safe for an end user to
+	// read; GoSX does not sanitize this string further.
+	SafeMessage() string
+}
+
+// UnsafeErrorMessage is the Result.Message text GoSX sends to a browser for
+// a handler error that carries no structured result (see resultProvider)
+// and does not implement SafeMessager. Replace it to change the wording for
+// your application. Do not set it to an error's own text, because GoSX
+// cannot verify that text is safe to expose.
+var UnsafeErrorMessage = "Something went wrong. Please try again."
+
+// ErrorLogger receives every error that resultFromError suppresses because
+// the error carries no structured result and does not implement
+// SafeMessager. It defaults to the standard library log package, matching
+// the convention the session package already uses for its own errors.
+// Replace it to route suppressed action errors to your own logging system;
+// set it to a no-op func to silence them.
+var ErrorLogger = func(err error) {
+	log.Printf("[gosx] action: %v", err)
 }
 
 // Context provides action execution context.
@@ -407,14 +451,42 @@ func (f FormValues) All() map[string]string {
 	return cp
 }
 
+// resultFromError converts a handler error into the HTTP status and Result
+// a browser receives.
+//
+// An error that implements resultProvider (for example, one built with
+// Error or Validation) keeps full control: its own ActionResult and
+// StatusCode reach the client unchanged.
+//
+// Every other error is fail-closed by default. GoSX logs the error through
+// ErrorLogger and sends UnsafeErrorMessage instead of the error's own text,
+// because that text may hold a file path, a driver message, or another
+// internal detail no application meant to expose.
+//
+// To show your own wording for a specific error, implement SafeMessager on
+// that error type, directly or through a type errors.As can reach by
+// unwrapping. GoSX then sends SafeMessage() in place of UnsafeErrorMessage
+// and does not log the error.
 func resultFromError(err error) (Result, int) {
 	var structured resultProvider
 	if errors.As(err, &structured) {
 		return structured.ActionResult(), structured.StatusCode()
 	}
+
+	var safe SafeMessager
+	if errors.As(err, &safe) {
+		return Result{
+			OK:      false,
+			Message: safe.SafeMessage(),
+		}, http.StatusInternalServerError
+	}
+
+	if ErrorLogger != nil {
+		ErrorLogger(err)
+	}
 	return Result{
 		OK:      false,
-		Message: err.Error(),
+		Message: UnsafeErrorMessage,
 	}, http.StatusInternalServerError
 }
 

@@ -3,6 +3,8 @@ package action
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -381,6 +383,97 @@ func TestRegistryHTTPSuccessResultJSON(t *testing.T) {
 	}
 	if string(result.Data) != `{"id":7}` {
 		t.Fatalf("unexpected data %s", result.Data)
+	}
+}
+
+// safeTestError implements SafeMessager. Error() carries an internal detail
+// that must never reach the client; SafeMessage() carries the text an
+// application has cleared for display.
+type safeTestError struct {
+	internal string
+	safe     string
+}
+
+func (e *safeTestError) Error() string       { return e.internal }
+func (e *safeTestError) SafeMessage() string { return e.safe }
+
+func TestResultFromErrorSuppressesUnmarkedErrorText(t *testing.T) {
+	prevLogger := ErrorLogger
+	prevMessage := UnsafeErrorMessage
+	t.Cleanup(func() {
+		ErrorLogger = prevLogger
+		UnsafeErrorMessage = prevMessage
+	})
+
+	var logged error
+	ErrorLogger = func(err error) { logged = err }
+
+	original := errors.New("open /var/lib/app/data.db: permission denied")
+	result, status := resultFromError(original)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", status)
+	}
+	if result.OK {
+		t.Fatal("expected a failed result")
+	}
+	if strings.Contains(result.Message, "/var/lib/app/data.db") {
+		t.Fatalf("raw error text leaked into Message: %q", result.Message)
+	}
+	if result.Message != UnsafeErrorMessage {
+		t.Fatalf("expected neutral message %q, got %q", UnsafeErrorMessage, result.Message)
+	}
+	if logged == nil || logged.Error() != original.Error() {
+		t.Fatalf("expected the original error to reach ErrorLogger, got %v", logged)
+	}
+}
+
+func TestResultFromErrorUsesSafeMessagerText(t *testing.T) {
+	err := &safeTestError{
+		internal: "pq: duplicate key value violates unique constraint \"users_email_key\"",
+		safe:     "That email address is already registered.",
+	}
+
+	result, status := resultFromError(err)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", status)
+	}
+	if result.Message != err.safe {
+		t.Fatalf("expected safe message %q, got %q", err.safe, result.Message)
+	}
+}
+
+func TestResultFromErrorPreservesResultProviderPath(t *testing.T) {
+	verr := Validation("name is required", map[string]string{"name": "required"}, map[string]string{"name": ""})
+
+	result, status := resultFromError(verr)
+
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", status)
+	}
+	if result.Message != "name is required" {
+		t.Fatalf("expected the validation message unchanged, got %q", result.Message)
+	}
+	if result.FieldErrors["name"] != "required" {
+		t.Fatalf("expected field errors unchanged, got %#v", result.FieldErrors)
+	}
+}
+
+func TestResultFromErrorFindsSafeMessagerThroughWrap(t *testing.T) {
+	inner := &safeTestError{
+		internal: "sqlite: UNIQUE constraint failed: pages.slug",
+		safe:     "That page slug is already in use.",
+	}
+	wrapped := fmt.Errorf("save page: %w", inner)
+
+	result, status := resultFromError(wrapped)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", status)
+	}
+	if result.Message != inner.safe {
+		t.Fatalf("expected errors.As to find the wrapped SafeMessager text, got %q", result.Message)
 	}
 }
 
