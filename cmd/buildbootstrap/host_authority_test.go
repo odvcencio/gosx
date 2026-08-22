@@ -95,7 +95,8 @@ func TestHostAmbientCompatibilityDoesNotIncrease(t *testing.T) {
 
 func TestBuilderUsesTypedHostAuthorities(t *testing.T) {
 	wanted := map[string]bool{
-		"../runtime/host/actions.ts": false, "../runtime/host/regions.ts": false,
+		"../runtime/host/actions.ts": false, "../runtime/host/disclosure.ts": false,
+		"../runtime/host/regions.ts":     false,
 		"../runtime/host/controllers.ts": false, "../runtime/host/dom.ts": false,
 		"../runtime/host/facade.ts": false, "../runtime/host/stream.ts": false,
 		"../runtime/host/events.ts": false, "../runtime/host/hubs.ts": false,

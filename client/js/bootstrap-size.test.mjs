@@ -531,7 +531,11 @@ const budgets = [
   // managed script DOM loader. Measured: 1_535_760 / 416_501 / 334_319.
   // Bumped for the four client fixes restored after main was squashed.
   // Measured: 1_537_175 / 416_632 / 334_727.
-  { file: "bootstrap.js", raw: 1_538_675, gzip: 417_132, brotli: 335_227 },
+  // v0.52.0: the framework-owned disclosure authority now ships in every
+  // runtime surface so modal focus, Escape, Tab, inert background, and
+  // navigation teardown do not require application JavaScript. Measured:
+  // 1_540_600 / 417_606 / 335_287, plus narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_542_000, gzip: 418_200, brotli: 335_900 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -596,7 +600,9 @@ const budgets = [
   // data-gosx-live-* text binding — periodic polling, its region-scoped
   // interaction guard, and ETag/body-diff conditional requests. Measured:
   // 144_189 / 39_212 / 34_215, plus rounding headroom.
-  { file: "bootstrap-runtime.js", raw: 145_000, gzip: 39_500, brotli: 34_500 },
+  // v0.52.0 disclosure authority. Measured: 148_060 / 40_423 / 35_255,
+  // plus narrow rounding headroom.
+  { file: "bootstrap-runtime.js", raw: 149_000, gzip: 41_000, brotli: 35_800 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -643,7 +649,9 @@ const budgets = [
   // ETag conditional requests, and scroll preservation added to the
   // existing data-gosx-region fragment-swap primitive in regions.ts — both
   // ride in the lite bundle. Measured: 107_874 / 28_741 / 25_605.
-  { file: "bootstrap-lite.js", raw: 108_500, gzip: 29_200, brotli: 26_100 },
+  // v0.52.0 disclosure authority. Measured: 111_565 / 29_882 / 26_549,
+  // plus narrow rounding headroom.
+  { file: "bootstrap-lite.js", raw: 112_500, gzip: 30_500, brotli: 27_100 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1339,9 +1347,11 @@ const routeBudgets = [
     // 253_960 / 71_709 / 63_054, plus rounding headroom.
     // Bumped raw 254_500 -> 255_000 for the same strict-CSP runtime script
     // metadata and nonce propagation. Measured: 254_644 / 72_004 / 63_239.
-    raw: 255_000,
-    gzip: 72_200,
-    brotli: 63_500,
+    // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
+    // selective total: 257_866 / 72_950 / 64_082, plus narrow headroom.
+    raw: 259_000,
+    gzip: 73_500,
+    brotli: 64_700,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1568,9 +1578,11 @@ const routeBudgets = [
     // 1_045_803 / 289_781 / 245_845, plus rounding headroom.
     // Bumped for the four client fixes restored after the main squash.
     // Measured: 1_048_022 / 290_324 / 246_238.
-    raw: 1_049_522,
-    gzip: 290_724,
-    brotli: 246_638,
+    // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
+    // route total: 1_051_244 / 291_270 / 247_081, plus narrow headroom.
+    raw: 1_052_800,
+    gzip: 291_800,
+    brotli: 247_600,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1663,9 +1675,11 @@ const routeBudgets = [
     // raw and gzip remain inside their existing ceilings.
     // Bumped for the four client fixes restored after the main squash.
     // Measured: 1_435_294 / 384_033 / 324_698.
-    raw: 1_437_000,
-    gzip: 384_600,
-    brotli: 325_200,
+    // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
+    // route total: 1_438_516 / 384_979 / 325_541, plus narrow headroom.
+    raw: 1_440_000,
+    gzip: 385_500,
+    brotli: 326_100,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1764,9 +1778,11 @@ const routeBudgets = [
     // nonce propagation in bootstrap-runtime.js. Measured:
     // 1_068_479 / 281_845 / 236_276.
     // Bumped for the restored client fixes. Measured: 1_069_539 / 281_902 / 236_158.
-    raw: 1_071_039,
-    gzip: 282_302,
-    brotli: 236_558,
+    // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
+    // route total: 1_072_761 / 282_848 / 237_001, plus narrow headroom.
+    raw: 1_074_300,
+    gzip: 283_400,
+    brotli: 237_600,
   },
 
 ];

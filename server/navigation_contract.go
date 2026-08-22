@@ -306,7 +306,7 @@ func ResolveNavigationLinkCurrent(href, currentPath, policy string) string {
 
 	target := navigationTargetParts(href, currentPath)
 	current := navigationTargetParts(currentPath, currentPath)
-	if !sameNavigationTarget(target, current) {
+	if !sameNavigationCurrentTarget(target, current) {
 		if ancestorNavigationTarget(target, current) {
 			return "ancestor"
 		}
@@ -402,6 +402,14 @@ func navigationBasePath(currentPath string) string {
 
 func sameNavigationTarget(left, right *navigationTarget) bool {
 	return left != nil && right != nil && left.origin == right.origin && left.path == right.path && left.search == right.search
+}
+
+// sameNavigationCurrentTarget treats a queryless authored link as naming the
+// route regardless of the current request's query. Once the author includes a
+// query, it remains an exact current-view match.
+func sameNavigationCurrentTarget(target, current *navigationTarget) bool {
+	return target != nil && current != nil && target.origin == current.origin && target.path == current.path &&
+		(target.search == "" || target.search == current.search)
 }
 
 func ancestorNavigationTarget(parent, child *navigationTarget) bool {

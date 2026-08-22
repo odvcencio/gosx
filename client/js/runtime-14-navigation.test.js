@@ -2810,6 +2810,40 @@ test("navigation runtime marks current and ancestor links and exposes navigation
   assert.equal(env.context.__gosx_page_nav.getState().currentPath, "/docs/forms");
 });
 
+test("navigation current links treat queryless routes as page-level and authored queries as exact", async () => {
+  const queryless = new FakeElement("a", null);
+  queryless.setAttribute("href", "/docs/forms");
+  queryless.setAttribute("data-gosx-link", "");
+
+  const exact = new FakeElement("a", null);
+  exact.setAttribute("href", "/docs/forms?tab=posting");
+  exact.setAttribute("data-gosx-link", "");
+
+  const otherQuery = new FakeElement("a", null);
+  otherQuery.setAttribute("href", "/docs/forms?tab=history");
+  otherQuery.setAttribute("data-gosx-link", "");
+
+  const ancestor = new FakeElement("a", null);
+  ancestor.setAttribute("href", "/docs");
+  ancestor.setAttribute("data-gosx-link", "");
+
+  const root = new FakeElement("a", null);
+  root.setAttribute("href", "/");
+  root.setAttribute("data-gosx-link", "");
+
+  const env = createContext({ elements: [queryless, exact, otherQuery, ancestor, root] });
+  env.context.location.href = "http://localhost:3000/docs/forms?tab=posting";
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(queryless.getAttribute("data-gosx-link-current"), "page");
+  assert.equal(queryless.getAttribute("aria-current"), "page");
+  assert.equal(exact.getAttribute("data-gosx-link-current"), "page");
+  assert.equal(otherQuery.getAttribute("data-gosx-link-current"), "none");
+  assert.equal(ancestor.getAttribute("data-gosx-link-current"), "ancestor");
+  assert.equal(root.getAttribute("data-gosx-link-current"), "none");
+});
+
 test("navigation runtime honors explicit link current policy", async () => {
   const link = new FakeElement("a", null);
   link.setAttribute("href", "/docs/forms");

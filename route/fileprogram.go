@@ -532,12 +532,18 @@ type fileManagedLinkPresence struct {
 func fileCurrentRequestPath(env fileRenderEnv) string {
 	pageBinding, _ := env.lookupValue("page")
 	if pageValue, ok := pageBinding.(map[string]any); ok {
+		if current := strings.TrimSpace(stringValue(pageValue["target"])); current != "" {
+			return current
+		}
 		if current := strings.TrimSpace(stringValue(pageValue["path"])); current != "" {
 			return current
 		}
 	}
 	requestBinding, _ := env.lookupValue("request")
 	if requestValue, ok := requestBinding.(map[string]any); ok {
+		if current := strings.TrimSpace(stringValue(requestValue["target"])); current != "" {
+			return current
+		}
 		if current := strings.TrimSpace(stringValue(requestValue["path"])); current != "" {
 			return current
 		}

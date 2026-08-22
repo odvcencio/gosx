@@ -184,6 +184,7 @@ func (env fileRenderEnv) flattenedValues() map[string]any {
 
 type fileRequestBindings struct {
 	requestPath   string
+	requestTarget string
 	method        string
 	requestID     string
 	query         map[string]string
@@ -317,6 +318,10 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 	}
 
 	bindings.requestPath = ctx.Request.URL.Path
+	bindings.requestTarget = bindings.requestPath
+	if ctx.Request.URL.RawQuery != "" {
+		bindings.requestTarget += "?" + ctx.Request.URL.RawQuery
+	}
 	bindings.method = ctx.Request.Method
 	bindings.requestID = serverRequestID(ctx.Request)
 	bindings.query = flattenQueryValues(ctx.Request.URL.Query())
@@ -354,11 +359,13 @@ func baseFileRenderValues(page FilePage, bindings fileRequestBindings) map[strin
 			"route":   page.RoutePath,
 			"source":  page.Source,
 			"path":    bindings.requestPath,
+			"target":  bindings.requestTarget,
 		},
 		"request": map[string]any{
 			"id":     bindings.requestID,
 			"method": bindings.method,
 			"path":   bindings.requestPath,
+			"target": bindings.requestTarget,
 		},
 	}
 }

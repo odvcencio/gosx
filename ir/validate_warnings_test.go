@@ -54,6 +54,28 @@ func Page() Node {
 	}
 }
 
+func TestValidateWarningsRecognizesDisclosureAttrs(t *testing.T) {
+	valid := []byte(`package main
+
+func Page() Node {
+	return <div>
+		<button data-gosx-disclosure-target="#panel"></button>
+		<div data-gosx-disclosure-backdrop="#panel"></div>
+		<section id="panel" data-gosx-disclosure data-gosx-disclosure-modal>
+			<button data-gosx-disclosure-close="#panel" data-gosx-disclosure-initial-focus></button>
+		</section>
+	</div>
+}
+`)
+	prog, err := parse(t, valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if warnings := ir.ValidateWarnings(prog); len(warnings) != 0 {
+		t.Fatalf("valid disclosure attrs produced warnings: %+v", warnings)
+	}
+}
+
 // TestValidateWarningsIgnoresUnrelatedDataGosxAttr proves an attribute
 // belonging to an entirely different subsystem's own contract (here,
 // scene3d) is out of scope -- it is not close to any navigation primitive,

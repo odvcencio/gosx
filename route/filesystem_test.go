@@ -340,6 +340,8 @@ func Page() Node {
 	return <nav>
 		<Link href="/docs">Docs</Link>
 		<Link href="/docs/forms">Forms</Link>
+		<Link href="/docs/forms?tab=posting">Posting</Link>
+		<Link href="/docs/forms?tab=history">History</Link>
 		<Link href="/blog">Blog</Link>
 		<Link href="/docs/api" prefetch="render">API</Link>
 	</nav>
@@ -349,7 +351,7 @@ func Page() Node {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/docs/forms", nil)
+	req := httptest.NewRequest(http.MethodGet, "/docs/forms?tab=posting", nil)
 	ctx := &RouteContext{Request: req}
 	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/docs/forms"})
 	if err != nil {
@@ -360,6 +362,8 @@ func Page() Node {
 	for _, snippet := range []string{
 		`href="/docs" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="ancestor" data-gosx-prefetch-state="idle"`,
 		`href="/docs/forms" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
+		`href="/docs/forms?tab=posting" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
+		`href="/docs/forms?tab=history" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
 		`href="/blog" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
 		`href="/docs/api" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="none" data-gosx-prefetch-state="idle" data-gosx-prefetch="render"`,
 	} {

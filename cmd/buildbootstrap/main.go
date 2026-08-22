@@ -88,6 +88,7 @@ const (
 	scene3DCommandBridgeFile = "../runtime/scene3d/command-bridge.ts"
 	controllersFile          = "../runtime/host/controllers.ts"
 	hostCompatibilityFile    = "../runtime/host/compatibility.ts"
+	disclosureFile           = "../runtime/host/disclosure.ts"
 	runtimeContractFile      = "../runtime/generated/runtime-abi.ts"
 	runtimeABISupportFile    = "../runtime/wasm/abi.ts"
 	runtimeMailboxFile       = "../runtime/wasm/mailbox.ts"
@@ -128,6 +129,7 @@ var outputs = []output{
 			sourceFile(runtimeABISupportFile),
 			sourceFile(runtimeMailboxFile),
 			sourceFile(runtimeLoaderFile),
+			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile(scene3DCommandBridgeFile),
 			sourceFile("../runtime/host/regions.ts"),
@@ -228,6 +230,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/04-telemetry.ts"),
 			sourceFile("bootstrap-src/05-document-env.ts"),
 			sourceFile(hostCompatibilityFile),
+			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile("../runtime/host/regions.ts"),
 			sourceFile("../runtime/host/facade.ts"),
@@ -248,6 +251,7 @@ var outputs = []output{
 			sourceFile(runtimeABISupportFile),
 			sourceFile(runtimeMailboxFile),
 			sourceFile(runtimeLoaderFile),
+			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile("../runtime/host/regions.ts"),
 			sourceFile("../runtime/host/facade.ts"),
@@ -571,6 +575,7 @@ var inlineAssets = []output{
 		name: "../runtime/host/navigation-runtime.min.js",
 		sources: []source{
 			sourceFile(hostCompatibilityFile),
+			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/navigation.ts"),
 		},
 	},

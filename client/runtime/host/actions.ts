@@ -34,11 +34,12 @@
 //   data-gosx-toggle-target="#id"     toggle an attribute on another element.
 //   data-gosx-toggle-attribute="open" attribute name (defaults to data-gosx-open).
 //   data-gosx-toggle-close="#id"      remove the configured attribute.
-//   data-gosx-disclosure-target="#id" open an accessible modal/disclosure.
-//   data-gosx-disclosure-close="#id"  close it and restore trigger focus.
 //   data-gosx-bind-source="selector"   project attributes from a selected source
 //                                     into descendants using data-gosx-bind-text
 //                                     and data-gosx-bind-attr="to:from".
+//
+// disclosure.ts exclusively owns data-gosx-disclosure-* and publishes its
+// authority as window.__gosx.disclosure.
 //
 // Discrete actions reuse existing idempotent HTTP endpoints whose results the
 // server re-broadcasts over the hub, so bound islands re-render with no response
@@ -416,65 +417,6 @@
     return true;
   }
 
-  function disclosurePanel(trigger) {
-    var selector = trigger && trigger.getAttribute && (
-      trigger.getAttribute("data-gosx-disclosure-target") ||
-      trigger.getAttribute("data-gosx-disclosure-close") ||
-      trigger.getAttribute("data-gosx-disclosure-backdrop")
-    );
-    return targetFor(selector);
-  }
-
-  function disclosureSelector(panel) {
-    if (!panel) return "";
-    var id = panel.getAttribute && panel.getAttribute("id");
-    return id ? "#" + id : "";
-  }
-
-  function disclosureTrigger(panel) {
-    var selector = disclosureSelector(panel);
-    return selector ? targetFor('[data-gosx-disclosure-target="' + selector + '"]') : null;
-  }
-
-  function setDisclosureHidden(panel, hidden) {
-    if (!panel) return;
-    panel.hidden = hidden;
-    if (hidden && typeof panel.setAttribute === "function") panel.setAttribute("hidden", "");
-    else if (!hidden && typeof panel.removeAttribute === "function") panel.removeAttribute("hidden");
-    var selector = disclosureSelector(panel);
-    if (!selector || typeof document.querySelectorAll !== "function") return;
-    document.querySelectorAll('[data-gosx-disclosure-backdrop="' + selector + '"]').forEach(function (backdrop) {
-      backdrop.hidden = hidden;
-      if (hidden) backdrop.setAttribute("hidden", "");
-      else backdrop.removeAttribute("hidden");
-    });
-  }
-
-  function openDisclosure(trigger) {
-    var panel = disclosurePanel(trigger);
-    if (!panel) return false;
-    panel.__gosxPreviousFocus = document.activeElement || trigger;
-    setDisclosureHidden(panel, false);
-    trigger.setAttribute("aria-expanded", "true");
-    var focusTarget = panel.querySelector && panel.querySelector("[data-gosx-disclosure-initial-focus]");
-    if (!focusTarget && panel.querySelector) {
-      focusTarget = panel.querySelector('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
-    }
-    if (focusTarget && typeof focusTarget.focus === "function") focusTarget.focus();
-    return true;
-  }
-
-  function closeDisclosure(panel) {
-    if (!panel) return false;
-    setDisclosureHidden(panel, true);
-    var trigger = disclosureTrigger(panel);
-    if (trigger) trigger.setAttribute("aria-expanded", "false");
-    var previous = panel.__gosxPreviousFocus || trigger;
-    if (previous && typeof previous.focus === "function") previous.focus();
-    panel.__gosxPreviousFocus = null;
-    return true;
-  }
-
   function bindAttribute(target, spec, source) {
     String(spec || "").split(";").forEach(function (mapping) {
       var split = mapping.indexOf(":");
@@ -518,18 +460,6 @@
     function (e) {
       var t = e.target;
       if (!t || !t.closest) return;
-      var disclosureClose = t.closest("[data-gosx-disclosure-close], [data-gosx-disclosure-backdrop]");
-      if (disclosureClose) {
-        if (disclosureClose.tagName !== "A" || !disclosureClose.getAttribute("href")) e.preventDefault();
-        closeDisclosure(disclosurePanel(disclosureClose));
-        return;
-      }
-      var disclosureOpen = t.closest("[data-gosx-disclosure-target]");
-      if (disclosureOpen) {
-        e.preventDefault();
-        openDisclosure(disclosureOpen);
-        return;
-      }
       var toggleClose = t.closest("[data-gosx-toggle-close]");
       if (toggleClose) {
         toggleAttribute(toggleClose, true);
@@ -583,32 +513,12 @@
 
   document.addEventListener("keydown", function (e) {
     if (!e) return;
-    var panel = document.activeElement && document.activeElement.closest
-      ? document.activeElement.closest("[data-gosx-disclosure]")
-      : null;
     if (e.key === "Escape") {
-      if (panel) {
-        e.preventDefault();
-        closeDisclosure(panel);
-      }
       if (typeof document.querySelectorAll === "function") {
         document.querySelectorAll("[data-gosx-toggle-target][aria-expanded='true']").forEach(function (trigger) {
           toggleAttribute(trigger, true);
         });
       }
-      return;
-    }
-    if (e.key !== "Tab" || !panel || !panel.querySelectorAll) return;
-    var focusable = panel.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
-    if (!focusable.length) return;
-    var first = focusable[0];
-    var last = focusable[focusable.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
     }
   }, true);
 
@@ -638,8 +548,6 @@
     applyResult: applyActionResult,
     dispatch: dispatchActionEvent,
     refreshBindings: refreshBindings,
-    openDisclosure: openDisclosure,
-    closeDisclosure: closeDisclosure,
   };
   window.__gosx.actions = Object.assign(window.__gosx.actions || {}, actionsAPI);
   gosxHost.actions = window.__gosx.actions;

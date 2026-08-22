@@ -789,6 +789,14 @@
     return !!left && !!right && left.origin === right.origin && left.path === right.path && left.search === right.search;
   }
 
+  // A queryless managed link names the page route, not only the empty-query
+  // representation of that route. An authored query remains exact so tabs,
+  // filters, and other query-addressed views do not all claim aria-current.
+  function sameManagedCurrentURL(target, current) {
+    return !!target && !!current && target.origin === current.origin &&
+      target.path === current.path && (target.search === "" || target.search === current.search);
+  }
+
   function navigationUUID() {
     const cryptoRef = window.crypto || null;
     if (cryptoRef && typeof cryptoRef.randomUUID === "function") {
@@ -1057,7 +1065,7 @@
     if (!target || !current || target.origin !== current.origin) {
       return "none";
     }
-    if (sameNavigationURL(target, current)) {
+    if (sameManagedCurrentURL(target, current)) {
       return "page";
     }
     if (ancestorNavigationURL(target, current)) {

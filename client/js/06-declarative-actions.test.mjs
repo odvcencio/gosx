@@ -266,7 +266,8 @@ test("declarative actions publish a core API while retaining the delegated trans
   assert.equal(typeof ctx.window.__gosx.actions.parse, "function");
   assert.equal(typeof ctx.window.__gosx.actions.applyResult, "function");
   assert.equal(typeof ctx.window.__gosx.actions.refreshBindings, "function");
-  assert.equal(typeof ctx.window.__gosx.actions.openDisclosure, "function");
+  assert.equal(ctx.window.__gosx.actions.openDisclosure, undefined);
+  assert.equal(ctx.window.__gosx.actions.closeDisclosure, undefined);
   assert.equal(ctx.window.__gosx.actions.parse("PUT /notes", "POST").method, "PUT");
   assert.equal(ctx.window.__gosx.actions.parse("PUT /notes", "POST").url, "/notes");
   assert.equal(ctx.window.__gosx_declarative_actions, ctx.window.__gosx.actions);
@@ -302,32 +303,6 @@ test("navigation context binding projects selected source data declaratively", (
   ctx.window.__gosx.actions.refreshBindings();
   assert.equal(root.getAttribute("data-active"), "water");
   assert.equal(title.textContent, "Water Lab");
-});
-
-test("declarative disclosure manages visibility, aria, and focus restoration", () => {
-  const close = makeEl({ "data-gosx-disclosure-initial-focus": "" }, { tag: "button" });
-  const panel = makeEl({ id: "details", hidden: "" }, { querySelector: () => close });
-  panel.hidden = true;
-  const trigger = makeEl({ "data-gosx-disclosure-target": "#details", "aria-expanded": "false" }, { tag: "button" });
-  const backdrop = makeEl({ "data-gosx-disclosure-backdrop": "#details", hidden: "" });
-  backdrop.hidden = true;
-  const { ctx } = runModule({
-    activeElement: trigger,
-    queryMap: {
-      "#details": panel,
-      '[data-gosx-disclosure-target="#details"]': trigger,
-    },
-    queryAll: { '[data-gosx-disclosure-backdrop="#details"]': [backdrop] },
-  });
-  ctx.window.__gosx.actions.openDisclosure(trigger);
-  assert.equal(panel.hidden, false);
-  assert.equal(backdrop.hidden, false);
-  assert.equal(trigger.getAttribute("aria-expanded"), "true");
-  assert.equal(close.focused, true);
-  ctx.window.__gosx.actions.closeDisclosure(panel);
-  assert.equal(panel.hidden, true);
-  assert.equal(trigger.getAttribute("aria-expanded"), "false");
-  assert.equal(trigger.focused, true);
 });
 
 test("data-gosx-action button POSTs, disables during flight, re-enables on settle", async () => {

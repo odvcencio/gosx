@@ -38,6 +38,16 @@ const (
 	ActionEventAttr    = "data-gosx-action-event"
 	ActionSignalAttr   = "data-gosx-action-signal"
 	ActionTargetAttr   = "data-gosx-action-target"
+
+	// Disclosure attributes are owned by the framework's accessible browser
+	// substrate. They work with either EnableNavigation's inline runtime or a
+	// fetched bootstrap bundle; loading both still installs one authority.
+	DisclosureAttr             = "data-gosx-disclosure"
+	DisclosureTargetAttr       = "data-gosx-disclosure-target"
+	DisclosureCloseAttr        = "data-gosx-disclosure-close"
+	DisclosureBackdropAttr     = "data-gosx-disclosure-backdrop"
+	DisclosureInitialFocusAttr = "data-gosx-disclosure-initial-focus"
+	DisclosureModalAttr        = "data-gosx-disclosure-modal"
 	// RegionAttr, on a container, marks it a server-fragment region
 	// (gosx#227): the bootstrap runtime fetches RegionURLAttr and swaps the
 	// response in as that container's new children on a signal change

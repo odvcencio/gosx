@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.52.0 (2026-08-22)
+
+### Added: accessible disclosure is framework substrate
+
+- Disclosure and modal behavior now ships in both the lean
+  `App.EnableNavigation()` payload and fetched bootstrap bundles, guarded by
+  one idempotent `window.__gosx.disclosure` authority. Loading both paths does
+  not install duplicate document listeners.
+- `data-gosx-disclosure-*` owns topmost Escape handling independent of current
+  focus, initial/first/panel focus fallback, a wrapping Tab trap, connected
+  focus return, and exact restoration of background `inert` state for modal
+  panels. Soft navigation closes and cleans active disclosures without
+  returning focus into disconnected markup.
+- Core attribute constants and IR typo recognition cover the disclosure,
+  target, close, backdrop, initial-focus, and modal contracts.
+
+### Fixed: route links remain current while the query changes
+
+- A queryless managed link now marks its same-path route current even when the
+  current URL has a query string. An explicitly authored query remains exact,
+  while ancestor and root behavior is unchanged. Client refreshes and
+  server-rendered file routes use the same rule.
+
 ## v0.51.1 (2026-08-21)
 
 ### Fixed: a version-pinned golden broke every release

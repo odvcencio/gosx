@@ -1866,7 +1866,11 @@ test("bootstrap batches keyboard and pointer input for capable engines", async (
   assert.equal(lastBatch["$input.pointer.buttons"], 0);
 
   env.context.__gosx_dispose_engine("gosx-engine-input");
-  assert.equal(env.document.eventListeners.get("keydown").length, 1, "framework declarative-action listener remains shared");
+  assert.equal(
+    env.document.eventListeners.get("keydown").length,
+    2,
+    "the disclosure and declarative-action authorities each retain one shared listener",
+  );
   assert.equal(env.document.eventListeners.get("pointermove").length, 0);
 });
 

@@ -2749,6 +2749,25 @@ func TestHandleAPIAppliesRouteMiddleware(t *testing.T) {
 	}
 }
 
+func TestResolveNavigationLinkCurrentQuerySemantics(t *testing.T) {
+	for _, test := range []struct {
+		name, href, current, want string
+	}{
+		{name: "queryless same path", href: "/docs/forms", current: "/docs/forms?tab=posting", want: "page"},
+		{name: "authored query exact", href: "/docs/forms?tab=posting", current: "/docs/forms?tab=posting", want: "page"},
+		{name: "authored query differs", href: "/docs/forms?tab=history", current: "/docs/forms?tab=posting", want: "none"},
+		{name: "path ancestor ignores current query", href: "/docs", current: "/docs/forms?tab=posting", want: "ancestor"},
+		{name: "root is not ancestor", href: "/", current: "/docs/forms?tab=posting", want: "none"},
+		{name: "queryless root same path", href: "/", current: "/?tab=posting", want: "page"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ResolveNavigationLinkCurrent(test.href, test.current, "auto"); got != test.want {
+				t.Fatalf("ResolveNavigationLinkCurrent(%q, %q) = %q, want %q", test.href, test.current, got, test.want)
+			}
+		})
+	}
+}
+
 func TestEnableNavigationInjectsRuntimeIntoDefaultDocument(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
