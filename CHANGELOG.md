@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.53.1 (2026-08-22)
+
 ### Fixed: declarative regions retain the last good DOM on HTTP errors
 
 - A `data-gosx-region` refresh that receives a 4xx or 5xx response now moves
