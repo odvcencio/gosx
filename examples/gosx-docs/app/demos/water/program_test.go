@@ -257,7 +257,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read managed water controls runtime: %v", err)
 	}
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
+	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/runtime/scene3d/webgpu.ts"))
 	if err != nil {
 		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
 	}
@@ -799,8 +799,9 @@ func TestWaterDemoControlsContract(t *testing.T) {
 }
 
 // TestWaterObjectShadowSignatureExcludesCamera is the M4 (water-parity-campaign)
-// regression lock: sceneWaterObjectRenderSignature's two call sites in
-// 16a-scene-webgpu.js MUST disagree on includeCamera. The object-shadow RTT
+// regression lock: sceneWaterObjectRenderSignature's two call sites in the
+// authored WebGPU runtime (client/runtime/scene3d/webgpu.ts) MUST disagree on
+// includeCamera. The object-shadow RTT
 // (renderWaterObjectShadowPass / renderWaterObjectMeshShadowPass) is a
 // light-space projection -- light direction + object transform + pool extents
 // only, see sceneWaterObjectMeshShadowUniformData, which packs no eye/view/
@@ -828,9 +829,12 @@ func TestWaterObjectShadowSignatureExcludesCamera(t *testing.T) {
 	}
 }
 
-// readWaterWebGPURuntimeSource reads 16a-scene-webgpu.js, the shared source
+// readWaterWebGPURuntimeSource reads client/runtime/scene3d/webgpu.ts, the
+// shared authored Scene3D WebGPU runtime source
 // TestWaterObjectShadowSignatureExcludesCamera / TestWaterAtRestGatingEmitsStatsAttr
-// grep for their milestone regression assertions.
+// grep for their milestone regression assertions. The browser artifact is the
+// compiled bootstrap-feature-scene3d-webgpu.js bundle; these locks must track
+// the authored TypeScript, not the emitted output.
 func readWaterWebGPURuntimeSource(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
@@ -838,7 +842,7 @@ func readWaterWebGPURuntimeSource(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	dir := filepath.Dir(file)
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
+	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/runtime/scene3d/webgpu.ts"))
 	if err != nil {
 		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
 	}
