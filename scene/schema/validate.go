@@ -97,6 +97,12 @@ func validateDocument(report *Report, doc Document, opts Options) {
 
 	ids := map[string]string{}
 	targetIDs := map[string]struct{}{}
+	// animatableIDs collects the IDs a graph AnimationClip channel may target:
+	// every renderable object-like record plus points layers. Channel TargetID
+	// values are validated against this set; TargetNode stays a non-negative
+	// index into the AUTHORED node list, which the IR does not ship, so no
+	// range check against flattened record counts exists here.
+	animatableIDs := map[string]struct{}{}
 	addID := func(id, path string, required bool) {
 		id = strings.TrimSpace(id)
 		if id == "" {
@@ -126,6 +132,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		path := fmt.Sprintf("objects[%d]", i)
 		addID(object.ID, path+".id", object.Pickable != nil && *object.Pickable)
 		addTargetID(object.ID)
+		animatableIDs[object.ID] = struct{}{}
 		if strings.TrimSpace(object.Kind) == "" {
 			report.add(Error, "scene.object.kind_missing", "Object scene record requires kind", path+".kind", object.ID, nil)
 		}
@@ -138,6 +145,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		path := fmt.Sprintf("models[%d]", i)
 		addID(model.ID, path+".id", model.Pickable != nil && *model.Pickable)
 		addTargetID(model.ID)
+		animatableIDs[model.ID] = struct{}{}
 		validateObject(report, model.ObjectIR, path)
 		if !modelHasValidAssetSource(model) {
 			report.add(Error, "scene.asset.missing", "Model scene record requires src", path+".src", model.ID, nil)
@@ -147,12 +155,14 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	for i, points := range doc.Points {
 		path := fmt.Sprintf("points[%d]", i)
 		addID(points.ID, path+".id", true)
+		animatableIDs[points.ID] = struct{}{}
 		validatePoints(report, points, path)
 	}
 	for i, mesh := range doc.InstancedMeshes {
 		path := fmt.Sprintf("instancedMeshes[%d]", i)
 		addID(mesh.ID, path+".id", true)
 		addTargetID(mesh.ID)
+		animatableIDs[mesh.ID] = struct{}{}
 		validateGeometryKind(report, mesh.Kind, mesh.ID, path)
 		validateMaterialKind(report, mesh.MaterialKind, mesh.ID, path, opts.Strict)
 		validateBlendMode(report, mesh.BlendMode, mesh.ID, path)
@@ -162,6 +172,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		path := fmt.Sprintf("instancedGLBMeshes[%d]", i)
 		addID(mesh.ID, path+".id", true)
 		addTargetID(mesh.ID)
+		animatableIDs[mesh.ID] = struct{}{}
 		if strings.TrimSpace(mesh.Src) == "" {
 			report.add(Error, "scene.asset.missing", "Instanced GLB mesh requires src", path+".src", mesh.ID, nil)
 		}
@@ -178,11 +189,13 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	for i, particles := range doc.ComputeParticles {
 		path := fmt.Sprintf("computeParticles[%d]", i)
 		addID(particles.ID, path+".id", true)
+		animatableIDs[particles.ID] = struct{}{}
 		validateComputeParticles(report, particles, path)
 	}
 	for i, water := range doc.WaterSystems {
 		path := fmt.Sprintf("waterSystems[%d]", i)
 		addID(water.ID, path+".id", true)
+		animatableIDs[water.ID] = struct{}{}
 		validateWaterSystem(report, water, path)
 	}
 	for i, label := range doc.Labels {
@@ -211,7 +224,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	for i, animation := range doc.Animations {
 		path := fmt.Sprintf("animations[%d]", i)
 		addID(animation.Name, path+".name", true)
-		validateAnimation(report, animation, path, len(doc.Objects)+len(doc.Models)+len(doc.InstancedMeshes)+len(doc.InstancedGLBMeshes))
+		validateAnimation(report, animation, path, animatableIDs)
 	}
 	for i, raw := range doc.PostEffects {
 		validatePostEffect(report, raw, fmt.Sprintf("postEffects[%d]", i))
@@ -776,21 +789,28 @@ func validateLight(report *Report, light scene.LightIR, path string) {
 	validateLive(report, light.ID, path, light.Live)
 }
 
-func validateAnimation(report *Report, animation scene.AnimationClipIR, path string, nodeCount int) {
+func validateAnimation(report *Report, animation scene.AnimationClipIR, path string, animatableIDs map[string]struct{}) {
 	validateNonNegativeFloat(report, animation.Name, path+".duration", animation.Duration)
 	if len(animation.Channels) == 0 {
 		report.add(Error, "scene.animation.channels_missing", "Animation clip requires at least one channel", path+".channels", animation.Name, nil)
 	}
 	for i, channel := range animation.Channels {
-		validateAnimationChannel(report, animation.Name, channel, fmt.Sprintf("%s.channels[%d]", path, i), nodeCount)
+		validateAnimationChannel(report, animation.Name, channel, fmt.Sprintf("%s.channels[%d]", path, i), animatableIDs)
 	}
 }
 
-func validateAnimationChannel(report *Report, id string, channel scene.AnimationChannelIR, path string, nodeCount int) {
+func validateAnimationChannel(report *Report, id string, channel scene.AnimationChannelIR, path string, animatableIDs map[string]struct{}) {
 	if channel.TargetNode < 0 {
 		report.add(Error, "scene.animation.invalid_target", "Animation targetNode must not be negative", path+".targetNode", id, nil)
-	} else if channel.TargetNode >= nodeCount {
-		report.add(Error, "scene.animation.invalid_target", "Animation targetNode is outside the known scene node range", path+".targetNode", id, map[string]any{"targetNode": channel.TargetNode, "nodeCount": nodeCount})
+	}
+	// TargetNode indexes the AUTHORED node list (which interleaves lights,
+	// points, clips, and helpers). The IR does not ship that list, so no
+	// range check against flattened record counts exists here — consumers
+	// resolve targets through the lowering-time TargetID instead.
+	if targetID := strings.TrimSpace(channel.TargetID); targetID != "" {
+		if _, ok := animatableIDs[targetID]; !ok {
+			report.add(Error, "scene.animation.unknown_target", "Animation targetID does not match any known scene record", path+".targetID", id, map[string]any{"targetID": targetID})
+		}
 	}
 	if strings.TrimSpace(channel.Property) == "" {
 		report.add(Error, "scene.animation.property_missing", "Animation channel requires property", path+".property", id, nil)
