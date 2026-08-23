@@ -27,6 +27,29 @@ func Roster(props RosterProps) Node {
 `)
 }
 
+func TestLowerValidatesTypedLegacyEachDefaultItemBinding(t *testing.T) {
+	_, err := parse(t, []byte(`package app
+
+type Player struct {
+	Name string
+}
+
+type RosterProps struct {
+	Players []Player
+}
+
+func Roster(props RosterProps) Node {
+	return <Each of={props.Players}><span>{item.name}</span></Each>
+}
+`))
+	if err == nil {
+		t.Fatal("Lower accepted an invalid selector through Each's default item binding")
+	}
+	if want := "typed legacy component Roster cannot resolve item.name"; !strings.Contains(err.Error(), want) {
+		t.Fatalf("Lower error = %v, want substring %q", err, want)
+	}
+}
+
 func TestLowerValidatesTypedLegacyEachFilterFormatting(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -159,6 +182,33 @@ func Roster(props RosterProps) Node {
 	return <section>
 		<Each of={props.Groups} as="item">
 			<Each of={item.Players} as="item">
+				<span>{item.Name}</span>
+			</Each>
+		</Each>
+	</section>
+}
+`)
+}
+
+func TestLowerKeepsDynamicNestedEachDefaultItemBindingOpaque(t *testing.T) {
+	lowerTypedLegacySource(t, `package app
+
+type Player struct {
+	Name string
+}
+
+type Group struct {
+	Players []*Player
+}
+
+type RosterProps struct {
+	Groups []Group
+}
+
+func Roster(props RosterProps) Node {
+	return <section>
+		<Each of={props.Groups} as="item">
+			<Each of={item.Players}>
 				<span>{item.Name}</span>
 			</Each>
 		</Each>

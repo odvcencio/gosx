@@ -133,7 +133,10 @@ func (l *lowerer) typedLegacyEachShape(node *Node) (itemName, indexName, ofExpr 
 			}
 		}
 	}
-	if ofCount != 1 || asCount != 1 || indexCount > 1 || ofExpr == "" || itemName == "" {
+	if asCount == 0 {
+		itemName = "item"
+	}
+	if ofCount != 1 || asCount > 1 || indexCount > 1 || ofExpr == "" || itemName == "" {
 		return "", "", "", false
 	}
 	return itemName, indexName, ofExpr, true
