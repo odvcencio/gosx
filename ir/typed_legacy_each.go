@@ -4,10 +4,48 @@ package ir
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
 	"strings"
 
 	"m31labs.dev/gosx/internal/strictcomponent"
 )
+
+// typedLegacyEachScope is deliberately separate from eachScope: strict loops
+// are always schema-backed, while a legacy loop can bind a value whose
+// element type the compiler cannot prove. opaque levels still shadow outer
+// bindings, matching the runtime's lexical scope, but their selectors remain
+// under the legacy dynamic contract.
+type typedLegacyEachScope struct {
+	parent    *typedLegacyEachScope
+	itemName  string
+	itemType  string
+	indexName string
+	opaque    bool
+}
+
+func (s *typedLegacyEachScope) strictScope() strictcomponent.Scope {
+	var items, indices []string
+	for cur := s; cur != nil; cur = cur.parent {
+		items = append(items, cur.itemName)
+		if cur.indexName != "" {
+			indices = append(indices, cur.indexName)
+		}
+	}
+	return strictcomponent.Scope{Items: items, Indices: indices}
+}
+
+func (s *typedLegacyEachScope) resolve(name string) (itemType string, isIndex, opaque, ok bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.itemName == name {
+			return cur.itemType, false, cur.opaque, true
+		}
+		if cur.indexName != "" && cur.indexName == name {
+			return "", true, cur.opaque, true
+		}
+	}
+	return "", false, false, false
+}
 
 // validateTypedLegacyEachBindings applies the same schema-aware binding
 // resolution used by strict components to the one legacy shape whose element
@@ -23,8 +61,8 @@ func (l *lowerer) validateTypedLegacyEachBindings(root NodeID, componentName, pr
 	_, strictEachShadowed := l.strictNames["Each"]
 	_, legacyEachShadowed := l.legacyNames["Each"]
 	eachShadowed := strictEachShadowed || legacyEachShadowed
-	var visit func(NodeID, *eachScope)
-	visit = func(id NodeID, scope *eachScope) {
+	var visit func(NodeID, *typedLegacyEachScope)
+	visit = func(id NodeID, scope *typedLegacyEachScope) {
 		if seen[id] || int(id) >= len(l.prog.Nodes) {
 			return
 		}
@@ -35,19 +73,17 @@ func (l *lowerer) validateTypedLegacyEachBindings(root NodeID, componentName, pr
 			itemName, indexName, ofExpr, shapeOK := l.typedLegacyEachShape(node)
 			if shapeOK {
 				elem, sourceOK := l.resolveTypedLegacyEachSource(node.Span, componentName, propsType, ofExpr, scope)
-				if sourceOK {
-					itemScope := &eachScope{
-						parent:    scope,
-						itemName:  itemName,
-						itemType:  elem,
-						indexName: indexName,
-						reads:     make(map[string]string),
-					}
-					for _, child := range node.Children {
-						visit(child, itemScope)
-					}
-					return
+				itemScope := &typedLegacyEachScope{
+					parent:    scope,
+					itemName:  itemName,
+					itemType:  elem,
+					indexName: indexName,
+					opaque:    !sourceOK,
 				}
+				for _, child := range node.Children {
+					visit(child, itemScope)
+				}
+				return
 			}
 		}
 		if node.Kind == NodeExpr {
@@ -103,53 +139,29 @@ func (l *lowerer) typedLegacyEachShape(node *Node) (itemName, indexName, ofExpr 
 	return itemName, indexName, ofExpr, true
 }
 
-// resolveTypedLegacyEachSource resolves the receiver path of a typed legacy
-// loop source. Method calls in the source (for example
-// props.Players.filter(...)) do not change the element type for the built-in
-// filtering idiom, so the maximal props/binding-rooted selector is enough to
-// prove the []T receiver. map-like transforms are intentionally left dynamic:
-// their output element type cannot be recovered from the renderer schema.
-func (l *lowerer) resolveTypedLegacyEachSource(span Span, componentName, propsType, source string, scope *eachScope) (string, bool) {
-	if strings.Contains(source, ".map(") || strings.Contains(source, ".flatMap(") {
+// resolveTypedLegacyEachSource resolves only the structural receiver of a
+// collection expression. In particular, filter predicate reads are never
+// candidates for the collection schema. Parentheses, comments, and spacing
+// around a filter call do not affect the Go AST; map-like transforms remain
+// opaque because they can change the output element type.
+func (l *lowerer) resolveTypedLegacyEachSource(span Span, componentName, propsType, source string, scope *typedLegacyEachScope) (string, bool) {
+	root, path, ok := typedLegacyCollectionSelector(source)
+	if !ok || len(path) == 0 {
 		return "", false
-	}
-	rooted := strictcomponent.ServerExpressionRootedPaths(source, scope.strictScope())
-	var candidate *strictcomponent.RootedPath
-	for i := range rooted {
-		if rooted[i].Root == "props" {
-			candidate = &rooted[i]
-			break
-		}
-		if candidate == nil && scope != nil {
-			if _, _, found := scope.resolve(rooted[i].Root); found {
-				candidate = &rooted[i]
-			}
-		}
-	}
-	if candidate == nil || len(candidate.Path) == 0 {
-		return "", false
-	}
-	path := candidate.Path
-	// ServerExpressionRootedPaths intentionally reports the maximal selector
-	// chain, so a filter receiver appears as props.Players.filter. The method
-	// is a collection operation, not a struct field; remove only this known
-	// non-transforming suffix before walking the declared schema.
-	if len(path) > 1 && strings.Contains(source, ".filter(") && path[len(path)-1] == "filter" {
-		path = path[:len(path)-1]
 	}
 	rootType := ""
-	if candidate.Root == "props" {
+	if root == "props" {
 		rootType = propsBaseType(propsType)
 	} else if scope != nil {
-		var isIndex, found bool
-		rootType, isIndex, found = scope.resolve(candidate.Root)
-		if !found || isIndex {
+		var isIndex, opaque, found bool
+		rootType, isIndex, opaque, found = scope.resolve(root)
+		if !found || isIndex || opaque {
 			return "", false
 		}
 	} else {
 		return "", false
 	}
-	res := l.walkStrictHops(candidate.Root, rootType, path)
+	res := l.walkStrictHops(root, rootType, path)
 	if res.failKind != strictHopOK {
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
@@ -175,7 +187,60 @@ func (l *lowerer) resolveTypedLegacyEachSource(span Span, componentName, propsTy
 	return elem, true
 }
 
-func (l *lowerer) validateTypedLegacyBindingExpressions(span Span, source, componentName string, scope *eachScope) {
+func typedLegacyCollectionSelector(source string) (root string, path []string, ok bool) {
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return "", nil, false
+	}
+	expr = typedLegacyUnwrapParens(expr)
+	for {
+		call, isCall := expr.(*ast.CallExpr)
+		if !isCall {
+			break
+		}
+		fun := typedLegacyUnwrapParens(call.Fun)
+		sel, isSelector := fun.(*ast.SelectorExpr)
+		if !isSelector || sel.Sel == nil {
+			return "", nil, false
+		}
+		switch sel.Sel.Name {
+		case "filter":
+			expr = typedLegacyUnwrapParens(sel.X)
+		case "map", "flatMap":
+			return "", nil, false
+		default:
+			return "", nil, false
+		}
+	}
+	return typedLegacySelectorPath(expr)
+}
+
+func typedLegacySelectorPath(expr ast.Expr) (root string, path []string, ok bool) {
+	switch node := typedLegacyUnwrapParens(expr).(type) {
+	case *ast.Ident:
+		return node.Name, nil, true
+	case *ast.SelectorExpr:
+		root, path, ok = typedLegacySelectorPath(node.X)
+		if !ok || node.Sel == nil {
+			return "", nil, false
+		}
+		return root, append(path, node.Sel.Name), true
+	default:
+		return "", nil, false
+	}
+}
+
+func typedLegacyUnwrapParens(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
+func (l *lowerer) validateTypedLegacyBindingExpressions(span Span, source, componentName string, scope *typedLegacyEachScope) {
 	for _, rooted := range strictcomponent.ServerExpressionRootedPaths(source, scope.strictScope()) {
 		if rooted.Root == "props" {
 			continue
@@ -184,12 +249,15 @@ func (l *lowerer) validateTypedLegacyBindingExpressions(span Span, source, compo
 	}
 }
 
-func (l *lowerer) validateTypedLegacyBindingRead(span Span, componentName string, scope *eachScope, root string, path []string) {
+func (l *lowerer) validateTypedLegacyBindingRead(span Span, componentName string, scope *typedLegacyEachScope, root string, path []string) {
 	if scope == nil {
 		return
 	}
-	itemType, isIndex, found := scope.resolve(root)
+	itemType, isIndex, opaque, found := scope.resolve(root)
 	if !found {
+		return
+	}
+	if opaque {
 		return
 	}
 	if isIndex {
