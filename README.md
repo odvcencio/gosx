@@ -220,6 +220,79 @@ func main() {
 }
 ```
 
+### Managed POST actions
+
+Managed actions use a deliberate two-phase lifecycle: register every named
+action, check/build the route tree, then compose it into the application. The
+complete executable shape is documented in
+[`docs/managed-actions.md`](docs/managed-actions.md); the runnable example
+below includes both phases and every executable error boundary:
+
+```go
+package main
+
+import (
+	"log"
+	"net/http"
+
+	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/session"
+)
+
+func build() (http.Handler, error) {
+	router := route.NewRouter() // phase 1: registration
+	if err := router.RegisterManagedPOST("subscribe", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		if ctx.Form.Value("email") == "" {
+			return action.Result{}, action.Validation("Email is required.", map[string]string{"email": "Required."})
+		}
+		if err := session.AddFlash(ctx.Request, "notice", "Subscribed."); err != nil {
+			return action.Result{}, err
+		}
+		return action.Result{OK: true, Redirect: "/"}, nil
+	}); err != nil {
+		return nil, err
+	}
+	compiled, err := router.BuildChecked() // no registrations after this boundary
+	if err != nil {
+		return nil, err
+	}
+
+	// phase 2: compose the checked tree with session/CSRF middleware
+	sessions, err := session.New("replace-this-secret", session.Options{AllowInsecure: true})
+	if err != nil {
+		return nil, err
+	}
+	app := server.New()
+	app.Use(func(next http.Handler) http.Handler { return sessions.Middleware(sessions.Protect(next)) })
+	app.Mount("/", compiled)
+	return app.Build(), nil
+}
+
+func main() {
+	handler, err := build()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(http.ListenAndServe(":8080", handler))
+}
+```
+
+Action names match `[A-Za-z][A-Za-z0-9_-]{0,63}` by byte length. Use
+`action.ActionPath(name)` when rendering a form; invalid names return an empty
+path and cannot produce a route that registration would reject. Native forms
+must include an escaped hidden `csrf_token` from the actual request's
+`session.Token(ctx.Request)`. Native POST-redirect-GET does not automatically
+rebind submitted values; use explicit server-side state or the enhanced
+browser projection when that is the intended UX. Enhanced requests may send
+that same request token in `X-CSRF-Token` (or the configured header). Directly
+mounted managed routers are frozen at `App.Build`,
+and the dispatcher and CSRF capability check retain the same immutable mount
+selection. See [`docs/managed-actions.md`](docs/managed-actions.md) for
+budgets, upload-reader lifetime, error/result precedence, locale paths, and
+the full test contract.
+
 ## File-Based Routing
 
 Routes are discovered from the `app/` directory:
@@ -261,9 +334,8 @@ if err := route.RegisterFileModuleHere(route.FileModuleOptions{
         post := data.(*Post)
         return server.Metadata{Title: post.Title, Description: post.Summary}, nil
     },
-    Actions: route.FileActions{
-        "comment": handleComment,
-    },
+    // Register managed POST actions on the owning router before Build:
+    // router.RegisterManagedPOST("comment", action.Config{}, handleComment),
 }); err != nil {
     log.Fatal(err)
 }
@@ -314,7 +386,7 @@ count    // local to the declaring island
 
 **Sessions and Auth** — Cookie-backed sessions with HMAC-SHA256 signing, optional AES-GCM encryption, previous-secret rotation, CSRF protection with constant-time token comparison, and flash values. Auth supports sessions, magic links, OAuth 2.0 (GitHub, Google), and WebAuthn/Passkeys.
 
-**Actions** — Named server-side mutation handlers with form/JSON parsing, field-level validation errors, and redirect-safe flash state.
+**Managed POST actions** — Named server-side mutation handlers with bounded form/JSON/multipart parsing, field-level validation errors, CSRF, and redirect-safe flash state.
 
 **Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
 

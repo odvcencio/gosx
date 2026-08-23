@@ -1,7 +1,7 @@
 package playground
 
 func Page() Node {
-	return <section class="play" data-compile-url={actionPath("compile")} data-csrf-token={csrf.token}>
+	return <section class="play" data-compile-url="/gosx/action/compile" data-csrf-token={csrf.token}>
 		<header class="play__header">
 			<h1 class="play__title">GoSX Playground</h1>
 			<p class="play__subtitle">

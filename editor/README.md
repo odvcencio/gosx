@@ -18,15 +18,17 @@ app.Mount("/editor/", http.StripPrefix("/editor/", editor.AssetHandler()))
 Render the component from request-scoped options:
 
 ```go
+import "m31labs.dev/gosx/action"
+
 ed := editor.New("post-editor", editor.Options{
 	Content:     post.Content,
 	Title:       post.Title,
 	Slug:        post.Slug,
-	FormAction:  ctx.ActionPath("update"),
-	AutoSaveURL: ctx.ActionPath("autosave"),
-	PreviewURL:  ctx.ActionPath("preview"),
-	UploadURL:   ctx.ActionPath("upload"),
-	ImagesURL:   ctx.ActionPath("images"),
+	FormAction:  action.ActionPath("update"),
+	AutoSaveURL: action.ActionPath("autosave"),
+	PreviewURL:  action.ActionPath("preview"),
+	UploadURL:   action.ActionPath("upload"),
+	ImagesURL:   action.ActionPath("images"),
 	CSRFToken:   token,
 })
 return ed.Render()

@@ -74,9 +74,7 @@ func Page() Node {
 			<span class="inline-code">Load</span>
 			,
 			<span class="inline-code">Metadata</span>
-			,
-			<span class="inline-code">Actions</span>
-			,
+			, managed-action installers on the shared route router ,
 			<span class="inline-code">Bindings</span>
 			, or a custom
 			<span class="inline-code">Render</span>

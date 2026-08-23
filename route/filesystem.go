@@ -3,7 +3,6 @@ package route
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,7 +10,6 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
-	"m31labs.dev/gosx/action"
 	"m31labs.dev/gosx/ir"
 )
 
@@ -476,9 +474,6 @@ func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
 			return node
 		}
 	}
-	if len(resolved.module.Actions) > 0 {
-		r.router.Handle(filePageActionPattern(resolved.page.Pattern), buildFileActionHandler(resolved.page, resolved.module.Actions, resolved.module.MaxActionBodyBytes), routeMiddleware...)
-	}
 	return Route{
 		Pattern:      resolved.page.Pattern,
 		Layout:       wrapWithDefaultLayout(r.router, resolved.layout),
@@ -632,33 +627,6 @@ func filePageFromPath(root, path string) (FilePage, string, error) {
 		Pattern:   pattern,
 		Params:    params,
 	}, "page", nil
-}
-
-func filePageActionPattern(pattern string) string {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || pattern == "/" {
-		return "POST /__actions/{__gosx_action}"
-	}
-	return "POST " + strings.TrimSuffix(pattern, "/") + "/__actions/{__gosx_action}"
-}
-
-func buildFileActionHandler(page FilePage, handlers FileActions, maxActionBodyBytes int64) http.Handler {
-	handlers = cloneFileActions(handlers)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := r.PathValue("__gosx_action")
-		if name == "" {
-			http.Error(w, "action name required", http.StatusBadRequest)
-			return
-		}
-		handler, ok := handlers[name]
-		if !ok {
-			http.Error(w, fmt.Sprintf("action %q not found for %s", name, page.Source), http.StatusNotFound)
-			return
-		}
-		action.ServeHandlerWithOptions(w, r, handler, action.ServeHandlerOptions{
-			MaxBodyBytes: maxActionBodyBytes,
-		})
-	})
 }
 
 func buildFileRoute(parts []string) (string, string, []string) {

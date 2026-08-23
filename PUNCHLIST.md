@@ -6,8 +6,8 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 
 - [x] File-route server conventions
 - [x] `route.FileLayout(...)` for `layout.gsx`
-- [x] File-route module registry with `Load`, `Metadata`, `Render`, and `Actions`
-- [x] Relative `__actions/<name>` endpoints for file-routed pages
+- [x] File-route module registry with `Load`, `Metadata`, `Render`, and explicit managed-action installers
+- [x] Global `/gosx/action/<name>` managed endpoints owned by the route router
 - [x] Starter scaffold dogfoods `page.server.go`
 
 ## Phase 2
@@ -15,7 +15,7 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 - [x] First-class forms and actions for file-routed apps
 - [x] Better authoring story than raw `route.MustRegisterFileModule(...)`
 - [x] Validation/error-state helpers for HTML forms
-- [x] Route-aware action helpers in `.gsx` and Go APIs
+- [x] Route-aware managed-action path helpers in `.gsx` and Go APIs
 - [x] Sessions, cookies, flash messages, and CSRF
 - [x] Auth guards and user-context conventions
 
@@ -81,6 +81,10 @@ This is the working framework punchlist for driving GoSX from "credible core" to
 - [ ] Vercel-tier deployment platform / hosted distribution story for GoSX apps
 
 ## Tracked Migration Blockers
+
+- [x] Replace the retired file-local action registry and `__actions` paths with
+  explicit managed POST registration on the owning router and global
+  `/gosx/action/{name}` endpoints.
 
 - [ ] Replace remaining app-facing `gosx.El(...)` trees in `blog.go`, `dashboard.go`, `editor.go`, and `pages.go` once file-routed `.gsx` pages can consume arbitrary loader-provided app data
 - [x] Extend the file-module / file-eval environment so `page.server.go` loaders can pass complex store-backed data and helpers through to `.gsx` templates without falling back to programmatic Go nodes

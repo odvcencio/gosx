@@ -11,7 +11,8 @@ import (
 // fileRouteDirSource remembers what AddDir discovered so Build/BuildChecked
 // can re-check the file module registry at build time, when a stale
 // modules.go is otherwise silent: the route serves, the template renders, and
-// only the missing Load/Actions wiring gives it away.
+// only the missing Load/Metadata/Render wiring gives it away; managed actions
+// are registered on the owning route.Router instead of a file module.
 type fileRouteDirSource struct {
 	root     string
 	registry *FileModuleRegistry

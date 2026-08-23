@@ -15,6 +15,7 @@ import (
 	"path"
 	"runtime"
 	"strings"
+	"sync"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/action"
@@ -117,38 +118,6 @@ func (ctx *RouteContext) Query(name string) string {
 	return ctx.Request.URL.Query().Get(name)
 }
 
-// ActionPath returns the current page-relative action endpoint for the given
-// action name.
-func (ctx *RouteContext) ActionPath(name string) string {
-	if ctx == nil || strings.TrimSpace(name) == "" {
-		return ""
-	}
-	base := "/"
-	if ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path != "" {
-		base = ctx.Request.URL.Path
-	}
-	if base == "/" {
-		return "/__actions/" + name
-	}
-	return strings.TrimSuffix(base, "/") + "/__actions/" + name
-}
-
-// ActionState returns the flashed state for a named browser action.
-func (ctx *RouteContext) ActionState(name string) (action.View, bool) {
-	if ctx == nil {
-		return action.View{}, false
-	}
-	return action.State(ctx.Request, name)
-}
-
-// ActionStates returns all flashed action states for the current request.
-func (ctx *RouteContext) ActionStates() map[string]action.View {
-	if ctx == nil {
-		return map[string]action.View{}
-	}
-	return action.States(ctx.Request)
-}
-
 // ParentData returns data loaded by a parent route's DataLoader.
 func (ctx *RouteContext) ParentData(key string) any {
 	if ctx.parentData == nil {
@@ -165,13 +134,14 @@ func (ctx *RouteContext) Form(args ...any) gosx.Node {
 
 // ActionForm renders a POST form targeting the current route's named action.
 func (ctx *RouteContext) ActionForm(name string, args ...any) gosx.Node {
-	prefixed := append([]any{
-		gosx.Attrs(
-			gosx.Attr("method", strings.ToLower(http.MethodPost)),
-			gosx.Attr("action", ctx.ActionPath(name)),
-			gosx.Attr(server.NavigationFormModeAttr, "post"),
-		),
-	}, args...)
+	attrs := []any{
+		gosx.Attr("method", strings.ToLower(http.MethodPost)),
+		gosx.Attr(server.NavigationFormModeAttr, "post"),
+	}
+	if actionPath := action.ActionPath(name); actionPath != "" {
+		attrs = append(attrs, gosx.Attr("action", actionPath))
+	}
+	prefixed := append([]any{gosx.Attrs(attrs...)}, args...)
 	return server.Form(prefixed...)
 }
 
@@ -189,6 +159,9 @@ type Router struct {
 	observers      []server.RequestObserver
 	fileRouteDirs  []fileRouteDirSource
 	navigationHead func(nonce string) gosx.Node
+	managedActions *action.Router
+	buildMu        sync.Mutex
+	buildStarted   bool
 }
 
 type handlerRoute struct {
@@ -286,6 +259,36 @@ func (r *Router) Handle(pattern string, handler http.Handler, middleware ...Midd
 	})
 }
 
+// RegisterManagedPOST installs one framework-owned bounded action on the
+// router's managed action endpoint. The complete policy is validated by the
+// action package before the route is made visible to Build/BuildChecked.
+func (r *Router) RegisterManagedPOST(name string, cfg action.Config, handler action.ManagedAction) error {
+	if r == nil {
+		return errors.New("route router is nil")
+	}
+	r.buildMu.Lock()
+	defer r.buildMu.Unlock()
+	if r.buildStarted {
+		return errors.New("route router is frozen after Build; register managed actions before Build")
+	}
+	if r.managedActions == nil {
+		candidate := action.NewRouter()
+		if err := candidate.RegisterManagedPOST(name, cfg, handler); err != nil {
+			return err
+		}
+		r.managedActions = candidate
+		return nil
+	}
+	return r.managedActions.RegisterManagedPOST(name, cfg, handler)
+}
+
+// IsManagedActionRequest reports whether the route tree owns a registered managed
+// action at path. It is consumed by session.Protect; it is not a path-prefix
+// authorization check.
+func (r *Router) IsManagedActionRequest(req *http.Request) bool {
+	return r != nil && r.managedActions != nil && r.managedActions.IsManagedActionRequest(req)
+}
+
 // Build compiles the router into an http.Handler. If route registration fails,
 // the returned handler reports the build error as HTTP 500 instead of crashing
 // the process.
@@ -303,8 +306,25 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 	if r == nil {
 		return nil, fmt.Errorf("route router is nil")
 	}
+	r.buildMu.Lock()
+	r.buildStarted = true
+	registeredManagedActions := r.managedActions
+	var managedActions *action.Router
+	if registeredManagedActions != nil {
+		registeredManagedActions.Freeze()
+		managedActions = registeredManagedActions.Snapshot()
+	}
+	r.buildMu.Unlock()
+	if err := r.validateManagedNamespace(); err != nil {
+		return nil, err
+	}
 	r.logUnregisteredFileModuleWarnings()
 	mux := http.NewServeMux()
+	if managedActions != nil {
+		if err := safeHandle(mux, "/gosx/action/{name}", managedActions); err != nil {
+			return nil, err
+		}
+	}
 	for _, extra := range r.handlers {
 		var h http.Handler = extra.handler
 		for i := len(extra.middleware) - 1; i >= 0; i-- {
@@ -350,7 +370,80 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 	if len(r.observers) > 0 {
 		handler = server.ObserveHandler(root, append([]server.RequestObserver(nil), r.observers...))
 	}
-	return &builtRouter{router: r, handler: handler}, nil
+	return &builtRouter{router: r, handler: handler, mux: mux, managedActions: managedActions}, nil
+}
+
+// validateManagedNamespace reserves the framework-owned managed endpoint
+// before ServeMux sees any application route. A raw/page/file route under
+// this namespace would make CSRF ownership ambiguous, so fail the build
+// rather than allowing whichever registration happens to win.
+func (r *Router) validateManagedNamespace() error {
+	if r == nil {
+		return nil
+	}
+	for _, extra := range r.handlers {
+		if managedNamespacePattern(extra.pattern) {
+			return fmt.Errorf("route %q overlaps reserved managed action namespace /gosx/action/", extra.pattern)
+		}
+	}
+	var walk func(string, []Route) error
+	walk = func(prefix string, routes []Route) error {
+		for _, route := range routes {
+			// registerRoute uses this exact composed pattern for both
+			// ServeMux registration and the route's handler metadata. Carry the
+			// same parent pattern through validation so a reserved endpoint
+			// cannot hide behind a nested page, raw, or file route.
+			pattern := joinPattern(prefix, route.Pattern)
+			if managedNamespacePattern(pattern) {
+				return fmt.Errorf("page route %q overlaps reserved managed action namespace /gosx/action/", pattern)
+			}
+			if err := walk(pattern, route.Children); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return walk("", r.routes)
+}
+
+func managedNamespacePattern(pattern string) bool {
+	path, err := serveMuxPatternPath(pattern)
+	if err != nil {
+		// Invalid patterns are rejected by the same safeHandle call that
+		// would register them. Namespace validation only answers whether the
+		// exact supported ServeMux pattern selects the reserved path.
+		return false
+	}
+	path = strings.TrimSuffix(path, "/")
+	return path == "/gosx/action" || strings.HasPrefix(path, "/gosx/action/")
+}
+
+// serveMuxPatternPath validates a pattern with the standard library's exact
+// ServeMux grammar, then returns its effective path after optional METHOD and
+// HOST components have been removed.  The route compiler later passes the same
+// normalized pattern to ServeMux, so namespace checks cannot disagree about a
+// method- or host-qualified winner.
+func serveMuxPatternPath(pattern string) (path string, err error) {
+	pattern = normalizePattern(pattern)
+	var panicValue any
+	func() {
+		defer func() {
+			panicValue = recover()
+		}()
+		http.NewServeMux().Handle(pattern, http.NotFoundHandler())
+	}()
+	if panicValue != nil {
+		return "", fmt.Errorf("invalid ServeMux pattern %q: %v", pattern, panicValue)
+	}
+	rest := pattern
+	if space := strings.IndexAny(rest, " \t"); space >= 0 {
+		rest = strings.TrimLeft(rest[space+1:], " \t")
+	}
+	slash := strings.IndexByte(rest, '/')
+	if slash < 0 {
+		return "", fmt.Errorf("invalid ServeMux pattern %q: missing path", pattern)
+	}
+	return rest[slash:], nil
 }
 
 // builtRouter is what Build/BuildChecked return. It serves exactly like the
@@ -358,8 +451,10 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 // server.App.Mount can still reach Router.SetNavigationHead after Build has
 // erased the concrete *Router type into an http.Handler.
 type builtRouter struct {
-	router  *Router
-	handler http.Handler
+	router         *Router
+	handler        http.Handler
+	mux            *http.ServeMux
+	managedActions *action.Router
 }
 
 func (b *builtRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -370,6 +465,38 @@ func (b *builtRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // the wrapped Router.
 func (b *builtRouter) SetNavigationHead(fn func(nonce string) gosx.Node) {
 	b.router.SetNavigationHead(fn)
+}
+
+// IsManagedActionRequest lets session.Protect distinguish the framework-owned
+// managed endpoint from an app-authored handler that happens to use the same
+// URL prefix.
+func (b *builtRouter) IsManagedActionRequest(req *http.Request) bool {
+	if b == nil || b.mux == nil || b.managedActions == nil || req == nil || req.URL == nil {
+		return false
+	}
+	selected, pattern := b.mux.Handler(req)
+	// The capability is valid only for the exact immutable handler and pattern
+	// selected by the compiled mux.  Checking the mux here keeps method/host/
+	// path precedence in one place and prevents a mutable Router map from
+	// drifting away from the dispatcher after Build.
+	if pattern != "/gosx/action/{name}" || selected != b.managedActions {
+		return false
+	}
+	return b.managedActions.IsManagedActionRequest(req)
+}
+
+// PreservesManagedActionCapability marks this compiled route tree as an
+// explicit capability boundary.  session.Protect will not infer the same
+// authority from an arbitrary middleware Unwrap method.
+func (b *builtRouter) PreservesManagedActionCapability() bool { return b != nil }
+
+// Unwrap exposes the compiled handler to middleware that needs to preserve
+// framework capabilities while composing wrappers.
+func (b *builtRouter) Unwrap() http.Handler {
+	if b == nil {
+		return nil
+	}
+	return b.handler
 }
 
 func buildErrorHandler(err error) http.Handler {
@@ -894,10 +1021,8 @@ func (w *interceptResponseWriter) commit() {
 
 // safeHandle registers a handler on the mux, recovering mux failures as errors.
 // Go 1.22+'s ServeMux panics when two patterns overlap without one being
-// strictly more specific. This commonly happens when a page has actions
-// (e.g. POST /blog/__actions/{action}) and a sibling [slug] directory
-// creates a wildcard route (e.g. /blog/{slug}/...) that also matches
-// the __actions segment.
+// strictly more specific. Managed actions occupy one global exact namespace,
+// so callers get a stable build error when an application route overlaps it.
 func safeHandle(mux *http.ServeMux, pattern string, handler http.Handler) (err error) {
 	if mux == nil {
 		return fmt.Errorf("gosx: route registration failed for %q: mux is nil", pattern)
@@ -911,11 +1036,9 @@ func safeHandle(mux *http.ServeMux, pattern string, handler http.Handler) (err e
 			if strings.Contains(msg, "conflicts with") || strings.Contains(msg, "already registered") {
 				err = fmt.Errorf(
 					"gosx: route conflict registering %q: %s\n\n"+
-						"This typically happens when a page with server actions sits next to a [param]\n"+
-						"directory. The __actions sub-path collides with the wildcard segment.\n\n"+
-						"To fix: move the page or its actions so that __actions doesn't share a path\n"+
-						"level with a dynamic [param] segment. For example, nest the dynamic routes\n"+
-						"under a sub-directory (e.g. /blog/posts/[slug] instead of /blog/[slug]).",
+						"This typically happens when an application route overlaps a managed action namespace.\n"+
+						"To fix: keep /gosx/action/{name} reserved for RegisterManagedPOST.\n"+
+						"Application pages and raw handlers must live outside that namespace.",
 					pattern, msg,
 				)
 				return

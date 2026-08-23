@@ -1,11 +1,13 @@
 package docs
 
 import (
+	"fmt"
 	"strings"
 
 	"m31labs.dev/gosx/action"
 	docs "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/session"
 )
 
 func init() {
@@ -26,17 +28,24 @@ func init() {
 				},
 			}, nil
 		},
-		Actions: route.FileActions{
-			"subscribe": func(ctx *action.Context) error {
-				email := ctx.FormData["email"]
-				if email == "" || !strings.Contains(email, "@") {
-					ctx.ValidationFailure("Please enter a valid email.", map[string]string{
-						"email": "A valid email address is required.",
-					})
-					return nil
-				}
-				return ctx.Success("Subscribed!", nil)
-			},
-		},
+	})
+}
+
+// RegisterManagedActions installs the docs form endpoint before the shared
+// route router is built. File modules render only; the aggregate installer in
+// main owns the registration boundary.
+func RegisterManagedActions(router *route.Router) error {
+	if router == nil {
+		return fmt.Errorf("managed action router is nil")
+	}
+	return router.RegisterManagedPOST("subscribe", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		email := strings.TrimSpace(ctx.Form.Value("email"))
+		if email == "" || !strings.Contains(email, "@") {
+			return action.Result{}, action.Validation("Enter a valid email address.", map[string]string{"email": "A valid email address is required."})
+		}
+		if err := session.AddFlash(ctx.Request, "notice", "Thanks — your subscription was saved."); err != nil {
+			return action.Result{}, err
+		}
+		return action.Result{OK: true, Redirect: "/docs/forms"}, nil
 	})
 }

@@ -134,7 +134,7 @@ func securityHeadersMiddleware(policy SecurityPolicy) Middleware {
 		headerName = "Content-Security-Policy-Report-Only"
 	}
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("Referrer-Policy", referrer)
 			if policy.FrameOptions != "" {
@@ -163,6 +163,7 @@ func securityHeadersMiddleware(policy SecurityPolicy) Middleware {
 			w.Header().Set(headerName, state.policy)
 			next.ServeHTTP(w, r.WithContext(withSecurityPolicyState(r.Context(), state)))
 		})
+		return &managedMiddlewareHandler{handler: wrapped, next: next}
 	}
 }
 

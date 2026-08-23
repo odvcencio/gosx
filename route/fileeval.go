@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
-	"m31labs.dev/gosx/action"
 	"m31labs.dev/gosx/auth"
 	"m31labs.dev/gosx/engine"
 	islandprogram "m31labs.dev/gosx/island/program"
@@ -190,8 +189,6 @@ type fileRequestBindings struct {
 	sessionValues map[string]any
 	flashes       map[string][]any
 	flash         map[string]any
-	actions       map[string]any
-	currentAction map[string]any
 	user          any
 	csrf          map[string]any
 }
@@ -282,9 +279,9 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 
 	env := fileRenderEnv{
 		values: baseFileRenderValues(page, bindings),
-		// Size funcs for the base set plus actionPath. components stays nil:
+		// Size funcs for the base set. components stays nil:
 		// a nil map reads like an empty one, and only withBindings adds to it.
-		funcs: make(map[string]any, 5),
+		funcs: make(map[string]any, 4),
 	}
 
 	if ctx != nil {
@@ -295,9 +292,6 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		env.enableBootstrap = ctx.Runtime().EnableBootstrap
 		env.islandPreloadHints = ctx.Runtime().PreloadHints
 		env.islandPageHead = func() gosx.Node { return ctx.Runtime().PageHeadWithNonce(ctx.Nonce()) }
-		env.funcs["actionPath"] = func(name string) string {
-			return ctx.ActionPath(name)
-		}
 	}
 	registerBaseFileFuncs(&env, bindings)
 	return env
@@ -323,8 +317,6 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 	bindings.sessionValues = session.Values(ctx.Request)
 	bindings.flashes = session.FlashValues(ctx.Request)
 	bindings.flash = firstFlashValues(bindings.flashes)
-	bindings.actions = templateActionStates(action.States(ctx.Request))
-	bindings.currentAction = preferredActionState(bindings.actions)
 	if resolvedUser, ok := auth.Current(ctx.Request); ok {
 		bindings.user = templateUser(resolvedUser)
 	}
@@ -345,8 +337,6 @@ func baseFileRenderValues(page FilePage, bindings fileRequestBindings) map[strin
 		"session": bindings.sessionValues,
 		"flash":   bindings.flash,
 		"flashes": bindings.flashes,
-		"actions": bindings.actions,
-		"action":  bindings.currentAction,
 		"csrf":    bindings.csrf,
 		"user":    bindings.user,
 		"page": map[string]any{
@@ -1083,42 +1073,8 @@ func firstFlashValues(values map[string][]any) map[string]any {
 	return out
 }
 
-func preferredActionState(states map[string]any) map[string]any {
-	if len(states) == 1 {
-		for _, state := range states {
-			if value, ok := state.(map[string]any); ok {
-				return value
-			}
-		}
-	}
-	return nil
-}
-
 func defaultCSRFFieldName() string {
 	return "csrf_token"
-}
-
-func templateActionStates(states map[string]action.View) map[string]any {
-	if len(states) == 0 {
-		return nil
-	}
-	out := make(map[string]any, len(states))
-	for name, view := range states {
-		out[name] = templateActionState(view)
-	}
-	return out
-}
-
-func templateActionState(view action.View) map[string]any {
-	return map[string]any{
-		"name":        view.Name,
-		"status":      view.Status,
-		"ok":          view.Result.OK,
-		"message":     view.Result.Message,
-		"redirect":    view.Result.Redirect,
-		"values":      cloneStringMap(view.Result.Values),
-		"fieldErrors": cloneStringMap(view.Result.FieldErrors),
-	}
 }
 
 func templateUser(user auth.User) map[string]any {

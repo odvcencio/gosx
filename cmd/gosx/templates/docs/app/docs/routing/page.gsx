@@ -39,7 +39,7 @@ func Page() Node {
 		  if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		    Load:     ...,
 		    Metadata: ...,
-		    Actions:  ...,
+		    // Managed actions are registered on the shared route router before BuildChecked.
 		  }); err != nil {
 		    log.Fatal(err)
 		  }

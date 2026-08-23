@@ -331,7 +331,7 @@ func BenchmarkGSXExprEval(b *testing.B) {
 func BenchmarkGSXRenderEnvWithValue(b *testing.B) {
 	env := fileRenderEnv{
 		values:     map[string]any{"data": nil, "params": nil, "query": nil, "session": nil, "flash": nil, "flashes": nil, "actions": nil, "action": nil, "csrf": nil, "user": nil, "page": nil, "request": nil},
-		funcs:      map[string]any{"len": fileEvalLen, "asset": nil, "stylesheet": nil, "flashValue": nil, "actionPath": nil},
+		funcs:      map[string]any{"len": fileEvalLen, "asset": nil, "stylesheet": nil, "flashValue": nil},
 		components: map[string]any{},
 	}
 	b.ReportAllocs()

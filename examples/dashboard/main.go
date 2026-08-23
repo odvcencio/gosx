@@ -13,6 +13,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,12 +24,14 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
 	_ "m31labs.dev/gosx/examples/dashboard/modules"
 	"m31labs.dev/gosx/highlight"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/session"
 )
 
 func main() {
@@ -108,6 +111,9 @@ func main() {
 	})
 
 	if err := router.AddDir(filepath.Join(baseDir, "app"), route.FileRoutesOptions{}); err != nil {
+		log.Fatal(err)
+	}
+	if err := registerManagedActions(router); err != nil {
 		log.Fatal(err)
 	}
 
@@ -190,11 +196,77 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	mux.Handle("/", rootHandler)
+	manager, err := session.New("gosx-dashboard-session-secret", session.Options{CookieName: "gosx_dashboard", AllowInsecure: true})
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.Handle("/", manager.Middleware(manager.Protect(rootHandler)))
 
 	addr := ":3000"
 	fmt.Printf("GoSX dashboard at http://localhost%s\n", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+func registerManagedActions(router *route.Router) error {
+	if router == nil {
+		return errors.New("managed action router is nil")
+	}
+	installers := []func(*route.Router) error{
+		registerSettingsAction,
+		registerCreateUserAction,
+	}
+	for _, install := range installers {
+		if err := install(router); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerSettingsAction(router *route.Router) error {
+	return router.RegisterManagedPOST("saveSettings", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		siteName := strings.TrimSpace(ctx.Form.Value("siteName"))
+		theme := strings.TrimSpace(ctx.Form.Value("theme"))
+		pageSize, err := strconv.Atoi(strings.TrimSpace(ctx.Form.Value("pageSize")))
+		fieldErrors := map[string]string{}
+		if siteName == "" {
+			fieldErrors["siteName"] = "Site name is required."
+		}
+		if theme != "light" && theme != "dark" {
+			fieldErrors["theme"] = "Choose light or dark."
+		}
+		if err != nil || pageSize < 10 || pageSize > 100 {
+			fieldErrors["pageSize"] = "Choose a value from 10 to 100."
+		}
+		if len(fieldErrors) > 0 {
+			return action.Result{}, action.Validation("Check the highlighted settings.", fieldErrors)
+		}
+		return action.Result{OK: true, Message: "Settings saved.", Redirect: "/settings"}, nil
+	})
+}
+
+func registerCreateUserAction(router *route.Router) error {
+	return router.RegisterManagedPOST("createUser", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		name := strings.TrimSpace(ctx.Form.Value("name"))
+		email := strings.TrimSpace(ctx.Form.Value("email"))
+		role := strings.TrimSpace(ctx.Form.Value("role"))
+		fieldErrors := map[string]string{}
+		if name == "" {
+			fieldErrors["name"] = "Name is required."
+		}
+		if !strings.Contains(email, "@") {
+			fieldErrors["email"] = "Enter a valid email address."
+		}
+		switch role {
+		case "viewer", "editor", "admin":
+		default:
+			fieldErrors["role"] = "Choose a valid role."
+		}
+		if len(fieldErrors) > 0 {
+			return action.Result{}, action.Validation("Check the highlighted user fields.", fieldErrors)
+		}
+		return action.Result{OK: true, Message: "User created.", Redirect: "/users"}, nil
+	})
 }
 
 // chromeLayout wraps content with layout.gsx's Layout component: the

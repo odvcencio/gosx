@@ -303,7 +303,7 @@ func TestRenderProfileAttrWriterCannotAppendConflictingManagedFormContractAttrs(
 	prog, err := gosx.Compile([]byte(`package main
 
 func Page() Node {
-	return <form method="post" action="/x/__actions/y" data-gosx-managed="true"></form>
+	return <form method="post" action="/gosx/action/y" data-gosx-managed="true"></form>
 }
 `))
 	if err != nil {

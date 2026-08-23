@@ -8,6 +8,25 @@
 - Built-in OAuth, magic-link, and WebAuthn handlers commit their final session mutations before JSON success or redirects. Commit failures fail closed as terminal non-3xx responses without a stale `Location` header.
 - `auth.SafeReturnPath` is the shared bounded canonicalizer for OAuth, magic links, WebAuthn, and protected-route navigation; custom low-level wrappers must commit after all mutations and before their final response.
 
+### Changed: managed POST actions
+
+- Managed actions are registered explicitly with
+  `route.Router.RegisterManagedPOST` and served from the reserved
+  `/gosx/action/{name}` namespace. The route router rejects raw handlers in
+  that namespace and freezes the registration snapshot at build time.
+- One framework-owned bounded parser handles JSON, URL-encoded, and multipart
+  requests with exact body, field, metadata, and upload budgets. Session CSRF
+  ownership is delegated only for the exact selected managed handler; opaque
+  middleware remains protected by the ordinary session parser.
+- Upload readers are revocable and short-lived for both memory and temp-file
+  storage. Terminal cleanup attempts every close/invalidate/remove operation,
+  aggregates causes, and logs one diagnostic without rewriting a successful
+  response.
+- Native forms carry the request's escaped hidden CSRF field. Enhanced browser
+  submissions use the configured header, real `FormData`, manual redirects, and
+  no automatic retry after an indeterminate request. See
+  `docs/managed-actions.md` for the supported contract.
+
 ### Added: a shared component call executes end to end for a strict caller
 
 - **A strict caller's shared component call now renders.** WP4 (v0.49.0)
@@ -176,15 +195,12 @@
   `cmd/gosx check` and the build gate (`gosx build`) both print collected
   warnings to stderr and still exit 0. `lsp` maps a warning to LSP
   `SeverityWarning` (2) and reports it beside every error.
-- **Check 1 — a form action must resolve to a registered action (error).**
-  `strictcheck.validateFormActionContract` (`strictcheck/formaction.go`)
-  reads a static `action`/`formaction` attribute holding
-  `actionPath("name")` and confirms `"name"` is a key in the page's
-  `route.FileActions`, read from a composite literal in a `*.server.go`
-  file. An unresolved name is a guaranteed 404: `route.RouteContext.
-  ActionPath` builds the URL with no such lookup. This is the
-  `examples/dashboard` defect from the framework owner's premise: a form
-  posting to an action nothing ever registered.
+- **Check 1 — managed action registration is explicit (error boundary).**
+  The page checker does not infer registrations from templates. The owning
+  `route.Router` registers each name with `RegisterManagedPOST`, reserves the
+  `/gosx/action/{name}` namespace, and rejects overlapping page, raw, and file
+  routes. A form may render that endpoint only after the application has
+  registered it and propagated the registration error before `BuildChecked`.
 - **Check 2 — a required control must stay reachable (warning, heuristic).**
   `strictcheck.validateRequiredReachabilityContract`
   (`strictcheck/requiredreach.go`) cross-references a `required` control's
@@ -588,7 +604,7 @@
 - `RegisterFileModuleHere` carried the same weakness in its `.gsx`/`.html`
   extension guess: it called `os.Stat` on the same unreachable path and
   silently fell back to `.gsx`. A `.gsx` page kept working by coincidence; an
-  `.html` page lost its registered `Load`, `Render`, and `Actions` hooks
+.html page lost its registered `Load` and `Render` hooks
   under `-trimpath`. Both now resolve through the same trimpath-safe path.
 - `LoadFileProgram` is unchanged and still takes an absolute path. Its doc
   comment now states plainly why building that path from `runtime.Caller`
@@ -1132,8 +1148,8 @@ Images become a first-class citizen, and the fail-open hunt reaches the
 renderer's corners. The <Image> builtin gains a check-time contract (alt
 required, local files probed for intrinsic dimensions, external sources
 declare theirs) and manifest-driven <picture> output with build-time WebP
-variants from the new imagepipe package. Actions gain first-class file
-uploads with a configurable body cap. Renderer output is now deterministic
+variants from the new imagepipe package. The mutation layer gains first-class
+file uploads with a configurable body cap. Renderer output is now deterministic
 (sorted attribute emission, twice over), spread map keys cannot smuggle
 attributes, Mount routes populate path wildcards, and the last hop-0
 selector deferrals fail closed.
@@ -1416,15 +1432,9 @@ selector deferrals fail closed.
   form field name. `File` returns the first header, or nil. Both stay
   nil-safe: a non-multipart request, a nil `Context`, or an absent field
   name all return nil. Fixes #187.
-- **The 1 MiB action body cap is now configurable.** `ServeHandler`
-  keeps the 1 MiB default. A caller with a larger upload calls the new
-  `ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{MaxBodyBytes: n})`
-  instead. `route.FileModuleOptions.MaxActionBodyBytes` carries the same
-  cap through file-routed actions registered with
-  `route.RegisterFileModuleHere` and its sibling constructors, so a
-  consumer raises the limit per module without touching the action
-  package directly. An oversized request still fails with 413 through
-  `http.MaxBytesReader` semantics, never a silent truncation.
+- **Upload body limits remain explicit.** The managed parser owns request,
+  field, metadata, and file budgets directly, with a 1 MiB default request
+  ceiling and no unbounded compatibility path.
 - **A pinned test proves the navigation runtime's managed form
   submission already carries a selected file.** `serializeForm()`
   builds a real `FormData` from the form element and passes it straight
@@ -6174,7 +6184,8 @@ Production-grade 3D rendering platform built into GoSX's native Scene3D.
 - **fix(ir):** HTML entities (`&rarr;`, `&mdash;`, etc.) in `.gsx` text are now decoded to UTF-8 characters instead of being double-escaped
 - **fix(ir):** `<script>` and `<style>` element content is now treated as raw text, preventing HTML escaping of `&&`, `<`, etc. inside inline scripts
 - **fix(build):** `gosx build` no longer generates invalid Go import paths for `[slug]` dynamic route directories
-- **fix(route):** Pattern conflicts between `__actions` and wildcard siblings now produce a clear diagnostic error instead of a raw panic
+- **fix(route):** Pattern conflicts between the retired action namespace and
+  wildcard siblings now produce a clear diagnostic error instead of a raw panic
 
 ## v0.2.0
 

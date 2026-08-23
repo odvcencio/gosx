@@ -2,8 +2,10 @@ package playground
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 
+	"m31labs.dev/gosx/action"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/route"
@@ -13,6 +15,19 @@ import (
 // /demos/playground action endpoint. Constructed once at init; holds the
 // rate limiter and LRU cache state.
 var playgroundCompiler *Compiler
+
+// RegisterManagedActions installs the playground's global managed endpoint on
+// the application's single route router. File modules render forms; they do
+// not own action registries or action paths.
+func RegisterManagedActions(router *route.Router) error {
+	if router == nil {
+		return fmt.Errorf("managed action router is nil")
+	}
+	if playgroundCompiler == nil {
+		return fmt.Errorf("playground compiler initialization failed")
+	}
+	return router.RegisterManagedPOST("compile", action.Config{}, NewCompileAction(playgroundCompiler))
+}
 
 func init() {
 	c, err := NewCompiler(DefaultCompileConfig())
@@ -53,9 +68,6 @@ func init() {
 					"initialLines": strings.Count(def.Source, "\n") + 1,
 					"initialChars": len(def.Source),
 				}, nil
-			},
-			Actions: route.FileActions{
-				"compile": NewCompileAction(playgroundCompiler),
 			},
 		},
 	)

@@ -1143,7 +1143,7 @@ func TestRenderIslandFromProgramExpandsManagedFormShorthand(t *testing.T) {
 				Tag:  "form",
 				Attrs: []program.Attr{
 					{Kind: program.AttrStatic, Name: "method", Value: "post"},
-					{Kind: program.AttrStatic, Name: "action", Value: "/x/__actions/y"},
+					{Kind: program.AttrStatic, Name: "action", Value: "/gosx/action/y"},
 					{Kind: program.AttrBool, Name: "data-gosx-managed"},
 				},
 				Children: []program.NodeID{1},
@@ -1164,7 +1164,7 @@ func TestRenderIslandFromProgramExpandsManagedFormShorthand(t *testing.T) {
 
 	for _, want := range []string{
 		`method="post"`,
-		`action="/x/__actions/y"`,
+		`action="/gosx/action/y"`,
 		gosx.ManagedFormStateAttr + `="idle"`,
 		gosx.EnhancementAttr + `="form"`,
 		gosx.EnhancementLayerAttr + `="bootstrap"`,
@@ -1203,7 +1203,7 @@ func TestRenderIslandFromProgramManagedFormShorthandFalseOptsOut(t *testing.T) {
 				Kind: program.NodeElement,
 				Tag:  "form",
 				Attrs: []program.Attr{
-					{Kind: program.AttrStatic, Name: "action", Value: "/x/__actions/y"},
+					{Kind: program.AttrStatic, Name: "action", Value: "/gosx/action/y"},
 					{Kind: program.AttrStatic, Name: "data-gosx-managed", Value: "false"},
 				},
 			},

@@ -288,6 +288,7 @@ import (
 	"time"
 
 	_ "__MODULE__/modules"
+	appmodule "__MODULE__/app"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/env"
 	"m31labs.dev/gosx/route"
@@ -324,6 +325,9 @@ func main() {
 		return server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)
 	})
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
+		log.Fatal(err)
+	}
+	if err := appmodule.RegisterManagedActions(router); err != nil {
 		log.Fatal(err)
 	}
 
@@ -395,6 +399,7 @@ func appHomeServerTemplate() string {
 	return `package app
 
 import (
+	"errors"
 	"log"
 	"os"
 	"strings"
@@ -428,20 +433,26 @@ func init() {
 				Description: "A GoSX app scaffolded with file-routed .gsx pages, session-backed form actions, root-level public assets, env loading, and a colocated JSON API.",
 			}, nil
 		},
-		Actions: route.FileActions{
-			"subscribe": func(ctx *action.Context) error {
-				if strings.TrimSpace(ctx.FormData["email"]) == "" {
-					return action.Validation("Add an email address to continue.", map[string]string{
-						"email": "Email is required.",
-					}, ctx.FormData)
-				}
-				session.AddFlash(ctx.Request, "notice", "The starter app is using redirect-safe form state and session-backed flashes.")
-				return ctx.Success("Form submission completed without leaving the server-first model.", nil)
-			},
-		},
 	}); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// RegisterManagedActions installs the starter form on the application's
+// framework-owned managed router. Call it before the app is built.
+func RegisterManagedActions(router *route.Router) error {
+	if router == nil {
+		return errors.New("managed action router is nil")
+	}
+	return router.RegisterManagedPOST("subscribe", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		if strings.TrimSpace(ctx.Form.Value("email")) == "" {
+			return action.Result{}, action.Validation("Add an email address to continue.", map[string]string{"email": "Email is required."})
+		}
+		if err := session.AddFlash(ctx.Request, "notice", "The starter app is using an explicit session flash."); err != nil {
+			return action.Result{}, err
+		}
+		return action.Result{OK: true, Redirect: "/"}, nil
+	})
 }
 `
 }
@@ -464,20 +475,18 @@ func Page() Node {
 		<section class="card">
 			<h2>Starter form</h2>
 			<p>
-				This page posts to a relative action, validates on the server, and restores values after a normal browser redirect.
+				This page posts to a named managed action, uses native browser constraints before the request, and shows a session flash after the normal browser redirect.
 			</p>
-			<form class="docs-form" method="post" action={actionPath("subscribe")}>
+			<form class="docs-form" method="post" action="/gosx/action/subscribe">
 				<input type="hidden" name="csrf_token" value={csrf.token}></input>
 				<label class="field">
 					<span>Name</span>
-					<input name="name" value={actions.subscribe.values.name}></input>
+					<input name="name" required></input>
 				</label>
 				<label class="field">
 					<span>Email</span>
-					<input name="email" value={actions.subscribe.values.email}></input>
+					<input name="email" type="email" required></input>
 				</label>
-				<p class="form-error">{actions.subscribe.fieldErrors.email}</p>
-				<p class="form-status">{action.message}</p>
 				<p class="flash-note">{flash.notice}</p>
 				<div class="actions">
 					<button class="button primary" type="submit">Submit the starter action</button>
@@ -499,8 +508,7 @@ func Page() Node {
 					file beside any route when you need
 					<span class="inline-code">Load</span>,
 					<span class="inline-code">Metadata</span>,
-					or
-					<span class="inline-code">Actions</span>.
+					or explicit managed-action installers on the shared route router.
 				</li>
 				<li>
 					Keep a blank import of

@@ -190,8 +190,8 @@ func TestPlaygroundPageHasEditorPlumbing(t *testing.T) {
 	src := string(gsxSource)
 
 	// 2. Root section must carry data-compile-url.
-	if !strings.Contains(src, `data-compile-url={actionPath("compile")}`) {
-		t.Error(`playground/page.gsx missing data-compile-url={actionPath("compile")} on root section`)
+	if !strings.Contains(src, `data-compile-url="/gosx/action/compile"`) {
+		t.Error(`playground/page.gsx missing data-compile-url="/gosx/action/compile" on root section`)
 	}
 
 	// 3. Root section must carry data-csrf-token.
@@ -249,7 +249,7 @@ func TestCMSDemoRewrittenShape(t *testing.T) {
 	gsxRequire := []string{
 		"data.blocks",
 		"<Each",
-		`actionPath("publish")`,
+		`action="/gosx/action/publish"`,
 		"csrf_token",
 	}
 	for _, needle := range gsxRequire {

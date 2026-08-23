@@ -526,7 +526,19 @@ const budgets = [
   // ETag conditional requests, and scroll preservation added to the
   // existing data-gosx-region fragment-swap primitive in regions.ts.
   // Measured: 1_534_529 / 416_028 / 334_368.
-  { file: "bootstrap.js", raw: 1_535_000, gzip: 416_300, brotli: 334_600 },
+  // Bumped for the managed-action FormData transport, explicit CSRF-header
+  // selection, submitter/form ownership, and manual redirect guard. Current
+  // generated measurement: 1_537_128 / 416_702 / 334_700. Keep an explicit
+  // 8 KiB raw and 2 KiB compressed reserve: this shared transport has native
+  // and enhanced paths, file/FormData handling, and browser fallback seams.
+  // The assertion below keeps that review headroom from silently collapsing.
+  {
+    file: "bootstrap.js",
+    raw: 1_545_600,
+    gzip: 418_800,
+    brotli: 336_800,
+    headroom: { raw: 8_192, gzip: 2_048, brotli: 2_048 },
+  },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -591,7 +603,16 @@ const budgets = [
   // data-gosx-live-* text binding — periodic polling, its region-scoped
   // interaction guard, and ETag/body-diff conditional requests. Measured:
   // 144_189 / 39_212 / 34_215, plus rounding headroom.
-  { file: "bootstrap-runtime.js", raw: 145_000, gzip: 39_500, brotli: 34_500 },
+  // Current generated measurement: 146_308 / 39_825 / 34_749 after the
+  // managed-action transport bundle changes. Keep an 8 KiB raw and 2 KiB
+  // compressed reserve so this shared runtime does not ratchet to the edge.
+  {
+    file: "bootstrap-runtime.js",
+    raw: 154_500,
+    gzip: 42_000,
+    brotli: 36_800,
+    headroom: { raw: 8_192, gzip: 2_048, brotli: 2_048 },
+  },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -638,7 +659,16 @@ const budgets = [
   // ETag conditional requests, and scroll preservation added to the
   // existing data-gosx-region fragment-swap primitive in regions.ts — both
   // ride in the lite bundle. Measured: 107_874 / 28_741 / 25_605.
-  { file: "bootstrap-lite.js", raw: 108_500, gzip: 29_200, brotli: 26_100 },
+  // Current generated measurement: 109_986 / 29_320 / 26_065 after the
+  // managed-action transport changes. Keep an 8 KiB raw and 2 KiB compressed
+  // reserve in the lite surface for the same browser paths.
+  {
+    file: "bootstrap-lite.js",
+    raw: 118_200,
+    gzip: 31_400,
+    brotli: 28_200,
+    headroom: { raw: 8_192, gzip: 2_048, brotli: 2_048 },
+  },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1332,9 +1362,13 @@ const routeBudgets = [
     // preservation added to the existing data-gosx-region fragment-swap
     // primitive in regions.ts (bootstrap-feature-engines.js). Measured:
     // 253_960 / 71_709 / 63_054, plus rounding headroom.
-    raw: 254_500,
-    gzip: 72_200,
-    brotli: 63_500,
+    // Bumped for the managed-action transport's submitter/form ownership and
+    // FormData/CSRF fallback paths. Current generated measurement:
+    // 256_114 / 72_352 / 63_576. Keep approximately 8 KiB raw and 2 KiB
+    // compressed reserve for this first-load route aggregate.
+    raw: 264_000,
+    gzip: 74_500,
+    brotli: 65_700,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1456,13 +1490,13 @@ const routeBudgets = [
     // Bumped raw 1_216_500 -> 1_218_500, gzip 323_700 -> 324_300, brotli
     // 273_500 -> 274_100 for the WebGL loss-recovery watchdog in the scene
     // mount. Measured: 1_217_388 / 323_925 / 273_646.
-    // Bumped raw 1_218_500 -> 1_221_000, gzip 324_300 -> 325_200, brotli
-    // 274_100 -> 274_900 for live-bound regions (gosx#217) carried by
-    // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
-    // 1_219_707 / 324_730 / 274_303, plus rounding headroom.
-    raw: 1_221_000,
-    gzip: 325_200,
-    brotli: 274_900,
+    // Current generated measurement after the managed-action transport's
+    // submitter/form ownership and FormData/CSRF paths: 1_221_826 /
+    // 325_343 / 274_837. Keep approximately 8 KiB raw and 2 KiB compressed
+    // reserve on this first-load surface.
+    raw: 1_230_000,
+    gzip: 327_500,
+    brotli: 277_000,
   },
   {
     name: "Scene3D Safari and Firefox route (WebGL, with labels)",
@@ -1552,13 +1586,13 @@ const routeBudgets = [
     // Bumped raw 1_043_000 -> 1_045_000 for the WebGL loss-recovery
     // watchdog. gzip and brotli headroom held. Measured: 1_043_484 /
     // 288_976 / 245_188.
-    // Bumped raw 1_045_000 -> 1_047_500, gzip 289_000 -> 290_500, brotli
-    // 245_300 -> 246_500 for live-bound regions (gosx#217) carried by
-    // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
-    // 1_045_803 / 289_781 / 245_845, plus rounding headroom.
-    raw: 1_047_500,
-    gzip: 290_500,
-    brotli: 246_500,
+    // Current generated measurement after the managed-action transport's
+    // submitter/form ownership and FormData/CSRF paths: 1_048_032 /
+    // 290_433 / 246_433. Keep approximately 8 KiB raw and 2 KiB compressed
+    // reserve on this first-load surface.
+    raw: 1_056_500,
+    gzip: 292_500,
+    brotli: 248_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1642,13 +1676,13 @@ const routeBudgets = [
     // Bumped raw 1_430_000 -> 1_432_000 for the WebGL loss-recovery
     // watchdog. gzip and brotli headroom held. Measured: 1_430_756 /
     // 382_685 / 323_648.
-    // Bumped raw 1_432_000 -> 1_434_500, gzip 382_700 -> 384_000, brotli
-    // 323_700 -> 324_800 for live-bound regions (gosx#217) carried by
-    // bootstrap-runtime.js and bootstrap-feature-engines.js. Measured:
-    // 1_433_075 / 383_490 / 324_305, plus rounding headroom.
-    raw: 1_434_500,
-    gzip: 384_000,
-    brotli: 324_800,
+    // Current generated measurement after the managed-action transport's
+    // submitter/form ownership and FormData/CSRF paths: 1_435_304 /
+    // 384_142 / 324_893. Keep approximately 8 KiB raw and 2 KiB compressed
+    // reserve on this fallback surface.
+    raw: 1_443_500,
+    gzip: 386_500,
+    brotli: 327_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1742,9 +1776,13 @@ const routeBudgets = [
     // does not load bootstrap-feature-engines.js, so it does not carry the
     // regions.ts polling addition. Measured: 1_067_430 / 281_398 / 235_819,
     // plus rounding headroom.
-    raw: 1_068_000,
-    gzip: 281_800,
-    brotli: 236_200,
+    // Current generated measurement after the managed-action transport's
+    // submitter/form ownership and FormData/CSRF paths: 1_069_549 /
+    // 282_011 / 236_353. Keep approximately 8 KiB raw and 2 KiB compressed
+    // reserve on this minimal first-load surface.
+    raw: 1_078_000,
+    gzip: 284_100,
+    brotli: 238_500,
   },
 
 ];
@@ -1763,6 +1801,20 @@ test("generated bootstrap bundles stay within runtime size budgets", () => {
     assert.ok(raw <= budget.raw, `${budget.file} raw size ${raw} exceeds budget ${budget.raw}`);
     assert.ok(gzip <= budget.gzip, `${budget.file}.gz size ${gzip} exceeds budget ${budget.gzip}`);
     assert.ok(brotli <= budget.brotli, `${budget.file}.br size ${brotli} exceeds budget ${budget.brotli}`);
+    if (budget.headroom) {
+      assert.ok(
+        budget.raw - raw >= budget.headroom.raw,
+        `${budget.file} raw headroom ${budget.raw - raw} is below ${budget.headroom.raw}`,
+      );
+      assert.ok(
+        budget.gzip - gzip >= budget.headroom.gzip,
+        `${budget.file}.gz headroom ${budget.gzip - gzip} is below ${budget.headroom.gzip}`,
+      );
+      assert.ok(
+        budget.brotli - brotli >= budget.headroom.brotli,
+        `${budget.file}.br headroom ${budget.brotli - brotli} is below ${budget.headroom.brotli}`,
+      );
+    }
     assert.ok(gzip < raw, `${budget.file}.gz should be smaller than raw JS`);
     assert.ok(brotli <= gzip, `${budget.file}.br should be no larger than gzip`);
   }

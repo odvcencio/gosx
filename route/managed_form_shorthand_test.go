@@ -55,11 +55,11 @@ func compileManagedFormFixture(t *testing.T, formOpenTag string) string {
 }
 
 func TestFileRendererExpandsManagedFormShorthandTrue(t *testing.T) {
-	html := compileManagedFormFixture(t, `<form method="post" action="/x/__actions/y" data-gosx-managed="true">`)
+	html := compileManagedFormFixture(t, `<form method="post" action="/gosx/action/y" data-gosx-managed="true">`)
 
 	for _, want := range []string{
 		`method="post"`,
-		`action="/x/__actions/y"`,
+		`action="/gosx/action/y"`,
 		gosx.ManagedFormStateAttr + `="idle"`,
 		gosx.EnhancementAttr + `="form"`,
 		gosx.EnhancementLayerAttr + `="bootstrap"`,

@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/action"
 	gosxcss "m31labs.dev/gosx/css"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/internal/htmlattr"
@@ -379,7 +380,7 @@ func (r *fileProgramRenderer) writeBuiltinComponent(b *strings.Builder, node *ir
 	case "ActionForm":
 		r.writeManagedForm(b, node, env, managedFormOptions{
 			defaultMethod: strings.ToLower(http.MethodPost),
-			defaultAction: fileRenderActionPath(env, stringValue(attrValue(node.Attrs, env, "actionName"))),
+			defaultAction: fileRenderManagedActionURL(stringValue(attrValue(node.Attrs, env, "actionName"))),
 		})
 	case "Image":
 		b.WriteString(r.renderImage(node, env))
@@ -3027,16 +3028,8 @@ func mergeComponentProps(props map[string]any, value any) {
 	}
 }
 
-func fileRenderActionPath(env fileRenderEnv, name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" || env.funcs == nil {
-		return ""
-	}
-	actionPath, ok := env.funcs["actionPath"].(func(string) string)
-	if !ok {
-		return ""
-	}
-	return actionPath(name)
+func fileRenderManagedActionURL(name string) string {
+	return action.ActionPath(name)
 }
 
 func fileFormEnhancementMode(attrs []ir.Attr, env fileRenderEnv) string {

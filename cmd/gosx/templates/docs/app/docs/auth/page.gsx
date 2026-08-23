@@ -36,16 +36,15 @@ func Page() Node {
 				<p>{flash.notice}</p>
 			</div>
 		</div>
-		<form class="docs-form" method="post" action={actionPath("signIn")}>
+		<form class="docs-form" method="post" action="/gosx/action/signIn">
 			<input type="hidden" name="csrf_token" value={csrf.token}></input>
 			<label class="field">
 				<span>Name</span>
-				<input name="name"></input>
+				<input name="name" required></input>
 			</label>
-			<p class="form-error">{actions.signIn.fieldErrors.name}</p>
 			<div class="hero-actions">
 				<button class="cta-link primary" type="submit">Sign in to the docs demo</button>
-				<button class="cta-link" type="submit" formaction={actionPath("signOut")}>Sign out</button>
+				<button class="cta-link" type="submit" formaction="/gosx/action/signOut">Sign out</button>
 			</div>
 		</form>
 		<section class="callout">
@@ -55,6 +54,5 @@ func Page() Node {
 				<a href="/labs/secret" data-gosx-link class="cta-link">Open the secret page</a>
 			</p>
 		</section>
-		<p class="form-status">{action.message}</p>
 	</article>
 }

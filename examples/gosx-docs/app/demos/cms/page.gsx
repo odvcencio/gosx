@@ -1,7 +1,7 @@
 package docs
 
 func Page() Node {
-	return <form class="cms-demo" id="cms-content-form" method="post" action={actionPath("publish")}>
+	return <form class="cms-demo" id="cms-content-form" method="post" action="/gosx/action/publish">
 		<h1 class="visually-hidden">CMS Editor</h1>
 		<input type="hidden" name="csrf_token" value={csrf.token} />
 		<input type="hidden" name="block_count" id="cms-block-count" value={len(data.blocks)} />

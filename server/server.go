@@ -70,6 +70,174 @@ type registeredMountedRoute struct {
 	handler http.Handler
 }
 
+// managedActionMatcher is intentionally a request capability rather than a
+// path-prefix convention. It lets session.Protect delegate CSRF ownership to
+// the exact mounted route that registered a managed action, including when a
+// router is composed through App.Mount/App.MountApp and ordinary middleware.
+type managedActionMatcher interface {
+	IsManagedActionRequest(*http.Request) bool
+	PreservesManagedActionCapability() bool
+}
+
+// managedActionBuilder is the explicit build boundary for mutable managed
+// handlers. A direct action.Router mount must be replaced by its immutable
+// snapshot before the mount mux is compiled; dispatch and capability checks
+// then retain that exact object for the lifetime of the built app.
+type managedActionBuilder interface {
+	BuildManagedActionHandler() http.Handler
+}
+
+type managedAppHandler struct {
+	snapshot *managedMountSnapshot
+	handler  http.Handler
+	// preserve is true only when every wrapper between this app boundary and
+	// the immutable dispatcher explicitly preserves managed-action capability.
+	// An arbitrary middleware may short-circuit, so the app boundary must not
+	// claim the capability merely because it can inspect the mount snapshot.
+	preserve bool
+}
+
+func (h *managedAppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.handler == nil {
+		http.Error(w, "server handler is not configured", http.StatusInternalServerError)
+		return
+	}
+	h.handler.ServeHTTP(w, r)
+}
+
+func (h *managedAppHandler) IsManagedActionRequest(r *http.Request) bool {
+	return h != nil && h.preserve && h.snapshot != nil && h.snapshot.IsManagedActionRequest(r)
+}
+
+func (h *managedAppHandler) PreservesManagedActionCapability() bool {
+	return h != nil && h.preserve
+}
+
+func (h *managedAppHandler) Unwrap() http.Handler {
+	if h == nil {
+		return nil
+	}
+	return h.handler
+}
+
+type managedChildMount struct {
+	prefix string
+	load   func() http.Handler
+}
+
+func (m *managedChildMount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	handler := m.load()
+	if handler == nil {
+		http.Error(w, "mounted application is not configured", http.StatusInternalServerError)
+		return
+	}
+	handler.ServeHTTP(w, stripMountedRequest(r, m.prefix))
+}
+
+func (m *managedChildMount) IsManagedActionRequest(r *http.Request) bool {
+	if m == nil || r == nil {
+		return false
+	}
+	handler := m.load()
+	matcher, ok := handler.(managedActionMatcher)
+	return ok && matcher.PreservesManagedActionCapability() && matcher.IsManagedActionRequest(stripMountedRequest(r, m.prefix))
+}
+
+func (m *managedChildMount) PreservesManagedActionCapability() bool { return m != nil }
+
+// managedMountHandler is the immutable wrapper installed in the Build-time
+// mount mux.  Its capability is derived once from the selected mount handler;
+// request-time checks never rescan App.mounts or consult a post-Build map.
+type managedMountHandler struct {
+	pattern string
+	handler http.Handler
+	managed managedActionMatcher
+}
+
+func (m *managedMountHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if m == nil || m.handler == nil {
+		http.Error(w, "mounted handler is not configured", http.StatusInternalServerError)
+		return
+	}
+	MarkObservedRequest(r, "mount", m.pattern)
+	m.handler.ServeHTTP(w, r)
+}
+
+func (m *managedMountHandler) IsManagedActionRequest(r *http.Request) bool {
+	return m != nil && m.managed != nil && m.managed.PreservesManagedActionCapability() && m.managed.IsManagedActionRequest(r)
+}
+
+func (m *managedMountHandler) PreservesManagedActionCapability() bool { return m != nil }
+
+// managedMountSnapshot is shared by the dispatcher and the CSRF capability
+// wrapper.  Both ask the same immutable ServeMux which mount pattern/handler
+// wins, so selection cannot drift between a preflight and dispatch.
+type managedMountSnapshot struct {
+	mux *http.ServeMux
+}
+
+func (s *managedMountSnapshot) IsManagedActionRequest(r *http.Request) bool {
+	if s == nil || s.mux == nil || r == nil || r.URL == nil {
+		return false
+	}
+	selected, pattern := s.mux.Handler(r)
+	mount, ok := selected.(*managedMountHandler)
+	if !ok || mount == nil || pattern != mount.pattern {
+		return false
+	}
+	return mount.IsManagedActionRequest(r)
+}
+
+func (s *managedMountSnapshot) PreservesManagedActionCapability() bool { return s != nil }
+
+// managedMiddlewareHandler records an explicit pass-through boundary around
+// one of GoSX's own middleware implementations.  The session capability walk
+// follows next, while the actual request still runs through handler.  Custom
+// middleware is opaque unless it supplies the same explicit marker itself.
+type managedMiddlewareHandler struct {
+	handler http.Handler
+	next    http.Handler
+}
+
+func (h *managedMiddlewareHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.handler == nil {
+		http.Error(w, "server middleware is not configured", http.StatusInternalServerError)
+		return
+	}
+	h.handler.ServeHTTP(w, r)
+}
+
+func (h *managedMiddlewareHandler) Unwrap() http.Handler {
+	if h == nil {
+		return nil
+	}
+	return h.next
+}
+
+func (h *managedMiddlewareHandler) PreservesManagedActionCapability() bool {
+	return h != nil && h.next != nil
+}
+
+func stripMountedRequest(r *http.Request, prefix string) *http.Request {
+	if r == nil {
+		return nil
+	}
+	clone := r.Clone(r.Context())
+	if r.URL == nil {
+		return clone
+	}
+	urlCopy := *r.URL
+	path := strings.TrimPrefix(r.URL.Path, prefix)
+	if path == "" {
+		path = "/"
+	} else if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	urlCopy.Path = path
+	clone.URL = &urlCopy
+	return clone
+}
+
 type statusCoder interface {
 	StatusCode() int
 }
@@ -413,16 +581,11 @@ func (a *App) MountApp(prefix string, child *App) {
 		handler, ok = cached.Load().(http.Handler)
 		if !ok {
 			handler = child.Build()
-			if prefix != "/" {
-				handler = http.StripPrefix(prefix, handler)
-			}
 			cached.Store(handler)
 		}
 		return handler
 	}
-	lazy := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		loadChild().ServeHTTP(w, r)
-	})
+	lazy := &managedChildMount{prefix: prefix, load: loadChild}
 
 	pattern := prefix
 	if pattern != "/" {
@@ -510,15 +673,69 @@ func (a *App) Build() http.Handler {
 	var dispatch func(w http.ResponseWriter, r *http.Request, allowRewrite bool)
 
 	a.mux = mux
-	dispatch = a.buildDispatcher(mux, redirectMux, rewriteMux, mountMux)
+	snapshot := &managedMountSnapshot{mux: mountMux}
+	dispatch = a.buildDispatcher(mux, redirectMux, rewriteMux, mountMux, snapshot)
 	a.registerRewriteRoutes(rewriteMux, dispatch)
 
-	return a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	core := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.maybeServeISR(w, r, dispatch) {
 			return
 		}
 		dispatch(w, r, true)
-	}))
+	})
+	// Keep the capability on both sides only when every wrapper in the app
+	// middleware chain explicitly preserves it.  Opaque middleware is allowed
+	// to short-circuit, so session.Protect must retain ownership of CSRF for
+	// that composition rather than trusting the mount snapshot alone.
+	capable := &managedAppHandler{snapshot: snapshot, handler: core, preserve: true}
+	wrapped := a.wrap(capable)
+	return &managedAppHandler{snapshot: snapshot, handler: wrapped, preserve: managedCapabilityChainPreserved(wrapped, capable)}
+}
+
+func managedCapabilityChainPreserved(handler, target http.Handler) bool {
+	for depth := 0; depth < 32 && handler != nil; depth++ {
+		if handler == target {
+			return true
+		}
+		preserver, ok := handler.(interface {
+			PreservesManagedActionCapability() bool
+		})
+		if !ok || !preserver.PreservesManagedActionCapability() {
+			return false
+		}
+		unwrapper, ok := handler.(interface{ Unwrap() http.Handler })
+		if !ok {
+			return false
+		}
+		handler = unwrapper.Unwrap()
+	}
+	return false
+}
+
+// managedHandlerMatches follows only explicit capability-preserving wrappers
+// while asking the immutable mounted handler whether this exact request is a
+// managed action. It is shared by middleware such as i18n that rewrites the
+// request path before delegating to a mounted handler.
+func managedHandlerMatches(handler http.Handler, req *http.Request) bool {
+	for depth := 0; depth < 32 && handler != nil; depth++ {
+		preserver, ok := handler.(interface {
+			PreservesManagedActionCapability() bool
+		})
+		if !ok || !preserver.PreservesManagedActionCapability() {
+			return false
+		}
+		if matcher, ok := handler.(interface {
+			IsManagedActionRequest(*http.Request) bool
+		}); ok && matcher.IsManagedActionRequest(req) {
+			return true
+		}
+		unwrapper, ok := handler.(interface{ Unwrap() http.Handler })
+		if !ok {
+			return false
+		}
+		handler = unwrapper.Unwrap()
+	}
+	return false
 }
 
 func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
@@ -664,6 +881,20 @@ func (a *App) registerMountRoutes(mux *http.ServeMux) {
 	for _, route := range a.mounts {
 		pattern := route.pattern
 		handler := route.handler
+		if builder, ok := handler.(managedActionBuilder); ok {
+			handler = builder.BuildManagedActionHandler()
+			if handler == nil {
+				handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					http.Error(w, "managed action handler is not configured", http.StatusInternalServerError)
+				})
+			}
+		}
+		// Resolve child applications while the parent is being built.  The
+		// resulting mount wrapper and child handler are part of the immutable
+		// snapshot used by both capability checks and dispatch.
+		if child, ok := handler.(*managedChildMount); ok {
+			_ = child.load()
+		}
 		// Wired here, at Build time, rather than back in Mount — see the N3
 		// ordering note on EnableNavigation and Mount. This makes
 		// EnableNavigation order-independent relative to Mount: it only has
@@ -673,15 +904,24 @@ func (a *App) registerMountRoutes(mux *http.ServeMux) {
 				configurable.SetNavigationHead(NavigationScriptWithNonce)
 			}
 		}
-		mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			MarkObservedRequest(r, "mount", pattern)
-			handler.ServeHTTP(w, r)
-		}))
+		mount := &managedMountHandler{pattern: pattern, handler: handler}
+		if matcher, ok := handler.(managedActionMatcher); ok && matcher.PreservesManagedActionCapability() {
+			mount.managed = matcher
+		}
+		mux.Handle(pattern, mount)
 	}
 }
 
-func (a *App) buildDispatcher(mux, redirectMux, rewriteMux, mountMux *http.ServeMux) func(http.ResponseWriter, *http.Request, bool) {
+func (a *App) buildDispatcher(mux, redirectMux, rewriteMux, mountMux *http.ServeMux, mountSnapshot *managedMountSnapshot) func(http.ResponseWriter, *http.Request, bool) {
 	return func(w http.ResponseWriter, r *http.Request, allowRewrite bool) {
+		// The built-in GET /gosx/ runtime asset route is more specific than a
+		// root-mounted route.Router in ServeMux and would otherwise turn a
+		// managed POST into a framework 405 before the mount gets a chance to
+		// dispatch it. The capability check is exact and body-free, so only a
+		// registered managed action is routed through its owning mount here.
+		if mountSnapshot != nil && mountSnapshot.IsManagedActionRequest(r) && mountHandled(mountMux, w, r) {
+			return
+		}
 		if redirectHandled(redirectMux, w, r) {
 			return
 		}
@@ -1176,7 +1416,7 @@ func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
 
 func requestIDMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get(requestIDHeader)
 			if id == "" {
 				id = nextRequestID()
@@ -1185,12 +1425,13 @@ func requestIDMiddleware() Middleware {
 			ctx := context.WithValue(r.Context(), requestIDContextKey, id)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
+		return &managedMiddlewareHandler{handler: wrapped, next: next}
 	}
 }
 
 func recoveryMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					log.Printf("[gosx] unhandled panic on %s: %v", r.URL.Path, recovered)
@@ -1199,6 +1440,7 @@ func recoveryMiddleware() Middleware {
 			}()
 			next.ServeHTTP(w, r)
 		})
+		return &managedMiddlewareHandler{handler: wrapped, next: next}
 	}
 }
 

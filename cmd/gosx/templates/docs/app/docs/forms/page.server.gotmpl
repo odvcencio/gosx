@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"errors"
 	"strings"
 
 	docsapp "__MODULE__/app"
@@ -12,19 +13,25 @@ import (
 func init() {
 	docsapp.RegisterDocsPage(
 		"Forms",
-		"Relative page actions, CSRF protection, validation state, and session-backed flashes now fit the file-routed app model.",
-		route.FileModuleOptions{
-			Actions: route.FileActions{
-				"subscribe": func(ctx *action.Context) error {
-					if strings.TrimSpace(ctx.FormData["email"]) == "" {
-						return action.Validation("Add an email address to continue.", map[string]string{
-							"email": "Email is required.",
-						}, ctx.FormData)
-					}
-					session.AddFlash(ctx.Request, "notice", "The session flash survived a redirect-backed form post.")
-					return ctx.Success("Validation state and success messages now survive a normal browser redirect.", nil)
-				},
-			},
-		},
+		"Managed POST actions, CSRF protection, validation, and session-backed flashes.",
+		route.FileModuleOptions{},
 	)
+}
+
+// RegisterManagedActions installs the form action on the application's
+// route.Router before Build. The managed namespace is global and immutable
+// after the router is built.
+func RegisterManagedActions(router *route.Router) error {
+	if router == nil {
+		return errors.New("managed action router is nil")
+	}
+	return router.RegisterManagedPOST("subscribe", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		if strings.TrimSpace(ctx.Form.Value("email")) == "" {
+			return action.Result{}, action.Validation("Add an email address to continue.", map[string]string{"email": "Email is required."})
+		}
+		if err := session.AddFlash(ctx.Request, "notice", "The session flash survived the managed form post."); err != nil {
+			return action.Result{}, err
+		}
+		return action.Result{OK: true, Redirect: "/docs/forms"}, nil
+	})
 }

@@ -1200,10 +1200,17 @@
     if (options && options.csrf != null) {
       return String(options.csrf);
     }
-    return csrfTokenFromElement(host)
-      || csrfTokenFromElement(document.documentElement)
-      || csrfTokenFromInput(host)
-      || csrfTokenFromInput(document.body)
+    const submitter = options && options.submitter;
+    const associatedForm = options && options.form ? options.form : host;
+    // The submitter is the most specific owner of an action's CSRF
+    // configuration.  The associated form remains the projection owner and
+    // is deliberately considered separately, so a submitter that owns only a
+    // target/event/signal or only a CSRF override cannot move result state to
+    // a different form.
+    return csrfTokenFromElement(submitter)
+      || csrfTokenFromElement(associatedForm)
+      || csrfTokenFromInput(associatedForm)
+      || (options && options.formData ? formCSRFToken(options.formData) : "")
       || csrfTokenFromMeta();
   }
 
@@ -1233,6 +1240,45 @@
         && (node.getAttribute("name") === "csrf-token" || node.getAttribute("name") === "gosx-csrf-token");
     });
     return meta ? String(meta.getAttribute("content") || "") : "";
+  }
+
+  function csrfHeaderFromElement(element) {
+    if (element && element.getAttribute) {
+      const value = String(element.getAttribute("data-gosx-csrf-header") || "").trim();
+      if (value) return value;
+    }
+    const meta = findElement(document.head, function(node) {
+      return isElement(node, "META")
+        && node.getAttribute
+        && (node.getAttribute("name") === "csrf-header" || node.getAttribute("name") === "gosx-csrf-header");
+    });
+    const value = meta ? String(meta.getAttribute("content") || "").trim() : "";
+    return value || "X-CSRF-Token";
+  }
+
+  function resolveActionCSRFHeader(host, options) {
+    const submitter = options && options.submitter;
+    const associatedForm = options && options.form ? options.form : host;
+    const submitterValue = submitter && submitter.getAttribute
+      ? String(submitter.getAttribute("data-gosx-csrf-header") || "").trim()
+      : "";
+    if (submitterValue) return submitterValue;
+    const formValue = associatedForm && associatedForm.getAttribute
+      ? String(associatedForm.getAttribute("data-gosx-csrf-header") || "").trim()
+      : "";
+    if (formValue) return formValue;
+    return csrfHeaderFromElement(null);
+  }
+
+  function associatedFormForSubmitter(form, submitter) {
+    if (!submitter) return form;
+    if (submitter.form) return submitter.form;
+    const formID = submitter.getAttribute && submitter.getAttribute("form");
+    if (formID) {
+      const associated = document.getElementById && document.getElementById(formID);
+      if (associated) return associated;
+    }
+    return form;
   }
 
   function prefetchManagedLinks(trigger) {
@@ -1778,10 +1824,29 @@
   }
 
   function serializeForm(form, submitter) {
-    const formData = new FormData(form);
+    let formData = null;
+    if (submitter) {
+      try {
+        formData = new FormData(form, submitter);
+      } catch (_error) {
+        formData = null;
+      }
+    }
+    if (!formData) {
+      formData = new FormData(form);
+    }
     const submitterName = submitter && (submitter.name || (typeof submitter.getAttribute === "function" ? submitter.getAttribute("name") : ""));
     const submitterValue = submitter && (submitter.value || (typeof submitter.getAttribute === "function" ? submitter.getAttribute("value") : "") || "");
-    if (submitterName && !formData.has(submitterName)) {
+    let included = false;
+    if (submitterName && typeof formData.getAll === "function") {
+      try {
+        const base = new FormData(form);
+        included = typeof base.getAll === "function" && formData.getAll(submitterName).length > base.getAll(submitterName).length;
+      } catch (_error) {
+        included = false;
+      }
+    }
+    if (submitterName && !included) {
       formData.append(submitterName, submitterValue);
     }
     return formData;
@@ -2061,17 +2126,24 @@
     });
   }
 
-  async function submitManagedActionForm(url, method, formData) {
-    const csrfToken = formCSRFToken(formData);
+  async function submitManagedActionForm(url, method, formData, csrfElement, submitter) {
+    const csrfToken = resolveActionCSRFToken(csrfElement, {
+      form: csrfElement,
+      formData: formData,
+      submitter: submitter,
+    });
+    const csrfHeader = resolveActionCSRFHeader(csrfElement, { form: csrfElement, submitter: submitter });
     const response = await gosxRuntimeRequest(url.href, {
       method: method,
       headers: {
         Accept: "application/json",
         "X-Requested-With": "XMLHttpRequest",
-        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+        ...(csrfToken ? { [csrfHeader]: csrfToken } : {}),
       },
       body: formData,
-      redirect: "follow",
+      // Managed actions return a JSON envelope; never let fetch follow an
+      // indeterminate redirect behind the runtime's back.
+      redirect: "manual",
     });
     let result = null;
     try {
@@ -2145,14 +2217,14 @@
         await submitManagedGetForm(url, method, formData);
         return;
       }
-      outcome = await submitManagedActionForm(url, method, formData);
+    const csrfOwner = associatedFormForSubmitter(form, submitter);
+    outcome = await submitManagedActionForm(url, method, formData, csrfOwner, submitter);
     } catch (err) {
       console.error("[gosx] form action failed:", err);
       reportNavigationFailure("form action", err, {
         source: url.href,
         telemetry: { url: url.href, method: method },
       });
-      nativeSubmitForm(form, submitter);
       return;
     } finally {
       try {
@@ -2177,41 +2249,6 @@
     }
     next.search = params.toString();
     return next;
-  }
-
-  function nativeSubmitForm(form, submitter) {
-    if (!form || !isManagedFormElement(form)) return;
-    // Strip every attribute that makes isManagedFormElement true — FORM_ATTR
-    // and/or the shorthand — so form.requestSubmit() below dispatches a
-    // fresh "submit" event that shouldHandleForm lets through natively,
-    // instead of re-intercepting it. Both are restored once the native
-    // submission has been requested.
-    const hadForm = form.hasAttribute(FORM_ATTR);
-    const previousForm = hadForm ? form.getAttribute(FORM_ATTR) : null;
-    const hadShorthand = form.hasAttribute(FORM_MANAGED_SHORTHAND_ATTR);
-    const previousShorthand = hadShorthand ? form.getAttribute(FORM_MANAGED_SHORTHAND_ATTR) : null;
-    if (hadForm) form.removeAttribute(FORM_ATTR);
-    if (hadShorthand) form.removeAttribute(FORM_MANAGED_SHORTHAND_ATTR);
-    try {
-      if (typeof form.requestSubmit === "function") {
-        if (submitter) {
-          form.requestSubmit(submitter);
-        } else {
-          form.requestSubmit();
-        }
-        return;
-      }
-      if (submitter && typeof submitter.click === "function") {
-        submitter.click();
-        return;
-      }
-      if (typeof form.submit === "function") {
-        form.submit();
-      }
-    } finally {
-      if (hadForm) form.setAttribute(FORM_ATTR, previousForm);
-      if (hadShorthand) form.setAttribute(FORM_MANAGED_SHORTHAND_ATTR, previousShorthand);
-    }
   }
 
   function parseDocument(html) {
@@ -4709,13 +4746,14 @@
       body.append(pair[0], pair[1]);
     }
     const csrfToken = csrfTokenFromElement(container) || csrfTokenFromMeta();
+    const csrfHeader = csrfHeaderFromElement(container);
     let response = null;
     try {
       response = await gosxRuntimeRequest(target.href, {
         method: method,
         headers: Object.assign(
           { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
-          csrfToken ? { "X-CSRF-Token": csrfToken } : {},
+          csrfToken ? { [csrfHeader]: csrfToken } : {},
         ),
         body: body,
       });

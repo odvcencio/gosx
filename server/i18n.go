@@ -44,7 +44,7 @@ func I18nMiddleware(config I18nConfig) Middleware {
 		if next == nil {
 			next = http.NotFoundHandler()
 		}
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			locale, routedPath, prefixed := resolveRequestLocale(r, cfg)
 			w.Header().Set("Content-Language", locale)
 			appendVary(w.Header(), "Accept-Language")
@@ -52,15 +52,60 @@ func I18nMiddleware(config I18nConfig) Middleware {
 			ctx := context.WithValue(r.Context(), localeContextKey, locale)
 			ctx = context.WithValue(ctx, localePrefixedContextKey, prefixed)
 			routed := r.WithContext(ctx)
-			if prefixed && r.URL != nil {
-				u := *r.URL
-				u.Path = routedPath
-				u.RawPath = ""
-				routed.URL = &u
-			}
+			routed = rewriteI18nRequestPath(routed, routedPath)
 			next.ServeHTTP(w, routed)
 		})
+		return &i18nMiddlewareHandler{handler: wrapped, next: next, cfg: cfg}
 	}
+}
+
+// i18nMiddlewareHandler preserves the managed capability only after applying
+// the same locale-prefix transformation that ServeHTTP applies. This keeps
+// session.Protect's body-free capability walk in agreement with dispatch for
+// /fr/gosx/action/name and encoded request paths.
+type i18nMiddlewareHandler struct {
+	handler http.Handler
+	next    http.Handler
+	cfg     normalizedI18nConfig
+}
+
+func (h *i18nMiddlewareHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h == nil || h.handler == nil {
+		http.NotFound(w, r)
+		return
+	}
+	h.handler.ServeHTTP(w, r)
+}
+
+func (h *i18nMiddlewareHandler) Unwrap() http.Handler {
+	if h == nil {
+		return nil
+	}
+	return h.next
+}
+
+func (h *i18nMiddlewareHandler) PreservesManagedActionCapability() bool {
+	return h != nil
+}
+
+func (h *i18nMiddlewareHandler) IsManagedActionRequest(r *http.Request) bool {
+	if h == nil || r == nil {
+		return false
+	}
+	_, routedPath, _ := resolveRequestLocale(r, h.cfg)
+	return managedHandlerMatches(h.next, rewriteI18nRequestPath(r, routedPath))
+}
+
+func rewriteI18nRequestPath(r *http.Request, routedPath string) *http.Request {
+	if r == nil || r.URL == nil || routedPath == r.URL.Path {
+		return r
+	}
+	u := *r.URL
+	u.Path = routedPath
+	u.RawPath = ""
+	routed := r.Clone(r.Context())
+	routed.URL = &u
+	return routed
 }
 
 // RequestLocale returns the locale selected for the current request.

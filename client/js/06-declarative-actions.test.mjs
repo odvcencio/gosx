@@ -125,14 +125,24 @@ function runModule(options = {}) {
     console,
     URLSearchParams,
     FormData: class {
-      constructor(form) {
+      constructor(form, submitter) {
         this.entries = form && Array.isArray(form._formEntries) ? form._formEntries.slice() : [];
+        if (submitter && submitter.name) {
+          this.entries.push([submitter.name, submitter.value || ""]);
+        }
       }
       append(key, value) {
-        this.entries.push([String(key), value == null ? "" : String(value)]);
+        this.entries.push([String(key), value == null ? "" : value]);
       }
       has(key) {
         return this.entries.some((entry) => entry[0] === String(key));
+      }
+      getAll(key) {
+        return this.entries.filter((entry) => entry[0] === String(key)).map((entry) => entry[1]);
+      }
+      get(key) {
+        const entry = this.entries.find((candidate) => candidate[0] === String(key));
+        return entry ? entry[1] : null;
       }
       [Symbol.iterator]() {
         return this.entries[Symbol.iterator]();
@@ -362,7 +372,7 @@ test("data-gosx-action form includes the clicked submitter value", () => {
     tag: "form",
     submitBtn: submit,
   });
-  form._formEntries = [["title", "Hello"]];
+  form._formEntries = [["title", "Hello"], ["tag", "one"], ["tag", "two"]];
   const prevented = listeners.submit({
     target: form,
     submitter: submit,
@@ -370,7 +380,12 @@ test("data-gosx-action form includes the clicked submitter value", () => {
   });
   assert.equal(prevented, undefined);
   assert.equal(fetches.length, 1);
-  assert.equal(String(fetches[0].opts.body), "title=Hello&post_action=publish");
+  assert.deepEqual(fetches[0].opts.body.entries, [
+    ["title", "Hello"],
+    ["tag", "one"],
+    ["tag", "two"],
+    ["post_action", "publish"],
+  ]);
 });
 
 test("data-gosx-action form honors submitter formaction and formmethod", () => {
@@ -391,7 +406,97 @@ test("data-gosx-action form honors submitter formaction and formmethod", () => {
   assert.equal(fetches.length, 1);
   assert.equal(fetches[0].url, "/api/x/schedule");
   assert.equal(fetches[0].opts.method, "PATCH");
-  assert.equal(String(fetches[0].opts.body), "publish_at=2026-07-29T16%3A30&post_action=schedule");
+  assert.deepEqual(fetches[0].opts.body.entries, [
+    ["publish_at", "2026-07-29T16:30"],
+    ["post_action", "schedule"],
+  ]);
+});
+
+test("data-gosx-action form honors an explicit CSRF header name", () => {
+  const { listeners, fetches } = runModule({ csrfToken: "custom-token" });
+  const form = makeEl({
+    "data-gosx-action": "",
+    "data-gosx-csrf-header": "X-Custom-CSRF",
+    method: "POST",
+    action: "/api/x/custom-csrf",
+  }, { tag: "form" });
+  form._formEntries = [["field", "value"]];
+  listeners.submit({ target: form, preventDefault() {} });
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].opts.headers["X-Custom-CSRF"], "custom-token");
+  assert.equal(fetches[0].opts.headers["X-CSRF-Token"], undefined);
+  assert.equal(fetches[0].opts.redirect, "manual");
+});
+
+test("data-gosx-action form gives a submitter CSRF override precedence over the associated form while preserving target/event/signal ownership", async () => {
+  const formTarget = { innerHTML: "<p>form</p>" };
+  const submitterTarget = { innerHTML: "<p>button</p>" };
+  const submit = makeEl({
+    type: "submit",
+    name: "intent",
+    value: "publish",
+    "data-gosx-csrf-token": "submitter-token",
+    "data-gosx-csrf-header": "X-Submitter-CSRF",
+    "data-gosx-action-target": "#button-status",
+    "data-gosx-action-event": "submitter:published",
+    "data-gosx-action-signal": "publish-status",
+  }, { tag: "button" });
+  const form = makeEl({
+    "data-gosx-action": "",
+    "data-gosx-csrf-token": "form-token",
+    "data-gosx-csrf-header": "X-Form-CSRF",
+    method: "POST",
+    action: "/api/x/submitter-csrf",
+  }, { tag: "form", submitBtn: submit });
+  submit.form = form;
+  form._formEntries = [["csrf_token", "form-token"], ["tag", "one"], ["tag", "two"]];
+  const { listeners, fetches, dispatched, signals } = runModule({
+    queryMap: {
+      "#form-status": formTarget,
+      "#button-status": submitterTarget,
+    },
+    responsePayload: { html: "<p>Published</p>", value: "done" },
+  });
+  listeners.submit({ target: form, submitter: submit, preventDefault() {} });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(fetches.length, 1);
+  assert.equal(fetches[0].opts.headers["X-Submitter-CSRF"], "submitter-token");
+  assert.equal(fetches[0].opts.headers["X-Form-CSRF"], undefined);
+  assert.equal(fetches[0].opts.redirect, "manual");
+  assert.deepEqual(fetches[0].opts.body.entries, [
+    ["csrf_token", "form-token"],
+    ["tag", "one"],
+    ["tag", "two"],
+    ["intent", "publish"],
+  ]);
+  assert.equal(formTarget.innerHTML, "<p>form</p>");
+  assert.equal(submitterTarget.innerHTML, "<p>Published</p>");
+  assert.deepEqual(signals, [{ name: "publish-status", payload: JSON.stringify("done") }]);
+  assert.equal(dispatched.some((event) => event.type === "submitter:published"), true);
+});
+
+test("data-gosx-action form reports transport failure once without native retry", async () => {
+  let calls = 0;
+  const { listeners } = runModule({
+    coreRequest() {
+      calls += 1;
+      return Promise.reject(new Error("offline"));
+    },
+  });
+  const submit = makeEl({ type: "submit", name: "intent", value: "save" }, { tag: "button" });
+  const form = makeEl({
+    "data-gosx-action": "",
+    method: "POST",
+    action: "/api/x/offline",
+  }, { tag: "form", submitBtn: submit });
+  submit.form = form;
+  listeners.submit({ target: form, submitter: submit, preventDefault() {} });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls, 1);
+  assert.equal(form.requestSubmitCalls ? form.requestSubmitCalls.length : 0, 0);
+  assert.equal(form.submitCalls ? form.submitCalls.length : 0, 0);
 });
 
 test("data-gosx-action form lets the submitter own the patch target", async () => {

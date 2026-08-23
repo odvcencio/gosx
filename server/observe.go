@@ -50,7 +50,7 @@ func ObserveHandler(handler http.Handler, observers []RequestObserver) http.Hand
 	if handler == nil || len(observers) == 0 {
 		return handler
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := &requestObservation{}
 		r = r.WithContext(context.WithValue(r.Context(), requestObservationContextKey, state))
 		recorder := &observedResponseWriter{ResponseWriter: w}
@@ -77,6 +77,7 @@ func ObserveHandler(handler http.Handler, observers []RequestObserver) http.Hand
 			}
 		}
 	})
+	return &managedMiddlewareHandler{handler: wrapped, next: handler}
 }
 
 // MarkObservedRequest attaches route metadata to the current observed request.

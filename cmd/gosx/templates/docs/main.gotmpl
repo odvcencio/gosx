@@ -15,6 +15,8 @@ import (
 	"time"
 
 	docsapp "__MODULE__/app"
+	docsAuthActions "__MODULE__/app/docs/auth"
+	docsFormActions "__MODULE__/app/docs/forms"
 	_ "__MODULE__/modules"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/auth"
@@ -157,6 +159,9 @@ func main() {
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
 		log.Fatal(err)
 	}
+	if err := registerManagedActions(router); err != nil {
+		log.Fatal(err)
+	}
 
 	app := server.New()
 	router.SetRevalidator(app.Revalidator())
@@ -209,6 +214,19 @@ func main() {
 
 	log.Printf("gosx-docs at http://localhost:%s", port)
 	log.Fatal(app.ListenAndServe(":" + port))
+}
+
+func registerManagedActions(router *route.Router) error {
+	installers := []func(*route.Router) error{
+		docsAuthActions.RegisterManagedActions,
+		docsFormActions.RegisterManagedActions,
+	}
+	for _, install := range installers {
+		if err := install(router); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func getenv(key, fallback string) string {

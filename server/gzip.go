@@ -23,7 +23,7 @@ var gzipWriterPool = sync.Pool{
 // http.Hijacker and http.Flusher so WebSocket upgrades and streaming work.
 func GzipMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") ||
 				strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 				next.ServeHTTP(w, r)
@@ -47,6 +47,7 @@ func GzipMiddleware() Middleware {
 
 			next.ServeHTTP(gw, r)
 		})
+		return &managedMiddlewareHandler{handler: wrapped, next: next}
 	}
 }
 

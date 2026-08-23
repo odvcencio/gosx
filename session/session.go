@@ -301,6 +301,15 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Managed actions own one bounded parser and one authoritative CSRF
+		// decision. Only a concrete framework handler that implements the
+		// capability below may opt out of this middleware's body parser. A path
+		// prefix alone is never sufficient: an app-authored handler mounted at
+		// /gosx/action/ remains protected.
+		if isRegisteredManagedAction(next, r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		store := m.Get(r)
 		if store == nil {
 			http.Error(w, "session middleware required before csrf protection", http.StatusInternalServerError)
@@ -323,6 +332,35 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isRegisteredManagedAction(handler http.Handler, req *http.Request) bool {
+	// A capability is an authorization-bearing signal.  Only a wrapper that
+	// explicitly opts into preserving it may be traversed; an arbitrary
+	// Unwrap method is not evidence that the wrapper delegates every request.
+	for depth := 0; depth < 32 && handler != nil; depth++ {
+		preserver, ok := handler.(interface {
+			PreservesManagedActionCapability() bool
+		})
+		if !ok || !preserver.PreservesManagedActionCapability() {
+			return false
+		}
+		if capability, ok := handler.(interface {
+			IsManagedActionRequest(*http.Request) bool
+		}); ok && capability.IsManagedActionRequest(req) {
+			return true
+		}
+		unwrapper, ok := handler.(interface{ Unwrap() http.Handler })
+		if !ok {
+			return false
+		}
+		inner := unwrapper.Unwrap()
+		if inner == nil {
+			return false
+		}
+		handler = inner
+	}
+	return false
 }
 
 // Get returns the request-scoped store for the manager.

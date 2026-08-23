@@ -86,31 +86,36 @@ func init() {
 					},
 				}, nil
 			},
-			Actions: route.FileActions{
-				"publish": func(ctx *action.Context) error {
-					if !cmsLimiter.Allow(cmsClientIP(ctx.Request)) {
-						ctx.ValidationFailure("Slow down — try again in a moment.", nil)
-						return nil
-					}
-					blocks, fieldErrors := cmsBlocksFromForm(ctx.FormData)
-					if len(fieldErrors) > 0 {
-						ctx.ValidationFailure("Fix the highlighted content before publishing.", fieldErrors)
-						return nil
-					}
-					cmsStore.save(blocks)
-					_, n, at := cmsStore.snapshot()
-					return ctx.Success(
-						fmt.Sprintf("Published %d blocks", n),
-						map[string]any{
-							"count":  n,
-							"at":     at,
-							"byKind": cmsSummarizeBlocks(blocks),
-						},
-					)
-				},
-			},
 		},
 	)
+}
+
+// RegisterManagedActions installs the CMS publish endpoint on the shared
+// route router. The page remains a normal file module; registration is an
+// explicit aggregate step in the example's main before BuildChecked.
+func RegisterManagedActions(router *route.Router) error {
+	if router == nil {
+		return fmt.Errorf("managed action router is nil")
+	}
+	return router.RegisterManagedPOST("publish", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		values := make(map[string]string)
+		for i := 0; i < cmsMaxBlocks; i++ {
+			prefix := fmt.Sprintf("block_%d_", i)
+			for _, field := range []string{"kind", "title", "subtitle", "body", "text", "author"} {
+				name := prefix + field
+				if value := ctx.Form.Value(name); value != "" {
+					values[name] = value
+				}
+			}
+		}
+		values["block_count"] = ctx.Form.Value("block_count")
+		blocks, fieldErrors := cmsBlocksFromForm(values)
+		if len(fieldErrors) > 0 {
+			return action.Result{}, action.Validation("Correct the highlighted blocks before publishing.", fieldErrors)
+		}
+		cmsStore.save(blocks)
+		return action.Result{OK: true, Message: "Published.", Redirect: "/demos/cms"}, nil
+	})
 }
 
 // cmsBlocksFromForm reconstructs the submitted draft from indexed form

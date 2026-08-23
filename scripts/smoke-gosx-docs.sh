@@ -182,7 +182,7 @@ fi
 	--cookie "$tmp_dir/forms.cookies" --cookie-jar "$tmp_dir/forms.cookies" \
 	--data-urlencode "csrf_token=${csrf_token}" \
 	--data-urlencode "email=smoke@example.com" \
-	"${base_url}/docs/forms/__actions/subscribe" -o "$tmp_dir/forms-result.html"
+	"${base_url}/gosx/action/subscribe" -o "$tmp_dir/forms-result.html"
 grep -q 'Subscribed!' "$tmp_dir/forms-result.html"
 
 # The docs index is deliberately dynamic so a query is never replaced by the

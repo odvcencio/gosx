@@ -4,6 +4,7 @@ build/
 /docs/*
 !/docs/docs-site-operations.md
 !/docs/docs-site-spec.md
+!/docs/managed-actions.md
 /gosx
 node_modules/
 

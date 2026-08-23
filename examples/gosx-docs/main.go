@@ -15,9 +15,13 @@ import (
 	"m31labs.dev/gosx/env"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	checkers "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
+	cms "m31labs.dev/gosx/examples/gosx-docs/app/demos/cms"
 	collab "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
 	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
+	playground "m31labs.dev/gosx/examples/gosx-docs/app/demos/playground"
+	docsauth "m31labs.dev/gosx/examples/gosx-docs/app/docs/auth"
+	docsforms "m31labs.dev/gosx/examples/gosx-docs/app/docs/forms"
 	_ "m31labs.dev/gosx/examples/gosx-docs/modules"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/server"
@@ -78,6 +82,9 @@ func main() {
 	docsapp.BindWebAuthn(webauthn)
 
 	router := route.NewRouter()
+	if err := registerManagedActions(router); err != nil {
+		log.Fatal(err)
+	}
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
 		ctx.AddHead(server.NavigationScript())
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
@@ -142,6 +149,21 @@ func main() {
 
 	log.Printf("gosx-docs at http://localhost:%s", port)
 	log.Fatal(app.ListenAndServe(":" + port))
+}
+
+func registerManagedActions(router *route.Router) error {
+	installers := []func(*route.Router) error{
+		playground.RegisterManagedActions,
+		cms.RegisterManagedActions,
+		docsauth.RegisterManagedActions,
+		docsforms.RegisterManagedActions,
+	}
+	for _, install := range installers {
+		if err := install(router); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func limitDocsRequestBodies(maxBytes int64) server.Middleware {

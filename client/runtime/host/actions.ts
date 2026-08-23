@@ -21,7 +21,7 @@
 // engine's own store, sees the same value either way.
 //
 //   data-gosx-action="POST /url"    element/button → fetch(url, {Accept: json}); no reload.
-//   <form data-gosx-action[="..."]>  submit → fetch URLSearchParams(FormData);
+//   <form data-gosx-action[="..."]>  submit → fetch the browser's FormData;
 //                                    method/url default to the form's method/action.
 //   data-gosx-reset                  on a data-gosx-action form → clear text inputs on 2xx.
 //   data-gosx-submit-on="change"     input → el.form.requestSubmit() on change.
@@ -44,14 +44,11 @@
 // server re-broadcasts over the hub, so bound islands re-render with no response
 // handling here. Streaming/outbound state uses BindHub outbound bindings, not this.
 //
-// CSRF: the core request transport attaches X-CSRF-Token to
+// CSRF: the core request transport attaches the configured CSRF header to
 // POST/PUT/PATCH/DELETE requests when the page carries a <meta name="csrf-token">
-// tag — the mirror of
-// m31labs.dev/gosx/session.Manager.Protect's expected header (session.go's
-// Protect reads r.Header.Get("X-CSRF-Token"), falling back to a csrf_token
-// form field only for non-JSON requests; actionFetch's Accept is always
-// "application/json", so the header is the only path that reaches it). Apps
-// without Protect mounted never render the meta tag, so no header is sent.
+// tag. A page or action element may set data-gosx-csrf-header, and a
+// <meta name="csrf-header"> page default is also supported; the default is
+// X-CSRF-Token. Apps without a CSRF token never send a header.
 // GET requests (Protect's csrfProtectedMethod ignores them) never get the
 // header, matching the server's own method filter.
 (function () {
@@ -117,15 +114,73 @@
     // is intentionally absent. The standard path above owns this policy.
     var fallback = Object.assign({}, opts || {});
     var headers = Object.assign({}, fallback.headers || {});
+    var csrfHeader = fallback.csrfHeader || resolveCSRFHeaderName(fallback.csrfElement);
     if (isMutatingMethod(fallback.method) && !Object.keys(headers).some(function (key) {
-      return String(key).toLowerCase() === "x-csrf-token";
+      return String(key).toLowerCase() === csrfHeader.toLowerCase();
     })) {
       var meta = document.querySelector('meta[name="csrf-token"]');
       var token = meta ? meta.getAttribute("content") || "" : "";
-      if (token) headers["X-CSRF-Token"] = token;
+      if (token) headers[csrfHeader] = token;
     }
     fallback.headers = headers;
     return fetch(url, fallback);
+  }
+
+  function resolveCSRFHeaderName(element) {
+    var value = element && element.getAttribute && element.getAttribute("data-gosx-csrf-header");
+    if (!value && typeof document !== "undefined" && document.querySelector) {
+      var meta = document.querySelector('meta[name="csrf-header"], meta[name="gosx-csrf-header"]');
+      value = meta && meta.getAttribute("content");
+    }
+    value = String(value || "").trim();
+    return value || "X-CSRF-Token";
+  }
+
+  function csrfTokenFromElement(element) {
+    if (!element || !element.getAttribute) return "";
+    return String(
+      element.getAttribute("data-gosx-csrf-token")
+      || element.getAttribute("data-csrf-token")
+      || element.getAttribute("data-csrf")
+      || ""
+    );
+  }
+
+  function csrfTokenFromForm(form) {
+    if (!form || typeof form.querySelector !== "function") return "";
+    var input = form.querySelector('input[name="csrf_token"]');
+    return input ? String(input.value || input.getAttribute("value") || "") : "";
+  }
+
+  function associatedFormForSubmitter(form, submitter) {
+    if (!submitter) return form;
+    if (submitter.form) return submitter.form;
+    var formID = submitter.getAttribute && submitter.getAttribute("form");
+    if (formID && typeof document.getElementById === "function") {
+      var associated = document.getElementById(formID);
+      if (associated) return associated;
+    }
+    return form;
+  }
+
+  function resolveFormCSRFToken(form, submitter, body) {
+    return csrfTokenFromElement(submitter)
+      || csrfTokenFromElement(form)
+      || csrfTokenFromForm(form)
+      || (body && typeof body.get === "function" && body.get("csrf_token") != null
+        ? String(body.get("csrf_token"))
+        : "");
+  }
+
+  function resolveFormCSRFHeader(form, submitter) {
+    var submitterHeader = submitter && submitter.getAttribute
+      ? String(submitter.getAttribute("data-gosx-csrf-header") || "").trim()
+      : "";
+    if (submitterHeader) return submitterHeader;
+    var formHeader = form && form.getAttribute
+      ? String(form.getAttribute("data-gosx-csrf-header") || "").trim()
+      : "";
+    return formHeader || resolveCSRFHeaderName(null);
   }
 
   var SUBMITTER_ATTRS = {
@@ -133,13 +188,23 @@
     formMethod: "formmethod",
   };
 
-  function actionFetch(el, method, url, body, contractEl) {
-    var actionEl = contractEl || el;
-    var opts = { method: method, headers: { Accept: "application/json" } };
-    if (body !== undefined) {
-      opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
-      opts.body = body;
-    }
+  function actionFetch(el, method, url, body, contractEl, csrfOwner) {
+	var actionEl = contractEl || el;
+	var opts = { method: method, headers: { Accept: "application/json" } };
+	var owner = csrfOwner || actionEl || el;
+	var customCSRFHeader = resolveFormCSRFHeader(owner, csrfOwner ? el : null);
+	var csrfToken = resolveFormCSRFToken(owner, csrfOwner ? el : null, body);
+	if (customCSRFHeader) opts.csrfHeader = customCSRFHeader;
+	if (csrfToken && isMutatingMethod(method)) opts.headers[customCSRFHeader] = csrfToken;
+	if (body !== undefined) {
+		// Let fetch generate the multipart boundary for FormData. Setting a
+		// multipart Content-Type manually makes the server unable to parse the
+		// body; URLSearchParams remains the explicit scalar path.
+		var isFormDataBody = typeof FormData !== "undefined" && body instanceof FormData;
+		if (!isFormDataBody) opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
+		opts.body = body;
+	}
+	opts.redirect = "manual";
     if (el && "disabled" in el) el.disabled = true;
     return gosxActionRequest(url, opts)
       .then(function (r) {
@@ -349,13 +414,24 @@
   }
 
   function formBody(form, submitter) {
-    var formData = new FormData(form);
-    var name = submitter && (submitter.name || (submitter.getAttribute && submitter.getAttribute("name")));
-    if (name && (!formData.has || !formData.has(name))) {
-      var value = submitter.value || (submitter.getAttribute && submitter.getAttribute("value")) || "";
-      if (typeof formData.append === "function") formData.append(name, value);
+	var formData;
+	if (submitter) {
+		try { formData = new FormData(form, submitter); } catch (_) { formData = null; }
+	}
+	if (!formData) formData = new FormData(form);
+	var name = submitter && (submitter.name || (submitter.getAttribute && submitter.getAttribute("name")));
+	var included = false;
+	if (name && typeof formData.getAll === "function") {
+		try {
+			var base = new FormData(form);
+			included = typeof base.getAll === "function" && formData.getAll(name).length > base.getAll(name).length;
+		} catch (_) { included = false; }
+	}
+	if (name && !included) {
+	  var value = submitter.value || (submitter.getAttribute && submitter.getAttribute("value")) || "";
+	  if (typeof formData.append === "function") formData.append(name, value);
     }
-    return new URLSearchParams(formData);
+	return formData;
   }
 
   function captureFormState(form) {
@@ -568,7 +644,8 @@
       if (!a.url) return;
       var previous = captureFormState(f);
       setFormPending(f);
-      actionFetch(submit, a.method, a.url, formBody(f, submit), formContractElement(f, submit)).then(function (r) {
+      var associatedForm = associatedFormForSubmitter(f, submit);
+      actionFetch(submit, a.method, a.url, formBody(f, submit), formContractElement(f, submit), associatedForm).then(function (r) {
         if (r && r.ok && f.hasAttribute("data-gosx-reset")) {
           f.querySelectorAll("input[type=text]").forEach(function (i) {
             i.value = "";

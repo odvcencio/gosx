@@ -1027,7 +1027,7 @@ test("declarative revalidation skips the catch-up tick when less than a full int
 
 test("declarative revalidation skips a tick while a managed form submission is in flight", async () => {
   const url = "http://localhost:3000/scoreboard";
-  const actionURL = "http://localhost:3000/scoreboard/__actions/save";
+  const actionURL = "http://localhost:3000/gosx/action/save";
   const main = new FakeElement("main", null);
   main.id = "scoreboard";
   main.setAttribute("data-gosx-revalidate-interval", "4s");
@@ -3353,6 +3353,7 @@ test("navigation runtime intercepts managed form submissions and forwards action
   assert.equal(env.fetchCalls[0].url, "http://localhost:3000/save");
   assert.equal(env.fetchCalls[0].init.method, "POST");
   assert.equal(env.fetchCalls[0].init.headers.Accept, "application/json");
+  assert.equal(env.fetchCalls[0].init.redirect, "manual");
   assert.equal(env.fetchCalls[0].init.body instanceof FakeFormData, true);
   assert.equal(env.fetchCalls[0].init.body.has("title"), true);
   assert.equal(env.fetchCalls[0].init.body.has("intent"), true);
@@ -3371,7 +3372,7 @@ test("navigation runtime intercepts managed form submissions and forwards action
 
 test("managed action same-URL redirects force a cache-bypassing soft refresh", async () => {
   const pageURL = "http://localhost:3000/agenda";
-  const actionURL = "http://localhost:3000/agenda/__actions/move";
+  const actionURL = "http://localhost:3000/gosx/action/move";
   const form = new FakeElement("form", null);
   form.setAttribute("action", actionURL);
   form.setAttribute("method", "post");
@@ -3463,7 +3464,7 @@ test("accepted action redirects replace pre-mutation pending pages with a fresh 
       ? "http://localhost:3000/mutation-target"
       : "http://localhost:3000/mutation-current";
     const targetURL = "http://localhost:3000/mutation-target";
-    const actionURL = "http://localhost:3000/__actions/mutate-" + (sameURL ? "same" : "different");
+    const actionURL = "http://localhost:3000/gosx/action/mutate-" + (sameURL ? "same" : "different");
     const form = new FakeElement("form", null);
     form.setAttribute("action", actionURL);
     form.setAttribute("method", "post");
@@ -3547,7 +3548,7 @@ test("accepted action redirects replace pre-mutation pending pages with a fresh 
 
 test("action redirect fetch suppresses an older same-tab hub refresh echo", async () => {
   const pageURL = "http://localhost:3000/agenda";
-  const actionURL = "http://localhost:3000/agenda/__actions/move";
+  const actionURL = "http://localhost:3000/gosx/action/move";
   const form = new FakeElement("form", null);
   form.setAttribute("action", actionURL);
   form.setAttribute("method", "post");
@@ -3740,7 +3741,7 @@ test("accepted action redirects never resubmit the POST when soft navigation fai
     {
       name: "same URL transport failure",
       pageURL: "http://localhost:3000/agenda",
-      actionURL: "http://localhost:3000/agenda/__actions/move",
+      actionURL: "http://localhost:3000/gosx/action/move",
       redirect: "/agenda",
       pageRoute() {
         throw new Error("page transport failed");
@@ -3831,7 +3832,7 @@ test("accepted actions block malformed and unsafe redirect targets without nativ
   }
 });
 
-test("action POST transport failure retains one native submission fallback", async () => {
+test("action POST transport failure never retries natively", async () => {
   const actionURL = "http://localhost:3000/save";
   const form = new FakeElement("form", null);
   form.setAttribute("action", actionURL);
@@ -3860,9 +3861,9 @@ test("action POST transport failure retains one native submission fallback", asy
   await flushAsyncWork();
 
   assert.deepEqual(env.fetchCalls.map((call) => call.url), [actionURL]);
-  assert.equal(form.requestSubmitCalls.length, 1);
-  assert.equal(form.requestSubmitCalls[0][0], submitter);
+  assert.equal(form.requestSubmitCalls.length, 0);
   assert.equal(form.submitCalls.length, 0);
+  assert.equal(form.hasAttribute("data-gosx-form"), true);
   assert.deepEqual(hardNavigations, []);
 });
 
@@ -3874,9 +3875,9 @@ test("navigation runtime exposes programmatic managed action submission", async 
   const env = createContext({
     elements: [main],
     fetchRoutes: {
-      "http://localhost:3000/play/__actions/pilot": {
+      "http://localhost:3000/gosx/action/pilot": {
         text: '{"ok":true}',
-        url: "http://localhost:3000/play/__actions/pilot",
+        url: "http://localhost:3000/gosx/action/pilot",
       },
     },
   });
@@ -3886,18 +3887,18 @@ test("navigation runtime exposes programmatic managed action submission", async 
   assert.equal(typeof env.context.__gosx_submit_action, "function");
   assert.equal(typeof env.context.__gosx_page_nav.submitAction, "function");
 
-  const form = env.context.__gosx_submit_action("/play/__actions/pilot", {
+  const form = env.context.__gosx_submit_action("/gosx/action/pilot", {
     unitId: "robot-1",
     mode: "manual",
   }, { root: main, keepForm: true });
   await form.__gosxSubmitPromise;
 
   assert.equal(form.parentNode, main);
-  assert.equal(form.getAttribute("action"), "/play/__actions/pilot");
+  assert.equal(form.getAttribute("action"), "/gosx/action/pilot");
   assert.equal(form.getAttribute("method"), "post");
   assert.equal(form.getAttribute("data-gosx-form"), "");
   assert.equal(form.getAttribute("data-gosx-form-state"), "success");
-  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/play/__actions/pilot");
+  assert.equal(env.fetchCalls[0].url, "http://localhost:3000/gosx/action/pilot");
   assert.equal(env.fetchCalls[0].init.method, "POST");
   assert.equal(env.fetchCalls[0].init.headers["X-CSRF-Token"], "root-token");
   assert.deepEqual(env.fetchCalls[0].init.body.values, [
@@ -3915,7 +3916,7 @@ test("navigation runtime exposes programmatic managed action submission", async 
 // intermediate stringification. A regression that read only text inputs, or
 // that stringified a File before sending it, must fail this test.
 test("managed form submission carries a selected file straight through to fetch", async () => {
-  const actionURL = "http://localhost:3000/team/__actions/avatar";
+  const actionURL = "http://localhost:3000/gosx/action/avatar";
   const form = new FakeElement("form", null);
   form.setAttribute("action", actionURL);
   form.setAttribute("method", "post");
@@ -3967,6 +3968,159 @@ test("managed form submission carries a selected file straight through to fetch"
   assert.equal(uploaded.name, "avatar.png");
   assert.equal(uploaded.type, "image/png");
   assert.equal(uploaded.size, 2048);
+});
+
+test("managed navigation combines custom CSRF, duplicate fields, FormData, manual redirects, and no POST retry", async () => {
+  const actionURL = "http://localhost:3000/gosx/action/submit-profile";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-csrf-token", "custom-token");
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-csrf-header", "X-Custom-CSRF");
+  main.appendChild(form);
+
+  const csrf = new FakeElement("input", null);
+  csrf.setAttribute("type", "hidden");
+  csrf.setAttribute("name", "csrf_token");
+  csrf.value = "custom-token";
+  form.appendChild(csrf);
+  for (const value of ["one", "two"]) {
+    const tag = new FakeElement("input", null);
+    tag.setAttribute("name", "tag");
+    tag.value = value;
+    form.appendChild(tag);
+  }
+  const fileField = new FakeElement("input", null);
+  fileField.setAttribute("type", "file");
+  fileField.setAttribute("name", "avatar");
+  const avatar = new FakeFile("profile.png", "image/png", 12);
+  fileField.files = [avatar];
+  form.appendChild(fileField);
+
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [actionURL]: {
+        text: '{"ok":true,"redirect":"/done"}',
+        url: actionURL,
+      },
+    },
+  });
+  const hardNavigations = [];
+  env.context.location.assign = function(url) { hardNavigations.push(["assign", String(url)]); };
+  env.context.location.replace = function(url) { hardNavigations.push(["replace", String(url)]); };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+
+  const actionCalls = env.fetchCalls.filter((call) => call.url === actionURL);
+  assert.equal(actionCalls.length, 1, "an indeterminate action request must never be retried");
+  assert.equal(actionCalls[0].init.method, "POST");
+  assert.equal(actionCalls[0].init.redirect, "manual");
+  assert.equal(actionCalls[0].init.headers["X-Custom-CSRF"], "custom-token");
+  assert.equal(actionCalls[0].init.headers["X-CSRF-Token"], undefined);
+  assert.ok(actionCalls[0].init.body instanceof FakeFormData);
+  assert.deepEqual(actionCalls[0].init.body.values, [
+    ["csrf_token", "custom-token"],
+    ["tag", "one"],
+    ["tag", "two"],
+    ["avatar", avatar],
+  ]);
+  assert.deepEqual(hardNavigations, [["assign", "http://localhost:3000/done"]]);
+  assert.equal(form.getAttribute("data-gosx-pending"), null);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("managed navigation gives a submitter CSRF override precedence without moving form projection", async () => {
+  const actionURL = "http://localhost:3000/gosx/action/submitter-csrf";
+  const form = new FakeElement("form", null);
+  form.id = "associated-form";
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-csrf-token", "form-token");
+  form.setAttribute("data-gosx-csrf-header", "X-Form-CSRF");
+  const hidden = new FakeElement("input", null);
+  hidden.setAttribute("type", "hidden");
+  hidden.setAttribute("name", "csrf_token");
+  hidden.value = "form-token";
+  form.appendChild(hidden);
+
+  const submitter = new FakeElement("button", null);
+  submitter.setAttribute("form", "associated-form");
+  submitter.setAttribute("name", "intent");
+  submitter.setAttribute("value", "publish");
+  submitter.setAttribute("data-gosx-csrf-token", "submitter-token");
+  submitter.setAttribute("data-gosx-csrf-header", "X-Submitter-CSRF");
+  submitter.setAttribute("data-gosx-action-target", "#not-navigation-projection");
+  submitter.setAttribute("data-gosx-action-event", "submitter:event");
+  submitter.setAttribute("data-gosx-action-signal", "submitter-signal");
+
+  const status = new FakeElement("p", null);
+  status.setAttribute("class", "form-status");
+  form.appendChild(status);
+  const env = createContext({
+    elements: [form, submitter],
+    fetchRoutes: {
+      [actionURL]: { text: '{"ok":true,"message":"projected on form"}', url: actionURL },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(env.fetchCalls[0].init.headers["X-Submitter-CSRF"], "submitter-token");
+  assert.equal(env.fetchCalls[0].init.headers["X-Form-CSRF"], undefined);
+  assert.deepEqual(env.fetchCalls[0].init.body.values, [
+    ["csrf_token", "form-token"],
+    ["intent", "publish"],
+  ]);
+  assert.equal(status.textContent, "projected on form");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "success");
+});
+
+test("managed navigation falls back from associated form to page meta CSRF and default header", async () => {
+  const actionURL = "http://localhost:3000/gosx/action/meta-csrf";
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const meta = new FakeElement("meta", null);
+  meta.setAttribute("name", "csrf-token");
+  meta.setAttribute("content", "meta-token");
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]: { text: '{"ok":true}', url: actionURL },
+    },
+  });
+  appendManagedHead(env.document, [meta]);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    submitter: null,
+    defaultPrevented: false,
+    preventDefault() {},
+  });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(env.fetchCalls[0].init.headers["X-CSRF-Token"], "meta-token");
 });
 
 test("managed forms suppress duplicate submissions until their request settles", async () => {
@@ -4026,7 +4180,7 @@ test("managed forms suppress duplicate submissions until their request settles",
 });
 
 test("programmatic hidden action forms ignore duplicate submit events while pending", async () => {
-  const actionURL = "http://localhost:3000/play/__actions/once";
+  const actionURL = "http://localhost:3000/gosx/action/once";
   const main = new FakeElement("main", null);
   main.setAttribute("data-gosx-main", "");
   let resolveAction;
@@ -4850,10 +5004,10 @@ test("navigation runtime intercepts a bare data-gosx-managed shorthand attribute
 // with no data-gosx-form attribute at all. Before the fix this fell back
 // to a native full-page POST because the runtime matched FORM_ATTR only.
 test("navigation runtime intercepts a POST form carrying only the data-gosx-managed shorthand", async () => {
-  const actionURL = "http://localhost:3000/x/__actions/y";
+  const actionURL = "http://localhost:3000/gosx/action/y";
   const form = new FakeElement("form", null);
   form.setAttribute("method", "post");
-  form.setAttribute("action", "/x/__actions/y");
+  form.setAttribute("action", "/gosx/action/y");
   form.setAttribute("data-gosx-managed", "true");
 
   const query = new FakeElement("input", null);
@@ -4890,14 +5044,10 @@ test("navigation runtime intercepts a POST form carrying only the data-gosx-mana
   assert.equal(form.getAttribute("data-gosx-form-state"), "success");
 });
 
-// gosx#179 F7 + nativeSubmitForm: a form carrying only the data-gosx-managed
-// shorthand (never expanded server-side) must also fall back to a clean
-// native submission when the managed transport fails. nativeSubmitForm has
-// to strip the shorthand — not just FORM_ATTR — before requestSubmit(), or
-// isManagedFormElement would re-intercept its own fallback submission; it
-// must then restore the exact prior value so the DOM is unchanged afterward.
-test("nativeSubmitForm strips and restores the shorthand attribute around a native fallback submission", async () => {
-  const actionURL = "http://localhost:3000/save";
+// A failed managed transport is indeterminate: the browser must not issue a
+// second POST or silently fall back to native submission.
+test("managed transport failure never resubmits the shorthand form", async () => {
+  const actionURL = "http://localhost:3000/gosx/action/save";
   const form = new FakeElement("form", null);
   form.setAttribute("action", actionURL);
   form.setAttribute("method", "post");
@@ -4922,8 +5072,7 @@ test("nativeSubmitForm strips and restores the shorthand attribute around a nati
   await flushAsyncWork();
 
   assert.deepEqual(env.fetchCalls.map((call) => call.url), [actionURL]);
-  assert.equal(form.requestSubmitCalls.length, 1);
-  assert.equal(form.requestSubmitCalls[0][0], submitter);
+  assert.equal(form.requestSubmitCalls.length, 0);
   assert.equal(form.submitCalls.length, 0);
   assert.equal(form.getAttribute("data-gosx-managed"), "true");
 });
@@ -5045,7 +5194,7 @@ test("navigation runtime restores prior managed form lifecycle attrs after submi
   assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:navigate");
 });
 
-test("navigation runtime honors submitter overrides and falls back with native semantics", async () => {
+test("navigation runtime honors submitter overrides without retrying a failed POST", async () => {
   const form = new FakeElement("form", null);
   form.setAttribute("action", "/save");
   form.setAttribute("method", "post");
@@ -5124,8 +5273,8 @@ test("navigation runtime honors submitter overrides and falls back with native s
   });
   await flushAsyncWork();
 
-  assert.equal(form.requestSubmitCalls.length, 1);
-  assert.equal(form.requestSubmitCalls[0][0], submitter);
+  assert.equal(form.requestSubmitCalls.length, 0);
+  assert.equal(form.submitCalls.length, 0);
   assert.equal(form.hasAttribute("data-gosx-form"), true);
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
 });

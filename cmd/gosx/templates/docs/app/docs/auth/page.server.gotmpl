@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"errors"
 	"strings"
 
 	docsapp "__MODULE__/app"
@@ -13,38 +14,39 @@ import (
 func init() {
 	docsapp.RegisterDocsPage(
 		"Auth",
-		"Auth guards and user context now share the same session-backed request pipeline as file routes and page actions.",
-		route.FileModuleOptions{
-			Actions: route.FileActions{
-				"signIn": func(ctx *action.Context) error {
-					if docsapp.AuthManager() == nil {
-						return action.Error(500, "auth manager not configured")
-					}
-					name := strings.TrimSpace(ctx.FormData["name"])
-					if name == "" {
-						return action.Validation("Enter a name to sign in.", map[string]string{
-							"name": "Name is required.",
-						}, ctx.FormData)
-					}
-					if !docsapp.AuthManager().SignIn(ctx.Request, auth.User{
-						ID:    strings.ToLower(strings.ReplaceAll(name, " ", "-")),
-						Name:  name,
-						Roles: []string{"docs"},
-					}) {
-						return action.Error(500, "session middleware not available")
-					}
-					session.AddFlash(ctx.Request, "notice", "Signed in as "+name+".")
-					return ctx.Success("The auth middleware will now expose the current user to routed .gsx pages.", nil)
-				},
-				"signOut": func(ctx *action.Context) error {
-					if docsapp.AuthManager() == nil {
-						return action.Error(500, "auth manager not configured")
-					}
-					docsapp.AuthManager().SignOut(ctx.Request)
-					session.AddFlash(ctx.Request, "notice", "Signed out.")
-					return ctx.Success("The session-backed auth state has been cleared.", nil)
-				},
-			},
-		},
+		"Auth guards and user context share the same session-backed request pipeline as managed actions.",
+		route.FileModuleOptions{},
 	)
+}
+
+// RegisterManagedActions installs the auth actions before the application
+// router is built. Registration is explicit; file modules do not own actions.
+func RegisterManagedActions(router *route.Router) error {
+	if router == nil {
+		return errors.New("managed action router is nil")
+	}
+	if err := router.RegisterManagedPOST("signIn", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		if docsapp.AuthManager() == nil {
+			return action.Result{}, action.BadRequest("auth manager not configured")
+		}
+		name := strings.TrimSpace(ctx.Form.Value("name"))
+		if name == "" {
+			return action.Result{}, action.Validation("Enter a name to sign in.", map[string]string{"name": "Name is required."})
+		}
+		if !docsapp.AuthManager().SignIn(ctx.Request, auth.User{ID: strings.ToLower(strings.ReplaceAll(name, " ", "-")), Name: name, Roles: []string{"docs"}}) {
+			return action.Result{}, action.BadRequest("session middleware not available")
+		}
+		session.AddFlash(ctx.Request, "notice", "Signed in as "+name+".")
+		return action.Result{OK: true, Message: "Signed in.", Redirect: "/docs/auth"}, nil
+	}); err != nil {
+		return err
+	}
+	return router.RegisterManagedPOST("signOut", action.Config{}, func(ctx *action.Context) (action.Result, error) {
+		if docsapp.AuthManager() == nil {
+			return action.Result{}, action.BadRequest("auth manager not configured")
+		}
+		docsapp.AuthManager().SignOut(ctx.Request)
+		session.AddFlash(ctx.Request, "notice", "Signed out.")
+		return action.Result{OK: true, Message: "Signed out.", Redirect: "/docs/auth"}, nil
+	})
 }

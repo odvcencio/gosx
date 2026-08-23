@@ -5,7 +5,8 @@ func Page() Node {
 		<h1>Settings</h1>
 		<div class="card">
 			<h3>Application Settings</h3>
-			<form method="post" action={actionPath("saveSettings")}>
+			<form method="post" action="/gosx/action/saveSettings">
+				<input type="hidden" name="csrf_token" value={csrf.token}></input>
 				<div class="form-group">
 					<label>Site Name</label>
 					<input type="text" name="siteName" value="GoSX Dashboard"></input>
@@ -21,9 +22,6 @@ func Page() Node {
 					<label>Items per page</label>
 					<input type="number" name="pageSize" value="25" min="10" max="100"></input>
 				</div>
-				<If cond={action.message != ""}>
-					<p class="form-status">{action.message}</p>
-				</If>
 				<button type="submit" class="btn btn-primary">Save Settings</button>
 			</form>
 		</div>

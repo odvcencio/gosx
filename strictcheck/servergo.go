@@ -12,11 +12,11 @@ import (
 )
 
 // serverGoDir holds every *.server.go file parsed from one file-routed page
-// directory. Both the form-action-registry check (gosx#249 check 1) and the
-// data-loader-keys check (gosx#249 check 4) read the same
-// route.FileModuleOptions / route.FileModule composite literal -- one
-// registered field (Actions) for check 1, two more (Load, Bindings) for
-// check 4 -- so this is one shared parse rather than two.
+// directory. The data-loader-keys check reads the same
+// route.FileModuleOptions / route.FileModule composite literal as the
+// file-module registration checks, so this is one shared parse rather than
+// two. Managed actions are intentionally not inferred from file modules;
+// they are explicit installers on the owning route.Router.
 //
 // Both checks fail closed on anything this type cannot represent
 // confidently: parseErr covers a *.server.go file this package's own
@@ -84,8 +84,8 @@ func compositeLitTypeName(lit *ast.CompositeLit) string {
 // fileModuleField returns the value expression assigned to name within
 // lit's fields, and whether that field was written at all. A field never
 // written is the same as an explicit Go zero value (nil) to every caller
-// here -- FileModuleOptions has no non-nil zero value for Actions, Load,
-// or Bindings, so "absent" and "present as nil" are one case, not two.
+// here -- FileModuleOptions has no non-nil zero value for Load or Bindings, so
+// "absent" and "present as nil" are one case, not two.
 func fileModuleField(lit *ast.CompositeLit, name string) (ast.Expr, bool) {
 	for _, elt := range lit.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
@@ -136,7 +136,7 @@ func literalStringMapKeys(lit *ast.CompositeLit) (map[string]bool, bool) {
 // fileTopLevelCompositeVars maps every package-level "var name = <composite
 // literal>" (and "var name = TypeName{...}") declaration in file to that
 // literal, by name. This resolves the one indirection level real code
-// actually uses -- a FileActions or a data map built as its own named
+// actually uses -- a managed route registration or a data map built as its own named
 // variable next to the registration call -- without attempting to trace
 // assignment through arbitrary control flow, which is exactly the
 // unbounded-analysis shape gosx#249 says to abstain from instead of
@@ -208,7 +208,7 @@ type fileModuleRegistration struct {
 	target string
 	lit    *ast.CompositeLit
 	// vars is the declaring file's own package-level composite-literal
-	// variables, needed to resolve an Actions/Load field written as a
+	// variables, needed to resolve a Load field written as a
 	// local identifier rather than an inline literal.
 	vars map[string]*ast.CompositeLit
 }
@@ -237,14 +237,14 @@ func candidateServerGoDirs(gsxDir string) []string {
 // hasUnrenderedServerGoTemplate reports whether any of dirs contains a
 // "*.server.gotmpl" file: a scaffold's own unrendered Go source for what
 // becomes a "*.server.go" file only once rendered (by `gosx init`, or a
-// project's own generator) -- never before. Its real Actions/Load content
+// project's own generator) -- never before. Its real Load content
 // is template syntax, not Go, so this scan cannot read it, and "found no
 // *.server.go here" must not be read as "confidently registers nothing"
 // when one of these sits right beside where that file would be.
 //
 // gosx#249 confirmed this exact shape in
 // cmd/gosx/templates/docs/app/docs/forms/page.server.gotmpl and its six
-// siblings: every one of them registers real Actions and a real Load once
+// siblings: every one of them registers a real managed installer and a real Load once
 // `gosx init` renders it, and check 1 and check 4 were reporting all
 // fourteen of those pages as broken before this existed — a scaffold gosx
 // itself ships, found broken by the very tool meant to keep a real

@@ -346,16 +346,15 @@ func (c *Compiler) Compile(rateKey string, source []byte) (CompileResult, error)
 // Action adapters
 // ---------------------------------------------------------------------------
 
-// NewCompileAction returns an action.Context handler that uses the given
-// Compiler for all safety gating. The returned closure is the preferred way
-// to wire the playground into a page's Actions map.
-func NewCompileAction(compiler *Compiler) func(*action.Context) error {
-	return func(ctx *action.Context) error {
+// NewCompileAction returns a managed action that uses the given Compiler for
+// all safety gating.
+func NewCompileAction(compiler *Compiler) action.ManagedAction {
+	return func(ctx *action.Context) (action.Result, error) {
 		var req struct {
 			Source string `json:"source"`
 		}
 		if compiler == nil {
-			return ctx.Success("", map[string]any{
+			return compileActionResult(map[string]any{
 				"component":   "",
 				"html":        "",
 				"program":     "",
@@ -365,8 +364,12 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 			})
 		}
 		rateKey := clientIPFromRequest(ctx.Request)
-		if err := json.Unmarshal(ctx.Payload, &req); err != nil {
-			return ctx.Success("", map[string]any{
+		payload, marshalErr := json.Marshal(ctx.Payload)
+		if marshalErr != nil {
+			return action.Result{}, marshalErr
+		}
+		if err := json.Unmarshal(payload, &req); err != nil {
+			return compileActionResult(map[string]any{
 				"component":   "",
 				"html":        "",
 				"program":     "",
@@ -379,7 +382,7 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		// Convert sentinel errors to diagnostics so the client has one
 		// uniform shape to render.
 		if err != nil {
-			return ctx.Success("", map[string]any{
+			return compileActionResult(map[string]any{
 				"component":   "",
 				"html":        "",
 				"program":     "",
@@ -388,7 +391,7 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 				"exprCount":   0,
 			})
 		}
-		return ctx.Success("", map[string]any{
+		return compileActionResult(map[string]any{
 			"component":   result.Component,
 			"html":        result.HTML,
 			"preview":     result.Preview,
@@ -400,44 +403,12 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 	}
 }
 
-// CompileAction is the legacy action.Context adapter kept for backwards
-// compatibility. New callers should use NewCompileAction with a configured
-// Compiler instead.
-func CompileAction(ctx *action.Context) error {
-	var req struct {
-		Source string `json:"source"`
-	}
-	if err := json.Unmarshal(ctx.Payload, &req); err != nil {
-		return ctx.Success("", map[string]any{
-			"component":   "",
-			"html":        "",
-			"program":     "",
-			"diagnostics": []Diagnostic{{Message: "invalid request body"}},
-			"nodeCount":   0,
-			"exprCount":   0,
-		})
-	}
-	result, err := CompileSource([]byte(req.Source))
+func compileActionResult(data any) (action.Result, error) {
+	payload, err := json.Marshal(data)
 	if err != nil {
-		// Fatal — expose as a single diagnostic so the client renders something.
-		return ctx.Success("", map[string]any{
-			"component":   "",
-			"html":        "",
-			"program":     "",
-			"diagnostics": []Diagnostic{{Message: err.Error()}},
-			"nodeCount":   0,
-			"exprCount":   0,
-		})
+		return action.Result{}, err
 	}
-	return ctx.Success("", map[string]any{
-		"component":   result.Component,
-		"html":        result.HTML,
-		"preview":     result.Preview,
-		"program":     base64.StdEncoding.EncodeToString(result.Program),
-		"diagnostics": result.Diagnostics,
-		"nodeCount":   result.NodeCount,
-		"exprCount":   result.ExprCount,
-	})
+	return action.Result{OK: true, Data: payload}, nil
 }
 
 // clientIPFromRequest extracts a stable rate-limiting key from the HTTP

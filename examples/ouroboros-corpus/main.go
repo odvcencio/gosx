@@ -21,6 +21,7 @@ import (
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/scene"
 	"m31labs.dev/gosx/server"
+	"m31labs.dev/gosx/session"
 )
 
 const defaultPort = "8080"
@@ -53,14 +54,33 @@ func newApp() (*server.App, error) {
 
 	app := server.New()
 	app.SetRuntimeRoot(runtimeRoot())
+	managedActions := action.NewRouter()
+	if err := managedActions.RegisterManagedPOST("validate-name", action.Config{}, validateNameAction); err != nil {
+		return nil, err
+	}
+	sessions, err := session.New("ouroboros-corpus-session-secret", session.Options{AllowInsecure: true})
+	if err != nil {
+		return nil, err
+	}
+	// Emit the token from the actual session-bound request. The native hidden
+	// field and the enhanced runtime head token therefore share one authority,
+	// and the value is escaped by the HTML renderer before it reaches markup.
+	app.AddHeadDecorator(func(ctx *server.Context) (gosx.Node, bool) {
+		token := session.Token(ctx.Request)
+		if token == "" {
+			return gosx.Node{}, false
+		}
+		return gosx.RawHTML(`<meta name="csrf-token" content="` + html.EscapeString(token) + `">`), true
+	})
+	app.Use(func(next http.Handler) http.Handler {
+		return sessions.Middleware(sessions.Protect(next))
+	})
 	app.UseReadyCheck("ouroboros-corpus", server.ReadyCheckFunc(func(context.Context) error { return nil }))
+	app.Mount("/gosx/", managedActions)
 	app.Mount("/_ouroboros/islands/", islandProgramHandler(programs))
 	app.Mount("/_ouroboros/hub/echo", newEchoHub())
 	app.Mount("/_ouroboros/video-sync", newVideoSyncHub())
 	app.Mount("/media/ouroboros-placeholder.mp4", http.HandlerFunc(serveFixtureVideo))
-	app.Mount("/action/form/__actions/validate-name", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		action.ServeHandler(w, r, validateNameAction)
-	}))
 
 	app.Page("GET /static", func(ctx *server.Context) gosx.Node {
 		ctx.SetMetadata(server.Metadata{Title: server.Title{Absolute: "R00 static"}})
@@ -77,7 +97,8 @@ func newApp() (*server.App, error) {
 			routeAttrs("R02", "/island/counter", "island-counter", "islands"),
 			gosx.El("h1", gosx.Text("Counter island")),
 			ctx.Runtime().IslandWithProgramAsset(program.CounterProgram(), map[string]int{"initial": 2}, "/_ouroboros/islands/Counter.json", "json", ""),
-			gosx.El("form", gosx.Attrs(gosx.Attr("method", "post"), gosx.Attr("action", "/action/form/__actions/validate-name")),
+			gosx.El("form", gosx.Attrs(gosx.Attr("method", "post"), gosx.Attr("action", "/gosx/action/validate-name")),
+				gosx.El("input", gosx.Attrs(gosx.Attr("type", "hidden"), gosx.Attr("name", "csrf_token"), gosx.Attr("value", session.Token(ctx.Request)))),
 				gosx.El("input", gosx.Attrs(gosx.Attr("type", "hidden"), gosx.Attr("name", "name"), gosx.Attr("value", "counter"))),
 				gosx.El("button", gosx.Attrs(gosx.Attr("type", "submit")), gosx.Text("Submit action")),
 			),
@@ -100,7 +121,7 @@ func newApp() (*server.App, error) {
 	app.Page("GET /action/form", func(ctx *server.Context) gosx.Node {
 		ctx.Runtime().EnableBootstrap()
 		ctx.SetMetadata(server.Metadata{Title: server.Title{Absolute: "R04 action form"}})
-		return pageShell("R04", "/action/form", "action-form", "action-bridge", actionFormBody("", "", "idle"))
+		return pageShell("R04", "/action/form", "action-form", "action-bridge", actionFormBody(session.Token(ctx.Request), "", "", "idle"))
 	})
 	app.Page("GET /canvas-board", func(ctx *server.Context) gosx.Node {
 		ctx.SetMetadata(server.Metadata{Title: server.Title{Absolute: "R05 CanvasBoard"}})
@@ -150,26 +171,15 @@ func newApp() (*server.App, error) {
 	return app, nil
 }
 
-func validateNameAction(ctx *action.Context) error {
-	name := strings.TrimSpace(ctx.FormData["name"])
+func validateNameAction(ctx *action.Context) (action.Result, error) {
+	name := strings.TrimSpace(ctx.Form.Value("name"))
 	if name == "" {
-		ctx.SetResult(action.Result{
-			OK:          false,
-			Message:     "name required",
-			FieldErrors: map[string]string{"name": "name required"},
-			Data:        actionData(map[string]string{"html": actionStateHTML("error", "name required")}),
-		})
-		ctx.SetStatus(http.StatusUnprocessableEntity)
-		return nil
+		return action.Result{}, action.Validation("name required", map[string]string{"name": "name required"})
 	}
-	if !strings.Contains(ctx.Request.Header.Get("Accept"), "application/json") {
-		ctx.Redirect("/action/form?ok=1")
-		return nil
-	}
-	return ctx.Success("name accepted", map[string]string{
+	return action.Result{OK: true, Message: "name accepted", Redirect: "/action/form?ok=1", Data: actionData(map[string]string{
 		"value": name,
 		"html":  actionStateHTML("ok", "accepted "+name),
-	})
+	})}, nil
 }
 
 func encodePrograms() (appPrograms, error) {
@@ -345,8 +355,9 @@ func actionStateHTML(status, message string) string {
 	return `<p data-action-state="` + html.EscapeString(status) + `">` + html.EscapeString(message) + `</p>`
 }
 
-func actionFormBody(value, errText, state string) gosx.Node {
+func actionFormBody(token, value, errText, state string) gosx.Node {
 	children := []any{
+		gosx.El("input", gosx.Attrs(gosx.Attr("type", "hidden"), gosx.Attr("name", "csrf_token"), gosx.Attr("value", token))),
 		gosx.El("label", gosx.Text("Name"), gosx.El("input", gosx.Attrs(gosx.Attr("name", "name"), gosx.Attr("value", value)))),
 		gosx.El("button", gosx.Attrs(
 			gosx.Attr("type", "submit"),
@@ -360,9 +371,9 @@ func actionFormBody(value, errText, state string) gosx.Node {
 	}
 	return gosx.El("form", append([]any{gosx.Attrs(
 		gosx.Attr("method", "post"),
-		gosx.Attr("action", "/action/form/__actions/validate-name"),
+		gosx.Attr("action", "/gosx/action/validate-name"),
 		gosx.Attr("data-action-name", "validate-name"),
-		gosx.Attr("data-gosx-action", "POST /action/form/__actions/validate-name"),
+		gosx.Attr("data-gosx-action", "POST /gosx/action/validate-name"),
 		gosx.Attr("data-gosx-action-target", "#action-state"),
 		gosx.Attr("data-gosx-action-signal", "$ouroboros.action.name"),
 	)}, children...)...)

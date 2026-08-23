@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"m31labs.dev/gosx"
-	"m31labs.dev/gosx/action"
 	"m31labs.dev/gosx/server"
 )
 
@@ -21,9 +20,6 @@ type FileMetadataFunc func(ctx *RouteContext, page FilePage, data any) (server.M
 
 // FileRenderDataFunc overrides the default page-file renderer.
 type FileRenderDataFunc func(ctx *RouteContext, page FilePage, data any) (gosx.Node, error)
-
-// FileActions maps action names to handlers for a file-routed page.
-type FileActions map[string]action.Handler
 
 // FileTemplateBindings exposes request-scoped values, helpers, and renderable
 // Go component functions to a file-routed `.gsx` page.
@@ -46,15 +42,7 @@ type FileModule struct {
 	Load     FileLoadFunc
 	Metadata FileMetadataFunc
 	Render   FileRenderDataFunc
-	Actions  FileActions
 	Bindings FileBindingsFunc
-
-	// MaxActionBodyBytes caps the request body accepted by this module's
-	// actions, enforced with http.MaxBytesReader semantics (an oversized
-	// request fails with 413 rather than being silently truncated). Zero
-	// keeps the action package default of 1 MiB. Set this to accept larger
-	// uploads, such as a file, through an action route.
-	MaxActionBodyBytes int64
 }
 
 // FileModuleOptions configures a file-routed server module.
@@ -62,27 +50,17 @@ type FileModuleOptions struct {
 	Load     FileLoadFunc
 	Metadata FileMetadataFunc
 	Render   FileRenderDataFunc
-	Actions  FileActions
 	Bindings FileBindingsFunc
-
-	// MaxActionBodyBytes caps the request body accepted by this module's
-	// actions, enforced with http.MaxBytesReader semantics (an oversized
-	// request fails with 413 rather than being silently truncated). Zero
-	// keeps the action package default of 1 MiB. Set this to accept larger
-	// uploads, such as a file, through an action route.
-	MaxActionBodyBytes int64
 }
 
 // FileModuleFor builds a file-routed server module definition.
 func FileModuleFor(source string, opts FileModuleOptions) FileModule {
 	return FileModule{
-		Source:             source,
-		Load:               opts.Load,
-		Metadata:           opts.Metadata,
-		Render:             opts.Render,
-		Actions:            cloneFileActions(opts.Actions),
-		Bindings:           opts.Bindings,
-		MaxActionBodyBytes: opts.MaxActionBodyBytes,
+		Source:   source,
+		Load:     opts.Load,
+		Metadata: opts.Metadata,
+		Render:   opts.Render,
+		Bindings: opts.Bindings,
 	}
 }
 
@@ -177,7 +155,6 @@ func (r *FileModuleRegistry) Register(module FileModule) error {
 		return fmt.Errorf("file module source is required")
 	}
 	module.Source = key
-	module.Actions = cloneFileActions(module.Actions)
 
 	r.mu.Lock()
 	if _, exists := r.modules[key]; exists {
@@ -244,7 +221,6 @@ func (r *FileModuleRegistry) Lookup(source string) (FileModule, bool) {
 	for _, key := range keys {
 		if module, ok := r.modules[key]; ok {
 			r.mu.RUnlock()
-			module.Actions = cloneFileActions(module.Actions)
 			return module, true
 		}
 	}
@@ -263,7 +239,6 @@ func (r *FileModuleRegistry) Lookup(source string) (FileModule, bool) {
 		matched = true
 	}
 	r.mu.RUnlock()
-	match.Actions = cloneFileActions(match.Actions)
 	return match, matched
 }
 
@@ -286,17 +261,6 @@ func resolveFileModule(registry *FileModuleRegistry, root string, page FilePage)
 
 func normalizeFileModuleSource(source string) string {
 	return normalizeRouteModuleSource(source)
-}
-
-func cloneFileActions(src FileActions) FileActions {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(FileActions, len(src))
-	for name, handler := range src {
-		dst[name] = handler
-	}
-	return dst
 }
 
 func fileModuleSourceHere(skip int) string {

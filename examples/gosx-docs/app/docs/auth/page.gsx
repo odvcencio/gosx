@@ -42,30 +42,19 @@ func Page() Node {
 		<section id="session-demo" class="demo-well" aria-labelledby="session-demo-title">
 			<p class="demo-well__label">Live session-backed action</p>
 			<h3 id="session-demo-title">Sign in to this documentation route</h3>
-			<If cond={actions.signIn.ok}>
-				<p class="form-status form-status--ok">{actions.signIn.message}</p>
-			</If>
-			<If cond={!actions.signIn.ok && actions.signIn.status != 0}>
-				<p class="form-status form-status--error">{actions.signIn.message}</p>
+			<If cond={flash.notice != nil}>
+				<p class="form-status">{flash.notice}</p>
 			</If>
 			<If cond={!data.currentUser.signedIn}>
 				<p>
-					This form posts through a named GoSX action, validates on the server, rotates the signed session cookie, and returns the action state to this page.
+					This form posts through a named GoSX action, validates on the server, rotates the signed session cookie, and carries the success notice through the session redirect.
 				</p>
-				<form method="post" action={actionPath("signIn")}>
+				<form method="post" action="/gosx/action/signIn">
 					<input type="hidden" name="csrf_token" value={csrf.token} />
 					<label class="field" for="docs-auth-name">
 						<span>Name</span>
-						<input
-							id="docs-auth-name"
-							name="name"
-							type="text"
-							value={actions.signIn.values.name}
-							autocomplete="name"
-							required
-						 />
+						<input id="docs-auth-name" name="name" type="text" value="" autocomplete="name" required />
 					</label>
-					<p class="form-error">{actions.signIn.fieldErrors.name}</p>
 					<button class="cta-link primary" type="submit">Create demo session</button>
 				</form>
 			</If>
@@ -75,7 +64,7 @@ func Page() Node {
 					<strong>{data.currentUser.name}</strong>
 					. Refresh this route to verify that the signed session survives another request.
 				</p>
-				<form method="post" action={actionPath("signOut")}>
+				<form method="post" action="/gosx/action/signOut">
 					<input type="hidden" name="csrf_token" value={csrf.token} />
 					<button class="cta-link" type="submit">Clear demo session</button>
 				</form>

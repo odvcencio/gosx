@@ -17,6 +17,12 @@
     return meta ? String(meta.getAttribute("content") || "") : "";
   }
 
+  function gosxRequestHeaderName() {
+    const meta = document.querySelector && document.querySelector('meta[name="csrf-header"], meta[name="gosx-csrf-header"]');
+    const value = meta ? String(meta.getAttribute("content") || "").trim() : "";
+    return value || "X-CSRF-Token";
+  }
+
   function gosxMutatingMethod(method) {
     switch (String(method || "").toUpperCase()) {
       case "POST":
@@ -58,11 +64,14 @@
     const options = Object.assign({}, init || {});
     const csrf = options.csrf !== false;
     delete options.csrf;
+    const configuredHeader = String(options.csrfHeader || "").trim();
+    delete options.csrfHeader;
     const headers = gosxHeadersObject(options.headers);
     const method = options.method || (input && input.method) || "GET";
-    if (csrf && gosxMutatingMethod(method) && !gosxHasHeader(headers, "X-CSRF-Token")) {
+    const csrfHeader = configuredHeader || gosxRequestHeaderName();
+    if (csrf && gosxMutatingMethod(method) && !gosxHasHeader(headers, csrfHeader)) {
       const token = gosxRequestToken();
-      if (token) headers["X-CSRF-Token"] = token;
+      if (token) headers[csrfHeader] = token;
     }
     if (Object.keys(headers).length > 0) options.headers = headers;
     return window.fetch(input, options);

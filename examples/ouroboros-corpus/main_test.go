@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,7 +78,7 @@ func TestFixtureRoutesServeAndDeclarePlans(t *testing.T) {
 			case "R02":
 				assertContains(t, body, `data-gosx-island="Counter"`)
 				assertContains(t, body, `"islands":1`)
-				assertContains(t, body, `action="/action/form/__actions/validate-name"`)
+				assertContains(t, body, `action="/gosx/action/validate-name"`)
 			case "R03":
 				manifest := routeManifest(t, body)
 				if len(manifest.Islands) != 5 {
@@ -98,7 +99,7 @@ func TestFixtureRoutesServeAndDeclarePlans(t *testing.T) {
 				assertSharedSelectionProgram(t, handler)
 			case "R04":
 				assertContains(t, body, `data-action-name="validate-name"`)
-				assertContains(t, body, `data-gosx-action="POST /action/form/__actions/validate-name"`)
+				assertContains(t, body, `data-gosx-action="POST /gosx/action/validate-name"`)
 				assertContains(t, body, `data-gosx-action-target="#action-state"`)
 				assertContains(t, body, `data-gosx-action-signal="$ouroboros.action.name"`)
 				assertContains(t, body, `data-gosx-bootstrap-mode="lite"`)
@@ -1183,25 +1184,67 @@ func TestReadyzAndActionForm(t *testing.T) {
 	}
 	assertContains(t, body, `"ok":true`)
 
-	req := httptest.NewRequest(http.MethodPost, "/action/form/__actions/validate-name", strings.NewReader("name="))
+	get := httptest.NewRequest(http.MethodGet, "/action/form", nil)
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, get)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("action form GET status = %d body=%s", getRec.Code, getRec.Body.String())
+	}
+	formBody := getRec.Body.String()
+	csrfToken := htmlAttribute(formBody, `name="csrf_token"`, "value")
+	metaToken := htmlAttribute(formBody, `name="csrf-token"`, "content")
+	if csrfToken == "" || csrfToken != metaToken {
+		t.Fatalf("rendered CSRF tokens differ or are empty: hidden=%q meta=%q", csrfToken, metaToken)
+	}
+	cookies := getRec.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("real action form GET did not produce a session cookie")
+	}
+	cookie := cookies[0]
+
+	// Native HTML fallback submits exactly the hidden token rendered above.
+	req := httptest.NewRequest(http.MethodPost, "/gosx/action/validate-name", strings.NewReader("csrf_token="+url.QueryEscape(csrfToken)+"&name=baseline"))
+	req.AddCookie(cookie)
+	req.Header.Set("Accept", "text/html")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("empty action status = %d", rec.Code)
-	}
-	assertContains(t, rec.Body.String(), `"fieldErrors":{"name":"name required"}`)
-
-	req = httptest.NewRequest(http.MethodPost, "/action/form/__actions/validate-name", strings.NewReader("name=baseline"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("valid action status = %d", rec.Code)
+		t.Fatalf("native action status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if got := rec.Header().Get("Location"); got != "/action/form?ok=1" {
 		t.Fatalf("redirect location = %q", got)
 	}
+
+	// Enhanced/browser submission uses the same rendered token through the
+	// configured header and receives the JSON bridge response.
+	req = httptest.NewRequest(http.MethodPost, "/gosx/action/validate-name", strings.NewReader("name=browser"))
+	req.AddCookie(cookie)
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("enhanced action status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func htmlAttribute(body, anchor, attribute string) string {
+	start := strings.Index(body, anchor)
+	if start < 0 {
+		return ""
+	}
+	valueStart := strings.Index(body[start:], attribute+`="`)
+	if valueStart < 0 {
+		return ""
+	}
+	valueStart += start + len(attribute) + 2
+	valueEnd := strings.IndexByte(body[valueStart:], '"')
+	if valueEnd < 0 {
+		return ""
+	}
+	return body[valueStart : valueStart+valueEnd]
 }
 
 func assertSharedSelectionProgram(t *testing.T, handler http.Handler) {
