@@ -4,7 +4,7 @@ func Page() Node {
 	return <div class="home">
 		<section class="hero" aria-labelledby="home-title">
 			<div class="hero__scene" aria-hidden="true">
-				<Scene3D {...data.heroScene} />
+				<Scene3D activation="idle" {...data.heroScene} />
 			</div>
 			<div class="hero__overlay">
 				<div class="hero__lockup">

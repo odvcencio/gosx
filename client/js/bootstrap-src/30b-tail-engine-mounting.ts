@@ -447,9 +447,72 @@
     );
   }
 
+  function engineActivationMode(mount) {
+    const value = mount && typeof mount.getAttribute === "function"
+      ? String(mount.getAttribute("data-gosx-engine-activation") || "").trim().toLowerCase()
+      : "";
+    return value === "visible" || value === "idle" ? value : "immediate";
+  }
+
+  function waitForEngineActivation(mount, pending) {
+    const mode = engineActivationMode(mount);
+    if (mode === "immediate") return Promise.resolve();
+    if (mount && typeof mount.setAttribute === "function") {
+      mount.setAttribute("data-gosx-engine-activation-state", "waiting");
+    }
+    return new Promise(function(resolve) {
+      let settled = false;
+      function activate() {
+        if (settled) return;
+        settled = true;
+        if (pending.activationObserver && typeof pending.activationObserver.disconnect === "function") {
+          pending.activationObserver.disconnect();
+        }
+        pending.activationObserver = null;
+        if (pending.activationTimer) {
+          clearTimeout(pending.activationTimer);
+          pending.activationTimer = 0;
+        }
+        pending.activationResolve = null;
+        if (mount && typeof mount.setAttribute === "function") {
+          mount.setAttribute("data-gosx-engine-activation-state", "active");
+        }
+        resolve();
+      }
+      pending.activationResolve = activate;
+      if (mode === "idle") {
+        if (typeof window.requestIdleCallback === "function") {
+          pending.activationTimer = window.requestIdleCallback(activate, { timeout: 1500 });
+        } else {
+          pending.activationTimer = setTimeout(activate, 64);
+        }
+        return;
+      }
+      if (typeof IntersectionObserver !== "function") {
+        activate();
+        return;
+      }
+      pending.activationObserver = new IntersectionObserver(function(entries) {
+        if (entries.some(function(entry) { return entry && entry.isIntersecting; })) activate();
+      }, { rootMargin: "200px 0px" });
+      pending.activationObserver.observe(mount);
+    });
+  }
+
   function disposePendingEngine(pending, restoreFallback) {
     if (!pending || pending.closed) return;
     pending.closed = true;
+    if (pending.activationObserver && typeof pending.activationObserver.disconnect === "function") {
+      pending.activationObserver.disconnect();
+    }
+    pending.activationObserver = null;
+    if (pending.activationTimer) {
+      if (typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(pending.activationTimer);
+      clearTimeout(pending.activationTimer);
+      pending.activationTimer = 0;
+    }
+    if (typeof pending.activationResolve === "function") pending.activationResolve();
+    pending.activationResolve = null;
     if (pendingEngineRuntimes.get(pending.id) === pending) {
       pendingEngineRuntimes.delete(pending.id);
     }
@@ -4515,8 +4578,16 @@
       moduleRecord: null,
       runtimeDisposed: false,
       closed: false,
+      activationObserver: null,
+      activationTimer: 0,
+      activationResolve: null,
     };
     pendingEngineRuntimes.set(entry.id, pending);
+    await waitForEngineActivation(mount, pending);
+    if (!pendingEngineOwned(pending)) {
+      disposePendingEngine(pending, true);
+      return;
+    }
     await prepareRuntimeCapabilityProbe(entry);
     if (!pendingEngineOwned(pending)) {
       disposePendingEngine(pending, true);
@@ -4529,6 +4600,18 @@
       showEngineCapabilityUnsupported(mount, entry, capabilityStatus);
       reportMissingEngineCapabilities(entry, mount, capabilityStatus);
       return;
+    }
+    if (String(entry.component || "") === "GoSXScene3D") {
+      if (typeof ensureBootstrapFeature !== "function") {
+        disposePendingEngine(pending, true);
+        console.error("[gosx] Scene3D feature loader is unavailable");
+        return;
+      }
+      await ensureBootstrapFeature("scene3d");
+      if (!pendingEngineOwned(pending)) {
+        disposePendingEngine(pending, true);
+        return;
+      }
     }
     const runtime = createEngineRuntime(entry, mount);
     pending.runtime = runtime;
@@ -4798,6 +4881,8 @@
       const promise = mountEngine(entry, invalidEntries.get(entry) || null).catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });
+      const mount = resolveEngineMount(entry);
+      const deferred = mount && engineActivationMode(mount) !== "immediate";
       if (isNavigationBootstrap && engineID) {
         promise.then(function() {
           if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
@@ -4808,7 +4893,10 @@
           }
         });
       }
-      return promise;
+      // Deferred engines retain their server fallback and mount later. They do
+      // not hold the global gosx:ready event open while off-screen or waiting
+      // for an idle period.
+      return deferred ? Promise.resolve() : promise;
     });
 
     await Promise.all(promises);

@@ -997,7 +997,6 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 
 	var b strings.Builder
 	plan := r.clientRuntimePlan()
-	nonceAttr := cspNonceAttr(nonce)
 	// Preview-mode relay (ADR 0009) emits an additional script that wires
 	// window.__gosx_relay_* before the bootstrap runs. Emitted FIRST so
 	// the relay's message listener is installed before any cross-frame
@@ -1025,7 +1024,19 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"%s></script>`, plan.Mode, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		b.WriteByte('\n')
-		b.WriteString(`<script defer data-gosx-script="feature-scene3d"`)
+		// Scene3D is capability- and activation-gated by the engines runtime.
+		// Publish immutable chunk URLs as inert metadata instead of parser-loaded
+		// scripts so pages with unsupported or deferred scenes pay no GPU runtime
+		// bytes before the engine actually activates.
+		b.WriteString(`<script type="application/json" data-gosx-script="feature-scene3d-metadata"`)
+		b.WriteString(` data-gosx-scene3d-url="`)
+		b.WriteString(html.EscapeString(scene3dPath))
+		b.WriteByte('"')
+		if integrity := r.compatRuntimeIntegrity(scene3dPath); integrity != "" {
+			b.WriteString(` data-gosx-scene3d-integrity="`)
+			b.WriteString(html.EscapeString(integrity))
+			b.WriteByte('"')
+		}
 		// Embed hashed URLs for lazy sub-feature chunks as data-* attributes
 		// so the main scene3d bundle can use immutable hashed URLs at first
 		// dynamic-load time instead of the unhashed compat URL. Lets the
@@ -1071,57 +1082,7 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			b.WriteString(html.EscapeString(decompressPath))
 			b.WriteByte('"')
 		}
-		b.WriteString(` src="`)
-		b.WriteString(html.EscapeString(scene3dPath))
-		b.WriteString(`"`)
-		b.WriteString(r.runtimeScriptAttrs(scene3dPath, nonce))
-		b.WriteString(">\x3c/script>")
-
-		// WebGPU sub-feature: lazy-load only when navigator.gpu exists.
-		// Safari and Firefox-on-most-platforms skip the download
-		// entirely, saving ~55KB gzip / 120KB raw per load. Chromium
-		// browsers fetch it in parallel with the main scene3d chunk so
-		// the scene mount can pick webgpu on the first render. Inlined
-		// rather than added to a manifest loader to keep the HTML byte
-		// cost minimal — the script body is ~190 bytes before gzip.
-		if webgpuPath := r.selectedBootstrapFeaturePath("scene3d-webgpu"); webgpuPath != "" {
-			b.WriteByte('\n')
-			// Gate the sub-chunk load behind DOMContentLoaded so it runs
-			// AFTER the parser-inserted defer scripts (which include the
-			// main bootstrap-feature-scene3d.js). Trying s.async = false
-			// on the dynamically-inserted script element doesn't work
-			// reliably in every Chromium build — the sub-chunk still
-			// races the main bundle and usually wins, firing the
-			// IIFE's early-return guard because __gosx_scene3d_api
-			// isn't defined yet. Waiting for DCL sidesteps the ordering
-			// problem entirely: by the time DCL fires, all parser-
-			// inserted defer scripts have already executed, so the main
-			// scene3d bundle has published its API.
-			//
-			// NB: Go raw-string (backticks) doesn't process \x escapes,
-			// so the closing </script> must come from a double-quoted
-			// string — hence the split. Historical bug from v0.17.16:
-			// using `\x3c/script>` inside a raw-string literal produced
-			// a literal "\x3c/script>" in the HTML, which JS parsed as
-			// a syntax error, silently dropping the entire inline loader.
-			b.WriteString(`<script data-gosx-script="feature-scene3d-webgpu-loader"`)
-			b.WriteString(nonceAttr)
-			b.WriteString(`>if(navigator.gpu&&!window.__gosx_scene3d_webgpu_api&&!window.__gosx_scene3d_webgpu_feature_promise){var _n=document.currentScript&&(document.currentScript.nonce||document.currentScript.getAttribute('nonce'))||'';var _w=function(){if(window.__gosx_scene3d_webgpu_api||window.__gosx_scene3d_webgpu_feature_promise)return;window.__gosx_scene3d_webgpu_feature_promise=new Promise(function(r,j){var s=document.createElement('script');s.async=false;s.type='text/javascript';s.setAttribute('crossorigin','anonymous');s.setAttribute('referrerpolicy','no-referrer');s.dataset.gosxScript='feature-scene3d-webgpu';if(_n){s.nonce=_n;}if(_n){s.setAttribute('nonce',_n);}`)
-			integrity := r.compatRuntimeIntegrity(webgpuPath)
-			if integrity == "" {
-				integrity = sriIntegrity(r.compatRuntimeHash(webgpuPath))
-			}
-			if integrity != "" {
-				b.WriteString(`s.setAttribute('integrity',`)
-				b.WriteString(htmlJSStringLiteral(integrity))
-				b.WriteString(`);`)
-			}
-			b.WriteString(`s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
-			b.WriteString(htmlJSStringLiteral(webgpuPath))
-			b.WriteString(";document.head.appendChild(s);});};")
-			b.WriteString("if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_w);}else{_w();}}")
-			b.WriteString("\x3c/script>")
-		}
+		b.WriteString(`></script>`)
 	}
 	return gosx.RawHTML(b.String())
 }

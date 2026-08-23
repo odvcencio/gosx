@@ -33,7 +33,7 @@ func Page() Node {
 				role="group"
 				aria-label="Interactive Scene3D orbital sculpture. Drag to orbit and scroll or pinch to zoom."
 			>
-				<Scene3D {...data.showreel} />
+				<Scene3D activation="visible" {...data.showreel} />
 			</div>
 			<div class="demos-showreel__overlay">
 				<p class="demos-showreel__kicker">Scene3D · index study 01</p>

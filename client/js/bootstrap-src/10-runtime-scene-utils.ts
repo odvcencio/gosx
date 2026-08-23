@@ -389,6 +389,19 @@
       script.setAttribute("crossorigin", "anonymous");
       script.setAttribute("referrerpolicy", "no-referrer");
       script.setAttribute("data-gosx-script", role || "managed-runtime");
+      if (role === "feature-scene3d") {
+        const metadata = document.querySelector('script[data-gosx-script="feature-scene3d-metadata"]');
+        if (metadata && metadata.attributes) {
+          for (const attr of Array.from(metadata.attributes)) {
+            if (attr.name.indexOf("data-gosx-scene3d-") === 0) {
+              script.setAttribute(attr.name, attr.value);
+            }
+          }
+          if (metadata.dataset && metadata.dataset.gosxScene3dIntegrity) {
+            script.setAttribute("integrity", metadata.dataset.gosxScene3dIntegrity);
+          }
+        }
+      }
       gosxApplyCurrentScriptNonce(script);
       script.onload = resolve;
       script.onerror = function() {

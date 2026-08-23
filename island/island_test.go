@@ -160,9 +160,9 @@ func TestPageHeadCarriesManifestSRIForRuntimeScripts(t *testing.T) {
 	for _, want := range []string{
 		`src="/gosx/assets/runtime/bootstrap-runtime.22222222.js"`,
 		`integrity="sha256-runtime-integrity"`,
-		`src="/gosx/assets/runtime/bootstrap-feature-scene3d.44444444.js"`,
-		`integrity="sha256-scene-integrity"`,
-		`s.setAttribute('integrity',"sha256-webgpu-integrity");`,
+		`data-gosx-script="feature-scene3d-metadata"`,
+		`data-gosx-scene3d-url="/gosx/assets/runtime/bootstrap-feature-scene3d.44444444.js"`,
+		`data-gosx-scene3d-integrity="sha256-scene-integrity"`,
 	} {
 		if !strings.Contains(runtimeHTML, want) {
 			t.Fatalf("expected production runtime to include %q in %s", want, runtimeHTML)
@@ -764,7 +764,7 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 	}
 }
 
-func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
+func TestScene3DMetadataCarriesLazyFeatureProvenance(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -779,15 +779,15 @@ func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	}
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 	html := gosx.RenderHTML(r.BootstrapScript())
-	if !strings.Contains(html, `data-gosx-script="feature-scene3d-webgpu-loader"`) {
-		t.Fatalf("Scene3D WebGPU loader lacks GoSX provenance: %s", html)
+	if !strings.Contains(html, `data-gosx-script="feature-scene3d-metadata"`) {
+		t.Fatalf("Scene3D metadata lacks GoSX provenance: %s", html)
 	}
 	if !strings.Contains(html, `data-gosx-scene3d-command-url="/gosx/assets/runtime/bootstrap-feature-scene3d-command.js"`) {
 		t.Fatalf("Scene3D script lacks command chunk URL: %s", html)
 	}
 }
 
-func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) {
+func TestScene3DMetadataDoesNotEmitExecutableInlineLoader(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -803,28 +803,18 @@ func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) 
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 
 	html := gosx.RenderHTML(r.BootstrapScriptWithNonce("scene-nonce"))
-	for _, snippet := range []string{
-		`data-gosx-script="feature-scene3d-webgpu-loader" nonce="scene-nonce"`,
-		`document.currentScript.nonce`,
-		`if(_n){s.nonce=_n;}`,
-	} {
-		if !strings.Contains(html, snippet) {
-			t.Fatalf("expected Scene3D WebGPU loader to include %q in %s", snippet, html)
-		}
+	if strings.Contains(html, `feature-scene3d-webgpu-loader`) || strings.Contains(html, `navigator.gpu`) {
+		t.Fatalf("Scene3D metadata must not execute an eager WebGPU loader: %s", html)
+	}
+	if !strings.Contains(html, `type="application/json" data-gosx-script="feature-scene3d-metadata"`) {
+		t.Fatalf("Scene3D lazy metadata missing: %s", html)
 	}
 }
 
-// TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag: PreloadHints() must
-// not <link rel="preload" as="script"> a bundle BootstrapScript() ALSO emits
-// as a same-document <script defer src="..."> tag — the browser's preload
-// scanner already discovers deferred scripts at full priority during HTML
-// parsing, so the extra preload adds nothing and, on a heavy page that
-// delays script execution, trips Firefox's "preloaded but not used within a
-// few seconds" warning. scene3d is the one selective feature bundle that IS
-// always also emitted as a <script defer> tag (see BootstrapScript); engines/
-// hubs/islands are fetched by client-side JS after bootstrap.js runs, so
-// their preloads remain genuinely useful and must NOT be dropped.
-func TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag(t *testing.T) {
+// Scene3D must not be preloaded: both a preload and an executable script would
+// defeat capability/activation gating. Its inert metadata remains available
+// to the runtime, while the ordinary engines feature is still preloaded.
+func TestPreloadHintsKeepScene3DLazy(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -840,15 +830,18 @@ func TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag(t *testing.T) {
 
 	preloads := gosx.RenderHTML(r.PreloadHints())
 	if strings.Contains(preloads, "bootstrap-feature-scene3d") {
-		t.Fatalf("scene3d bundle must not be preloaded — it is already a same-document <script defer> tag: %s", preloads)
+		t.Fatalf("scene3d bundle must not be preloaded before activation: %s", preloads)
 	}
 	if !strings.Contains(preloads, "bootstrap-feature-engines") {
 		t.Fatalf("engines bundle preload must be preserved (client-side fetched, never a same-document script tag): %s", preloads)
 	}
 
 	scripts := gosx.RenderHTML(r.BootstrapScript())
-	if !strings.Contains(scripts, `data-gosx-script="feature-scene3d"`) || !strings.Contains(scripts, "bootstrap-feature-scene3d") {
-		t.Fatalf("scene3d bundle must still be emitted as a deferred <script> tag: %s", scripts)
+	if !strings.Contains(scripts, `data-gosx-script="feature-scene3d-metadata"`) || !strings.Contains(scripts, "bootstrap-feature-scene3d") {
+		t.Fatalf("scene3d lazy metadata is missing: %s", scripts)
+	}
+	if strings.Contains(scripts, `defer data-gosx-script="feature-scene3d"`) {
+		t.Fatalf("scene3d bundle is still emitted eagerly: %s", scripts)
 	}
 }
 
@@ -1332,7 +1325,7 @@ func TestLoadDefaultBuildManifestOverrideMissingManifestReturnsNil(t *testing.T)
 	}
 }
 
-// TestScene3DScriptCarriesLazyChunkURLs pins that the feature-scene3d script tag
+// TestScene3DScriptCarriesLazyChunkURLs pins that the inert Scene3D metadata
 // advertises the hashed URL of every chunk the browser fetches on demand.
 //
 // The WebGL2 renderer moved out of the base Scene3D chunk so a WebGPU-capable
@@ -1368,7 +1361,7 @@ func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
 		`data-gosx-scene3d-command-url="/gosx/assets/runtime/bootstrap-feature-scene3d-command.js"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("feature-scene3d script is missing %s\ngot: %s", want, html)
+			t.Errorf("feature-scene3d metadata is missing %s\ngot: %s", want, html)
 		}
 	}
 

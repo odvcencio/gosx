@@ -3520,6 +3520,8 @@ func normalizeSurfaceMountAttr(name string) string {
 	switch name {
 	case "className":
 		return "class"
+	case "activation":
+		return "data-gosx-engine-activation"
 	case "class", "style", "role", "title":
 		return name
 	}

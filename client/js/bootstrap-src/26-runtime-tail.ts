@@ -48,6 +48,7 @@
       gosxSubscribeSharedSignal,
       setSharedSignalJSON,
       setSharedSignalValue,
+      ensureBootstrapFeature,
     };
   }
 
@@ -92,7 +93,10 @@
       case "textlayout":
         return String(assets.bootstrapFeatureTextLayoutPath || runtimeFeaturePreloadPath("bootstrap-feature-textlayout") || "/gosx/bootstrap-feature-textlayout.js").trim();
       case "scene3d":
-        return assets && assets.bootstrapFeatureScene3dPath;
+        var metadata = document.querySelector('script[data-gosx-script="feature-scene3d-metadata"]');
+        return String((assets && assets.bootstrapFeatureScene3dPath)
+          || (metadata && metadata.dataset && metadata.dataset.gosxScene3dUrl)
+          || "/gosx/bootstrap-feature-scene3d.js").trim();
       default:
         return "";
     }
@@ -132,18 +136,18 @@
       return inlineFeature;
     }
 
-    // Scene3D is loaded via an async <script> tag emitted by the Go renderer,
-    // not dynamically by the runtime. Wait for it to signal readiness.
+    // Scene3D is loaded only when a Scene3D engine passes its capability and
+    // activation gates. The renderer emits inert URL metadata, never an eager
+    // script tag, so unsupported and below-the-fold scenes cost no GPU bytes.
     if (name === "scene3d") {
       if (!window.__gosx_scene3d_available) {
-        await new Promise(function(resolve) {
-          if (window.__gosx_scene3d_available) { resolve(); return; }
-          var prev = window.__gosx_scene3d_loaded;
-          window.__gosx_scene3d_loaded = function() {
-            if (typeof prev === "function") { prev(); }
-            resolve();
-          };
-        });
+        const jsRef = bootstrapFeatureURL(name);
+        if (!jsRef) return null;
+        await loadScriptTag(jsRef, "feature-scene3d");
+      }
+      if (!window.__gosx_scene3d_available) {
+        console.error("[gosx] Scene3D chunk loaded without publishing its API");
+        return null;
       }
       var scene3dFeature = { name: "scene3d" };
       activeBootstrapFeatures.set(name, scene3dFeature);
@@ -293,7 +297,12 @@
     if (names.length === 0) {
       return Promise.resolve([]);
     }
-    return Promise.all(names.map(function(name) {
+    // Scene3D activation belongs to each engine mount. Loading it here would
+    // defeat visible/idle activation and download GPU code before capability
+    // preflight. The engines feature calls ensureBootstrapFeature("scene3d")
+    // after those gates pass.
+    const eagerNames = names.filter(function(name) { return name !== "scene3d"; });
+    return Promise.all(eagerNames.map(function(name) {
       return ensureBootstrapFeature(name);
     })).then(function(features) {
       return features.filter(Boolean);

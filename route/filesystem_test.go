@@ -1120,6 +1120,34 @@ func Page() Node {
 	}
 }
 
+func TestDefaultFileRendererLowersScene3DActivationToMountContract(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.gsx")
+	source := `package docs
+
+func Page() Node {
+	return <Scene3D class="scene-shell" activation="visible" />
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &RouteContext{}
+	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := gosx.RenderHTML(node)
+	if !strings.Contains(html, `data-gosx-engine-activation="visible"`) {
+		t.Fatalf("Scene3D activation did not reach the mount contract: %q", html)
+	}
+	head := gosx.RenderHTML(ctx.Runtime().Head())
+	if strings.Contains(head, `"activation"`) {
+		t.Fatalf("Scene3D activation leaked into engine props: %q", head)
+	}
+}
+
 func TestDefaultFileRendererDoesNotInjectDefaultSceneObjectsForProgramRef(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "page.gsx")

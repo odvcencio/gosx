@@ -68,7 +68,16 @@ func Page() Node {
 			{CodeBlock("go", `func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
 	    return map[string]any{"scene": MyScene()}, nil
 	}`)}
-			{CodeBlock("gosx", `<Scene3D {...data.scene} />`)}
+			{CodeBlock("gosx", `<Scene3D activation="visible" {...data.scene} />`)}
+			<p>
+				Choose an activation policy deliberately. The default
+				<span class="inline-code">immediate</span>
+				mode starts an above-the-fold scene during bootstrap.
+				<span class="inline-code">visible</span>
+				keeps the server fallback and Scene3D chunks dormant until the mount nears the viewport.
+				<span class="inline-code">idle</span>
+				starts after critical document work, which fits hero scenes with a poster or CSS boot still. Capability checks run before GoSX downloads the Scene3D feature.
+			</p>
 			<p>
 				Set
 				<span class="inline-code">AriaLabel</span>
@@ -83,7 +92,7 @@ func Page() Node {
 			</p>
 		</section>
 		<section id="scene3d-demo" class="scene3d-demo-well" aria-label="PBR demo scene">
-			<Scene3D {...data.demoScene} />
+			<Scene3D activation="visible" {...data.demoScene} />
 		</section>
 		<section id="no-hierarchical-scale">
 			<h2>No Hierarchical Scale</h2>
