@@ -1,0 +1,1175 @@
+diff --git a/cmd/gosx/ouroboros.go b/cmd/gosx/ouroboros.go
+index 2580409c9f26ba7ce74ea6885797a4596841aae6..a312899920dd9c38bb9386110967a916dfa386e4 100644
+--- a/cmd/gosx/ouroboros.go
++++ b/cmd/gosx/ouroboros.go
+@@ -195,12 +195,7 @@ func cmdOuroborosInventory(args []string) {
+ 	if err := ouroboros.WriteOverlayArtifacts(context.Background(), *root, artifactDir, inv.Overlay); err != nil {
+ 		fatal("write overlay artifacts: %v", err)
+ 	}
+-	f, err := os.Create(*outPath)
+-	if err != nil {
+-		fatal("create inventory: %v", err)
+-	}
+-	defer f.Close()
+-	if err := ouroboros.WriteJSON(f, inv); err != nil {
++	if err := ouroboros.WriteCanonicalInventoryFile(*outPath, inv); err != nil {
+ 		fatal("write inventory: %v", err)
+ 	}
+ }
+diff --git a/perf/heap.go b/perf/heap.go
+index 8ff4bac882fd046cdcfe3d6fd0e2522141b9a3de..351ffb8b9146e5b2f5e9d4a0eb79536ca2efaed6 100644
+--- a/perf/heap.go
++++ b/perf/heap.go
+@@ -97,6 +97,8 @@ type MemoryStats struct {
+ 	JSHeapLimitMB float64 `json:"jsHeapLimitMb"`
+ 	DOMNodeCount  int     `json:"domNodeCount"`
+ 	ListenerCount int     `json:"listenerCount"`
++	WASMPages     int     `json:"wasmPages"`
++	WASMBytes     int64   `json:"wasmBytes"`
+ }
+ 
+ // QueryMemoryStats reads performance.memory + document DOM counts via a
+diff --git a/perf/ouroboros/browser.go b/perf/ouroboros/browser.go
+index 1cd76fd91e84fe19435dd232644dc04cd881d233..bf88d5bab8c3ba6db47c20fecf6fb63f780dd64a 100644
+--- a/perf/ouroboros/browser.go
++++ b/perf/ouroboros/browser.go
+@@ -68,6 +68,7 @@ type BrowserBaselineOptions struct {
+ 	DPR                float64
+ 	Environment        string
+ 	RuntimeProbeNames  []string
++	DisableNoiseRerun  bool
+ }
+ 
+ type BrowserBaselineResult struct {
+@@ -300,6 +301,7 @@ type BrowserSummary struct {
+ 	SampleCount   int                             `json:"sampleCount"`
+ 	Discarded     int                             `json:"discardedSampleCount"`
+ 	NoiseFlags    []NoiseFlag                     `json:"noiseFlags,omitempty"`
++	NoiseRerun    *NoiseRerunProof                `json:"noiseRerunProof,omitempty"`
+ }
+ 
+ type BaselineValidation struct {
+@@ -332,6 +334,27 @@ type NoiseFlag struct {
+ 	Ratio  float64 `json:"ratio"`
+ }
+ 
++type NoiseRerunProof struct {
++	SchemaVersion            string                  `json:"schemaVersion"`
++	Status                   string                  `json:"status"`
++	RunMode                  string                  `json:"runMode"`
++	Source                   SourceIdentity          `json:"source"`
++	BaselineRawSamplesRef    string                  `json:"baselineRawSamplesRef"`
++	BaselineRawSamplesSHA256 string                  `json:"baselineRawSamplesSHA256"`
++	RerunRawSamplesRef       string                  `json:"rerunRawSamplesRef"`
++	RerunRawSamplesSHA256    string                  `json:"rerunRawSamplesSHA256"`
++	Metrics                  []NoiseRerunMetricProof `json:"metrics"`
++}
++
++type NoiseRerunMetricProof struct {
++	Group          string  `json:"group"`
++	Metric         string  `json:"metric"`
++	BaselineN      int     `json:"baselineN"`
++	RerunN         int     `json:"rerunN"`
++	BaselineMedian float64 `json:"baselineMedian"`
++	RerunMedian    float64 `json:"rerunMedian"`
++}
++
+ func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (result *BrowserBaselineResult, err error) {
+ 	opts = normalizeBrowserOptions(opts)
+ 	artifactWriteStarted := false
+@@ -500,6 +523,19 @@ func RunBrowserBaseline(ctx context.Context, opts BrowserBaselineOptions) (resul
+ 	validation := ValidateBrowserBaseline(plan, samples, source, env, opts)
+ 	canonical := plan.Canonical && validation.Status == "pass"
+ 	summary := SummarizeBrowserSamples(samples, opts.Samples, source)
++	if canonical && !opts.DisableNoiseRerun {
++		if err := rawWriter.Flush(); err != nil {
++			return nil, err
++		}
++		if err := rawFile.Sync(); err != nil {
++			return nil, err
++		}
++		proof, err := maybeRunCanonicalNoiseRerun(ctx, opts, originalInventoryPath, summary, samples, rawPath, commandLog)
++		if err != nil {
++			return nil, err
++		}
++		summary.NoiseRerun = proof
++	}
+ 	if err := WriteJSONFile(summaryPath, summary); err != nil {
+ 		return nil, err
+ 	}
+@@ -843,6 +879,56 @@ func runRouteSamples(ctx context.Context, opts BrowserBaselineOptions, plan Samp
+ 	return out, nil
+ }
+ 
++func maybeRunCanonicalNoiseRerun(ctx context.Context, opts BrowserBaselineOptions, originalInventoryPath string, summary BrowserSummary, samples []BrowserRawSample, rawPath string, log io.Writer) (*NoiseRerunProof, error) {
++	metricIDs := unstableRequiredNoiseMetricIDs(samples)
++	if len(metricIDs) == 0 {
++		return nil, nil
++	}
++	rerunOpts := opts
++	rerunOpts.ArtifactRoot = filepath.Join(opts.ArtifactRoot, "noise-rerun")
++	rerunOpts.EvidenceRoot = rerunOpts.ArtifactRoot
++	rerunOpts.InventoryPath = originalInventoryPath
++	rerunOpts.DisableNoiseRerun = true
++	if log != nil {
++		fmt.Fprintf(log, "noise-rerun start root=%s metrics=%s\n", rerunOpts.ArtifactRoot, strings.Join(metricIDs, ","))
++	}
++	result, err := RunBrowserBaseline(ctx, rerunOpts)
++	if err != nil {
++		return nil, fmt.Errorf("canonical noise rerun failed: %w", err)
++	}
++	rerunSamples, err := ReadBrowserRawSamplesJSONLStrict(result.RawSamplesPath)
++	if err != nil {
++		return nil, fmt.Errorf("canonical noise rerun raw samples: %w", err)
++	}
++	proof, err := BuildNoiseRerunProof(summary, rawPath, result.RawSamplesPath, relTo(opts.ArtifactRoot, rawPath), relTo(opts.ArtifactRoot, result.RawSamplesPath), samples, rerunSamples, metricIDs)
++	if err != nil {
++		return nil, err
++	}
++	if log != nil {
++		fmt.Fprintf(log, "noise-rerun pass root=%s raw=%s\n", rerunOpts.ArtifactRoot, proof.RerunRawSamplesSHA256)
++	}
++	return proof, nil
++}
++
++func unstableRequiredNoiseMetricIDs(samples []BrowserRawSample) []string {
++	stats := buildMetricStats(samples)
++	needed := map[string]bool{}
++	for _, bucketStats := range stats {
++		for _, metricID := range compareRequiredMetricIDs {
++			stat, ok := bucketStats[metricID]
++			if ok && stat.Unstable && !isDeterministicMetric(metricID) {
++				needed[metricID] = true
++			}
++		}
++	}
++	out := make([]string, 0, len(needed))
++	for metricID := range needed {
++		out = append(out, metricID)
++	}
++	sort.Strings(out)
++	return out
++}
++
+ func effectiveRouteTimeout(opts BrowserBaselineOptions, route FixtureSpec) time.Duration {
+ 	timeout := opts.Timeout
+ 	if timeout == 0 {
+@@ -948,6 +1034,7 @@ func runSingleSample(ctx context.Context, opts BrowserBaselineOptions, source So
+ 		if err != nil {
+ 			return err
+ 		}
++		fillWASMMemoryStats(d, &mem)
+ 		if opts.HeapSnapshots {
+ 			snap, err := perf.TakeHeapSnapshotAfterGC(d)
+ 			if err != nil {
+@@ -1069,6 +1156,10 @@ func newOuroborosDriver(ctx context.Context, opts BrowserBaselineOptions, lane S
+ 	setupDriver, setupCancel := d.WithOperationContext(ctx, opts.Timeout)
+ 	defer setupCancel()
+ 	if lane == SampleLaneProbe || lane == SampleLaneProbeOverhead {
++		if err := injectPreloadScript(setupDriver, wasmMemoryProbeScript()); err != nil {
++			d.Close()
++			return nil, err
++		}
+ 		runtimeJSONProbe, err := RuntimeJSONProbeScript(opts.RuntimeProbeNames)
+ 		if err != nil {
+ 			d.Close()
+@@ -1127,6 +1218,88 @@ func setProbeRoutePhase(d *perf.Driver, routeID, phase string) error {
+ 	})()`, routeID, phase), nil)
+ }
+ 
++func wasmMemoryProbeScript() string {
++	return `(function(){
++		if (window.__gosxOuroborosWASMMemory) return;
++		var state = {records: [], maxPages: 0, maxBytes: 0};
++		function observeMemory(memory) {
++			try {
++				if (!memory || !memory.buffer || typeof memory.buffer.byteLength !== "number") return;
++				var bytes = memory.buffer.byteLength;
++				if (!Number.isFinite(bytes) || bytes <= 0) return;
++				var pages = Math.ceil(bytes / 65536);
++				state.records.push({pages: pages, bytes: bytes});
++				if (pages > state.maxPages) state.maxPages = pages;
++				if (bytes > state.maxBytes) state.maxBytes = bytes;
++			} catch (_) {}
++		}
++		function observeExports(exports) {
++			if (!exports || typeof exports !== "object") return;
++			for (var key in exports) {
++				if (Object.prototype.hasOwnProperty.call(exports, key)) observeMemory(exports[key]);
++			}
++		}
++		function observeResult(result) {
++			try {
++				if (result && result.instance) observeExports(result.instance.exports);
++				else if (result && result.exports) observeExports(result.exports);
++			} catch (_) {}
++		}
++		Object.defineProperty(window, "__gosxOuroborosWASMMemory", {
++			value: {
++				snapshot: function() {
++					return {pages: state.maxPages, bytes: state.maxBytes, records: state.records.length};
++				}
++			},
++			configurable: false,
++			enumerable: false,
++			writable: false
++		});
++		if (typeof WebAssembly !== "object" || !WebAssembly) return;
++		if (typeof WebAssembly.instantiate === "function") {
++			var instantiate = WebAssembly.instantiate;
++			WebAssembly.instantiate = function() {
++				var result = instantiate.apply(this, arguments);
++				return Promise.resolve(result).then(function(value) {
++					observeResult(value);
++					return value;
++				});
++			};
++		}
++		if (typeof WebAssembly.instantiateStreaming === "function") {
++			var instantiateStreaming = WebAssembly.instantiateStreaming;
++			WebAssembly.instantiateStreaming = function() {
++				return instantiateStreaming.apply(this, arguments).then(function(value) {
++					observeResult(value);
++					return value;
++				});
++			};
++		}
++	})()`
++}
++
++func fillWASMMemoryStats(d *perf.Driver, mem *perf.MemoryStats) {
++	if d == nil || mem == nil {
++		return
++	}
++	var raw struct {
++		Pages   int   `json:"pages"`
++		Bytes   int64 `json:"bytes"`
++		Records int   `json:"records"`
++	}
++	if err := d.Evaluate(`(function(){
++		var probe = window.__gosxOuroborosWASMMemory;
++		if (!probe || typeof probe.snapshot !== "function") return {pages:0, bytes:0, records:0};
++		return probe.snapshot();
++	})()`, &raw); err != nil {
++		return
++	}
++	if raw.Pages > 0 && raw.Bytes > 0 && raw.Records > 0 {
++		mem.WASMPages = raw.Pages
++		mem.WASMBytes = raw.Bytes
++	}
++}
++
+ func primeWarmRoute(d *perf.Driver, opts BrowserBaselineOptions, route FixtureSpec) error {
+ 	url, err := routeURL(opts, route)
+ 	if err != nil {
+@@ -4025,6 +4198,10 @@ func sampleMetrics(page *perf.PageReport, mem perf.MemoryStats) map[string]float
+ 		"totalBlockingTimeMs": page.TotalBlockingTimeMs,
+ 		"consoleErrorCount":   float64(len(page.ConsoleEntries)),
+ 	}
++	if mem.WASMPages > 0 && mem.WASMBytes > 0 {
++		m["wasmPages"] = float64(mem.WASMPages)
++		m["wasmBytes"] = float64(mem.WASMBytes)
++	}
+ 	if page.Scene != nil {
+ 		m["sceneFrameCount"] = float64(page.Scene.FrameCount)
+ 		m["sceneCpuP95Ms"] = page.Scene.FrameStats.P95
+@@ -4564,6 +4741,104 @@ func SummarizeBrowserSamples(samples []BrowserRawSample, runMode string, source
+ 	}
+ }
+ 
++func BuildNoiseRerunProof(summary BrowserSummary, baselineRawPath, rerunRawPath, baselineRawRef, rerunRawRef string, baselineSamples, rerunSamples []BrowserRawSample, metricIDs []string) (*NoiseRerunProof, error) {
++	baselineRawSHA256, err := sha256File(baselineRawPath)
++	if err != nil {
++		return nil, fmt.Errorf("noise rerun proof baseline raw samples hash: %w", err)
++	}
++	rerunRawSHA256, err := sha256File(rerunRawPath)
++	if err != nil {
++		return nil, fmt.Errorf("noise rerun proof rerun raw samples hash: %w", err)
++	}
++	metrics, err := noiseRerunMetricProofs(baselineSamples, rerunSamples, metricIDs)
++	if err != nil {
++		return nil, err
++	}
++	proof := &NoiseRerunProof{
++		SchemaVersion:            BrowserBaselineSchemaVersion,
++		Status:                   "pass",
++		RunMode:                  summary.RunMode,
++		Source:                   summary.Source,
++		BaselineRawSamplesRef:    baselineRawRef,
++		BaselineRawSamplesSHA256: baselineRawSHA256,
++		RerunRawSamplesRef:       rerunRawRef,
++		RerunRawSamplesSHA256:    rerunRawSHA256,
++		Metrics:                  metrics,
++	}
++	return validateConstructedNoiseRerunProof(proof)
++}
++
++func noiseRerunMetricProofs(baselineSamples, rerunSamples []BrowserRawSample, metricIDs []string) ([]NoiseRerunMetricProof, error) {
++	baselineStats := buildMetricStats(baselineSamples)
++	rerunStats := buildMetricStats(rerunSamples)
++	var metrics []NoiseRerunMetricProof
++	for _, bucket := range metricBucketsForProof(baselineStats, rerunStats) {
++		group := bucket.RouteID + "/" + bucket.CacheMode
++		for _, metricID := range metricIDs {
++			baseline, ok := baselineStats[bucket][metricID]
++			if !ok {
++				continue
++			}
++			if !baseline.Unstable {
++				continue
++			}
++			rerun, ok := rerunStats[bucket][metricID]
++			if !ok {
++				return nil, fmt.Errorf("noise rerun proof missing rerun metric %s/%s", group, metricID)
++			}
++			metrics = append(metrics, NoiseRerunMetricProof{
++				Group:          group,
++				Metric:         metricID,
++				BaselineN:      baseline.N,
++				RerunN:         rerun.N,
++				BaselineMedian: baseline.Median,
++				RerunMedian:    rerun.Median,
++			})
++		}
++	}
++	if len(metrics) == 0 {
++		return nil, fmt.Errorf("noise rerun proof requires at least one unstable required metric")
++	}
++	return metrics, nil
++}
++
++func metricBucketsForProof(a, b map[metricBucket]map[string]Stats) []metricBucket {
++	return allMetricBuckets(a, b)
++}
++
++func validateConstructedNoiseRerunProof(proof *NoiseRerunProof) (*NoiseRerunProof, error) {
++	if proof == nil {
++		return nil, nil
++	}
++	if !compareSHA256Re.MatchString(proof.BaselineRawSamplesSHA256) {
++		return nil, fmt.Errorf("noise rerun proof baseline raw samples hash is invalid")
++	}
++	if !compareSHA256Re.MatchString(proof.RerunRawSamplesSHA256) {
++		return nil, fmt.Errorf("noise rerun proof rerun raw samples hash is invalid")
++	}
++	if proof.BaselineRawSamplesSHA256 == proof.RerunRawSamplesSHA256 {
++		return nil, fmt.Errorf("noise rerun proof requires distinct raw sample hashes")
++	}
++	if strings.TrimSpace(proof.BaselineRawSamplesRef) == "" || strings.TrimSpace(proof.RerunRawSamplesRef) == "" {
++		return nil, fmt.Errorf("noise rerun proof requires raw sample refs")
++	}
++	if len(proof.Metrics) == 0 {
++		return nil, fmt.Errorf("noise rerun proof requires at least one metric")
++	}
++	for _, metric := range proof.Metrics {
++		if metric.Group == "" || metric.Metric == "" {
++			return nil, fmt.Errorf("noise rerun proof metric identity is incomplete")
++		}
++		if metric.BaselineN <= 0 || metric.RerunN <= 0 {
++			return nil, fmt.Errorf("noise rerun proof metric %s/%s has empty samples", metric.Group, metric.Metric)
++		}
++		if math.IsNaN(metric.BaselineMedian) || math.IsInf(metric.BaselineMedian, 0) || math.IsNaN(metric.RerunMedian) || math.IsInf(metric.RerunMedian, 0) {
++			return nil, fmt.Errorf("noise rerun proof metric %s/%s has non-finite median", metric.Group, metric.Metric)
++		}
++	}
++	return proof, nil
++}
++
+ func ComputeStats(values []float64) Stats {
+ 	clean := make([]float64, 0, len(values))
+ 	for _, v := range values {
+diff --git a/perf/ouroboros/browser_test.go b/perf/ouroboros/browser_test.go
+index 8ffb29294156a1186e5bce477d5ee5d8504d9783..4246e542cd2fcc80eb95ef660df738832a156ca3 100644
+--- a/perf/ouroboros/browser_test.go
++++ b/perf/ouroboros/browser_test.go
+@@ -583,6 +583,58 @@ func TestValidateCanonicalSampleMatrixRejectsMissingBucketAndUndercount(t *testi
+ 	}
+ }
+ 
++func TestCanonicalNoiseRerunProofKeepsRawSamplesSeparate(t *testing.T) {
++	plan, err := samplingPlan("baseline")
++	if err != nil {
++		t.Fatal(err)
++	}
++	source := compareSource("")
++	baseline := canonicalBrowserMatrixSamples(plan)
++	rerun := canonicalBrowserMatrixSamples(plan)
++	for i := range baseline {
++		baseline[i].Source = source
++		rerun[i].Source = source
++		if baseline[i].SampleLane == SampleLaneProduct && baseline[i].RouteID == "R00" && baseline[i].CacheMode == "cold" && !baseline[i].Discarded {
++			if baseline[i].SampleIndex%2 == 0 {
++				baseline[i].Metrics = map[string]float64{"dclMs": 100}
++			} else {
++				baseline[i].Metrics = map[string]float64{"dclMs": 200}
++			}
++			rerun[i].Metrics = map[string]float64{"dclMs": 100}
++		}
++	}
++	if len(baseline) != 484 {
++		t.Fatalf("canonical raw sample count = %d, want 484", len(baseline))
++	}
++	root := t.TempDir()
++	baselineRaw := filepath.Join(root, "perf", "raw-samples.jsonl")
++	rerunRaw := filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
++	writeRawSamples(t, baselineRaw, baseline)
++	writeRawSamples(t, rerunRaw, rerun)
++	summary := SummarizeBrowserSamples(baseline, "baseline", source)
++	proof, err := BuildNoiseRerunProof(summary, baselineRaw, rerunRaw, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", baseline, rerun, []string{"startup.dclMs"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if proof.BaselineRawSamplesRef != "perf/raw-samples.jsonl" || proof.RerunRawSamplesRef != "noise-rerun/perf/raw-samples.jsonl" {
++		t.Fatalf("proof refs = %#v", proof)
++	}
++	gotBaseline, err := ReadBrowserRawSamplesJSONLStrict(baselineRaw)
++	if err != nil {
++		t.Fatal(err)
++	}
++	gotRerun, err := ReadBrowserRawSamplesJSONLStrict(rerunRaw)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(gotBaseline) != 484 || len(gotRerun) != 484 {
++		t.Fatalf("raw counts baseline=%d rerun=%d", len(gotBaseline), len(gotRerun))
++	}
++	if len(proof.Metrics) != 1 || proof.Metrics[0].Group != "R00/cold" || proof.Metrics[0].Metric != "startup.dclMs" {
++		t.Fatalf("proof metrics = %#v", proof.Metrics)
++	}
++}
++
+ func canonicalBrowserMatrixSamples(plan SamplingPlan) []BrowserRawSample {
+ 	var samples []BrowserRawSample
+ 	for _, routeID := range canonicalRouteIDs() {
+@@ -665,11 +717,20 @@ func TestSampleMetricsPreservesRawTransferAndMemoryValues(t *testing.T) {
+ 		LongTaskTotalMs:       80,
+ 		TotalBlockingTimeMs:   30,
+ 	}
+-	mem := perf.MemoryStats{JSHeapUsedMB: 1.5, DOMNodeCount: 42}
++	mem := perf.MemoryStats{JSHeapUsedMB: 1.5, DOMNodeCount: 42, WASMPages: 3, WASMBytes: 196608}
+ 	metrics := sampleMetrics(page, mem)
+ 	if metrics["transferBytes"] != 789 || metrics["jsHeapUsedMb"] != 1.5 || metrics["domNodeCount"] != 42 {
+ 		t.Fatalf("metrics = %#v", metrics)
+ 	}
++	if metrics["wasmPages"] != 3 || metrics["wasmBytes"] != 196608 {
++		t.Fatalf("wasm metrics = %#v", metrics)
++	}
++	mem.WASMPages = 0
++	mem.WASMBytes = 0
++	metrics = sampleMetrics(page, mem)
++	if _, ok := metrics["wasmPages"]; ok {
++		t.Fatalf("wasmPages present without observed WASM memory: %#v", metrics)
++	}
+ }
+ 
+ func TestBrowserBaselineSmokeR00(t *testing.T) {
+@@ -2768,6 +2829,23 @@ func TestCanonicalBrowserPreseedRootValidation(t *testing.T) {
+ 			},
+ 			want: "source inventory",
+ 		},
++		{
++			name: "pretty_source_inventory_drift",
++			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
++				path := filepath.Join(opts.ArtifactRoot, "source", "source-inventory.json")
++				f, err := os.Open(path)
++				if err != nil {
++					t.Fatal(err)
++				}
++				inv, err := DecodeInventoryStrict(f)
++				_ = f.Close()
++				if err != nil {
++					t.Fatal(err)
++				}
++				writeFixtureJSON(t, path, inv)
++			},
++			want: "differs from predicted materialization",
++		},
+ 		{
+ 			name: "invalid_runtime_rows",
+ 			mutate: func(t *testing.T, opts BrowserBaselineOptions, source SourceIdentity) {
+diff --git a/perf/ouroboros/compare.go b/perf/ouroboros/compare.go
+index c205f2cbea9837fc5e06e63b8df705ef04285a2c..08aa18df362b6200d21a6baf15b83ed78ba32bc7 100644
+--- a/perf/ouroboros/compare.go
++++ b/perf/ouroboros/compare.go
+@@ -519,7 +519,7 @@ func loadCompareArtifact(input, mode, pixelRoot string) (*compareLoadedArtifact,
+ 	if env.SchemaVersion != BrowserBaselineSchemaVersion && env.SchemaVersion != SchemaVersion {
+ 		return nil, fmt.Errorf("environment schemaVersion = %q, want %q", env.SchemaVersion, BrowserBaselineSchemaVersion)
+ 	}
+-	if err := requireSummaryParity(*summary, raw, manifest.Sampling.Name, manifest.Source); err != nil {
++	if err := requireSummaryParity(paths, rawPath, *summary, raw, manifest.Sampling.Name, manifest.Source); err != nil {
+ 		return nil, err
+ 	}
+ 	inventory, err := loadSourceInventory(paths, manifest.Source)
+@@ -1527,10 +1527,15 @@ func resolveExternalArtifactRoot(root string) (comparePathSet, error) {
+ 	return comparePathSet{root: realRoot, rootReal: realRoot}, nil
+ }
+ 
+-func requireSummaryParity(summary BrowserSummary, samples []BrowserRawSample, runMode string, source SourceIdentity) error {
++func requireSummaryParity(paths comparePathSet, rawPath string, summary BrowserSummary, samples []BrowserRawSample, runMode string, source SourceIdentity) error {
++	if err := validateNoiseRerunProof(paths, rawPath, summary, samples); err != nil {
++		return err
++	}
+ 	recomputed := SummarizeBrowserSamples(samples, runMode, source)
+ 	summary.GeneratedAt = ""
+ 	recomputed.GeneratedAt = ""
++	summary.NoiseRerun = nil
++	recomputed.NoiseRerun = nil
+ 	sortNoiseFlags(summary.NoiseFlags)
+ 	sortNoiseFlags(recomputed.NoiseFlags)
+ 	if !reflect.DeepEqual(summary, recomputed) {
+@@ -1539,6 +1544,115 @@ func requireSummaryParity(summary BrowserSummary, samples []BrowserRawSample, ru
+ 	return nil
+ }
+ 
++func validateNoiseRerunProof(paths comparePathSet, rawPath string, summary BrowserSummary, samples []BrowserRawSample) error {
++	proof := summary.NoiseRerun
++	if proof == nil {
++		return nil
++	}
++	if proof.SchemaVersion != BrowserBaselineSchemaVersion {
++		return fmt.Errorf("noise rerun proof schemaVersion = %q", proof.SchemaVersion)
++	}
++	if proof.Status != "pass" {
++		return fmt.Errorf("noise rerun proof status = %q", proof.Status)
++	}
++	if proof.RunMode != summary.RunMode {
++		return fmt.Errorf("noise rerun proof runMode = %q, want %q", proof.RunMode, summary.RunMode)
++	}
++	if !reflect.DeepEqual(proof.Source, summary.Source) {
++		return fmt.Errorf("noise rerun proof source identity mismatch")
++	}
++	baselineRawPath, err := resolveArtifactRef(paths, proof.BaselineRawSamplesRef)
++	if err != nil {
++		return fmt.Errorf("noise rerun proof baseline raw samples ref: %w", err)
++	}
++	if !samePath(baselineRawPath, rawPath) {
++		return fmt.Errorf("noise rerun proof baseline raw samples ref does not match manifest raw samples")
++	}
++	rerunRawPath, err := resolveArtifactRef(paths, proof.RerunRawSamplesRef)
++	if err != nil {
++		return fmt.Errorf("noise rerun proof rerun raw samples ref: %w", err)
++	}
++	baselineHash, err := sha256File(baselineRawPath)
++	if err != nil {
++		return fmt.Errorf("noise rerun proof baseline raw samples hash: %w", err)
++	}
++	rerunHash, err := sha256File(rerunRawPath)
++	if err != nil {
++		return fmt.Errorf("noise rerun proof rerun raw samples hash: %w", err)
++	}
++	if !compareSHA256Re.MatchString(proof.BaselineRawSamplesSHA256) {
++		return fmt.Errorf("noise rerun proof baseline raw samples hash is invalid")
++	}
++	if !compareSHA256Re.MatchString(proof.RerunRawSamplesSHA256) {
++		return fmt.Errorf("noise rerun proof rerun raw samples hash is invalid")
++	}
++	if proof.BaselineRawSamplesSHA256 == proof.RerunRawSamplesSHA256 {
++		return fmt.Errorf("noise rerun proof requires distinct raw sample hashes")
++	}
++	if proof.BaselineRawSamplesSHA256 != baselineHash {
++		return fmt.Errorf("noise rerun proof baseline raw samples hash mismatch")
++	}
++	if proof.RerunRawSamplesSHA256 != rerunHash {
++		return fmt.Errorf("noise rerun proof rerun raw samples hash mismatch")
++	}
++	rerunSamples, err := ReadBrowserRawSamplesJSONLStrict(rerunRawPath)
++	if err != nil {
++		return fmt.Errorf("noise rerun proof rerun raw samples: %w", err)
++	}
++	for i, sample := range rerunSamples {
++		if !reflect.DeepEqual(sample.Source, summary.Source) {
++			return fmt.Errorf("noise rerun proof rerun raw sample %d source identity mismatch", i)
++		}
++	}
++	if len(proof.Metrics) == 0 {
++		return fmt.Errorf("noise rerun proof requires at least one metric")
++	}
++	for _, metric := range proof.Metrics {
++		if metric.Group == "" || metric.Metric == "" {
++			return fmt.Errorf("noise rerun proof metric identity is incomplete")
++		}
++		if metric.BaselineN <= 0 || metric.RerunN <= 0 {
++			return fmt.Errorf("noise rerun proof metric %s/%s has empty samples", metric.Group, metric.Metric)
++		}
++		if !finiteFloat(metric.BaselineMedian) || !finiteFloat(metric.RerunMedian) {
++			return fmt.Errorf("noise rerun proof metric %s/%s has non-finite median", metric.Group, metric.Metric)
++		}
++	}
++	if err := validateNoiseRerunMetricReplay(*proof, samples, rerunSamples); err != nil {
++		return err
++	}
++	return nil
++}
++
++func validateNoiseRerunMetricReplay(proof NoiseRerunProof, baselineSamples, rerunSamples []BrowserRawSample) error {
++	metricSet := map[string]bool{}
++	for _, metric := range proof.Metrics {
++		metricSet[metric.Metric] = true
++	}
++	metricIDs := make([]string, 0, len(metricSet))
++	for metricID := range metricSet {
++		metricIDs = append(metricIDs, metricID)
++	}
++	sort.Strings(metricIDs)
++	recomputed, err := noiseRerunMetricProofs(baselineSamples, rerunSamples, metricIDs)
++	if err != nil {
++		return err
++	}
++	normalize := func(metrics []NoiseRerunMetricProof) []NoiseRerunMetricProof {
++		out := append([]NoiseRerunMetricProof{}, metrics...)
++		sort.Slice(out, func(i, j int) bool {
++			a := out[i].Group + "\x00" + out[i].Metric
++			b := out[j].Group + "\x00" + out[j].Metric
++			return a < b
++		})
++		return out
++	}
++	if !reflect.DeepEqual(normalize(proof.Metrics), normalize(recomputed)) {
++		return fmt.Errorf("noise rerun proof metrics do not match raw sample recomputation")
++	}
++	return nil
++}
++
+ func sortNoiseFlags(flags []NoiseFlag) {
+ 	sort.Slice(flags, func(i, j int) bool {
+ 		a := flags[i].Group + "\x00" + flags[i].Metric + "\x00" + flags[i].Reason
+@@ -1773,7 +1887,7 @@ func runMetricChecks(report *CompareReport, baseline, candidate *compareLoadedAr
+ 				report.addMetricCheck(metricID, categoryForMetric(metricID), bucket, metricID, "fail", 0, 0, rule, false, false, message, false)
+ 				continue
+ 			}
+-			if (bStat.Unstable || cStat.Unstable) && !hasNoiseRerunProof(baseline.summary) && !isDeterministicMetric(metricID) {
++			if (bStat.Unstable || cStat.Unstable) && !hasNoiseRerunProof(baseline.summary, bucket, metricID) && !isDeterministicMetric(metricID) {
+ 				report.addMetricCheck(metricID, categoryForMetric(metricID), bucket, metricID, "blocked", bStat.Median, cStat.Median, rule, bStat.Unstable, cStat.Unstable, "required noisy metric lacks rerun proof", false)
+ 				continue
+ 			}
+@@ -1898,12 +2012,12 @@ func runBaselinePixelSelfCompareCheck(report *CompareReport, baseline, candidate
+ 	if manifest.Source.BaseRevision != baseline.manifest.Source.BaseRevision || manifest.Source.OverlayHash != baseline.manifest.Source.OverlayHash || manifest.Source.InventorySHA256 != baseline.manifest.Source.InventorySHA256 {
+ 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".source", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel source does not match browser source"})
+ 	}
+-	if manifest.HardwareClassification != "" && manifest.HardwareClassification != baseline.environment.HardwareClassification {
+-		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".hardware", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel hardware class differs from browser environment"})
+-	}
+ 	if manifest.BackendRequirement == "" {
+ 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".backend", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel backend requirement is missing"})
+ 	}
++	if msg := baselinePixelHardwareMessage(manifest, baseline.environment.HardwareClassification); msg != "" {
++		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".hardware", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: msg})
++	}
+ 	if !manifest.Certified {
+ 		report.Ratchets = append(report.Ratchets, CompareCheck{ID: id + ".certified", Category: "pixel", RouteID: manifest.RouteID, Status: "fail", Message: "baseline pixel manifest is not certified"})
+ 	}
+@@ -2578,13 +2692,51 @@ func isDeterministicMetric(id string) bool {
+ 	return strings.Contains(id, "Bytes") || strings.HasPrefix(id, "console.") || strings.HasPrefix(id, "json.") || strings.HasPrefix(id, "route.") || strings.HasPrefix(id, "wasm.")
+ }
+ 
+-func hasNoiseRerunProof(summary BrowserSummary) bool {
+-	// BrowserSummary has no rerun-proof fields in the current producer.
+-	// Canonical and smoke comparisons must stay inconclusive for noisy
+-	// required metrics until the producer adds explicit proof fields.
++func hasNoiseRerunProof(summary BrowserSummary, bucket metricBucket, metricID string) bool {
++	proof := summary.NoiseRerun
++	if proof == nil || proof.SchemaVersion != BrowserBaselineSchemaVersion || proof.Status != "pass" || proof.RunMode != summary.RunMode {
++		return false
++	}
++	if !reflect.DeepEqual(proof.Source, summary.Source) {
++		return false
++	}
++	if !compareSHA256Re.MatchString(proof.BaselineRawSamplesSHA256) || !compareSHA256Re.MatchString(proof.RerunRawSamplesSHA256) || proof.BaselineRawSamplesSHA256 == proof.RerunRawSamplesSHA256 {
++		return false
++	}
++	group := bucket.RouteID + "/" + bucket.CacheMode
++	for _, metric := range proof.Metrics {
++		if metric.Group != group || metric.Metric != metricID {
++			continue
++		}
++		if metric.BaselineN <= 0 || metric.RerunN <= 0 {
++			return false
++		}
++		return finiteFloat(metric.BaselineMedian) && finiteFloat(metric.RerunMedian)
++	}
+ 	return false
+ }
+ 
++func finiteFloat(value float64) bool {
++	return !math.IsNaN(value) && !math.IsInf(value, 0)
++}
++
++func baselinePixelHardwareMessage(manifest visual.PixelEvidenceManifest, browserHardware string) string {
++	if manifest.HardwareClassification == "" {
++		return "baseline pixel hardware class is missing"
++	}
++	if manifest.BackendRequirement != string(visual.RequireBackendWebGPU) && manifest.BackendRequirement != string(visual.RequireBackendWebGL) {
++		return "baseline pixel backend requirement is not canonical hardware"
++	}
++	want := "hardware-" + manifest.BackendRequirement
++	if manifest.HardwareClassification != want {
++		return fmt.Sprintf("baseline pixel hardware class %s does not match backend %s", manifest.HardwareClassification, manifest.BackendRequirement)
++	}
++	if browserHardware != "" && browserHardware != "hardware-webgpu" && browserHardware != "hardware-webgl" && browserHardware != "mixed-hardware" {
++		return "browser environment is not certified hardware for pixel self-compare"
++	}
++	return ""
++}
++
+ func isHardwareCompare(baseline, candidate *compareLoadedArtifact) bool {
+ 	return baseline.environment.HardwareClassification == candidate.environment.HardwareClassification &&
+ 		(baseline.environment.HardwareClassification == "hardware-webgpu" || baseline.environment.HardwareClassification == "hardware-webgl")
+diff --git a/perf/ouroboros/compare_test.go b/perf/ouroboros/compare_test.go
+index b0066dd8c81737405369ffff535c9e15deb4adc0..8aec29ed595b3927a31b03d3a35593f32f6f331c 100644
+--- a/perf/ouroboros/compare_test.go
++++ b/perf/ouroboros/compare_test.go
+@@ -52,6 +52,38 @@ func TestCompareSmokeSelfComparePasses(t *testing.T) {
+ 	}
+ }
+ 
++func TestCompareRejectsProbeLaneWASMMemoryMetricsForProductBudgets(t *testing.T) {
++	root := writeCompareFixture(t, t.TempDir(), compareFixtureOptions{manifestMutator: func(m *BrowserManifest) {
++		m.Corpus.Routes[0].ExpectedTinyGoCurrent = "runtime"
++		m.Corpus.Routes[0].ExpectedCapabilities = []string{"wasm-current"}
++	}})
++	rawPath := filepath.Join(root, "perf", "raw-samples.jsonl")
++	samples, err := ReadBrowserRawSamplesJSONLStrict(rawPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	delete(samples[0].Metrics, "wasmPages")
++	delete(samples[0].Metrics, "wasmBytes")
++	samples[0].Memory.WASMPages = 0
++	samples[0].Memory.WASMBytes = 0
++	probe := samples[0]
++	probe.SampleLane = SampleLaneProbe
++	probe.SampleIndex = 1
++	probe.Metrics = map[string]float64{"wasmPages": 1, "wasmBytes": 65536}
++	probe.Memory.WASMPages = 1
++	probe.Memory.WASMBytes = 65536
++	samples = append(samples, probe)
++	writeRawSamples(t, rawPath, samples)
++	summary := SummarizeBrowserSamples(samples, "smoke", samples[0].Source)
++	summary.GeneratedAt = "2026-08-09T00:00:00Z"
++	writeFixtureJSON(t, filepath.Join(root, "summaries", "browser-summary.json"), summary)
++
++	report := runSmokeCompare(t, root, root)
++	if report.ExitCode != 1 || !reportHasMetricFailure(report, "memory.wasmPages") || !reportHasMetricFailure(report, "memory.wasmBytes") {
++		t.Fatalf("probe wasm metrics were accepted: exit=%d summary=%+v checks=%+v", report.ExitCode, report.Summary, report.Checks)
++	}
++}
++
+ func TestCompareLiveR00SmokeSelfCompareWhenPresent(t *testing.T) {
+ 	root := filepath.Join("..", "..", "build", "ouroboros", "o0.2", "browser-smoke-ci", "20260809T081011Z-3954451")
+ 	if _, err := os.Stat(filepath.Join(root, "manifest.json")); err != nil {
+@@ -103,6 +135,41 @@ func TestComparePixelSelfCompareUsesExternalEvidenceRoot(t *testing.T) {
+ 	}
+ }
+ 
++func TestComparePixelSelfCompareAcceptsMixedBackendBaselineManifests(t *testing.T) {
++	artifactRoot := writeCompareFixture(t, filepath.Join(t.TempDir(), "browser"), compareFixtureOptions{envMutator: func(env *EnvironmentReport) {
++		env.HardwareClassification = "hardware-webgpu"
++	}, sourceMutator: func(source *SourceIdentity) {
++		source.OverlayHash = "sha256:" + strings.Repeat("a", 64)
++		source.TrackedDiffHash = "sha256:" + strings.Repeat("b", 64)
++		source.UntrackedIncludedSourceHash = "sha256:" + strings.Repeat("c", 64)
++	}})
++	pixelRoot := filepath.Join(t.TempDir(), "pixel-evidence")
++	addPixelRefsToFixture(t, artifactRoot, []string{"pixels/R00/webgpu/pixel-evidence.json", "pixels/R00/webgl/pixel-evidence.json"})
++	var manifest BrowserManifest
++	readFixtureJSON(t, filepath.Join(artifactRoot, "manifest.json"), &manifest)
++	gpuInitial := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "R00-initial-00.png"), true)
++	gpuSettled := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "R00-settled-00.png"), true)
++	writeFixtureJSON(t, filepath.Join(pixelRoot, "pixels", "R00", "webgpu", "pixel-evidence.json"), compareBaselinePixelManifestForBackend(t, manifest.Source, gpuInitial, gpuSettled, "webgpu"))
++	glInitial := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgl", "R00-initial-00.png"), true)
++	glSettled := writeTestPNG(t, filepath.Join(pixelRoot, "pixels", "R00", "webgl", "R00-settled-00.png"), true)
++	writeFixtureJSON(t, filepath.Join(pixelRoot, "pixels", "R00", "webgl", "pixel-evidence.json"), compareBaselinePixelManifestForBackend(t, manifest.Source, glInitial, glSettled, "webgl"))
++
++	report, err := CompareOuroborosArtifacts(CompareOptions{
++		BaselineManifest:  filepath.Join(artifactRoot, "manifest.json"),
++		CandidateManifest: filepath.Join(artifactRoot, "manifest.json"),
++		BudgetPath:        compareBudgetPath(t),
++		Mode:              CompareModeSmoke,
++		BaselinePixelRoot: pixelRoot,
++		GeneratedAt:       time.Unix(0, 0).UTC(),
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if report.ExitCode != 0 || !reportHasMetricPass(report, "pixel.diffPct") {
++		t.Fatalf("mixed backend pixel baseline did not pass: exit=%d summary=%+v ratchets=%+v", report.ExitCode, report.Summary, report.Ratchets)
++	}
++}
++
+ func TestCompareCandidatePixelReplayAcceptsValidEvidence(t *testing.T) {
+ 	source := compareSource("")
+ 	source.OverlayHash = "sha256:" + strings.Repeat("a", 64)
+@@ -959,6 +1026,96 @@ func TestCompareNoisyMetricWithoutRerunProofIsInconclusive(t *testing.T) {
+ 	}
+ }
+ 
++func TestCompareNoisyMetricWithRerunProofPassesAsUnstableNonblocking(t *testing.T) {
++	root := writeNoisyFixture(t, t.TempDir())
++	summaryPath := filepath.Join(root, "summaries", "browser-summary.json")
++	var summary BrowserSummary
++	readFixtureJSON(t, summaryPath, &summary)
++	rawHash, err := sha256File(filepath.Join(root, "perf", "raw-samples.jsonl"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	rerunRawPath := filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
++	writeRawSamples(t, rerunRawPath, rerunSamplesForNoiseProof(t, root))
++	proof, err := BuildNoiseRerunProof(summary, filepath.Join(root, "perf", "raw-samples.jsonl"), rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamplesForNoiseProof(t, root), []string{"startup.dclMs"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if proof.BaselineRawSamplesSHA256 != rawHash {
++		t.Fatalf("baseline proof hash = %s, want %s", proof.BaselineRawSamplesSHA256, rawHash)
++	}
++	summary.NoiseRerun = proof
++	writeFixtureJSON(t, summaryPath, summary)
++
++	report := runSmokeCompare(t, root, root)
++	if report.Status != CompareStatusPass || report.ExitCode != 0 || !reportHasMetricStatus(report, "startup.dclMs", "unstable-nonblocking") {
++		t.Fatalf("status=%s exit=%d summary=%+v checks=%+v", report.Status, report.ExitCode, report.Summary, report.Checks)
++	}
++}
++
++func TestCompareInvalidNoiseRerunProofFailsSummaryValidation(t *testing.T) {
++	root := writeNoisyFixture(t, t.TempDir())
++	summaryPath := filepath.Join(root, "summaries", "browser-summary.json")
++	var summary BrowserSummary
++	readFixtureJSON(t, summaryPath, &summary)
++	summary.NoiseRerun = &NoiseRerunProof{
++		SchemaVersion:            BrowserBaselineSchemaVersion,
++		Status:                   "pass",
++		RunMode:                  summary.RunMode,
++		Source:                   summary.Source,
++		BaselineRawSamplesRef:    "perf/raw-samples.jsonl",
++		BaselineRawSamplesSHA256: "sha256:" + strings.Repeat("e", 64),
++		RerunRawSamplesRef:       "perf/raw-samples.jsonl",
++		RerunRawSamplesSHA256:    "sha256:" + strings.Repeat("e", 64),
++		Metrics:                  []NoiseRerunMetricProof{{Group: "R00/cold", Metric: "startup.dclMs", BaselineN: 3, RerunN: 3, BaselineMedian: 100, RerunMedian: 100}},
++	}
++	writeFixtureJSON(t, summaryPath, summary)
++
++	report := runSmokeCompare(t, root, root)
++	if report.ExitCode != 1 || !reportHasMessage(report, "noise rerun proof requires distinct raw sample hashes") {
++		t.Fatalf("invalid proof did not fail: exit=%d summary=%+v checks=%+v", report.ExitCode, report.Summary, report.Checks)
++	}
++}
++
++func TestCompareNoiseRerunProofRejectsHashAndSourceDrift(t *testing.T) {
++	root := writeNoisyFixture(t, t.TempDir())
++	summaryPath := filepath.Join(root, "summaries", "browser-summary.json")
++	rawPath := filepath.Join(root, "perf", "raw-samples.jsonl")
++	rerunRawPath := filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
++	writeRawSamples(t, rerunRawPath, rerunSamplesForNoiseProof(t, root))
++	var summary BrowserSummary
++	readFixtureJSON(t, summaryPath, &summary)
++	proof, err := BuildNoiseRerunProof(summary, rawPath, rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamplesForNoiseProof(t, root), []string{"startup.dclMs"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	proof.RerunRawSamplesSHA256 = "sha256:" + strings.Repeat("f", 64)
++	summary.NoiseRerun = proof
++	writeFixtureJSON(t, summaryPath, summary)
++	report := runSmokeCompare(t, root, root)
++	if report.ExitCode != 1 || !reportHasMessage(report, "noise rerun proof rerun raw samples hash mismatch") {
++		t.Fatalf("hash drift did not fail: exit=%d checks=%+v", report.ExitCode, report.Checks)
++	}
++
++	root = writeNoisyFixture(t, t.TempDir())
++	summaryPath = filepath.Join(root, "summaries", "browser-summary.json")
++	rawPath = filepath.Join(root, "perf", "raw-samples.jsonl")
++	rerunRawPath = filepath.Join(root, "noise-rerun", "perf", "raw-samples.jsonl")
++	writeRawSamples(t, rerunRawPath, rerunSamplesForNoiseProof(t, root))
++	readFixtureJSON(t, summaryPath, &summary)
++	proof, err = BuildNoiseRerunProof(summary, rawPath, rerunRawPath, "perf/raw-samples.jsonl", "noise-rerun/perf/raw-samples.jsonl", samplesForNoiseProof(t, root), rerunSamplesForNoiseProof(t, root), []string{"startup.dclMs"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	proof.Source.BaseRevision = "different"
++	summary.NoiseRerun = proof
++	writeFixtureJSON(t, summaryPath, summary)
++	report = runSmokeCompare(t, root, root)
++	if report.ExitCode != 1 || !reportHasMessage(report, "noise rerun proof source identity mismatch") {
++		t.Fatalf("source drift did not fail: exit=%d checks=%+v", report.ExitCode, report.Checks)
++	}
++}
++
+ func writeCanonicalCompareSizeFixture(t *testing.T) (string, SourceIdentity, []FixtureSpec) {
+ 	t.Helper()
+ 	repoRoot, err := resolveRepoRootForEvidence(".")
+@@ -1155,6 +1312,25 @@ func writeNoisyFixture(t *testing.T, root string) string {
+ 	return root
+ }
+ 
++func samplesForNoiseProof(t *testing.T, root string) []BrowserRawSample {
++	t.Helper()
++	samples, err := ReadBrowserRawSamplesJSONLStrict(filepath.Join(root, "perf", "raw-samples.jsonl"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	return samples
++}
++
++func rerunSamplesForNoiseProof(t *testing.T, root string) []BrowserRawSample {
++	t.Helper()
++	samples := samplesForNoiseProof(t, root)
++	for i := range samples {
++		samples[i].Metrics["dclMs"] = 100
++		samples[i].Page.DCLMs = 100
++	}
++	return samples
++}
++
+ func compareSource(suffix string) SourceIdentity {
+ 	return SourceIdentity{
+ 		BaseRevision:                "0123456789abcdef0123456789abcdef01234567",
+@@ -1332,7 +1508,7 @@ func compareSample(source SourceIdentity, metrics map[string]float64, mutator fu
+ 		},
+ 		Proofs:  ProofBundle{FirstUsable: ProofPayload{Name: "first", OK: true, AtMs: 100}},
+ 		Trace:   TraceSampleSummary{TotalsMs: map[string]float64{"EvaluateScript": 1, "CompileScript": 1, "v8.compile": 1, "v8.parseOnBackground": 1, "WebAssembly.Compile": 1, "WebAssembly.Instantiate": 1}},
+-		Memory:  perf.MemoryStats{JSHeapUsedMB: metrics["jsHeapUsedMb"], JSHeapTotalMB: metrics["jsHeapTotalMb"], DOMNodeCount: int(metrics["domNodeCount"]), ListenerCount: int(metrics["listenerCount"])},
++		Memory:  perf.MemoryStats{JSHeapUsedMB: metrics["jsHeapUsedMb"], JSHeapTotalMB: metrics["jsHeapTotalMb"], DOMNodeCount: int(metrics["domNodeCount"]), ListenerCount: int(metrics["listenerCount"]), WASMPages: int(metrics["wasmPages"]), WASMBytes: int64(metrics["wasmBytes"])},
+ 		Network: []NetworkRecord{{RuntimeAssetRole: "runtime", TransferredBytes: 10}},
+ 		Metrics: metrics,
+ 	}
+@@ -1443,32 +1619,40 @@ func comparePixelManifest(passed bool, baseline, candidate SourceIdentity, initi
+ }
+ 
+ func compareBaselinePixelManifest(t *testing.T, source SourceIdentity, initial, settled visual.PixelCaptureEvidence) visual.PixelEvidenceManifest {
++	return compareBaselinePixelManifestForBackend(t, source, initial, settled, "webgpu")
++}
++
++func compareBaselinePixelManifestForBackend(t *testing.T, source SourceIdentity, initial, settled visual.PixelCaptureEvidence, backend string) visual.PixelEvidenceManifest {
+ 	t.Helper()
+-	initial = completeComparePixelCapture(initial, "initial", 0, "webgpu")
+-	settled = completeComparePixelCapture(settled, "settled", 0, "webgpu")
++	initial = completeComparePixelCapture(initial, "initial", 0, backend)
++	settled = completeComparePixelCapture(settled, "settled", 0, backend)
+ 	return visual.PixelEvidenceManifest{
+ 		SchemaVersion:          visual.OuroborosPixelSchemaVersion,
+ 		GeneratedAt:            "2026-08-09T00:00:00Z",
+ 		RouteID:                "R00",
+ 		Mode:                   string(visual.PixelModeRecordBaseline),
+ 		Source:                 compareTestPixelSource(source),
+-		BackendRequirement:     "webgpu",
+-		BackendSelection:       comparePixelBackendSelection("webgpu"),
++		BackendRequirement:     backend,
++		BackendSelection:       comparePixelBackendSelection(backend),
+ 		Certified:              true,
+-		HardwareClassification: "hardware-webgpu",
++		HardwareClassification: "hardware-" + backend,
+ 		Viewport:               visual.ViewportEvidence{Width: 1280, Height: 720, DPR: 1},
+ 		Selected:               visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: visual.DefaultPixelCanvasSelector, CanvasCount: 1, MountCount: 1},
+ 		Threshold:              visual.PixelThresholdEvidence{EffectivePct: 1},
+ 		SettlePolicy:           comparePixelSettlePolicy(),
+ 		States: []visual.PixelStateEvidence{
+-			{State: "initial", Settle: comparePixelSettle(10, false), Batch: comparePixelBatch("R00-initial-batch", "initial", 10, false), Captures: comparePixelCaptureSeries(t, initial, "initial", 3)},
+-			{State: "settled", Settle: comparePixelSettle(40, true), Batch: comparePixelBatch("R00-settled-batch", "settled", 40, true), Captures: comparePixelCaptureSeries(t, settled, "settled", 3)},
++			{State: "initial", Settle: comparePixelSettle(10, false), Batch: comparePixelBatch("R00-initial-batch", "initial", 10, false, backend), Captures: comparePixelCaptureSeries(t, initial, "initial", 3, backend)},
++			{State: "settled", Settle: comparePixelSettle(40, true), Batch: comparePixelBatch("R00-settled-batch", "settled", 40, true, backend), Captures: comparePixelCaptureSeries(t, settled, "settled", 3, backend)},
+ 		},
+ 	}
+ }
+ 
+ func comparePixelBackendSelection(backend string) visual.PixelBackendSelection {
+-	return visual.PixelBackendSelection{RequestedBackend: backend, RuntimeObservedBackend: backend, PreNavigationHook: "gosx-o02-clear-force-webgl-new-document"}
++	hook := "gosx-o02-clear-force-webgl-new-document"
++	if backend == "webgl" {
++		hook = "gosx-o02-force-webgl-new-document"
++	}
++	return visual.PixelBackendSelection{RequestedBackend: backend, RuntimeObservedBackend: backend, ForceWebGL: backend == "webgl", PreNavigationHook: hook}
+ }
+ 
+ func compareTestPixelSource(source SourceIdentity) visual.PixelSourceIdentity {
+@@ -1495,12 +1679,16 @@ func comparePixelSettle(frame int, settled bool) visual.PixelSettleResult {
+ 	return visual.PixelSettleResult{RequiredFrame: frame, ObservedFrame: frame, AdvanceRequired: false, StaticAccepted: false, RenderLoop: visual.RenderLoopEvidence{State: "active", Reason: "runtime-program", Active: true, WantsAnimation: true, StateParsed: true, WantsAnimationParsed: true, Valid: true}}
+ }
+ 
+-func comparePixelBatch(id, state string, frame int, settled bool) visual.PixelBatchEvidence {
++func comparePixelBatch(id, state string, frame int, settled bool, backend ...string) visual.PixelBatchEvidence {
++	b := "webgpu"
++	if len(backend) > 0 && backend[0] != "" {
++		b = backend[0]
++	}
+ 	loop := comparePixelSettle(frame, settled).RenderLoop
+ 	if settled {
+ 		frame = 10
+ 	}
+-	snapshot := visual.PixelBatchSnapshot{Visible: true, Focused: true, Backend: "webgpu", Renderer: "webgpu", FrameSeq: frame, RuntimeTruthParsed: true, RenderLoopState: loop.State, RenderLoopActive: loop.Active, WantsAnimation: loop.WantsAnimation, Clip: visual.PixelCanvasClipEvidence{Width: 16, Height: 16, Scale: 1, Stable: true}}
++	snapshot := visual.PixelBatchSnapshot{Visible: true, Focused: true, Backend: b, Renderer: b, FrameSeq: frame, RuntimeTruthParsed: true, RenderLoopState: loop.State, RenderLoopActive: loop.Active, WantsAnimation: loop.WantsAnimation, Clip: visual.PixelCanvasClipEvidence{Width: 16, Height: 16, Scale: 1, Stable: true}}
+ 	return visual.PixelBatchEvidence{ID: id, State: state, Acquired: true, Released: true, ReleaseProved: true, NonceHash: "sha256:" + strings.Repeat("1", 64), GlobalKeyHash: "sha256:" + strings.Repeat("2", 64), DrainTicks: 2, NativeTickCount: 2, QueueAfterDrain: 1, QueueBeforeRelease: 1, Delivered: 1, Restored: true, Cleaned: true, Clip: snapshot.Clip, BeforeAcquire: snapshot, Before: snapshot, After: snapshot}
+ }
+ 
+@@ -1517,12 +1705,17 @@ func completeComparePixelCapture(capture visual.PixelCaptureEvidence, state stri
+ 	capture.RenderLoop = comparePixelSettle(capture.FrameSeq, state == "settled").RenderLoop
+ 	capture.Selected = visual.SelectedSceneEvidence{MountID: "mount", MountSelector: "#mount", CanvasSelector: visual.DefaultPixelCanvasSelector, CanvasCount: 1, MountCount: 1}
+ 	capture.WebGPU = visual.WebGPUEvidence{Available: true, AdapterName: "NVIDIA RTX", Vendor: "NVIDIA Corporation", Description: "NVIDIA RTX", AdapterInfo: map[string]interface{}{"vendor": "NVIDIA Corporation", "description": "NVIDIA RTX"}}
++	capture.WebGL = visual.WebGLEvidence{Vendor: "NVIDIA Corporation", Renderer: "NVIDIA RTX", Version: "WebGL 2.0"}
+ 	capture.Viewport = visual.ViewportEvidence{Width: 1280, Height: 720, DPR: 1, CanvasWidth: 16, CanvasHeight: 16, CanvasCSSWidth: 16, CanvasCSSHeight: 16, EffectiveDPR: 1}
+ 	return capture
+ }
+ 
+-func comparePixelCaptureSeries(t *testing.T, first visual.PixelCaptureEvidence, state string, count int) []visual.PixelCaptureEvidence {
++func comparePixelCaptureSeries(t *testing.T, first visual.PixelCaptureEvidence, state string, count int, backend ...string) []visual.PixelCaptureEvidence {
+ 	t.Helper()
++	b := "webgpu"
++	if len(backend) > 0 && backend[0] != "" {
++		b = backend[0]
++	}
+ 	data, err := os.ReadFile(first.Path)
+ 	if err != nil {
+ 		t.Fatal(err)
+@@ -1544,7 +1737,7 @@ func comparePixelCaptureSeries(t *testing.T, first visual.PixelCaptureEvidence,
+ 			capture.SHA256 = strings.TrimPrefix(hash, "sha256:")
+ 			capture.Bytes = len(data)
+ 		}
+-		capture = completeComparePixelCapture(capture, state, i, "webgpu")
++		capture = completeComparePixelCapture(capture, state, i, b)
+ 		capture.Comparison = &visual.PixelComparison{BaselinePath: capture.Path, DiffPct: 0, Mismatched: 0, Total: capture.Width * capture.Height, DimensionsMatch: true, Similarity: 1, BaselineThresholdPct: 1, EffectiveThresholdPct: 1, Passed: true}
+ 		out = append(out, capture)
+ 	}
+@@ -1698,6 +1891,9 @@ func compareBudgetPath(t *testing.T) string {
+ 
+ func writeRawSamples(t *testing.T, path string, samples []BrowserRawSample) {
+ 	t.Helper()
++	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
++		t.Fatal(err)
++	}
+ 	var buf bytes.Buffer
+ 	for _, sample := range samples {
+ 		data, err := json.Marshal(sample)
+@@ -1738,6 +1934,10 @@ func readFixtureJSON(t *testing.T, path string, value any) {
+ }
+ 
+ func addPixelRefToFixture(t *testing.T, artifactRoot, ref string) {
++	addPixelRefsToFixture(t, artifactRoot, []string{ref})
++}
++
++func addPixelRefsToFixture(t *testing.T, artifactRoot string, refs []string) {
+ 	t.Helper()
+ 	rawPath := filepath.Join(artifactRoot, "perf", "raw-samples.jsonl")
+ 	samples, err := ReadBrowserRawSamplesJSONLStrict(rawPath)
+@@ -1745,7 +1945,7 @@ func addPixelRefToFixture(t *testing.T, artifactRoot, ref string) {
+ 		t.Fatal(err)
+ 	}
+ 	for i := range samples {
+-		samples[i].Artifacts.PixelManifestRefs = []string{ref}
++		samples[i].Artifacts.PixelManifestRefs = append([]string{}, refs...)
+ 	}
+ 	writeRawSamples(t, rawPath, samples)
+ 	summary := SummarizeBrowserSamples(samples, "smoke", samples[0].Source)
+@@ -1799,8 +1999,12 @@ func reportHasMetricPass(report *CompareReport, metric string) bool {
+ }
+ 
+ func reportHasMetricWarn(report *CompareReport, metric string) bool {
++	return reportHasMetricStatus(report, metric, "warn")
++}
++
++func reportHasMetricStatus(report *CompareReport, metric, status string) bool {
+ 	for _, check := range append(append([]CompareCheck{}, report.Checks...), report.Ratchets...) {
+-		if check.Metric == metric && check.Status == "warn" {
++		if check.Metric == metric && check.Status == status {
+ 			return true
+ 		}
+ 	}
+diff --git a/perf/ouroboros/size.go b/perf/ouroboros/size.go
+index ecd5fe545d2bddf798a9e07d1784b087f55ed1ad..8a0ecec43151ab4bec1fca61122baafa7afbe308 100644
+--- a/perf/ouroboros/size.go
++++ b/perf/ouroboros/size.go
+@@ -563,6 +563,14 @@ func canonicalInventoryJSON(inv *Inventory) ([]byte, error) {
+ 	return json.Marshal(normalized)
+ }
+ 
++func WriteCanonicalInventoryFile(path string, inv *Inventory) error {
++	data, err := canonicalInventoryJSON(inv)
++	if err != nil {
++		return err
++	}
++	return writeJSONBytesFileAtomic(path, data, true)
++}
++
+ func rewriteMaterializedOverlayRefs(repoRoot, sourceDir string, inv *Inventory) {
+ 	if inv == nil {
+ 		return
+@@ -692,13 +700,19 @@ func WriteNewJSONFile(path string, value any) error {
+ }
+ 
+ func writeNewJSONBytesFile(path string, data []byte) error {
++	return writeJSONBytesFileAtomic(path, data, false)
++}
++
++func writeJSONBytesFileAtomic(path string, data []byte, overwrite bool) error {
+ 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+ 		return err
+ 	}
+-	if _, err := os.Lstat(path); err == nil {
+-		return fmt.Errorf("refusing to overwrite existing evidence %s", path)
+-	} else if !os.IsNotExist(err) {
+-		return err
++	if !overwrite {
++		if _, err := os.Lstat(path); err == nil {
++			return fmt.Errorf("refusing to overwrite existing evidence %s", path)
++		} else if !os.IsNotExist(err) {
++			return err
++		}
+ 	}
+ 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+ 	if err != nil {
+@@ -722,7 +736,11 @@ func writeNewJSONBytesFile(path string, data []byte) error {
+ 	if err := tmp.Close(); err != nil {
+ 		return err
+ 	}
+-	if err := os.Link(tmpPath, path); err != nil {
++	if overwrite {
++		if err := os.Rename(tmpPath, path); err != nil {
++			return err
++		}
++	} else if err := os.Link(tmpPath, path); err != nil {
+ 		return err
+ 	}
+ 	cleanup = false
+diff --git a/perf/ouroboros/size_test.go b/perf/ouroboros/size_test.go
+index 7eb3b61f0e2f31c08f2cb33926b095a4490445cd..d36ff8894f5900d341cf29c05d793540f691ea45 100644
+--- a/perf/ouroboros/size_test.go
++++ b/perf/ouroboros/size_test.go
+@@ -792,6 +792,41 @@ func TestMaterializeCanonicalInventoryWritesPredictedBytes(t *testing.T) {
+ 	}
+ }
+ 
++func TestWriteCanonicalInventoryFileWritesPredictedBytesAndRejectsPrettyDrift(t *testing.T) {
++	repoRoot, inventoryPath := writeReplayableCanonicalInventory(t)
++	materializedRoot := filepath.Join(repoRoot, "build", "canonical-inventory-writer")
++	plan, err := PredictCanonicalInventoryMaterialization(context.Background(), repoRoot, inventoryPath, materializedRoot)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := WriteCanonicalInventoryFile(plan.Path, plan.Inventory); err != nil {
++		t.Fatal(err)
++	}
++	body, err := os.ReadFile(plan.Path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !bytes.Equal(body, plan.Bytes) {
++		t.Fatalf("canonical inventory writer bytes differ from predicted materialization")
++	}
++	if bytes.Contains(body, []byte("\n  \"")) || bytes.HasSuffix(body, []byte("\n")) {
++		t.Fatalf("canonical inventory writer emitted pretty formatting")
++	}
++	if err := WriteJSONFile(plan.Path, plan.Inventory); err != nil {
++		t.Fatal(err)
++	}
++	pretty, err := os.ReadFile(plan.Path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if bytes.Equal(pretty, plan.Bytes) {
++		t.Fatalf("pretty inventory unexpectedly matched canonical bytes")
++	}
++	if err := validateReusableMaterializedInventory(context.Background(), repoRoot, plan.Path, plan.Bytes); err == nil {
++		t.Fatalf("pretty inventory formatting drift was accepted")
++	}
++}
++
+ func TestDirtySourceIdentityHandoffPredictsMaterializedOverlayBytes(t *testing.T) {
+ 	repoRoot, inventoryPath := writeDirtyReplayableCanonicalInventory(t)
+ 	materializedRoot := filepath.Join(repoRoot, "build", "dirty-materialized-browser-out")
