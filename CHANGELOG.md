@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed: gosx fmt preserves GSX child whitespace
+
+- The formatter now keeps zero-whitespace adjacency and intentional
+  whitespace between text, expression, element, component, self-closing, and
+  fragment children, while only wrapping at whitespace-only child boundaries.
+  Formatted source therefore renders the same HTML as the source, including
+  punctuation adjacency, prose, and raw text elements.
+
 ### Added: a shared component call executes end to end for a strict caller
 
 - **A strict caller's shared component call now renders.** WP4 (v0.49.0)

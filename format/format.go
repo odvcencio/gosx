@@ -110,22 +110,8 @@ func (f *formatter) formatElement(n *gotreesitter.Node, depth int) string {
 	// Format children
 	if len(children) == 0 {
 		// Empty: <tag></tag>
-	} else if len(children) == 1 && f.isInlineChild(children[0]) {
-		// Single inline child: <tag>text</tag>
-		b.WriteString(f.format(children[0], depth))
 	} else {
-		// Multi-line children
-		for _, child := range children {
-			childStr := f.format(child, depth+1)
-			if strings.TrimSpace(childStr) == "" {
-				continue
-			}
-			b.WriteByte('\n')
-			b.WriteString(strings.Repeat(f.indent, depth+1))
-			b.WriteString(strings.TrimSpace(childStr))
-		}
-		b.WriteByte('\n')
-		b.WriteString(strings.Repeat(f.indent, depth))
+		b.WriteString(f.formatChildren(children, depth))
 	}
 
 	// Closing tag
@@ -166,19 +152,9 @@ func (f *formatter) formatFragment(n *gotreesitter.Node, depth int) string {
 
 	var b strings.Builder
 	b.WriteString("<>")
-
-	for _, child := range children {
-		childStr := f.format(child, depth+1)
-		if strings.TrimSpace(childStr) == "" {
-			continue
-		}
-		b.WriteByte('\n')
-		b.WriteString(strings.Repeat(f.indent, depth+1))
-		b.WriteString(strings.TrimSpace(childStr))
+	if len(children) > 0 {
+		b.WriteString(f.formatChildren(children, depth))
 	}
-
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat(f.indent, depth))
 	b.WriteString("</>")
 	return b.String()
 }
@@ -186,7 +162,26 @@ func (f *formatter) formatFragment(n *gotreesitter.Node, depth int) string {
 func (f *formatter) formatExprContainer(n *gotreesitter.Node) string {
 	exprNode := f.childByField(n, "expression")
 	if exprNode == nil {
-		return "{}"
+		// The grammar requires an expression, but a comment-only container
+		// can still reach the formatter before Compile reports the missing
+		// expression. Keep the source intact instead of deleting its comment.
+		return f.text(n)
+	}
+
+	// Go comments are extras rather than part of the expression node span.
+	// Preserve a leading/trailing comment together with its surrounding
+	// container; rebuilding from only exprNode would silently erase it.
+	innerStart := int(n.StartByte()) + 1
+	innerEnd := int(n.EndByte()) - 1
+	exprStart := int(exprNode.StartByte())
+	exprEnd := int(exprNode.EndByte())
+	if exprStart >= innerStart && exprEnd <= innerEnd {
+		prefix := string(f.src[innerStart:exprStart])
+		suffix := string(f.src[exprEnd:innerEnd])
+		if strings.Contains(prefix, "//") || strings.Contains(prefix, "/*") ||
+			strings.Contains(suffix, "//") || strings.Contains(suffix, "/*") {
+			return f.text(n)
+		}
 	}
 	expr := f.text(exprNode)
 	if strings.Contains(expr, "\n") && f.containsStringLiteral(exprNode) {
@@ -197,11 +192,96 @@ func (f *formatter) formatExprContainer(n *gotreesitter.Node) string {
 
 func (f *formatter) formatText(n *gotreesitter.Node) string {
 	text := f.text(n)
-	fields := strings.Fields(text)
-	if len(fields) == 0 {
+	if strings.TrimSpace(text) == "" {
+		// The compiler lowers every whitespace-only jsx_text node to one
+		// semantic space. Keep that canonical spelling when the node stays
+		// inline; formatChildren may replace it with a source-approved line
+		// break when the surrounding child stream is multiline.
+		return " "
+	}
+	// Non-empty text is rendered verbatim by the compiler and renderer. In
+	// particular, a line break or a run of spaces inside prose is not merely
+	// formatter indentation: it belongs to the output text node. Returning it
+	// unchanged keeps source, formatted source, and repeated formatting on the
+	// same rendered HTML.
+	return text
+}
+
+// formatChildren formats the direct GSX child stream without inventing a
+// separator between adjacent children. A newline in a formatted GSX body is
+// itself a jsx_text child and therefore renders as a space; inserting one
+// around every child changes `(<expr>)` into `( <expr> )` and joins such as
+// `<b>A</b><i>B</i>` into a spaced sequence. The only safe place to break is
+// a standalone whitespace-only child that was already present in the source.
+// That child is represented by the formatter's line break and indentation,
+// preserving the compiler's one-space rendering contract.
+func (f *formatter) formatChildren(children []*gotreesitter.Node, depth int) string {
+	if len(children) == 0 {
 		return ""
 	}
-	return strings.Join(fields, " ")
+
+	type childInfo struct {
+		node           *gotreesitter.Node
+		whitespaceOnly bool
+	}
+	infos := make([]childInfo, 0, len(children))
+	nonWhitespace := 0
+	hasWhitespaceBoundary := false
+	for _, child := range children {
+		info := childInfo{node: child}
+		if f.nodeType(child) == "jsx_text" {
+			info.whitespaceOnly = strings.TrimSpace(f.text(child)) == ""
+		}
+		if info.whitespaceOnly {
+			hasWhitespaceBoundary = true
+		}
+		if !info.whitespaceOnly {
+			nonWhitespace++
+		}
+		infos = append(infos, info)
+	}
+
+	// A whitespace-only child is the source-level permission to make a
+	// structural line break. Keep a body made solely of whitespace inline
+	// (`<p> </p>`); there is no useful wrapping to do and the inline spelling
+	// is the least surprising canonical result.
+	multiline := hasWhitespaceBoundary && nonWhitespace > 0
+	if !multiline {
+		var b strings.Builder
+		for _, info := range infos {
+			b.WriteString(f.format(info.node, depth))
+		}
+		return b.String()
+	}
+
+	var b strings.Builder
+	pendingBreak := false
+	for _, info := range infos {
+		if info.whitespaceOnly {
+			// The whitespace-only child is emitted either as a literal space
+			// (when the run remains inline) or as this pending source-approved
+			// line break. Consecutive whitespace-only nodes coalesce here
+			// without quadratic concatenation.
+			pendingBreak = true
+			continue
+		}
+
+		childDepth := depth
+		if pendingBreak {
+			b.WriteByte('\n')
+			b.WriteString(strings.Repeat(f.indent, depth+1))
+			childDepth = depth + 1
+			pendingBreak = false
+		}
+		b.WriteString(f.format(info.node, childDepth))
+	}
+	if pendingBreak {
+		// A trailing whitespace-only child is retained as a source-approved
+		// newline. Align the closing tag with this element/fragment's depth.
+		b.WriteByte('\n')
+		b.WriteString(strings.Repeat(f.indent, depth))
+	}
+	return b.String()
 }
 
 func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
@@ -220,9 +300,14 @@ func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
 		}
 
 		childType := f.nodeType(child)
-		if childType == "jsx_element" || childType == "jsx_self_closing_element" || childType == "jsx_fragment" {
-			childStr := f.format(child, depth)
-			b.WriteString(f.indentEmbedded(childStr, f.lineLeadingWhitespace(child.StartByte())))
+		if childType == "jsx_element" || childType == "jsx_raw_text_element" ||
+			childType == "jsx_self_closing_element" || childType == "jsx_fragment" {
+			// Format the embedded GSX node at the next structural depth so
+			// its own child lines have the right code indentation. Do not
+			// prefix every rendered line afterwards: a multiline jsx_text node
+			// is output verbatim, and adding Go indentation to it changes the
+			// rendered prose (and compounds on every formatter pass).
+			b.WriteString(f.format(child, depth+1))
 		} else {
 			b.WriteString(f.formatDefault(child, depth))
 		}
@@ -237,44 +322,6 @@ func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
 	return b.String()
 }
 
-func (f *formatter) indentEmbedded(text string, prefix string) string {
-	if prefix == "" || !strings.Contains(text, "\n") {
-		return text
-	}
-	lines := strings.Split(text, "\n")
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "" {
-			lines[i] = ""
-			continue
-		}
-		lines[i] = prefix + lines[i]
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (f *formatter) lineLeadingWhitespace(pos uint32) string {
-	if pos == 0 || len(f.src) == 0 {
-		return ""
-	}
-	idx := int(pos)
-	if idx > len(f.src) {
-		idx = len(f.src)
-	}
-	lineStart := idx - 1
-	for lineStart >= 0 && f.src[lineStart] != '\n' {
-		lineStart--
-	}
-	lineStart++
-	lineEnd := lineStart
-	for lineEnd < idx {
-		if f.src[lineEnd] != ' ' && f.src[lineEnd] != '\t' {
-			break
-		}
-		lineEnd++
-	}
-	return string(f.src[lineStart:lineEnd])
-}
-
 func (f *formatter) normalizeMultilineExpr(expr string) string {
 	lines := strings.Split(expr, "\n")
 	if len(lines) < 2 {
@@ -287,7 +334,16 @@ func (f *formatter) normalizeMultilineExpr(expr string) string {
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, f.indent) {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ""
+			changed = true
+			continue
+		}
+		// One leading indent belongs to the Go expression that contains
+		// this multiline literal. Leave the literal's own first indent in
+		// place so a second formatter pass does not keep shifting its
+		// contents left.
+		if strings.HasPrefix(line, f.indent+f.indent) {
 			lines[i] = strings.TrimPrefix(line, f.indent)
 			changed = true
 		}
@@ -383,15 +439,4 @@ func (f *formatter) extractTagName(n *gotreesitter.Node) string {
 		return ""
 	}
 	return f.text(nameNode)
-}
-
-func (f *formatter) isInlineChild(n *gotreesitter.Node) bool {
-	typ := f.nodeType(n)
-	if typ == "jsx_text" {
-		return len(strings.TrimSpace(f.text(n))) < 40
-	}
-	if typ == "jsx_expression_container" {
-		return len(f.text(n)) < 40
-	}
-	return false
 }

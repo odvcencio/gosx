@@ -10,7 +10,12 @@ func Layout() Node {
 						class="docs-guide-navigation docs-guide-navigation--desktop"
 						aria-label="All documentation guides"
 					>
-						<a href="/docs" data-gosx-link="true" class={docsIndexClassName} aria-current={docsIndexCurrent}>
+						<a
+							href="/docs"
+							data-gosx-link="true"
+							class={docsIndexClassName}
+							aria-current={docsIndexCurrent}
+						>
 							<span>Search &amp; guide index</span>
 							<small>All documentation</small>
 						</a>
@@ -94,7 +99,11 @@ func Layout() Node {
 							</a>
 						</If>
 						<If cond={docsNext != nil}>
-							<a href={docsNext.href} data-gosx-link="true" class="docs-footer__link docs-footer__link--next">
+							<a
+								href={docsNext.href}
+								data-gosx-link="true"
+								class="docs-footer__link docs-footer__link--next"
+							>
 								{docsNext.label}
 							</a>
 						</If>

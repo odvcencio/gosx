@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
 )
 
 func TestRunFmtFormatsSingleGSXFile(t *testing.T) {
@@ -14,7 +15,11 @@ func TestRunFmtFormatsSingleGSXFile(t *testing.T) {
 	writeTempFile(t, dir, "page.gsx", `package main
 
 func Page() Node {
-	return <main><section><h1>Hi</h1></section></main>
+	return <main>
+		<section>
+			<h1>Hi</h1>
+		</section>
+	</main>
 }
 `)
 	path := filepath.Join(dir, "page.gsx")
@@ -32,8 +37,8 @@ func Page() Node {
 	if !strings.Contains(formatted, "<section>") || !strings.Contains(formatted, "<h1>Hi</h1>") {
 		t.Fatalf("unexpected formatted output %q", formatted)
 	}
-	if strings.Contains(formatted, "<main><section>") {
-		t.Fatalf("expected formatter to expand nested GSX elements, got %q", formatted)
+	if strings.Contains(formatted, "<main><section>") || strings.Contains(formatted, "<section><h1>") {
+		t.Fatalf("expected formatter to preserve source whitespace for readable nesting, got %q", formatted)
 	}
 }
 
@@ -42,7 +47,9 @@ func TestRunFmtFormatsOnlyGSXFilesInDirectory(t *testing.T) {
 	writeTempFile(t, dir, "app/page.gsx", `package main
 
 func Page() Node {
-	return <div><span>Hi</span></div>
+	return <div>
+		<span>Hi</span>
+	</div>
 }
 `)
 	writeTempFile(t, dir, "app/page.server.go", `package main
@@ -64,7 +71,7 @@ func Loader() string { return "ok" }
 
 	formatted := readFile(t, filepath.Join(dir, "app", "page.gsx"))
 	if strings.Contains(formatted, "<div><span>") {
-		t.Fatalf("expected formatted GSX output, got %q", formatted)
+		t.Fatalf("expected formatted GSX output to retain readable source whitespace, got %q", formatted)
 	}
 	goFile := readFile(t, filepath.Join(dir, "app", "page.server.go"))
 	if !strings.Contains(goFile, `func Loader() string { return "ok" }`) {
@@ -124,7 +131,11 @@ func TestRunFmtCheckReportsUnformattedGSXFile(t *testing.T) {
 	writeTempFile(t, dir, "page.gsx", `package main
 
 func Page() Node {
-	return <main><section><h1>Hi</h1></section></main>
+	return <main>
+	<section>
+	<h1>Hi</h1>
+	</section>
+	</main>
 }
 `)
 	path := filepath.Join(dir, "page.gsx")
@@ -147,7 +158,9 @@ func TestRunFmtCheckVerifiesFormattedDirectory(t *testing.T) {
 	writeTempFile(t, dir, "app/page.gsx", `package main
 
 func Page() Node {
-	return <div><span>Hi</span></div>
+	return <div>
+	<span>Hi</span>
+	</div>
 }
 `)
 
@@ -169,7 +182,7 @@ func Page() Node {
 	}
 }
 
-func TestRunFmtCheckHandlesWrappedTextWithoutDrift(t *testing.T) {
+func TestRunFmtCheckPreservesWrappedTextWithoutDrift(t *testing.T) {
 	dir := t.TempDir()
 	writeTempFile(t, dir, "page.gsx", `package main
 
@@ -196,11 +209,21 @@ func Page() Node {
 	}
 
 	formatted := readFile(t, path)
-	if strings.Contains(formatted, "\n\t\t\t\t\t\t") {
-		t.Fatalf("expected wrapped text indentation drift to be removed, got:\n%s", formatted)
+	for _, snippet := range []string{
+		"This example is a real GoSX app, not a brochure hung next to one.",
+		"Routes, server actions, auth, client navigation, and Scene3D all live in the same",
+		"codebase.",
+	} {
+		if !strings.Contains(formatted, snippet) {
+			t.Fatalf("expected wrapped prose to survive formatting, missing %q:\n%s", snippet, formatted)
+		}
 	}
-	if !strings.Contains(formatted, "Routes, server actions, auth, client navigation, and Scene3D all live in the same codebase.") {
-		t.Fatalf("expected wrapped text to normalize to a single logical line, got:\n%s", formatted)
+	beforeSecondPass := formatted
+	if _, err := RunFmt(path, &stderr); err != nil {
+		t.Fatalf("RunFmt second pass (%s): %v", path, err)
+	}
+	if afterSecondPass := readFile(t, path); afterSecondPass != beforeSecondPass {
+		t.Fatalf("wrapped text formatting is not idempotent\nfirst:\n%s\nsecond:\n%s", beforeSecondPass, afterSecondPass)
 	}
 }
 
@@ -239,5 +262,61 @@ func TestRunFmtCheckLeavesRawStringCodeExamplesStable(t *testing.T) {
 	}
 	if afterSecondPass := readFile(t, path); afterSecondPass != beforeSecondPass {
 		t.Fatalf("raw string formatting is not idempotent\nfirst:\n%s\nsecond:\n%s", beforeSecondPass, afterSecondPass)
+	}
+}
+
+func TestRunFmtPreservesRenderedSemanticWhitespaceAndCheck(t *testing.T) {
+	dir := t.TempDir()
+	source := []byte(`package main
+
+func Page() Node {
+	return <main>
+		<p>({"ABC"})</p>
+		<p>{"support"}@stablekernel.com</p>
+		<p><b>A</b><i>B</i></p>
+		<p><b>A</b> <i>B</i></p>
+	</main>
+}
+`)
+	path := filepath.Join(dir, "page.gsx")
+	writeTempFile(t, dir, "page.gsx", string(source))
+
+	wantProg, err := gosx.Compile(source)
+	if err != nil {
+		t.Fatalf("Compile(source): %v", err)
+	}
+	wantHTML, err := route.RenderProgramComponent(wantProg, "Page", route.ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent(source): %v", err)
+	}
+
+	var stderr bytes.Buffer
+	if count, err := RunFmt(path, &stderr); err != nil || count != 1 {
+		t.Fatalf("RunFmt(%s) = (%d, %v)", path, count, err)
+	}
+	formatted := []byte(readFile(t, path))
+	gotProg, err := gosx.Compile(formatted)
+	if err != nil {
+		t.Fatalf("Compile(formatted): %v\n%s", err, formatted)
+	}
+	gotHTML, err := route.RenderProgramComponent(gotProg, "Page", route.ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("RenderProgramComponent(formatted): %v", err)
+	}
+	if gotHTML != wantHTML {
+		t.Fatalf("gosx fmt changed rendered HTML\nwant: %q\ngot:  %q\nformatted:\n%s", wantHTML, gotHTML, formatted)
+	}
+
+	stderr.Reset()
+	if count, err := RunFmtCheck(path, &stderr); err != nil || count != 1 {
+		t.Fatalf("RunFmtCheck(%s) = (%d, %v), stderr=%q", path, count, err, stderr.String())
+	}
+	beforeSecondPass := string(formatted)
+	stderr.Reset()
+	if count, err := RunFmt(path, &stderr); err != nil || count != 1 {
+		t.Fatalf("RunFmt second pass (%s) = (%d, %v)", path, count, err)
+	}
+	if afterSecondPass := readFile(t, path); afterSecondPass != beforeSecondPass {
+		t.Fatalf("RunFmt is not idempotent\nfirst:\n%s\nsecond:\n%s", beforeSecondPass, afterSecondPass)
 	}
 }
