@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.53.4 (2026-08-23)
+
 ### Added: native actions can preserve an exact same-origin return target
 
 - `action.ReturnTargetField` exposes the reserved `__gosx_return_to` form
