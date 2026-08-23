@@ -13,10 +13,34 @@ import (
 	"m31labs.dev/gosx/transpile"
 )
 
+const (
+	layoutDataContextPage     = "page"
+	layoutDataContextNotFound = "not-found"
+	layoutDataContextError    = "error"
+)
+
+type layoutDataRenderContext struct {
+	source  string
+	display string
+	pattern string
+	kind    string
+	layouts []string
+}
+
+type layoutDataContextUse struct {
+	context layoutDataRenderContext
+	keys    map[string]bool
+}
+
+type layoutDataLayoutUse struct {
+	selectors map[string]ir.Span
+	contexts  map[string]layoutDataContextUse
+}
+
 // validateLayoutDataContract checks the data selectors in a file-routed
-// layout against the literal Load keys of each descendant page that actually
-// uses that layout. A layout is rendered with the page's ctx.Data; its own
-// FileModule.Load is not invoked by the file router.
+// layout against the literal Load keys of each page or special-page render
+// context that actually uses that layout. A layout is rendered with that
+// context's ctx.Data; its own FileModule.Load is not invoked by the file router.
 func validateLayoutDataContract(root string, sources []string, opts Options) {
 	if opts.Warnings == nil || len(sources) == 0 {
 		return
@@ -68,15 +92,9 @@ func validateLayoutDataContract(root string, sources []string, opts Options) {
 		return transpile.PackageFile{}, false
 	}
 
-	type pageUse struct {
-		page route.FilePage
-		keys map[string]bool
-	}
-	type layoutUse struct {
-		selectors map[string]ir.Span
-		pages     map[string]pageUse
-	}
-	layouts := make(map[string]*layoutUse)
+	layouts := make(map[string]*layoutDataLayoutUse)
+	layoutBindingsChecked := make(map[string]bool)
+	layoutBindingsAbsent := make(map[string]bool)
 	seenMounts := make(map[string]bool)
 
 	for _, mountRoot := range mountRoots {
@@ -94,28 +112,29 @@ func validateLayoutDataContract(root string, sources []string, opts Options) {
 		if err != nil {
 			continue
 		}
-		for _, page := range routes.Pages {
-			pagePath, err := filepath.Abs(page.FilePath)
-			if err != nil || !sourceSet[filepath.Clean(pagePath)] {
-				continue
-			}
-			_, ok := loadPackageFile(pagePath)
-			if !ok {
-				continue
-			}
-			pageKeys, ok := resolveDataKeysForFile(pagePath)
+		for _, renderContext := range layoutDataRenderContexts(routes) {
+			contextKeys, ok := resolveDataKeysForFile(renderContext.source)
 			if !ok {
 				// A nonliteral Load, a possible Bindings overwrite, or an
-				// unrendered server template leaves the page's key set
+				// unrendered server template leaves the render context's key set
 				// unknown. Do not guess at a layout warning.
 				continue
 			}
-			for _, layoutSource := range page.Layouts {
+			for _, layoutSource := range renderContext.layouts {
 				layoutPath, err := filepath.Abs(layoutSource)
 				if err != nil {
 					continue
 				}
 				layoutPath = filepath.Clean(layoutPath)
+				if !layoutBindingsChecked[layoutPath] {
+					layoutBindingsChecked[layoutPath] = true
+					layoutBindingsAbsent[layoutPath] = layoutDataBindingsKnownAbsent(layoutPath)
+				}
+				if !layoutBindingsAbsent[layoutPath] {
+					// The rendered layout module's Bindings can replace "data".
+					// Its true selector key set is not statically knowable.
+					continue
+				}
 				layoutFile, ok := loadPackageFile(layoutPath)
 				if !ok {
 					continue
@@ -126,15 +145,15 @@ func validateLayoutDataContract(root string, sources []string, opts Options) {
 				}
 				layout := layouts[layoutPath]
 				if layout == nil {
-					layout = &layoutUse{
+					layout = &layoutDataLayoutUse{
 						selectors: selectors,
-						pages:     make(map[string]pageUse),
+						contexts:  make(map[string]layoutDataContextUse),
 					}
 					layouts[layoutPath] = layout
 				}
-				pageID := pagePath + "\x00" + page.Pattern
-				if _, exists := layout.pages[pageID]; !exists {
-					layout.pages[pageID] = pageUse{page: page, keys: pageKeys}
+				contextID := renderContext.source + "\x00" + renderContext.pattern + "\x00" + renderContext.kind
+				if _, exists := layout.contexts[contextID]; !exists {
+					layout.contexts[contextID] = layoutDataContextUse{context: renderContext, keys: contextKeys}
 				}
 			}
 		}
@@ -152,41 +171,135 @@ func validateLayoutDataContract(root string, sources []string, opts Options) {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
-		pageIDs := make([]string, 0, len(layout.pages))
-		for pageID := range layout.pages {
-			pageIDs = append(pageIDs, pageID)
+		contextIDs := make([]string, 0, len(layout.contexts))
+		for contextID := range layout.contexts {
+			contextIDs = append(contextIDs, contextID)
 		}
-		sort.Strings(pageIDs)
-		for _, pageID := range pageIDs {
-			use := layout.pages[pageID]
+		sort.Strings(contextIDs)
+		for _, contextID := range contextIDs {
+			use := layout.contexts[contextID]
 			for _, key := range keys {
 				if use.keys[key] {
 					continue
 				}
 				span := layout.selectors[key]
-				routePath := strings.TrimSpace(use.page.Pattern)
-				if routePath == "" {
-					routePath = strings.TrimSpace(use.page.RoutePath)
-				}
+				routePath := strings.TrimSpace(use.context.pattern)
 				if routePath == "" {
 					routePath = "/"
 				}
-				pageSource := filepath.ToSlash(use.page.Source)
 				addWarnings(opts, []ir.Diagnostic{{
 					Span:     span,
 					Severity: ir.SeverityWarning,
 					Message: fmt.Sprintf(
-						"gosx: layout data.%s is not produced by descendant page %s (route %s)",
-						key, pageSource, routePath,
+						"gosx: layout data.%s is not produced by %s %s (route %s)",
+						key, use.context.kind, filepath.ToSlash(use.context.display), routePath,
 					),
 					Hint: fmt.Sprintf(
-						"this layout receives the descendant page's ctx.Data; add %q to %s Load, or remove the selector if it is not shared by this route",
-						key, pageSource,
+						"this layout receives that render context's ctx.Data; add %q to %s Load, or remove the selector if it is not shared by this route",
+						key, filepath.ToSlash(use.context.display),
 					),
 				}})
 			}
 		}
 	}
+}
+
+func layoutDataRenderContexts(routes route.FileRoutes) []layoutDataRenderContext {
+	contexts := make(map[string]layoutDataRenderContext)
+	add := func(page route.FilePage, pattern, kind string, layouts []string) {
+		source, err := filepath.Abs(page.FilePath)
+		if err != nil {
+			return
+		}
+		source = filepath.Clean(source)
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			pattern = strings.TrimSpace(page.Pattern)
+		}
+		if pattern == "" {
+			pattern = "/"
+		}
+		id := source + "\x00" + pattern + "\x00" + kind
+		context, found := contexts[id]
+		if !found {
+			display := strings.TrimSpace(page.Source)
+			if display == "" {
+				display = source
+			}
+			context = layoutDataRenderContext{
+				source:  source,
+				display: display,
+				pattern: pattern,
+				kind:    kind,
+			}
+		}
+		context.layouts = mergeLayoutDataSources(context.layouts, layouts)
+		contexts[id] = context
+	}
+
+	for _, page := range routes.Pages {
+		add(page, page.Pattern, layoutDataContextPage, page.Layouts)
+		if page.ErrorPage != nil {
+			// The failing route pattern distinguishes this render context, but
+			// the nearest error page renders with its own layout chain and Load.
+			add(*page.ErrorPage, page.Pattern, layoutDataContextError, page.ErrorPage.Layouts)
+		}
+	}
+	if routes.NotFound != nil {
+		add(*routes.NotFound, routes.NotFound.Pattern, layoutDataContextNotFound, routes.NotFound.Layouts)
+	}
+	for _, scope := range routes.NotFoundScopes {
+		add(scope.Page, scope.Pattern, layoutDataContextNotFound, scope.Page.Layouts)
+	}
+	if routes.Error != nil {
+		add(*routes.Error, routes.Error.Pattern, layoutDataContextError, routes.Error.Layouts)
+	}
+
+	ids := make([]string, 0, len(contexts))
+	for id := range contexts {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	out := make([]layoutDataRenderContext, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, contexts[id])
+	}
+	return out
+}
+
+func mergeLayoutDataSources(current, added []string) []string {
+	seen := make(map[string]bool, len(current)+len(added))
+	merged := make([]string, 0, len(current)+len(added))
+	for _, sources := range [][]string{current, added} {
+		for _, source := range sources {
+			clean := filepath.Clean(source)
+			if clean == "" || seen[clean] {
+				continue
+			}
+			seen[clean] = true
+			merged = append(merged, clean)
+		}
+	}
+	sort.Strings(merged)
+	return merged
+}
+
+func layoutDataBindingsKnownAbsent(layoutPath string) bool {
+	dirs := candidateServerGoDirs(filepath.Dir(layoutPath))
+	if hasUnrenderedServerGoTemplate(dirs) {
+		return false
+	}
+	registrations, ok := collectFileModuleRegistrations(dirs)
+	if !ok {
+		return false
+	}
+	target := filepath.Clean(layoutPath)
+	for _, registration := range registrations {
+		if registration.target == target && bindingsMightOverrideData(registration.lit) {
+			return false
+		}
+	}
+	return true
 }
 
 func isFileRouteLayout(path string) bool {
