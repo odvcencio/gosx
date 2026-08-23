@@ -120,6 +120,7 @@ var navigationPrimitiveAttrs = []string{
 	"data-gosx-filter-announce",
 	"data-gosx-heartbeat",
 	"data-gosx-heartbeat-interval",
+	heartbeatHiddenIntervalAttr,
 	regionIntervalAttr,
 }
 

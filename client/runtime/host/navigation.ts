@@ -109,10 +109,23 @@
   const FILTER_ANNOUNCE_ATTR = "data-gosx-filter-announce";
   const FILTER_HIDDEN_CLASS = "gosx-filter-row--hidden";
   const FILTER_DEBOUNCE_MS = 150;
-  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216). See
-  // "Visibility-aware heartbeat" below for the full contract.
+  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216 /
+  // gosx#258). See "Visibility-aware heartbeat" below for the full
+  // contract.
   const HEARTBEAT_ATTR = "data-gosx-heartbeat";
   const HEARTBEAT_INTERVAL_ATTR = "data-gosx-heartbeat-interval";
+  const HEARTBEAT_HIDDEN_INTERVAL_ATTR = "data-gosx-heartbeat-hidden-interval";
+  // Sent, with value "hidden", on every ping the hidden cadence starts; a
+  // ping the visible cadence starts carries no such header. A server reads
+  // this to tell a backgrounded tab from a closed browser — both look
+  // identical (silence) under a pure ping-count signal, since a browser
+  // already throttles a hidden tab's timers on its own.
+  const HEARTBEAT_VISIBILITY_HEADER = "X-GoSX-Heartbeat-Visibility";
+  // The hidden cadence's default period when HEARTBEAT_HIDDEN_INTERVAL_ATTR
+  // is absent: slow enough to matter for battery and bandwidth, frequent
+  // enough that a server's presence timeout can still treat "hidden" as
+  // "still here" rather than as silence.
+  const HEARTBEAT_DEFAULT_HIDDEN_INTERVAL_MS = 60000;
   const MAIN_ATTR = "data-gosx-main";
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
@@ -264,16 +277,17 @@
   // onFilterPointerOut listeners below — see rowIsFilterGuarded's own doc
   // comment for why. null when the pointer is over no row at all.
   let filterHoverRow = null;
-  // heartbeatTimerHandle/heartbeatSrc/heartbeatIntervalMs/heartbeatHiddenSince
-  // mirror the periodic-revalidation state above almost exactly (gosx#216):
-  // a same-origin poll on an interval, paused while the document is hidden,
-  // with one catch-up tick on visibility return if a full interval elapsed
-  // while hidden. See setupPageHeartbeat's own doc comment for what
+  // heartbeatTimerHandle/heartbeatSrc/heartbeatIntervalMs/
+  // heartbeatHiddenIntervalMs are the heartbeat's own state (gosx#216 /
+  // gosx#258): a same-origin poll on one of two intervals — the normal one
+  // while the document is visible, a slower one while it is hidden — with
+  // the currently armed timer swapped between the two on every
+  // visibilitychange. See setupPageHeartbeat's own doc comment for what
   // differs from periodic revalidation.
   let heartbeatTimerHandle = null;
   let heartbeatSrc = "";
   let heartbeatIntervalMs = 0;
-  let heartbeatHiddenSince = null;
+  let heartbeatHiddenIntervalMs = 0;
   // True while a heartbeat GET's fetch await is unresolved — guards against
   // an interval tick or a visibility catch-up starting a second overlapping
   // ping, exactly like revalidatePollInFlight above.
@@ -3022,7 +3036,8 @@
   }
 
   // ---------------------------------------------------------------------
-  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216)
+  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216 /
+  // gosx#258)
   //
   // HEARTBEAT_ATTR, on an element (or on <body> itself — findElement below
   // walks the root it is given too, so body qualifies with no special
@@ -3040,21 +3055,46 @@
   // no equivalent cost runaway to guard against beyond the shared parser's
   // own 32-bit timer bound.
   //
-  // The lifecycle mirrors periodic revalidation immediately above almost
-  // exactly: paused entirely while the document is hidden
-  // (runHeartbeatTick's own documentIsHidden() guard), one immediate
-  // catch-up ping on visibility return if at least one full interval
-  // elapsed while hidden (onHeartbeatVisibilityChange, mirroring
-  // onRevalidateVisibilityChange), and never more than one ping in flight
-  // at a time — an interval tick or a catch-up that lands while the
-  // previous ping's fetch has not settled is skipped outright rather than
-  // queued or raced (heartbeatPingInFlight, mirroring
-  // revalidatePollInFlight). Unlike revalidation, a ping never mutates the
-  // page: this is presence detection, not content staleness, so its
-  // response is read and discarded, and BOTH a network failure and a
-  // non-2xx response are silent by contract — presence is a best-effort
-  // signal a visitor's dropped connection or a transient server error must
-  // never surface as a console error for.
+  // A backgrounded tab and a closed browser both produce silence under a
+  // heartbeat that stops entirely while hidden. A server acting on that
+  // silence — shortening a session timer, marking a player absent —
+  // punishes an engaged visitor whose tab simply lost focus. So the
+  // heartbeat never stops; it slows down instead.
+  //
+  // While the document is visible, it pings on HEARTBEAT_INTERVAL_ATTR.
+  // The instant the document goes hidden (onHeartbeatVisibilityChange,
+  // driven by the "visibilitychange" event), the runtime tears down that
+  // timer and arms a second one on HEARTBEAT_HIDDEN_INTERVAL_ATTR. This
+  // interval is deliberately much longer, so a backgrounded tab still
+  // costs little battery or bandwidth, and still never wakes a sleeping
+  // machine on the old cadence. Each ping the hidden timer starts carries
+  // HEARTBEAT_VISIBILITY_HEADER with the value "hidden". A ping the
+  // visible timer starts carries no such header at all. A server that
+  // never reads the header keeps seeing the pings it already sees, at
+  // the pace it already sees, while a tab is visible. The instant the
+  // document becomes visible again, the runtime tears down the hidden
+  // timer and rearms the normal one at once. Recovery never waits out
+  // whatever time was left on the hidden cadence.
+  //
+  // documentIsHidden() decides, at the moment each ping fires
+  // (runHeartbeatTick), whether that ping carries the header. It never
+  // trusts which timer the runtime believes is currently armed. A
+  // browser throttles a background tab's timers on its own, often to
+  // about once a minute, independently of the interval this file
+  // requested. A tick can therefore land after visibility already
+  // changed underneath it. Trusting "the hidden timer fired, so this
+  // must be hidden" would mislabel that tick. Checking the real state at
+  // fire time cannot.
+  //
+  // Never more than one ping is in flight at a time — an interval tick
+  // that lands while the previous ping's fetch has not settled is skipped
+  // outright rather than queued or raced (heartbeatPingInFlight, mirroring
+  // revalidatePollInFlight above). A ping never mutates the page: this is
+  // presence detection, not content staleness, so its response is read and
+  // discarded, and BOTH a network failure and a non-2xx response are
+  // silent by contract — presence is a best-effort signal a visitor's
+  // dropped connection or a transient server error must never surface as a
+  // console error for.
   // ---------------------------------------------------------------------
 
   function findHeartbeatElement() {
@@ -3070,27 +3110,50 @@
     heartbeatTimerHandle = null;
     heartbeatSrc = "";
     heartbeatIntervalMs = 0;
-    heartbeatHiddenSince = null;
+    heartbeatHiddenIntervalMs = 0;
   }
 
-  // pingHeartbeat is the whole GET: no headers, no body, credentials
-  // "same-origin" so an authenticated session's cookies ride along the way
-  // any other same-origin fetch on this page would. Both branches of the
-  // settle — success or failure — only ever clear heartbeatPingInFlight,
-  // and only for the generation that started this ping; see
-  // heartbeatGeneration's own declaration for why a stale settle must not
-  // touch state a later setupPageHeartbeat call now owns.
-  function pingHeartbeat() {
+  // armHeartbeatTimer replaces whatever timer is currently armed (if any)
+  // with a fresh setInterval at intervalMs. setupPageHeartbeat calls this
+  // once to arm the cadence matching the document's state at setup time;
+  // onHeartbeatVisibilityChange calls it again on every visibility flip to
+  // swap between the visible and hidden cadence. Always rearming fresh,
+  // rather than only rearming when the target interval differs from
+  // whatever is already running, means a return to visible always starts
+  // its next normal-interval tick a full HEARTBEAT_INTERVAL_ATTR from now
+  // — not from whenever the hidden timer last happened to fire.
+  function armHeartbeatTimer(intervalMs) {
+    if (heartbeatTimerHandle != null) {
+      clearInterval(heartbeatTimerHandle);
+    }
+    heartbeatTimerHandle = setInterval(runHeartbeatTick, intervalMs);
+  }
+
+  // pingHeartbeat is the whole GET: no body, credentials "same-origin" so
+  // an authenticated session's cookies ride along the way any other
+  // same-origin fetch on this page would, and — only when hidden is true —
+  // one header, HEARTBEAT_VISIBILITY_HEADER: "hidden". Both branches of
+  // the settle — success or failure — only ever clear
+  // heartbeatPingInFlight, and only for the generation that started this
+  // ping; see heartbeatGeneration's own declaration for why a stale settle
+  // must not touch state a later setupPageHeartbeat call now owns.
+  function pingHeartbeat(hidden) {
     if (heartbeatPingInFlight) {
       return;
     }
     heartbeatPingInFlight = true;
     const generation = heartbeatGeneration;
-    gosxRuntimeRequest(heartbeatSrc, {
+    const requestInit = {
       method: "GET",
       credentials: "same-origin",
       cache: "no-store",
-    }).catch(function() {
+    };
+    if (hidden) {
+      const headers = {};
+      headers[HEARTBEAT_VISIBILITY_HEADER] = "hidden";
+      requestInit.headers = headers;
+    }
+    gosxRuntimeRequest(heartbeatSrc, requestInit).catch(function() {
       // Silent by contract — see this section's own doc comment above.
     }).then(function() {
       if (generation !== heartbeatGeneration) return;
@@ -3098,34 +3161,22 @@
     });
   }
 
+  // runHeartbeatTick is the callback both the visible and the hidden timer
+  // share. It never trusts which timer invoked it: documentIsHidden() is
+  // the live, authoritative signal a ping is marked against — see this
+  // section's own doc comment for why a browser's own background-timer
+  // throttling makes that the only correct source.
   function runHeartbeatTick() {
-    if (documentIsHidden()) {
-      return;
-    }
-    pingHeartbeat();
+    pingHeartbeat(documentIsHidden());
   }
 
-  // onHeartbeatVisibilityChange mirrors onRevalidateVisibilityChange above:
-  // one immediate catch-up ping the moment the document becomes visible
-  // again, if at least one full interval elapsed while it was hidden —
-  // runHeartbeatTick's own documentIsHidden() guard otherwise means a tab
-  // backgrounded for hours only pings once it is looked at again.
+  // onHeartbeatVisibilityChange swaps the armed timer between the visible
+  // and the hidden cadence on every "visibilitychange" event. A no-op
+  // before setupPageHeartbeat has found a heartbeat target at all
+  // (heartbeatSrc still empty).
   function onHeartbeatVisibilityChange() {
     if (!heartbeatSrc) return;
-    if (documentIsHidden()) {
-      if (heartbeatHiddenSince == null) {
-        heartbeatHiddenSince = Date.now();
-      }
-      return;
-    }
-    const hiddenSince = heartbeatHiddenSince;
-    heartbeatHiddenSince = null;
-    if (hiddenSince == null || !heartbeatIntervalMs) {
-      return;
-    }
-    if (Date.now() - hiddenSince >= heartbeatIntervalMs) {
-      pingHeartbeat();
-    }
+    armHeartbeatTimer(documentIsHidden() ? heartbeatHiddenIntervalMs : heartbeatIntervalMs);
   }
 
   // setupPageHeartbeat scans for the FIRST element carrying HEARTBEAT_ATTR
@@ -3162,9 +3213,22 @@
       );
       return;
     }
+    let hiddenIntervalMs = HEARTBEAT_DEFAULT_HIDDEN_INTERVAL_MS;
+    if (target.hasAttribute(HEARTBEAT_HIDDEN_INTERVAL_ATTR)) {
+      const rawHiddenInterval = target.getAttribute(HEARTBEAT_HIDDEN_INTERVAL_ATTR);
+      hiddenIntervalMs = parseRevalidateInterval(rawHiddenInterval);
+      if (hiddenIntervalMs == null) {
+        console.warn(
+          "[gosx] invalid " + HEARTBEAT_HIDDEN_INTERVAL_ATTR + " value " + JSON.stringify(String(rawHiddenInterval || ""))
+          + "; the heartbeat is disabled for this page",
+        );
+        return;
+      }
+    }
     heartbeatSrc = parsedSrc.href;
     heartbeatIntervalMs = intervalMs;
-    heartbeatTimerHandle = setInterval(runHeartbeatTick, intervalMs);
+    heartbeatHiddenIntervalMs = hiddenIntervalMs;
+    armHeartbeatTimer(documentIsHidden() ? heartbeatHiddenIntervalMs : heartbeatIntervalMs);
   }
 
   // ---------------------------------------------------------------------
