@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.53.5 (2026-08-23)
+
+### Fixed: layout data contracts follow every real render context
+
+- Strict checking now validates a layout's `data.*` reads against the literal
+  keys returned by the descendant page loader that actually renders through
+  that layout. Nested layouts remain scoped to their own route subtree, and a
+  layout's loader cannot accidentally satisfy its own descendant contract.
+- Error and not-found views are checked with their real layout chains and
+  route patterns, including scoped, nested, per-page, `.gsx`, and `.html`
+  variants. Diagnostics are deterministic and deduplicated by source, route,
+  and render kind.
+- Layouts that author a `Bindings` expression deliberately abstain from this
+  static contract because the binding may replace the inherited page data at
+  runtime. Direct page data checks keep their existing behavior.
+
 ## v0.53.4 (2026-08-23)
 
 ### Added: native actions can preserve an exact same-origin return target
