@@ -237,10 +237,10 @@ const (
 	// non-2xx response are silent — presence detection must never
 	// surface a console error for a dropped connection.
 	//
-	// The ping never stops while the tab stays open (gosx#258). A
-	// heartbeat that stops entirely while hidden looks the same, from the
-	// server, as a closed browser. That ambiguity punishes an engaged
-	// visitor whose tab merely lost focus.
+	// The ping never stops while the tab stays open. A heartbeat that
+	// stops entirely while hidden looks the same, from the server, as a
+	// closed browser. That ambiguity punishes an engaged visitor whose
+	// tab merely lost focus.
 	//
 	// While the document is visible, the runtime pings on
 	// NavigationHeartbeatIntervalAttr. The moment the document is
@@ -285,20 +285,18 @@ const (
 
 	// NavigationHeartbeatHiddenIntervalAttr sets the ping period the
 	// runtime uses instead of NavigationHeartbeatIntervalAttr while the
-	// document is hidden (gosx#258). It uses the same whole-second or
-	// whole-minute grammar. It is optional. Absent, it defaults to 60s
-	// on the client. Present with a value the shared duration grammar
-	// cannot parse, it disables the whole heartbeat with one
-	// console.warn — the same fail-closed behavior
-	// NavigationHeartbeatIntervalAttr already has.
+	// document is hidden. It uses the same whole-second or whole-minute
+	// grammar. It is optional. Absent, it defaults to 60s on the client.
+	// Present with a value the shared duration grammar cannot parse, it
+	// disables the whole heartbeat with one console.warn — the same
+	// fail-closed behavior NavigationHeartbeatIntervalAttr already has.
 	NavigationHeartbeatHiddenIntervalAttr = "data-gosx-heartbeat-hidden-interval"
 
 	// NavigationHeartbeatVisibilityHeader is the request header a hidden
-	// heartbeat ping carries, with the value "hidden" (gosx#258). A ping
-	// the visible period starts carries no such header. Read this
-	// header in your own presence handler to tell a backgrounded tab
-	// from a closed browser. Without it, both cases produce the same
-	// signal: silence.
+	// heartbeat ping carries, with the value "hidden". A ping the visible
+	// period starts carries no such header. Read this header in your own
+	// presence handler to tell a backgrounded tab from a closed browser.
+	// Without it, both cases produce the same signal: silence.
 	NavigationHeartbeatVisibilityHeader = "X-GoSX-Heartbeat-Visibility"
 )
 

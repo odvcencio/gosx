@@ -25,8 +25,8 @@ func TestNavigationFilterAttrConstants(t *testing.T) {
 
 // TestNavigationHeartbeatAttrConstants is TestNavigationFilterAttrConstants'
 // gosx#216 counterpart, pinning the data-gosx-heartbeat* constants and the
-// gosx#258 hidden-interval marker header against their identical literal
-// values in client/runtime/host/navigation.ts.
+// hidden-interval marker header against their identical literal values in
+// client/runtime/host/navigation.ts.
 func TestNavigationHeartbeatAttrConstants(t *testing.T) {
 	if got, want := NavigationHeartbeatAttr, "data-gosx-heartbeat"; got != want {
 		t.Fatalf("NavigationHeartbeatAttr = %q, want %q", got, want)

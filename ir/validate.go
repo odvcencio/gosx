@@ -326,7 +326,7 @@ const (
 )
 
 // revalidateIntervalAttr, heartbeatIntervalAttr, and
-// heartbeatHiddenIntervalAttr (gosx#216, gosx#217, gosx#258) share
+// heartbeatHiddenIntervalAttr (gosx#216, gosx#217) share
 // liveIntervalAttr and regionIntervalAttr's exact whole-seconds/
 // whole-minutes grammar (see isValidPollIntervalValue below), pinned
 // against NavigationRevalidateIntervalAttr,

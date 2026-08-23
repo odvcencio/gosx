@@ -5,7 +5,7 @@
 ### Changed: the declarative heartbeat pings while hidden, at a slower marked rate
 
 - `data-gosx-heartbeat` no longer pauses entirely while the document is
-  hidden (gosx#258). A hidden document used to produce the same silence
+  hidden. A hidden document used to produce the same silence
   as a closed browser. A server that acted on that silence — for example
   by shortening a timer or marking a player absent — could not tell a
   backgrounded tab from a departed visitor.

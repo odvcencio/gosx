@@ -109,9 +109,8 @@
   const FILTER_ANNOUNCE_ATTR = "data-gosx-filter-announce";
   const FILTER_HIDDEN_CLASS = "gosx-filter-row--hidden";
   const FILTER_DEBOUNCE_MS = 150;
-  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216 /
-  // gosx#258). See "Visibility-aware heartbeat" below for the full
-  // contract.
+  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216). See
+  // "Visibility-aware heartbeat" below for the full contract.
   const HEARTBEAT_ATTR = "data-gosx-heartbeat";
   const HEARTBEAT_INTERVAL_ATTR = "data-gosx-heartbeat-interval";
   const HEARTBEAT_HIDDEN_INTERVAL_ATTR = "data-gosx-heartbeat-hidden-interval";
@@ -278,10 +277,10 @@
   // comment for why. null when the pointer is over no row at all.
   let filterHoverRow = null;
   // heartbeatTimerHandle/heartbeatSrc/heartbeatIntervalMs/
-  // heartbeatHiddenIntervalMs are the heartbeat's own state (gosx#216 /
-  // gosx#258): a same-origin poll on one of two intervals — the normal one
-  // while the document is visible, a slower one while it is hidden — with
-  // the currently armed timer swapped between the two on every
+  // heartbeatHiddenIntervalMs are the heartbeat's own state (gosx#216): a
+  // same-origin poll on one of two intervals — the normal one while the
+  // document is visible, a slower one while it is hidden — with the
+  // currently armed timer swapped between the two on every
   // visibilitychange. See setupPageHeartbeat's own doc comment for what
   // differs from periodic revalidation.
   let heartbeatTimerHandle = null;
@@ -3036,8 +3035,7 @@
   }
 
   // ---------------------------------------------------------------------
-  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216 /
-  // gosx#258)
+  // Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216)
   //
   // HEARTBEAT_ATTR, on an element (or on <body> itself — findElement below
   // walks the root it is given too, so body qualifies with no special
