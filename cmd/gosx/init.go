@@ -430,10 +430,10 @@ func init() {
 		},
 		Actions: route.FileActions{
 			"subscribe": func(ctx *action.Context) error {
-				if strings.TrimSpace(ctx.FormData["email"]) == "" {
-					return action.Validation("Add an email address to continue.", map[string]string{
+				if strings.TrimSpace(ctx.Form.Value("email")) == "" {
+					return action.ValidationWithValues("Add an email address to continue.", map[string]string{
 						"email": "Email is required.",
-					}, ctx.FormData)
+					}, map[string]string{"email": ctx.Form.Value("email")})
 				}
 				session.AddFlash(ctx.Request, "notice", "The starter app is using redirect-safe form state and session-backed flashes.")
 				return ctx.Success("Form submission completed without leaving the server-first model.", nil)

@@ -3189,7 +3189,7 @@ func Page() Node {
 			"publish": func(ctx *action.Context) error {
 				return ctx.Success("published", map[string]string{
 					"slug": ctx.Request.PathValue("slug"),
-					"name": ctx.FormData["name"],
+					"name": ctx.Form.Value("name"),
 				})
 			},
 		},
@@ -3538,10 +3538,13 @@ func Page() Node {
 		},
 		Actions: FileActions{
 			"save": func(ctx *action.Context) error {
-				if strings.TrimSpace(ctx.FormData["email"]) == "" {
-					return action.Validation("email is required", map[string]string{
+				if strings.TrimSpace(ctx.Form.Value("email")) == "" {
+					return action.ValidationWithValues("email is required", map[string]string{
 						"email": "required",
-					}, ctx.FormData)
+					}, map[string]string{
+						"name":  ctx.Form.Value("name"),
+						"email": ctx.Form.Value("email"),
+					})
 				}
 				return ctx.Success("saved", nil)
 			},

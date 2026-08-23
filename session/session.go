@@ -245,6 +245,15 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Managed actions own one bounded parser and one authoritative CSRF
+		// decision. Only a concrete framework handler that implements the
+		// capability below may opt out of this legacy middleware's FormValue
+		// parser. A path prefix alone is never sufficient: an app-authored
+		// handler mounted at /gosx/action/ or /__actions/ remains protected.
+		if isRegisteredManagedAction(next, r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		store := m.Get(r)
 		if store == nil {
 			http.Error(w, "session middleware required before csrf protection", http.StatusInternalServerError)
@@ -267,6 +276,22 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isRegisteredManagedAction(handler http.Handler, path string) bool {
+	for depth := 0; depth < 16 && handler != nil; depth++ {
+		if matcher, ok := handler.(interface {
+			IsManagedActionPath(string) bool
+		}); ok && matcher.IsManagedActionPath(path) {
+			return true
+		}
+		unwrapper, ok := handler.(interface{ Unwrap() http.Handler })
+		if !ok {
+			return false
+		}
+		handler = unwrapper.Unwrap()
+	}
+	return false
 }
 
 // Get returns the request-scoped store for the manager.

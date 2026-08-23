@@ -37,12 +37,13 @@ type Handler func(ctx *Context) error
 
 // Result is the structured response contract for actions.
 type Result struct {
-	OK          bool              `json:"ok"`
-	Message     string            `json:"message,omitempty"`
-	Data        json.RawMessage   `json:"data,omitempty"`
-	FieldErrors map[string]string `json:"fieldErrors,omitempty"`
-	Values      map[string]string `json:"values,omitempty"`
-	Redirect    string            `json:"redirect,omitempty"`
+	OK             bool              `json:"ok"`
+	Message        string            `json:"message,omitempty"`
+	Data           json.RawMessage   `json:"data,omitempty"`
+	FieldErrors    map[string]string `json:"fieldErrors,omitempty"`
+	Values         map[string]string `json:"values,omitempty"`
+	Redirect       string            `json:"redirect,omitempty"`
+	RedirectStatus int               `json:"redirectStatus,omitempty"`
 }
 
 // ResultError is a structured action error with an explicit HTTP status code.
@@ -91,8 +92,22 @@ func Error(status int, message string) *ResultError {
 	}
 }
 
-// Validation constructs a structured validation failure.
-func Validation(message string, fieldErrors map[string]string, values map[string]string) *ResultError {
+// Validation constructs a managed validation failure.
+//
+// Managed actions return this error to let the framework choose the stable
+// validation envelope. Use [ValidationWithValues] only for the legacy
+// redirect-backed Handler API.
+func Validation(message string, fieldErrors map[string]string) *ActionError {
+	return &ActionError{
+		Kind:        ActionErrorValidation,
+		Message:     message,
+		FieldErrors: cloneStrings(fieldErrors),
+	}
+}
+
+// ValidationWithValues constructs a legacy redirect-backed validation
+// failure that explicitly carries native form values.
+func ValidationWithValues(message string, fieldErrors map[string]string, values map[string]string) *ResultError {
 	return &ResultError{
 		Status: http.StatusUnprocessableEntity,
 		Result: Result{
@@ -125,14 +140,35 @@ type Context struct {
 	// Request is the originating HTTP request (for server actions).
 	Request *http.Request
 
-	// FormData contains parsed form values.
-	FormData map[string]string
+	// Form is the immutable, bounded body form exposed to managed actions.
+	Form ActionForm
 
-	// Payload is the JSON request body (for client-invoked actions).
-	Payload json.RawMessage
+	// Payload is the decoded JSON request body for managed actions. The legacy
+	// Handler API stores the decoded value as json.RawMessage here.
+	Payload any
 
 	status int
 	result *Result
+}
+
+// contextValues is used only by the redirect-backed legacy handler plumbing;
+// managed actions receive their immutable ActionForm and never get an
+// automatically copied result-values map.
+func contextValues(ctx *Context) map[string]string {
+	if ctx == nil || ctx.Form == nil {
+		return nil
+	}
+	form, ok := ctx.Form.(*managedForm)
+	if !ok || len(form.values) == 0 {
+		return nil
+	}
+	values := make(map[string]string, len(form.values))
+	for name, entries := range form.values {
+		if len(entries) > 0 {
+			values[name] = entries[0]
+		}
+	}
+	return values
 }
 
 // Files returns the uploaded file headers submitted under the given
@@ -209,8 +245,8 @@ func (v View) Redirect() string {
 
 // SetResult replaces the structured action result.
 func (c *Context) SetResult(result Result) {
-	if result.Values == nil && len(c.FormData) > 0 {
-		result.Values = cloneStrings(c.FormData)
+	if result.Values == nil {
+		result.Values = contextValues(c)
 	}
 	c.result = &result
 }
@@ -225,7 +261,7 @@ func (c *Context) Success(message string, data any) error {
 	res := Result{
 		OK:      true,
 		Message: message,
-		Values:  cloneStrings(c.FormData),
+		Values:  contextValues(c),
 	}
 	if data != nil {
 		raw, err := json.Marshal(data)
@@ -246,7 +282,7 @@ func (c *Context) Redirect(url string) {
 	c.result = &Result{
 		OK:       true,
 		Redirect: url,
-		Values:   cloneStrings(c.FormData),
+		Values:   contextValues(c),
 	}
 	if c.status == 0 {
 		c.status = http.StatusSeeOther
@@ -259,7 +295,7 @@ func (c *Context) ValidationFailure(message string, fieldErrors map[string]strin
 		OK:          false,
 		Message:     message,
 		FieldErrors: cloneStrings(fieldErrors),
-		Values:      cloneStrings(c.FormData),
+		Values:      contextValues(c),
 	}
 	c.status = http.StatusUnprocessableEntity
 }
@@ -389,8 +425,7 @@ func serveHandler(w http.ResponseWriter, req *http.Request, handler Handler, max
 	defer req.Body.Close()
 
 	ctx := &Context{
-		Request:  req,
-		FormData: make(map[string]string),
+		Request: req,
 	}
 
 	// Parse form data or JSON body
@@ -423,11 +458,12 @@ func serveHandler(w http.ResponseWriter, req *http.Request, handler Handler, max
 			return
 		}
 
-		for k, v := range req.Form {
-			if len(v) > 0 {
-				ctx.FormData[k] = v[0]
-			}
+		values := make(map[string][]string, len(req.PostForm))
+		for k, v := range req.PostForm {
+			values[k] = append([]string(nil), v...)
 		}
+		files := make(map[string][]Upload)
+		ctx.Form = &managedForm{values: values, files: files}
 	}
 
 	if err := handler(ctx); err != nil {
@@ -475,6 +511,18 @@ func resultFromError(err error) (Result, int) {
 	if errors.As(err, &structured) {
 		return structured.ActionResult(), structured.StatusCode()
 	}
+	var managed *ActionError
+	if errors.As(err, &managed) && managed != nil {
+		result := Result{
+			OK:          false,
+			Message:     managed.Message,
+			FieldErrors: cloneStrings(managed.FieldErrors),
+		}
+		if managed.Kind == ActionErrorValidation {
+			return result, http.StatusUnprocessableEntity
+		}
+		return result, http.StatusBadRequest
+	}
 	return Result{
 		OK:      false,
 		Message: err.Error(),
@@ -487,8 +535,8 @@ func resultFromContext(ctx *Context) (Result, int) {
 	}
 
 	result := *ctx.result
-	if result.Values == nil && len(ctx.FormData) > 0 {
-		result.Values = cloneStrings(ctx.FormData)
+	if result.Values == nil {
+		result.Values = contextValues(ctx)
 	}
 	if ctx.status != 0 {
 		return result, ctx.status

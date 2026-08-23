@@ -189,6 +189,7 @@ type Router struct {
 	observers      []server.RequestObserver
 	fileRouteDirs  []fileRouteDirSource
 	navigationHead func(nonce string) gosx.Node
+	managedActions *action.Router
 }
 
 type handlerRoute struct {
@@ -286,6 +287,31 @@ func (r *Router) Handle(pattern string, handler http.Handler, middleware ...Midd
 	})
 }
 
+// RegisterManagedPOST installs one framework-owned bounded action on the
+// router's managed action endpoint. The complete policy is validated by the
+// action package before the route is made visible to Build/BuildChecked.
+func (r *Router) RegisterManagedPOST(name string, cfg action.Config, handler action.ManagedAction) error {
+	if r == nil {
+		return errors.New("route router is nil")
+	}
+	if r.managedActions == nil {
+		candidate := action.NewRouter()
+		if err := candidate.RegisterManagedPOST(name, cfg, handler); err != nil {
+			return err
+		}
+		r.managedActions = candidate
+		return nil
+	}
+	return r.managedActions.RegisterManagedPOST(name, cfg, handler)
+}
+
+// IsManagedActionPath reports whether the route tree owns a registered managed
+// action at path. It is consumed by session.Protect; it is not a path-prefix
+// authorization check.
+func (r *Router) IsManagedActionPath(path string) bool {
+	return r != nil && r.managedActions != nil && r.managedActions.IsManagedActionPath(path)
+}
+
 // Build compiles the router into an http.Handler. If route registration fails,
 // the returned handler reports the build error as HTTP 500 instead of crashing
 // the process.
@@ -305,6 +331,11 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 	}
 	r.logUnregisteredFileModuleWarnings()
 	mux := http.NewServeMux()
+	if r.managedActions != nil {
+		if err := safeHandle(mux, "POST /gosx/action/{name}", r.managedActions); err != nil {
+			return nil, err
+		}
+	}
 	for _, extra := range r.handlers {
 		var h http.Handler = extra.handler
 		for i := len(extra.middleware) - 1; i >= 0; i-- {
@@ -370,6 +401,22 @@ func (b *builtRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // the wrapped Router.
 func (b *builtRouter) SetNavigationHead(fn func(nonce string) gosx.Node) {
 	b.router.SetNavigationHead(fn)
+}
+
+// IsManagedActionPath lets session.Protect distinguish the framework-owned
+// managed endpoint from an app-authored handler that happens to use the same
+// URL prefix.
+func (b *builtRouter) IsManagedActionPath(path string) bool {
+	return b != nil && b.router != nil && b.router.IsManagedActionPath(path)
+}
+
+// Unwrap exposes the compiled handler to middleware that needs to preserve
+// framework capabilities while composing wrappers.
+func (b *builtRouter) Unwrap() http.Handler {
+	if b == nil {
+		return nil
+	}
+	return b.handler
 }
 
 func buildErrorHandler(err error) http.Handler {

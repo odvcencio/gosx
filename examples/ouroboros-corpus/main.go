@@ -151,7 +151,7 @@ func newApp() (*server.App, error) {
 }
 
 func validateNameAction(ctx *action.Context) error {
-	name := strings.TrimSpace(ctx.FormData["name"])
+	name := strings.TrimSpace(ctx.Form.Value("name"))
 	if name == "" {
 		ctx.SetResult(action.Result{
 			OK:          false,

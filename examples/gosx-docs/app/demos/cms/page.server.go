@@ -92,7 +92,7 @@ func init() {
 						ctx.ValidationFailure("Slow down — try again in a moment.", nil)
 						return nil
 					}
-					blocks, fieldErrors := cmsBlocksFromForm(ctx.FormData)
+					blocks, fieldErrors := cmsBlocksFromForm(actionFormValues(ctx))
 					if len(fieldErrors) > 0 {
 						ctx.ValidationFailure("Fix the highlighted content before publishing.", fieldErrors)
 						return nil
@@ -170,6 +170,19 @@ func cmsBlocksFromForm(values map[string]string) ([]map[string]string, map[strin
 		}
 	}
 	return blocks, errs
+}
+
+func actionFormValues(ctx *action.Context) map[string]string {
+	values := map[string]string{}
+	if ctx == nil || ctx.Request == nil {
+		return values
+	}
+	for name, entries := range ctx.Request.PostForm {
+		if len(entries) > 0 {
+			values[name] = entries[0]
+		}
+	}
+	return values
 }
 
 // cmsSummarizeBlocks counts published blocks by kind, always reporting the

@@ -365,7 +365,11 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 			})
 		}
 		rateKey := clientIPFromRequest(ctx.Request)
-		if err := json.Unmarshal(ctx.Payload, &req); err != nil {
+		payload, marshalErr := json.Marshal(ctx.Payload)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err := json.Unmarshal(payload, &req); err != nil {
 			return ctx.Success("", map[string]any{
 				"component":   "",
 				"html":        "",
@@ -407,7 +411,11 @@ func CompileAction(ctx *action.Context) error {
 	var req struct {
 		Source string `json:"source"`
 	}
-	if err := json.Unmarshal(ctx.Payload, &req); err != nil {
+	payload, marshalErr := json.Marshal(ctx.Payload)
+	if marshalErr != nil {
+		return marshalErr
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
 		return ctx.Success("", map[string]any{
 			"component":   "",
 			"html":        "",

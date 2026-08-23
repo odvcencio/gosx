@@ -58,11 +58,11 @@ func init() {
 					if docsapp.AuthManager() == nil {
 						return action.Error(500, "auth manager not configured")
 					}
-					name := strings.TrimSpace(ctx.FormData["name"])
+					name := strings.TrimSpace(ctx.Form.Value("name"))
 					if name == "" {
-						return action.Validation("Enter a name to sign in.", map[string]string{
+						return action.ValidationWithValues("Enter a name to sign in.", map[string]string{
 							"name": "Name is required.",
-						}, ctx.FormData)
+						}, map[string]string{"name": ctx.Form.Value("name")})
 					}
 					if !docsapp.AuthManager().SignIn(ctx.Request, auth.User{
 						ID:    strings.ToLower(strings.ReplaceAll(name, " ", "-")),

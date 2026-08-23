@@ -16,8 +16,8 @@ func init() {
 		},
 		Actions: route.FileActions{
 			"createUser": func(ctx *action.Context) error {
-				name := strings.TrimSpace(ctx.FormData["name"])
-				email := strings.TrimSpace(ctx.FormData["email"])
+				name := strings.TrimSpace(ctx.Form.Value("name"))
+				email := strings.TrimSpace(ctx.Form.Value("email"))
 				fieldErrors := map[string]string{}
 				if name == "" {
 					fieldErrors["name"] = "Name is required."
@@ -26,7 +26,10 @@ func init() {
 					fieldErrors["email"] = "Email is required."
 				}
 				if len(fieldErrors) > 0 {
-					return action.Validation("Please correct the highlighted fields.", fieldErrors, ctx.FormData)
+					return action.ValidationWithValues("Please correct the highlighted fields.", fieldErrors, map[string]string{
+						"name":  ctx.Form.Value("name"),
+						"email": ctx.Form.Value("email"),
+					})
 				}
 				ctx.Redirect("/users")
 				return nil

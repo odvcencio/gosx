@@ -28,7 +28,7 @@ func init() {
 		},
 		Actions: route.FileActions{
 			"subscribe": func(ctx *action.Context) error {
-				email := ctx.FormData["email"]
+				email := ctx.Form.Value("email")
 				if email == "" || !strings.Contains(email, "@") {
 					ctx.ValidationFailure("Please enter a valid email.", map[string]string{
 						"email": "A valid email address is required.",

@@ -47,8 +47,9 @@ func TestRegistryList(t *testing.T) {
 func TestRegistryHTTP(t *testing.T) {
 	r := NewRegistry()
 	r.Register("greet", func(ctx *Context) error {
-		if string(ctx.Payload) != `{}` {
-			t.Fatalf("expected payload to be decoded, got %s", string(ctx.Payload))
+		payload, ok := ctx.Payload.(json.RawMessage)
+		if !ok || string(payload) != `{}` {
+			t.Fatalf("expected payload to be decoded, got %v", ctx.Payload)
 		}
 		return nil
 	})
@@ -67,8 +68,9 @@ func TestRegistryHTTP(t *testing.T) {
 func TestRegistryHTTPContentTypeCharset(t *testing.T) {
 	r := NewRegistry()
 	r.Register("greet", func(ctx *Context) error {
-		if string(ctx.Payload) != `{"message":"hi"}` {
-			t.Fatalf("expected payload to be decoded, got %s", string(ctx.Payload))
+		payload, ok := ctx.Payload.(json.RawMessage)
+		if !ok || string(payload) != `{"message":"hi"}` {
+			t.Fatalf("expected payload to be decoded, got %v", ctx.Payload)
 		}
 		return nil
 	})
@@ -190,7 +192,7 @@ func TestRegistryHTTPOversizedForm(t *testing.T) {
 func TestRegistryHTTPFormData(t *testing.T) {
 	r := NewRegistry()
 	r.Register("submit", func(ctx *Context) error {
-		if got := ctx.FormData["name"]; got != "Ada" {
+		if got := ctx.Form.Value("name"); got != "Ada" {
 			t.Fatalf("expected form value Ada, got %q", got)
 		}
 		return nil
@@ -210,10 +212,10 @@ func TestRegistryHTTPFormData(t *testing.T) {
 func TestRegistryHTTPMultipartFormData(t *testing.T) {
 	r := NewRegistry()
 	r.Register("submit", func(ctx *Context) error {
-		if got := ctx.FormData["name"]; got != "Ada" {
+		if got := ctx.Form.Value("name"); got != "Ada" {
 			t.Fatalf("expected multipart form value Ada, got %q", got)
 		}
-		if got := ctx.FormData["path"]; got != "power" {
+		if got := ctx.Form.Value("path"); got != "power" {
 			t.Fatalf("expected multipart form value power, got %q", got)
 		}
 		return nil
@@ -423,7 +425,7 @@ func TestServeHandlerWithOptionsZeroFallsBackToPackageDefault(t *testing.T) {
 func TestRegistryHTTPStructuredValidationError(t *testing.T) {
 	r := NewRegistry()
 	r.Register("submit", func(ctx *Context) error {
-		return Validation("name is required", map[string]string{"name": "required"}, ctx.FormData)
+		return ValidationWithValues("name is required", map[string]string{"name": "required"}, map[string]string{"name": ctx.Form.Value("name")})
 	})
 
 	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader("name="))
@@ -454,9 +456,9 @@ func TestServeHandlerFlashesBrowserFormStateWhenSessionPresent(t *testing.T) {
 	handler := sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			ServeHandler(w, r, func(ctx *Context) error {
-				return Validation("email is required", map[string]string{
+				return ValidationWithValues("email is required", map[string]string{
 					"email": "required",
-				}, ctx.FormData)
+				}, map[string]string{"name": ctx.Form.Value("name")})
 			})
 			return
 		}
