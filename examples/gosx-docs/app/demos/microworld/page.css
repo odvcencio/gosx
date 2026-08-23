@@ -1,0 +1,164 @@
+/* Micro-world demo shell. Scoped under .micro-world to stay out of the
+   global docs chrome. Visual language mirrors the other demo shells
+   (--demo-bg / accent variables) so the dock and metadata drawer match. */
+.micro-world {
+  --mw-bg: #0d1117;
+  --mw-panel: #131a24;
+  --mw-edge: rgba(148, 163, 184, 0.18);
+  --mw-accent: #ffd166;
+  --mw-accent-2: #4cc9f0;
+  --mw-text: #e6edf5;
+  --mw-dim: #93a4b8;
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  color: var(--mw-text);
+}
+
+.micro-world__stage {
+  position: relative;
+  border: 1px solid var(--mw-edge);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--mw-bg);
+  min-height: 420px;
+}
+
+.micro-world__canvas {
+  width: 100%;
+  height: min(62vh, 560px);
+}
+
+.micro-world__hud {
+  position: absolute;
+  inset: auto 0.75rem 0.75rem 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.1rem;
+  align-items: center;
+  padding: 0.55rem 0.9rem;
+  border-radius: 10px;
+  background: rgba(13, 17, 23, 0.78);
+  border: 1px solid var(--mw-edge);
+  backdrop-filter: blur(6px);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.micro-world__hud dt {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mw-dim);
+}
+
+.micro-world__hud dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.micro-world__hud .is-lit {
+  color: var(--mw-accent);
+}
+
+.micro-world__status {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--mw-dim);
+}
+
+.micro-world__status[data-backend="starting"] {
+  color: var(--mw-accent-2);
+}
+
+.micro-world__panel {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid var(--mw-edge);
+  border-radius: 14px;
+  background: var(--mw-panel);
+}
+
+.micro-world__panel h1 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.micro-world__eyebrow {
+  margin: 0;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--mw-accent-2);
+}
+
+.micro-world__tagline {
+  margin: 0;
+  color: var(--mw-dim);
+  max-width: 68ch;
+}
+
+.micro-world__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.micro-world__keys kbd {
+  display: inline-block;
+  min-width: 1.7rem;
+  padding: 0.18rem 0.42rem;
+  border: 1px solid var(--mw-edge);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: #0b1016;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
+.micro-world__keys li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--mw-dim);
+}
+
+.micro-world__proof {
+  font-size: 0.82rem;
+  color: var(--mw-dim);
+}
+
+.micro-world__proof summary {
+  cursor: pointer;
+  color: var(--mw-text);
+}
+
+.micro-world__proof ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.micro-world__proof code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  background: #0b1016;
+  border: 1px solid var(--mw-edge);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+@media (max-width: 720px) {
+  .micro-world__canvas {
+    height: 52vh;
+  }
+}
