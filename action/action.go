@@ -6,12 +6,14 @@
 package action
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -26,6 +28,13 @@ import (
 const maxActionBodyBytes = 1024 * 1024
 
 const actionFlashKey = "__gosx_action_state"
+
+// ReturnTargetField is the reserved progressive-enhancement field that lets
+// a native form preserve its authored same-origin return path, query, and
+// fragment across a POST redirect.
+const ReturnTargetField = "__gosx_return_to"
+
+type returnTargetContextKey struct{}
 
 func isBodyTooLarge(err error) bool {
 	var maxErr *http.MaxBytesError
@@ -396,6 +405,98 @@ func ServeHandlerWithOptions(w http.ResponseWriter, req *http.Request, handler H
 	serveHandler(w, req, handler, maxBodyBytes)
 }
 
+func requestWithReturnTarget(req *http.Request, target string) *http.Request {
+	if req == nil || target == "" {
+		return req
+	}
+	return req.WithContext(context.WithValue(req.Context(), returnTargetContextKey{}, target))
+}
+
+func requestReturnTarget(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	target, _ := req.Context().Value(returnTargetContextKey{}).(string)
+	return target
+}
+
+func hasForbiddenTargetByte(value string) bool {
+	for _, r := range value {
+		if r <= 0x1f || r == 0x7f || r == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEncodedBackslash(value string) bool {
+	return strings.Contains(strings.ToLower(value), "%5c")
+}
+
+func safeTargetComponent(value string) bool {
+	if hasForbiddenTargetByte(value) || hasEncodedBackslash(value) {
+		return false
+	}
+	decoded, err := url.QueryUnescape(value)
+	return err == nil && !hasForbiddenTargetByte(decoded) && !hasEncodedBackslash(decoded)
+}
+
+func rootRelativeTarget(raw string, includeFragment bool) (string, bool) {
+	if raw == "" || hasForbiddenTargetByte(raw) || hasEncodedBackslash(raw) {
+		return "", false
+	}
+	target := strings.TrimSpace(raw)
+	if target == "" || target != raw || !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
+		return "", false
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Opaque != "" || parsed.User != nil {
+		return "", false
+	}
+	if parsed.Path == "" || !strings.HasPrefix(parsed.Path, "/") {
+		return "", false
+	}
+	if !safeTargetComponent(parsed.Path) || !safeTargetComponent(parsed.RawQuery) || !safeTargetComponent(parsed.Fragment) {
+		return "", false
+	}
+	escapedPath := parsed.EscapedPath()
+	if escapedPath == "" || !strings.HasPrefix(escapedPath, "/") {
+		return "", false
+	}
+	result := escapedPath
+	if parsed.ForceQuery || parsed.RawQuery != "" {
+		result += "?" + parsed.RawQuery
+	}
+	if includeFragment && parsed.Fragment != "" {
+		result += "#" + parsed.EscapedFragment()
+	}
+	return result, true
+}
+
+func normalizedReturnTarget(raw string) string {
+	target, ok := rootRelativeTarget(raw, true)
+	if !ok {
+		return ""
+	}
+	return target
+}
+
+func extractReturnTarget(req *http.Request) string {
+	if req == nil || req.Method != http.MethodPost {
+		return ""
+	}
+	var raw string
+	if values := req.PostForm[ReturnTargetField]; len(values) > 0 {
+		raw = values[0]
+	}
+	delete(req.PostForm, ReturnTargetField)
+	delete(req.Form, ReturnTargetField)
+	if req.MultipartForm != nil {
+		delete(req.MultipartForm.Value, ReturnTargetField)
+	}
+	return normalizedReturnTarget(raw)
+}
+
 func serveHandler(w http.ResponseWriter, req *http.Request, handler Handler, maxBodyBytes int64) {
 	if handler == nil {
 		http.Error(w, "action handler required", http.StatusNotFound)
@@ -412,6 +513,7 @@ func serveHandler(w http.ResponseWriter, req *http.Request, handler Handler, max
 
 	// Parse form data or JSON body
 	contentType := req.Header.Get("Content-Type")
+	returnTarget := ""
 	if strings.HasPrefix(contentType, "application/json") {
 		var payload json.RawMessage
 		decoder := json.NewDecoder(req.Body)
@@ -440,11 +542,16 @@ func serveHandler(w http.ResponseWriter, req *http.Request, handler Handler, max
 			return
 		}
 
+		returnTarget = extractReturnTarget(req)
 		for k, v := range req.Form {
 			if len(v) > 0 {
 				ctx.FormData[k] = v[0]
 			}
 		}
+	}
+	if returnTarget != "" {
+		req = requestWithReturnTarget(req, returnTarget)
+		ctx.Request = req
 	}
 
 	if err := handler(ctx); err != nil {
@@ -522,7 +629,23 @@ func resultFromContext(ctx *Context) (Result, int) {
 	return result, http.StatusOK
 }
 
+func sanitizeResult(result Result) Result {
+	if len(result.Values) == 0 {
+		return result
+	}
+	values := make(map[string]string, len(result.Values))
+	for key, value := range result.Values {
+		if key == ReturnTargetField {
+			continue
+		}
+		values[key] = value
+	}
+	result.Values = cloneStrings(values)
+	return result
+}
+
 func writeResponse(w http.ResponseWriter, req *http.Request, status int, result Result) {
+	result = sanitizeResult(result)
 	if status == 0 {
 		status = http.StatusOK
 	}
@@ -562,6 +685,72 @@ func shouldFlashRedirect(req *http.Request) bool {
 	return !WantsJSON(req) && session.Current(req) != nil
 }
 
+func requestHost(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	if req.Host != "" {
+		return req.Host
+	}
+	if req.URL != nil {
+		return req.URL.Host
+	}
+	return ""
+}
+
+func requestScheme(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	if req.URL != nil && req.URL.Scheme != "" {
+		return strings.ToLower(req.URL.Scheme)
+	}
+	if req.TLS != nil {
+		return "https"
+	}
+	return ""
+}
+
+func sanitizedReferer(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	raw := req.Header.Get("Referer")
+	trimmed := strings.TrimSpace(raw)
+	if raw == "" || trimmed != raw || hasForbiddenTargetByte(raw) || hasEncodedBackslash(raw) {
+		return ""
+	}
+	referer, err := url.Parse(trimmed)
+	if err != nil || referer.User != nil || referer.Opaque != "" {
+		return ""
+	}
+	if referer.IsAbs() || referer.Host != "" {
+		if referer.Scheme == "" || referer.Host == "" || !strings.EqualFold(referer.Host, requestHost(req)) {
+			return ""
+		}
+		if scheme := requestScheme(req); scheme != "" && !strings.EqualFold(referer.Scheme, scheme) {
+			return ""
+		}
+	} else if referer.Scheme != "" {
+		return ""
+	}
+	if referer.Path == "" || !strings.HasPrefix(referer.Path, "/") || strings.HasPrefix(referer.Path, "//") {
+		return ""
+	}
+	if !safeTargetComponent(referer.Path) || !safeTargetComponent(referer.RawQuery) || !safeTargetComponent(referer.Fragment) {
+		return ""
+	}
+	escapedPath := referer.EscapedPath()
+	if escapedPath == "" || !strings.HasPrefix(escapedPath, "/") {
+		return ""
+	}
+	target := escapedPath
+	if referer.ForceQuery || referer.RawQuery != "" {
+		target += "?" + referer.RawQuery
+	}
+	return target
+}
+
 func redirectTarget(req *http.Request, result Result) string {
 	if result.Redirect != "" {
 		return result.Redirect
@@ -569,13 +758,16 @@ func redirectTarget(req *http.Request, result Result) string {
 	if req == nil {
 		return ""
 	}
-	if target := strings.TrimSpace(req.Header.Get("Referer")); target != "" {
+	if target := requestReturnTarget(req); target != "" {
+		return target
+	}
+	if target := sanitizedReferer(req); target != "" {
 		return target
 	}
 	if actionTarget := stripActionPath(req.URL.Path); actionTarget != "" {
 		return actionTarget
 	}
-	return req.Header.Get("Referer")
+	return ""
 }
 
 // WantsJSON reports whether req negotiated GoSX's managed-action JSON

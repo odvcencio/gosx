@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added: native actions can preserve an exact same-origin return target
+
+- `action.ReturnTargetField` exposes the reserved `__gosx_return_to` form
+  field for progressively enhanced mutations that should return to a specific
+  path, query, and fragment. The server accepts only a root-relative,
+  same-origin target, removes the private field before application handlers or
+  feedback can observe it, and uses it ahead of a safe same-site referrer or
+  the action route fallback. Explicit handler redirects remain authoritative.
+
+### Fixed: managed navigation preserves and applies URL fragments
+
+- Authored fragments now survive fetch responses whose `Response.url` omits
+  them, including same-origin HTTP redirects that change the path or query.
+- Same-document fragment changes update history, focus, and scroll without a
+  redundant page fetch. Redirect-backed managed actions invalidate the target
+  page cache and scroll to their destination fragment instead of retaining the
+  outgoing scroll position.
+
 ## v0.53.3 (2026-08-23)
 
 ### Fixed: typed legacy `<Each>` preserves dynamic selector boundaries

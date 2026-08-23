@@ -314,7 +314,17 @@ count    // local to the declaring island
 
 **Sessions and Auth** — Cookie-backed sessions with HMAC-SHA256 signing, optional AES-GCM encryption, previous-secret rotation, CSRF protection with constant-time token comparison, and flash values. Auth supports sessions, magic links, OAuth 2.0 (GitHub, Google), and WebAuthn/Passkeys.
 
-**Actions** — Named server-side mutation handlers with form/JSON parsing, field-level validation errors, redirect-safe flash state, and `action.WantsJSON` as the shared authority when application code must distinguish a managed action from a native form submission.
+**Actions** — Named server-side mutation handlers with form/JSON parsing, field-level validation errors, redirect-safe flash state, and `action.WantsJSON` as the shared authority when application code must distinguish a managed action from a native form submission. Native forms can preserve an exact path, query, and fragment by rendering the reserved return-target field:
+
+```go
+<input
+    type="hidden"
+    name={action.ReturnTargetField}
+    value="/board?page=2#board-pool"
+/>
+```
+
+Return targets must be root-relative and same-origin. An explicit handler redirect takes precedence; otherwise GoSX falls back to a safe same-site referrer and then the action route. Managed navigation preserves authored fragments across fetches and same-origin HTTP redirects, and same-document fragment changes do not refetch the page.
 
 **Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
 
