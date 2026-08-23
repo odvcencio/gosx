@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.53.3 (2026-08-23)
+
+### Fixed: typed legacy `<Each>` preserves dynamic selector boundaries
+
+- The v0.53.2 selector guard incorrectly continued static field resolution
+  through map, interface, and `any` projections, treating valid legacy dynamic
+  keys as Go struct selectors and rejecting those views before rendering.
+- Resolution now stops at the dynamic boundary and keeps the projected selector
+  path opaque. Known struct hops before that boundary and real struct-backed
+  item fields remain strict. Focused lowering and strict-check coverage plus an
+  actual Gridiron Draft Room production build verify the corrected contract.
+
 ## v0.53.2 (2026-08-23)
 
 ### Fixed: typed legacy `<Each>` selectors honor strict field visibility
