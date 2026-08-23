@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/crdt"
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/island/program"
@@ -111,6 +112,100 @@ func TestBridgeHydrateComputeIslandDoesNotPushPatches(t *testing.T) {
 	if b.ComputeIslandCount() != 0 {
 		t.Fatalf("expected disposed compute island, got %d", b.ComputeIslandCount())
 	}
+}
+
+func TestBridgeHydratePatchesPreloadedSharedAndComputedValues(t *testing.T) {
+	tests := []struct {
+		name string
+		prog *program.Program
+		want string
+	}{
+		{name: "direct", prog: sharedDisplay("$x"), want: "7"},
+		{name: "computed", prog: computedSharedDisplay("$x"), want: "14"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := New()
+			if err := b.SetSharedSignalJSON("$x", "7"); err != nil {
+				t.Fatal(err)
+			}
+			var pushed []string
+			b.SetPatchCallback(func(_ string, patchJSON string) {
+				pushed = append(pushed, patchJSON)
+			})
+			data, err := program.EncodeJSON(tt.prog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := b.HydrateIsland("island-0", tt.prog.Name, `{}`, data, "json"); err != nil {
+				t.Fatal(err)
+			}
+			if len(pushed) != 1 || !strings.Contains(pushed[0], `"text":"`+tt.want+`"`) {
+				t.Fatalf("hydration patches = %v, want one SetText(%s)", pushed, tt.want)
+			}
+			reconciler, _ := b.LookupReconciler("island-0")
+			island := reconciler.(*vm.Island)
+			tree := island.CurrentTree()
+			if tree == nil || len(tree.Nodes) < 2 || tree.Nodes[1].Text != tt.want {
+				t.Fatalf("hydrated tree = %#v, want text %s", tree, tt.want)
+			}
+		})
+	}
+}
+
+func TestBridgeSharedArrayWinsAcrossHydrationOrder(t *testing.T) {
+	prog := &program.Program{
+		Name: "SharedArray",
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "strong", Children: []program.NodeID{1}},
+			{Kind: program.NodeExpr, Expr: 2},
+		},
+		Root: 0,
+		Exprs: []program.Expr{
+			{Op: program.OpLitString, Value: "[]string{}", Type: program.TypeAny},
+			{Op: program.OpSignalGet, Value: "$saved", Type: program.TypeAny},
+			{Op: program.OpLen, Operands: []program.ExprID{1}, Type: program.TypeInt},
+		},
+		Signals: []program.SignalDef{{Name: "$saved", Type: program.TypeAny, Init: 0}},
+	}
+	data, err := program.EncodeBinary(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertCount := func(t *testing.T, b *Bridge, want string) {
+		t.Helper()
+		reconciler, ok := b.LookupReconciler("island-0")
+		if !ok {
+			t.Fatal("island reconciler not registered")
+		}
+		tree := reconciler.(*vm.Island).CurrentTree()
+		if tree == nil || len(tree.Nodes) < 2 || tree.Nodes[1].Text != want {
+			t.Fatalf("tree = %#v, want shared length %s", tree, want)
+		}
+	}
+
+	t.Run("controller before island", func(t *testing.T) {
+		b := New()
+		if err := b.SetSharedSignalJSON("$saved", `["session"]`); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.HydrateIsland("island-0", prog.Name, `{}`, data, "bin"); err != nil {
+			t.Fatal(err)
+		}
+		assertCount(t, b, "1")
+	})
+
+	t.Run("island before controller", func(t *testing.T) {
+		b := New()
+		if err := b.HydrateIsland("island-0", prog.Name, `{}`, data, "bin"); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.SetSharedSignalJSON("$saved", `["session"]`); err != nil {
+			t.Fatal(err)
+		}
+		assertCount(t, b, "1")
+	})
 }
 
 func TestBridgeDispose(t *testing.T) {

@@ -492,6 +492,116 @@ func TestParseHandlerCallWithArgs(t *testing.T) {
 	}
 }
 
+func TestParseBrowserHostCallInHandlerScope(t *testing.T) {
+	scope := &ExprScope{Browser: true}
+	exprs, rootID, err := ParseExpr(`browser.Focus("#search")`, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := exprs[rootID]
+	if call.Op != program.OpHostCall || call.Value != "browser.Focus" {
+		t.Fatalf("browser call = %+v, want OpHostCall browser.Focus", call)
+	}
+	if len(call.Operands) != 1 || call.Type != program.TypeBool {
+		t.Fatalf("browser call operands/type = %d/%v", len(call.Operands), call.Type)
+	}
+}
+
+func TestParseBrowserEffectBooleanGuards(t *testing.T) {
+	scope := &ExprScope{Browser: true}
+	for _, source := range []string{
+		`browser.Open(true, "#dialog")`,
+		`browser.FocusMove(true, "[role=option]", -1)`,
+		`browser.Activate(true, "[role=option]")`,
+		`browser.Refresh(false)`,
+		`browser.PreventDefault(true)`,
+		`browser.Navigate(true, "/agenda", true, true)`,
+	} {
+		exprs, rootID, err := ParseExpr(source, scope)
+		if err != nil {
+			t.Fatalf("ParseExpr(%q): %v", source, err)
+		}
+		if exprs[rootID].Op != program.OpHostCall {
+			t.Fatalf("ParseExpr(%q) op = %v, want OpHostCall", source, exprs[rootID].Op)
+		}
+	}
+}
+
+func TestParseBrowserMethodAllowlistAndArity(t *testing.T) {
+	scope := &ExprScope{Browser: true}
+	for _, source := range []string{
+		`browser.Eval("alert(1)")`,
+		`browser.StorageGet("local", "key")`,
+		`browser.Focus()`,
+		`browser.Focus(false)`,
+		`browser.Focus("#one", "#two")`,
+		`browser.Activate()`,
+		`browser.Refresh(true, false)`,
+	} {
+		if _, _, err := ParseExpr(source, scope); err == nil {
+			t.Fatalf("ParseExpr(%q) succeeded, want browser allowlist/arity error", source)
+		}
+	}
+}
+
+func TestParseBrowserReceiverIsHandlerOnly(t *testing.T) {
+	if _, _, err := ParseExpr(`browser.Focus("#search")`, &ExprScope{}); err == nil {
+		t.Fatal("browser host call outside handler scope succeeded")
+	}
+}
+
+func TestParseAuthoredSignalsWinEventFieldNameCollisions(t *testing.T) {
+	for _, signalName := range []string{"code", "data"} {
+		scope := &ExprScope{
+			Signals:     map[string]bool{signalName: true},
+			EventFields: map[string]bool{signalName: true, "value": true},
+		}
+		exprs, rootID, err := ParseExpr(signalName+`.Set(value)`, scope)
+		if err != nil {
+			t.Fatalf("ParseExpr signal %q: %v", signalName, err)
+		}
+		set := exprs[rootID]
+		if set.Op != program.OpSignalSet || set.Value != signalName {
+			t.Fatalf("signal %q collision lowered to %+v, want OpSignalSet", signalName, set)
+		}
+		if len(set.Operands) != 1 || exprs[set.Operands[0]].Op != program.OpEventGet {
+			t.Fatalf("signal %q value operand did not remain OpEventGet", signalName)
+		}
+	}
+}
+
+func TestParseEventFieldsCarryTypedMissingValueContract(t *testing.T) {
+	wants := map[string]program.ExprType{
+		"type": program.TypeString, "value": program.TypeString,
+		"key": program.TypeString, "code": program.TypeString,
+		"targetID": program.TypeString, "currentTargetID": program.TypeString,
+		"pointerType": program.TypeString, "eventData": program.TypeString,
+		"checked": program.TypeBool, "ctrlKey": program.TypeBool,
+		"metaKey": program.TypeBool, "altKey": program.TypeBool,
+		"shiftKey": program.TypeBool, "repeat": program.TypeBool,
+		"editable": program.TypeBool, "isPrimary": program.TypeBool,
+		"selectedIndex": program.TypeInt, "pointerID": program.TypeInt,
+		"button": program.TypeInt, "buttons": program.TypeInt,
+		"width": program.TypeFloat, "height": program.TypeFloat,
+		"timeStamp": program.TypeFloat, "clientX": program.TypeFloat,
+		"clientY": program.TypeFloat, "pressure": program.TypeFloat,
+		"data": program.TypeAny,
+	}
+	fields := make(map[string]bool, len(wants))
+	for name := range wants {
+		fields[name] = true
+	}
+	for name, want := range wants {
+		exprs, root, err := ParseExpr(name, &ExprScope{EventFields: fields})
+		if err != nil {
+			t.Fatalf("ParseExpr(%q): %v", name, err)
+		}
+		if got := exprs[root]; got.Op != program.OpEventGet || got.Type != want {
+			t.Errorf("event %q lowered to %+v, want OpEventGet type %v", name, got, want)
+		}
+	}
+}
+
 func TestParseGoroutineRejected(t *testing.T) {
 	_, _, err := ParseExpr("go func(){}", &ExprScope{})
 	if err == nil {
@@ -645,5 +755,30 @@ func TestParseChainDepthCap(t *testing.T) {
 	_, _, err := ParseExpr(`items.filter(func(i){ return i.a }).filter(func(i){ return i.b }).filter(func(i){ return i.c }).filter(func(i){ return i.d }).filter(func(i){ return i.e })`, scope)
 	if err == nil {
 		t.Fatal("expected error for 5-level method chain")
+	}
+}
+
+func TestParseTypedSliceLiteral(t *testing.T) {
+	tests := []struct {
+		source string
+		want   int
+	}{
+		{source: `[]string{}`, want: 0},
+		{source: `[]string{"a", "b"}`, want: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			exprs, rootID, err := ParseExpr(tt.source, &ExprScope{})
+			if err != nil {
+				t.Fatalf("ParseExpr: %v", err)
+			}
+			root := exprs[rootID]
+			if root.Op != program.OpComposite || root.Value != "slice" {
+				t.Fatalf("root = %#v, want OpComposite slice", root)
+			}
+			if got := len(root.Operands) / 2; got != tt.want {
+				t.Fatalf("elements = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }

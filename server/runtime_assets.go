@@ -18,7 +18,19 @@ import (
 // bootstrap.js has not been built yet (e.g. during `go run` development).
 const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
 (function(){
-  window.__gosx = window.__gosx || { version: "dev", islands: new Map(), engines: new Map(), hubs: new Map(), controllers: new Map(), textLayouts: new Map(), sharedSignals: { values: new Map(), subscribers: new Map() }, input: {}, ready: true };
+  var gosx = window.__gosx || {};
+  window.__gosx = gosx;
+  if (!gosx.navigation && window.__gosx_page_nav) gosx.navigation = window.__gosx_page_nav;
+  gosx.version = "dev";
+  gosx.islands = new Map();
+  gosx.computeIslands = new Map();
+  gosx.engines = new Map();
+  gosx.hubs = new Map();
+  gosx.controllers = new Map();
+  gosx.textLayouts = new Map();
+  gosx.sharedSignals = { values: new Map(), subscribers: new Map(), nextID: 0 };
+  gosx.input = { pending: null, frameHandle: 0, providers: Object.create(null) };
+  gosx.ready = false;
   window.__gosx_engine_factories = window.__gosx_engine_factories || Object.create(null);
   window.__gosx_register_engine_factory = window.__gosx_register_engine_factory || function(name, factory) { window.__gosx_engine_factories[name] = factory; };
   // Mount engines from page manifest
@@ -39,6 +51,7 @@ const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
       } catch(ex) {}
     });
   } catch(ex) {}
+  gosx.ready = true;
 })();
 `
 

@@ -57,6 +57,12 @@ func setSlimGlobalValue(t *testing.T, name string, value any) {
 	})
 }
 
+func slimUint8ArrayFromBytes(b []byte) js.Value {
+	arr := js.Global().Get("Uint8Array").New(len(b))
+	js.CopyBytesToJS(arr, b)
+	return arr
+}
+
 func TestIslandsOnlyRuntimeHydrateAndDispatchCompiledGSX(t *testing.T) {
 	prog := compileSlimIslandProgram(t, `package main
 
@@ -110,6 +116,175 @@ func Counter() Node {
 	if !foundTextPatch {
 		t.Fatalf("expected text patch setting counter to 1, got %#v", patches)
 	}
+}
+
+func TestIslandsOnlyRuntimeSharedSliceStorageWinsAcrossHydrationOrder(t *testing.T) {
+	controllerFirst := compileSlimIslandProgram(t, `package main
+
+//gosx:island
+func ControllerFirst() Node {
+	saved := signal.NewShared("$controllerFirst", []string{})
+	clear := func() { saved.Set(saved.Get().filter(func(item){ return false })) }
+	return <div><strong>{saved.Get().length}</strong><button onClick={clear}>Clear</button></div>
+}`)
+	islandFirst := compileSlimIslandProgram(t, `package main
+
+//gosx:island
+func IslandFirst() Node {
+	saved := signal.NewShared("$islandFirst", []string{})
+	clear := func() { saved.Set(saved.Get().filter(func(item){ return false })) }
+	return <div><strong>{saved.Get().length}</strong><button onClick={clear}>Clear</button></div>
+}`)
+	encode := func(prog *program.Program) js.Value {
+		t.Helper()
+		data, err := program.EncodeBinary(prog)
+		if err != nil {
+			t.Fatalf("encode %s: %v", prog.Name, err)
+		}
+		return slimUint8ArrayFromBytes(data)
+	}
+	patches := make(map[string][]vm.PatchOp)
+	setSlimGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any {
+		var batch []vm.PatchOp
+		if err := json.Unmarshal([]byte(args[1].String()), &batch); err != nil {
+			t.Fatalf("unmarshal patches: %v", err)
+		}
+		id := args[0].String()
+		patches[id] = append(patches[id], batch...)
+		return nil
+	})
+	setSlimGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+	registerRuntime(bridge.New())
+
+	js.Global().Get("__gosx_set_shared_signal").Invoke("$controllerFirst", `["session"]`)
+	if ret := js.Global().Get("__gosx_hydrate").Invoke("controller-first", controllerFirst.Name, `{}`, encode(controllerFirst), "bin"); !ret.IsNull() {
+		t.Fatalf("hydrate controller-first: %q", ret.String())
+	}
+	if ret := js.Global().Get("__gosx_hydrate").Invoke("island-first", islandFirst.Name, `{}`, encode(islandFirst), "bin"); !ret.IsNull() {
+		t.Fatalf("hydrate island-first: %q", ret.String())
+	}
+	js.Global().Get("__gosx_set_shared_signal").Invoke("$islandFirst", `["session"]`)
+
+	for _, id := range []string{"controller-first", "island-first"} {
+		found := false
+		for _, patch := range patches[id] {
+			if patch.Kind == vm.PatchSetText && patch.Text == "1" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("%s patches = %#v, want stored count 1", id, patches[id])
+		}
+		if ret := js.Global().Get("__gosx_action").Invoke(id, "clear", `{}`); ret.Int() <= 0 {
+			t.Fatalf("clear %s returned %v", id, ret)
+		}
+	}
+	for _, name := range []string{"$controllerFirst", "$islandFirst"} {
+		if got := js.Global().Get("__gosx_get_shared_signal").Invoke(name).String(); got != "[]" {
+			t.Fatalf("cleared %s = %s, want []", name, got)
+		}
+	}
+}
+
+func TestIslandsOnlyRuntimeComputedChainBinaryRoundTrip(t *testing.T) {
+	prog := compileSlimIslandProgram(t, `package main
+
+//gosx:island
+func ComputedCounter() Node {
+	count := signal.New(1)
+	doubled := signal.Derive(func() int { return count.Get() * 2 })
+	label := signal.Derive(func() int { return doubled.Get() + 1 })
+	increment := func() { count.Set(count.Get() + 1) }
+	return <div>
+		<output>{label.Get()}</output>
+		<button onClick={increment}>+</button>
+	</div>
+}`)
+	data, err := program.EncodeBinary(prog)
+	if err != nil {
+		t.Fatalf("encode binary: %v", err)
+	}
+	decoded, err := program.DecodeBinary(data)
+	if err != nil {
+		t.Fatalf("decode binary: %v", err)
+	}
+	if len(decoded.Computeds) != 2 {
+		t.Fatalf("decoded computeds = %+v, want doubled and label", decoded.Computeds)
+	}
+	labelExpr := decoded.Exprs[decoded.Computeds[1].Expr]
+	if labelExpr.Op != program.OpAdd || len(labelExpr.Operands) != 2 {
+		t.Fatalf("decoded label body = %+v, want OpAdd", labelExpr)
+	}
+	dependency := decoded.Exprs[labelExpr.Operands[0]]
+	if dependency.Op != program.OpSignalGet || dependency.Value != "doubled" {
+		t.Fatalf("decoded label dependency = %+v, want OpSignalGet(doubled)", dependency)
+	}
+
+	var patches []vm.PatchOp
+	setSlimGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any {
+		if err := json.Unmarshal([]byte(args[1].String()), &patches); err != nil {
+			t.Fatalf("unmarshal patches: %v", err)
+		}
+		return nil
+	})
+	setSlimGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+	registerRuntime(bridge.New())
+
+	wire := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(wire, data)
+	if ret := js.Global().Get("__gosx_hydrate").Invoke("computed-0", decoded.Name, `{}`, wire, "bin"); !ret.IsNull() {
+		t.Fatalf("hydrate computed binary returned %q", ret.String())
+	}
+	if ret := js.Global().Get("__gosx_action").Invoke("computed-0", "increment", `{}`); ret.Int() <= 0 {
+		t.Fatalf("computed increment returned %v, want patches", ret)
+	}
+	for _, patch := range patches {
+		if patch.Kind == vm.PatchSetText && patch.Text == "5" {
+			return
+		}
+	}
+	t.Fatalf("computed binary chain did not patch text to 5: %#v", patches)
+}
+
+func TestIslandsOnlyRuntimeIntegralEventCoordinateUsesFloatArithmetic(t *testing.T) {
+	prog := compileSlimIslandProgram(t, `package main
+
+//gosx:island
+func PointerHalf() Node {
+	half := signal.New(0.0)
+	capture := func() { half.Set(clientX / 2) }
+	return <div onPointerMove={capture}>{half.Get()}</div>
+}`)
+	data, err := program.EncodeBinary(prog)
+	if err != nil {
+		t.Fatalf("encode binary: %v", err)
+	}
+
+	var patches []vm.PatchOp
+	setSlimGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any {
+		if err := json.Unmarshal([]byte(args[1].String()), &patches); err != nil {
+			t.Fatalf("unmarshal patches: %v", err)
+		}
+		return nil
+	})
+	setSlimGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+	registerRuntime(bridge.New())
+
+	wire := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(wire, data)
+	if ret := js.Global().Get("__gosx_hydrate").Invoke("pointer-half-0", prog.Name, `{}`, wire, "bin"); !ret.IsNull() {
+		t.Fatalf("hydrate pointer binary returned %q", ret.String())
+	}
+	if ret := js.Global().Get("__gosx_action").Invoke("pointer-half-0", "capture", `{"clientX":13}`); ret.Int() <= 0 {
+		t.Fatalf("pointer capture returned %v, want patches", ret)
+	}
+	for _, patch := range patches {
+		if patch.Kind == vm.PatchSetText && patch.Text == "6.5" {
+			return
+		}
+	}
+	t.Fatalf("integral clientX did not use float division: %#v", patches)
 }
 
 func TestIslandsOnlyRuntimeHydrateComputeIsland(t *testing.T) {

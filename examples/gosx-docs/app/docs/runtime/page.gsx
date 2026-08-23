@@ -48,6 +48,45 @@ func Page() Node {
 	    ctx.AddHead(server.NavigationScript())
 	    return server.HTMLDocument(ctx.Title("My App"), ctx.Head(), body)
 	})`)}
+			<p>
+				Programmatic
+				<span class="inline-code">navigation.navigate(url)</span>
+				soft-fetches only same-origin HTTP(S) documents. Safe cross-origin HTTP(S) targets use a normal hard navigation; non-HTTP schemes are rejected without fetching or changing the location.
+			</p>
+			<p>
+				Call
+				<span class="inline-code">window.__gosx.navigation.revalidate()</span>
+				to invalidate cached HTML for the current URL and run one forced same-URL soft navigation. It returns a promise, replaces rather than pushes history, and preserves scroll by default. Fetch failures reject before the live document is replaced, so a caller may choose a hard-load fallback. The legacy
+				<span class="inline-code">refresh()</span>
+				and its
+				<span class="inline-code">refreshState()</span>
+				alias synchronously reapply navigation state without fetching.
+			</p>
+			{CodeBlock("javascript", `await window.__gosx.navigation.revalidate()
+
+	// Opt into normal top-of-page scroll for this revalidation.
+	await window.__gosx.navigation.revalidate({ preserveScroll: false })
+
+	// Synchronous state-only compatibility operation; no network request.
+	const state = window.__gosx.navigation.refresh()
+
+	// Read-only counters: started advances on fetch; applied advances only
+	// after that fetched page completes the managed navigation lifecycle.
+	const { started, applied } = window.__gosx.navigation.getFetchEpoch()`)}
+		</section>
+		<section id="headless-controllers">
+			<h2>Headless Controllers</h2>
+			<p>
+				A controller storage load can write decoded JSON directly into a shared signal, publish the legacy structured storage event through an output, or do both. A missing, empty, or invalid stored value does not overwrite the signal's typed island default; an output still receives an event with a null value.
+			</p>
+			{CodeBlock("go", `Storage: &controller.Storage{
+	    Namespace: "workspace",
+	    Load: []controller.StorageSlot{{
+	        Key:    "sidebar-open",
+	        Signal: "$sidebar.open", // decoded value directly
+	        Output: "events",        // optional structured event too
+	    }},
+	}`)}
 		</section>
 		<section id="page-transitions">
 			<h2>Page Transitions</h2>

@@ -1496,6 +1496,7 @@ func TestAppServesPrecompressedRuntimeAssetWhenAccepted(t *testing.T) {
 
 	app := New()
 	app.SetRuntimeRoot(root)
+	app.EnableGzip()
 	handler := app.Build()
 
 	req := httptest.NewRequest(http.MethodGet, "/gosx/runtime-islands.wasm", nil)

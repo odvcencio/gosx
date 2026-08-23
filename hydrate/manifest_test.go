@@ -55,6 +55,38 @@ func TestManifestAddIsland(t *testing.T) {
 	}
 }
 
+func TestManifestModernEventlessIslandSerializesExplicitEmptyEvents(t *testing.T) {
+	m := NewManifest()
+	if _, err := m.AddIsland("SharedStatus", "main", map[string]any{"shared": true}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := m.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Islands []struct {
+			Events json.RawMessage `json:"events"`
+		} `json:"islands"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.Islands) != 1 || string(wire.Islands[0].Events) != "[]" {
+		t.Fatalf("eventless modern island manifest = %s, want explicit events:[]", data)
+	}
+
+	// Missing/null remain distinguishable from modern [] after decoding, so the
+	// JS bootstrap can retain its attach-all fallback for old manifests.
+	legacy, err := Unmarshal([]byte(`{"version":"0.1.0","islands":[{"id":"old","component":"Old","bundleId":"main","props":{},"events":null}],"bundles":{},"runtime":{"path":"/runtime.wasm"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Islands[0].Events != nil {
+		t.Fatalf("legacy null events decoded as %#v, want nil compatibility marker", legacy.Islands[0].Events)
+	}
+}
+
 func TestManifestAddComputeIsland(t *testing.T) {
 	m := NewManifest()
 	id, err := m.AddComputeIsland(
@@ -257,6 +289,7 @@ func TestManifestAddControllerRoundTrip(t *testing.T) {
 			Namespace: "prefs",
 			Load: []controller.StorageSlot{{
 				Key:    "theme",
+				Signal: "$theme",
 				Output: "events",
 			}},
 			Save: []controller.StorageSlot{{
@@ -291,6 +324,9 @@ func TestManifestAddControllerRoundTrip(t *testing.T) {
 	}
 	if got.Config.Storage.Load[0].Output != "events" {
 		t.Fatalf("storage did not round trip: %#v", got.Config.Storage)
+	}
+	if got.Config.Storage.Load[0].Signal != "$theme" {
+		t.Fatalf("storage signal did not round trip: %#v", got.Config.Storage)
 	}
 }
 
@@ -329,6 +365,33 @@ func TestHubBindingDirectionRoundTrip(t *testing.T) {
 	}
 	if strings.Contains(string(data2), "direction") {
 		t.Fatalf("expected direction to be omitted for empty string, got %s", data2)
+	}
+}
+
+func TestHubBindingRefreshRoundTrip(t *testing.T) {
+	preserveScroll := false
+	b := HubBinding{
+		Event:                 "agenda.changed",
+		Refresh:               true,
+		RefreshDebounceMS:     75,
+		RefreshPreserveScroll: &preserveScroll,
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), `"signal"`) {
+		t.Fatalf("refresh-only binding should omit signal: %s", data)
+	}
+	var got HubBinding
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !got.Refresh || got.RefreshDebounceMS != 75 {
+		t.Fatalf("refresh fields did not round trip: %#v", got)
+	}
+	if got.RefreshPreserveScroll == nil || *got.RefreshPreserveScroll {
+		t.Fatalf("explicit preserve-scroll=false did not round trip: %#v", got)
 	}
 }
 

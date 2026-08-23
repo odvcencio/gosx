@@ -387,13 +387,20 @@
     if (!area) return;
     const loads = Array.isArray(storageConfig.load) ? storageConfig.load : [];
     for (const slot of loads) {
-      if (!slot || !slot.key || !slot.output) continue;
+      if (!slot || !slot.key || (!slot.signal && !slot.output)) continue;
       let value = null;
+      let decoded = false;
       try {
         const raw = area.getItem(controllerStorageKey(storageConfig, slot.key));
-        value = raw == null || raw === "" ? null : JSON.parse(raw);
+        if (raw != null && raw !== "") {
+          value = JSON.parse(raw);
+          decoded = true;
+        }
       } catch (_error) {}
-      controllerPublish(record, slot.output, { kind: "storage", name: String(slot.key), value: value });
+      if (slot.signal && decoded) controllerSetValue(record, slot.signal, value);
+      if (slot.output) {
+        controllerPublish(record, slot.output, { kind: "storage", name: String(slot.key), value: value });
+      }
     }
     const saves = Array.isArray(storageConfig.save) ? storageConfig.save : [];
     for (const slot of saves) {

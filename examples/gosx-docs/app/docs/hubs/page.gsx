@@ -67,6 +67,28 @@ func Page() Node {
 			{CodeBlock("go", `// In main.go or your router setup
 	router.Handle("/ws/collab", collab.Handler())`)}
 		</section>
+		<section id="runtime-bindings">
+			<h2>Runtime Bindings</h2>
+			<p>
+				Bind an inbound event to a shared signal, a forced soft refresh, or both. Refresh-only bindings do not need a signal. A hub connection coalesces all matching refresh bindings into one rearmed burst with
+				<span class="inline-code">RefreshDebounceMS</span>
+				from the latest event. Setting
+				<span class="inline-code">RefreshPreserveScroll</span>
+				to false on any matching binding wins for that pending burst. A newer successfully applied managed page suppresses an older pending refresh echo; a failed or still-pending fetch never consumes it, and an event received after that fetch still revalidates. Transport welcome frames do nothing unless a binding explicitly names the welcome event.
+			</p>
+			{CodeBlock("go", `ctx.Runtime().BindHub("agenda", "/ws/agenda", []hydrate.HubBinding{
+	    {
+	        Event:             "agenda.changed",
+	        Signal:            "$agenda",
+	        Refresh:           true,
+	        RefreshDebounceMS: 60,
+	    },
+	    {
+	        Event:   "reviews.changed",
+	        Refresh: true, // refresh-only is valid
+	    },
+	})`)}
+		</section>
 		<section id="websocket-protocol">
 			<h2>WebSocket Protocol</h2>
 			<p>

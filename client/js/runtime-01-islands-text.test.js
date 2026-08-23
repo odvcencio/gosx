@@ -327,6 +327,227 @@ test("bootstrap forwards click target value to delegated island handlers", async
   ]);
 });
 
+test("delegated island pointer events carry modifiers, ids, dataset, and synchronous event context", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+  const button = new FakeElement("button", null);
+  wrapper.id = "gosx-island-pointer";
+  button.id = "drag-handle";
+  button.setAttribute("data-gosx-on-pointerdown", "beginDrag");
+  button.setAttribute("data-session-id", "session-7");
+  componentRoot.appendChild(button);
+  wrapper.appendChild(componentRoot);
+
+  let eventObject;
+  let contextDuringAction;
+  let env;
+  env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/pointer.json": { text: '{"name":"PointerControls"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [{
+        id: wrapper.id,
+        component: "PointerControls",
+        props: {},
+        programRef: "/pointer.json",
+        events: [
+          { eventType: "pointerDown" },
+          { eventType: "pointerdown" },
+        ],
+      }],
+    },
+    onAction() {
+      contextDuringAction = [env.context.__gosx_current_event, env.context.__gosx_current_handler];
+      return 0;
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.deepEqual(Array.from(wrapper.listeners.keys()), ["pointerdown"]);
+  eventObject = {
+    type: "pointerdown",
+    target: button,
+    pointerId: 9,
+    pointerType: "pen",
+    isPrimary: true,
+    clientX: 12.5,
+    clientY: 44,
+    button: 0,
+    buttons: 1,
+    pressure: 0.75,
+    ctrlKey: true,
+    shiftKey: true,
+    preventDefault() {},
+  };
+  (wrapper.listeners.get("pointerdown") || [])[0].listener(eventObject);
+
+  assert.equal(eventObject.__gosx_handled, true);
+  assert.deepEqual(contextDuringAction, [eventObject, button]);
+  assert.equal(env.context.__gosx_current_event, undefined);
+  assert.equal(env.context.__gosx_current_handler, undefined);
+  const payload = JSON.parse(env.actionCalls[0][2]);
+  assert.deepEqual(payload, {
+    type: "pointerdown",
+    targetID: "drag-handle",
+    currentTargetID: "drag-handle",
+    ctrlKey: true,
+    shiftKey: true,
+    pointerID: 9,
+    pointerType: "pen",
+    isPrimary: true,
+    clientX: 12.5,
+    clientY: 44,
+    buttons: 1,
+    pressure: 0.75,
+    data: { sessionId: "session-7" },
+  });
+});
+
+test("delegated island drag events transfer authored data and prevent handled drops", async () => {
+  const wrapper = new FakeElement("div", null);
+  const componentRoot = new FakeElement("div", null);
+  const card = new FakeElement("article", null);
+  const lane = new FakeElement("section", null);
+  wrapper.id = "gosx-island-drag";
+  card.setAttribute("data-gosx-on-dragstart", "startMove");
+  card.setAttribute("data-gosx-event-value", "session-42");
+  lane.setAttribute("data-gosx-on-dragover", "previewMove");
+  lane.setAttribute("data-gosx-on-drop", "finishMove");
+  lane.setAttribute("data-track", "main");
+  componentRoot.appendChild(card);
+  componentRoot.appendChild(lane);
+  wrapper.appendChild(componentRoot);
+
+  const transfer = {
+    value: "",
+    setData(type, value) { if (type === "text/plain") this.value = String(value); },
+    getData(type) { return type === "text/plain" ? this.value : ""; },
+  };
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/drag.json": { text: '{"name":"DragControls"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [{ id: wrapper.id, component: "DragControls", props: {}, programRef: "/drag.json" }],
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  (wrapper.listeners.get("dragstart") || [])[0].listener({
+    type: "dragstart", target: card, dataTransfer: transfer, preventDefault() {},
+  });
+  let prevented = 0;
+  (wrapper.listeners.get("dragover") || [])[0].listener({
+    type: "dragover", target: lane, dataTransfer: transfer, preventDefault() { prevented++; },
+  });
+  (wrapper.listeners.get("drop") || [])[0].listener({
+    type: "drop", target: lane, dataTransfer: transfer, preventDefault() { prevented++; },
+  });
+
+  assert.equal(transfer.value, "session-42");
+  assert.equal(prevented, 2);
+  assert.deepEqual(env.actionCalls.map((call) => [call[1], JSON.parse(call[2])]), [
+    ["startMove", { type: "dragstart", eventData: "session-42" }],
+    ["previewMove", { type: "dragover", data: { track: "main" } }],
+    ["finishMove", { type: "drop", data: { track: "main" }, eventData: "session-42" }],
+  ]);
+});
+
+test("document/window island event conventions detach from their actual listener targets", async () => {
+  const wrapper = new FakeElement("div", null);
+  const shell = new FakeElement("main", null);
+  wrapper.id = "gosx-island-shell";
+  shell.id = "route-shell";
+  shell.setAttribute("data-gosx-on-document-keydown", "shortcut");
+  shell.setAttribute("data-gosx-on-window-resize", "resize");
+  wrapper.appendChild(shell);
+  const env = createContext({
+    elements: [wrapper],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/shell.json": { text: '{"name":"RouteShell"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [{ id: wrapper.id, component: "RouteShell", props: {}, programRef: "/shell.json" }],
+    },
+  });
+  env.context.innerWidth = 1440;
+  env.context.innerHeight = 900;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.document.dispatchEvent({
+    type: "keydown", target: env.document.body, key: "k", code: "KeyK", metaKey: true,
+  });
+  env.context.dispatchEvent({ type: "resize", target: env.context });
+  assert.deepEqual(env.actionCalls.map((call) => [call[1], JSON.parse(call[2])]), [
+    ["shortcut", { type: "keydown", key: "k", code: "KeyK", currentTargetID: "route-shell", metaKey: true }],
+    ["resize", { type: "resize", currentTargetID: "route-shell", width: 1440, height: 900 }],
+  ]);
+
+  env.context.__gosx_dispose_island(wrapper.id);
+  const callCount = env.actionCalls.length;
+  env.document.dispatchEvent({ type: "keydown", target: env.document.body, key: "x" });
+  env.context.dispatchEvent({ type: "resize", target: env.context });
+  assert.equal(env.actionCalls.length, callCount);
+});
+
+test("document island events fan out unless a handler explicitly stops island fanout", async () => {
+  const firstRoot = new FakeElement("div", null);
+  const firstShell = new FakeElement("main", null);
+  const secondRoot = new FakeElement("div", null);
+  const secondShell = new FakeElement("main", null);
+  firstRoot.id = "gosx-island-global-first";
+  secondRoot.id = "gosx-island-global-second";
+  firstShell.setAttribute("data-gosx-on-document-keydown", "firstShortcut");
+  secondShell.setAttribute("data-gosx-on-document-keydown", "secondShortcut");
+  firstRoot.appendChild(firstShell);
+  secondRoot.appendChild(secondShell);
+  let stopAfterFirst = false;
+  let env;
+  env = createContext({
+    elements: [firstRoot, secondRoot],
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      "/first.json": { text: '{"name":"FirstShell"}' },
+      "/second.json": { text: '{"name":"SecondShell"}' },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      islands: [
+        { id: firstRoot.id, component: "FirstShell", props: {}, programRef: "/first.json" },
+        { id: secondRoot.id, component: "SecondShell", props: {}, programRef: "/second.json" },
+      ],
+    },
+    onAction(_islandID, handlerName) {
+      if (stopAfterFirst && handlerName === "firstShortcut") {
+        env.context.__gosx_current_event.__gosx_stop_island_fanout = true;
+      }
+      return 0;
+    },
+  });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  env.document.dispatchEvent({ type: "keydown", target: env.document.body, key: "k" });
+  assert.deepEqual(env.actionCalls.map((call) => call[1]), ["firstShortcut", "secondShortcut"]);
+
+  env.actionCalls.length = 0;
+  stopAfterFirst = true;
+  env.document.dispatchEvent({ type: "keydown", target: env.document.body, key: "Escape" });
+  assert.deepEqual(env.actionCalls.map((call) => call[1]), ["firstShortcut"]);
+});
+
 test("bootstrap exposes a browser text measurement helper", () => {
   const env = createContext({});
 

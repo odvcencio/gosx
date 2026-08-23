@@ -1,10 +1,12 @@
 package ir_test
 
 import (
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/program"
 )
 
 func parse(t *testing.T, source []byte) (*ir.Program, error) {
@@ -288,9 +290,93 @@ func Demo() Node {
 	for _, c := range island.Computeds {
 		if c.Name == "doubled" {
 			emitted = true
+			if int(c.Expr) < 0 || int(c.Expr) >= len(island.Exprs) {
+				t.Fatalf("computed expr id %d out of bounds", c.Expr)
+			}
+			body := island.Exprs[c.Expr]
+			if body.Op != program.OpMul || len(body.Operands) != 2 {
+				t.Fatalf("computed body = %+v, want OpMul with two operands", body)
+			}
+			left := island.Exprs[body.Operands[0]]
+			if left.Op != program.OpSignalGet || left.Value != "count" {
+				t.Fatalf("computed dependency = %+v, want OpSignalGet(count)", left)
+			}
 		}
 	}
 	if !emitted {
 		t.Fatalf("computed not emitted into island program: %+v", island.Computeds)
 	}
+}
+
+func TestLowerRejectsUnsupportedComputedBodyShapes(t *testing.T) {
+	tests := []struct {
+		name   string
+		body   string
+		needle string
+	}{
+		{
+			name:   "non function argument",
+			body:   `bad := signal.Derive(42)`,
+			needle: `computed "bad": requires signal.Derive`,
+		},
+		{
+			name:   "no return",
+			body:   `bad := signal.Derive(func() int { count.Get() })`,
+			needle: `exactly one return statement`,
+		},
+		{
+			name:   "multiple statements",
+			body:   `bad := signal.Derive(func() int { value := count.Get(); return value })`,
+			needle: `multi-statement bodies are not supported`,
+		},
+		{
+			name:   "multiple return values",
+			body:   `bad := signal.Derive(func() (int, int) { return count.Get(), count.Get() })`,
+			needle: `return must contain exactly one expression`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := []byte(`package main
+
+//gosx:island
+func InvalidComputed() Node {
+	count := signal.New(1)
+	` + test.body + `
+	return <div>{count.Get()}</div>
+}
+`)
+			_, err := parse(t, source)
+			if err == nil || !strings.Contains(err.Error(), test.needle) {
+				t.Fatalf("Lower error = %v, want substring %q", err, test.needle)
+			}
+		})
+	}
+}
+
+func TestLowerIslandBrowserAuthoringImportToHostCall(t *testing.T) {
+	source := []byte(`package main
+
+import "m31labs.dev/gosx/browser"
+
+//gosx:island
+func CommandResults() Node {
+	activate := func() { browser.Activate("[data-command-result]") }
+	return <button onClick={activate}>Open</button>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	islandProg, err := ir.LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("LowerIsland failed: %v", err)
+	}
+	for _, expr := range islandProg.Exprs {
+		if expr.Op == program.OpHostCall && expr.Value == "browser.Activate" {
+			return
+		}
+	}
+	t.Fatal("browser.Activate did not lower to OpHostCall")
 }

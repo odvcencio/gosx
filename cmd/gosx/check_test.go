@@ -57,6 +57,60 @@ func TestRunCheckReportsReadError(t *testing.T) {
 	}
 }
 
+func TestRunCheckRejectsInvalidIslandComputeds(t *testing.T) {
+	tests := []struct {
+		name   string
+		decls  string
+		needle string
+	}{
+		{
+			name: "forward reference",
+			decls: `first := signal.Derive(func() int { return later.Get() })
+	later := signal.Derive(func() int { return 1 })`,
+			needle: "parse computed first",
+		},
+		{
+			name:   "self reference",
+			decls:  `loop := signal.Derive(func() int { return loop.Get() + 1 })`,
+			needle: "parse computed loop",
+		},
+		{
+			name:   "unsupported argument",
+			decls:  `bad := signal.Derive(42)`,
+			needle: `computed "bad": requires signal.Derive`,
+		},
+		{
+			name: "multi statement body",
+			decls: `count := signal.New(1)
+	bad := signal.Derive(func() int { value := count.Get(); return value })`,
+			needle: "multi-statement bodies are not supported",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "invalid.gsx")
+			writeTempFile(t, dir, "invalid.gsx", `package main
+
+//gosx:island
+func InvalidComputed() Node {
+	`+test.decls+`
+	return <div>invalid</div>
+}
+`)
+
+			var stderr bytes.Buffer
+			err := runCheck(path, &stderr)
+			if err == nil || !strings.Contains(err.Error(), test.needle) {
+				t.Fatalf("runCheck error = %v, want substring %q", err, test.needle)
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("runCheck printed success output on failure: %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestRunCheckAcceptsDocsAppPages(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", "..", "examples", "gosx-docs", "app"))
 	if err != nil {

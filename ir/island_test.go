@@ -500,3 +500,144 @@ func TestLowerIslandEmitsComponentScopeDefs(t *testing.T) {
 		t.Fatalf("expected handler lowering to expose event value in expr table, got %+v", island.Exprs)
 	}
 }
+
+func TestLowerIslandComputedDefinitionsUseSequentialScope(t *testing.T) {
+	baseProgram := func(computeds []ComputedInfo) *Program {
+		return &Program{
+			Nodes: []Node{{Kind: NodeExpr, Text: computeds[len(computeds)-1].Name}},
+			Components: []Component{{
+				Name:     "ComputedScope",
+				Root:     0,
+				IsIsland: true,
+				Scope: &ComponentScope{
+					Signals:   []SignalInfo{{Name: "count", Local: "count", InitExpr: "1", TypeHint: "int"}},
+					Computeds: computeds,
+				},
+			}},
+		}
+	}
+
+	valid, err := LowerIsland(baseProgram([]ComputedInfo{
+		{Name: "doubled", BodyExpr: "count.Get() * 2"},
+		{Name: "label", BodyExpr: "doubled.Get() + 1"},
+	}), 0)
+	if err != nil {
+		t.Fatalf("valid source-order chain: %v", err)
+	}
+	if len(valid.Computeds) != 2 {
+		t.Fatalf("valid computed chain = %+v", valid.Computeds)
+	}
+
+	tests := []struct {
+		name      string
+		computeds []ComputedInfo
+		want      string
+	}{
+		{
+			name: "forward reference",
+			computeds: []ComputedInfo{
+				{Name: "first", BodyExpr: "later.Get()"},
+				{Name: "later", BodyExpr: "count.Get()"},
+			},
+			want: "parse computed first",
+		},
+		{
+			name:      "self reference",
+			computeds: []ComputedInfo{{Name: "loop", BodyExpr: "loop.Get()"}},
+			want:      "parse computed loop",
+		},
+		{
+			name:      "missing body",
+			computeds: []ComputedInfo{{Name: "empty", BodyExpr: ""}},
+			want:      "exactly one return expression",
+		},
+		{
+			name:      "multi statement body",
+			computeds: []ComputedInfo{{Name: "many", BodyExpr: "count.Get(); count.Get()"}},
+			want:      "parse computed many",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := LowerIsland(baseProgram(test.computeds), 0)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("LowerIsland error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestLowerIslandHandlerBrowserHostAndExpandedEventFields(t *testing.T) {
+	prog := &Program{
+		Nodes: []Node{{
+			Kind:  NodeElement,
+			Tag:   "button",
+			Attrs: []Attr{{Kind: AttrExpr, Name: "onPointerDown", Expr: "activate", IsEvent: true}},
+		}},
+		Components: []Component{{
+			Name:     "BrowserControls",
+			Root:     0,
+			IsIsland: true,
+			Scope: &ComponentScope{Handlers: []HandlerInfo{{
+				Name: "activate",
+				Statements: []string{
+					`browser.PreventDefault(ctrlKey)`,
+					`browser.Focus(data["focusTarget"])`,
+					`browser.Submit(eventData != "" , "#move-form")`,
+				},
+			}}},
+		}},
+	}
+
+	island, err := LowerIsland(prog, 0)
+	if err != nil {
+		t.Fatalf("LowerIsland: %v", err)
+	}
+	wantEvents := map[string]program.ExprType{
+		"ctrlKey":   program.TypeBool,
+		"data":      program.TypeAny,
+		"eventData": program.TypeString,
+	}
+	foundEvents := make(map[string]bool, len(wantEvents))
+	hostCalls := 0
+	for _, expr := range island.Exprs {
+		if expr.Op == program.OpEventGet {
+			if wantType, ok := wantEvents[expr.Value]; ok {
+				foundEvents[expr.Value] = true
+				if expr.Type != wantType {
+					t.Errorf("event field %q type = %v, want %v", expr.Value, expr.Type, wantType)
+				}
+			}
+		}
+		if expr.Op == program.OpHostCall && len(expr.Value) > len("browser.") && expr.Value[:len("browser.")] == "browser." {
+			hostCalls++
+		}
+	}
+	if hostCalls != 3 {
+		t.Fatalf("browser host calls = %d, want 3; exprs=%+v", hostCalls, island.Exprs)
+	}
+	for field := range wantEvents {
+		if !foundEvents[field] {
+			t.Errorf("event field %q did not lower to OpEventGet", field)
+		}
+	}
+}
+
+func TestHandlerEventFieldsDoNotShadowAuthoredBindings(t *testing.T) {
+	scope := &ExprScope{
+		Signals:       map[string]bool{"code": true},
+		SignalAliases: map[string]string{"data": "$data"},
+		Props:         map[string]bool{"key": true},
+		Handlers:      map[string]bool{"repeat": true},
+		EventFields:   map[string]bool{},
+	}
+	handlerScope := handlerExprScope(scope)
+	for _, name := range []string{"code", "data", "key", "repeat"} {
+		if handlerScope.EventFields[name] {
+			t.Fatalf("event field %q shadows authored handler binding", name)
+		}
+	}
+	if !handlerScope.EventFields["value"] || !handlerScope.EventFields["timeStamp"] {
+		t.Fatalf("non-colliding event fields were not injected: %+v", handlerScope.EventFields)
+	}
+}

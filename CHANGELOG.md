@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Expanded the framework-owned island/browser runtime with allowlisted,
+  root-scoped handler effects (microtask-isolated dialogs and focus movement,
+  deferred activation, clipboard, managed navigation/refresh, deferred form submission, event
+  control, and scrolling); typed compact keyboard, pointer, drag/drop, dataset,
+  and timing payloads; lifecycle-safe document/window event conventions; and
+  manifest-selective delegated listeners with legacy compatibility, explicit
+  zero-listener eventless manifests, and nested-island ownership boundaries.
+  Island programs now execute chained reactive computed definitions across DOM,
+  Scene3D, and Canvas2D surfaces, including shared-signal rebinding, prop
+  invalidation, hot-reload/disposal cleanup, and guarded non-reentrant dispatch.
+  Reload binds new shared/computed inputs before its single DOM reconcile. The
+  same cohesive runtime upgrade adds forced soft-route refresh and mutation
+  revalidation, debounced hub-triggered refresh bindings, direct JSON
+  storage-to-signal hydration, and scoped accessible managed-form result
+  projection, including stale-error cleanup, status announcement, and
+  invalid-field focus.
+
 ## v0.36.0 (2026-07-26)
 
 ### Checkable cross-file claims (`internal/claimcheck`)

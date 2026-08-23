@@ -44,13 +44,14 @@ import (
 // host-call bridge. Mirrors the parity-test harness pattern Y.F established
 // (see hyphae/cmd/hypha-viz before the dogfood-parity deletion).
 type engineSurfaceRecordingCanvas struct {
-	calls     []string
-	fillStyle string
-	lastFillX float64
-	lastFillW float64
+	calls      []string
+	fillStyle  string
+	lastFillX  float64
+	lastFillW  float64
+	widthCalls int
 }
 
-func (r *engineSurfaceRecordingCanvas) Width() int  { return 400 }
+func (r *engineSurfaceRecordingCanvas) Width() int  { r.widthCalls++; return 400 }
 func (r *engineSurfaceRecordingCanvas) Height() int { return 300 }
 func (r *engineSurfaceRecordingCanvas) Clear()      { r.calls = append(r.calls, "Clear") }
 func (r *engineSurfaceRecordingCanvas) ClearRect(x, y, w, h float64) {
@@ -226,6 +227,54 @@ func TestHydrateEngineSurfaceDispatchEvent(t *testing.T) {
 		t.Errorf("FillRect x = %v, want 123", rec.lastFillX)
 	}
 	b.DisposeEngineSurface("surface-click")
+}
+
+func TestHydrateEngineSurfaceInitializesComputedAndRebuildsOncePerEventScope(t *testing.T) {
+	// viewport := signal.Derive(func() float64 { return c.Width() + ev.X })
+	// Mount and OnClick both draw using viewport. Width calls expose graph
+	// construction: one at hydration, one for staging all five click props, and
+	// one for restoring them. The former per-field path would rebuild ten times
+	// per click, while the old initializer never created the computed at all.
+	prog := &islandprogram.Program{
+		Name: "ComputedSurface",
+		Exprs: []islandprogram.Expr{
+			{Op: islandprogram.OpHostCall, Value: "c.Width", Type: islandprogram.TypeInt},                                                  // 0
+			{Op: islandprogram.OpPropGet, Value: "ev.X", Type: islandprogram.TypeFloat},                                                    // 1
+			{Op: islandprogram.OpAdd, Operands: []islandprogram.ExprID{0, 1}, Type: islandprogram.TypeFloat},                               // 2
+			{Op: islandprogram.OpSignalGet, Value: "viewport", Type: islandprogram.TypeFloat},                                              // 3
+			{Op: islandprogram.OpLitFloat, Value: "0", Type: islandprogram.TypeFloat},                                                      // 4
+			{Op: islandprogram.OpLitFloat, Value: "1", Type: islandprogram.TypeFloat},                                                      // 5
+			{Op: islandprogram.OpHostCall, Value: "c.FillRect", Operands: []islandprogram.ExprID{3, 4, 5, 5}, Type: islandprogram.TypeAny}, // 6
+			{Op: islandprogram.OpSeq, Operands: []islandprogram.ExprID{6}, Type: islandprogram.TypeAny},                                    // 7
+		},
+		Computeds: []islandprogram.ComputedDef{{Name: "viewport", Type: islandprogram.TypeFloat, Expr: 2}},
+		Handlers: []islandprogram.Handler{
+			{Name: "Mount", Body: []islandprogram.ExprID{7}},
+			{Name: "OnClick", Body: []islandprogram.ExprID{7}},
+		},
+	}
+	data, err := json.Marshal(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := &engineSurfaceRecordingCanvas{}
+	b := New()
+	if err := b.HydrateEngineSurface("computed-surface", prog.Name, `{}`, data, "json", surface.NewCanvasFromHostImpl(recorder)); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.lastFillX != 400 || recorder.widthCalls != 1 {
+		t.Fatalf("Mount computed x/calls = %v/%d, want 400/1", recorder.lastFillX, recorder.widthCalls)
+	}
+	if err := b.DispatchEngineSurfaceEvent("computed-surface", EngineSurfaceEventClick, []float64{23, 0, 0, 0, 0}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.lastFillX != 423 {
+		t.Fatalf("OnClick computed x = %v, want 423", recorder.lastFillX)
+	}
+	if recorder.widthCalls != 3 {
+		t.Fatalf("computed graph builds after one five-prop event = %d, want 3 total", recorder.widthCalls)
+	}
+	b.DisposeEngineSurface("computed-surface")
 }
 
 // TestHydrateEngineSurfaceStartLoopTicksThroughBridge verifies the canonical

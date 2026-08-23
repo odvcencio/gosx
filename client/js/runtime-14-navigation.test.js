@@ -8,6 +8,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const {
@@ -28,7 +29,80 @@ const {
   appendManagedHead,
   buildNavigatedDocument,
   installManualClock,
+  installManualTimers,
 } = require("./runtime-test-harness.js");
+
+const hubConnectionsSource = fs.readFileSync(
+  path.join(__dirname, "bootstrap-src", "30c-tail-hub-connections.js"),
+  "utf8",
+);
+
+test("bootstrap preserves navigation and request installed before it", async () => {
+  const env = createContext({ elements: [] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const namespace = env.context.__gosx;
+  const navigation = env.context.__gosx.navigation;
+  const request = function() { return Promise.resolve({ ok: true }); };
+  const relay = { send() {} };
+  namespace.request = request;
+  namespace.relay = relay;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx, namespace);
+  assert.equal(env.context.__gosx.navigation, navigation);
+  assert.equal(env.context.__gosx.request, request);
+  assert.equal(env.context.__gosx.relay, relay);
+  assert.equal(env.context.__gosx_page_nav, navigation);
+  assert.equal(env.context.__gosx.islands instanceof Map, true);
+});
+
+test("bootstrap restores legacy page navigation into the preserved namespace", async () => {
+  const env = createContext({ elements: [] });
+  const navigation = { navigate() {}, revalidate() {} };
+  const namespace = { request() {}, relay: {} };
+  env.context.__gosx = namespace;
+  env.context.__gosx_page_nav = navigation;
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  assert.equal(env.context.__gosx, namespace);
+  assert.equal(namespace.navigation, navigation);
+});
+
+test("development bootstrap stub preserves external namespace services and resets owned state", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "..", "server", "runtime_assets.go"),
+    "utf8",
+  );
+  const match = source.match(/const bootstrapStub = `([\s\S]*?)`\n/);
+  assert.ok(match, "bootstrapStub source must remain extractable");
+
+  const env = createContext({ elements: [] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const namespace = env.context.__gosx;
+  const navigation = namespace.navigation;
+  const request = function() { return Promise.resolve({ ok: true }); };
+  const relay = { configure() {} };
+  const staleIslands = new Map([["stale", {}]]);
+  namespace.request = request;
+  namespace.relay = relay;
+  namespace.islands = staleIslands;
+  namespace.ready = true;
+
+  runScript(match[1], env.context, "bootstrap-stub.js");
+
+  assert.equal(env.context.__gosx, namespace);
+  assert.equal(namespace.navigation, navigation);
+  assert.equal(namespace.request, request);
+  assert.equal(namespace.relay, relay);
+  assert.notEqual(namespace.islands, staleIslands);
+  assert.equal(namespace.islands.size, 0);
+  assert.equal(namespace.computeIslands.size, 0);
+  assert.equal(namespace.ready, true);
+});
 
 test("bootstrap exposes page lifecycle hooks and can re-bootstrap after disposal", async () => {
   const wrapper = new FakeElement("div", null);
@@ -165,6 +239,257 @@ test("navigation runtime swaps managed head/body and calls page lifecycle hooks"
   assert.equal(env.scrollCalls[0][0].top, 0);
   assert.equal(env.scrollCalls[0][0].left, 0);
   assert.equal(env.scrollCalls[0][0].behavior, "instant");
+});
+
+test("navigation revalidate invalidates cache and reconciles the current page without moving history or scroll", async () => {
+  const url = "http://localhost:3000/agenda?day=one";
+  const oldMain = new FakeElement("main", null);
+  oldMain.id = "old-agenda";
+  oldMain.textContent = "old";
+  const oldMeta = new FakeElement("meta", null);
+  oldMeta.setAttribute("name", "description");
+  oldMeta.setAttribute("content", "old agenda");
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [oldMain],
+    fetchRoutes: {
+      [url]: { text: "__FRESH_AGENDA__", url },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.location.href = url;
+  appendManagedHead(env.document, [oldMeta]);
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+
+  const freshMeta = new FakeElement("meta", null);
+  freshMeta.setAttribute("name", "description");
+  freshMeta.setAttribute("content", "fresh agenda");
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "fresh-agenda";
+  freshMain.textContent = "fresh";
+  parsedDocs.set("__FRESH_AGENDA__", buildNavigatedDocument({
+    title: "Fresh agenda",
+    headNodes: [freshMeta],
+    bodyNodes: [freshMain],
+  }));
+
+  const stale = Promise.resolve({ html: "__STALE_AGENDA__", url });
+  stale.__gosxCachedAt = Date.now();
+  env.context.__gosx_page_cache = new Map([[url, stale]]);
+  const historyCalls = [];
+  env.context.history = {
+    pushState(_state, _title, nextURL) {
+      historyCalls.push(["push", String(nextURL)]);
+      env.context.location.href = String(nextURL);
+    },
+    replaceState(_state, _title, nextURL) {
+      historyCalls.push(["replace", String(nextURL)]);
+      env.context.location.href = String(nextURL);
+    },
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(typeof env.context.__gosx.navigation.refresh, "function");
+  assert.equal(typeof env.context.__gosx.navigation.refreshState, "function");
+  assert.equal(typeof env.context.__gosx.navigation.revalidate, "function");
+  assert.equal(typeof env.context.__gosx.navigation.getFetchEpoch, "function");
+  const initialEpoch = env.context.__gosx.navigation.getFetchEpoch();
+  assert.equal(initialEpoch.started, 0);
+  assert.equal(initialEpoch.applied, 0);
+  const refreshedState = env.context.__gosx.navigation.refresh();
+  assert.equal(refreshedState.currentURL, url);
+  assert.equal(typeof refreshedState.then, "undefined");
+  assert.equal(env.fetchCalls.length, 0);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, initialEpoch.started);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, initialEpoch.applied);
+  assert.equal(env.context.__gosx.navigation.refreshState().currentURL, url);
+  assert.equal(await env.context.__gosx.navigation.revalidate(), true);
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, initialEpoch.started + 1);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, initialEpoch.applied + 1);
+  assert.equal(env.fetchCalls[0].url, url);
+  assert.notEqual(env.context.__gosx_page_cache.get(url), stale);
+  assert.equal(env.document.title, "Fresh agenda");
+  assert.equal(env.document.getElementById("fresh-agenda").textContent, "fresh");
+  assert.equal(env.document.head.childNodes[1].getAttribute("content"), "fresh agenda");
+  assert.deepEqual(historyCalls, [["replace", url]]);
+  assert.equal(env.context.location.href, url);
+  assert.deepEqual(env.scrollCalls, []);
+  assert.equal(env.document.activeElement, env.document.getElementById("fresh-agenda"));
+});
+
+test("programmatic navigation soft-fetches only same-origin HTTP URLs", async () => {
+  const safeURL = "http://localhost:3000/safe";
+  const redirectedURL = "http://localhost:3000/redirected-off-origin";
+  const parsedDocs = new Map();
+  const safeMain = new FakeElement("main", null);
+  safeMain.id = "safe-page";
+  parsedDocs.set("__SAFE_PAGE__", buildNavigatedDocument({
+    title: "Safe",
+    bodyNodes: [safeMain],
+  }));
+  const env = createContext({
+    elements: [],
+    fetchRoutes: {
+      [safeURL]: { text: "__SAFE_PAGE__", url: safeURL },
+      [redirectedURL]: { text: "__ATTACKER_PAGE__", url: "https://attacker.example/page" },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  const assigned = [];
+  const replaced = [];
+  env.context.location.assign = (url) => assigned.push(String(url));
+  env.context.location.replace = (url) => replaced.push(String(url));
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(await env.context.__gosx.navigation.navigate(safeURL), true);
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(env.document.getElementById("safe-page").id, "safe-page");
+
+  await assert.rejects(
+    env.context.__gosx.navigation.navigate(redirectedURL),
+    /blocked cross-origin navigation response/,
+  );
+  assert.equal(env.fetchCalls.length, 2);
+  assert.equal(env.document.getElementById("safe-page").id, "safe-page");
+
+  assert.equal(await env.context.__gosx.navigation.navigate("https://elsewhere.example/path"), true);
+  assert.deepEqual(assigned, ["https://elsewhere.example/path"]);
+  assert.equal(env.fetchCalls.length, 2);
+  assert.equal(await env.context.__gosx.navigation.navigate("https://elsewhere.example/replaced", { replace: true }), true);
+  assert.deepEqual(replaced, ["https://elsewhere.example/replaced"]);
+  assert.equal(env.fetchCalls.length, 2);
+
+  const href = env.context.location.href;
+  for (const unsafe of [
+    "javascript:alert(1)",
+    "data:text/html,attacker",
+    "vbscript:msgbox(1)",
+    "blob:http://localhost:3000/attacker",
+    "http://[",
+  ]) {
+    await assert.rejects(
+      env.context.__gosx.navigation.navigate(unsafe),
+      /blocked unsafe navigation URL/,
+      unsafe,
+    );
+  }
+  assert.equal(env.context.location.href, href);
+  assert.deepEqual(assigned, ["https://elsewhere.example/path"]);
+  assert.deepEqual(replaced, ["https://elsewhere.example/replaced"]);
+  assert.equal(env.fetchCalls.length, 2);
+});
+
+test("state-only refresh with a hash stays synchronous and does not advance the fetch epoch", () => {
+  const url = "http://localhost:3000/agenda#details";
+  const env = createContext({});
+  env.context.location.href = url;
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const initialEpoch = env.context.__gosx.navigation.getFetchEpoch();
+  const snapshot = env.context.__gosx_page_nav.refresh();
+
+  assert.equal(snapshot.currentURL, url);
+  assert.equal(typeof snapshot.then, "undefined");
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, initialEpoch.started);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, initialEpoch.applied);
+  assert.deepEqual(env.fetchCalls, []);
+});
+
+test("navigation revalidate rejects cleanly so callers can use the documented hard-load fallback", async () => {
+  const url = "http://localhost:3000/agenda";
+  const oldMain = new FakeElement("main", null);
+  oldMain.id = "current-agenda";
+  oldMain.textContent = "still current";
+  const env = createContext({
+    elements: [oldMain],
+    fetchRoutes: {
+      [url]: { ok: false, status: 503, text: "unavailable", url },
+    },
+  });
+  env.context.location.href = url;
+  let reloads = 0;
+  env.context.location.reload = function() { reloads += 1; };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await assert.rejects(
+    env.context.__gosx.navigation.revalidate().catch(function(error) {
+      env.context.location.reload();
+      throw error;
+    }),
+    /navigation fetch failed with status 503/,
+  );
+
+  assert.equal(reloads, 1);
+  assert.equal(env.context.location.href, url);
+  assert.equal(env.document.getElementById("current-agenda").textContent, "still current");
+  assert.equal(env.context.__gosx.navigation.getState().phase, "idle");
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, 1);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, 0);
+});
+
+test("navigation fetch epoch stays uncommitted while pending and commits after page apply", async () => {
+  const url = "http://localhost:3000/pending";
+  let resolveFetch;
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      [url]: () => new Promise((resolve) => { resolveFetch = resolve; }),
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const main = new FakeElement("main", null);
+  main.id = "pending-applied";
+  parsedDocs.set("__PENDING_PAGE__", buildNavigatedDocument({
+    title: "Pending",
+    bodyNodes: [main],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const revalidation = env.context.__gosx.navigation.revalidate();
+  await Promise.resolve();
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, 1);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, 0);
+
+  resolveFetch({ text: "__PENDING_PAGE__", url });
+  assert.equal(await revalidation, true);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, 1);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, 1);
+});
+
+test("navigation fetch epoch does not commit when page application fails", async () => {
+  const url = "http://localhost:3000/apply-failure";
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      [url]: { text: "__APPLY_FAILURE_PAGE__", url },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {
+    throw new Error("dispose failed before apply");
+  };
+  parsedDocs.set("__APPLY_FAILURE_PAGE__", buildNavigatedDocument({
+    title: "Apply failure",
+    bodyNodes: [new FakeElement("main", null)],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await assert.rejects(env.context.__gosx.navigation.revalidate(), /dispose failed before apply/);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, 1);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, 0);
+  env.context.__gosx_dispose_page = async function() {};
 });
 
 test("navigation runtime sends typed beacons once per soft navigation path", async () => {
@@ -325,6 +650,157 @@ test("navigation runtime aborts stale fetches and lets the newest navigation win
   assert.equal(env.context.location.href, "http://localhost:3000/fast");
   assert.equal(env.document.getElementById("fast-page").textContent, "fast");
   assert.equal(env.document.getElementById("slow-page"), null);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, 2);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, 2);
+});
+
+test("same-target pending navigations share one fetch and let the newest caller apply", async () => {
+  class TestAbortSignal {
+    constructor() {
+      this.aborted = false;
+      this.listeners = [];
+    }
+
+    addEventListener(type, listener) {
+      if (type === "abort") this.listeners.push(listener);
+    }
+  }
+
+  class TestAbortController {
+    constructor() {
+      this.signal = new TestAbortSignal();
+    }
+
+    abort() {
+      if (this.signal.aborted) return;
+      this.signal.aborted = true;
+      for (const listener of this.signal.listeners) listener();
+    }
+  }
+
+  for (const mode of ["ordinary", "revalidate"]) {
+    const url = "http://localhost:3000/coalesced-" + mode;
+    let resolveFetch;
+    const parsedDocs = new Map();
+    const main = new FakeElement("main", null);
+    main.id = "coalesced-page-" + mode;
+    main.textContent = mode;
+    parsedDocs.set("__COALESCED_PAGE__", buildNavigatedDocument({
+      title: "Coalesced " + mode,
+      bodyNodes: [main],
+    }));
+    const env = createContext({
+      fetchRoutes: {
+        [url]: (_url, init) => new Promise((resolve, reject) => {
+          resolveFetch = resolve;
+          init.signal.addEventListener("abort", () => {
+            const error = new Error("navigation aborted");
+            error.name = "AbortError";
+            reject(error);
+          });
+        }),
+      },
+      parseHTML(html) { return parsedDocs.get(html); },
+    });
+    env.context.AbortController = TestAbortController;
+    if (mode === "revalidate") env.context.location.href = url;
+    env.context.__gosx_dispose_page = async function() {};
+    env.context.__gosx_bootstrap_page = async function() {};
+
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    const first = mode === "revalidate"
+      ? env.context.__gosx.navigation.revalidate()
+      : env.context.__gosx.navigation.navigate(url);
+    const newest = mode === "revalidate"
+      ? env.context.__gosx.navigation.revalidate()
+      : env.context.__gosx.navigation.navigate(url);
+    await Promise.resolve();
+
+    assert.equal(env.fetchCalls.length, 1, mode);
+    assert.equal(env.context.__gosx.navigation.getState().phase, "pending", mode);
+    resolveFetch({ text: "__COALESCED_PAGE__", url });
+    assert.deepEqual(await Promise.all([first, newest]), [false, true], mode);
+    assert.equal(env.document.getElementById("coalesced-page-" + mode).textContent, mode);
+    assert.equal(env.context.__gosx.navigation.getState().phase, "idle", mode);
+    const epoch = env.context.__gosx.navigation.getFetchEpoch();
+    assert.equal(epoch.started, 1, mode);
+    assert.equal(epoch.applied, 1, mode);
+  }
+});
+
+test("stale same-URL requests cannot evict a newer cached request", async () => {
+  for (const staleOutcome of ["reject", "no-store"]) {
+    const url = "http://localhost:3000/agenda-race-" + staleOutcome;
+    const middleURL = "http://localhost:3000/race-middle-" + staleOutcome;
+    const link = new FakeElement("a", null);
+    link.setAttribute("href", url);
+    link.setAttribute("data-gosx-link", "");
+    let settleStale;
+    let resolveFresh;
+    let routeCalls = 0;
+    const parsedDocs = new Map();
+    const env = createContext({
+      elements: [link],
+      fetchRoutes: {
+        [url]: () => {
+          routeCalls += 1;
+          if (routeCalls === 1) {
+            return new Promise((resolve, reject) => {
+              settleStale = staleOutcome === "reject"
+                ? () => reject(new Error("stale request failed"))
+                : () => resolve({ text: "__STALE_NO_STORE__", url });
+            });
+          }
+          return new Promise((resolve) => { resolveFresh = resolve; });
+        },
+        [middleURL]: { text: "__RACE_MIDDLE__", url: middleURL },
+      },
+      parseHTML(html) { return parsedDocs.get(html); },
+    });
+    env.context.__gosx_dispose_page = async function() {};
+    env.context.__gosx_bootstrap_page = async function() {};
+    const noStoreMeta = new FakeElement("meta", null);
+    noStoreMeta.setAttribute("name", "gosx-page-cache");
+    noStoreMeta.setAttribute("content", "no-store");
+    parsedDocs.set("__STALE_NO_STORE__", buildNavigatedDocument({
+      title: "Stale",
+      headNodes: [noStoreMeta],
+      bodyNodes: [new FakeElement("main", null)],
+    }));
+    parsedDocs.set("__RACE_MIDDLE__", buildNavigatedDocument({
+      title: "Middle",
+      bodyNodes: [new FakeElement("main", null)],
+    }));
+    const freshMain = new FakeElement("main", null);
+    freshMain.id = "fresh-race-" + staleOutcome;
+    freshMain.textContent = "fresh " + staleOutcome;
+    parsedDocs.set("__FRESH_RACE__", buildNavigatedDocument({
+      title: "Fresh",
+      bodyNodes: [freshMain],
+    }));
+
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    const stale = env.context.__gosx.navigation.navigate(url, { force: true, revalidate: true });
+    assert.equal(await env.context.__gosx.navigation.navigate(middleURL), true, staleOutcome);
+    const fresh = env.context.__gosx.navigation.navigate(url, { force: true, revalidate: true });
+    await Promise.resolve();
+    assert.equal(routeCalls, 2, staleOutcome);
+
+    settleStale();
+    const staleResult = await stale;
+    assert.equal(staleResult, false, staleOutcome);
+    env.document.eventListeners.get("mouseover")[0]({ type: "mouseover", target: link });
+    await Promise.resolve();
+    assert.equal(routeCalls, 2, staleOutcome + " must retain request B");
+
+    resolveFresh({ text: "__FRESH_RACE__", url });
+    assert.equal(await fresh, true, staleOutcome);
+    assert.equal(env.context.__gosx_page_cache.has(url), true, staleOutcome);
+    assert.equal(
+      env.document.getElementById("fresh-race-" + staleOutcome).textContent,
+      "fresh " + staleOutcome,
+    );
+  }
 });
 
 test("navigation runtime reports failures through the shared diagnostics policy", async () => {
@@ -1672,6 +2148,35 @@ test("navigation runtime prefetches marked links and reuses cached HTML", async 
   assert.equal(env.document.title, "Prefetched");
 });
 
+test("navigation prefetch never requests external or non-HTTP managed links", async () => {
+  const external = new FakeElement("a", null);
+  external.setAttribute("href", "https://attacker.example/page");
+  external.setAttribute("data-gosx-link", "");
+  external.setAttribute("data-gosx-prefetch", "render");
+  const dangerous = new FakeElement("a", null);
+  dangerous.setAttribute("href", "javascript:alert(1)");
+  dangerous.setAttribute("data-gosx-link", "");
+  dangerous.setAttribute("data-gosx-prefetch", "force");
+  const blob = new FakeElement("a", null);
+  blob.setAttribute("href", "blob:http://localhost:3000/attacker");
+  blob.setAttribute("data-gosx-link", "");
+  const env = createContext({ elements: [external, dangerous, blob] });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const hover = env.document.eventListeners.get("mouseover")[0];
+  const focus = env.document.eventListeners.get("focusin")[0];
+  for (const link of [external, dangerous, blob]) {
+    hover({ type: "mouseover", target: link });
+    focus({ type: "focusin", target: link });
+  }
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 0);
+  for (const link of [external, dangerous, blob]) {
+    assert.equal(link.getAttribute("data-gosx-prefetch-state"), "idle");
+  }
+});
+
 test("navigation runtime page cache entries expire after their TTL", async () => {
   const link = new FakeElement("a", null);
   link.setAttribute("href", "/ttl-page");
@@ -2157,6 +2662,20 @@ test("navigation runtime intercepts managed form submissions and forwards action
     title: "Done",
     bodyNodes: [doneBody],
   }));
+  const staleDone = Promise.resolve({ html: "__STALE_DONE__", url: "http://localhost:3000/done" });
+  staleDone.__gosxCachedAt = Date.now();
+  env.context.__gosx_page_cache = new Map([["http://localhost:3000/done", staleDone]]);
+  const historyCalls = [];
+  env.context.history = {
+    pushState(_state, _title, url) {
+      historyCalls.push(["push", String(url)]);
+      env.context.location.href = String(url);
+    },
+    replaceState(_state, _title, url) {
+      historyCalls.push(["replace", String(url)]);
+      env.context.location.href = String(url);
+    },
+  };
 
   runScript(navigationSource, env.context, "navigation_runtime.js");
 
@@ -2183,10 +2702,513 @@ test("navigation runtime intercepts managed form submissions and forwards action
   assert.equal(env.fetchCalls[0].init.body.has("title"), true);
   assert.equal(env.fetchCalls[0].init.body.has("intent"), true);
   assert.deepEqual(inputBatchCalls, ['{"$draft.title":"hello"}']);
+  assert.equal(env.fetchCalls[1].url, "http://localhost:3000/done");
+  assert.notEqual(env.context.__gosx_page_cache.get("http://localhost:3000/done"), staleDone);
   assert.equal(env.context.location.href, "http://localhost:3000/done");
+  assert.equal(env.document.getElementById("done").textContent, "done");
+  assert.deepEqual(historyCalls, [["push", "http://localhost:3000/done"]]);
+  assert.equal(env.scrollCalls.length, 1);
   assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
   assert.equal(form.getAttribute("data-gosx-pending"), null);
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+  assert.equal(form.parentNode, null);
+});
+
+test("managed action same-URL redirects force a cache-bypassing soft refresh", async () => {
+  const pageURL = "http://localhost:3000/agenda";
+  const actionURL = "http://localhost:3000/agenda/__actions/move";
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+  const sessionID = new FakeElement("input", null);
+  sessionID.setAttribute("name", "session_id");
+  sessionID.value = "s-1";
+  form.appendChild(sessionID);
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]: { text: '{"ok":true,"redirect":"/agenda"}', url: actionURL },
+      [pageURL]: { text: "__FRESH_AGENDA_AFTER_MOVE__", url: pageURL },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = pageURL;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const fresh = new FakeElement("main", null);
+  fresh.id = "fresh-agenda-after-move";
+  fresh.textContent = "Session moved";
+  parsedDocs.set("__FRESH_AGENDA_AFTER_MOVE__", buildNavigatedDocument({
+    title: "Agenda",
+    bodyNodes: [fresh],
+  }));
+  const stale = Promise.resolve({ html: "__STALE_AGENDA__", url: pageURL });
+  stale.__gosxCachedAt = Date.now();
+  env.context.__gosx_page_cache = new Map([[pageURL, stale]]);
+  const historyCalls = [];
+  env.context.history = {
+    pushState(_state, _title, url) {
+      historyCalls.push(["push", String(url)]);
+      env.context.location.href = String(url);
+    },
+    replaceState(_state, _title, url) {
+      historyCalls.push(["replace", String(url)]);
+      env.context.location.href = String(url);
+    },
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.deepEqual(env.fetchCalls.map((call) => call.url), [actionURL, pageURL]);
+  assert.notEqual(env.context.__gosx_page_cache.get(pageURL), stale);
+  assert.equal(env.document.getElementById("fresh-agenda-after-move").textContent, "Session moved");
+  assert.deepEqual(historyCalls, [["replace", pageURL]]);
+  assert.deepEqual(env.scrollCalls, []);
+  assert.equal(form.parentNode, null);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("accepted action redirects replace pre-mutation pending pages with a fresh fetch", async () => {
+  class TestAbortSignal {
+    constructor() {
+      this.aborted = false;
+      this.listeners = [];
+    }
+
+    addEventListener(type, listener) {
+      if (type === "abort") this.listeners.push(listener);
+    }
+  }
+
+  class TestAbortController {
+    constructor() {
+      this.signal = new TestAbortSignal();
+    }
+
+    abort() {
+      if (this.signal.aborted) return;
+      this.signal.aborted = true;
+      for (const listener of this.signal.listeners) listener();
+    }
+  }
+
+  for (const sameURL of [true, false]) {
+    const label = sameURL ? "same URL" : "different URL";
+    const currentURL = sameURL
+      ? "http://localhost:3000/mutation-target"
+      : "http://localhost:3000/mutation-current";
+    const targetURL = "http://localhost:3000/mutation-target";
+    const actionURL = "http://localhost:3000/__actions/mutate-" + (sameURL ? "same" : "different");
+    const form = new FakeElement("form", null);
+    form.setAttribute("action", actionURL);
+    form.setAttribute("method", "post");
+    form.setAttribute("data-gosx-form", "");
+    let rejectStale;
+    let staleSignal;
+    let targetCalls = 0;
+    const parsedDocs = new Map();
+    const freshMain = new FakeElement("main", null);
+    freshMain.id = "post-mutation-" + (sameURL ? "same" : "different");
+    freshMain.textContent = "fresh after mutation";
+    parsedDocs.set("__POST_MUTATION__", buildNavigatedDocument({
+      title: "Fresh mutation",
+      bodyNodes: [freshMain],
+    }));
+    const env = createContext({
+      elements: [form],
+      fetchRoutes: {
+        [actionURL]: { text: '{"ok":true,"redirect":"/mutation-target"}', url: actionURL },
+        [targetURL]: (_url, init) => {
+          targetCalls += 1;
+          if (targetCalls === 1) {
+            staleSignal = init.signal;
+            return new Promise((_resolve, reject) => { rejectStale = reject; });
+          }
+          return { text: "__POST_MUTATION__", url: targetURL };
+        },
+      },
+      parseHTML(html) { return parsedDocs.get(html); },
+    });
+    env.context.AbortController = TestAbortController;
+    env.context.location.href = currentURL;
+    env.context.__gosx_dispose_page = async function() {};
+    env.context.__gosx_bootstrap_page = async function() {};
+    const historyCalls = [];
+    env.context.history = {
+      pushState(_state, _title, url) {
+        historyCalls.push(["push", String(url)]);
+        env.context.location.href = String(url);
+      },
+      replaceState(_state, _title, url) {
+        historyCalls.push(["replace", String(url)]);
+        env.context.location.href = String(url);
+      },
+    };
+
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    const stale = sameURL
+      ? env.context.__gosx.navigation.revalidate()
+      : env.context.__gosx.navigation.navigate(targetURL);
+    await Promise.resolve();
+    assert.equal(targetCalls, 1, label);
+
+    env.document.eventListeners.get("submit")[0]({
+      type: "submit",
+      target: form,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    });
+    await flushAsyncWork();
+
+    assert.equal(staleSignal.aborted, true, label);
+    assert.equal(targetCalls, 2, label);
+    assert.deepEqual(
+      env.fetchCalls.map((call) => [call.url, call.init.method || "GET"]),
+      [[targetURL, "GET"], [actionURL, "POST"], [targetURL, "GET"]],
+      label,
+    );
+    assert.equal(env.document.getElementById(freshMain.id).textContent, "fresh after mutation", label);
+    assert.equal(env.context.__gosx.navigation.getState().phase, "idle", label);
+    assert.deepEqual(historyCalls, [[sameURL ? "replace" : "push", targetURL]], label);
+
+    const abortError = new Error("stale pre-mutation page rejected");
+    abortError.name = "AbortError";
+    rejectStale(abortError);
+    assert.equal(await stale, false, label);
+    assert.equal(env.context.__gosx_page_cache.has(targetURL), true, label);
+    assert.equal(env.document.getElementById(freshMain.id).textContent, "fresh after mutation", label);
+  }
+});
+
+test("action redirect fetch suppresses an older same-tab hub refresh echo", async () => {
+  const pageURL = "http://localhost:3000/agenda";
+  const actionURL = "http://localhost:3000/agenda/__actions/move";
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  let emitHubEvent = function() {};
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]() {
+        emitHubEvent();
+        return { text: '{"ok":true,"redirect":"/agenda"}', url: actionURL };
+      },
+      [pageURL]: { text: "__AGENDA_AFTER_ACTION__", url: pageURL },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = pageURL;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const fresh = new FakeElement("main", null);
+  fresh.id = "agenda-after-action";
+  parsedDocs.set("__AGENDA_AFTER_ACTION__", buildNavigatedDocument({
+    title: "Agenda",
+    bodyNodes: [fresh],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.context.__gosx.hubs = new Map();
+  runScript(
+    `(function(){${hubConnectionsSource}\nwindow.__test_applyHubBindings = applyHubBindings;})();`,
+    env.context,
+    "30c-tail-hub-connections.js",
+  );
+  const record = {
+    entry: {
+      id: "gosx-hub-action-echo",
+      bindings: [{ event: "agenda.changed", refresh: true, refreshDebounceMs: 180 }],
+    },
+    socket: { close() {} },
+  };
+  env.context.__gosx.hubs.set(record.entry.id, record);
+  let hubTimer = null;
+  let hubDelay = null;
+  let capturedEpoch = null;
+  emitHubEvent = function() {
+    const realSetTimeout = env.context.setTimeout;
+    const realClearTimeout = env.context.clearTimeout;
+    env.context.setTimeout = function(callback, delay) {
+      hubTimer = callback;
+      hubDelay = delay;
+      return 701;
+    };
+    env.context.clearTimeout = function() {};
+    env.context.__test_applyHubBindings(record, {
+      event: "agenda.changed",
+      data: { revision: 2 },
+    });
+    capturedEpoch = record.refreshFetchEpoch;
+    env.context.setTimeout = realSetTimeout;
+    env.context.clearTimeout = realClearTimeout;
+  };
+
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.equal(capturedEpoch, 0);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().started, 1);
+  assert.equal(env.context.__gosx.navigation.getFetchEpoch().applied, 1);
+  assert.deepEqual(
+    env.fetchCalls.map((call) => [call.url, call.init.method || "GET"]),
+    [[actionURL, "POST"], [pageURL, "GET"]],
+  );
+  assert.equal(typeof hubTimer, "function");
+  assert.equal(hubDelay, 180);
+  hubTimer();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(env.fetchCalls.map((call) => call.url), [actionURL, pageURL]);
+});
+
+test("Hub refresh waits for a real pending navigation before refreshing its settled page", async () => {
+  for (const outcome of ["success", "failure"]) {
+    const currentURL = "http://localhost:3000/";
+    const pendingURL = "http://localhost:3000/pending-" + outcome;
+    let settlePending;
+    let pendingSignal;
+    let pendingCalls = 0;
+    const parsedDocs = new Map();
+    const currentMain = new FakeElement("main", null);
+    currentMain.id = "current-after-" + outcome;
+    const pendingMain = new FakeElement("main", null);
+    pendingMain.id = "pending-after-" + outcome;
+    parsedDocs.set("__CURRENT_AFTER_PENDING__", buildNavigatedDocument({
+      title: "Current",
+      bodyNodes: [currentMain],
+    }));
+    parsedDocs.set("__PENDING_NAVIGATION__", buildNavigatedDocument({
+      title: "Pending",
+      bodyNodes: [pendingMain],
+    }));
+    const env = createContext({
+      fetchRoutes: {
+        [pendingURL]: (_url, init) => {
+          pendingCalls += 1;
+          if (pendingCalls > 1) return { text: "__PENDING_NAVIGATION__", url: pendingURL };
+          pendingSignal = init.signal;
+          return new Promise((resolve, reject) => {
+            settlePending = outcome === "success"
+              ? () => resolve({ text: "__PENDING_NAVIGATION__", url: pendingURL })
+              : () => reject(new Error("pending navigation failed"));
+          });
+        },
+        [currentURL]: { text: "__CURRENT_AFTER_PENDING__", url: currentURL },
+      },
+      parseHTML(html) { return parsedDocs.get(html); },
+    });
+    env.context.__gosx_dispose_page = async function() {};
+    env.context.__gosx_bootstrap_page = async function() {};
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    env.context.__gosx.hubs = new Map();
+    const timers = installManualTimers(env.context);
+    runScript(
+      `(function(){${hubConnectionsSource}\nwindow.__test_applyHubBindings = applyHubBindings;})();`,
+      env.context,
+      "30c-tail-hub-connections.js",
+    );
+    const record = {
+      entry: {
+        id: "gosx-hub-pending-" + outcome,
+        bindings: [{ event: "changed", refresh: true }],
+      },
+      socket: { close() {} },
+    };
+    env.context.__gosx.hubs.set(record.entry.id, record);
+
+    const pending = env.context.__gosx.navigation.navigate(pendingURL);
+    await Promise.resolve();
+    env.context.__test_applyHubBindings(record, { event: "changed", data: null });
+    timers.runDelay(0);
+    await Promise.resolve();
+
+    assert.equal(pendingSignal.aborted, false, outcome);
+    assert.equal(env.context.__gosx.navigation.getState().phase, "pending", outcome);
+    assert.equal(timers.count(), 1, outcome);
+    settlePending();
+    if (outcome === "success") {
+      assert.equal(await pending, true);
+    } else {
+      await assert.rejects(pending, /pending navigation failed/);
+    }
+
+    timers.runDelay(32);
+    await flushAsyncWork();
+    assert.equal(pendingSignal.aborted, false, outcome);
+    assert.equal(env.context.__gosx.navigation.getState().phase, "idle", outcome);
+    assert.equal(env.context.location.href, outcome === "success" ? pendingURL : currentURL);
+    assert.deepEqual(
+      env.fetchCalls.map((call) => call.url),
+      outcome === "success" ? [pendingURL, pendingURL] : [pendingURL, currentURL],
+      outcome,
+    );
+    assert.ok(env.document.getElementById(
+      outcome === "success" ? "pending-after-success" : "current-after-failure",
+    ));
+  }
+});
+
+test("accepted action redirects never resubmit the POST when soft navigation fails", async () => {
+  const cases = [
+    {
+      name: "different URL status failure",
+      pageURL: "http://localhost:3000/current",
+      actionURL: "http://localhost:3000/save",
+      redirect: "/done",
+      pageRoute: {
+        ok: false,
+        status: 503,
+        text: "unavailable",
+        url: "http://localhost:3000/done",
+      },
+      hardMethod: "assign",
+      hardURL: "http://localhost:3000/done",
+    },
+    {
+      name: "same URL transport failure",
+      pageURL: "http://localhost:3000/agenda",
+      actionURL: "http://localhost:3000/agenda/__actions/move",
+      redirect: "/agenda",
+      pageRoute() {
+        throw new Error("page transport failed");
+      },
+      hardMethod: "replace",
+      hardURL: "http://localhost:3000/agenda",
+    },
+  ];
+
+  for (const scenario of cases) {
+    const form = new FakeElement("form", null);
+    form.setAttribute("action", scenario.actionURL);
+    form.setAttribute("method", "post");
+    form.setAttribute("data-gosx-form", "");
+    const fetchRoutes = {
+      [scenario.actionURL]: {
+        text: JSON.stringify({ ok: true, redirect: scenario.redirect }),
+        url: scenario.actionURL,
+      },
+      [scenario.hardURL]: scenario.pageRoute,
+    };
+    const env = createContext({ elements: [form], fetchRoutes });
+    env.context.location.href = scenario.pageURL;
+    const hardNavigations = [];
+    env.context.location.assign = function(url) {
+      hardNavigations.push(["assign", String(url)]);
+    };
+    env.context.location.replace = function(url) {
+      hardNavigations.push(["replace", String(url)]);
+    };
+
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    env.document.eventListeners.get("submit")[0]({
+      type: "submit",
+      target: form,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    });
+    await flushAsyncWork();
+
+    assert.deepEqual(
+      env.fetchCalls.map((call) => [call.url, call.init.method || "GET"]),
+      [[scenario.actionURL, "POST"], [scenario.hardURL, "GET"]],
+      scenario.name,
+    );
+    assert.equal(form.requestSubmitCalls.length, 0, scenario.name);
+    assert.equal(form.submitCalls.length, 0, scenario.name);
+    assert.deepEqual(hardNavigations, [[scenario.hardMethod, scenario.hardURL]], scenario.name);
+  }
+});
+
+test("accepted actions block malformed and unsafe redirect targets without native fallback", async () => {
+  const redirects = [
+    "https://attacker.example/steal",
+    "javascript:alert(1)",
+    "http://[invalid",
+  ];
+
+  for (const redirect of redirects) {
+    const actionURL = "http://localhost:3000/save";
+    const form = new FakeElement("form", null);
+    form.setAttribute("action", actionURL);
+    form.setAttribute("method", "post");
+    form.setAttribute("data-gosx-form", "");
+    const env = createContext({
+      elements: [form],
+      fetchRoutes: {
+        [actionURL]: { text: JSON.stringify({ ok: true, redirect }), url: actionURL },
+      },
+    });
+    const hardNavigations = [];
+    env.context.location.assign = function(url) { hardNavigations.push(["assign", String(url)]); };
+    env.context.location.replace = function(url) { hardNavigations.push(["replace", String(url)]); };
+
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    env.document.eventListeners.get("submit")[0]({
+      type: "submit",
+      target: form,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    });
+    await flushAsyncWork();
+
+    assert.deepEqual(env.fetchCalls.map((call) => call.url), [actionURL], redirect);
+    assert.equal(form.requestSubmitCalls.length, 0, redirect);
+    assert.equal(form.submitCalls.length, 0, redirect);
+    assert.deepEqual(hardNavigations, [], redirect);
+  }
+});
+
+test("action POST transport failure retains one native submission fallback", async () => {
+  const actionURL = "http://localhost:3000/save";
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const submitter = new FakeElement("button", null);
+  form.appendChild(submitter);
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]() { throw new Error("action transport failed"); },
+    },
+  });
+  const hardNavigations = [];
+  env.context.location.assign = function(url) { hardNavigations.push(["assign", String(url)]); };
+  env.context.location.replace = function(url) { hardNavigations.push(["replace", String(url)]); };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    submitter,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.deepEqual(env.fetchCalls.map((call) => call.url), [actionURL]);
+  assert.equal(form.requestSubmitCalls.length, 1);
+  assert.equal(form.requestSubmitCalls[0][0], submitter);
+  assert.equal(form.submitCalls.length, 0);
+  assert.deepEqual(hardNavigations, []);
 });
 
 test("navigation runtime exposes programmatic managed action submission", async () => {
@@ -2219,7 +3241,7 @@ test("navigation runtime exposes programmatic managed action submission", async 
   assert.equal(form.getAttribute("action"), "/play/__actions/pilot");
   assert.equal(form.getAttribute("method"), "post");
   assert.equal(form.getAttribute("data-gosx-form"), "");
-  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "success");
   assert.equal(env.fetchCalls[0].url, "http://localhost:3000/play/__actions/pilot");
   assert.equal(env.fetchCalls[0].init.method, "POST");
   assert.equal(env.fetchCalls[0].init.headers["X-CSRF-Token"], "root-token");
@@ -2229,6 +3251,631 @@ test("navigation runtime exposes programmatic managed action submission", async 
     ["csrf_token", "root-token"],
   ]);
   assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:form:result");
+});
+
+test("managed forms suppress duplicate submissions until their request settles", async () => {
+  const actionURL = "http://localhost:3000/save-once";
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const status = new FakeElement("p", null);
+  status.setAttribute("class", "form-status");
+  form.appendChild(status);
+  let resolveFirst;
+  let calls = 0;
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]: () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Promise((resolve) => { resolveFirst = resolve; });
+        }
+        return { text: '{"ok":true,"message":"Saved again."}', url: actionURL };
+      },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const submit = env.document.eventListeners.get("submit")[0];
+  const event = () => ({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  const firstEvent = event();
+  const duplicateEvent = event();
+
+  submit(firstEvent);
+  submit(duplicateEvent);
+  await Promise.resolve();
+  assert.equal(firstEvent.defaultPrevented, true);
+  assert.equal(duplicateEvent.defaultPrevented, true);
+  assert.equal(calls, 1);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "pending");
+
+  resolveFirst({ text: '{"ok":true,"message":"Saved once."}', url: actionURL });
+  await flushAsyncWork();
+  assert.equal(calls, 1);
+  assert.equal(status.textContent, "Saved once.");
+  assert.equal(form.getAttribute("data-gosx-form-state"), "success");
+  assert.equal(form.requestSubmitCalls.length, 0);
+  assert.equal(form.submitCalls.length, 0);
+
+  submit(event());
+  await flushAsyncWork();
+  assert.equal(calls, 2, "the guard clears after settlement");
+  assert.equal(status.textContent, "Saved again.");
+});
+
+test("programmatic hidden action forms ignore duplicate submit events while pending", async () => {
+  const actionURL = "http://localhost:3000/play/__actions/once";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-main", "");
+  let resolveAction;
+  let calls = 0;
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: {
+      [actionURL]: () => {
+        calls += 1;
+        return new Promise((resolve) => { resolveAction = resolve; });
+      },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const form = env.context.__gosx_submit_action(actionURL, { id: "one" }, {
+    root: main,
+    keepForm: true,
+  });
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await Promise.resolve();
+
+  assert.equal(form.hidden, true);
+  assert.equal(calls, 1);
+  resolveAction({ text: '{"ok":true}', url: actionURL });
+  await form.__gosxSubmitPromise;
+  assert.equal(calls, 1);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "success");
+});
+
+test("managed action results clear stale form errors and project success locally", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/profile");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+  const name = new FakeElement("input", null);
+  name.setAttribute("name", "name");
+  name.setAttribute("aria-invalid", "true");
+  name.setAttribute("aria-describedby", "name-error");
+  const error = new FakeElement("p", null);
+  error.id = "name-error";
+  error.setAttribute("class", "form-error");
+  error.textContent = "Stale error";
+  const status = new FakeElement("p", null);
+  status.setAttribute("class", "action-message");
+  status.textContent = "Old status";
+  form.appendChild(name);
+  form.appendChild(error);
+  form.appendChild(status);
+
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/profile": {
+        text: '{"ok":true,"message":"Profile saved."}',
+        url: "http://localhost:3000/profile",
+      },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.getAttribute("data-gosx-form-state"), "success");
+  assert.equal(name.hasAttribute("aria-invalid"), false);
+  assert.equal(error.textContent, "");
+  assert.equal(status.textContent, "Profile saved.");
+  assert.equal(env.document.querySelector("[data-gosx-announcer]").textContent, "Profile saved.");
+});
+
+test("managed validation projects described field errors, focuses first invalid, and respects reduced motion", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/register");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const sessionID = new FakeElement("input", null);
+  sessionID.setAttribute("type", "hidden");
+  sessionID.setAttribute("name", "session_id");
+  sessionID.setAttribute("aria-describedby", "session-error");
+  const sessionError = new FakeElement("p", null);
+  sessionError.id = "session-error";
+  sessionError.setAttribute("class", "form-error");
+  const disabled = new FakeElement("input", null);
+  disabled.setAttribute("name", "locked");
+  disabled.setAttribute("disabled", "");
+  disabled.setAttribute("aria-describedby", "locked-error");
+  const disabledError = new FakeElement("p", null);
+  disabledError.id = "locked-error";
+  disabledError.setAttribute("class", "form-error");
+  const hiddenGroup = new FakeElement("div", null);
+  hiddenGroup.setAttribute("hidden", "");
+  const hiddenChild = new FakeElement("input", null);
+  hiddenChild.setAttribute("name", "hidden_child");
+  hiddenChild.setAttribute("aria-describedby", "hidden-child-error");
+  const hiddenChildError = new FakeElement("p", null);
+  hiddenChildError.id = "hidden-child-error";
+  hiddenChildError.setAttribute("class", "form-error");
+  hiddenGroup.appendChild(hiddenChild);
+  hiddenGroup.appendChild(hiddenChildError);
+  const email = new FakeElement("input", null);
+  email.setAttribute("name", "email");
+  email.setAttribute("aria-describedby", "email-error email-help");
+  const emailError = new FakeElement("p", null);
+  emailError.id = "email-error";
+  emailError.setAttribute("class", "form-error");
+  const phone = new FakeElement("input", null);
+  phone.setAttribute("name", "phone");
+  phone.setAttribute("aria-invalid", "true");
+  phone.setAttribute("aria-describedby", "phone-error");
+  const phoneError = new FakeElement("p", null);
+  phoneError.id = "phone-error";
+  phoneError.setAttribute("class", "form-error");
+  phoneError.textContent = "Stale phone error";
+  const status = new FakeElement("p", null);
+  status.setAttribute("class", "form-status");
+  form.appendChild(sessionID);
+  form.appendChild(sessionError);
+  form.appendChild(disabled);
+  form.appendChild(disabledError);
+  form.appendChild(hiddenGroup);
+  form.appendChild(email);
+  form.appendChild(emailError);
+  form.appendChild(phone);
+  form.appendChild(phoneError);
+  form.appendChild(status);
+
+  const env = createContext({
+    elements: [form],
+    prefersReducedMotion: true,
+    fetchRoutes: {
+      "http://localhost:3000/register": {
+        ok: false,
+        status: 422,
+        text: '{"ok":false,"message":"Check the highlighted fields.","fieldErrors":{"session_id":"Missing session.","locked":"Locked.","hidden_child":"Hidden.","email":"Use a valid email."}}',
+        url: "http://localhost:3000/register",
+      },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.getAttribute("data-gosx-form-state"), "error");
+  assert.equal(sessionID.getAttribute("aria-invalid"), "true");
+  assert.equal(sessionError.textContent, "Missing session.");
+  assert.equal(sessionID.focusCalls.length, 0);
+  assert.equal(disabled.focusCalls.length, 0);
+  assert.equal(hiddenChild.focusCalls.length, 0);
+  assert.equal(email.getAttribute("aria-invalid"), "true");
+  assert.equal(emailError.textContent, "Use a valid email.");
+  assert.equal(phone.hasAttribute("aria-invalid"), false);
+  assert.equal(phoneError.textContent, "");
+  assert.equal(status.textContent, "Check the highlighted fields.");
+  assert.equal(env.document.activeElement, email);
+  assert.equal(email.scrollIntoViewCalls.length, 1);
+  assert.equal(email.scrollIntoViewCalls[0][0].behavior, "auto");
+  assert.equal(email.scrollIntoViewCalls[0][0].block, "center");
+});
+
+test("managed validation focuses invalid controls in form DOM order", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/focus-order");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const first = new FakeElement("input", null);
+  first.setAttribute("name", "first");
+  const firstError = new FakeElement("p", null);
+  firstError.setAttribute("class", "form-error");
+  firstError.setAttribute("data-gosx-field-error", "first");
+  const second = new FakeElement("input", null);
+  second.setAttribute("name", "second");
+  const secondError = new FakeElement("p", null);
+  secondError.setAttribute("class", "form-error");
+  secondError.setAttribute("data-gosx-field-error", "second");
+  form.appendChild(first);
+  form.appendChild(firstError);
+  form.appendChild(second);
+  form.appendChild(secondError);
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/focus-order": {
+        ok: false,
+        status: 422,
+        text: '{"ok":false,"fieldErrors":{"second":"Second error.","first":"First error."}}',
+        url: "http://localhost:3000/focus-order",
+      },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.equal(first.getAttribute("aria-invalid"), "true");
+  assert.equal(second.getAttribute("aria-invalid"), "true");
+  assert.equal(env.document.activeElement, first);
+  assert.equal(first.focusCalls.length, 1);
+  assert.equal(second.focusCalls.length, 0);
+});
+
+test("managed validation removes only framework-added error descriptions between results", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/reuse-error");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const first = new FakeElement("input", null);
+  first.setAttribute("name", "first");
+  first.setAttribute("aria-describedby", "first-help");
+  const help = new FakeElement("p", null);
+  help.id = "first-help";
+  const second = new FakeElement("input", null);
+  second.setAttribute("name", "second");
+  const reusedError = new FakeElement("p", null);
+  reusedError.setAttribute("class", "form-error");
+  form.appendChild(first);
+  form.appendChild(help);
+  form.appendChild(second);
+  form.appendChild(reusedError);
+  let calls = 0;
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/reuse-error": () => {
+        calls += 1;
+        return {
+          ok: false,
+          status: 422,
+          text: calls === 1
+            ? '{"ok":false,"fieldErrors":{"first":"First error."}}'
+            : '{"ok":false,"fieldErrors":{"second":"Second error."}}',
+          url: "http://localhost:3000/reuse-error",
+        };
+      },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const submit = env.document.eventListeners.get("submit")[0];
+  const submitForm = () => submit({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  submitForm();
+  await flushAsyncWork();
+  const errorID = reusedError.id;
+  assert.match(errorID, /^gosx-form-error-/);
+  assert.equal(first.getAttribute("aria-describedby"), "first-help " + errorID);
+  assert.equal(second.hasAttribute("aria-describedby"), false);
+
+  submitForm();
+  await flushAsyncWork();
+  assert.equal(first.getAttribute("aria-describedby"), "first-help");
+  assert.equal(first.hasAttribute("aria-invalid"), false);
+  assert.equal(second.getAttribute("aria-describedby"), errorID);
+  assert.equal(second.getAttribute("aria-invalid"), "true");
+  assert.equal(reusedError.textContent, "Second error.");
+});
+
+test("managed validation marks and describes every radio in a field group", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/preferences");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const compact = new FakeElement("input", null);
+  compact.setAttribute("type", "radio");
+  compact.setAttribute("name", "layout");
+  compact.setAttribute("value", "compact");
+  const spacious = new FakeElement("input", null);
+  spacious.setAttribute("type", "radio");
+  spacious.setAttribute("name", "layout");
+  spacious.setAttribute("value", "spacious");
+  const error = new FakeElement("p", null);
+  error.setAttribute("class", "form-error");
+  error.setAttribute("data-gosx-field-error", "layout");
+  form.appendChild(compact);
+  form.appendChild(spacious);
+  form.appendChild(error);
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/preferences": {
+        ok: false,
+        status: 422,
+        text: '{"ok":false,"fieldErrors":{"layout":"Choose a layout."}}',
+        url: "http://localhost:3000/preferences",
+      },
+    },
+  });
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.equal(error.textContent, "Choose a layout.");
+  assert.match(error.id, /^gosx-form-error-/);
+  for (const radio of [compact, spacious]) {
+    assert.equal(radio.getAttribute("aria-invalid"), "true");
+    assert.equal(radio.getAttribute("aria-describedby"), error.id);
+  }
+  assert.equal(env.document.activeElement, compact);
+  assert.equal(compact.scrollIntoViewCalls.length, 1);
+  assert.equal(spacious.focusCalls.length, 0);
+});
+
+test("managed validation skips hidden or disabled first group members when focusing", async () => {
+  const scenarios = [
+    {
+      label: "hidden first",
+      slug: "hidden-first",
+      configure(control) { control.setAttribute("type", "hidden"); },
+    },
+    {
+      label: "disabled first",
+      slug: "disabled-first",
+      configure(control) { control.setAttribute("disabled", ""); },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const actionURL = "http://localhost:3000/" + scenario.slug;
+    const form = new FakeElement("form", null);
+    form.setAttribute("action", "/" + scenario.slug);
+    form.setAttribute("method", "post");
+    form.setAttribute("data-gosx-form", "");
+    const first = new FakeElement("input", null);
+    first.setAttribute("name", "choice");
+    scenario.configure(first);
+    const focusable = new FakeElement("input", null);
+    focusable.setAttribute("type", "checkbox");
+    focusable.setAttribute("name", "choice");
+    const error = new FakeElement("p", null);
+    error.setAttribute("class", "form-error");
+    error.setAttribute("data-gosx-field-error", "choice");
+    form.appendChild(first);
+    form.appendChild(focusable);
+    form.appendChild(error);
+    const env = createContext({
+      elements: [form],
+      fetchRoutes: {
+        [actionURL]: {
+          ok: false,
+          status: 422,
+          text: '{"ok":false,"fieldErrors":{"choice":"Choose an option."}}',
+          url: actionURL,
+        },
+      },
+    });
+
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    env.document.eventListeners.get("submit")[0]({
+      type: "submit",
+      target: form,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    });
+    await flushAsyncWork();
+
+    assert.equal(first.getAttribute("aria-invalid"), "true", scenario.label);
+    assert.equal(focusable.getAttribute("aria-invalid"), "true", scenario.label);
+    assert.equal(first.getAttribute("aria-describedby"), error.id, scenario.label);
+    assert.equal(focusable.getAttribute("aria-describedby"), error.id, scenario.label);
+    assert.equal(first.focusCalls.length, 0, scenario.label);
+    assert.equal(env.document.activeElement, focusable, scenario.label);
+    assert.equal(focusable.scrollIntoViewCalls.length, 1, scenario.label);
+  }
+});
+
+test("concurrent managed forms project only into their submitted form", async () => {
+  function formFixture(action) {
+    const form = new FakeElement("form", null);
+    form.setAttribute("action", action);
+    form.setAttribute("method", "post");
+    form.setAttribute("data-gosx-form", "");
+    const status = new FakeElement("p", null);
+    status.setAttribute("class", "form-status");
+    form.appendChild(status);
+    return { form, status };
+  }
+  const first = formFixture("/first");
+  const second = formFixture("/second");
+  const pending = new Map();
+  const env = createContext({
+    elements: [first.form, second.form],
+    fetchRoutes: {
+      "http://localhost:3000/first": () => new Promise((resolve) => pending.set("first", resolve)),
+      "http://localhost:3000/second": () => new Promise((resolve) => pending.set("second", resolve)),
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  const submit = env.document.eventListeners.get("submit")[0];
+  for (const form of [first.form, second.form]) {
+    submit({
+      type: "submit",
+      target: form,
+      defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    });
+  }
+  await Promise.resolve();
+  assert.equal(first.form.getAttribute("data-gosx-form-state"), "pending");
+  assert.equal(second.form.getAttribute("data-gosx-form-state"), "pending");
+
+  pending.get("second")({ text: '{"ok":true,"message":"Second saved."}' });
+  await flushAsyncWork();
+  assert.equal(second.status.textContent, "Second saved.");
+  assert.equal(second.form.getAttribute("data-gosx-form-state"), "success");
+  assert.equal(first.status.textContent, "");
+  assert.equal(first.form.getAttribute("data-gosx-form-state"), "pending");
+
+  pending.get("first")({ text: '{"ok":true,"message":"First saved."}' });
+  await flushAsyncWork();
+  assert.equal(first.status.textContent, "First saved.");
+  assert.equal(first.form.getAttribute("data-gosx-form-state"), "success");
+  assert.equal(second.status.textContent, "Second saved.");
+});
+
+test("managed validation safely handles malicious and missing field names without crossing form boundaries", async () => {
+  const maliciousName = 'email\"] [data-pwned="true';
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/unsafe-name");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const control = new FakeElement("input", null);
+  control.setAttribute("name", maliciousName);
+  const error = new FakeElement("p", null);
+  error.setAttribute("class", "form-error");
+  error.setAttribute("data-gosx-field-error", maliciousName);
+  form.appendChild(control);
+  form.appendChild(error);
+
+  const unrelated = new FakeElement("form", null);
+  unrelated.setAttribute("data-gosx-form", "");
+  const unrelatedError = new FakeElement("p", null);
+  unrelatedError.setAttribute("class", "form-error");
+  unrelatedError.textContent = "Keep me";
+  unrelated.appendChild(unrelatedError);
+
+  const env = createContext({
+    elements: [form, unrelated],
+    fetchRoutes: {
+      "http://localhost:3000/unsafe-name": {
+        ok: false,
+        status: 422,
+        text: JSON.stringify({
+          ok: false,
+          message: "Invalid.",
+          fieldErrors: { [maliciousName]: "Rejected safely.", missing: "No matching control." },
+        }),
+        url: "http://localhost:3000/unsafe-name",
+      },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.getAttribute("data-gosx-form-state"), "error");
+  assert.equal(control.getAttribute("aria-invalid"), "true");
+  assert.equal(error.textContent, "Rejected safely.");
+  assert.match(error.id, /^gosx-form-error-/);
+  assert.equal(control.getAttribute("aria-describedby"), error.id);
+  assert.equal(unrelatedError.textContent, "Keep me");
+  assert.equal(unrelated.getAttribute("data-gosx-form-state"), "idle");
+});
+
+test("managed form result projection can be explicitly disabled", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/custom-projection");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+  form.setAttribute("data-gosx-form-project", "off");
+  const status = new FakeElement("p", null);
+  status.setAttribute("class", "form-status");
+  status.textContent = "Island-owned";
+  form.appendChild(status);
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/custom-projection": {
+        text: '{"ok":true,"message":"Framework result"}',
+        url: "http://localhost:3000/custom-projection",
+      },
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+  assert.equal(status.textContent, "Island-owned");
+  assert.equal(env.document.querySelector("[data-gosx-announcer]"), null);
+});
+
+test("managed form result projection skips a form detached while its action is pending", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/detached");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+  const status = new FakeElement("p", null);
+  status.setAttribute("class", "form-status");
+  status.textContent = "Keep detached state";
+  form.appendChild(status);
+  let resolveAction;
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/detached": () => new Promise((resolve) => { resolveAction = resolve; }),
+    },
+  });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await Promise.resolve();
+  form.parentNode.removeChild(form);
+  resolveAction({ text: '{"ok":true,"message":"Do not project."}' });
+  await flushAsyncWork();
+
+  assert.equal(form.parentNode, null);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
+  assert.equal(status.textContent, "Keep detached state");
+  assert.equal(env.document.querySelector("[data-gosx-announcer]"), null);
 });
 
 test("navigation runtime intercepts managed GET forms and navigates with query params", async () => {

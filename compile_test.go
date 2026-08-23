@@ -558,3 +558,24 @@ func TestNodeRenderBoolAttr(t *testing.T) {
 		t.Errorf("expected type attr, got %q", html)
 	}
 }
+
+func TestNodeRenderNamedBooleanValues(t *testing.T) {
+	html := RenderHTML(El("input", Attrs(
+		Attr("hidden", false),
+		Attr("required", true),
+		Attr("selected", false),
+		Attr("aria-pressed", false),
+		Attr("spellcheck", false),
+		Attr("hidden", "until-found"),
+	)))
+
+	if strings.Contains(html, `hidden="false"`) || strings.Contains(html, `selected="false"`) {
+		t.Fatalf("false HTML boolean attrs must be omitted, got %q", html)
+	}
+	if !strings.Contains(html, " required") || !strings.Contains(html, `hidden="until-found"`) {
+		t.Fatalf("true and string-valued presence attrs must remain present, got %q", html)
+	}
+	if !strings.Contains(html, `aria-pressed="false"`) || !strings.Contains(html, `spellcheck="false"`) {
+		t.Fatalf("non-boolean attributes must serialize false as text, got %q", html)
+	}
+}

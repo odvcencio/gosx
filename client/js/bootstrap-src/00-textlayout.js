@@ -49,7 +49,12 @@
     };
   });
 
-  window.__gosx = {
+  const gosxNamespace = window.__gosx || {};
+  window.__gosx = gosxNamespace;
+  if (!gosxNamespace.navigation && window.__gosx_page_nav) {
+    gosxNamespace.navigation = window.__gosx_page_nav;
+  }
+  Object.assign(gosxNamespace, {
     version: GOSX_VERSION,
     islands: new Map(),   // islandID -> { component, listeners, root }
     computeIslands: new Map(), // compute island ID -> { component }
@@ -68,7 +73,7 @@
       providers: Object.create(null),
     },
     ready: false,
-  };
+  });
 
   function gosxSharedSignalStore() {
     const current = window.__gosx && window.__gosx.sharedSignals;

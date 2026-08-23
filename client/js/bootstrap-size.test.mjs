@@ -486,7 +486,17 @@ const budgets = [
   // (cold-cache chunk race fix) add ~680 raw across the shared bootstrap
   // head and the engine tail; every bundle and route ceiling below moves
   // by its share of that. Exact measured totals per entry.
-  { file: "bootstrap.js", raw: 1_486_231, gzip: 402_762, brotli: 323_723 },
+  // The framework-owned browser-event island host, selective event hydration,
+  // direct controller storage loads, and hub-triggered soft refresh add 4_262
+  // raw / 1_288 gzip / 890 brotli bytes to the legacy all-features bundle.
+  // The exact regenerated artifact remains the ratchet ceiling.
+  // Connection-wide Hub scheduling/freshness, nested-island event ownership,
+  // bounded external-drop payloads, and namespace-preserving startup bring the
+  // final integrated artifact from 1_490_493 / 404_050 / 324_613 to
+  // 1_492_041 / 404_529 / 325_107. Pending-navigation-safe Hub scheduling
+  // brings the definitive artifact to 1_492_193 / 404_581 / 325_075. Keep
+  // that exact artifact as the ratchet.
+  { file: "bootstrap.js", raw: 1_492_193, gzip: 404_581, brotli: 325_075 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -535,7 +545,9 @@ const budgets = [
   // runtime surface. Final measurement: 125_629 / 34_137 / 29_910.
   // Main's declarative submit-action handling is part of the shared runtime.
   // Combined post-merge measurement: 127_742 / 34_679 / 30_385.
-  { file: "bootstrap-runtime.js", raw: 127_742, gzip: 34_679, brotli: 30_385 },
+  // Preserving preinstalled namespace services adds 127 raw / 39 gzip while
+  // Brotli shrinks by 4 bytes; ratchet only the breached measurements.
+  { file: "bootstrap-runtime.js", raw: 127_869, gzip: 34_718, brotli: 30_385 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -569,7 +581,9 @@ const budgets = [
   // Final measurement: 98_110 / 26_463 / 23_574.
   // The same submit-action handling reaches the lite bundle. Brotli remains
   // within its existing ceiling; raw/gzip measure 100_220 / 26_981.
-  { file: "bootstrap-lite.js", raw: 100_220, gzip: 26_981, brotli: 24_077 },
+  // Namespace preservation measures 100_347 / 27_027 / 24_037; keep the prior
+  // Brotli ceiling because the compressed artifact shrank.
+  { file: "bootstrap-lite.js", raw: 100_347, gzip: 27_027, brotli: 24_077 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1101,7 +1115,12 @@ const budgets = [
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
   { file: "bootstrap-feature-controllers.js", raw: 10_000, gzip: 3_500, brotli: 3_000 },
   { file: "bootstrap-feature-hubs.js", raw: 40_000, gzip: 14_000, brotli: 13_000 },
-  { file: "bootstrap-feature-islands.js", raw: 10_000, gzip: 4_000, brotli: 4_000 },
+  // Selective island event hydration and the browser-host bridge. Exact raw
+  // measurement: 12_265; compressed output remains under its existing gates.
+  // Nested-island ownership and bounded, typed event payloads add 698 raw
+  // bytes to the selective island runtime; compressed output remains within
+  // its existing ceilings.
+  { file: "bootstrap-feature-islands.js", raw: 12_963, gzip: 4_000, brotli: 4_000 },
 ];
 
 const routeBudgets = [
@@ -1197,8 +1216,10 @@ const routeBudgets = [
     // Final observable-telemetry measurement: 229_436 / 65_617 / 57_847.
     // Main's declarative submit-action handling is shared by the selective
     // runtime; record the combined post-merge measurement.
-    raw: 231_974,
-    gzip: 66_291,
+    // Namespace preservation in bootstrap-runtime adds 127 raw / 39 gzip;
+    // Brotli shrinks by 4 bytes across every selective route below.
+    raw: 232_101,
+    gzip: 66_330,
     brotli: 58_412,
     maxMonolithFraction: 0.25,
   },
@@ -1299,8 +1320,8 @@ const routeBudgets = [
     // route total to:
     // 16a memoization rides in through the WebGPU chunk. Exact merged
     // route measurement: 1_176_526 / 313_698 / 264_905.
-    raw: 1_176_526,
-    gzip: 313_698,
+    raw: 1_176_653,
+    gzip: 313_737,
     brotli: 264_905,
   },
   {
@@ -1373,8 +1394,8 @@ const routeBudgets = [
     // exact measured route totals. Merging current main with declarative
     // status bindings, plus main's declarative submit-action fix, brings the
     // exact route total to:
-    raw: 1_004_743,
-    gzip: 279_300,
+    raw: 1_004_870,
+    gzip: 279_339,
     brotli: 236_953,
   },
   {
@@ -1441,8 +1462,8 @@ const routeBudgets = [
     // exact route total to:
     // 16a memoization rides in through the WebGPU chunk. Exact merged
     // route measurement: 1_388_495 / 372_093 / 314_574.
-    raw: 1_388_495,
-    gzip: 372_093,
+    raw: 1_388_622,
+    gzip: 372_132,
     brotli: 314_574,
   },
   {
@@ -1512,8 +1533,8 @@ const routeBudgets = [
     // exact route total to:
     // 16a memoization rides in through the WebGPU chunk. Exact merged
     // route measurement: 1_029_823 / 271_279 / 227_216.
-    raw: 1_029_823,
-    gzip: 271_279,
+    raw: 1_029_950,
+    gzip: 271_318,
     brotli: 227_216,
   },
 

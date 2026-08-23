@@ -5,6 +5,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/client/bridge"
+	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
 )
@@ -151,6 +152,33 @@ func Calc() Node {
 	t.Logf("Calc patches: %s", pj)
 }
 
+func TestFrontendComputedChainFromSource(t *testing.T) {
+	b := compileAndHydrate(t, `package main
+
+//gosx:island
+func ComputedCounter() Node {
+	count := signal.New(1)
+	doubled := signal.Derive(func() int { return count.Get() * 2 })
+	label := signal.Derive(func() int { return doubled.Get() + 1 })
+	increment := func() { count.Set(count.Get() + 1) }
+	return <div>
+		<output>{label.Get()}</output>
+		<button onClick={increment}>+</button>
+	</div>
+}`)
+
+	patches, err := b.DispatchAction("test-0", "increment", `{}`)
+	if err != nil {
+		t.Fatalf("increment: %v", err)
+	}
+	for _, patch := range patches {
+		if patch.Kind == vm.PatchSetText && patch.Text == "5" {
+			return
+		}
+	}
+	t.Fatalf("computed chain did not render final value 5: %#v", patches)
+}
+
 func TestFrontendMultiSignalFromSource(t *testing.T) {
 	b := compileAndHydrate(t, `package main
 
@@ -227,6 +255,128 @@ func Lengths() Node {
 
 	if b == nil {
 		t.Fatal("expected hydrated bridge")
+	}
+}
+
+func TestFrontendSharedEmptySliceBinaryStorageLifecycle(t *testing.T) {
+	source := `package main
+
+//gosx:island
+func SavedList() Node {
+	saved := signal.NewShared("$savedList", []string{})
+	clear := func() { saved.Set(saved.Get().filter(func(item){ return false })) }
+	return <div><strong>{saved.Get().length}</strong><button onClick={clear}>Clear</button></div>
+}`
+	irProg, err := gosx.Compile([]byte(source))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var lowered *program.Program
+	for i, comp := range irProg.Components {
+		if !comp.IsIsland {
+			continue
+		}
+		lowered, err = ir.LowerIsland(irProg, i)
+		if err != nil {
+			t.Fatalf("lower: %v", err)
+		}
+		break
+	}
+	if lowered == nil || len(lowered.Signals) != 1 {
+		t.Fatalf("lowered signals = %#v", lowered)
+	}
+	data, err := program.EncodeBinary(lowered)
+	if err != nil {
+		t.Fatalf("encode binary: %v", err)
+	}
+	decoded, err := program.DecodeBinary(data)
+	if err != nil {
+		t.Fatalf("decode binary: %v", err)
+	}
+	def := decoded.Signals[0]
+	if def.Name != "$savedList" {
+		t.Fatalf("signal name = %q, want $savedList", def.Name)
+	}
+	initExpr := decoded.Exprs[def.Init]
+	if initExpr.Op != program.OpComposite || initExpr.Value != "slice" {
+		t.Fatalf("binary init = %#v, want OpComposite slice", initExpr)
+	}
+	initValue := vm.NewIsland(decoded, `{}`).EvalExpr(def.Init)
+	if !initValue.IsList() || len(initValue.List()) != 0 {
+		t.Fatalf("initial value = %#v, want empty list", initValue)
+	}
+
+	assertRenderedCount := func(t *testing.T, b *bridge.Bridge, want string) {
+		t.Helper()
+		reconciler, ok := b.LookupReconciler("saved-list")
+		if !ok {
+			t.Fatal("saved-list reconciler missing")
+		}
+		tree := reconciler.(*vm.Island).CurrentTree()
+		for i := range tree.Nodes {
+			if tree.Nodes[i].Text == want {
+				return
+			}
+		}
+		t.Fatalf("tree = %#v, want rendered count %q", tree, want)
+	}
+	assertClearsToEmptyList := func(t *testing.T, b *bridge.Bridge) {
+		t.Helper()
+		if _, err := b.DispatchAction("saved-list", "clear", `{}`); err != nil {
+			t.Fatalf("clear: %v", err)
+		}
+		got, err := b.GetSharedSignalJSON("$savedList")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "[]" {
+			t.Fatalf("cleared shared JSON = %s, want []", got)
+		}
+		assertRenderedCount(t, b, "0")
+	}
+
+	t.Run("fresh", func(t *testing.T) {
+		b := bridge.New()
+		if err := b.HydrateIsland("saved-list", decoded.Name, `{}`, data, "bin"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := b.GetSharedSignalJSON("$savedList")
+		if err != nil || got != "[]" {
+			t.Fatalf("fresh shared JSON = %q, %v; want []", got, err)
+		}
+		assertRenderedCount(t, b, "0")
+	})
+
+	for _, controllerFirst := range []bool{true, false} {
+		name := "island-before-controller"
+		if controllerFirst {
+			name = "controller-before-island"
+		}
+		t.Run(name, func(t *testing.T) {
+			b := bridge.New()
+			var hydrationPatches []string
+			b.SetPatchCallback(func(_ string, patchJSON string) {
+				hydrationPatches = append(hydrationPatches, patchJSON)
+			})
+			if controllerFirst {
+				if err := b.SetSharedSignalJSON("$savedList", `["session"]`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := b.HydrateIsland("saved-list", decoded.Name, `{}`, data, "bin"); err != nil {
+				t.Fatal(err)
+			}
+			if !controllerFirst {
+				if err := b.SetSharedSignalJSON("$savedList", `["session"]`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertRenderedCount(t, b, "1")
+			if len(hydrationPatches) == 0 {
+				t.Fatal("stored value produced no DOM patch")
+			}
+			assertClearsToEmptyList(t, b)
+		})
 	}
 }
 

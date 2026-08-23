@@ -1,8 +1,10 @@
 package bridge
 
 import (
+	"encoding/json"
 	"testing"
 
+	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/island/program"
 )
 
@@ -208,6 +210,73 @@ func TestBridgeReloadProgramRewiresSharedSignals(t *testing.T) {
 	}
 	if patchCount != 0 {
 		t.Fatalf("changing dropped shared signal $a reconciled the island %d time(s); subscription should be gone", patchCount)
+	}
+}
+
+func computedSharedDisplay(name string) *program.Program {
+	return &program.Program{
+		Name: "ComputedDisplay",
+		Exprs: []program.Expr{
+			{Op: program.OpLitInt, Value: "0", Type: program.TypeInt},
+			{Op: program.OpSignalGet, Value: name, Type: program.TypeInt},
+			{Op: program.OpLitInt, Value: "2", Type: program.TypeInt},
+			{Op: program.OpMul, Operands: []program.ExprID{1, 2}, Type: program.TypeInt},
+			{Op: program.OpSignalGet, Value: "doubled", Type: program.TypeInt},
+		},
+		Signals:   []program.SignalDef{{Name: name, Type: program.TypeInt, Init: 0}},
+		Computeds: []program.ComputedDef{{Name: "doubled", Type: program.TypeInt, Expr: 3}},
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}},
+			{Kind: program.NodeExpr, Expr: 4},
+		},
+		Root:       0,
+		StaticMask: []bool{false, false},
+	}
+}
+
+func TestBridgeReloadBindsNewSharedComputedBeforeReconcile(t *testing.T) {
+	b := New()
+	if err := b.SetSharedSignalJSON("$b", "7"); err != nil {
+		t.Fatal(err)
+	}
+	oldData, err := program.EncodeJSON(sharedDisplay("$a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.HydrateIsland("island-0", "Display", `{}`, oldData, "json"); err != nil {
+		t.Fatal(err)
+	}
+
+	var pushed [][]vm.PatchOp
+	b.SetPatchCallback(func(_ string, patchJSON string) {
+		var patches []vm.PatchOp
+		if err := json.Unmarshal([]byte(patchJSON), &patches); err != nil {
+			t.Fatalf("decode pushed patches: %v", err)
+		}
+		pushed = append(pushed, patches)
+	})
+	newData, err := program.EncodeJSON(computedSharedDisplay("$b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.ReloadProgram("island-0", newData, "json"); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(pushed) != 1 || len(pushed[0]) != 1 || pushed[0][0].Kind != vm.PatchSetText || pushed[0][0].Text != "14" {
+		t.Fatalf("reload patches = %#v, want one push containing SetText(14)", pushed)
+	}
+	reconciler, ok := b.LookupReconciler("island-0")
+	if !ok {
+		t.Fatal("reloaded island missing")
+	}
+	island, ok := reconciler.(*vm.Island)
+	if !ok {
+		t.Fatalf("reconciler type = %T, want *vm.Island", reconciler)
+	}
+	tree := island.CurrentTree()
+	if tree == nil || len(tree.Nodes) < 2 || tree.Nodes[1].Text != "14" {
+		t.Fatalf("retained tree after reload = %#v, want shared computed text 14", tree)
 	}
 }
 

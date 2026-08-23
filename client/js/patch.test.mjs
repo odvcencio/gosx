@@ -97,6 +97,12 @@ class FakeElement {
     this.ownerDocument = doc;
     this.id = "";
     this.value = undefined;
+    this.hidden = false;
+    this.required = false;
+    this.disabled = false;
+    this.selected = false;
+    this.checked = false;
+    this.readOnly = false;
   }
 
   get childNodes() {
@@ -293,8 +299,30 @@ function loadApplier() {
 // ---------------------------------------------------------------------------
 
 const IMPLICIT = new Set(["TBODY", "THEAD", "TFOOT", "COLGROUP"]);
-const PROP_ATTRS = new Set(["value", "checked", "selected", "disabled"]);
-const BOOL_PROPS = new Set(["checked", "selected", "disabled"]);
+const BOOL_ATTRS = new Set([
+  "allowfullscreen", "alpha", "async", "autofocus", "autoplay",
+  "checked", "controls", "default", "defer", "disabled",
+  "formnovalidate", "headingreset", "hidden", "inert", "ismap", "itemscope",
+  "loop", "multiple", "muted", "nomodule", "novalidate", "open",
+  "playsinline", "readonly", "required", "reversed", "selected",
+  "shadowrootclonable", "shadowrootcustomelementregistry",
+  "shadowrootdelegatesfocus", "shadowrootserializable",
+]);
+const BOOL_PROP_NAMES = {
+  allowfullscreen: "allowFullscreen",
+  formnovalidate: "formNoValidate",
+  headingreset: "headingReset",
+  ismap: "isMap",
+  itemscope: "itemScope",
+  nomodule: "noModule",
+  novalidate: "noValidate",
+  playsinline: "playsInline",
+  readonly: "readOnly",
+  shadowrootclonable: "shadowRootClonable",
+  shadowrootcustomelementregistry: "shadowRootCustomElementRegistry",
+  shadowrootdelegatesfocus: "shadowRootDelegatesFocus",
+  shadowrootserializable: "shadowRootSerializable",
+};
 
 function refSkipImplicit(node) {
   if (node.nodeType !== ELEMENT_NODE) return node;
@@ -356,8 +384,11 @@ function refApplyOne(doc, root, op) {
       break;
     case 2:
       target.removeAttribute(op.attrName);
-      if (BOOL_PROPS.has(op.attrName)) target[op.attrName] = false;
-      else if (op.attrName === "value") target.value = "";
+      if (BOOL_ATTRS.has(String(op.attrName).toLowerCase())) {
+        const normalized = String(op.attrName).toLowerCase();
+        const prop = BOOL_PROP_NAMES[normalized] || normalized;
+        if (prop in target) target[prop] = false;
+      } else if (op.attrName === "value") target.value = "";
       break;
     case 3: {
       const created = doc.createElement(op.tag);
@@ -407,12 +438,19 @@ function refApplyOne(doc, root, op) {
 }
 
 function refSetAttr(el, name, value) {
-  if (PROP_ATTRS.has(name)) {
-    if (BOOL_PROPS.has(name)) el[name] = value !== "false" && value !== "";
-    else el[name] = value;
-  } else {
-    el.setAttribute(name, value);
+  const normalized = String(name).toLowerCase();
+  if (normalized === "hidden" && String(value).toLowerCase() === "until-found") {
+    el.setAttribute(name, "until-found");
+    return;
   }
+  if (BOOL_ATTRS.has(normalized)) {
+    el.setAttribute(name, "");
+    const prop = BOOL_PROP_NAMES[normalized] || normalized;
+    if (prop in el) el[prop] = true;
+    return;
+  }
+  if (name === "value") el.value = value;
+  else el.setAttribute(name, value);
 }
 
 // ---------------------------------------------------------------------------
@@ -688,6 +726,65 @@ test("patch applier sets attributes, values and removals identically", () => {
     { kind: 1, path: "0/0", attrName: "aria-label", text: "field" },
   ];
   assertMatchesOracles("attributes", populate, ops);
+});
+
+test("patch applier reflects HTML boolean attributes as property and presence", () => {
+  const scene = buildScene((root, doc, stats) => {
+    root.appendChild(new FakeElement("input", stats, doc));
+  });
+  const input = scene.root.kids[0];
+  scene.apply("island", JSON.stringify([
+    { kind: 1, path: "0", attrName: "hidden", text: "false" },
+    { kind: 1, path: "0", attrName: "required", text: "" },
+    { kind: 1, path: "0", attrName: "disabled", text: "false" },
+    { kind: 1, path: "0", attrName: "selected", text: "" },
+    { kind: 1, path: "0", attrName: "checked", text: "false" },
+    { kind: 1, path: "0", attrName: "readonly", text: "false" },
+    { kind: 1, path: "0", attrName: "aria-pressed", text: "false" },
+    { kind: 1, path: "0", attrName: "spellcheck", text: "false" },
+  ]));
+
+  for (const name of ["hidden", "required", "disabled", "selected", "checked", "readonly"]) {
+    assert.equal(input.getAttribute(name), "", name);
+  }
+  for (const prop of ["hidden", "required", "disabled", "selected", "checked", "readOnly"]) {
+    assert.equal(input[prop], true, prop);
+  }
+  assert.equal(input.getAttribute("aria-pressed"), "false");
+  assert.equal(input.getAttribute("spellcheck"), "false");
+
+  scene.apply("island", JSON.stringify([
+    { kind: 2, path: "0", attrName: "hidden" },
+    { kind: 2, path: "0", attrName: "required" },
+    { kind: 2, path: "0", attrName: "disabled" },
+    { kind: 2, path: "0", attrName: "selected" },
+    { kind: 2, path: "0", attrName: "checked" },
+    { kind: 2, path: "0", attrName: "readonly" },
+  ]));
+  for (const name of ["hidden", "required", "disabled", "selected", "checked", "readonly"]) {
+    assert.equal(input.getAttribute(name), null, name);
+  }
+  for (const prop of ["hidden", "required", "disabled", "selected", "checked", "readOnly"]) {
+    assert.equal(input[prop], false, prop);
+  }
+});
+
+test("patch applier preserves the hidden until-found state", () => {
+  const scene = buildScene((root, doc, stats) => {
+    root.appendChild(new FakeElement("section", stats, doc));
+  });
+  const section = scene.root.kids[0];
+
+  scene.apply("island", JSON.stringify([
+    { kind: 1, path: "0", attrName: "HiDdEn", text: "until-found" },
+  ]));
+  assert.equal(section.getAttribute("HiDdEn"), "until-found");
+
+  scene.apply("island", JSON.stringify([
+    { kind: 2, path: "0", attrName: "HiDdEn" },
+  ]));
+  assert.equal(section.getAttribute("HiDdEn"), null);
+  assert.equal(section.hidden, false);
 });
 
 test("patch applier survives a long randomized op stream", () => {

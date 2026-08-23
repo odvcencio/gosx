@@ -24,7 +24,7 @@ var gzipWriterPool = sync.Pool{
 func GzipMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") ||
+			if !requestAcceptsGzip(r) ||
 				strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 				next.ServeHTTP(w, r)
 				return
@@ -55,6 +55,7 @@ type gzipWriter struct {
 	http.ResponseWriter
 	started     bool
 	headersSent bool
+	passthrough bool
 }
 
 func (w *gzipWriter) WriteHeader(code int) {
@@ -63,6 +64,7 @@ func (w *gzipWriter) WriteHeader(code int) {
 	}
 	// Don't compress if upstream already set encoding (e.g., pre-compressed static files).
 	if w.Header().Get("Content-Encoding") != "" {
+		w.passthrough = true
 		w.headersSent = true
 		w.ResponseWriter.WriteHeader(code)
 		return
@@ -77,6 +79,9 @@ func (w *gzipWriter) WriteHeader(code int) {
 func (w *gzipWriter) Write(b []byte) (int, error) {
 	if !w.headersSent {
 		w.WriteHeader(http.StatusOK)
+	}
+	if w.passthrough {
+		return w.ResponseWriter.Write(b)
 	}
 	w.started = true
 	return w.Writer.Write(b)
@@ -93,7 +98,13 @@ func (w *gzipWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // Flush supports streaming responses (SSE, chunked transfer).
 func (w *gzipWriter) Flush() {
-	w.Writer.(*gzip.Writer).Flush()
+	if !w.headersSent {
+		w.WriteHeader(http.StatusOK)
+	}
+	if !w.passthrough {
+		w.started = true
+		_ = w.Writer.(*gzip.Writer).Flush()
+	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}

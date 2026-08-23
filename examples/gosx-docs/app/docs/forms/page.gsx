@@ -50,6 +50,33 @@ func Page() Node {
 			</p>
 			{CodeBlock("gsx", "<input name=\"email\" value={actions.subscribe.values.email} />\n<p class=\"form-error\">{actions.subscribe.fieldErrors.email}</p>")}
 		</section>
+		<section id="managed-action-results" class="docs-section-block">
+			<h2>Managed Action Results</h2>
+			<p>
+				A
+				<span class="inline-code">data-gosx-form</span>
+				form projects JSON action results without page-authored JavaScript. The runtime clears stale errors inside only the submitted form, writes each field error into the field's described
+				<span class="inline-code">.form-error</span>
+				node, and marks and links every same-name radio or checkbox. It updates the first
+				<span class="inline-code">.form-status</span>
+				or
+				<span class="inline-code">.action-message</span>
+				, announces the result, and sets the form state to success or error. Hidden and disabled controls still receive error state, while focus follows the first focusable invalid control in form DOM order. Authored
+				<span class="inline-code">aria-describedby</span>
+				tokens are preserved; only transient error relationships added by the projector are removed on its next result.
+			</p>
+			{CodeBlock("gsx", `<form method="post" action={actionPath("subscribe")} data-gosx-form>
+	    <input name="email" aria-describedby="email-error" />
+	    <p id="email-error" class="form-error"></p>
+	    <p class="form-status" role="status"></p>
+	    <button type="submit">Subscribe</button>
+	</form>`)}
+			<p>
+				Use
+				<span class="inline-code">data-gosx-form-project="off"</span>
+				when an island or another framework-owned surface owns result rendering. Native submission remains the fallback either way.
+			</p>
+		</section>
 		<section id="csrf-protection" class="docs-section-block">
 			<h2>CSRF Protection</h2>
 			<p>

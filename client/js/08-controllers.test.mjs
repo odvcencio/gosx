@@ -60,7 +60,7 @@ function createContext(options = {}) {
   const button = new FakeTarget("button");
   button.id = "save";
   button.value = "clicked";
-  const storage = new Map([["prefs:theme", JSON.stringify("light")]]);
+  const storage = new Map(options.storageEntries || [["prefs:theme", JSON.stringify("light")]]);
   const aborts = [];
   class AbortController {
     constructor() {
@@ -133,7 +133,7 @@ function createContext(options = {}) {
   };
   vm.createContext(context);
   vm.runInContext(`(function(){${source}\nwindow.__test_mountAllControllers = mountAllControllers;})();`, context);
-  return { context, writes, timers, document, button, storage, aborts };
+  return { context, writes, timers, document, button, storage, aborts, sharedValues };
 }
 
 test("declarative controller handles signals, keys, timers, fetch, storage, and dispose", async () => {
@@ -151,7 +151,10 @@ test("declarative controller handles signals, keys, timers, fetch, storage, and 
         resources: [{ name: "settings", url: "/api/settings", output: "events" }],
         storage: {
           namespace: "prefs",
-          load: [{ key: "theme", output: "events" }],
+          load: [
+            { key: "theme", signal: "$storedTheme", output: "events" },
+            { key: "theme", signal: "$storedThemeOnly" },
+          ],
           save: [{ key: "theme", signal: "$theme" }],
         },
       },
@@ -166,6 +169,8 @@ test("declarative controller handles signals, keys, timers, fetch, storage, and 
   assert.equal(env.writes.some((entry) => entry.value.kind === "input" && entry.value.value === "dark"), true);
   assert.equal(env.writes.some((entry) => entry.value.kind === "resource" && entry.value.result.data.ok === true), true);
   assert.equal(env.writes.some((entry) => entry.value.kind === "storage" && entry.value.value === "light"), true);
+  assert.equal(env.writes.some((entry) => entry.signal === "$storedTheme" && entry.value === "light"), true);
+  assert.equal(env.writes.some((entry) => entry.signal === "$storedThemeOnly" && entry.value === "light"), true);
 
   const keyEvent = {
     type: "keydown",
@@ -262,5 +267,44 @@ test("controller resource refresh and polling release completed AbortControllers
     await drainMicrotasks();
     assert.equal(record.abortControllers.length, 0);
     assert.equal(Object.keys(record.resourceAbort).length, 0);
+  }
+});
+
+test("stored signal loads win across controller-island mount order while missing or invalid values preserve defaults", async () => {
+  const manifest = {
+    controllers: [{
+      id: "gosx-controller-storage",
+      config: {
+        name: "storage",
+        outputs: [{ name: "events", signal: "$events" }],
+        storage: {
+          namespace: "prefs",
+          load: [{ key: "open", signal: "$open", output: "events" }],
+        },
+      },
+    }],
+  };
+  const hydrateDefault = (env) => {
+    if (!env.sharedValues.has("$open")) env.sharedValues.set("$open", false);
+    return env.sharedValues.get("$open");
+  };
+
+  const controllerFirst = createContext({ storageEntries: [["prefs:open", "true"]] });
+  await controllerFirst.context.window.__test_mountAllControllers(manifest);
+  assert.equal(hydrateDefault(controllerFirst), true);
+
+  const islandFirst = createContext({ storageEntries: [["prefs:open", "true"]] });
+  assert.equal(hydrateDefault(islandFirst), false);
+  await islandFirst.context.window.__test_mountAllControllers(manifest);
+  assert.equal(islandFirst.sharedValues.get("$open"), true);
+
+  for (const storageEntries of [[], [["prefs:open", ""]], [["prefs:open", "not-json"]]]) {
+    const env = createContext({ storageEntries });
+    await env.context.window.__test_mountAllControllers(manifest);
+    assert.equal(env.sharedValues.has("$open"), false);
+    assert.equal(hydrateDefault(env), false);
+    const event = env.writes.find((entry) => entry.signal === "$events");
+    assert.equal(event.value.kind, "storage");
+    assert.equal(event.value.value, null);
   }
 });

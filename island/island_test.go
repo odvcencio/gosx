@@ -9,6 +9,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	clientvm "m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/island/program"
@@ -1062,6 +1063,35 @@ func TestRenderIslandFromProgramRendersInitialExpressions(t *testing.T) {
 	}
 }
 
+func TestRenderIslandFromProgramEventlessReactiveManifestUsesNoListeners(t *testing.T) {
+	r := NewRenderer("main")
+	prog := &program.Program{
+		Name: "SharedStatus",
+		Exprs: []program.Expr{
+			{Op: program.OpSignalGet, Value: "$status", Type: program.TypeString},
+			{Op: program.OpLitString, Value: "ready", Type: program.TypeString},
+		},
+		Signals: []program.SignalDef{{Name: "$status", Type: program.TypeString, Init: 1}},
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "output", Children: []program.NodeID{1}},
+			{Kind: program.NodeExpr, Expr: 0},
+		},
+		Root: 0,
+	}
+	r.RenderIslandFromProgram(prog, nil)
+	entry := r.Manifest().Islands[0]
+	if entry.Events == nil || len(entry.Events) != 0 {
+		t.Fatalf("eventless reactive events = %#v, want explicit empty slice", entry.Events)
+	}
+	data, err := r.Manifest().Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"events": []`) {
+		t.Fatalf("eventless reactive manifest omitted events array: %s", data)
+	}
+}
+
 func TestRenderIslandFromProgramRendersDynamicAttrs(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetBundle("main", "/gosx/runtime.wasm")
@@ -1075,6 +1105,65 @@ func TestRenderIslandFromProgramRendersDynamicAttrs(t *testing.T) {
 	}
 	if !strings.Contains(html, `About: GoSX is a Go-native web platform.`) {
 		t.Fatalf("expected initial tab content, got %s", html)
+	}
+}
+
+func TestRenderResolvedHTMLUsesTypedBooleanAttributePresence(t *testing.T) {
+	prog := &program.Program{
+		Exprs: []program.Expr{
+			{Op: program.OpLitBool, Value: "false", Type: program.TypeBool},
+			{Op: program.OpLitBool, Value: "true", Type: program.TypeBool},
+			{Op: program.OpLitString, Value: "until-found", Type: program.TypeString},
+		},
+		Nodes: []program.Node{
+			{Kind: program.NodeElement, Tag: "div", Attrs: []program.Attr{
+				{Kind: program.AttrExpr, Name: "hidden", Expr: 0},
+				{Kind: program.AttrExpr, Name: "required", Expr: 0},
+				{Kind: program.AttrExpr, Name: "selected", Expr: 1},
+				{Kind: program.AttrExpr, Name: "checked", Expr: 1},
+				{Kind: program.AttrExpr, Name: "aria-pressed", Expr: 0},
+				{Kind: program.AttrExpr, Name: "spellcheck", Expr: 0},
+			}, Children: []program.NodeID{1}},
+			{Kind: program.NodeElement, Tag: "section", Attrs: []program.Attr{
+				{Kind: program.AttrExpr, Name: "hidden", Expr: 2},
+			}},
+		},
+		Root: 0,
+	}
+	html := RenderResolvedHTML(prog, clientvm.ResolveInitialTree(prog, `{}`))
+
+	if strings.Contains(html, `hidden="false"`) || strings.Contains(html, `required="false"`) {
+		t.Fatalf("false typed HTML boolean attrs must be omitted, got %q", html)
+	}
+	for _, want := range []string{" selected", " checked", `aria-pressed="false"`, `spellcheck="false"`, `hidden="until-found"`} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("rendered island %q missing %q", html, want)
+		}
+	}
+}
+
+func TestExtractEventSlotsNormalizesDelegatedAndGlobalNames(t *testing.T) {
+	prog := &program.Program{
+		Root: 0,
+		Nodes: []program.Node{{
+			Kind: program.NodeElement,
+			Attrs: []program.Attr{
+				{Kind: program.AttrEvent, Name: "onDragStart", Event: "drag"},
+				{Kind: program.AttrEvent, Name: "onPointerDown", Event: "point"},
+				{Kind: program.AttrEvent, Name: "onDocumentKeyDown", Event: "shortcut"},
+				{Kind: program.AttrEvent, Name: "onWindowResize", Event: "resize"},
+			},
+		}},
+	}
+	slots := extractEventSlots(prog)
+	if len(slots) != 4 {
+		t.Fatalf("event slots = %d, want 4", len(slots))
+	}
+	want := []string{"dragstart", "pointerdown", "document-keydown", "window-resize"}
+	for i := range want {
+		if slots[i].EventType != want[i] {
+			t.Fatalf("slot %d event type = %q, want %q", i, slots[i].EventType, want[i])
+		}
 	}
 }
 
