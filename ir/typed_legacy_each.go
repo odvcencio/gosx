@@ -164,6 +164,9 @@ func (l *lowerer) resolveTypedLegacyEachSource(span Span, componentName, propsTy
 	} else {
 		return "", false
 	}
+	if l.typedLegacyPathBecomesOpaque(rootType, path) {
+		return "", false
+	}
 	res := l.walkStrictHops(root, rootType, path)
 	if res.failKind != strictHopOK {
 		l.errs = append(l.errs, Diagnostic{
@@ -188,6 +191,56 @@ func (l *lowerer) resolveTypedLegacyEachSource(span Span, componentName, propsTy
 		return "", false
 	}
 	return elem, true
+}
+
+// typedLegacyPathBecomesOpaque reports whether a selector leaves a known
+// struct schema through a map or interface before its final hop. Those values
+// intentionally retain legacy key-selection semantics, so the checker must
+// stop proving the path rather than reinterpret the next key as a Go struct
+// field. Structural failures before that dynamic boundary still fall through
+// to walkStrictHops and keep their existing diagnostics.
+func (l *lowerer) typedLegacyPathBecomesOpaque(rootType string, path []string) bool {
+	currentType := strings.TrimSpace(rootType)
+	for i, field := range path {
+		if typedLegacyDynamicSelectorType(currentType) {
+			return true
+		}
+		fields, isStruct := l.structTypes[currentType]
+		if !isStruct {
+			return false
+		}
+		fieldType, known := fields[field]
+		if !known {
+			return false
+		}
+		trimmed := strings.TrimSpace(fieldType)
+		if i == len(path)-1 {
+			return false
+		}
+		if typedLegacyDynamicSelectorType(trimmed) {
+			return true
+		}
+		if _, isStruct := l.structTypes[trimmed]; !isStruct {
+			return false
+		}
+		currentType = trimmed
+	}
+	return false
+}
+
+func typedLegacyDynamicSelectorType(typeText string) bool {
+	expr, err := parser.ParseExpr(strings.TrimSpace(typeText))
+	if err != nil {
+		return false
+	}
+	switch node := typedLegacyUnwrapParens(expr).(type) {
+	case *ast.MapType, *ast.InterfaceType:
+		return true
+	case *ast.Ident:
+		return node.Name == "any"
+	default:
+		return false
+	}
 }
 
 func typedLegacyCollectionSelector(source string) (root string, path []string, ok bool) {

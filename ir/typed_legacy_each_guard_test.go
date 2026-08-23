@@ -277,6 +277,31 @@ func Roster(props RosterProps) Node {
 	}
 }
 
+func TestLowerLeavesTypedLegacyMapProjectionDynamic(t *testing.T) {
+	lowerTypedLegacySource(t, `package app
+
+type DraftProps struct {
+	Data map[string]any
+}
+
+func Draft(props DraftProps) Node {
+	return <section>
+		<Each of={props.Data.teams} as="team">
+			<article data-seat={team.seat_id}>
+				<If cond={team.ready}><strong>{team.name}</strong></If>
+				<Each of={team.seat_controls} as="control">
+					<button data-action={control.action}>{control.label}</button>
+				</Each>
+			</article>
+		</Each>
+		<Each of={props.Data.board} as="player"><span>{player.display_name}</span></Each>
+		<Each of={props.Data.picks} as="pick"><span data-round={pick.round}>{pick.player_name}</span></Each>
+		<Each of={props.Data.seat_controls} as="control"><span>{control.label}</span></Each>
+	</section>
+}
+`)
+}
+
 func TestLowerValidatesTypedLegacyNestedEachScopes(t *testing.T) {
 	lowerTypedLegacySource(t, `package app
 

@@ -38,6 +38,39 @@ component Page() {
 	}
 }
 
+func TestCheckFileAcceptsTypedLegacyMapProjection(t *testing.T) {
+	dir := newTestModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, `package main
+
+type DraftProps struct {
+	Data map[string]any
+}
+
+func Draft(props DraftProps) Node {
+	return <section>
+		<Each of={props.Data.teams} as="team">
+			<article data-seat={team.seat_id}>
+				<If cond={team.ready}><strong>{team.name}</strong></If>
+				<Each of={team.seat_controls} as="control">
+					<button data-action={control.action}>{control.label}</button>
+				</Each>
+			</article>
+		</Each>
+		<Each of={props.Data.board} as="player"><span>{player.display_name}</span></Each>
+		<Each of={props.Data.picks} as="pick"><span data-round={pick.round}>{pick.player_name}</span></Each>
+	</section>
+}
+
+component Page() {
+	return <main>ok</main>
+}
+`)
+	if err := CheckFile(context.Background(), path); err != nil {
+		t.Fatalf("CheckFile rejected a typed legacy map projection: %v", err)
+	}
+}
+
 func TestCheckFileRejectsTypedLegacyEachSelectorAlias(t *testing.T) {
 	dir := newTestModule(t)
 	path := filepath.Join(dir, "page.gsx")
