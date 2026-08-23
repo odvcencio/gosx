@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.53.2 (2026-08-23)
+
+### Fixed: typed legacy `<Each>` selectors honor strict field visibility
+
+- Legacy `<Each>` loops whose collection is statically resolvable to a declared
+  struct slice now validate item selectors against the same visible-field rules
+  as strict components. Go-invisible lowercase and snake-case selectors are
+  diagnosed before runtime instead of being silently lost by reflective
+  rendering. This covers expressions and attributes, including default `item`
+  bindings and nested loops.
+- Slice-preserving `.filter(...)` receivers are peeled structurally, so the
+  collection schema remains authoritative even when a predicate references
+  multiple roots or uses comments and spacing. Unresolved expressions,
+  map-like transforms, pointer-backed collections, custom `<Each>` components,
+  and other dynamic legacy shapes retain their existing runtime contract.
+
 ## v0.53.1 (2026-08-22)
 
 ### Fixed: declarative regions retain the last good DOM on HTTP errors
