@@ -71,14 +71,25 @@ func Image(props ImageProps, args ...any) gosx.Node {
 	if props.Responsive && len(widths) == 0 {
 		widths = AutoImageWidths(props.Width)
 	}
-	shouldOptimize := shouldOptimizeImageSource(src) || strings.TrimSpace(props.Resolver) != ""
+	shouldOptimize := shouldOptimizeImageSource(src)
+	if resolverName := strings.TrimSpace(props.Resolver); resolverName != "" {
+		probe := ImageTransform{Width: props.Width, Height: props.Height, Quality: props.Quality, Format: props.Format}
+		if len(widths) > 0 {
+			probe.Width = widths[len(widths)-1]
+			probe.Height = 0
+		}
+		resolver := imageResolverNamed(resolverName)
+		shouldOptimize = false
+		if resolver != nil {
+			_, shouldOptimize = resolver.Resolve(src, probe)
+		}
+	}
 
 	if shouldOptimize {
 		switch {
 		case len(widths) > 0:
 			src = ImageURLWithResolver(props.Resolver, src, ImageTransform{
 				Width:   widths[len(widths)-1],
-				Height:  props.Height,
 				Quality: props.Quality,
 				Format:  props.Format,
 			})

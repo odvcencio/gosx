@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,10 @@ func resolveLocalImageURL(src string, transform ImageTransform) (string, bool) {
 	if !shouldOptimizeImageSource(src) || transform == (ImageTransform{}) {
 		return src, true
 	}
+	return resolveImageEndpointURL(defaultImageEndpoint, src, transform), true
+}
+
+func resolveImageEndpointURL(endpoint, src string, transform ImageTransform) string {
 	values := url.Values{}
 	values.Set("src", src)
 	if transform.Width > 0 {
@@ -100,7 +105,46 @@ func resolveLocalImageURL(src string, transform ImageTransform) (string, bool) {
 	if format := normalizeImageFormat(transform.Format); format != "" {
 		values.Set("fmt", format)
 	}
-	return defaultImageEndpoint + "?" + values.Encode(), true
+	return endpoint + "?" + values.Encode()
+}
+
+// NewImageEndpointResolver maps one public URL prefix onto a dedicated local
+// optimizer endpoint. It lets CMS uploads or other non-public/ directories use
+// Image without exposing arbitrary filesystem paths or teaching the default
+// public-asset handler about application storage.
+//
+// The returned resolver accepts only sources beneath sourcePrefix and strips
+// that prefix before sending the source to an ImageHandler rooted at the
+// corresponding storage directory.
+func NewImageEndpointResolver(endpoint, sourcePrefix string) (ImageResolver, error) {
+	endpoint = strings.TrimSpace(endpoint)
+	parsedEndpoint, err := url.Parse(endpoint)
+	if err != nil || parsedEndpoint.IsAbs() || parsedEndpoint.Host != "" || parsedEndpoint.RawQuery != "" || parsedEndpoint.Fragment != "" || !strings.HasPrefix(parsedEndpoint.Path, "/") {
+		return nil, fmt.Errorf("image endpoint must be a root-relative path")
+	}
+	endpoint = path.Clean(parsedEndpoint.Path)
+	if endpoint == "." || endpoint == "/" {
+		return nil, fmt.Errorf("image endpoint must name a route below /")
+	}
+
+	sourcePrefix = path.Clean("/" + strings.TrimSpace(sourcePrefix))
+	if sourcePrefix == "/" || sourcePrefix == "." {
+		return nil, fmt.Errorf("image source prefix must name a path below /")
+	}
+
+	return ImageResolverFunc(func(src string, transform ImageTransform) (string, bool) {
+		parsedSource, err := url.Parse(strings.TrimSpace(src))
+		if err != nil || parsedSource.IsAbs() || parsedSource.Host != "" {
+			return "", false
+		}
+		cleanSource := path.Clean("/" + strings.TrimSpace(parsedSource.Path))
+		prefixWithSlash := strings.TrimRight(sourcePrefix, "/") + "/"
+		if !strings.HasPrefix(cleanSource, prefixWithSlash) {
+			return "", false
+		}
+		relative := "/" + strings.TrimPrefix(cleanSource, prefixWithSlash)
+		return resolveImageEndpointURL(endpoint, relative, transform), true
+	}), nil
 }
 
 // registerStaticExportImageResolver overrides the "local" image resolver

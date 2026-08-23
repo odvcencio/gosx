@@ -3,8 +3,47 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestImageEndpointResolverScopesDynamicMediaRoot(t *testing.T) {
+	resolver, err := NewImageEndpointResolver("/_gosx/cms-image", "/media/uploads")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := resolver.Resolve("/media/uploads/hero photo.jpg", ImageTransform{Width: 640, Quality: 78})
+	if !ok {
+		t.Fatal("expected upload source to resolve")
+	}
+	for _, want := range []string{"/_gosx/cms-image?", "src=%2Fhero+photo.jpg", "w=640", "q=78"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("resolved URL %q lacks %q", got, want)
+		}
+	}
+	if _, ok := resolver.Resolve("/media/elsewhere/hero.jpg", ImageTransform{Width: 640}); ok {
+		t.Fatal("resolver escaped its declared source prefix")
+	}
+	if _, ok := resolver.Resolve("https://example.com/media/uploads/hero.jpg", ImageTransform{Width: 640}); ok {
+		t.Fatal("resolver accepted a remote source")
+	}
+}
+
+func TestImageEndpointResolverRejectsUnsafeConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint string
+		prefix   string
+	}{
+		{"https://images.example.com/resize", "/media/uploads"},
+		{"/_gosx/image?tenant=other", "/media/uploads"},
+		{"/", "/media/uploads"},
+		{"/_gosx/image", "/"},
+	} {
+		if _, err := NewImageEndpointResolver(tc.endpoint, tc.prefix); err == nil {
+			t.Fatalf("NewImageEndpointResolver(%q, %q) unexpectedly succeeded", tc.endpoint, tc.prefix)
+		}
+	}
+}
 
 // staticExportManifestJSON is a minimal build.json body carrying one
 // buildmanifest.Manifest.Images entry: /hero.png at 1200x800, with jpeg and

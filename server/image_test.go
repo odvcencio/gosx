@@ -31,6 +31,19 @@ func TestImageHelperBuildsResponsiveMarkup(t *testing.T) {
 	}, gosx.Attrs(gosx.Attr("class", "hero-image")))
 
 	html := gosx.RenderHTML(node)
+	srcStart := strings.Index(html, `src="`)
+	if srcStart < 0 {
+		t.Fatalf("missing src in %q", html)
+	}
+	valueStart := srcStart + len(`src="`)
+	valueEnd := strings.Index(html[valueStart:], `"`)
+	if valueEnd < 0 {
+		t.Fatalf("unterminated src in %q", html)
+	}
+	srcValue := html[valueStart : valueStart+valueEnd]
+	if strings.Contains(stdhtml.UnescapeString(srcValue), "h=") {
+		t.Fatalf("responsive fallback src must preserve source aspect ratio: %q", srcValue)
+	}
 	for _, snippet := range []string{
 		`src="/_gosx/image?`,
 		`srcset="/_gosx/image?`,
@@ -98,6 +111,25 @@ func TestImageHelperSupportsCustomResolver(t *testing.T) {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)
 		}
+	}
+}
+
+func TestImageHelperFallsBackWithoutFakeSrcsetWhenCustomResolverDeclines(t *testing.T) {
+	resolverName := "test-declining-resolver-" + strings.ReplaceAll(t.Name(), "/", "-")
+	if err := RegisterImageResolver(resolverName, ImageResolverFunc(func(string, ImageTransform) (string, bool) {
+		return "", false
+	})); err != nil {
+		t.Fatal(err)
+	}
+	html := gosx.RenderHTML(Image(ImageProps{
+		Src: "/media/elsewhere/hero.jpg", Alt: "Hero", Width: 640, Height: 480,
+		Responsive: true, Resolver: resolverName,
+	}))
+	if strings.Contains(html, "srcset=") || strings.Contains(html, defaultImageEndpoint) {
+		t.Fatalf("declined source emitted fake optimizer markup: %q", html)
+	}
+	if !strings.Contains(html, `src="/media/elsewhere/hero.jpg"`) {
+		t.Fatalf("declined source did not preserve original URL: %q", html)
 	}
 }
 

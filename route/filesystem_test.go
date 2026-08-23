@@ -627,11 +627,11 @@ func Page() Node {
 	html := gosx.RenderHTML(node)
 	for _, snippet := range []string{
 		`class="demo-image"`,
-		// The bare "src" fallback keeps the full requested box (width and
-		// height together): it is the single non-srcset URL a browser
-		// without srcset support loads, so it renders exactly the declared
-		// width x height.
-		`src="/_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=960"`,
+		// The bare fallback uses the largest responsive width and derives its
+		// height from the source, just like every srcset rung. The width and
+		// height attributes remain the layout reservation; they must not turn
+		// the fallback request into a distorting exact rectangle.
+		`src="/_gosx/image?src=%2Fpaper-card.png&amp;w=960"`,
 		// Ladder entries carry width only (gosx#199): copying h=624 into the
 		// 320w and 640w candidates would request that height at every
 		// narrower width and distort the image, since the source is not
