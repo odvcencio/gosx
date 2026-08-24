@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.53.8 (2026-08-24)
+
 ### Added: strict bundle boundary and safe staged artifacts
 
 - Production, offline, static, and image stages now consume a freshly staged
