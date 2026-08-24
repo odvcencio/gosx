@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added: strict bundle boundary and safe staged artifacts
+
+- Production, offline, static, and image stages now consume a freshly staged
+  dist/ tree rather than copying source roots directly.
+- gosx.config.json accepts strict build.bundle allowances for immutable
+  app/ or content/ data, exact anonymous public/ files, and exclusions.
+  Secrets, symlinks, special files, and mutable database/state sidecars are
+  denied by default and cannot be smuggled through exclusions.
+- Existing mutable application state should live outside app/, content/, and
+  public/; configure an explicit runtime volume or external state path instead
+  of placing it in a deployable bundle.
+
 ## v0.53.7 (2026-08-23)
 
 ### Added: opt-in action redirects can return to the submitted page

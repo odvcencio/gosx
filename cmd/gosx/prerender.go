@@ -17,6 +17,7 @@ import (
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/route"
 )
 
@@ -48,10 +49,11 @@ type routeCapabilities struct {
 }
 
 type staticExportOptions struct {
-	AppRoot     string
-	OutputDir   string
-	BinaryPath  string
-	StageAssets func(outputDir string, manifest exportManifest) error
+	AppRoot      string
+	OutputDir    string
+	BinaryPath   string
+	BundlePolicy bundlepolicy.Config
+	StageAssets  func(outputDir string, manifest exportManifest) error
 }
 
 func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
@@ -115,7 +117,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return exportManifest{}, fmt.Errorf("create export dir: %w", err)
 	}
-	if err := copyDirIfPresent(filepath.Join(appRoot, "public"), outputDir); err != nil {
+	if err := bundlepolicy.CopyTree(filepath.Join(appRoot, "public"), outputDir, bundlepolicy.RootPublic, opts.BundlePolicy); err != nil {
 		return exportManifest{}, fmt.Errorf("copy public assets: %w", err)
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
