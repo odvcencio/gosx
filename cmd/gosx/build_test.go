@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"m31labs.dev/gosx"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
@@ -109,6 +114,14 @@ func TestRuntimeJSAssetDataStripsMissingHLSMapTrailer(t *testing.T) {
 	other := []byte("console.log('bootstrap');\n//# sourceMappingURL=bootstrap.js.map\n")
 	if got := string(runtimeJSAssetData("bootstrap", other)); got != string(other) {
 		t.Fatalf("non-HLS runtime asset was changed: %q", got)
+	}
+}
+
+func TestGoServerBuildArgsUsesTrimpath(t *testing.T) {
+	got := goServerBuildArgs("dist/server/app")
+	want := []string{"build", "-trimpath", "-o", "dist/server/app", "."}
+	if !slices.Equal(got, want) {
+		t.Fatalf("server build args = %#v, want %#v", got, want)
 	}
 }
 
@@ -556,6 +569,227 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 			t.Fatalf("expected %q in edge worker bundle %q", snippet, edgeWorker)
 		}
 	}
+}
+
+// TestRunBuildRelocatedBundleRendersSiblingFragment proves the production
+// deployment shape end to end. The server binary is built with -trimpath,
+// the finished dist/ tree is moved to a fresh path, and the original source
+// tree is removed before run.sh starts it from outside the bundle. run.sh's
+// GOSX_APP_ROOT export must therefore point the trimpath-safe caller resolver
+// at the staged app/ tree for LoadFileProgramHere to find page.gsx.
+func TestRunBuildRelocatedBundleRendersSiblingFragment(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("shells out to the production build and server; race instrumentation adds no value and blows the timeout")
+	}
+	if _, err := exec.LookPath("tinygo"); err != nil {
+		t.Skip("production relocation test requires TinyGo on PATH")
+	}
+
+	sourceDir := filepath.Join(t.TempDir(), "fragment-source")
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(sourceDir, "go.mod"), `module example.com/fragment-relocation
+
+go 1.25
+
+require m31labs.dev/gosx v0.53.5
+`)
+	addLocalGoSXReplace(t, sourceDir)
+	mustWriteFile(t, filepath.Join(sourceDir, "main.go"), `package main
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+
+	"example.com/fragment-relocation/app/wire"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+)
+
+func main() {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := server.ResolveAppRoot(thisFile)
+	router := route.NewRouter()
+	router.Handle("/wire/signal", http.HandlerFunc(wire.ServeSignalFragment))
+	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
+		log.Fatal(err)
+	}
+	handler, err := router.BuildChecked()
+	if err != nil {
+		log.Fatal(err)
+	}
+	listenAddr := "127.0.0.1:0"
+	if port := os.Getenv("PORT"); port != "" {
+		listenAddr = "127.0.0.1:" + strings.TrimPrefix(port, ":")
+	}
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("LISTENING %s\n", ln.Addr())
+	log.Fatal(http.Serve(ln, handler))
+}
+`)
+	mustWriteFile(t, filepath.Join(sourceDir, "app", "wire", "page.gsx"), `package wire
+
+type SignalCardProps struct {
+	Label string
+	Value string
+}
+
+component SignalCard(props: SignalCardProps) {
+	return <li class="signal-card">{props.Label}: {props.Value}</li>
+}
+
+component Page() {
+	return <ul data-gosx-region data-gosx-region-url="/wire/signal">
+		<SignalCard label="Passing Yards" value="317" />
+	</ul>
+}
+`)
+	mustWriteFile(t, filepath.Join(sourceDir, "app", "wire", "page.server.go"), `package wire
+
+import (
+	"net/http"
+
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
+)
+
+// FragmentProps deliberately has a different name from page.gsx's
+// SignalCardProps. RenderProgramComponentNode proves the fields structurally
+// at the render boundary; it does not require Go to recreate the .gsx type.
+type FragmentProps struct {
+	Label string
+	Value string
+}
+
+func init() {
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{}); err != nil {
+		panic(err)
+	}
+}
+
+func ServeSignalFragment(w http.ResponseWriter, _ *http.Request) {
+	prog, err := route.LoadFileProgramHere("page.gsx")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	node, err := route.RenderProgramComponentNode(prog, "SignalCard", route.ProgramRenderEnv{
+		Props: FragmentProps{Label: "Passing Yards", Value: "317"},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(gosx.RenderHTML(node)))
+}
+`)
+	tidyModule(t, sourceDir)
+
+	if err := RunBuild(sourceDir, false); err != nil {
+		t.Fatalf("RunBuild: %v", err)
+	}
+
+	relocated := filepath.Join(t.TempDir(), "staged-dist")
+	if err := os.Rename(filepath.Join(sourceDir, "dist"), relocated); err != nil {
+		t.Fatalf("move dist to staged path: %v", err)
+	}
+	if err := os.RemoveAll(sourceDir); err != nil {
+		t.Fatalf("remove original source tree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sourceDir, "app", "wire", "page.gsx")); !os.IsNotExist(err) {
+		t.Fatalf("original page.gsx is still available after relocation: %v", err)
+	}
+
+	cmd := exec.Command(filepath.Join(relocated, "run.sh"))
+	cmd.Dir = filepath.Dir(relocated)
+	cmd.Stderr = os.Stderr
+	cmd.Env = withoutEnv(os.Environ(), "GOSX_APP_ROOT")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start relocated bundle: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+
+	addrCh := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			if addr, ok := strings.CutPrefix(scanner.Text(), "LISTENING "); ok {
+				select {
+				case addrCh <- addr:
+				default:
+				}
+				return
+			}
+		}
+	}()
+
+	var addr string
+	select {
+	case addr = <-addrCh:
+	case <-time.After(20 * time.Second):
+		t.Fatal("relocated bundle never printed its listening address")
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	baseURL := "http://" + addr
+	pageResp, err := client.Get(baseURL + "/wire")
+	if err != nil {
+		t.Fatalf("GET relocated page: %v", err)
+	}
+	pageBody, readErr := io.ReadAll(pageResp.Body)
+	_ = pageResp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read relocated page: %v", readErr)
+	}
+	if pageResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /wire = %d, want 200; body: %s", pageResp.StatusCode, pageBody)
+	}
+	if !strings.Contains(string(pageBody), `data-gosx-region-url="/wire/signal"`) {
+		t.Fatalf("relocated page is missing region wiring: %s", pageBody)
+	}
+
+	fragmentResp, err := client.Get(baseURL + "/wire/signal")
+	if err != nil {
+		t.Fatalf("GET relocated fragment: %v", err)
+	}
+	fragmentBody, readErr := io.ReadAll(fragmentResp.Body)
+	_ = fragmentResp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read relocated fragment: %v", readErr)
+	}
+	const wantFragment = `<li class="signal-card">Passing Yards: 317</li>`
+	if fragmentResp.StatusCode != http.StatusOK || string(fragmentBody) != wantFragment {
+		t.Fatalf("GET /wire/signal = %d body %q, want 200 and %q", fragmentResp.StatusCode, fragmentBody, wantFragment)
+	}
+}
+
+func withoutEnv(env []string, name string) []string {
+	prefix := name + "="
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			out = append(out, entry)
+		}
+	}
+	return out
 }
 
 func TestRunBuildStrictGateRunsBeforeDistWrites(t *testing.T) {

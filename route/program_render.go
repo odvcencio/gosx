@@ -205,8 +205,8 @@ func LoadFileProgram(path string) (*ir.Program, error) {
 	return loadCachedGSXProgram(abs)
 }
 
-// LoadFileProgramHere compiles the .gsx (or .html) file named name in the
-// same directory as the calling source file and returns its IR program,
+// LoadFileProgramHere compiles the .gsx file named name in the same directory
+// as the calling source file and returns its IR program,
 // through the same cache LoadFileProgram uses (gosx#226).
 //
 // Use this in place of building a path from runtime.Caller and
