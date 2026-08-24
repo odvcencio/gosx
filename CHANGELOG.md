@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.53.6 (2026-08-23)
+
+### Fixed: relocated production bundles load their own app files
+
+- Generated Go server binaries now use `-trimpath`, so moving a production bundle away from its source checkout does not leave runtime file loading pointed at the build machine.
+- End-to-end coverage proves page and sibling-fragment rendering after relocation, and the component-rendering docs clarify structural props compatibility.
+
 ## v0.53.5 (2026-08-23)
 
 ### Fixed: layout data contracts follow every real render context
