@@ -15,6 +15,7 @@ import (
 
 	"m31labs.dev/gosx"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/island"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
@@ -392,6 +393,24 @@ func TestStageOfflineAssetBundleWritesVersionedManifest(t *testing.T) {
 	}
 	if policies["app/page.gsx"] != "first-launch" {
 		t.Fatalf("app asset policy = %q", policies["app/page.gsx"])
+	}
+}
+
+func TestStageOfflineAssetBundleKeepsAllowedMutableAppStateAuditable(t *testing.T) {
+	distDir := filepath.Join(t.TempDir(), "dist")
+	cfg := bundlepolicy.Config{Allow: []string{"app/cache.db"}}
+	mustWriteFile(t, filepath.Join(distDir, "app", "cache.db"), "immutable cache")
+	if err := writeBundlePolicySidecar(distDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageOfflineAssetBundleWithPolicy(distDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(distDir, "offline", "app", "cache.db")); err != nil {
+		t.Fatalf("allowed app database was not staged offline: %v", err)
+	}
+	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg); !diagnostics.Empty() {
+		t.Fatalf("allowed offline app database failed final audit: %s", diagnostics.Error())
 	}
 }
 

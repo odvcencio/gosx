@@ -1085,12 +1085,8 @@ func stageDeploymentBundleWithPolicy(projectDir, distDir string, manifest *Build
 		manifest.Images = imageAssets
 	}
 
-	policyData, err := bundlepolicy.EncodePolicyFile(bundlepolicy.PolicyFileFor(policy))
-	if err != nil {
-		return fmt.Errorf("encode bundle policy: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(distDir, "bundle-policy.json"), policyData, 0644); err != nil {
-		return fmt.Errorf("write bundle policy: %w", err)
+	if err := writeBundlePolicySidecar(distDir, policy); err != nil {
+		return err
 	}
 
 	if err := writeBuildReadme(filepath.Join(distDir, "README.md"), builtServer); err != nil {

@@ -89,6 +89,9 @@ func RunExport(dir string) error {
 	if err := writeExportManifest(filepath.Join(distDir, "export.json"), manifest); err != nil {
 		return err
 	}
+	if err := writeBundlePolicySidecar(distDir, cfg.Build.Bundle); err != nil {
+		return err
+	}
 	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg.Build.Bundle); !diagnostics.Empty() {
 		return errors.New(diagnostics.Error())
 	}

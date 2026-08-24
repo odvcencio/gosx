@@ -46,3 +46,25 @@ func TestServePublicAppliesSourceBundlePolicy(t *testing.T) {
 		t.Fatalf("path traversal was served: %d %q", traversal.Code, traversal.Body.String())
 	}
 }
+
+func TestServePublicFailsClosedForMalformedBundlePolicy(t *testing.T) {
+	root := t.TempDir()
+	public := filepath.Join(root, "public")
+	if err := os.MkdirAll(public, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(public, "private.txt"), []byte("must not be served"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bundle-policy.json"), []byte("{not-json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetPublicDir(public)
+	recorder := httptest.NewRecorder()
+	app.Build().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/private.txt", nil))
+	if recorder.Code == http.StatusOK || recorder.Body.String() == "must not be served" {
+		t.Fatalf("malformed staged policy failed open: %d %q", recorder.Code, recorder.Body.String())
+	}
+}

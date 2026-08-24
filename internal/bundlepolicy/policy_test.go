@@ -171,6 +171,95 @@ func TestDiagnosticsErrorIsSortedAndActionable(t *testing.T) {
 	}
 }
 
+func TestAuditArtifactRejectsCorruptPolicyAndReintroducedExcludedFile(t *testing.T) {
+	dist := t.TempDir()
+	cfg := Config{Exclude: []string{"public/private.txt"}}
+	mustBundleFile(t, filepath.Join(dist, "public", "private.txt"), "should have stayed excluded")
+	mustBundleFile(t, filepath.Join(dist, "bundle-policy.json"), "{not-json")
+
+	diagnostics := AuditArtifact(dist, cfg)
+	message := diagnostics.Error()
+	for _, want := range []string{
+		"bundle-policy.json: invalid bundle policy sidecar",
+		"public/private.txt: path excluded by build.bundle.exclude is present in final artifact",
+	} {
+		if !strings.Contains(message, want) {
+			t.Errorf("artifact diagnostics missing %q: %s", want, message)
+		}
+	}
+}
+
+func TestAuditArtifactRejectsSymlinkedOrMismatchedPolicySidecar(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, string)
+		want  string
+	}{
+		{
+			name: "symlink",
+			setup: func(t *testing.T, dist string) {
+				target := filepath.Join(t.TempDir(), "policy.json")
+				data, err := EncodePolicyFile(PolicyFileFor(Config{}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				mustBundleFile(t, target, string(data))
+				if err := os.Symlink(target, filepath.Join(dist, "bundle-policy.json")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "bundle policy sidecar cannot be a symlink",
+		},
+		{
+			name: "mismatch",
+			setup: func(t *testing.T, dist string) {
+				data, err := EncodePolicyFile(PolicyFileFor(Config{}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				mustBundleFile(t, filepath.Join(dist, "bundle-policy.json"), string(data))
+			},
+			want: "does not exactly match the expected build policy",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dist := t.TempDir()
+			mustBundleFile(t, filepath.Join(dist, "public", "seed.db"), "immutable seed")
+			tc.setup(t, dist)
+			diagnostics := AuditArtifact(dist, Config{AllowPublic: []string{"public/seed.db"}})
+			if !strings.Contains(diagnostics.Error(), tc.want) {
+				t.Fatalf("artifact diagnostics missing %q: %s", tc.want, diagnostics.Error())
+			}
+		})
+	}
+}
+
+func TestArtifactSourcePolicyPathMapsOnlySupportedSecondaryRoots(t *testing.T) {
+	for _, tc := range []struct {
+		artifact string
+		source   string
+		ok       bool
+	}{
+		{"offline/app/cache.db", "app/cache.db", true},
+		{"offline/content/catalog.sqlite", "content/catalog.sqlite", true},
+		{"offline/public/seed.db", "public/seed.db", true},
+		{"offline/static/seed.db", "public/seed.db", true},
+		{"msix/package/app/cache.db", "app/cache.db", true},
+		{"msix/package/content/catalog.sqlite", "content/catalog.sqlite", true},
+		{"msix/package/public/seed.db", "public/seed.db", true},
+		{"msix/package/static/seed.db", "public/seed.db", true},
+		{"msix/package/offline/app/cache.db", "app/cache.db", true},
+		{"msix/package/offline/static/seed.db", "public/seed.db", true},
+		{"offline/offline/app/cache.db", "", false},
+		{"msix/package/assets/cache.db", "", false},
+	} {
+		got, ok := artifactSourcePolicyPath(tc.artifact)
+		if got != tc.source || ok != tc.ok {
+			t.Errorf("artifactSourcePolicyPath(%q) = %q, %v; want %q, %v", tc.artifact, got, ok, tc.source, tc.ok)
+		}
+	}
+}
+
 func mustBundleFile(t *testing.T, name, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {

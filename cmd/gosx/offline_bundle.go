@@ -45,11 +45,12 @@ func stageOfflineAssetBundleWithPolicy(distDir string, policy bundlepolicy.Confi
 	}{
 		{filepath.Join(distDir, "assets"), filepath.Join(offlineDir, "assets")},
 		{filepath.Join(distDir, "app"), filepath.Join(offlineDir, "app")},
+		{filepath.Join(distDir, "content"), filepath.Join(offlineDir, "content")},
 		{filepath.Join(distDir, "public"), filepath.Join(offlineDir, "public")},
 		{filepath.Join(distDir, "static"), filepath.Join(offlineDir, "static")},
 	}
 	for _, c := range copies {
-		if c.dst == filepath.Join(offlineDir, "app") || c.dst == filepath.Join(offlineDir, "public") {
+		if c.dst == filepath.Join(offlineDir, "app") || c.dst == filepath.Join(offlineDir, "content") || c.dst == filepath.Join(offlineDir, "public") {
 			continue
 		}
 		if err := copyDirIfPresent(c.src, c.dst); err != nil {
@@ -58,6 +59,9 @@ func stageOfflineAssetBundleWithPolicy(distDir string, policy bundlepolicy.Confi
 	}
 	if err := bundlepolicy.CopyTree(filepath.Join(distDir, "app"), filepath.Join(offlineDir, "app"), bundlepolicy.RootApp, policy); err != nil {
 		return fmt.Errorf("stage offline app: %w", err)
+	}
+	if err := bundlepolicy.CopyTree(filepath.Join(distDir, "content"), filepath.Join(offlineDir, "content"), bundlepolicy.RootContent, policy); err != nil {
+		return fmt.Errorf("stage offline content: %w", err)
 	}
 	if err := bundlepolicy.CopyTree(filepath.Join(distDir, "public"), filepath.Join(offlineDir, "public"), bundlepolicy.RootPublic, policy); err != nil {
 		return fmt.Errorf("stage offline public: %w", err)

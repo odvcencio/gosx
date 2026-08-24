@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -22,6 +23,7 @@ type Config struct {
 }
 
 type PolicyFile struct {
+	Allow       []string `json:"allow,omitempty"`
 	AllowPublic []string `json:"allowPublic,omitempty"`
 	Exclude     []string `json:"exclude,omitempty"`
 }
@@ -150,7 +152,7 @@ func Normalize(raw string) (string, error) {
 }
 
 func PolicyFileFor(cfg Config) PolicyFile {
-	return PolicyFile{AllowPublic: append([]string(nil), cfg.AllowPublic...), Exclude: append([]string(nil), cfg.Exclude...)}
+	return PolicyFile{Allow: append([]string(nil), cfg.Allow...), AllowPublic: append([]string(nil), cfg.AllowPublic...), Exclude: append([]string(nil), cfg.Exclude...)}
 }
 
 func EncodePolicyFile(policy PolicyFile) ([]byte, error) { return json.MarshalIndent(policy, "", "  ") }
@@ -168,7 +170,7 @@ func DecodePolicyFile(data []byte) (PolicyFile, error) {
 		}
 		return PolicyFile{}, err
 	}
-	if d := ValidateConfig(Config{AllowPublic: policy.AllowPublic, Exclude: policy.Exclude}); !d.Empty() {
+	if d := ValidateConfig(Config{Allow: policy.Allow, AllowPublic: policy.AllowPublic, Exclude: policy.Exclude}); !d.Empty() {
 		return PolicyFile{}, errors.New(d.Error())
 	}
 	return policy, nil
@@ -291,9 +293,8 @@ func ValidateTree(rootDir string, root Root, cfg Config) Diagnostics {
 				out = append(out, Diagnostic{rel, "secret or credential material is never allowed in a bundle"})
 				return fs.SkipDir
 			}
-			if IsExcluded(rel, cfg.Exclude) {
-				return fs.SkipDir
-			}
+			// Exclusions control staging, not validation. Continue walking so a
+			// parent exclusion cannot conceal nested secrets or symlinks.
 			return nil
 		}
 		if !info.Mode().IsRegular() {
@@ -373,6 +374,7 @@ func AuditProject(projectDir string, cfg Config) Diagnostics {
 // allowance semantics; every other artifact path is hard-deny by default.
 func AuditArtifact(distDir string, cfg Config) Diagnostics {
 	out := AuditProject(distDir, cfg)
+	out = out.Merge(auditArtifactPolicySidecars(distDir, cfg))
 	err := filepath.WalkDir(distDir, func(full string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			rel, _ := filepath.Rel(distDir, full)
@@ -388,8 +390,15 @@ func AuditArtifact(distDir string, cfg Config) Diagnostics {
 			return nil
 		}
 		rel := filepath.ToSlash(relOS)
+		sourceRel, sourceMapped := artifactSourcePolicyPath(rel)
 		first := strings.Split(rel, "/")[0]
 		if first == string(RootApp) || first == string(RootContent) || first == string(RootPublic) {
+			if sourceMapped && IsExcluded(sourceRel, cfg.Exclude) {
+				out = append(out, Diagnostic{rel, "path excluded by build.bundle.exclude is present in final artifact"})
+				if entry.IsDir() {
+					return fs.SkipDir
+				}
+			}
 			return nil
 		}
 		info, statErr := os.Lstat(full)
@@ -403,6 +412,12 @@ func AuditArtifact(distDir string, cfg Config) Diagnostics {
 				return fs.SkipDir
 			}
 			return nil
+		}
+		if sourceMapped && IsExcluded(sourceRel, cfg.Exclude) {
+			out = append(out, Diagnostic{rel, "path excluded by build.bundle.exclude is present in final artifact"})
+			if info.IsDir() {
+				return fs.SkipDir
+			}
 		}
 		if info.IsDir() {
 			if privateDir(info.Name()) {
@@ -422,8 +437,8 @@ func AuditArtifact(distDir string, cfg Config) Diagnostics {
 		if secretPath(rel, info.Name()) {
 			out = append(out, Diagnostic{rel, "secret or credential material is never allowed in a bundle"})
 		}
-		if mutableState(info.Name()) && !artifactPublicAllowed(rel, cfg.AllowPublic) {
-			out = append(out, Diagnostic{rel, "mutable database/state files are not allowed outside staged source roots"})
+		if mutableState(info.Name()) && !artifactMutableAllowed(rel, cfg) {
+			out = append(out, Diagnostic{rel, "mutable database/state files are not allowed outside policy-mapped staged roots"})
 		}
 		return nil
 	})
@@ -433,17 +448,112 @@ func AuditArtifact(distDir string, cfg Config) Diagnostics {
 	return out
 }
 
-func artifactPublicAllowed(rel string, allowPublic []string) bool {
-	var publicRel string
+func auditArtifactPolicySidecars(distDir string, cfg Config) Diagnostics {
+	var out Diagnostics
+	for _, rootRel := range []string{"", "offline", "msix/package"} {
+		rootDir := distDir
+		if rootRel != "" {
+			rootDir = filepath.Join(distDir, filepath.FromSlash(rootRel))
+			info, err := os.Lstat(rootDir)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				out = append(out, Diagnostic{rootRel, "cannot inspect policy-bearing artifact root: " + err.Error()})
+				continue
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+				continue
+			}
+		}
+		sidecarRel := "bundle-policy.json"
+		if rootRel != "" {
+			sidecarRel = rootRel + "/bundle-policy.json"
+		}
+		sidecar := filepath.Join(rootDir, "bundle-policy.json")
+		info, err := os.Lstat(sidecar)
+		if err != nil {
+			if os.IsNotExist(err) {
+				out = append(out, Diagnostic{sidecarRel, "required bundle policy sidecar is missing"})
+			} else {
+				out = append(out, Diagnostic{sidecarRel, "cannot inspect bundle policy sidecar: " + err.Error()})
+			}
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			out = append(out, Diagnostic{sidecarRel, "bundle policy sidecar cannot be a symlink"})
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			out = append(out, Diagnostic{sidecarRel, "bundle policy sidecar must be a regular file"})
+			continue
+		}
+		data, err := os.ReadFile(sidecar)
+		if err != nil {
+			out = append(out, Diagnostic{sidecarRel, "cannot read bundle policy sidecar: " + err.Error()})
+			continue
+		}
+		policy, err := DecodePolicyFile(data)
+		if err != nil {
+			out = append(out, Diagnostic{sidecarRel, "invalid bundle policy sidecar: " + err.Error()})
+			continue
+		}
+		expected := PolicyFileFor(cfg)
+		if !slices.Equal(policy.Allow, expected.Allow) || !slices.Equal(policy.AllowPublic, expected.AllowPublic) || !slices.Equal(policy.Exclude, expected.Exclude) {
+			out = append(out, Diagnostic{sidecarRel, "bundle policy sidecar does not exactly match the expected build policy"})
+		}
+	}
+	return out
+}
+
+func artifactMutableAllowed(rel string, cfg Config) bool {
+	sourceRel, ok := artifactSourcePolicyPath(rel)
+	if !ok {
+		return false
+	}
 	switch {
-	case strings.HasPrefix(rel, "static/"):
-		publicRel = "public/" + strings.TrimPrefix(rel, "static/")
-	case strings.HasPrefix(rel, "offline/public/"):
-		publicRel = "public/" + strings.TrimPrefix(rel, "offline/public/")
+	case hasRoot(sourceRel, string(RootApp)), hasRoot(sourceRel, string(RootContent)):
+		return isExactAllowed(sourceRel, cfg.Allow)
+	case hasRoot(sourceRel, string(RootPublic)):
+		return IsPublicMutableAllowed(sourceRel, cfg.AllowPublic)
 	default:
 		return false
 	}
-	return IsPublicMutableAllowed(publicRel, allowPublic)
+}
+
+func artifactSourcePolicyPath(rel string) (string, bool) {
+	rel = filepath.ToSlash(rel)
+	if strings.HasPrefix(rel, "msix/package/") {
+		rel = strings.TrimPrefix(rel, "msix/package/")
+	} else if rel == "msix/package" {
+		return "", false
+	}
+	for _, root := range []Root{RootApp, RootContent, RootPublic} {
+		if hasRoot(rel, string(root)) {
+			return rel, true
+		}
+	}
+	if rel == "static" {
+		return string(RootPublic), true
+	}
+	if strings.HasPrefix(rel, "static/") {
+		return string(RootPublic) + "/" + strings.TrimPrefix(rel, "static/"), true
+	}
+	if strings.HasPrefix(rel, "offline/") {
+		offlineRel := strings.TrimPrefix(rel, "offline/")
+		for _, root := range []Root{RootApp, RootContent, RootPublic} {
+			if hasRoot(offlineRel, string(root)) {
+				return offlineRel, true
+			}
+		}
+		if offlineRel == "static" {
+			return string(RootPublic), true
+		}
+		if strings.HasPrefix(offlineRel, "static/") {
+			return string(RootPublic) + "/" + strings.TrimPrefix(offlineRel, "static/"), true
+		}
+	}
+	return "", false
 }
 
 func CopyTree(src, dst string, root Root, cfg Config) error {

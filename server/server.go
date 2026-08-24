@@ -161,7 +161,7 @@ func (a *App) SetErrorPage(handler ErrorHandler) {
 // SetPublicDir sets the public asset directory served at the site root.
 // An empty directory disables automatic public asset serving.
 func (a *App) SetPublicDir(dir string) {
-	a.publicDir = dir
+	a.publicDir = ""
 	a.publicPolicy = bundlepolicy.PolicyFile{}
 	if strings.TrimSpace(dir) == "" {
 		return
@@ -175,16 +175,22 @@ func (a *App) SetPublicDir(dir string) {
 		if readErr != nil {
 			return
 		}
-		if policy, decodeErr := bundlepolicy.DecodePolicyFile(data); decodeErr == nil {
-			a.publicPolicy = policy
+		policy, decodeErr := bundlepolicy.DecodePolicyFile(data)
+		if decodeErr != nil {
+			return
 		}
+		a.publicPolicy = policy
+		a.publicDir = dir
 		return
 	} else if !os.IsNotExist(statErr) {
 		return
 	}
-	if policy, policyErr := bundlepolicy.LoadProjectPolicy(filepath.Dir(dir)); policyErr == nil {
-		a.publicPolicy = policy
+	policy, policyErr := bundlepolicy.LoadProjectPolicy(filepath.Dir(dir))
+	if policyErr != nil {
+		return
 	}
+	a.publicPolicy = policy
+	a.publicDir = dir
 }
 
 // SetRevalidator replaces the app-wide revalidator used for

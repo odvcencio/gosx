@@ -71,6 +71,20 @@ func runBuildHookCommands(dir string, phase string, commands []string) error {
 	return nil
 }
 
+func writeBundlePolicySidecar(root string, cfg bundlepolicy.Config) error {
+	data, err := bundlepolicy.EncodePolicyFile(bundlepolicy.PolicyFileFor(cfg))
+	if err != nil {
+		return fmt.Errorf("encode bundle policy: %w", err)
+	}
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return fmt.Errorf("create bundle policy root: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "bundle-policy.json"), data, 0644); err != nil {
+		return fmt.Errorf("write bundle policy: %w", err)
+	}
+	return nil
+}
+
 func printBundlePolicyWarnings(cfg bundlepolicy.Config) {
 	for _, rel := range cfg.Allow {
 		fmt.Fprintf(os.Stderr, "GoSX bundle: WARNING allow keeps immutable server data %s\n", rel)
