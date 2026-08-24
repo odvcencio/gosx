@@ -1019,7 +1019,7 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 		return false, err
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", outputPath, ".")
+	buildCmd := exec.Command("go", goServerBuildArgs(outputPath)...)
 	buildCmd.Dir = dir
 	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
 	buildCmd.Stderr = os.Stderr
@@ -1027,6 +1027,10 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func goServerBuildArgs(outputPath string) []string {
+	return []string{"build", "-trimpath", "-o", outputPath, "."}
 }
 
 func stageDeploymentBundle(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string) error {
