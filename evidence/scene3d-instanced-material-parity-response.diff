@@ -1,0 +1,198 @@
+diff --git a/scene/ir.go b/scene/ir.go
+index 0000000..0000000 100644
+--- a/scene/ir.go
++++ b/scene/ir.go
+@@
+ func materialFromInstancedIR(mesh InstancedMeshIR) IRMaterial {
+ 	return IRMaterial{
+-		Kind:               firstNonEmptySceneString(mesh.MaterialKind, "standard"),
+-		Color:              mesh.Color,
+-		Texture:            mesh.Texture,
+-		Opacity:            derefFloat64(mesh.Opacity),
+-		Emissive:           derefFloat64(mesh.Emissive),
+-		Roughness:          mesh.Roughness,
+-		Metalness:          mesh.Metalness,
+-		NormalMap:          mesh.NormalMap,
+-		RoughnessMap:       mesh.RoughnessMap,
+-		MetalnessMap:       mesh.MetalnessMap,
+-		OcclusionMap:       mesh.OcclusionMap,
+-		EmissiveMap:        mesh.EmissiveMap,
+-		TextureDescriptors: mesh.TextureDescriptors,
++		Kind:               firstNonEmptySceneString(mesh.MaterialKind, "standard"),
++		Color:              mesh.Color,
++		Texture:            mesh.Texture,
++		Opacity:            derefFloat64(mesh.Opacity),
++		Emissive:           derefFloat64(mesh.Emissive),
++		Roughness:          mesh.Roughness,
++		Metalness:          mesh.Metalness,
++		Clearcoat:          mesh.Clearcoat,
++		Sheen:              mesh.Sheen,
++		Transmission:       mesh.Transmission,
++		Iridescence:        mesh.Iridescence,
++		Anisotropy:         mesh.Anisotropy,
++		NormalMap:          mesh.NormalMap,
++		RoughnessMap:       mesh.RoughnessMap,
++		MetalnessMap:       mesh.MetalnessMap,
++		OcclusionMap:       mesh.OcclusionMap,
++		EmissiveMap:        mesh.EmissiveMap,
++		TextureDescriptors: mesh.TextureDescriptors,
++		BlendMode:          mesh.BlendMode,
++		RenderPass:         mesh.RenderPass,
++		Wireframe:          mesh.Wireframe,
++		DepthWrite:         mesh.DepthWrite,
++		CustomVertex:       mesh.CustomVertex,
++		CustomFragment:     mesh.CustomFragment,
++		CustomVertexWGSL:   mesh.CustomVertexWGSL,
++		CustomFragmentWGSL: mesh.CustomFragmentWGSL,
++		CustomUniforms:     cloneSceneAnyMap(mesh.CustomUniforms),
++		ShaderBackend:      mesh.ShaderBackend,
++		ShaderLayout:       cloneSceneAnyMap(mesh.ShaderLayout),
++		ShaderSource:       mesh.ShaderSource,
++		ShaderSourceFiles:  cloneSceneStringMap(mesh.ShaderSourceFiles),
+ 	}
+ }
+diff --git a/scene/ir_test.go b/scene/ir_test.go
+index 0000000..0000000 100644
+--- a/scene/ir_test.go
++++ b/scene/ir_test.go
+@@
++func TestCanonicalIRInstancedMaterialParity(t *testing.T) {
++	opacity := 0.75
++	wireframe := true
++	depthWrite := false
++
++	build := func() InstancedMeshIR {
++		return InstancedMeshIR{
++			ID:                "inst",
++			Geometry:          "box",
++			MaterialKind:      "standard",
++			Color:             "#ff8800",
++			Texture:           "tex.png",
++			Opacity:           &opacity,
++			Emissive:          ptrSceneFloat64(0.25),
++			Roughness:         0.4,
++			Metalness:         0.6,
++			Clearcoat:         0.5,
++			Sheen:             0.3,
++			Transmission:      0.2,
++			Iridescence:       0.1,
++			Anisotropy:        0.7,
++			NormalMap:         "normal.png",
++			RoughnessMap:      "rough.png",
++			MetalnessMap:      "metal.png",
++			OcclusionMap:      "ao.png",
++			EmissiveMap:       "emissive.png",
++			BlendMode:         "multiply",
++			RenderPass:        "transparent",
++			Wireframe:         &wireframe,
++			DepthWrite:        &depthWrite,
++			CustomVertex:      "v-main",
++			CustomFragment:    "f-main",
++			CustomVertexWGSL:  "v-wgsl",
++			CustomFragmentWGSL: "f-wgsl",
++			CustomUniforms:    map[string]any{"uTime": 1.5},
++			ShaderBackend:     "wgsl",
++			ShaderLayout:      map[string]any{"uTime": "f32"},
++			ShaderSource:      "// source",
++			ShaderSourceFiles: map[string]string{"main": "main.wgsl"},
++		}
++	}
++
++	instanced := build()
++
++	object := ObjectIR{
++		ID:                 "obj",
++		Geometry:           "box",
++		MaterialKind:       instanced.MaterialKind,
++		Color:              instanced.Color,
++		Texture:            instanced.Texture,
++		Opacity:            instanced.Opacity,
++		Emissive:           instanced.Emissive,
++		Roughness:          instanced.Roughness,
++		Metalness:          instanced.Metalness,
++		Clearcoat:          instanced.Clearcoat,
++		Sheen:              instanced.Sheen,
++		Transmission:       instanced.Transmission,
++		Iridescence:        instanced.Iridescence,
++		Anisotropy:         instanced.Anisotropy,
++		NormalMap:          instanced.NormalMap,
++		RoughnessMap:       instanced.RoughnessMap,
++		MetalnessMap:       instanced.MetalnessMap,
++		OcclusionMap:       instanced.OcclusionMap,
++		EmissiveMap:        instanced.EmissiveMap,
++		TextureDescriptors: instanced.TextureDescriptors,
++		BlendMode:          instanced.BlendMode,
++		RenderPass:         instanced.RenderPass,
++		Wireframe:          instanced.Wireframe,
++		DepthWrite:         instanced.DepthWrite,
++		CustomVertex:       instanced.CustomVertex,
++		CustomFragment:     instanced.CustomFragment,
++		CustomVertexWGSL:   instanced.CustomVertexWGSL,
++		CustomFragmentWGSL: instanced.CustomFragmentWGSL,
++		CustomUniforms:     instanced.CustomUniforms,
++		ShaderBackend:      instanced.ShaderBackend,
++		ShaderLayout:       instanced.ShaderLayout,
++		ShaderSource:       instanced.ShaderSource,
++		ShaderSourceFiles:  instanced.ShaderSourceFiles,
++	}
++
++	props := Props{}
++	props.InstancedMeshes = []InstancedMeshIR{instanced}
++	props.Objects = []ObjectIR{object}
++
++	ir := props.CanonicalIR()
++
++	if len(ir.Materials) != 1 {
++		t.Fatalf("expected one deduplicated canonical material, got %d", len(ir.Materials))
++	}
++	material := ir.Materials[0]
++
++	if material.Kind != "standard" {
++		t.Errorf("Kind = %q, want %q", material.Kind, "standard")
++	}
++	if material.Color != "#ff8800" {
++		t.Errorf("Color = %q", material.Color)
++	}
++	if material.Opacity != opacity {
++		t.Errorf("Opacity = %v, want %v", material.Opacity, opacity)
++	}
++	if material.Clearcoat != 0.5 {
++		t.Errorf("Clearcoat = %v, want 0.5", material.Clearcoat)
++	}
++	if material.Sheen != 0.3 {
++		t.Errorf("Sheen = %v, want 0.3", material.Sheen)
++	}
++	if material.Transmission != 0.2 {
++		t.Errorf("Transmission = %v, want 0.2", material.Transmission)
++	}
++	if material.Iridescence != 0.1 {
++		t.Errorf("Iridescence = %v, want 0.1", material.Iridescence)
++	}
++	if material.Anisotropy != 0.7 {
++		t.Errorf("Anisotropy = %v, want 0.7", material.Anisotropy)
++	}
++	if material.BlendMode != "multiply" {
++		t.Errorf("BlendMode = %q, want %q", material.BlendMode, "multiply")
++	}
++	if material.Wireframe == nil || !*material.Wireframe {
++		t.Errorf("Wireframe not preserved: %v", material.Wireframe)
++	}
++	if material.DepthWrite == nil || *material.DepthWrite {
++		t.Errorf("DepthWrite not preserved: %v", material.DepthWrite)
++	}
++	if material.CustomFragment != "f-main" {
++		t.Errorf("CustomFragment = %q, want %q", material.CustomFragment, "f-main")
++	}
++	if material.CustomUniforms["uTime"] != 1.5 {
++		t.Errorf("CustomUniforms not preserved: %#v", material.CustomUniforms)
++	}
++	if material.ShaderBackend != "wgsl" {
++		t.Errorf("ShaderBackend = %q, want %q", material.ShaderBackend, "wgsl")
++	}
++
++	// The canonical material must be an independent clone of the authored maps.
++	instanced.CustomUniforms["uTime"] = 9.9
++	if material.CustomUniforms["uTime"] != 1.5 {
++		t.Errorf("canonical CustomUniforms alias the source map: %#v", material.CustomUniforms)
++	}
++}
