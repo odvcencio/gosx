@@ -96,7 +96,7 @@ func TestParametricGeometryMatchesCanonicalGenerator(t *testing.T) {
 	}
 }
 
-func TestParametricGeometryLoweringExpansionReportsTheDrawnVertexCount(t *testing.T) {
+func TestParametricGeometryLoweringPreservesIndexedVertexCount(t *testing.T) {
 	const slices, stacks = 8, 8
 	geometry := ParametricGeometry(parametricWrapperPlane, slices, stacks)
 
@@ -104,12 +104,16 @@ func TestParametricGeometryLoweringExpansionReportsTheDrawnVertexCount(t *testin
 	if vertices == nil {
 		t.Fatal("BufferGeometry lowering returned nil")
 	}
+	unique := (slices + 1) * (stacks + 1)
 	drawn := 2 * slices * stacks * 3
-	if vertices.Count != drawn {
-		t.Fatalf("drawn vertex count = %d, want %d", vertices.Count, drawn)
+	if vertices.Count != unique {
+		t.Fatalf("unique vertex count = %d, want %d", vertices.Count, unique)
 	}
-	if len(vertices.Positions) != drawn*3 || len(vertices.Normals) != drawn*3 || len(vertices.UVs) != drawn*2 {
-		t.Fatal("the lowered payload must carry positions, normals, and UVs for every drawn vertex")
+	if len(vertices.Positions) != unique*3 || len(vertices.Normals) != unique*3 || len(vertices.UVs) != unique*2 {
+		t.Fatal("the lowered payload must carry positions, normals, and UVs for every unique vertex")
+	}
+	if len(vertices.Indices) != drawn {
+		t.Fatalf("index count = %d, want %d drawn corners", len(vertices.Indices), drawn)
 	}
 
 	props := Props{Graph: NewGraph(Mesh{
@@ -125,8 +129,8 @@ func TestParametricGeometryLoweringExpansionReportsTheDrawnVertexCount(t *testin
 	if obj.Kind != "gltf-mesh" {
 		t.Fatalf("expected kind gltf-mesh, got %q", obj.Kind)
 	}
-	if obj.Vertices == nil || obj.Vertices.Count != drawn {
-		t.Fatalf("lowered object carries %+v, want count %d", obj.Vertices, drawn)
+	if obj.Vertices == nil || obj.Vertices.Count != unique || len(obj.Vertices.Indices) != drawn {
+		t.Fatalf("lowered object carries %+v, want %d unique vertices and %d indices", obj.Vertices, unique, drawn)
 	}
 }
 

@@ -228,7 +228,26 @@
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
-      if (obj.directVertices) continue;
+      if (obj.directVertices) {
+        // Retained casters draw from model-space vertex buffers and never land
+        // in the baked soup, so fold their transformed world bounds into the
+        // light-frustum fit instead of skipping them outright.
+        if (!obj.retainedGeometry || !obj.castShadow) continue;
+        var casterBounds = obj.bounds;
+        if (
+          casterBounds &&
+          isFinite(casterBounds.minX) && isFinite(casterBounds.minY) && isFinite(casterBounds.minZ) &&
+          isFinite(casterBounds.maxX) && isFinite(casterBounds.maxY) && isFinite(casterBounds.maxZ)
+        ) {
+          if (casterBounds.minX < minX) minX = casterBounds.minX;
+          if (casterBounds.minY < minY) minY = casterBounds.minY;
+          if (casterBounds.minZ < minZ) minZ = casterBounds.minZ;
+          if (casterBounds.maxX > maxX) maxX = casterBounds.maxX;
+          if (casterBounds.maxY > maxY) maxY = casterBounds.maxY;
+          if (casterBounds.maxZ > maxZ) maxZ = casterBounds.maxZ;
+        }
+        continue;
+      }
       var offset = obj.vertexOffset;
       var count = obj.vertexCount;
       if (!Number.isFinite(offset) || !Number.isFinite(count) || count <= 0) continue;

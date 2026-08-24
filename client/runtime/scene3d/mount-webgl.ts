@@ -1047,6 +1047,10 @@ function gosxConfigureSceneScript(script, role, src) {
     return typed;
   }
 
+  function sceneCloneModelMeshIndices(indices) {
+    return indices instanceof Uint32Array ? new Uint32Array(indices) : null;
+  }
+
   function sceneModelMeshObject(object, model, prefix) {
     const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
     if (!vertices || !vertices.positions || !vertices.count) {
@@ -1079,6 +1083,7 @@ function gosxConfigureSceneScript(script, role, src) {
         tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+        indices: sceneCloneModelMeshIndices(vertices.indices),
       };
     } else {
       instanced.vertices = {
@@ -1096,6 +1101,7 @@ function gosxConfigureSceneScript(script, role, src) {
         }),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+        indices: sceneCloneModelMeshIndices(vertices.indices),
       };
     }
     if (model && model.static !== null) {
@@ -1122,6 +1128,7 @@ function gosxConfigureSceneScript(script, role, src) {
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
         tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
+        indices: sceneCloneModelMeshIndices(vertices.indices),
         count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
       };
     }

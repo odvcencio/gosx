@@ -535,7 +535,10 @@ const budgets = [
   // runtime surface so modal focus, Escape, Tab, inert background, and
   // navigation teardown do not require application JavaScript. Measured:
   // 1_540_600 / 417_606 / 335_287, plus narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_542_000, gzip: 418_200, brotli: 335_900 },
+  // Indexed BufferGeometry adds uint32 index retention, indexed backend draws,
+  // exact indexed picking, and indexed shadow submission. Measured:
+  // 1_547_149 / 419_508 / 336_549, plus narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_548_000, gzip: 420_000, brotli: 337_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -863,7 +866,8 @@ const budgets = [
   // -> 50_200 for the reserved `time` auto-uniform on the authored
   // points path: the frame clock now overrides the authored placeholder,
   // matching the WGSL packer. Measured: 213_478 / 58_799 / 50_056.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 214_000, gzip: 59_000, brotli: 50_200 },
+  // Indexed BufferGeometry exact measurement: 215_520 / 59_273 / 50_350.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 216_000, gzip: 59_500, brotli: 50_500 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -944,7 +948,8 @@ const budgets = [
   // 148_477 / 123_144.
   // Bumped gzip 148_800 -> 148_850 for complete prepared-scene light cache
   // invalidation. Measured: 538_069 / 148_810 / 123_368.
-  { file: "bootstrap-feature-scene3d.js", raw: 538_929, gzip: 148_850, brotli: 123_500 },
+  // Indexed BufferGeometry exact measurement: 539_531 / 149_304 / 123_908.
+  { file: "bootstrap-feature-scene3d.js", raw: 540_500, gzip: 149_800, brotli: 124_300 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1115,7 +1120,8 @@ const budgets = [
   // 78_800 for the memoized-manifest water shader ingest (ingestManifestValue
   // reads window.__gosx_manifest before falling back to a DOM text re-parse).
   // Measured: 387_272 / 93_709 / 78_460, plus rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 388_000, gzip: 94_000, brotli: 78_800 },
+  // Indexed BufferGeometry exact measurement: 389_362 / 94_293 / 79_001.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 390_500, gzip: 94_800, brotli: 79_500 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1582,9 +1588,10 @@ const routeBudgets = [
     // Measured: 1_048_022 / 290_324 / 246_238.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_051_244 / 291_270 / 247_081, plus narrow headroom.
-    raw: 1_052_800,
-    gzip: 291_800,
-    brotli: 247_600,
+    // Indexed BufferGeometry exact measurement: 1_055_774 / 292_427 / 248_044.
+    raw: 1_057_000,
+    gzip: 293_000,
+    brotli: 248_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1679,9 +1686,10 @@ const routeBudgets = [
     // Measured: 1_435_294 / 384_033 / 324_698.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_438_516 / 384_979 / 325_541, plus narrow headroom.
-    raw: 1_440_000,
-    gzip: 385_500,
-    brotli: 326_100,
+    // Indexed BufferGeometry exact measurement: 1_445_136 / 386_720 / 327_045.
+    raw: 1_446_000,
+    gzip: 387_200,
+    brotli: 327_500,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1782,9 +1790,10 @@ const routeBudgets = [
     // Bumped for the restored client fixes. Measured: 1_069_539 / 281_902 / 236_158.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_072_761 / 282_848 / 237_001, plus narrow headroom.
-    raw: 1_074_300,
-    gzip: 283_400,
-    brotli: 237_600,
+    // Indexed BufferGeometry exact measurement: 1_077_339 / 284_115 / 238_211.
+    raw: 1_078_500,
+    gzip: 284_700,
+    brotli: 238_700,
   },
 
 ];

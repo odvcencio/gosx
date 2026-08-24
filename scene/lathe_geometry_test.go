@@ -41,17 +41,18 @@ func TestLatheGeometryLoweringExpansionContract(t *testing.T) {
 	if vertices == nil {
 		t.Fatal("BufferGeometry lowering returned nil")
 	}
-	drawn := vertices.Count
+	drawn := len(vertices.Indices)
 	if drawn != 6*2*3 {
-		t.Fatalf("drawn vertex count = %d, want %d", drawn, 6*2*3)
+		t.Fatalf("drawn index count = %d, want %d", drawn, 6*2*3)
 	}
-	if len(vertices.Positions) != drawn*3 {
-		t.Fatalf("expanded positions = %d, want %d", len(vertices.Positions), drawn*3)
+	if len(vertices.Positions) != len(g.Positions) {
+		t.Fatalf("unique positions = %d, want %d", len(vertices.Positions), len(g.Positions))
 	}
-	for i := 0; i < drawn; i++ {
+	for _, idx := range vertices.Indices {
+		i := int(idx)
 		r := math.Hypot(vertices.Positions[i*3], vertices.Positions[i*3+2])
 		if math.Abs(r-1) > 1e-9 {
-			t.Errorf("expanded vertex radius = %g, want 1", r)
+			t.Errorf("drawn vertex %d radius = %g, want 1", i, r)
 		}
 	}
 }

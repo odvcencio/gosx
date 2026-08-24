@@ -60,13 +60,16 @@ func TestTubeGeometryLoweringExpansionReportsTheDrawnVertexCount(t *testing.T) {
 	if vertices == nil {
 		t.Fatal("expected lowered inline vertices")
 	}
-	// Indexed shared vertices expand to three per triangle:
-	// 2 path segments * 8 radial segments = 16 quads = 96 drawn vertices.
-	if vertices.Count != 2*8*6 {
-		t.Fatalf("drawn vertex count = %d, want %d", vertices.Count, 2*8*6)
+	// Indexed shared vertices draw three indices per triangle:
+	// 2 path segments * 8 radial segments = 16 quads = 96 drawn indices.
+	if len(vertices.Indices) != 2*8*6 {
+		t.Fatalf("drawn index count = %d, want %d", len(vertices.Indices), 2*8*6)
+	}
+	if vertices.Count != len(geometry.Positions)/3 {
+		t.Fatalf("unique vertex count = %d, want %d", vertices.Count, len(geometry.Positions)/3)
 	}
 	if len(vertices.Positions) != vertices.Count*3 {
-		t.Fatalf("expanded positions carry %d floats for count %d", len(vertices.Positions), vertices.Count)
+		t.Fatalf("unique positions carry %d floats for count %d", len(vertices.Positions), vertices.Count)
 	}
 	if len(vertices.Normals) == 0 || len(vertices.UVs) == 0 {
 		t.Fatal("the wire payload must carry normals and UVs")

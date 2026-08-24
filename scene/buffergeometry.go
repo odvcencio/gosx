@@ -3,8 +3,9 @@ package scene
 // BufferGeometry is raw triangle-mesh geometry: flat vertex buffers produced by
 // a mesh generator (CSG, NURBS tessellation, glTF import) rather than a
 // parametric primitive. Positions and Normals are flat xyz triples; UVs are
-// flat uv pairs. Indices, when present, reference vertices and are expanded
-// into a flat (non-indexed) triangle list at lower time.
+// flat uv pairs. Indices, when present, reference vertices; lowering keeps the
+// unique vertex streams and the authored triangle index list intact so the
+// browser can upload an element buffer and draw indexed (see MeshVertices).
 //
 // A Mesh using BufferGeometry lowers to a "gltf-mesh" scene object carrying its
 // vertices inline, so it flows through SceneIR and the WebGPU honesty gate just
@@ -36,39 +37,41 @@ func (BufferGeometry) legacyGeometry() (string, map[string]any) {
 }
 
 // MeshVertices carries inline vertex buffers for a BufferGeometry mesh in the
-// wire shape the browser runtime consumes (item.vertices): a flat, non-indexed
-// triangle list. Positions/Normals are xyz triples and UVs are uv pairs; Count
-// is the vertex count (len(Positions)/3).
+// wire shape the browser runtime consumes (item.vertices). When Indices is
+// empty the streams are a flat, non-indexed triangle list exactly as before.
+// When Indices is present, Positions/Normals/UVs/Tangents hold UNIQUE vertices
+// (Positions are xyz triples, UVs uv pairs), Count is the unique position
+// vertex count, and Indices is the authored triangle list over those vertices —
+// every entry in [0, Count), length divisible by three. The browser runtime
+// uploads Indices as a Uint32Array element buffer and draws indexed.
 type MeshVertices struct {
 	Positions []float64 `json:"positions,omitempty"`
 	Normals   []float64 `json:"normals,omitempty"`
 	UVs       []float64 `json:"uvs,omitempty"`
 	Tangents  []float64 `json:"tangents,omitempty"`
+	Indices   []uint32  `json:"indices,omitempty"`
 	Count     int       `json:"count"`
 	Immutable bool      `json:"immutable,omitempty"`
 	Revision  *uint64   `json:"revision,omitempty"`
 	Dynamic   bool      `json:"dynamic,omitempty"`
 }
 
-// bufferGeometryVertices flattens a BufferGeometry into inline MeshVertices.
-// Indexed geometry is expanded into a non-indexed list because the runtime
-// draws item.vertices as a flat triangle soup (count = len(positions)/3).
-// Returns nil for empty geometry so the object simply carries no vertices.
+// bufferGeometryVertices lowers a BufferGeometry into inline MeshVertices.
+// Unindexed geometry keeps its historical flat-triangle-list shape unchanged.
+// Indexed geometry preserves its unique vertex streams plus its authored
+// triangle indices instead of expanding them into triangle soup, so the
+// browser can upload an element buffer and issue indexed draws. Malformed
+// indexed geometry fails closed: nil is returned so no partial mesh is ever
+// serialized or drawn. Returns nil for empty geometry so the object simply
+// carries no vertices.
 func bufferGeometryVertices(g BufferGeometry) *MeshVertices {
-	pos, nrm, uvs, tangents := g.Positions, g.Normals, g.UVs, g.Tangents
-	if len(g.Indices) > 0 {
-		pos = expandBufferAttr(g.Positions, g.Indices, 3)
-		nrm = expandBufferAttr(g.Normals, g.Indices, 3)
-		uvs = expandBufferAttr(g.UVs, g.Indices, 2)
-		tangents = expandBufferAttr(g.Tangents, g.Indices, 4)
-	}
-	count := len(pos) / 3
+	count := len(g.Positions) / 3
 	if count == 0 {
 		return nil
 	}
 	out := &MeshVertices{
 		Count:     count,
-		Positions: append([]float64(nil), pos...),
+		Positions: append([]float64(nil), g.Positions...),
 		Immutable: g.Immutable,
 		Dynamic:   g.Dynamic,
 	}
@@ -76,32 +79,42 @@ func bufferGeometryVertices(g BufferGeometry) *MeshVertices {
 		revision := g.Revision
 		out.Revision = &revision
 	}
-	if len(nrm) > 0 {
-		out.Normals = append([]float64(nil), nrm...)
+	if len(g.Normals) > 0 {
+		out.Normals = append([]float64(nil), g.Normals...)
 	}
-	if len(uvs) > 0 {
-		out.UVs = append([]float64(nil), uvs...)
+	if len(g.UVs) > 0 {
+		out.UVs = append([]float64(nil), g.UVs...)
 	}
-	if len(tangents) > 0 {
-		out.Tangents = append([]float64(nil), tangents...)
+	if len(g.Tangents) > 0 {
+		out.Tangents = append([]float64(nil), g.Tangents...)
+	}
+	if len(g.Indices) > 0 {
+		if !validBufferTriangleIndices(g.Indices, count) {
+			// Fail closed: malformed indices must not reach the wire as a
+			// partial mesh or an out-of-range GPU fetch. Dropping the object's
+			// vertices leaves nothing to serialize or draw.
+			return nil
+		}
+		indices := make([]uint32, len(g.Indices))
+		for i, idx := range g.Indices {
+			indices[i] = uint32(idx)
+		}
+		out.Indices = indices
 	}
 	return out
 }
 
-// expandBufferAttr expands an indexed attribute (stride floats per vertex) into
-// a flat per-index list. Out-of-range indices are skipped so malformed input
-// can't panic the lowerer.
-func expandBufferAttr(src []float64, indices []int, stride int) []float64 {
-	if len(src) == 0 || stride <= 0 {
-		return nil
+// validBufferTriangleIndices reports whether an authored index stream forms a
+// drawable triangle list over count unique vertices: non-empty, divisible by
+// three, and every index within [0, count).
+func validBufferTriangleIndices(indices []int, count int) bool {
+	if len(indices) < 3 || len(indices)%3 != 0 {
+		return false
 	}
-	out := make([]float64, 0, len(indices)*stride)
 	for _, idx := range indices {
-		base := idx * stride
-		if idx < 0 || base+stride > len(src) {
-			continue
+		if idx < 0 || idx >= count {
+			return false
 		}
-		out = append(out, src[base:base+stride]...)
 	}
-	return out
+	return true
 }

@@ -626,8 +626,11 @@
     "precision highp float;",
     "in vec3 a_position;",
     "uniform mat4 u_lightViewProjection;",
+    // Retained indexed geometry casts from model-space vertices, so the shadow
+    // pass must apply the caster's own transform. Soup casters pass identity.
+    "uniform mat4 u_modelMatrix;",
     "void main() {",
-    "    gl_Position = u_lightViewProjection * vec4(a_position, 1.0);",
+    "    gl_Position = u_lightViewProjection * (u_modelMatrix * vec4(a_position, 1.0));",
     "}",
   ].join("\n");
 
@@ -1249,6 +1252,12 @@
       if (!o || !o.castShadow || o.viewCulled) continue;
       h += (o.vertexOffset || 0) + (o.vertexCount || 0)
          + (o.depthNear || 0) + (o.depthFar || 0);
+      if (o.retainedGeometry && o.modelMatrix) {
+        // Retained indexed casters draw from model-space vertices, so their
+        // transform belongs in the pass hash: a spin that keeps the bounds and
+        // depth metrics constant must still invalidate the shadow map.
+        for (var k = 0; k < 16; k++) h += o.modelMatrix[k] || 0;
+      }
       casterCount++;
     }
     h += casterCount * 17.0;
@@ -1263,7 +1272,13 @@
   // frame — on a static scene with static lights this reclaims every
   // bit of the shadow pipeline (clear, N×bufferData, N×drawArrays)
   // and lets the existing depth texture be sampled as-is.
-  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState) {
+  // Identity model matrix for soup casters. This lives beside the shadow pass
+  // because the pass is defined outside the PBR renderer closure that owns
+  // identityModelMatrix; retained indexed casters overwrite it per draw via the
+  // caller-supplied bind hook.
+  var SHADOW_IDENTITY_MODEL_MATRIX = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindIndexedCaster) {
     var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
     var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash, {
       cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
@@ -1283,6 +1298,11 @@
 
     gl.useProgram(shadowProgram.program);
     gl.uniformMatrix4fv(shadowProgram.uniforms.lightViewProjection, false, lightMatrix);
+    // Soup casters bake world-space positions, so they project through identity;
+    // retained indexed casters overwrite this with their model matrix per draw.
+    if (shadowProgram.uniforms.modelMatrix) {
+      gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false, SHADOW_IDENTITY_MODEL_MATRIX);
+    }
 
     gl.enable(gl.DEPTH_TEST);
     gl.depthMask(true);
@@ -1312,8 +1332,22 @@
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
-      if (obj.directVertices) continue;
       if (!obj.castShadow) continue;
+
+      if (obj.directVertices) {
+        // Retained indexed geometry casts from its cached model-space vertex
+        // buffers through a Uint32Array element buffer: no per-frame CPU
+        // expansion and the authored triangle order is preserved. The bind hook
+        // comes from the PBR renderer closure that owns the attribute/element
+        // buffer caches; every other direct-vertex shape keeps its historical
+        // path (it bakes into the world soup below, or never reaches this pass).
+        if (typeof bindIndexedCaster !== "function") continue;
+        var casterIndexCount = bindIndexedCaster(obj, shadowProgram);
+        if (!(casterIndexCount > 0)) continue;
+        gl.drawElements(gl.TRIANGLES, casterIndexCount, gl.UNSIGNED_INT, 0);
+        continue;
+      }
+
       if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
 
       var offset = obj.vertexOffset;
@@ -1335,6 +1369,9 @@
       gl.enableVertexAttribArray(shadowProgram.attributes.position);
       gl.vertexAttribPointer(shadowProgram.attributes.position, 3, gl.FLOAT, false, 0, 0);
 
+      if (shadowProgram.uniforms.modelMatrix) {
+        gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false, SHADOW_IDENTITY_MODEL_MATRIX);
+      }
       gl.drawArrays(gl.TRIANGLES, 0, count);
     }
 
@@ -1367,6 +1404,7 @@
       },
       uniforms: {
         lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
+        modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
       },
     };
   }
@@ -7238,7 +7276,7 @@
           // Render one depth pass per cascade.
           for (var ci = 0; ci < shadowSlots[slot].numCascades; ci++) {
             var cascade = shadowSlots[slot].cascades[ci];
-            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState);
+            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster);
           }
           activeShadowCount++;
         }
@@ -7696,6 +7734,75 @@
 	      return record.view;
 	    }
 
+    // bindScenePBRDirectIndexBuffer uploads (once) and binds the optional
+    // authored index stream of a direct-vertex mesh as a UNSIGNED_INT element
+    // buffer, returning its triangle-index count. Retained geometry reuses its
+    // cached buffer until the geometry revision changes; non-retained geometry
+    // reuses while the Uint32Array identity is stable and otherwise streams.
+    // Returns 0 when there are no valid indices so callers keep drawArrays.
+    function bindScenePBRDirectIndexBuffer(obj) {
+      var vertices = obj && obj.vertices;
+      if (!vertices) return 0;
+      var data = vertices.indices;
+      if (!(data instanceof Uint32Array) || data.length < 3 || data.length % 3 !== 0) {
+        return 0;
+      }
+      var retained = obj.retainedGeometry === true;
+      var revision = retained ? obj.geometryRevision : null;
+      let entry = directMeshAttributeCache.get(vertices);
+      if (
+        entry &&
+        (entry.retained !== retained || (retained && entry.revision !== revision))
+      ) {
+        if (retained || entry.retained) {
+          retainedMeshBufferStats.rebuilds += 1;
+          if (entry.revision !== revision) retainedMeshBufferStats.revisionInvalidations += 1;
+        }
+        retireWebGLDirectMeshEntry(vertices, entry);
+        entry = null;
+      }
+      if (!entry) {
+        entry = {
+          retained,
+          revision,
+          lastSeenEpoch: directMeshAttributeEpoch,
+          attributes: Object.create(null),
+        };
+        directMeshAttributeCache.set(vertices, entry);
+      }
+      entry.lastSeenEpoch = directMeshAttributeEpoch;
+      let record = entry.attributes.indices;
+      if (!record || record.data !== data) {
+        if (record) {
+          if (retained) retainedMeshBufferStats.rebuilds += 1;
+          retireWebGLDirectMeshAttribute(entry, "indices");
+        }
+        record = {
+          data,
+          size: 1,
+          byteLength: data.byteLength,
+          buffer: gl.createBuffer(),
+        };
+        pointsEntryBuffers.add(record.buffer);
+        entry.attributes.indices = record;
+        if (retained) {
+          retainedMeshBufferStats.misses += 1;
+          retainedMeshBufferStats.allocations += 1;
+          retainedMeshBufferStats.liveBytes += data.byteLength;
+        }
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, record.buffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data, retained ? gl.STATIC_DRAW : gl.DYNAMIC_DRAW);
+        if (retained) {
+          retainedMeshBufferStats.uploadCalls += 1;
+          retainedMeshBufferStats.uploadBytes += data.byteLength;
+        }
+      } else {
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, record.buffer);
+        if (retained) retainedMeshBufferStats.hits += 1;
+      }
+      return data.length;
+    }
+
     function retireWebGLDirectMeshAttribute(entry, key) {
       var record = entry && entry.attributes && entry.attributes[key];
       if (!record) return;
@@ -7882,7 +7989,12 @@
           if (selenaProgram.skinned && obj.skin) {
             bindSelenaSkinAttributes(gl, selenaProgram, obj);
           }
-          gl.drawArrays(gl.TRIANGLES, 0, selenaCount);
+          const selenaIndexCount = bindScenePBRDirectIndexBuffer(selenaDirectVertices ? obj : null);
+          if (selenaIndexCount > 0) {
+            gl.drawElements(gl.TRIANGLES, selenaIndexCount, gl.UNSIGNED_INT, 0);
+          } else {
+            gl.drawArrays(gl.TRIANGLES, 0, selenaCount);
+          }
           webglRenderTruthStats.meshDrawn += 1;
 
           if (selenaDepthWriteOverride) {
@@ -8081,7 +8193,12 @@
           gl.vertexAttrib4f(currentAttribs.weights, 0, 0, 0, 0);
         }
 
-        gl.drawArrays(gl.TRIANGLES, 0, count);
+        const directIndexCount = bindScenePBRDirectIndexBuffer(directVertices ? obj : null);
+        if (directIndexCount > 0) {
+          gl.drawElements(gl.TRIANGLES, directIndexCount, gl.UNSIGNED_INT, 0);
+        } else {
+          gl.drawArrays(gl.TRIANGLES, 0, count);
+        }
         webglRenderTruthStats.meshDrawn += 1;
 
         // Restore depth mask if overridden by per-object control.
@@ -8097,6 +8214,34 @@
       if (currentProgram !== program) {
         gl.useProgram(program);
       }
+    }
+
+    // bindScenePBRDirectShadowCaster binds a retained indexed caster's cached
+    // position attribute plus its Uint32Array element buffer and folds the
+    // caster's model matrix into the shadow uniform (the depth pass otherwise
+    // projects world-space soup through identity). Returns the index count, or
+    // 0 when obj is not a retained indexed mesh so the caller skips it.
+    function bindScenePBRDirectShadowCaster(obj, shadowProgram) {
+      var indices = obj && obj.vertices && obj.vertices.indices;
+      if (
+        !obj ||
+        obj.retainedGeometry !== true ||
+        !(indices instanceof Uint32Array) ||
+        indices.length < 3 ||
+        indices.length % 3 !== 0
+      ) {
+        return 0;
+      }
+      var count = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
+      if (count <= 0) return 0;
+      var positions = scenePBRDirectAttribute(obj.vertices, "positions", count, 3);
+      bindScenePBRDirectAttribute(obj, "positions", shadowProgram.attributes.position, 3, positions);
+      var indexCount = bindScenePBRDirectIndexBuffer(obj);
+      if (!(indexCount > 0)) return 0;
+      if (shadowProgram.uniforms.modelMatrix) {
+        gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
+      }
+      return indexCount;
     }
 
     // Ensure the points program is compiled (lazy init).

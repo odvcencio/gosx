@@ -55,16 +55,20 @@ func TestCapsuleGeometryLoweringExpansionContract(t *testing.T) {
 	if vertices == nil {
 		t.Fatal("BufferGeometry lowering returned nil")
 	}
-	// Defaults draw 4*R*S = 128 triangles as a flat soup.
+	// Defaults draw 4*R*S = 128 triangles through the authored index list.
 	wantDrawn := 4 * 8 * 4 * 3
-	if vertices.Count != wantDrawn {
-		t.Fatalf("drawn vertex count = %d, want %d", vertices.Count, wantDrawn)
+	if len(vertices.Indices) != wantDrawn {
+		t.Fatalf("drawn index count = %d, want %d", len(vertices.Indices), wantDrawn)
+	}
+	if vertices.Count != len(g.Positions)/3 {
+		t.Fatalf("unique vertex count = %d, want %d", vertices.Count, len(g.Positions)/3)
 	}
 	if len(vertices.Positions) != vertices.Count*3 {
-		t.Fatalf("expanded positions = %d, want %d", len(vertices.Positions), vertices.Count*3)
+		t.Fatalf("unique positions = %d, want %d", len(vertices.Positions), vertices.Count*3)
 	}
 	// Every drawn vertex still sits exactly on the unit-radius surface.
-	for i := 0; i < vertices.Count; i++ {
+	for _, raw := range vertices.Indices {
+		i := int(raw)
 		x, y, z := vertices.Positions[i*3], vertices.Positions[i*3+1], vertices.Positions[i*3+2]
 		r := math.Hypot(x, z)
 		limit := 1.0
@@ -72,7 +76,7 @@ func TestCapsuleGeometryLoweringExpansionContract(t *testing.T) {
 			limit = math.Sqrt(max(1e-12, 1-(math.Abs(y)-0.5)*(math.Abs(y)-0.5)))
 		}
 		if r > limit+1e-9 || r < limit-1e-6 {
-			t.Errorf("expanded vertex %d radius = %g at y=%g, want about %g", i, r, y, limit)
+			t.Errorf("drawn vertex %d radius = %g at y=%g, want about %g", i, r, y, limit)
 		}
 	}
 }

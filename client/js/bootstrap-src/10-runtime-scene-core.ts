@@ -544,10 +544,39 @@
     return out;
   }
 
+  // sceneNormalizeMeshIndices validates an optional authored triangle index
+  // stream over count unique vertices. Absent (null/undefined) input returns
+  // null — the geometry simply stays non-indexed. Present-but-malformed input
+  // (wrong length, non-triangle list, or any index outside [0, count)) returns
+  // undefined so the caller can fail closed instead of drawing a partial mesh
+  // or handing the GPU an out-of-range fetch. Valid input returns a fresh
+  // Uint32Array copy so callers can never alias the author's slice. Indices are
+  // normalized once here, never per frame. It lives in the base chunk next to
+  // sceneTypedFloatArray because mesh normalization runs on every Scene3D page,
+  // backend and all.
+  function sceneNormalizeMeshIndices(value, count) {
+    if (value === undefined || value === null) return null;
+    const source = value;
+    if (typeof source !== "object" || typeof source.length !== "number") {
+      return undefined;
+    }
+    const total = Math.floor(source.length);
+    if (total < 3 || total % 3 !== 0) {
+      return undefined;
+    }
+    const out = source instanceof Uint32Array ? source.slice() : new Uint32Array(total);
+    for (let i = 0; i < total; i += 1) {
+      const entry = Number(source[i]);
+      if (!Number.isInteger(entry) || entry < 0 || entry >= count) {
+        return undefined;
+      }
+      out[i] = entry;
+    }
+    return out;
+  }
+
   // sceneTypedFloatArray stays in the base chunk even though the legacy
-  // vertex-colour renderer (16e-scene-webgl-legacy.js) also calls it. Mesh
-  // normalization and animation-channel normalization run on every Scene3D
-  // page, backend and all, so this helper is not WebGL-only.
+  // vertex-colour renderer (16e-scene-webgl-legacy.js) also calls it.
   function sceneTypedFloatArray(values) {
     if (values instanceof Float32Array) {
       return values;
@@ -592,6 +621,13 @@
     const tangents = sceneNormalizeMeshFloatArray(item.tangents, 4);
     const joints = sceneNormalizeMeshFloatArray(item.joints, 4);
     const weights = sceneNormalizeMeshFloatArray(item.weights, 4);
+    // Normalize the optional index stream once. Malformed indexed geometry
+    // fails closed: the object carries no vertices, so nothing partial is ever
+    // published or drawn.
+    const indices = sceneNormalizeMeshIndices(item.indices, count);
+    if (indices === undefined) {
+      return null;
+    }
     return {
       positions: count * 3 === positions.length ? positions : positions.slice(0, count * 3),
       normals: normals.length >= count * 3 ? normals.slice(0, count * 3) : new Float32Array(0),
@@ -599,6 +635,7 @@
       tangents: tangents.length >= count * 4 ? tangents.slice(0, count * 4) : new Float32Array(0),
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
+      indices: indices || null,
       count,
       // Retained geometry is an explicit snapshot contract, never inferred
       // from typed-array identity. For immutable=true, every attribute remains
@@ -5204,6 +5241,16 @@
     return material && material.shaderBackend === "selena";
   }
 
+  // sceneMeshHasValidTriangleIndices reports whether a vertices snapshot carries
+  // the optional authored triangle index stream (already validated and copied to
+  // a Uint32Array by sceneNormalizeMeshVertexData).
+  function sceneMeshHasValidTriangleIndices(vertices) {
+    const indices = vertices && vertices.indices;
+    return indices instanceof Uint32Array &&
+      indices.length >= 3 &&
+      indices.length % 3 === 0;
+  }
+
   function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments) {
     const count = Math.max(0, Math.floor(sceneNumber(vertices && vertices.count, 0)));
     const scaleX = sceneNumber(object && object.scaleX, 1);
@@ -5226,7 +5273,11 @@
       uniformScale &&
       !emitWireSegments &&
       !(bundle && Array.isArray(bundle.waterSystems) && bundle.waterSystems.length) &&
-      !(object && object.castShadow) &&
+      // Shadow casters historically bake into the shared world soup. Indexed
+      // geometry opts out: the shadow pass can draw its retained local vertices
+      // through an element buffer instead, so no per-frame CPU expansion is
+      // needed and the caster keeps model-space topology.
+      !(object && object.castShadow && !sceneMeshHasValidTriangleIndices(vertices)) &&
       !(object && object.skin) &&
       !(object && object.computedMorph) &&
       !(object && (object.dynamicGeometry || object.geometryDynamic || object.geometryDirty)) &&
@@ -5334,7 +5385,7 @@
           renderPass: objectPassString,
           texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
           static: Boolean(object.static),
-          castShadow: false,
+          castShadow: Boolean(object.castShadow),
           receiveShadow: Boolean(object.receiveShadow),
           depthWrite: object.depthWrite,
           bounds,
@@ -5374,7 +5425,17 @@
     const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
     const bakeLinearState = sceneObjectMeshBakeLinearState(object, modelMatrix);
     const reverseWinding = bakeLinearState[9] < 0;
-    for (let tri = 0; tri + 2 < vertices.count; tri += 3) {
+    // Indexed geometry keeps its authored triangle order: dereference the index
+    // list while baking so the world soup, wire segments, and picking all see
+    // exactly the triangles the author wrote. Unindexed geometry iterates the
+    // flat stream unchanged.
+    const authoredIndices = vertices.indices instanceof Uint32Array &&
+      vertices.indices.length >= 3 &&
+      vertices.indices.length % 3 === 0
+      ? vertices.indices
+      : null;
+    const drawnTriangleCount = authoredIndices ? authoredIndices.length : vertices.count;
+    for (let tri = 0; tri + 2 < drawnTriangleCount; tri += 3) {
       // Translate the three triangle vertices directly from the raw
       // positions Float32Array into hoisted scratch points, skipping the
       // intermediate sceneMeshVertexPoint object allocation (was 3 extra
@@ -5387,9 +5448,12 @@
       // Swap vertices 1 and 2 while baking so every backend can keep its fixed
       // CCW front-face contract. UVs, normals, and tangents use the same source
       // order below, preserving picking interpolation and triangle identity.
-      const source0 = tri;
-      const source1 = reverseWinding ? tri + 2 : tri + 1;
-      const source2 = reverseWinding ? tri + 1 : tri + 2;
+      const base0 = authoredIndices ? authoredIndices[tri] : tri;
+      const base1 = authoredIndices ? authoredIndices[tri + 1] : tri + 1;
+      const base2 = authoredIndices ? authoredIndices[tri + 2] : tri + 2;
+      const source0 = base0;
+      const source1 = reverseWinding ? base2 : base1;
+      const source2 = reverseWinding ? base1 : base2;
       const tri0 = source0 * 3;
       const tri1 = source1 * 3;
       const tri2 = source2 * 3;
