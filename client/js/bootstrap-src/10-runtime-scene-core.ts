@@ -5347,7 +5347,41 @@
       indices.length % 3 === 0;
   }
 
-  function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments) {
+  // sceneMeshObjectSupportsRetainedBackend reports whether an object may draw
+  // from a retained local-space snapshot rather than the CPU world bake.
+  // Materials without authored shaders always qualify — unchanged behavior.
+  // Authored shaders stay excluded EXCEPT Selena: custom per-vertex float
+  // BufferAttributes only survive on the retained immutable snapshot contract,
+  // so a Selena material must be able to reach the retained draw path or its
+  // declared custom streams could never bind. The static Selena vertex
+  // convention feeds pre-baked WORLD-space positions (there is no
+  // u_modelMatrix on the static Selena path), so Selena retention is gated to
+  // an effectively-identity model transform where local == world and the
+  // retained draw is numerically identical to the baked one. CustomMaterial /
+  // raw shaderSource authors keep the historical baked fallback semantics.
+  function sceneMeshObjectSupportsRetainedBackend(object, material, timeSeconds) {
+    if (!sceneMaterialUsesAuthoredMeshShader(material)) {
+      return true;
+    }
+    const backend = String((material && material.shaderBackend) || "").trim().toLowerCase();
+    if (backend !== "selena") {
+      return false;
+    }
+    const m = sceneObjectModelMatrix(object, timeSeconds);
+    if (!m || m.length !== 16) {
+      return false;
+    }
+    const EPSILON = 0.000001;
+    for (let i = 0; i < 16; i += 1) {
+      const expected = i % 5 === 0 ? 1 : 0;
+      if (!(Math.abs(m[i] - expected) <= EPSILON)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments, timeSeconds) {
     const count = Math.max(0, Math.floor(sceneNumber(vertices && vertices.count, 0)));
     const scaleX = sceneNumber(object && object.scaleX, 1);
     const scaleY = sceneNumber(object && object.scaleY, 1);
@@ -5378,7 +5412,7 @@
       !(object && object.computedMorph) &&
       !(object && (object.dynamicGeometry || object.geometryDynamic || object.geometryDirty)) &&
       !(vertices && (vertices.dynamic || vertices.dirty || vertices.needsUpdate)) &&
-      !sceneMaterialUsesAuthoredMeshShader(material) &&
+      sceneMeshObjectSupportsRetainedBackend(object, material, timeSeconds) &&
       hasAttribute("positions", 3) &&
       hasAttribute("normals", 3) &&
       hasAttribute("uvs", 2) &&
@@ -5466,7 +5500,7 @@
       });
       return;
     }
-    if (sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments)) {
+    if (sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments, timeSeconds)) {
       const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
       const localBounds = sceneMeshLocalBounds(vertices, geometryRevision);
       const bounds = sceneTransformMeshBounds(localBounds, modelMatrix);

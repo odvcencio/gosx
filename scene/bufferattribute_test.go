@@ -144,6 +144,61 @@ func TestBufferGeometryCustomAttributesLowerAndMarshal(t *testing.T) {
 	}
 }
 
+// TestBufferGeometryCustomAttributesVec3 covers the vec3 tuple width end to
+// end: lowering preserves ItemSize 3 and Count*3 values, and the wire shape
+// keeps "itemSize":3 so a JS consumer binds an exact vec3 fetch.
+func TestBufferGeometryCustomAttributesVec3(t *testing.T) {
+	g := quadGeometry()
+	g.Attributes = map[string]BufferAttribute{
+		"offsetVec": {Data: []float64{
+			1, 2, 3,
+			4, 5, 6,
+			7, 8, 9,
+			10, 11, 12,
+		}, ItemSize: 3},
+	}
+	v := bufferGeometryVertices(g)
+	if v == nil {
+		t.Fatal("bufferGeometryVertices returned nil for valid vec3 custom geometry")
+	}
+	attr, ok := v.Attributes["offsetVec"]
+	if !ok {
+		t.Fatal("missing vec3 attribute \"offsetVec\" after lowering")
+	}
+	if attr.ItemSize != 3 {
+		t.Fatalf("ItemSize = %d, want 3", attr.ItemSize)
+	}
+	if len(attr.Data) != v.Count*3 {
+		t.Fatalf("len(Data) = %d, want %d", len(attr.Data), v.Count*3)
+	}
+	for i, want := range []float64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12} {
+		if attr.Data[i] != want {
+			t.Fatalf("Data[%d] = %v, want %v", i, attr.Data[i], want)
+		}
+	}
+
+	wire, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if !strings.Contains(string(wire), "\"itemSize\":3") {
+		t.Errorf("wire output missing \"itemSize\":3 for vec3 stream: %s", wire)
+	}
+	var back struct {
+		Attributes map[string]struct {
+			Data     []float64 `json:"data"`
+			ItemSize int       `json:"itemSize"`
+		} `json:"attributes"`
+	}
+	if err := json.Unmarshal(wire, &back); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	got := back.Attributes["offsetVec"]
+	if got.ItemSize != 3 || len(got.Data) != 12 {
+		t.Errorf("vec3 wire stream wrong: %+v", got)
+	}
+}
+
 func TestBufferGeometryCustomAttributesDoNotAliasCaller(t *testing.T) {
 	g := quadGeometry()
 	data := []float64{1, 2, 3, 4}

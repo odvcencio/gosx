@@ -5402,10 +5402,13 @@
   function sceneSelenaAttributeComponents(type) {
     switch (String(type || "")) {
     case "vec2": return 2;
+    case "vec3": return 3;
     case "vec4": return 4;
-    case "vec3":
-    default:
-      return 3;
+    // float scalars bind one component. Unknown declared types are invalid
+    // descriptor metadata: report 0 so program creation fails closed instead
+    // of silently widening a scalar stream to a vec3 fetch.
+    case "float": return 1;
+    default: return 0;
     }
   }
 
@@ -5573,6 +5576,16 @@
     return { source: out, hasNormal: hasNormal };
   }
 
+  // sceneSelenaDiscardProgram releases a compiled Selena program whose
+  // attribute descriptor failed validation, so a failed compile path never
+  // leaks GPU programs across repeated material rejections.
+  function sceneSelenaDiscardProgram(gl, info) {
+    if (!info) return;
+    if (info.program) gl.deleteProgram(info.program);
+    if (info.vertexShader) gl.deleteShader(info.vertexShader);
+    if (info.fragmentShader) gl.deleteShader(info.fragmentShader);
+  }
+
   function createSceneSelenaProgram(gl, material, skinned) {
     var layout = sceneSelenaMaterialLayout(material);
     if (!layout) return null;
@@ -5614,7 +5627,75 @@
       uniforms: sceneSelenaUniformLocations(gl, program, layout),
       layout: layout,
       skinned: Boolean(skinned),
+      customAttributeLocations: {},
+      customAttributeSizes: {},
     };
+    // Custom per-vertex BufferAttribute descriptors fail closed at compile
+    // time: every declared custom attribute must be a canonical non-reserved
+    // shader identifier with a known tuple type, must exist in the compiled
+    // vertex shader (loc >= 0), and no two attributes may resolve to the same
+    // location. Any violation discards the program so the object takes the
+    // journaled builtin-PBR fallback instead of drawing with a broken or
+    // half-bound descriptor.
+    var RESERVED_ATTRIBUTE_NAMES = {
+      position: true, positions: true,
+      normal: true, normals: true,
+      uv: true, uvs: true, uv1: true,
+      tangent: true, tangents: true,
+      index: true, indices: true,
+      skin: true, skinIndex: true, joints: true, weights: true,
+    };
+    var seenCustomLocations = {};
+    var seenDeclaredLocations = {};
+    for (var c = 0; c < layoutAttrs.length; c++) {
+      var customAttr = layoutAttrs[c] || {};
+      var customName = customAttr.name;
+      // Reserved built-in layout entries (position/normal/uv/tangent/...) are
+      // part of the fixed Selena vertex layout and must survive into the
+      // program descriptor untouched; they are skipped from custom-stream
+      // validation because their binding is owned by the builtin path.
+      if (
+        typeof customName === "string" &&
+        Object.prototype.hasOwnProperty.call(RESERVED_ATTRIBUTE_NAMES, customName)
+      ) {
+        continue;
+      }
+      if (
+        typeof customName !== "string" ||
+        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(customName)
+      ) {
+        sceneSelenaDiscardProgram(gl, result);
+        return null;
+      }
+      var customSize = sceneSelenaAttributeComponents(customAttr.type);
+      if (!(customSize >= 1 && customSize <= 4)) {
+        sceneSelenaDiscardProgram(gl, result);
+        return null;
+      }
+      var declaredLocation = customAttr.location;
+      if (
+        typeof declaredLocation !== "number" ||
+        !Number.isFinite(declaredLocation) ||
+        !Number.isInteger(declaredLocation) ||
+        declaredLocation < 0
+      ) {
+        sceneSelenaDiscardProgram(gl, result);
+        return null;
+      }
+      if (seenDeclaredLocations[declaredLocation]) {
+        sceneSelenaDiscardProgram(gl, result);
+        return null;
+      }
+      seenDeclaredLocations[declaredLocation] = true;
+      var customLoc = gl.getAttribLocation(program, customName);
+      if (!Number.isFinite(customLoc) || customLoc < 0 || seenCustomLocations[customLoc]) {
+        sceneSelenaDiscardProgram(gl, result);
+        return null;
+      }
+      seenCustomLocations[customLoc] = true;
+      result.customAttributeLocations[customName] = customLoc;
+      result.customAttributeSizes[customName] = customSize;
+    }
     if (skinned) {
       result.skinUniforms = {
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
@@ -7924,6 +8005,63 @@
       gl.vertexAttribPointer(attrib, size, gl.FLOAT, false, 0, 0);
       return true;
     }
+
+  function bindSelenaCustomAttributes(gl, selenaProgram, obj) {
+    var locations = selenaProgram && selenaProgram.customAttributeLocations;
+    var sizes = selenaProgram && selenaProgram.customAttributeSizes;
+    if (!locations) {
+      return true;
+    }
+    var names = Object.keys(locations);
+    if (names.length === 0) {
+      return true;
+    }
+    var declared = obj && obj.vertices && obj.vertices.attributes;
+    var count = Math.max(0, Math.floor(sceneNumber(obj && obj.vertexCount, 0)));
+    var seenLocations = {};
+    var pending = [];
+    for (var i = 0; i < names.length; i += 1) {
+      var name = names[i];
+      var loc = locations[name];
+      var size = sizes ? sizes[name] : undefined;
+      if (
+        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(name)) ||
+        !Number.isFinite(loc) || loc < 0 ||
+        !Number.isInteger(size) || size < 1 || size > 4 ||
+        seenLocations[loc]
+      ) {
+        return false;
+      }
+      seenLocations[loc] = true;
+      var entry = declared && typeof declared === "object" ? declared[name] : null;
+      var required = count * size;
+      if (
+        !entry ||
+        typeof entry !== "object" ||
+        entry.itemSize !== size ||
+        !(entry.data instanceof Float32Array) ||
+        entry.data.length !== required
+      ) {
+        return false;
+      }
+      pending.push({ name: name, loc: loc, size: size, data: entry.data });
+    }
+    for (var j = 0; j < pending.length; j += 1) {
+      var rec = pending[j];
+      bindScenePBRDirectAttribute(
+        {
+          vertices: obj.vertices,
+          retainedGeometry: obj.retainedGeometry === true,
+          geometryRevision: obj.geometryRevision,
+        },
+        "custom:" + rec.name,
+        rec.loc,
+        rec.size,
+        rec.data
+      );
+    }
+    return true;
+  }
 
     function drawPBRObjectList(gl, objectList, bundle, materials) {
       var lastMaterialIndex = -1;
