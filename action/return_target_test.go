@@ -218,3 +218,279 @@ func TestReturnTargetNativeValidationFlashOmitsReservedValue(t *testing.T) {
 		t.Fatalf("GET status = %d, want 204", getRes.Code)
 	}
 }
+
+func TestRedirectBackWithMessageNativePRGUsesSubmittedTargetAndFlashesMessage(t *testing.T) {
+	sessions := session.MustNew("redirect-back-native-secret", session.Options{})
+	handler := sessions.Middleware(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			ServeHandler(w, req, func(ctx *Context) error {
+				if _, ok := ctx.FormData[ReturnTargetField]; ok {
+					t.Fatal("reserved return target leaked into FormData")
+				}
+				ctx.RedirectBackWithMessage("/fallback", "  Saved.  ")
+				return nil
+			})
+			return
+		}
+
+		view, ok := State(req, "save")
+		if !ok {
+			t.Fatal("expected flashed redirect-back result")
+		}
+		if view.Message() != "Saved." {
+			t.Fatalf("flashed message = %q, want Saved.", view.Message())
+		}
+		if view.Redirect() != "/board?tab=all#roster" {
+			t.Fatalf("flashed redirect = %q", view.Redirect())
+		}
+		if _, ok := view.Result.Values[ReturnTargetField]; ok {
+			t.Fatalf("reserved return target leaked into flash values: %#v", view.Result.Values)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	values := url.Values{
+		ReturnTargetField: {"/board?tab=all#roster"},
+		"name":            {"Ada"},
+	}
+	postReq := httptest.NewRequest(http.MethodPost, "/account/__actions/save", strings.NewReader(values.Encode()))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postRes := httptest.NewRecorder()
+	handler.ServeHTTP(postRes, postReq)
+	if postRes.Code != http.StatusSeeOther {
+		t.Fatalf("POST status = %d, want 303", postRes.Code)
+	}
+	if got := postRes.Header().Get("Location"); got != "/board?tab=all#roster" {
+		t.Fatalf("POST Location = %q", got)
+	}
+	cookies := postRes.Result().Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("POST did not set a session cookie")
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/board?tab=all", nil)
+	getReq.AddCookie(cookies[0])
+	getRes := httptest.NewRecorder()
+	handler.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusNoContent {
+		t.Fatalf("GET status = %d, want 204", getRes.Code)
+	}
+}
+
+func TestRedirectBackWithMessageManagedResultUsesSubmittedTarget(t *testing.T) {
+	registry := NewRegistry()
+	registry.Register("save", func(ctx *Context) error {
+		if _, ok := ctx.FormData[ReturnTargetField]; ok {
+			t.Fatal("reserved return target leaked into FormData")
+		}
+		ctx.RedirectBackWithMessage("/fallback", "  Saved.  ")
+		return nil
+	})
+
+	values := url.Values{
+		ReturnTargetField: {"/board?tab=all#roster"},
+		"name":            {"Ada"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/gosx/action/save", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.SetPathValue("name", "save")
+	w := httptest.NewRecorder()
+	registry.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("managed status = %d, want 303", w.Code)
+	}
+
+	var got Result
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.OK || got.Message != "Saved." || got.Redirect != "/board?tab=all#roster" {
+		t.Fatalf("managed result = %+v", got)
+	}
+	if _, ok := got.Values[ReturnTargetField]; ok {
+		t.Fatalf("reserved return target leaked into managed values: %#v", got.Values)
+	}
+	if got.Values["name"] != "Ada" {
+		t.Fatalf("managed values = %#v", got.Values)
+	}
+}
+
+func TestRedirectBackWithMessageFallbackAndRootSafety(t *testing.T) {
+	tests := []struct {
+		name      string
+		submitted string
+		fallback  string
+		want      string
+	}{
+		{
+			name:     "missing submitted target uses fallback",
+			fallback: "/fallback?tab=one#top",
+			want:     "/fallback?tab=one#top",
+		},
+		{
+			name:      "empty submitted target uses fallback",
+			submitted: "",
+			fallback:  "/fallback#top",
+			want:      "/fallback#top",
+		},
+		{
+			name:      "protocol relative submitted target uses fallback",
+			submitted: "//evil.example/path",
+			fallback:  "/fallback#top",
+			want:      "/fallback#top",
+		},
+		{
+			name:      "absolute submitted target uses fallback",
+			submitted: "https://evil.example/path",
+			fallback:  "/fallback?ok=1#top",
+			want:      "/fallback?ok=1#top",
+		},
+		{
+			name:      "malformed submitted target uses fallback",
+			submitted: "/board%ZZ",
+			fallback:  "/fallback",
+			want:      "/fallback",
+		},
+		{
+			name:     "invalid fallback resolves to root",
+			fallback: "https://evil.example/path",
+			want:     "/",
+		},
+		{
+			name:     "protocol relative fallback resolves to root",
+			fallback: "//evil.example/path",
+			want:     "/",
+		},
+		{
+			name:     "malformed fallback resolves to root",
+			fallback: "/fallback%ZZ",
+			want:     "/",
+		},
+		{
+			name:     "empty fallback resolves to root",
+			fallback: "",
+			want:     "/",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			registry := NewRegistry()
+			registry.Register("save", func(ctx *Context) error {
+				ctx.RedirectBackWithMessage(test.fallback, "saved")
+				return nil
+			})
+
+			values := url.Values{"name": {"Ada"}}
+			if test.submitted != "" {
+				values.Set(ReturnTargetField, test.submitted)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/gosx/action/save", strings.NewReader(values.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.SetPathValue("name", "save")
+			w := httptest.NewRecorder()
+			registry.ServeHTTP(w, req)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303", w.Code)
+			}
+			if got := w.Header().Get("Location"); got != test.want {
+				t.Fatalf("Location = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRedirectBackWithMessageKeepsExplicitRedirectAuthoritative(t *testing.T) {
+	registry := NewRegistry()
+	registry.Register("save", func(ctx *Context) error {
+		ctx.RedirectWithMessage("/explicit?tab=done#notice", "saved")
+		return nil
+	})
+	values := url.Values{ReturnTargetField: {"/submitted#return"}}
+	req := httptest.NewRequest(http.MethodPost, "/gosx/action/save", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "save")
+	w := httptest.NewRecorder()
+	registry.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != "/explicit?tab=done#notice" {
+		t.Fatalf("explicit Location = %q", got)
+	}
+}
+
+func TestExplicitRedirectSanitizationIsSharedByNativeAndManagedResponses(t *testing.T) {
+	for _, raw := range []string{
+		"//evil.example/path",
+		"https://evil.example/path",
+		"javascript:alert(1)",
+		"/bad%ZZ",
+		"/bad\\path",
+		"/bad%5Cpath",
+		"/bad%0Apath",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			registry := NewRegistry()
+			registry.Register("save", func(ctx *Context) error {
+				ctx.SetResult(Result{OK: true, Message: "saved", Redirect: raw})
+				return nil
+			})
+
+			nativeReq := httptest.NewRequest(http.MethodPost, "/gosx/action/save", strings.NewReader("name=Ada"))
+			nativeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			nativeReq.SetPathValue("name", "save")
+			nativeRes := httptest.NewRecorder()
+			registry.ServeHTTP(nativeRes, nativeReq)
+			if nativeRes.Code != http.StatusSeeOther {
+				t.Fatalf("native status = %d, want 303", nativeRes.Code)
+			}
+			if got := nativeRes.Header().Get("Location"); got != "/" {
+				t.Fatalf("native unsafe Location = %q, want /", got)
+			}
+
+			managedReq := httptest.NewRequest(http.MethodPost, "/gosx/action/save", strings.NewReader("name=Ada"))
+			managedReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			managedReq.Header.Set("Accept", "application/json")
+			managedReq.SetPathValue("name", "save")
+			managedRes := httptest.NewRecorder()
+			registry.ServeHTTP(managedRes, managedReq)
+			if managedRes.Code != http.StatusSeeOther {
+				t.Fatalf("managed status = %d, want 303", managedRes.Code)
+			}
+			var got Result
+			if err := json.Unmarshal(managedRes.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Redirect != "/" || got.Message != "saved" {
+				t.Fatalf("managed sanitized result = %+v", got)
+			}
+		})
+	}
+}
+
+func TestExplicitValidRedirectPreservesQueryAndFragment(t *testing.T) {
+	registry := NewRegistry()
+	registry.Register("save", func(ctx *Context) error {
+		ctx.RedirectWithMessage("/explicit?tab=done#notice", "saved")
+		return nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/gosx/action/save", strings.NewReader("name=Ada"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	req.SetPathValue("name", "save")
+	w := httptest.NewRecorder()
+	registry.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", w.Code)
+	}
+	var got Result
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Redirect != "/explicit?tab=done#notice" {
+		t.Fatalf("redirect = %q", got.Redirect)
+	}
+}

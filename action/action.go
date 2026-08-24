@@ -51,7 +51,10 @@ type Result struct {
 	Data        json.RawMessage   `json:"data,omitempty"`
 	FieldErrors map[string]string `json:"fieldErrors,omitempty"`
 	Values      map[string]string `json:"values,omitempty"`
-	Redirect    string            `json:"redirect,omitempty"`
+	// Redirect is emitted as a same-origin, root-relative target. Non-empty
+	// values that do not satisfy that contract are deterministically replaced
+	// with "/" before a native Location header or managed JSON is written.
+	Redirect string `json:"redirect,omitempty"`
 }
 
 // ResultError is a structured action error with an explicit HTTP status code.
@@ -113,7 +116,9 @@ func Validation(message string, fieldErrors map[string]string, values map[string
 	}
 }
 
-// Redirect constructs a successful redirect result.
+// Redirect constructs a successful redirect result. Redirect targets are
+// sanitized to same-origin, root-relative paths when the result is emitted;
+// an unsafe non-empty target resolves to "/".
 func Redirect(url string) *ResultError {
 	return &ResultError{
 		Status: http.StatusSeeOther,
@@ -250,7 +255,9 @@ func (c *Context) Success(message string, data any) error {
 	return nil
 }
 
-// Redirect sends a browser-friendly redirect after a successful action.
+// Redirect sends a browser-friendly redirect after a successful action. The
+// explicit destination remains authoritative, but is sanitized to a
+// same-origin, root-relative path when the response is emitted.
 func (c *Context) Redirect(url string) {
 	c.result = &Result{
 		OK:       true,
@@ -266,12 +273,36 @@ func (c *Context) Redirect(url string) {
 // action and carries a human-readable completion message through both
 // progressive-enhancement paths. Native form submissions flash the structured
 // result before redirecting; managed forms receive the same message in their
-// JSON result and can project it without a page reload.
+// JSON result and can project it without a page reload. The explicit
+// destination remains authoritative; unsafe non-empty destinations resolve to
+// "/" when the response is emitted.
 func (c *Context) RedirectWithMessage(url, message string) {
 	c.result = &Result{
 		OK:       true,
 		Message:  strings.TrimSpace(message),
 		Redirect: url,
+		Values:   cloneStrings(c.FormData),
+	}
+	if c.status == 0 {
+		c.status = http.StatusSeeOther
+	}
+}
+
+// RedirectBackWithMessage sends a successful action result to the submitted
+// same-origin return target when one was provided through ReturnTargetField.
+// When the submitted target is absent or invalid, fallback is used if it is a
+// valid root-relative target; otherwise the safe root path "/" is used.
+// Query strings and fragments are preserved. The completion message follows
+// the same native POST-redirect-GET and managed JSON semantics as
+// RedirectWithMessage.
+//
+// This method is opt-in: RedirectWithMessage remains the explicit-destination
+// API for workflows that intentionally choose a different destination.
+func (c *Context) RedirectBackWithMessage(fallback, message string) {
+	c.result = &Result{
+		OK:       true,
+		Message:  strings.TrimSpace(message),
+		Redirect: redirectBackTarget(c.Request, fallback),
 		Values:   cloneStrings(c.FormData),
 	}
 	if c.status == 0 {
@@ -630,6 +661,7 @@ func resultFromContext(ctx *Context) (Result, int) {
 }
 
 func sanitizeResult(result Result) Result {
+	result.Redirect = sanitizeExplicitRedirect(result.Redirect)
 	if len(result.Values) == 0 {
 		return result
 	}
@@ -642,6 +674,16 @@ func sanitizeResult(result Result) Result {
 	}
 	result.Values = cloneStrings(values)
 	return result
+}
+
+func sanitizeExplicitRedirect(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if target := normalizedReturnTarget(raw); target != "" {
+		return target
+	}
+	return "/"
 }
 
 func writeResponse(w http.ResponseWriter, req *http.Request, status int, result Result) {
@@ -753,7 +795,7 @@ func sanitizedReferer(req *http.Request) string {
 
 func redirectTarget(req *http.Request, result Result) string {
 	if result.Redirect != "" {
-		return result.Redirect
+		return sanitizeExplicitRedirect(result.Redirect)
 	}
 	if req == nil {
 		return ""
@@ -768,6 +810,16 @@ func redirectTarget(req *http.Request, result Result) string {
 		return actionTarget
 	}
 	return ""
+}
+
+func redirectBackTarget(req *http.Request, fallback string) string {
+	if target := normalizedReturnTarget(requestReturnTarget(req)); target != "" {
+		return target
+	}
+	if target := normalizedReturnTarget(fallback); target != "" {
+		return target
+	}
+	return "/"
 }
 
 // WantsJSON reports whether req negotiated GoSX's managed-action JSON
