@@ -1667,7 +1667,19 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(vertices.count, 0));
     hash = scenePlannerHashFloatArray(hash, vertices.positions, 0);
     hash = scenePlannerHashFloatArray(hash, vertices.normals, 0);
-    return scenePlannerHashFloatArray(hash, vertices.uvs, 0);
+    hash = scenePlannerHashFloatArray(hash, vertices.uvs, 0);
+    // The authored index stream is part of the geometry identity: swapping
+    // topology without touching attributes must still invalidate the hash.
+    const indices = vertices.indices;
+    if (indices instanceof Uint32Array && indices.length > 0) {
+      hash = scenePlannerHashNumber(hash, indices.length);
+      for (let i = 0; i < indices.length; i += 1) {
+        hash = scenePlannerHashNumber(hash, indices[i]);
+      }
+    } else {
+      hash = scenePlannerHashNumber(hash, 0);
+    }
+    return hash;
   }
 
   function scenePlannerHashPointsEntry(hash, entry) {

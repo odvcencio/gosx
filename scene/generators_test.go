@@ -19,10 +19,10 @@ import (
 // plane, then ask a 2D question. The solid generators get a marching reference,
 // the same construction raycast_exact_test.go uses.
 
-// genVertexCount returns the number of vertices a generated geometry ships on
-// the wire. Indexed geometry expands at lower time, so the wire count is the
-// index count.
-func genVertexCount(g BufferGeometry) int {
+// genDrawnIndexCount returns how many vertex fetches the browser performs for a
+// generated geometry: len(Indices) when indexed (the runtime dereferences the
+// authored index stream), else every unique vertex.
+func genDrawnIndexCount(g BufferGeometry) int {
 	if len(g.Indices) > 0 {
 		return len(g.Indices)
 	}
@@ -131,8 +131,9 @@ func genRandomRays(seed int64, count int, spread, reach float64) []Ray {
 	return rays
 }
 
-// TestGeneratedGeometryVertexCounts pins the wire vertex count of every new
-// generator. A memory report and a wire budget both read this number.
+// TestGeneratedGeometryVertexCounts pins the drawn vertex count of every new
+// generator: len(Indices) for indexed geometry (the runtime dereferences it),
+// else every vertex. A memory report and a wire budget both read this number.
 func TestGeneratedGeometryVertexCounts(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -153,8 +154,8 @@ func TestGeneratedGeometryVertexCounts(t *testing.T) {
 		{"extrude square", ExtrudeGeometry(Shape{Outline: []float64{-1, -1, 1, -1, 1, 1, -1, 1}}, ExtrudeOptions{Depth: 1}), 36},
 	}
 	for _, testCase := range cases {
-		if got := genVertexCount(testCase.geometry); got != testCase.vertices {
-			t.Fatalf("%s: %d wire vertices, want %d", testCase.name, got, testCase.vertices)
+		if got := genDrawnIndexCount(testCase.geometry); got != testCase.vertices {
+			t.Fatalf("%s: %d drawn indices/vertices, want %d", testCase.name, got, testCase.vertices)
 		}
 		if len(testCase.geometry.Normals) != len(testCase.geometry.Positions) {
 			t.Fatalf("%s: normals and positions have different lengths", testCase.name)
@@ -638,8 +639,11 @@ func TestGeneratedGeometryLowersToAMeshWithVertices(t *testing.T) {
 		if object.Vertices == nil {
 			t.Fatalf("%s: the object carries no vertices, so the browser would draw nothing", name)
 		}
-		if got, want := object.Vertices.Count, genVertexCount(geometry); got != want {
-			t.Fatalf("%s: %d wire vertices, want %d", name, got, want)
+		if got, want := object.Vertices.Count, len(geometry.Positions)/3; got != want {
+			t.Fatalf("%s: %d wire vertices, want %d unique", name, got, want)
+		}
+		if len(object.Vertices.Indices) != genDrawnIndexCount(geometry) {
+			t.Fatalf("%s: index stream of %d does not match the drawn count %d", name, len(object.Vertices.Indices), genDrawnIndexCount(geometry))
 		}
 		if len(object.Vertices.Positions) != object.Vertices.Count*3 {
 			t.Fatalf("%s: the position stream does not match the vertex count", name)
@@ -759,7 +763,7 @@ func TestGeneratedGeometryWireCost(t *testing.T) {
 		props := Props{Graph: NewGraph(Mesh{ID: "subject", Geometry: testCase.geometry})}
 		raw, gzipped := genWireBytesBoth(t, props)
 		t.Logf("%-34s vertices=%4d raw=%7d B gzip-9=%6d B (delta over a cube: %+d B)",
-			testCase.name, genVertexCount(testCase.geometry), raw, gzipped, gzipped-empty)
+			testCase.name, genDrawnIndexCount(testCase.geometry), raw, gzipped, gzipped-empty)
 		if gzipped <= empty {
 			t.Fatalf("%s costs no more than a parametric cube; the vertices did not reach the wire",
 				testCase.name)

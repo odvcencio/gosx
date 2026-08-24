@@ -14332,7 +14332,11 @@
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || !obj.retainedGeometry || !obj.vertices) continue;
+        // Direct-vertex entries (including skinned/morph draws that carry an
+        // authored index stream) are marked so their cached GPU buffers survive
+        // the sweep exactly like fully retained ones.
+        if (!obj || !obj.vertices) continue;
+        if (!obj.retainedGeometry && !obj.directVertices) continue;
         var entry = retainedMeshAttributeCache.get(obj.vertices);
         if (entry) entry.lastSeenEpoch = retainedMeshAttributeEpoch;
       }
@@ -14425,6 +14429,68 @@
       }
       pass.setVertexBuffer(slot, record.buffer, 0, Math.max(4, count * components * 4));
       return true;
+    }
+
+    // webGPUBindRetainedMeshIndexBuffer uploads (once) and binds the optional
+    // authored index stream of a direct-vertex mesh as a uint32 index buffer,
+    // returning its triangle-index count. Retained entries rebuild on revision
+    // change and retire with their attribute buffers; non-retained direct
+    // geometry (skinned draws) reuses while the Uint32Array identity is stable.
+    // Returns 0 when there are no valid indices so callers keep draw().
+    function webGPUBindRetainedMeshIndexBuffer(pass, obj) {
+      if (!pass) return 0;
+      var vertices = obj && obj.vertices;
+      if (!vertices) return 0;
+      var data = vertices.indices;
+      if (!(data instanceof Uint32Array) || data.length < 3 || data.length % 3 !== 0) {
+        return 0;
+      }
+      var retained = obj.retainedGeometry === true;
+      var entry = retainedMeshAttributeCache.get(vertices);
+      if (entry && retained && entry.revision !== obj.geometryRevision) {
+        retainedMeshBufferStats.rebuilds += 1;
+        retainedMeshBufferStats.revisionInvalidations += 1;
+        webGPURetireRetainedMeshEntry(vertices, entry);
+        entry = null;
+      }
+      if (!entry) {
+        entry = {
+          revision: retained ? obj.geometryRevision : undefined,
+          lastSeenEpoch: retainedMeshAttributeEpoch,
+          attributes: Object.create(null),
+        };
+        retainedMeshAttributeCache.set(vertices, entry);
+      }
+      var materialSource = webGPURetainedMaterialSource(obj);
+      if (materialSource && typeof materialSource === "object" && !entry.materialSource) {
+        entry.materialSource = materialSource;
+        entry.materialOwner = retainedMaterialOwners.get(materialSource) || null;
+      }
+      entry.lastSeenEpoch = retainedMeshAttributeEpoch;
+      var record = entry.attributes.indices;
+      if (!record || record.data !== data) {
+        if (record) {
+          retainedMeshBufferStats.rebuilds += 1;
+          webGPURetireRetainedMeshAttribute(entry, "indices");
+        }
+        var buffer = wgpuCreateTrackedBuffer(
+          GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+          data.byteLength || 4
+        );
+        if (!buffer) return 0;
+        device.queue.writeBuffer(buffer, 0, data);
+        record = { buffer: buffer, data: data, components: 1, byteLength: data.byteLength };
+        entry.attributes.indices = record;
+        retainedMeshBufferStats.misses += 1;
+        retainedMeshBufferStats.allocations += 1;
+        retainedMeshBufferStats.uploadCalls += 1;
+        retainedMeshBufferStats.uploadBytes += data.byteLength;
+        retainedMeshBufferStats.liveBytes += data.byteLength;
+      } else {
+        retainedMeshBufferStats.hits += 1;
+      }
+      pass.setIndexBuffer(record.buffer, "uint32");
+      return data.length;
     }
 
     function webGPUDefaultAttributeData(obj, key, count, tupleSize, defaults) {
@@ -15087,6 +15153,10 @@
     // Shadow pass
     // -----------------------------------------------------------------------
 
+    // Scratch for the per-caster combined (lightVP × model) matrix used by
+    // retained indexed casters; allocated lazily, reused every frame.
+    var _shadowCombinedMatrixScratch = null;
+
     function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
       var sp = getShadowPipeline();
       if (!sp) return;
@@ -15146,6 +15216,34 @@
           }
           if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
           pass.draw(obj.vertexCount);
+          continue;
+        }
+
+        if (obj.retainedGeometry && obj.directVertices) {
+          // Retained indexed geometry casts from cached model-space buffers
+          // through a uint32 index buffer. The shadow uniform carries the light
+          // view-projection alone, so model-space casters fold their own
+          // transform in per draw and restore the base matrix afterwards.
+          var casterIndices = obj.vertices && obj.vertices.indices;
+          if (!(casterIndices instanceof Uint32Array) || casterIndices.length < 3 || casterIndices.length % 3 !== 0) continue;
+          if (currentShadowPipeline !== "static") {
+            pass.setPipeline(sp);
+            pass.setBindGroup(0, shadowBG);
+            currentShadowPipeline = "static";
+          }
+          if (!webGPUBindRetainedMeshAttribute(pass, 0, obj, "positions", 3)) continue;
+          var casterIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+          if (!(casterIndexCount > 0)) continue;
+          var casterModel = obj.modelMatrix;
+          if (casterModel && casterModel.length >= 16) {
+            if (!_shadowCombinedMatrixScratch) _shadowCombinedMatrixScratch = new Float32Array(16);
+            sceneMat4MultiplyInto(_shadowCombinedMatrixScratch, lightMatrix, casterModel);
+            device.queue.writeBuffer(shadowFrameBuffer, 0, _shadowCombinedMatrixScratch, 0, 16);
+          } else {
+            device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix, 0, 16);
+          }
+          pass.drawIndexed(casterIndexCount);
+          device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix, 0, 16);
           continue;
         }
 
@@ -15269,7 +15367,9 @@
               // Skinned positions live in the compute-pass output buffer; bind via
               // the shared 4-slot skinned binding (slot0=skinned pos, 1-3=base).
               if (webGPUBindElioSkinnedBuffers(pass, obj, count)) {
-                pass.draw(count);
+                var selenaSkinIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+                if (selenaSkinIndexCount > 0) pass.drawIndexed(selenaSkinIndexCount);
+                else pass.draw(count);
                 if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
               }
               continue;
@@ -15294,7 +15394,9 @@
             lastMaterialOwner = skinnedOwner;
           }
           if (webGPUBindElioSkinnedBuffers(pass, obj, count)) {
-            pass.draw(count);
+            var skinnedPBRIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            if (skinnedPBRIndexCount > 0) pass.drawIndexed(skinnedPBRIndexCount);
+            else pass.draw(count);
             if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
           }
           continue;
@@ -15333,7 +15435,12 @@
           if (!webGPUBindRetainedMeshAttribute(pass, 1, obj, "normals", 3)) continue;
           if (!webGPUBindRetainedMeshAttribute(pass, 2, obj, "uvs", 2)) continue;
           if (!webGPUBindRetainedMeshAttribute(pass, 3, obj, "tangents", 4)) continue;
-          pass.draw(count);
+          var pbrIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+          if (pbrIndexCount > 0) {
+            pass.drawIndexed(pbrIndexCount);
+          } else {
+            pass.draw(count);
+          }
           if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
           continue;
         }
