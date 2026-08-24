@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"m31labs.dev/gosx/internal/bundlepolicy"
 )
 
 type offlineAssetManifest struct {
@@ -24,7 +26,11 @@ type offlineAssetRecord struct {
 	CachePolicy string `json:"cachePolicy"`
 }
 
-func stageOfflineAssetBundle(projectDir, distDir string) error {
+func stageOfflineAssetBundle(_ string, distDir string) error {
+	return stageOfflineAssetBundleWithPolicy(distDir, bundlepolicy.Config{})
+}
+
+func stageOfflineAssetBundleWithPolicy(distDir string, policy bundlepolicy.Config) error {
 	offlineDir := filepath.Join(distDir, "offline")
 	if err := os.RemoveAll(offlineDir); err != nil {
 		return err
@@ -38,16 +44,25 @@ func stageOfflineAssetBundle(projectDir, distDir string) error {
 		dst string
 	}{
 		{filepath.Join(distDir, "assets"), filepath.Join(offlineDir, "assets")},
-		{filepath.Join(projectDir, "app"), filepath.Join(offlineDir, "app")},
-		{filepath.Join(projectDir, "public"), filepath.Join(offlineDir, "public")},
+		{filepath.Join(distDir, "app"), filepath.Join(offlineDir, "app")},
+		{filepath.Join(distDir, "public"), filepath.Join(offlineDir, "public")},
 		{filepath.Join(distDir, "static"), filepath.Join(offlineDir, "static")},
 	}
 	for _, c := range copies {
+		if c.dst == filepath.Join(offlineDir, "app") || c.dst == filepath.Join(offlineDir, "public") {
+			continue
+		}
 		if err := copyDirIfPresent(c.src, c.dst); err != nil {
 			return err
 		}
 	}
-	for _, name := range []string{"build.json", "export.json", "scene-assets.json"} {
+	if err := bundlepolicy.CopyTree(filepath.Join(distDir, "app"), filepath.Join(offlineDir, "app"), bundlepolicy.RootApp, policy); err != nil {
+		return fmt.Errorf("stage offline app: %w", err)
+	}
+	if err := bundlepolicy.CopyTree(filepath.Join(distDir, "public"), filepath.Join(offlineDir, "public"), bundlepolicy.RootPublic, policy); err != nil {
+		return fmt.Errorf("stage offline public: %w", err)
+	}
+	for _, name := range []string{"build.json", "bundle-policy.json", "export.json", "scene-assets.json"} {
 		if err := copyFileIfPresent(filepath.Join(distDir, name), filepath.Join(offlineDir, name)); err != nil {
 			return err
 		}

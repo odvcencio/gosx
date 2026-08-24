@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/scheduled"
 )
 
@@ -87,6 +88,7 @@ type App struct {
 	notFound           PageHandler
 	errorPage          ErrorHandler
 	publicDir          string
+	publicPolicy       bundlepolicy.PolicyFile
 	imageDir           string
 	runtimeRoot        string
 	runtimeMeta        *runtimeManifestCache
@@ -160,6 +162,29 @@ func (a *App) SetErrorPage(handler ErrorHandler) {
 // An empty directory disables automatic public asset serving.
 func (a *App) SetPublicDir(dir string) {
 	a.publicDir = dir
+	a.publicPolicy = bundlepolicy.PolicyFile{}
+	if strings.TrimSpace(dir) == "" {
+		return
+	}
+	sidecar := filepath.Join(filepath.Dir(dir), "bundle-policy.json")
+	if info, statErr := os.Lstat(sidecar); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return
+		}
+		data, readErr := os.ReadFile(sidecar)
+		if readErr != nil {
+			return
+		}
+		if policy, decodeErr := bundlepolicy.DecodePolicyFile(data); decodeErr == nil {
+			a.publicPolicy = policy
+		}
+		return
+	} else if !os.IsNotExist(statErr) {
+		return
+	}
+	if policy, policyErr := bundlepolicy.LoadProjectPolicy(filepath.Dir(dir)); policyErr == nil {
+		a.publicPolicy = policy
+	}
 }
 
 // SetRevalidator replaces the app-wide revalidator used for
@@ -1077,17 +1102,15 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
-	cleanPath := path.Clean("/" + r.URL.Path)
-	if cleanPath == "/" {
+	if r.URL.Path == "" || r.URL.Path == "/" {
 		return false
 	}
 
-	name := strings.TrimPrefix(cleanPath, "/")
-	fsPath := filepath.Join(a.publicDir, filepath.FromSlash(name))
-	info, err := os.Stat(fsPath)
-	if err != nil || info.IsDir() {
+	fsPath, ok := bundlepolicy.PublicPath(a.publicDir, r.URL.Path, a.publicPolicy.AllowPublic, a.publicPolicy.Exclude)
+	if !ok {
 		return false
 	}
+	cleanPath := path.Clean("/" + r.URL.Path)
 
 	MarkObservedRequest(r, "public", cleanPath)
 	// A version query marks the URL as content-addressed by the app (the
