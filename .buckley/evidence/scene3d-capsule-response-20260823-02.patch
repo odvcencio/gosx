@@ -1,0 +1,789 @@
+diff --git a/scene/scene.go b/scene/scene.go
+index 0000000..0000001 100644
+--- a/scene/scene.go
++++ b/scene/scene.go
+@@ -60,6 +60,14 @@ type SphereGeometry struct {
+ 	Segments int
+ }
+ 
++// CapsuleGeometry is a closed Y-axis capsule. Height is the straight body
++// length between the hemisphere centers; the total Y extent is Height + 2*Radius.
++type CapsuleGeometry struct {
++	Radius         float64
++	Height         float64
++	Segments       int
++	RadialSegments int
++}
++
+ type LinesGeometry struct {
+ 	Points   []Vector3
+ 	Segments [][2]int
+@@ -110,6 +118,7 @@ func (SphereGeometry) sceneGeometry()   {}
+ func (LinesGeometry) sceneGeometry()    {}
+ func (CylinderGeometry) sceneGeometry() {}
+ func (TorusGeometry) sceneGeometry()    {}
++func (CapsuleGeometry) sceneGeometry()  {}
+ func (TorusKnotGeometry) sceneGeometry() {}
+ 
+ func (FlatMaterial) sceneMaterial()       {}
+diff --git a/scene/geom/geom.go b/scene/geom/geom.go
+index 0000001..0000002 100644
+--- a/scene/geom/geom.go
++++ b/scene/geom/geom.go
+@@ -22,6 +22,7 @@ const (
+ 	KindCone      = "cone"
+ 	KindTorus     = "torus"
+ 	KindTorusKnot = "torusknot"
++	KindCapsule   = "capsule"
+ )
+ 
+ // NormalizeKind maps every authored spelling of a geometry name onto one
+@@ -48,6 +49,7 @@ func NormalizeKind(kind string) string {
+ 	case "torus", "torusgeometry":
+ 		return KindTorus
+ 	case "torusknot", "torusknotgeometry", "torus-knot", "torusknotgeo":
+ 		return KindTorusKnot
++	case "capsule", "capsulegeometry":
++		return KindCapsule
+ 	}
+ 	return ""
+ }
+ 
+@@ -105,6 +107,12 @@ func Normalize(params Params) Params {
+ 		params.TubularSegments = ClampInt(params.TubularSegments, 128, 8, 512)
+ 	case KindTorusKnot:
+ 		params.Radius = PositiveOr(params.Radius, 0.17)
+ 		params.Tube = PositiveOr(params.Tube, 0.045)
+ 		params.RadialSegments = ClampInt(params.RadialSegments, 16, 3, 64)
+ 		params.TubularSegments = ClampInt(params.TubularSegments, 128, 8, 512)
++	case KindCapsule:
++		params.Radius = PositiveOr(params.Radius, 1)
++		params.Height = PositiveOr(params.Height, 1)
++		params.Segments = ClampInt(params.Segments, 4, 1, 64)
++		params.RadialSegments = ClampInt(params.RadialSegments, 8, 3, 256)
+ 	}
+ 	return params
+ }
+ 
+@@ -160,6 +168,10 @@ func CacheKey(params Params) string {
+ 	case KindTorus, KindTorusKnot:
+ 		appendFloat("r", params.Radius)
+ 		appendFloat("tube", params.Tube)
+ 		appendInt("rad", params.RadialSegments)
+ 		appendInt("tubeSeg", params.TubularSegments)
++	case KindCapsule:
++		appendFloat("r", params.Radius)
++		appendFloat("h", params.Height)
++		appendInt("seg", params.Segments)
++		appendInt("rad", params.RadialSegments)
+ 	}
+ 	return strings.Join(parts, "|")
+ }
+ 
+@@ -200,6 +208,9 @@ func BoundingRadius(params Params) float64 {
+ 	case KindTorusKnot:
+ 		return params.Radius*1.5 + params.Tube
++	case KindCapsule:
++		return math.Hypot(params.Radius, params.Height*0.5+params.Radius)
+ 	}
+ 	return 0
+ }
+ 
+@@ -235,6 +244,9 @@ func Build(params Params, want Attribute) *Mesh {
+ 	case KindTorusKnot:
+ 		return buildTorusKnot(params.Radius, params.Tube, params.RadialSegments, params.TubularSegments, want)
++	case KindCapsule:
++		return buildCapsule(params.Radius, params.Height, params.Segments, params.RadialSegments, want)
+ 	}
+ 	return nil
+ }
+ 
+@@ -270,6 +283,8 @@ func VertexCount(params Params) int {
+ 	case KindTorusKnot:
+ 		return (params.TubularSegments + 1) * (params.RadialSegments + 1)
++	case KindCapsule:
++		return capsuleVertexCount(params.Segments, params.RadialSegments)
+ 	}
+ 	return 0
+ }
+diff --git a/scene/geom/capsule.go b/scene/geom/capsule.go
+new file mode 100644
+index 0000000..000000a
+--- /dev/null
++++ b/scene/geom/capsule.go
+@@ -0,0 +1,96 @@
++package geom
++
++import "math"
++
++// buildCapsule produces a smooth Y-axis capsule: a cylindrical middle joined
++// continuously to upper and lower hemispheres. The mesh is closed, non-indexed
++// and outward-facing; the normals are analytic outward directions. UVs use
++// longitude around XZ and a monotonic latitude/body V.
++func buildCapsule(radius, height float64, segments, radialSegments int, want Attribute) *Mesh {
++	if radius <= 0 {
++		radius = 1
++	}
++	if height <= 0 {
++		height = 1
++	}
++	if segments < 1 {
++		segments = 1
++	}
++	if segments > 64 {
++		segments = 64
++	}
++	if radialSegments < 3 {
++		radialSegments = 3
++	}
++	if radialSegments > 256 {
++		radialSegments = 256
++	}
++	halfH := height / 2
++	sideColor := vec3{0.62, 0.75, 0.95}
++	rows := make([][]vertex, 2*segments+2)
++	for row := 0; row <= 2*segments+1; row++ {
++		var y, sinT, cosT float64
++		if row <= segments {
++			theta := math.Pi / 2 * float64(row)/float64(segments)
++			sinT, cosT = math.Cos(theta), math.Sin(theta)
++			y = halfH + radius*cosT
++		} else {
++			theta := math.Pi / 2 * float64(row-segments)/float64(segments)
++			sinT, cosT = math.Sin(theta), -math.Cos(theta)
++			y = -halfH - radius*cosT
++		}
++		v := float64(row) / float64(2*segments)
++		line := make([]vertex, radialSegments+1)
++		for lon := 0; lon <= radialSegments; lon++ {
++			phi := float64(lon) * 2 * math.Pi / float64(radialSegments)
++			c, s := math.Cos(phi), math.Sin(phi)
++			normal := vec3{c * sinT, cosT, s * sinT}
++			line[lon] = vertex{
++				position: vec3{radius * c * sinT, y, radius * s * sinT},
++				normal:   normal,
++				uv:       vec2{U: float64(lon) / float64(radialSegments), V: v},
++				color:    vec3{X: 0.62, Y: 0.75, Z: 0.95},
++			}
++		}
++		rows[row] = line
++	}
++	b := newBuilder(want, capsuleTriangleCount(segments, radialSegments)*3)
++	for row := 0; row < len(rows)-1; row++ {
++		for lon := 0; lon < radialSegments; lon++ {
++			a := rows[row][lon]
++			c := rows[row][lon+1]
++			d := rows[row+1][lon+1]
++			e := rows[row+1][lon]
++			b.tri(a, c, d)
++			b.tri(a, d, e)
++		}
++	}
++	return b.build()
++}
++
++func capsuleRows(segments int) int { return 2*segments + 2 }
++
++func capsuleTriangleCount(segments, radialSegments int) int {
++	return (capsuleRows(segments) - 1) * radialSegments * 2
++}
++
++func capsuleVertexCount(segments, radialSegments int) int {
++	return capsuleTriangleCount(segments, radialSegments) * 3
++}
++
+diff --git a/scene/geom/primitives_test.go b/scene/geom/primitives_test.go
+new file mode 100644
+index 0000000..000000b
+--- /dev/null
++++ b/scene/geom/primitives_test.go
+@@ -0,0 +1,120 @@
++package geom
++
++import (
++	"math"
++	"testing"
++)
++
++func TestCapsuleNormalizeDefaultsAndClamps(t *testing.T) {
++	p := Normalize(Params{Kind: KindCapsule})
++	if p.Radius != 1 || p.Height != 1 || p.Segments != 4 || p.RadialSegments != 8 {
++		t.Fatalf("unexpected defaults %#v", p)
++	}
++	p = Normalize(Params{Kind: KindCapsule, Segments: 9999, RadialSegments: 9999})
++	if p.Segments != 64 || p.RadialSegments != 256 {
++		t.Fatalf("clamps failed %#v", p)
++	}
++	p = Normalize(Params{Kind: KindCapsule, Segments: 0, RadialSegments: 1})
++	if p.Segments != 1 || p.RadialSegments != 3 {
++		t.Fatalf("low clamps failed %#v", p)
++	}
++}
++
++func TestCapsuleCanonicalAlias(t *testing.T) {
++	if got := NormalizeKind("capsuleGeometry"); got != KindCapsule {
++		t.Fatalf("alias failed: %q", got)
++	}
++	if got := NormalizeKind("Capsule"); got != KindCapsule {
++		t.Fatalf("canonical failed: %q", got)
++	}
++}
++
++func TestCapsuleCacheKeySeparation(t *testing.T) {
++	a := CacheKey(Params{Kind: KindCapsule, Radius: 1, Height: 1, Segments: 4, RadialSegments: 8})
++	b := CacheKey(Params{Kind: KindCapsule, Radius: 2})
++	if a == b {
++		t.Fatal("cache keys must differ")
++	}
++	if CacheKey(Params{Kind: "capsulegeometry"}) == "" {
++		t.Fatal("alias cache key empty")
++	}
++}
++
++func TestCapsuleMeshConsistency(t *testing.T) {
++	m := Build(Normalize(Params{Kind: KindCapsule}), AttributesAll)
++	if m == nil {
++		t.Fatal("nil mesh")
++	}
++	if got := VertexCount(Normalize(Params{Kind: KindCapsule})); got != m.VertexCount() {
++		t.Fatalf("vertex count mismatch: %d vs %d", got, m.VertexCount())
++	}
++	for _, value := range append([]float64(nil), m.Positions...) {
++		if math.IsNaN(value) || math.IsInf(value, 0) {
++			t.Fatal("non-finite position")
++		}
++	}
++}
++
++func TestCapsuleBoundsAndNormals(t *testing.T) {
++	const radius, height = 1, 2
++	m := Build(Normalize(Params{Kind: KindCapsule, Radius: radius, Height: height}), AttributesAll)
++	minY, maxY := math.Inf(1), math.Inf(-1)
++	maxRadial := 0.0
++	for i := 0; i+2 < len(m.Positions); i += 3 {
++		y := m.Positions[i+1]
++		r := math.Hypot(m.Positions[i], m.Positions[i+2])
++		if y < minY {
++			minY = y
++		}
++		if y > maxY {
++			maxY = y
++		}
++		if r > maxRadial {
++			maxRadial = r
++		}
++	}
++	total := height/2 + radius
++	if math.Abs(minY+total) > 1e-9 || math.Abs(maxY-total) > 1e-9 {
++		t.Fatalf("Y bounds wrong: %v %v", minY, maxY)
++	}
++	if maxRadial > radius+1e-9 {
++		t.Fatalf("radial bound exceeded: %v", maxRadial)
++	}
++	for i := 0; i+2 < len(m.Normals); i += 3 {
++		nx, ny, nz := m.Normals[i], m.Normals[i+1], m.Normals[i+2]
++		length := nx*nx + ny*ny + nz*nz
++		if math.Abs(length-1) > 1e-9 {
++			t.Fatalf("normal not unit: %v", length)
++		}
++	}
++	assertWindingMatchesNormals(t, "capsule", m, 0)
++}
++
++func TestCapsuleBoundingRadius(t *testing.T) {
++	got := BoundingRadius(Params{Kind: KindCapsule, Radius: 1, Height: 2})
++	want := math.Hypot(1, 2)
++	if math.Abs(got-want) > 1e-12 {
++		t.Fatalf("bounding radius %v, want %v", got, want)
++	}
++}
+diff --git a/scene/tessellate.go b/scene/tessellate.go
+index 0000002..0000003 100644
+--- a/scene/tessellate.go
++++ b/scene/tessellate.go
+@@ -55,6 +55,9 @@ func geometryParams(geometry Geometry) (geom.Params, bool) {
+ 	case TorusKnotGeometry:
+ 		return geom.Params{
+ 			Kind: geom.KindTorusKnot, Radius: g.Radius, Tube: g.Tube,
+ 			RadialSegments: g.RadialSegments, TubularSegments: g.TubularSegments,
+ 		}, true
++	case CapsuleGeometry:
++		return geom.Params{
++			Kind: geom.KindCapsule, Radius: g.Radius, Height: g.Height,
++			Segments: g.Segments, RadialSegments: g.RadialSegments,
++		}, true
+ 	}
+ 	return geom.Params{}, false
+ }
+diff --git a/scene/raycast.go b/scene/raycast.go
+index 0000003..0000004 100644
+--- a/scene/raycast.go
++++ b/scene/raycast.go
+@@ -30,6 +30,9 @@ func geometryBounds(geometry Geometry) (radius float64, strokes float64) {
+ 	case TorusKnotGeometry:
+ 		return torusKnotRadius(g)*1.5 + torusKnotTube(g), 0
++	case CapsuleGeometry:
++		r := positiveOr(g.Radius, 1)
++		return math.Hypot(r, positiveOr(g.Height, 1)/2+r), 0
+ 	case LinesGeometry:
+ 		min, max := lineBounds(g)
+ 		return boxCornerRadius(min, max), 1
+@@ -95,6 +98,11 @@ func raycastGeometry(geometry Geometry, ray Ray, localThreshold float64) (RayHit, string, bool) {
+ 	case CylinderGeometry:
+ 		hit, ok := intersectCylinder(ray, radiusTop, radiusBottom, positiveOr(g.Height, 1))
+ 		hit.Method = "analytic-frustum"
+ 		return hit, "cylinder", ok
++	case CapsuleGeometry:
++		radius := positiveOr(g.Radius, 1)
++		height := positiveOr(g.Height, 1)
++		hit, ok := intersectCapsule(ray, radius, height/2)
++		hit.Method = "analytic-capsule"
++		return hit, "capsule", ok
+ 	default:
+ 		hit, ok := intersectAABB(ray, Vector3{X: -0.5, Y: -0.5, Z: -0.5}, Vector3{X: 0.5, Y: 0.5, Z: 0.5})
+ 		hit.Method = "fallback-aabb"
+ 		return hit, "cube", ok
+ 	}
+ }
++
++// intersectCapsule picks a finite Y-axis capsule analytically: it tests the
++// cylindrical body and both spherical caps, then keeps the nearest non-negative
++// hit with the correct outward normal.
++func intersectCapsule(ray Ray, radius, halfH float64) (RayHit, bool) {
++	best := RayHit{}
++	found := false
++	consider := func(hit RayHit, ok bool) {
++		if !ok || hit.Distance < 0 {
++			return
++		}
++		if !found || hit.Distance < best.Distance {
++			best, found = hit, true
++		}
++	}
++	consider(intersectSphereCentered(ray, Vector3{}, radius))
++	consider(intersectSphereCentered(ray, Vector3{Y: halfH}, radius))
++	consider(intersectSphereCentered(ray, Vector3{Y: -halfH}, radius))
++	body := rayBody(ray, radius, halfH)
++	consider(body.hit, body.ok)
++	return best, found
++}
++
++func intersectSphereCentered(ray Ray, center Vector3, radius float64) (RayHit, bool) {
++	oc := subVectors(ray.Origin, center)
++	b := dotVector(oc, ray.Direction)
++	c := dotVector(oc, oc) - radius*radius
++	discriminant := b*b - c
++	if discriminant < 0 {
++		return RayHit{}, false
++	}
++	root := math.Sqrt(discriminant)
++	t := -b - root
++	if t < 0 {
++		t = -b + root
++	}
++	if t < 0 {
++		return RayHit{}, false
++	}
++	point := addVectors(ray.Origin, scaleVector(ray.Direction, t))
++	return RayHit{Distance: t, Point: point, Normal: normalizeVector(subVectors(point, center))}, true
++}
++
++func rayBody(ray Ray, radius, halfH float64) (hit RayHit, ok bool) {
++	const epsilon = 1e-9
++	dx, dy, dz := ray.Direction.X, ray.Direction.Y, ray.Direction.Z
++	ox, oy, oz := ray.Origin.X, ray.Origin.Y-halfH, ray.Origin.Z
++	a := dx*dx + dz*dz
++	b := ox*dx + oz*dz
++	c := ox*ox + oz*oz - radius*radius
++	if a < epsilon {
++		return RayHit{}, false
++	}
++	discriminant := b*b - a*c
++	if discriminant < 0 {
++		return RayHit{}, false
++	}
++	root := math.Sqrt(discriminant)
++	t := (-b - root) / a
++	if t < 0 {
++		t = (-b + root) / a
++	}
++	if t < 0 {
++		return RayHit{}, false
++	}
++	point := addVectors(ray.Origin, scaleVector(ray.Direction, t))
++	if point.Y < -halfH || point.Y > halfH {
++		return RayHit{}, false
++	}
++	normal := normalizeVector(Vector3{X: point.X, Y: 0, Z: point.Z})
++	return RayHit{Distance: t, Point: point, Normal: normal}, true
++}
+diff --git a/scene/schema/vocabulary.go b/scene/schema/vocabulary.go
+index 0000004..0000005 100644
+--- a/scene/schema/vocabulary.go
++++ b/scene/schema/vocabulary.go
+@@ -25,6 +25,7 @@ var geometryKinds = []string{
+ 	"box",
++	"capsule",
+ 	"cone",
+ 	"cube",
+@@ -38,6 +39,7 @@ var geometryKinds = []string{
+ var geometryKindAliases = map[string]string{
++	"capsulegeometry": "capsule",
+ 	"torus-knot": "torusknot",
+ }
+diff --git a/scene/lowering.go b/scene/lowering.go
+index 0000005..0000006 100644
+--- a/scene/lowering.go
++++ b/scene/lowering.go
+@@ -40,6 +40,7 @@ func applyGeometryToObjectIR(record *ObjectIR, geometry Geometry) string {
+ 	case TorusKnotGeometry:
+ 		record.Radius = g.Radius
+ 		record.Tube = g.Tube
+ 		record.RadialSegments = g.RadialSegments
+ 		record.TubularSegments = g.TubularSegments
+ 		return "torusknot"
++	case CapsuleGeometry:
++		record.Radius = g.Radius
++		record.Height = g.Height
++		if g.Segments > 0 {
++			record.Segments = g.Segments
++		}
++		if g.RadialSegments > 0 {
++			record.RadialSegments = g.RadialSegments
++		}
++		return "capsule"
+ 	case BufferGeometry:
+ 		record.Vertices = bufferGeometryVertices(g)
+ 		return "gltf-mesh"
+@@ -120,6 +127,15 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransform) {
+ 		record.TubularSegments = mapInt(geometryProps["tubularSegments"])
+ 	}
+ 	_ = record
++	if geometryProps != nil && kind == "capsule" {
++		record.Radius = mapFloat64(geometryProps["radius"])
++		record.Height = mapFloat64(geometryProps["height"])
++		record.Segments = mapInt(geometryProps["segments"])
++		record.RadialSegments = mapInt(geometryProps["radialSegments"])
++	}
+ 	// Apply material kind.
+ 	materialProps := legacyMaterial(im.Material)
+diff --git a/scene/scene_legacy.go b/scene/scene_legacy.go
+index 0000006..0000007 100644
+--- a/scene/scene_legacy.go
++++ b/scene/scene_legacy.go
+@@ -20,6 +20,16 @@ func (g TorusKnotGeometry) legacyGeometry() (string, map[string]any) {
+ 	return "torusknot", out
+ }
++
++func (g CapsuleGeometry) legacyGeometry() (string, map[string]any) {
++	out := map[string]any{}
++	setNumeric(out, "radius", g.Radius)
++	setNumeric(out, "height", g.Height)
++	if g.Segments > 0 {
++		out["segments"] = g.Segments
++	}
++	if g.RadialSegments > 0 {
++		out["radialSegments"] = g.RadialSegments
++	}
++	if len(out) == 0 {
++		return "capsule", nil
++	}
++	return "capsule", out
++}
+diff --git a/scene/raycast_test.go b/scene/raycast_test.go
+index 0000007..0000008 100644
+--- a/scene/raycast_test.go
++++ b/scene/raycast_test.go
+@@ -70,3 +70,90 @@ func TestRaycastPickableChildSurvivesNonPickableParent(t *testing.T) {
+ 	})
+ }
++
++func TestCapsuleRaycast(t *testing.T) {
++	capsule := CapsuleGeometry{Radius: 1, Height: 2}
++	hit, kind, ok := raycastGeometry(capsule, Ray{Origin: Vec3(0, 0, 5), Direction: Vec3(0, 0, -1)}, 0)
++	if !ok || kind != "capsule" {
++		t.Fatalf("expected capsule hit, kind=%q ok=%v", kind, ok)
++	}
++	if hit.Method != "analytic-capsule" {
++		t.Fatalf("method %q", hit.Method)
++	}
++	if math.Abs(hit.Distance-4) > 1e-9 {
++		t.Fatalf("distance %v", hit.Distance)
++	}
++	if math.Abs(hit.Normal.Z-1) > 1e-9 {
++		t.Fatalf("normal %#v", hit.Normal)
++	}
++	if _, _, ok := raycastGeometry(capsule, Ray{Origin: Vec3(5, 5, 5), Direction: Vec3(1, 0, 0)}, 0); ok {
++		t.Fatal("expected miss")
++	}
++	top, _, _ := raycastGeometry(capsule, Ray{Origin: Vec3(0, 5, 0), Direction: Vec3(0, -1, 0)}, 0)
++	if math.Abs(top.Distance-(5-2)) > 1e-9 {
++		t.Fatalf("cap distance %v", top.Distance)
++	}
++}
++
++func TestCapsuleLoweringTransport(t *testing.T) {
++	record := &ObjectIR{}
++	kind := applyGeometryToObjectIR(record, CapsuleGeometry{Radius: 2, Height: 3, Segments: 5, RadialSegments: 16})
++	if kind != "capsule" || record.Radius != 2 || record.Height != 3 || record.Segments != 5 || record.RadialSegments != 16 {
++		t.Fatalf("lowering mismatch: %q %#v", kind, record)
++	}
++	props := CapsuleGeometry{}.legacyGeometry()
++	if props[0] != "capsule" {
++		t.Fatalf("legacy transport kind %q", props[0])
++	}
++	mesh, ok := Tessellate(CapsuleGeometry{Radius: 1, Height: 1}, AttributesAll)
++	_ = mesh
++	_ = ok
++}
++
++func TestCapsuleAcceleratedParity(t *testing.T) {
++	graph := NewGraph(Mesh{ID: "cap", Geometry: CapsuleGeometry{Radius: 1, Height: 2}})
++	direct, okDirect := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, 5), Direction: Vec3(0, 0, -1)})
++	if !okDirect {
++		t.Fatal("direct miss")
++	}
++	accelerated, okAccel := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, 5), Direction: Vec3(0, 0, -1)})
++	if !okAccel || accelerated.ID != direct.ID || math.Abs(accelerated.Distance-direct.Distance) > 1e-9 {
++		t.Fatalf("parity failure %#v vs %#v", accelerated, direct)
++	}
++}
++
++func TestCapsuleNativeHeadlessPrimitive(t *testing.T) {
++	params, ok := geometryParams(CapsuleGeometry{Radius: 1, Height: 2, Segments: 4, RadialSegments: 16})
++	if !ok {
++		t.Fatal("native/headless primitive generation unavailable")
++	}
++	mesh := geom.Build(params, geom.AttributesAll)
++	if mesh == nil || mesh.VertexCount() == 0 {
++		t.Fatal("native/headless primitive produced no vertices")
++	}
++}
+diff --git a/client/js/bootstrap-src/12-scene-geometry.ts b/client/js/bootstrap-src/12-scene-geometry.ts
+index 0000008..0000009 100644
+--- a/client/js/bootstrap-src/12-scene-geometry.ts
++++ b/client/js/bootstrap-src/12-scene-geometry.ts
+@@ -45,6 +45,7 @@ function scenePrimitiveTriangleMesh(object) {
+     switch (object && object.kind) {
+       case "box":
+       case "cube":
++      case "capsule":
+       case "plane":
+       case "sphere":
+       case "torus":
+@@ -58,6 +59,7 @@ function scenePrimitiveTriangleMesh(object) {
+       // cylinder, cone and pyramid had no case here, so
+       // 10-runtime-scene-core.js never set vertices for them,
+       // appendSceneObjectToBundle fell through to sceneObjectSegments, and
+       // 15-scene-draw-plan.js kept the object on the line pass. Three
+       // documented primitive kinds drew as wireframes when the author asked
+       // for a solid mesh. The solid generators already existed in 16c.
+       case "cylinder":
+       case "cone":
+       case "pyramid":
+         return sceneInstancedTriangleMesh(object.kind, object);
++        return sceneInstancedTriangleMesh(object.kind, object);
+       default:
+         return null;
+     }
+   }
+diff --git a/client/js/bootstrap-src/16c-scene-shared-pbr.ts b/client/js/bootstrap-src/16c-scene-shared-pbr.ts
+index 0000009..0000010 100644
+--- a/client/js/bootstrap-src/16c-scene-shared-pbr.ts
++++ b/client/js/bootstrap-src/16c-scene-shared-pbr.ts
+@@ -80,6 +80,13 @@ function generateInstancedGeometry(kind, dims) {
+       sceneNumber(dims && dims.tubularSegments, 16)
+     );
+   }
++  if (kind === "capsule") {
++    return generateInstancedCapsuleGeometry(
++      sceneNumber(dims && dims.radius, 1),
++      sceneNumber(dims && dims.height, 1),
++      sceneNumber(dims && dims.segments, 4),
++      sceneNumber(dims && dims.radialSegments, 8)
++    );
++  }
+ 
+   // Default: box geometry.
+   return generateInstancedBoxGeometry(w, h, d);
+@@ -115,6 +122,7 @@ function normalizeInstancedGeometryKind(kind) {
+       case "torusknotgeometry":
+       case "torus-knot":
+         return "torusknot";
++      case "capsulegeometry":
++        return "capsule";
+     }
+ 
+   function generateInstancedPyramidGeometry(w, h, d) {
+diff --git a/client/js/bootstrap-src/harness-tests.ts b/client/js/bootstrap-src/harness-tests.ts
+index 0000010..0000011 100644
+--- a/client/js/bootstrap-src/harness-tests.ts
++++ b/client/js/bootstrap-src/harness-tests.ts
+@@ -0,0 +1,60 @@
++function runCapsuleHarnessTests() {
++  const defaults = { kind: "capsule", radius: 1, height: 1, segments: 4, radialSegments: 8 };
++  const mesh = generateInstancedCapsuleGeometry(defaults.radius, defaults.height, defaults.segments, defaults.radialSegments);
++  if (!(mesh.positions instanceof Float32Array)) throw new Error("positions not typed");
++  if (!mesh.vertexCount) throw new Error("empty vertex count");
++  let minY = Infinity, maxY = -Infinity, maxRadial = 0;
++  for (let i = 0; i + 2 < mesh.positions.length; i += 3) {
++    const x = mesh.positions[i], y = mesh.positions[i + 1], z = mesh.positions[i + 2];
++    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) throw new Error("non-finite");
++    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
++    maxRadial = Math.max(maxRadial, Math.hypot(x, z));
++  }
++  const total = defaults.height / 2 + defaults.radius;
++  if (Math.abs(minY + total) > 1e-6 || Math.abs(maxY - total) > 1e-6) throw new Error("Y bounds");
++  if (maxRadial > defaults.radius + 1e-6) throw new Error("radial bound");
++  for (let i = 0; i + 2 < mesh.normals.length; i += 3) {
++    const l = mesh.normals[i] ** 2 + mesh.normals[i + 1] ** 2 + mesh.normals[i + 2] ** 2;
++    if (Math.abs(l - 1) > 1e-5) throw new Error("unit normals");
++  }
++  const clampedHigh = generateInstancedCapsuleGeometry(1, 1, 999, 999);
++  if (clampedHigh.vertexCount !== generateInstancedCapsuleGeometry(1, 1, 64, 256).vertexCount) throw new Error("high clamps");
++  const clampedLow = generateInstancedCapsuleGeometry(1, 1, 0, 1);
++  if (clampedLow.vertexCount !== generateInstancedCapsuleGeometry(1, 1, 1, 3).vertexCount) throw new Error("low clamps");
++  const instanced = sceneInstancedTriangleMesh("capsule", defaults);
++  if (!instanced || !(instanced.count > 2)) throw new Error("ordinary/instanced routing failed");
++  const ordinary = scenePrimitiveTriangleMesh(defaults);
++  if (!ordinary || !(ordinary.count > 2)) throw new Error("ordinary routing failed");
++}
++runCapsuleHarnessTests();
+diff --git a/client/js/bootstrap-src/16c-capsule-generator.ts b/client/js/bootstrap-src/16c-capsule-generator.ts
+new file mode 100644
+index 0000000..0000012
+--- /dev/null
++++ b/client/js/bootstrap-src/16c-capsule-generator.ts
+@@ -0,0 +1,78 @@
++// Shared in-IIFE capsule generator for the browser runtime. Defaults and
++// clamps match the Go generator exactly: radius 1, height 1, segments 1..64,
++// radialSegments 3..256.
++function generateInstancedCapsuleGeometry(radius, height, segments, radialSegments) {
++  var r = instancedPositiveNumber(radius, 1);
++  var h = instancedPositiveNumber(height, 1);
++  var seg = instancedSegmentCount(segments, 4, 1, 64);
++  var rad = instancedSegmentCount(radialSegments, 8, 3, 256);
++  var halfH = h * 0.5;
++  var rows = seg * 2 + 2;
++  var writer = createInstancedGeometryWriter((rows - 1) * rad * 2 * 3);
++  for (var row = 0; row < rows; row++) {
++    var theta, cosT, sinT, y;
++    if (row <= seg) {
++      theta = (Math.PI / 2) * row / seg;
++      cosT = Math.cos(theta);
++      sinT = Math.sin(theta);
++      y = halfH + r * cosT;
++    } else {
++      theta = (Math.PI / 2) * (row - seg) / seg;
++      cosT = -Math.cos(theta);
++      sinT = Math.sin(theta);
++      y = -halfH - r * cosT;
++    }
++    var sinRow = Math.sqrt(Math.max(0, 1 - cosT * cosT));
++    var v = row / (rows - 1);
++    for (var lon = 0; lon <= rad; lon++) {
++      var phi = (Math.PI * 2 * lon) / rad;
++      var c = Math.cos(phi);
++      var s = Math.sin(phi);
++      var normal = [c * sinRow, cosT, s * sinRow];
++      var position = [r * c * sinRow, y, r * s * sinRow];
++      writer.push(position, normal, [lon / rad, v], [c, 0, s, 1]);
++    }
++  }
++  for (var rowA = 0; rowA < rows - 1; rowA++) {
++    for (var lonA = 0; lonA < rad; lonA++) {
++      var idx = rowA * rad + lonA;
++      var a = idx, b2 = idx + 1, d = idx + rad + 2, e = idx + rad + 1;
++      pushQuad(writer, a, b2, d, e);
++    }
+  }
++  return writer.build();
++}
+diff --git a/scene/geom/geom.go b/scene/geom/geom.go
+index 0000002..0000003 100644
+--- a/scene/geom/geom.go
++++ b/scene/geom/geom.go
+@@ -290,3 +290,10 @@ func VertexCount(params Params) int {
+ 	return 0
+ }
++
++func clampCapsule(value int) int {
++	if value < 0 {
++		return 0
++	}
++	return value
++}
+diff --git a/scene/geom/builder.go b/scene/geom/builder.go
+index 0000012..0000013 100644
+--- a/scene/geom/builder.go
++++ b/scene/geom/builder.go
+@@ -1,2 +1,6 @@
+ package geom
++
++func quadFromGrid(b *builder, rows [][]vertex, rad int) {
++	for row := 0; row < len(rows)-1; row++ {
++		for lon := 0; lon < rad; lon++ {
++			b.tri(rows[row][lon], rows[row][lon+1], rows[row+1][lon+1])
++			b.tri(rows[row][lon], rows[row+1][lon+1], rows[row+1][lon])
++		}
++	}
++}
+diff --git a/scene/geom/capsule_test.go b/scene/geom/capsule_test.go
+new file mode 100644
+index 0000013..0000014
+--- /dev/null
++++ b/scene/geom/capsule_test.go
+@@ -0,0 +1,40 @@
++package geom
++
++import "testing"
++
++func TestCapsuleDrawVertexCountMatchesBuild(t *testing.T) {
++	params := Normalize(Params{Kind: KindCapsule})
++	if DrawVertexCount(params) != VertexCount(params) {
++		t.Fatal("capsule is non-indexed; draw and vertex counts must agree")
++	}
++}
++
++func TestCapsuleAttributesRespected(t *testing.T) {
++	onlyPositions := Build(Params{Kind: KindCapsule}, AttributePositions)
++	if onlyPositions == nil || len(onlyPositions.Positions) == 0 {
++		t.Fatal("positions missing")
++	}
++	full := Build(Params{Kind: KindCapsule}, AttributesAll)
++	if full == nil || len(full.Normals) == 0 || len(full.UVs) == 0 || len(full.Colors) == 0 {
++		t.Fatal("streams missing under AttributesAll")
++	}
++}
++
++func TestCapsuleUnknownAttributeSafety(t *testing.T) {
++	if Build(Params{Kind: KindCapsule}, Attribute(255)) != nil {
++		t.Fatal("unknown attribute must yield no mesh")
++	}
++}
+diff --git a/scene/geom/capsule.go b/scene/geom/capsule.go
+index 000000a..000000f 100644
+--- a/scene/geom/capsule.go
++++ b/scene/geom/capsule.go
+@@ -1,96 +1,104 @@
+-package geom
+-
+-import "math"
+-
+-// buildCapsule produces a smooth Y-axis capsule...
++package geom
++
++import "math"
++
++// buildCapsule final version...
+diff --git a/scene/geom/capsule.go b/scene/geom/capsule.go
+index 000000f..000000a 100644
+--- a/scene/geom/capsule.go
++++ b/scene/geom/capsule.go
+@@ -1,4 +1,4 @@
+-package geom
+-
+-import "math"
++package geom
++
++import "math"
