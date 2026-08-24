@@ -1,0 +1,329 @@
+```diff
+diff --git a/scene/raycast.go b/scene/raycast.go
+index 0000000..0000001 100644
+--- a/scene/raycast.go
++++ b/scene/raycast.go
+@@ -func intersectPlane(ray Ray, width, height float64) (RayHit, bool) {
+ func intersectPlane(ray Ray, width, height float64) (RayHit, bool) {
+ 	const epsilon = 1e-9
+-	if math.Abs(ray.Direction.Z) < epsilon {
++	// PlaneGeometry lies in the local XZ plane at y=0 with a +Y normal,
++	// matching the renderer. A ray parallel to that surface cannot hit it.
++	if math.Abs(ray.Direction.Y) < epsilon {
+ 		return RayHit{}, false
+ 	}
+-	t := -ray.Origin.Z / ray.Direction.Z
++	t := -ray.Origin.Y / ray.Direction.Y
+ 	if t < 0 {
+ 		return RayHit{}, false
+ 	}
+ 	point := addVectors(ray.Origin, scaleVector(ray.Direction, t))
+-	if math.Abs(point.X) > width/2 || math.Abs(point.Y) > height/2 {
++	if math.Abs(point.X) > width/2 || math.Abs(point.Z) > height/2 {
+ 		return RayHit{}, false
+ 	}
+-	normal := Vector3{Z: 1}
+-	if ray.Direction.Z > 0 {
+-	normal.Z = -1
++	// Keep the face-forward behavior: the normal points back toward the ray.
++	normal := Vector3{Y: 1}
++	if ray.Direction.Y > 0 {
++		normal.Y = -1
+ 	}
+ 	return RayHit{Distance: t, Point: point, Normal: normal}, true
+ }
+diff --git a/scene/raycast_coverage_test.go b/scene/raycast_coverage_test.go
+index 0000000..0000001 100644
+--- a/scene/raycast_coverage_test.go
++++ b/scene/raycast_coverage_test.go
+@@ func TestRaycastDecalHitsItsPlane(t *testing.T) {
+ func TestRaycastDecalHitsItsPlane(t *testing.T) {
+-	graph := NewGraph(Decal{ID: "scorch", Width: 4, Height: 4, Position: Vec3(0, 0, -2)})
+-	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, 3), Direction: Vec3(0, 0, -1)})
++	graph := NewGraph(Decal{ID: "scorch", Width: 4, Height: 4, Position: Vec3(0, -2, 0)})
++	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 0), Direction: Vec3(0, -1, 0)})
+ 	if !ok {
+ 		t.Fatal("expected a decal hit through the mesh plane path")
+ 	}
+ 	if hit.ID != "scorch" || hit.Kind != "plane" || hit.Method != "analytic-plane" {
+ 		t.Fatalf("expected the exact plane test, got %#v", hit)
+ 	}
+ 	if math.Abs(hit.Distance-5) > 1e-9 {
+ 		t.Fatalf("expected distance 5, got %v", hit.Distance)
+ 	}
+-	// A ray outside the 4x4 plane must miss.
+-	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(3, 0, 3), Direction: Vec3(0, 0, -1)}); ok {
+-		t.Fatal("a ray outside the decal plane must miss")
++	// Rays outside the 4x4 extent on X or Z must miss.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(3, 3, 0), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("a ray outside the decal plane on X must miss")
++	}
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 3), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("a ray outside the decal plane on Z must miss")
+ 	}
+ }
+ 
++func TestPlaneRaycastMatchesRenderedXZSurface(t *testing.T) {
++	graph := NewGraph(Mesh{ID: "ground", Geometry: PlaneGeometry{Width: 4, Height: 6}})
++
++	// A downward ray hits the rendered XZ quad at y=0.
++	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(1, 5, 2), Direction: Vec3(0, -1, 0)})
++	if !ok {
++		t.Fatal("downward ray misses the rendered XZ plane")
++	}
++	if hit.Method != "analytic-plane" || hit.Kind != "plane" {
++		t.Fatalf("expected analytic-plane, got %#v", hit)
++	}
++	if math.Abs(hit.Distance-5) > 1e-9 {
++		t.Fatalf("expected distance 5, got %v", hit.Distance)
++	}
++	if hit.Point.X != 1 || hit.Point.Y != 0 || hit.Point.Z != 2 {
++		t.Fatalf("expected point (1, 0, 2), got %#v", hit.Point)
++	}
++	if hit.Normal != (Vector3{Y: 1}) {
++		t.Fatalf("expected +Y normal from above, got %#v", hit.Normal)
++	}
++
++	// An upward ray from below sees the face-forward -Y normal.
++	up, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, -5, 0), Direction: Vec3(0, 1, 0)})
++	if !ok {
++		t.Fatal("upward ray from below must still hit the plane")
++	}
++	if up.Normal != (Vector3{Y: -1}) {
++		t.Fatalf("expected -Y normal from below, got %#v", up.Normal)
++	}
++
++	// A ray parallel to and coplanar with the XZ surface reports no phantom hit.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, -9), Direction: Vec3(0, 0, 1)}); ok {
++		t.Fatal("parallel coplanar ray must not hit the old phantom XY surface")
++	}
++
++	// Width governs X; Height governs Z.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(2.001, 5, 0), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("ray beyond Width on X must miss")
++	}
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 5, 3.001), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("ray beyond Height on Z must miss")
++	}
++}
++
+ func TestRaycastDecalHonorsPickableOnly(t *testing.T) {
+```
+
+Note: the diff above shows intended hunks in readable form; here is the exact unified patch:
+
+```diff
+diff --git a/scene/raycast.go b/scene/raycast.go
+--- a/scene/raycast.go
++++ b/scene/raycast.go
+@@ func intersectPlane(ray Ray, width, height float64) (RayHit, bool) {
+ func intersectPlane(ray Ray, width, height float64) (RayHit, bool) {
+ 	const epsilon = 1e-9
+-	if math.Abs(ray.Direction.Z) < epsilon {
++	if math.Abs(ray.Direction.Y) < epsilon {
+ 		return RayHit{}, false
+ 	}
+-	t := -ray.Origin.Z / ray.Direction.Z
++	t := -ray.Origin.Y / ray.Direction.Y
+ 	if t < 0 {
+ 		return RayHit{}, false
+ 	}
+ 	point := addVectors(ray.Origin, scaleVector(ray.Direction, t))
+-	if math.Abs(point.X) > width/2 || math.Abs(point.Y) > height/2 {
++	if math.Abs(point.X) > width/2 || math.Abs(point.Z) > height/2 {
+ 		return RayHit{}, false
+ 	}
+-	normal := Vector3{Z: 1}
+-	if ray.Direction.Z > 0 {
+-		normal.Z = -1
++	normal := Vector3{Y: 1}
++	if ray.Direction.Y > 0 {
++		normal.Y = -1
+ 	}
+ 	return RayHit{Distance: t, Point: point, Normal: normal}, true
+ }
+diff --git a/scene/raycast_coverage_test.go b/scene/raycast_coverage_test.go
+--- a/scene/raycast_coverage_test.go
++++ b/scene/raycast_coverage_test.go
+@@ func TestRaycastDecalHitsItsPlane(t *testing.T) {
+ func TestRaycastDecalHitsItsPlane(t *testing.T) {
+-	graph := NewGraph(Decal{ID: "scorch", Width: 4, Height: 4, Position: Vec3(0, 0, -2)})
+-	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, 3), Direction: Vec3(0, 0, -1)})
++	graph := NewGraph(Decal{ID: "scorch", Width: 4, Height: 4, Position: Vec3(0, -2, 0)})
++	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 0), Direction: Vec3(0, -1, 0)})
+ 	if !ok {
+ 		t.Fatal("expected a decal hit through the mesh plane path")
+ 	}
+ 	if hit.ID != "scorch" || hit.Kind != "plane" || hit.Method != "analytic-plane" {
+ 		t.Fatalf("expected the exact plane test, got %#v", hit)
+ 	}
+ 	if math.Abs(hit.Distance-5) > 1e-9 {
+ 		t.Fatalf("expected distance 5, got %v", hit.Distance)
+ 	}
+-	// A ray outside the 4x4 plane must miss.
+-	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(3, 0, 3), Direction: Vec3(0, 0, -1)}); ok {
+-		t.Fatal("a ray outside the decal plane must miss")
++	// Rays outside the 4x4 extent on X or Z must miss.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(3, 3, 0), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("a ray outside the decal plane on X must miss")
++	}
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 3), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("a ray outside the decal plane on Z must miss")
+ 	}
+ }
+ 
++func TestPlaneRaycastMatchesRenderedXZSurface(t *testing.T) {
++	graph := NewGraph(Mesh{ID: "ground", Geometry: PlaneGeometry{Width: 4, Height: 6}})
++
++	// A downward ray hits the rendered XZ quad at y=0.
++	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(1, 5, 2), Direction: Vec3(0, -1, 0)})
++	if !ok {
++		t.Fatal("downward ray misses the rendered XZ plane")
++	}
++	if hit.Method != "analytic-plane" || hit.Kind != "plane" {
++		t.Fatalf("expected analytic-plane, got %#v", hit)
++	}
++	if math.Abs(hit.Distance-5) > 1e-9 {
++		t.Fatalf("expected distance 5, got %v", hit.Distance)
++	}
++	if hit.Point.X != 1 || hit.Point.Y != 0 || hit.Point.Z != 2 {
++		t.Fatalf("expected point (1, 0, 2), got %#v", hit.Point)
++	}
++	if hit.Normal != (Vector3{Y: 1}) {
++		t.Fatalf("expected +Y normal from above, got %#v", hit.Normal)
++	}
++
++	// An upward ray from below sees the face-forward -Y normal.
++	up, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, -5, 0), Direction: Vec3(0, 1, 0)})
++	if !ok {
++		t.Fatal("upward ray from below must still hit the plane")
++	}
++	if up.Normal != (Vector3{Y: -1}) {
++		t.Fatalf("expected -Y normal from below, got %#v", up.Normal)
++	}
++
++	// A ray parallel to and coplanar with the XZ surface reports no phantom hit.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, -9), Direction: Vec3(0, 0, 1)}); ok {
++		t.Fatal("parallel coplanar ray must not hit the old phantom XY surface")
++	}
++
++	// Width governs X; Height governs Z.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(2.001, 5, 0), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("ray beyond Width on X must miss")
++	}
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 5, 3.001), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("ray beyond Height on Z must miss")
++	}
++}
++
+ func TestRaycastDecalHonorsPickableOnly(t *testing.T) {
+```
+
+Wait — output contract says only one unified patch, first bytes `diff --git`, no prose. The above contains commentary between two blocks. Provide final clean patch:
+
+```diff
+diff --git a/scene/raycast.go b/scene/raycast.go
+--- a/scene/raycast.go
++++ b/scene/raycast.go
+@@ func intersectPlane(ray Ray, width, height float64) (RayHit, bool) {
+ func intersectPlane(ray Ray, width, height float64) (RayHit, bool) {
+ 	const epsilon = 1e-9
+-	if math.Abs(ray.Direction.Z) < epsilon {
++	if math.Abs(ray.Direction.Y) < epsilon {
+ 		return RayHit{}, false
+ 	}
+-	t := -ray.Origin.Z / ray.Direction.Z
++	t := -ray.Origin.Y / ray.Direction.Y
+ 	if t < 0 {
+ 		return RayHit{}, false
+ 	}
+ 	point := addVectors(ray.Origin, scaleVector(ray.Direction, t))
+-	if math.Abs(point.X) > width/2 || math.Abs(point.Y) > height/2 {
++	if math.Abs(point.X) > width/2 || math.Abs(point.Z) > height/2 {
+ 		return RayHit{}, false
+ 	}
+-	normal := Vector3{Z: 1}
+-	if ray.Direction.Z > 0 {
+-		normal.Z = -1
++	normal := Vector3{Y: 1}
++	if ray.Direction.Y > 0 {
++		normal.Y = -1
+ 	}
+ 	return RayHit{Distance: t, Point: point, Normal: normal}, true
+ }
+diff --git a/scene/raycast_coverage_test.go b/scene/raycast_coverage_test.go
+--- a/scene/raycast_coverage_test.go
++++ b/scene/raycast_coverage_test.go
+@@ func TestRaycastDecalHitsItsPlane(t *testing.T) {
+ func TestRaycastDecalHitsItsPlane(t *testing.T) {
+-	graph := NewGraph(Decal{ID: "scorch", Width: 4, Height: 4, Position: Vec3(0, 0, -2)})
+-	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, 3), Direction: Vec3(0, 0, -1)})
++	graph := NewGraph(Decal{ID: "scorch", Width: 4, Height: 4, Position: Vec3(0, -2, 0)})
++	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 0), Direction: Vec3(0, -1, 0)})
+ 	if !ok {
+ 		t.Fatal("expected a decal hit through the mesh plane path")
+ 	}
+ 	if hit.ID != "scorch" || hit.Kind != "plane" || hit.Method != "analytic-plane" {
+ 		t.Fatalf("expected the exact plane test, got %#v", hit)
+ 	}
+ 	if math.Abs(hit.Distance-5) > 1e-9 {
+ 		t.Fatalf("expected distance 5, got %v", hit.Distance)
+ 	}
+-	// A ray outside the 4x4 plane must miss.
+-	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(3, 0, 3), Direction: Vec3(0, 0, -1)}); ok {
+-		t.Fatal("a ray outside the decal plane must miss")
++	// Rays outside the 4x4 extent on X or Z must miss.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(3, 3, 0), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("a ray outside the decal plane on X must miss")
++	}
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 3), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("a ray outside the decal plane on Z must miss")
+ 	}
+ }
+ 
++func TestPlaneRaycastMatchesRenderedXZSurface(t *testing.T) {
++	graph := NewGraph(Mesh{ID: "ground", Geometry: PlaneGeometry{Width: 4, Height: 6}})
++
++	// A downward ray hits the rendered XZ quad at y=0.
++	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(1, 5, 2), Direction: Vec3(0, -1, 0)})
++	if !ok {
++		t.Fatal("downward ray misses the rendered XZ plane")
++	}
++	if hit.Method != "analytic-plane" || hit.Kind != "plane" {
++		t.Fatalf("expected analytic-plane, got %#v", hit)
++	}
++	if math.Abs(hit.Distance-5) > 1e-9 {
++		t.Fatalf("expected distance 5, got %v", hit.Distance)
++	}
++	if hit.Point.X != 1 || hit.Point.Y != 0 || hit.Point.Z != 2 {
++		t.Fatalf("expected point (1, 0, 2), got %#v", hit.Point)
++	}
++	if hit.Normal != (Vector3{Y: 1}) {
++		t.Fatalf("expected +Y normal from above, got %#v", hit.Normal)
++	}
++
++	// An upward ray from below sees the face-forward -Y normal.
++	up, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, -5, 0), Direction: Vec3(0, 1, 0)})
++	if !ok {
++		t.Fatal("upward ray from below must still hit the plane")
++	}
++	if up.Normal != (Vector3{Y: -1}) {
++		t.Fatalf("expected -Y normal from below, got %#v", up.Normal)
++	}
++
++	// A ray parallel to and coplanar with the XZ surface reports no phantom hit.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, -9), Direction: Vec3(0, 0, 1)}); ok {
++		t.Fatal("parallel coplanar ray must not hit the old phantom XY surface")
++	}
++
++	// Width governs X; Height governs Z.
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(2.001, 5, 0), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("ray beyond Width on X must miss")
++	}
++	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 5, 3.001), Direction: Vec3(0, -1, 0)}); ok {
++		t.Fatal("ray beyond Height on Z must miss")
++	}
++}
++
+ func TestRaycastDecalHonorsPickableOnly(t *testing.T) {
+```
