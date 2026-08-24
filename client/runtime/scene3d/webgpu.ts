@@ -3417,7 +3417,7 @@
     return device.createBindGroupLayout({
       label: "gosx-shadow-frame",
       entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 64 } },
       ],
     });
   }
@@ -6872,6 +6872,8 @@
     // Shadow pass buffer.
     var shadowPositionBuffer = null;
     var shadowFrameBuffer = null;
+    var shadowFrameBufferStride = 256;
+    var shadowFrameBufferCapacity = 0;
 
     // Depth texture for main render pass.
     var mainDepthTexture = null;
@@ -7610,7 +7612,15 @@
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        shadowFrameBufferStride = Math.max(
+          256,
+          Math.floor(sceneNumber(device && device.limits && device.limits.minUniformBufferOffsetAlignment, 256))
+        );
+        shadowFrameBufferCapacity = 1;
+        shadowFrameBuffer = device.createBuffer({
+          size: shadowFrameBufferStride,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
 
         // Create samplers.
         linearSampler = device.createSampler({
@@ -15157,17 +15167,40 @@
     // retained indexed casters; allocated lazily, reused every frame.
     var _shadowCombinedMatrixScratch = null;
 
+    function ensureShadowFrameBufferCapacity(matrixCount) {
+      var required = Math.max(1, Math.floor(sceneNumber(matrixCount, 1)));
+      if (shadowFrameBuffer && shadowFrameBufferCapacity >= required) {
+        return true;
+      }
+      var capacity = Math.max(1, shadowFrameBufferCapacity);
+      while (capacity < required) capacity *= 2;
+      destroyRendererGPUResource(shadowFrameBuffer);
+      shadowFrameBuffer = device.createBuffer({
+        size: capacity * shadowFrameBufferStride,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      shadowFrameBufferCapacity = capacity;
+      return Boolean(shadowFrameBuffer);
+    }
+
     function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
       var sp = getShadowPipeline();
       if (!sp) return;
 
+      var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+      // Slot zero carries the shared light matrix. Every retained caster gets
+      // its own aligned slot so queue writes are immutable for the lifetime of
+      // the encoded pass; mutating one shared uniform before submit would make
+      // every draw observe the final caster's matrix.
+      if (!ensureShadowFrameBufferCapacity(objects.length + 1)) return;
+
       // Upload light space matrix.
-      device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix);
+      device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix, 0, 16);
 
       var shadowBG = device.createBindGroup({
         layout: shadowBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: shadowFrameBuffer } },
+          { binding: 0, resource: { buffer: shadowFrameBuffer, offset: 0, size: 64 } },
         ],
       });
 
@@ -15184,10 +15217,10 @@
       if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
       var pass = encoder.beginRenderPass(shadowPassDescriptor);
 
-      pass.setBindGroup(0, shadowBG);
+      pass.setBindGroup(0, shadowBG, [0]);
       var currentShadowPipeline = "";
+      var retainedShadowMatrixSlot = 1;
 
-      var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
         if (!obj || obj.viewCulled) continue;
@@ -15199,11 +15232,13 @@
           if (!skinnedPositionBuffer) continue;
           if (currentShadowPipeline !== "static") {
             pass.setPipeline(sp);
-            pass.setBindGroup(0, shadowBG);
             currentShadowPipeline = "static";
           }
+          pass.setBindGroup(0, shadowBG, [0]);
           pass.setVertexBuffer(0, skinnedPositionBuffer);
-          pass.draw(obj.vertexCount);
+          var skinnedShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+          if (skinnedShadowIndexCount > 0) pass.drawIndexed(skinnedShadowIndexCount);
+          else pass.draw(obj.vertexCount);
           continue;
         }
 
@@ -15211,11 +15246,13 @@
         if (computedMorphRecord) {
           if (currentShadowPipeline !== "static") {
             pass.setPipeline(sp);
-            pass.setBindGroup(0, shadowBG);
             currentShadowPipeline = "static";
           }
+          pass.setBindGroup(0, shadowBG, [0]);
           if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
-          pass.draw(obj.vertexCount);
+          var morphShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+          if (morphShadowIndexCount > 0) pass.drawIndexed(morphShadowIndexCount);
+          else pass.draw(obj.vertexCount);
           continue;
         }
 
@@ -15228,35 +15265,37 @@
           if (!(casterIndices instanceof Uint32Array) || casterIndices.length < 3 || casterIndices.length % 3 !== 0) continue;
           if (currentShadowPipeline !== "static") {
             pass.setPipeline(sp);
-            pass.setBindGroup(0, shadowBG);
             currentShadowPipeline = "static";
           }
           if (!webGPUBindRetainedMeshAttribute(pass, 0, obj, "positions", 3)) continue;
           var casterIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
           if (!(casterIndexCount > 0)) continue;
           var casterModel = obj.modelMatrix;
+          var casterMatrix = lightMatrix;
           if (casterModel && casterModel.length >= 16) {
             if (!_shadowCombinedMatrixScratch) _shadowCombinedMatrixScratch = new Float32Array(16);
             sceneMat4MultiplyInto(_shadowCombinedMatrixScratch, lightMatrix, casterModel);
-            device.queue.writeBuffer(shadowFrameBuffer, 0, _shadowCombinedMatrixScratch, 0, 16);
-          } else {
-            device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix, 0, 16);
+            casterMatrix = _shadowCombinedMatrixScratch;
           }
+          var casterMatrixOffset = retainedShadowMatrixSlot * shadowFrameBufferStride;
+          retainedShadowMatrixSlot += 1;
+          device.queue.writeBuffer(shadowFrameBuffer, casterMatrixOffset, casterMatrix, 0, 16);
+          pass.setBindGroup(0, shadowBG, [casterMatrixOffset]);
           pass.drawIndexed(casterIndexCount);
-          device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix, 0, 16);
           continue;
         }
 
         if (currentShadowPipeline !== "static") {
           pass.setPipeline(sp);
-          pass.setBindGroup(0, shadowBG);
           currentShadowPipeline = "static";
         }
 
+        pass.setBindGroup(0, shadowBG, [0]);
         if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
         pass.draw(obj.vertexCount);
       }
 
+      pass.setBindGroup(0, shadowBG, [0]);
       drawInstancedShadowMeshes(pass, bundle);
       pass.end();
     }

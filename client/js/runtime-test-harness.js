@@ -3972,8 +3972,12 @@ function makeFakeGPUDevice(options) {
       setPipeline(pipeline) {
         pass.pipelines.push(pipeline);
       },
-      setBindGroup(slot, group) {
-        pass.bindGroups.push({ slot, group });
+      setBindGroup(slot, group, dynamicOffsets) {
+        const record = { slot, group };
+        if (dynamicOffsets && typeof dynamicOffsets.length === "number") {
+          record.dynamicOffsets = Array.from(dynamicOffsets);
+        }
+        pass.bindGroups.push(record);
       },
       setVertexBuffer(slot, buffer, offset, size) {
         pass.vertexBuffers.push({ slot, buffer, offset, size });

@@ -642,8 +642,8 @@ func TestGeneratedGeometryLowersToAMeshWithVertices(t *testing.T) {
 		if got, want := object.Vertices.Count, len(geometry.Positions)/3; got != want {
 			t.Fatalf("%s: %d wire vertices, want %d unique", name, got, want)
 		}
-		if len(object.Vertices.Indices) != genDrawnIndexCount(geometry) {
-			t.Fatalf("%s: index stream of %d does not match the drawn count %d", name, len(object.Vertices.Indices), genDrawnIndexCount(geometry))
+		if got, want := len(object.Vertices.Indices), len(geometry.Indices); got != want {
+			t.Fatalf("%s: wire index stream of %d does not match the %d authored indices", name, got, want)
 		}
 		if len(object.Vertices.Positions) != object.Vertices.Count*3 {
 			t.Fatalf("%s: the position stream does not match the vertex count", name)
