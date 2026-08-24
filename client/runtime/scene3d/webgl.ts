@@ -7989,6 +7989,16 @@
           if (selenaProgram.skinned && obj.skin) {
             bindSelenaSkinAttributes(gl, selenaProgram, obj);
           }
+          // Custom descriptor attributes resolve only against the mesh's own
+          // declared custom streams. A declared custom attribute with no
+          // matching stream (missing data or a component-count mismatch)
+          // fails the authored draw safely: the object is skipped this frame
+          // and the miss is journaled — no later location shifts, no
+          // substitution of unrelated data, no partial draws.
+          if (!bindSelenaCustomAttributes(gl, selenaProgram, obj)) {
+            webglRenderTruthStats.selenaCustomAttributeSkips = (webglRenderTruthStats.selenaCustomAttributeSkips || 0) + 1;
+            continue;
+          }
           const selenaIndexCount = bindScenePBRDirectIndexBuffer(selenaDirectVertices ? obj : null);
           if (selenaIndexCount > 0) {
             gl.drawElements(gl.TRIANGLES, selenaIndexCount, gl.UNSIGNED_INT, 0);

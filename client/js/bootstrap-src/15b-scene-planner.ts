@@ -1679,6 +1679,28 @@
     } else {
       hash = scenePlannerHashNumber(hash, 0);
     }
+    // Custom attribute schema and data identity join the geometry identity.
+    // Names are visited in sorted order — the normalizer already inserts them
+    // that way, but sorting again here makes the hash independent of any
+    // producer's key insertion order. Retained meshes keep this stable
+    // between revisions and change it when a revision republishes streams.
+    const attributes = vertices.attributes;
+    if (!attributes || typeof attributes !== "object") {
+      return scenePlannerHashNumber(hash, 0);
+    }
+    const names = Object.keys(attributes).sort();
+    hash = scenePlannerHashNumber(hash, names.length);
+    for (let n = 0; n < names.length; n += 1) {
+      const name = names[n];
+      const entry = attributes[name];
+      hash = scenePlannerHashString(hash, name);
+      if (!entry || typeof entry !== "object") {
+        hash = scenePlannerHashNumber(hash, 0);
+        continue;
+      }
+      hash = scenePlannerHashNumber(hash, sceneNumber(entry.itemSize, 0));
+      hash = scenePlannerHashFloatArray(hash, entry.data, 0);
+    }
     return hash;
   }
 

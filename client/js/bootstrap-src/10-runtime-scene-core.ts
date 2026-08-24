@@ -602,6 +602,86 @@
     return typed.slice(0, count * safeTupleSize);
   }
 
+  // Canonical custom-attribute name rule, mirroring the Go lowering rule in
+  // scene.ValidBufferAttributeName: a non-empty shader identifier that never
+  // collides with the built-in position/normal/uv/tangent/index/skin streams.
+  const SCENE_CUSTOM_ATTRIBUTE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  const SCENE_RESERVED_ATTRIBUTE_NAMES = {
+    position: true, positions: true,
+    normal: true, normals: true,
+    uv: true, uvs: true, uv1: true,
+    tangent: true, tangents: true,
+    index: true, indices: true,
+    skin: true, skinIndex: true, joints: true, weights: true,
+  };
+
+  function sceneValidCustomAttributeName(name) {
+    return typeof name === "string" &&
+      name.length > 0 &&
+      SCENE_CUSTOM_ATTRIBUTE_NAME_RE.test(name) &&
+      !Object.prototype.hasOwnProperty.call(SCENE_RESERVED_ATTRIBUTE_NAMES, name);
+  }
+
+  // sceneNormalizeCustomAttributes validates and normalizes an optional
+  // name-keyed custom float attribute collection ({ data, itemSize } per
+  // name) against a mesh vertex count. Valid streams become fresh
+  // Float32Array snapshots inserted in sorted-name order so key enumeration
+  // — hashing, GPU slot assignment, telemetry — never depends on author map
+  // insertion order. Malformed input (bad names, built-in collisions, item
+  // sizes outside [1,4], wrong lengths, non-finite values) returns undefined
+  // so the caller fails closed instead of publishing a partial GPU fetch.
+  // Custom streams ride only on the retained snapshot contract (immutable,
+  // revisioned, non-dynamic): the CPU-baked mutable path cannot preserve
+  // extra unnamed streams through world baking, so attributes on such meshes
+  // are rejected outright rather than silently dropped.
+  function sceneNormalizeCustomAttributes(value, count, immutable, revision, dynamic) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (!sceneIsPlainObject(value)) {
+      return undefined;
+    }
+    if (!(immutable === true && revision !== null && dynamic !== true)) {
+      return undefined;
+    }
+    const names = Object.keys(value).sort();
+    if (names.length === 0) {
+      return null;
+    }
+    const out = {};
+    for (let i = 0; i < names.length; i += 1) {
+      const name = names[i];
+      if (!sceneValidCustomAttributeName(name)) {
+        return undefined;
+      }
+      const entry = value[name];
+      if (!sceneIsPlainObject(entry)) {
+        return undefined;
+      }
+      const itemSize = Number(entry.itemSize);
+      if (!Number.isInteger(itemSize) || itemSize < 1 || itemSize > 4) {
+        return undefined;
+      }
+      const source = entry.data;
+      if ((source instanceof Float32Array) === false && !Array.isArray(source)) {
+        return undefined;
+      }
+      if (source.length !== count * itemSize) {
+        return undefined;
+      }
+      const typed = new Float32Array(count * itemSize);
+      for (let j = 0; j < typed.length; j += 1) {
+        const v = Number(source[j]);
+        if (!Number.isFinite(v)) {
+          return undefined;
+        }
+        typed[j] = v;
+      }
+      out[name] = { data: typed, itemSize };
+    }
+    return out;
+  }
+
   function sceneNormalizeMeshVertexData(value) {
     const item = value && typeof value === "object" ? value : {};
     const positions = sceneNormalizeMeshFloatArray(item.positions, 3);
@@ -628,6 +708,24 @@
     if (indices === undefined) {
       return null;
     }
+    // Normalize optional named custom float streams once. Malformed streams —
+    // and attributes riding on meshes outside the retained snapshot contract
+    // — fail closed exactly like malformed indices: no partial vertex payload
+    // is ever published or drawn.
+    const revision = Object.prototype.hasOwnProperty.call(item, "revision") &&
+      Number.isFinite(Number(item.revision)) && Number(item.revision) >= 0
+        ? Math.floor(Number(item.revision))
+        : null;
+    const attributes = sceneNormalizeCustomAttributes(
+      item.attributes,
+      count,
+      item.immutable === true,
+      revision,
+      item.dynamic === true,
+    );
+    if (attributes === undefined) {
+      return null;
+    }
     return {
       positions: count * 3 === positions.length ? positions : positions.slice(0, count * 3),
       normals: normals.length >= count * 3 ? normals.slice(0, count * 3) : new Float32Array(0),
@@ -636,15 +734,13 @@
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
       indices: indices || null,
+      attributes: attributes || null,
       count,
       // Retained geometry is an explicit snapshot contract, never inferred
       // from typed-array identity. For immutable=true, every attribute remains
       // immutable until revision changes; dynamic=true always forces baking.
       immutable: item.immutable === true,
-      revision: Object.prototype.hasOwnProperty.call(item, "revision") &&
-        Number.isFinite(Number(item.revision)) && Number(item.revision) >= 0
-          ? Math.floor(Number(item.revision))
-          : null,
+      revision,
       dynamic: item.dynamic === true,
     };
   }
