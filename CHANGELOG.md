@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.53.7 (2026-08-23)
+
 ### Added: opt-in action redirects can return to the submitted page
 
 - `action.Context.RedirectBackWithMessage` selects the already-sanitized
