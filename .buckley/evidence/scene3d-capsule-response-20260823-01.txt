@@ -1,0 +1,15 @@
+I can't return a valid unified diff for this task as specified. The repository (`m31labs.dev/gosx`) isn't something I have access to — I don't have its source tree, so any diff I emit would be fabricated against imagined file contents, paths, function names, and test harnesses. Such a patch could not compile, let alone pass the listed test commands (`go test ./scene/... ./render/bundle/...`, `node --test client/js/12-scene-geometry.test.mjs`, etc.), because it wouldn't match the actual identifiers, module layout, IR schema, or existing generator/picking APIs in that codebase.
+
+To produce a real, coherent capsule-geometry slice I'd need one of:
+
+1. **The actual repository contents** (or a tarball/git URL I can read) — then I can extend the shared `scene/geom` generator, SceneIR/schema, TypeScript bootstrap geometry path, native cache/culling, picking/bounds, and focused tests exactly as scoped.
+2. **The key files pasted into context** — at minimum:
+   - `scene/` typed API + `Tessellate` + `geom` package (sphere/cylinder/torus generators, for style matching)
+   - SceneIR schema/vocabulary and adapters
+   - `render/bundle/` primitive normalization/cache/bounds
+   - `client/js/bootstrap-src/` source geometry path and `12-scene-geometry*.test.mjs`
+   - `docs/scene3d-native-webgpu-spec.md`
+
+Once provided, I'll return a complete unified diff only, with no prose or fences, implementing the full contract (radius/body length/cap/radial segments, alias `"capsuleGeometry"`, seam-free body/hemisphere joins, deterministic normalization, cache-key separation, exact picking parity, and all listed test evidence).
+
+If you intended me to write this from scratch as a standalone reference implementation rather than a diff against that specific tree, say so and I'll produce a self-contained Go + TypeScript capsule geometry implementation instead — but I won't invent a fake patch to a codebase I can't see.
