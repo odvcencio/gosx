@@ -1,0 +1,191 @@
+diff --git a/scene/ir.go b/scene/ir.go
+--- a/scene/ir.go
++++ b/scene/ir.go
+@@ -1,6 +1,6 @@
+ package scene
+ 
+ import (
++	"sort"
++
+ )
+ 
+ // IRKind enumerates node kinds in the canonical intermediate representation.
+ type IRKind string
+@@
+-// materialFromInstancedIR flattens the material carried by an InstancedMeshIR.
+-// It intentionally copies only the subset of fields shared with the legacy
+-// pipeline, which means custom shader state and advanced PBR parameters are
+-// dropped during lowering.
+-func materialFromInstancedIR(src *InstancedMeshIR) *IRMaterial {
+-	return &IRMaterial{
+-		ID:        src.ID,
+-		Color:     src.Color,
+-		Texture:   src.Texture,
+-		Roughness: src.Roughness,
+-		Metalness: src.Metalness,
+-	}
++// materialFromInstancedIR flattens the material carried by an InstancedMeshIR,
++// copying every field shared between InstancedMeshIR and IRMaterial so that
++// instanced nodes reach the canonical IR with parity against regular meshes.
++func materialFromInstancedIR(src *InstancedMeshIR) *IRMaterial {
++	material := &IRMaterial{
++		ID:           src.ID,
++		Color:        src.Color,
++		Texture:      src.Texture,
++		Roughness:    src.Roughness,
++		Metalness:    src.Metalness,
++		Clearcoat:    src.Clearcoat,
++		Sheen:        src.Sheen,
++		Transmission: src.Transmission,
++		Iridescence:  src.Iridescence,
++		Anisotropy:   src.Anisotropy,
++		NormalMap:    src.NormalMap,
++		EmissiveMap:  src.EmissiveMap,
++		Emissive:     src.Emissive,
++		BlendMode:    src.BlendMode,
++		Wireframe:    src.Wireframe,
++		RenderOrder:  src.RenderOrder,
++		CastShadow:   src.CastShadow,
++		DoubleSided:  src.DoubleSided,
++		ShaderBackend: src.ShaderBackend,
++		ShaderSource:  src.ShaderSource,
++		VertexGLSL:    src.VertexGLSL,
++		FragmentGLSL:  src.FragmentGLSL,
++		VertexWGSL:    src.VertexWGSL,
++		FragmentWGSL:  src.FragmentWGSL,
++	}
++	if src.Opacity != nil {
++		opacity := *src.Opacity
++		material.Opacity = &opacity
++	}
++	if len(src.CustomUniforms) > 0 {
++		material.Uniforms = cloneAnyMap(src.CustomUniforms)
++	}
++	if len(src.ShaderLayout) > 0 {
++		material.ShaderLayout = cloneAnyMap(src.ShaderLayout)
++	}
++	if len(src.ShaderSourceFiles) > 0 {
++		material.ShaderSourceFiles = cloneStringMap(src.ShaderSourceFiles)
++	}
++	return material
+ }
++
++func cloneAnyMap(src map[string]any) map[string]any {
++	out := make(map[string]any, len(src))
++	for k, v := range src {
++		out[k] = v
++	}
++	return out
++}
++
++func cloneStringMap(src map[string]string) map[string]string {
++	out := make(map[string]string, len(src))
++	for k, v := range src {
++		out[k] = v
++	}
++	return out
++}
+diff --git a/scene/ir_test.go b/scene/ir_test.go
+--- a/scene/ir_test.go
++++ b/scene/ir_test.go
+@@
+ import (
+ 	"reflect"
+ 	"testing"
+ )
+@@
++func TestCanonicalIRInstancedMaterialParity(t *testing.T) {
++	shaderLayout := map[string]any{"position": "vec3", "uv": "vec2"}
++	uniforms := map[string]any{"time": 0.5, "tint": [3]float64{0.2, 0.4, 0.8}}
++	sourceFiles := map[string]string{"vertex.glsl": "void main() {}"}
++	material := CustomMaterial{
++		StandardMaterial: StandardMaterial{
++			Color:        "#ff8800",
++			Texture:      "albedo.png",
++			Roughness:    0.25,
++			Metalness:    0.75,
++			Clearcoat:    0.5,
++			Sheen:        0.3,
++			Transmission: 0.1,
++			Iridescence:  0.2,
++			Anisotropy:   0.4,
++			NormalMap:    "normal.png",
++			RoughnessMap: "roughness.png",
++			MetalnessMap: "metalness.png",
++			OcclusionMap: "occlusion.png",
++			EmissiveMap:  "emissive.png",
++			Emissive:     0.15,
++			Opacity:      Float(0.9),
++			BlendMode:    BlendAlpha,
++			Wireframe:    Bool(true),
++		},
++		ShaderBackend:     "wgsl",
++		ShaderLayout:      shaderLayout,
++		ShaderSource:      "fn vs_main() -> void {}",
++		ShaderSourceFiles: sourceFiles,
++		VertexGLSL:        "void main() {}",
++		FragmentGLSL:      "void main() {}",
++		VertexWGSL:        "@vertex fn vs() {}",
++		FragmentWGSL:      "@fragment fn fs() {}",
++		Uniforms:          uniforms,
++	}
++	props := Props{
++		Graph: NewGraph(
++			Mesh{ID: "mesh", Geometry: BoxGeometry{SizeX: 1}, Material: material},
++			InstancedMesh{
++				ID:        "instanced",
++				Count:     1,
++				Geometry:  BoxGeometry{SizeX: 1},
++				Material:  material,
++				Positions: []Vector3{{X: 1, Y: 2, Z: 3}},
++			},
++		),
++	}
++
++	ir, err := props.CanonicalIR()
++	if err != nil {
++		t.Fatalf("CanonicalIR: %v", err)
++	}
++	if got := len(ir.Materials); got != 1 {
++		t.Fatalf("len(ir.Materials) = %d, want 1", got)
++	}
++	mat := ir.Materials[0]
++	if mat.Roughness != 0.25 || mat.Metalness != 0.75 || mat.Clearcoat != 0.5 || mat.Transmission != 0.1 {
++		t.Errorf("physical PBR fields not preserved: %+v", mat)
++	}
++	if mat.BlendMode != BlendAlpha {
++		t.Errorf("BlendMode = %q, want %q", mat.BlendMode, BlendAlpha)
++	}
++	if mat.Wireframe == nil || !*mat.Wireframe {
++		t.Errorf("Wireframe not preserved: %v", mat.Wireframe)
++	}
++	if mat.ShaderBackend != "wgsl" || mat.ShaderSource == "" || mat.VertexWGSL == "" || mat.FragmentGLSL == "" {
++		t.Errorf("custom shader envelope not preserved: %+v", mat)
++	}
++	if !reflect.DeepEqual(mat.Uniforms["time"], 0.5) || !reflect.DeepEqual(mat.ShaderLayout["position"], "vec3") ||
++		mat.ShaderSourceFiles["vertex.glsl"] != "void main() {}" {
++		t.Errorf("shader maps not preserved: uniforms=%v layout=%v files=%v", mat.Uniforms, mat.ShaderLayout, mat.ShaderSourceFiles)
++	}
++}
++
++func TestMaterialFromInstancedIRClonesShaderMaps(t *testing.T) {
++	src := &InstancedMeshIR{
++		ID:                "instanced-src",
++		CustomUniforms:    map[string]any{"time": 1.0},
++		ShaderLayout:      map[string]any{"normal": "vec3"},
++		ShaderSourceFiles: map[string]string{"frag.wgsl": "return vec4f(1);"},
++	}
++	mat := materialFromInstancedIR(src)
++	src.CustomUniforms["time"] = 2.0
++	src.ShaderLayout["normal"] = "vec4"
++	src.ShaderSourceFiles["frag.wgsl"] = "mutated"
++	if !reflect.DeepEqual(mat.Uniforms["time"], 1.0) {
++		t.Errorf("Uniforms aliased source map: %v", mat.Uniforms)
++	}
++	if !reflect.DeepEqual(mat.ShaderLayout["normal"], "vec3") {
++		t.Errorf("ShaderLayout aliased source map: %v", mat.ShaderLayout)
++	}
++	if !reflect.DeepEqual(mat.ShaderSourceFiles["frag.wgsl"], "return vec4f(1);") {
++		t.Errorf("ShaderSourceFiles aliased source map: %v", mat.ShaderSourceFiles)
++	}
++}
