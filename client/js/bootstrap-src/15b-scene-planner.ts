@@ -1679,24 +1679,13 @@
     } else {
       hash = scenePlannerHashNumber(hash, 0);
     }
-    // Sorted here too so the hash never depends on producer key order.
-    const attributes = vertices.attributes;
-    if (!attributes || typeof attributes !== "object") {
-      return scenePlannerHashNumber(hash, 0);
-    }
-    const names = Object.keys(attributes).sort();
-    hash = scenePlannerHashNumber(hash, names.length);
-    for (let n = 0; n < names.length; n += 1) {
-      const name = names[n];
-      const entry = attributes[name];
-      hash = scenePlannerHashString(hash, name);
-      if (!entry || typeof entry !== "object") {
-        hash = scenePlannerHashNumber(hash, 0);
-        continue;
-      }
-      hash = scenePlannerHashNumber(hash, sceneNumber(entry.itemSize, 0));
-      hash = scenePlannerHashFloatArray(hash, entry.data, 0);
-    }
+    // Custom attribute streams are deliberately NOT hashed per-value here.
+    // sceneNormalizeCustomAttributes only accepts custom streams when the
+    // geometry is immutable, non-dynamic, and revision-pinned, and
+    // scenePlannerHashMeshObject already hashes object.geometryRevision.
+    // Any change to a custom stream must therefore bump the revision, so
+    // scanning every name/itemSize/data value here would duplicate identity
+    // work already covered by the contract.
     return hash;
   }
 

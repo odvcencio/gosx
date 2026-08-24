@@ -616,10 +616,7 @@
     if (value === undefined || value === null) {
       return null;
     }
-    if (!sceneIsPlainObject(value)) {
-      return undefined;
-    }
-    if (!(immutable === true && revision !== null && dynamic !== true)) {
+    if (!sceneIsPlainObject(value) || !(immutable === true && revision !== null && dynamic !== true)) {
       return undefined;
     }
     const names = Object.keys(value).sort();
@@ -633,27 +630,18 @@
         return undefined;
       }
       const entry = value[name];
-      if (!sceneIsPlainObject(entry)) {
+      const itemSize = Number(sceneIsPlainObject(entry) ? entry.itemSize : NaN);
+      const source = sceneIsPlainObject(entry) ? entry.data : null;
+      if (!Number.isInteger(itemSize) || itemSize < 1 || itemSize > 4 ||
+        ((source instanceof Float32Array) === false && !Array.isArray(source)) ||
+        source.length !== count * itemSize) {
         return undefined;
       }
-      const itemSize = Number(entry.itemSize);
-      if (!Number.isInteger(itemSize) || itemSize < 1 || itemSize > 4) {
-        return undefined;
-      }
-      const source = entry.data;
-      if ((source instanceof Float32Array) === false && !Array.isArray(source)) {
-        return undefined;
-      }
-      if (source.length !== count * itemSize) {
-        return undefined;
-      }
-      const typed = new Float32Array(count * itemSize);
+      const typed = new Float32Array(source);
       for (let j = 0; j < typed.length; j += 1) {
-        const v = Number(source[j]);
-        if (!Number.isFinite(v)) {
+        if (!Number.isFinite(typed[j])) {
           return undefined;
         }
-        typed[j] = v;
       }
       out[name] = { data: typed, itemSize };
     }
