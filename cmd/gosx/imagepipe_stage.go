@@ -73,13 +73,20 @@ var imagePipeExtraFormats = []imagepipe.Format{imagepipe.FormatWebP}
 // warning on stderr and omitted from the returned assets, matching how
 // sidecar CSS is best-effort elsewhere in this file.
 func stageImageVariants(projectDir, distDir string) ([]buildmanifest.ImageAsset, error) {
-	publicDir := filepath.Join(projectDir, "public")
-	info, err := os.Stat(publicDir)
-	if err != nil || !info.IsDir() {
+	return stageImageVariantsFromPublicDir(filepath.Join(projectDir, "public"), distDir)
+}
+func stageImageVariantsFromPublicDir(publicDir, distDir string) ([]buildmanifest.ImageAsset, error) {
+	imagesDir := filepath.Join(distDir, "assets", "images")
+	if err := os.RemoveAll(imagesDir); err != nil {
+		return nil, fmt.Errorf("clean image asset dir: %w", err)
+	}
+	info, err := os.Lstat(publicDir)
+	if err != nil {
 		return nil, nil
 	}
-
-	imagesDir := filepath.Join(distDir, "assets", "images")
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, fmt.Errorf("public image source must be a regular directory: %s", publicDir)
+	}
 	if err := os.MkdirAll(imagesDir, 0755); err != nil {
 		return nil, fmt.Errorf("create image asset dir: %w", err)
 	}
@@ -90,6 +97,9 @@ func stageImageVariants(projectDir, distDir string) ([]buildmanifest.ImageAsset,
 	walkErr := filepath.WalkDir(publicDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("public image source contains symlink: %s", path)
 		}
 		if d.IsDir() {
 			return nil

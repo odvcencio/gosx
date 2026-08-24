@@ -15,6 +15,7 @@ import (
 
 	"m31labs.dev/gosx"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/island"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
@@ -144,6 +145,7 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	distDir := filepath.Join(t.TempDir(), "dist")
 
 	mustWriteFile(t, filepath.Join(projectDir, "app", "page.gsx"), "package app\n")
+	mustWriteFile(t, filepath.Join(distDir, "app", "page.gsx"), "staged app\n")
 	mustWriteFile(t, filepath.Join(projectDir, "content", "docs", "intro.md"), "# Introduction\n")
 	mustWriteFile(t, filepath.Join(projectDir, "public", "styles.css"), "body {}\n")
 	mustWriteFile(t, filepath.Join(projectDir, ".env.example"), "PORT=8080\n")
@@ -160,7 +162,6 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 		"app/page.gsx",
 		"content/docs/intro.md",
 		"public/styles.css",
-		".env.example",
 		"README.md",
 		"run.sh",
 	} {
@@ -170,6 +171,9 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(distDir, "content", "docs", "removed.md")); !os.IsNotExist(err) {
 		t.Fatalf("stale content file survived deployment staging: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(distDir, ".env.example")); !os.IsNotExist(err) {
+		t.Fatalf("root .env.example was copied into deployment staging: %v", err)
 	}
 
 	runScript := readFile(t, filepath.Join(distDir, "run.sh"))
@@ -344,7 +348,9 @@ func TestStageOfflineAssetBundleWritesVersionedManifest(t *testing.T) {
 	projectDir := t.TempDir()
 	distDir := filepath.Join(t.TempDir(), "dist")
 	mustWriteFile(t, filepath.Join(projectDir, "app", "page.gsx"), "package app\n")
-	mustWriteFile(t, filepath.Join(projectDir, "public", "logo.svg"), "<svg />\n")
+	mustWriteFile(t, filepath.Join(projectDir, "public", "logo.svg"), "source public should not be copied\n")
+	mustWriteFile(t, filepath.Join(distDir, "app", "page.gsx"), "staged app\n")
+	mustWriteFile(t, filepath.Join(distDir, "public", "logo.svg"), "staged public\n")
 	mustWriteFile(t, filepath.Join(distDir, "assets", "runtime", "bootstrap.abc.js"), "runtime")
 	mustWriteFile(t, filepath.Join(distDir, "build.json"), `{"runtime":{}}`)
 
@@ -387,6 +393,24 @@ func TestStageOfflineAssetBundleWritesVersionedManifest(t *testing.T) {
 	}
 	if policies["app/page.gsx"] != "first-launch" {
 		t.Fatalf("app asset policy = %q", policies["app/page.gsx"])
+	}
+}
+
+func TestStageOfflineAssetBundleKeepsAllowedMutableAppStateAuditable(t *testing.T) {
+	distDir := filepath.Join(t.TempDir(), "dist")
+	cfg := bundlepolicy.Config{Allow: []string{"app/cache.db"}}
+	mustWriteFile(t, filepath.Join(distDir, "app", "cache.db"), "immutable cache")
+	if err := writeBundlePolicySidecar(distDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageOfflineAssetBundleWithPolicy(distDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(distDir, "offline", "app", "cache.db")); err != nil {
+		t.Fatalf("allowed app database was not staged offline: %v", err)
+	}
+	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg); !diagnostics.Empty() {
+		t.Fatalf("allowed offline app database failed final audit: %s", diagnostics.Error())
 	}
 }
 

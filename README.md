@@ -828,6 +828,40 @@ manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
 `dist/app.appinstaller` for AppInstaller-based updates.
 
+### Bundle boundary and mutable state
+
+The production build is a clean-room staging boundary. It validates the
+project before removing an old dist/ directory, then stages app/, content/,
+and public/ with Lstat-based containment checks. Secrets, credential files,
+private metadata directories, symlinks, sockets, devices, FIFOs, and mutable
+database/state files are not deployable artifacts.
+
+Applications that intentionally ship immutable server data can declare exact
+paths in gosx.config.json:
+
+    {
+      "build": {
+        "bundle": {
+          "allow": ["app/catalog.db"],
+          "allowPublic": ["public/seed.db"],
+          "exclude": ["content/drafts"]
+        }
+      }
+    }
+
+allow entries are for immutable app/ or content/ data. allowPublic is a
+separate, loudly warned exception for one exact public file and therefore
+makes that file anonymously readable. No allowance can re-enable secrets or
+symlinks, and exclusions cannot hide them. SQLite -wal, -shm, and -journal
+sidecars must be handled outside the bundle and are never implied by an
+allow entry.
+
+Runtime databases, write-ahead logs, uploads, sessions, and other mutable
+state should live in an explicitly mounted runtime volume or external state
+service, not under app/, content/, or public/. The offline, static, image, and
+server consumers all use the filtered staged tree, and a final artifact audit
+protects it from build hooks reintroducing denied material.
+
 ## Deploy
 
 Three tiers:
