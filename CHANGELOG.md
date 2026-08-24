@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added: opt-in action redirects can return to the submitted page
+
+- `action.Context.RedirectBackWithMessage` selects the already-sanitized
+  `__gosx_return_to` target when present, otherwise a sanitized root-relative
+  fallback, while carrying the same completion message through native
+  POST-redirect-GET and managed JSON responses. Query strings and fragments are
+  preserved, and invalid or empty targets resolve to the safe root path `/`.
+- The reserved return-target field remains private: it is removed before
+  application handlers observe `Context.FormData` and before values are
+  flashed or emitted in managed JSON.
+
+### Fixed: action redirect output is fail-closed
+
+- Explicit `Result.Redirect` values now pass through the same root-relative
+  sanitizer before native `Location` headers and managed JSON are emitted.
+  Unsafe non-empty redirects deterministically resolve to `/`, preventing an
+  open redirect while preserving valid explicit destinations.
+
 ## v0.53.6 (2026-08-23)
 
 ### Fixed: relocated production bundles load their own app files

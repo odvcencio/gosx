@@ -326,6 +326,15 @@ count    // local to the declaring island
 
 Return targets must be root-relative and same-origin. An explicit handler redirect takes precedence; otherwise GoSX falls back to a safe same-site referrer and then the action route. Managed navigation preserves authored fragments across fetches and same-origin HTTP redirects, and same-document fragment changes do not refetch the page.
 
+Actions that should return to the submitting page can opt in with
+`ctx.RedirectBackWithMessage("/fallback", "Saved.")`. GoSX chooses the valid
+`__gosx_return_to` target first, then the sanitized root-relative fallback;
+invalid or empty values resolve to `/`. Query strings and fragments are
+preserved, and the reserved field never enters `Context.FormData` or the
+returned values. Use `ctx.RedirectWithMessage` when the action intentionally
+chooses a different destination; explicit non-empty redirects are sanitized to
+a same-origin root-relative path, with unsafe values resolving to `/`.
+
 **Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
 
 **Navigation** — Opt-in client-side page transitions via `app.EnableNavigation()` with managed head swaps and intent-prefetching. Pages render server-first, enhance progressively.
