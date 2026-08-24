@@ -1630,7 +1630,17 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(light && light.directionY, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(light && light.directionZ, 0));
     hash = scenePlannerHashNumber(hash, light && light.castShadow ? 1 : 0);
-    return scenePlannerHashNumber(hash, sceneNumber(light && light.shadowSize, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.shadowSize, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.range, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.decay, 2));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.angle, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.penumbra, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.width, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.height, 0));
+    hash = scenePlannerHashString(hash, light && light.groundColor || "");
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.shadowBias, 0));
+    hash = scenePlannerHashNumber(hash, sceneNumber(light && light.shadowCascades, 0));
+    return scenePlannerHashNumber(hash, sceneNumber(light && light.shadowSoftness, 0));
   }
 
   function scenePlannerHashFloatArray(hash, values, maxItems) {

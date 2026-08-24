@@ -942,7 +942,9 @@ const budgets = [
   // Bumped raw 535_500 -> 537_000, gzip 148_500 -> 148_800, brotli 123_300
   // -> 123_500 for the WebGL loss-recovery watchdog. Measured: 535_969 /
   // 148_477 / 123_144.
-  { file: "bootstrap-feature-scene3d.js", raw: 538_929, gzip: 148_800, brotli: 123_500 },
+  // Bumped gzip 148_800 -> 148_850 for complete prepared-scene light cache
+  // invalidation. Measured: 538_069 / 148_810 / 123_368.
+  { file: "bootstrap-feature-scene3d.js", raw: 538_929, gzip: 148_850, brotli: 123_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
