@@ -100,6 +100,27 @@ func Page() Node {
 			</p>
 			{CodeBlock("go", "// Redirect safely and explain what changed.\nctx.RedirectWithMessage(\"/subscribe/confirmed\", \"Subscription confirmed.\")")}
 			<p>
+				When the action should return to the page that submitted it, opt in with
+				<span class="inline-code">ctx.RedirectBackWithMessage</span>
+				. It prefers a valid
+				<span class="inline-code">__gosx_return_to</span>
+				field, then uses the sanitized root-relative fallback. Empty, malformed, absolute, and protocol-relative targets resolve to
+				<span class="inline-code">/</span>
+				; valid query strings and fragments are preserved. The reserved field is removed before the handler sees
+				<span class="inline-code">ctx.FormData</span>
+				.
+			</p>
+			{CodeBlock("go", "// In the form:\n<input type=\"hidden\" name={action.ReturnTargetField} value=\"/board?tab=all#roster\" />\n\n// In the action:\nctx.RedirectBackWithMessage(\"/account\", \"Profile saved.\")")}
+			<p>
+				Use
+				<span class="inline-code">ctx.RedirectWithMessage</span>
+				when the action intentionally changes destination. Explicit non-empty redirect values are sanitized to same-origin root-relative paths before either native
+				<span class="inline-code">Location</span>
+				or managed JSON is emitted; unsafe values resolve to
+				<span class="inline-code">/</span>
+				.
+			</p>
+			<p>
 				Most actions never need to inspect their transport mode. When application code genuinely must branch, call
 				<span class="inline-code">action.WantsJSON(ctx.Request)</span>
 				to share GoSX's authoritative managed-action negotiation instead of parsing request headers again.
@@ -109,8 +130,10 @@ func Page() Node {
 				Render one
 				<span class="inline-code">data-gosx-toast-host</span>
 				in your layout to make managed-action messages visibly float. The runtime supplies accessible status and dismiss behavior; style the stable
-				<span class="inline-code">gosx-toast</span>,
-				<span class="inline-code">gosx-toast--success</span>, and
+				<span class="inline-code">gosx-toast</span>
+				,
+				<span class="inline-code">gosx-toast--success</span>
+				, and
 				<span class="inline-code">gosx-toast--error</span>
 				classes to match your product.
 			</p>
