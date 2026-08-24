@@ -5576,6 +5576,10 @@
     return { source: out, hasNormal: hasNormal };
   }
 
+  // Fixed Selena vertex-layout built-ins that never participate in the
+  // custom-stream record (their binding is owned by the builtin path).
+  var SCENE_WEBGL_RESERVED_ATTRIBUTES = "position positions normal normals uv uvs uv1 tangent tangents index indices skin skinIndex joints weights".split(" ");
+
   // sceneSelenaDiscardProgram releases a compiled Selena program whose
   // attribute descriptor failed validation, so a failed compile path never
   // leaks GPU programs across repeated material rejections.
@@ -5627,74 +5631,30 @@
       uniforms: sceneSelenaUniformLocations(gl, program, layout),
       layout: layout,
       skinned: Boolean(skinned),
-      customAttributeLocations: {},
-      customAttributeSizes: {},
-    };
-    // Custom per-vertex BufferAttribute descriptors fail closed at compile
-    // time: every declared custom attribute must be a canonical non-reserved
-    // shader identifier with a known tuple type, must exist in the compiled
-    // vertex shader (loc >= 0), and no two attributes may resolve to the same
-    // location. Any violation discards the program so the object takes the
-    // journaled builtin-PBR fallback instead of drawing with a broken or
-    // half-bound descriptor.
-    var RESERVED_ATTRIBUTE_NAMES = {
-      position: true, positions: true,
-      normal: true, normals: true,
-      uv: true, uvs: true, uv1: true,
-      tangent: true, tangents: true,
-      index: true, indices: true,
-      skin: true, skinIndex: true, joints: true, weights: true,
+      // Validated Selena custom descriptors as one compact ordered flat
+      // array: [name, compiledLocation, componentWidth, ...].
+      customAttributes: [],
     };
     var seenCustomLocations = {};
-    var seenDeclaredLocations = {};
     for (var c = 0; c < layoutAttrs.length; c++) {
       var customAttr = layoutAttrs[c] || {};
       var customName = customAttr.name;
-      // Reserved built-in layout entries (position/normal/uv/tangent/...) are
-      // part of the fixed Selena vertex layout and must survive into the
-      // program descriptor untouched; they are skipped from custom-stream
-      // validation because their binding is owned by the builtin path.
-      if (
-        typeof customName === "string" &&
-        Object.prototype.hasOwnProperty.call(RESERVED_ATTRIBUTE_NAMES, customName)
-      ) {
-        continue;
-      }
-      if (
-        typeof customName !== "string" ||
-        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(customName)
-      ) {
-        sceneSelenaDiscardProgram(gl, result);
-        return null;
-      }
+      // Reserved built-in layout entries are part of the fixed Selena vertex
+      // layout; their binding is owned by the builtin path, so they are
+      // skipped from the custom-stream record.
+      if (SCENE_WEBGL_RESERVED_ATTRIBUTES.indexOf(customName) >= 0) continue;
       var customSize = sceneSelenaAttributeComponents(customAttr.type);
-      if (!(customSize >= 1 && customSize <= 4)) {
-        sceneSelenaDiscardProgram(gl, result);
-        return null;
-      }
-      var declaredLocation = customAttr.location;
-      if (
-        typeof declaredLocation !== "number" ||
-        !Number.isFinite(declaredLocation) ||
-        !Number.isInteger(declaredLocation) ||
-        declaredLocation < 0
-      ) {
-        sceneSelenaDiscardProgram(gl, result);
-        return null;
-      }
-      if (seenDeclaredLocations[declaredLocation]) {
-        sceneSelenaDiscardProgram(gl, result);
-        return null;
-      }
-      seenDeclaredLocations[declaredLocation] = true;
-      var customLoc = gl.getAttribLocation(program, customName);
-      if (!Number.isFinite(customLoc) || customLoc < 0 || seenCustomLocations[customLoc]) {
+      var customLoc = gl.getAttribLocation(program, String(customName));
+      // Fail closed unless the descriptor has a known tuple width and the
+      // vertex shader exposes it at a unique compiled location; anything else
+      // discards the program so the object takes the journaled builtin-PBR
+      // fallback.
+      if (customSize < 1 || customLoc < 0 || seenCustomLocations[customLoc]) {
         sceneSelenaDiscardProgram(gl, result);
         return null;
       }
       seenCustomLocations[customLoc] = true;
-      result.customAttributeLocations[customName] = customLoc;
-      result.customAttributeSizes[customName] = customSize;
+      result.customAttributes.push(customName, customLoc, customSize);
     }
     if (skinned) {
       result.skinUniforms = {
@@ -8007,58 +7967,25 @@
     }
 
   function bindSelenaCustomAttributes(gl, selenaProgram, obj) {
-    var locations = selenaProgram && selenaProgram.customAttributeLocations;
-    var sizes = selenaProgram && selenaProgram.customAttributeSizes;
-    if (!locations) {
-      return true;
-    }
-    var names = Object.keys(locations);
-    if (names.length === 0) {
+    // Consume the program's trusted compact custom-descriptor record
+    // ([name, compiledLocation, width, ...]). Names and tuple widths were
+    // validated once during scene attribute normalization; only the
+    // per-object stream presence/width match — which fails the draw safely
+    // on a missing or mismatched stream — and the backend buffer binding
+    // remain here.
+    var custom = selenaProgram.customAttributes;
+    if (!custom.length) {
       return true;
     }
     var declared = obj && obj.vertices && obj.vertices.attributes;
-    var count = Math.max(0, Math.floor(sceneNumber(obj && obj.vertexCount, 0)));
-    var seenLocations = {};
-    var pending = [];
-    for (var i = 0; i < names.length; i += 1) {
-      var name = names[i];
-      var loc = locations[name];
-      var size = sizes ? sizes[name] : undefined;
-      if (
-        !/^[A-Za-z_][A-Za-z0-9_]*$/.test(String(name)) ||
-        !Number.isFinite(loc) || loc < 0 ||
-        !Number.isInteger(size) || size < 1 || size > 4 ||
-        seenLocations[loc]
-      ) {
+    for (var i = 0; i < custom.length; i += 3) {
+      var size = custom[i + 2];
+      var entry = declared ? declared[custom[i]] : null;
+      // A missing or width-mismatched stream fails the draw safely.
+      if (!entry || entry.itemSize !== size) {
         return false;
       }
-      seenLocations[loc] = true;
-      var entry = declared && typeof declared === "object" ? declared[name] : null;
-      var required = count * size;
-      if (
-        !entry ||
-        typeof entry !== "object" ||
-        entry.itemSize !== size ||
-        !(entry.data instanceof Float32Array) ||
-        entry.data.length !== required
-      ) {
-        return false;
-      }
-      pending.push({ name: name, loc: loc, size: size, data: entry.data });
-    }
-    for (var j = 0; j < pending.length; j += 1) {
-      var rec = pending[j];
-      bindScenePBRDirectAttribute(
-        {
-          vertices: obj.vertices,
-          retainedGeometry: obj.retainedGeometry === true,
-          geometryRevision: obj.geometryRevision,
-        },
-        "custom:" + rec.name,
-        rec.loc,
-        rec.size,
-        rec.data
-      );
+      bindScenePBRDirectAttribute(obj, "custom:" + custom[i], custom[i + 1], size, entry.data);
     }
     return true;
   }

@@ -544,16 +544,10 @@
     return out;
   }
 
-  // sceneNormalizeMeshIndices validates an optional authored triangle index
-  // stream over count unique vertices. Absent (null/undefined) input returns
-  // null — the geometry simply stays non-indexed. Present-but-malformed input
-  // (wrong length, non-triangle list, or any index outside [0, count)) returns
-  // undefined so the caller can fail closed instead of drawing a partial mesh
-  // or handing the GPU an out-of-range fetch. Valid input returns a fresh
-  // Uint32Array copy so callers can never alias the author's slice. Indices are
-  // normalized once here, never per frame. It lives in the base chunk next to
-  // sceneTypedFloatArray because mesh normalization runs on every Scene3D page,
-  // backend and all.
+  // Validates an optional authored triangle index stream over count unique
+  // vertices. Absent input returns null; malformed input returns undefined
+  // so callers fail closed; valid input returns a fresh Uint32Array copy,
+  // normalized once here.
   function sceneNormalizeMeshIndices(value, count) {
     if (value === undefined || value === null) return null;
     const source = value;
@@ -602,38 +596,22 @@
     return typed.slice(0, count * safeTupleSize);
   }
 
-  // Canonical custom-attribute name rule, mirroring the Go lowering rule in
-  // scene.ValidBufferAttributeName: a non-empty shader identifier that never
-  // collides with the built-in position/normal/uv/tangent/index/skin streams.
+  // Mirrors Go scene.ValidBufferAttributeName: shader identifier, never a
+  // built-in stream name.
   const SCENE_CUSTOM_ATTRIBUTE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-  const SCENE_RESERVED_ATTRIBUTE_NAMES = {
-    position: true, positions: true,
-    normal: true, normals: true,
-    uv: true, uvs: true, uv1: true,
-    tangent: true, tangents: true,
-    index: true, indices: true,
-    skin: true, skinIndex: true, joints: true, weights: true,
-  };
+  const SCENE_RESERVED_ATTRIBUTE_NAMES =
+    "position positions normal normals uv uvs uv1 tangent tangents index indices skin skinIndex joints weights".split(" ");
 
   function sceneValidCustomAttributeName(name) {
     return typeof name === "string" &&
-      name.length > 0 &&
       SCENE_CUSTOM_ATTRIBUTE_NAME_RE.test(name) &&
-      !Object.prototype.hasOwnProperty.call(SCENE_RESERVED_ATTRIBUTE_NAMES, name);
+      SCENE_RESERVED_ATTRIBUTE_NAMES.indexOf(name) < 0;
   }
 
-  // sceneNormalizeCustomAttributes validates and normalizes an optional
-  // name-keyed custom float attribute collection ({ data, itemSize } per
-  // name) against a mesh vertex count. Valid streams become fresh
-  // Float32Array snapshots inserted in sorted-name order so key enumeration
-  // — hashing, GPU slot assignment, telemetry — never depends on author map
-  // insertion order. Malformed input (bad names, built-in collisions, item
-  // sizes outside [1,4], wrong lengths, non-finite values) returns undefined
-  // so the caller fails closed instead of publishing a partial GPU fetch.
-  // Custom streams ride only on the retained snapshot contract (immutable,
-  // revisioned, non-dynamic): the CPU-baked mutable path cannot preserve
-  // extra unnamed streams through world baking, so attributes on such meshes
-  // are rejected outright rather than silently dropped.
+  // Validates/normalizes optional custom float streams against a mesh vertex
+  // count. Returns fresh Float32Array snapshots in sorted-name order;
+  // malformed input or meshes outside the immutable/revisioned snapshot
+  // contract return undefined so callers fail closed.
   function sceneNormalizeCustomAttributes(value, count, immutable, revision, dynamic) {
     if (value === undefined || value === null) {
       return null;
@@ -701,17 +679,12 @@
     const tangents = sceneNormalizeMeshFloatArray(item.tangents, 4);
     const joints = sceneNormalizeMeshFloatArray(item.joints, 4);
     const weights = sceneNormalizeMeshFloatArray(item.weights, 4);
-    // Normalize the optional index stream once. Malformed indexed geometry
-    // fails closed: the object carries no vertices, so nothing partial is ever
-    // published or drawn.
+    // Malformed indexed geometry fails closed: nothing partial is published.
     const indices = sceneNormalizeMeshIndices(item.indices, count);
     if (indices === undefined) {
       return null;
     }
-    // Normalize optional named custom float streams once. Malformed streams —
-    // and attributes riding on meshes outside the retained snapshot contract
-    // — fail closed exactly like malformed indices: no partial vertex payload
-    // is ever published or drawn.
+    // Malformed streams and out-of-contract meshes fail closed like indices.
     const revision = Object.prototype.hasOwnProperty.call(item, "revision") &&
       Number.isFinite(Number(item.revision)) && Number(item.revision) >= 0
         ? Math.floor(Number(item.revision))
@@ -736,9 +709,7 @@
       indices: indices || null,
       attributes: attributes || null,
       count,
-      // Retained geometry is an explicit snapshot contract, never inferred
-      // from typed-array identity. For immutable=true, every attribute remains
-      // immutable until revision changes; dynamic=true always forces baking.
+      // Snapshot contract, never inferred from typed-array identity.
       immutable: item.immutable === true,
       revision,
       dynamic: item.dynamic === true,

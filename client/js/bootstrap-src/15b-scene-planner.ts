@@ -1679,11 +1679,7 @@
     } else {
       hash = scenePlannerHashNumber(hash, 0);
     }
-    // Custom attribute schema and data identity join the geometry identity.
-    // Names are visited in sorted order — the normalizer already inserts them
-    // that way, but sorting again here makes the hash independent of any
-    // producer's key insertion order. Retained meshes keep this stable
-    // between revisions and change it when a revision republishes streams.
+    // Sorted here too so the hash never depends on producer key order.
     const attributes = vertices.attributes;
     if (!attributes || typeof attributes !== "object") {
       return scenePlannerHashNumber(hash, 0);
