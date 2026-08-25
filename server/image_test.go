@@ -7,6 +7,7 @@ import (
 	stdhtml "html"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"log/slog"
 	"net/http"
@@ -124,6 +125,7 @@ func TestImageHelperBuildsAutomaticResponsiveMarkup(t *testing.T) {
 
 	for _, snippet := range []string{
 		`srcset="/_gosx/image?`,
+		`fmt=webp`,
 		`w=320`,
 		`w=828`,
 		`w=960`,
@@ -364,11 +366,11 @@ func TestImageRejectsNonProducibleFormatAtRenderTime(t *testing.T) {
 		if r == nil {
 			t.Fatal("expected Image to panic for an unproducible format")
 		}
-		if msg := fmt.Sprint(r); !strings.Contains(msg, "webp") {
+		if msg := fmt.Sprint(r); !strings.Contains(msg, "avif") {
 			t.Fatalf("expected the panic message to name the rejected format, got %q", msg)
 		}
 	}()
-	Image(ImageProps{Src: "/hero.png", Alt: "Hero", Format: "webp"})
+	Image(ImageProps{Src: "/hero.png", Alt: "Hero", Format: "avif"})
 	t.Fatal("unreachable: Image did not panic")
 }
 
@@ -376,7 +378,7 @@ func TestImageRejectsNonProducibleFormatAtRenderTime(t *testing.T) {
 // TestImageRejectsNonProducibleFormatAtRenderTime: every format the handler
 // can actually encode, plus an unset format, must render without panicking.
 func TestImageAllowsProducibleFormatsAtRenderTime(t *testing.T) {
-	for _, format := range []string{"", "jpeg", "jpg", "png", "gif"} {
+	for _, format := range []string{"", "jpeg", "jpg", "png", "gif", "webp"} {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -388,21 +390,21 @@ func TestImageAllowsProducibleFormatsAtRenderTime(t *testing.T) {
 	}
 }
 
-// TestSelectTargetImageFormatRejectsWebpAsOutputEvenAfterDecoderRegistration
-// covers gosx#199's decoder/encoder split: registering the WebP decoder
-// makes WebP a decodable SOURCE format, but the handler still has no WebP
-// encoder, so the render-time and request-time allowlists must both keep
-// rejecting fmt=webp as an OUTPUT format.
-func TestSelectTargetImageFormatRejectsWebpAsOutputEvenAfterDecoderRegistration(t *testing.T) {
-	if _, err := selectTargetImageFormat("png", "webp"); err == nil {
-		t.Fatal("expected an explicit fmt=webp request to be rejected as an output format")
+func TestSelectTargetImageFormatUsesBuiltInWebP(t *testing.T) {
+	got, err := selectTargetImageFormat("png", "webp")
+	if err != nil || got != "webp" {
+		t.Fatalf("explicit WebP output = (%q, %v), want webp", got, err)
 	}
-	got, err := selectTargetImageFormat("webp", "")
+	got, err = selectTargetImageFormat("jpeg", "")
+	if err != nil || got != "webp" {
+		t.Fatalf("default JPEG output = (%q, %v), want webp", got, err)
+	}
+	got, err = selectTargetImageFormat("webp", "")
 	if err != nil {
-		t.Fatalf("expected a webp source with no explicit format to fall back to a producible output, got err: %v", err)
+		t.Fatalf("webp source fallback: %v", err)
 	}
 	if got != "png" {
-		t.Fatalf("expected a webp source to default to png output (no webp encoder), got %q", got)
+		t.Fatalf("webp source default = %q, want alpha-safe png", got)
 	}
 }
 
@@ -457,8 +459,8 @@ func TestWebpDecoderIsRegisteredForDimensionProbing(t *testing.T) {
 
 // TestImageHandlerDecodesWebpSourceAndProbesDimensions covers gosx#199 end
 // to end through the live optimizer handler: a WebP source now decodes (HEAD
-// and GET), and resizes proportionally, falling back to a png-encoded
-// output since there is no WebP encoder.
+// and GET), and resizes proportionally. WebP sources retain their PNG
+// fallback because the source may contain alpha.
 func TestImageHandlerDecodesWebpSourceAndProbesDimensions(t *testing.T) {
 	publicDir := t.TempDir()
 	writeGopherDocWebpFixture(t, filepath.Join(publicDir, "gopher.webp"))
@@ -497,11 +499,7 @@ func TestImageHandlerDecodesWebpSourceAndProbesDimensions(t *testing.T) {
 	}
 }
 
-// TestImageOptimizerRejectsUnproducibleFormatWithClientSafeMessage covers
-// gosx#199: even though a webp SOURCE now decodes, fmt=webp as a requested
-// OUTPUT format must still 400 with the existing client-safe message (no
-// producible-format allowlist regression from registering the decoder).
-func TestImageOptimizerRejectsUnproducibleFormatWithClientSafeMessage(t *testing.T) {
+func TestImageOptimizerProducesExplicitWebP(t *testing.T) {
 	publicDir := t.TempDir()
 	if err := writeTestPNG(filepath.Join(publicDir, "hero.png"), 40, 40); err != nil {
 		t.Fatal(err)
@@ -514,11 +512,88 @@ func TestImageOptimizerRejectsUnproducibleFormatWithClientSafeMessage(t *testing
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("fmt=webp request = %d; want 400", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("fmt=webp request = %d; want 200, body %q", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "unsupported image format") {
-		t.Fatalf("expected the client-safe unsupported-format message, got %q", w.Body.String())
+	if got := w.Header().Get("Content-Type"); got != "image/webp" {
+		t.Fatalf("fmt=webp content type = %q", got)
+	}
+	img, format, err := image.Decode(bytes.NewReader(w.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("decode WebP output: %v", err)
+	}
+	if format != "webp" || img.Bounds().Dx() != 20 || img.Bounds().Dy() != 20 {
+		t.Fatalf("decoded WebP = format %q bounds %v, want webp 20x20", format, img.Bounds())
+	}
+}
+
+func TestImageOptimizerRefusesTransparentWebPWithoutDroppingAlpha(t *testing.T) {
+	publicDir := t.TempDir()
+	src := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	for y := range 4 {
+		for x := range 4 {
+			src.SetNRGBA(x, y, color.NRGBA{R: 240, G: 80, B: 40, A: 128})
+		}
+	}
+	f, err := os.Create(filepath.Join(publicDir, "alpha.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, src); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetPublicDir(publicDir)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, defaultImageEndpoint+"?src=/alpha.png&w=4&fmt=webp", nil))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("transparent WebP request = %d; want 400", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "alpha channel is not supported") {
+		t.Fatalf("transparent WebP response = %q, want clear alpha refusal", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), publicDir) {
+		t.Fatalf("transparent WebP response leaked host path: %q", w.Body.String())
+	}
+}
+
+func TestJPEGVariantsDefaultToExplicitWebPCacheKeyAndOutput(t *testing.T) {
+	url := ImageURL("/photo.jpg", ImageTransform{Width: 20})
+	if !strings.Contains(url, "fmt=webp") {
+		t.Fatalf("JPEG optimizer URL = %q, want explicit fmt=webp cache key", url)
+	}
+
+	publicDir := t.TempDir()
+	f, err := os.Create(filepath.Join(publicDir, "photo.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jpeg.Encode(f, image.NewRGBA(image.Rect(0, 0, 40, 20)), &jpeg.Options{Quality: 90}); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetPublicDir(publicDir)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, url, nil))
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "image/webp" {
+		t.Fatalf("default JPEG variant = status %d type %q body %q", w.Code, w.Header().Get("Content-Type"), w.Body.String())
+	}
+	decoded, format, err := image.Decode(bytes.NewReader(w.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("decode default WebP: %v", err)
+	}
+	if format != "webp" || decoded.Bounds().Dx() != 20 || decoded.Bounds().Dy() != 10 {
+		t.Fatalf("default WebP = format %q bounds %v, want webp 20x10", format, decoded.Bounds())
 	}
 }
 

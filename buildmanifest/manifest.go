@@ -364,11 +364,9 @@ func (m *Manifest) ImageAssetBySource(source string) (ImageAsset, bool) {
 
 // ImageVariant returns the hashed build-time output for a source image at
 // the given width and, if named, format. An empty format matches the first
-// variant recorded at width, in gosx build's own generation order -- by
-// default that is the source's own native format (imagepipe ships no WebP
-// encoder; see cmd/gosx's imagePipeNativeFormat and imagePipeExtraFormats),
-// so a caller that never named an explicit format still lands on whatever
-// gosx build actually produced for it. It returns false if source has no
+// variant recorded at width, in gosx build's own generation order. The local
+// image resolver writes its preferred format explicitly, so this fallback is
+// mainly for low-level callers and older manifests. It returns false if source has no
 // recorded ImageAsset, or that asset has no matching variant at exactly
 // this width; gosx build never upscales, so a width above the source's
 // intrinsic Width never matches.

@@ -1,8 +1,15 @@
 package imagepipe
 
 import (
+	"errors"
 	"image"
+	"image/color"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
+
+	tqwebp "m31labs.dev/tqwebp"
 )
 
 func TestProcessReturnsIntrinsicDimensionsAndOneVariantPerWidthFormatPair(t *testing.T) {
@@ -80,17 +87,16 @@ func TestProcessSingleWidthMatchingIntrinsicProducesOneVariantPerFormat(t *testi
 	}
 }
 
-// TestProcessFailsOnAFormatWithNoRegisteredEncoder proves Process (via
-// Encode) never silently drops or substitutes an unproducible format: with
-// no Encoder registered for FormatWebP, a caller that asks Process for it
-// gets a clear error, not a shorter variants slice.
-func TestProcessFailsOnAFormatWithNoRegisteredEncoder(t *testing.T) {
+func TestProcessProducesBuiltInWebPWithoutRegistration(t *testing.T) {
 	dir := t.TempDir()
-	path := writeTestPNG(t, dir, "no-webp-encoder", 100, 100)
+	path := writeTestPNG(t, dir, "built-in-webp", 100, 100)
 
-	_, _, err := Process(path, []int{100}, []Format{FormatWebP}, EncodeOptions{})
-	if err == nil {
-		t.Fatal("expected Process to error on FormatWebP with no registered encoder")
+	_, variants, err := Process(path, []int{100}, []Format{FormatWebP}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("Process built-in WebP: %v", err)
+	}
+	if len(variants) != 1 || variants[0].Format != FormatWebP {
+		t.Fatalf("variants = %+v, want one built-in WebP variant", variants)
 	}
 }
 
@@ -115,5 +121,40 @@ func TestProcessUsesARegisteredEncoderForANonBuiltInFormat(t *testing.T) {
 	}
 	if len(variants) != 1 || string(variants[0].Data) != "stub-webp-bytes" {
 		t.Fatalf("variants = %+v, want one FormatWebP variant with the registered encoder's own bytes", variants)
+	}
+}
+
+func TestProcessKeepsNativeFallbackAndSkipsWebPForAlpha(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "alpha.png")
+	src := image.NewNRGBA(image.Rect(0, 0, 10, 10))
+	for y := range 10 {
+		for x := range 10 {
+			src.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 20), G: uint8(y * 20), B: 80, A: 127})
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, src); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, variants, err := Process(path, []int{10}, []Format{FormatPNG, FormatWebP}, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("Process alpha with native fallback: %v", err)
+	}
+	if len(variants) != 1 || variants[0].Format != FormatPNG {
+		t.Fatalf("alpha variants = %+v, want native PNG only", variants)
+	}
+
+	_, _, err = Process(path, []int{10}, []Format{FormatWebP}, EncodeOptions{})
+	if !errors.Is(err, tqwebp.ErrAlphaUnsupported) {
+		t.Fatalf("WebP-only alpha error = %v, want ErrAlphaUnsupported", err)
 	}
 }

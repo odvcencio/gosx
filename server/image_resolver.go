@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,7 @@ func resolveLocalImageURL(src string, transform ImageTransform) (string, bool) {
 	if !shouldOptimizeImageSource(src) || transform == (ImageTransform{}) {
 		return src, true
 	}
+	transform = defaultLocalImageTransform(src, transform)
 	values := url.Values{}
 	values.Set("src", src)
 	if transform.Width > 0 {
@@ -128,12 +130,33 @@ func registerStaticExportImageResolver(a *App) {
 // package-level resolveLocalImageURL, so this method changes nothing about
 // existing behavior beyond adding that one new match.
 func (a *App) resolveLocalImageURL(src string, transform ImageTransform) (string, bool) {
+	transform = defaultLocalImageTransform(src, transform)
 	if strings.TrimSpace(os.Getenv("GOSX_STATIC_EXPORT")) != "" {
 		if resolved, ok := a.staticExportImageVariant(src, transform); ok {
 			return resolved, true
 		}
 	}
 	return resolveLocalImageURL(src, transform)
+}
+
+// defaultLocalImageTransform makes tqwebp the default encoder for local JPEG
+// variants. JPEG is opaque by construction, so this cannot discard alpha.
+// Writing fmt=webp into the URL also gives the new representation a distinct
+// immutable cache key. PNG, GIF, and WebP sources retain their existing safe
+// defaults because each may contain transparency.
+func defaultLocalImageTransform(src string, transform ImageTransform) ImageTransform {
+	if strings.TrimSpace(transform.Format) != "" {
+		return transform
+	}
+	parsed, err := url.Parse(src)
+	if err != nil {
+		return transform
+	}
+	switch strings.ToLower(filepath.Ext(parsed.Path)) {
+	case ".jpg", ".jpeg":
+		transform.Format = "webp"
+	}
+	return transform
 }
 
 // staticExportImageVariant looks up the build-time image variant gosx

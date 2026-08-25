@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"image/gif"
@@ -21,6 +22,7 @@ import (
 	_ "golang.org/x/image/webp" // register the WebP decoder (gosx#199)
 
 	"m31labs.dev/gosx"
+	tqwebp "m31labs.dev/tqwebp"
 )
 
 const defaultImageEndpoint = "/_gosx/image"
@@ -222,6 +224,7 @@ type imageVariant struct {
 const (
 	maxImageDimension          = 4096
 	maxImagePixels             = 8 * 1024 * 1024
+	maxImageOutputBytes        = 32 * 1024 * 1024
 	maxConcurrentImageVariants = 2
 )
 
@@ -343,6 +346,22 @@ func encodeImageVariant(buf *bytes.Buffer, img image.Image, format string, quali
 			return "", fmt.Errorf("encode png: %w", err)
 		}
 		return "image/png", nil
+	case "webp":
+		if quality < 0 {
+			quality = 0
+		} else if quality > 100 {
+			quality = 100
+		}
+		err := tqwebp.EncodeWithLimits(buf, img, &tqwebp.Options{Quality: quality}, tqwebp.Limits{
+			MaxWidth:       maxImageDimension,
+			MaxHeight:      maxImageDimension,
+			MaxPixels:      maxImagePixels,
+			MaxOutputBytes: maxImageOutputBytes,
+		})
+		if err != nil {
+			return "", fmt.Errorf("encode webp: %w", err)
+		}
+		return "image/webp", nil
 	default:
 		return "", fmt.Errorf("unsupported image format %q", format)
 	}
@@ -391,6 +410,8 @@ func imageVariantContentType(filePath, requestedFormat string) (string, error) {
 		return "image/png", nil
 	case "gif":
 		return "image/gif", nil
+	case "webp":
+		return "image/webp", nil
 	default:
 		return "", fmt.Errorf("unsupported image format %q", format)
 	}
@@ -503,19 +524,16 @@ func normalizeImageFormat(format string) string {
 		return "png"
 	case "gif":
 		return "gif"
+	case "webp":
+		return "webp"
 	default:
 		return strings.ToLower(strings.TrimSpace(format))
 	}
 }
 
 // producibleImageFormats lists the output formats the optimizer handler can
-// encode (encodeImageVariant). Registering the WebP decoder (gosx#199) makes
-// WebP a decodable SOURCE format, but it stays out of this list: this
-// request-time handler only ever builds in stdlib encoders, so it can never
-// be a producible OUTPUT format here. Image checks a requested format
-// against this exact list before it builds a URL, so nothing renders a
-// fmt= value the handler would reject at request time.
-var producibleImageFormats = []string{"jpeg", "png", "gif"}
+// encode. WebP uses the pure-Go tqwebp encoder.
+var producibleImageFormats = []string{"jpeg", "png", "gif", "webp"}
 
 // ValidateProducibleImageFormat rejects an Image format prop the optimizer
 // handler could never encode. An empty format defers to the source format
@@ -532,17 +550,8 @@ func ValidateProducibleImageFormat(format string) error {
 		return nil
 	}
 	normalized := normalizeImageFormat(format)
-	if normalized == "webp" {
-		// Name the real situation, not just the allowlist: gosx ships no
-		// WebP encoder at all (no wasm runtime, no FFI shim), for this
-		// request-time handler or for the build-time imagepipe stage
-		// either — WebP encoding is a registered-Encoder extension point
-		// (imagepipe.RegisterEncoder), not something either path builds
-		// in by default.
-		return fmt.Errorf("gosx: Image format %q is not producible: gosx ships no built-in WebP encoder (want jpeg, png, or gif); register an imagepipe.Encoder for build-time WebP variants, or omit format to use the source's own format", format)
-	}
 	if !slices.Contains(producibleImageFormats, normalized) {
-		return fmt.Errorf("gosx: Image format %q is not a producible output format (want jpeg, png, or gif)", format)
+		return fmt.Errorf("gosx: Image format %q is not a producible output format (want jpeg, png, gif, or webp)", format)
 	}
 	return nil
 }
@@ -558,14 +567,15 @@ func selectTargetImageFormat(sourceFormat, requestedFormat string) (string, erro
 
 	switch normalizeImageFormat(sourceFormat) {
 	case "jpeg":
-		return "jpeg", nil
+		return "webp", nil
 	case "png":
 		return "png", nil
 	case "gif":
 		return "png", nil
 	case "webp":
-		// WebP is decodable but not encodable here, so a WebP source with no
-		// explicit target format falls back to png, same as gif (gosx#199).
+		// WebP sources may carry alpha. Keep the lossless PNG fallback unless
+		// the caller explicitly asks for WebP and accepts tqwebp's current
+		// opaque-only contract.
 		return "png", nil
 	default:
 		return "", fmt.Errorf("unsupported source image format %q", sourceFormat)
@@ -591,6 +601,9 @@ func parseOptionalPositiveInt(value string) (int, error) {
 func isImageClientError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, tqwebp.ErrAlphaUnsupported) || errors.Is(err, tqwebp.ErrLimitExceeded) {
+		return true
 	}
 	for _, snippet := range []string{
 		"missing src",

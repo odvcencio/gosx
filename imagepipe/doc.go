@@ -3,21 +3,17 @@
 // build-only package: cmd/gosx imports it to generate same-format variants
 // for every image under a project's public/ directory.
 //
-// gosx ships no WebP encoder: no foreign wasm runtime (tetratelabs/wazero)
-// and no FFI shim (ebitengine/purego) sits anywhere in this module's build
-// graph (see the CHANGELOG entry for the issue that removed
-// github.com/gen2brain/webp, and TestModuleGraphExcludesForeignRuntimes at
-// the repo root, which proves it). WebP encoding is instead a pluggable
-// extension point: RegisterEncoder adds an Encoder for FormatWebP (or any
-// other non-built-in format), and only a project that calls it links that
-// encoder's own dependencies into its own build. FormatWebP still decodes
-// -- golang.org/x/image/webp is golang.org, pure Go, decode-only, and stays
-// blank-imported below.
+// WebP output uses m31labs.dev/tqwebp, a pure-Go VP8 encoder. It brings no
+// foreign wasm runtime (tetratelabs/wazero) or FFI shim (ebitengine/purego)
+// back into the module graph; TestModuleGraphExcludesForeignRuntimes at the
+// repo root enforces that boundary. RegisterEncoder can still override WebP
+// for compatibility, or add another output format. WebP input continues to
+// decode through the pure-Go golang.org/x/image/webp decoder.
 //
 // server must never import this package directly. Every gosx app imports
-// package server, and package imagepipe (plus whatever Encoder a project
-// registers) is a build-time-only feature; paying that cost in every
-// deployed app would be a regression the other direction.
+// package server, and package imagepipe is a build-time-only feature. The
+// runtime optimizer imports tqwebp directly, but it does not pull this
+// pipeline or any custom registered Encoder into deployed applications.
 // TestServerPackageTreeNeverImportsImagepipe (repo root,
 // imagepipe_isolation_test.go) enforces the boundary with a `go list -json`
 // check over package server's own direct imports.
@@ -34,8 +30,8 @@
 //     golang.org/x/image/draw's Catmull-Rom resampler -- the same
 //     resampler server/image.go's request-time optimizer uses -- and
 //     refuses to upscale.
-//   - Encode writes a resized image out as JPEG or PNG (both built in), or
-//     any other registered Encoder's format -- see RegisterEncoder.
+//   - Encode writes a resized image out as WebP, JPEG, or PNG (all built in),
+//     or any other registered Encoder's format -- see RegisterEncoder.
 //
 // Ladder computes the responsive width rungs gosx build generates for one
 // source image (AutoImageWidths values, capped at the source's own

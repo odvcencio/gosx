@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"image"
-	"strings"
+	"image/color"
 	"testing"
+
+	tqwebp "m31labs.dev/tqwebp"
 )
 
 func TestEncodeJPEGProducesDecodableOutput(t *testing.T) {
@@ -38,22 +40,30 @@ func TestEncodeRejectsUnknownFormat(t *testing.T) {
 	}
 }
 
-// TestEncodeWebPWithNoRegisteredEncoderNamesTheExtensionPoint covers gosx's
-// excision of its built-in WebP encoder (no wazero wasm runtime, no purego
-// FFI shim): Encode must not silently produce a different format, or link
-// a WebP encoder by default -- it must fail with a message that names
-// RegisterEncoder as the way to add one back.
-func TestEncodeWebPWithNoRegisteredEncoderNamesTheExtensionPoint(t *testing.T) {
+func TestEncodeWebPUsesPureGoBuiltIn(t *testing.T) {
 	src := newTestImage(50, 50)
-	_, err := Encode(src, FormatWebP, EncodeOptions{})
-	if err == nil {
-		t.Fatal("expected an error encoding webp with no registered encoder")
+	data, err := Encode(src, FormatWebP, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("Encode webp: %v", err)
 	}
-	if !strings.Contains(err.Error(), "RegisterEncoder") {
-		t.Fatalf("expected the error to name the RegisterEncoder extension point, got %v", err)
+	if !bytes.HasPrefix(data, []byte("RIFF")) || len(data) < 12 || string(data[8:12]) != "WEBP" {
+		t.Fatalf("webp output missing RIFF/WEBP signature: % x", data[:min(12, len(data))])
 	}
-	if !strings.Contains(err.Error(), "webp") {
-		t.Fatalf("expected the error to name the rejected format, got %v", err)
+	decoded, format, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decode built-in webp: %v", err)
+	}
+	if format != "webp" || decoded.Bounds() != src.Bounds() {
+		t.Fatalf("decoded webp = format %q bounds %v, want webp %v", format, decoded.Bounds(), src.Bounds())
+	}
+}
+
+func TestEncodeWebPRejectsAlpha(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 1))
+	src.SetNRGBA(0, 0, color.NRGBA{R: 255, A: 255})
+	src.SetNRGBA(1, 0, color.NRGBA{B: 255, A: 127})
+	if _, err := Encode(src, FormatWebP, EncodeOptions{}); !errors.Is(err, tqwebp.ErrAlphaUnsupported) {
+		t.Fatalf("Encode alpha webp error = %v, want ErrAlphaUnsupported", err)
 	}
 }
 
@@ -95,8 +105,8 @@ func TestRegisterEncoderRoutesEncodeToTheRegisteredImplementation(t *testing.T) 
 }
 
 // TestRegisterEncoderRejectsBuiltInFormats proves a caller cannot shadow
-// Encode's own JPEG/PNG paths through the registry -- both are, and stay,
-// built in.
+// Encode's standard-library JPEG/PNG paths. WebP remains overridable for
+// backward compatibility.
 func TestRegisterEncoderRejectsBuiltInFormats(t *testing.T) {
 	for _, format := range []Format{FormatJPEG, FormatPNG} {
 		if err := RegisterEncoder(format, EncoderFunc(func(image.Image, EncodeOptions) ([]byte, error) {
@@ -115,9 +125,8 @@ func TestRegisterEncoderRejectsNilEncoder(t *testing.T) {
 	}
 }
 
-// TestUnregisterEncoderRemovesARegistration proves UnregisterEncoder is a
-// real, working inverse of RegisterEncoder: Encode fails again afterward,
-// and a second call (nothing registered) is a harmless no-op.
+// TestUnregisterEncoderRemovesARegistration proves UnregisterEncoder restores
+// the built-in WebP path and a second call is a harmless no-op.
 func TestUnregisterEncoderRemovesARegistration(t *testing.T) {
 	if err := RegisterEncoder(FormatWebP, EncoderFunc(func(image.Image, EncodeOptions) ([]byte, error) {
 		return []byte("stub"), nil
@@ -132,8 +141,12 @@ func TestUnregisterEncoderRemovesARegistration(t *testing.T) {
 	if EncoderRegistered(FormatWebP) {
 		t.Fatal("EncoderRegistered(FormatWebP) = true after UnregisterEncoder")
 	}
-	if _, err := Encode(newTestImage(10, 10), FormatWebP, EncodeOptions{}); err == nil {
-		t.Fatal("expected Encode to fail again after UnregisterEncoder")
+	data, err := Encode(newTestImage(10, 10), FormatWebP, EncodeOptions{})
+	if err != nil {
+		t.Fatalf("Encode did not return to built-in WebP after UnregisterEncoder: %v", err)
+	}
+	if !bytes.HasPrefix(data, []byte("RIFF")) {
+		t.Fatalf("built-in WebP output missing RIFF signature: % x", data[:min(4, len(data))])
 	}
 
 	UnregisterEncoder(FormatWebP) // a second call with nothing registered must not panic

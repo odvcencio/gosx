@@ -14,15 +14,12 @@ import (
 // buildmanifest.Manifest.Images entries this file's tests exercise:
 //
 //   - /manifest-hero.jpg: a JPEG source with both webp and jpeg variants at
-//     three widths -- only possible when a project has registered its own
-//     WebP imagepipe.Encoder (gosx ships none); still the full <picture>
-//     case whenever a manifest does carry it.
+//     three widths -- the stock output for an opaque source.
 //   - /manifest-only.webp: a WebP source with only webp variants -- imagepipe
 //     never generates a redundant same-format fallback for one.
-//   - /manifest-native-only.png: a PNG source with only png variants -- what
-//     an ordinary `gosx build` (no registered WebP encoder) actually
-//     produces for a raster source today; must render a plain <img>, never
-//     a <picture> with an empty <source>.
+//   - /manifest-native-only.png: a transparent PNG source with only png
+//     variants; it must render a plain <img>, never a <picture> with an
+//     empty <source>.
 //
 // Every source path here is unique to this file (the "manifest-" prefix),
 // so registering it as the process-global App (server.registerImageManifestLookup,

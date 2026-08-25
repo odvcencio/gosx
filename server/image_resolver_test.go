@@ -9,10 +9,8 @@ import (
 // staticExportManifestJSON is a minimal build.json body carrying one
 // buildmanifest.Manifest.Images entry: /hero.png at 1200x800, with jpeg and
 // webp variants at width 320 (jpeg listed first -- gosx build's own
-// generation order lists a source's native format first; a webp entry at
-// all only occurs when a project has registered its own WebP
-// imagepipe.Encoder, since gosx ships none in-tree) plus a jpeg variant at
-// its own intrinsic width 1200. It exists so this file's tests never need
+// generation order lists a source's native format first) plus a jpeg variant
+// at its own intrinsic width 1200. It exists so this file's tests never need
 // package imagepipe (or a registered encoder) to prove the resolver reads
 // recorded manifest data correctly -- exactly the isolation
 // TestServerPackageTreeNeverImportsImagepipe (repo root) enforces.
@@ -29,6 +27,15 @@ const staticExportManifestJSON = `{
         {"width": 320, "format": "jpeg", "file": "hero-320w.bbbbbbbb.jpg", "hash": "bbbbbbbb", "size": 1500},
         {"width": 320, "format": "webp", "file": "hero-320w.aaaaaaaa.webp", "hash": "aaaaaaaa", "size": 1000},
         {"width": 1200, "format": "jpeg", "file": "hero-1200w.cccccccc.jpg", "hash": "cccccccc", "size": 9000}
+      ]
+    },
+    {
+      "source": "/photo.jpg",
+      "width": 320,
+      "height": 200,
+      "variants": [
+        {"width": 320, "format": "jpeg", "file": "photo-320w.dddddddd.jpg", "hash": "dddddddd", "size": 1500},
+        {"width": 320, "format": "webp", "file": "photo-320w.eeeeeeee.webp", "hash": "eeeeeeee", "size": 1000}
       ]
     }
   ]
@@ -60,9 +67,8 @@ func TestStaticExportImageVariantResolvesRealVariantFromManifest(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 
-	// No format requested matches the first variant recorded at that width
-	// -- gosx build's own native format, since it ships no WebP encoder
-	// and so never lists webp first.
+	// No format requested at this low-level lookup matches the first variant
+	// recorded at that width.
 	got, ok = app.staticExportImageVariant("/hero.png", ImageTransform{Width: 320})
 	if !ok {
 		t.Fatal("expected a matching variant for /hero.png at 320px with no format")
@@ -139,6 +145,23 @@ func TestRegisterStaticExportImageResolverEndToEnd(t *testing.T) {
 	got := ImageURLWithResolver("", "/hero.png", ImageTransform{Width: 320, Format: "webp"})
 	if want := "/gosx/assets/images/hero-320w.aaaaaaaa.webp"; got != want {
 		t.Fatalf("ImageURLWithResolver = %q, want %q", got, want)
+	}
+}
+
+func TestStaticExportJPEGDefaultsToWebPVariant(t *testing.T) {
+	t.Cleanup(func() {
+		_ = RegisterImageResolver("local", ImageResolverFunc(resolveLocalImageURL))
+	})
+	root := t.TempDir()
+	writeStaticExportManifest(t, root)
+	app := New()
+	app.SetRuntimeRoot(root)
+	registerStaticExportImageResolver(app)
+	t.Setenv("GOSX_STATIC_EXPORT", "1")
+
+	got := ImageURLWithResolver("", "/photo.jpg", ImageTransform{Width: 320})
+	if want := "/gosx/assets/images/photo-320w.eeeeeeee.webp"; got != want {
+		t.Fatalf("default static JPEG variant = %q, want %q", got, want)
 	}
 }
 

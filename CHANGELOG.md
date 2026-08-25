@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added: pure-Go WebP is the default optimized image codec
+
+- The runtime image optimizer and build-time `imagepipe` now encode WebP with
+  `m31labs.dev/tqwebp`. The encoder is pure Go, so the module graph remains
+  free of the WASM runtimes and FFI shims rejected in v0.45.0.
+- Local JPEG-derived variants now carry an explicit `fmt=webp` parameter, so
+  tqwebp output has a distinct immutable cache key. Explicit `format="webp"`
+  is accepted by `<Image>`, strict checking, and the optimizer endpoint.
+- Stock builds generate WebP plus native fallback ladders for opaque raster
+  sources. Transparent sources remain native-only until tqwebp supports alpha;
+  explicit WebP requests fail clearly instead of dropping transparency.
+- Existing `imagepipe.RegisterEncoder(imagepipe.FormatWebP, ...)` calls remain
+  supported as overrides of the built-in encoder.
+
 ## v0.53.8 (2026-08-24)
 
 ### Added: strict bundle boundary and safe staged artifacts

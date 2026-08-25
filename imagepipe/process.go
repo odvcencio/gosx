@@ -1,6 +1,9 @@
 package imagepipe
 
-import "fmt"
+import (
+	"fmt"
+	"image"
+)
 
 // Variant is one resized, encoded rung of a source image: Data is the
 // finished, ready-to-write file content for Width at Format.
@@ -30,6 +33,20 @@ func Process(path string, widths []int, formats []Format, opts EncodeOptions) (D
 		return Dimensions{}, nil, fmt.Errorf("imagepipe: %s has no pixels (%dx%d)", path, dims.Width, dims.Height)
 	}
 
+	// tqwebp deliberately rejects alpha until it can encode alpha without
+	// loss. When a native fallback was requested alongside WebP, keep that
+	// fallback and omit only WebP. A WebP-only request still reaches Encode
+	// and returns tqwebp.ErrAlphaUnsupported to the caller.
+	if len(formats) > 1 && !isOpaqueImage(img) {
+		filtered := make([]Format, 0, len(formats)-1)
+		for _, format := range formats {
+			if format != FormatWebP {
+				filtered = append(filtered, format)
+			}
+		}
+		formats = filtered
+	}
+
 	variants := make([]Variant, 0, len(widths)*len(formats))
 	for _, width := range widths {
 		resized, err := Resize(img, width)
@@ -45,4 +62,20 @@ func Process(path string, widths []int, formats []Format, opts EncodeOptions) (D
 		}
 	}
 	return dims, variants, nil
+}
+
+func isOpaqueImage(img image.Image) bool {
+	if opaque, ok := img.(interface{ Opaque() bool }); ok {
+		return opaque.Opaque()
+	}
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, alpha := img.At(x, y).RGBA()
+			if alpha != 0xffff {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -23,14 +23,9 @@ var imagePipeSourceExtensions = map[string]bool{
 }
 
 // imagePipeNativeFormat returns the output format that best matches ext's
-// own source encoding -- the format a caller that registered no extra
-// encoder would still expect a resized variant to keep. It mirrors
-// selectTargetImageFormat's source side in server/image.go: GIF sources
-// resize to PNG (a GIF's own format is not one Encode builds in), WebP
-// sources also resize to PNG by default (gosx ships no WebP encoder --
-// register one with imagepipe.RegisterEncoder(imagepipe.FormatWebP, ...) to
-// keep a WebP source's own format instead), and an unrecognized extension
-// has no native fallback.
+// own source encoding -- the fallback format a resized variant keeps beside
+// its WebP output. GIF and WebP sources use PNG because either may carry
+// alpha and imagepipe's current tqwebp path intentionally refuses alpha.
 func imagePipeNativeFormat(ext string) (imagepipe.Format, bool) {
 	switch strings.ToLower(ext) {
 	case ".jpg", ".jpeg":
@@ -44,20 +39,14 @@ func imagePipeNativeFormat(ext string) (imagepipe.Format, bool) {
 	}
 }
 
-// imagePipeExtraFormats lists every non-native output format this stage
-// asks imagepipe.Process for when -- and only when -- imagepipe.Encoder is
-// registered for it (imagepipe.EncoderRegistered). Nothing in this module
-// calls imagepipe.RegisterEncoder: gosx ships no wasm runtime, no FFI shim,
-// and no WebP encoder in-tree (see package imagepipe's own doc comment). A
-// build of this stage that does call RegisterEncoder for one of these
-// formats -- before stageImageVariants runs, from the same process --
-// picks it up automatically, with no further change to this file.
+// imagePipeExtraFormats lists built-in modern output formats generated beside
+// the native fallback. FormatWebP uses tqwebp by default; a project may still
+// replace it through imagepipe.RegisterEncoder before this stage runs.
 var imagePipeExtraFormats = []imagepipe.Format{imagepipe.FormatWebP}
 
 // stageImageVariants walks projectDir/public for raster images, resizes
 // each down the AutoImageWidths ladder capped at its own intrinsic width,
-// encodes every rung to its own native format (plus any extra format named
-// in imagePipeExtraFormats with a registered Encoder -- none by default),
+// encodes every rung to its own native format plus WebP for opaque sources,
 // and writes the hashed results into
 // distDir/assets/images -- beside the runtime, island, and CSS asset
 // buckets gosx build already writes under distDir/assets, and right next
@@ -160,9 +149,7 @@ func processImagePipeSource(srcPath, source, ext, imagesDir string, candidates [
 		formats = append(formats, native)
 	}
 	for _, extra := range imagePipeExtraFormats {
-		if imagepipe.EncoderRegistered(extra) {
-			formats = append(formats, extra)
-		}
+		formats = append(formats, extra)
 	}
 	if len(formats) == 0 {
 		return buildmanifest.ImageAsset{}, false, nil

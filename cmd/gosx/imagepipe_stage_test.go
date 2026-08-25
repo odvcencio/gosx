@@ -69,9 +69,7 @@ func TestImagePipeNativeFormat(t *testing.T) {
 		{".JPEG", imagepipe.FormatJPEG, true},
 		{".png", imagepipe.FormatPNG, true},
 		{".gif", imagepipe.FormatPNG, true},
-		// A WebP source falls back to PNG too: gosx ships no WebP
-		// encoder, so re-encoding to the source's own format is not an
-		// option (compare GIF, which never was one either).
+		// WebP retains a PNG fallback because the source may carry alpha.
 		{".webp", imagepipe.FormatPNG, true},
 		{".bmp", "", false},
 	}
@@ -106,11 +104,7 @@ func TestImageAssetBaseName(t *testing.T) {
 // toolchain (see tinygo_build_test.go's own preference for targeted
 // function tests over a full build for the same reason).
 //
-// Only a PNG (native-format) ladder comes out of it: gosx ships no WebP
-// encoder, and nothing in this package registers one, so
-// imagePipeExtraFormats never contributes a variant here (see
-// TestStageImageVariantsNeverProducesWebPByDefault for the same claim
-// stated directly).
+// The opaque PNG gets both its native fallback and tqwebp ladders.
 func TestStageImageVariantsWritesHashedVariantsAndPopulatesManifest(t *testing.T) {
 	projectDir := t.TempDir()
 	distDir := filepath.Join(t.TempDir(), "dist")
@@ -133,17 +127,22 @@ func TestStageImageVariantsWritesHashedVariantsAndPopulatesManifest(t *testing.T
 	}
 
 	wantWidths := imagepipe.Ladder(1200, []int{320, 480, 640, 750, 828, 1080, 1200, 1920, 2048, 3840})
-	if len(asset.Variants) != len(wantWidths) { // native (png) only -- no WebP encoder registered
-		t.Fatalf("got %d variants, want %d (%d ladder widths x 1 native format): %+v", len(asset.Variants), len(wantWidths), len(wantWidths), asset.Variants)
+	if len(asset.Variants) != len(wantWidths)*2 {
+		t.Fatalf("got %d variants, want %d (%d ladder widths x native+webp): %+v", len(asset.Variants), len(wantWidths)*2, len(wantWidths), asset.Variants)
 	}
 
+	formatsByWidth := make(map[int]map[string]bool, len(wantWidths))
 	for _, variant := range asset.Variants {
 		if variant.Width > asset.Width {
 			t.Errorf("variant width %d exceeds intrinsic width %d (upscale)", variant.Width, asset.Width)
 		}
-		if variant.Format != "png" {
-			t.Errorf("unexpected variant format %q, want png (no WebP encoder registered)", variant.Format)
+		if variant.Format != "png" && variant.Format != "webp" {
+			t.Errorf("unexpected variant format %q, want png or webp", variant.Format)
 		}
+		if formatsByWidth[variant.Width] == nil {
+			formatsByWidth[variant.Width] = map[string]bool{}
+		}
+		formatsByWidth[variant.Width][variant.Format] = true
 		path := filepath.Join(distDir, "assets", "images", variant.File)
 		info, err := os.Stat(path)
 		if err != nil {
@@ -161,6 +160,11 @@ func TestStageImageVariantsWritesHashedVariantsAndPopulatesManifest(t *testing.T
 			}
 		}
 	}
+	for _, width := range wantWidths {
+		if !formatsByWidth[width]["png"] || !formatsByWidth[width]["webp"] {
+			t.Errorf("width %d formats = %v, want png and webp", width, formatsByWidth[width])
+		}
+	}
 
 	// The largest ladder rung equals the intrinsic width -- no upscaling,
 	// and the ladder always reaches the source's own resolution.
@@ -175,12 +179,7 @@ func TestStageImageVariantsWritesHashedVariantsAndPopulatesManifest(t *testing.T
 	}
 }
 
-// TestStageImageVariantsNeverProducesWebPByDefault covers this excision
-// directly: a JPEG source produces a JPEG-only ladder, a PNG source
-// produces a PNG-only ladder, and no "webp" format string appears anywhere
-// in either -- gosx ships no WebP encoder, and stageImageVariants
-// registers none of its own (see imagePipeExtraFormats).
-func TestStageImageVariantsNeverProducesWebPByDefault(t *testing.T) {
+func TestStageImageVariantsProducesWebPByDefault(t *testing.T) {
 	projectDir := t.TempDir()
 	distDir := filepath.Join(t.TempDir(), "dist")
 	writeTestSourceJPEG(t, filepath.Join(projectDir, "public", "photo.jpg"), 600, 400)
@@ -199,23 +198,25 @@ func TestStageImageVariantsNeverProducesWebPByDefault(t *testing.T) {
 		if asset.Source == "/photo.jpg" {
 			wantFormat = "jpeg"
 		}
+		sawNative, sawWebP := false, false
 		for _, variant := range asset.Variants {
-			if variant.Format == "webp" {
-				t.Fatalf("source %s unexpectedly produced a webp variant %+v; gosx ships no WebP encoder by default", asset.Source, variant)
+			switch variant.Format {
+			case "webp":
+				sawWebP = true
+			case wantFormat:
+				sawNative = true
+			default:
+				t.Errorf("source %s variant format = %q, want %q or webp", asset.Source, variant.Format, wantFormat)
 			}
-			if variant.Format != wantFormat {
-				t.Errorf("source %s variant format = %q, want %q (its own native format, the only ladder by default)", asset.Source, variant.Format, wantFormat)
-			}
+		}
+		if !sawNative || !sawWebP {
+			t.Errorf("source %s formats: native=%v webp=%v, want both", asset.Source, sawNative, sawWebP)
 		}
 	}
 }
 
-// TestStageImageVariantsAddsWebPWhenAnEncoderIsRegistered proves
-// imagePipeExtraFormats is a real, working seam and not just a formality:
-// once a caller registers an imagepipe.Encoder for FormatWebP,
-// stageImageVariants includes a WebP ladder alongside the native one, with
-// no change to this file's own code.
-func TestStageImageVariantsAddsWebPWhenAnEncoderIsRegistered(t *testing.T) {
+// A registered WebP encoder remains a supported override of tqwebp.
+func TestStageImageVariantsUsesRegisteredWebPOverride(t *testing.T) {
 	stub := imagepipe.EncoderFunc(func(image.Image, imagepipe.EncodeOptions) ([]byte, error) {
 		return []byte("stub-webp-bytes"), nil
 	})
@@ -241,15 +242,62 @@ func TestStageImageVariantsAddsWebPWhenAnEncoderIsRegistered(t *testing.T) {
 		switch variant.Format {
 		case "webp":
 			sawWebP = true
+			path := filepath.Join(distDir, "assets", "images", variant.File)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != "stub-webp-bytes" {
+				t.Fatalf("registered WebP override wrote %q", data)
+			}
 		case "png":
 			sawPNG = true
 		}
 	}
 	if !sawWebP {
-		t.Errorf("expected a webp variant once an Encoder is registered, got %+v", assets[0].Variants)
+		t.Errorf("expected a webp variant, got %+v", assets[0].Variants)
 	}
 	if !sawPNG {
 		t.Errorf("expected the native png variant to stay alongside the registered webp one, got %+v", assets[0].Variants)
+	}
+}
+
+func TestStageImageVariantsKeepsTransparentPNGNativeOnly(t *testing.T) {
+	projectDir := t.TempDir()
+	distDir := filepath.Join(t.TempDir(), "dist")
+	path := filepath.Join(projectDir, "public", "alpha.png")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	img := image.NewNRGBA(image.Rect(0, 0, 32, 20))
+	for y := range 20 {
+		for x := range 32 {
+			img.SetNRGBA(x, y, color.NRGBA{R: uint8(x * 7), G: uint8(y * 11), B: 90, A: 128})
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	assets, err := stageImageVariants(projectDir, distDir)
+	if err != nil {
+		t.Fatalf("stageImageVariants: %v", err)
+	}
+	if len(assets) != 1 || len(assets[0].Variants) == 0 {
+		t.Fatalf("assets = %+v, want native PNG variants", assets)
+	}
+	for _, variant := range assets[0].Variants {
+		if variant.Format != "png" {
+			t.Fatalf("transparent source produced unsafe %q variant", variant.Format)
+		}
 	}
 }
 
