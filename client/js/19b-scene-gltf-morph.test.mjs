@@ -6,13 +6,18 @@
 // inside the VM, so typed-array identity matches the loader's realm. No
 // network and no GPU involved.
 //
-// Scope of these tests (first morph-target checkpoint):
+// Scope of these tests (static morph-target checkpoint):
 //   - primitive.targets extraction for POSITION, NORMAL, and TANGENT
 //   - index-map expansion so target vertex v matches expanded base vertex v
 //   - node default weights overriding mesh default weights
 //   - additive weighted-delta accumulation across multiple targets
+//   - weighted deltas folded into PRIMITIVE-LOCAL base attributes BEFORE any
+//     node/world transform (Khronos glTF 2.0 ordering), proven under a
+//     non-uniform node scale where the old transform-deltas-separately order
+//     produced wrong normals/tangents
 //   - morphed position/normal/tangent data with tangent w preserved
 //   - UV data untouched by morph handling; inputs never mutated
+//   - static morph metadata never leaks onto extracted objects
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -123,7 +128,16 @@ function vec3(byteOffset) {
   return { bufferView: 0, byteOffset, componentType: 5126, count: 3, type: "VEC3" };
 }
 
-function morphDoc(meshWeights) {
+function morphDoc(meshWeights, nodeTransforms) {
+  var nodes = [
+    { mesh: 0 },
+    { mesh: 0, weights: meshWeights.node },
+  ];
+  if (nodeTransforms) {
+    for (var i = 0; i < nodeTransforms.length && i < nodes.length; i++) {
+      Object.assign(nodes[i], nodeTransforms[i] || {});
+    }
+  }
   return {
     asset: { version: "2.0" },
     bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: FIXTURE_FLOATS.length * 4 + 8 }],
@@ -152,24 +166,21 @@ function morphDoc(meshWeights) {
         ],
       }],
     }],
-    nodes: [
-      { mesh: 0 },
-      { mesh: 0, weights: meshWeights.node },
-    ],
+    nodes: nodes,
     scenes: [{ nodes: [0, 1] }],
   };
 }
 
 // Builds the binary chunk and document inside the VM and stashes them on the
 // sandbox global so several tests can share one extraction.
-function loadFixture(context, meshWeights) {
+function loadFixture(context, meshWeights, nodeTransforms) {
   call(context, `
     var floats = ${JSON.stringify(FIXTURE_FLOATS)};
     var indices = [1, 2, 0];
     var buffer = new ArrayBuffer(floats.length * 4 + 8);
     new Float32Array(buffer, 0, floats.length).set(floats);
     new Uint16Array(buffer, floats.length * 4, 3).set(indices);
-    var morphDoc = ${JSON.stringify(morphDoc(meshWeights))};
+    var morphDoc = ${JSON.stringify(morphDoc(meshWeights, nodeTransforms))};
     var morphScene = null;
   `);
 }
@@ -230,40 +241,68 @@ test("unindexed primitives extract owned copies of their targets", () => {
 
 // --- default weights ---------------------------------------------------------
 
-test("node weights override mesh defaults on extracted objects", () => {
+test("node weights override mesh defaults on baked object vertices", () => {
   const { context } = createLoaderContext();
   loadFixture(context, { mesh: [0.5, 0.25], node: [1, 0] });
   const result = plain(call(context, `
     var scene = gltfExtractScene(morphDoc, buffer);
     ({
-      meshDefaults: Array.from(scene.objects[0].vertices.morphWeights),
-      nodeOverride: Array.from(scene.objects[1].vertices.morphWeights),
-      targetCounts: scene.objects.map(function(o) { return o.vertices.morphTargets.length; }),
       objectCount: scene.objects.length,
+      meshDefaultPositions: Array.from(scene.objects[0].vertices.positions),
+      nodeOverridePositions: Array.from(scene.objects[1].vertices.positions),
+      leakedMetadata: scene.objects.some(function(o) {
+        return Object.prototype.hasOwnProperty.call(o.vertices, "morphTargets")
+          || Object.prototype.hasOwnProperty.call(o.vertices, "morphWeights");
+      }),
     });
   `));
+  const round6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
 
   assert.equal(result.objectCount, 2);
-  // A plain node keeps the mesh's own default weights.
-  assert.deepEqual(result.meshDefaults, [0.5, 0.25]);
-  // A node instantiating the mesh overrides them wholesale (glTF 2.0).
-  assert.deepEqual(result.nodeOverride, [1, 0]);
-  assert.deepEqual(result.targetCounts, [2, 2]);
+  // Both nodes sit under an identity transform here, so baked object-space
+  // positions equal primitive-local base + weighted deltas exactly.
+  // A plain node keeps the mesh's own default weights [0.5, 0.25].
+  assert.deepEqual(round6(result.meshDefaultPositions), [
+    1, 0.3125, 0,
+    0, 1, 0.3125,
+    0.25, 0.0625, 0,
+  ]);
+  // A node instantiating the mesh overrides them wholesale with [1, 0]
+  // (glTF 2.0).
+  assert.deepEqual(round6(result.nodeOverridePositions), [
+    1, 0.5, 0,
+    0, 1, 0.5,
+    0.5, 0, 0,
+  ]);
+  // Static morph metadata is fully consumed during extraction: nothing rides
+  // on the extracted objects' vertices.
+  assert.equal(result.leakedMetadata, false);
 
-  // Short authored lists leave trailing targets at zero rather than leaking.
+  // Short authored lists leave trailing targets at zero rather than leaking;
+  // extra node entries are truncated to the target count.
   const partial = plain((() => {
     const { context: ctx } = createLoaderContext();
     loadFixture(ctx, { mesh: [0.75], node: [0.5, 0.5, 0.125] });
     return JSON.parse(JSON.stringify(call(ctx, `
       var scene = gltfExtractScene(morphDoc, buffer);
       ({
-        paddedMesh: Array.from(scene.objects[0].vertices.morphWeights),
-        truncatedNode: Array.from(scene.objects[1].vertices.morphWeights),
+        paddedMesh: Array.from(scene.objects[0].vertices.positions),
+        truncatedNode: Array.from(scene.objects[1].vertices.positions),
       });
     `)));
   })());
-  assert.deepEqual(partial.paddedMesh, [0.75, 0]);
-  assert.deepEqual(partial.truncatedNode, [0.5, 0.5]);
+  const t0Flat = FLAT_TARGET0_POSITIONS;
+  assert.deepEqual(round6(partial.paddedMesh), [
+    1 + 0.75 * t0Flat[0], 0 + 0.75 * t0Flat[1], 0 + 0.75 * t0Flat[2],
+    0 + 0.75 * t0Flat[3], 1 + 0.75 * t0Flat[4], 0 + 0.75 * t0Flat[5],
+    0 + 0.75 * t0Flat[6], 0 + 0.75 * t0Flat[7], 0 + 0.75 * t0Flat[8],
+  ]);
+  // Target 1 flat corner positions: c0=(0,0.25,0), c1=(0,0,0.25), c2=(0,0.25,0).
+  assert.deepEqual(round6(partial.truncatedNode), [
+    1 + 0.5 * t0Flat[0] + 0.5 * 0,     0 + 0.5 * t0Flat[1] + 0.5 * 0.25, 0 + 0.5 * t0Flat[2] + 0.5 * 0,
+    0 + 0.5 * t0Flat[3] + 0.5 * 0,     1 + 0.5 * t0Flat[4] + 0.5 * 0,    0 + 0.5 * t0Flat[5] + 0.5 * 0.25,
+    0 + 0.5 * t0Flat[6] + 0.5 * 0,     0 + 0.5 * t0Flat[7] + 0.5 * 0.25, 0 + 0.5 * t0Flat[8] + 0.5 * 0,
+  ]);
 });
 
 // --- additive weighted-delta application -------------------------------------

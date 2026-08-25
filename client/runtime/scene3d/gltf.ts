@@ -463,9 +463,12 @@
 
   // Apply the glTF additive weighted-delta rule once:
   //   result = base + sum_i weights[i] * target[i]
-  // Runs during shared model instantiation, once per instance, never per
-  // frame; the returned arrays are fresh and owned by that instance. Tangent
-  // w is preserved because deltas only displace directions.
+  // Runs during extraction, once per node instantiation, never per frame, and
+  // always BEFORE any node/world transform or skinning: the Khronos glTF 2.0
+  // invariant requires POSITION/NORMAL/TANGENT deltas to fold into the
+  // primitive-local base attributes first. The returned arrays are fresh and
+  // owned by the caller. Tangent w is preserved because deltas only displace
+  // directions.
   function gltfApplyMorphWeights(positions, normals, tangents, targets, weights) {
     if (!targets || !targets.length || !positions) {
       return null;
@@ -510,62 +513,6 @@
       }
     }
     return { positions: outPos, normals: outNrm, tangents: outTan };
-  }
-
-  // Transform morph-target deltas from primitive-local space into object space.
-  // Base attributes move through the full world transform below, so each delta
-  // rotates by the linear part of the same transform (normals via the inverse-
-  // transpose normal matrix). Skinned objects keep bind-pose local space, so
-  // their deltas pass through unchanged in fresh buffers.
-  function gltfTransformMorphTargets(targets, worldTransform, normalMat, transform) {
-    var out = [];
-    for (var t = 0; t < targets.length; t++) {
-      var source = targets[t];
-      var entry = {};
-      if (source.positions) {
-        entry.positions = transform
-          ? gltfRotateVec3Array(source.positions, worldTransform)
-          : new Float32Array(source.positions);
-      }
-      if (source.normals) {
-        entry.normals = transform
-          ? gltfRotateVec3ArrayByNormalMatrix(source.normals, normalMat)
-          : new Float32Array(source.normals);
-      }
-      if (source.tangents) {
-        // Deltas are VEC3 directions, so only xyz rotates; there is no w here.
-        entry.tangents = transform
-          ? gltfRotateVec3Array(source.tangents, worldTransform)
-          : new Float32Array(source.tangents);
-      }
-      out.push(entry);
-    }
-    return out;
-  }
-
-  // Rotate a flat vec3 array by the upper-left 3x3 of a 4x4 matrix.
-  function gltfRotateVec3Array(values, m) {
-    var out = new Float32Array(values.length);
-    for (var i = 0; i + 2 < values.length; i += 3) {
-      var rotated = gltfTransformDirection(m, values[i], values[i + 1], values[i + 2]);
-      out[i] = rotated.x;
-      out[i + 1] = rotated.y;
-      out[i + 2] = rotated.z;
-    }
-    return out;
-  }
-
-  // Rotate a flat vec3 array by a 3x3 normal matrix without renormalizing:
-  // deltas must keep their authored magnitude.
-  function gltfRotateVec3ArrayByNormalMatrix(values, nm) {
-    var out = new Float32Array(values.length);
-    for (var i = 0; i + 2 < values.length; i += 3) {
-      var x = values[i], y = values[i + 1], z = values[i + 2];
-      out[i]     = nm[0] * x + nm[3] * y + nm[6] * z;
-      out[i + 1] = nm[1] * x + nm[4] * y + nm[7] * z;
-      out[i + 2] = nm[2] * x + nm[5] * y + nm[8] * z;
-    }
-    return out;
   }
 
   function gltfReadPrimitiveAttribute(gltf, primitive, names, binaryBuffer) {
@@ -864,7 +811,8 @@
 
     // Morph targets expand through the same index map as the base attributes,
     // so target vertex v matches the expanded base vertex v. Kept raw here:
-    // default weights fold in later, at shared model instantiation.
+    // default weights fold in during gltfExtractMeshNode, before any
+    // node/world transform or skinning.
     var morphTargets = gltfExtractMorphTargets(gltf, primitive, binaryBuffer, indices);
 
     // Bake KHR_texture_transform into the UVs before tangents are computed, so
@@ -1358,14 +1306,16 @@
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
-      // Default morph weights: a node instantiating this mesh overrides the
-      // mesh's own defaults (glTF 2.0); entries beyond the authored list stay
-      // at zero. The weighted deltas themselves bake in later, at shared
-      // model instantiation.
+      // Static morph targets: default node/mesh weights fold into the
+      // PRIMITIVE-LOCAL base attributes right here, before any node/world
+      // transform and before later skinning — the Khronos glTF 2.0 ordering
+      // rule for POSITION/NORMAL/TANGENT deltas. A node instantiating this
+      // mesh overrides the mesh's own defaults (glTF 2.0); entries beyond
+      // the authored list stay at zero. The payload is consumed immediately:
+      // no morph metadata rides on the extracted object.
       var morphTargets = geometry.morphTargets || null;
-      var morphWeights = null;
       if (morphTargets) {
-        morphWeights = new Float32Array(morphTargets.length);
+        var morphWeights = new Float32Array(morphTargets.length);
         var authoredWeights = node && Array.isArray(node.weights)
           ? node.weights
           : mesh.weights;
@@ -1376,12 +1326,14 @@
             morphWeights[mw] = isFinite(authored) ? authored : 0;
           }
         }
-        // Target deltas live in primitive-local space while the object's base
-        // attributes are transformed below. Rotate each delta by the same
-        // linear part so weighted sums land on top of the transformed base.
-        // Skinned objects keep bind-pose local space, matching their bases.
-        morphTargets = gltfTransformMorphTargets(
-          morphTargets, worldTransform, normalMat, !primitiveSkinned);
+        var morphed = gltfApplyMorphWeights(
+          geometry.positions, geometry.normals, geometry.tangents,
+          morphTargets, morphWeights);
+        if (morphed) {
+          geometry.positions = morphed.positions;
+          geometry.normals = morphed.normals || geometry.normals;
+          geometry.tangents = morphed.tangents || geometry.tangents;
+        }
       }
 
       var objectPositions;
@@ -1450,10 +1402,6 @@
         tangents: objectTangents,
         count: vertCount,
       };
-      if (morphTargets) {
-        vertices.morphTargets = morphTargets;
-        vertices.morphWeights = morphWeights;
-      }
 
       var object = {
         id: objectID,
@@ -2236,7 +2184,6 @@
     window.__gosx_scene3d_gltf_api = {
       sceneLoadGLTFModel: sceneLoadGLTFModel,
       gltfSceneToModelAsset: gltfSceneToModelAsset,
-      gltfApplyMorphWeights: gltfApplyMorphWeights,
     };
     window.__gosx_scene3d_gltf_loaded = true;
   }
