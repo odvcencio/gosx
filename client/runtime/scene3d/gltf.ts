@@ -448,8 +448,10 @@
         hasChannel = true;
       }
       if (source.TANGENT != null) {
+        // Morph tangent deltas are VEC3 direction offsets; the base tangent
+        // stream stays VEC4 and its w survives application untouched.
         entry.tangents = gltfExpandAttributeIndexed(
-          gltfReadAccessor(gltf, source.TANGENT, binaryBuffer), 4, indices);
+          gltfReadAccessor(gltf, source.TANGENT, binaryBuffer), 3, indices);
         hasChannel = true;
       }
       if (hasChannel) {
@@ -493,12 +495,17 @@
         }
       }
       if (target.tangents && outTan) {
-        var tlimit = Math.min(tanLimit - (tanLimit % 4), target.tangents.length);
-        for (var ti = 0; ti < tlimit; ti += 4) {
-          outTan[ti]     += weight * target.tangents[ti];
-          outTan[ti + 1] += weight * target.tangents[ti + 1];
-          outTan[ti + 2] += weight * target.tangents[ti + 2];
-          // outTan[ti + 3] keeps its base sign value.
+        // Target tangents carry three delta components per vertex while the
+        // base stream carries four; walk both strides together so each delta
+        // lands on the matching xyz and every authored w is left alone.
+        var vertexLimit = Math.min(
+          Math.floor(tanLimit / 4),
+          Math.floor(target.tangents.length / 3));
+        for (var ti = 0; ti < vertexLimit; ti++) {
+          outTan[ti * 4]     += weight * target.tangents[ti * 3];
+          outTan[ti * 4 + 1] += weight * target.tangents[ti * 3 + 1];
+          outTan[ti * 4 + 2] += weight * target.tangents[ti * 3 + 2];
+          // outTan[ti * 4 + 3] keeps its base sign value.
         }
       }
     }
@@ -526,8 +533,9 @@
           : new Float32Array(source.normals);
       }
       if (source.tangents) {
+        // Deltas are VEC3 directions, so only xyz rotates; there is no w here.
         entry.tangents = transform
-          ? gltfRotateVec4ArrayXYZ(source.tangents, worldTransform)
+          ? gltfRotateVec3Array(source.tangents, worldTransform)
           : new Float32Array(source.tangents);
       }
       out.push(entry);
@@ -556,20 +564,6 @@
       out[i]     = nm[0] * x + nm[3] * y + nm[6] * z;
       out[i + 1] = nm[1] * x + nm[4] * y + nm[7] * z;
       out[i + 2] = nm[2] * x + nm[5] * y + nm[8] * z;
-    }
-    return out;
-  }
-
-  // Rotate the xyz of a flat vec4 array by a 4x4 matrix's upper-left 3x3,
-  // carrying every w component through untouched.
-  function gltfRotateVec4ArrayXYZ(values, m) {
-    var out = new Float32Array(values.length);
-    for (var i = 0; i + 3 < values.length; i += 4) {
-      var rotated = gltfTransformDirection(m, values[i], values[i + 1], values[i + 2]);
-      out[i] = rotated.x;
-      out[i + 1] = rotated.y;
-      out[i + 2] = rotated.z;
-      out[i + 3] = values[i + 3];
     }
     return out;
   }

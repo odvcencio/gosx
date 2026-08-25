@@ -69,6 +69,14 @@ function call(context, expression) {
   return vm.runInContext(expression, context);
 }
 
+// plain deep-copies a value out of the loader's VM realm into ordinary
+// host-realm objects so assert.deepEqual compares like with like. Every value
+// handed here is JSON-safe by construction: the VM expressions flatten typed
+// arrays with Array.from before returning them.
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 // --- Fixture ----------------------------------------------------------------
 //
 // One triangle, three base vertices, referenced through indices [1, 2, 0] so
@@ -80,8 +88,9 @@ function call(context, expression) {
 // Buffer layout (one bufferView over everything):
 //   bytes   0-143  base floats: 3x POSITION, 3x NORMAL, 3x TANGENT(vec4),
 //                  3x UV = 9 + 9 + 12 + 6 = 36 floats
-//   bytes 144-335  target floats: t0 pos(9) nrm(9) tan(12), t1 pos(9) nrm(9)
-//   bytes 352-357  indices [1, 2, 0] as UINT16
+//   bytes 144-323  target floats: t0 pos(9) nrm(9) tan(9), t1 pos(9) nrm(9);
+//                  morph TANGENT deltas are VEC3 like every other delta
+//   bytes 324-329  indices [1, 2, 0] as UINT16
 
 const BASE_POSITIONS = [0, 0, 0, 1, 0, 0, 0, 1, 0];
 const BASE_NORMALS = [0, 0, 1, 0, 0, 1, 0, 0, 1];
@@ -89,7 +98,8 @@ const BASE_TANGENTS = [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1];
 const BASE_UVS = [0, 0, 1, 0, 0, 1];
 const TARGET0_POSITIONS = [0.5, 0, 0, 0, 0.5, 0, 0, 0, 0.5];
 const TARGET0_NORMALS = [0, 0, 0.25, 0, 0, 0.25, 0, 0, 0.25];
-const TARGET0_TANGENTS = [0, 1, 0, 7, 0, 1, 0, 7, 0, 1, 0, 7];
+// Three xyz direction deltas per vertex; there is no authored w component.
+const TARGET0_TANGENTS = [0, 1, 0, 0, 1, 0, 0, 1, 0];
 const TARGET1_POSITIONS = [0, 0.25, 0, 0, 0.25, 0, 0, 0, 0.25];
 const TARGET1_NORMALS = [0.5, 0, 0, 0.5, 0, 0, 0.5, 0, 0];
 
@@ -101,10 +111,13 @@ const FIXTURE_FLOATS = [
   ...BASE_UVS,            // accessor 3 TEXCOORD_0
   ...TARGET0_POSITIONS,   // accessor 5 (byte 144)
   ...TARGET0_NORMALS,     // accessor 6 (byte 180)
-  ...TARGET0_TANGENTS,    // accessor 7 (byte 216)
-  ...TARGET1_POSITIONS,   // accessor 8 (byte 264)
-  ...TARGET1_NORMALS,     // accessor 9 (byte 300)
+  ...TARGET0_TANGENTS,    // accessor 7 (byte 216, VEC3)
+  ...TARGET1_POSITIONS,   // accessor 8 (byte 252)
+  ...TARGET1_NORMALS,     // accessor 9 (byte 288)
 ];
+
+// Indices sit right after the float payload inside the same bufferView.
+const INDICES_BYTE_OFFSET = FIXTURE_FLOATS.length * 4;
 
 function vec3(byteOffset) {
   return { bufferView: 0, byteOffset, componentType: 5126, count: 3, type: "VEC3" };
@@ -113,18 +126,18 @@ function vec3(byteOffset) {
 function morphDoc(meshWeights) {
   return {
     asset: { version: "2.0" },
-    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: FIXTURE_FLOATS.length * 4 + 24 }],
+    bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: FIXTURE_FLOATS.length * 4 + 8 }],
     accessors: [
       vec3(0),
       vec3(36),
       { bufferView: 0, byteOffset: 72, componentType: 5126, count: 3, type: "VEC4" },
       { bufferView: 0, byteOffset: 120, componentType: 5126, count: 3, type: "VEC2" },
-      { bufferView: 0, byteOffset: 352, componentType: 5123, count: 3, type: "SCALAR" },
+      { bufferView: 0, byteOffset: INDICES_BYTE_OFFSET, componentType: 5123, count: 3, type: "SCALAR" },
       vec3(144),
       vec3(180),
-      { bufferView: 0, byteOffset: 216, componentType: 5126, count: 3, type: "VEC4" },
-      vec3(264),
-      vec3(300),
+      { bufferView: 0, byteOffset: 216, componentType: 5126, count: 3, type: "VEC3" },
+      vec3(252),
+      vec3(288),
     ],
     meshes: [{
       name: "tri",
@@ -190,7 +203,8 @@ test("primitive targets extract for POSITION, NORMAL, and TANGENT through the in
   // Fan-out through indices [1, 2, 0]: each corner gets its own vertex delta.
   assert.deepEqual(result.t0Positions, FLAT_TARGET0_POSITIONS);
   assert.equal(result.t0NormalsLength, 9);
-  assert.equal(result.t0TangentsLength, 12);
+  // Morph TANGENT deltas are VEC3: three components per expanded corner.
+  assert.equal(result.t0TangentsLength, 9);
   assert.equal(result.hasT1Tangents, false);
   assert.equal(result.t1NormalsLength, 9);
 
@@ -238,7 +252,7 @@ test("node weights override mesh defaults on extracted objects", () => {
 
   // Short authored lists leave trailing targets at zero rather than leaking.
   const partial = plain((() => {
-    const ctx = createLoaderContext();
+    const { context: ctx } = createLoaderContext();
     loadFixture(ctx, { mesh: [0.75], node: [0.5, 0.5, 0.125] });
     return JSON.parse(JSON.stringify(call(ctx, `
       var scene = gltfExtractScene(morphDoc, buffer);
@@ -264,7 +278,7 @@ test("multiple targets accumulate additively with weighted deltas", () => {
       {
         positions: new Float32Array(${JSON.stringify(FLAT_TARGET0_POSITIONS)}),
         normals: new Float32Array([0, 0, 0.25, 0, 0, 0.25, 0, 0, 0.25]),
-        tangents: new Float32Array([0, 1, 0, 7, 0, 1, 0, 7, 0, 1, 0, 7]),
+        tangents: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]),
       },
       {
         positions: new Float32Array([0, 0.25, 0, 0, 0.25, 0, 0, 0.25, 0]),
@@ -285,7 +299,7 @@ test("multiple targets accumulate additively with weighted deltas", () => {
   // position + 0.5*target0 + 0.25*target1 per corner.
   assert.deepEqual(result.positions.map((v) => Math.round(v * 1e6) / 1e6), [
     1, 0.3125, 0,
-    0, 1.0625, 0.125,
+    0, 1.0625, 0.25,
     0.25, 0.0625, 0,
   ]);
   // normal + 0.5*(0,0,0.25) + 0.25*(0.5,0,0) per corner.
@@ -294,7 +308,7 @@ test("multiple targets accumulate additively with weighted deltas", () => {
     0.125, 0, 1.125,
     0.125, 0, 1.125,
   ]);
-  // Tangent xyz shifts by 0.5*(0,1,0); the authored w stays untouched.
+  // Tangent xyz shifts by 0.5*(0,1,0); each base w (1) survives untouched.
   assert.deepEqual(result.tangents.map((v) => Math.round(v * 1e6) / 1e6), [
     1, 0.5, 0, 1,
     1, 0.5, 0, 1,
@@ -312,7 +326,7 @@ test("zero-weight targets are skipped entirely", () => {
     var baked = gltfApplyMorphWeights(positions, null, null, targets, [0, 1]);
     ({ out: Array.from(baked.positions), hasNormals: Boolean(baked.normals), hasTangents: Boolean(baked.tangents) });
   `));
-  assert.deepEqual(result.out, [101, 92, 103]);
+  assert.deepEqual(result.out, [101, 102, 103]);
   assert.equal(result.hasNormals, false);
   assert.equal(result.hasTangents, false);
 });
@@ -343,7 +357,7 @@ test("default weights fold onto morphed position/normal/tangent data per node", 
   // transform, so object-space deltas match primitive-local ones.
   assert.deepEqual(round6(result.meshDefault.positions), [
     1, 0.3125, 0,
-    0, 1.0625, 0.125,
+    0, 1, 0.3125,
     0.25, 0.0625, 0,
   ]);
   assert.deepEqual(round6(result.meshDefault.normals), [
