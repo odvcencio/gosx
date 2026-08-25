@@ -2308,3 +2308,110 @@ test("16a Selena skinned LBS packs per-vertex normals/tangents into the gosx-eli
   await runSkinPackCase("A-explicit-normals-tangents", true);
   await runSkinPackCase("B-default-normals-tangents", false);
 });
+
+test("16a skinned LBS output survives renderer disposal with a fresh bind group on the next WebGPU renderer", async () => {
+  // Regression: a scene object keeps its _gosxWGPUElioSkinRecord (output
+  // buffer + compute bind group) across renderer rebuilds, but dispose()
+  // destroys every buffer in pointsEntryGPUBuffers. webGPUElioEnsureOutputBuffer
+  // must therefore invalidate BOTH record.outputBuffer AND record.bindGroup
+  // when the cached buffer belongs to a dead renderer — never hand the old
+  // bind group back around the dead buffer. fresh:true builds the renderer
+  // straight from client/runtime/scene3d/webgpu.ts instead of the committed
+  // bootstrap bundle, which predates this guard.
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  function skinnedMesh(id) {
+    return {
+      id,
+      kind: "gltf-mesh",
+      materialIndex: 0,
+      vertexOffset: 0,
+      vertexCount: 3,
+      viewCulled: false,
+      depthCenter: 4,
+      directVertices: true,
+      modelMatrix: identity,
+      skin: { jointMatrices: identity },
+      vertices: {
+        count: 3,
+        positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        joints: new Float32Array(12),
+        weights: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+        uvs: new Float32Array([0, 0, 1, 0, 0, 1]),
+        normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]),
+        tangents: new Float32Array([0, 0, 1, -1, 0, 0, 1, -1, 0, 0, 1, -1]),
+      },
+    };
+  }
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [selenaMaterial],
+    meshObjects: [skinnedMesh("skin-reuse-across-renderers")],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+  };
+  const meshObject = bundle.meshObjects[0];
+
+  // Renderer 1: one frame caches the skin record, output buffer and bind group.
+  const first = await createBoardWebGPUHarness({ fresh: true });
+  first.renderer.render(bundle, {});
+  const record = meshObject._gosxWGPUElioSkinRecord;
+  assert.ok(record && record.outputBuffer, "first render must cache a skin record with an LBS output buffer");
+  assert.ok(record.bindGroup, "first render must cache a compute bind group");
+  const deadBuffer = record.outputBuffer;
+  const staleBindGroup = record.bindGroup;
+
+  first.renderer.dispose();
+  assert.equal(deadBuffer.destroyed, true, "dispose must destroy every tracked buffer, including the LBS output");
+
+  // Renderer 2 (own fake device): render the SAME object. The stale guard
+  // must drop the dead buffer reference AND its bind group, then reallocate.
+  const second = await createBoardWebGPUHarness({ fresh: true });
+  second.renderer.render(bundle, {});
+
+  const record2 = meshObject._gosxWGPUElioSkinRecord;
+  assert.strictEqual(record2, record, "the skin record persists across renderers by design");
+  const freshBuffer = record2.outputBuffer;
+  assert.ok(freshBuffer, "the second render must have an LBS output buffer");
+  assert.notStrictEqual(freshBuffer, deadBuffer, "the second renderer allocates a distinct LBS output buffer");
+  assert.ok(!freshBuffer.destroyed, "the fresh output buffer must be live on the second device");
+  assert.notStrictEqual(record2.bindGroup, staleBindGroup, "the stale compute bind group must be invalidated, not reused");
+
+  // Compute side: the dispatched bind group's binding 2 carries the fresh buffer.
+  let computedBinding2 = null;
+  let sawDispatch = false;
+  for (const computePass of second.fake.state.computePasses) {
+    for (const dispatch of computePass.dispatches) {
+      if (!(dispatch.pipeline && dispatch.pipeline.label === "gosx-elio-skin-lbs")) continue;
+      sawDispatch = true;
+      for (const bg of computePass.bindGroups) {
+        const entry = bg.group.desc.entries.find((e) => e.binding === 2);
+        if (entry) {
+          computedBinding2 = entry.resource.buffer;
+          break;
+        }
+      }
+    }
+  }
+  assert.ok(sawDispatch, "the second frame must dispatch gosx-elio-skin-lbs");
+  assert.strictEqual(computedBinding2, freshBuffer,
+    "LBS compute bind group binding 2 must reference the fresh output buffer");
+
+  // Draw side: vertex slots 0/1/3 all read from the same fresh buffer.
+  const bound = {};
+  for (const pass of mainRenderPasses(second.fake)) {
+    for (const vb of pass.vertexBuffers) bound[vb.slot] = vb;
+  }
+  assert.strictEqual(bound[0].buffer, freshBuffer, "slot 0 reads skinned positions from the fresh output");
+  assert.strictEqual(bound[1].buffer, freshBuffer, "slot 1 reads skinned normals from the fresh output");
+  assert.strictEqual(bound[3].buffer, freshBuffer, "slot 3 reads skinned tangents from the fresh output");
+});

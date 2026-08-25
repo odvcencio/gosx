@@ -7116,16 +7116,6 @@
       return new Float32Array(length);
     }
 
-    function sliceToFloat32(source, offset, count, stride, scratchName) {
-      var length = count * stride;
-      var start = offset * stride;
-      var buf = ensureScratch(scratchName, length);
-      for (var i = 0; i < length; i++) {
-        buf[i] = source && source[start + i] !== undefined ? +source[start + i] : 0;
-      }
-      return buf.subarray(0, length);
-    }
-
     function wgpuCreateTrackedBuffer(usage, dataOrSize) {
       var size = typeof dataOrSize === "number"
         ? wgpuAlignUp(Math.max(dataOrSize, 4), 4)
@@ -14683,6 +14673,20 @@
 
     function webGPUElioEnsureOutputBuffer(record, paddedCount) {
       var bytes = Math.max(4, paddedCount * 10 * 4);
+      // Cross-renderer staleness guard: scene objects retain their skin
+      // records across renderer rebuilds, but dispose() destroys every buffer
+      // tracked in pointsEntryGPUBuffers. A cached outputBuffer absent from
+      // THIS renderer's set belongs to a dead device — drop the stale JS
+      // reference WITHOUT calling destroy() again (dispose already destroyed
+      // it), so the alloc path below creates a fresh buffer on the current
+      // device. Mirrors the owner[slot] guard in sceneCachedTrackedBuffer.
+      // The bind group is invalidated too: it was created on the dead device
+      // and references the destroyed buffer, so no cache path below may
+      // return with a live-looking bindGroup around the dead buffer.
+      if (record.outputBuffer && !pointsEntryGPUBuffers.has(record.outputBuffer)) {
+        record.outputBuffer = null;
+        record.bindGroup = null;
+      }
       if (record.outputBuffer && wgpuTrackedBufferSize(record.outputBuffer) >= bytes) return record.outputBuffer;
       if (record.outputBuffer && typeof record.outputBuffer.destroy === "function") {
         pointsEntryGPUBuffers.delete(record.outputBuffer);
@@ -14997,53 +15001,6 @@
       var byteSize = Math.max(4, Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, components) * 4);
       pass.setVertexBuffer(slot, buffer, 0, byteSize);
       return true;
-    }
-
-    function webGPUTransformVec3Attribute(obj, key, count, defaults, scratchName) {
-      var source = webGPUDefaultAttributeData(obj, key, count, 3, defaults);
-      var out = ensureScratch(scratchName, count * 3);
-      var m = webGPUObjectModelMatrix(obj);
-      for (var i = 0; i < count; i++) {
-        var off = i * 3;
-        var x = sceneNumber(source[off], defaults && defaults[0] || 0);
-        var y = sceneNumber(source[off + 1], defaults && defaults[1] || 0);
-        var z = sceneNumber(source[off + 2], defaults && defaults[2] || 0);
-        var tx = sceneNumber(m[0], 1) * x + sceneNumber(m[4], 0) * y + sceneNumber(m[8], 0) * z;
-        var ty = sceneNumber(m[1], 0) * x + sceneNumber(m[5], 1) * y + sceneNumber(m[9], 0) * z;
-        var tz = sceneNumber(m[2], 0) * x + sceneNumber(m[6], 0) * y + sceneNumber(m[10], 1) * z;
-        var len = Math.hypot(tx, ty, tz);
-        if (len > 0.000001) {
-          tx /= len; ty /= len; tz /= len;
-        }
-        out[off] = tx;
-        out[off + 1] = ty;
-        out[off + 2] = tz;
-      }
-      return out.subarray(0, count * 3);
-    }
-
-    function webGPUTransformTangentAttribute(obj, count) {
-      var source = webGPUDefaultAttributeData(obj, "tangents", count, 4, [1, 0, 0, 1]);
-      var out = ensureScratch("tangents", count * 4);
-      var m = webGPUObjectModelMatrix(obj);
-      for (var i = 0; i < count; i++) {
-        var off = i * 4;
-        var x = sceneNumber(source[off], 1);
-        var y = sceneNumber(source[off + 1], 0);
-        var z = sceneNumber(source[off + 2], 0);
-        var tx = sceneNumber(m[0], 1) * x + sceneNumber(m[4], 0) * y + sceneNumber(m[8], 0) * z;
-        var ty = sceneNumber(m[1], 0) * x + sceneNumber(m[5], 1) * y + sceneNumber(m[9], 0) * z;
-        var tz = sceneNumber(m[2], 0) * x + sceneNumber(m[6], 0) * y + sceneNumber(m[10], 1) * z;
-        var len = Math.hypot(tx, ty, tz);
-        if (len > 0.000001) {
-          tx /= len; ty /= len; tz /= len;
-        }
-        out[off] = tx;
-        out[off + 1] = ty;
-        out[off + 2] = tz;
-        out[off + 3] = sceneNumber(source[off + 3], 1);
-      }
-      return out.subarray(0, count * 4);
     }
 
     function webGPUBindElioSkinnedBuffers(pass, obj, count) {

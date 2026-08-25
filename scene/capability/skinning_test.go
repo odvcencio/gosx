@@ -28,7 +28,8 @@ import (
 //   - SCENE_ELIO_SKIN_LBS_SOURCE:      the linear blend skinning kernel
 //   - entryPoint: "skin":              the compute entry point
 //   - updateElioSkinnedMeshes:         dispatches it once per frame
-//   - webGPUBindElioSkinnedBuffers:    binds the output as vertex slot 0
+//   - webGPUBindElioSkinnedBuffers:    binds the packed output regions as
+//                                      vertex slots 0, 1 and 3
 //
 // skinning sits in DefaultPolicy().Required, so a false cell EXCLUDES a backend.
 // That makes an empty promise here expensive: it would send every skinned scene
@@ -72,83 +73,87 @@ func TestSkinningImplementedOnBothGPUBackends(t *testing.T) {
 	}
 }
 
-// TestSkinnedNormalGapIsRecordedNotClaimed is the finding this file exists for.
+// TestSkinnedNormalsAndTangentsReachTheDraw is the positive contract that
+// replaced the old rest-pose-normals gap sentinel: WebGPU now joint-skins
+// normals and tangents alongside positions, matching WebGL2's shading-vector
+// attribute coverage, so no cell or diagnostic needs to record that gap.
 //
-// Both skinning cells are true, and a skinned mesh does deform on both backends.
-// The two images still differ, because only WebGL2 skins the NORMALS.
+// The contract has three links. If any one breaks, WebGPU lights a deformed
+// limb from wrong shading vectors again:
 //
-// The WGSL kernel writes three floats per vertex and stops. Its whole body
-// contains the strings "normal" and "tangent" zero times, and its last write is
-// out[((i * 3u) + 2u)] = skinned.z. Meanwhile webGPUBindElioSkinnedBuffers binds
-// slots 1 and 3 from webGPUTransformVec3Attribute and
-// webGPUTransformTangentAttribute, and both of those apply the object's MODEL
-// matrix, not a joint matrix. So WebGPU lights a deformed limb from rest-pose
-// normals.
-//
-// WebGL2 skins all three vectors in one matrix multiply.
-//
-// No cell and no diagnostic record this. The WebGPU renderer publishes four
-// issue codes (light-cap, spot-empty-cone, rect-area-specular, light-probe-sh)
-// and none of them mentions skinning.
-//
-// RECOMMENDED FOLLOW-UP: a skinned-normals feature, WebGPU false and WebGL2
-// true, droppable. Wrong normals shade the same silhouette in the same place, so
-// they degrade the image rather than produce a different scene. That row needs a
-// key in BOTH renderer manifests, so this test records the gap instead of adding
-// a row the drift guard would reject.
-//
-// The test fails the moment either side changes, which is the moment the row
-// becomes worth adding.
-func TestSkinnedNormalGapIsRecordedNotClaimed(t *testing.T) {
+//  1. The WGSL kernel blends positions AND shading vectors with the joint
+//     palette and writes three packed regions per vertex: positions at float
+//     i*3, renormalized normals at paddedCount*3, tangents (w preserved) at
+//     paddedCount*6.
+//  2. webGPUBindElioSkinnedBuffers binds those regions to vertex slots 1 and
+//     3 of the SAME output buffer that feeds slot 0, at byte offsets
+//     paddedCount*12 and paddedCount*24.
+//  3. WebGL2 still skins both shading vectors via mat3(skinMatrix), matching
+//     WebGPU's attribute coverage on the shading vectors.
+func TestSkinnedNormalsAndTangentsReachTheDraw(t *testing.T) {
 	webgpu := readRenderer(t, webgpuRendererPath)
 	kernel := webgpuElioSkinKernel(t, webgpu)
 
-	// The kernel writes position only. Three writes, and no fourth.
+	// Link 1: the kernel skins and writes all three vectors. Slicing the
+	// kernel out keeps each claim about the KERNEL, not about the whole ~900 KB
+	// renderer, where "normal" appears everywhere for unskinned draws.
 	for _, write := range []string{
-		"out[((i * 3u) + 0u)] = skinned.x;",
-		"out[((i * 3u) + 1u)] = skinned.y;",
-		"out[((i * 3u) + 2u)] = skinned.z;",
+		// positions
+		"out[posBase] = skinned.x;",
+		"out[posBase + 1u] = skinned.y;",
+		"out[posBase + 2u] = skinned.z;",
+		// normals: joint-blend, renormalize, write at paddedCount*3
+		"let rawNormal = (m * vec4f(v.nx, v.ny, v.nz, 0.0)).xyz;",
+		"let normBase = (paddedCount * 3u) + posBase;",
+		"out[normBase] = sn.x;",
+		"out[normBase + 1u] = sn.y;",
+		"out[normBase + 2u] = sn.z;",
+		// tangents: joint-blend, renormalize, preserve w, write at paddedCount*6
+		"let rawTangent = (m * vec4f(v.tx, v.ty, v.tz, 0.0)).xyz;",
+		"let tanBase = (paddedCount * 6u) + (i * 4u);",
+		"out[tanBase] = st.x;",
+		"out[tanBase + 1u] = st.y;",
+		"out[tanBase + 2u] = st.z;",
+		"out[tanBase + 3u] = v.tw;",
 	} {
 		if !strings.Contains(kernel, write) {
 			t.Errorf("the WebGPU skin kernel lost %q; re-read what it writes now", write)
 		}
 	}
-	for _, absent := range []string{"normal", "tangent", "Normal", "Tangent"} {
-		if strings.Contains(kernel, absent) {
-			t.Errorf("the WebGPU skin kernel now mentions %q; if it skins normals, "+
-				"delete this test and check whether WebGPU still needs a skinned-normals gap", absent)
-		}
-	}
 
-	// And the draw binds unskinned normals and tangents. Both helpers apply the
-	// model matrix only, which is why the gap survives the kernel.
-	for _, symbol := range []string{
-		`webGPUTransformVec3Attribute(obj, "normals", count, [0, 0, 1], "normals")`,
-		"webGPUTransformTangentAttribute(obj, count)",
+	// Link 2: the draw consumes those regions from slots 1 and 3. The bind
+	// helper must keep binding them from the packed output buffer at the byte
+	// offsets the kernel wrote — not from model-transformed attribute scratch.
+	for _, bind := range []string{
+		"pass.setVertexBuffer(0, outputBuffer, 0, vec3Bytes);",
+		"pass.setVertexBuffer(1, outputBuffer, paddedCount * 12, vec3Bytes);",
+		"pass.setVertexBuffer(3, outputBuffer, paddedCount * 24, Math.max(4, count * 4 * 4));",
 	} {
-		if !strings.Contains(webgpu, symbol) {
-			t.Errorf("expected %q in %s: the skinned draw binds model-transformed normals, "+
-				"and this test documents that", symbol, webgpuRendererPath)
+		if !strings.Contains(webgpu, bind) {
+			t.Errorf("expected %q in %s: the skinned draw must feed slots 0/1/3 "+
+				"from the compute output buffer's packed regions", bind, webgpuRendererPath)
 		}
 	}
 
-	// WebGL2 is the contrast that makes the gap a gap rather than a limitation
-	// of skinning itself.
+	// Link 3: WebGL2 remains the coverage reference — it skins both shading
+	// vectors with the same blended matrix as the position.
 	webgl := readRenderer(t, webglRendererPath)
 	for _, symbol := range []string{
 		`"        norm = mat3(skinMatrix) * norm;",`,
 		`"        tang = mat3(skinMatrix) * tang;",`,
 	} {
 		if !strings.Contains(webgl, symbol) {
-			t.Errorf("expected %q in %s: WebGL2 skinning normals is the contrast this gap rests on",
-				symbol, webglRendererPath)
+			t.Errorf("expected %q in %s: WebGL2 skinning normals and tangents "+
+				"is half of this coverage contract", symbol, webglRendererPath)
 		}
 	}
 
-	// No cell claims the gap yet, and no cell may claim it without manifest keys.
+	// Full attribute coverage needs no new capability row; if one ever appears
+	// it must carry keys in BOTH renderer manifests and its own corroboration
+	// test.
 	if _, exists := Matrix[Feature("skinned-normals")]; exists {
-		t.Error("a skinned-normals row appeared; move the reasoning above into its own corroboration test " +
-			"and confirm both renderer manifests carry the key")
+		t.Error("a skinned-normals row appeared; both GPU backends now skin all " +
+			"three vectors, so a flat row would merely restate skinning")
 	}
 }
 
@@ -185,7 +190,7 @@ func TestSkinningStaysRequired(t *testing.T) {
 }
 
 // webgpuElioSkinKernel returns the WGSL source of the skin kernel. Slicing the
-// kernel out keeps the "no normals" claim about the KERNEL, not about the whole
+// kernel out keeps each write claim about the KERNEL, not about the whole
 // 842 KB renderer, where "normal" appears everywhere for unskinned draws.
 func webgpuElioSkinKernel(t *testing.T, source string) string {
 	t.Helper()
