@@ -8051,6 +8051,7 @@
       case "position": return "positions";
       case "normal": return "normals";
       case "uv": return "uvs";
+      case "tangent": return "tangents";
       default: return "";
       }
     }
@@ -8059,26 +8060,9 @@
       var attrs = Array.isArray(layout && layout.attributes) ? layout.attributes : [];
       var out = [];
       var seenLocations = {};
-      // Canonical reserved aliases that must never become custom attributes.
-      var RESERVED = [
-        "position", "positions", "normal", "normals", "uv", "uvs", "uv1",
-        "tangent", "tangents", "index", "indices", "skin", "skinIndex",
-        "joints", "weights",
-      ];
-      var reserved = {};
-      for (var r = 0; r < RESERVED.length; r++) reserved[RESERVED[r]] = true;
-      // Builtin sources classified by canonical name (no source marker needed).
-      var BUILTIN_SOURCES = {
-        position: "positions",
-        normal: "normals",
-        uv: "uvs",
-        tangent: "tangents",
-      };
-      // Exact scalar/vector widths -> component count and vertex format.
-      var TYPE_COMPONENTS = { float: 1, vec2: 2, vec3: 3, vec4: 4 };
-      var TYPE_FORMATS = {
-        1: "float32", 2: "float32x2", 3: "float32x3", 4: "float32x4",
-      };
+      // Single static membership string of canonical reserved aliases that
+      // must never become custom attributes.
+      var RESERVED = "|position|positions|normal|normals|uv|uvs|uv1|tangent|tangents|index|indices|skin|skinIndex|joints|weights|";
       // Single pass over the declared layout so output preserves the original
       // Selena attribute order. Each descriptor is validated in place or
       // dropped entirely (fail closed).
@@ -8087,15 +8071,16 @@
         var name = typeof attr.name === "string" ? attr.name.trim() : "";
         if (!name) continue;
         // Only exact float/vec2/vec3/vec4 types are supported.
-        var comps = TYPE_COMPONENTS[String(attr.type || "")];
+        var type = String(attr.type || "");
+        var comps = type === "float" ? 1 : type === "vec2" ? 2 :
+          type === "vec3" ? 3 : type === "vec4" ? 4 : 0;
         if (!comps) continue;
-        var isBuiltin = Object.prototype.hasOwnProperty.call(BUILTIN_SOURCES, name);
-        var source;
-        if (isBuiltin) {
-          source = BUILTIN_SOURCES[name];
-        } else {
-          // Reject every canonical reserved alias outright.
-          if (reserved[name]) continue;
+        // Builtin sources come from the shared helper; everything else must
+        // clear the reserved list and identifier validation.
+        var source = sceneSelenaAttributeSource(name);
+        var isBuiltin = !!source;
+        if (!isBuiltin) {
+          if (RESERVED.indexOf("|" + name + "|") !== -1) continue;
           // Custom names must be valid WGSL-safe identifiers.
           if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
           source = "custom";
@@ -8122,7 +8107,8 @@
           slot: out.length,
           components: comps,
           shaderLocation: loc,
-          format: TYPE_FORMATS[comps],
+          format: comps === 1 ? "float32" : comps === 2 ? "float32x2" :
+            comps === 3 ? "float32x3" : "float32x4",
         });
       }
       return out;
