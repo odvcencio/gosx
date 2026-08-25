@@ -2150,3 +2150,160 @@ test("16a Selena skinned mesh draws preserve per-object doubleSided cull mode", 
     "skinned Selena pipelines must cache and draw distinct single- and double-sided variants",
   );
 });
+
+test("16a Selena skinned LBS packs per-vertex normals/tangents into the gosx-elio-skin-lbs compute input", async () => {
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+
+  // Both fixtures share one body: a single 3-vertex direct skinned object on
+  // one identity joint matrix, so the only difference between cases is how
+  // the LBS packing stage fills the normals/tangents lanes of its input.
+  async function runSkinPackCase(caseLabel, explicitNormalsTangents) {
+    const harness = await createBoardWebGPUHarness();
+    const uvs = new Float32Array([0, 0, 1, 0, 0, 1]);
+    function skinnedMesh(id, depthCenter) {
+      const vertices = {
+        count: 3,
+        positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        joints: new Float32Array(12),
+        weights: new Float32Array([
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+        ]),
+        uvs,
+      };
+      if (explicitNormalsTangents) {
+        vertices.normals = new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]);
+        vertices.tangents = new Float32Array([
+          0, 0, 1, -1,
+          0, 0, 1, -1,
+          0, 0, 1, -1,
+        ]);
+      }
+      return {
+        id,
+        kind: "gltf-mesh",
+        materialIndex: 0,
+        vertexOffset: 0,
+        vertexCount: 3,
+        viewCulled: false,
+        depthCenter,
+        directVertices: true,
+        modelMatrix: identity,
+        skin: { jointMatrices: identity },
+        vertices,
+      };
+    }
+    const bundle = {
+      camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+      environment: {},
+      materials: [selenaMaterial],
+      meshObjects: [skinnedMesh("skin-pack-" + caseLabel, 4)],
+      objects: [],
+      worldPositions: new Float32Array(0),
+      worldColors: new Float32Array(0),
+      worldMeshPositions: new Float32Array(0),
+      worldMeshNormals: new Float32Array(0),
+    };
+
+    harness.renderer.render(bundle, {});
+
+    // (1) Exactly one LBS dispatch, one workgroup for the 64-slot padded batch.
+    const lbsDispatches = [];
+    for (const computePass of harness.fake.state.computePasses) {
+      for (const dispatch of computePass.dispatches) {
+        if (dispatch.pipeline && dispatch.pipeline.label === "gosx-elio-skin-lbs") {
+          lbsDispatches.push({ computePass, dispatch });
+        }
+      }
+    }
+    assert.equal(lbsDispatches.length, 1, caseLabel + ": exactly one gosx-elio-skin-lbs dispatch per frame");
+    assert.equal(lbsDispatches[0].dispatch.workgroupCountX, 1, caseLabel + ": paddedCount 64 fits in one 64-thread workgroup");
+
+    // (2) The dispatch bind group hands binding 1 the packed CPU→GPU input
+    // and binding 3 the skinned output storage buffer.
+    let packedInputBuffer = null;
+    let outputBuffer = null;
+    for (const record of lbsDispatches[0].computePass.bindGroups) {
+      const entries = record.group.desc.entries;
+      const inputEntry = entries.find((entry) => entry.binding === 1);
+      const outputEntry = entries.find((entry) => entry.binding === 3);
+      if (inputEntry && outputEntry) {
+        packedInputBuffer = inputEntry.resource.buffer;
+        outputBuffer = outputEntry.resource.buffer;
+        break;
+      }
+    }
+    assert.ok(packedInputBuffer, caseLabel + ": LBS bind group exposes the packed input at binding 1");
+    assert.ok(outputBuffer, caseLabel + ": LBS bind group exposes the skinned output at binding 3");
+
+    // (3) Decode the queue.writeBuffer payload copied into THAT input buffer:
+    // stride 72 B/vertex, normals at byte offsets 44/48/52, tangents at
+    // 56/60/64/68 (w lane included).
+    const inputWrite = harness.fake.state.writeBufferCalls.find(
+      (call) => call.buffer === packedInputBuffer,
+    );
+    assert.ok(inputWrite, caseLabel + ": the packed input staging reached queue.writeBuffer");
+    const view = new DataView(inputWrite.data.buffer, inputWrite.data.byteOffset, inputWrite.data.byteLength);
+    const readF32 = (byteOffset) => view.getFloat32(byteOffset, true);
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      const base = vertex * 72;
+      if (explicitNormalsTangents) {
+        assert.deepEqual(
+          [readF32(base + 44), readF32(base + 48), readF32(base + 52)],
+          [0, 1, 0],
+          caseLabel + ": vertex " + vertex + " keeps its authored normal",
+        );
+        assert.deepEqual(
+          [readF32(base + 56), readF32(base + 60), readF32(base + 64), readF32(base + 68)],
+          [0, 0, 1, -1],
+          caseLabel + ": vertex " + vertex + " keeps its authored tangent (w=-1)",
+        );
+      } else {
+        assert.deepEqual(
+          [readF32(base + 44), readF32(base + 48), readF32(base + 52)],
+          [0, 0, 1],
+          caseLabel + ": vertex " + vertex + " falls back to the default +Z normal",
+        );
+        assert.deepEqual(
+          [readF32(base + 56), readF32(base + 60), readF32(base + 64), readF32(base + 68)],
+          [1, 0, 0, 1],
+          caseLabel + ": vertex " + vertex + " falls back to the default identity tangent (w=1)",
+        );
+      }
+    }
+
+    // (4) The main render passes bind the SAME output storage back as vertex
+    // buffers: positions/normals/tangents sub-ranges of the one buffer
+    // (paddedCount 64 → 768-byte vec3 regions), while UVs ride a distinct
+    // buffer in slot 2.
+    const mains = mainRenderPasses(harness.fake);
+    assert.ok(mains.length >= 1, caseLabel + ": the frame encodes a main render pass");
+    const bound = {};
+    for (const pass of mains) {
+      for (const vb of pass.vertexBuffers) {
+        bound[vb.slot] = vb;
+      }
+    }
+    assert.strictEqual(bound[0].buffer, outputBuffer, caseLabel + ": slot 0 reads skinned positions from the LBS output");
+    assert.equal(bound[0].offset, 0, caseLabel + ": positions start at the top of the output");
+    assert.equal(bound[0].size, 36, caseLabel + ": 3 vec3 positions = 36 bytes");
+    assert.strictEqual(bound[1].buffer, outputBuffer, caseLabel + ": slot 1 reads skinned normals from the LBS output");
+    assert.equal(bound[1].offset, 768, caseLabel + ": normals sit past the 64-vertex padded position region");
+    assert.equal(bound[1].size, 36, caseLabel + ": 3 vec3 normals = 36 bytes");
+    assert.strictEqual(bound[3].buffer, outputBuffer, caseLabel + ": slot 3 reads skinned tangents from the LBS output");
+    assert.equal(bound[3].offset, 1536, caseLabel + ": tangents sit past the 64-vertex padded normal region");
+    assert.equal(bound[3].size, 48, caseLabel + ": 3 vec4 tangents = 48 bytes");
+    assert.ok(bound[2], caseLabel + ": the skinned draw binds a slot-2 UV buffer");
+    assert.notStrictEqual(bound[2].buffer, outputBuffer, caseLabel + ": UVs ride their own buffer, never the packed output");
+  }
+
+  await runSkinPackCase("A-explicit-normals-tangents", true);
+  await runSkinPackCase("B-default-normals-tangents", false);
+});
