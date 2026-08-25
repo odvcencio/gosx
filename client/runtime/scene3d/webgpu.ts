@@ -14268,12 +14268,12 @@
 
     function webGPUDirectAttribute(obj, key, count, tupleSize) {
       var vertices = obj && obj.vertices;
-      if (typeof key === "string" && key.indexOf("custom:") === 0) {
+      var isCustom = typeof key === "string" && key.indexOf("custom:") === 0;
+      var data;
+      if (isCustom) {
         // Custom streams resolve fail-closed from vertices.attributes only.
-        var name = key.slice("custom:".length);
         var attrs = vertices && typeof vertices.attributes === "object" ? vertices.attributes : null;
-        var entry = attrs ? attrs[name] : null;
-        var customRequired = Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, tupleSize);
+        var entry = attrs ? attrs[key.slice("custom:".length)] : null;
         if (
           !entry ||
           typeof entry !== "object" ||
@@ -14282,35 +14282,18 @@
         ) {
           return null;
         }
-        var customData = entry.data;
-        if (customRequired <= 0 || customData.length < customRequired) {
+        data = entry.data;
+      } else {
+        data = vertices && vertices[key];
+        if (!vertices || !data || typeof data.length !== "number") {
           return null;
         }
-        if (customData.length === customRequired) {
-          return customData;
-        }
-        var customViews = vertices._wgpuAttributeViews;
-        if (!customViews) {
-          customViews = Object.create(null);
-          vertices._wgpuAttributeViews = customViews;
-        }
-        var customViewKey = key + ":" + customRequired;
-        var customRecord = customViews[customViewKey];
-        if (!customRecord || customRecord.source !== customData) {
-          customRecord = {
-            source: customData,
-            view: customData.subarray(0, customRequired),
-          };
-          customViews[customViewKey] = customRecord;
-        }
-        return customRecord.view;
       }
-      var data = vertices && vertices[key];
       var required = Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, tupleSize);
-      if (!vertices || required <= 0 || !data || typeof data.length !== "number" || data.length < required) {
+      if (required <= 0 || data.length < required) {
         return null;
       }
-      if (!(data instanceof Float32Array)) {
+      if (!isCustom && !(data instanceof Float32Array)) {
         data = new Float32Array(data);
         vertices[key] = data;
       }
