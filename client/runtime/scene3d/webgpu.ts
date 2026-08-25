@@ -8051,6 +8051,7 @@
       case "position": return "positions";
       case "normal": return "normals";
       case "uv": return "uvs";
+      case "tangent": return "tangents";
       default: return "";
       }
     }
@@ -8058,17 +8059,56 @@
     function sceneSelenaPipelineAttributes(layout) {
       var attrs = Array.isArray(layout && layout.attributes) ? layout.attributes : [];
       var out = [];
+      var seenLocations = {};
+      // Single static membership string of canonical reserved aliases that
+      // must never become custom attributes.
+      var RESERVED = "|position|positions|normal|normals|uv|uvs|uv1|tangent|tangents|index|indices|skin|skinIndex|joints|weights|";
+      // Single pass over the declared layout so output preserves the original
+      // Selena attribute order. Each descriptor is validated in place or
+      // dropped entirely (fail closed).
       for (var i = 0; i < attrs.length; i++) {
         var attr = attrs[i] || {};
-        var source = sceneSelenaAttributeSource(attr.name);
-        if (!source) continue;
+        var name = typeof attr.name === "string" ? attr.name.trim() : "";
+        if (!name) continue;
+        // Only exact float/vec2/vec3/vec4 types are supported.
+        var type = String(attr.type || "");
+        var comps = type === "float" ? 1 : type === "vec2" ? 2 :
+          type === "vec3" ? 3 : type === "vec4" ? 4 : 0;
+        if (!comps) continue;
+        // Builtin sources come from the shared helper; everything else must
+        // clear the reserved list and identifier validation.
+        var source = sceneSelenaAttributeSource(name);
+        var isBuiltin = !!source;
+        if (!isBuiltin) {
+          if (RESERVED.indexOf("|" + name + "|") !== -1) continue;
+          // Custom names must be valid WGSL-safe identifiers.
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
+          source = "custom";
+          // Custom shader locations must be explicit nonnegative integers.
+          var n = Number(attr.location);
+          if (!Number.isFinite(n) || n < 0 || Math.floor(n) !== n) continue;
+        }
+        // Location: explicit value when provided, else prior builtin fallback
+        // of the running slot index (compatible only for builtin attributes).
+        var loc;
+        if (attr.location != null && Number.isFinite(Number(attr.location))) {
+          loc = Math.floor(Number(attr.location));
+          if (loc < 0 || loc !== Number(attr.location)) continue;
+        } else {
+          if (!isBuiltin) continue; // custom already required a location above
+          loc = out.length;
+        }
+        // Skip any descriptor whose location duplicates an earlier emission.
+        if (seenLocations[loc]) continue;
+        seenLocations[loc] = true;
         out.push({
-          name: attr.name,
+          name: name,
           source: source,
           slot: out.length,
-          components: sceneSelenaAttributeComponents(attr.type),
-          shaderLocation: Math.max(0, Math.floor(sceneNumber(attr.location, out.length))),
-          format: sceneSelenaWGPUFormat(attr.type),
+          components: comps,
+          shaderLocation: loc,
+          format: comps === 1 ? "float32" : comps === 2 ? "float32x2" :
+            comps === 3 ? "float32x3" : "float32x4",
         });
       }
       return out;
@@ -10885,6 +10925,9 @@
       if (attr.source === "tangents") {
         if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return true;
         return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
+      }
+      if (attr.source === "custom") {
+        return webGPUBindRetainedMeshAttribute(pass, attr.slot, obj, "custom:" + attr.name, attr.components);
       }
       return false;
     }
@@ -14225,12 +14268,32 @@
 
     function webGPUDirectAttribute(obj, key, count, tupleSize) {
       var vertices = obj && obj.vertices;
-      var data = vertices && vertices[key];
+      var isCustom = typeof key === "string" && key.indexOf("custom:") === 0;
+      var data;
+      if (isCustom) {
+        // Custom streams resolve fail-closed from vertices.attributes only.
+        var attrs = vertices && typeof vertices.attributes === "object" ? vertices.attributes : null;
+        var entry = attrs ? attrs[key.slice("custom:".length)] : null;
+        if (
+          !entry ||
+          typeof entry !== "object" ||
+          !(entry.data instanceof Float32Array) ||
+          entry.itemSize !== tupleSize
+        ) {
+          return null;
+        }
+        data = entry.data;
+      } else {
+        data = vertices && vertices[key];
+        if (!vertices || !data || typeof data.length !== "number") {
+          return null;
+        }
+      }
       var required = Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, tupleSize);
-      if (!vertices || required <= 0 || !data || typeof data.length !== "number" || data.length < required) {
+      if (required <= 0 || data.length < required) {
         return null;
       }
-      if (!(data instanceof Float32Array)) {
+      if (!isCustom && !(data instanceof Float32Array)) {
         data = new Float32Array(data);
         vertices[key] = data;
       }
@@ -15313,23 +15376,27 @@
       function bindMeshAttribute(attr, obj, offset, count) {
         var computedRecord = webGPUObjectComputedMorphDrawRecord(obj);
         if (attr.source === "positions") {
-          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return;
-          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.positions, offset, count);
-          return;
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.positionBuffer, count, 3)) return true;
+          return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.positions, offset, count);
         }
         if (attr.source === "normals") {
-          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.normalBuffer, count, 3)) return;
-          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.normals, offset, count);
-          return;
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.normalBuffer, count, 3)) return true;
+          return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.normals, offset, count);
         }
         if (attr.source === "uvs") {
-          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.uvs, offset, count);
-          return;
+          return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.uvs, offset, count);
         }
         if (attr.source === "tangents") {
-          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return;
-          webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
+          if (computedRecord && webGPUBindComputedMorphBuffer(pass, attr.slot, computedRecord.tangentBuffer, count, 4)) return true;
+          return webGPUBindSceneMeshVertexBuffer(pass, attr.slot, pbrBuffers && pbrBuffers.tangents, offset, count);
         }
+        // Custom attribute stream: bind fail-closed from the retained direct
+        // vertex data under its "custom:<name>" key. Any failure returns false
+        // so the caller skips the draw instead of binding a stale slot.
+        if (attr.source === "custom") {
+          return webGPUBindRetainedMeshAttribute(pass, attr.slot, obj, "custom:" + attr.name, attr.components);
+        }
+        return false;
       }
 
       function bindPBRPipeline() {
@@ -15413,10 +15480,19 @@
               }
               continue;
             }
+            var allBound = true;
             for (var ai = 0; ai < selenaResource.attrs.length; ai++) {
-              bindMeshAttribute(selenaResource.attrs[ai], obj, offset, count);
+              if (!bindMeshAttribute(selenaResource.attrs[ai], obj, offset, count)) {
+                allBound = false;
+                break;
+              }
             }
-            pass.draw(count);
+            // Fail closed: skip the whole object (and its draw-call stat)
+            // when any declared attribute could not be bound.
+            if (!allBound) continue;
+            var selenaIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            if (selenaIndexCount > 0) pass.drawIndexed(selenaIndexCount);
+            else pass.draw(count);
             if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
             continue;
           }

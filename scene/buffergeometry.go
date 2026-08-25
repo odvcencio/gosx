@@ -17,6 +17,15 @@ type BufferGeometry struct {
 	Tangents  []float64
 	Indices   []int
 
+	// Attributes carries optional named custom per-vertex float streams (see
+	// BufferAttribute). Each stream must hold exactly Count*ItemSize finite
+	// values. Custom attributes require the retained snapshot contract:
+	// Immutable non-Dynamic geometry with a Revision, because the CPU-baked
+	// mutable path cannot preserve extra unnamed streams through world
+	// baking. A mutable/dynamic geometry carrying attributes fails closed in
+	// bufferGeometryVertices — nothing partial is serialized or drawn.
+	Attributes map[string]BufferAttribute
+
 	// Immutable opts this geometry into renderer-side retained GPU buffers.
 	// Authors must treat every attribute slice as immutable for a given
 	// Revision. To publish changed data, replace the slices and increment
@@ -51,9 +60,16 @@ type MeshVertices struct {
 	Tangents  []float64 `json:"tangents,omitempty"`
 	Indices   []uint32  `json:"indices,omitempty"`
 	Count     int       `json:"count"`
-	Immutable bool      `json:"immutable,omitempty"`
-	Revision  *uint64   `json:"revision,omitempty"`
-	Dynamic   bool      `json:"dynamic,omitempty"`
+
+	// Attributes carries optional named custom float streams, each exactly
+	// Count*ItemSize finite values (see MeshAttribute). Absent for meshes
+	// without custom attributes, keeping byte- and behavior-compatible wire
+	// output.
+	Attributes map[string]MeshAttribute `json:"attributes,omitempty"`
+
+	Immutable bool    `json:"immutable,omitempty"`
+	Revision  *uint64 `json:"revision,omitempty"`
+	Dynamic   bool    `json:"dynamic,omitempty"`
 }
 
 // bufferGeometryVertices lowers a BufferGeometry into inline MeshVertices.
@@ -64,10 +80,31 @@ type MeshVertices struct {
 // indexed geometry fails closed: nil is returned so no partial mesh is ever
 // serialized or drawn. Returns nil for empty geometry so the object simply
 // carries no vertices.
+//
+// Custom attributes follow the same fail-closed discipline. They lower only
+// for Immutable, non-Dynamic geometry under the retained snapshot contract —
+// every stream must validate (canonical name, ItemSize in [1,4], exactly
+// Count*ItemSize finite values) and is deep-copied into the snapshot. A
+// mutable/dynamic geometry carrying attributes, or any malformed stream,
+// returns nil: the unsupported combination is rejected deterministically
+// instead of silently dropping an attribute the authored shader expects.
 func bufferGeometryVertices(g BufferGeometry) *MeshVertices {
 	count := len(g.Positions) / 3
 	if count == 0 {
 		return nil
+	}
+	hasCustom := len(g.Attributes) > 0
+	if hasCustom {
+		// Custom streams ride only on the retained snapshot contract. The
+		// CPU-baked mutable path bakes world-space positions per frame and
+		// cannot preserve extra streams without a broad redesign, so that
+		// combination is rejected outright.
+		if !g.Immutable || g.Dynamic {
+			return nil
+		}
+		if !validateBufferAttributes(g.Attributes, count) {
+			return nil
+		}
 	}
 	out := &MeshVertices{
 		Count:     count,
@@ -100,6 +137,9 @@ func bufferGeometryVertices(g BufferGeometry) *MeshVertices {
 			indices[i] = uint32(idx)
 		}
 		out.Indices = indices
+	}
+	if hasCustom {
+		out.Attributes = lowerCustomAttributes(g.Attributes)
 	}
 	return out
 }

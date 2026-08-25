@@ -544,16 +544,10 @@
     return out;
   }
 
-  // sceneNormalizeMeshIndices validates an optional authored triangle index
-  // stream over count unique vertices. Absent (null/undefined) input returns
-  // null — the geometry simply stays non-indexed. Present-but-malformed input
-  // (wrong length, non-triangle list, or any index outside [0, count)) returns
-  // undefined so the caller can fail closed instead of drawing a partial mesh
-  // or handing the GPU an out-of-range fetch. Valid input returns a fresh
-  // Uint32Array copy so callers can never alias the author's slice. Indices are
-  // normalized once here, never per frame. It lives in the base chunk next to
-  // sceneTypedFloatArray because mesh normalization runs on every Scene3D page,
-  // backend and all.
+  // Validates an optional authored triangle index stream over count unique
+  // vertices. Absent input returns null; malformed input returns undefined
+  // so callers fail closed; valid input returns a fresh Uint32Array copy,
+  // normalized once here.
   function sceneNormalizeMeshIndices(value, count) {
     if (value === undefined || value === null) return null;
     const source = value;
@@ -602,6 +596,58 @@
     return typed.slice(0, count * safeTupleSize);
   }
 
+  // Mirrors Go scene.ValidBufferAttributeName: shader identifier, never a
+  // built-in stream name.
+  const SCENE_CUSTOM_ATTRIBUTE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+  const SCENE_RESERVED_ATTRIBUTE_NAMES =
+    "position positions normal normals uv uvs uv1 tangent tangents index indices skin skinIndex joints weights".split(" ");
+
+  function sceneValidCustomAttributeName(name) {
+    return typeof name === "string" &&
+      SCENE_CUSTOM_ATTRIBUTE_NAME_RE.test(name) &&
+      SCENE_RESERVED_ATTRIBUTE_NAMES.indexOf(name) < 0;
+  }
+
+  // Validates/normalizes optional custom float streams against a mesh vertex
+  // count. Returns fresh Float32Array snapshots in sorted-name order;
+  // malformed input or meshes outside the immutable/revisioned snapshot
+  // contract return undefined so callers fail closed.
+  function sceneNormalizeCustomAttributes(value, count, immutable, revision, dynamic) {
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (!sceneIsPlainObject(value) || !(immutable === true && revision !== null && dynamic !== true)) {
+      return undefined;
+    }
+    const names = Object.keys(value).sort();
+    if (names.length === 0) {
+      return null;
+    }
+    const out = {};
+    for (let i = 0; i < names.length; i += 1) {
+      const name = names[i];
+      if (!sceneValidCustomAttributeName(name)) {
+        return undefined;
+      }
+      const entry = value[name];
+      const itemSize = Number(sceneIsPlainObject(entry) ? entry.itemSize : NaN);
+      const source = sceneIsPlainObject(entry) ? entry.data : null;
+      if (!Number.isInteger(itemSize) || itemSize < 1 || itemSize > 4 ||
+        ((source instanceof Float32Array) === false && !Array.isArray(source)) ||
+        source.length !== count * itemSize) {
+        return undefined;
+      }
+      const typed = new Float32Array(source);
+      for (let j = 0; j < typed.length; j += 1) {
+        if (!Number.isFinite(typed[j])) {
+          return undefined;
+        }
+      }
+      out[name] = { data: typed, itemSize };
+    }
+    return out;
+  }
+
   function sceneNormalizeMeshVertexData(value) {
     const item = value && typeof value === "object" ? value : {};
     const positions = sceneNormalizeMeshFloatArray(item.positions, 3);
@@ -621,11 +667,24 @@
     const tangents = sceneNormalizeMeshFloatArray(item.tangents, 4);
     const joints = sceneNormalizeMeshFloatArray(item.joints, 4);
     const weights = sceneNormalizeMeshFloatArray(item.weights, 4);
-    // Normalize the optional index stream once. Malformed indexed geometry
-    // fails closed: the object carries no vertices, so nothing partial is ever
-    // published or drawn.
+    // Malformed indexed geometry fails closed: nothing partial is published.
     const indices = sceneNormalizeMeshIndices(item.indices, count);
     if (indices === undefined) {
+      return null;
+    }
+    // Malformed streams and out-of-contract meshes fail closed like indices.
+    const revision = Object.prototype.hasOwnProperty.call(item, "revision") &&
+      Number.isFinite(Number(item.revision)) && Number(item.revision) >= 0
+        ? Math.floor(Number(item.revision))
+        : null;
+    const attributes = sceneNormalizeCustomAttributes(
+      item.attributes,
+      count,
+      item.immutable === true,
+      revision,
+      item.dynamic === true,
+    );
+    if (attributes === undefined) {
       return null;
     }
     return {
@@ -636,15 +695,11 @@
       joints: joints.length >= count * 4 ? joints.slice(0, count * 4) : new Float32Array(0),
       weights: weights.length >= count * 4 ? weights.slice(0, count * 4) : new Float32Array(0),
       indices: indices || null,
+      attributes: attributes || null,
       count,
-      // Retained geometry is an explicit snapshot contract, never inferred
-      // from typed-array identity. For immutable=true, every attribute remains
-      // immutable until revision changes; dynamic=true always forces baking.
+      // Snapshot contract, never inferred from typed-array identity.
       immutable: item.immutable === true,
-      revision: Object.prototype.hasOwnProperty.call(item, "revision") &&
-        Number.isFinite(Number(item.revision)) && Number(item.revision) >= 0
-          ? Math.floor(Number(item.revision))
-          : null,
+      revision,
       dynamic: item.dynamic === true,
     };
   }
@@ -5251,7 +5306,41 @@
       indices.length % 3 === 0;
   }
 
-  function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments) {
+  // sceneMeshObjectSupportsRetainedBackend reports whether an object may draw
+  // from a retained local-space snapshot rather than the CPU world bake.
+  // Materials without authored shaders always qualify — unchanged behavior.
+  // Authored shaders stay excluded EXCEPT Selena: custom per-vertex float
+  // BufferAttributes only survive on the retained immutable snapshot contract,
+  // so a Selena material must be able to reach the retained draw path or its
+  // declared custom streams could never bind. The static Selena vertex
+  // convention feeds pre-baked WORLD-space positions (there is no
+  // u_modelMatrix on the static Selena path), so Selena retention is gated to
+  // an effectively-identity model transform where local == world and the
+  // retained draw is numerically identical to the baked one. CustomMaterial /
+  // raw shaderSource authors keep the historical baked fallback semantics.
+  function sceneMeshObjectSupportsRetainedBackend(object, material, timeSeconds) {
+    if (!sceneMaterialUsesAuthoredMeshShader(material)) {
+      return true;
+    }
+    const backend = String((material && material.shaderBackend) || "").trim().toLowerCase();
+    if (backend !== "selena") {
+      return false;
+    }
+    const m = sceneObjectModelMatrix(object, timeSeconds);
+    if (!m || m.length !== 16) {
+      return false;
+    }
+    const EPSILON = 0.000001;
+    for (let i = 0; i < 16; i += 1) {
+      const expected = i % 5 === 0 ? 1 : 0;
+      if (!(Math.abs(m[i] - expected) <= EPSILON)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments, timeSeconds) {
     const count = Math.max(0, Math.floor(sceneNumber(vertices && vertices.count, 0)));
     const scaleX = sceneNumber(object && object.scaleX, 1);
     const scaleY = sceneNumber(object && object.scaleY, 1);
@@ -5282,7 +5371,7 @@
       !(object && object.computedMorph) &&
       !(object && (object.dynamicGeometry || object.geometryDynamic || object.geometryDirty)) &&
       !(vertices && (vertices.dynamic || vertices.dirty || vertices.needsUpdate)) &&
-      !sceneMaterialUsesAuthoredMeshShader(material) &&
+      sceneMeshObjectSupportsRetainedBackend(object, material, timeSeconds) &&
       hasAttribute("positions", 3) &&
       hasAttribute("normals", 3) &&
       hasAttribute("uvs", 2) &&
@@ -5370,7 +5459,7 @@
       });
       return;
     }
-    if (sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments)) {
+    if (sceneMeshCanRetainLocalGeometry(bundle, object, material, vertices, emitWireSegments, timeSeconds)) {
       const modelMatrix = sceneObjectModelMatrix(object, timeSeconds);
       const localBounds = sceneMeshLocalBounds(vertices, geometryRevision);
       const bounds = sceneTransformMeshBounds(localBounds, modelMatrix);

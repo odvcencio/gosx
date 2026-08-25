@@ -5402,10 +5402,13 @@
   function sceneSelenaAttributeComponents(type) {
     switch (String(type || "")) {
     case "vec2": return 2;
+    case "vec3": return 3;
     case "vec4": return 4;
-    case "vec3":
-    default:
-      return 3;
+    // float scalars bind one component. Unknown declared types are invalid
+    // descriptor metadata: report 0 so program creation fails closed instead
+    // of silently widening a scalar stream to a vec3 fetch.
+    case "float": return 1;
+    default: return 0;
     }
   }
 
@@ -5573,6 +5576,20 @@
     return { source: out, hasNormal: hasNormal };
   }
 
+  // Fixed Selena vertex-layout built-ins that never participate in the
+  // custom-stream record (their binding is owned by the builtin path).
+  var SCENE_WEBGL_RESERVED_ATTRIBUTES = "position positions normal normals uv uvs uv1 tangent tangents index indices skin skinIndex joints weights".split(" ");
+
+  // sceneSelenaDiscardProgram releases a compiled Selena program whose
+  // attribute descriptor failed validation, so a failed compile path never
+  // leaks GPU programs across repeated material rejections.
+  function sceneSelenaDiscardProgram(gl, info) {
+    if (!info) return;
+    if (info.program) gl.deleteProgram(info.program);
+    if (info.vertexShader) gl.deleteShader(info.vertexShader);
+    if (info.fragmentShader) gl.deleteShader(info.fragmentShader);
+  }
+
   function createSceneSelenaProgram(gl, material, skinned) {
     var layout = sceneSelenaMaterialLayout(material);
     if (!layout) return null;
@@ -5595,17 +5612,6 @@
     if (!program) return null;
     var attrs = {};
     var layoutAttrs = Array.isArray(layout.attributes) ? layout.attributes : [];
-    for (var i = 0; i < layoutAttrs.length; i++) {
-      var attr = layoutAttrs[i] || {};
-      if (typeof attr.name !== "string") continue;
-      var glName = attr.name;
-      if (skinned && attr.name === "position") glName = "a_position";
-      else if (skinned && attr.name === "normal" && skinInfo.hasNormal) glName = "a_normal";
-      attrs[attr.name] = {
-        loc: gl.getAttribLocation(program, glName),
-        size: sceneSelenaAttributeComponents(attr.type),
-      };
-    }
     var result = {
       program: program,
       vertexShader: vertexShader,
@@ -5614,7 +5620,42 @@
       uniforms: sceneSelenaUniformLocations(gl, program, layout),
       layout: layout,
       skinned: Boolean(skinned),
+      // Validated Selena custom descriptors as one compact ordered flat
+      // array: [name, compiledLocation, componentWidth, ...].
+      customAttributes: [],
     };
+    var seenCustomLocations = {};
+    for (var i = 0; i < layoutAttrs.length; i++) {
+      var attr = layoutAttrs[i] || {};
+      var attrName = attr.name;
+      // Reserved built-in layout entries are part of the fixed Selena vertex
+      // layout; their binding is owned by the builtin path, so they are
+      // excluded from the custom-stream record.
+      var isReserved = SCENE_WEBGL_RESERVED_ATTRIBUTES.indexOf(attrName) >= 0;
+      if (typeof attrName !== "string") {
+        if (!isReserved) {
+          sceneSelenaDiscardProgram(gl, result);
+          return null;
+        }
+        continue;
+      }
+      var glName = attrName;
+      if (skinned && attrName === "position") glName = "a_position";
+      else if (skinned && attrName === "normal" && skinInfo.hasNormal) glName = "a_normal";
+      var size = sceneSelenaAttributeComponents(attr.type);
+      var loc = gl.getAttribLocation(program, glName);
+      attrs[attrName] = { loc: loc, size: size };
+      if (!isReserved && (size < 1 || loc < 0 || seenCustomLocations[loc])) {
+        // Fail closed unless the descriptor has a known tuple width and the
+        // vertex shader exposes it at a unique compiled location; anything else
+        // discards the program so the object takes the journaled builtin-PBR
+        // fallback.
+        sceneSelenaDiscardProgram(gl, result);
+        return null;
+      }
+      seenCustomLocations[loc] = true;
+      if (!isReserved) result.customAttributes.push(attrName, loc, size);
+    }
     if (skinned) {
       result.skinUniforms = {
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
@@ -7925,6 +7966,19 @@
       return true;
     }
 
+  function bindSelenaCustomAttributes(gl, selenaProgram, obj) {
+    // Trusted ordered flat [name, compiledLocation, width] record; missing or
+    // width-mismatched per-object stream fails the draw before binding.
+    var custom = selenaProgram.customAttributes;
+    var declared = obj && obj.vertices && obj.vertices.attributes;
+    for (var i = 0; i < custom.length; i += 3) {
+      var entry = declared ? declared[custom[i]] : null;
+      if (!entry || entry.itemSize !== custom[i + 2]) return false;
+      bindScenePBRDirectAttribute(obj, "custom:" + custom[i], custom[i + 1], custom[i + 2], entry.data);
+    }
+    return true;
+  }
+
     function drawPBRObjectList(gl, objectList, bundle, materials) {
       var lastMaterialIndex = -1;
       // Track which program is currently bound so we can switch between
@@ -7988,6 +8042,16 @@
           bindSelenaMeshAttribute(gl, selenaProgram, "uv", obj, bundle, selenaOffset, selenaCount, selenaDirectVertices);
           if (selenaProgram.skinned && obj.skin) {
             bindSelenaSkinAttributes(gl, selenaProgram, obj);
+          }
+          // Custom descriptor attributes resolve only against the mesh's own
+          // declared custom streams. A declared custom attribute with no
+          // matching stream (missing data or a component-count mismatch)
+          // fails the authored draw safely: the object is skipped this frame
+          // and the miss is journaled — no later location shifts, no
+          // substitution of unrelated data, no partial draws.
+          if (!bindSelenaCustomAttributes(gl, selenaProgram, obj)) {
+            webglRenderTruthStats.selenaCustomAttributeSkips = (webglRenderTruthStats.selenaCustomAttributeSkips || 0) + 1;
+            continue;
           }
           const selenaIndexCount = bindScenePBRDirectIndexBuffer(selenaDirectVertices ? obj : null);
           if (selenaIndexCount > 0) {

@@ -1679,6 +1679,13 @@
     } else {
       hash = scenePlannerHashNumber(hash, 0);
     }
+    // Custom attribute streams are deliberately NOT hashed per-value here.
+    // sceneNormalizeCustomAttributes only accepts custom streams when the
+    // geometry is immutable, non-dynamic, and revision-pinned, and
+    // scenePlannerHashMeshObject already hashes object.geometryRevision.
+    // Any change to a custom stream must therefore bump the revision, so
+    // scanning every name/itemSize/data value here would duplicate identity
+    // work already covered by the contract.
     return hash;
   }
 
