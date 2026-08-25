@@ -29,7 +29,7 @@ import (
 //   - entryPoint: "skin":              the compute entry point
 //   - updateElioSkinnedMeshes:         dispatches it once per frame
 //   - webGPUBindElioSkinnedBuffers:    binds the packed output regions as
-//                                      vertex slots 0, 1 and 3
+//     vertex slots 0, 1 and 3
 //
 // skinning sits in DefaultPolicy().Required, so a false cell EXCLUDES a backend.
 // That makes an empty promise here expensive: it would send every skinned scene
