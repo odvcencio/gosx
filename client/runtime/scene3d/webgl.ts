@@ -7967,25 +7967,14 @@
     }
 
   function bindSelenaCustomAttributes(gl, selenaProgram, obj) {
-    // Consume the program's trusted compact custom-descriptor record
-    // ([name, compiledLocation, width, ...]). Names and tuple widths were
-    // validated once during scene attribute normalization; only the
-    // per-object stream presence/width match — which fails the draw safely
-    // on a missing or mismatched stream — and the backend buffer binding
-    // remain here.
+    // Trusted ordered flat [name, compiledLocation, width] record; missing or
+    // width-mismatched per-object stream fails the draw before binding.
     var custom = selenaProgram.customAttributes;
-    if (!custom.length) {
-      return true;
-    }
     var declared = obj && obj.vertices && obj.vertices.attributes;
     for (var i = 0; i < custom.length; i += 3) {
-      var size = custom[i + 2];
       var entry = declared ? declared[custom[i]] : null;
-      // A missing or width-mismatched stream fails the draw safely.
-      if (!entry || entry.itemSize !== size) {
-        return false;
-      }
-      bindScenePBRDirectAttribute(obj, "custom:" + custom[i], custom[i + 1], size, entry.data);
+      if (!entry || entry.itemSize !== custom[i + 2]) return false;
+      bindScenePBRDirectAttribute(obj, "custom:" + custom[i], custom[i + 1], custom[i + 2], entry.data);
     }
     return true;
   }
