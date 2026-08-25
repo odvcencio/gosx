@@ -213,6 +213,16 @@
   // Emitted by m31labs.dev/elio/emit/wgsl from stdlib.Skin().
   // The runtime pads dispatch buffers to the 64-wide workgroup size, so the
   // generated kernel can stay byte-for-byte aligned with Elio's current output.
+  //
+  // One dispatch writes three contiguous regions of a single tracked output
+  // buffer, each paddedCount elements wide: positions (vec3) first, then
+  // normals (vec3), then tangents (vec4). Each invocation blends the four
+  // bone influences into ONE weighted mat4x4 (columns c0..c3): its translation
+  // column skins the position while the linear xyz columns skin the packed
+  // source normal and tangent, safe-normalized so degenerate vectors pass
+  // through as zero instead of NaN. Tangent w is carried through untouched so
+  // bitangent handedness survives skinning. SkinParams.paddedCount places the
+  // normal/tangent region bases.
   var SCENE_ELIO_SKIN_LBS_SOURCE = [
     "struct SkinVertex {",
     "  px : f32,",
@@ -226,20 +236,55 @@
     "  b1 : u32,",
     "  b2 : u32,",
     "  b3 : u32,",
+    "  nx : f32,",
+    "  ny : f32,",
+    "  nz : f32,",
+    "  tx : f32,",
+    "  ty : f32,",
+    "  tz : f32,",
+    "  tw : f32,",
+    "};",
+    "",
+    "struct SkinParams {",
+    "  paddedCount : u32,",
+    "  _pad0 : u32,",
+    "  _pad1 : u32,",
+    "  _pad2 : u32,",
     "};",
     "",
     "@group(0) @binding(0) var<storage, read> bones : array<mat4x4<f32>>;",
     "@group(0) @binding(1) var<storage, read> verts : array<SkinVertex>;",
-    "@group(0) @binding(2) var<storage, read_write> out : array<f32>;",
+    "@group(0) @binding(2) var<uniform> params : SkinParams;",
+    "@group(0) @binding(3) var<storage, read_write> out : array<f32>;",
     "",
     "@compute @workgroup_size(64)",
     "fn skin(@builtin(global_invocation_id) gid : vec3<u32>) {",
     "  let i = gid.x;",
     "  let v = verts[i];",
-    "  let skinned = ((((((((bones[v.b0][0u] * v.px) + (bones[v.b0][1u] * v.py)) + (bones[v.b0][2u] * v.pz)) + bones[v.b0][3u]) * v.w0) + (((((bones[v.b1][0u] * v.px) + (bones[v.b1][1u] * v.py)) + (bones[v.b1][2u] * v.pz)) + bones[v.b1][3u]) * v.w1)) + (((((bones[v.b2][0u] * v.px) + (bones[v.b2][1u] * v.py)) + (bones[v.b2][2u] * v.pz)) + bones[v.b2][3u]) * v.w2)) + (((((bones[v.b3][0u] * v.px) + (bones[v.b3][1u] * v.py)) + (bones[v.b3][2u] * v.pz)) + bones[v.b3][3u]) * v.w3));",
-    "  out[((i * 3u) + 0u)] = skinned.x;",
-    "  out[((i * 3u) + 1u)] = skinned.y;",
-    "  out[((i * 3u) + 2u)] = skinned.z;",
+    "  let c0 = (((bones[v.b0][0u] * v.w0) + (bones[v.b1][0u] * v.w1)) + ((bones[v.b2][0u] * v.w2) + (bones[v.b3][0u] * v.w3)));",
+    "  let c1 = (((bones[v.b0][1u] * v.w0) + (bones[v.b1][1u] * v.w1)) + ((bones[v.b2][1u] * v.w2) + (bones[v.b3][1u] * v.w3)));",
+    "  let c2 = (((bones[v.b0][2u] * v.w0) + (bones[v.b1][2u] * v.w1)) + ((bones[v.b2][2u] * v.w2) + (bones[v.b3][2u] * v.w3)));",
+    "  let c3 = (((bones[v.b0][3u] * v.w0) + (bones[v.b1][3u] * v.w1)) + ((bones[v.b2][3u] * v.w2) + (bones[v.b3][3u] * v.w3)));",
+    "  let skinned = ((((c0 * v.px) + (c1 * v.py)) + (c2 * v.pz)) + c3);",
+    "  let rawNormal = (((c0 * v.nx) + (c1 * v.ny)) + (c2 * v.nz));",
+    "  let nLen = length(rawNormal);",
+    "  let skinnedNormal = select(rawNormal, rawNormal / nLen, nLen > 0.000001);",
+    "  let rawTangent = (((c0 * v.tx) + (c1 * v.ty)) + (c2 * v.tz));",
+    "  let tLen = length(rawTangent);",
+    "  let skinnedTangent = select(rawTangent, rawTangent / tLen, tLen > 0.000001);",
+    "  let posBase = i * 3u;",
+    "  out[posBase] = skinned.x;",
+    "  out[posBase + 1u] = skinned.y;",
+    "  out[posBase + 2u] = skinned.z;",
+    "  let normBase = (params.paddedCount * 3u) + posBase;",
+    "  out[normBase] = skinnedNormal.x;",
+    "  out[normBase + 1u] = skinnedNormal.y;",
+    "  out[normBase + 2u] = skinnedNormal.z;",
+    "  let tanBase = (params.paddedCount * 6u) + (i * 4u);",
+    "  out[tanBase] = skinnedTangent.x;",
+    "  out[tanBase + 1u] = skinnedTangent.y;",
+    "  out[tanBase + 2u] = skinnedTangent.z;",
+    "  out[tanBase + 3u] = v.tw;",
     "}",
   ].join("\n");
 
@@ -7358,7 +7403,8 @@
           entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
           ],
         });
         computedMorphBindGroupLayout = device.createBindGroupLayout({
@@ -14569,13 +14615,19 @@
       var positions = webGPUDirectAttribute(obj, "positions", count, 3);
       var joints = webGPUDirectAttribute(obj, "joints", count, 4);
       var weights = webGPUDirectAttribute(obj, "weights", count, 4);
-      if (!vertices || !positions || !joints || !weights || count <= 0 || paddedCount <= 0) return null;
+      // Same source defaults the CPU draw path used before skinning moved to
+      // the compute pass: normals fall back to +Z, tangents to (1,0,0,w=1).
+      var normals = webGPUDefaultAttributeData(obj, "normals", count, 3, [0, 0, 1]);
+      var tangents = webGPUDefaultAttributeData(obj, "tangents", count, 4, [1, 0, 0, 1]);
+      if (!vertices || !positions || !joints || !weights || !normals || !tangents || count <= 0 || paddedCount <= 0) return null;
       var cache = vertices._gosxWGPUElioSkinVertexData;
       if (
         cache &&
         cache.positions === positions &&
         cache.joints === joints &&
         cache.weights === weights &&
+        cache.normals === normals &&
+        cache.tangents === tangents &&
         cache.count === count &&
         cache.paddedCount === paddedCount &&
         cache.jointCount === jointCount
@@ -14583,7 +14635,7 @@
         return cache.data;
       }
 
-      var stride = 44;
+      var stride = 72;
       var bytes = new Uint8Array(paddedCount * stride);
       var view = new DataView(bytes.buffer);
       var maxJoint = Math.max(0, jointCount - 1);
@@ -14613,6 +14665,13 @@
           view.setUint32(off + 32, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 1], 0)))), true);
           view.setUint32(off + 36, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 2], 0)))), true);
           view.setUint32(off + 40, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 3], 0)))), true);
+          view.setFloat32(off + 44, sceneNumber(normals[p], 0), true);
+          view.setFloat32(off + 48, sceneNumber(normals[p + 1], 0), true);
+          view.setFloat32(off + 52, sceneNumber(normals[p + 2], 0), true);
+          view.setFloat32(off + 56, sceneNumber(tangents[q], 1), true);
+          view.setFloat32(off + 60, sceneNumber(tangents[q + 1], 0), true);
+          view.setFloat32(off + 64, sceneNumber(tangents[q + 2], 0), true);
+          view.setFloat32(off + 68, sceneNumber(tangents[q + 3], 1), true);
         } else {
           view.setFloat32(off + 12, 1, true);
         }
@@ -14622,6 +14681,8 @@
         positions: positions,
         joints: joints,
         weights: weights,
+        normals: normals,
+        tangents: tangents,
         count: count,
         paddedCount: paddedCount,
         jointCount: jointCount,
@@ -14632,7 +14693,7 @@
     }
 
     function webGPUElioEnsureOutputBuffer(record, paddedCount) {
-      var bytes = Math.max(4, paddedCount * 3 * 4);
+      var bytes = Math.max(4, paddedCount * 10 * 4);
       if (record.outputBuffer && wgpuTrackedBufferSize(record.outputBuffer) >= bytes) return record.outputBuffer;
       if (record.outputBuffer && typeof record.outputBuffer.destroy === "function") {
         pointsEntryGPUBuffers.delete(record.outputBuffer);
@@ -14673,13 +14734,29 @@
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         false
       );
+      // paddedCount places the normal/tangent regions inside the single
+      // output buffer; the kernel reads it from a small uniform.
+      var skinParams = record.skinParams;
+      if (!skinParams || skinParams[0] !== paddedCount) {
+        skinParams = new Uint32Array([paddedCount, 0, 0, 0]);
+        record.skinParams = skinParams;
+      }
+      var paramBuffer = wgpuCachedTrackedBuffer(
+        record,
+        "_gosxWGPUElioSkinParamBuffer",
+        skinParams,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        false
+      );
       var outputBuffer = webGPUElioEnsureOutputBuffer(record, paddedCount);
-      if (!boneBuffer || !vertexBuffer || !outputBuffer) return null;
+      if (!boneBuffer || !vertexBuffer || !paramBuffer || !outputBuffer) return null;
 
       if (
         !record.bindGroup ||
         record.boneBuffer !== boneBuffer ||
         record.vertexBuffer !== vertexBuffer ||
+        record.paramBuffer !== paramBuffer ||
+        record.paddedCount !== paddedCount ||
         record.outputBuffer !== outputBuffer
       ) {
         record.bindGroup = device.createBindGroup({
@@ -14687,17 +14764,20 @@
           entries: [
             { binding: 0, resource: { buffer: boneBuffer } },
             { binding: 1, resource: { buffer: vertexBuffer } },
-            { binding: 2, resource: { buffer: outputBuffer } },
+            { binding: 2, resource: { buffer: paramBuffer } },
+            { binding: 3, resource: { buffer: outputBuffer } },
           ],
         });
         record.boneBuffer = boneBuffer;
         record.vertexBuffer = vertexBuffer;
+        record.paramBuffer = paramBuffer;
         record.outputBuffer = outputBuffer;
       }
       record.count = count;
       record.paddedCount = paddedCount;
       record.workgroups = Math.ceil(paddedCount / 64);
       obj._gosxWGPUElioSkinOutputBuffer = outputBuffer;
+      obj._gosxWGPUElioSkinOutputPaddedCount = paddedCount;
       return record;
     }
 
@@ -14995,13 +15075,18 @@
     function webGPUBindElioSkinnedBuffers(pass, obj, count) {
       var outputBuffer = obj && obj._gosxWGPUElioSkinOutputBuffer;
       if (!outputBuffer) return false;
-      var normals = webGPUTransformVec3Attribute(obj, "normals", count, [0, 0, 1], "normals");
+      // One tracked buffer holds three contiguous paddedCount-sized regions:
+      // positions at byte 0, normals at paddedCount*12, tangents at
+      // paddedCount*24. Bind each region at its exact offset and the logical
+      // (unpadded) draw size; slot 2 stays on its own UV buffer.
+      var paddedCount = sceneNumber(obj && obj._gosxWGPUElioSkinOutputPaddedCount, 0);
+      if (!(paddedCount > 0)) return false;
       var uvs = webGPUDefaultAttributeData(obj, "uvs", count, 2, [0, 0]);
-      var tangents = webGPUTransformTangentAttribute(obj, count);
-      pass.setVertexBuffer(0, outputBuffer);
-      pass.setVertexBuffer(1, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedNormals", normals, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      var vec3Bytes = Math.max(4, count * 3 * 4);
+      pass.setVertexBuffer(0, outputBuffer, 0, vec3Bytes);
+      pass.setVertexBuffer(1, outputBuffer, paddedCount * 12, vec3Bytes);
       pass.setVertexBuffer(2, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
-      pass.setVertexBuffer(3, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedTangents", tangents, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      pass.setVertexBuffer(3, outputBuffer, paddedCount * 24, Math.max(4, count * 4 * 4));
       return true;
     }
 
