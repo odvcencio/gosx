@@ -1011,11 +1011,62 @@ function gosxConfigureSceneScript(script, role, src) {
     return normalizeScenePointsEntry(instanced, instanced.id, normalized);
   }
 
+  // Static morph baking. glTF morph targets ride on extracted vertices as
+  // { morphTargets, morphWeights } until shared model instantiation; here the
+  // default weights fold into the model-local position/normal/tangent
+  // attributes exactly once, so every backend renders the static morphed shape
+  // from its regular vertex buffers and nothing allocates during frames.
+  // The payload is consumed afterwards: animated weights are out of scope for
+  // this checkpoint.
+  function sceneBakeDefaultMorphWeights(object) {
+    if (!object || !object.vertices) {
+      return object;
+    }
+    const vertices = object.vertices;
+    if (!Array.isArray(vertices.morphTargets) || vertices.morphTargets.length === 0) {
+      return object;
+    }
+    const applier = sceneMorphWeightApplier();
+    if (!applier) {
+      return object;
+    }
+    const baked = applier(
+      vertices.positions,
+      vertices.normals,
+      vertices.tangents,
+      vertices.morphTargets,
+      vertices.morphWeights
+    );
+    if (!baked) {
+      return object;
+    }
+    const nextVertices = Object.assign({}, vertices, baked);
+    delete nextVertices.morphTargets;
+    delete nextVertices.morphWeights;
+    return Object.assign({}, object, { vertices: nextVertices });
+  }
+
+  // Resolve the pure weighted-delta helper. Inside bundles that concatenate
+  // gltf.ts it is a sibling binding; in the split scene3d feature chunk the
+  // lazy gltf loader publishes it on the window API instead. Assets without
+  // the loader have no morph data, so resolving to null is correct there.
+  function sceneMorphWeightApplier() {
+    if (typeof gltfApplyMorphWeights === "function") {
+      return gltfApplyMorphWeights;
+    }
+    if (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api
+      && typeof window.__gosx_scene3d_gltf_api.gltfApplyMorphWeights === "function") {
+      return window.__gosx_scene3d_gltf_api.gltfApplyMorphWeights;
+    }
+    return null;
+  }
+
   function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
-    const source = sceneApplyMaterialOverride(rawObject, model);
+    let source = sceneApplyMaterialOverride(rawObject, model);
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
       source.skin = skinInstances[source.skinIndex];
     }
+    source = sceneBakeDefaultMorphWeights(source);
     const normalized = normalizeSceneObject(source, index);
     if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
       return sceneModelMeshObject(normalized, model, prefix);

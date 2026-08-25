@@ -394,6 +394,186 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Morph targets (primitive.targets)
+  // ---------------------------------------------------------------------------
+
+  // Expand one flat attribute array so it lines up with the expanded per-corner
+  // vertex streams: indexed primitives fan each source vertex out through the
+  // index list, unindexed primitives get an owned copy. The copy also detaches
+  // the target from any view over the shared GLB binary buffer.
+  function gltfExpandAttributeIndexed(values, tupleSize, indices) {
+    if (!values) {
+      return null;
+    }
+    if (!indices) {
+      return new Float32Array(values);
+    }
+    var count = indices.length;
+    var out = new Float32Array(count * tupleSize);
+    for (var i = 0; i < count; i++) {
+      var idx = indices[i];
+      for (var c = 0; c < tupleSize; c++) {
+        out[i * tupleSize + c] = values[idx * tupleSize + c];
+      }
+    }
+    return out;
+  }
+
+  // Extract primitive.targets for POSITION, NORMAL, and TANGENT. Each present
+  // channel expands through the same index map as the base attributes, so
+  // target vertex v always matches base vertex v after expansion. Targets are
+  // read once at load time; nothing here ever runs per frame.
+  function gltfExtractMorphTargets(gltf, primitive, binaryBuffer, indices) {
+    var targets = primitive.targets;
+    if (!targets || !targets.length) {
+      return null;
+    }
+    var out = [];
+    for (var t = 0; t < targets.length; t++) {
+      var source = targets[t];
+      if (!source || typeof source !== "object") {
+        continue;
+      }
+      var entry = {};
+      var hasChannel = false;
+      if (source.POSITION != null) {
+        entry.positions = gltfExpandAttributeIndexed(
+          gltfReadAccessor(gltf, source.POSITION, binaryBuffer), 3, indices);
+        hasChannel = true;
+      }
+      if (source.NORMAL != null) {
+        entry.normals = gltfExpandAttributeIndexed(
+          gltfReadAccessor(gltf, source.NORMAL, binaryBuffer), 3, indices);
+        hasChannel = true;
+      }
+      if (source.TANGENT != null) {
+        entry.tangents = gltfExpandAttributeIndexed(
+          gltfReadAccessor(gltf, source.TANGENT, binaryBuffer), 4, indices);
+        hasChannel = true;
+      }
+      if (hasChannel) {
+        out.push(entry);
+      }
+    }
+    return out.length ? out : null;
+  }
+
+  // Apply the glTF additive weighted-delta rule once:
+  //   result = base + sum_i weights[i] * target[i]
+  // Runs during shared model instantiation, once per instance, never per
+  // frame; the returned arrays are fresh and owned by that instance. Tangent
+  // w is preserved because deltas only displace directions.
+  function gltfApplyMorphWeights(positions, normals, tangents, targets, weights) {
+    if (!targets || !targets.length || !positions) {
+      return null;
+    }
+    var posLimit = positions.length;
+    var nrmLimit = normals ? Math.min(posLimit, normals.length) : 0;
+    var tanLimit = tangents ? tangents.length : 0;
+    var outPos = new Float32Array(positions);
+    var outNrm = normals ? new Float32Array(normals) : null;
+    var outTan = tangents ? new Float32Array(tangents) : null;
+    for (var t = 0; t < targets.length; t++) {
+      var weight = weights && weights[t] != null ? Number(weights[t]) : 0;
+      if (!isFinite(weight) || weight === 0) {
+        continue;
+      }
+      var target = targets[t];
+      if (target.positions) {
+        var limit = Math.min(posLimit, target.positions.length);
+        for (var pi = 0; pi < limit; pi++) {
+          outPos[pi] += weight * target.positions[pi];
+        }
+      }
+      if (target.normals && outNrm) {
+        var nlimit = Math.min(nrmLimit, target.normals.length);
+        for (var ni = 0; ni < nlimit; ni++) {
+          outNrm[ni] += weight * target.normals[ni];
+        }
+      }
+      if (target.tangents && outTan) {
+        var tlimit = Math.min(tanLimit - (tanLimit % 4), target.tangents.length);
+        for (var ti = 0; ti < tlimit; ti += 4) {
+          outTan[ti]     += weight * target.tangents[ti];
+          outTan[ti + 1] += weight * target.tangents[ti + 1];
+          outTan[ti + 2] += weight * target.tangents[ti + 2];
+          // outTan[ti + 3] keeps its base sign value.
+        }
+      }
+    }
+    return { positions: outPos, normals: outNrm, tangents: outTan };
+  }
+
+  // Transform morph-target deltas from primitive-local space into object space.
+  // Base attributes move through the full world transform below, so each delta
+  // rotates by the linear part of the same transform (normals via the inverse-
+  // transpose normal matrix). Skinned objects keep bind-pose local space, so
+  // their deltas pass through unchanged in fresh buffers.
+  function gltfTransformMorphTargets(targets, worldTransform, normalMat, transform) {
+    var out = [];
+    for (var t = 0; t < targets.length; t++) {
+      var source = targets[t];
+      var entry = {};
+      if (source.positions) {
+        entry.positions = transform
+          ? gltfRotateVec3Array(source.positions, worldTransform)
+          : new Float32Array(source.positions);
+      }
+      if (source.normals) {
+        entry.normals = transform
+          ? gltfRotateVec3ArrayByNormalMatrix(source.normals, normalMat)
+          : new Float32Array(source.normals);
+      }
+      if (source.tangents) {
+        entry.tangents = transform
+          ? gltfRotateVec4ArrayXYZ(source.tangents, worldTransform)
+          : new Float32Array(source.tangents);
+      }
+      out.push(entry);
+    }
+    return out;
+  }
+
+  // Rotate a flat vec3 array by the upper-left 3x3 of a 4x4 matrix.
+  function gltfRotateVec3Array(values, m) {
+    var out = new Float32Array(values.length);
+    for (var i = 0; i + 2 < values.length; i += 3) {
+      var rotated = gltfTransformDirection(m, values[i], values[i + 1], values[i + 2]);
+      out[i] = rotated.x;
+      out[i + 1] = rotated.y;
+      out[i + 2] = rotated.z;
+    }
+    return out;
+  }
+
+  // Rotate a flat vec3 array by a 3x3 normal matrix without renormalizing:
+  // deltas must keep their authored magnitude.
+  function gltfRotateVec3ArrayByNormalMatrix(values, nm) {
+    var out = new Float32Array(values.length);
+    for (var i = 0; i + 2 < values.length; i += 3) {
+      var x = values[i], y = values[i + 1], z = values[i + 2];
+      out[i]     = nm[0] * x + nm[3] * y + nm[6] * z;
+      out[i + 1] = nm[1] * x + nm[4] * y + nm[7] * z;
+      out[i + 2] = nm[2] * x + nm[5] * y + nm[8] * z;
+    }
+    return out;
+  }
+
+  // Rotate the xyz of a flat vec4 array by a 4x4 matrix's upper-left 3x3,
+  // carrying every w component through untouched.
+  function gltfRotateVec4ArrayXYZ(values, m) {
+    var out = new Float32Array(values.length);
+    for (var i = 0; i + 3 < values.length; i += 4) {
+      var rotated = gltfTransformDirection(m, values[i], values[i + 1], values[i + 2]);
+      out[i] = rotated.x;
+      out[i + 1] = rotated.y;
+      out[i + 2] = rotated.z;
+      out[i + 3] = values[i + 3];
+    }
+    return out;
+  }
+
   function gltfReadPrimitiveAttribute(gltf, primitive, names, binaryBuffer) {
     var attrs = primitive && primitive.attributes ? primitive.attributes : {};
     for (var i = 0; i < names.length; i++) {
@@ -688,6 +868,11 @@
       }
     }
 
+    // Morph targets expand through the same index map as the base attributes,
+    // so target vertex v matches the expanded base vertex v. Kept raw here:
+    // default weights fold in later, at shared model instantiation.
+    var morphTargets = gltfExtractMorphTargets(gltf, primitive, binaryBuffer, indices);
+
     // Bake KHR_texture_transform into the UVs before tangents are computed, so
     // the tangent basis matches the UVs the shader samples with. Copy first: a
     // tightly packed accessor hands back a view over the shared GLB buffer, and
@@ -706,6 +891,7 @@
       tangents: tangents,
       joints: joints,
       weights: weights,
+      morphTargets: morphTargets,
       count: positions.length / 3,
     };
   }
@@ -1178,6 +1364,32 @@
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
+      // Default morph weights: a node instantiating this mesh overrides the
+      // mesh's own defaults (glTF 2.0); entries beyond the authored list stay
+      // at zero. The weighted deltas themselves bake in later, at shared
+      // model instantiation.
+      var morphTargets = geometry.morphTargets || null;
+      var morphWeights = null;
+      if (morphTargets) {
+        morphWeights = new Float32Array(morphTargets.length);
+        var authoredWeights = node && Array.isArray(node.weights)
+          ? node.weights
+          : mesh.weights;
+        if (Array.isArray(authoredWeights)) {
+          var weightLimit = Math.min(morphWeights.length, authoredWeights.length);
+          for (var mw = 0; mw < weightLimit; mw++) {
+            var authored = Number(authoredWeights[mw]);
+            morphWeights[mw] = isFinite(authored) ? authored : 0;
+          }
+        }
+        // Target deltas live in primitive-local space while the object's base
+        // attributes are transformed below. Rotate each delta by the same
+        // linear part so weighted sums land on top of the transformed base.
+        // Skinned objects keep bind-pose local space, matching their bases.
+        morphTargets = gltfTransformMorphTargets(
+          morphTargets, worldTransform, normalMat, !primitiveSkinned);
+      }
+
       var objectPositions;
       var objectNormals;
       var objectTangents;
@@ -1244,6 +1456,10 @@
         tangents: objectTangents,
         count: vertCount,
       };
+      if (morphTargets) {
+        vertices.morphTargets = morphTargets;
+        vertices.morphWeights = morphWeights;
+      }
 
       var object = {
         id: objectID,
@@ -2026,6 +2242,7 @@
     window.__gosx_scene3d_gltf_api = {
       sceneLoadGLTFModel: sceneLoadGLTFModel,
       gltfSceneToModelAsset: gltfSceneToModelAsset,
+      gltfApplyMorphWeights: gltfApplyMorphWeights,
     };
     window.__gosx_scene3d_gltf_loaded = true;
   }
