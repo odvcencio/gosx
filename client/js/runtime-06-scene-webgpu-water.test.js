@@ -73,10 +73,15 @@ test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buf
   assert.doesNotMatch(drawPBR, /uvBuffer\s*=\s*wgpuEnsureBufferData/);
   assert.doesNotMatch(drawPBR, /tangentBuffer\s*=\s*wgpuEnsureBufferData/);
 
-  assert.match(skinnedBind, /pass\.setVertexBuffer\(0,\s*outputBuffer\)/);
-  assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedNormals"/);
+  // One tracked output buffer backs slots 0/1/3: positions at offset 0,
+  // normals at paddedCount * 12, tangents at paddedCount * 24, each bound
+  // with its logical draw size; only slot 2 keeps a cached UV buffer.
+  assert.match(skinnedBind, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
+  assert.match(skinnedBind, /pass\.setVertexBuffer\(1,\s*outputBuffer,\s*paddedCount \* 12,\s*vec3Bytes\)/);
   assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedUVs"/);
-  assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedTangents"/);
+  assert.match(skinnedBind, /pass\.setVertexBuffer\(3,\s*outputBuffer,\s*paddedCount \* 24,\s*Math\.max\(4,\s*count \* 4 \* 4\)\)/);
+  assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedNormals"/);
+  assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedTangents"/);
   assert.doesNotMatch(skinnedBind, /wgpuEnsureBufferData/);
 });
 
@@ -259,7 +264,7 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
   assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
   assert.match(source, /webGPUBindElioSkinnedBuffers\(pass, obj, count\)/);
-  assert.match(source, /pass\.setVertexBuffer\(0, outputBuffer\)/);
+  assert.match(source, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-dispatches/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-kernel/);
 });
