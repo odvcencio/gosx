@@ -5612,17 +5612,6 @@
     if (!program) return null;
     var attrs = {};
     var layoutAttrs = Array.isArray(layout.attributes) ? layout.attributes : [];
-    for (var i = 0; i < layoutAttrs.length; i++) {
-      var attr = layoutAttrs[i] || {};
-      if (typeof attr.name !== "string") continue;
-      var glName = attr.name;
-      if (skinned && attr.name === "position") glName = "a_position";
-      else if (skinned && attr.name === "normal" && skinInfo.hasNormal) glName = "a_normal";
-      attrs[attr.name] = {
-        loc: gl.getAttribLocation(program, glName),
-        size: sceneSelenaAttributeComponents(attr.type),
-      };
-    }
     var result = {
       program: program,
       vertexShader: vertexShader,
@@ -5636,25 +5625,36 @@
       customAttributes: [],
     };
     var seenCustomLocations = {};
-    for (var c = 0; c < layoutAttrs.length; c++) {
-      var customAttr = layoutAttrs[c] || {};
-      var customName = customAttr.name;
+    for (var i = 0; i < layoutAttrs.length; i++) {
+      var attr = layoutAttrs[i] || {};
+      var attrName = attr.name;
       // Reserved built-in layout entries are part of the fixed Selena vertex
       // layout; their binding is owned by the builtin path, so they are
-      // skipped from the custom-stream record.
-      if (SCENE_WEBGL_RESERVED_ATTRIBUTES.indexOf(customName) >= 0) continue;
-      var customSize = sceneSelenaAttributeComponents(customAttr.type);
-      var customLoc = gl.getAttribLocation(program, String(customName));
-      // Fail closed unless the descriptor has a known tuple width and the
-      // vertex shader exposes it at a unique compiled location; anything else
-      // discards the program so the object takes the journaled builtin-PBR
-      // fallback.
-      if (customSize < 1 || customLoc < 0 || seenCustomLocations[customLoc]) {
+      // excluded from the custom-stream record.
+      var isReserved = SCENE_WEBGL_RESERVED_ATTRIBUTES.indexOf(attrName) >= 0;
+      if (typeof attrName !== "string") {
+        if (!isReserved) {
+          sceneSelenaDiscardProgram(gl, result);
+          return null;
+        }
+        continue;
+      }
+      var glName = attrName;
+      if (skinned && attrName === "position") glName = "a_position";
+      else if (skinned && attrName === "normal" && skinInfo.hasNormal) glName = "a_normal";
+      var size = sceneSelenaAttributeComponents(attr.type);
+      var loc = gl.getAttribLocation(program, glName);
+      attrs[attrName] = { loc: loc, size: size };
+      if (!isReserved && (size < 1 || loc < 0 || seenCustomLocations[loc])) {
+        // Fail closed unless the descriptor has a known tuple width and the
+        // vertex shader exposes it at a unique compiled location; anything else
+        // discards the program so the object takes the journaled builtin-PBR
+        // fallback.
         sceneSelenaDiscardProgram(gl, result);
         return null;
       }
-      seenCustomLocations[customLoc] = true;
-      result.customAttributes.push(customName, customLoc, customSize);
+      seenCustomLocations[loc] = true;
+      if (!isReserved) result.customAttributes.push(attrName, loc, size);
     }
     if (skinned) {
       result.skinUniforms = {
