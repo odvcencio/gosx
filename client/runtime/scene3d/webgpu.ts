@@ -217,12 +217,12 @@
   // One dispatch writes three contiguous regions of a single tracked output
   // buffer, each paddedCount elements wide: positions (vec3) first, then
   // normals (vec3), then tangents (vec4). Each invocation blends the four
-  // bone influences into ONE weighted mat4x4 (columns c0..c3): its translation
+  // bone influences into ONE weighted mat4x4 blend: its translation
   // column skins the position while the linear xyz columns skin the packed
   // source normal and tangent, safe-normalized so degenerate vectors pass
   // through as zero instead of NaN. Tangent w is carried through untouched so
-  // bitangent handedness survives skinning. SkinParams.paddedCount places the
-  // normal/tangent region bases.
+  // bitangent handedness survives skinning. paddedCount comes from
+  // arrayLength(&verts) to place the normal/tangent region bases.
   var SCENE_ELIO_SKIN_LBS_SOURCE = [
     "struct SkinVertex {",
     "  px : f32,",
@@ -245,45 +245,35 @@
     "  tw : f32,",
     "};",
     "",
-    "struct SkinParams {",
-    "  paddedCount : u32,",
-    "  _pad0 : u32,",
-    "  _pad1 : u32,",
-    "  _pad2 : u32,",
-    "};",
-    "",
     "@group(0) @binding(0) var<storage, read> bones : array<mat4x4<f32>>;",
     "@group(0) @binding(1) var<storage, read> verts : array<SkinVertex>;",
-    "@group(0) @binding(2) var<uniform> params : SkinParams;",
-    "@group(0) @binding(3) var<storage, read_write> out : array<f32>;",
+    "@group(0) @binding(2) var<storage, read_write> out : array<f32>;",
     "",
     "@compute @workgroup_size(64)",
     "fn skin(@builtin(global_invocation_id) gid : vec3<u32>) {",
     "  let i = gid.x;",
+    "  let paddedCount = arrayLength(&verts);",
     "  let v = verts[i];",
-    "  let c0 = (((bones[v.b0][0u] * v.w0) + (bones[v.b1][0u] * v.w1)) + ((bones[v.b2][0u] * v.w2) + (bones[v.b3][0u] * v.w3)));",
-    "  let c1 = (((bones[v.b0][1u] * v.w0) + (bones[v.b1][1u] * v.w1)) + ((bones[v.b2][1u] * v.w2) + (bones[v.b3][1u] * v.w3)));",
-    "  let c2 = (((bones[v.b0][2u] * v.w0) + (bones[v.b1][2u] * v.w1)) + ((bones[v.b2][2u] * v.w2) + (bones[v.b3][2u] * v.w3)));",
-    "  let c3 = (((bones[v.b0][3u] * v.w0) + (bones[v.b1][3u] * v.w1)) + ((bones[v.b2][3u] * v.w2) + (bones[v.b3][3u] * v.w3)));",
-    "  let skinned = ((((c0 * v.px) + (c1 * v.py)) + (c2 * v.pz)) + c3);",
-    "  let rawNormal = (((c0 * v.nx) + (c1 * v.ny)) + (c2 * v.nz));",
+    "  let m = (bones[v.b0] * v.w0 + bones[v.b1] * v.w1) + (bones[v.b2] * v.w2 + bones[v.b3] * v.w3);",
+    "  let skinned = (m * vec4f(v.px, v.py, v.pz, 1.0)).xyz;",
+    "  let rawNormal = (m * vec4f(v.nx, v.ny, v.nz, 0.0)).xyz;",
+    "  let rawTangent = (m * vec4f(v.tx, v.ty, v.tz, 0.0)).xyz;",
     "  let nLen = length(rawNormal);",
-    "  let skinnedNormal = select(rawNormal, rawNormal / nLen, nLen > 0.000001);",
-    "  let rawTangent = (((c0 * v.tx) + (c1 * v.ty)) + (c2 * v.tz));",
+    "  let sn = select(rawNormal, rawNormal / nLen, nLen > 0.000001);",
     "  let tLen = length(rawTangent);",
-    "  let skinnedTangent = select(rawTangent, rawTangent / tLen, tLen > 0.000001);",
+    "  let st = select(rawTangent, rawTangent / tLen, tLen > 0.000001);",
     "  let posBase = i * 3u;",
     "  out[posBase] = skinned.x;",
     "  out[posBase + 1u] = skinned.y;",
     "  out[posBase + 2u] = skinned.z;",
-    "  let normBase = (params.paddedCount * 3u) + posBase;",
-    "  out[normBase] = skinnedNormal.x;",
-    "  out[normBase + 1u] = skinnedNormal.y;",
-    "  out[normBase + 2u] = skinnedNormal.z;",
-    "  let tanBase = (params.paddedCount * 6u) + (i * 4u);",
-    "  out[tanBase] = skinnedTangent.x;",
-    "  out[tanBase + 1u] = skinnedTangent.y;",
-    "  out[tanBase + 2u] = skinnedTangent.z;",
+    "  let normBase = (paddedCount * 3u) + posBase;",
+    "  out[normBase] = sn.x;",
+    "  out[normBase + 1u] = sn.y;",
+    "  out[normBase + 2u] = sn.z;",
+    "  let tanBase = (paddedCount * 6u) + (i * 4u);",
+    "  out[tanBase] = st.x;",
+    "  out[tanBase + 1u] = st.y;",
+    "  out[tanBase + 2u] = st.z;",
     "  out[tanBase + 3u] = v.tw;",
     "}",
   ].join("\n");
@@ -7403,8 +7393,7 @@
           entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
-            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
           ],
         });
         computedMorphBindGroupLayout = device.createBindGroupLayout({
@@ -14734,28 +14723,15 @@
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         false
       );
-      // paddedCount places the normal/tangent regions inside the single
-      // output buffer; the kernel reads it from a small uniform.
-      var skinParams = record.skinParams;
-      if (!skinParams || skinParams[0] !== paddedCount) {
-        skinParams = new Uint32Array([paddedCount, 0, 0, 0]);
-        record.skinParams = skinParams;
-      }
-      var paramBuffer = wgpuCachedTrackedBuffer(
-        record,
-        "_gosxWGPUElioSkinParamBuffer",
-        skinParams,
-        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        false
-      );
       var outputBuffer = webGPUElioEnsureOutputBuffer(record, paddedCount);
-      if (!boneBuffer || !vertexBuffer || !paramBuffer || !outputBuffer) return null;
+      // paddedCount places the normal/tangent regions inside the single
+      // output buffer; the kernel derives it from arrayLength(&verts).
+      if (!boneBuffer || !vertexBuffer || !outputBuffer) return null;
 
       if (
         !record.bindGroup ||
         record.boneBuffer !== boneBuffer ||
         record.vertexBuffer !== vertexBuffer ||
-        record.paramBuffer !== paramBuffer ||
         record.paddedCount !== paddedCount ||
         record.outputBuffer !== outputBuffer
       ) {
@@ -14764,13 +14740,11 @@
           entries: [
             { binding: 0, resource: { buffer: boneBuffer } },
             { binding: 1, resource: { buffer: vertexBuffer } },
-            { binding: 2, resource: { buffer: paramBuffer } },
-            { binding: 3, resource: { buffer: outputBuffer } },
+            { binding: 2, resource: { buffer: outputBuffer } },
           ],
         });
         record.boneBuffer = boneBuffer;
         record.vertexBuffer = vertexBuffer;
-        record.paramBuffer = paramBuffer;
         record.outputBuffer = outputBuffer;
       }
       record.count = count;

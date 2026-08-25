@@ -2227,13 +2227,14 @@ test("16a Selena skinned LBS packs per-vertex normals/tangents into the gosx-eli
     assert.equal(lbsDispatches[0].dispatch.workgroupCountX, 1, caseLabel + ": paddedCount 64 fits in one 64-thread workgroup");
 
     // (2) The dispatch bind group hands binding 1 the packed CPU→GPU input
-    // and binding 3 the skinned output storage buffer.
+    // and binding 2 the skinned output storage buffer (the padded-count
+    // uniform was removed, shifting the output storage down to slot 2).
     let packedInputBuffer = null;
     let outputBuffer = null;
     for (const record of lbsDispatches[0].computePass.bindGroups) {
       const entries = record.group.desc.entries;
       const inputEntry = entries.find((entry) => entry.binding === 1);
-      const outputEntry = entries.find((entry) => entry.binding === 3);
+      const outputEntry = entries.find((entry) => entry.binding === 2);
       if (inputEntry && outputEntry) {
         packedInputBuffer = inputEntry.resource.buffer;
         outputBuffer = outputEntry.resource.buffer;
@@ -2241,7 +2242,7 @@ test("16a Selena skinned LBS packs per-vertex normals/tangents into the gosx-eli
       }
     }
     assert.ok(packedInputBuffer, caseLabel + ": LBS bind group exposes the packed input at binding 1");
-    assert.ok(outputBuffer, caseLabel + ": LBS bind group exposes the skinned output at binding 3");
+    assert.ok(outputBuffer, caseLabel + ": LBS bind group exposes the skinned output at binding 2");
 
     // (3) Decode the queue.writeBuffer payload copied into THAT input buffer:
     // stride 72 B/vertex, normals at byte offsets 44/48/52, tangents at
