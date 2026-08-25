@@ -3962,6 +3962,7 @@ function makeFakeGPUDevice(options) {
       kind,
       descriptor,
       draws: [],
+      dispatches: [],
       drawIndirects: [],
       drawIndexeds: [],
       indexBuffers: [],
@@ -4025,7 +4026,20 @@ function makeFakeGPUDevice(options) {
           pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
         });
       },
-      dispatchWorkgroups() {},
+      // dispatchWorkgroups: mirrors draw() recording for the compute path.
+      // Records the workgroup counts + the currently-bound pipeline so tests
+      // can assert WHICH compute path ran without GPU execution.
+      dispatchWorkgroups(workgroupCountX, workgroupCountY, workgroupCountZ) {
+        pass.dispatches.push({
+          workgroupCountX,
+          workgroupCountY: workgroupCountY == null ? 1 : workgroupCountY,
+          workgroupCountZ: workgroupCountZ == null ? 1 : workgroupCountZ,
+          // The pipeline bound when the dispatch was issued — lets tests
+          // assert WHICH path dispatched without coupling to setPipeline
+          // call ordering.
+          pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
+        });
+      },
       // executeBundles records a render-bundle replay. Tests assert on
       // executedBundles to prove the renderer replayed rather than re-encoded.
       executeBundles(bundles) {
