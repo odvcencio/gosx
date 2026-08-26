@@ -395,95 +395,38 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Morph targets (primitive.targets)
+  // Static morph-target folding (primitive.targets, load time only)
   // ---------------------------------------------------------------------------
 
-  // Expand one flat attribute array so it lines up with the expanded per-corner
-  // vertex streams: indexed primitives fan each source vertex out through the
-  // index list, unindexed primitives get an owned copy. The copy also detaches
-  // the target from any view over the shared GLB binary buffer.
-  function gltfExpandAttributeIndexed(values, tupleSize, indices) {
-    if (!values) {
-      return null;
-    }
-    if (!indices) {
-      return new Float32Array(values);
-    }
-    var count = indices.length;
-    var out = new Float32Array(count * tupleSize);
-    for (var i = 0; i < count; i++) {
-      var idx = indices[i];
-      for (var c = 0; c < tupleSize; c++) {
-        out[i * tupleSize + c] = values[idx * tupleSize + c];
-      }
-    }
-    return out;
-  }
-
-  // Extract primitive.targets for POSITION, NORMAL, and TANGENT. Each target
-  // becomes a compact fixed tuple [positionDeltas, normalDeltas, tangentDeltas]
-  // written positionally by one loop over the fixed channel names; absent
-  // channels stay null. The layout is positional, consumed only by
-  // gltfApplyMorphWeights, and never escapes extraction. Each present channel
-  // expands through the same index map as the base attributes, so target
-  // vertex v always matches base vertex v after expansion. A target enters
-  // the list whenever it names at least one channel, even if a malformed
-  // accessor reads back empty, so authored weight slots stay aligned with
-  // their targets. Targets are read once at load time; nothing here ever runs
-  // per frame.
-  var MORPH_CHANNEL_NAMES = ["POSITION", "NORMAL", "TANGENT"];
-  function gltfExtractMorphTargets(gltf, primitive, binaryBuffer, indices) {
-    var targets = primitive.targets;
-    if (!targets || !targets.length) {
-      return null;
-    }
-    var out = [];
-    for (var t = 0; t < targets.length; t++) {
-      var source = targets[t];
-      if (!source || typeof source !== "object") {
-        continue;
-      }
-      var tuple = [null, null, null];
-      var present = false;
-      for (var s = 0; s < 3; s++) {
-        var attributeName = MORPH_CHANNEL_NAMES[s];
-        if (source[attributeName] == null) {
-          continue;
-        }
-        present = true;
-        tuple[s] = gltfExpandAttributeIndexed(
-          gltfReadAccessor(gltf, source[attributeName], binaryBuffer),
-          3,
-          indices);
-      }
-      if (present) {
-        out.push(tuple);
-      }
-    }
-    return out.length ? out : null;
-  }
-
-  // Apply the glTF additive weighted-delta rule once:
+  // Fold primitive.targets POSITION/NORMAL/TANGENT deltas into freshly owned
+  // copies of the base streams using the authored node-over-mesh weights:
   //   result = base + sum_i weights[i] * target[i]
-  // Runs during extraction, once per node instantiation, never per frame, and
-  // always BEFORE any node/world transform or skinning: the Khronos glTF 2.0
-  // invariant requires POSITION/NORMAL/TANGENT deltas to fold into the
-  // primitive-local base attributes first. Returns a fixed triple
+  // Runs once per node instantiation during primitive extraction, never per
+  // frame, and always BEFORE any node/world transform or skinning: the Khronos
+  // glTF 2.0 invariant requires POSITION/NORMAL/TANGENT deltas to land in
+  // primitive-local space first. Because extraction folds before UV baking and
+  // fallback-tangent generation, computed tangents describe the morphed
+  // surface. Each present channel reads straight from its target accessor and
+  // walks the SAME index map as the base attributes, so delta vertex
+  // indices[v] feeds corner v; unindexed primitives pair vertex v directly.
+  // Corners whose delta index falls outside a short accessor are left
+  // untouched, and target channels naming missing accessors are skipped, so
+  // malformed assets degrade safely instead of poisoning the streams. Tangent
+  // w survives because deltas displace xyz only. Returns fixed triples
   // [positions, normals, tangents] (null where that base stream was absent);
-  // the arrays are fresh and owned by the caller. Tangent w is preserved
-  // because deltas only displace directions. One output tuple plus fixed
-  // strides (POSITION/NORMAL are interleaved at 3, TANGENT at 4) drive a
-  // single nested channel loop per target; the vertex clamp keeps malformed
-  // delta lengths from running past either stream.
-  var MORPH_TARGET_STRIDES = [3, 3, 4];
-  function gltfApplyMorphWeights(positions, normals, tangents, targets, weights) {
+  // the arrays are fresh and owned by the caller. Weights are validated one by
+  // one: non-array lists read as all-zero, and every entry must be a finite
+  // non-zero number to apply.
+  var GLTF_MORPH_CHANNELS = ["POSITION", "NORMAL", "TANGENT"];
+  function gltfFoldMorphTargets(gltf, primitive, binaryBuffer, indices, positions, normals, tangents, weights) {
+    var targets = primitive && primitive.targets;
     if (!targets || !targets.length || !positions) {
       return null;
     }
-    var out = [
-      new Float32Array(positions),
-      normals ? new Float32Array(normals) : null,
-      tangents ? new Float32Array(tangents) : null,
+    var streams = [
+      { values: new Float32Array(positions), stride: 3 },
+      { values: normals ? new Float32Array(normals) : null, stride: 3 },
+      { values: tangents ? new Float32Array(tangents) : null, stride: 4 },
     ];
     for (var t = 0; t < targets.length; t++) {
       var weight = Array.isArray(weights) && weights[t] != null
@@ -492,25 +435,39 @@
       if (!isFinite(weight) || weight === 0) {
         continue;
       }
-      var target = targets[t];
+      var source = targets[t];
+      if (!source || typeof source !== "object") {
+        continue;
+      }
       for (var s = 0; s < 3; s++) {
-        var dst = out[s];
-        var deltas = target[s];
-        if (!dst || !deltas) {
+        var stream = streams[s];
+        var attributeName = GLTF_MORPH_CHANNELS[s];
+        if (!stream.values || source[attributeName] == null ||
+            !gltf.accessors[source[attributeName]]) {
           continue;
         }
-        var stride = MORPH_TARGET_STRIDES[s];
-        var vertexLimit = Math.min(
-          Math.floor(dst.length / stride),
-          Math.floor(deltas.length / 3));
-        for (var v = 0; v < vertexLimit; v++) {
-          for (var c = 0; c < 3; c++) {
-            dst[v * stride + c] += weight * deltas[v * 3 + c];
+        var deltas = gltfReadAccessor(gltf, source[attributeName], binaryBuffer);
+        if (!deltas || !deltas.length) {
+          continue;
+        }
+        var srcVertices = Math.floor(deltas.length / 3);
+        var dstVertices = Math.floor(stream.values.length / stream.stride);
+        for (var v = 0; v < dstVertices; v++) {
+          var d = indices ? indices[v] : v;
+          if (!(d >= 0 && d < srcVertices)) {
+            continue;
           }
+          stream.values[v * stream.stride]     += weight * deltas[d * 3];
+          stream.values[v * stream.stride + 1] += weight * deltas[d * 3 + 1];
+          stream.values[v * stream.stride + 2] += weight * deltas[d * 3 + 2];
         }
       }
     }
-    return out;
+    return [
+      streams[0].values,
+      streams[1].values,
+      streams[2].values,
+    ];
   }
 
   function gltfReadPrimitiveAttribute(gltf, primitive, names, binaryBuffer) {
@@ -739,7 +696,7 @@
     return values;
   }
 
-  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform) {
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights) {
     var positions = gltfReadAccessor(gltf, primitive.attributes.POSITION, binaryBuffer);
 
     var normals = primitive.attributes.NORMAL != null
@@ -807,11 +764,20 @@
       }
     }
 
-    // Morph targets expand through the same index map as the base attributes,
-    // so target vertex v matches the expanded base vertex v. Kept raw here:
-    // default weights fold in during gltfExtractMeshNode, before any
-    // node/world transform or skinning.
-    var morphTargets = gltfExtractMorphTargets(gltf, primitive, binaryBuffer, indices);
+    // Fold static morph-target deltas right here, once at load time: every
+    // stream above is already a fresh owned copy or gets copied inside the
+    // fold, deltas land in PRIMITIVE-LOCAL space before any node/world
+    // transform or skinning (Khronos glTF 2.0), and folding before UV baking
+    // and fallback-tangent generation keeps computed tangents on the morphed
+    // surface.
+    var morphedStreams = gltfFoldMorphTargets(
+      gltf, primitive, binaryBuffer, indices,
+      positions, normals, tangentsRaw, morphWeights);
+    if (morphedStreams) {
+      positions = morphedStreams[0];
+      normals = morphedStreams[1] || normals;
+      tangentsRaw = morphedStreams[2] || tangentsRaw;
+    }
 
     // Bake KHR_texture_transform into the UVs before tangents are computed, so
     // the tangent basis matches the UVs the shader samples with. Copy first: a
@@ -831,7 +797,6 @@
       tangents: tangents,
       joints: joints,
       weights: weights,
-      morphTargets: morphTargets,
       count: positions.length / 3,
     };
   }
@@ -1300,33 +1265,19 @@
         continue;
       }
 
-      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform);
+      // Resolve authored morph weights BEFORE primitive extraction: a node
+      // instantiating this mesh overrides the mesh's own defaults wholesale
+      // (glTF 2.0); entries beyond the authored list stay at zero and missing
+      // entries read as zero. The fold itself happens inside extraction, on
+      // primitive-local streams, before any transform or skinning. The weight
+      // list is consumed there immediately — no morph metadata ever rides on
+      // the extracted object.
+      var authoredWeights = node && Array.isArray(node.weights)
+        ? node.weights
+        : mesh.weights;
+      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights);
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
-
-      // Static morph targets: default node/mesh weights fold into the
-      // PRIMITIVE-LOCAL base attributes right here, before any node/world
-      // transform and before later skinning — the Khronos glTF 2.0 ordering
-      // rule for POSITION/NORMAL/TANGENT deltas. A node instantiating this
-      // mesh overrides the mesh's own defaults (glTF 2.0); entries beyond
-      // the authored list stay at zero and missing entries read as zero.
-      // The payload is consumed immediately: no morph metadata rides on the
-      // extracted object. gltfApplyMorphWeights validates every weight, so
-      // the authored list is passed through without a temporary copy.
-      var morphTargets = geometry.morphTargets;
-      if (morphTargets) {
-        var authoredWeights = node && Array.isArray(node.weights)
-          ? node.weights
-          : mesh.weights;
-        var morphed = gltfApplyMorphWeights(
-          geometry.positions, geometry.normals, geometry.tangents,
-          morphTargets, authoredWeights);
-        if (morphed) {
-          geometry.positions = morphed[0];
-          geometry.normals = morphed[1] || geometry.normals;
-          geometry.tangents = morphed[2] || geometry.tangents;
-        }
-      }
 
       var objectPositions;
       var objectNormals;
