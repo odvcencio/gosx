@@ -319,10 +319,11 @@ test("multiple targets accumulate additively with weighted deltas", () => {
         new Float32Array([0, 0, 0.25, 0, 0, 0.25, 0, 0, 0.25]),
         new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]),
       ],
-      {
-        positions: new Float32Array([0, 0.25, 0, 0, 0.25, 0, 0, 0.25, 0]),
-        normals: new Float32Array([0.5, 0, 0, 0.5, 0, 0, 0.5, 0, 0]),
-      },
+      [
+        new Float32Array([0, 0.25, 0, 0, 0.25, 0, 0, 0.25, 0]),
+        new Float32Array([0.5, 0, 0, 0.5, 0, 0, 0.5, 0, 0]),
+        null,
+      ],
     ];
     var weights = [0.5, 0.25];
     var baked = gltfApplyMorphWeights(positions, normals, tangents, targets, weights);
@@ -361,9 +362,9 @@ test("zero-weight targets are skipped entirely", () => {
   const { context } = createLoaderContext();
   const result = plain(call(context, `
     var positions = new Float32Array([1, 2, 3]);
-    var targets = [{ positions: new Float32Array([10, -10, 4]) }, { positions: new Float32Array([100, 100, 100]) }];
+    var targets = [[new Float32Array([10, -10, 4]), null, null], [new Float32Array([100, 100, 100]), null, null]];
     var baked = gltfApplyMorphWeights(positions, null, null, targets, [0, 1]);
-    ({ out: Array.from(baked.positions), hasNormals: Boolean(baked.normals), hasTangents: Boolean(baked.tangents) });
+    ({ out: Array.from(baked[0]), hasNormals: Boolean(baked[1]), hasTangents: Boolean(baked[2]) });
   `));
   assert.deepEqual(result.out, [101, 102, 103]);
   assert.equal(result.hasNormals, false);
