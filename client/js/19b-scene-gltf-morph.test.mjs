@@ -375,39 +375,45 @@ test("zero-weight targets are skipped entirely", () => {
 test("default weights fold onto morphed position/normal/tangent data per node", () => {
   const { context } = createLoaderContext();
   loadFixture(context, { mesh: [0.5, 0.25], node: [1, 0] });
+  // Morph targets and weights are consumed during extraction: the object
+  // vertices arrive already baked, so this test reads positions/normals/
+  // tangents directly instead of calling gltfApplyMorphWeights a second time.
   const result = plain(call(context, `
     var scene = gltfExtractScene(morphDoc, buffer);
-    function bake(vertices) {
-      var out = gltfApplyMorphWeights(
-        vertices.positions, vertices.normals, vertices.tangents,
-        vertices.morphTargets, vertices.morphWeights);
+    function read(vertices) {
       return {
-        positions: Array.from(out.positions),
-        normals: Array.from(out.normals),
-        tangents: Array.from(out.tangents),
+        positions: Array.from(vertices.positions),
+        normals: Array.from(vertices.normals),
+        tangents: Array.from(vertices.tangents),
         uvs: Array.from(vertices.uvs),
+        leakedMetadata: Object.prototype.hasOwnProperty.call(vertices, "morphTargets")
+          || Object.prototype.hasOwnProperty.call(vertices, "morphWeights"),
       };
     }
-    ({ meshDefault: bake(scene.objects[0].vertices), nodeOverride: bake(scene.objects[1].vertices) });
+    ({ meshDefault: read(scene.objects[0].vertices), nodeOverride: read(scene.objects[1].vertices) });
   `));
   const round6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
 
   // Mesh-default weights [0.5, 0.25]: both nodes sit under an identity
-  // transform, so object-space deltas match primitive-local ones.
+  // transform, so object-space data equals the primitive-local bake.
   assert.deepEqual(round6(result.meshDefault.positions), [
     1, 0.3125, 0,
     0, 1, 0.3125,
     0.25, 0.0625, 0,
   ]);
+  // Baked normals are normalized after folding: raw sum is [0.125, 0, 1.125].
+  const nLen = Math.sqrt(0.125 ** 2 + 1.125 ** 2);
   assert.deepEqual(round6(result.meshDefault.normals), [
-    0.125, 0, 1.125,
-    0.125, 0, 1.125,
-    0.125, 0, 1.125,
+    round6([0.125 / nLen])[0], 0, round6([1.125 / nLen])[0],
+    round6([0.125 / nLen])[0], 0, round6([1.125 / nLen])[0],
+    round6([0.125 / nLen])[0], 0, round6([1.125 / nLen])[0],
   ]);
+  // Baked tangent xyz is normalized ([1, 0.5, 0]); authored w=1 survives.
+  const tLen = Math.sqrt(1 ** 2 + 0.5 ** 2);
   assert.deepEqual(round6(result.meshDefault.tangents), [
-    1, 0.5, 0, 1,
-    1, 0.5, 0, 1,
-    1, 0.5, 0, 1,
+    round6([1 / tLen])[0], round6([0.5 / tLen])[0], 0, 1,
+    round6([1 / tLen])[0], round6([0.5 / tLen])[0], 0, 1,
+    round6([1 / tLen])[0], round6([0.5 / tLen])[0], 0, 1,
   ]);
 
   // Node override [1, 0]: only target 0 applies, at full weight.
@@ -416,15 +422,17 @@ test("default weights fold onto morphed position/normal/tangent data per node", 
     0, 1, 0.5,
     0.5, 0, 0,
   ]);
+  // Raw baked normal [0, 0, 1.25] normalizes back to +Z.
   assert.deepEqual(round6(result.nodeOverride.normals), [
-    0, 0, 1.25,
-    0, 0, 1.25,
-    0, 0, 1.25,
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
   ]);
+  // Raw baked tangent xyz [1, 1, 0] normalizes; w stays 1.
   assert.deepEqual(round6(result.nodeOverride.tangents), [
-    1, 1, 0, 1,
-    1, 1, 0, 1,
-    1, 1, 0, 1,
+    round6([Math.SQRT1_2])[0], round6([Math.SQRT1_2])[0], 0, 1,
+    round6([Math.SQRT1_2])[0], round6([Math.SQRT1_2])[0], 0, 1,
+    round6([Math.SQRT1_2])[0], round6([Math.SQRT1_2])[0], 0, 1,
   ]);
 
   // Both nodes keep their original UV corners: morph handling never touches
@@ -436,4 +444,63 @@ test("default weights fold onto morphed position/normal/tangent data per node", 
   // Index-driven corner order is preserved end to end: the first baked corner
   // descends from source vertex 1, not vertex 0.
   assert.deepEqual(round6(result.meshDefault.positions.slice(0, 3)), [1, 0.3125, 0]);
+
+  // Static morph metadata is consumed during extraction: nothing rides on
+  // either node's vertices.
+  assert.equal(result.meshDefault.leakedMetadata, false);
+  assert.equal(result.nodeOverride.leakedMetadata, false);
+});
+
+// --- pre-transform bake under a non-uniform node scale ------------------------
+
+test("non-uniform node scale transforms primitive-local baked morph data", () => {
+  const { context } = createLoaderContext();
+  // Scale only the mesh-default node; extraction runs exactly once through
+  // gltfExtractScene, so any correct result must come from morphing BEFORE
+  // the world transform (Khronos ordering).
+  loadFixture(context, { mesh: [0.5, 0.25], node: [1, 0] }, [{ scale: [2, 3, 4] }]);
+  const result = plain(call(context, `
+    var scene = gltfExtractScene(morphDoc, buffer);
+    var vertices = scene.objects[0].vertices;
+    ({
+      positions: Array.from(vertices.positions),
+      normals: Array.from(vertices.normals),
+      tangents: Array.from(vertices.tangents),
+      leakedMetadata: Object.prototype.hasOwnProperty.call(vertices, "morphTargets")
+        || Object.prototype.hasOwnProperty.call(vertices, "morphWeights"),
+    });
+  `));
+  const round6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
+
+  // Primitive-local baked positions (identity case above) scaled by [2,3,4]:
+  // [1,0.3125,0] -> [2,0.9375,0]; [0,1,0.3125] -> [0,3,1.25];
+  // [0.25,0.0625,0] -> [0.5,0.1875,0]. Morphing happened before scaling.
+  assert.deepEqual(round6(result.positions), [
+    2, 0.9375, 0,
+    0, 3, 1.25,
+    0.5, 0.1875, 0,
+  ]);
+
+  // Normals go through the inverse-transpose of the diagonal scale, i.e.
+  // component-wise division, then renormalize: normalize([0.125/2, 0/3,
+  // 1.125/4]). Transforming deltas separately would fold [0.125, 0, 1.125]
+  // AFTER normalization or skip the inverse-transpose and produce a different
+  // direction here.
+  const nl = Math.sqrt((0.125 / 2) ** 2 + (1.125 / 4) ** 2);
+  assert.deepEqual(round6(result.normals), [
+    round6([(0.125 / 2) / nl])[0], 0, round6([(1.125 / 4) / nl])[0],
+    round6([(0.125 / 2) / nl])[0], 0, round6([(1.125 / 4) / nl])[0],
+    round6([(0.125 / 2) / nl])[0], 0, round6([(1.125 / 4) / nl])[0],
+  ]);
+
+  // Tangent directions take the upper-left 3x3 (the scale itself), then
+  // renormalize: normalize([1*2, 0.5*3, 0*4]) = [0.8, 0.6, 0], w still 1.
+  assert.deepEqual(round6(result.tangents), [
+    0.8, 0.6, 0, 1,
+    0.8, 0.6, 0, 1,
+    0.8, 0.6, 0, 1,
+  ]);
+
+  // The bake payload was consumed during extraction even under a transform.
+  assert.equal(result.leakedMetadata, false);
 });
