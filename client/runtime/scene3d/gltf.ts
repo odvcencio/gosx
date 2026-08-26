@@ -423,10 +423,13 @@
     if (!targets || !targets.length || !positions) {
       return null;
     }
+    // Fixed triple of freshly owned streams: [POSITION, NORMAL, TANGENT]
+    // (null where that base stream was absent). TANGENT is the lone 4-wide
+    // channel; POSITION/NORMAL are 3-wide.
     var streams = [
-      { values: new Float32Array(positions), stride: 3 },
-      { values: normals ? new Float32Array(normals) : null, stride: 3 },
-      { values: tangents ? new Float32Array(tangents) : null, stride: 4 },
+      new Float32Array(positions),
+      normals ? new Float32Array(normals) : null,
+      tangents ? new Float32Array(tangents) : null,
     ];
     for (var t = 0; t < targets.length; t++) {
       var weight = Array.isArray(weights) && weights[t] != null
@@ -440,9 +443,10 @@
         continue;
       }
       for (var s = 0; s < 3; s++) {
-        var stream = streams[s];
+        var values = streams[s];
+        var stride = s === 2 ? 4 : 3;
         var attributeName = GLTF_MORPH_CHANNELS[s];
-        if (!stream.values || source[attributeName] == null ||
+        if (!values || source[attributeName] == null ||
             !gltf.accessors[source[attributeName]]) {
           continue;
         }
@@ -451,23 +455,20 @@
           continue;
         }
         var srcVertices = Math.floor(deltas.length / 3);
-        var dstVertices = Math.floor(stream.values.length / stream.stride);
+        var dstVertices = Math.floor(values.length / stride);
         for (var v = 0; v < dstVertices; v++) {
           var d = indices ? indices[v] : v;
           if (!(d >= 0 && d < srcVertices)) {
             continue;
           }
-          stream.values[v * stream.stride]     += weight * deltas[d * 3];
-          stream.values[v * stream.stride + 1] += weight * deltas[d * 3 + 1];
-          stream.values[v * stream.stride + 2] += weight * deltas[d * 3 + 2];
+          var offset = v * stride;
+          values[offset]     += weight * deltas[d * 3];
+          values[offset + 1] += weight * deltas[d * 3 + 1];
+          values[offset + 2] += weight * deltas[d * 3 + 2];
         }
       }
     }
-    return [
-      streams[0].values,
-      streams[1].values,
-      streams[2].values,
-    ];
+    return [streams[0], streams[1], streams[2]];
   }
 
   function gltfReadPrimitiveAttribute(gltf, primitive, names, binaryBuffer) {
