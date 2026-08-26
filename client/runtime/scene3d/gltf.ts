@@ -422,25 +422,20 @@
 
   // Extract primitive.targets for POSITION, NORMAL, and TANGENT. Each target
   // becomes a compact fixed tuple [positionDeltas, normalDeltas, tangentDeltas]
-  // with null for every absent channel; the layout is positional, consumed
-  // only by gltfApplyMorphWeights, and never escapes extraction. Each present
-  // channel expands through the same index map as the base attributes, so
-  // target vertex v always matches base vertex v after expansion. A target
-  // enters the list whenever it names at least one channel, even if a
-  // malformed accessor reads back empty, so authored weight slots stay aligned
-  // with their targets. Targets are read once at load time; nothing here ever
-  // runs per frame.
+  // written positionally by one loop over the fixed channel names; absent
+  // channels stay null. The layout is positional, consumed only by
+  // gltfApplyMorphWeights, and never escapes extraction. Each present channel
+  // expands through the same index map as the base attributes, so target
+  // vertex v always matches base vertex v after expansion. A target enters
+  // the list whenever it names at least one channel, even if a malformed
+  // accessor reads back empty, so authored weight slots stay aligned with
+  // their targets. Targets are read once at load time; nothing here ever runs
+  // per frame.
+  var MORPH_CHANNEL_NAMES = ["POSITION", "NORMAL", "TANGENT"];
   function gltfExtractMorphTargets(gltf, primitive, binaryBuffer, indices) {
     var targets = primitive.targets;
     if (!targets || !targets.length) {
       return null;
-    }
-    function expandChannel(source, attributeName) {
-      if (source[attributeName] == null) {
-        return null;
-      }
-      return gltfExpandAttributeIndexed(
-        gltfReadAccessor(gltf, source[attributeName], binaryBuffer), 3, indices);
     }
     var out = [];
     for (var t = 0; t < targets.length; t++) {
@@ -448,32 +443,24 @@
       if (!source || typeof source !== "object") {
         continue;
       }
-      var positionDeltas = expandChannel(source, "POSITION");
-      var normalDeltas = expandChannel(source, "NORMAL");
-      var tangentDeltas = expandChannel(source, "TANGENT");
-      if (source.POSITION != null || source.NORMAL != null
-        || source.TANGENT != null) {
-        out.push([positionDeltas, normalDeltas, tangentDeltas]);
+      var tuple = [null, null, null];
+      var present = false;
+      for (var s = 0; s < 3; s++) {
+        var attributeName = MORPH_CHANNEL_NAMES[s];
+        if (source[attributeName] == null) {
+          continue;
+        }
+        present = true;
+        tuple[s] = gltfExpandAttributeIndexed(
+          gltfReadAccessor(gltf, source[attributeName], binaryBuffer),
+          3,
+          indices);
+      }
+      if (present) {
+        out.push(tuple);
       }
     }
     return out.length ? out : null;
-  }
-
-  // Add weighted VEC3 deltas from one morph channel onto an interleaved
-  // output stream. dstStride is 3 for POSITION/NORMAL and 4 for TANGENT,
-  // whose w components the deltas never touch.
-  function gltfAddMorphDeltas(dst, deltas, weight, dstStride) {
-    if (!dst || !deltas) {
-      return;
-    }
-    var vertexLimit = Math.min(
-      Math.floor(dst.length / dstStride),
-      Math.floor(deltas.length / 3));
-    for (var v = 0; v < vertexLimit; v++) {
-      for (var c = 0; c < 3; c++) {
-        dst[v * dstStride + c] += weight * deltas[v * 3 + c];
-      }
-    }
   }
 
   // Apply the glTF additive weighted-delta rule once:
@@ -484,14 +471,20 @@
   // primitive-local base attributes first. Returns a fixed triple
   // [positions, normals, tangents] (null where that base stream was absent);
   // the arrays are fresh and owned by the caller. Tangent w is preserved
-  // because deltas only displace directions.
+  // because deltas only displace directions. One output tuple plus fixed
+  // strides (POSITION/NORMAL are interleaved at 3, TANGENT at 4) drive a
+  // single nested channel loop per target; the vertex clamp keeps malformed
+  // delta lengths from running past either stream.
+  var MORPH_TARGET_STRIDES = [3, 3, 4];
   function gltfApplyMorphWeights(positions, normals, tangents, targets, weights) {
     if (!targets || !targets.length || !positions) {
       return null;
     }
-    var outPos = new Float32Array(positions);
-    var outNrm = normals ? new Float32Array(normals) : null;
-    var outTan = tangents ? new Float32Array(tangents) : null;
+    var out = [
+      new Float32Array(positions),
+      normals ? new Float32Array(normals) : null,
+      tangents ? new Float32Array(tangents) : null,
+    ];
     for (var t = 0; t < targets.length; t++) {
       var weight = Array.isArray(weights) && weights[t] != null
         ? Number(weights[t])
@@ -500,11 +493,24 @@
         continue;
       }
       var target = targets[t];
-      gltfAddMorphDeltas(outPos, target[0], weight, 3);
-      gltfAddMorphDeltas(outNrm, target[1], weight, 3);
-      gltfAddMorphDeltas(outTan, target[2], weight, 4);
+      for (var s = 0; s < 3; s++) {
+        var dst = out[s];
+        var deltas = target[s];
+        if (!dst || !deltas) {
+          continue;
+        }
+        var stride = MORPH_TARGET_STRIDES[s];
+        var vertexLimit = Math.min(
+          Math.floor(dst.length / stride),
+          Math.floor(deltas.length / 3));
+        for (var v = 0; v < vertexLimit; v++) {
+          for (var c = 0; c < 3; c++) {
+            dst[v * stride + c] += weight * deltas[v * 3 + c];
+          }
+        }
+      }
     }
-    return [outPos, outNrm, outTan];
+    return out;
   }
 
   function gltfReadPrimitiveAttribute(gltf, primitive, names, binaryBuffer) {
