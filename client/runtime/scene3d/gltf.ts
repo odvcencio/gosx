@@ -420,19 +420,27 @@
     return out;
   }
 
-  // Channel names a target may carry, in extraction order. Each name maps to
-  // its entry key by lowercasing and appending "s": POSITION -> positions,
-  // NORMAL -> normals, TANGENT -> tangents.
-  var GLTF_MORPH_CHANNEL_NAMES = ["POSITION", "NORMAL", "TANGENT"];
-
-  // Extract primitive.targets for POSITION, NORMAL, and TANGENT. Each present
+  // Extract primitive.targets for POSITION, NORMAL, and TANGENT. Each target
+  // becomes a compact fixed tuple [positionDeltas, normalDeltas, tangentDeltas]
+  // with null for every absent channel; the layout is positional, consumed
+  // only by gltfApplyMorphWeights, and never escapes extraction. Each present
   // channel expands through the same index map as the base attributes, so
-  // target vertex v always matches base vertex v after expansion. Targets are
-  // read once at load time; nothing here ever runs per frame.
+  // target vertex v always matches base vertex v after expansion. A target
+  // enters the list whenever it names at least one channel, even if a
+  // malformed accessor reads back empty, so authored weight slots stay aligned
+  // with their targets. Targets are read once at load time; nothing here ever
+  // runs per frame.
   function gltfExtractMorphTargets(gltf, primitive, binaryBuffer, indices) {
     var targets = primitive.targets;
     if (!targets || !targets.length) {
       return null;
+    }
+    function expandChannel(source, attributeName) {
+      if (source[attributeName] == null) {
+        return null;
+      }
+      return gltfExpandAttributeIndexed(
+        gltfReadAccessor(gltf, source[attributeName], binaryBuffer), 3, indices);
     }
     var out = [];
     for (var t = 0; t < targets.length; t++) {
@@ -440,19 +448,12 @@
       if (!source || typeof source !== "object") {
         continue;
       }
-      var entry = {};
-      var hasChannel = false;
-      for (var c = 0; c < GLTF_MORPH_CHANNEL_NAMES.length; c++) {
-        var attributeName = GLTF_MORPH_CHANNEL_NAMES[c];
-        if (source[attributeName] == null) {
-          continue;
-        }
-        entry[attributeName.toLowerCase() + "s"] = gltfExpandAttributeIndexed(
-          gltfReadAccessor(gltf, source[attributeName], binaryBuffer), 3, indices);
-        hasChannel = true;
-      }
-      if (hasChannel) {
-        out.push(entry);
+      var positionDeltas = expandChannel(source, "POSITION");
+      var normalDeltas = expandChannel(source, "NORMAL");
+      var tangentDeltas = expandChannel(source, "TANGENT");
+      if (source.POSITION != null || source.NORMAL != null
+        || source.TANGENT != null) {
+        out.push([positionDeltas, normalDeltas, tangentDeltas]);
       }
     }
     return out.length ? out : null;
@@ -480,9 +481,10 @@
   // Runs during extraction, once per node instantiation, never per frame, and
   // always BEFORE any node/world transform or skinning: the Khronos glTF 2.0
   // invariant requires POSITION/NORMAL/TANGENT deltas to fold into the
-  // primitive-local base attributes first. The returned arrays are fresh and
-  // owned by the caller. Tangent w is preserved because deltas only displace
-  // directions.
+  // primitive-local base attributes first. Returns a fixed triple
+  // [positions, normals, tangents] (null where that base stream was absent);
+  // the arrays are fresh and owned by the caller. Tangent w is preserved
+  // because deltas only displace directions.
   function gltfApplyMorphWeights(positions, normals, tangents, targets, weights) {
     if (!targets || !targets.length || !positions) {
       return null;
@@ -498,11 +500,11 @@
         continue;
       }
       var target = targets[t];
-      gltfAddMorphDeltas(outPos, target.positions, weight, 3);
-      gltfAddMorphDeltas(outNrm, target.normals, weight, 3);
-      gltfAddMorphDeltas(outTan, target.tangents, weight, 4);
+      gltfAddMorphDeltas(outPos, target[0], weight, 3);
+      gltfAddMorphDeltas(outNrm, target[1], weight, 3);
+      gltfAddMorphDeltas(outTan, target[2], weight, 4);
     }
-    return { positions: outPos, normals: outNrm, tangents: outTan };
+    return [outPos, outNrm, outTan];
   }
 
   function gltfReadPrimitiveAttribute(gltf, primitive, names, binaryBuffer) {
@@ -1314,9 +1316,9 @@
           geometry.positions, geometry.normals, geometry.tangents,
           morphTargets, authoredWeights);
         if (morphed) {
-          geometry.positions = morphed.positions;
-          geometry.normals = morphed.normals || geometry.normals;
-          geometry.tangents = morphed.tangents || geometry.tangents;
+          geometry.positions = morphed[0];
+          geometry.normals = morphed[1] || geometry.normals;
+          geometry.tangents = morphed[2] || geometry.tangents;
         }
       }
 

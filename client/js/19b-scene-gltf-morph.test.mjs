@@ -199,11 +199,11 @@ test("primitive targets extract for POSITION, NORMAL, and TANGENT through the in
     ({
       count: geometry.count,
       morphCount: geometry.morphTargets ? geometry.morphTargets.length : 0,
-      t0Positions: Array.from(geometry.morphTargets[0].positions),
-      t0NormalsLength: geometry.morphTargets[0].normals.length,
-      t0TangentsLength: geometry.morphTargets[0].tangents.length,
-      hasT1Tangents: Boolean(geometry.morphTargets[1].tangents),
-      t1NormalsLength: geometry.morphTargets[1].normals.length,
+      t0Positions: Array.from(geometry.morphTargets[0][0]),
+      t0NormalsLength: geometry.morphTargets[0][1].length,
+      t0TangentsLength: geometry.morphTargets[0][2].length,
+      hasT1Tangents: Boolean(geometry.morphTargets[1][2]),
+      t1NormalsLength: geometry.morphTargets[1][1].length,
       basePositions: Array.from(geometry.positions),
       baseUvs: Array.from(geometry.uvs),
     });
@@ -232,7 +232,7 @@ test("unindexed primitives extract owned copies of their targets", () => {
     var geometry = gltfExtractMeshPrimitive(morphDoc, unindexed, buffer, null);
     ({
       positions: Array.from(geometry.positions),
-      t0Positions: Array.from(geometry.morphTargets[0].positions),
+      t0Positions: Array.from(geometry.morphTargets[0][0]),
     });
   `));
   assert.deepEqual(result.positions, BASE_POSITIONS);
@@ -314,11 +314,11 @@ test("multiple targets accumulate additively with weighted deltas", () => {
     var normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
     var tangents = new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]);
     var targets = [
-      {
-        positions: new Float32Array(${JSON.stringify(FLAT_TARGET0_POSITIONS)}),
-        normals: new Float32Array([0, 0, 0.25, 0, 0, 0.25, 0, 0, 0.25]),
-        tangents: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]),
-      },
+      [
+        new Float32Array(${JSON.stringify(FLAT_TARGET0_POSITIONS)}),
+        new Float32Array([0, 0, 0.25, 0, 0, 0.25, 0, 0, 0.25]),
+        new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]),
+      ],
       {
         positions: new Float32Array([0, 0.25, 0, 0, 0.25, 0, 0, 0.25, 0]),
         normals: new Float32Array([0.5, 0, 0, 0.5, 0, 0, 0.5, 0, 0]),
@@ -327,11 +327,11 @@ test("multiple targets accumulate additively with weighted deltas", () => {
     var weights = [0.5, 0.25];
     var baked = gltfApplyMorphWeights(positions, normals, tangents, targets, weights);
     ({
-      positions: Array.from(baked.positions),
-      normals: Array.from(baked.normals),
-      tangents: Array.from(baked.tangents),
+      positions: Array.from(baked[0]),
+      normals: Array.from(baked[1]),
+      tangents: Array.from(baked[2]),
       inputUntouched: Array.from(positions)[0] === 1 && Array.from(normals)[2] === 1,
-      freshBuffers: baked.positions !== positions && baked.normals !== normals && baked.tangents !== tangents,
+      freshBuffers: baked[0] !== positions && baked[1] !== normals && baked[2] !== tangents,
     });
   `));
 
