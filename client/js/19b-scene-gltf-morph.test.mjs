@@ -1,4 +1,4 @@
-// glTF morph-target tests — primitive.targets extraction and static baking.
+// glTF morph-target tests — static folding inside primitive extraction.
 //
 // These tests follow the same pattern as 19-scene-gltf.test.mjs: bootstrap
 // fragments load into ONE VM context and the tests call the loader functions
@@ -7,17 +7,20 @@
 // network and no GPU involved.
 //
 // Scope of these tests (static morph-target checkpoint):
-//   - primitive.targets extraction for POSITION, NORMAL, and TANGENT
-//   - index-map expansion so target vertex v matches expanded base vertex v
-//   - node default weights overriding mesh default weights
+//   - primitive.targets POSITION/NORMAL/TANGENT deltas folded into fresh,
+//     owned primitive-local streams during gltfExtractMeshPrimitive
+//   - index-map application so delta vertex indices[v] feeds corner v
+//   - node default weights overriding mesh default weights (resolved before
+//     primitive extraction)
 //   - additive weighted-delta accumulation across multiple targets
-//   - weighted deltas folded into PRIMITIVE-LOCAL base attributes BEFORE any
-//     node/world transform (Khronos glTF 2.0 ordering), proven under a
-//     non-uniform node scale where the old transform-deltas-separately order
-//     produced wrong normals/tangents
+//   - short, long, zero, and non-finite authored weight lists
+//   - malformed target accessors and short delta accessors degrade safely
+//   - weighted deltas folded BEFORE any node/world transform (Khronos glTF
+//     2.0 ordering), proven under a non-uniform node scale where a
+//     transform-deltas-separately order produced wrong normals/tangents
 //   - morphed position/normal/tangent data with tangent w preserved
 //   - UV data untouched by morph handling; inputs never mutated
-//   - static morph metadata never leaks onto extracted objects
+//   - static morph metadata never leaks onto extracted geometry or objects
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -85,7 +88,8 @@ function plain(value) {
 // --- Fixture ----------------------------------------------------------------
 //
 // One triangle, three base vertices, referenced through indices [1, 2, 0] so
-// the flat per-corner streams exercise index-map expansion. Two morph targets:
+// the flat per-corner streams exercise index-map application. Two morph
+// targets:
 //
 //   target 0: POSITION/NORMAL/TANGENT deltas (distinct per vertex)
 //   target 1: POSITION/NORMAL deltas only (no tangent channel)
@@ -189,57 +193,95 @@ function loadFixture(context, meshWeights, nodeTransforms) {
 // source vertex indices[k].
 const FLAT_TARGET0_POSITIONS = [0, 0.5, 0, 0, 0, 0.5, 0.5, 0, 0];
 
-// --- primitive.targets extraction -------------------------------------------
+// --- primitive-level fold ------------------------------------------------------
 
-test("primitive targets extract for POSITION, NORMAL, and TANGENT through the index map", () => {
+test("indexed morph targets fold into owned primitive-local streams through the index map", () => {
   const { context } = createLoaderContext();
-  loadFixture(context, { mesh: [0.5, 0.25], node: [1, 0] });
+  loadFixture(context, { mesh: [0.5, 0.25], node: null });
   const result = plain(call(context, `
-    var geometry = gltfExtractMeshPrimitive(morphDoc, morphDoc.meshes[0].primitives[0], buffer, null);
+    var geometry = gltfExtractMeshPrimitive(
+      morphDoc, morphDoc.meshes[0].primitives[0], buffer, null, [0.5, 0.25]);
     ({
       count: geometry.count,
-      morphCount: geometry.morphTargets ? geometry.morphTargets.length : 0,
-      t0Positions: Array.from(geometry.morphTargets[0][0]),
-      t0NormalsLength: geometry.morphTargets[0][1].length,
-      t0TangentsLength: geometry.morphTargets[0][2].length,
-      hasT1Tangents: Boolean(geometry.morphTargets[1][2]),
-      t1NormalsLength: geometry.morphTargets[1][1].length,
-      basePositions: Array.from(geometry.positions),
-      baseUvs: Array.from(geometry.uvs),
+      positions: Array.from(geometry.positions),
+      normals: Array.from(geometry.normals),
+      tangents: Array.from(geometry.tangents),
+      uvs: Array.from(geometry.uvs),
+      ownedStreams: geometry.positions.buffer !== buffer
+        && geometry.normals.buffer !== buffer
+        && geometry.tangents.buffer !== buffer,
+      noMetadata: !Object.prototype.hasOwnProperty.call(geometry, "morphTargets")
+        && !Object.prototype.hasOwnProperty.call(geometry, "morphWeights"),
+      sourceUntouched: Array.from(new Float32Array(buffer, 0, floats.length))
+        .every(function(v, i) { return v === floats[i]; }),
     });
   `));
+  const round6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
 
   assert.equal(result.count, 3);
-  assert.equal(result.morphCount, 2);
-  // Fan-out through indices [1, 2, 0]: each corner gets its own vertex delta.
-  assert.deepEqual(result.t0Positions, FLAT_TARGET0_POSITIONS);
-  assert.equal(result.t0NormalsLength, 9);
-  // Morph TANGENT deltas are VEC3: three components per expanded corner.
-  assert.equal(result.t0TangentsLength, 9);
-  assert.equal(result.hasT1Tangents, false);
-  assert.equal(result.t1NormalsLength, 9);
+  // Additive bake with mesh defaults [0.5, 0.25]: base corner + 0.5*target0 +
+  // 0.25*target1 per expanded corner. Corners descend from indices [1, 2, 0].
+  assert.deepEqual(round6(result.positions), [
+    1, 0.3125, 0,
+    0, 1, 0.3125,
+    0.25, 0.0625, 0,
+  ]);
+  // Primitive extraction deliberately exposes additive primitive-local
+  // normal sums before later world-transform normalization: raw fold is
+  // base + 0.5*target0 + 0.25*target1 = [0.125, 0, 1.125].
+  assert.deepEqual(round6(result.normals), [
+    0.125, 0, 1.125,
+    0.125, 0, 1.125,
+    0.125, 0, 1.125,
+  ]);
+  // Tangent xyz shifts by 0.5*(0,1,0); authored w=1 survives untouched.
+  assert.deepEqual(round6(result.tangents), [
+    1, 0.5, 0, 1,
+    1, 0.5, 0, 1,
+    1, 0.5, 0, 1,
+  ]);
+  // UV corners are untouched by morph folding and still fan out via indices.
+  assert.deepEqual(result.uvs, [1, 0, 0, 1, 0, 0]);
 
-  // Reading targets leaves every base stream untouched.
-  assert.deepEqual(result.basePositions, [1, 0, 0, 0, 1, 0, 0, 0, 0]);
-  assert.deepEqual(result.baseUvs, [1, 0, 0, 1, 0, 0]);
+  // The fold hands back fresh copies, not views over the shared GLB buffer,
+  // and reading targets never mutates the binary payload itself.
+  assert.equal(result.ownedStreams, true);
+  assert.equal(result.noMetadata, true);
+  assert.equal(result.sourceUntouched, true);
 });
 
-test("unindexed primitives extract owned copies of their targets", () => {
+test("unindexed primitives fold owned target copies without an index map", () => {
   const { context } = createLoaderContext();
-  loadFixture(context, { mesh: [0.5, 0.25], node: [1, 0] });
+  loadFixture(context, { mesh: [1, 0], node: null });
   const result = plain(call(context, `
     var unindexed = Object.assign({}, morphDoc.meshes[0].primitives[0], { indices: undefined });
-    var geometry = gltfExtractMeshPrimitive(morphDoc, unindexed, buffer, null);
+    var geometry = gltfExtractMeshPrimitive(morphDoc, unindexed, buffer, null, [1, 0]);
     ({
       positions: Array.from(geometry.positions),
-      t0Positions: Array.from(geometry.morphTargets[0][0]),
+      normals: Array.from(geometry.normals),
+      owned: geometry.positions.buffer !== buffer,
     });
   `));
-  assert.deepEqual(result.positions, BASE_POSITIONS);
-  assert.deepEqual(result.t0Positions, TARGET0_POSITIONS);
+  const round6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
+
+  // Vertex v pairs directly with target vertex v at weight 1:
+  // base + flat target0 = [0.5,0,0], [1,0.5,0], [0,1,0.5].
+  assert.deepEqual(round6(result.positions), [
+    0.5, 0, 0,
+    1, 0.5, 0,
+    0, 1, 0.5,
+  ]);
+  // Base normal (0,0,1) plus target0's (0,0,0.25) per vertex.
+  assert.deepEqual(round6(result.normals), [
+    0, 0, 1.25,
+    0, 0, 1.25,
+    0, 0, 1.25,
+  ]);
+  // Even on the unindexed path the folded stream detaches from the GLB view.
+  assert.equal(result.owned, true);
 });
 
-// --- default weights ---------------------------------------------------------
+// --- node-over-mesh default weights -------------------------------------------
 
 test("node weights override mesh defaults on baked object vertices", () => {
   const { context } = createLoaderContext();
@@ -305,70 +347,54 @@ test("node weights override mesh defaults on baked object vertices", () => {
   ]);
 });
 
-// --- additive weighted-delta application -------------------------------------
-
-test("multiple targets accumulate additively with weighted deltas", () => {
+test("zero and non-finite weights are skipped without touching their channels", () => {
+  // Zero-weight target 1 ([1, 0]) applies only target 0 — already exercised by
+  // the node-override case above. Here both entries are non-finite: nothing
+  // applies, and the pure base surface survives untouched.
   const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [], node: null });
   const result = plain(call(context, `
-    var positions = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 0]);
-    var normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
-    var tangents = new Float32Array([1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]);
-    var targets = [
-      [
-        new Float32Array(${JSON.stringify(FLAT_TARGET0_POSITIONS)}),
-        new Float32Array([0, 0, 0.25, 0, 0, 0.25, 0, 0, 0.25]),
-        new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]),
-      ],
-      [
-        new Float32Array([0, 0.25, 0, 0, 0.25, 0, 0, 0.25, 0]),
-        new Float32Array([0.5, 0, 0, 0.5, 0, 0, 0.5, 0, 0]),
-        null,
-      ],
-    ];
-    var weights = [0.5, 0.25];
-    var baked = gltfApplyMorphWeights(positions, normals, tangents, targets, weights);
+    morphDoc.meshes[0].weights = [Infinity, NaN];
+    var scene = gltfExtractScene(morphDoc, buffer);
     ({
-      positions: Array.from(baked[0]),
-      normals: Array.from(baked[1]),
-      tangents: Array.from(baked[2]),
-      inputUntouched: Array.from(positions)[0] === 1 && Array.from(normals)[2] === 1,
-      freshBuffers: baked[0] !== positions && baked[1] !== normals && baked[2] !== tangents,
+      positions: Array.from(scene.objects[0].vertices.positions),
+      normals: Array.from(scene.objects[0].vertices.normals),
+      uvs: Array.from(scene.objects[0].vertices.uvs),
     });
   `));
+  const round6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
 
-  // position + 0.5*target0 + 0.25*target1 per corner.
-  assert.deepEqual(result.positions.map((v) => Math.round(v * 1e6) / 1e6), [
-    1, 0.3125, 0,
-    0, 1.0625, 0.25,
-    0.25, 0.0625, 0,
+  assert.deepEqual(round6(result.positions), [
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 0,
   ]);
-  // normal + 0.5*(0,0,0.25) + 0.25*(0.5,0,0) per corner.
-  assert.deepEqual(result.normals.map((v) => Math.round(v * 1e6) / 1e6), [
-    0.125, 0, 1.125,
-    0.125, 0, 1.125,
-    0.125, 0, 1.125,
+  assert.deepEqual(round6(result.normals), [
+    0, 0, 1,
+    0, 0, 1,
+    0, 0, 1,
   ]);
-  // Tangent xyz shifts by 0.5*(0,1,0); each base w (1) survives untouched.
-  assert.deepEqual(result.tangents.map((v) => Math.round(v * 1e6) / 1e6), [
-    1, 0.5, 0, 1,
-    1, 0.5, 0, 1,
-    1, 0.5, 0, 1,
-  ]);
-  assert.equal(result.inputUntouched, true);
-  assert.equal(result.freshBuffers, true);
+  // Corner order still descends from indices [1, 2, 0].
+  assert.deepEqual(result.uvs, [1, 0, 0, 1, 0, 0]);
 });
 
-test("zero-weight targets are skipped entirely", () => {
+test("a finite entry next to a non-finite one applies positionally", () => {
   const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [], node: null });
   const result = plain(call(context, `
-    var positions = new Float32Array([1, 2, 3]);
-    var targets = [[new Float32Array([10, -10, 4]), null, null], [new Float32Array([100, 100, 100]), null, null]];
-    var baked = gltfApplyMorphWeights(positions, null, null, targets, [0, 1]);
-    ({ out: Array.from(baked[0]), hasNormals: Boolean(baked[1]), hasTangents: Boolean(baked[2]) });
+    // Target 0 is rejected as non-finite; target 1 applies at weight 1.
+    morphDoc.meshes[0].weights = [NaN, 1];
+    var scene = gltfExtractScene(morphDoc, buffer);
+    ({ positions: Array.from(scene.objects[0].vertices.positions) });
   `));
-  assert.deepEqual(result.out, [101, 102, 103]);
-  assert.equal(result.hasNormals, false);
-  assert.equal(result.hasTangents, false);
+  const round6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
+
+  // base + flat target1: c0=(0,0.25,0), c1=(0,0,0.25), c2=(0,0.25,0).
+  assert.deepEqual(round6(result.positions), [
+    1, 0.25, 0,
+    0, 1, 0.25,
+    0, 0.25, 0,
+  ]);
 });
 
 // --- full pipeline at extraction level ----------------------------------------
@@ -377,8 +403,8 @@ test("default weights fold onto morphed position/normal/tangent data per node", 
   const { context } = createLoaderContext();
   loadFixture(context, { mesh: [0.5, 0.25], node: [1, 0] });
   // Morph targets and weights are consumed during extraction: the object
-  // vertices arrive already baked, so this test reads positions/normals/
-  // tangents directly instead of calling gltfApplyMorphWeights a second time.
+  // vertices arrive already baked with multiple targets accumulating
+  // additively per node.
   const result = plain(call(context, `
     var scene = gltfExtractScene(morphDoc, buffer);
     function read(vertices) {
@@ -504,4 +530,43 @@ test("non-uniform node scale transforms primitive-local baked morph data", () =>
 
   // The bake payload was consumed during extraction even under a transform.
   assert.equal(result.leakedMetadata, false);
+});
+
+// --- malformed accessors and length bounds ------------------------------------
+
+test("malformed target accessors and short delta lengths stay safe", () => {
+  // Target 0's channels are malformed (skipped below); target 1 carries the
+  // short POSITION accessor that must degrade safely.
+  const { context } = createLoaderContext();
+  loadFixture(context, { mesh: [0, 1], node: null });
+  const result = plain(call(context, `
+    // Target 0 names an accessor that does not exist: its channels are
+    // skipped instead of poisoning the streams. Target 1's POSITION points
+    // at a deliberately short two-vertex accessor; its NORMAL stays valid.
+    morphDoc.meshes[0].primitives[0].targets[0] = { POSITION: 99, NORMAL: 99, TANGENT: 99 };
+    morphDoc.accessors.push({
+      bufferView: 0, byteOffset: 144, componentType: 5126, count: 2, type: "VEC3",
+    });
+    morphDoc.meshes[0].primitives[0].targets[1].POSITION = 10;
+    var scene = gltfExtractScene(morphDoc, buffer);
+    var positions = Array.from(scene.objects[0].vertices.positions);
+    var normals = Array.from(scene.objects[0].vertices.normals);
+    ({
+      positions: positions,
+      allFinite: positions.every(function(v) { return isFinite(v); })
+        && normals.every(function(v) { return isFinite(v); }),
+    });
+  `));
+  const round6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
+
+  // Accessor 10 holds two vertices over TARGET0_POSITIONS bytes: v0=(0.5,0,0),
+  // v1=(0,0.5,0). With indices [1,2,0]: corner 0 reads d=1 (+0,0.5,0),
+  // corner 1 reads d=2 which is past the short accessor and is LEFT UNTOUCHED,
+  // corner 2 reads d=0 (+0.5,0,0).
+  assert.equal(result.allFinite, true);
+  assert.deepEqual(round6(result.positions), [
+    1, 0.5, 0,
+    0, 1, 0,
+    0.5, 0, 0,
+  ]);
 });
