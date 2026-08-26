@@ -420,6 +420,11 @@
     return out;
   }
 
+  // Channel names a target may carry, in extraction order. Each name maps to
+  // its entry key by lowercasing and appending "s": POSITION -> positions,
+  // NORMAL -> normals, TANGENT -> tangents.
+  var GLTF_MORPH_CHANNEL_NAMES = ["POSITION", "NORMAL", "TANGENT"];
+
   // Extract primitive.targets for POSITION, NORMAL, and TANGENT. Each present
   // channel expands through the same index map as the base attributes, so
   // target vertex v always matches base vertex v after expansion. Targets are
@@ -437,21 +442,13 @@
       }
       var entry = {};
       var hasChannel = false;
-      if (source.POSITION != null) {
-        entry.positions = gltfExpandAttributeIndexed(
-          gltfReadAccessor(gltf, source.POSITION, binaryBuffer), 3, indices);
-        hasChannel = true;
-      }
-      if (source.NORMAL != null) {
-        entry.normals = gltfExpandAttributeIndexed(
-          gltfReadAccessor(gltf, source.NORMAL, binaryBuffer), 3, indices);
-        hasChannel = true;
-      }
-      if (source.TANGENT != null) {
-        // Morph tangent deltas are VEC3 direction offsets; the base tangent
-        // stream stays VEC4 and its w survives application untouched.
-        entry.tangents = gltfExpandAttributeIndexed(
-          gltfReadAccessor(gltf, source.TANGENT, binaryBuffer), 3, indices);
+      for (var c = 0; c < GLTF_MORPH_CHANNEL_NAMES.length; c++) {
+        var attributeName = GLTF_MORPH_CHANNEL_NAMES[c];
+        if (source[attributeName] == null) {
+          continue;
+        }
+        entry[attributeName.toLowerCase() + "s"] = gltfExpandAttributeIndexed(
+          gltfReadAccessor(gltf, source[attributeName], binaryBuffer), 3, indices);
         hasChannel = true;
       }
       if (hasChannel) {
@@ -459,6 +456,23 @@
       }
     }
     return out.length ? out : null;
+  }
+
+  // Add weighted VEC3 deltas from one morph channel onto an interleaved
+  // output stream. dstStride is 3 for POSITION/NORMAL and 4 for TANGENT,
+  // whose w components the deltas never touch.
+  function gltfAddMorphDeltas(dst, deltas, weight, dstStride) {
+    if (!dst || !deltas) {
+      return;
+    }
+    var vertexLimit = Math.min(
+      Math.floor(dst.length / dstStride),
+      Math.floor(deltas.length / 3));
+    for (var v = 0; v < vertexLimit; v++) {
+      for (var c = 0; c < 3; c++) {
+        dst[v * dstStride + c] += weight * deltas[v * 3 + c];
+      }
+    }
   }
 
   // Apply the glTF additive weighted-delta rule once:
@@ -473,44 +487,20 @@
     if (!targets || !targets.length || !positions) {
       return null;
     }
-    var posLimit = positions.length;
-    var nrmLimit = normals ? Math.min(posLimit, normals.length) : 0;
-    var tanLimit = tangents ? tangents.length : 0;
     var outPos = new Float32Array(positions);
     var outNrm = normals ? new Float32Array(normals) : null;
     var outTan = tangents ? new Float32Array(tangents) : null;
     for (var t = 0; t < targets.length; t++) {
-      var weight = weights && weights[t] != null ? Number(weights[t]) : 0;
+      var weight = Array.isArray(weights) && weights[t] != null
+        ? Number(weights[t])
+        : 0;
       if (!isFinite(weight) || weight === 0) {
         continue;
       }
       var target = targets[t];
-      if (target.positions) {
-        var limit = Math.min(posLimit, target.positions.length);
-        for (var pi = 0; pi < limit; pi++) {
-          outPos[pi] += weight * target.positions[pi];
-        }
-      }
-      if (target.normals && outNrm) {
-        var nlimit = Math.min(nrmLimit, target.normals.length);
-        for (var ni = 0; ni < nlimit; ni++) {
-          outNrm[ni] += weight * target.normals[ni];
-        }
-      }
-      if (target.tangents && outTan) {
-        // Target tangents carry three delta components per vertex while the
-        // base stream carries four; walk both strides together so each delta
-        // lands on the matching xyz and every authored w is left alone.
-        var vertexLimit = Math.min(
-          Math.floor(tanLimit / 4),
-          Math.floor(target.tangents.length / 3));
-        for (var ti = 0; ti < vertexLimit; ti++) {
-          outTan[ti * 4]     += weight * target.tangents[ti * 3];
-          outTan[ti * 4 + 1] += weight * target.tangents[ti * 3 + 1];
-          outTan[ti * 4 + 2] += weight * target.tangents[ti * 3 + 2];
-          // outTan[ti * 4 + 3] keeps its base sign value.
-        }
-      }
+      gltfAddMorphDeltas(outPos, target.positions, weight, 3);
+      gltfAddMorphDeltas(outNrm, target.normals, weight, 3);
+      gltfAddMorphDeltas(outTan, target.tangents, weight, 4);
     }
     return { positions: outPos, normals: outNrm, tangents: outTan };
   }
@@ -1311,24 +1301,18 @@
       // transform and before later skinning — the Khronos glTF 2.0 ordering
       // rule for POSITION/NORMAL/TANGENT deltas. A node instantiating this
       // mesh overrides the mesh's own defaults (glTF 2.0); entries beyond
-      // the authored list stay at zero. The payload is consumed immediately:
-      // no morph metadata rides on the extracted object.
-      var morphTargets = geometry.morphTargets || null;
+      // the authored list stay at zero and missing entries read as zero.
+      // The payload is consumed immediately: no morph metadata rides on the
+      // extracted object. gltfApplyMorphWeights validates every weight, so
+      // the authored list is passed through without a temporary copy.
+      var morphTargets = geometry.morphTargets;
       if (morphTargets) {
-        var morphWeights = new Float32Array(morphTargets.length);
         var authoredWeights = node && Array.isArray(node.weights)
           ? node.weights
           : mesh.weights;
-        if (Array.isArray(authoredWeights)) {
-          var weightLimit = Math.min(morphWeights.length, authoredWeights.length);
-          for (var mw = 0; mw < weightLimit; mw++) {
-            var authored = Number(authoredWeights[mw]);
-            morphWeights[mw] = isFinite(authored) ? authored : 0;
-          }
-        }
         var morphed = gltfApplyMorphWeights(
           geometry.positions, geometry.normals, geometry.tangents,
-          morphTargets, morphWeights);
+          morphTargets, authoredWeights);
         if (morphed) {
           geometry.positions = morphed.positions;
           geometry.normals = morphed.normals || geometry.normals;
