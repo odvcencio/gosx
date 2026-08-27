@@ -887,7 +887,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return normalizeSceneObject(instanced, prefix);
   }
 
-  function sceneModelLineObject(object, model, prefix) {
+  function sceneModelLineObject(object, model, prefix, nodeAnimSource) {
     const scaleX = sceneNumber(model && model.scaleX, 1);
     const scaleY = sceneNumber(model && model.scaleY, 1);
     const scaleZ = sceneNumber(model && model.scaleZ, 1);
@@ -907,6 +907,11 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model && model.static !== null) {
       instanced.static = Boolean(model.static);
     }
+    if (nodeAnimSource) {
+      // Rigid node TRS playback changes geometry every pose tick; a static
+      // bake would freeze the first frame even when model.static was true.
+      instanced.static = false;
+    }
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
@@ -914,7 +919,30 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneApplyModelMaterialName(instanced, model);
     sceneApplyModelRenderFlags(instanced, model);
     sceneApplyModelLOD(instanced, model);
-    return normalizeSceneObject(instanced, prefix);
+    const normalized = normalizeSceneObject(instanced, prefix);
+    if (nodeAnimSource && nodeAnimSource.basePositions) {
+      normalized._nodeAnimLive = {
+        kind: "lines",
+        nodeIndex: nodeAnimSource.nodeIndex,
+        instanceMatrix: nodeAnimSource.instanceMatrix || null,
+        nodeMatrix: nodeAnimSource.nodeMatrix || null,
+        basePositions: nodeAnimSource.basePositions,
+        object: normalized,
+        modelBase: {
+          x: object.x,
+          y: object.y,
+          z: object.z,
+          rotationX: object.rotationX,
+          rotationY: object.rotationY,
+          rotationZ: object.rotationZ,
+        },
+        modelMatrix: null,
+        model: null,
+        lastNodeMatrix: null,
+        lastModelMatrix: null,
+      };
+    }
+    return normalized;
   }
 
   function sceneScaleModelLinePoints(points, scaleX, scaleY, scaleZ) {
@@ -984,6 +1012,7 @@ function gosxConfigureSceneScript(script, role, src) {
 
   function sceneInstantiateModelPointsEntry(rawPoint, model, prefix, index) {
     const source = sceneApplyModelPointOverride(rawPoint, model);
+    const nodeAnimSource = rawPoint && rawPoint._nodeAnim ? rawPoint._nodeAnim : null;
     const normalized = normalizeScenePointsEntry(source, index, null);
     const scaleX = sceneNumber(model && model.scaleX, 1);
     const scaleY = sceneNumber(model && model.scaleY, 1);
@@ -1009,7 +1038,30 @@ function gosxConfigureSceneScript(script, role, src) {
     if (normalized._cachedColors) {
       instanced._cachedColors = normalized._cachedColors;
     }
-    return normalizeScenePointsEntry(instanced, instanced.id, normalized);
+    const result = normalizeScenePointsEntry(instanced, instanced.id, normalized);
+    if (nodeAnimSource && nodeAnimSource.basePositions) {
+      result._nodeAnimLive = {
+        kind: "points",
+        nodeIndex: nodeAnimSource.nodeIndex,
+        instanceMatrix: nodeAnimSource.instanceMatrix || null,
+        nodeMatrix: nodeAnimSource.nodeMatrix || null,
+        basePositions: nodeAnimSource.basePositions,
+        object: result,
+        modelBase: {
+          x: normalized.x,
+          y: normalized.y,
+          z: normalized.z,
+          rotationX: normalized.rotationX,
+          rotationY: normalized.rotationY,
+          rotationZ: normalized.rotationZ,
+        },
+        modelMatrix: null,
+        model: null,
+        lastNodeMatrix: null,
+        lastModelMatrix: null,
+      };
+    }
+    return result;
   }
 
   function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
@@ -1019,16 +1071,17 @@ function gosxConfigureSceneScript(script, role, src) {
     const morphNodeMatrix = morphSource && rawObject.transform && rawObject.transform.length === 16
       ? rawObject.transform
       : null;
+    const nodeAnimSource = rawObject && rawObject._nodeAnim ? rawObject._nodeAnim : null;
     let source = sceneApplyMaterialOverride(rawObject, model);
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
       source.skin = skinInstances[source.skinIndex];
     }
     const normalized = normalizeSceneObject(source, index);
     if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
-      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix);
+      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource);
     }
     if (normalized.kind === "lines") {
-      return sceneModelLineObject(normalized, model, prefix);
+      return sceneModelLineObject(normalized, model, prefix, nodeAnimSource);
     }
     return sceneModelPrimitiveObject(normalized, model, prefix);
   }
@@ -1058,7 +1111,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return indices instanceof Uint32Array ? new Uint32Array(indices) : null;
   }
 
-  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix) {
+  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource) {
     const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
     if (!vertices || !vertices.positions || !vertices.count) {
       return null;
@@ -1126,6 +1179,11 @@ function gosxConfigureSceneScript(script, role, src) {
       // would freeze the first folded frame into the render bundle.
       instanced.static = false;
     }
+    if (nodeAnimSource) {
+      // Rigid node TRS playback: same reasoning — never bake a static frame,
+      // even when model.static was authored true.
+      instanced.static = false;
+    }
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
@@ -1158,6 +1216,24 @@ function gosxConfigureSceneScript(script, role, src) {
         modelLocalVertices: normalized._modelLocalVertices || null,
         lastWeights: morphMeta.defaults.slice(),
         lastFolded: null,
+        lastNodeMatrix: null,
+        lastModelMatrix: null,
+      };
+    }
+    if (nodeAnimSource && normalized && normalized.vertices) {
+      // Re-attached AFTER normalization (the whitelist drops it otherwise).
+      // meta is the shared immutable pristine-local source; matrices and the
+      // last-applied snapshots are per-instance output state.
+      normalized._nodeAnimLive = {
+        kind: "mesh",
+        meta: nodeAnimSource,
+        nodeIndex: nodeAnimSource.nodeIndex,
+        instanceMatrix: nodeAnimSource.instanceMatrix || null,
+        nodeMatrix: nodeAnimSource.nodeMatrix || null,
+        vertices: normalized.vertices,
+        modelLocalVertices: normalized._modelLocalVertices || null,
+        modelMatrix: null,
+        model: null,
         lastNodeMatrix: null,
         lastModelMatrix: null,
       };
@@ -2584,6 +2660,27 @@ function gosxConfigureSceneScript(script, role, src) {
     return false;
   }
 
+  // True when any parsed animation channel drives rigid node TRS, so a
+  // non-skinned, weights-free model still needs a mixer record and per-frame
+  // pose ticks (one record per model, shared with skins/morphs).
+  function sceneModelHasNodeAnimations(asset) {
+    const animations = asset && Array.isArray(asset.animations) ? asset.animations : [];
+    for (let index = 0; index < animations.length; index += 1) {
+      const channels = animations[index] && Array.isArray(animations[index].channels)
+        ? animations[index].channels
+        : [];
+      for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+        const channel = channels[channelIndex];
+        if (channel && (channel.property === "translation"
+          || channel.property === "rotation"
+          || channel.property === "scale")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function sceneModelRootNodes(nodes) {
     if (!Array.isArray(nodes) || !nodes.length) {
       return [];
@@ -2675,14 +2772,41 @@ function gosxConfigureSceneScript(script, role, src) {
           morphEntry.modelMatrix = record.rootTransform;
         }
       }
-      // Model-local node transforms (no root/model transform): the fold bakes
-      // node TRS — including per-frame animated TRS — without double-applying
-      // the model transform. The world map for skinning is built separately
-      // below with record.rootTransform, exactly as before.
-      const localNodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, null, record.rootNodes);
+    }
+    // Model-local node transforms (no root/model transform), shared by the
+    // morph fold and rigid node TRS playback: animated TRS — including
+    // per-frame sampled values with authored per-component fallbacks and
+    // ancestor composition — without double-applying the model transform.
+    // The world map for skinning is built separately below with
+    // record.rootTransform, exactly as before.
+    const hasMorphTargets = record.morphTargets && record.morphTargets.length > 0;
+    const hasNodeAnimTargets = record.nodeAnimTargets && record.nodeAnimTargets.length > 0;
+    const localNodeTransforms = hasMorphTargets || hasNodeAnimTargets
+      ? record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, null, record.rootNodes)
+      : null;
+    if (hasMorphTargets) {
       const morphApi = (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api) || record.morphApi;
       if (morphApi && typeof morphApi.applyMorphPose === "function") {
         morphApi.applyMorphPose(record.morphTargets, animatedTransforms, localNodeTransforms);
+      }
+    }
+    // Rigid node TRS playback for every emitted geometry kind. Mesh entries
+    // compose animated node-world * authored instance-local * primitive-local
+    // and apply the model/root transform once; points/lines entries get
+    // genuinely new position arrays each rebuilt frame so the render caches
+    // re-upload. A stopped/reset mixer hands back the authored full node map,
+    // restoring the authored pose.
+    if (hasNodeAnimTargets) {
+      const nodeAnimApi = (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api) || record.morphApi;
+      if (nodeAnimApi && typeof nodeAnimApi.applyNodeAnimPose === "function") {
+        for (let nodeAnimIndex = 0; nodeAnimIndex < record.nodeAnimTargets.length; nodeAnimIndex += 1) {
+          const animEntry = record.nodeAnimTargets[nodeAnimIndex];
+          if (animEntry) {
+            animEntry.modelMatrix = record.rootTransform;
+            animEntry.model = record.model;
+          }
+        }
+        nodeAnimApi.applyNodeAnimPose(record.nodeAnimTargets, localNodeTransforms);
       }
     }
     const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform, record.rootNodes);
@@ -2790,8 +2914,8 @@ function gosxConfigureSceneScript(script, role, src) {
     state._modelSkins.push(record);
   }
 
-  async function scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs, stagedObjects) {
-    if ((!sceneModelHasSkins(skinInstances) && !sceneModelHasWeightAnimations(asset))
+  async function scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs, stagedObjects, stagedPoints) {
+    if ((!sceneModelHasSkins(skinInstances) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset))
       || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
     }
@@ -2844,6 +2968,33 @@ function gosxConfigureSceneScript(script, role, src) {
     if (morphTargets.length > 0) {
       record.morphTargets = morphTargets;
       record.morphApi = typeof window !== "undefined" ? (window.__gosx_scene3d_gltf_api || null) : null;
+    }
+    // Rigid node TRS playback entries: one live record per emitted geometry
+    // kind (mesh/points/lines), sharing the immutable loader metadata and
+    // owning the per-instance live streams. Registered alongside morphs so
+    // there is still exactly one animation/live record per model.
+    const nodeAnimTargets = [];
+    if (Array.isArray(stagedObjects)) {
+      for (let index = 0; index < stagedObjects.length; index += 1) {
+        const meshLive = stagedObjects[index] && stagedObjects[index]._nodeAnimLive;
+        if (meshLive) {
+          nodeAnimTargets.push(meshLive);
+        }
+      }
+    }
+    if (Array.isArray(stagedPoints)) {
+      for (let index = 0; index < stagedPoints.length; index += 1) {
+        const pointLive = stagedPoints[index] && stagedPoints[index]._nodeAnimLive;
+        if (pointLive) {
+          nodeAnimTargets.push(pointLive);
+        }
+      }
+    }
+    if (nodeAnimTargets.length > 0) {
+      record.nodeAnimTargets = nodeAnimTargets;
+      if (!record.morphApi && typeof window !== "undefined") {
+        record.morphApi = window.__gosx_scene3d_gltf_api || null;
+      }
     }
 
     const clips = sceneCloneModelAnimations(asset.animations);
@@ -2929,16 +3080,19 @@ function gosxConfigureSceneScript(script, role, src) {
       if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_stop === "function") {
         window.__gosx_motion_mixer_stop(record.wasmMixer, name, options.fadeOut !== undefined ? options.fadeOut : 0);
       }
-      if (record.morphTargets && record.morphTargets.length > 0) {
-        // One final pose tick after the stop/fade so the fold restores the
-        // authored defaults. Morph records only: skinned stop/hold unchanged.
+      if ((record.morphTargets && record.morphTargets.length > 0)
+        || (record.nodeAnimTargets && record.nodeAnimTargets.length > 0)) {
+        // One final pose tick after the stop/fade so the fold and the rigid
+        // node playback restore the authored defaults. Skinned stop/hold
+        // unchanged.
         record.poseDirty = true;
       }
       return;
     }
     if (record && record.mixer) {
       record.mixer.stop(name, options);
-      if (record.morphTargets && record.morphTargets.length > 0) {
+      if ((record.morphTargets && record.morphTargets.length > 0)
+        || (record.nodeAnimTargets && record.nodeAnimTargets.length > 0)) {
         record.poseDirty = true;
       }
     }
@@ -3594,12 +3748,12 @@ function gosxConfigureSceneScript(script, role, src) {
         }
       }
       stage = "skin";
-      if (sceneModelHasSkins(skinInstances) || sceneModelHasWeightAnimations(asset)) {
+      if (sceneModelHasSkins(skinInstances) || sceneModelHasWeightAnimations(asset) || sceneModelHasNodeAnimations(asset)) {
         // ONE record per model: the playback record is the live record, the
         // same way skinned models already receive live patches. Registering
         // an additional static/live record under the same model ID would let
         // two records diverge in pose state.
-        await scenePrepareModelSkinPlayback(stageState, asset, instanceModel, skinInstances, objectIDs, staged.objects);
+        await scenePrepareModelSkinPlayback(stageState, asset, instanceModel, skinInstances, objectIDs, staged.objects, staged.points);
       } else {
         sceneRegisterStaticModelLiveRecord(stageState, instanceModel, objectIDs);
       }

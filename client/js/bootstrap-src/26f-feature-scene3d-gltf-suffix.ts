@@ -12,6 +12,9 @@
     // split-bundle load silently drops it (gltfApplyAnimatedMorphPose is in
     // scope from the concatenated glTF chunk above).
     applyMorphPose: gltfApplyAnimatedMorphPose,
+    // Same rule: the rigid node TRS playback entry point must be re-exported
+    // or the split-bundle load silently drops it.
+    applyNodeAnimPose: gltfApplyNodeAnimPose,
   };
 
   // Mark chunk loaded for dev tooling / coverage inspection.

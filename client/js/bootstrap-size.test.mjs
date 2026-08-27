@@ -539,10 +539,10 @@ const budgets = [
   // exact indexed picking, and indexed shadow submission. Measured:
   // 1_547_149 / 419_508 / 336_549, plus narrow rounding headroom.
   // Variable-width morph transport measured at raw 1547188 / gzip 419932 / brotli 337252.
-  // Live glTF deformation (skin OR weights animation playback, authored-matrix
-  // handling) rebuilt assets measured 1_553_771 / 421_907 / 339_007; all three
-  // caps raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_554_500, gzip: 422_000, brotli: 339_300 },
+  // Live glTF deformation (skin OR weights OR node-TRS animation playback,
+  // authored-matrix handling) rebuilt assets measured 1_559_039 / 423_270 /
+  // 340_270; all three caps raised with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_559_100, gzip: 423_300, brotli: 340_300 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -953,9 +953,9 @@ const budgets = [
   // Bumped gzip 148_800 -> 148_850 for complete prepared-scene light cache
   // invalidation. Measured: 538_069 / 148_810 / 123_368.
   // Indexed BufferGeometry exact measurement: 539_531 / 149_304 / 123_908.
-  // Live glTF deformation rebuild measured 540_939 / 149_699 / 124_119; only
-  // raw exceeded its cap: raw 540_500 -> 541_500; gzip/brotli unchanged.
-  { file: "bootstrap-feature-scene3d.js", raw: 541_500, gzip: 149_800, brotli: 124_300 },
+  // Live glTF deformation rebuild including node-TRS playback measured
+  // 543_190 / 150_137 / 124_474; all three caps raised with narrow headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 543_250, gzip: 150_150, brotli: 124_500 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1152,9 +1152,10 @@ const budgets = [
   // the quantized _POINT_SIZE decode via extras pointSizeScale. Measured:
   // 31_308 / 11_635 / 10_374, plus rounding headroom.
   // Budget: cubic-spline channel-width fix measured 10_626 B Brotli (from 10_599); ceiling raised 10_600 -> 10_700; raw/gzip caps unchanged.
-  // Live glTF deformation playback and authored-matrix handling measured
-  // 35_754 / 13_456 / 12_062; all three caps raised with narrow headroom.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 36_000, gzip: 13_500, brotli: 12_100 },
+  // Live glTF deformation playback (skins, weights, node TRS) and
+  // authored-matrix handling measured 38_735 / 14_332 / 12_780; all three
+  // caps raised with narrow headroom.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 38_800, gzip: 14_350, brotli: 12_800 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
@@ -1600,11 +1601,11 @@ const routeBudgets = [
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_051_244 / 291_270 / 247_081, plus narrow headroom.
     // Indexed BufferGeometry exact measurement: 1_055_774 / 292_427 / 248_044.
-    // Live glTF deformation rebuild measured 1_057_182 / 292_822 / 248_255;
-    // only raw exceeded its cap: raw 1_057_000 -> 1_057_500; gzip/brotli unchanged.
-    raw: 1_057_500,
-    gzip: 293_000,
-    brotli: 248_500,
+    // Live glTF deformation rebuild including node-TRS playback measured
+    // 1_059_433 / 293_260 / 248_610; all three caps raised with narrow headroom.
+    raw: 1_059_500,
+    gzip: 293_300,
+    brotli: 248_650,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1700,10 +1701,11 @@ const routeBudgets = [
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_438_516 / 384_979 / 325_541, plus narrow headroom.
     // Indexed BufferGeometry exact measurement: 1_445_136 / 386_720 / 327_045.
-    // Live glTF deformation rebuild measured 1_446_541 / 387_053 / 327_082;
-    // only raw exceeded its cap: raw 1_446_000 -> 1_447_000; gzip/brotli unchanged.
-    raw: 1_447_000,
-    gzip: 387_200,
+    // Live glTF deformation rebuild including node-TRS playback measured
+    // 1_448_792 / 387_491 / 327_437; raw and gzip raised with narrow headroom;
+    // brotli still under its cap and unchanged.
+    raw: 1_449_000,
+    gzip: 387_550,
     brotli: 327_500,
   },
   {
@@ -1806,10 +1808,11 @@ const routeBudgets = [
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_072_761 / 282_848 / 237_001, plus narrow headroom.
     // Indexed BufferGeometry exact measurement: 1_077_339 / 284_115 / 238_211.
-    // Live glTF deformation rebuild measured 1_078_744 / 284_448 / 238_248;
-    // only raw exceeded its cap: raw 1_078_500 -> 1_079_000; gzip/brotli unchanged.
-    raw: 1_079_000,
-    gzip: 284_700,
+    // Live glTF deformation rebuild including node-TRS playback measured
+    // 1_080_995 / 284_886 / 238_603; raw and gzip raised with narrow headroom;
+    // brotli still under its cap and unchanged.
+    raw: 1_081_100,
+    gzip: 284_950,
     brotli: 238_700,
   },
 
