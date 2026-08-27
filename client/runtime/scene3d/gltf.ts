@@ -720,7 +720,10 @@
 
     var uvs = attrValues("TEXCOORD_0");
 
-    var tangentsRaw = attrValues("TANGENT");
+    // glTF 2.0: when NORMAL is absent, normals are calculated (flat) and both
+    // authored tangents and morph TANGENT displacement must be ignored — the
+    // tangent basis is recomputed from the final folded surface below.
+    var tangentsRaw = normals ? attrValues("TANGENT") : null;
 
     var joints = gltfToFloat32Array(attrValues("JOINTS_0"));
 
@@ -734,7 +737,7 @@
     if (indices) {
       var expanded = gltfExpandIndexed(
         positions,
-        normals || positions, // placeholder; we generate normals after expansion
+        normals || positions, // placeholder; fallback normals come after folding
         uvs || gltfGenerateDefaultUVs(positions.length / 3),
         tangentsRaw,
         joints,
@@ -742,20 +745,19 @@
         indices
       );
       positions = expanded.positions;
-      normals = normals ? expanded.normals : gltfGenerateFlatNormals(positions);
+      if (normals) {
+        normals = expanded.normals;
+      }
       uvs = expanded.uvs;
       tangentsRaw = expanded.tangents;
       joints = expanded.joints;
       weights = expanded.weights;
-    } else {
+    } else if (!uvs) {
       // Unindexed geometry pairs vertex v directly. The base streams stay as
       // the accessor handed them — the fold copies each channel lazily, only
       // when a morph weight actually writes it — and the fallback streams are
       // fresh either way.
-      normals = normals || gltfGenerateFlatNormals(positions);
-      if (!uvs) {
-        uvs = gltfGenerateDefaultUVs(positions.length / 3);
-      }
+      uvs = gltfGenerateDefaultUVs(positions.length / 3);
     }
 
     // Fold static morph-target deltas right here, once at load time: deltas
@@ -765,6 +767,9 @@
     // surface. The fold copies a stream only when a weight actually writes
     // it, so a no-op morph hands the input views straight back and allocates
     // nothing.
+    // With no authored NORMAL the fold sees null normals, so NORMAL deltas
+    // are skipped here rather than perturbing normals that no longer
+    // describe the folded surface.
     var morphedStreams = gltfFoldMorphTargets(
       gltf, primitive, binaryBuffer, indices,
       positions, normals, tangentsRaw, morphWeights);
@@ -772,6 +777,17 @@
       positions = morphedStreams[0];
       normals = morphedStreams[1] || normals;
       tangentsRaw = morphedStreams[2] || tangentsRaw;
+    }
+
+    // Fallback flat normals are generated here — AFTER the fold — from the
+    // final primitive-local positions: generating them before the fold left
+    // POSITION-only morph targets deforming the triangle under normals that
+    // described the old surface and feeding that stale basis into tangent
+    // generation. Generated exactly once, only when NORMAL is absent, so
+    // assets with authored normals and static assets with no effective morph
+    // pay nothing extra.
+    if (!normals) {
+      normals = gltfGenerateFlatNormals(positions);
     }
 
     // Bake KHR_texture_transform into the UVs before tangents are computed, so
