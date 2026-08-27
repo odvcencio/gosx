@@ -1746,6 +1746,50 @@
     return material.alphaMode === "BLEND" || material.opacity < 0.999;
   }
 
+  // Once-per-load reachability scan: which meshes are referenced by more than
+  // one node in the selected scene. Reused meshes need per-node synthesized-id
+  // disambiguation; single-use meshes keep their legacy ids untouched.
+  function gltfCountMeshUses(gltf, nodeIndex, counts, visited) {
+    if (visited[nodeIndex]) {
+      return;
+    }
+    visited[nodeIndex] = true;
+    var node = gltf.nodes && gltf.nodes[nodeIndex];
+    if (!node) {
+      return;
+    }
+    if (node.mesh != null) {
+      counts[node.mesh] = (counts[node.mesh] || 0) + 1;
+    }
+    var children = node.children || [];
+    for (var i = 0; i < children.length; i++) {
+      gltfCountMeshUses(gltf, children[i], counts, visited);
+    }
+  }
+
+  function gltfSharedMeshMap(gltf, scene) {
+    var counts = {};
+    var visited = {};
+    if (scene && scene.nodes) {
+      for (var i = 0; i < scene.nodes.length; i++) {
+        gltfCountMeshUses(gltf, scene.nodes[i], counts, visited);
+      }
+    }
+    var shared = {};
+    for (var meshIndex in counts) {
+      if (counts[meshIndex] > 1) {
+        shared[meshIndex] = true;
+      }
+    }
+    return shared;
+  }
+
+  // Node-identity suffix appended only when the node's mesh is reused by
+  // multiple reachable nodes; empty otherwise.
+  function gltfNodeSuffix(sharedMeshes, nodeIndex) {
+    return sharedMeshes ? "-n" + nodeIndex : "";
+  }
+
   // Read POSITION, transform it by the node matrix, and report vertex count.
   // Returns null when the attribute or its values are too short to draw.
   function gltfTransformedPositions(gltf, primitive, binaryBuffer, worldTransform, minValues) {
@@ -2043,7 +2087,7 @@
     return out;
   }
 
-  function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result, animatedTRS, inheritedAnimated) {
+  function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result, animatedTRS, inheritedAnimated, sharedMeshes) {
     var node = gltf.nodes[nodeIndex];
     if (!node) {
       return;
@@ -2059,6 +2103,7 @@
 
     if (node.mesh != null) {
       var skin = node.skin != null ? node.skin : null;
+      var nodeSuffix = gltfNodeSuffix(sharedMeshes && sharedMeshes[node.mesh], nodeIndex);
       var instances = gltfInstanceTransforms(gltf, node, binaryBuffer);
       if (instances) {
         for (var n = 0; n < instances.length; n++) {
@@ -2070,20 +2115,20 @@
             result,
             skin,
             node,
-            "-inst-" + n,
+            "-inst-" + n + nodeSuffix,
             nodeIndex,
             instances[n],
             animated
           );
         }
       } else {
-        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, "", nodeIndex, null, animated);
+        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, nodeSuffix, nodeIndex, null, animated);
       }
     }
 
     var children = node.children || [];
     for (var i = 0; i < children.length; i++) {
-      gltfWalkNode(gltf, children[i], binaryBuffer, worldTransform, result, animatedTRS, animated);
+      gltfWalkNode(gltf, children[i], binaryBuffer, worldTransform, result, animatedTRS, animated, sharedMeshes);
     }
   }
 
@@ -2250,8 +2295,9 @@
 
     var identity = new Float32Array(SCENE_IDENTITY_MAT4);
     var animatedTRS = gltfDirectTRSNodes(gltf);
+    var sharedMeshes = gltfSharedMeshMap(gltf, scene);
     for (var i = 0; i < scene.nodes.length; i++) {
-      gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result, animatedTRS, false);
+      gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result, animatedTRS, false, sharedMeshes);
     }
 
     // Extract animations.
@@ -2304,8 +2350,9 @@
       return out;
     }
     var identity = new Float32Array(SCENE_IDENTITY_MAT4);
+    var sharedMeshes = gltfSharedMeshMap(gltf, scene);
     for (var i = 0; i < scene.nodes.length; i++) {
-      gltfCollectPointOverlayNode(gltf, scene.nodes[i], binaryBuffer, identity, out);
+      gltfCollectPointOverlayNode(gltf, scene.nodes[i], binaryBuffer, identity, out, sharedMeshes);
     }
     return out;
   }
@@ -2319,7 +2366,7 @@
     return (accessor && accessor.count) || 0;
   }
 
-  function gltfCollectPointOverlayNode(gltf, nodeIndex, binaryBuffer, parentTransform, out) {
+  function gltfCollectPointOverlayNode(gltf, nodeIndex, binaryBuffer, parentTransform, out, sharedMeshes) {
     var node = gltf.nodes && gltf.nodes[nodeIndex];
     if (!node) {
       return;
@@ -2363,15 +2410,16 @@
         // does during base extraction, so the overlay must resolve it the
         // same way or every authored layer misses its patch.
         var extras = gltfCollectScene3DExtras(node, mesh, primitive);
+        var nodeSuffix = gltfNodeSuffix(sharedMeshes && sharedMeshes[node.mesh], nodeIndex);
         var key = extras && typeof extras.id === "string" && extras.id
           ? extras.id
-          : gltfPrimitiveID(mesh, node.mesh, "points", p, "");
+          : gltfPrimitiveID(mesh, node.mesh, "points", p, nodeSuffix);
         out[key] = { count: count, colors: colors, positions: positions, sizes: sizes };
       }
     }
     var children = node.children || [];
     for (var c = 0; c < children.length; c++) {
-      gltfCollectPointOverlayNode(gltf, children[c], binaryBuffer, worldTransform, out);
+      gltfCollectPointOverlayNode(gltf, children[c], binaryBuffer, worldTransform, out, sharedMeshes);
     }
   }
 

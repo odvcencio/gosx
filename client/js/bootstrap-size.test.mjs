@@ -542,7 +542,10 @@ const budgets = [
   // Live glTF deformation (skin OR weights OR node-TRS animation playback,
   // authored-matrix handling) rebuilt assets measured 1_559_039 / 423_270 /
   // 340_270; all three caps raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_559_100, gzip: 423_300, brotli: 340_300 },
+  // Reused glTF mesh node identity rebuild measured 1_559_474 / 423_430 /
+  // 340_185; raw and gzip caps raised with narrow headroom, brotli unchanged
+  // (improved below its 340_300 cap).
+  { file: "bootstrap.js", raw: 1_559_500, gzip: 423_500, brotli: 340_300 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1155,7 +1158,9 @@ const budgets = [
   // Live glTF deformation playback (skins, weights, node TRS) and
   // authored-matrix handling measured 38_735 / 14_332 / 12_780; all three
   // caps raised with narrow headroom.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 38_800, gzip: 14_350, brotli: 12_800 },
+  // Reused glTF mesh node identity rebuild measured 39_170 / 14_476 /
+  // 12_914; all three caps raised with narrow headroom.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 39_250, gzip: 14_500, brotli: 12_950 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
