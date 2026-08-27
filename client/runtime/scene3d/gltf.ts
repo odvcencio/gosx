@@ -66,20 +66,22 @@
   // ---------------------------------------------------------------------------
 
   // Per-componentType record: [byte size, typed-array constructor, DataView
-  // reader name]. FLOAT32, an omitted view slot, and anything unlisted all
-  // resolve through GLTF_FLOAT32_FORMAT below, so every fallback matches the
-  // old default branches exactly (4-byte size, Float32Array view).
-  // Every table literal opens with __proto__: null, so a hostile or corrupt
-  // componentType or type string ("constructor", "toString", "__proto__")
-  // misses and falls through to the defaults instead of matching inherited
-  // Object.prototype members.
+  // reader name, normalized-integer divisor, signed flag]. The signed flag
+  // keeps the -1 endpoint of signed types alive through division rounding.
+  // FLOAT32, an omitted view slot, and anything unlisted all resolve through
+  // GLTF_FLOAT32_FORMAT below, so every fallback matches the old default
+  // branches exactly (4-byte size, Float32Array view) and those same keys
+  // copy through normalization unchanged. Every table literal opens with
+  // __proto__: null, so a hostile or corrupt componentType or type string
+  // ("constructor", "toString", "__proto__") misses and falls through to the
+  // defaults instead of matching inherited Object.prototype members.
   var GLTF_COMPONENT_FORMATS = {
     __proto__: null,
-    5120: [1, Int8Array, "getInt8"],
-    5121: [1, Uint8Array, "getUint8"],
-    5122: [2, Int16Array, "getInt16"],
-    5123: [2, Uint16Array, "getUint16"],
-    5125: [4, Uint32Array, "getUint32"],
+    5120: [1, Int8Array, "getInt8", 127, true],
+    5121: [1, Uint8Array, "getUint8", 255, false],
+    5122: [2, Int16Array, "getInt16", 32767, true],
+    5123: [2, Uint16Array, "getUint16", 65535, false],
+    5125: [4, Uint32Array, "getUint32", 4294967295, false],
   };
   var GLTF_FLOAT32_FORMAT = [4, Float32Array, "getFloat32"];
 
@@ -105,27 +107,15 @@
     return new format[1](buffer, byteOffset, count);
   }
 
-  // Normalized-integer dequantization divisors, signed types flagged so their
-  // -1 endpoint survives division rounding. FLOAT32 and unknown types are
-  // absent and simply copy through the one conversion loop below.
-  var GLTF_NORMALIZE_DIVISORS = {
-    __proto__: null,
-    5120: [127, true],
-    5121: [255, false],
-    5122: [32767, true],
-    5123: [65535, false],
-    5125: [4294967295, false],
-  };
-
   function gltfNormalizeAccessorValues(values, componentType) {
     var normalized = new Float32Array(values.length);
-    var quantization = GLTF_NORMALIZE_DIVISORS[componentType];
+    var quantization = GLTF_COMPONENT_FORMATS[componentType];
     if (!quantization) {
       normalized.set(values);
       return normalized;
     }
-    var divisor = quantization[0];
-    var signed = quantization[1];
+    var divisor = quantization[3];
+    var signed = quantization[4];
     for (var i = 0; i < values.length; i++) {
       var value = values[i] / divisor;
       normalized[i] = signed && value < -1 ? -1 : value;
