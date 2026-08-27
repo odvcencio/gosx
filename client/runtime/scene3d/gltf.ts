@@ -851,6 +851,48 @@
     }
     return out;
   }
+  // Convert TRIANGLE_STRIP (5) / TRIANGLE_FAN (6) topology into a flat
+  // TRIANGLES-style index list mapping each output triangle corner back to its
+  // ORIGINAL vertex, so the existing indexed-expansion pipeline (positions,
+  // normals, UVs, tangents, joints, weights, and both static and animated morph
+  // delta expansion) consumes one shared corner-to-vertex map. Index values are
+  // copied as plain numbers, so index values above 65535 never truncate.
+  // Strip winding: window k emits (k, k+1, k+2) on even k and (k+2, k+1, k) on
+  // odd k, the canonical corner order that keeps attribute/morph corner maps
+  // deterministic (cyclic rotations of the same cycle are geometrically
+  // equivalent). Parity is the raw window index, so degenerate windows
+  // (duplicate strip vertices) still consume their parity and never reset the
+  // alternation. Fan winding: triangle k anchors on input vertex 0 as
+  // (0, k, k+1) for k = 1..cornerCount-2, keeping every fan triangle on the
+  // same front face. Fewer than three input corners yields zero triangles.
+  // The document, accessors, and binary are never written; a fresh array is
+  // always returned.
+  function gltfTriangleListIndices(mode, indices, vertexCount) {
+    var cornerCount = indices ? indices.length : vertexCount;
+    var out = [];
+    var w;
+    if (mode === 5) {
+      for (w = 0; w + 2 < cornerCount; w++) {
+        if ((w & 1) === 0) {
+          out.push(w, w + 1, w + 2);
+        } else {
+          out.push(w + 2, w + 1, w);
+        }
+      }
+    } else {
+      for (w = 1; w + 1 < cornerCount; w++) {
+        out.push(0, w, w + 1);
+      }
+    }
+    if (indices) {
+      // Map corner numbers back to the original vertices they reference;
+      // plain number reads never truncate index values above 65535.
+      for (w = 0; w < out.length; w++) {
+        out[w] = indices[out[w]];
+      }
+    }
+    return out;
+  }
   function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node) {
     // One named-attribute read: absent names hand back null exactly like the
     // inline guards they replace.
@@ -882,6 +924,18 @@
     var indices = primitive.indices != null
       ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
       : null;
+
+    // TRIANGLE_STRIP (5) / TRIANGLE_FAN (6) feed the same flat-triangle
+    // pipeline as TRIANGLES: rewrite the topology into a triangle-corner
+    // index list up front so every downstream channel and morph delta
+    // expands through the identical corner-to-original-vertex map. Mode 4
+    // keeps its existing fastpath (authored indices untouched, unindexed
+    // stays sequential).
+    var primitiveMode = primitive.mode != null ? primitive.mode : 4;
+    if (primitiveMode === 5 || primitiveMode === 6) {
+      indices = gltfTriangleListIndices(
+        primitiveMode, indices, positions ? Math.floor(positions.length / 3) : 0);
+    }
 
     // Expand indexed geometry to flat triangle arrays.
     if (indices) {
@@ -1911,8 +1965,9 @@
         continue;
       }
 
-      // Only handle TRIANGLES mode (4) for mesh objects.
-      if (mode !== 4) {
+      // Handle TRIANGLES (4), TRIANGLE_STRIP (5), and TRIANGLE_FAN (6) for
+      // mesh objects; strip/fan are flattened to triangles during extraction.
+      if (mode !== 4 && mode !== 5 && mode !== 6) {
         continue;
       }
 
