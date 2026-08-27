@@ -1496,7 +1496,7 @@
         // carries 4, and a morph "weights" channel carries one value per morph
         // target. The mixer reads this instead of guessing from the property
         // name, so a weights channel interpolates at its true width.
-        var componentCount = times.length > 0 ? Math.max(1, Math.floor(values.length / times.length)) : 3;
+        var componentCount = times.length > 0 ? Math.max(1, Math.floor(values.length / (times.length * (sampler.interpolation === "CUBICSPLINE" ? 3 : 1)))) : 3;
 
         channels.push({
           targetID: ch.target.node,
