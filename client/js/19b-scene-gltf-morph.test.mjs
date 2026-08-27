@@ -15,6 +15,7 @@
 //   - additive weighted-delta accumulation across multiple targets
 //   - short, long, zero, and non-finite authored weight lists
 //   - malformed target accessors and short delta accessors degrade safely
+//   - incomplete trailing destination vertices are never folded nor copied
 //   - weighted deltas folded BEFORE any node/world transform (Khronos glTF
 //     2.0 ordering), proven under a non-uniform node scale where a
 //     transform-deltas-separately order produced wrong normals/tangents
@@ -569,4 +570,44 @@ test("malformed target accessors and short delta lengths stay safe", () => {
     0, 1, 0,
     0.5, 0, 0,
   ]);
+});
+
+// --- incomplete destination vertices ------------------------------------------
+
+// dstVertices is floor(values.length / stride), so a trailing base fragment
+// narrower than one full three-float vertex is never folded. With zero
+// complete vertices the fold cannot write a single corner: no stream copy is
+// allocated and the shared GLB view is handed back by identity. With one
+// complete vertex plus a one-float fragment, only that vertex folds and the
+// fragment float survives into the owned copy.
+test("incomplete trailing destination vertices stay untouched and uncopied", () => {
+  const { context } = createLoaderContext();
+  const result = plain(call(context, `
+    var gltf = {
+      accessors: [{ bufferView: 0, byteOffset: 0, componentType: 5126, count: 2, type: "VEC3" }],
+      bufferViews: [{ byteOffset: 0 }],
+    };
+    var primitive = { targets: [{ POSITION: 0 }] };
+    var deltas = new Float32Array([10, 20, 30, 40, 50, 60]);
+    var fragmentOnly = new Float32Array([1, 2]);
+    var oneVertexPlusFragment = new Float32Array([1, 2, 3, 4]);
+    var fragmentStreams = gltfFoldMorphTargets(
+      gltf, primitive, deltas.buffer, null, fragmentOnly, null, null, [1]);
+    var foldedStreams = gltfFoldMorphTargets(
+      gltf, primitive, deltas.buffer, null, oneVertexPlusFragment, null, null, [1]);
+    ({
+      fragmentSameObject: fragmentStreams[0] === fragmentOnly,
+      fragment: Array.from(fragmentStreams[0]),
+      fragmentInputUntouched: Array.from(fragmentOnly),
+      foldedSameObject: foldedStreams[0] === oneVertexPlusFragment,
+      folded: Array.from(foldedStreams[0]),
+      foldedInputUntouched: Array.from(oneVertexPlusFragment),
+    });
+  `));
+  assert.equal(result.fragmentSameObject, true, "no complete destination vertex means no copy");
+  assert.deepEqual(result.fragment, [1, 2], "a two-float fragment cannot hold a stride, so nothing folds");
+  assert.deepEqual(result.fragmentInputUntouched, [1, 2], "the shared GLB bytes stay untouched");
+  assert.equal(result.foldedSameObject, false, "one writable corner detaches the stream from the shared view");
+  assert.deepEqual(result.folded, [11, 22, 33, 4], "only the first complete vertex folds; the fragment float survives");
+  assert.deepEqual(result.foldedInputUntouched, [1, 2, 3, 4], "the original shared view stays untouched");
 });

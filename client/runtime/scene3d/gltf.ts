@@ -65,56 +65,64 @@
   // Accessor / buffer-view reading
   // ---------------------------------------------------------------------------
 
-  var GLTF_COMPONENT_SIZES = {
-    5120: 1,  // INT8
-    5121: 1,  // UINT8
-    5122: 2,  // INT16
-    5123: 2,  // UINT16
-    5125: 4,  // UINT32
-    5126: 4,  // FLOAT32
-  };
+  // Per-componentType record: [byte size, typed-array constructor, DataView
+  // reader name]. FLOAT32, an omitted view slot, and anything unlisted all
+  // resolve through GLTF_FLOAT32_FORMAT below, so every fallback matches the
+  // old default branches exactly (4-byte size, Float32Array view).
+  // All three lookup tables are built null-prototype at construction: a
+  // hostile or corrupt componentType or type string ("constructor",
+  // "toString", "__proto__") must miss and fall through to the defaults
+  // instead of matching inherited Object.prototype members.
+  var GLTF_COMPONENT_FORMATS = Object.assign(Object.create(null), {
+    5120: [1, Int8Array, "getInt8"],
+    5121: [1, Uint8Array, "getUint8"],
+    5122: [2, Int16Array, "getInt16"],
+    5123: [2, Uint16Array, "getUint16"],
+    5125: [4, Uint32Array, "getUint32"],
+  });
+  var GLTF_FLOAT32_FORMAT = [4, Float32Array, "getFloat32"];
+
+  // Elements per accessor record by glTF type name; anything unlisted reads
+  // as one scalar component.
+  var GLTF_TYPE_COUNTS = Object.assign(Object.create(null), {
+    SCALAR: 1,
+    VEC2: 2,
+    VEC3: 3,
+    VEC4: 4,
+    MAT2: 4,
+    MAT3: 9,
+    MAT4: 16,
+  });
 
   function gltfAccessorTypeCount(type) {
-    switch (type) {
-      case "SCALAR": return 1;
-      case "VEC2":   return 2;
-      case "VEC3":   return 3;
-      case "VEC4":   return 4;
-      case "MAT2":   return 4;
-      case "MAT3":   return 9;
-      case "MAT4":   return 16;
-      default:       return 1;
-    }
+    return GLTF_TYPE_COUNTS[type] || 1;
   }
 
   function gltfTypedArrayView(buffer, byteOffset, componentType, count) {
-    switch (componentType) {
-      case 5120: return new Int8Array(buffer, byteOffset, count);
-      case 5121: return new Uint8Array(buffer, byteOffset, count);
-      case 5122: return new Int16Array(buffer, byteOffset, count);
-      case 5123: return new Uint16Array(buffer, byteOffset, count);
-      case 5125: return new Uint32Array(buffer, byteOffset, count);
-      case 5126: return new Float32Array(buffer, byteOffset, count);
-      default:   return new Float32Array(buffer, byteOffset, count);
-    }
+    var format = GLTF_COMPONENT_FORMATS[componentType] || GLTF_FLOAT32_FORMAT;
+    return new format[1](buffer, byteOffset, count);
   }
+
+  // Normalized-integer dequantization divisors, signed types flagged so their
+  // -1 endpoint survives division rounding. FLOAT32 and unknown types are
+  // absent and simply copy through the one conversion loop below.
+  var GLTF_NORMALIZE_DIVISORS = Object.assign(Object.create(null), {
+    5120: [127, true],
+    5121: [255, false],
+    5122: [32767, true],
+    5123: [65535, false],
+    5125: [4294967295, false],
+  });
 
   function gltfNormalizeAccessorValues(values, componentType) {
     var normalized = new Float32Array(values.length);
-    var divisor = 1;
-    var signed = false;
-    switch (componentType) {
-      case 5120: divisor = 127; signed = true; break;
-      case 5121: divisor = 255; break;
-      case 5122: divisor = 32767; signed = true; break;
-      case 5123: divisor = 65535; break;
-      case 5125: divisor = 4294967295; break;
-      default:
-        for (var f = 0; f < values.length; f++) {
-          normalized[f] = values[f];
-        }
-        return normalized;
+    var quantization = GLTF_NORMALIZE_DIVISORS[componentType];
+    if (!quantization) {
+      normalized.set(values);
+      return normalized;
     }
+    var divisor = quantization[0];
+    var signed = quantization[1];
     for (var i = 0; i < values.length; i++) {
       var value = values[i] / divisor;
       normalized[i] = signed && value < -1 ? -1 : value;
@@ -148,18 +156,6 @@
     return Math.max(min, Math.min(max, value));
   }
 
-  // Read the largest component of a linear colour factor. GoSX materials carry
-  // scalar sheen and specular strengths, so a colour factor collapses to its
-  // peak intensity.
-  function gltfExtensionColorPeak(extension, key, fallback) {
-    var color = extension && extension[key];
-    if (!Array.isArray(color) || color.length < 3) {
-      return fallback;
-    }
-    var peak = Math.max(Number(color[0]) || 0, Number(color[1]) || 0, Number(color[2]) || 0);
-    return Math.max(0, Math.min(1, peak));
-  }
-
   // Compression extensions rewrite the bytes a bufferView or primitive points
   // at. The loader has no decoder for them, so reading the raw bytes would
   // build a corrupt mesh. Throw instead, with the extension named.
@@ -189,31 +185,28 @@
 
     var byteOffset = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
     var componentCount = gltfAccessorTypeCount(accessor.type);
-    var componentSize = GLTF_COMPONENT_SIZES[accessor.componentType] || 4;
+    var componentFormat = GLTF_COMPONENT_FORMATS[accessor.componentType] || GLTF_FLOAT32_FORMAT;
+    var componentSize = componentFormat[0];
     var stride = bufferView.byteStride || 0;
     var totalElements = accessor.count * componentCount;
 
     // Fast path: tightly packed data with no stride.
+    var result;
     if (!stride || stride === componentCount * componentSize) {
-      var packed = gltfTypedArrayView(buffer, byteOffset, accessor.componentType, totalElements);
-      return accessor.normalized ? gltfNormalizeAccessorValues(packed, accessor.componentType) : packed;
-    }
-
-    // Interleaved: copy element-by-element.
-    var result = new Float32Array(totalElements);
-    var src = new DataView(buffer);
-    for (var i = 0; i < accessor.count; i++) {
-      var elemOffset = byteOffset + i * stride;
-      for (var c = 0; c < componentCount; c++) {
-        var co = elemOffset + c * componentSize;
-        switch (accessor.componentType) {
-          case 5120: result[i * componentCount + c] = src.getInt8(co); break;
-          case 5121: result[i * componentCount + c] = src.getUint8(co); break;
-          case 5122: result[i * componentCount + c] = src.getInt16(co, true); break;
-          case 5123: result[i * componentCount + c] = src.getUint16(co, true); break;
-          case 5125: result[i * componentCount + c] = src.getUint32(co, true); break;
-          case 5126: result[i * componentCount + c] = src.getFloat32(co, true); break;
-          default:   result[i * componentCount + c] = src.getFloat32(co, true); break;
+      result = gltfTypedArrayView(buffer, byteOffset, accessor.componentType, totalElements);
+    } else {
+      // Interleaved: copy element-by-element.
+      result = new Float32Array(totalElements);
+      var src = new DataView(buffer);
+      for (var i = 0; i < accessor.count; i++) {
+        var elemOffset = byteOffset + i * stride;
+        for (var c = 0; c < componentCount; c++) {
+          var co = elemOffset + c * componentSize;
+          // One reader per componentType, little-endian throughout; single-byte
+          // readers ignore the endianness argument and unknown types read
+          // through the getFloat32 fallback recorded above.
+          result[i * componentCount + c] =
+            src[componentFormat[2]](co, true);
         }
       }
     }
@@ -348,39 +341,25 @@
     var outTan = tangents ? new Float32Array(count * 4) : null;
     var outJoints = joints ? new Float32Array(count * 4) : null;
     var outWeights = weights ? new Float32Array(count * 4) : null;
+    // One row per output stream; the width comes from each allocation above,
+    // so every element lands at exactly the offset the unrolled copies wrote.
+    var channels = [
+      [outPos, positions], [outNrm, normals], [outUV, uvs],
+      [outTan, tangents], [outJoints, joints], [outWeights, weights],
+    ];
 
     for (var i = 0; i < count; i++) {
       var idx = indices[i];
-      outPos[i * 3]     = positions[idx * 3];
-      outPos[i * 3 + 1] = positions[idx * 3 + 1];
-      outPos[i * 3 + 2] = positions[idx * 3 + 2];
-
-      outNrm[i * 3]     = normals[idx * 3];
-      outNrm[i * 3 + 1] = normals[idx * 3 + 1];
-      outNrm[i * 3 + 2] = normals[idx * 3 + 2];
-
-      outUV[i * 2]     = uvs[idx * 2];
-      outUV[i * 2 + 1] = uvs[idx * 2 + 1];
-
-      if (outTan) {
-        outTan[i * 4]     = tangents[idx * 4];
-        outTan[i * 4 + 1] = tangents[idx * 4 + 1];
-        outTan[i * 4 + 2] = tangents[idx * 4 + 2];
-        outTan[i * 4 + 3] = tangents[idx * 4 + 3];
-      }
-
-      if (outJoints) {
-        outJoints[i * 4]     = joints[idx * 4];
-        outJoints[i * 4 + 1] = joints[idx * 4 + 1];
-        outJoints[i * 4 + 2] = joints[idx * 4 + 2];
-        outJoints[i * 4 + 3] = joints[idx * 4 + 3];
-      }
-
-      if (outWeights) {
-        outWeights[i * 4]     = weights[idx * 4];
-        outWeights[i * 4 + 1] = weights[idx * 4 + 1];
-        outWeights[i * 4 + 2] = weights[idx * 4 + 2];
-        outWeights[i * 4 + 3] = weights[idx * 4 + 3];
+      for (var c = 0; c < channels.length; c++) {
+        var channel = channels[c];
+        var streamOut = channel[0];
+        if (!streamOut) {
+          continue;
+        }
+        var width = streamOut.length / count;
+        for (var k = 0; k < width; k++) {
+          streamOut[i * width + k] = channel[1][idx * width + k];
+        }
       }
     }
 
@@ -398,8 +377,8 @@
   // Static morph-target folding (primitive.targets, load time only)
   // ---------------------------------------------------------------------------
 
-  // Fold primitive.targets POSITION/NORMAL/TANGENT deltas into freshly owned
-  // copies of the base streams using the authored node-over-mesh weights:
+  // Fold primitive.targets POSITION/NORMAL/TANGENT deltas into primitive-local
+  // streams using the authored node-over-mesh weights:
   //   result = base + sum_i weights[i] * target[i]
   // Runs once per node instantiation during primitive extraction, never per
   // frame, and always BEFORE any node/world transform or skinning: the Khronos
@@ -410,31 +389,72 @@
   // walks the SAME index map as the base attributes, so delta vertex
   // indices[v] feeds corner v; unindexed primitives pair vertex v directly.
   // Corners whose delta index falls outside a short accessor are left
-  // untouched, and target channels naming missing accessors are skipped, so
-  // malformed assets degrade safely instead of poisoning the streams. Tangent
-  // w survives because deltas displace xyz only. Returns fixed triples
-  // [positions, normals, tangents] (null where that base stream was absent);
-  // the arrays are fresh and owned by the caller. Weights are validated one by
-  // one: non-array lists read as all-zero, and every entry must be a finite
-  // non-zero number to apply.
-  var GLTF_MORPH_CHANNELS = ["POSITION", "NORMAL", "TANGENT"];
+  // untouched, an incomplete trailing vertex shorter than one full stride is
+  // likewise never folded, and target channels naming missing accessors are
+  // skipped, so malformed assets degrade safely instead of poisoning the
+  // streams. Tangent w survives because deltas displace xyz only.
+  //
+  // Copy-on-effective-fold: the streams handed in may still be views over the
+  // shared GLB buffer (unindexed primitives skip the eager expansion copies),
+  // so each channel is copied with its exact source length only when a valid
+  // finite non-zero morph weight AND a present target accessor mean the fold
+  // can actually write it. Absent, invalid, all-zero, and channel-missing
+  // morphs allocate no stream copies and hand the untouched streams back. The
+  // returned list echoes the inputs where a channel never wrote (positions is
+  // always present; 3-wide channels are POSITION and NORMAL, TANGENT is the
+  // lone 4-wide channel and the copy keeps its w). Weights are validated one
+  // by one: non-array lists read as all-zero, and every entry must be a
+  // finite non-zero number to apply.
   function gltfFoldMorphTargets(gltf, primitive, binaryBuffer, indices, positions, normals, tangents, weights) {
     var targets = primitive && primitive.targets;
     if (!targets || !targets.length || !positions) {
       return null;
     }
-    // Fixed triple of freshly owned streams: [POSITION, NORMAL, TANGENT]
-    // (null where that base stream was absent). TANGENT is the lone 4-wide
-    // channel; POSITION/NORMAL are 3-wide.
-    var streams = [
-      new Float32Array(positions),
-      normals ? new Float32Array(normals) : null,
-      tangents ? new Float32Array(tangents) : null,
-    ];
+    // One slot per channel; the no-normal/no-tangent case skips two.
+    var streams = normals || tangents ? [positions, normals, tangents] : [positions];
+    // Per-channel copy flags: each channel detaches from the shared GLB view
+    // exactly once, at the first corner a fold actually writes (a valid finite
+    // non-zero weight over a present target accessor whose deltas carry at
+    // least three components AND an in-range delta index over a COMPLETE
+    // destination vertex), keeping the exact source length so a short view
+    // stays short. A trailing fragment narrower than one stride never folds,
+    // so a two-float base with a three-wide delta stays bit-identical.
+    // POSITION/NORMAL are 3-wide; TANGENT is the lone 4-wide channel.
+    var copied = [];
+    function foldChannel(channel, accessorIndex, stride) {
+      var values = streams[channel];
+      if (!values || accessorIndex == null || !gltf.accessors[accessorIndex]) {
+        return;
+      }
+      var deltas = gltfReadAccessor(gltf, accessorIndex, binaryBuffer);
+      if (!deltas || !deltas.length) {
+        return;
+      }
+      var srcVertices = Math.floor(deltas.length / 3);
+      // Whole destination vertices only: no copy and no write for a trailing
+      // fragment that cannot hold a full stride.
+      var dstVertices = Math.floor(values.length / stride);
+      for (var v = 0; v < dstVertices; v++) {
+        var d = indices ? indices[v] : v;
+        if (!(d >= 0 && d < srcVertices)) {
+          continue;
+        }
+        if (!copied[channel]) {
+          // First writable corner only: targets that index nothing real never
+          // allocate a copy and hand the input stream straight back.
+          var copy = new Float32Array(values.length);
+          copy.set(values);
+          values = streams[channel] = copy;
+          copied[channel] = true;
+        }
+        var offset = v * stride;
+        values[offset]     += weight * deltas[d * 3];
+        values[offset + 1] += weight * deltas[d * 3 + 1];
+        values[offset + 2] += weight * deltas[d * 3 + 2];
+      }
+    }
     for (var t = 0; t < targets.length; t++) {
-      var weight = Array.isArray(weights) && weights[t] != null
-        ? Number(weights[t])
-        : 0;
+      var weight = Array.isArray(weights) && weights[t] != null ? Number(weights[t]) : 0;
       if (!isFinite(weight) || weight === 0) {
         continue;
       }
@@ -442,33 +462,13 @@
       if (!source || typeof source !== "object") {
         continue;
       }
-      for (var s = 0; s < 3; s++) {
-        var values = streams[s];
-        var stride = s === 2 ? 4 : 3;
-        var attributeName = GLTF_MORPH_CHANNELS[s];
-        if (!values || source[attributeName] == null ||
-            !gltf.accessors[source[attributeName]]) {
-          continue;
-        }
-        var deltas = gltfReadAccessor(gltf, source[attributeName], binaryBuffer);
-        if (!deltas || !deltas.length) {
-          continue;
-        }
-        var srcVertices = Math.floor(deltas.length / 3);
-        var dstVertices = Math.floor(values.length / stride);
-        for (var v = 0; v < dstVertices; v++) {
-          var d = indices ? indices[v] : v;
-          if (!(d >= 0 && d < srcVertices)) {
-            continue;
-          }
-          var offset = v * stride;
-          values[offset]     += weight * deltas[d * 3];
-          values[offset + 1] += weight * deltas[d * 3 + 1];
-          values[offset + 2] += weight * deltas[d * 3 + 2];
-        }
+      foldChannel(0, source.POSITION, 3);
+      if (streams.length > 1) {
+        foldChannel(1, source.NORMAL, 3);
+        foldChannel(2, source.TANGENT, 4);
       }
     }
-    return [streams[0], streams[1], streams[2]];
+    return streams;
   }
 
   function gltfReadPrimitiveAttribute(gltf, primitive, names, binaryBuffer) {
@@ -522,27 +522,21 @@
   }
 
   function gltfLineSegments(mode, pointCount, indices) {
+    var indexed = indices && indices.length;
+    var total = indexed ? indices.length : pointCount;
     var order = [];
-    if (indices && indices.length) {
-      for (var i = 0; i < indices.length; i++) {
-        order.push(Math.floor(indices[i]));
-      }
-    } else {
-      for (var p = 0; p < pointCount; p++) {
-        order.push(p);
-      }
+    for (var i = 0; i < total; i++) {
+      order.push(indexed ? Math.floor(indices[i]) : i);
     }
 
+    // LINES pairs corners two by two; LINE_STRIP/LINE_LOOP chain them.
+    var step = mode === 1 ? 2 : 1;
     var segments = [];
-    if (mode === 1) {
-      for (var pair = 0; pair + 1 < order.length; pair += 2) {
-        segments.push([order[pair], order[pair + 1]]);
-      }
-      return segments;
-    }
-
-    for (var s = 0; s + 1 < order.length; s++) {
+    for (var s = 0; s + 1 < order.length; s += step) {
       segments.push([order[s], order[s + 1]]);
+    }
+    if (mode === 1) {
+      return segments;
     }
     if (mode === 2 && order.length > 2) {
       segments.push([order[order.length - 1], order[0]]);
@@ -571,14 +565,15 @@
     if (componentCount < 3) {
       return null;
     }
+    var componentType = record.accessor.componentType;
     var colors = new Float32Array(count * 4);
     for (var i = 0; i < count; i++) {
       var src = i * componentCount;
-      colors[i * 4] = gltfColorComponent(record.values[src], record.accessor.componentType);
-      colors[i * 4 + 1] = gltfColorComponent(record.values[src + 1], record.accessor.componentType);
-      colors[i * 4 + 2] = gltfColorComponent(record.values[src + 2], record.accessor.componentType);
+      colors[i * 4] = gltfColorComponent(record.values[src], componentType);
+      colors[i * 4 + 1] = gltfColorComponent(record.values[src + 1], componentType);
+      colors[i * 4 + 2] = gltfColorComponent(record.values[src + 2], componentType);
       colors[i * 4 + 3] = componentCount > 3
-        ? gltfColorComponent(record.values[src + 3], record.accessor.componentType)
+        ? gltfColorComponent(record.values[src + 3], componentType)
         : 1;
     }
     return colors;
@@ -697,39 +692,37 @@
     return values;
   }
 
+  // Hand back an owned Float32Array unless the stream already is one.
+  function gltfToFloat32Array(values) {
+    return values && !(values instanceof Float32Array)
+      ? new Float32Array(values)
+      : values;
+  }
+
   function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights) {
+    // One named-attribute read: absent names hand back null exactly like the
+    // inline guards they replace.
+    function attrValues(name) {
+      return primitive.attributes[name] != null
+        ? gltfReadAccessor(gltf, primitive.attributes[name], binaryBuffer)
+        : null;
+    }
     var positions = gltfReadAccessor(gltf, primitive.attributes.POSITION, binaryBuffer);
 
-    var normals = primitive.attributes.NORMAL != null
-      ? gltfReadAccessor(gltf, primitive.attributes.NORMAL, binaryBuffer)
-      : null;
+    var normals = attrValues("NORMAL");
     // A normalized accessor already handed back a fresh Float32Array, so this
     // never writes through a view over the shared GLB buffer.
     if (normals && gltf.accessors[primitive.attributes.NORMAL].normalized) {
       normals = gltfRenormalizeVec3(normals);
     }
 
-    var uvs = primitive.attributes.TEXCOORD_0 != null
-      ? gltfReadAccessor(gltf, primitive.attributes.TEXCOORD_0, binaryBuffer)
-      : null;
+    var uvs = attrValues("TEXCOORD_0");
 
-    var tangentsRaw = primitive.attributes.TANGENT != null
-      ? gltfReadAccessor(gltf, primitive.attributes.TANGENT, binaryBuffer)
-      : null;
+    var tangentsRaw = attrValues("TANGENT");
 
-    var joints = primitive.attributes.JOINTS_0 != null
-      ? gltfReadAccessor(gltf, primitive.attributes.JOINTS_0, binaryBuffer)
-      : null;
-    if (joints && !(joints instanceof Float32Array)) {
-      joints = new Float32Array(joints);
-    }
+    var joints = gltfToFloat32Array(attrValues("JOINTS_0"));
 
-    var weights = primitive.attributes.WEIGHTS_0 != null
-      ? gltfReadAccessor(gltf, primitive.attributes.WEIGHTS_0, binaryBuffer)
-      : null;
-    if (weights && !(weights instanceof Float32Array)) {
-      weights = new Float32Array(weights);
-    }
+    var weights = gltfToFloat32Array(attrValues("WEIGHTS_0"));
 
     var indices = primitive.indices != null
       ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
@@ -747,30 +740,29 @@
         indices
       );
       positions = expanded.positions;
-      if (normals) {
-        normals = expanded.normals;
-      } else {
-        normals = gltfGenerateFlatNormals(positions);
-      }
+      normals = normals ? expanded.normals : gltfGenerateFlatNormals(positions);
       uvs = expanded.uvs;
       tangentsRaw = expanded.tangents;
       joints = expanded.joints;
       weights = expanded.weights;
     } else {
-      if (!normals) {
-        normals = gltfGenerateFlatNormals(positions);
-      }
+      // Unindexed geometry pairs vertex v directly. The base streams stay as
+      // the accessor handed them — the fold copies each channel lazily, only
+      // when a morph weight actually writes it — and the fallback streams are
+      // fresh either way.
+      normals = normals || gltfGenerateFlatNormals(positions);
       if (!uvs) {
         uvs = gltfGenerateDefaultUVs(positions.length / 3);
       }
     }
 
-    // Fold static morph-target deltas right here, once at load time: every
-    // stream above is already a fresh owned copy or gets copied inside the
-    // fold, deltas land in PRIMITIVE-LOCAL space before any node/world
-    // transform or skinning (Khronos glTF 2.0), and folding before UV baking
-    // and fallback-tangent generation keeps computed tangents on the morphed
-    // surface.
+    // Fold static morph-target deltas right here, once at load time: deltas
+    // land in PRIMITIVE-LOCAL space before any node/world transform or
+    // skinning (Khronos glTF 2.0), and folding before UV baking and
+    // fallback-tangent generation keeps computed tangents on the morphed
+    // surface. The fold copies a stream only when a weight actually writes
+    // it, so a no-op morph hands the input views straight back and allocates
+    // nothing.
     var morphedStreams = gltfFoldMorphTargets(
       gltf, primitive, binaryBuffer, indices,
       positions, normals, tangentsRaw, morphWeights);
@@ -1124,7 +1116,13 @@
     // roughness and the colour hue are dropped.
     var sheen = gltfExtension(mat, "KHR_materials_sheen");
     if (sheen) {
-      record.sheen = gltfExtensionColorPeak(sheen, "sheenColorFactor", 0);
+      var sheenColor = sheen.sheenColorFactor;
+      record.sheen = Array.isArray(sheenColor) && sheenColor.length >= 3
+        ? Math.max(0, Math.min(1, Math.max(
+            Number(sheenColor[0]) || 0,
+            Number(sheenColor[1]) || 0,
+            Number(sheenColor[2]) || 0)))
+        : 0;
     }
 
     // KHR_materials_transmission -> StandardMaterial.Transmission, 0 to 1.
@@ -1181,6 +1179,30 @@
   // Mesh node extraction — produces objects for the scene asset
   // ---------------------------------------------------------------------------
 
+  // Synthesized primitive id: an authored mesh name wins over the positional
+  // "mesh-<index>" form, and idSuffix marks instanced copies.
+  function gltfPrimitiveID(mesh, meshIndex, channel, p, suffix) {
+    return (mesh.name || ("mesh-" + meshIndex)) + "-" + channel + "-" + p + suffix;
+  }
+
+  // Shared alpha-pass gate: BLEND or sub-unit opacity renders in the alpha
+  // pass. One predicate backs the points/lines blendMode strings and the mesh
+  // renderPass so the three sites cannot drift apart.
+  function gltfIsAlphaMaterial(material) {
+    return material.alphaMode === "BLEND" || material.opacity < 0.999;
+  }
+
+  // Read POSITION, transform it by the node matrix, and report vertex count.
+  // Returns null when the attribute or its values are too short to draw.
+  function gltfTransformedPositions(gltf, primitive, binaryBuffer, worldTransform, minValues) {
+    var record = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
+    if (!record || !record.values || record.values.length < minValues) {
+      return null;
+    }
+    var transformed = gltfTransformPositions(record.values, worldTransform);
+    return { positions: transformed, count: Math.floor(transformed.length / 3) };
+  }
+
   function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
@@ -1190,7 +1212,7 @@
 
     var normalMat = gltfNormalMatrix(worldTransform);
     var skin = skinIndex != null && result.skins ? result.skins[skinIndex] : null;
-    var isSkinned = Boolean(skin);
+    var isSkinned = !!skin;
 
     for (var p = 0; p < mesh.primitives.length; p++) {
       var primitive = mesh.primitives[p];
@@ -1200,15 +1222,15 @@
       var extras = gltfCollectScene3DExtras(node, mesh, primitive);
 
       if (mode === 0) {
-        var positionRecord = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
-        if (!positionRecord || !positionRecord.values || positionRecord.values.length < 3) {
+        var pointStream = gltfTransformedPositions(gltf, primitive, binaryBuffer, worldTransform, 3);
+        if (!pointStream) {
           continue;
         }
-        var pointPositions = gltfTransformPositions(positionRecord.values, worldTransform);
-        var pointCount = Math.floor(pointPositions.length / 3);
+        var pointPositions = pointStream.positions;
+        var pointCount = pointStream.count;
         var pointColors = gltfPointColorBuffer(gltf, primitive, binaryBuffer, pointCount);
         var pointSizes = gltfPointSizeBuffer(gltf, primitive, binaryBuffer, pointCount);
-        var pointID = (mesh.name ? (mesh.name + "-points-" + p) : ("mesh-" + meshIndex + "-points-" + p)) + suffix;
+        var pointID = gltfPrimitiveID(mesh, meshIndex, "points", p, suffix);
         var pointEntry = {
           id: pointID,
           count: pointCount,
@@ -1218,7 +1240,7 @@
           color: material.color || "#ffffff",
           size: 1,
           opacity: material.opacity != null ? material.opacity : 1,
-          blendMode: (material.alphaMode === "BLEND" || material.opacity < 0.999) ? "alpha" : "",
+          blendMode: gltfIsAlphaMaterial(material) ? "alpha" : "",
           depthWrite: material.alphaMode !== "BLEND",
           attenuation: false,
         };
@@ -1235,16 +1257,16 @@
       }
 
       if (mode === 1 || mode === 2 || mode === 3) {
-        var linePositionRecord = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
-        if (!linePositionRecord || !linePositionRecord.values || linePositionRecord.values.length < 6) {
+        var lineStream = gltfTransformedPositions(gltf, primitive, binaryBuffer, worldTransform, 6);
+        if (!lineStream) {
           continue;
         }
-        var linePositions = gltfTransformPositions(linePositionRecord.values, worldTransform);
-        var lineCount = Math.floor(linePositions.length / 3);
+        var linePositions = lineStream.positions;
+        var lineCount = lineStream.count;
         var lineIndices = primitive.indices != null
           ? gltfReadAccessor(gltf, primitive.indices, binaryBuffer)
           : null;
-        var lineID = (mesh.name ? (mesh.name + "-lines-" + p) : ("mesh-" + meshIndex + "-lines-" + p)) + suffix;
+        var lineID = gltfPrimitiveID(mesh, meshIndex, "lines", p, suffix);
         var lineObject = {
           id: lineID,
           kind: "lines",
@@ -1253,7 +1275,7 @@
           material: material,
           color: material.color || "#cccccc",
           opacity: material.opacity != null ? material.opacity : 1,
-          blendMode: (material.alphaMode === "BLEND" || material.opacity < 0.999) ? "alpha" : "",
+          blendMode: gltfIsAlphaMaterial(material) ? "alpha" : "",
         };
         gltfApplyScene3DExtras(lineObject, extras, GLTF_OBJECT_EXTRA_KEYS);
         result.objects.push(lineObject);
@@ -1328,16 +1350,9 @@
       }
 
       // Determine render pass from material alpha mode.
-      var renderPass = "opaque";
-      if (material.alphaMode === "BLEND" || material.opacity < 0.999) {
-        renderPass = "alpha";
-      }
+      var renderPass = gltfIsAlphaMaterial(material) ? "alpha" : "opaque";
 
-      var objectID = "mesh-" + meshIndex + "-prim-" + p;
-      if (mesh.name) {
-        objectID = mesh.name + "-prim-" + p;
-      }
-      objectID += suffix;
+      var objectID = gltfPrimitiveID(mesh, meshIndex, "prim", p, suffix);
 
       var vertices = {
         positions: objectPositions,
@@ -1670,6 +1685,15 @@
     return out;
   }
 
+  // Count of one overlay attribute's accessor record, zero when the record is
+  // absent or carries no count.
+  function gltfOverlayAttributeCount(gltf, primitive, name) {
+    var accessor = gltf.accessors && primitive.attributes[name] != null
+      ? gltf.accessors[primitive.attributes[name]]
+      : null;
+    return (accessor && accessor.count) || 0;
+  }
+
   function gltfCollectPointOverlayNode(gltf, nodeIndex, binaryBuffer, parentTransform, out) {
     var node = gltf.nodes && gltf.nodes[nodeIndex];
     if (!node) {
@@ -1695,12 +1719,10 @@
           }
         }
         if (!count && primitive.attributes.COLOR_0 != null) {
-          var colorAccessor = gltf.accessors && gltf.accessors[primitive.attributes.COLOR_0];
-          count = colorAccessor && colorAccessor.count ? colorAccessor.count : 0;
+          count = gltfOverlayAttributeCount(gltf, primitive, "COLOR_0");
         }
         if (!count && primitive.attributes._POINT_SIZE != null) {
-          var sizeAccessor = gltf.accessors && gltf.accessors[primitive.attributes._POINT_SIZE];
-          count = sizeAccessor && sizeAccessor.count ? sizeAccessor.count : 0;
+          count = gltfOverlayAttributeCount(gltf, primitive, "_POINT_SIZE");
         }
         if (!count) {
           continue;
@@ -1718,7 +1740,7 @@
         var extras = gltfCollectScene3DExtras(node, mesh, primitive);
         var key = extras && typeof extras.id === "string" && extras.id
           ? extras.id
-          : ((mesh.name ? mesh.name : ("mesh-" + node.mesh)) + "-points-" + p);
+          : gltfPrimitiveID(mesh, node.mesh, "points", p, "");
         out[key] = { count: count, colors: colors, positions: positions, sizes: sizes };
       }
     }
@@ -1727,6 +1749,11 @@
       gltfCollectPointOverlayNode(gltf, children[c], binaryBuffer, worldTransform, out);
     }
   }
+
+  // Field pairs: overlay attribute name and its retained cache twin.
+  var GLTF_POINT_PATCH_FIELDS = [
+    ["colors", "_cachedColors"], ["positions", "_cachedPos"], ["sizes", "_cachedSizes"],
+  ];
 
   // Patch base point entries in place. A count mismatch means the base and
   // overlay were built from different layer sets; the entry keeps its base
@@ -1747,17 +1774,14 @@
         console.warn("[gosx] glb overlay skipped " + entry.id + ": overlay has " + patch.count + " points, base has " + entry.count);
         continue;
       }
-      if (patch.colors) {
-        entry.colors = patch.colors;
-        entry._cachedColors = patch.colors;
-      }
-      if (patch.positions) {
-        entry.positions = patch.positions;
-        entry._cachedPos = patch.positions;
-      }
-      if (patch.sizes) {
-        entry.sizes = patch.sizes;
-        entry._cachedSizes = patch.sizes;
+      for (var f = 0; f < GLTF_POINT_PATCH_FIELDS.length; f++) {
+        var field = GLTF_POINT_PATCH_FIELDS[f];
+        var value = patch[field[0]];
+        if (!value) {
+          continue;
+        }
+        entry[field[0]] = value;
+        entry[field[1]] = value;
       }
     }
     return scene;
@@ -1766,6 +1790,17 @@
   // ---------------------------------------------------------------------------
   // External buffer fetching for .gltf (non-binary) files
   // ---------------------------------------------------------------------------
+
+  // One model-side GET policy: same-origin credentials and one error shape.
+  // kind names the asset role in the thrown message so each error stays
+  // byte-identical to the inline copies it replaces.
+  async function gltfFetchModelResource(url, kind) {
+    var response = await fetch(url, { credentials: "same-origin" });
+    if (!response.ok) {
+      throw new Error("Failed to fetch " + kind + ": " + url + " (HTTP " + response.status + ")");
+    }
+    return response;
+  }
 
   async function gltfFetchExternalBuffers(gltf, baseURL) {
     if (!gltf.buffers || !gltf.buffers.length) {
@@ -1790,11 +1825,7 @@
 
     // Relative or absolute URL.
     var resolved = new URL(uri, baseURL).toString();
-    var response = await fetch(resolved, { credentials: "same-origin" });
-    if (!response.ok) {
-      throw new Error("Failed to fetch glTF buffer: " + resolved + " (HTTP " + response.status + ")");
-    }
-    return await response.arrayBuffer();
+    return (await gltfFetchModelResource(resolved, "glTF buffer")).arrayBuffer();
   }
 
   function gltfAbsoluteURL(url) {
@@ -1839,9 +1870,15 @@
 
   var GLTF_VARIANT_QUALITY_RANK = { ultra: 5, high: 4, standard: 3, medium: 3, low: 2 };
 
+  // Canonical form for every device/quality token read from the manifest or a
+  // renderer context: trimmed, lowercased text with a non-string reading as "".
+  function gltfLowerToken(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
   function gltfVariantQualityRank(quality) {
-    var rank = GLTF_VARIANT_QUALITY_RANK[String(quality || "").trim().toLowerCase()];
-    return rank ? rank : 1;
+    var rank = GLTF_VARIANT_QUALITY_RANK[gltfLowerToken(quality)];
+    return rank || 1;
   }
 
   function gltfTextureVariantTable() {
@@ -1860,7 +1897,7 @@
     }
     var set = {};
     for (var i = 0; i < context.tokens.length; i++) {
-      set[String(context.tokens[i] || "").trim().toLowerCase()] = true;
+      set[gltfLowerToken(context.tokens[i])] = true;
     }
     return set;
   }
@@ -1870,7 +1907,7 @@
       return null;
     }
     return {
-      backend: String(value.backend || "").trim().toLowerCase(),
+      backend: gltfLowerToken(value.backend),
       uploadReady: value.uploadReady === true,
       tokens: Array.isArray(value.tokens) ? value.tokens.slice() : [],
     };
@@ -1911,7 +1948,7 @@
     var required = Array.isArray(variant.requiredCapabilities) ? variant.requiredCapabilities : [];
     var block = false;
     for (var i = 0; i < required.length; i++) {
-      var token = String(required[i] || "").trim().toLowerCase();
+      var token = gltfLowerToken(required[i]);
       if (!tokens[token]) {
         return false;
       }
@@ -2036,19 +2073,13 @@
       : Promise.resolve(variantContext).then(gltfTextureVariantContext, function() { return null; });
 
     if (isGLB) {
-      response = await fetch(url, { credentials: "same-origin" });
-      if (!response.ok) {
-        throw new Error("Failed to fetch GLB: " + url + " (HTTP " + response.status + ")");
-      }
+      response = await gltfFetchModelResource(url, "GLB");
       var arrayBuffer = await response.arrayBuffer();
       var parsed = sceneParseGLB(arrayBuffer);
       var baseSrc = gltfPointOverlayBaseSrc(parsed.json);
       if (baseSrc) {
         var baseURL = new URL(baseSrc, assetURL).toString();
-        var baseResponse = await fetch(baseURL, { credentials: "same-origin" });
-        if (!baseResponse.ok) {
-          throw new Error("Failed to fetch GLB base: " + baseURL + " (HTTP " + baseResponse.status + ")");
-        }
+        var baseResponse = await gltfFetchModelResource(baseURL, "GLB base");
         var baseParsed = sceneParseGLB(await baseResponse.arrayBuffer());
         gltfResolveExternalImageURIs(baseParsed.json, baseURL, await variantContextPromise);
         var baseScene = gltfExtractScene(baseParsed.json, baseParsed.binaryBuffer);
@@ -2077,10 +2108,7 @@
     }
 
     // .gltf JSON file.
-    response = await fetch(url, { credentials: "same-origin" });
-    if (!response.ok) {
-      throw new Error("Failed to fetch glTF: " + url + " (HTTP " + response.status + ")");
-    }
+    response = await gltfFetchModelResource(url, "glTF");
     var json = await response.json();
     // External buffers do not depend on image variant selection, so fetch them
     // while the renderer context is still settling.
@@ -2100,18 +2128,17 @@
   // ---------------------------------------------------------------------------
 
   function gltfSceneToModelAsset(scene, src) {
-    return {
-      src: src || "",
-      objects: scene.objects || [],
-      points: scene.points || [],
-      labels: scene.labels || [],
-      sprites: scene.sprites || [],
-      lights: scene.lights || [],
-      materials: scene.materials || [],
-      animations: scene.animations || [],
-      skins: scene.skins || [],
-      nodes: scene.nodes || [],
-    };
+    // Collection names share their model-asset spellings, so one sweep copies
+    // every present list and substitutes an empty one where absent.
+    var collections = [
+      "objects", "points", "labels", "sprites", "lights",
+      "materials", "animations", "skins", "nodes",
+    ];
+    var asset = { src: src || "" };
+    for (var i = 0; i < collections.length; i++) {
+      asset[collections[i]] = scene[collections[i]] || [];
+    }
+    return asset;
   }
 
   // Publish the GLTF API onto window so ensureGLTFFeatureLoaded() in

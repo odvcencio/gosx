@@ -17,6 +17,7 @@
 //   - KHR_materials_unlit selecting the flat shading path
 //   - named errors for the compression extensions the loader cannot decode
 //   - animation channel component width, including morph "weights" channels
+//   - accessor lookup tables staying inert for inherited or unknown keys
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -127,6 +128,47 @@ function extractTexturedMaterial(context) {
   };
   return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
 }
+
+// --- accessor lookup tables -------------------------------------------------
+
+// A hostile or corrupt componentType or type string must fall through to the
+// pre-table defaults — scalar width 1, a Float32Array view, values copied
+// through normalization unchanged — instead of matching inherited
+// Object.prototype keys. The component/type/normalize tables are built
+// null-prototype at construction; the interleaved row below also pins the
+// second component-format lookup inside gltfReadAccessor, where byte-stride
+// reads resolve both the view record and its DataView reader name from the
+// same table before hitting the Float32 fallback.
+test("accessor lookup tables ignore inherited and unknown keys", () => {
+  const { context } = createLoaderContext();
+  const result = plain(call(context, `
+    var input = new Float32Array([0.25, 0.5]);
+    var interleaved = new Float32Array([0.25, 42, 0.5, 43]);
+    var rows = ["constructor", "toString", "__proto__", "unknown"].map(function(key) {
+      return {
+        key: key,
+        count: gltfAccessorTypeCount(key),
+        view: Array.from(gltfTypedArrayView(input.buffer, 0, key, 2)),
+        normalized: Array.from(gltfNormalizeAccessorValues(input, key)),
+        interleaved: Array.from(gltfReadAccessor({
+          accessors: [{ bufferView: 0, byteOffset: 0, componentType: key, count: 2, type: "SCALAR" }],
+          bufferViews: [{ byteOffset: 0, byteStride: 8 }],
+        }, 0, interleaved.buffer)),
+      };
+    });
+    ({ rows: rows });
+  `));
+  for (const row of result.rows) {
+    assert.equal(row.count, 1, `${row.key} must read as one scalar component`);
+    assert.deepEqual(row.view, [0.25, 0.5], `${row.key} must build a Float32Array view`);
+    assert.deepEqual(row.normalized, [0.25, 0.5], `${row.key} must copy through normalization unchanged`);
+    assert.deepEqual(
+      row.interleaved,
+      [0.25, 0.5],
+      `${row.key} must read interleaved elements through the Float32 fallback`,
+    );
+  }
+});
 
 // --- KHR_materials_* factor mapping ----------------------------------------
 
