@@ -1568,7 +1568,7 @@
     };
   }
 
-  function gltfMaterialTextureDescriptors(baseColor, normal, roughness, metalness, occlusion, emissive) {
+  function gltfMaterialTextureDescriptors(baseColor, normal, roughness, metalness, occlusion, emissive, specularIntensity, specularColor) {
     var descriptors = {};
     function add(name, descriptor) {
       if (descriptor) {
@@ -1581,6 +1581,8 @@
     add("metalness", gltfTextureDescriptor(metalness, "metalness", "linear", "b"));
     add("occlusion", gltfTextureDescriptor(occlusion, "ambient-occlusion", "linear", "r"));
     add("emissive", gltfTextureDescriptor(emissive, "emissive", "srgb", "rgb"));
+    add("specularIntensity", gltfTextureDescriptor(specularIntensity, "specular-intensity", "linear", "a"));
+    add("specularColor", gltfTextureDescriptor(specularColor, "specular-color", "srgb", "rgb"));
     return descriptors;
   }
 
@@ -1707,6 +1709,9 @@
     var metallicRoughnessURL = gltfResolveTexture(gltf, pbr.metallicRoughnessTexture, binaryBuffer);
     var occlusionURL = gltfResolveTexture(gltf, mat.occlusionTexture, binaryBuffer);
     var emissiveURL = gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer);
+    var specular = gltfExtension(mat, "KHR_materials_specular");
+    var specularIntensityURL = specular ? gltfResolveTexture(gltf, specular.specularTexture, binaryBuffer) : "";
+    var specularColorURL = specular ? gltfResolveTexture(gltf, specular.specularColorTexture, binaryBuffer) : "";
 
     var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
     var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
@@ -1725,7 +1730,9 @@
       metallicRoughnessURL,
       metallicRoughnessURL,
       occlusionURL,
-      emissiveURL
+      emissiveURL,
+      specularIntensityURL,
+      specularColorURL
     );
     var record = {
       kind: "standard",
@@ -1796,11 +1803,11 @@
     // KHR_materials_specular -> StandardMaterial.specularIntensity and
     // .specularColor. The intensity is the [0, 1] specular strength and the
     // colour is the linear-space F0 tint; both import straight through with
-    // the spec defaults when missing or malformed. Only the factors map in
-    // this slice — the texture inputs stay unsupported, so the extension
-    // deliberately stays off GLTF_SUPPORTED_EXTENSIONS and an asset that
-    // requires it still warns.
-    var specular = gltfExtension(mat, "KHR_materials_specular");
+    // the spec defaults when missing or malformed. The texture inputs resolve
+    // through the shared descriptor path above — intensity samples the alpha
+    // channel in linear space, the colour is sRGB RGB — but the extension
+    // still stays off GLTF_SUPPORTED_EXTENSIONS until renderer sampling and
+    // the broader textureInfo semantics are validated.
     if (specular) {
       record.specularIntensity = gltfExtensionStrictFactor(specular, "specularFactor", 1, 0, 1);
       record.specularColor = gltfExtensionColor3(specular, "specularColorFactor") || [1, 1, 1];

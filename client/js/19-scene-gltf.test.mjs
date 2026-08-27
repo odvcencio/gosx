@@ -129,6 +129,27 @@ function extractTexturedMaterial(context) {
   return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
 }
 
+// One shared image URI feeds both specular slots so the tests can pin the
+// role/transfer split even when the source bytes are identical.
+function extractSpecularTexturedMaterial(context, imageUri) {
+  const doc = {
+    asset: { version: "2.0" },
+    images: [{ uri: imageUri }],
+    textures: [{ source: 0 }],
+    materials: [{
+      pbrMetallicRoughness: { roughnessFactor: 0.4 },
+      extensions: {
+        KHR_materials_specular: {
+          specularFactor: 0.5,
+          specularTexture: { index: 0 },
+          specularColorTexture: { index: 0 },
+        },
+      },
+    }],
+  };
+  return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
+}
+
 // --- KHR_materials_ior ------------------------------------------------------
 
 // The loader owns ior normalization itself: the standalone loader context
@@ -242,6 +263,156 @@ test("glTF texture slots carry explicit color roles and transfer functions", () 
     occlusion: { uri: "ao.png", role: "ambient-occlusion", colorSpace: "linear", channels: "r", view: "2d" },
     emissive: { uri: "emissive.png", role: "emissive", colorSpace: "srgb", channels: "rgb", view: "2d" },
   });
+});
+
+test("KHR_materials_specular textures resolve through the shared descriptor path", () => {
+  const { context } = createLoaderContext();
+  const material = extractSpecularTexturedMaterial(context, "spec.png");
+
+  // Factors survive beside the textures.
+  assert.equal(material.specularIntensity, 0.5);
+  assert.deepEqual(material.specularColor, [1, 1, 1]);
+  assert.equal(material.roughness, 0.4);
+
+  // Intensity is the linear alpha mask; the colour is the sRGB F0 tint.
+  assert.deepEqual(material.textureDescriptors.specularIntensity, {
+    uri: "spec.png", role: "specular-intensity", colorSpace: "linear", channels: "a", view: "2d",
+  });
+  assert.deepEqual(material.textureDescriptors.specularColor, {
+    uri: "spec.png", role: "specular-color", colorSpace: "srgb", channels: "rgb", view: "2d",
+  });
+
+  // The SAME source URI must produce two distinct roles, never a merged slot.
+  assert.notEqual(
+    material.textureDescriptors.specularIntensity.role,
+    material.textureDescriptors.specularColor.role,
+  );
+  assert.equal(material.textureDescriptors.specularIntensity.uri, material.textureDescriptors.specularColor.uri);
+
+  // Standard slots stay untouched by the specular additions.
+  assert.equal("baseColor" in material.textureDescriptors, false);
+});
+
+test("KHR_materials_specular resolves data URI strings", () => {
+  const { context } = createLoaderContext();
+  const material = extractSpecularTexturedMaterial(context, "data:image/png;base64,iVBORw0KGgo=");
+  assert.equal(material.textureDescriptors.specularIntensity.uri, "data:image/png;base64,iVBORw0KGgo=");
+  assert.equal(material.textureDescriptors.specularColor.uri, "data:image/png;base64,iVBORw0KGgo=");
+  assert.equal(material.textureDescriptors.specularIntensity.role, "specular-intensity");
+  assert.equal(material.textureDescriptors.specularColor.role, "specular-color");
+});
+
+test("KHR_materials_specular resolves bufferView-embedded images from one ArrayBuffer", () => {
+  const { context, sandbox } = createLoaderContext();
+
+  // Sentinel bytes surround the payload; the bufferView starts at a nonzero
+  // offset so the extracted bytes must be an exact slice, not the whole
+  // buffer. No image decoder runs here: this is URI-resolution coverage.
+  const payload = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const bytes = new Uint8Array(7 + payload.length + 5);
+  bytes.fill(0xee, 0, 7);
+  bytes.set(payload, 7);
+  bytes.fill(0xdd, 7 + payload.length);
+  const buffer = bytes.buffer;
+
+  const doc = materialDoc({
+    extensions: {
+      KHR_materials_specular: {
+        specularFactor: 0.5,
+        specularTexture: { index: 0 },
+        specularColorTexture: { index: 1 },
+      },
+    },
+  });
+  doc.buffers = [{ byteLength: buffer.byteLength }];
+  doc.bufferViews = [{ buffer: 0, byteOffset: 7, byteLength: payload.length }];
+  doc.images = [
+    { bufferView: 0, mimeType: "image/png" },
+    { bufferView: 0, mimeType: "image/png" },
+  ];
+  doc.textures = [{ source: 0 }, { source: 1 }];
+
+  // A Node-local variable is invisible inside vm.runInContext: bind the real
+  // ArrayBuffer into the sandbox explicitly before the call.
+  sandbox.__embeddedSpecBuffer = buffer;
+
+  // Observe the Blob objects handed to URL.createObjectURL; never treat the
+  // stub's return value alone as the assertion.
+  const blobs = [];
+  sandbox.URL.createObjectURL = (blob) => {
+    blobs.push(blob);
+    return "blob:fake-" + blobs.length;
+  };
+
+  const material = plain(call(context,
+    `gltfExtractMaterial(${JSON.stringify(doc)}, 0, __embeddedSpecBuffer)`));
+
+  // Both slots resolve to their own blob URL with distinct roles over the
+  // same embedded bytes.
+  assert.equal(material.textureDescriptors.specularIntensity.uri, "blob:fake-1");
+  assert.equal(material.textureDescriptors.specularColor.uri, "blob:fake-2");
+  assert.equal(material.textureDescriptors.specularIntensity.role, "specular-intensity");
+  assert.equal(material.textureDescriptors.specularColor.role, "specular-color");
+  assert.equal(material.textureDescriptors.specularIntensity.colorSpace, "linear");
+  assert.equal(material.textureDescriptors.specularColor.colorSpace, "srgb");
+  assert.equal(material.textureDescriptors.specularIntensity.channels, "a");
+  assert.equal(material.textureDescriptors.specularColor.channels, "rgb");
+  assert.equal(material.specularIntensity, 0.5);
+
+  // Each captured Blob carries the expected MIME type and exactly the sliced
+  // payload bytes, excluding the surrounding sentinels.
+  assert.equal(blobs.length, 2);
+  for (const blob of blobs) {
+    assert.equal(blob.type, "image/png");
+    assert.equal(blob.parts.length, 1);
+    assert.deepEqual(Array.from(new Uint8Array(blob.parts[0])), payload);
+  }
+});
+
+test("KHR_materials_specular keeps texture slots absent when references do not resolve", () => {
+  const { context } = createLoaderContext();
+
+  // No extension at all: neither slot nor factor field appears.
+  const bare = extractMaterial(context, { pbrMetallicRoughness: {} });
+  assert.equal(bare.textureDescriptors, undefined);
+  assert.equal("specularIntensity" in bare, false);
+
+  // Extension present but without texture references: factors only.
+  const factorsOnly = extractMaterial(context, {
+    extensions: { KHR_materials_specular: { specularFactor: 0.25 } },
+  });
+  assert.equal(factorsOnly.specularIntensity, 0.25);
+  assert.equal(factorsOnly.textureDescriptors, undefined);
+
+  // Out-of-range texture indices resolve to nothing and leave no slot.
+  const badIndex = extractMaterial(context, {
+    extensions: {
+      KHR_materials_specular: {
+        specularTexture: { index: 9 },
+        specularColorTexture: { index: 9 },
+      },
+    },
+  });
+  assert.equal(badIndex.textureDescriptors, undefined);
+
+  // One broken reference must not suppress the other, resolvable slot.
+  const doc = {
+    asset: { version: "2.0" },
+    images: [{ uri: "spec-color.png" }],
+    textures: [{ source: 0 }],
+    materials: [{
+      extensions: {
+        KHR_materials_specular: {
+          specularTexture: { index: 5 },
+          specularColorTexture: { index: 0 },
+        },
+      },
+    }],
+  };
+  const partial = plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
+  assert.equal("specularIntensity" in partial.textureDescriptors, false);
+  assert.equal(partial.textureDescriptors.specularColor.uri, "spec-color.png");
+  assert.equal(partial.textureDescriptors.specularColor.role, "specular-color");
 });
 
 test("KHR_materials_clearcoat maps clearcoatFactor onto clearcoat", () => {

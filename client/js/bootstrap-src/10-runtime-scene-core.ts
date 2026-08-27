@@ -2677,7 +2677,7 @@
     const source = sceneIsPlainObject(raw) ? raw : {};
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const out = {};
-    for (const name of ["baseColor", "normal", "roughness", "metalness", "occlusion", "emissive"]) {
+    for (const name of ["baseColor", "normal", "roughness", "metalness", "occlusion", "emissive", "specularIntensity", "specularColor"]) {
       const descriptor = normalizeSceneTextureDescriptor(source[name], base[name]);
       if (descriptor) out[name] = descriptor;
     }
