@@ -36,11 +36,17 @@
  *  - graceful+bounded Chrome teardown, CDP/server close, owned tmp profile
  *    removal on success/failure/timeout.
  * GPU hardware acceleration type is not certified (SwiftShader possible).
+ * Also covers real specular-IBL isolation: the verified Go fixture bakes a
+ * constant radiance cube (RGB [.75,.875,1], 2 mips), zero diffuse irradiance
+ * and a 1x1 BRDF LUT (A=.5, B=.25), so with F0=0 the pixel response isolates
+ * B*F90. Positive IBL pairs (specularIntensity 1 vs 0) must differ; no-IBL
+ * negative controls (direct light zeroed, IBL disabled, no IBL assets fetched)
+ * must be pixel-identical. Case count is dynamic (CASES.length).
  */
 
 const fs = require('fs'), os = require('os'), path = require('path');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 
 const REPO = process.argv[2];
 if (!REPO) {
@@ -65,6 +71,28 @@ if (ART && (!fs.existsSync(ART) || !fs.statSync(ART).isDirectory())) {
   console.error('artifactDir, if supplied, must be an existing directory: ' + ART);
   process.exit(2);
 }
+const GLTF_CHUNK = path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-gltf.js');
+if (!fs.existsSync(GLTF_CHUNK)) {
+  console.error('missing built runtime asset: ' + GLTF_CHUNK);
+  process.exit(2);
+}
+// Verified deterministic IBL fixture: one JSON object on stdout with base64
+// KTX2 radiance/irradiance/brdfLUT plus the real environment.ibl descriptor.
+// A missing or invalid fixture is fatal: no probe runs without it.
+let IBL_FIXTURE = null;
+try {
+  IBL_FIXTURE = JSON.parse(execFileSync('go', ['run', './client/js/testdata/specular-ibl-fixture'],
+    { cwd: REPO, encoding: 'utf8', timeout: 60000 }));
+  if (!IBL_FIXTURE || !IBL_FIXTURE.radiance || !IBL_FIXTURE.irradiance ||
+      !IBL_FIXTURE.brdfLUT || !IBL_FIXTURE.descriptor) {
+    throw new Error('incomplete fixture payload');
+  }
+} catch (e) {
+  console.error('specular-ibl-fixture failed: ' + ((e && e.message) || e));
+  process.exit(2);
+}
+const b64buf = (b) => Buffer.from(String(b), 'base64');
+let iblAssetCount = { radiance: 0, irradiance: 0, brdfLUT: 0 };
 const REQUIRE_WGPU = process.env.GOSX_IOR_REQUIRE_WEBGPU === '1';
 
 const errors = [], warnings = [];
@@ -190,6 +218,103 @@ const CASES = [
   WG({ name: 'wg-metal133', obj: OBJ({ ior: 1.33, metalness: 1 }), f0: F0(1.33), base: 'wm133' }),
   WG({ name: 'wg-metal242', obj: OBJ({ ior: 2.42, metalness: 1 }), f0: F0(2.42), same: 'wg-metal133' }),
 ];
+
+// ---- Direct-light specular-factor cases (both backends) ----
+// Each definition below is instantiated once on WebGL and once on the required
+// WebGPU backend by the loop that follows, reusing the OBJ/OBJNAMED/WG helpers.
+// Expectations may be a scalar (all channels) or an authored linear RGB triple
+// plus an optional per-case f90 (defaulting to 1). Metals intentionally keep
+// uniform checks (their F0/F90 differ) while the image must stay identical.
+[
+  // Explicit white specular color at intensity 1: exactly the omitted baseline.
+  { name: 'obj-spec-white', wgName: 'wg-spec-white',
+    obj: OBJ({ specularColor: [1, 1, 1], specularIntensity: 1 }),
+    f0: 0.04, same: 'obj-omitted', wgSame: 'wg-omit' },
+  // Intensity 0: F0 and F90 both zero, image changes.
+  { name: 'obj-spec-int0', wgName: 'wg-spec-int0',
+    obj: OBJ({ specularIntensity: 0 }),
+    f0: [0, 0, 0], f90: 0, differs: 'obj-omitted', wgDiffers: 'wg-omit', minChanged: 20 },
+  // Black specular color: F0 zero but F90 stays 1, image changes.
+  { name: 'obj-spec-black', wgName: 'wg-spec-black',
+    obj: OBJ({ specularColor: [0, 0, 0] }),
+    f0: [0, 0, 0], f90: 1, differs: 'obj-omitted', wgDiffers: 'wg-omit', minChanged: 20 },
+  // Tinted specular color scales per-channel F0 linearly (0.04 * [4,1,1]).
+  { name: 'obj-spec-tint', wgName: 'wg-spec-tint',
+    obj: OBJ({ specularColor: [4, 1, 1] }),
+    f0: [0.16, 0.04, 0.04], f90: 1, differs: 'obj-omitted', wgDiffers: 'wg-omit', minChanged: 20 },
+  // HDR clamp order at default IOR 1.5: per-channel F0 is clamped to 1 BEFORE
+  // the intensity scale, so 0.04*100 lands on 1 then *0.5 gives 0.5 (not 2).
+  { name: 'obj-spec-hdr', wgName: 'wg-spec-hdr',
+    obj: OBJ({ specularColor: [100, 0.5, 2], specularIntensity: 0.5 }),
+    f0: [0.5, 0.01, 0.04], f90: 0.5, differs: 'obj-omitted', wgDiffers: 'wg-omit', minChanged: 20 },
+  // Nonclipping metal baseline: metals shade from base color, so the dielectric
+  // F0/F90 uniforms are still observed (0.04 / 1) while the image is stable.
+  { name: 'obj-metal-spec-base', wgName: 'wg-metal-spec-base',
+    obj: OBJ({ metalness: 1, roughness: 0.7, color: '#806040' }), f0: 0.04, f90: 1, base: 'metb' },
+  // Metal with intensity 0: dielectric uniform F0/F90 drop to 0, but the image
+  // must be EXACTLY identical to the metal baseline (no metallic F90 mixing in
+  // the uploaded dielectric uniform).
+  { name: 'obj-metal-spec-int0', wgName: 'wg-metal-spec-int0',
+    obj: OBJ({ metalness: 1, roughness: 0.7, color: '#806040', specularIntensity: 0 }),
+    f0: [0, 0, 0], f90: 0, same: 'obj-metal-spec-base', wgSame: 'wg-metal-spec-base' },
+  // Metal with HDR specular factors: uniforms change (clamped+scaled), image
+  // must remain EXACTLY identical to the metal baseline.
+  { name: 'obj-metal-spec-hdr', wgName: 'wg-metal-spec-hdr',
+    obj: OBJ({ metalness: 1, roughness: 0.7, color: '#806040',
+      specularColor: [100, 2, 0.5], specularIntensity: 0.5 }),
+    f0: [0.5, 0.04, 0.01], f90: 0.5, same: 'obj-metal-spec-base', wgSame: 'wg-metal-spec-base' },
+  // Named material table carries the factors; the object only references the
+  // material id (no duplicated factors on the object).
+  { name: 'named-spec', wgName: 'wg-named-spec',
+    materials: [{ id: 'dielectric', materialKind: 'standard', roughness: 0.35, metalness: 0,
+      ior: 1.5, color: '#b0503c', specularColor: [0.5, 1, 1.5], specularIntensity: 1 }],
+    obj: OBJNAMED, f0: [0.02, 0.04, 0.06], f90: 1,
+    differs: 'obj-omitted', wgDiffers: 'wg-omit', minChanged: 20 },
+  // Specular IBL isolation: metallic 0, direct light intensity 0,
+  // ambient/sky/ground intensities 0. With F0=0 the IBL specular path
+  // reduces to B*F90, so specularIntensity 1 vs 0 must produce meaningfully
+  // different images. Negative controls run with IBL disabled (envIntensity
+  // 1 preserved so lighting matches the positive pair) and must not fetch
+  // IBL products; they must render identical pixels.
+  { name: 'ibl-f0zero-int1', wgName: 'wg-ibl-f0zero-int1',
+    keyLightIntensity: 0, requiresIBL: true,
+    materials: [{ id: 'dielectric', materialKind: 'standard', roughness: 0.35, metalness: 0,
+      ior: 1.0, color: '#b0503c', specularIntensity: 1 }],
+    obj: OBJNAMED, f0: 0, f90: 1,
+    environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0,
+      envIntensity: 1, ibl: IBL_FIXTURE.descriptor } },
+  { name: 'ibl-f0zero-int0', wgName: 'wg-ibl-f0zero-int0',
+    keyLightIntensity: 0, requiresIBL: true,
+    materials: [{ id: 'dielectric', materialKind: 'standard', roughness: 0.35, metalness: 0,
+      ior: 1.0, color: '#b0503c', specularIntensity: 0 }],
+    obj: OBJNAMED, f0: 0, f90: 0,
+    environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0,
+      envIntensity: 1, ibl: IBL_FIXTURE.descriptor },
+    differs: 'ibl-f0zero-int1', minChanged: 20,
+    wgDiffers: 'wg-ibl-f0zero-int1' },
+  { name: 'noibl-f0zero-int1', wgName: 'wg-noibl-f0zero-int1',
+    keyLightIntensity: 0, noIBL: true,
+    materials: [{ id: 'dielectric', materialKind: 'standard', roughness: 0.35, metalness: 0,
+      ior: 1.0, color: '#b0503c', specularIntensity: 1 }],
+    obj: OBJNAMED, f0: 0, f90: 1,
+    environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0, envIntensity: 1 } },
+  { name: 'noibl-f0zero-int0', wgName: 'wg-noibl-f0zero-int0',
+    keyLightIntensity: 0, noIBL: true,
+    materials: [{ id: 'dielectric', materialKind: 'standard', roughness: 0.35, metalness: 0,
+      ior: 1.0, color: '#b0503c', specularIntensity: 0 }],
+    obj: OBJNAMED, f0: 0, f90: 0,
+    environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0, envIntensity: 1 },
+    same: 'noibl-f0zero-int1', minChanged: 0,
+    wgSame: 'wg-noibl-f0zero-int1' },
+].forEach((d) => {
+  CASES.push(d);
+  const w = WG(Object.assign({}, d, { name: d.wgName }));
+  if (d.base) w.base = 'w' + d.base;
+  if (d.wgSame) { w.same = d.wgSame; } else { delete w.same; }
+  if (d.wgDiffers) { w.differs = d.wgDiffers; } else { delete w.differs; }
+  delete w.wgName; delete w.wgSame; delete w.wgDiffers;
+  CASES.push(w);
+});
 const byName = {};
 CASES.forEach((c) => { byName[c.name] = c; });
 
@@ -202,6 +327,23 @@ function propsFor(c) {
     camera: { x: 0, y: 0, z: 4, fov: 50 },
     lights: [{ id: 'key', kind: 'directional', intensity: 1.2,
       directionX: 0, directionY: 0, directionZ: -1 }] };
+  // Explicit-zero preservation for the IBL isolation cases: direct light
+  // zero, ambient/sky/ground zero; prior cases keep the 1.2 key light.
+  if (typeof c.keyLightIntensity === 'number') p.lights[0].intensity = c.keyLightIntensity;
+  // IBL isolation cases: normalizeSceneEnvironment treats an all-zero or
+  // color-less environment descriptor as unspecified and then adds a default
+  // fill. Explicit black colors keep the zero corresponding intensities but
+  // disable that fill, so the only environment contribution is the IBL asset
+  // itself. This does not change production semantics for these cases.
+  if (c.environment) p.environment = c.environment;
+  if (c.requiresIBL || c.noIBL) {
+    p.environment = {
+      ...c.environment,
+      ambientColor: '#000000',
+      skyColor: '#000000',
+      groundColor: '#000000',
+    };
+  }
   if (c.materials) p.materials = c.materials;
   if (c.obj) p.objects = [c.obj];
   if (c.model) p.models = [c.model];
@@ -235,6 +377,25 @@ let server = http.createServer((req, res) => {
     const js = fs.readFileSync(WG_CHUNK);
     res.writeHead(200, { 'content-type': 'text/javascript', 'content-length': js.length });
     res.end(js);
+  } else if (req.url === '/gosx/bootstrap-feature-scene3d-gltf.js') {
+    const js = fs.readFileSync(GLTF_CHUNK);
+    res.writeHead(200, { 'content-type': 'text/javascript', 'content-length': js.length });
+    res.end(js);
+  } else if (req.url === '/ibl/spec-radiance.ktx2') {
+    iblAssetCount.radiance += 1;
+    const b = b64buf(IBL_FIXTURE.radiance);
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': b.length });
+    res.end(b);
+  } else if (req.url === '/ibl/spec-irradiance.ktx2') {
+    iblAssetCount.irradiance += 1;
+    const b = b64buf(IBL_FIXTURE.irradiance);
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': b.length });
+    res.end(b);
+  } else if (req.url === '/ibl/spec-brdf-lut.ktx2') {
+    iblAssetCount.brdfLUT += 1;
+    const b = b64buf(IBL_FIXTURE.brdfLUT);
+    res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': b.length });
+    res.end(b);
   } else if (req.url === '/' || (req.url && req.url.indexOf('/?') === 0)) {
     // Valid served loopback HTTP origin used before requestAdapter probing.
     res.writeHead(200, { 'content-type': 'text/html' });
@@ -243,6 +404,7 @@ let server = http.createServer((req, res) => {
     const name = req.url.slice('/case/'.length).split('?')[0];
     const c = CASES.find((x) => x.name === name);
     if (!c) { res.writeHead(404); res.end(); return; }
+    iblAssetCount = { radiance: 0, irradiance: 0, brdfLUT: 0 };
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(htmlFor(c));
   } else { res.writeHead(404); res.end(); }
@@ -358,9 +520,18 @@ async function evalSend(send, expression, extra) {
 // at 47.
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
-    programInfo: null, queriedUniforms: [] };
-window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
+    lastDrawHasIBL: null, programInfo: null, queriedUniforms: [] };
+  window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
 (function () {
+  var latest80 = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+  var frameBindGroups = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+  var boundEnvBuffer = null;
+  // Dynamic read of the latest environment words for the currently bound
+  // environment buffer: resolved at read time (never a stale snapshot), and
+  // never a raw buffer/weakmap exposed in the JSON evidence.
+  window.__gosxWGPUReadEnvWords = function () {
+    return (latest80 && boundEnvBuffer) ? (latest80.get(boundEnvBuffer) || null) : null;
+  };
   function noteErr(store, e) {
     if (store.length < 16) store.push(String((e && e.message) || e));
   }
@@ -401,6 +572,19 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
           window.__gosxIOR.pbrDraws += 1;
           window.__gosxIOR.lastDrawF0 = vec;
           window.__gosxIOR.lastDrawF90 = v90;
+          var mibl = this.__sibllocs;
+          if (mibl && mibl.has(cp)) {
+            var vI = this.__origGetUniform.call(this, cp, mibl.get(cp));
+            // Preserve an explicit boolean true/false or numeric 1/0 as a
+            // boolean; anything else is null. Missing is NOT disabled.
+            window.__gosxIOR.lastDrawHasIBL =
+              (vI === true || vI === false) ? vI :
+              (vI === 1 || vI === 0) ? vI === 1 : null;
+          } else {
+            // No tracked u_hasIBL location for this PBR program: clear any
+            // previous observation so it cannot leak across draws.
+            window.__gosxIOR.lastDrawHasIBL = null;
+          }
           if (window.__gosxIOR.f0s.length < 4096) window.__gosxIOR.f0s.push(vec);
         }
       }
@@ -444,6 +628,10 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
           var m90 = this.__sf90locs || (this.__sf90locs = new Map());
           if (loc) m90.set(p, loc); else m90.delete(p);
         }
+        if (n === "u_hasIBL") {
+          var mibl = this.__sibllocs || (this.__sibllocs = new Map());
+          if (loc) mibl.set(p, loc); else mibl.delete(p);
+        }
       } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
       return loc;
     };
@@ -456,10 +644,7 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
     var wb = GPUQueue.prototype.writeBuffer;
     GPUQueue.prototype.writeBuffer = function (buffer, bufferOffset, data, dataOffset, size) {
       try {
-        if (data && window.__gosxWGPU.dumps.length < 256) {
-          // Signature: writeBuffer(buffer, bufferOffset, data, dataOffset?, size?).
-          // dataOffset/size are in ELEMENTS for typed arrays, BYTES for
-          // ArrayBuffer/ArrayBufferView-without-elements.
+        if (data) {
           // Signature: writeBuffer(buffer, bufferOffset, data, dataOffset?,
           // size?). dataOffset/size are in ELEMENTS for typed arrays
           // (DataView counts in bytes, element unit 1), BYTES for a bare
@@ -472,13 +657,27 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
           var totalBytes = data.byteLength;
           var byteOff = (dataOffset == null) ? 0 : dataOffset * elem;
           var byteLen = (size == null) ? (totalBytes - byteOff) : size * elem;
-          if (byteLen === 192 && byteOff >= 0 && byteOff + 192 <= totalBytes) {
+          if (byteLen === 80 && bufferOffset === 0 && byteOff >= 0 && byteOff + 80 <= totalBytes) {
+            // 80-byte environment word snapshot: hasIBL/mips/hasEnvMap are
+            // words 14/15/16 (bytes 56/60/64). Every bounded 80-byte full
+            // write is snapshotted, independently of the 192-byte material
+            // dump cap below.
+            var dv80 = new DataView(buf, base + byteOff, 80);
+            if (latest80) latest80.set(buffer, {
+              hasIBL: dv80.getUint32(14 * 4, true),
+              mips: dv80.getUint32(15 * 4, true),
+              hasEnvMap: dv80.getUint32(16 * 4, true)
+            });
+          }
+          if (byteLen === 192 && window.__gosxWGPU.dumps.length < 256 &&
+              byteOff >= 0 && byteOff + 192 <= totalBytes) {
+            // 192-byte material capture: production writes Float32Array(48);
+            // the effective specular F0 lives at float indices 44..46 and F90
+            // at 47 (bytes 176:192). Slots 0..43 are pre-existing uniform
+            // data. Capped by the 256-entry dump limit.
             var dv = new DataView(buf, base + byteOff, 192);
             var floats = new Array(48);
             for (var i = 0; i < 48; i++) floats[i] = dv.getFloat32(i * 4, true);
-            // Production writes Float32Array(48); the effective specular F0
-            // lives at float indices 44..46 and F90 at 47 (bytes 176:192).
-            // Slots 0..43 are pre-existing uniform data.
             window.__gosxWGPU.dumps.push({
               f0: [floats[44], floats[45], floats[46]], f90: floats[47], floats: floats });
             window.__gosxWGPU.materialUploads += 1;
@@ -488,6 +687,63 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
       return wb.apply(this, arguments);
     };
   }
+  if (typeof GPUDevice !== "undefined" && GPUDevice.prototype && GPUDevice.prototype.createBindGroup) {
+    var cbg = GPUDevice.prototype.createBindGroup;
+    GPUDevice.prototype.createBindGroup = function () {
+      var group = cbg.apply(this, arguments);
+      try {
+        var d = arguments[0];
+        var entries = d && d.entries;
+        if (frameBindGroups && entries && entries.length === 15) {
+          var ok = true;
+          for (var i = 0; i < 15; i += 1) {
+            var entry = entries[i];
+            var res = entry && entry.resource;
+            var isBufferSlot = (i === 0 || i === 1 || i === 2 || i === 3 || i === 8);
+            var isViewSlot = (i === 9 || i === 10 || i === 11);
+            var isSamplerSlot = (i === 12);
+            // The production frame bind group uses a dense layout: entry
+            // slot i must carry actual binding i, so the identified binding 3
+            // below corresponds to the REAL binding 3.
+            if (!entry || entry.binding !== i) { ok = false; break; }
+            if (!res || typeof res !== "object") { ok = false; break; }
+            if (isBufferSlot && !(res.buffer && typeof res.buffer === "object")) { ok = false; break; }
+            if (isViewSlot && (res.buffer || typeof GPUTextureView === "undefined" ||
+                !(res instanceof GPUTextureView))) { ok = false; break; }
+            if (isSamplerSlot && (res.buffer || typeof GPUSampler === "undefined" ||
+                !(res instanceof GPUSampler))) { ok = false; break; }
+          }
+          // Production frame bind group shape: buffers at 0/1/2/3/8,
+          // texture views at 9/10/11, sampler at 12. Binding 3 carries
+          // the per-frame environment buffer.
+          if (ok && entries[3].resource && entries[3].resource.buffer) {
+            frameBindGroups.set(group, entries[3].resource.buffer);
+          }
+        }
+      } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+      return group;
+    };
+  }
+  function wrapSetBindGroup(proto) {
+    if (!proto || !proto.setBindGroup || proto.__gosxSBGWrapped) return;
+    proto.__gosxSBGWrapped = true;
+    var sbg = proto.setBindGroup;
+    proto.setBindGroup = function () {
+      var r = sbg.apply(this, arguments);
+      try {
+        if (arguments[0] === 0 && frameBindGroups) {
+          // Keep the bound environment buffer identity, including null when
+          // the frame bind group is unknown; readEnvWords resolves the words
+          // dynamically so a later 80-byte write is never shadowed by a
+          // stale snapshot taken at bind time.
+          boundEnvBuffer = frameBindGroups.get(arguments[1]) || null;
+        }
+      } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+      return r;
+    };
+  }
+  if (typeof GPURenderPassEncoder !== "undefined") wrapSetBindGroup(GPURenderPassEncoder.prototype);
+  if (typeof GPURenderBundleEncoder !== "undefined") wrapSetBindGroup(GPURenderBundleEncoder.prototype);
 })();
 `;
 
@@ -532,6 +788,7 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'return Object.keys(im).length;})(),' +
   'ior:window.__gosxIOR?{draws:window.__gosxIOR.draws,pbrDraws:window.__gosxIOR.pbrDraws,' +
   'lastDrawF0:window.__gosxIOR.lastDrawF0,lastDrawF90:window.__gosxIOR.lastDrawF90,gl:window.__gosxIOR.gl,' +
+  'lastDrawHasIBL:window.__gosxIOR.lastDrawHasIBL,' +
   'linkStatus:(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.linkStatus!==null?window.__gosxIOR.programInfo.linkStatus:null),' +
   'trackedF0:!!(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.trackedF0),' +
   'activeUniforms:((window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.activeUniforms)||[]).slice(0,100),' +
@@ -539,6 +796,7 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'obsErrors:(window.__gosxIOR.obsErrors||[]).slice(0,4)}:null,' +
   'wgpu:window.__gosxWGPU?{uploads:window.__gosxWGPU.materialUploads,' +
   'dumps:window.__gosxWGPU.dumps.slice(-4),' +
+  'envWords:((typeof window.__gosxWGPUReadEnvWords === "function") ? window.__gosxWGPUReadEnvWords() : null),' +
   'obsErrors:(window.__gosxWGPU.obsErrors||[]).slice(0,4)}:null};})()';
 
 // Decode the actual screenshot with a native Image + 2D canvas. Measures the
@@ -554,13 +812,14 @@ function decodeExpr(b64) {
     'for(var k=0;k<corners.length;k++){for(var dy=0;dy<4;dy++){for(var dx=0;dx<4;dx++){' +
     'var i=((corners[k][1]+dy)*c.width+(corners[k][0]+dx))*4;cr+=d[i];cg+=d[i+1];cb+=d[i+2];cn++;}}}' +
     'var bg=[Math.round(cr/cn),Math.round(cg/cn),Math.round(cb/cn)];' +
+    'var ci=((c.height>>1)*c.width+(c.width>>1))*4;var center=[d[ci],d[ci+1],d[ci+2]];' +
     'var fg=0,maxDelta=0,bgPixels=0;' +
     'for(var i=0;i<d.length;i+=4){' +
     'var df=Math.max(Math.abs(d[i]-bg[0]),Math.abs(d[i+1]-bg[1]),Math.abs(d[i+2]-bg[2]));' +
     'if(df>=FG_THRESHOLD){fg++;if(df>maxDelta)maxDelta=df;}' +
     'if(d[i]===bg[0]&&d[i+1]===bg[1]&&d[i+2]===bg[2])bgPixels++;}' +
     'var png=null;try{png=c.toDataURL("image/png").split(",")[1];}catch(e){}' +
-    'res({w:c.width,h:c.height,bg:bg,fgPixels:fg,fgFrac:fg/n,maxDelta:maxDelta,bgPixels:bgPixels,png:png});}catch(e){res(null);}};' +
+    'res({w:c.width,h:c.height,bg:bg,center:center,fgPixels:fg,fgFrac:fg/n,maxDelta:maxDelta,bgPixels:bgPixels,png:png});}catch(e){res(null);}};' +
     'img.onerror=function(){res(null);};' +
     'img.src="data:image/png;base64,' + b64 + '";})';
   // Interpolate the threshold into the ENTIRE assembled expression so the
@@ -710,7 +969,7 @@ setTimeout(() => {
   const shots = {}; const evidence = [];
 
   // After the first readiness fatal, stop attempting further cases promptly:
-  // record the remaining cases as aborted (preserving all 21 entries) and exit
+  // record the remaining cases as aborted (preserving all cases) and exit
   // nonzero via the diagnostic failure below. Normal cases still all run.
   let readinessFatal = false;
   for (const c of CASES) {
@@ -732,6 +991,11 @@ setTimeout(() => {
 
     const rec = { name: c.name, skipped: false };
     evidence.push(rec);
+    // IBL expectation: requiresIBL === true selects the positive gate;
+    // noIBL === true selects the explicit-disabled assertions. Cases
+    // without either flag are not IBL-asserted.
+    const iblExpected = c.requiresIBL === true;
+    const iblDisabled = c.noIBL === true;
     let cap = null;
     try {
       const loadP = waitForEvent('Page.loadEventFired', CASE_WAIT_MS);
@@ -758,6 +1022,26 @@ setTimeout(() => {
         fail(c.name + ': scene not ready (real PBR object/instancedMesh + draws/uploads) within ' +
           CASE_WAIT_MS + 'ms; mount/backend/counter state: ' + diag);
       }
+      if (iblExpected && ready) {
+        // Actual IBL readiness gate: normal scene readiness alone is not
+        // enough for IBL-required cases. Poll the observation READ until the
+        // selected backend reports real IBL state, before settle/screenshot.
+        let iblReady = false;
+        const iblDeadline = Date.now() + CASE_WAIT_MS;
+        while (Date.now() < iblDeadline) {
+          const sI = await evalSend(send, READ);
+          if (sI && (c.webgpu
+            ? sI.wgpu && sI.wgpu.envWords && sI.wgpu.envWords.hasIBL === 1 &&
+              sI.wgpu.envWords.mips === 2 && sI.wgpu.envWords.hasEnvMap === 0
+            : sI.ior && sI.ior.lastDrawHasIBL === true)) { iblReady = true; break; }
+          await sleep(100);
+        }
+        if (!iblReady) {
+          readinessFatal = true;
+          fail(c.name + ': IBL not observed ready (hasIBL/mips/hasEnvMap) within ' +
+            CASE_WAIT_MS + 'ms');
+        }
+      }
       await sleep(SETTLE_MS);
       const s = await evalSend(send, READ);
       if (!s || !s.ior || !s.wgpu) throw new Error('evidence read failed');
@@ -776,6 +1060,68 @@ setTimeout(() => {
       if (s.mounted !== 'true') fail(c.name + ': data-gosx-scene3d-mounted not true');
       if (s.ior.obsErrors.length) fail(c.name + ': GL observation errors: ' + s.ior.obsErrors.join('; '));
       if (s.wgpu.obsErrors.length) fail(c.name + ': WebGPU observation errors: ' + s.wgpu.obsErrors.join('; '));
+
+      if (iblExpected || iblDisabled) {
+        // Record the IBL state from the SELECTED backend only: a GL boolean
+        // or the WebGPU environment-word object. iblAssetsServed snapshots
+        // the served IBL asset counter at the final settled read.
+        rec.iblState = c.webgpu
+          ? (s.wgpu.envWords ? { hasIBL: s.wgpu.envWords.hasIBL,
+              mips: s.wgpu.envWords.mips, hasEnvMap: s.wgpu.envWords.hasEnvMap } : null)
+          : s.ior.lastDrawHasIBL;
+        rec.iblAssetsServed = {
+          radiance: iblAssetCount.radiance,
+          irradiance: iblAssetCount.irradiance,
+          brdfLUT: iblAssetCount.brdfLUT,
+        };
+      }
+      if (iblExpected) {
+        // Positive: selected backend active AND positive served asset count
+        // at the final settled read. No cross-backend OR.
+        if (c.webgpu) {
+          if (!rec.iblState || rec.iblState.hasIBL !== 1 ||
+              rec.iblState.mips !== 2 || rec.iblState.hasEnvMap !== 0) {
+            fail(c.name + ': expected IBL enabled on WebGPU, got ' + JSON.stringify(rec.iblState));
+          }
+          if (s.renderer !== 'webgpu' || s.fallback === 'true') {
+            fail(c.name + ': expected active WebGPU backend at settled read');
+          }
+        } else {
+          if (rec.iblState !== true) {
+            fail(c.name + ': expected lastDrawHasIBL true, got ' + JSON.stringify(rec.iblState));
+          }
+          if (!s.ior.gl) fail(c.name + ': expected active GL backend at settled read');
+        }
+        if (!(rec.iblAssetsServed.radiance > 0) ||
+            !(rec.iblAssetsServed.irradiance > 0) ||
+            !(rec.iblAssetsServed.brdfLUT > 0)) {
+          fail(c.name + ': expected positive served IBL asset counts, got ' +
+            JSON.stringify(rec.iblAssetsServed));
+        }
+      } else if (iblDisabled) {
+        // Negative: IBL must be EXPLICITLY disabled — missing observations
+        // (null / absent env words) do not pass.
+        if (c.webgpu) {
+          if (!rec.iblState || rec.iblState.hasIBL !== 0 ||
+              rec.iblState.mips !== 0 || rec.iblState.hasEnvMap !== 0) {
+            fail(c.name + ': expected IBL explicitly disabled on WebGPU, got ' + JSON.stringify(rec.iblState));
+          }
+        } else if (rec.iblState !== false) {
+          fail(c.name + ': expected lastDrawHasIBL explicitly false, got ' + JSON.stringify(rec.iblState));
+        }
+        if (rec.iblAssetsServed.radiance !== 0 ||
+            rec.iblAssetsServed.irradiance !== 0 ||
+            rec.iblAssetsServed.brdfLUT !== 0) {
+          fail(c.name + ': expected zero served IBL asset counts, got ' +
+            JSON.stringify(rec.iblAssetsServed));
+        }
+      }
+
+      // Per-case expected uniform values: scalar f0 applies to all channels;
+      // authored RGB triples and optional f90 override per case. Explicit zeros
+      // must NOT be defaulted away (hence the typeof/Array checks, no ||).
+      const expF0 = Array.isArray(c.f0) ? c.f0 : [c.f0, c.f0, c.f0];
+      const expF90 = typeof c.f90 === 'number' ? c.f90 : 1;
 
       if (c.webgpu) {
         if (s.renderer !== 'webgpu') {
@@ -810,17 +1156,22 @@ setTimeout(() => {
             fail(c.name + ': unknown/missing data-gosx-scene3d-webgpu-bundle-state: ' + s.bundleState);
           }
           if (!(s.wgpu.uploads > 0)) fail(c.name + ': no 192-byte material uploads observed');
-          const hit = (s.wgpu.dumps || []).some((d) => {
-            if (!Array.isArray(d.f0) || d.f0.length !== 3) return false;
+          let hit = null;
+          (s.wgpu.dumps || []).forEach((d) => {
+            if (hit || !Array.isArray(d.f0) || d.f0.length !== 3) return;
             for (var ci = 0; ci < 3; ci += 1) {
               if (!(typeof d.f0[ci] === 'number' && Number.isFinite(d.f0[ci]) &&
-                    Math.abs(d.f0[ci] - c.f0) < 1e-4)) return false;
+                    Math.abs(d.f0[ci] - expF0[ci]) < 1e-4)) return;
             }
-            return typeof d.f90 === 'number' && Number.isFinite(d.f90) && Math.abs(d.f90 - 1) < 1e-4;
+            if (!(typeof d.f90 === 'number' && Number.isFinite(d.f90) &&
+                  Math.abs(d.f90 - expF90) < 1e-4)) return;
+            hit = { f0: [d.f0[0], d.f0[1], d.f0[2]], f90: d.f90 };
           });
-          rec.f0InUpload = hit;
+          rec.f0InUpload = Boolean(hit);
+          if (hit) { rec.uploadF0 = hit.f0; rec.uploadF90 = hit.f90; }
           if (!hit) {
-            fail(c.name + ': expected F0 ' + c.f0 + ' (all channels) + F90 1 not found at float indices 44..47 of any 192-byte upload');
+            fail(c.name + ': expected F0 [' + expF0.join(',') + '] + F90 ' + expF90 +
+              ' not found at float indices 44..47 of any 192-byte upload');
           }
           if (s.wgpuErr) {
             fail(c.name + ': WebGPU renderer produced nonempty wgpuErr: ' + s.wgpuErr);
@@ -841,10 +1192,10 @@ setTimeout(() => {
           fail(c.name + ': u_specularF0 not observed as a vec3 at draw');
         } else {
           for (var ch = 0; ch < 3; ch += 1) {
-            assertClose(f0v[ch], c.f0, c.name + ' u_specularF0[' + ch + '] at draw');
+            assertClose(f0v[ch], expF0[ch], c.name + ' u_specularF0[' + ch + '] at draw');
           }
         }
-        assertClose(s.ior.lastDrawF90, 1, c.name + ' u_specularF90 at draw');
+        assertClose(s.ior.lastDrawF90, expF90, c.name + ' u_specularF90 at draw');
       }
 
       cap = await capture(send);
@@ -858,11 +1209,29 @@ setTimeout(() => {
       }
       const m = cap.metrics;
       rec.litPixels = m.fgPixels; rec.fgFrac = m.fgFrac; rec.meanRGB = m.bg;
+      rec.centerRGB = Array.isArray(m.center) ? m.center : null;
       // Foreground-vs-background proof in ALL cases (including IOR 0 / F0 1).
       // A pure background image (fg=0) fails this assertion.
       if (!(m.fgPixels > 0) || !(m.fgFrac >= FG_COVERAGE) || !(m.maxDelta >= FG_THRESHOLD)) {
         fail(c.name + ': no measurable geometry foreground vs measured corner background ' +
           '(fg=' + m.fgPixels + ', frac=' + m.fgFrac.toFixed(4) + ', maxDelta=' + m.maxDelta + ')');
+      }
+      // WebGL half-float regression probe: a bad texImage2D view fails with a
+      // driver-side INVALID_OPERATION (no JS throw) and leaves the IBL black
+      // or a white placeholder. The fixed quad covers the screenshot center,
+      // so a real numeric three-element center RGB observation is required
+      // and the black controls must actually sample black there.
+      const centerMustBeBlack = Boolean(c.noIBL) ||
+        (Boolean(c.requiresIBL) && c.f90 === 0);
+      if (centerMustBeBlack) {
+        if (!Array.isArray(m.center) || m.center.length !== 3 ||
+            !m.center.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+          fail(c.name + ': missing numeric center RGB observation (' +
+            JSON.stringify(m.center) + ')');
+        } else if (m.center.some((v) => v > 1)) {
+          fail(c.name + ': center RGB ' + JSON.stringify(m.center) +
+            ' exceeds black; WebGL half-float IBL upload likely broken');
+        }
       }
       saveArtifact(c.name + '.png', cap.base64);
       shots[c.name] = cap;
@@ -994,7 +1363,9 @@ setTimeout(() => {
       webgpuBundleReplays: r.bundleReplays, webgpuBundleDraws: r.bundleDraws,
       glBackend: r.glBackend, draws: r.draws, pbrDraws: r.pbrDraws,
       uniformF0: r.uniformF0, uniformF90: r.uniformF90, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
-      objects: r.objects, fgPixels: r.litPixels, fgFrac: r.fgFrac, cornerBG: r.meanRGB,
+      iblState: r.iblState, iblAssetsServed: r.iblAssetsServed,
+      uploadF0: r.uploadF0, uploadF90: r.uploadF90,
+      objects: r.objects, fgPixels: r.litPixels, fgFrac: r.fgFrac, cornerBG: r.meanRGB, centerRGB: r.centerRGB,
       cssAfter: r.cssAfter || undefined, sameAs: r.sameAs || undefined,
       differsFrom: r.differsFrom || undefined, disposeRemovedState: r.disposeRemovedState })),
     disposal: ran.length > 0 && ran.every((r) => r.disposeRemovedState === true),
@@ -1009,6 +1380,12 @@ setTimeout(() => {
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +
       'proof in every case. GPU hardware acceleration type is NOT certified (SwiftShader possible).',
   };
+  if (ART) {
+    // Persist the full report to the artifact path before emitting, so the
+    // artifact set is self-contained. A write error fails the probe.
+    try { fs.writeFileSync(path.join(ART, 'report.json'), JSON.stringify(out, null, 2)); }
+    catch (e) { errors.push('failed to write report to ' + path.join(ART, 'report.json') + ': ' + ((e && e.message) || e)); }
+  }
   emit(out);
   if (errors.length) exitCode = 1;
 })().catch((e) => {

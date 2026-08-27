@@ -33,7 +33,7 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 		"uniform sampler2D u_iblBRDFLUT;",
 		"textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod)",
 		"texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg",
-		"prefiltered * (F0 * brdf.x + brdf.y)",
+		"prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y)",
 		"irradiance * albedo * kDenv",
 		"scenePBRLinearHDRPixels",
 		"gl.RGBA16F || 0x881A",
@@ -51,21 +51,31 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 }
 
 // TestBothRenderersConsumeTheGeneratedIBLProducts pins the shared metadata and
-// exact split-sum convention in both runtime backends.
+// the exact, backend-specific F90 split-sum convention in both runtime
+// backends. The old unweighted-B form (F0 * brdf.x + brdf.y) must not appear.
 func TestBothRenderersConsumeTheGeneratedIBLProducts(t *testing.T) {
-	for _, path := range []string{webglRendererPath, webgpuRendererPath} {
-		source := readRenderer(t, path)
+	for _, tc := range []struct {
+		path     string
+		splitSum string
+	}{
+		{webglRendererPath, "prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y)"},
+		{webgpuRendererPath, "prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y)"},
+	} {
+		source := readRenderer(t, tc.path)
 		for _, marker := range []string{
 			"GoSXiblRole",
 			"GoSXColorSpace",
 			"GoSXiblModel",
 			"ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
-			"prefiltered * (F0 * brdf.x + brdf.y)",
+			tc.splitSum,
 			"irradiance * albedo * kDenv",
 		} {
 			if !strings.Contains(source, marker) {
-				t.Errorf("%s does not consume the generated IBL contract marker %q", path, marker)
+				t.Errorf("%s does not consume the generated IBL contract marker %q", tc.path, marker)
 			}
+		}
+		if strings.Contains(source, "prefiltered * (F0 * brdf.x + brdf.y)") {
+			t.Errorf("%s still contains the old unweighted-B split-sum form", tc.path)
 		}
 	}
 }
