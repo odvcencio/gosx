@@ -1816,7 +1816,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
 				continue
 			}
-			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script">`, path))
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
 			b.WriteByte('\n')
 		}
 	}

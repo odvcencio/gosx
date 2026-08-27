@@ -48,6 +48,23 @@ function run(context, expression) {
   return JSON.parse(JSON.stringify(vm.runInContext(expression, context)));
 }
 
+test("cloned five-weight channel preserves componentCount and owns buffer copies", () => {
+  const { context } = createMixerContext();
+  vm.runInContext(readSource("10-runtime-scene-utils.ts"), context);
+  vm.runInContext(readSource("../runtime/scene3d/mount-webgl.ts"), context);
+  const out = run(context, `(() => {
+    const times = new Float32Array([0, 1]);
+    const values = new Float32Array(10);
+    const channel = { targetID: 3, property: "weights", componentCount: 5, times, values };
+    const copy = sceneCloneModelAnimations([{ name: "w5", duration: 2, channels: [channel] }])[0].channels[0];
+    return { count: copy.componentCount, len: copy.values.length, sharedTimes: copy.times === times, sharedValues: copy.values === values };
+  })()`);
+  assert.equal(out.count, 5);
+  assert.equal(out.len, 10);
+  assert.equal(out.sharedTimes, false);
+  assert.equal(out.sharedValues, false);
+});
+
 test("sceneAnimChannelWidth reads the declared component count", () => {
   const { context } = createMixerContext();
   assert.equal(vm.runInContext(`sceneAnimChannelWidth({ property: "weights", componentCount: 7 })`, context), 7);

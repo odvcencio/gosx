@@ -846,6 +846,12 @@ func TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag(t *testing.T) {
 		t.Fatalf("engines bundle preload must be preserved (client-side fetched, never a same-document script tag): %s", preloads)
 	}
 
+	path := r.selectedBootstrapFeaturePath("engines")
+	expected := `<link rel="preload" href="` + path + `" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`
+	if !strings.Contains(preloads, expected) {
+		t.Fatalf("regression: preload for engines path %q missing exact link tag (needs crossorigin and referrerpolicy in order)\nwant: %s\ngot:  %s", path, expected, preloads)
+	}
+
 	scripts := gosx.RenderHTML(r.BootstrapScript())
 	if !strings.Contains(scripts, `data-gosx-script="feature-scene3d"`) || !strings.Contains(scripts, "bootstrap-feature-scene3d") {
 		t.Fatalf("scene3d bundle must still be emitted as a deferred <script> tag: %s", scripts)
