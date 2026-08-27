@@ -623,7 +623,9 @@
     if (names.length === 0) {
       return null;
     }
-    const out = {};
+    // Null prototype: assigning out["__proto__"] on a plain {} would hit the
+    // Object.prototype accessor and silently drop the JSON-parsed own key.
+    const out = Object.create(null);
     for (let i = 0; i < names.length; i += 1) {
       const name = names[i];
       if (!sceneValidCustomAttributeName(name)) {

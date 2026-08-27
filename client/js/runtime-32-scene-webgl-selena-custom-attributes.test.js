@@ -387,3 +387,94 @@ test("Scene3D WebGL safely skips the retained Selena draw when a declared custom
 
   renderer.dispose();
 });
+
+test("Scene3D retained snapshots preserve JSON-parsed exotic own attribute keys", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const object = selenaObjectWithCustomAttributes({ env });
+
+  // JSON.parse is what makes "__proto__" an *own* enumerable key; a plain
+  // object literal would rewrite the prototype instead of adding the key.
+  const raw = JSON.parse(
+    '{"__proto__":{"itemSize":1,"data":[1,2,3,4]},' +
+      '"constructor":{"itemSize":1,"data":[5,6,7,8]},' +
+      '"toString":{"itemSize":1,"data":[9,10,11,12]}}'
+  );
+  object.vertices = Object.assign({}, object.vertices, { attributes: raw });
+
+  // renderBundle consumes already-normalized objects, so run the fixture
+  // through the public normalizer first or sceneNormalizeCustomAttributes
+  // never executes over the JSON-parsed exotic keys.
+  const normalizedObject = api.normalizeSceneObject(object, 0, null);
+  const bundle = renderBundle(api, [normalizedObject], 0);
+  assert.equal(bundle.retainedMeshObjectCount, 1,
+    "a Selena mesh with exotic-named immutable custom streams must retain");
+  const meshObject = bundle.meshObjects[0];
+  assert.equal(meshObject.retainedGeometry, true);
+  assert.equal(meshObject.geometryRevision, 0);
+  const attributes = meshObject.vertices.attributes;
+  assert.ok(attributes, "retained snapshot must carry the normalized custom streams");
+
+  const expected = [
+    ["__proto__", [1, 2, 3, 4]],
+    ["constructor", [5, 6, 7, 8]],
+    ["toString", [9, 10, 11, 12]],
+  ];
+  const assertStreams = (snapshot, label) => {
+    assert.deepEqual(Object.keys(snapshot), ["__proto__", "constructor", "toString"],
+      `${label} must keep every JSON-parsed exotic name as an own enumerable key`);
+    assert.ok(Object.prototype.hasOwnProperty.call(snapshot, "__proto__"),
+      `${label} must hold "__proto__" as an own property, never as its prototype`);
+    for (const [name, values] of expected) {
+      const record = snapshot[name];
+      assert.ok(record && typeof record === "object",
+        `${label} must expose stream "${name}" to own-key lookup`);
+      assert.equal(record.itemSize, 1, `${label} stream "${name}" must stay itemSize 1`);
+      assert.equal(record.data.length, values.length);
+      assert.deepEqual(Array.from(record.data), values,
+        `${label} stream "${name}" must keep its exact four floats`);
+    }
+  };
+
+  assertStreams(attributes, "first render snapshot");
+  assert.notEqual(attributes, raw,
+    "the snapshot must be an independent dictionary, not the caller's input");
+
+  // Unchanged input: normalization must leave the JSON-parsed source alone.
+  assert.deepEqual(Object.keys(raw), ["__proto__", "constructor", "toString"],
+    "normalization must not mutate the caller's input dictionary");
+  for (const [name, values] of expected) {
+    assert.ok(Array.isArray(raw[name].data),
+      `input stream "${name}" must stay the caller's plain JSON array`);
+    assert.deepEqual(Array.from(raw[name].data), values,
+      `input stream "${name}" must keep its original values`);
+  }
+
+  // Second render: feed the first normalized dictionary into a fresh fixture
+  // so normalization runs again over an own-"__proto__" dictionary.
+  const secondObject = selenaObjectWithCustomAttributes({ env });
+  secondObject.vertices = Object.assign({}, secondObject.vertices, {
+    revision: 1,
+    attributes: attributes,
+  });
+  const secondNormalized = api.normalizeSceneObject(secondObject, 0, null);
+  const second = renderBundle(api, [secondNormalized], 0);
+  assert.equal(second.retainedMeshObjectCount, 1);
+  assert.equal(second.meshObjects[0].retainedGeometry, true);
+  assert.equal(second.meshObjects[0].geometryRevision, 1,
+    "republishing the snapshot through a new fixture must honor the new revision");
+  const secondAttributes = second.meshObjects[0].vertices.attributes;
+  assert.notEqual(secondAttributes, attributes,
+    "each render must snapshot independently instead of aliasing the prior one");
+  assertStreams(secondAttributes, "second render snapshot");
+
+  // Direct data-array non-alias assertions across the raw/first/second
+  // snapshots: every stage must copy, never share, the underlying floats.
+  for (const [name] of expected) {
+    assert.notEqual(attributes[name].data, raw[name].data,
+      `first snapshot stream "${name}" must copy, never alias, the caller's data array`);
+    assert.notEqual(secondAttributes[name].data, attributes[name].data,
+      `second snapshot stream "${name}" must copy, never alias, the first snapshot's data array`);
+    assert.notEqual(secondAttributes[name].data, raw[name].data,
+      `second snapshot stream "${name}" must not alias the caller's original data array`);
+  }
+});
