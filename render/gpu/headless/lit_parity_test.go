@@ -53,23 +53,26 @@ func readLitShader(t *testing.T) string {
 	return strings.Join(lines, "\n")
 }
 
-// authoredF0ShaderTerm is the litWGSL expression that reads the authored
-// dielectric F0 out of the material uniform.
-const authoredF0ShaderTerm = "mix(vec3<f32>(material.physicalParams2.y), baseColor, metalness)"
+// authoredF0ShaderTerm is the litWGSL expression that reads the prepared
+// effective dielectric F0 (specularParams.xyz) out of the material uniform.
+const authoredF0ShaderTerm = "mix(material.specularParams.xyz, baseColor, metalness)"
 
-// pinnedF0ShaderTerm is the pre-authored-IOR literal that must never return.
-const pinnedF0ShaderTerm = "mix(vec3<f32>(0.04), baseColor, metalness)"
+// pinnedF0ShaderTerm is the legacy IOR-only mix that must never return as the
+// shading F0. Byte 100 keeps the legacy lane for provenance, but the shader
+// must read the prepared specular vec4.
+const pinnedF0ShaderTerm = "mix(vec3<f32>(material.physicalParams2.y), baseColor, metalness)"
 
-// checkLitAuthoredF0 fails when litWGSL stops consuming the authored
-// dielectric F0 lane or reverts to the fixed default literal. The CPU constant
-// table cannot pin a runtime value, so this dedicated guard replaces the old
-// dielectric-f0 row; the mutation test below proves the guard can fail.
+// checkLitAuthoredF0 fails when litWGSL stops consuming the prepared effective
+// dielectric F0 (specularParams.xyz) or reverts to reading only the legacy IOR
+// lane at byte 100. The CPU constant table cannot pin a runtime value, so this
+// dedicated guard replaces the old dielectric-f0 row; the mutation test below
+// proves the guard can fail.
 func checkLitAuthoredF0(shader string) error {
 	if !strings.Contains(shader, authoredF0ShaderTerm) {
-		return fmt.Errorf("litWGSL no longer reads the authored dielectric F0 from material.physicalParams2.y")
+		return fmt.Errorf("litWGSL no longer reads the prepared effective dielectric F0 from material.specularParams")
 	}
 	if strings.Contains(shader, pinnedF0ShaderTerm) {
-		return fmt.Errorf("litWGSL replaced the authored dielectric F0 with the fixed default 0.04")
+		return fmt.Errorf("litWGSL reverted the shading F0 to the legacy IOR lane at byte 100")
 	}
 	return nil
 }
@@ -90,7 +93,7 @@ func TestLitShaderAuthoredF0GuardDetectsMutation(t *testing.T) {
 		t.Fatal("mutation did not apply; the authored F0 term moved")
 	}
 	if err := checkLitAuthoredF0(mutated); err == nil {
-		t.Fatal("guard must fail when the authored F0 is replaced with the fixed 0.04")
+		t.Fatal("guard must fail when the shading F0 reverts to the legacy IOR lane")
 	}
 }
 
@@ -277,7 +280,7 @@ func TestLitProgramStructureMatchesTheShader(t *testing.T) {
 		{
 			id:     "energy-conserving-diffuse",
 			effect: "A metal picks up a diffuse term, or a dielectric loses one.",
-			needle: "let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);",
+			needle: "let kD = (1.0 - max(FdielL.x, max(FdielL.y, FdielL.z))) * (1.0 - metalness);",
 		},
 		{
 			id:     "lambert-diffuse-normalization",
@@ -288,6 +291,21 @@ func TestLitProgramStructureMatchesTheShader(t *testing.T) {
 			id:     "specular-is-d-times-g-times-f",
 			effect: "The specular lobe gains or loses the 1/(4 NdotL NdotV) factor.",
 			needle: "let specular = D * G * F;",
+		},
+		{
+			id:     "scalar-diffuse-weight-native",
+			effect: "The diffuse lobe regains the componentwise mixed metallic Fresnel tint.",
+			needle: "let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
+		},
+		{
+			id:     "specular-f90-schlick-native",
+			effect: "Grazing highlights saturate toward white instead of the authored F90. The browser copy has no F90 lane; this row is native only until it does.",
+			needle: "let F = fresnelSchlick(F0, F90, VdotH);",
+		},
+		{
+			id:     "prepared-specular-uniform",
+			effect: "The shader reads a lane the material never uploaded, or the F90 lane silently vanishes.",
+			needle: "specularParams : vec4<f32>, // xyz = effective dielectric F0, w = F90",
 		},
 		{
 			id:     "correlated-smith-visibility",

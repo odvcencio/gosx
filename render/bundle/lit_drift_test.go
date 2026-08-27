@@ -90,10 +90,10 @@ var litSharedTerms = []sharedTerm{
 		effect: "Every non-metal highlight changes brightness.",
 		// The dielectric F0 is authored (derived from the optional IOR) and
 		// dynamic, so no literal can be pinned. This row is a presence check:
-		// each copy must read its own authored F0 lane, and the negative
-		// mutations below prove that replacing it with the old fixed 0.04
-		// fails this row on both backends.
-		goPat: `mix\(vec3f\(material\.physicalParams2\.y\), baseColor, metalness\)`,
+		// the native copy must read the prepared effective F0 the material
+		// uploaded (specularParams.xyz), and the negative mutation below
+		// proves that reverting it fails this row.
+		goPat: `mix\(material\.specularParams\.xyz, baseColor, metalness\)`,
 		jsPat: `mix\(vec3f\(material\.dielectricF0\), albedo, metalness\)`,
 		want:  "",
 	},
@@ -135,12 +135,6 @@ var litSharedTerms = []sharedTerm{
 		goPat:  `pow\(clamp\(1\.0 - [A-Za-z]+, 0\.0, 1\.0\), ([0-9.]+)\)`,
 		jsPat:  `pow\(clamp\(1\.0 - [A-Za-z]+, 0\.0, 1\.0\), ([0-9.]+)\)`,
 		want:   "5.0",
-	},
-	{
-		id:     "energy-conserving-diffuse-weight",
-		effect: "A metal picks up a diffuse term, or a dielectric loses one.",
-		goPat:  `\(vec3f\(1\.0\) - kS\) \* \(1\.0 - metalness\)`,
-		jsPat:  `\(vec3f\(1\.0\) - F\) \* \(1\.0 - metalness\)`,
 	},
 	{
 		id:     "lambert-diffuse-normalization",
@@ -763,6 +757,40 @@ type divergentTerm struct {
 // stopped guarding.
 var litDivergentTerms = []divergentTerm{
 	{
+		// The native copy weights diffuse by the scalar max-RGB of the
+		// dielectric Fresnel term, so the diffuse tint never carries the
+		// inverse of a per-channel Fresnel colour. The browser copy subtracts
+		// the vec3 F componentwise from vec3(1.0), which tints the diffuse
+		// lobe with the complement of F's channels. Note the max of a vec3 is
+		// not a luminance, and a componentwise complement alone does not by
+		// itself prove the sum exceeds the incoming energy; the divergence is
+		// the scalar-vs-componentwise form. The browser copy has no authored
+		// specular support and retains the componentwise mixed-metal Fresnel
+		// for its diffuse term; the native copy matches the specular model
+		// used here. For example, at the default IOR with base colour 0.5 and
+		// metalness 0.5 the two forms differ (about .48 vs .365 diffuse
+		// weighting). The browser remains follow-up. Other native
+		// approximations remain, so no claim of exact overall energy
+		// conservation is made.
+		id:      "diffuse-weight-scalar-native",
+		effect:  "Scalar versus componentwise diffuse tint yields a brightness difference for mixed-metal shading between the browser copy and native.",
+		verdict: "Native weights the diffuse tint by maxRGB of the dielectric Fresnel; the browser still ignores the authored specular and retains the old mixed Fresnel path. Follow-up required.",
+		goLine:  "let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
+		jsLine:  "let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+	},
+	{
+		// The native copy takes F90 from the prepared specular vec4's w lane
+		// (with the metalness mix to 1.0), honouring the authored specular
+		// intensity. The browser copy only carries the Schlick term with an
+		// implicit F90 of 1, so an authored sub-1 F90 has no effect. Native
+		// is correct.
+		id:      "specular-f90-native",
+		effect:  "The browser copy ignores an authored F90 below 1 on the specular lobe.",
+		verdict: "The native copy is correct: F90 comes from the material's specular vec4. Follow up on the browser copy to read the same lane.",
+		goLine:  "var F90 = mix(material.specularParams.w, 1.0, metalness);",
+		jsLine:  "return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+	},
+	{
 		// This row stayed open on purpose. The audit of 2026-07-26 moved the
 		// native copy to the browser form on seven numeric terms. In each of
 		// those the native copy broke a specification, or carried an arbitrary
@@ -1012,7 +1040,7 @@ var litSharedGuardMutations = []litGuardMutation{
 	{
 		name:    "native renderer replaces the authored F0 with the fixed default",
 		side:    "go",
-		from:    "mix(vec3f(material.physicalParams2.y), baseColor, metalness)",
+		from:    "mix(material.specularParams.xyz, baseColor, metalness)",
 		to:      "mix(vec3f(0.04), baseColor, metalness)",
 		wantRow: "dielectric-f0-authored",
 	},
@@ -1288,6 +1316,20 @@ var litDivergentGuardMutations = []litGuardMutation{
 		from:    "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, NoV);",
 		to:      "Lo = Lo + vec3f(0.0);",
 		wantRow: "rect-area-light",
+	},
+	{
+		name:    "native renderer reverts the scalar diffuse weight to the browser componentwise form",
+		side:    "go",
+		from:    "let Fdiel = fresnelSchlick(specF0, specF90, VdotH);\nlet kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
+		to:      "let kS = F;\nlet kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+		wantRow: "diffuse-weight-scalar-native",
+	},
+	{
+		name:    "native renderer drops the authored F90 from the Schlick term",
+		side:    "go",
+		from:    "var F90 = mix(material.specularParams.w, 1.0, metalness);",
+		to:      "var F90 = 1.0;",
+		wantRow: "specular-f90-native",
 	},
 }
 
