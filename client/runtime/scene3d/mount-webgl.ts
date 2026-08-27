@@ -1012,7 +1012,7 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
-    const source = sceneApplyMaterialOverride(rawObject, model);
+    let source = sceneApplyMaterialOverride(rawObject, model);
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
       source.skin = skinInstances[source.skinIndex];
     }
