@@ -69,22 +69,24 @@
   // reader name]. FLOAT32, an omitted view slot, and anything unlisted all
   // resolve through GLTF_FLOAT32_FORMAT below, so every fallback matches the
   // old default branches exactly (4-byte size, Float32Array view).
-  // All three lookup tables are built null-prototype at construction: a
-  // hostile or corrupt componentType or type string ("constructor",
-  // "toString", "__proto__") must miss and fall through to the defaults
-  // instead of matching inherited Object.prototype members.
-  var GLTF_COMPONENT_FORMATS = Object.assign(Object.create(null), {
+  // Every table literal opens with __proto__: null, so a hostile or corrupt
+  // componentType or type string ("constructor", "toString", "__proto__")
+  // misses and falls through to the defaults instead of matching inherited
+  // Object.prototype members.
+  var GLTF_COMPONENT_FORMATS = {
+    __proto__: null,
     5120: [1, Int8Array, "getInt8"],
     5121: [1, Uint8Array, "getUint8"],
     5122: [2, Int16Array, "getInt16"],
     5123: [2, Uint16Array, "getUint16"],
     5125: [4, Uint32Array, "getUint32"],
-  });
+  };
   var GLTF_FLOAT32_FORMAT = [4, Float32Array, "getFloat32"];
 
   // Elements per accessor record by glTF type name; anything unlisted reads
   // as one scalar component.
-  var GLTF_TYPE_COUNTS = Object.assign(Object.create(null), {
+  var GLTF_TYPE_COUNTS = {
+    __proto__: null,
     SCALAR: 1,
     VEC2: 2,
     VEC3: 3,
@@ -92,7 +94,7 @@
     MAT2: 4,
     MAT3: 9,
     MAT4: 16,
-  });
+  };
 
   function gltfAccessorTypeCount(type) {
     return GLTF_TYPE_COUNTS[type] || 1;
@@ -106,13 +108,14 @@
   // Normalized-integer dequantization divisors, signed types flagged so their
   // -1 endpoint survives division rounding. FLOAT32 and unknown types are
   // absent and simply copy through the one conversion loop below.
-  var GLTF_NORMALIZE_DIVISORS = Object.assign(Object.create(null), {
+  var GLTF_NORMALIZE_DIVISORS = {
+    __proto__: null,
     5120: [127, true],
     5121: [255, false],
     5122: [32767, true],
     5123: [65535, false],
     5125: [4294967295, false],
-  });
+  };
 
   function gltfNormalizeAccessorValues(values, componentType) {
     var normalized = new Float32Array(values.length);
@@ -341,25 +344,38 @@
     var outTan = tangents ? new Float32Array(count * 4) : null;
     var outJoints = joints ? new Float32Array(count * 4) : null;
     var outWeights = weights ? new Float32Array(count * 4) : null;
-    // One row per output stream; the width comes from each allocation above,
-    // so every element lands at exactly the offset the unrolled copies wrote.
-    var channels = [
-      [outPos, positions], [outNrm, normals], [outUV, uvs],
-      [outTan, tangents], [outJoints, joints], [outWeights, weights],
-    ];
-
     for (var i = 0; i < count; i++) {
       var idx = indices[i];
-      for (var c = 0; c < channels.length; c++) {
-        var channel = channels[c];
-        var streamOut = channel[0];
-        if (!streamOut) {
-          continue;
-        }
-        var width = streamOut.length / count;
-        for (var k = 0; k < width; k++) {
-          streamOut[i * width + k] = channel[1][idx * width + k];
-        }
+      outPos[i * 3]     = positions[idx * 3];
+      outPos[i * 3 + 1] = positions[idx * 3 + 1];
+      outPos[i * 3 + 2] = positions[idx * 3 + 2];
+
+      outNrm[i * 3]     = normals[idx * 3];
+      outNrm[i * 3 + 1] = normals[idx * 3 + 1];
+      outNrm[i * 3 + 2] = normals[idx * 3 + 2];
+
+      outUV[i * 2]     = uvs[idx * 2];
+      outUV[i * 2 + 1] = uvs[idx * 2 + 1];
+
+      if (outTan) {
+        outTan[i * 4]     = tangents[idx * 4];
+        outTan[i * 4 + 1] = tangents[idx * 4 + 1];
+        outTan[i * 4 + 2] = tangents[idx * 4 + 2];
+        outTan[i * 4 + 3] = tangents[idx * 4 + 3];
+      }
+
+      if (outJoints) {
+        outJoints[i * 4]     = joints[idx * 4];
+        outJoints[i * 4 + 1] = joints[idx * 4 + 1];
+        outJoints[i * 4 + 2] = joints[idx * 4 + 2];
+        outJoints[i * 4 + 3] = joints[idx * 4 + 3];
+      }
+
+      if (outWeights) {
+        outWeights[i * 4]     = weights[idx * 4];
+        outWeights[i * 4 + 1] = weights[idx * 4 + 1];
+        outWeights[i * 4 + 2] = weights[idx * 4 + 2];
+        outWeights[i * 4 + 3] = weights[idx * 4 + 3];
       }
     }
 
