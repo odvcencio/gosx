@@ -72,6 +72,7 @@ func ValidateJSON(data []byte, opts Options) Report {
 		report.Valid = false
 		return report
 	}
+	validateSpecularRawDocument(&report, data)
 	validateDocument(&report, doc, opts)
 	report.Valid = !hasError(report.Diagnostics)
 	return report
@@ -175,6 +176,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		}
 		validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
 		validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
+		validateSpecular(report, mesh.ID, path, mesh.SpecularIntensity, mesh.SpecularColor)
 	}
 	for i, particles := range doc.ComputeParticles {
 		path := fmt.Sprintf("computeParticles[%d]", i)
@@ -230,6 +232,7 @@ func validateObject(report *Report, object scene.ObjectIR, path string) {
 	validatePrimitiveParameters(report, object.Kind, object.ID, path, object.Size, object.Width, object.Height, object.Depth, object.Radius, object.RadiusTop, object.RadiusBottom, object.Tube, object.Segments, object.RadialSegments, object.TubularSegments)
 	validateMaterialScalars(report, object.ID, path, object.Roughness, object.Metalness, object.Clearcoat, object.Sheen, object.Transmission, object.Iridescence, object.Anisotropy)
 	validateIOR(report, object.ID, path+".ior", object.IOR)
+	validateSpecular(report, object.ID, path, object.SpecularIntensity, object.SpecularColor)
 	validateNumericFields(report, object.ID, path, map[string]float64{
 		"lineWidth":      object.LineWidth,
 		"dashSize":       object.DashSize,
@@ -398,6 +401,7 @@ func validateInstancedMesh(report *Report, mesh scene.InstancedMeshIR, path stri
 	validateCompressedArrays(report, mesh.ID, path+".previewTransforms", mesh.PreviewTransforms)
 	validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
 	validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
+	validateSpecular(report, mesh.ID, path, mesh.SpecularIntensity, mesh.SpecularColor)
 	validatePrimitiveParameters(report, mesh.Kind, mesh.ID, path, mesh.Size, mesh.Width, mesh.Height, mesh.Depth, mesh.Radius, mesh.RadiusTop, mesh.RadiusBottom, mesh.Tube, mesh.Segments, mesh.RadialSegments, mesh.TubularSegments)
 	validateLive(report, mesh.ID, path, mesh.Live)
 }

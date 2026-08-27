@@ -124,21 +124,23 @@ type InteractionProfileIR struct {
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
-	ID           string           `json:"id"`
-	Src          string           `json:"src"`
-	MaterialKind string           `json:"materialKind,omitempty"`
-	Color        string           `json:"color,omitempty"`
-	Texture      string           `json:"texture,omitempty"`
-	Opacity      *float64         `json:"opacity,omitempty"`
-	Emissive     *float64         `json:"emissive,omitempty"`
-	BlendMode    string           `json:"blendMode,omitempty"`
-	Roughness    float64          `json:"roughness,omitempty"`
-	Metalness    float64          `json:"metalness,omitempty"`
-	IOR          *float64         `json:"ior,omitempty"`
-	Instances    []MeshInstanceIR `json:"instances"`
-	Pickable     *bool            `json:"pickable,omitempty"`
-	Visible      *bool            `json:"visible,omitempty"`
-	Static       *bool            `json:"static,omitempty"`
+	ID                string           `json:"id"`
+	Src               string           `json:"src"`
+	MaterialKind      string           `json:"materialKind,omitempty"`
+	Color             string           `json:"color,omitempty"`
+	Texture           string           `json:"texture,omitempty"`
+	Opacity           *float64         `json:"opacity,omitempty"`
+	Emissive          *float64         `json:"emissive,omitempty"`
+	BlendMode         string           `json:"blendMode,omitempty"`
+	Roughness         float64          `json:"roughness,omitempty"`
+	Metalness         float64          `json:"metalness,omitempty"`
+	SpecularIntensity *float64         `json:"specularIntensity,omitempty"`
+	SpecularColor     *[3]float64      `json:"specularColor,omitempty"`
+	IOR               *float64         `json:"ior,omitempty"`
+	Instances         []MeshInstanceIR `json:"instances"`
+	Pickable          *bool            `json:"pickable,omitempty"`
+	Visible           *bool            `json:"visible,omitempty"`
+	Static            *bool            `json:"static,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
@@ -222,6 +224,8 @@ type ObjectIR struct {
 	Transmission       float64                    `json:"transmission,omitempty"`
 	Iridescence        float64                    `json:"iridescence,omitempty"`
 	Anisotropy         float64                    `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64                   `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64                `json:"specularColor,omitempty"`
 	IOR                *float64                   `json:"ior,omitempty"`
 	NormalMap          string                     `json:"normalMap,omitempty"`
 	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
@@ -610,6 +614,8 @@ type InstancedMeshIR struct {
 	Transmission         float64                    `json:"transmission,omitempty"`
 	Iridescence          float64                    `json:"iridescence,omitempty"`
 	Anisotropy           float64                    `json:"anisotropy,omitempty"`
+	SpecularIntensity    *float64                   `json:"specularIntensity,omitempty"`
+	SpecularColor        *[3]float64                `json:"specularColor,omitempty"`
 	IOR                  *float64                   `json:"ior,omitempty"`
 	NormalMap            string                     `json:"normalMap,omitempty"`
 	RoughnessMap         string                     `json:"roughnessMap,omitempty"`
@@ -1956,6 +1962,8 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
 	setNumericPtr(record, "ior", item.IOR)
+	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
+	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -2054,6 +2062,8 @@ func (item ModelIR) legacyProps() map[string]any {
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
 	setNumericPtr(record, "ior", item.IOR)
+	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
+	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -2251,6 +2261,8 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
 	setNumericPtr(record, "ior", item.IOR)
+	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
+	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -2324,6 +2336,8 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	setNumeric(record, "roughness", item.Roughness)
 	setNumeric(record, "metalness", item.Metalness)
 	setNumericPtr(record, "ior", item.IOR)
+	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
+	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
 	}
