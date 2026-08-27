@@ -1013,13 +1013,19 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
+    // Read morph metadata off the pristine asset object BEFORE any override
+    // copy or normalization: the normalizer whitelist drops unknown fields.
+    const morphSource = rawObject && rawObject._morphAnim ? rawObject._morphAnim : null;
+    const morphNodeMatrix = morphSource && rawObject.transform && rawObject.transform.length === 16
+      ? rawObject.transform
+      : null;
     let source = sceneApplyMaterialOverride(rawObject, model);
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
       source.skin = skinInstances[source.skinIndex];
     }
     const normalized = normalizeSceneObject(source, index);
     if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
-      return sceneModelMeshObject(normalized, model, prefix);
+      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix);
     }
     if (normalized.kind === "lines") {
       return sceneModelLineObject(normalized, model, prefix);
@@ -1052,11 +1058,12 @@ function gosxConfigureSceneScript(script, role, src) {
     return indices instanceof Uint32Array ? new Uint32Array(indices) : null;
   }
 
-  function sceneModelMeshObject(object, model, prefix) {
+  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix) {
     const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
     if (!vertices || !vertices.positions || !vertices.count) {
       return null;
     }
+    const morphMeta = morphSource || null;
     const instanced = Object.assign({}, object, {
       id: prefix + "/" + (object.id || "object"),
       x: 0,
@@ -1114,6 +1121,11 @@ function gosxConfigureSceneScript(script, role, src) {
     if (hasSkin && model && model.animation) {
       instanced.static = false;
     }
+    if (morphMeta) {
+      // Animated morph geometry changes on every pose tick; a static bake
+      // would freeze the first folded frame into the render bundle.
+      instanced.static = false;
+    }
     if (model && typeof model.pickable === "boolean") {
       instanced.pickable = model.pickable;
     }
@@ -1131,6 +1143,23 @@ function gosxConfigureSceneScript(script, role, src) {
         tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
         indices: sceneCloneModelMeshIndices(vertices.indices),
         count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+      };
+    }
+    if (morphMeta && normalized && normalized.vertices) {
+      // Re-attached AFTER normalization (the whitelist drops it otherwise).
+      // meta is the shared immutable source; matrices, lastWeights, the
+      // cached fold and the snapshot fields are per-instance output state.
+      normalized._morphAnim = {
+        meta: morphMeta,
+        vertices: normalized.vertices,
+        skinned: hasSkin === true,
+        nodeMatrix: morphNodeMatrix || null,
+        modelMatrix: hasSkin ? null : sceneModelTransformMatrix(model),
+        modelLocalVertices: normalized._modelLocalVertices || null,
+        lastWeights: morphMeta.defaults.slice(),
+        lastFolded: null,
+        lastNodeMatrix: null,
+        lastModelMatrix: null,
       };
     }
     return normalized;
@@ -2536,6 +2565,25 @@ function gosxConfigureSceneScript(script, role, src) {
     });
   }
 
+  // True when any parsed animation channel drives morph weights, so a model
+  // without skins still needs a mixer record and per-frame pose ticks.
+  // Parsed channels carry `property` — no tolerant aliases.
+  function sceneModelHasWeightAnimations(asset) {
+    const animations = asset && Array.isArray(asset.animations) ? asset.animations : [];
+    for (let index = 0; index < animations.length; index += 1) {
+      const channels = animations[index] && Array.isArray(animations[index].channels)
+        ? animations[index].channels
+        : [];
+      for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+        const channel = channels[channelIndex];
+        if (channel && channel.property === "weights") {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function sceneModelRootNodes(nodes) {
     if (!Array.isArray(nodes) || !nodes.length) {
       return [];
@@ -2614,6 +2662,28 @@ function gosxConfigureSceneScript(script, role, src) {
         }
         entry[property] = Array.isArray(value) ? value.slice() : Array.from(value || []);
       });
+    }
+    // Animated morph weights. entry.modelMatrix is refreshed from the
+    // record's live root transform every tick so a model-only move is never
+    // folded with a stale matrix, and transform-only changes still re-apply
+    // even when the sampled weights are unchanged (applyMorphPose detects
+    // the matrix delta itself).
+    if (record.morphTargets && record.morphTargets.length > 0) {
+      for (let morphIndex = 0; morphIndex < record.morphTargets.length; morphIndex += 1) {
+        const morphEntry = record.morphTargets[morphIndex];
+        if (morphEntry && !morphEntry.skinned && record.rootTransform) {
+          morphEntry.modelMatrix = record.rootTransform;
+        }
+      }
+      // Model-local node transforms (no root/model transform): the fold bakes
+      // node TRS — including per-frame animated TRS — without double-applying
+      // the model transform. The world map for skinning is built separately
+      // below with record.rootTransform, exactly as before.
+      const localNodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, null, record.rootNodes);
+      const morphApi = (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api) || record.morphApi;
+      if (morphApi && typeof morphApi.applyMorphPose === "function") {
+        morphApi.applyMorphPose(record.morphTargets, animatedTransforms, localNodeTransforms);
+      }
     }
     const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform, record.rootNodes);
     for (let index = 0; index < record.skins.length; index += 1) {
@@ -2720,8 +2790,9 @@ function gosxConfigureSceneScript(script, role, src) {
     state._modelSkins.push(record);
   }
 
-  async function scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs) {
-    if (!sceneModelHasSkins(skinInstances) || !Array.isArray(asset.nodes) || !asset.nodes.length) {
+  async function scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs, stagedObjects) {
+    if ((!sceneModelHasSkins(skinInstances) && !sceneModelHasWeightAnimations(asset))
+      || !Array.isArray(asset.nodes) || !asset.nodes.length) {
       return;
     }
 
@@ -2756,6 +2827,24 @@ function gosxConfigureSceneScript(script, role, src) {
       state._modelSkins = [];
     }
     state._modelSkins.push(record);
+
+    // Per-instance morph fold entries: shared immutable source metadata, one
+    // live vertices owner per instance. Registered only when the parsed asset
+    // actually carries animated morphs. stagedObjects is optional; older call
+    // sites that omit it simply register no morph entries.
+    const morphTargets = [];
+    if (Array.isArray(stagedObjects)) {
+      for (let index = 0; index < stagedObjects.length; index += 1) {
+        const entry = stagedObjects[index] && stagedObjects[index]._morphAnim;
+        if (entry) {
+          morphTargets.push(entry);
+        }
+      }
+    }
+    if (morphTargets.length > 0) {
+      record.morphTargets = morphTargets;
+      record.morphApi = typeof window !== "undefined" ? (window.__gosx_scene3d_gltf_api || null) : null;
+    }
 
     const clips = sceneCloneModelAnimations(asset.animations);
     const wantWasmMixer = clips.length > 0
@@ -2840,10 +2929,18 @@ function gosxConfigureSceneScript(script, role, src) {
       if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_stop === "function") {
         window.__gosx_motion_mixer_stop(record.wasmMixer, name, options.fadeOut !== undefined ? options.fadeOut : 0);
       }
+      if (record.morphTargets && record.morphTargets.length > 0) {
+        // One final pose tick after the stop/fade so the fold restores the
+        // authored defaults. Morph records only: skinned stop/hold unchanged.
+        record.poseDirty = true;
+      }
       return;
     }
     if (record && record.mixer) {
       record.mixer.stop(name, options);
+      if (record.morphTargets && record.morphTargets.length > 0) {
+        record.poseDirty = true;
+      }
     }
   }
 
@@ -3497,8 +3594,12 @@ function gosxConfigureSceneScript(script, role, src) {
         }
       }
       stage = "skin";
-      if (sceneModelHasSkins(skinInstances)) {
-        await scenePrepareModelSkinPlayback(stageState, asset, instanceModel, skinInstances, objectIDs);
+      if (sceneModelHasSkins(skinInstances) || sceneModelHasWeightAnimations(asset)) {
+        // ONE record per model: the playback record is the live record, the
+        // same way skinned models already receive live patches. Registering
+        // an additional static/live record under the same model ID would let
+        // two records diverge in pose state.
+        await scenePrepareModelSkinPlayback(stageState, asset, instanceModel, skinInstances, objectIDs, staged.objects);
       } else {
         sceneRegisterStaticModelLiveRecord(stageState, instanceModel, objectIDs);
       }

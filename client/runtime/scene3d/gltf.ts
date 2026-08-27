@@ -701,7 +701,130 @@
       : values;
   }
 
-  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights) {
+  // True when any glTF animation channel drives the morph weights of this
+  // node. Raw glTF graph field: channel.target.path per glTF 2.0. Animated
+  // morphs are the only reason to retain per-primitive morph metadata past
+  // load time; static morph assets keep the load-time fold and allocate
+  // nothing extra.
+  function gltfNodeHasWeightAnimation(gltf, nodeIndex) {
+    var animations = gltf && gltf.animations;
+    if (!animations || !animations.length) {
+      return false;
+    }
+    for (var a = 0; a < animations.length; a++) {
+      var channels = animations[a] && animations[a].channels;
+      if (!channels || !channels.length) {
+        continue;
+      }
+      for (var c = 0; c < channels.length; c++) {
+        var target = channels[c] && channels[c].target;
+        if (target && target.node === nodeIndex && target.path === "weights") {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Materialize immutable primitive-local morph inputs for animated morphs:
+  // base streams copied out of the (possibly GLB-backed) accessor views and
+  // target deltas pre-expanded through the primitive's index map, so the
+  // per-frame fold never re-reads accessors, never walks indices, and never
+  // retains the GLB binary or the glTF graph. Channel rules mirror the
+  // static fold exactly: deltas are VEC3 displacements, missing or short
+  // accessors drop to absent channels, out-of-range delta indices expand to
+  // zero, and defaults record the validated weights the static fold applied.
+  function gltfBuildAnimatedMorphMetadata(gltf, primitive, binaryBuffer, indices, positions, normals, tangents, authoredWeights, nodeIndex, node) {
+    var targets = primitive.targets || [];
+    var vertexCount = Math.floor(positions.length / 3);
+    var meta = {
+      nodeIndex: nodeIndex,
+      vertexCount: vertexCount,
+      // Authored node TRS retained so a partially animated node rebuilds its
+      // local matrix with the same per-component fallbacks
+      // sceneAnimBuildNodeTransforms uses (anim component else authored).
+      nodeTranslation: node && node.translation ? node.translation : null,
+      nodeRotation: node && node.rotation ? node.rotation : null,
+      nodeScale: node && node.scale ? node.scale : null,
+      instanced: false,
+      defaults: [],
+      basePositions: new Float32Array(positions),
+      baseNormals: normals ? new Float32Array(normals) : null,
+      baseTangents: tangents ? new Float32Array(tangents) : null,
+      baseUVs: null,
+      targetPositions: [],
+      targetNormals: [],
+      targetTangents: [],
+    };
+    function readTargetDeltas(accessorIndex) {
+      if (accessorIndex == null || !gltf.accessors || !gltf.accessors[accessorIndex]) {
+        return null;
+      }
+      var deltas = gltfReadAccessor(gltf, accessorIndex, binaryBuffer);
+      if (!deltas || !deltas.length) {
+        return null;
+      }
+      var srcVertices = Math.floor(deltas.length / 3);
+      var out = new Float32Array(vertexCount * 3);
+      for (var v = 0; v < vertexCount; v++) {
+        var d = indices ? indices[v] : v;
+        if (!(d >= 0 && d < srcVertices)) {
+          continue;
+        }
+        out[v * 3] = deltas[d * 3];
+        out[v * 3 + 1] = deltas[d * 3 + 1];
+        out[v * 3 + 2] = deltas[d * 3 + 2];
+      }
+      return out;
+    }
+    for (var t = 0; t < targets.length; t++) {
+      var source = targets[t];
+      if (!source || typeof source !== "object") {
+        meta.defaults.push(0);
+        meta.targetPositions.push(null);
+        meta.targetNormals.push(null);
+        meta.targetTangents.push(null);
+        continue;
+      }
+      // Validate exactly like the static fold: finite numbers only — no
+      // Number() coercion of strings/booleans/empty values.
+      var raw = Array.isArray(authoredWeights) ? authoredWeights[t] : null;
+      meta.defaults.push(typeof raw === "number" && isFinite(raw) ? raw : 0);
+      meta.targetPositions.push(readTargetDeltas(source.POSITION));
+      meta.targetNormals.push(source.NORMAL != null ? readTargetDeltas(source.NORMAL) : null);
+      meta.targetTangents.push(source.TANGENT != null ? readTargetDeltas(source.TANGENT) : null);
+    }
+    return meta;
+  }
+
+  // Matrix snapshot helpers: transform-only changes (live model move or
+  // animated node TRS) must re-apply even when the sampled weights did not
+  // change, so the apply tracks the last node/model matrices per entry.
+  function gltfMatrixChanged(last, current) {
+    if (!last && !current) {
+      return false;
+    }
+    if (!last || !current) {
+      return true;
+    }
+    for (var i = 0; i < 16; i++) {
+      if (last[i] !== current[i]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function gltfCopyMat4(m) {
+    var out = new Float32Array(16);
+    if (m) {
+      for (var i = 0; i < 16 && i < m.length; i++) {
+        out[i] = m[i];
+      }
+    }
+    return out;
+  }
+  function gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, uvTransform, morphWeights, animatedMorph, nodeIndex, node) {
     // One named-attribute read: absent names hand back null exactly like the
     // inline guards they replace.
     function attrValues(name) {
@@ -760,6 +883,16 @@
       uvs = gltfGenerateDefaultUVs(positions.length / 3);
     }
 
+    // Animated morphs retain their primitive-local inputs (base streams and
+    // index-expanded target deltas) so the per-frame apply can re-fold from a
+    // pristine base. Snapshot BEFORE the static fold: the fold's lazy copies
+    // would otherwise become the "base" and double-apply on every frame.
+    var morphMeta = animatedMorph && primitive.targets && primitive.targets.length && positions
+      ? gltfBuildAnimatedMorphMetadata(
+          gltf, primitive, binaryBuffer, indices,
+          positions, normals, tangentsRaw, morphWeights, nodeIndex, node)
+      : null;
+
     // Fold static morph-target deltas right here, once at load time: deltas
     // land in PRIMITIVE-LOCAL space before any node/world transform or
     // skinning (Khronos glTF 2.0), and folding before UV baking and
@@ -801,6 +934,12 @@
     // Compute tangents if not provided by the asset.
     var tangents = tangentsRaw || gltfComputeTangents(positions, normals, uvs);
 
+    if (morphMeta && !tangentsRaw) {
+      // Computed tangents are re-derived per pose change from the same UVs,
+      // so keep the post-texture-transform UVs the load-time pass used.
+      morphMeta.baseUVs = new Float32Array(uvs);
+    }
+
     return {
       positions: positions,
       normals: normals,
@@ -809,7 +948,225 @@
       joints: joints,
       weights: weights,
       count: positions.length / 3,
+      morphMeta: morphMeta,
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Animated morph weights — per-frame fold driven by the motion mixers
+  // ---------------------------------------------------------------------------
+
+  // Resolve the effective weight vector for one morph meta against the
+  // decoded mixer pose. Finite numbers only (no coercion). Returns null when
+  // the effective vector already matches lastWeights.
+  function gltfMorphEffectiveWeights(meta, animatedWeights, lastWeights) {
+    var defaults = meta.defaults;
+    var count = defaults.length;
+    if (!count) {
+      return null;
+    }
+    var pose = animatedWeights && typeof animatedWeights.get === "function"
+      ? animatedWeights.get(meta.nodeIndex)
+      : null;
+    var values = pose && pose.weights != null && typeof pose.weights.length === "number"
+      ? pose.weights
+      : null;
+    var effective = new Array(count);
+    var changed = !lastWeights || lastWeights.length !== count;
+    for (var t = 0; t < count; t++) {
+      var raw = values && t < values.length ? values[t] : NaN;
+      if (typeof raw !== "number" || !isFinite(raw)) {
+        raw = defaults[t];
+      }
+      effective[t] = raw;
+      if (!changed && raw !== lastWeights[t]) {
+        changed = true;
+      }
+    }
+    return changed ? effective : null;
+  }
+
+  // Fold the weighted target deltas into FRESH primitive-local streams from
+  // the immutable base — repeated applications can never accumulate.
+  function gltfFoldAnimatedMorphStreams(meta, weights) {
+    var positions = new Float32Array(meta.basePositions);
+    var normals = meta.baseNormals ? new Float32Array(meta.baseNormals) : null;
+    var tangents = meta.baseTangents ? new Float32Array(meta.baseTangents) : null;
+    for (var t = 0; t < weights.length; t++) {
+      var weight = weights[t];
+      if (!isFinite(weight) || weight === 0) {
+        continue;
+      }
+      var target = meta.targetPositions[t];
+      if (target) {
+        for (var i = 0; i < positions.length; i++) {
+          positions[i] += weight * target[i];
+        }
+      }
+      if (normals) {
+        target = meta.targetNormals[t];
+        if (target) {
+          for (var n = 0; n < normals.length; n++) {
+            normals[n] += weight * target[n];
+          }
+        }
+      }
+      if (tangents) {
+        target = meta.targetTangents[t];
+        if (target) {
+          for (var v = 0; v < meta.vertexCount; v++) {
+            tangents[v * 4] += weight * target[v * 3];
+            tangents[v * 4 + 1] += weight * target[v * 3 + 1];
+            tangents[v * 4 + 2] += weight * target[v * 3 + 2];
+          }
+        }
+      }
+    }
+    if (!normals) {
+      normals = gltfGenerateFlatNormals(positions);
+    }
+    if (!tangents) {
+      tangents = gltfComputeTangents(positions, normals, meta.baseUVs || gltfGenerateDefaultUVs(meta.vertexCount));
+    }
+    return { positions: positions, normals: normals, tangents: tangents };
+  }
+
+  // Transform folded primitive-local streams by one matrix, mirroring the
+  // load-time/static model-transform path (sceneApplyStaticModel
+  // ObjectTransform): positions through the full transform, normals through
+  // the inverse-transpose 3x3 (correct under non-uniform scale), tangent
+  // xyz as directions through the linear 3x3 with renormalization, tangent
+  // w preserved. Uses only this chunk's glTF matrix helpers — no
+  // sceneModelTransform*/sceneNormalizeDirection cross-chunk calls.
+  function gltfTransformMorphedStreams(streams, worldTransform) {
+    var outPositions = new Float32Array(streams.positions.length);
+    for (var p = 0; p < streams.positions.length; p += 3) {
+      var point = gltfTransformPoint(worldTransform, streams.positions[p], streams.positions[p + 1], streams.positions[p + 2]);
+      outPositions[p] = point.x;
+      outPositions[p + 1] = point.y;
+      outPositions[p + 2] = point.z;
+    }
+    var normalMatrix = gltfNormalMatrix(worldTransform);
+    var outNormals = new Float32Array(streams.normals.length);
+    for (var n = 0; n < streams.normals.length; n += 3) {
+      var normal = gltfTransformNormal(normalMatrix, streams.normals[n], streams.normals[n + 1], streams.normals[n + 2]);
+      outNormals[n] = normal.x;
+      outNormals[n + 1] = normal.y;
+      outNormals[n + 2] = normal.z;
+    }
+    var outTangents = new Float32Array(streams.tangents.length);
+    for (var t = 0; t < streams.tangents.length; t += 4) {
+      var tangent = gltfTransformDirection(worldTransform, streams.tangents[t], streams.tangents[t + 1], streams.tangents[t + 2]);
+      var tangentLen = Math.sqrt(tangent.x * tangent.x + tangent.y * tangent.y + tangent.z * tangent.z);
+      if (tangentLen > 1e-8) {
+        tangent.x /= tangentLen;
+        tangent.y /= tangentLen;
+        tangent.z /= tangentLen;
+      }
+      outTangents[t] = tangent.x;
+      outTangents[t + 1] = tangent.y;
+      outTangents[t + 2] = tangent.z;
+      var w = streams.tangents[t + 3];
+      outTangents[t + 3] = typeof w === "number" && isFinite(w) ? w : 1;
+    }
+    return { positions: outPositions, normals: outNormals, tangents: outTangents };
+  }
+
+  // Cache keys the bounds/snapshot layers attach to vertices objects.
+  var GLTF_MORPH_CACHE_KEYS = ["_skinnedLocalBounds", "_localBounds", "_bounds"];
+
+  function gltfDropVertexCaches(vertices) {
+    for (var i = 0; i < GLTF_MORPH_CACHE_KEYS.length; i++) {
+      if (Object.prototype.hasOwnProperty.call(vertices, GLTF_MORPH_CACHE_KEYS[i])) {
+        delete vertices[GLTF_MORPH_CACHE_KEYS[i]];
+      }
+    }
+  }
+
+  // Published per-frame entry point (window.__gosx_scene3d_gltf_api.
+  // applyMorphPose). nodeTransforms (optional) is the model-local node map
+  // from sceneAnimBuildNodeTransforms(nodes, pose, null, rootNodes): animated
+  // node TRS WITHOUT the model/root transform, so the model transform below
+  // is applied exactly once and skinning/instancing are unaffected.
+  function gltfApplyAnimatedMorphPose(entries, animatedWeights, nodeTransforms) {
+    if (!Array.isArray(entries)) {
+      return;
+    }
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (!entry || !entry.meta || !entry.vertices) {
+        continue;
+      }
+      var meta = entry.meta;
+      var effective = gltfMorphEffectiveWeights(meta, animatedWeights, entry.lastWeights);
+      if (entry.skinned) {
+        // Skinned instances stay primitive-local: node and model transforms
+        // fold in at skin time through the joint matrices.
+        if (!effective) {
+          continue;
+        }
+        var skinnedFold = gltfFoldAnimatedMorphStreams(meta, effective);
+        entry.vertices.positions = skinnedFold.positions;
+        entry.vertices.normals = skinnedFold.normals;
+        entry.vertices.tangents = skinnedFold.tangents;
+        gltfDropVertexCaches(entry.vertices);
+        entry.lastWeights = effective;
+        entry.lastFolded = skinnedFold;
+        continue;
+      }
+      // Node matrix: the animated model-local matrix when available, else
+      // the authored asset matrix. Instanced morph primitives keep their
+      // authored matrix (the node-level map carries no per-instance offset).
+      var nodeMatrix = entry.nodeMatrix || null;
+      if (!meta.instanced && nodeTransforms && typeof nodeTransforms.get === "function") {
+        var animatedNodeMatrix = nodeTransforms.get(meta.nodeIndex);
+        if (animatedNodeMatrix) {
+          nodeMatrix = animatedNodeMatrix;
+        }
+      } else if (!nodeTransforms && animatedWeights && typeof animatedWeights.get === "function") {
+        // Bare-VM fallback (no mount): rebuild node-local TRS from the pose
+        // with the same per-component fallbacks buildNodeTransforms uses.
+        var pose = animatedWeights.get(meta.nodeIndex);
+        if (pose && (pose.translation != null || pose.position != null || pose.rotation != null || pose.scale != null)) {
+          nodeMatrix = sceneTRSToMat4(
+            (pose.translation || pose.position || meta.nodeTranslation || [0, 0, 0]),
+            (pose.rotation || meta.nodeRotation || [0, 0, 0, 1]),
+            (pose.scale || meta.nodeScale || [1, 1, 1])
+          );
+        }
+      }
+      var modelMatrix = entry.modelMatrix || null;
+      var nodeChanged = gltfMatrixChanged(entry.lastNodeMatrix, nodeMatrix);
+      var modelChanged = gltfMatrixChanged(entry.lastModelMatrix, modelMatrix);
+      if (!effective && !nodeChanged && !modelChanged) {
+        continue;
+      }
+      // Re-fold only when weights changed; transform-only changes reuse the
+      // cached primitive-local fold.
+      var folded = effective
+        ? gltfFoldAnimatedMorphStreams(meta, effective)
+        : (entry.lastFolded || gltfFoldAnimatedMorphStreams(meta, entry.lastWeights || meta.defaults));
+      entry.lastFolded = folded;
+      if (effective) {
+        entry.lastWeights = effective;
+      }
+      // Node stage → model-local asset-space geometry (the _modelLocalVertices
+      // contract: node transform INCLUDED). Model stage → world, once.
+      var local = nodeMatrix ? gltfTransformMorphedStreams(folded, nodeMatrix) : folded;
+      var finalStreams = modelMatrix ? gltfTransformMorphedStreams(local, modelMatrix) : local;
+      entry.vertices.positions = finalStreams.positions;
+      entry.vertices.normals = finalStreams.normals;
+      entry.vertices.tangents = finalStreams.tangents;
+      if (entry.modelLocalVertices && entry.modelLocalVertices.positions) {
+        entry.modelLocalVertices.positions = local.positions;
+        entry.modelLocalVertices.normals = local.normals;
+        entry.modelLocalVertices.tangents = local.tangents;
+        entry.modelLocalVertices.count = meta.vertexCount;
+      }
+      gltfDropVertexCaches(entry.vertices);
+      entry.lastNodeMatrix = nodeMatrix ? gltfCopyMat4(nodeMatrix) : null;
+      entry.lastModelMatrix = modelMatrix ? gltfCopyMat4(modelMatrix) : null;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1221,12 +1578,13 @@
     return { positions: transformed, count: Math.floor(transformed.length / 3) };
   }
 
-  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix) {
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix, nodeIndex) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
       return;
     }
     var suffix = idSuffix || "";
+    var animateMorph = nodeIndex != null && gltfNodeHasWeightAnimation(gltf, nodeIndex);
 
     var normalMat = gltfNormalMatrix(worldTransform);
     var skin = skinIndex != null && result.skins ? result.skins[skinIndex] : null;
@@ -1316,7 +1674,7 @@
       var authoredWeights = node && Array.isArray(node.weights)
         ? node.weights
         : mesh.weights;
-      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights);
+      var geometry = gltfExtractMeshPrimitive(gltf, primitive, binaryBuffer, material.uvTransform, authoredWeights, animateMorph, nodeIndex, node);
       var vertCount = geometry.count;
       var primitiveSkinned = isSkinned && geometry.joints && geometry.weights;
 
@@ -1397,6 +1755,15 @@
         object.skin = skin;
       }
 
+      if (geometry.morphMeta) {
+        // Private internal morph metadata (never a public morphTargets /
+        // morphWeights field): the mount layer reads it at instantiation.
+        // Immutable and shared by every clone; the GLB binary and glTF graph
+        // are not retained — only copied streams and validated defaults.
+        geometry.morphMeta.instanced = suffix.indexOf("-inst-") === 0;
+        object._morphAnim = geometry.morphMeta;
+      }
+
       gltfApplyScene3DExtras(object, extras, GLTF_OBJECT_EXTRA_KEYS);
       result.objects.push(object);
 
@@ -1467,11 +1834,12 @@
             result,
             skin,
             node,
-            "-inst-" + n
+            "-inst-" + n,
+            nodeIndex
           );
         }
       } else {
-        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node);
+        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, "", nodeIndex);
       }
     }
 
@@ -2173,6 +2541,7 @@
     window.__gosx_scene3d_gltf_api = {
       sceneLoadGLTFModel: sceneLoadGLTFModel,
       gltfSceneToModelAsset: gltfSceneToModelAsset,
+      applyMorphPose: gltfApplyAnimatedMorphPose,
     };
     window.__gosx_scene3d_gltf_loaded = true;
   }
