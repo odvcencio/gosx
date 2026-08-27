@@ -102,7 +102,8 @@
     "uniform float u_transmission;",
     "uniform float u_iridescence;",
     "uniform float u_anisotropy;",
-    "uniform float u_dielectricF0;",
+    "uniform vec3 u_specularF0;",
+    "uniform float u_specularF90;",
     "uniform float u_emissive;",
     "uniform float u_opacity;",
     "uniform bool u_unlit;",
@@ -336,13 +337,15 @@
     "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
     "}",
     "",
-    // Schlick fresnel approximation.
-    "vec3 fresnelSchlick(float cosTheta, vec3 F0) {",
-    "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    // Schlick fresnel approximation. F90 is the authored specular intensity:
+    // the grazing reflectance the KHR specular extension scales, so an
+    // intensity below 1 dims the whole lobe, not just the F0 floor.
+    "vec3 fresnelSchlick(float cosTheta, vec3 F0, float F90) {",
+    "    return F0 + (vec3(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
-    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {",
-    "    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float F90, float roughness) {",
+    "    return F0 + (max(vec3(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
     "vec3 rotateEnvY(vec3 dir, float radians) {",
@@ -424,9 +427,20 @@
     "",
     // Fresnel reflectance at normal incidence — the material's authored
     // dielectric F0 = ((ior-1)/(ior+1))^2 blended with metallic albedo.
-    // u_dielectricF0 defaults to 0.04 (ior 1.5) and uploads 1.0 in the glTF
-    // ior=0 compatibility mode. Direct and environment consumers share it.
-    "    vec3 F0 = mix(vec3(u_dielectricF0), albedo, metalness);",
+    // The authored KHR specular factors refine the dielectric lane:
+    // u_specularF0 is min(IOR F0 * linear specularColor, 1) * intensity and
+    // u_specularF90 is the intensity itself, both prepared CPU-side so the
+    // upload is always finite and bounded to [0, 1]. Shading consumes only
+    // these effective uniforms. The metallic mix keeps its exact
+    // fully-metal branch so a metal never reads the dielectric lane.
+    "    vec3 specF0 = u_specularF0;",
+    "    float specF90 = u_specularF90;",
+    "    vec3 F0 = mix(specF0, albedo, metalness);",
+    "    float F90 = mix(specF90, 1.0, metalness);",
+    "    if (metalness >= 1.0) {",
+    "        F0 = albedo;",
+    "        F90 = 1.0;",
+    "    }",
     "",
     // Accumulate direct lighting.
     "    vec3 Lo = vec3(0.0);",
@@ -492,14 +506,18 @@
     // Cook-Torrance specular BRDF.
     "        float D = distributionGGX(N, H, roughness);",
     "        float G = geometrySmith(N, V, L, roughness);",
-    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
     "",
     "        vec3 numerator = D * G * F;",
     "        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
     "        vec3 specular = numerator / denominator;",
     "",
-    // Energy conservation: diffuse complement of specular.
-    "        vec3 kD = (vec3(1.0) - F) * (1.0 - metalness);",
+    // Energy conservation: diffuse complement of the dielectric specular.
+    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
+    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
+    // the Fresnel colour and never borrows the metallic Fresnel.
+    "        vec3 Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
+    "        float kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
     // Shadow attenuation for directional lights.
     "        float shadow = 1.0;",
@@ -523,13 +541,13 @@
     "    if (u_hasIBL) {",
     "        vec3 Nr = rotateEnvY(N, u_envRotation);",
     "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
-    "        vec3 Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
-    "        vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metalness);",
+    "        vec3 FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        vec3 irradiance = texture(u_iblIrradiance, Nr).rgb;",
     "        vec3 prefiltered = textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod).rgb;",
     "        vec2 brdf = texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg;",
     "        vec3 diffuseIBL = irradiance * albedo * kDenv;",
-    "        vec3 specularIBL = prefiltered * (F0 * brdf.x + brdf.y);",
+    "        vec3 specularIBL = prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * u_envIntensity;",
     "    } else",
     "#endif",
@@ -538,8 +556,9 @@
     "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
     "        vec3 envDiffuse = texture(u_envMap, envEquirectUV(Nr)).rgb * albedo;",
     "        vec3 envSpecular = texture(u_envMap, envEquirectUV(Rr)).rgb;",
-    "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);",
-    "        vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metalness);",
+    "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, F90, roughness);",
+    "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
+    "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
     "    } else {",
     "        float hemi = N.y * 0.5 + 0.5;",
@@ -5105,6 +5124,49 @@
     return t * t;
   }
 
+  // Effective dielectric specular factors from the authored KHR-style
+  // specularIntensity / specularColor factors. The intensity contract is a
+  // finite number in [0, 1] — an explicit 0 is valid, an omitted value means
+  // 1 — and the color contract is exactly three finite non-negative LINEAR
+  // components, omitted meaning white. The effective F0 is
+  // min(IOR F0 * color, 1) * intensity with the clamp applied BEFORE the
+  // intensity so a finite HDR tint above 1 clamps to 1 rather than scaling
+  // past it, and F90 is the intensity itself. Every returned component is
+  // finite and non-negative, so the GL upload can never see NaN or Infinity,
+  // and the result is bounded to [0, 1]. A future specular texture must
+  // multiply its colour into `color` BEFORE this clamp, never into an
+  // already-clamped F0.
+  function scenePBRSpecularFactors(material) {
+    var mat = material || {};
+    var intensity = mat.specularIntensity;
+    if (!(typeof intensity === "number" && Number.isFinite(intensity) && intensity >= 0 && intensity <= 1)) {
+      intensity = 1;
+    }
+    var color = mat.specularColor;
+    var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+    if (valid) {
+      for (var i = 0; i < 3; i++) {
+        var component = color[i];
+        if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+          valid = false;
+          break;
+        }
+      }
+    }
+    if (!valid) {
+      color = [1, 1, 1];
+    }
+    var iorF0 = scenePBRDielectricF0(mat.ior);
+    return {
+      f0: [
+        Math.min(iorF0 * color[0], 1) * intensity,
+        Math.min(iorF0 * color[1], 1) * intensity,
+        Math.min(iorF0 * color[2], 1) * intensity,
+      ],
+      f90: intensity,
+    };
+  }
+
   // Cache the base uniform locations shared between the static and skinned
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
@@ -5123,7 +5185,8 @@
       transmission: gl.getUniformLocation(program, "u_transmission"),
       iridescence: gl.getUniformLocation(program, "u_iridescence"),
       anisotropy: gl.getUniformLocation(program, "u_anisotropy"),
-      dielectricF0: gl.getUniformLocation(program, "u_dielectricF0"),
+      specularF0: gl.getUniformLocation(program, "u_specularF0"),
+      specularF90: gl.getUniformLocation(program, "u_specularF90"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
@@ -7078,7 +7141,9 @@
       gl.uniform1f(uniforms.transmission, clamp01(sceneNumber(mat.transmission, 0)));
       gl.uniform1f(uniforms.iridescence, clamp01(sceneNumber(mat.iridescence, 0)));
       gl.uniform1f(uniforms.anisotropy, Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0))));
-      gl.uniform1f(uniforms.dielectricF0, scenePBRDielectricF0(mat.ior));
+      const specularFactors = scenePBRSpecularFactors(mat);
+      gl.uniform3f(uniforms.specularF0, specularFactors.f0[0], specularFactors.f0[1], specularFactors.f0[2]);
+      gl.uniform1f(uniforms.specularF90, specularFactors.f90);
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
       gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);

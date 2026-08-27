@@ -155,7 +155,7 @@ test("WebGL HDR IBL compiles the bounded variant and consumes split-sum products
   assert.match(source, /scenePBRFragmentSourceForContext\(gl, SCENE_PBR_FRAGMENT_SOURCE\)/);
   assert.match(fragment, /textureLod\(u_iblRadiance, Rr, roughness \* u_iblRadianceMaxLod\)/);
   assert.match(fragment, /texture\(u_iblBRDFLUT, vec2\(NoV, roughness\)\)\.rg/);
-  assert.match(fragment, /prefiltered \* \(F0 \* brdf\.x \+ brdf\.y\)/);
+  assert.match(fragment, /prefiltered \* \(F0 \* brdf\.x \+ vec3\(F90\) \* brdf\.y\)/);
   assert.match(fragment, /irradiance \* albedo \* kDenv/);
   assert.match(fragment, /ambient \*= ambientOcclusion/);
   assert.match(source, /gl\.SRGB8_ALPHA8 \|\| 0x8C43/);
@@ -176,7 +176,7 @@ test("WebGPU consumes the same split-sum contract and keeps color/data texture f
   assert.match(source, new RegExp(BRDF_MODEL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(source, /textureSampleLevel\(iblRadiance, iblSampler, Rr, roughness \* maxLod\)/);
   assert.match(source, /textureSample\(iblBRDFLUT, iblSampler, vec2f\(NoV, roughness\)\)\.rg/);
-  assert.match(source, /prefiltered \* \(F0 \* brdf\.x \+ brdf\.y\)/);
+  assert.match(source, /prefiltered \* \(F0 \* brdf\.x \+ vec3f\(F90\) \* brdf\.y\)/);
   assert.match(source, /irradiance \* albedo \* kDenv/);
   assert.match(source, /ambient = ambient \* ambientOcclusion/);
   assert.match(source, /descriptor\.colorSpace === "srgb" \? "rgba8unorm-srgb" : "rgba8unorm"/);

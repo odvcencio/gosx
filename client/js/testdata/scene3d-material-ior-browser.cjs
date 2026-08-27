@@ -13,12 +13,13 @@
  *
  * Evidence gathered per case (one sequential browser page/scene at a time,
  * fixed camera/lighting/FOV, no animation):
- *  - native u_dielectricF0 uniform values observed at production GL draw
- *    calls (getUniformLocation program->location tracking + getParameter
- *    CURRENT_PROGRAM + getUniform at draw time, instanced forms included),
- *    and the 176-byte WebGPU material upload with F0 read at exactly float
- *    index 40 (bytes 160:164); all wrappers strictly forward and observation
- *    errors are recorded and fail the probe without changing native behavior;
+ *  - native u_specularF0 (vec3) + u_specularF90 uniform values observed at
+ *    production GL draw calls (getUniformLocation program->location tracking
+ *    + getParameter CURRENT_PROGRAM + getUniform at draw time, instanced
+ *    forms included), and the 192-byte WebGPU material upload with the
+ *    effective F0 read at float indices 44..46 and F90 at 47 (bytes
+ *    176:192); all wrappers strictly forward and observation errors are
+ *    recorded and fail the probe without changing native behavior;
  *  - actual rendered pixels via CDP screenshot clipped to the real canvas
  *    bounding rect, decoded with a native browser Image + 2D canvas, with
  *    foreground-vs-measured-corner-background threshold + coverage asserted
@@ -347,14 +348,16 @@ async function evalSend(send, expression, extra) {
 
 // Strict wrappers only: every wrapped native forwards arguments/result/this
 // unchanged. WebGL observation reads the REAL uniform state at draw time:
-// getUniformLocation tracks program->location for u_dielectricF0; at each
-// draw (including instanced forms) we read CURRENT_PROGRAM and getUniform.
+// getUniformLocation tracks program->location for u_specularF0 and
+// u_specularF90; at each draw (including instanced forms) we read
+// CURRENT_PROGRAM and getUniform.
 // Nothing is inferred from uniform1f/useProgram. GPUQueue.writeBuffer is
 // wrapped with its true signature (buffer, bufferOffset, data, dataOffset?,
 // size?) with correct element/byte dataOffset+size semantics, capturing only
-// 176-byte material uploads and reading F0 at exactly float index 40.
+// 192-byte material uploads and reading F0 at float indices 44..46 and F90
+// at 47.
 const PRELOAD = `
-  window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, f0s: [], obsErrors: [], gl: null,
+  window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
     programInfo: null, queriedUniforms: [] };
 window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
 (function () {
@@ -384,17 +387,21 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
           }
           info.activeUniforms = names;
         } catch (e2) { noteErr(window.__gosxIOR.obsErrors, e2); }
-        var fm = this.__f0locs;
-        info.trackedF0 = !!(fm && fm.has(cp));
+        var fm0 = this.__sf0locs, fm90 = this.__sf90locs;
+        info.trackedF0 = !!(fm0 && fm0.has(cp) && fm90 && fm90.has(cp));
         window.__gosxIOR.programInfo = info;
       }
-      var m = this.__f0locs;
-      if (cp && m && m.has(cp)) {
-        var v = this.__origGetUniform.call(this, cp, m.get(cp));
-        if (typeof v === "number" && Number.isFinite(v)) {
+      var mf0 = this.__sf0locs, mf90 = this.__sf90locs;
+      if (cp && mf0 && mf0.has(cp) && mf90 && mf90.has(cp)) {
+        var v0 = this.__origGetUniform.call(this, cp, mf0.get(cp));
+        var v90 = this.__origGetUniform.call(this, cp, mf90.get(cp));
+        if (v0 && typeof v0.length === "number" && v0.length === 3 &&
+            typeof v90 === "number" && Number.isFinite(v90)) {
+          var vec = [v0[0], v0[1], v0[2]];
           window.__gosxIOR.pbrDraws += 1;
-          window.__gosxIOR.lastDrawF0 = v;
-          if (window.__gosxIOR.f0s.length < 4096) window.__gosxIOR.f0s.push(v);
+          window.__gosxIOR.lastDrawF0 = vec;
+          window.__gosxIOR.lastDrawF90 = v90;
+          if (window.__gosxIOR.f0s.length < 4096) window.__gosxIOR.f0s.push(vec);
         }
       }
     } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
@@ -429,9 +436,13 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
         var q = window.__gosxIOR.queriedUniforms ||
           (window.__gosxIOR.queriedUniforms = []);
         if (q.length < 64 && q.indexOf(String(n)) < 0) q.push(String(n));
-        if (n === "u_dielectricF0") {
-          var m = this.__f0locs || (this.__f0locs = new Map());
-          if (loc) m.set(p, loc); else m.delete(p);
+        if (n === "u_specularF0") {
+          var m0 = this.__sf0locs || (this.__sf0locs = new Map());
+          if (loc) m0.set(p, loc); else m0.delete(p);
+        }
+        if (n === "u_specularF90") {
+          var m90 = this.__sf90locs || (this.__sf90locs = new Map());
+          if (loc) m90.set(p, loc); else m90.delete(p);
         }
       } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
       return loc;
@@ -461,13 +472,15 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
           var totalBytes = data.byteLength;
           var byteOff = (dataOffset == null) ? 0 : dataOffset * elem;
           var byteLen = (size == null) ? (totalBytes - byteOff) : size * elem;
-          if (byteLen === 176 && byteOff >= 0 && byteOff + 176 <= totalBytes) {
-            var dv = new DataView(buf, base + byteOff, 176);
-            var floats = new Array(44);
-            for (var i = 0; i < 44; i++) floats[i] = dv.getFloat32(i * 4, true);
-            // Production writes Float32Array(44); F0 lives at float index 40
-            // (bytes 160:164). Slots 0..39 are pre-existing uniform data.
-            window.__gosxWGPU.dumps.push({ f0: floats[40], floats: floats });
+          if (byteLen === 192 && byteOff >= 0 && byteOff + 192 <= totalBytes) {
+            var dv = new DataView(buf, base + byteOff, 192);
+            var floats = new Array(48);
+            for (var i = 0; i < 48; i++) floats[i] = dv.getFloat32(i * 4, true);
+            // Production writes Float32Array(48); the effective specular F0
+            // lives at float indices 44..46 and F90 at 47 (bytes 176:192).
+            // Slots 0..43 are pre-existing uniform data.
+            window.__gosxWGPU.dumps.push({
+              f0: [floats[44], floats[45], floats[46]], f90: floats[47], floats: floats });
             window.__gosxWGPU.materialUploads += 1;
           }
         }
@@ -518,7 +531,7 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'if(typeof im.length==="number")return im.length;' +
   'return Object.keys(im).length;})(),' +
   'ior:window.__gosxIOR?{draws:window.__gosxIOR.draws,pbrDraws:window.__gosxIOR.pbrDraws,' +
-  'lastDrawF0:window.__gosxIOR.lastDrawF0,gl:window.__gosxIOR.gl,' +
+  'lastDrawF0:window.__gosxIOR.lastDrawF0,lastDrawF90:window.__gosxIOR.lastDrawF90,gl:window.__gosxIOR.gl,' +
   'linkStatus:(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.linkStatus!==null?window.__gosxIOR.programInfo.linkStatus:null),' +
   'trackedF0:!!(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.trackedF0),' +
   'activeUniforms:((window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.activeUniforms)||[]).slice(0,100),' +
@@ -756,6 +769,7 @@ setTimeout(() => {
         bundleReplays: s.bundleReplays, bundleDraws: s.bundleDraws,
         objects: s.objects, glBackend: s.ior.gl,
         draws: s.ior.draws, pbrDraws: s.ior.pbrDraws, uniformF0: s.ior.lastDrawF0,
+        uniformF90: s.ior.lastDrawF90,
         wgpuUploads: s.wgpu.uploads,
       });
 
@@ -795,12 +809,18 @@ setTimeout(() => {
             // Unknown/missing state: fail, never silently accept.
             fail(c.name + ': unknown/missing data-gosx-scene3d-webgpu-bundle-state: ' + s.bundleState);
           }
-          if (!(s.wgpu.uploads > 0)) fail(c.name + ': no 176-byte material uploads observed');
-          const hit = (s.wgpu.dumps || []).some((d) =>
-            typeof d.f0 === 'number' && Number.isFinite(d.f0) && Math.abs(d.f0 - c.f0) < 1e-4);
+          if (!(s.wgpu.uploads > 0)) fail(c.name + ': no 192-byte material uploads observed');
+          const hit = (s.wgpu.dumps || []).some((d) => {
+            if (!Array.isArray(d.f0) || d.f0.length !== 3) return false;
+            for (var ci = 0; ci < 3; ci += 1) {
+              if (!(typeof d.f0[ci] === 'number' && Number.isFinite(d.f0[ci]) &&
+                    Math.abs(d.f0[ci] - c.f0) < 1e-4)) return false;
+            }
+            return typeof d.f90 === 'number' && Number.isFinite(d.f90) && Math.abs(d.f90 - 1) < 1e-4;
+          });
           rec.f0InUpload = hit;
           if (!hit) {
-            fail(c.name + ': expected F0 ' + c.f0 + ' not found at float index 40 of any 176-byte upload');
+            fail(c.name + ': expected F0 ' + c.f0 + ' (all channels) + F90 1 not found at float indices 44..47 of any 192-byte upload');
           }
           if (s.wgpuErr) {
             fail(c.name + ': WebGPU renderer produced nonempty wgpuErr: ' + s.wgpuErr);
@@ -814,9 +834,17 @@ setTimeout(() => {
           fail(c.name + ': unexpected renderer fallback attr: ' + s.fallback);
         }
         if (!(s.ior.pbrDraws > 0)) {
-          fail(c.name + ': no production PBR draws with u_dielectricF0 observed (draws=' + s.ior.draws + ')');
+          fail(c.name + ': no production PBR draws with u_specularF0/u_specularF90 observed (draws=' + s.ior.draws + ')');
         }
-        assertClose(s.ior.lastDrawF0, c.f0, c.name + ' u_dielectricF0 at draw');
+        var f0v = s.ior.lastDrawF0;
+        if (!Array.isArray(f0v) || f0v.length !== 3) {
+          fail(c.name + ': u_specularF0 not observed as a vec3 at draw');
+        } else {
+          for (var ch = 0; ch < 3; ch += 1) {
+            assertClose(f0v[ch], c.f0, c.name + ' u_specularF0[' + ch + '] at draw');
+          }
+        }
+        assertClose(s.ior.lastDrawF90, 1, c.name + ' u_specularF90 at draw');
       }
 
       cap = await capture(send);
@@ -853,12 +881,15 @@ setTimeout(() => {
         while (Date.now() < dl) {
           s2 = await evalSend(send, READ);
           if (s2 && Number(s2.rev || 0) > revBefore && s2.ior &&
-              typeof s2.ior.lastDrawF0 === 'number' &&
-              Math.abs(s2.ior.lastDrawF0 - F0(2.42)) < 2e-4) { advanced = true; break; }
+              Array.isArray(s2.ior.lastDrawF0) && s2.ior.lastDrawF0.length === 3 &&
+              Math.abs(s2.ior.lastDrawF0[0] - F0(2.42)) < 2e-4 &&
+              Math.abs(s2.ior.lastDrawF0[1] - F0(2.42)) < 2e-4 &&
+              Math.abs(s2.ior.lastDrawF0[2] - F0(2.42)) < 2e-4 &&
+              Math.abs((s2.ior.lastDrawF90 || 0) - 1) < 2e-4) { advanced = true; break; }
           await sleep(100);
         }
         if (!advanced) {
-          fail('css-var: revision advance + new u_dielectricF0=' + F0(2.42) +
+          fail('css-var: revision advance + new u_specularF0=' + F0(2.42) +
             ' not observed after real style setProperty 1.33 -> 2.42');
         }
         if (s2) {
@@ -883,7 +914,8 @@ setTimeout(() => {
               ', maxDelta=' + cap2.metrics.maxDelta + ')');
           }
           const d = await diffShots(send, cap.base64, cap2.base64);
-          rec.cssAfter = { rev: s2 && s2.rev, uniformF0: s2 && s2.ior.lastDrawF0, pixelDiff: d };
+          rec.cssAfter = { rev: s2 && s2.rev, uniformF0: s2 && s2.ior.lastDrawF0,
+            uniformF90: s2 && s2.ior.lastDrawF90, pixelDiff: d };
           if (!d || !d.dimsMatch || !(d.meanChanged >= 50) || !(d.maxDelta >= 3)) {
             fail('css-var: pixels did not change meaningfully after real CSS var change ' +
               '(meanChanged=' + (d && d.meanChanged) + ', maxDelta=' + (d && d.maxDelta) + ')');
@@ -961,7 +993,7 @@ setTimeout(() => {
       webgpuBundleState: r.bundleState, webgpuBundleEncodes: r.bundleEncodes,
       webgpuBundleReplays: r.bundleReplays, webgpuBundleDraws: r.bundleDraws,
       glBackend: r.glBackend, draws: r.draws, pbrDraws: r.pbrDraws,
-      uniformF0: r.uniformF0, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
+      uniformF0: r.uniformF0, uniformF90: r.uniformF90, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
       objects: r.objects, fgPixels: r.litPixels, fgFrac: r.fgFrac, cornerBG: r.meanRGB,
       cssAfter: r.cssAfter || undefined, sameAs: r.sameAs || undefined,
       differsFrom: r.differsFrom || undefined, disposeRemovedState: r.disposeRemovedState })),
@@ -969,9 +1001,10 @@ setTimeout(() => {
     artifacts: ART || undefined,
     errors, warnings,
     note: 'Real Chrome + real WebGL2/WebGPU PBR with the actual built bootstrap.js, real GLB ' +
-      'loading and native draws. u_dielectricF0 read from real uniform state at production draw ' +
-      'calls (getUniformLocation tracking + CURRENT_PROGRAM + getUniform, instanced forms) and at ' +
-      'float index 40 of 176-byte WebGPU material uploads; all wrappers strictly forward and ' +
+      'loading and native draws. u_specularF0/u_specularF90 read from real uniform state at ' +
+      'production draw calls (getUniformLocation tracking + CURRENT_PROGRAM + getUniform, ' +
+      'instanced forms) and at float indices 44..47 of 192-byte WebGPU material uploads; ' +
+      'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +
       'proof in every case. GPU hardware acceleration type is NOT certified (SwiftShader possible).',

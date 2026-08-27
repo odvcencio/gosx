@@ -552,7 +552,8 @@ const budgets = [
   // 340_649; caps set from measured bytes plus small headroom.
   // Authored specular color plumbing (pre-typed-copy) measured
   // 1_564_667 / 424_753 / 341_352; caps raised with narrow headroom.
-  { file: "bootstrap.js", raw: 1_564_900, gzip: 424_900, brotli: 341_500 },
+  // Measured: bootstrap.js 1566845/425344/341816 raw/gzip/brotli.
+  { file: "bootstrap.js", raw: 1_567_000, gzip: 425_500, brotli: 342_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -881,7 +882,8 @@ const budgets = [
   // points path: the frame clock now overrides the authored placeholder,
   // matching the WGSL packer. Measured: 213_478 / 58_799 / 50_056.
   // Indexed BufferGeometry exact measurement: 215_520 / 59_273 / 50_350.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 216_000, gzip: 59_500, brotli: 50_500 },
+  // Measured: WebGL chunk 216900/59714/50773.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 217_100, gzip: 59_900, brotli: 50_900 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1141,7 +1143,8 @@ const budgets = [
   // reads window.__gosx_manifest before falling back to a DOM text re-parse).
   // Measured: 387_272 / 93_709 / 78_460, plus rounding headroom.
   // Indexed BufferGeometry exact measurement: 389_362 / 94_293 / 79_001.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 390_500, gzip: 94_800, brotli: 79_500 },
+  // Measured: WebGPU chunk 390659/94660/79194 (only raw exceeded; compressed caps kept).
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 390_800, gzip: 94_800, brotli: 79_500 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1625,9 +1628,10 @@ const routeBudgets = [
     // 248_981; caps set from measured bytes plus small headroom.
     // Authored specular color plumbing (pre-typed-copy) measured
     // 1_063_979 / 294_336 / 249_531; caps raised with narrow headroom.
-    raw: 1_064_200,
-    gzip: 294_500,
-    brotli: 249_700,
+    // Measured: 1065114/294665/249782.
+    raw: 1_065_300,
+    gzip: 294_800,
+    brotli: 249_900,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1730,9 +1734,10 @@ const routeBudgets = [
     // 327_956; caps set from measured bytes plus small headroom.
     // Authored specular color plumbing (pre-typed-copy) measured
     // 1_453_600 / 388_683 / 328_506; caps raised with narrow headroom.
-    raw: 1_453_800,
-    gzip: 388_800,
-    brotli: 328_700,
+    // Measured: 1455773/389325/328976.
+    raw: 1_455_900,
+    gzip: 389_500,
+    brotli: 329_100,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1841,9 +1846,10 @@ const routeBudgets = [
     // 239_012; caps set from measured bytes plus small headroom.
     // Authored specular color plumbing (pre-typed-copy) measured
     // 1_085_489 / 285_944 / 239_562; caps raised with narrow headroom.
-    raw: 1_085_700,
-    gzip: 286_100,
-    brotli: 239_700,
+    // Measured: 1086596/286279/239719.
+    raw: 1_086_700,
+    gzip: 286_400,
+    brotli: 239_900,
   },
 
 ];
