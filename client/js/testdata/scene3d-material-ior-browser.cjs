@@ -29,6 +29,14 @@
  *  - fully metallic images invariant to IOR while uniforms stay distinct;
  *  - real GLB with KHR_materials_ior 2.42, model override 1.33, omitted
  *    instancedGLB batch preserving loaded 2.42, explicit zero batch override;
+ *  - real GLB KHR_materials_specular FACTORS through the importer: omitted
+ *    extension on a default-IOR asset (F0 .04/F90 1 baseline), explicit
+ *    factor 1 / color [1,1,1] pixel-identical to that baseline, factor 0
+ *    (F0/F90 both 0), IOR 2.42 with HDR factors .5 / [100,.5,2] giving
+ *    F0 [.5, F0(2.42)*.25, F0(2.42)] and F90 .5, a model specularIntensity:0
+ *    override of that asset, and an instanced GLB batch inheriting the loaded
+ *    factors exactly (no batch specular overrides) vs batch
+ *    specularIntensity:0;
  *  - named-material table reference; real CSS var(--ior) 1.33 -> 2.42 change
  *    via documentElement.style.setProperty with observed revision advance,
  *    new uniform value and changed pixels (no remount, no manual writes);
@@ -110,7 +118,10 @@ const FG_THRESHOLD = 12;   // min channel delta vs measured corner background
 const FG_COVERAGE = 0.01;  // min fraction of foreground pixels
 
 // ---- GLB fixture: one quad facing +Z, positions + normals, metallic 0 ----
-function buildQuadGLB(withIor) {
+// buildQuadGLB(true) remains byte-identical to the original IOR 2.42 fixture;
+// the optional second argument adds KHR_materials_specular factor inputs that
+// only the importer (never model/batch duplication) consumes.
+function buildQuadGLB(withIor, spec) {
   const pos = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);
   const nrm = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
   const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
@@ -137,6 +148,11 @@ function buildQuadGLB(withIor) {
   if (withIor) {
     material.extensions = { KHR_materials_ior: { ior: 2.42 } };
   }
+  if (spec) {
+    material.extensions = material.extensions || {};
+    material.extensions.KHR_materials_specular = {
+      specularFactor: spec.factor, specularColorFactor: spec.color };
+  }
   const json = {
     asset: { version: '2.0', generator: 'scene3d-material-ior-browser probe' },
     scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: 'quad' }],
@@ -147,7 +163,10 @@ function buildQuadGLB(withIor) {
       { bufferView: iv, componentType: 5123, count: 6, type: 'SCALAR', min: [0], max: [3] },
     ], bufferViews: views, buffers: [{ byteLength: bin.length }],
   };
-  if (withIor) json.extensionsUsed = ['KHR_materials_ior'];
+  const extUsed = [];
+  if (withIor) extUsed.push('KHR_materials_ior');
+  if (spec) extUsed.push('KHR_materials_specular');
+  if (extUsed.length) json.extensionsUsed = extUsed;
   let jsonBuf = Buffer.from(JSON.stringify(json), 'utf8');
   const jp = (4 - (jsonBuf.length % 4)) % 4;
   if (jp) jsonBuf = Buffer.concat([jsonBuf, Buffer.alloc(jp, 0x20)]);
@@ -161,6 +180,21 @@ function buildQuadGLB(withIor) {
   return Buffer.concat([header, jh, jsonBuf, bh, binP]);
 }
 const glb242 = buildQuadGLB(true);
+// Default-IOR asset with the specular extension omitted entirely: the
+// importer must default specularIntensity to 1 and specularColor to linear
+// white, so F0 .04 (default IOR 1.5) / F90 1. This is the GLB baseline for
+// the factor cases (the authored-object fixtures use a different base color,
+// so cross-family pixel comparison is not valid).
+const glbDefaultIor = buildQuadGLB(false);
+// Explicit factor 1 / linear white must be indistinguishable from the omitted
+// extension; factor 0 must zero both F0 and F90.
+const glbSpecWhite = buildQuadGLB(false, { factor: 1, color: [1, 1, 1] });
+const glbSpecZero = buildQuadGLB(false, { factor: 0, color: [1, 1, 1] });
+// IOR 2.42 asset with HDR specular factors served through the importer only:
+// F0 channel clamp happens before the intensity scale, so [100,.5,2] with
+// factor .5 yields F0 [.5, F0(2.42)*.25, F0(2.42)] and F90 .5. These inputs
+// are deliberately NOT duplicated as model or batch overrides.
+const glbSpecIor242 = buildQuadGLB(true, { factor: 0.5, color: [100, 0.5, 2] });
 
 // ---- Case table (one object/scene per page; sequential, never batched) ----
 // Explicit unindexed quad mesh (6 triangle vertices). A bare kind:'box' would
@@ -270,6 +304,49 @@ const CASES = [
       ior: 1.5, color: '#b0503c', specularColor: [0.5, 1, 1.5], specularIntensity: 1 }],
     obj: OBJNAMED, f0: [0.02, 0.04, 0.06], f90: 1,
     differs: 'obj-omitted', wgDiffers: 'wg-omit', minChanged: 20 },
+  // GLB specular FACTOR cases (real importer path). Same asset family only:
+  // case 1 is its own GLB baseline (default IOR, no specular extension);
+  // cases 2-4 share that baseline for comparison within the same backend.
+  // Omitted extension on a default-IOR GLB: importer defaults intensity 1,
+  // linear white color -> F0 .04 / F90 1.
+  { name: 'glb-spec-omit', wgName: 'wg-glb-spec-omit',
+    model: MODEL({ src: '/models/quad-default.glb' }),
+    f0: 0.04, base: 'gsdo' },
+  // Explicit specularFactor 1 + specularColorFactor [1,1,1]: must render and
+  // upload EXACTLY like the omitted-extension baseline.
+  { name: 'glb-spec-white', wgName: 'wg-glb-spec-white',
+    model: MODEL({ src: '/models/quad-spec-white.glb' }),
+    f0: 0.04, same: 'glb-spec-omit', wgSame: 'wg-glb-spec-omit' },
+  // Explicit specularFactor 0: F0 and F90 both zero, image changes.
+  { name: 'glb-spec-zero', wgName: 'wg-glb-spec-zero',
+    model: MODEL({ src: '/models/quad-spec-zero.glb' }),
+    f0: 0, f90: 0, differs: 'glb-spec-omit', wgDiffers: 'wg-glb-spec-omit',
+    minChanged: 20 },
+  // IOR 2.42 with HDR factors served only through the importer (no model or
+  // batch duplication): F0 [.5, F0(2.42)*.25, F0(2.42)], F90 .5.
+  { name: 'glb-spec-ior242', wgName: 'wg-glb-spec-ior242',
+    model: MODEL({ src: '/models/quad-spec-ior242.glb' }),
+    f0: [0.5, F0(2.42) * 0.25, F0(2.42)], f90: 0.5,
+    differs: 'glb-spec-omit', wgDiffers: 'wg-glb-spec-omit', minChanged: 20 },
+  // Normal model instance of the same asset with an explicit
+  // specularIntensity: 0 override: F0/F90 zero, image differs from the
+  // inherited-factor render.
+  { name: 'glb-spec-ior242-int0', wgName: 'wg-glb-spec-ior242-int0',
+    model: MODEL({ src: '/models/quad-spec-ior242.glb', specularIntensity: 0 }),
+    f0: 0, f90: 0, differs: 'glb-spec-ior242', wgDiffers: 'wg-glb-spec-ior242',
+    minChanged: 20 },
+  // Instanced GLB batch with specular fields OMITTED from the batch config
+  // (BATCH keeps only its existing roughness/metalness overrides): the loaded
+  // factors [.5, F0(2.42)*.25, F0(2.42)] / .5 must be inherited exactly.
+  { name: 'glb-batch-spec-inherit', wgName: 'wg-glb-batch-spec-inherit',
+    instanced: BATCH({ src: '/models/quad-spec-ior242.glb' }),
+    f0: [0.5, F0(2.42) * 0.25, F0(2.42)], f90: 0.5, base: 'gsbi' },
+  // Same instanced GLB with a batch specularIntensity: 0 override: F0/F90
+  // zero and pixels differ from the inheriting batch.
+  { name: 'glb-batch-spec-int0', wgName: 'wg-glb-batch-spec-int0',
+    instanced: BATCH({ src: '/models/quad-spec-ior242.glb', specularIntensity: 0 }),
+    f0: 0, f90: 0, differs: 'glb-batch-spec-inherit',
+    wgDiffers: 'wg-glb-batch-spec-inherit', minChanged: 20 },
   // Specular IBL isolation: metallic 0, direct light intensity 0,
   // ambient/sky/ground intensities 0. With F0=0 the IBL specular path
   // reduces to B*F90, so specularIntensity 1 vs 0 must produce meaningfully
@@ -369,6 +446,18 @@ let server = http.createServer((req, res) => {
   if (req.url === '/models/quad242.glb') {
     res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glb242.length });
     res.end(glb242);
+  } else if (req.url === '/models/quad-default.glb') {
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glbDefaultIor.length });
+    res.end(glbDefaultIor);
+  } else if (req.url === '/models/quad-spec-white.glb') {
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glbSpecWhite.length });
+    res.end(glbSpecWhite);
+  } else if (req.url === '/models/quad-spec-zero.glb') {
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glbSpecZero.length });
+    res.end(glbSpecZero);
+  } else if (req.url === '/models/quad-spec-ior242.glb') {
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glbSpecIor242.length });
+    res.end(glbSpecIor242);
   } else if (req.url === '/bootstrap.js' || req.url === '/client/js/bootstrap.js') {
     const js = fs.readFileSync(BOOTSTRAP);
     res.writeHead(200, { 'content-type': 'text/javascript', 'content-length': js.length });

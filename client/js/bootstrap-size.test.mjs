@@ -552,8 +552,8 @@ const budgets = [
   // 340_649; caps set from measured bytes plus small headroom.
   // Authored specular color plumbing (pre-typed-copy) measured
   // 1_564_667 / 424_753 / 341_352; caps raised with narrow headroom.
-  // Measured: bootstrap.js 1567157/425439/341384 raw/gzip/brotli.
-  { file: "bootstrap.js", raw: 1_567_300, gzip: 425_500, brotli: 342_000 },
+  // Measured: bootstrap.js 1567605/425573/341841 raw/gzip/brotli.
+  { file: "bootstrap.js", raw: 1_567_800, gzip: 425_700, brotli: 342_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1176,7 +1176,7 @@ const budgets = [
   // 12_914; all three caps raised with narrow headroom.
   // Same strip/fan topology rebuild measured 39_473 / 14_604 / 13_057;
   // all three caps raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 40_000, gzip: 14_850, brotli: 13_150 },
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 40_450, gzip: 15_000, brotli: 13_400 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
