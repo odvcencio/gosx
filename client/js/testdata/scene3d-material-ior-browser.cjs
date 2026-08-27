@@ -134,12 +134,11 @@ function buildQuadGLB(withIor) {
 const glb242 = buildQuadGLB(true);
 
 // ---- Case table (one object/scene per page; sequential, never batched) ----
-// Explicit unindexed quad mesh (6 triangle vertices) so normalizeSceneObject
-// yields a real triangle mesh (sceneObjectHasTriangleMesh requires
-// vertices.positions + count >= 3). A bare kind:'box' with no vertices never
-// produces a mesh in JS. The fixture supplies explicit triangle material data
-// (positions/normals/uvs/tangents) directly. Same geometry for every case so
-// rendered frames stay byte-comparable; only IOR/material inputs vary.
+// Explicit unindexed quad mesh (6 triangle vertices). A bare kind:'box' would
+// also generate primitive geometry in normalizeSceneObject, but this fixture
+// supplies explicit, identical triangle data (positions/normals/uvs/tangents)
+// to isolate material behavior and keep cross-case pixel comparisons stable;
+// only IOR/material inputs vary.
 const QUAD_VERTICES = (function () {
   const positions = [
     -0.6, -0.6, 0, 0.6, -0.6, 0, 0.6, 0.6, 0,
