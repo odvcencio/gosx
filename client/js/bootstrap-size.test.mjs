@@ -1145,7 +1145,8 @@ const budgets = [
   // (gosx.baseSrc follow + name-keyed patch of colors/positions/sizes) and
   // the quantized _POINT_SIZE decode via extras pointSizeScale. Measured:
   // 31_308 / 11_635 / 10_374, plus rounding headroom.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 32_000, gzip: 11_900, brotli: 10_600 },
+  // Budget: cubic-spline channel-width fix measured 10_626 B Brotli (from 10_599); ceiling raised 10_600 -> 10_700; raw/gzip caps unchanged.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 32_000, gzip: 11_900, brotli: 10_700 },
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->

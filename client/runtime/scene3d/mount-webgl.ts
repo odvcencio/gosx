@@ -716,6 +716,7 @@ function gosxConfigureSceneScript(script, role, src) {
           targetID: ch.targetID != null ? ch.targetID : ch.targetNode,
           targetNode: ch.targetNode != null ? ch.targetNode : ch.targetID,
           property: typeof ch.property === "string" ? ch.property : "translation",
+          componentCount: sceneNumber(ch.componentCount, 0),
           interpolation: typeof ch.interpolation === "string" && ch.interpolation ? ch.interpolation : "LINEAR",
           times: ch.times instanceof Float32Array ? new Float32Array(ch.times) : sceneTypedFloatArray(ch.times),
           values: ch.values instanceof Float32Array ? new Float32Array(ch.values) : sceneTypedFloatArray(ch.values),

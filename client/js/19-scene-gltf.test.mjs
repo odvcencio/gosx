@@ -488,6 +488,13 @@ test("gltfExtractAnimations records the true component count per channel", () =>
   assert.deepEqual(animations, [{ name: "wave", widths: [3, 4, 5] }]);
 });
 
+test('CUBICSPLINE weights channel yields componentCount 5, not 15', () => {
+  const { context } = createLoaderContext();
+  context.gltfReadAccessor = (gltfDocument, accessorIndex, binaryBuffer) => accessorIndex === 0 ? new Float32Array([0, 1]) : new Float32Array(30);
+  const [anim] = call(context, `gltfExtractAnimations(${JSON.stringify({ animations: [{ samplers: [{ input: 0, output: 1, interpolation: 'CUBICSPLINE' }], channels: [{ sampler: 0, target: { node: 2, path: 'weights' } }] }] })})`);
+  assert.equal(anim.channels[0].componentCount, 5);
+});
+
 // --- KHR_mesh_quantization --------------------------------------------------
 
 // quantizedDoc builds a two-triangle quad whose positions are UNSIGNED_SHORT
