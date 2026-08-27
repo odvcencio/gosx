@@ -726,6 +726,33 @@
     return false;
   }
 
+  // Node indices carrying a DIRECT rigid TRS animation channel (translation,
+  // rotation, scale). Morph "weights" channels are excluded — they are
+  // handled by the existing morph metadata path, and glTF 2.0 defines no
+  // matrix animation channel. Ancestor propagation happens during the node
+  // walk below, so a static child under an animated parent inherits the
+  // flag without any per-primitive graph scan.
+  function gltfDirectTRSNodes(gltf) {
+    var animated = new Set();
+    var animations = gltf && gltf.animations;
+    if (!animations || !animations.length) {
+      return animated;
+    }
+    for (var a = 0; a < animations.length; a++) {
+      var channels = animations[a] && animations[a].channels;
+      if (!channels || !channels.length) {
+        continue;
+      }
+      for (var c = 0; c < channels.length; c++) {
+        var target = channels[c] && channels[c].target;
+        if (target && target.node != null && target.path !== "weights") {
+          animated.add(target.node);
+        }
+      }
+    }
+    return animated;
+  }
+
   // Materialize immutable primitive-local morph inputs for animated morphs:
   // base streams copied out of the (possibly GLB-backed) accessor views and
   // target deltas pre-expanded through the primitive's index map, so the
@@ -1079,6 +1106,153 @@
     for (var i = 0; i < GLTF_MORPH_CACHE_KEYS.length; i++) {
       if (Object.prototype.hasOwnProperty.call(vertices, GLTF_MORPH_CACHE_KEYS[i])) {
         delete vertices[GLTF_MORPH_CACHE_KEYS[i]];
+      }
+    }
+  }
+
+  // Number coercion with fallback for live model fields riding node-anim
+  // entries.
+  function gltfAnimNumber(value, fallback) {
+    var n = typeof value === "number" ? value : Number(value);
+    return isFinite(n) ? n : fallback;
+  }
+
+  // Per-frame rigid node TRS playback, published as
+  // window.__gosx_scene3d_gltf_api.applyNodeAnimPose. Entries are the
+  // per-instance live records the mount layer builds (_nodeAnimLive): each
+  // carries immutable pristine primitive-local inputs (retained at load,
+  // never the baked world-transform outputs), the target node index, the
+  // authored instance-local matrix for instanced copies, and the live
+  // vertices/points/lines object it owns. nodeTransforms is the model-local
+  // node map from sceneAnimBuildNodeTransforms(nodes, pose, null,
+  // rootNodes); it always contains every node, so a stopped or reset mixer
+  // yields the authored pose. The model/root transform is applied exactly
+  // once (mesh entries via entry.modelMatrix refreshed from the record's
+  // live root transform each tick; points/lines mirror the mount's split
+  // scale/rotate/translate instantiation semantics using the captured
+  // pre-model base fields plus the live model values). No cached asset
+  // input is ever mutated: every changed frame writes fresh output arrays,
+  // so point/line render caches receive genuinely new positions and
+  // re-upload. Nothing is ever reconstructed by inverting a baked transform
+  // — the compose is always animated node-world * authored instance-local *
+  // primitive-local, plus the model transform once — so singular or
+  // zero-scale authored transforms can never block a later valid pose.
+  function gltfApplyNodeAnimPose(entries, nodeTransforms) {
+    if (!Array.isArray(entries)) {
+      return;
+    }
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (!entry) {
+        continue;
+      }
+      var anim = nodeTransforms && typeof nodeTransforms.get === "function"
+        ? nodeTransforms.get(entry.nodeIndex)
+        : null;
+      var instanceMatrix = entry.instanceMatrix || null;
+      // Animated node world * authored instance-local. The entry.nodeMatrix
+      // fallback is the authored world transform (already containing the
+      // instance offset for instanced copies), so it is never multiplied a
+      // second time.
+      var nodeMatrix;
+      if (anim) {
+        nodeMatrix = instanceMatrix ? sceneMat4Multiply(anim, instanceMatrix) : anim;
+      } else {
+        nodeMatrix = entry.nodeMatrix || null;
+      }
+      if (entry.kind === "mesh" && entry.meta && entry.vertices) {
+        var model = entry.modelMatrix || null;
+        var nodeChanged = gltfMatrixChanged(entry.lastNodeMatrix, nodeMatrix);
+        var modelChanged = gltfMatrixChanged(entry.lastModelMatrix, model);
+        if (!nodeChanged && !modelChanged) {
+          continue;
+        }
+        var meta = entry.meta;
+        var base = {
+          positions: meta.basePositions,
+          normals: meta.baseNormals,
+          tangents: meta.baseTangents,
+        };
+        // gltfTransformMorphedStreams: positions through the full transform,
+        // normals through the inverse-transpose 3x3 (correct under
+        // non-uniform scale), tangent xyz through the linear 3x3 with
+        // renormalization and tangent w preserved. Skinned and
+        // morph-animated primitives never register here, so their outputs
+        // are never rigid-transformed a second time.
+        var local = nodeMatrix ? gltfTransformMorphedStreams(base, nodeMatrix) : base;
+        var finalStreams = model ? gltfTransformMorphedStreams(local, model) : local;
+        entry.vertices.positions = finalStreams.positions;
+        entry.vertices.normals = finalStreams.normals;
+        entry.vertices.tangents = finalStreams.tangents;
+        if (entry.modelLocalVertices && entry.modelLocalVertices.positions) {
+          entry.modelLocalVertices.positions = local.positions;
+          entry.modelLocalVertices.normals = local.normals;
+          entry.modelLocalVertices.tangents = local.tangents;
+          entry.modelLocalVertices.count = meta.vertexCount;
+        }
+        gltfDropVertexCaches(entry.vertices);
+        entry.lastNodeMatrix = nodeMatrix ? gltfCopyMat4(nodeMatrix) : null;
+        entry.lastModelMatrix = model ? gltfCopyMat4(model) : null;
+      } else if ((entry.kind === "points" || entry.kind === "lines") && entry.object) {
+        var source = entry.basePositions || null;
+        var target = entry.object;
+        if (source && source.length >= 3 && nodeMatrix) {
+          var modelScaleX = gltfAnimNumber(entry.model && entry.model.scaleX, 1);
+          var modelScaleY = gltfAnimNumber(entry.model && entry.model.scaleY, 1);
+          var modelScaleZ = gltfAnimNumber(entry.model && entry.model.scaleZ, 1);
+          var count3 = Math.floor(source.length / 3) * 3;
+          if (entry.kind === "points") {
+            var outPositions = new Float32Array(count3);
+            for (var v = 0; v < count3; v += 3) {
+              var pt = gltfTransformPoint(nodeMatrix, source[v], source[v + 1], source[v + 2]);
+              outPositions[v] = pt.x * modelScaleX;
+              outPositions[v + 1] = pt.y * modelScaleY;
+              outPositions[v + 2] = pt.z * modelScaleZ;
+            }
+            // Fresh array identity every rebuilt frame: the static point VBO
+            // cache keys on the typed array, so this forces a real upload.
+            target.positions = outPositions;
+            target._cachedPos = outPositions;
+          } else {
+            var linePoints = new Array(count3 / 3);
+            for (var lv = 0; lv < count3; lv += 3) {
+              var lp = gltfTransformPoint(nodeMatrix, source[lv], source[lv + 1], source[lv + 2]);
+              linePoints[lv / 3] = { x: lp.x * modelScaleX, y: lp.y * modelScaleY, z: lp.z * modelScaleZ };
+            }
+            target.points = linePoints;
+          }
+        }
+        // Model translate/rotate split, mirroring the mount instantiation:
+        // positions above carry the model scale only and rotation rides the
+        // object fields. The base origin is NOT simply additive with the
+        // model translation: the mount runs sceneModelTransformPoint on the
+        // captured base (scale, then rotate, then translate). gltf.ts
+        // cannot call that mount-local helper, but entry.modelMatrix is the
+        // live model root transform, so transforming the base origin
+        // through it reproduces the exact same semantics self-contained.
+        // No double application: the per-vertex streams above never see
+        // the model translation or rotation.
+        var basePose = entry.modelBase || null;
+        var liveModel = entry.model || null;
+        var poseModelMatrix = entry.modelMatrix || null;
+        if (basePose && poseModelMatrix) {
+          var origin = gltfTransformPoint(
+            poseModelMatrix,
+            gltfAnimNumber(basePose.x, 0),
+            gltfAnimNumber(basePose.y, 0),
+            gltfAnimNumber(basePose.z, 0)
+          );
+          target.x = origin.x;
+          target.y = origin.y;
+          target.z = origin.z;
+        } else {
+          target.x = (basePose ? gltfAnimNumber(basePose.x, 0) : 0) + gltfAnimNumber(liveModel && liveModel.x, 0);
+          target.y = (basePose ? gltfAnimNumber(basePose.y, 0) : 0) + gltfAnimNumber(liveModel && liveModel.y, 0);
+          target.z = (basePose ? gltfAnimNumber(basePose.z, 0) : 0) + gltfAnimNumber(liveModel && liveModel.z, 0);
+        }
+        target.rotationX = (basePose ? gltfAnimNumber(basePose.rotationX, 0) : 0) + gltfAnimNumber(liveModel && liveModel.rotationX, 0);
+        target.rotationY = (basePose ? gltfAnimNumber(basePose.rotationY, 0) : 0) + gltfAnimNumber(liveModel && liveModel.rotationY, 0);
+        target.rotationZ = (basePose ? gltfAnimNumber(basePose.rotationZ, 0) : 0) + gltfAnimNumber(liveModel && liveModel.rotationZ, 0);
       }
     }
   }
@@ -1583,13 +1757,14 @@
     return { positions: transformed, count: Math.floor(transformed.length / 3) };
   }
 
-  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix, nodeIndex, instanceMatrix) {
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix, nodeIndex, instanceMatrix, animateTRSFlag) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
       return;
     }
     var suffix = idSuffix || "";
     var animateMorph = nodeIndex != null && gltfNodeHasWeightAnimation(gltf, nodeIndex);
+    var animateTRS = animateTRSFlag === true;
 
     var normalMat = gltfNormalMatrix(worldTransform);
     var skin = skinIndex != null && result.skins ? result.skins[skinIndex] : null;
@@ -1632,6 +1807,20 @@
         if (pointColors) {
           pointEntry._cachedColors = pointColors;
         }
+        if (animateTRS) {
+          // Retain pristine primitive-local positions so rigid playback can
+          // re-transform every frame; the baked stream above remains the
+          // authored-pose initial value.
+          var pointLocal = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
+          if (pointLocal && pointLocal.values && pointLocal.values.length >= 3) {
+            pointEntry._nodeAnim = {
+              nodeIndex: nodeIndex,
+              instanceMatrix: instanceMatrix ? gltfCopyMat4(instanceMatrix) : null,
+              nodeMatrix: gltfCopyMat4(worldTransform),
+              basePositions: new Float32Array(pointLocal.values),
+            };
+          }
+        }
         gltfApplyScene3DExtras(pointEntry, extras, GLTF_POINT_EXTRA_KEYS);
         result.points.push(pointEntry);
         continue;
@@ -1658,6 +1847,20 @@
           opacity: material.opacity != null ? material.opacity : 1,
           blendMode: gltfIsAlphaMaterial(material) ? "alpha" : "",
         };
+        if (animateTRS) {
+          // Same pristine-local retention for line/strip/loop primitives;
+          // lineSegments index into the per-frame rebuilt points array and
+          // stay valid because the vertex count never changes.
+          var lineLocal = gltfReadPrimitiveAttribute(gltf, primitive, ["POSITION"], binaryBuffer);
+          if (lineLocal && lineLocal.values && lineLocal.values.length >= 6) {
+            lineObject._nodeAnim = {
+              nodeIndex: nodeIndex,
+              instanceMatrix: instanceMatrix ? gltfCopyMat4(instanceMatrix) : null,
+              nodeMatrix: gltfCopyMat4(worldTransform),
+              basePositions: new Float32Array(lineLocal.values),
+            };
+          }
+        }
         gltfApplyScene3DExtras(lineObject, extras, GLTF_OBJECT_EXTRA_KEYS);
         result.objects.push(lineObject);
         result.materials.push(material);
@@ -1773,6 +1976,23 @@
           geometry.morphMeta.instanceMatrix = gltfCopyMat4(instanceMatrix);
         }
         object._morphAnim = geometry.morphMeta;
+      } else if (!primitiveSkinned && animateTRS) {
+        // Rigid TRS playback: retain pristine primitive-local streams (post
+        // static morph fold, pre world transform) plus node bookkeeping.
+        // Skinned primitives are skipped — their node transforms fold in at
+        // skin time through the joint matrices — and morph-animated
+        // primitives are skipped — the morph apply already composes animated
+        // node matrices so rigid transforms are never applied twice.
+        object._nodeAnim = {
+          nodeIndex: nodeIndex,
+          instanced: suffix.indexOf("-inst-") === 0,
+          instanceMatrix: instanceMatrix ? gltfCopyMat4(instanceMatrix) : null,
+          nodeMatrix: gltfCopyMat4(worldTransform),
+          vertexCount: vertCount,
+          basePositions: new Float32Array(geometry.positions),
+          baseNormals: new Float32Array(geometry.normals),
+          baseTangents: new Float32Array(geometry.tangents),
+        };
       }
 
       gltfApplyScene3DExtras(object, extras, GLTF_OBJECT_EXTRA_KEYS);
@@ -1823,12 +2043,17 @@
     return out;
   }
 
-  function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result) {
+  function gltfWalkNode(gltf, nodeIndex, binaryBuffer, parentTransform, result, animatedTRS, inheritedAnimated) {
     var node = gltf.nodes[nodeIndex];
     if (!node) {
       return;
     }
 
+    // A node is rigid-animated when it carries a direct TRS channel or any
+    // ancestor does; the flag rides the walk so a static child under an
+    // animated parent retains pristine inputs without a per-primitive scan.
+    var animated = inheritedAnimated === true
+      || Boolean(animatedTRS && animatedTRS.has(nodeIndex));
     var localTransform = gltfNodeTransform(node);
     var worldTransform = sceneMat4Multiply(parentTransform, localTransform);
 
@@ -1847,17 +2072,18 @@
             node,
             "-inst-" + n,
             nodeIndex,
-            instances[n]
+            instances[n],
+            animated
           );
         }
       } else {
-        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, "", nodeIndex);
+        gltfExtractMeshNode(gltf, node.mesh, binaryBuffer, worldTransform, result, skin, node, "", nodeIndex, null, animated);
       }
     }
 
     var children = node.children || [];
     for (var i = 0; i < children.length; i++) {
-      gltfWalkNode(gltf, children[i], binaryBuffer, worldTransform, result);
+      gltfWalkNode(gltf, children[i], binaryBuffer, worldTransform, result, animatedTRS, animated);
     }
   }
 
@@ -2023,8 +2249,9 @@
     }
 
     var identity = new Float32Array(SCENE_IDENTITY_MAT4);
+    var animatedTRS = gltfDirectTRSNodes(gltf);
     for (var i = 0; i < scene.nodes.length; i++) {
-      gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result);
+      gltfWalkNode(gltf, scene.nodes[i], binaryBuffer, identity, result, animatedTRS, false);
     }
 
     // Extract animations.
@@ -2554,6 +2781,7 @@
       sceneLoadGLTFModel: sceneLoadGLTFModel,
       gltfSceneToModelAsset: gltfSceneToModelAsset,
       applyMorphPose: gltfApplyAnimatedMorphPose,
+      applyNodeAnimPose: gltfApplyNodeAnimPose,
     };
     window.__gosx_scene3d_gltf_loaded = true;
   }
