@@ -366,7 +366,7 @@
       };
       if (record.property === "weights") {
         var declared = ch.componentCount;
-        if (typeof declared === "number" && isFinite(declared) && declared > 0 && declared === Math.floor(declared)) {
+        if (Number.isInteger(declared) && declared > 0) {
           // Native morph IDs are propID = 1000 + weightIndex with weightIndex
           // in [0, weightCount - 1], so weightCount must satisfy
           // 1000 + weightCount - 1 <= _SCENE_ANIM_WASM_MAX_ID. Anything above
@@ -407,7 +407,7 @@
   var _SCENE_ANIM_WASM_MAX_ID = 2147483647;
 
   function _sceneAnimWasmIsValidID(v) {
-    return typeof v === "number" && isFinite(v) && v >= 0 && v <= _SCENE_ANIM_WASM_MAX_ID && v === Math.floor(v);
+    return Number.isInteger(v) && v >= 0 && v <= _SCENE_ANIM_WASM_MAX_ID;
   }
 
   // Materialize one node's weight vector after the walk: a fresh, dense,
@@ -511,7 +511,7 @@
         // Semantic width for the stable TRS IDs; the arity slot is not
         // trusted here (see the compatibility note above).
         width = propID === 1 ? 4 : 3;
-      } else if (!(arity >= 0) || arity > 5 || arity !== Math.floor(arity)) {
+      } else if (!(Number.isInteger(arity) && arity >= 0 && arity <= 5)) {
         break; // unknown arity ordinal — record width cannot be known
       } else {
         width = _SCENE_ANIM_WASM_ARITY_WIDTHS[arity];
