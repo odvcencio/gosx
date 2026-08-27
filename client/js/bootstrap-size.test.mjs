@@ -538,7 +538,8 @@ const budgets = [
   // Indexed BufferGeometry adds uint32 index retention, indexed backend draws,
   // exact indexed picking, and indexed shadow submission. Measured:
   // 1_547_149 / 419_508 / 336_549, plus narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_548_000, gzip: 420_000, brotli: 337_000 },
+  // Variable-width morph transport measured at raw 1547188 / gzip 419932 / brotli 337252.
+  { file: "bootstrap.js", raw: 1_548_000, gzip: 420_000, brotli: 337_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
