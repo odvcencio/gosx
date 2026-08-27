@@ -735,6 +735,8 @@
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(sceneObjectMaterialValue(item, "ior"), current.ior),
+      specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
+      specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
@@ -1316,6 +1318,15 @@
     if (sceneObjectMaterialHasValue(current, "ior")) {
       override.ior = sceneNormalizeMaterialIor(sceneObjectMaterialValue(current, "ior"), 1.5);
     }
+    // Authored specular factors are normalized (CSS var text trimmed,
+    // explicit zero/black preserved) while genuine absence stays absent from
+    // the override bag.
+    if (sceneObjectMaterialHasValue(current, "specularIntensity")) {
+      override.specularIntensity = sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(current, "specularIntensity"), 1);
+    }
+    if (sceneObjectMaterialHasValue(current, "specularColor")) {
+      override.specularColor = sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(current, "specularColor"), null);
+    }
     for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
@@ -1434,6 +1445,16 @@
         : (Object.prototype.hasOwnProperty.call(current, "ior")
           ? sceneNormalizeMaterialIor(current.ior, 1.5)
           : undefined),
+      specularIntensity: sceneObjectMaterialHasValue(raw, "specularIntensity")
+        ? sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(raw, "specularIntensity"), current.specularIntensity)
+        : (Object.prototype.hasOwnProperty.call(current, "specularIntensity")
+          ? sceneNormalizeMaterialSpecularIntensity(current.specularIntensity, 1)
+          : undefined),
+      specularColor: sceneObjectMaterialHasValue(raw, "specularColor")
+        ? sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(raw, "specularColor"), current.specularColor)
+        : (Object.prototype.hasOwnProperty.call(current, "specularColor")
+          ? sceneNormalizeMaterialSpecularColor(current.specularColor, null)
+          : undefined),
       pickable: Object.prototype.hasOwnProperty.call(raw, "pickable") ? sceneBool(raw.pickable, false) : current.pickable,
       visible: Object.prototype.hasOwnProperty.call(raw, "visible")
         ? sceneBool(raw.visible, true)
@@ -1452,6 +1473,16 @@
     // ior with a defaulted value; explicit/inherited fields are normalized.
     if (batch.ior === undefined) {
       delete batch.ior;
+    }
+    // A genuinely omitted specular factor (no authored raw value and no
+    // inherited field) stays absent for the same reason: the override
+    // plumbing must not erase asset-authored specular factors with
+    // defaulted values.
+    if (batch.specularIntensity === undefined) {
+      delete batch.specularIntensity;
+    }
+    if (batch.specularColor === undefined) {
+      delete batch.specularColor;
     }
     return batch;
   }
@@ -1489,7 +1520,7 @@
         scaleY: instance.scaleY,
         scaleZ: instance.scaleZ,
       };
-      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "pickable", "visible", "static"]) {
+      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "pickable", "visible", "static"]) {
         if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
           raw[key] = batch[key];
         }
@@ -1873,6 +1904,8 @@
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(sceneObjectMaterialValue(item, "ior"), current.ior),
+      specularIntensity: sceneNormalizeMaterialSpecularIntensity(sceneObjectMaterialValue(item, "specularIntensity"), current.specularIntensity),
+      specularColor: sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(item, "specularColor"), current.specularColor),
       clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
@@ -2317,6 +2350,8 @@
       roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
       ior: sceneNormalizeMaterialIor(item.ior, current.ior),
+      specularIntensity: sceneNormalizeMaterialSpecularIntensity(item.specularIntensity, current.specularIntensity),
+      specularColor: sceneNormalizeMaterialSpecularColor(item.specularColor, current.specularColor),
       clearcoat: sceneClampNumberOrCSSVar(item.clearcoat, sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(item.sheen, sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(item.transmission, sceneNumber(current.transmission, 0), 0, 1),
@@ -2967,6 +3002,8 @@
       roughness: material.roughness != null ? material.roughness : object.roughness,
       metalness: material.metalness != null ? material.metalness : object.metalness,
       ior: material.ior != null ? material.ior : object.ior,
+      specularIntensity: material.specularIntensity != null ? material.specularIntensity : object.specularIntensity,
+      specularColor: material.specularColor != null ? material.specularColor : object.specularColor,
       clearcoat: material.clearcoat != null ? material.clearcoat : object.clearcoat,
       sheen: material.sheen != null ? material.sheen : object.sheen,
       transmission: material.transmission != null ? material.transmission : object.transmission,

@@ -550,7 +550,9 @@ const budgets = [
   // narrow rounding headroom.
   // Material IOR authored-key support measured 1_561_091 / 423_972 /
   // 340_649; caps set from measured bytes plus small headroom.
-  { file: "bootstrap.js", raw: 1_561_300, gzip: 424_100, brotli: 340_800 },
+  // Authored specular color plumbing (pre-typed-copy) measured
+  // 1_564_667 / 424_753 / 341_352; caps raised with narrow headroom.
+  { file: "bootstrap.js", raw: 1_564_900, gzip: 424_900, brotli: 341_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -965,7 +967,9 @@ const budgets = [
   // 543_190 / 150_137 / 124_474; all three caps raised with narrow headroom.
   // Material IOR authored-key support measured 543_852 / 150_353 / 124_735;
   // caps set from measured bytes plus small headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 544_000, gzip: 150_450, brotli: 124_850 },
+  // Authored specular color plumbing (pre-typed-copy) measured
+  // 547_422 / 151_079 / 125_285; caps raised with narrow headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 547_700, gzip: 151_200, brotli: 125_400 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1619,9 +1623,11 @@ const routeBudgets = [
     // 1_059_433 / 293_260 / 248_610; all three caps raised with narrow headroom.
     // Material IOR authored-key support measured 1_060_409 / 293_610 /
     // 248_981; caps set from measured bytes plus small headroom.
-    raw: 1_060_600,
-    gzip: 293_750,
-    brotli: 249_100,
+    // Authored specular color plumbing (pre-typed-copy) measured
+    // 1_063_979 / 294_336 / 249_531; caps raised with narrow headroom.
+    raw: 1_064_200,
+    gzip: 294_500,
+    brotli: 249_700,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1722,9 +1728,11 @@ const routeBudgets = [
     // brotli still under its cap and unchanged.
     // Material IOR authored-key support measured 1_450_030 / 387_957 /
     // 327_956; caps set from measured bytes plus small headroom.
-    raw: 1_450_200,
-    gzip: 388_100,
-    brotli: 328_100,
+    // Authored specular color plumbing (pre-typed-copy) measured
+    // 1_453_600 / 388_683 / 328_506; caps raised with narrow headroom.
+    raw: 1_453_800,
+    gzip: 388_800,
+    brotli: 328_700,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1831,9 +1839,11 @@ const routeBudgets = [
     // brotli still under its cap and unchanged.
     // Material IOR authored-key support measured 1_081_919 / 285_218 /
     // 239_012; caps set from measured bytes plus small headroom.
-    raw: 1_082_100,
-    gzip: 285_350,
-    brotli: 239_150,
+    // Authored specular color plumbing (pre-typed-copy) measured
+    // 1_085_489 / 285_944 / 239_562; caps raised with narrow headroom.
+    raw: 1_085_700,
+    gzip: 286_100,
+    brotli: 239_700,
   },
 
 ];
