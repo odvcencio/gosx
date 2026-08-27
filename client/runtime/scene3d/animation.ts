@@ -340,8 +340,16 @@
   // Build the JSON payload for __gosx_motion_mixer_add_clip from a parsed glTF
   // clip (as produced by gltfExtractAnimations / sceneCloneModelAnimations).
   // Each channel carries a node index (targetID/targetNode), a property string
-  // ("translation"|"rotation"|"scale"), an interpolation string, and typed
-  // times/values arrays which are flattened to plain number arrays.
+  // ("translation"|"rotation"|"scale"|"weights"), an interpolation string, and
+  // typed times/values arrays which are flattened to plain number arrays.
+  //
+  // Morph "weights" channels hold one value per morph target, so their width
+  // cannot be derived from the property name. The declared componentCount is
+  // forwarded as the "weightCount" JSON key — the exact key the Go WASM bridge
+  // reads — so both ends agree. When that width is missing or invalid the key
+  // is omitted rather than guessed at 3 or 4, letting the native side reject
+  // the channel. The caller's clip, channels and typed arrays are never
+  // mutated or aliased.
   function sceneAnimWasmClipJSON(clip) {
     var channels = clip && Array.isArray(clip.channels) ? clip.channels : [];
     var out = { duration: clip && typeof clip.duration === "number" ? clip.duration : 0, channels: [] };
@@ -349,54 +357,215 @@
       var ch = channels[i];
       if (!ch) continue;
       var node = ch.targetID != null ? ch.targetID : ch.targetNode;
-      out.channels.push({
+      var record = {
         node: node,
         property: typeof ch.property === "string" ? ch.property : "translation",
         interpolation: typeof ch.interpolation === "string" && ch.interpolation ? ch.interpolation : "LINEAR",
         times: Array.from(ch.times || []),
         values: Array.from(ch.values || []),
-      });
+      };
+      if (record.property === "weights") {
+        var declared = ch.componentCount;
+        if (typeof declared === "number" && isFinite(declared) && declared > 0 && declared === Math.floor(declared)) {
+          // Native morph IDs are propID = 1000 + weightIndex with weightIndex
+          // in [0, weightCount - 1], so weightCount must satisfy
+          // 1000 + weightCount - 1 <= _SCENE_ANIM_WASM_MAX_ID. Anything above
+          // that bound (including huge finite values like 1e100 that the Go
+          // int unmarshaler rejects) would invalidate the whole clip, so the
+          // key is omitted and the channel is rejected per-channel instead.
+          var maxWeightCount = _SCENE_ANIM_WASM_MAX_ID - _SCENE_ANIM_WASM_WEIGHT_PROP_BASE + 1;
+          if (declared <= maxWeightCount) {
+            record.weightCount = declared;
+          }
+        }
+      }
+      out.channels.push(record);
     }
     return JSON.stringify(out);
   }
 
-  // Map a packed propID (0/1/2) to the TRS property name written by the mixer.
+  // Map a packed propID to the TRS property name written by the mixer:
+  // translation=0, rotation=1, scale=2. Morph-weight writes use
+  // propID = 1000 + weightIndex (see _SCENE_ANIM_WASM_WEIGHT_PROP_BASE).
   var _SCENE_ANIM_WASM_PROPS = ["translation", "rotation", "scale"];
 
+  // Component width per motion ValueArity ordinal (motion/ir.go): scalar=0,
+  // vec2=1, vec3=2, vec4=3, quat=4, color=5. Only consulted for records whose
+  // width the propID cannot imply; an ordinal outside this table leaves the
+  // record width unknowable and decoding must stop rather than desync.
+  var _SCENE_ANIM_WASM_ARITY_WIDTHS = [1, 2, 3, 4, 4, 4];
+
+  // Native BuildClipTimeline emits one scalar packed write per morph weight,
+  // [nodeID, 1000 + weightIndex, ArityScalar, value], with ArityScalar
+  // (ordinal 0 — not 1) carrying exactly one float. Values are raw weights:
+  // negative and >1 are legal and are never clamped or normalized.
+  var _SCENE_ANIM_WASM_WEIGHT_PROP_BASE = 1000;
+
+  // Native validates signed int32 target/prop IDs; the decoder mirrors that
+  // bound so NaN, fractional, negative or >2^31-1 floats can never mint node
+  // or weight entries.
+  var _SCENE_ANIM_WASM_MAX_ID = 2147483647;
+
+  function _sceneAnimWasmIsValidID(v) {
+    return typeof v === "number" && isFinite(v) && v >= 0 && v <= _SCENE_ANIM_WASM_MAX_ID && v === Math.floor(v);
+  }
+
+  // Materialize one node's weight vector after the walk: a fresh, dense,
+  // per-node array (never shared between entries, never aliased to the input
+  // buffer, never mutating a default array another node may still share).
+  // Writes arrive as staged (slot, value) pairs. A write at slot K implies a
+  // dense vector of K+1 slots, but the dense length may only grow by what
+  // this packet actually paid for: native emits every scalar track of a new
+  // or extended vector, so a slot is accepted only when it lands inside the
+  // established length plus this packet's record count for the node. A slot
+  // beyond that bound is a malformed sparse outlier — an untrusted ID must
+  // never buy allocation or loop time — and is dropped while its valid
+  // siblings are kept. Slots below the kept maximum that no record targeted
+  // keep their previous value, defaulting to the glTF morph weight 0. One
+  // O(established + received) pass per node — no per-write reallocation, no
+  // work proportional to any raw ID value. Returns {weights, accepted}, or
+  // null when every record for the node was an outlier (the caller then
+  // leaves the node untouched).
+  function _sceneAnimWasmMaterializeWeights(existing, idxs, vals) {
+    var existingLen = existing && typeof existing.length === "number" ? existing.length : 0;
+    var records = idxs.length;
+    var limit = existingLen + records;
+    var accepted = 0;
+    var maxKept = -1;
+    for (var r = 0; r < records; r++) {
+      if (idxs[r] < limit) {
+        accepted += 1;
+        if (idxs[r] > maxKept) maxKept = idxs[r];
+      }
+    }
+    if (accepted === 0) return null;
+    var total = maxKept + 1 > existingLen ? maxKept + 1 : existingLen;
+    var weights = new Array(total);
+    for (var wi = 0; wi < total; wi++) {
+      var prev = wi < existingLen ? existing[wi] : 0;
+      weights[wi] = typeof prev === "number" ? prev : 0;
+    }
+    for (var r2 = 0; r2 < records; r2++) {
+      if (idxs[r2] < limit) weights[idxs[r2]] = vals[r2];
+    }
+    return { weights: weights, accepted: accepted };
+  }
+
   // Decode the packed LE-float64 buffer written by __gosx_motion_mixer_update
-  // into the animatedTransforms Map (Map<nodeIndex, {translation,rotation,scale}>).
+  // into the animatedTransforms Map
+  // (Map<nodeIndex, {translation,rotation,scale,weights}>).
   // Layout per write: [targetID, propID, arity, comps...] where targetID is the
-  // glTF node index, propID is 0(translation)/1(rotation)/2(scale), and arity is
-  // the motion enum ordinal (ArityVec3=2, ArityQuat=4) — NOT the component count.
-  // Width is derived from propID: rotation(1) → 4 components, else → 3.
-  // Writes merge into the existing per-node entry so a node touched by only one
-  // property keeps its other defaults.
-  // `f` is a Float64Array view; `count` is the valid float length to walk.
+  // glTF node index, propID is 0(translation)/1(rotation)/2(scale) or
+  // 1000+weightIndex for morph weights, and arity is the motion ValueArity
+  // enum ordinal (ArityScalar=0, ArityVec2=1, ArityVec3=2, ArityVec4=3,
+  // ArityQuat=4, ArityColor=5) — NOT the component count.
+  //
+  // Width resolution:
+  // - Known TRS propIDs keep the legacy semantic width (rotation(1) → 4
+  //   quaternion floats; translation(0)/scale(2) → 3 floats) and the arity
+  //   slot is ignored for them: historical fixtures record the component
+  //   count there (vec3 → 3), which is not the ArityVec3 ordinal (2).
+  // - Every other record derives its stride from the arity ordinal, so scalar
+  //   weight writes (arity 0 → 1 float) no longer desync the translation /
+  //   quaternion / scale writes around them. An ordinal outside the known
+  //   table leaves the width unknowable and stops the walk safely.
+  //
+  // Weight records merge into entry.weights[weightIndex] on the same per-node
+  // entry as TRS writes. Records may arrive in any order; weights may be
+  // negative or >1 (no clamping or normalization) and any target count is
+  // accepted — no width cap.
+  // A weight slot is accepted only inside the established vector length plus
+  // the records this packet staged for its node — dense emits from native
+  // carry every scalar track — so a slot beyond that bound is a malformed
+  // sparse outlier: it is dropped uncounted instead of materializing an
+  // untrusted-ID-sized array, and its valid siblings are kept.
+  //
+  // Header defense: target/prop IDs must be whole non-negative int32s.
+  // Records with bad headers are skipped in stride while their width is
+  // still known and never create node or weight entries. `count` is clamped
+  // to f.length, a record that would run past it ends the walk, and the
+  // input buffer is only ever read (decoded arrays are fresh copies).
   function sceneAnimWasmDecodePose(f, count, animatedTransforms) {
-    if (!f || !animatedTransforms || count < 3) return 0;
+    if (!f || !animatedTransforms) return 0;
+    if (typeof animatedTransforms.get !== "function" || typeof animatedTransforms.set !== "function") return 0;
+    if (typeof count !== "number" || !(count >= 3)) return 0;
+    if (count > f.length) count = f.length;
+
     var writes = 0;
-    for (var i = 0; i + 3 <= count;) {
+    // nodeID -> { idxs: [], vals: [] } — staged (slot, value) pairs. Weight
+    // writes are staged per node and materialized once after the walk, so
+    // shuffled records cost no per-write copies, entries are touched exactly
+    // once per decode, and sparse outliers are filtered once the packet's
+    // full per-node record count is known.
+    var stagedWeights = null;
+
+    var i = 0;
+    while (i + 3 <= count) {
       var targetID = f[i];
       var propID = f[i + 1];
-      // arity carries the enum ordinal; derive component width from propID (the
-      // semantic truth for TRS): rotation(1) is a quaternion (4 floats), all
-      // others (translation=0, scale=2) are vec3 (3 floats).
-      var width = propID === 1 ? 4 : 3;
-      var c = i + 3;
-      if (c + width > count) break;
-      i = c + width;
-      var prop = _SCENE_ANIM_WASM_PROPS[propID];
-      if (prop == null) continue;
-      var entry = animatedTransforms.get(targetID);
-      if (!entry) {
-        entry = {};
-        animatedTransforms.set(targetID, entry);
+      var arity = f[i + 2];
+
+      var isTRS = propID === 0 || propID === 1 || propID === 2;
+      var width;
+      if (isTRS) {
+        // Semantic width for the stable TRS IDs; the arity slot is not
+        // trusted here (see the compatibility note above).
+        width = propID === 1 ? 4 : 3;
+      } else if (!(arity >= 0) || arity > 5 || arity !== Math.floor(arity)) {
+        break; // unknown arity ordinal — record width cannot be known
+      } else {
+        width = _SCENE_ANIM_WASM_ARITY_WIDTHS[arity];
       }
-      var value = new Array(width);
-      for (var k = 0; k < width; k++) value[k] = f[c + k];
-      entry[prop] = value;
-      writes += 1;
+
+      var c = i + 3;
+      if (c + width > count) break; // truncated record — stop before reading it
+
+      if (_sceneAnimWasmIsValidID(targetID) && _sceneAnimWasmIsValidID(propID)) {
+        if (isTRS) {
+          var prop = _SCENE_ANIM_WASM_PROPS[propID];
+          var entry = animatedTransforms.get(targetID);
+          if (!entry) {
+            entry = {};
+            animatedTransforms.set(targetID, entry);
+          }
+          var value = new Array(width);
+          for (var k = 0; k < width; k++) value[k] = f[c + k];
+          entry[prop] = value;
+          writes += 1;
+        } else if (propID >= _SCENE_ANIM_WASM_WEIGHT_PROP_BASE && width === 1) {
+          // Scalar morph-weight write: [nodeID, 1000+weightIndex, ArityScalar, value].
+          // Staged as a (slot, value) pair; acceptance and its write count
+          // are settled at materialization, after the walk.
+          var weightIndex = propID - _SCENE_ANIM_WASM_WEIGHT_PROP_BASE;
+          if (!stagedWeights) stagedWeights = new Map();
+          var staged = stagedWeights.get(targetID);
+          if (!staged) {
+            staged = { idxs: [], vals: [] };
+            stagedWeights.set(targetID, staged);
+          }
+          staged.idxs.push(weightIndex);
+          staged.vals.push(f[c]);
+        }
+        // Any other known-arity property is skipped in stride only.
+      }
+
+      i = c + width;
     }
+
+    if (stagedWeights) {
+      stagedWeights.forEach(function (staged, nodeID) {
+        var entry = animatedTransforms.get(nodeID);
+        var result = _sceneAnimWasmMaterializeWeights(entry && entry.weights, staged.idxs, staged.vals);
+        if (!result) return; // every staged slot was a sparse outlier
+        if (!entry) {
+          entry = {};
+          animatedTransforms.set(nodeID, entry);
+        }
+        entry.weights = result.weights;
+        writes += result.accepted;
+      });
+    }
+
     return writes;
   }
 
