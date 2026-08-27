@@ -68,6 +68,8 @@
   // Per-componentType record: [byte size, typed-array constructor, DataView
   // reader name, normalized-integer divisor, signed flag]. The signed flag
   // keeps the -1 endpoint of signed types alive through division rounding.
+  // The flag is only recorded for signed types; normalization reads it by
+  // truthiness, so unsigned records leave slot 4 undefined (falsy).
   // FLOAT32, an omitted view slot, and anything unlisted all resolve through
   // GLTF_FLOAT32_FORMAT below, so every fallback matches the old default
   // branches exactly (4-byte size, Float32Array view) and those same keys
@@ -78,10 +80,10 @@
   var GLTF_COMPONENT_FORMATS = {
     __proto__: null,
     5120: [1, Int8Array, "getInt8", 127, true],
-    5121: [1, Uint8Array, "getUint8", 255, false],
+    5121: [1, Uint8Array, "getUint8", 255],
     5122: [2, Int16Array, "getInt16", 32767, true],
-    5123: [2, Uint16Array, "getUint16", 65535, false],
-    5125: [4, Uint32Array, "getUint32", 4294967295, false],
+    5123: [2, Uint16Array, "getUint16", 65535],
+    5125: [4, Uint32Array, "getUint32", 4294967295],
   };
   var GLTF_FLOAT32_FORMAT = [4, Float32Array, "getFloat32"];
 
@@ -326,14 +328,30 @@
   // Index expansion — convert indexed geometry to flat triangle arrays
   // ---------------------------------------------------------------------------
 
+  // One specialized fixed-width expansion for the optional stride-4 streams
+  // (tangents, joints, weights): null streams stay null, empty index lists
+  // yield zero-length outputs, byte-for-byte identical to the inline
+  // branches this replaces.
+  function gltfExpandIndexedWidth4(src, indices, count) {
+    if (!src) {
+      return null;
+    }
+    var out = new Float32Array(count * 4);
+    for (var i = 0; i < count; i++) {
+      var idx = indices[i] * 4;
+      out[i * 4]     = src[idx];
+      out[i * 4 + 1] = src[idx + 1];
+      out[i * 4 + 2] = src[idx + 2];
+      out[i * 4 + 3] = src[idx + 3];
+    }
+    return out;
+  }
+
   function gltfExpandIndexed(positions, normals, uvs, tangents, joints, weights, indices) {
     var count = indices.length;
     var outPos = new Float32Array(count * 3);
     var outNrm = new Float32Array(count * 3);
     var outUV  = new Float32Array(count * 2);
-    var outTan = tangents ? new Float32Array(count * 4) : null;
-    var outJoints = joints ? new Float32Array(count * 4) : null;
-    var outWeights = weights ? new Float32Array(count * 4) : null;
     for (var i = 0; i < count; i++) {
       var idx = indices[i];
       outPos[i * 3]     = positions[idx * 3];
@@ -346,36 +364,15 @@
 
       outUV[i * 2]     = uvs[idx * 2];
       outUV[i * 2 + 1] = uvs[idx * 2 + 1];
-
-      if (outTan) {
-        outTan[i * 4]     = tangents[idx * 4];
-        outTan[i * 4 + 1] = tangents[idx * 4 + 1];
-        outTan[i * 4 + 2] = tangents[idx * 4 + 2];
-        outTan[i * 4 + 3] = tangents[idx * 4 + 3];
-      }
-
-      if (outJoints) {
-        outJoints[i * 4]     = joints[idx * 4];
-        outJoints[i * 4 + 1] = joints[idx * 4 + 1];
-        outJoints[i * 4 + 2] = joints[idx * 4 + 2];
-        outJoints[i * 4 + 3] = joints[idx * 4 + 3];
-      }
-
-      if (outWeights) {
-        outWeights[i * 4]     = weights[idx * 4];
-        outWeights[i * 4 + 1] = weights[idx * 4 + 1];
-        outWeights[i * 4 + 2] = weights[idx * 4 + 2];
-        outWeights[i * 4 + 3] = weights[idx * 4 + 3];
-      }
     }
 
     return {
       positions: outPos,
       normals: outNrm,
       uvs: outUV,
-      tangents: outTan,
-      joints: outJoints,
-      weights: outWeights,
+      tangents: gltfExpandIndexedWidth4(tangents, indices, count),
+      joints: gltfExpandIndexedWidth4(joints, indices, count),
+      weights: gltfExpandIndexedWidth4(weights, indices, count),
     };
   }
 
@@ -448,9 +445,8 @@
         if (!copied[channel]) {
           // First writable corner only: targets that index nothing real never
           // allocate a copy and hand the input stream straight back.
-          var copy = new Float32Array(values.length);
-          copy.set(values);
-          values = streams[channel] = copy;
+          // Float32Array(source) copies the input values directly.
+          values = streams[channel] = new Float32Array(values);
           copied[channel] = true;
         }
         var offset = v * stride;
