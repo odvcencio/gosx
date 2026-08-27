@@ -41,7 +41,8 @@ func clipPropID(property string) int {
 //   - Times:    nKeys keyframe times (seconds).
 //   - Values:   the flat glTF accessor data. For LINEAR/STEP this is nKeys*width;
 //     for CUBICSPLINE it is nKeys*3*width laid out [inTangent, value, outTangent]
-//     per key (width = 3 for translation/scale, 4 for rotation).
+//     per key (width = 3 for translation/scale, 4 for rotation, WeightCount
+//     for "weights").
 //   - WeightCount: for Property "weights", the number of morph weights (one
 //     ArityScalar track is emitted per weight); ignored for TRS channels.
 type ClipChannel struct {
@@ -82,11 +83,15 @@ func clipInterp(s string) Interp {
 }
 
 // BuildClipTimeline builds an evaluable Timeline from a set of glTF animation
-// channels. Each well-formed channel becomes one Track inside a Positioned child
-// at absolute time 0.
+// channels. Each well-formed channel contributes one or more Tracks inside
+// Positioned children at absolute time 0: a TRS channel becomes exactly one
+// Track, and a "weights" channel becomes WeightCount scalar Tracks — one
+// ArityScalar track per morph weight.
 //
 // Mapping:
 //   - translation / scale → ArityVec3 tracks; rotation → ArityQuat tracks (slerp).
+//   - "weights" → one ArityScalar track per morph weight; see the "weights"
+//     layout and ID rules below.
 //   - "LINEAR" → InterpLinear, "STEP" → InterpStep, "CUBICSPLINE" →
 //     InterpCubicSpline with per-key InTangent/OutTangent populated from the
 //     glTF value triplets; default/unknown → InterpLinear.
@@ -95,11 +100,36 @@ func clipInterp(s string) Interp {
 // ID assignment (cross-clip consistent):
 //   - Track.TargetID = channel.Node (the glTF node index — globally unique across clips).
 //   - Track.PropID   = fixed per-property constant: translation→0, rotation→1, scale→2.
+//   - "weights":     PropID = morphIDBase+j (morphIDBase = 1000) for weight j of
+//     the channel's node, with TargetID = channel.Node, so weight j of a node
+//     blends under the same (TargetID, PropID) key in every clip.
+//
+// "weights" channel layout: Values is the flat glTF morph WEIGHTS accessor —
+// one WeightCount-wide vector [w0 … wWeightCount-1] per key, in key order.
+// Weight j's track reads component j of every per-key vector:
+//
+//	LINEAR/STEP: len(Values) must be exactly nKeys*WeightCount;
+//	  key i, weight j = Values[i*WeightCount + j]
+//	CUBICSPLINE: len(Values) must be exactly nKeys*3*WeightCount; each key
+//	  holds the [inTangent, value, outTangent] triplet of WeightCount-wide
+//	  vectors, the middle vector being the animated value:
+//	  key i, weight j value      = Values[i*3*WeightCount + WeightCount + j]
+//	  key i, weight j inTangent  = Values[i*3*WeightCount + 0*WeightCount + j]
+//	  key i, weight j outTangent = Values[i*3*WeightCount + 2*WeightCount + j]
+//
+// WeightCount is authoritative and never inferred: a missing, zero, or negative
+// WeightCount invalidates the channel (weights are not guessed as vec4), as do
+// a Values length that is not a whole multiple of the key count (truncated or
+// extra data) and a per-key width that does not equal WeightCount (times 3 for
+// CUBICSPLINE). A rejected "weights" channel contributes no tracks; its sibling
+// channels are still built. Node indexes and weight counts whose packed
+// (TargetID, PropID) would not fit a signed int32 are rejected as well.
 //
 // This guarantees (TargetID, PropID) is identical across ALL clips for the same
-// (node, property), so motion.Mixer blends correctly when mixing clips that share
-// animated nodes. PrepareTracks is NOT called here — the IDs are set directly and
-// must not be overwritten by a per-clip interner.
+// (node, property) — including (node, weight j) pairs — so motion.Mixer blends
+// correctly when mixing clips that share animated nodes or morph targets.
+// PrepareTracks is NOT called here — the IDs are set directly and must not be
+// overwritten by a per-clip interner.
 //
 // CUBICSPLINE accessor layout: for key i with component width w, the three
 // triplet members live in the flat Values slice at:
@@ -108,9 +138,11 @@ func clipInterp(s string) Interp {
 //	value      = Values[i*3*w + 1*w : i*3*w + 2*w]
 //	outTangent = Values[i*3*w + 2*w : i*3*w + 3*w]
 //
+// (w = 3 for translation/scale, 4 for rotation, and WeightCount for "weights".)
+//
 // Malformed channels (unknown property, no keys, or a Values slice too short for
-// the keyframe count and interpolation mode) are silently skipped — never a
-// panic.
+// the keyframe count and interpolation mode; for "weights", any malformed
+// WeightCount/layout above) are silently skipped — never a panic.
 //
 // The returned duration is the larger of the maximum last-keyframe time across
 // channels (clips with no usable keys yield 0).
