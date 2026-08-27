@@ -1115,25 +1115,30 @@
         continue;
       }
       // Node matrix: the animated model-local matrix when available, else
-      // the authored asset matrix. Instanced morph primitives keep their
-      // authored matrix (the node-level map carries no per-instance offset).
+      // the authored asset matrix. Instanced primitives compose the animated
+      // node world with their authored instance-local matrix; the baked
+      // entry.nodeMatrix already contains that offset, never applied twice.
       var nodeMatrix = entry.nodeMatrix || null;
-      if (!meta.instanced && nodeTransforms && typeof nodeTransforms.get === "function") {
-        var animatedNodeMatrix = nodeTransforms.get(meta.nodeIndex);
-        if (animatedNodeMatrix) {
-          nodeMatrix = animatedNodeMatrix;
-        }
+      var instanceMatrix = meta.instanceMatrix || null;
+      var anim = null;
+      if (nodeTransforms && typeof nodeTransforms.get === "function") {
+        anim = nodeTransforms.get(meta.nodeIndex);
       } else if (!nodeTransforms && animatedWeights && typeof animatedWeights.get === "function") {
         // Bare-VM fallback (no mount): rebuild node-local TRS from the pose
         // with the same per-component fallbacks buildNodeTransforms uses.
         var pose = animatedWeights.get(meta.nodeIndex);
         if (pose && (pose.translation != null || pose.position != null || pose.rotation != null || pose.scale != null)) {
-          nodeMatrix = sceneTRSToMat4(
+          anim = sceneTRSToMat4(
             (pose.translation || pose.position || meta.nodeTranslation || [0, 0, 0]),
             (pose.rotation || meta.nodeRotation || [0, 0, 0, 1]),
             (pose.scale || meta.nodeScale || [1, 1, 1])
           );
         }
+      }
+      if (anim && (!meta.instanced || instanceMatrix)) {
+        nodeMatrix = instanceMatrix
+          ? sceneMat4Multiply(anim, instanceMatrix)
+          : anim;
       }
       var modelMatrix = entry.modelMatrix || null;
       var nodeChanged = gltfMatrixChanged(entry.lastNodeMatrix, nodeMatrix);
@@ -1578,7 +1583,7 @@
     return { positions: transformed, count: Math.floor(transformed.length / 3) };
   }
 
-  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix, nodeIndex) {
+  function gltfExtractMeshNode(gltf, meshIndex, binaryBuffer, worldTransform, result, skinIndex, node, idSuffix, nodeIndex, instanceMatrix) {
     var mesh = gltf.meshes[meshIndex];
     if (!mesh) {
       return;
@@ -1761,6 +1766,12 @@
         // Immutable and shared by every clone; the GLB binary and glTF graph
         // are not retained — only copied streams and validated defaults.
         geometry.morphMeta.instanced = suffix.indexOf("-inst-") === 0;
+        if (geometry.morphMeta.instanced && instanceMatrix) {
+          // Authored instance-local matrix for morph time: composed after
+          // the animated node-world matrix. The baked node matrix already
+          // contains it, so it is never applied twice.
+          geometry.morphMeta.instanceMatrix = gltfCopyMat4(instanceMatrix);
+        }
         object._morphAnim = geometry.morphMeta;
       }
 
@@ -1835,7 +1846,8 @@
             skin,
             node,
             "-inst-" + n,
-            nodeIndex
+            nodeIndex,
+            instances[n]
           );
         }
       } else {
