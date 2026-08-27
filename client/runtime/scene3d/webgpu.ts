@@ -158,6 +158,10 @@
     "    hasOcclusionMap: u32,",
     "    modelMatrix: mat4x4f,",
     "    modelScaleSigns: vec4f,",
+    // Trailing dedicated material scalar: the authored dielectric F0. Every
+    // texture flag slot and the model transform/sign floats keep their
+    // existing offsets; the struct pads to 176 bytes total.
+    "    dielectricF0: f32,",
     "};",
   ].join("\n");
 
@@ -1836,9 +1840,12 @@
     "",
     "    let V = normalize(frame.cameraPos - in.worldPos);",
     "    let NoV = max(dot(N, V), 0.0);",
-    "",
-    // Fresnel reflectance at normal incidence.
-    "    let F0 = mix(vec3f(0.04), albedo, metalness);",
+      "",
+      // Fresnel reflectance at normal incidence — the material's authored
+      // dielectric F0 = ((ior-1)/(ior+1))^2 blended with metallic albedo.
+      // Defaults to 0.04 (ior 1.5); 1.0 in the glTF ior=0 compatibility mode.
+      // Direct and environment consumers share this single F0.
+      "    let F0 = mix(vec3f(material.dielectricF0), albedo, metalness);",
     "",
     // Accumulate direct lighting.
     "    var Lo = vec3f(0.0);",
@@ -7087,7 +7094,10 @@
     // scene warns once instead of every frame.
     var _lightIssuesReported = Object.create(null);
 
-    var _materialUniformBuf = new ArrayBuffer(160);
+    // 176 bytes: the previous 160-byte MaterialUniforms layout plus the
+    // trailing dielectric-F0 scalar and struct padding. Only the material
+    // buffer grows; frame and shadow buffers are untouched.
+    var _materialUniformBuf = new ArrayBuffer(176);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -14011,12 +14021,33 @@
       device.queue.writeBuffer(shadowUniformBuffer, 0, f);
     }
 
+    // Normal-incidence dielectric Fresnel for an authored material IOR:
+    // F0 = ((ior-1)/(ior+1))^2. Total function — missing, null, invalid,
+    // non-finite, negative and 0<ior<1 inputs fall back to the default ior
+    // 1.5 (F0 0.04); the glTF explicit-zero compatibility mode maps to a
+    // Fresnel of exactly 1. The (ior-1)/(ior+1) form stays stable for huge
+    // finite inputs and the result always fits float32 for upload.
+    function sceneWebGPUDielectricF0(ior) {
+      var value = typeof ior === "number"
+        ? ior
+        : (typeof ior === "string" && ior.trim() !== "" ? Number(ior) : NaN);
+      if (!(Number.isFinite(value) && (value >= 1 || value === 0))) {
+        value = 1.5;
+      }
+      if (value === 0) {
+        return 1;
+      }
+      var t = (value - 1) / (value + 1);
+      return t * t;
+    }
+
     function materialUniformData(material, receiveShadow, modelMatrix, modelScaleSigns) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
       // MaterialUniforms: PBR fields (80 bytes) + per-object model matrix
-      // (64 bytes) + three scale signs (16-byte aligned). The signs recover
+      // (64 bytes) + three scale signs (16-byte aligned) + one trailing
+      // dielectric-F0 scalar (struct padded to 176 bytes). The signs recover
       // the rotation-only normal/tangent transform used by the CPU-baked path,
       // including negative and non-uniform scale. World-baked and instanced
       // draws receive identity.
@@ -14051,6 +14082,13 @@
       f[37] = modelScaleSigns ? sceneNumber(modelScaleSigns[1], 1) : 1;
       f[38] = modelScaleSigns ? sceneNumber(modelScaleSigns[2], 1) : 1;
       f[39] = 0;
+      // Dedicated trailing material scalar: normal-incidence dielectric F0
+      // from the authored IOR. Slots 41..43 are struct padding; keep them
+      // zeroed so the packed material bytes stay deterministic.
+      f[40] = sceneWebGPUDielectricF0(mat.ior);
+      f[41] = 0;
+      f[42] = 0;
+      f[43] = 0;
       return { data: f, u: u };
     }
 

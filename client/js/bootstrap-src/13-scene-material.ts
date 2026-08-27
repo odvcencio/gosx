@@ -236,6 +236,40 @@
     }
   }
 
+  // Scene/glTF-authored index of refraction (the KHR_materials_ior numeric
+  // contract): finite ior >= 1 is valid with no upper truncation; an
+  // explicit numeric 0 is the glTF compatibility mode that pins the
+  // dielectric Fresnel to 1 (it is neither a default nor a clamp); missing,
+  // null, invalid, non-finite, negative and 0<ior<1 all default safely.
+  // CSS var strings ride the existing explicit-var machinery and come back
+  // trimmed; null, false and empty strings are never coerced to zero.
+  function sceneNormalizeMaterialIor(value, fallback) {
+    if (sceneCSSVarReference(value)) {
+      return String(value).trim();
+    }
+    var numeric = value;
+    if (typeof numeric === "string") {
+      numeric = numeric.trim() !== "" ? Number(numeric) : NaN;
+    } else if (typeof numeric !== "number") {
+      numeric = NaN;
+    }
+    if (numeric === 0) {
+      return 0;
+    }
+    if (Number.isFinite(numeric) && numeric >= 1) {
+      return numeric;
+    }
+    if (sceneCSSVarReference(fallback)) {
+      return String(fallback).trim();
+    }
+    // The inherited fallback must satisfy the same numeric contract as the
+    // direct value: sceneNumber(fallback, 1.5) coerces null, false and ""
+    // to 0 — silently enabling the glTF zero mode — and passes negative or
+    // 0<ior<1 numbers straight through. Revalidating under the same rule
+    // terminates because the hard 1.5 default is always valid.
+    return sceneNormalizeMaterialIor(fallback, 1.5);
+  }
+
   function sceneObjectMaterialSource(item) {
     return item && item.material && typeof item.material === "object" ? item.material : null;
   }
@@ -318,6 +352,7 @@
       emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
+      ior: sceneNormalizeMaterialIor(object && object.ior, 1.5),
       clearcoat: sceneNumberOrCSSVar(object && object.clearcoat, 0),
       sheen: sceneNumberOrCSSVar(object && object.sheen, 0),
       transmission: sceneNumberOrCSSVar(object && object.transmission, 0),
@@ -363,6 +398,11 @@
       sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
+      // Authored ior keys at full precision — no toFixed quantization — so
+      // distinct valid iors never share a cached material. Raw invalid values
+      // (null/false/"") go through sceneNormalizeMaterialIor onto the 1.5
+      // shader default instead of colliding with an explicit 0 (F0 = 1).
+      sceneCSSVarReference(profile && profile.ior) ? String(profile.ior).trim() : sceneNormalizeMaterialIor(profile && profile.ior),
       sceneCSSVarReference(profile && profile.clearcoat) ? String(profile.clearcoat).trim() : sceneNumber(profile && profile.clearcoat, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.sheen) ? String(profile.sheen).trim() : sceneNumber(profile && profile.sheen, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.transmission) ? String(profile.transmission).trim() : sceneNumber(profile && profile.transmission, 0).toFixed(3),

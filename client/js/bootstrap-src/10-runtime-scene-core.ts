@@ -734,6 +734,7 @@
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
+      ior: sceneNormalizeMaterialIor(sceneObjectMaterialValue(item, "ior"), current.ior),
       clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
@@ -1310,6 +1311,11 @@
     if (sceneObjectMaterialHasValue(current, "metalness")) {
       override.metalness = sceneObjectMaterialValue(current, "metalness");
     }
+    // Authored ior is normalized under the KHR contract (CSS var text
+    // trimmed, explicit zero preserved) while genuine absence stays absent.
+    if (sceneObjectMaterialHasValue(current, "ior")) {
+      override.ior = sceneNormalizeMaterialIor(sceneObjectMaterialValue(current, "ior"), 1.5);
+    }
     for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
@@ -1423,6 +1429,11 @@
       ),
       roughness: sceneObjectMaterialHasValue(raw, "roughness") ? sceneNumberOrCSSVar(sceneObjectMaterialValue(raw, "roughness"), sceneNumber(current.roughness, 0.5)) : current.roughness,
       metalness: sceneObjectMaterialHasValue(raw, "metalness") ? sceneNumberOrCSSVar(sceneObjectMaterialValue(raw, "metalness"), sceneNumber(current.metalness, 0)) : current.metalness,
+      ior: sceneObjectMaterialHasValue(raw, "ior")
+        ? sceneNormalizeMaterialIor(sceneObjectMaterialValue(raw, "ior"), current.ior)
+        : (Object.prototype.hasOwnProperty.call(current, "ior")
+          ? sceneNormalizeMaterialIor(current.ior, 1.5)
+          : undefined),
       pickable: Object.prototype.hasOwnProperty.call(raw, "pickable") ? sceneBool(raw.pickable, false) : current.pickable,
       visible: Object.prototype.hasOwnProperty.call(raw, "visible")
         ? sceneBool(raw.visible, true)
@@ -1436,6 +1447,12 @@
       _outState: lifecycle.outState,
       _live: lifecycle.live,
     };
+    // A genuinely omitted ior (no authored raw value and no inherited field)
+    // stays absent so the override plumbing cannot erase an authored glTF
+    // ior with a defaulted value; explicit/inherited fields are normalized.
+    if (batch.ior === undefined) {
+      delete batch.ior;
+    }
     return batch;
   }
 
@@ -1472,7 +1489,7 @@
         scaleY: instance.scaleY,
         scaleZ: instance.scaleZ,
       };
-      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "pickable", "visible", "static"]) {
+      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "pickable", "visible", "static"]) {
         if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
           raw[key] = batch[key];
         }
@@ -1855,6 +1872,7 @@
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
+      ior: sceneNormalizeMaterialIor(sceneObjectMaterialValue(item, "ior"), current.ior),
       clearcoat: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "clearcoat"), sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "sheen"), sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
@@ -2298,6 +2316,7 @@
       emissive: sceneClampNumberOrCSSVar(item.emissive, sceneNumber(current.emissive, sceneDefaultMaterialEmissive(kind)), 0, 1),
       roughness: sceneNumberOrCSSVar(item.roughness, sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(item.metalness, sceneNumber(current.metalness, 0)),
+      ior: sceneNormalizeMaterialIor(item.ior, current.ior),
       clearcoat: sceneClampNumberOrCSSVar(item.clearcoat, sceneNumber(current.clearcoat, 0), 0, 1),
       sheen: sceneClampNumberOrCSSVar(item.sheen, sceneNumber(current.sheen, 0), 0, 1),
       transmission: sceneClampNumberOrCSSVar(item.transmission, sceneNumber(current.transmission, 0), 0, 1),
@@ -2947,6 +2966,7 @@
       emissive: material.emissive != null ? material.emissive : object.emissive,
       roughness: material.roughness != null ? material.roughness : object.roughness,
       metalness: material.metalness != null ? material.metalness : object.metalness,
+      ior: material.ior != null ? material.ior : object.ior,
       clearcoat: material.clearcoat != null ? material.clearcoat : object.clearcoat,
       sheen: material.sheen != null ? material.sheen : object.sheen,
       transmission: material.transmission != null ? material.transmission : object.transmission,

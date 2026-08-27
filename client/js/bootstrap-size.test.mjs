@@ -548,7 +548,9 @@ const budgets = [
   // Strip/fan topology rebuild (TRIANGLE_STRIP/TRIANGLE_FAN extraction)
   // measured 1_559_777 / 423_556 / 340_350; all three caps raised with
   // narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_559_850, gzip: 423_650, brotli: 340_450 },
+  // Material IOR authored-key support measured 1_561_091 / 423_972 /
+  // 340_649; caps set from measured bytes plus small headroom.
+  { file: "bootstrap.js", raw: 1_561_300, gzip: 424_100, brotli: 340_800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -961,7 +963,9 @@ const budgets = [
   // Indexed BufferGeometry exact measurement: 539_531 / 149_304 / 123_908.
   // Live glTF deformation rebuild including node-TRS playback measured
   // 543_190 / 150_137 / 124_474; all three caps raised with narrow headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 543_250, gzip: 150_150, brotli: 124_500 },
+  // Material IOR authored-key support measured 543_852 / 150_353 / 124_735;
+  // caps set from measured bytes plus small headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 544_000, gzip: 150_450, brotli: 124_850 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1613,9 +1617,11 @@ const routeBudgets = [
     // Indexed BufferGeometry exact measurement: 1_055_774 / 292_427 / 248_044.
     // Live glTF deformation rebuild including node-TRS playback measured
     // 1_059_433 / 293_260 / 248_610; all three caps raised with narrow headroom.
-    raw: 1_059_500,
-    gzip: 293_300,
-    brotli: 248_650,
+    // Material IOR authored-key support measured 1_060_409 / 293_610 /
+    // 248_981; caps set from measured bytes plus small headroom.
+    raw: 1_060_600,
+    gzip: 293_750,
+    brotli: 249_100,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1714,9 +1720,11 @@ const routeBudgets = [
     // Live glTF deformation rebuild including node-TRS playback measured
     // 1_448_792 / 387_491 / 327_437; raw and gzip raised with narrow headroom;
     // brotli still under its cap and unchanged.
-    raw: 1_449_000,
-    gzip: 387_550,
-    brotli: 327_500,
+    // Material IOR authored-key support measured 1_450_030 / 387_957 /
+    // 327_956; caps set from measured bytes plus small headroom.
+    raw: 1_450_200,
+    gzip: 388_100,
+    brotli: 328_100,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1821,9 +1829,11 @@ const routeBudgets = [
     // Live glTF deformation rebuild including node-TRS playback measured
     // 1_080_995 / 284_886 / 238_603; raw and gzip raised with narrow headroom;
     // brotli still under its cap and unchanged.
-    raw: 1_081_100,
-    gzip: 284_950,
-    brotli: 238_700,
+    // Material IOR authored-key support measured 1_081_919 / 285_218 /
+    // 239_012; caps set from measured bytes plus small headroom.
+    raw: 1_082_100,
+    gzip: 285_350,
+    brotli: 239_150,
   },
 
 ];
