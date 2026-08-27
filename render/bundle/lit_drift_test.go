@@ -86,11 +86,16 @@ type sharedTerm struct {
 // difference stays visible instead of hiding inside a passing test.
 var litSharedTerms = []sharedTerm{
 	{
-		id:     "dielectric-f0",
+		id:     "dielectric-f0-authored",
 		effect: "Every non-metal highlight changes brightness.",
-		goPat:  `mix\(vec3f\(([0-9.]+)\), baseColor, metalness\)`,
-		jsPat:  `mix\(vec3f\(([0-9.]+)\), albedo, metalness\)`,
-		want:   "0.04",
+		// The dielectric F0 is authored (derived from the optional IOR) and
+		// dynamic, so no literal can be pinned. This row is a presence check:
+		// each copy must read its own authored F0 lane, and the negative
+		// mutations below prove that replacing it with the old fixed 0.04
+		// fails this row on both backends.
+		goPat: `mix\(vec3f\(material\.physicalParams2\.y\), baseColor, metalness\)`,
+		jsPat: `mix\(vec3f\(material\.dielectricF0\), albedo, metalness\)`,
+		want:  "",
 	},
 	{
 		id:     "roughness-floor",
@@ -1005,11 +1010,18 @@ var litSharedGuardMutations = []litGuardMutation{
 		wantRow: "anisotropy-roughness-gain",
 	},
 	{
-		name:    "native renderer raises the dielectric F0",
+		name:    "native renderer replaces the authored F0 with the fixed default",
 		side:    "go",
-		from:    "mix(vec3f(0.04), baseColor, metalness)",
-		to:      "mix(vec3f(0.05), baseColor, metalness)",
-		wantRow: "dielectric-f0",
+		from:    "mix(vec3f(material.physicalParams2.y), baseColor, metalness)",
+		to:      "mix(vec3f(0.04), baseColor, metalness)",
+		wantRow: "dielectric-f0-authored",
+	},
+	{
+		name:    "browser replaces the authored F0 with the fixed default",
+		side:    "js",
+		from:    "mix(vec3f(material.dielectricF0), albedo, metalness)",
+		to:      "mix(vec3f(0.04), albedo, metalness)",
+		wantRow: "dielectric-f0-authored",
 	},
 	{
 		name:    "browser widens the clear coat power range",

@@ -63,7 +63,7 @@ struct Material {
   textureParams : vec4<f32>, // x=hasBaseColor, y=hasNormal, z=hasRoughMap, w=hasMetalMap
   textureParams2: vec4<f32>, // x=hasEmissiveMap
   physicalParams : vec4<f32>, // x=clearcoat, y=sheen, z=transmission, w=iridescence
-  physicalParams2: vec4<f32>, // x=anisotropy
+  physicalParams2: vec4<f32>, // x=anisotropy, y=dielectricF0
 };
 
 @group(0) @binding(0) var<uniform> scene             : Scene;
@@ -272,8 +272,9 @@ fn fs_main(in : VSOut) -> FSOut {
   let anisotropy = clamp(material.physicalParams2.x, -1.0, 1.0);
   roughness = clamp(roughness * (1.0 - abs(anisotropy) * 0.28), 0.04, 1.0);
 
-  // F0: 0.04 for dielectrics, baseColor for metals, linearly interpolated.
-  let F0 = mix(vec3<f32>(0.04), baseColor, metalness);
+  // F0: the authored dielectric reflectance carried in physicalParams2.y
+  // (default 0.04), baseColor for metals, linearly interpolated.
+  let F0 = mix(vec3<f32>(material.physicalParams2.y), baseColor, metalness);
 
   // Fresnel at the primary light. The image-based terms below reuse it, so a
   // cubemap keeps the exact response it had before the light array arrived.
