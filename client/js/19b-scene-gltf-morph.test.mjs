@@ -611,3 +611,222 @@ test("incomplete trailing destination vertices stay untouched and uncopied", () 
   assert.deepEqual(result.folded, [11, 22, 33, 4], "only the first complete vertex folds; the fragment float survives");
   assert.deepEqual(result.foldedInputUntouched, [1, 2, 3, 4], "the original shared view stays untouched");
 });
+
+// --- fallback normals describe the morphed surface ---------------------------
+//
+// Regression guard: with no authored NORMAL the loader generates flat
+// fallback normals, and it used to generate them from the BASE positions
+// before gltfFoldMorphTargets ran. A POSITION-only morph target therefore
+// deformed the triangle while every corner kept the undeformed face
+// normal, and computed tangents inherited that stale basis. The fix
+// generates the fallback after the fold, from the final primitive-local
+// positions.
+//
+// The expected normals below are derived independently from the expected
+// deformed corners with plain cross-product/normalize math in this test
+// realm; the production gltfGenerateFlatNormals helper is never called.
+
+// Loads the shared fixture, then strips the authored NORMAL/TANGENT
+// attribute references and keeps POSITION-only targets, so extraction
+// must fall back to generated normals.
+function loadPositionOnlyMorphFixture(context, weights) {
+  loadFixture(context, { mesh: weights, node: null });
+  call(context, `
+    delete morphDoc.meshes[0].primitives[0].attributes.NORMAL;
+    delete morphDoc.meshes[0].primitives[0].attributes.TANGENT;
+    morphDoc.meshes[0].primitives[0].targets = [{ POSITION: 5 }, { POSITION: 8 }];
+  `);
+}
+
+// Independent face normal of the triangle (a, b, c), computed here rather
+// than through any production helper.
+function faceNormalFromCorners(a, b, c) {
+  const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const n = [
+    e1[1] * e2[2] - e1[2] * e2[1],
+    e1[2] * e2[0] - e1[0] * e2[2],
+    e1[0] * e2[1] - e1[1] * e2[0],
+  ];
+  const len = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+  return [n[0] / len, n[1] / len, n[2] / len];
+}
+
+const morphRound6 = (arr) => arr.map((v) => Math.round(v * 1e6) / 1e6);
+// Face normal of the undeformed fixture triangle.
+const UNDEFORMED_NORMAL = [0, 0, 1];
+
+// --- no base NORMAL ignores authored and morph tangents (glTF 2.0) ----------
+//
+// The spec requires calculated flat normals when NORMAL is absent and says
+// authored tangents and morph TANGENT displacement must be ignored. This
+// fixture restores TANGENT streams (base VEC4 and morph VEC3 delta) on the
+// POSITION-only fixture, pointing at a sentinel direction that cannot
+// describe the triangle, and proves extraction computes its tangent basis
+// from the deformed geometry instead of forwarding the sentinels.
+
+// Reuses loadPositionOnlyMorphFixture (which strips NORMAL and TANGENT),
+// then re-adds deliberately incompatible sentinel TANGENT streams.
+function loadNoNormalWithTangentSentinels(context, weights) {
+  loadPositionOnlyMorphFixture(context, weights);
+  call(context, `
+    morphDoc.meshes[0].primitives[0].attributes.TANGENT = 2;
+    morphDoc.meshes[0].primitives[0].targets[0].TANGENT = 7;
+    // Base VEC4 TANGENT lives at byte 72; morph VEC3 delta at byte 216.
+    new Float32Array(buffer, 72, 12).set(
+      [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1]);
+    new Float32Array(buffer, 216, 9).set(
+      [0, 0, -1, 0, 0, -1, 0, 0, -1]);
+  `);
+}
+
+test("no authored NORMAL: authored and morph tangents are ignored, basis is computed", () => {
+  const cases = [
+    { name: "indexed", unindexed: false,
+      corners: [[1, 0.5, 0], [0, 1, 0.5], [0.5, 0, 0]] },
+    { name: "unindexed", unindexed: true,
+      corners: [[0.5, 0, 0], [1, 0.5, 0], [0, 1, 0.5]] },
+  ];
+  for (const { name, unindexed, corners } of cases) {
+    const { context } = createLoaderContext();
+    loadNoNormalWithTangentSentinels(context, [1, 0]);
+    if (unindexed) {
+      call(context, "delete morphDoc.meshes[0].primitives[0].indices;");
+    }
+    const result = plain(call(context, `
+      var geometry = gltfExtractMeshPrimitive(
+        morphDoc, morphDoc.meshes[0].primitives[0], buffer, null, [1, 0]);
+      ({
+        positions: Array.from(geometry.positions),
+        normals: Array.from(geometry.normals),
+        tangents: Array.from(geometry.tangents),
+        sourceTangents: Array.from(new Float32Array(buffer, 72, 12)),
+      });
+    `));
+
+    const expectedNormal = faceNormalFromCorners(...corners);
+    for (let k = 0; k < 3; k++) {
+      assert.deepStrictEqual(
+        morphRound6(result.positions.slice(k * 3, k * 3 + 3)),
+        morphRound6(corners[k]), `${name}: deformed corner`);
+      const n = result.normals.slice(k * 3, k * 3 + 3);
+      assert.deepStrictEqual(morphRound6(n), morphRound6(expectedNormal),
+        `${name}: flat normal from deformed surface`);
+      const t = result.tangents.slice(k * 4, k * 4 + 4);
+      assert.strictEqual(t[3], 1, `${name}: tangent handedness`);
+      const len = Math.hypot(t[0], t[1], t[2]);
+      assert.ok(Math.abs(len - 1) < 1e-6, `${name}: tangent is unit`);
+      const dot = t[0] * n[0] + t[1] * n[1] + t[2] * n[2];
+      assert.ok(Math.abs(dot) < 1e-6, `${name}: tangent orthogonal to normal`);
+      // The [0,0,1] sentinel direction must not leak into the output.
+      assert.ok(
+        Math.abs(t[0]) + Math.abs(t[1]) + Math.abs(t[2] - 1) > 0.5,
+        `${name}: sentinel tangent leaked`);
+    }
+    // The shared GLB buffer's authored TANGENT stream was never rewritten.
+    assert.deepStrictEqual(
+      morphRound6(result.sourceTangents),
+      [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1],
+      `${name}: source tangent stream unchanged`);
+  }
+});
+
+test("indexed POSITION-only morphs regenerate fallback normals from the deformed surface", () => {
+  const { context } = createLoaderContext();
+  loadPositionOnlyMorphFixture(context, [1, 0]);
+  const result = plain(call(context, `
+    var geometry = gltfExtractMeshPrimitive(
+      morphDoc, morphDoc.meshes[0].primitives[0], buffer, null, [1, 0]);
+    ({
+      positions: Array.from(geometry.positions),
+      normals: Array.from(geometry.normals),
+      noMetadata: !Object.prototype.hasOwnProperty.call(geometry, "morphTargets")
+        && !Object.prototype.hasOwnProperty.call(geometry, "morphWeights"),
+      sourceUntouched: Array.from(new Float32Array(buffer, 0, floats.length))
+        .every(function(v, i) { return v === floats[i]; }),
+    });
+  `));
+
+  // Weight [1, 0] folds only target 0's POSITION deltas. Base vertices
+  // (0,0,0), (1,0,0), (0,1,0) become (0.5,0,0), (1,0.5,0), (0,1,0.5), and
+  // the [1, 2, 0] index fan-out orders the corners v1, v2, v0.
+  const deformedCorners = [
+    [1, 0.5, 0],
+    [0, 1, 0.5],
+    [0.5, 0, 0],
+  ];
+  const expectedNormal = faceNormalFromCorners(
+    deformedCorners[0], deformedCorners[1], deformedCorners[2]);
+
+  assert.deepEqual(morphRound6(result.positions), morphRound6(deformedCorners.flat()));
+  assert.equal(result.noMetadata, true);
+  assert.equal(result.sourceUntouched, true);
+
+  // Every corner carries the deformed face normal, which differs from the
+  // undeformed (0, 0, 1) the pre-fold fallback used to hand back.
+  for (let v = 0; v < 3; v++) {
+    const corner = morphRound6(result.normals.slice(v * 3, v * 3 + 3));
+    assert.deepEqual(corner, morphRound6(expectedNormal), `corner ${v} matches the deformed face normal`);
+    assert.notDeepEqual(corner, UNDEFORMED_NORMAL, `corner ${v} differs from the undeformed normal`);
+  }
+});
+
+test("unindexed POSITION-only morphs regenerate fallback normals from the deformed surface", () => {
+  const { context } = createLoaderContext();
+  loadPositionOnlyMorphFixture(context, [1, 0]);
+  const result = plain(call(context, `
+    var unindexed = Object.assign({}, morphDoc.meshes[0].primitives[0], { indices: undefined });
+    var geometry = gltfExtractMeshPrimitive(morphDoc, unindexed, buffer, null, [1, 0]);
+    ({
+      positions: Array.from(geometry.positions),
+      normals: Array.from(geometry.normals),
+    });
+  `));
+
+  // Vertex v pairs directly with target vertex v: (0,0,0), (1,0,0), (0,1,0)
+  // become (0.5,0,0), (1,0.5,0), (0,1,0.5). This is the same deformed
+  // triangle as the indexed case up to a cyclic corner shift, so the
+  // independent cross product lands on the same face normal.
+  const deformedCorners = [
+    [0.5, 0, 0],
+    [1, 0.5, 0],
+    [0, 1, 0.5],
+  ];
+  const expectedNormal = faceNormalFromCorners(
+    deformedCorners[0], deformedCorners[1], deformedCorners[2]);
+
+  assert.deepEqual(morphRound6(result.positions), morphRound6(deformedCorners.flat()));
+
+  for (let v = 0; v < 3; v++) {
+    const corner = morphRound6(result.normals.slice(v * 3, v * 3 + 3));
+    assert.deepEqual(corner, morphRound6(expectedNormal), `corner ${v} matches the deformed face normal`);
+    assert.notDeepEqual(corner, UNDEFORMED_NORMAL, `corner ${v} differs from the undeformed normal`);
+  }
+});
+
+test("zero-weight POSITION-only morphs keep the base fallback normals and the shared source", () => {
+  const { context } = createLoaderContext();
+  loadPositionOnlyMorphFixture(context, [0, 0]);
+  const result = plain(call(context, `
+    var geometry = gltfExtractMeshPrimitive(
+      morphDoc, morphDoc.meshes[0].primitives[0], buffer, null, [0, 0]);
+    ({
+      positions: Array.from(geometry.positions),
+      normals: Array.from(geometry.normals),
+      ownedStreams: geometry.positions.buffer !== buffer
+        && geometry.normals.buffer !== buffer,
+      sourceUntouched: Array.from(new Float32Array(buffer, 0, floats.length))
+        .every(function(v, i) { return v === floats[i]; }),
+    });
+  `));
+
+  // No effective fold: the expanded base corners (1,0,0), (0,1,0), (0,0,0)
+  // keep the undeformed face normal on every corner, the fallback streams
+  // are owned copies, and the shared GLB bytes are never written.
+  const baseNormal = faceNormalFromCorners([1, 0, 0], [0, 1, 0], [0, 0, 0]);
+  assert.deepEqual(morphRound6(baseNormal), [0, 0, 1]);
+  assert.deepEqual(morphRound6(result.positions), [1, 0, 0, 0, 1, 0, 0, 0, 0]);
+  assert.deepEqual(morphRound6(result.normals), [0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  assert.equal(result.ownedStreams, true);
+  assert.equal(result.sourceUntouched, true);
+});
