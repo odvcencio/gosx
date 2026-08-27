@@ -430,7 +430,7 @@ func materialFromObject(o scene.ObjectIR) engine.RenderMaterial {
 	return newMaterial(o.MaterialKind, o.Color, o.Texture, o.Opacity, o.Emissive, o.BlendMode, o.RenderPass,
 		boolValue(o.Wireframe), o.Roughness, o.Metalness, o.Clearcoat, o.Sheen, o.Transmission,
 		o.Iridescence, o.Anisotropy, o.NormalMap, o.RoughnessMap, o.MetalnessMap, o.EmissiveMap,
-		o.CustomVertex, o.CustomFragment, o.CustomVertexWGSL, o.CustomFragmentWGSL, o.CustomUniforms, o.ShaderBackend, o.ShaderLayout)
+		o.CustomVertex, o.CustomFragment, o.CustomVertexWGSL, o.CustomFragmentWGSL, o.CustomUniforms, o.ShaderBackend, o.ShaderLayout, previewIOR(o.IOR))
 }
 
 func materialFromInstance(m scene.InstancedMeshIR) engine.RenderMaterial {
@@ -438,13 +438,34 @@ func materialFromInstance(m scene.InstancedMeshIR) engine.RenderMaterial {
 		boolValue(m.Wireframe), m.Roughness, m.Metalness, m.Clearcoat, m.Sheen, m.Transmission,
 		m.Iridescence, m.Anisotropy, m.NormalMap, m.RoughnessMap, m.MetalnessMap, m.EmissiveMap,
 		m.CustomVertex, m.CustomFragment, m.CustomVertexWGSL, m.CustomFragmentWGSL,
-		m.CustomUniforms, m.ShaderBackend, m.ShaderLayout)
+		m.CustomUniforms, m.ShaderBackend, m.ShaderLayout, previewIOR(m.IOR))
+}
+
+// previewIOR passes an authored IOR through only when the native runtime can
+// honor it verbatim. Non-finite, negative, or strictly sub-unity values
+// normalize to the default at the shader boundary; dropping them here keeps
+// the JSON material key marshallable and stable instead of letting a NaN
+// empty it. An explicit zero is honored (it derives F0 = 1), and absence is
+// preserved so an override boundary never synthesizes a default over an
+// asset's own authored IOR.
+func previewIOR(ior *float64) *float64 {
+	if ior == nil {
+		return nil
+	}
+	v := *ior
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return nil
+	}
+	if v < 1 && v != 0 {
+		return nil
+	}
+	return ior
 }
 
 func newMaterial(kind, color, texture string, opacity, emissive *float64, blend, pass string, wire bool,
 	roughness, metalness, clearcoat, sheen, transmission, iridescence, anisotropy float64,
 	normalMap, roughnessMap, metalnessMap, emissiveMap, vertex, fragment, vertexWGSL, fragmentWGSL string,
-	uniforms map[string]any, backend string, layout map[string]any) engine.RenderMaterial {
+	uniforms map[string]any, backend string, layout map[string]any, ior *float64) engine.RenderMaterial {
 	if kind == "" {
 		kind = "standard"
 	}
@@ -466,6 +487,9 @@ func newMaterial(kind, color, texture string, opacity, emissive *float64, blend,
 		MetalnessMap: metalnessMap, EmissiveMap: emissiveMap, CustomVertex: vertex,
 		CustomFragment: fragment, CustomVertexWGSL: vertexWGSL, CustomFragmentWGSL: fragmentWGSL,
 		CustomUniforms: uniforms, ShaderBackend: backend, ShaderLayout: layout}
+	if ior != nil {
+		m.IOR = ior
+	}
 	keyBytes, _ := json.Marshal(m)
 	m.Key = string(keyBytes)
 	return m

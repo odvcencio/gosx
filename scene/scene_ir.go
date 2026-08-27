@@ -134,6 +134,7 @@ type InstancedGLBMeshIR struct {
 	BlendMode    string           `json:"blendMode,omitempty"`
 	Roughness    float64          `json:"roughness,omitempty"`
 	Metalness    float64          `json:"metalness,omitempty"`
+	IOR          *float64         `json:"ior,omitempty"`
 	Instances    []MeshInstanceIR `json:"instances"`
 	Pickable     *bool            `json:"pickable,omitempty"`
 	Visible      *bool            `json:"visible,omitempty"`
@@ -221,6 +222,7 @@ type ObjectIR struct {
 	Transmission       float64                    `json:"transmission,omitempty"`
 	Iridescence        float64                    `json:"iridescence,omitempty"`
 	Anisotropy         float64                    `json:"anisotropy,omitempty"`
+	IOR                *float64                   `json:"ior,omitempty"`
 	NormalMap          string                     `json:"normalMap,omitempty"`
 	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
 	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
@@ -608,6 +610,7 @@ type InstancedMeshIR struct {
 	Transmission         float64                    `json:"transmission,omitempty"`
 	Iridescence          float64                    `json:"iridescence,omitempty"`
 	Anisotropy           float64                    `json:"anisotropy,omitempty"`
+	IOR                  *float64                   `json:"ior,omitempty"`
 	NormalMap            string                     `json:"normalMap,omitempty"`
 	RoughnessMap         string                     `json:"roughnessMap,omitempty"`
 	MetalnessMap         string                     `json:"metalnessMap,omitempty"`
@@ -1952,6 +1955,7 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "transmission", item.Transmission)
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
+	setNumericPtr(record, "ior", item.IOR)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -2049,6 +2053,7 @@ func (item ModelIR) legacyProps() map[string]any {
 	setNumeric(record, "transmission", item.Transmission)
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
+	setNumericPtr(record, "ior", item.IOR)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -2245,6 +2250,7 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setNumeric(record, "transmission", item.Transmission)
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
+	setNumericPtr(record, "ior", item.IOR)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -2317,6 +2323,7 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	setString(record, "blendMode", item.BlendMode)
 	setNumeric(record, "roughness", item.Roughness)
 	setNumeric(record, "metalness", item.Metalness)
+	setNumericPtr(record, "ior", item.IOR)
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
 	}

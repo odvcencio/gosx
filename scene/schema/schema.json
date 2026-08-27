@@ -247,6 +247,7 @@
         "transmission": { "type": "number" },
         "iridescence": { "type": "number" },
         "anisotropy": { "type": "number" },
+        "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
         "normalMap": { "type": "string" },
         "roughnessMap": { "type": "string" },
         "metalnessMap": { "type": "string" },
@@ -486,6 +487,7 @@
             "color": { "type": "string" },
             "roughness": { "type": "number" },
             "metalness": { "type": "number" },
+            "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
             "transforms": { "$ref": "#/$defs/numberArray" },
             "colors": { "$ref": "#/$defs/stringArray" },
             "attributes": {
@@ -515,6 +517,7 @@
             },
             "roughness": { "type": "number" },
             "metalness": { "type": "number" },
+            "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
             "instances": {
               "type": "array",
               "items": { "$ref": "#/$defs/meshInstance" }

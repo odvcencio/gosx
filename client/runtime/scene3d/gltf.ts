@@ -1759,12 +1759,24 @@
       record.anisotropy = Math.max(-1, Math.min(1, strength * Math.cos(2 * rotation)));
     }
 
-    // KHR_materials_ior records the index of refraction. The PBR shaders derive
-    // F0 from a fixed 0.04, so nothing consumes this value yet. Carry it on the
-    // material so a later shader pass can read it without a loader change.
+    // KHR_materials_ior records the index of refraction. Spec contract:
+    // finite ior >= 1 is valid with no upper clamp, an explicit 0 is the
+    // glTF compatibility mode that pins the dielectric Fresnel to 1, and
+    // everything else — missing, null, non-finite, negative or 0<ior<1 —
+    // defaults safely to 1.5 (F0 0.04). The PBR shaders turn this into the
+    // normal-incidence dielectric Fresnel and blend it with metallic albedo.
+    // Kept self-contained: the standalone loader must not depend on the
+    // scene material helpers.
     var ior = gltfExtension(mat, "KHR_materials_ior");
     if (ior) {
-      record.ior = gltfExtensionFactor(ior, "ior", 1.5, 1, 5);
+      var iorValue = typeof ior.ior === "number" ? ior.ior : NaN;
+      if (iorValue === 0) {
+        record.ior = 0;
+      } else if (Number.isFinite(iorValue) && iorValue >= 1) {
+        record.ior = iorValue;
+      } else {
+        record.ior = 1.5;
+      }
     }
 
     // KHR_materials_unlit switches to the flat shading path. Both the WebGL and

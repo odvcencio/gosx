@@ -174,6 +174,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 			validateMeshInstance(report, instance, instancePath, mesh.ID)
 		}
 		validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
+		validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
 	}
 	for i, particles := range doc.ComputeParticles {
 		path := fmt.Sprintf("computeParticles[%d]", i)
@@ -228,6 +229,7 @@ func modelHasValidAssetSource(model scene.ModelIR) bool {
 func validateObject(report *Report, object scene.ObjectIR, path string) {
 	validatePrimitiveParameters(report, object.Kind, object.ID, path, object.Size, object.Width, object.Height, object.Depth, object.Radius, object.RadiusTop, object.RadiusBottom, object.Tube, object.Segments, object.RadialSegments, object.TubularSegments)
 	validateMaterialScalars(report, object.ID, path, object.Roughness, object.Metalness, object.Clearcoat, object.Sheen, object.Transmission, object.Iridescence, object.Anisotropy)
+	validateIOR(report, object.ID, path+".ior", object.IOR)
 	validateNumericFields(report, object.ID, path, map[string]float64{
 		"lineWidth":      object.LineWidth,
 		"dashSize":       object.DashSize,
@@ -395,6 +397,7 @@ func validateInstancedMesh(report *Report, mesh scene.InstancedMeshIR, path stri
 	}
 	validateCompressedArrays(report, mesh.ID, path+".previewTransforms", mesh.PreviewTransforms)
 	validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
+	validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
 	validatePrimitiveParameters(report, mesh.Kind, mesh.ID, path, mesh.Size, mesh.Width, mesh.Height, mesh.Depth, mesh.Radius, mesh.RadiusTop, mesh.RadiusBottom, mesh.Tube, mesh.Segments, mesh.RadialSegments, mesh.TubularSegments)
 	validateLive(report, mesh.ID, path, mesh.Live)
 }
@@ -948,6 +951,31 @@ func validateMaterialScalars(report *Report, id, path string, values ...float64)
 			report.add(Error, "scene.material.non_finite", "Material scalar must be finite", path+"."+name, id, nil)
 		}
 	}
+}
+
+// validateIOR diagnoses an explicitly authored index of refraction. Absent
+// (nil) is valid and means the renderer default. Zero is valid and selects the
+// special 1-reflectance case. Any value in (0, 1), any negative value, and any
+// non-finite value violates the authored material contract, which requires 0
+// or a finite value of at least 1.
+func validateIOR(report *Report, id, path string, ior *float64) string {
+	if ior == nil {
+		return ""
+	}
+	value := *ior
+	if !finite(value) {
+		report.add(Error, "scene.material.ior_non_finite", "Material ior must be finite", path, id, nil)
+		return "scene.material.ior_non_finite"
+	}
+	if value < 0 {
+		report.add(Error, "scene.material.ior_negative", "Material ior must not be negative; use 0 or a value of at least 1", path, id, map[string]any{"ior": value})
+		return "scene.material.ior_negative"
+	}
+	if value > 0 && value < 1 {
+		report.add(Error, "scene.material.ior_out_of_range", "Material ior must be 0 or at least 1", path, id, map[string]any{"ior": value})
+		return "scene.material.ior_out_of_range"
+	}
+	return ""
 }
 
 func validateNumericFields(report *Report, id, path string, fields map[string]float64) {

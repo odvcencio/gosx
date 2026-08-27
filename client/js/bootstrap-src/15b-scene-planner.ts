@@ -387,7 +387,7 @@
     hash = scenePlannerHashString(hash, "css");
     hash = scenePlannerHashAny(hash, bundle && bundle.environment, 0);
     hash = sceneCSSHashCollection(hash, bundle && bundle.materials, [
-      "id", "name", "kind", "color", "opacity", "emissive", "roughness", "metalness",
+      "id", "name", "kind", "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "blendMode",
       "renderPass", "depthWrite", "style", "size", "attenuation",
     ]);
@@ -398,12 +398,12 @@
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.objects, [
       "id", "kind", "material", "materialIndex", "color", "opacity", "emissive",
-      "roughness", "metalness", "lineWidth", "x", "y", "z", "rotationX",
+      "roughness", "metalness", "ior", "lineWidth", "x", "y", "z", "rotationX",
       "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, [
       "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
-      "vertexCount", "color", "opacity", "roughness", "metalness",
+      "vertexCount", "color", "opacity", "roughness", "metalness", "ior",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.points, [
       "id", "material", "materialIndex", "count", "color", "size", "opacity",
@@ -412,7 +412,7 @@
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.instancedMeshes, [
       "id", "kind", "material", "materialIndex", "count", "color", "roughness",
-      "metalness", "width", "height", "depth", "radius",
+      "metalness", "ior", "width", "height", "depth", "radius",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.labels, [
       "id", "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
@@ -618,7 +618,7 @@
       "groundColor", "groundIntensity", "exposure", "fogColor", "fogDensity",
     ], css.mount);
     sceneCSSResolveCollectionKeys(state, css, "materials", [
-      "color", "opacity", "emissive", "roughness", "metalness",
+      "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "clearcoat", "sheen", "transmission", "iridescence", "anisotropy",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap",
     ], null);
@@ -628,20 +628,20 @@
       "range", "decay", "width", "height", "shadowBias", "shadowSize",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "objects", [
-      "color", "opacity", "emissive", "roughness", "metalness",
+      "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineWidth",
       "x", "y", "z", "rotationX", "rotationY", "rotationZ",
       "spinX", "spinY", "spinZ",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "meshObjects", [
-      "depthCenter", "vertexOffset", "vertexCount",
+      "depthCenter", "vertexOffset", "vertexCount", "ior",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "points", [
       "color", "size", "opacity", "x", "y", "z",
       "rotationX", "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "instancedMeshes", [
-      "color", "roughness", "metalness", "width", "height", "depth", "radius",
+      "color", "roughness", "metalness", "ior", "width", "height", "depth", "radius",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "labels", [
       "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
@@ -1615,6 +1615,10 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.emissive, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.roughness, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.metalness, 0));
+    // Authored ior drives the dielectric F0 uniform; hash it explicitly so
+    // material records without a stable profile key still invalidate the
+    // prepared-scene signature when it changes.
+    hash = scenePlannerHashNumber(hash, sceneNumber(material && material.ior, 1.5));
     return scenePlannerHashNumber(hash, material && material.wireframe ? 1 : 0);
   }
 

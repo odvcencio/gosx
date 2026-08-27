@@ -53,6 +53,47 @@ func readLitShader(t *testing.T) string {
 	return strings.Join(lines, "\n")
 }
 
+// authoredF0ShaderTerm is the litWGSL expression that reads the authored
+// dielectric F0 out of the material uniform.
+const authoredF0ShaderTerm = "mix(vec3<f32>(material.physicalParams2.y), baseColor, metalness)"
+
+// pinnedF0ShaderTerm is the pre-authored-IOR literal that must never return.
+const pinnedF0ShaderTerm = "mix(vec3<f32>(0.04), baseColor, metalness)"
+
+// checkLitAuthoredF0 fails when litWGSL stops consuming the authored
+// dielectric F0 lane or reverts to the fixed default literal. The CPU constant
+// table cannot pin a runtime value, so this dedicated guard replaces the old
+// dielectric-f0 row; the mutation test below proves the guard can fail.
+func checkLitAuthoredF0(shader string) error {
+	if !strings.Contains(shader, authoredF0ShaderTerm) {
+		return fmt.Errorf("litWGSL no longer reads the authored dielectric F0 from material.physicalParams2.y")
+	}
+	if strings.Contains(shader, pinnedF0ShaderTerm) {
+		return fmt.Errorf("litWGSL replaced the authored dielectric F0 with the fixed default 0.04")
+	}
+	return nil
+}
+
+func TestLitShaderConsumesAuthoredDielectricF0(t *testing.T) {
+	if err := checkLitAuthoredF0(readLitShader(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLitShaderAuthoredF0GuardDetectsMutation(t *testing.T) {
+	shader := readLitShader(t)
+	if err := checkLitAuthoredF0(shader); err != nil {
+		t.Fatalf("guard must pass on the shipped shader: %v", err)
+	}
+	mutated := strings.Replace(shader, authoredF0ShaderTerm, pinnedF0ShaderTerm, 1)
+	if mutated == shader {
+		t.Fatal("mutation did not apply; the authored F0 term moved")
+	}
+	if err := checkLitAuthoredF0(mutated); err == nil {
+		t.Fatal("guard must fail when the authored F0 is replaced with the fixed 0.04")
+	}
+}
+
 // litConstantRow is one number this package shares with litWGSL.
 //
 // value is what the rasterizer really computes with. pattern must capture the
@@ -71,12 +112,6 @@ type litConstantRow struct {
 // Add a row when this copy starts using a number the shader also uses. Do not add
 // a row for a number only one copy has.
 var litSharedConstants = []litConstantRow{
-	{
-		id:      "dielectric-f0",
-		effect:  "Every non-metal highlight changes brightness.",
-		value:   dielectricF0,
-		pattern: `mix\(vec3<f32>\(([0-9.]+)\), baseColor, metalness\)`,
-	},
 	{
 		id:      "roughness-floor",
 		effect:  "A polished material turns into a pinpoint mirror on one backend only.",
@@ -399,12 +434,6 @@ func TestLitProgramConstantGuardsDetectMutation(t *testing.T) {
 		to      string
 		wantRow string
 	}{
-		{
-			name:    "the shader raises the dielectric F0",
-			from:    "mix(vec3<f32>(0.04), baseColor, metalness)",
-			to:      "mix(vec3<f32>(0.08), baseColor, metalness)",
-			wantRow: "dielectric-f0",
-		},
 		{
 			name:    "the shader widens the clear coat power range",
 			from:    "mix(12.0, 96.0, 1.0 - roughness)",

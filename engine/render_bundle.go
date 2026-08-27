@@ -179,6 +179,7 @@ type RenderMaterial struct {
 	Transmission       float64        `json:"transmission,omitempty"`
 	Iridescence        float64        `json:"iridescence,omitempty"`
 	Anisotropy         float64        `json:"anisotropy,omitempty"`
+	IOR                *float64       `json:"ior,omitempty"`
 	NormalMap          string         `json:"normalMap,omitempty"`
 	RoughnessMap       string         `json:"roughnessMap,omitempty"`
 	MetalnessMap       string         `json:"metalnessMap,omitempty"`

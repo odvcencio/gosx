@@ -1954,6 +1954,10 @@ type materialState struct {
 	transmission float32
 	iridescence  float32
 	anisotropy   float32
+	// dielectricF0 is the authored normal-incidence reflectance carried in
+	// physicalParams2.y. Zero is a valid authored value (IOR 1); the default
+	// 0.04 applies only when the lane was never written.
+	dielectricF0 float32
 
 	hasNormalMap   bool
 	hasRoughMap    bool
@@ -1976,6 +1980,7 @@ func defaultMaterialState() materialState {
 		opacity:        1,
 		roughness:      0.6,
 		useVertexColor: true,
+		dielectricF0:   dielectricF0,
 		baseColorMap:   textureBinding{layer: -1},
 		normalMap:      textureBinding{layer: -1},
 		roughMap:       textureBinding{layer: -1},
@@ -2028,6 +2033,9 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 			state.transmission = readFloat32At(data, offset+88)
 			state.iridescence = readFloat32At(data, offset+92)
 			state.anisotropy = readFloat32At(data, offset+96)
+			if f0, ok := materialDielectricF0(data, offset); ok {
+				state.dielectricF0 = f0
+			}
 		case 1:
 			state.baseColorMap = bind(entry)
 		case 3:
@@ -2041,6 +2049,18 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 		}
 	}
 	return state
+}
+
+// materialDielectricF0 reads the authored dielectric F0 from physicalParams2.y
+// at byte 100 of the material uniform. ok is false when the buffer does not
+// actually hold the lane, in which case the caller keeps the default 0.04. A
+// full buffer with a zero lane is a legitimate authored F0 (IOR 1) and is
+// returned as zero, never re-defaulted.
+func materialDielectricF0(data []byte, offset int) (float32, bool) {
+	if offset < 0 || offset+104 > len(data) {
+		return dielectricF0, false
+	}
+	return readFloat32At(data, offset+100), true
 }
 
 // solidColor returns the untextured base colour and the opacity, which is what
@@ -2517,7 +2537,9 @@ func rotateEnvY(v [3]float32, radians float32) [3]float32 {
 // it. Do not change a value here without changing litWGSL and the browser copies
 // in the same commit.
 const (
-	// dielectricF0 is the normal-incidence reflectance of a non-metal.
+	// dielectricF0 is the normal-incidence reflectance of a non-metal with no
+	// authored IOR. The shaders read the authored lane from the material
+	// uniform; this constant is only the fallback for a missing lane.
 	dielectricF0 = float32(0.04)
 	// roughnessFloor stops a polished material collapsing to a pinpoint mirror.
 	roughnessFloor = float32(0.04)
@@ -2688,11 +2710,12 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	anisotropy := clampSignedUnit(m.anisotropy)
 	roughness = clampRange(roughness*(1-absf(anisotropy)*anisotropyRoughnessGain), roughnessFloor, 1)
 
-	// F0 is 0.04 for a dielectric and the base colour for a metal.
+	// F0 is the authored dielectric reflectance (default 0.04) and the base
+	// colour for a metal.
 	f0 := [3]float32{
-		mix(dielectricF0, baseColor[0], metalness),
-		mix(dielectricF0, baseColor[1], metalness),
-		mix(dielectricF0, baseColor[2], metalness),
+		mix(m.dielectricF0, baseColor[0], metalness),
+		mix(m.dielectricF0, baseColor[1], metalness),
+		mix(m.dielectricF0, baseColor[2], metalness),
 	}
 	// Fresnel and kD at the primary light. The image-based terms at the end reuse
 	// both, so a cubemap keeps the exact response it had before the light array

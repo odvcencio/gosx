@@ -153,6 +153,7 @@
    * @property {number} [opacity]
    * @property {number} [roughness]
    * @property {number} [metalness]
+   * @property {number} [ior] Index of refraction. Absent uses the renderer default (1.5); 0 selects the special 1-reflectance case; values must be 0 or at least 1.
    * @property {string} [shaderBackend]
    * @property {object} [shaderLayout]
    * @property {string} [shaderSource]

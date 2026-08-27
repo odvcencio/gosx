@@ -102,6 +102,7 @@
     "uniform float u_transmission;",
     "uniform float u_iridescence;",
     "uniform float u_anisotropy;",
+    "uniform float u_dielectricF0;",
     "uniform float u_emissive;",
     "uniform float u_opacity;",
     "uniform bool u_unlit;",
@@ -421,8 +422,11 @@
     "    vec3 V = normalize(u_cameraPosition - v_worldPosition);",
     "    float NoV = max(dot(N, V), 0.0);",
     "",
-    // Fresnel reflectance at normal incidence — dielectric vs metallic blend.
-    "    vec3 F0 = mix(vec3(0.04), albedo, metalness);",
+    // Fresnel reflectance at normal incidence — the material's authored
+    // dielectric F0 = ((ior-1)/(ior+1))^2 blended with metallic albedo.
+    // u_dielectricF0 defaults to 0.04 (ior 1.5) and uploads 1.0 in the glTF
+    // ior=0 compatibility mode. Direct and environment consumers share it.
+    "    vec3 F0 = mix(vec3(u_dielectricF0), albedo, metalness);",
     "",
     // Accumulate direct lighting.
     "    vec3 Lo = vec3(0.0);",
@@ -5081,6 +5085,26 @@
 
   // --- Shader Program ---
 
+  // Normal-incidence dielectric Fresnel for an authored material IOR:
+  // F0 = ((ior-1)/(ior+1))^2. Total function — missing, null, invalid,
+  // non-finite, negative and 0<ior<1 inputs fall back to the default ior
+  // 1.5 (F0 0.04); the glTF explicit-zero compatibility mode maps to a
+  // Fresnel of exactly 1. The (ior-1)/(ior+1) form stays stable for huge
+  // finite inputs and the result always fits float32 for upload.
+  function scenePBRDielectricF0(ior) {
+    var value = typeof ior === "number"
+      ? ior
+      : (typeof ior === "string" && ior.trim() !== "" ? Number(ior) : NaN);
+    if (!(Number.isFinite(value) && (value >= 1 || value === 0))) {
+      value = 1.5;
+    }
+    if (value === 0) {
+      return 1;
+    }
+    var t = (value - 1) / (value + 1);
+    return t * t;
+  }
+
   // Cache the base uniform locations shared between the static and skinned
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
@@ -5099,6 +5123,7 @@
       transmission: gl.getUniformLocation(program, "u_transmission"),
       iridescence: gl.getUniformLocation(program, "u_iridescence"),
       anisotropy: gl.getUniformLocation(program, "u_anisotropy"),
+      dielectricF0: gl.getUniformLocation(program, "u_dielectricF0"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
@@ -7053,6 +7078,7 @@
       gl.uniform1f(uniforms.transmission, clamp01(sceneNumber(mat.transmission, 0)));
       gl.uniform1f(uniforms.iridescence, clamp01(sceneNumber(mat.iridescence, 0)));
       gl.uniform1f(uniforms.anisotropy, Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0))));
+      gl.uniform1f(uniforms.dielectricF0, scenePBRDielectricF0(mat.ior));
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
       gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);

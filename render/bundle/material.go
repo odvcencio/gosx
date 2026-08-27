@@ -2,6 +2,7 @@ package bundle
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"m31labs.dev/gosx/engine"
@@ -19,8 +20,13 @@ type materialFingerprint struct {
 	metalness, roughness                        uint16
 	clearcoat, sheen, transmission, iridescence uint16
 	anisotropy                                  int16
-	emissiveR, emissiveG, emissiveB             uint16
-	emissiveStrength                            uint16
+	// dielectricF0 is the exact float32 F0 derived from the authored IOR. It
+	// deliberately bypasses quantize(): the 1/1024 lattice would move the
+	// default 0.04 to a different bit pattern, and an authored F0 of exactly
+	// zero (IOR 1) must stay distinct from "lane never written".
+	dielectricF0                    float32
+	emissiveR, emissiveG, emissiveB uint16
+	emissiveStrength                uint16
 	// textureURL: "" means no texture; the fallback 1×1 white is bound so
 	// the bind group layout stays static.
 	textureURL string
@@ -128,12 +134,39 @@ func defaultVertexColorMaterial() materialFingerprint {
 		transmission:     0,
 		iridescence:      0,
 		anisotropy:       0,
+		dielectricF0:     defaultDielectricF0,
 		emissiveR:        0,
 		emissiveG:        0,
 		emissiveB:        0,
 		emissiveStrength: 0,
 		useVertexColor:   true,
 	}
+}
+
+// defaultDielectricF0 is the F0 of the default IOR 1.5, kept as the exact
+// float32 the shaders have always used so a material with no authored IOR
+// renders bit-identically to one authored before the field existed.
+const defaultDielectricF0 = float32(0.04)
+
+// dielectricF0FromIOR converts an authored index of refraction to the
+// normal-incidence reflectance F0 = ((ior-1)/(ior+1))^2. The computation runs
+// in float64 so math.MaxFloat64 cannot overflow the float32 lane. ok is false
+// when the value must fall back to the default: non-finite, negative, or
+// strictly between 0 and 1. An explicit zero is valid and yields F0 = 1; an
+// IOR of exactly one yields F0 = 0 and must survive as zero, never be
+// re-defaulted on read.
+func dielectricF0FromIOR(ior float64) (f0 float64, ok bool) {
+	if math.IsNaN(ior) || math.IsInf(ior, 0) {
+		return 0, false
+	}
+	if ior < 1 && ior != 0 {
+		return 0, false
+	}
+	if ior == 0 {
+		return 1, true
+	}
+	t := (ior - 1) / (ior + 1)
+	return t * t, true
 }
 
 func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
@@ -155,6 +188,15 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 	// fixes the offset of every later field, and a dedicated emissive colour
 	// will fill them.
 	emissiveStrength := float32(mat.Emissive)
+	// Authored dielectric F0 from the optional IOR. Computed in float64 and
+	// cast once, with the default 0.04 for nil, non-finite, negative, or
+	// sub-unity values other than an explicit zero.
+	dielectricF0 := defaultDielectricF0
+	if mat.IOR != nil {
+		if f0, ok := dielectricF0FromIOR(*mat.IOR); ok {
+			dielectricF0 = float32(f0)
+		}
+	}
 	return materialFingerprint{
 		baseColorR:       quantize(base[0]),
 		baseColorG:       quantize(base[1]),
@@ -167,6 +209,7 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		transmission:     quantize(clamp01f(float32(mat.Transmission))),
 		iridescence:      quantize(clamp01f(float32(mat.Iridescence))),
 		anisotropy:       quantizeSignedUnit(float32(mat.Anisotropy)),
+		dielectricF0:     dielectricF0,
 		emissiveR:        quantize(base[0]),
 		emissiveG:        quantize(base[1]),
 		emissiveB:        quantize(base[2]),
@@ -324,7 +367,7 @@ func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.B
 //	48..64  textureParams vec4 (hasBaseColor, hasNormal, hasRoughMap, hasMetalMap)
 //	64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
 //	80..96  physicalParams vec4 (clearcoat, sheen, transmission, iridescence)
-//	96..112 physicalParams2 vec4 (anisotropy, 0, 0, 0)
+//	96..112 physicalParams2 vec4 (anisotropy, dielectricF0, 0, 0)
 func materialUniformBytes(fp materialFingerprint) []byte {
 	useVertex := float32(0)
 	if fp.useVertexColor {
@@ -349,8 +392,8 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 		flag(fp.emissiveURL), 0, 0, 0,
 		// physicalParams (clearcoat, sheen, transmission, iridescence)
 		dequantize(fp.clearcoat), dequantize(fp.sheen), dequantize(fp.transmission), dequantize(fp.iridescence),
-		// physicalParams2 (anisotropy, 0, 0, 0)
-		dequantizeSignedUnit(fp.anisotropy), 0, 0, 0,
+		// physicalParams2 (anisotropy, dielectricF0, 0, 0)
+		dequantizeSignedUnit(fp.anisotropy), fp.dielectricF0, 0, 0,
 	}
 	out := make([]byte, materialUniformSize)
 	copy(out[:len(values)*4], float32sToBytes(values))

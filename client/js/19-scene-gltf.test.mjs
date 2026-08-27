@@ -129,6 +129,44 @@ function extractTexturedMaterial(context) {
   return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
 }
 
+// --- KHR_materials_ior ------------------------------------------------------
+
+// The loader owns ior normalization itself: the standalone loader context
+// loads only 11-scene-math.ts + gltf.ts, so the spec contract (finite >= 1
+// valid, explicit 0 = compatibility mode, everything else defaults to 1.5)
+// must not lean on the scene material helpers.
+test("gltfExtractMaterial normalizes KHR_materials_ior to the spec contract", () => {
+  const { context } = createLoaderContext();
+
+  // Omitted extension: no ior field; downstream normalization defaults.
+  assert.equal("ior" in extractMaterial(context, { pbrMetallicRoughness: {} }), false);
+
+  // Finite ior >= 1 is valid without the legacy max=5 truncation.
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 1 } } }).ior, 1);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 1.33 } } }).ior, 1.33);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 1.5 } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 2.42 } } }).ior, 2.42);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 6 } } }).ior, 6);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 40 } } }).ior, 40);
+
+  // Explicit numeric zero is the glTF compatibility mode: preserved as 0,
+  // never defaulted and never clamped to 1.
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 0 } } }).ior, 0);
+
+  // 0<ior<1, negative, null, non-numeric and missing values default to 1.5.
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 0.5 } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: -1 } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: null } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: "2.5" } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: {} } }).ior, 1.5);
+
+  // Non-finite numbers cannot travel through JSON; exercise them directly in
+  // the loader realm.
+  const nonFinite = call(context,
+    "gltfExtractMaterial({asset:{version:'2.0'},materials:[{extensions:{'KHR_materials_ior':{ior: Infinity}}}]}, 0, null)");
+  assert.equal(plain(nonFinite).ior, 1.5);
+});
+
 // --- accessor lookup tables -------------------------------------------------
 
 // A hostile or corrupt componentType or type string must fall through to the
