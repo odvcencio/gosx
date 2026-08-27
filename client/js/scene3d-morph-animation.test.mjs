@@ -276,19 +276,12 @@ function assertTriangle(actual, expected, label, tolerance) {
 }
 // Instance-local INPUT matrices may use the production TRS helper - only the
 // expected coordinates in the instanced tests are hand-computed without it.
-function vmInstanceMatrix(env, spec) {
-  return vm.runInContext(
-    "sceneTRSToMat4(" + JSON.stringify(spec.t) + ", " + JSON.stringify(spec.r) + ", " + JSON.stringify(spec.s) + ")",
-    env.context,
-  );
-}
-
 // Builds the per-instance fold entry exactly as the mount layer does: shared
 // immutable meta, private live vertices copy, per-instance matrices.
-// GPU-instanced mounts also attach the authored instance-local TRS per
-// entry (instanceMatrix); the instanced tests below pass the fixture-authored
-// TRS directly so the loader's instance plumbing stays opaque.
-function makeEntry(object, modelMatrix, skinned, withLocal, instanceMatrix) {
+// GPU-instanced objects carry their authored instance-local TRS in the
+// loader-emitted meta.instanceMatrix, so entries need no extra argument; the
+// fixture parser is the source of the instance offsets.
+function makeEntry(object, modelMatrix, skinned, withLocal) {
   const meta = object._morphAnim;
   assert.ok(meta, "asset object carries private morph metadata");
   const source = object.vertices;
@@ -304,7 +297,6 @@ function makeEntry(object, modelMatrix, skinned, withLocal, instanceMatrix) {
     skinned: Boolean(skinned),
     nodeMatrix: object.transform,
     modelMatrix: modelMatrix || null,
-    instanceMatrix: instanceMatrix || null,
     modelLocalVertices: null,
     lastWeights: meta.defaults.slice(),
     lastFolded: null,
@@ -670,10 +662,10 @@ test("mixed morph + TRS animation: animated node TRS folds once, model transform
 // animated hierarchy node-world, then the authored instance-local TRS, around
 // the folded vertex, and apply the model transform exactly once. The current
 // implementation drops the animated node world for instanced entries, so each
-// expected coordinate below fails until that composition is fixed. The
-// instance-local TRS is fixture-authored and handed to the entry directly, so
-// the loader's internal instance plumbing stays opaque; every expected
-// coordinate is hand-computed without the production matrix helpers.
+// expected coordinate below fails until that composition is fixed. The two
+// instance objects come out of the loader independently parsed, each with its
+// own immutable meta.instanceMatrix; every expected coordinate is
+// hand-computed without the production matrix helpers.
 // ---------------------------------------------------------------------------
 test("gpu-instanced fold composes animated node world, authored instance-local, fold, and one model transform", async () => {
   const env = createContextWithAnimation();
@@ -685,9 +677,12 @@ test("gpu-instanced fold composes animated node world, authored instance-local, 
   const sampled = new Map([[0, { translation: [5, 0, 0], weights: FINAL_WEIGHTS }]]);
   const nodeTransforms = animationApi.buildNodeTransforms(asset.nodes, sampled, null, null);
   const modelMatrix = vm.runInContext("sceneTRSToMat4([10, 0, 0], [0, 0, 0, 1], [1, 1, 1])", env.context);
-  const entryA = makeEntry(asset.objects[0], modelMatrix, false, true, vmInstanceMatrix(env, INSTANCE_TRS[0]));
-  const entryB = makeEntry(asset.objects[0], modelMatrix, false, false, vmInstanceMatrix(env, INSTANCE_TRS[1]));
-  assert.equal(entryA.meta, entryB.meta, "instances share the immutable metadata");
+  const entryA = makeEntry(asset.objects[0], modelMatrix, false, true);
+  const entryB = makeEntry(asset.objects[1], modelMatrix, false, false);
+  assert.ok(entryA.meta.instanced, "instance 0 metadata carries the authored instance TRS");
+  assert.ok(entryB.meta.instanced, "instance 1 metadata carries the authored instance TRS");
+  assert.notEqual(entryA.meta, entryB.meta, "independently parsed instance objects have distinct metadata");
+  assert.notEqual(entryA.vertices.positions, entryB.vertices.positions, "instances own distinct live vertex streams");
   api.applyMorphPose([entryA, entryB], sampled, nodeTransforms);
   // Instance 0, T(2,0,0)*Rz90*S(2,1,1): p -> (2 - y, 2x, z). On FULL_FOLD:
   //   v0 (0.1125, 0.1625, 0.0375) -> (1.8375, 0.225, 0.0375)
@@ -720,7 +715,7 @@ test("gpu-instanced fold follows an animated ancestor while the weights stay fix
   const env = createContextWithAnimation();
   const { asset, api } = await parseMorphAsset(env.context, { parent: true, instances: [INSTANCE_TRS[0]] });
   const animationApi = vm.runInContext("window.__gosx_scene3d_animation_api", env.context);
-  const entry = makeEntry(asset.objects[0], null, false, true, vmInstanceMatrix(env, INSTANCE_TRS[0]));
+  const entry = makeEntry(asset.objects[0], null, false, true);
   // Fixed weights [1,0,0,0,0] in both poses; only the parent translation moves.
   const poseA = new Map([[0, { translation: [0, 0, 0] }], [1, { weights: [1, 0, 0, 0, 0] }]]);
   api.applyMorphPose([entry], poseA, animationApi.buildNodeTransforms(asset.nodes, poseA, null, null));
@@ -753,7 +748,11 @@ test("gpu-instanced bare pose keeps the authored instance offset; repeats reuse 
   const object = asset.objects[0];
   const meta = object._morphAnim;
   const animationApi = vm.runInContext("window.__gosx_scene3d_animation_api", env.context);
-  const entry = makeEntry(asset.objects[0], null, false, false, vmInstanceMatrix(env, INSTANCE_TRS[0]));
+  const entry = makeEntry(asset.objects[0], null, false, false);
+  // The loader bakes the authored instance TRS into the parsed source stream,
+  // so the pristine first-instance positions are the transformed base
+  // triangle, not BASE_TRIANGLES. Snapshot before any live fold.
+  const sourceSnapshot = Array.from(object.vertices.positions);
   const weighted = new Map([[0, { translation: [4, 0, 0], weights: FINAL_WEIGHTS }]]);
   api.applyMorphPose([entry], weighted, animationApi.buildNodeTransforms(asset.nodes, weighted, null, null));
   // Instance-local on FULL_FOLD -> (1.8375,0.225,0.0375) (1.8875,2.325,0.0375)
@@ -769,6 +768,12 @@ test("gpu-instanced bare pose keeps the authored instance offset; repeats reuse 
   // then +4 on x.
   const barePose = new Map([[0, { translation: [4, 0, 0] }]]);
   api.applyMorphPose([entry], new Map(), animationApi.buildNodeTransforms(asset.nodes, barePose, null, null));
+  assertTriangle(Array.from(entry.vertices.positions), [
+    [6, 0, 0],
+    [6, 2, 0],
+    [5, 0, 0],
+  ], "full-map default-weight restoration");
+  api.applyMorphPose([entry], barePose);
   const bare = entry.vertices.positions;
   assertTriangle(Array.from(bare), [
     [6, 0, 0],
@@ -777,7 +782,7 @@ test("gpu-instanced bare pose keeps the authored instance offset; repeats reuse 
   ], "bare pose keeps the authored instance offset + node world");
   assertClose(Array.from(entry.vertices.normals.slice(0, 3)), [0, 0, 1], "bare base normal survives the instance rotation");
   // Repeating the unchanged pose must reuse the per-instance stream as-is.
-  api.applyMorphPose([entry], new Map(), animationApi.buildNodeTransforms(asset.nodes, barePose, null, null));
+  api.applyMorphPose([entry], barePose);
   assert.equal(entry.vertices.positions, bare, "unchanged bare pose reuses the stream");
   assertTriangle(Array.from(entry.vertices.positions), [
     [6, 0, 0],
@@ -785,8 +790,25 @@ test("gpu-instanced bare pose keeps the authored instance offset; repeats reuse 
     [5, 0, 0],
   ], "no drift after the repeated pose");
   // The shared loader source stays pristine regardless of instance folds.
-  assertTriangle(object.vertices.positions, BASE_TRIANGLES, "source instance stream untouched");
+  assertTriangle(sourceSnapshot, [
+    [2, 0, 0],
+    [2, 2, 0],
+    [1, 0, 0],
+  ], "pristine authored first-instance source: T(2,0,0)*Rz90*S(2,1,1) on the base triangle");
+  assertTriangle(object.vertices.positions, [
+    [2, 0, 0],
+    [2, 2, 0],
+    [1, 0, 0],
+  ], "source instance stream untouched by live folds");
   assertClose(Array.from(meta.basePositions), BASE_POSITIONS, "metadata base untouched");
+  // An empty pose (no map) must restore the authored/default instance pose,
+  // applying the authored offset exactly once.
+  api.applyMorphPose([entry], new Map());
+  assertTriangle(Array.from(entry.vertices.positions), [
+    [2, 0, 0],
+    [2, 2, 0],
+    [1, 0, 0],
+  ], "empty pose restores the authored instance pose, offset applied once");
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
@@ -812,7 +834,7 @@ test("real mixer drives parent TRS and weights into the gpu-instanced fold", asy
   assertClose(Array.from(sampled.get(0).translation), [6, 0, 0], "parent translation sampled");
   const nodeTransforms = animationApi.buildNodeTransforms(asset.nodes, sampled, null, null);
   const modelMatrix = vm.runInContext("sceneTRSToMat4([10, 0, 0], [0, 0, 0, 1], [1, 1, 1])", env.context);
-  const entry = makeEntry(asset.objects[0], modelMatrix, false, false, vmInstanceMatrix(env, INSTANCE_TRS[0]));
+  const entry = makeEntry(asset.objects[0], modelMatrix, false, false);
   api.applyMorphPose([entry], sampled, nodeTransforms);
   // Same hand composition as the direct test: instance-local on FULL_FOLD ->
   // (1.8375,0.225,0.0375) (1.8875,2.325,0.0375) (0.9625,0.075,0.2375), then
@@ -820,7 +842,7 @@ test("real mixer drives parent TRS and weights into the gpu-instanced fold", asy
   assertTriangle(Array.from(entry.vertices.positions), [
     [17.8375, 0.225, 0.0375],
     [17.8875, 2.325, 0.0375],
-    [15.9625, 0.075, 0.2375],
+    [16.9625, 0.075, 0.2375],
   ], "mixer-driven ancestor and weights reach the instanced fold");
   assert.equal(env.consoleLogs.error.length, 0);
 });

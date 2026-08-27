@@ -1120,29 +1120,25 @@
       // entry.nodeMatrix already contains that offset, never applied twice.
       var nodeMatrix = entry.nodeMatrix || null;
       var instanceMatrix = meta.instanceMatrix || null;
+      var anim = null;
       if (nodeTransforms && typeof nodeTransforms.get === "function") {
-        var animatedNodeMatrix = nodeTransforms.get(meta.nodeIndex);
-        if (animatedNodeMatrix && (!meta.instanced || instanceMatrix)) {
-          nodeMatrix = instanceMatrix
-            ? sceneMat4Multiply(animatedNodeMatrix, instanceMatrix)
-            : animatedNodeMatrix;
-        }
+        anim = nodeTransforms.get(meta.nodeIndex);
       } else if (!nodeTransforms && animatedWeights && typeof animatedWeights.get === "function") {
         // Bare-VM fallback (no mount): rebuild node-local TRS from the pose
         // with the same per-component fallbacks buildNodeTransforms uses.
         var pose = animatedWeights.get(meta.nodeIndex);
         if (pose && (pose.translation != null || pose.position != null || pose.rotation != null || pose.scale != null)) {
-          var poseNodeMatrix = sceneTRSToMat4(
+          anim = sceneTRSToMat4(
             (pose.translation || pose.position || meta.nodeTranslation || [0, 0, 0]),
             (pose.rotation || meta.nodeRotation || [0, 0, 0, 1]),
             (pose.scale || meta.nodeScale || [1, 1, 1])
           );
-          if (meta.instanced && instanceMatrix) {
-            nodeMatrix = sceneMat4Multiply(poseNodeMatrix, instanceMatrix);
-          } else if (!meta.instanced) {
-            nodeMatrix = poseNodeMatrix;
-          }
         }
+      }
+      if (anim && (!meta.instanced || instanceMatrix)) {
+        nodeMatrix = instanceMatrix
+          ? sceneMat4Multiply(anim, instanceMatrix)
+          : anim;
       }
       var modelMatrix = entry.modelMatrix || null;
       var nodeChanged = gltfMatrixChanged(entry.lastNodeMatrix, nodeMatrix);
