@@ -35,11 +35,31 @@
       if (!node) return;
       var anim = animatedTransforms ? animatedTransforms.get(nodeIndex) : null;
 
-      var local = sceneTRSToMat4(
-        anim && (anim.translation || anim.position) ? (anim.translation || anim.position) : (node.translation || [0, 0, 0]),
-        anim && anim.rotation ? anim.rotation : (node.rotation || [0, 0, 0, 1]),
-        anim && anim.scale ? anim.scale : (node.scale || [1, 1, 1])
-      );
+      // A pose entry only overrides TRS when it animates translation, rotation,
+      // or scale. A weights-only morph pose is not a TRS override, so an
+      // authored glTF node matrix must survive it.
+      var animOverridesTRS = !!(anim && (anim.translation || anim.position || anim.rotation || anim.scale));
+
+      var local;
+      if (animOverridesTRS) {
+        local = sceneTRSToMat4(
+          anim && (anim.translation || anim.position) ? (anim.translation || anim.position) : (node.translation || [0, 0, 0]),
+          anim && anim.rotation ? anim.rotation : (node.rotation || [0, 0, 0, 1]),
+          anim && anim.scale ? anim.scale : (node.scale || [1, 1, 1])
+        );
+      } else if (node.matrix && node.matrix.length === 16) {
+        // Authored 4x4 node matrix (column-major, translation in elements
+        // 12-14). Copy it: the traversal map is reused across frames and its
+        // entries are handed to callers, so they must never alias or mutate
+        // the source asset buffers.
+        local = new Float32Array(node.matrix);
+      } else {
+        local = sceneTRSToMat4(
+          node.translation || [0, 0, 0],
+          node.rotation || [0, 0, 0, 1],
+          node.scale || [1, 1, 1]
+        );
+      }
 
       var world = parentWorld ? sceneMat4Multiply(parentWorld, local) : local;
       _nodeTransforms.set(nodeIndex, world);

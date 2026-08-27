@@ -9,6 +9,7 @@ const assert = require("node:assert/strict");
 const {
   bootstrapSource,
   FakeElement,
+  FakeWebGLContext,
   createContext,
   installManualRAF,
   flushSceneInitialFrameBoundary,
@@ -84,19 +85,21 @@ function buildMorphGLBBytes() {
     bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 0 }],
     accessors,
   };
-  const jsonText = JSON.stringify(doc);
-  const jsonRaw = Buffer.from(jsonText, "utf8");
-  const jsonPadded = (jsonRaw.length + 3) & ~3;
-  const json = Buffer.alloc(jsonPadded, 0x20);
-  jsonRaw.copy(json, 0);
-
   const floatBytes = new Uint8Array(new Float32Array(floats).buffer);
   const indexBytes = new Uint8Array(new Uint16Array([0, 1, 2]).buffer);
   const binPadded = (floatBytes.length + indexBytes.length + 3) & ~3;
   const bin = new Uint8Array(binPadded);
   bin.set(floatBytes, 0);
   bin.set(indexBytes, floatBytes.length);
+
+  // Serialize the JSON chunk only after bufferViews[0].byteLength is final:
+  // the JSON must describe the real padded BIN size, never the placeholder 0.
   doc.bufferViews[0].byteLength = binPadded;
+
+  const jsonRaw = Buffer.from(JSON.stringify(doc), "utf8");
+  const jsonPadded = (jsonRaw.length + 3) & ~3;
+  const json = Buffer.alloc(jsonPadded, 0x20);
+  jsonRaw.copy(json, 0);
 
   const total = 12 + 8 + jsonPadded + 8 + binPadded;
   const glb = new ArrayBuffer(total);
@@ -138,40 +141,67 @@ function trianglesClose(actual, expected, tolerance) {
   return true;
 }
 
+// bufferUploads maps bufferID -> the LATEST number array uploaded for that
+// buffer (no history), so tests snapshot the whole Map at phase boundaries.
+function snapshotUploads(gl) {
+  const snapshot = new Map();
+  for (const [bufferID, data] of gl.bufferUploads) {
+    if (data && typeof data.length === "number") snapshot.set(bufferID, Array.from(data));
+  }
+  return snapshot;
+}
+
+// 9-float buffers (3 x VEC3 positions) whose latest upload matches the
+// expected triangle, so a test can track one buffer id across phases.
+function triangleBufferIds(uploads, expected) {
+  const ids = [];
+  for (const [bufferID, data] of uploads) {
+    if (data.length === 9 && trianglesClose(data, expected, 1e-4)) ids.push(bufferID);
+  }
+  return ids;
+}
+
 function mountMorphEngine(mountId, engineId) {
   const mount = new FakeElement("div", null);
   mount.id = mountId;
-  return {
-    mount,
-    env: createContext({
-      elements: [mount],
-      fetchRoutes: { "/models/morph.glb": { bytes: buildMorphGLBBytes() } },
-      manifest: {
-        engines: [{
-          id: engineId,
-          component: "GoSXScene3D",
-          kind: "surface",
-          mountId,
-          props: {
-            width: 320,
-            height: 180,
-            autoRotate: false,
-            models: [{ id: "morph", src: "/models/morph.glb", animation: "morph", loop: false }],
-          },
-        }],
-      },
-    }),
-  };
+  // createContext does not enable a WebGL backend by default: mirror the
+  // suite's working WebGL2 pattern (enableWebGL2 + disableCanvas2D here and
+  // the WebGL2RenderingContext global installed on the context below).
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: { "/models/morph.glb": { bytes: buildMorphGLBBytes() } },
+    manifest: {
+      engines: [{
+        id: engineId,
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId,
+        props: {
+          width: 320,
+          height: 180,
+          autoRotate: false,
+          models: [{ id: "morph", src: "/models/morph.glb", animation: "morph", loop: false }],
+        },
+      }],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  return { mount, env };
 }
 
 // The shared rotation-only stub cannot drive morphs (it emits only a
-// quaternion), so this test-local stub emits a packed WEIGHTS record. Layout
-// matches the shared stub: [targetID, propID, arity, ...payload] float64
-// slots; propID mirrors the motion decoder's property enum (1 = rotation is
-// pinned by the shared stub; weights = 3).
-const WASM_PROP_WEIGHTS = 3;
-
-function installWasmMorphMixerStub(context, nodeIndex, weights) {
+// quaternion), so this test-local stub emits the packed pose packet the real
+// WASM mixer writes: ONE SCALAR RECORD PER WEIGHT, laid out as
+//   [targetID, 1000 + weightIndex, ArityScalar(0), value]
+// float64 slots — exactly what sceneAnimWasmDecodePose walks (propID
+// 1000+i addresses weights[i]; arity 0 means one value float follows; no TRS
+// propID is ever used here). The stub writes only complete records that fit
+// the packet capacity and returns the REQUIRED float64 slot count for every
+// record — the production caller grows the buffer and re-emits at dt=0 when
+// that count exceeds buffer.length.
+function installWasmMorphMixerStub(context, nodeIndex, weightsForHandle) {
   const calls = { create: 0, addClip: [], play: [], stop: [], update: 0, isPlaying: 0, destroy: [] };
   let nextHandle = 1;
   context.__gosx_motion_wasm = true;
@@ -192,12 +222,22 @@ function installWasmMorphMixerStub(context, nodeIndex, weights) {
   };
   context.__gosx_motion_mixer_update = (handle, dt, reduced, outU8) => {
     calls.update += 1;
+    const weights = weightsForHandle(handle);
+    const count = Array.isArray(weights) ? weights.length : 0;
     const f = new Float64Array(outU8.buffer, outU8.byteOffset, Math.floor(outU8.byteLength / 8));
-    f[0] = nodeIndex;
-    f[1] = WASM_PROP_WEIGHTS;
-    f[2] = weights.length;
-    for (let i = 0; i < weights.length; i += 1) f[3 + i] = weights[i];
-    return 3 + weights.length;
+    let used = 0;
+    for (let i = 0; i < count; i += 1) {
+      if (used + 4 > f.length) break; // never emit a partial record
+      f[used] = nodeIndex;            // targetID
+      f[used + 1] = 1000 + i;         // propID = weight base + weightIndex
+      f[used + 2] = 0;                // arity = ArityScalar
+      f[used + 3] = weights[i];       // scalar value
+      used += 4;
+    }
+    // Faithfully signal capacity: return the float64 slots REQUIRED for
+    // every record, not the number actually written. The production caller
+    // grows the buffer and re-emits at dt=0 when this exceeds buffer.length.
+    return count * 4;
   };
   context.__gosx_motion_mixer_destroy = (handle) => {
     calls.destroy.push(handle);
@@ -242,7 +282,23 @@ test("P5 morph animation: hydration + JS mixer frames fold sampled weights into 
   await flushAsyncWork();
   await flushSceneInitialFrameBoundary(raf);
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl", "WebGL2 canvas reports the webgl renderer mode");
   assert.equal(jsMixers, 1, "morph-only model initializes the existing mixer");
+
+  // Real renderer evidence: the mounted canvas exposes its WebGL2 context.
+  const gl = mount.children[0] && typeof mount.children[0].getContext === "function"
+    ? mount.children[0].getContext("webgl2")
+    : null;
+  assert.ok(gl, "mounted canvas exposes the FakeWebGLContext via getContext('webgl2')");
+
+  // bufferUploads only keeps each buffer's LATEST upload, so snapshot the
+  // base pose before any mixer frame deforms it.
+  const baselineUploads = snapshotUploads(gl);
+  const baseBufferIds = triangleBufferIds(baselineUploads, BASE_TRIANGLES);
+  assert.ok(
+    baseBufferIds.length > 0,
+    "position buffer uploaded with the base triangle before the first mixer frame",
+  );
 
   // Manual RAF flush takes ABSOLUTE time — advance the clock every frame.
   // ~1.47s total: the clip is flat at its final weights from 0.5s to 2s.
@@ -269,31 +325,20 @@ test("P5 morph animation: hydration + JS mixer frames fold sampled weights into 
   assertTriangle(first.positions, BASE_TRIANGLES, "first tick near-default", 0.05);
   assertTriangle(last.positions, FULL_FOLD, "final fold");
 
-  // Actual renderer upload evidence (FakeWebGLContext.bufferUploads / ops),
-  // in addition to the live-vertices assertions above.
-  const gl = mount.children[0] && typeof mount.children[0].getContext === "function"
-    ? mount.children[0].getContext("webgl")
-    : null;
-  assert.ok(gl, "mounted canvas exposes the FakeWebGLContext");
-  const uploadedTriangles = [];
-  for (const upload of gl.bufferUploads.values()) {
-    const data = upload && upload.data ? upload.data : upload;
-    if (data && typeof data.length === "number" && data.length === 9) {
-      uploadedTriangles.push(Array.from(data));
-    }
-  }
+  // Renderer evidence for the changed pose: the SAME buffer id that carried
+  // the base triangle at baseline now carries the morphed triangle as its
+  // latest upload (bufferUploads keeps one entry per buffer, never a
+  // history), so old and new poses can never coexist in the final Map.
+  const changedUploads = snapshotUploads(gl);
+  const morphedBufferIds = baseBufferIds.filter((bufferID) => {
+    const latest = changedUploads.get(bufferID);
+    return !!latest && trianglesClose(latest, FULL_FOLD, 1e-4);
+  });
   assert.ok(
-    uploadedTriangles.some((verts) => trianglesClose(verts, BASE_TRIANGLES, 1e-4)),
-    "renderer received the base triangle upload",
+    morphedBufferIds.length > 0,
+    "the same position buffer id now uploads the morphed triangle",
   );
-  assert.ok(
-    uploadedTriangles.some((verts) => trianglesClose(verts, FULL_FOLD, 1e-4)),
-    "renderer received the morphed triangle upload after pose ticks",
-  );
-  const opCount = !gl.ops ? 0
-    : typeof gl.ops.length === "number" ? gl.ops.length
-    : typeof gl.ops.size === "number" ? gl.ops.size : 0;
-  assert.ok(opCount > 0, "FakeWebGLContext op log records renderer calls");
+  assert.ok(Array.isArray(gl.ops) && gl.ops.length > 0, "FakeWebGLContext op log records renderer calls");
 
   // Instance output differs from the immutable parsed source.
   const pristine = await env.context.__gosx_scene3d_gltf_api.sceneLoadGLTFModel("/models/morph.glb");
@@ -305,7 +350,7 @@ test("P5 morph animation: hydration + JS mixer frames fold sampled weights into 
 
 test("P5 morph animation: WASM mixer weight records drive real deformation through wasmDecodePose", async () => {
   const { mount, env } = mountMorphEngine("scene-model-morph-wasm-root", "gosx-engine-model-morph-wasm");
-  const calls = installWasmMorphMixerStub(env.context, 0, FINAL_WEIGHTS);
+  const calls = installWasmMorphMixerStub(env.context, 0, () => FINAL_WEIGHTS);
   const raf = installManualRAF(env.context);
   runScript(bootstrapSource, env.context, "bootstrap.js");
 
@@ -331,9 +376,10 @@ test("P5 morph animation: WASM mixer weight records drive real deformation throu
   assert.ok(weightChannel, "weight channel transmitted to the WASM mixer");
   assert.deepEqual(weightChannel.times, [0, 0.5, 2]);
   assert.equal(weightChannel.values.length, 15, "3 keyframes x 5 weights");
-  const weightCount = clip.weightCount != null ? clip.weightCount : weightChannel.weightCount;
-  assert.equal(weightCount, 5, "weightCount transmitted");
+  assert.equal(weightChannel.weightCount, 5, "weightCount lives on the weight channel");
+  assert.equal(weightChannel.values.length, weightChannel.weightCount * weightChannel.times.length, "values pack whole keyframes");
 
+  // Manual RAF flush takes ABSOLUTE time — the clock only ever moves forward.
   const updatesBefore = calls.update;
   let clock = 48;
   for (let frame = 0; frame < 10; frame += 1) {
@@ -357,11 +403,173 @@ test("P5 morph animation: WASM mixer weight records drive real deformation throu
 
 test("P5 morph animation: morph model disposal tears down cleanly", async () => {
   const { mount, env } = mountMorphEngine("scene-model-morph-dispose-root", "gosx-engine-model-morph-dispose");
-  installManualRAF(env.context);
+  const raf = installManualRAF(env.context);
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   env.context.__gosx_dispose_engine("gosx-engine-model-morph-dispose");
   await flushAsyncWork();
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("P5 morph animation: WASM stub reports required float count for a too-small buffer (no overrun, full re-emission)", async () => {
+  const weights = [0.25, 0.5, 0.75];
+  const stubContext = {};
+  installWasmMorphMixerStub(stubContext, 7, (handle) => (handle === 1 ? weights : []));
+  const handle = stubContext.__gosx_motion_mixer_create();
+
+  // Packet with capacity for exactly one complete 4-slot record, cut from a
+  // larger store so slots beyond the packet act as overrun canaries.
+  const backing = new Float64Array(8);
+  const packet = new Uint8Array(backing.buffer, 0, 4 * 8);
+  const required = stubContext.__gosx_motion_mixer_update(handle, 1 / 60, 0, packet);
+  assert.equal(required, 12); // 3 records x 4 slots — truncation is signalled, not hidden
+  assert.ok(required > packet.byteLength / 8);
+  assert.equal(backing[0], 7); // targetID
+  assert.equal(backing[1], 1000); // propID = 1000 + weightIndex 0
+  assert.equal(backing[2], 0); // arity = ArityScalar
+  assert.equal(backing[3], weights[0]);
+  for (let i = 4; i < backing.length; i += 1) {
+    assert.equal(backing[i], 0, `slot ${i} beyond the packet must not be overrun`);
+  }
+
+  // Production recovery: grow and re-emit at dt=0 — every record lands.
+  const grown = new Float64Array(required);
+  const requiredAgain = stubContext.__gosx_motion_mixer_update(handle, 0, 0, new Uint8Array(grown.buffer));
+  assert.equal(requiredAgain, required);
+  assert.ok(requiredAgain <= grown.length);
+  for (let i = 0; i < weights.length; i += 1) {
+    const base = i * 4;
+    assert.equal(grown[base], 7);
+    assert.equal(grown[base + 1], 1000 + i);
+    assert.equal(grown[base + 2], 0);
+    assert.equal(grown[base + 3], weights[i]);
+  }
+  stubContext.__gosx_motion_mixer_destroy(handle);
+});
+
+test("P5 morph animation: two mounts of one cached GLB keep independent live vertices (no cross-instance deformation)", async () => {
+  const mountA = new FakeElement("div", null);
+  mountA.id = "scene-model-morph-pair-a";
+  const mountB = new FakeElement("div", null);
+  mountB.id = "scene-model-morph-pair-b";
+  const env = createContext({
+    elements: [mountA, mountB],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    fetchRoutes: { "/models/morph.glb": { bytes: buildMorphGLBBytes() } },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-morph-pair-a",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-morph-pair-a",
+          props: {
+            width: 320,
+            height: 180,
+            autoRotate: false,
+            models: [{ id: "morph-a", src: "/models/morph.glb", animation: "morph", loop: false }],
+          },
+        },
+        {
+          id: "gosx-engine-morph-pair-b",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-morph-pair-b",
+          props: {
+            width: 320,
+            height: 180,
+            autoRotate: false,
+            models: [{ id: "morph-b", src: "/models/morph.glb", animation: "morph", loop: false }],
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+
+  // Different live playback per instance: the first-created mixer runs the
+  // clip to its final weights while the second is held at all-zero weights.
+  // Both packets still flow through the real WASM decoder and each mount's
+  // real pose application, so the shared cached asset ends at two DIFFERENT
+  // live poses — cross-instance deformation would show up as both mounts
+  // collapsing onto one pose.
+  const calls = installWasmMorphMixerStub(env.context, 0, (handle) => (handle === 1 ? FINAL_WEIGHTS : [0, 0, 0, 0, 0]));
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+
+  const gltfApi = env.context.__gosx_scene3d_gltf_api;
+  const originalApply = gltfApi.applyMorphPose;
+  const ticks = [];
+  gltfApi.applyMorphPose = function spiedApplyMorphPose(entries, weights, nodeTransforms) {
+    originalApply.call(this, entries, weights, nodeTransforms);
+    if (entries.length) {
+      ticks.push({
+        owner: entries[0].vertices,
+        positionsRef: entries[0].vertices.positions,
+        positions: Array.from(entries[0].vertices.positions),
+      });
+    }
+  };
+
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  assert.equal(mountA.getAttribute("data-gosx-scene3d-mounted"), "true", "first mount hydrated through the real mount path");
+  assert.equal(mountB.getAttribute("data-gosx-scene3d-mounted"), "true", "second mount hydrated through the real mount path");
+  assert.equal(mountA.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mountB.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(calls.create, 2, "one WASM mixer per mounted instance");
+
+  // Monotonic absolute RAF timestamps, as the manual harness requires.
+  let clock = 48;
+  for (let frame = 0; frame < 20; frame += 1) {
+    raf.flush(clock);
+    await flushAsyncWork();
+    clock += 16;
+  }
+
+  assert.ok(ticks.length >= 2, "both instances ticked the morph apply seam");
+
+  // Independent output arrays/owners: exactly two distinct live vertices
+  // objects — one folded to the final weights, one held at the base pose.
+  const perOwner = new Map();
+  for (const tick of ticks) {
+    perOwner.set(tick.owner, { positionsRef: tick.positionsRef, positions: tick.positions });
+  }
+  assert.equal(perOwner.size, 2, "each instance owns its own live vertices object");
+  const states = Array.from(perOwner.values());
+  assert.notEqual(states[0].positionsRef, states[1].positionsRef, "instances never alias one positions array");
+  const morphedStates = states.filter((state) => trianglesClose(state.positions, FULL_FOLD));
+  const heldStates = states.filter((state) => trianglesClose(state.positions, BASE_TRIANGLES));
+  assert.equal(morphedStates.length, 1, "exactly one instance folded to the final weights");
+  assert.equal(heldStates.length, 1, "the other instance stayed exactly at the base pose");
+
+  // Renderer evidence per mount: the morphed triangle was uploaded to exactly
+  // one instance's WebGL context; the held instance's context still shows the
+  // base triangle and never the morphed one.
+  const glA = mountA.children[0] && typeof mountA.children[0].getContext === "function"
+    ? mountA.children[0].getContext("webgl2")
+    : null;
+  const glB = mountB.children[0] && typeof mountB.children[0].getContext === "function"
+    ? mountB.children[0].getContext("webgl2")
+    : null;
+  assert.ok(glA && glB, "both mounts expose their own FakeWebGLContext");
+  const fullInA = triangleBufferIds(snapshotUploads(glA), FULL_FOLD).length > 0;
+  const fullInB = triangleBufferIds(snapshotUploads(glB), FULL_FOLD).length > 0;
+  assert.notEqual(fullInA, fullInB, "the morphed triangle was uploaded to exactly one instance's renderer");
+  const baseInA = triangleBufferIds(snapshotUploads(glA), BASE_TRIANGLES).length > 0;
+  const baseInB = triangleBufferIds(snapshotUploads(glB), BASE_TRIANGLES).length > 0;
+  assert.ok(baseInA || baseInB, "the held instance's renderer still shows the base triangle");
+
+  // The shared cached asset stays immutable: deformation never leaks back
+  // into the parsed source either instance was built from.
+  const pristine = await env.context.__gosx_scene3d_gltf_api.sceneLoadGLTFModel("/models/morph.glb");
+  assertTriangle(pristine.objects[0].vertices.positions, BASE_TRIANGLES, "cached asset stays pristine");
+  for (const state of states) {
+    assert.notEqual(state.positionsRef, pristine.objects[0].vertices.positions, "instances do not alias the cached asset");
+  }
+
   assert.equal(env.consoleLogs.error.length, 0);
 });

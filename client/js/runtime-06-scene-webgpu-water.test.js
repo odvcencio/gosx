@@ -1397,8 +1397,18 @@ test("Scene3D static GLB models can receive live motion patches", () => {
   assert.match(source, /_modelLocalVertices/);
   assert.match(source, /function sceneApplyStaticModelObjectTransform\(state, record\)/);
   assert.match(source, /object\.vertices\.positions = sceneModelTransformMeshFloats\(local\.positions/);
-  assert.match(source, /if \(sceneModelHasSkins\(skinInstances\)\) \{/);
-  assert.match(source, /sceneRegisterStaticModelLiveRecord\(state, instanceModel, objectIDs\)/);
+  assert.match(
+    source,
+    /if \(sceneModelHasSkins\(skinInstances\) \|\| sceneModelHasWeightAnimations\(asset\)\) \{/
+  );
+  assert.match(
+    source,
+    /scenePrepareModelSkinPlayback\(stageState, asset, instanceModel, skinInstances, objectIDs, staged\.objects\)/
+  );
+  assert.match(
+    source,
+    /else \{\s*sceneRegisterStaticModelLiveRecord\(stageState, instanceModel, objectIDs\);/
+  );
 });
 
 test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
