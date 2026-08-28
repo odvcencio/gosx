@@ -6267,15 +6267,71 @@
     return sceneAllocateTextureUnits(options);
   }
 
+  // Negotiate effective per-light cascade counts against the real shared
+  // texture-unit budget BEFORE any slot is created, matrix fit, or depth
+  // pass. Fair baseline: when the budget covers at least one cascade per
+  // eligible light, each light gets one, then remaining units fill the first
+  // (priority) light up to its request. A reduced count is refit across the
+  // FULL camera range by computeShadowSlotCascadeMatrices, so far coverage
+  // is never truncated. Authored lights are never modified.
+  function scenePBRNegotiateShadowCascades(requestedPerLight, environment, maxUnits) {
+    var requested = Array.isArray(requestedPerLight) ? requestedPerLight : [];
+    var counts = [];
+    var wants = [];
+    var totalRequested = 0;
+    for (var i = 0; i < requested.length; i++) {
+      var want = Math.max(1, Math.min(4, requested[i] | 0));
+      counts.push(want);
+      wants.push(want);
+      totalRequested += want;
+    }
+    if (totalRequested === 0) {
+      return counts;
+    }
+    var placeholderSlots = [];
+    var placeholderIndices = [];
+    for (var j = 0; j < counts.length; j++) {
+      placeholderSlots.push({ numCascades: counts[j], cascades: [] });
+      placeholderIndices.push(j);
+    }
+    var layout = scenePBRTextureLayoutForFrame(
+      placeholderSlots, placeholderIndices, environment, maxUnits);
+    var budget = layout && Array.isArray(layout.shadows) ? layout.shadows.length : 0;
+    if (budget >= counts.length) {
+      // Reserve one cascade per eligible light, then fill first priority.
+      for (var k = 0; k < counts.length; k++) {
+        counts[k] = 1;
+      }
+      var remaining = budget - counts.length;
+      for (var p = 0; p < counts.length && remaining > 0; p++) {
+        // Fill from the pre-clamped per-light requests.
+        var extra = Math.min(Math.min(wants[p], 4) - counts[p], remaining);
+        if (extra > 0) {
+          counts[p] += extra;
+          remaining -= extra;
+        }
+      }
+    } else {
+      // Budget cannot cover one cascade per light: grant one cascade to
+      // earlier (priority) lights while units remain; later lights get 0
+      // (upload disables slots with 0 effective cascades rather than
+      // advertising a count it cannot bind).
+      for (var z = 0; z < counts.length; z++) {
+        counts[z] = z < budget ? 1 : 0;
+      }
+    }
+    return counts;
+  }
+
   // Upload cascaded-shadow uniforms for both slots to the given program's
   // uniforms. `shadowSlots[s]` is either null (no shadow light in slot s)
   // or an object produced by createSceneShadowSlot with up to 4 cascades.
   function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, lights, environment) {
     var lightArray = Array.isArray(lights) ? lights : [];
-    // Allocate only the active cascade count, while reserving IBL after the
-    // cascades when an envMap is present. Slot offsets are packed, not
-    // hard-coded to 4-wide blocks, so two single-cascade lights use units 5/6
-    // and one 4-cascade CSM light uses 5/6/7/8.
+    // Allocate only the negotiated cascade counts, while reserving IBL after
+    // the cascades when an envMap is present. Slot offsets are packed, not
+    // hard-coded to 4-wide blocks: units start at 8, so two single-cascade
+    // lights use units 8/9 and one 4-cascade CSM light uses 8/9/10/11.
     var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment,
       scenePBRMaxTextureUnits(gl));
     var shadowUnits = layout.shadows;
@@ -6301,30 +6357,48 @@
     var indexKey = slotIndex === 0 ? "shadowLightIndex0" : "shadowLightIndex1";
     var base = Math.max(0, unitBase | 0);
 
-    if (!slot || lightIndex < 0) {
+    var numCascades = slot ? Math.max(0, Math.min(4, slot.numCascades | 0)) : 0;
+    var primaryUnit = numCascades > 0 && shadowUnits.length > base ? shadowUnits[base] : null;
+
+    // Absent light, no budgeted unit, or a stale slot whose cascade count
+    // exceeds its remaining units: disable the WHOLE slot
+    // (has=0, index -1, cascade count 0) instead of truncating old fitted
+    // splits — truncation would lose far coverage while still advertising
+    // shadows. Never bind any texture here; a disabled slot must not steal
+    // another slot's unit.
+    if (!slot || lightIndex < 0 || numCascades <= 0 || primaryUnit == null ||
+        base + numCascades > shadowUnits.length) {
       gl.uniform1i(uniforms[hasKey], 0);
       gl.uniform1f(uniforms[softKey], 0);
       gl.uniform1i(uniforms[indexKey], -1);
-      gl.uniform1i(uniforms[cascadesKey], 1);
+      gl.uniform1i(uniforms[cascadesKey], 0);
+      // Reset ALL unused 2D sampler uniforms: an unused 2D sampler points at
+      // material unit 0, which is always safe, and setting a sampler uniform
+      // binds no texture.
+      for (var di = 0; di < 4; di++) {
+        gl.uniform1i(uniforms[samplerKeys[di]], 0);
+      }
       return;
     }
 
     var light = lightArray[lightIndex] || {};
-    var numCascades = Math.max(1, Math.min(4, slot.numCascades | 0));
 
-    // Bind each cascade's depth texture. When the allocator doesn't have
-    // enough units for all cascades, fall back to reusing cascade 0's unit
-    // — the shader's c=0 branch will dominate because the split comparison
-    // against Infinity always returns cascade 0.
-    for (var ci = 0; ci < 4; ci++) {
-      var effectiveCascade = ci < numCascades ? slot.cascades[ci] : slot.cascades[0];
-      var unit = shadowUnits[base + ci];
-      if (unit == null) unit = shadowUnits[base] || shadowUnits[0] || null;
-      if (unit == null) continue;
-      scenePBRBindTexture(gl, unit, effectiveCascade.depthTexture);
+    // Bind each ACTIVE cascade exactly once to its unique negotiated unit —
+    // negotiation guarantees every rendered cascade owns a unit, so there is
+    // no fallback re-bind of one texture over another's unit.
+    for (var ci = 0; ci < numCascades; ci++) {
+      var unit = shadowUnits.length > base + ci ? shadowUnits[base + ci] : null;
+      if (unit == null) break;
+      scenePBRBindTexture(gl, unit, slot.cascades[ci].depthTexture);
       gl.uniform1i(uniforms[samplerKeys[ci]], unit);
     }
 
+    // Alias unused samplers to cascade 0's unit WITHOUT re-binding (that
+    // texture is already bound there); the shader never selects them because
+    // u_shadowCascades matches the effective count.
+    for (var ai = numCascades; ai < 4; ai++) {
+      gl.uniform1i(uniforms[samplerKeys[ai]], primaryUnit);
+    }
     // Pack matrices and splits. Matrix array = 4*16 = 64 floats; cascades
     // beyond numCascades are filled with cascade 0's matrix as a safe
     // fallback (shader never selects them when numCascades is set correctly,
@@ -7414,53 +7488,90 @@
       // cascade depth maps. Reset per-frame shadow state (closure-scoped for
       // drawPBRObjectList access).
       shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
-      var activeShadowCount = 0;
 
       if (shadowProgram) {
         var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
         var sceneBounds = null;
         var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
-        for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
+        // Collect eligible lights (max 2) first, then negotiate effective
+        // cascade counts against the shared texture budget BEFORE creating
+        // slots, fitting matrices, or rendering depth passes. Authored lights
+        // are never modified; light.shadowCascades is only a request.
+        var shadowCandidates = [];
+        for (var li = 0; li < lightArray.length && shadowCandidates.length < 2; li++) {
           var light = lightArray[li];
           if (!light || !light.castShadow) continue;
           var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
           if (kind !== "directional") continue;
+          shadowCandidates.push({
+            lightIndex: li,
+            light: light,
+            requestedCascades: Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1)),
+            shadowSize: resolveShadowSize(
+              Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
+              shadowMaxPixels),
+          });
+        }
 
-          // Compute scene bounds lazily (only if we have shadow casters).
+        var negotiatedCounts = shadowCandidates.length > 0
+          ? scenePBRNegotiateShadowCascades(
+              shadowCandidates.map(function (c) { return c.requestedCascades; }),
+              bundle.environment,
+              scenePBRMaxTextureUnits(gl))
+          : [];
+
+        for (var candIdx = 0; candIdx < shadowCandidates.length; candIdx++) {
+          var candidate = shadowCandidates[candIdx];
+          var effectiveCascades = negotiatedCounts[candIdx] | 0;
+
+          // Reallocate per-cascade resources whenever the budget or the
+          // authored request changes the effective count. A zero effective
+          // count disposes the slot and disables it — no stale resources,
+          // no depth passes, no advertised-but-unbindable cascade count.
+          if (shadowSlots[candIdx] &&
+              (effectiveCascades <= 0 ||
+               shadowSlots[candIdx].size !== candidate.shadowSize ||
+               shadowSlots[candIdx].numCascades !== effectiveCascades)) {
+            disposeShadowSlot(gl, shadowSlots[candIdx]);
+            shadowSlots[candIdx] = null;
+          }
+          if (effectiveCascades <= 0) {
+            shadowLightIndices[candIdx] = -1;
+            continue;
+          }
+          if (!shadowSlots[candIdx]) {
+            shadowSlots[candIdx] = createSceneShadowSlot(gl, candidate.shadowSize, effectiveCascades);
+          }
+
+          shadowLightIndices[candIdx] = candidate.lightIndex;
+
+          // Fit per-cascade matrices for the EFFECTIVE count: the full
+          // camera range (near..far) is re-split into N ranges, and a single
+          // remaining cascade uses the legacy full-scene fit, so reduced
+          // counts never truncate far coverage.
           if (!sceneBounds) {
             sceneBounds = sceneShadowComputeBounds(bundle);
           }
-
-          var slot = activeShadowCount;
-          var numCascades = Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1));
-          var shadowSize = sceneNumber(light.shadowSize, 1024);
-          shadowSize = Math.max(256, Math.min(4096, shadowSize));
-          shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
-
-          // Create or resize shadow resources for this slot (per cascade).
-          if (!shadowSlots[slot] ||
-              shadowSlots[slot].size !== shadowSize ||
-              shadowSlots[slot].numCascades !== numCascades) {
-            disposeShadowSlot(gl, shadowSlots[slot]);
-            shadowSlots[slot] = createSceneShadowSlot(gl, shadowSize, numCascades);
-          }
-
-          shadowLightIndices[slot] = li;
-
-          // Fit a per-cascade light-space matrix. When numCascades > 1 the
-          // camera's view frustum is split into N sub-frusta (PSSM); each
-          // cascade's corners are fit to a tight ortho box in light-space.
-          // numCascades == 1 matches the legacy full-scene ortho fit.
-          computeShadowSlotCascadeMatrices(light, shadowSlots[slot], sceneBounds,
+          computeShadowSlotCascadeMatrices(candidate.light, shadowSlots[candIdx], sceneBounds,
             viewMatrix, cam.fov, aspect, cam.near, cam.far);
 
-          // Render one depth pass per cascade.
-          for (var ci = 0; ci < shadowSlots[slot].numCascades; ci++) {
-            var cascade = shadowSlots[slot].cascades[ci];
+          // One depth pass per EFFECTIVE cascade; unbudgeted cascades are
+          // never drawn.
+          for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
+            var cascade = shadowSlots[candIdx].cascades[ci2];
             renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster);
           }
-          activeShadowCount++;
+        }
+
+        // Dispose slots whose light disappeared this frame so GPU resources
+        // follow the effective allocation.
+        for (var staleSlot = shadowCandidates.length; staleSlot < shadowSlots.length; staleSlot++) {
+          if (shadowSlots[staleSlot]) {
+            disposeShadowSlot(gl, shadowSlots[staleSlot]);
+            shadowSlots[staleSlot] = null;
+          }
+          shadowLightIndices[staleSlot] = -1;
         }
       }
 

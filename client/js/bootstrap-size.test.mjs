@@ -561,7 +561,11 @@ const budgets = [
   // exact measured values.
   // Specular-color patch measured 1572890/426803/342577; raw and gzip raised
   // with narrow rounding headroom; brotli cap unchanged.
-  { file: "bootstrap.js", raw: 1_573_000, gzip: 427_000, brotli: 342_751 },
+  // Initial shadow allocation fix measured
+  // 1573965/427214/342907; all three caps raised with narrow rounding headroom.
+  // Final rebuild removed dead activeShadowCount; measured 343015 brotli,
+  // so the brotli cap was raised with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_574_000, gzip: 427_250, brotli: 343_100 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -895,7 +899,11 @@ const budgets = [
   // begin7, 19 fragment samplers). Measured: 217769/59923/50835.
   // Specular-color patch measured 219449/60299/51206; all three caps raised
   // with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 220_000, gzip: 60_500, brotli: 51_500 },
+  // Initial shadow allocation fix measured 220525/60745/51463; raw and gzip
+  // raised with narrow rounding headroom; brotli cap unchanged.
+  // Final rebuild removed dead activeShadowCount; measured 51554 brotli,
+  // so the brotli cap was raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 220_750, gzip: 60_800, brotli: 51_600 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1652,8 +1660,10 @@ const routeBudgets = [
     // 1066019/294879/249778.
     // Specular-color patch measured 1067699/295255/250149; all three caps
     // raised with narrow rounding headroom.
-    raw: 1_068_000,
-    gzip: 295_500,
+    // Initial shadow allocation fix measured 1068775/295701/250406; raw and
+    // gzip raised with narrow rounding headroom; brotli cap unchanged.
+    raw: 1_069_000,
+    gzip: 295_750,
     brotli: 250_500,
   },
   {
@@ -1766,9 +1776,13 @@ const routeBudgets = [
     // the exact measured values.
     // Specular-color patch measured 1460873/390448/329817; all three caps
     // raised with narrow rounding headroom.
-    raw: 1_461_000,
-    gzip: 390_500,
-    brotli: 330_000,
+    // Initial shadow allocation fix measured 1461949/390894/330074; all
+    // three caps raised with narrow rounding headroom.
+    // Final rebuild removed dead activeShadowCount; measured 330165 brotli,
+    // so the brotli cap was raised with narrow rounding headroom.
+    raw: 1_462_000,
+    gzip: 390_950,
+    brotli: 330_250,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
