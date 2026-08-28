@@ -775,6 +775,39 @@
     "}",
   ].join("\n");
 
+  // Skinned shadow depth vertex variant: identical 64-joint palette skinning
+  // and skin-then-model composition semantics as the PBR skinned color stage
+  // (SCENE_PBR_SKINNED_VERTEX_SOURCE), followed by the light projection. The
+  // fragment stage is the shared strict-mask shadow fragment, so mask math
+  // cannot drift between the static, instanced and skinned depth programs.
+  const SCENE_SHADOW_SKINNED_VERTEX_SOURCE = [
+    "#version 300 es",
+    "precision highp float;",
+    "precision highp int;",
+    "in vec3 a_position;",
+    "in vec2 a_uv;",
+    "in vec4 a_joints;",
+    "in vec4 a_weights;",
+    "uniform mat4 u_lightViewProjection;",
+    "uniform mat4 u_modelMatrix;",
+    "uniform mat4 u_jointMatrices[64];",
+    "uniform bool u_hasSkin;",
+    "out vec2 v_uv;",
+    "void main() {",
+    "    vec4 pos = vec4(a_position, 1.0);",
+    "    if (u_hasSkin) {",
+    "        mat4 skinMatrix =",
+    "            a_weights.x * u_jointMatrices[int(a_joints.x)] +",
+    "            a_weights.y * u_jointMatrices[int(a_joints.y)] +",
+    "            a_weights.z * u_jointMatrices[int(a_joints.z)] +",
+    "            a_weights.w * u_jointMatrices[int(a_joints.w)];",
+    "        pos = skinMatrix * pos;",
+    "    }",
+    "    gl_Position = u_lightViewProjection * (u_modelMatrix * pos);",
+    "    v_uv = a_uv;",
+    "}",
+  ].join("\n");
+
   // --- Points Shader Sources ---
 
   const SCENE_POINTS_VERTEX_SOURCE = [
@@ -1407,6 +1440,23 @@
   // frame — on a static scene with static lights this reclaims every
   // bit of the shadow pipeline (clear, N×bufferData, N×drawArrays)
   // and lets the existing depth texture be sampled as-is.
+  // sceneObjectHasSkinData reports whether a mesh object carries the same
+  // skin payload the PBR skinned color stage requires. Kept beside the shadow
+  // pass because the pass is defined outside the renderer closure that owns
+  // objectIsSkinned. Shadow participation is identical to the color stage;
+  // joint-palette usability is validated separately at draw time.
+  // Skin PARTICIPATION mirrors the color stage recognition exactly (obj.skin
+  // plus vertices.joints/weights). Palette USABILITY is validated separately
+  // at draw time so an empty/missing palette can never produce a skinned draw
+  // with u_hasSkin=1 over stale/zero uniforms, and can never silently fall
+  // back to the bind-pose path.
+  function sceneObjectHasSkinData(obj) {
+    return Boolean(
+      obj && obj.skin &&
+      obj.vertices && obj.vertices.joints && obj.vertices.weights
+    );
+  }
+
   // Identity model matrix for soup casters. This lives beside the shadow pass
   // because the pass is defined outside the PBR renderer closure that owns
   // identityModelMatrix; retained indexed casters overwrite it per draw via the
@@ -1425,7 +1475,7 @@
     }
   }
 
-  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindIndexedCaster, textureCache, resolveInstancedGeometry) {
+  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindIndexedCaster, textureCache, resolveInstancedGeometry, bindSkinnedCaster) {
     var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
     var instancedMeshes = typeof resolveInstancedGeometry === "function" &&
       Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
@@ -1462,16 +1512,36 @@
       maskInfo[mi] = mask;
     }
 
+    // Skinned participation is resolved before the cache check too: joint
+    // palettes change in place with unchanged vertex arrays and bounds, so
+    // the additive hash (vertexOffset/Count + depth metrics) cannot see a
+    // pose change. Any participating skinned caster bypasses the hash cache
+    // entirely — the same conservative invalidation the masked path uses.
+    var anySkinned = false;
+    for (var ski = 0; ski < objects.length; ski++) {
+      var skinCandidate = objects[ski];
+      if (!skinCandidate || !skinCandidate.castShadow || skinCandidate.viewCulled) continue;
+      if (sceneObjectHasSkinData(skinCandidate)) {
+        anySkinned = true;
+        break;
+      }
+    }
+
     // Conservative cache bypass: while any participating caster is masked the
     // pass always redraws, so texture-readiness, opacity and cutoff changes
     // can never reuse a stale shadow map. After a masked frame the next
     // unmasked frame also redraws — the masked pass's hash is not retained as
     // valid. Fully unmasked frames keep the existing hash optimization.
+    // The same bypass covers skinned casters (in-place pose edits) and the
+    // frame after the final skinned caster disappears, flushing the stale
+    // deformed silhouette before purely static caching resumes.
     if (
       !anyMasked &&
+      !anySkinned &&
       !passHasInstanced &&
       !shadowResources._lastPassHadInstanced &&
       !shadowResources._lastPassMasked &&
+      !shadowResources._lastPassHadSkinned &&
       shadowResources._lastPassHash === passHash
     ) {
       return;
@@ -1479,6 +1549,7 @@
     shadowResources._lastPassHash = passHash;
     shadowResources._lastPassMasked = anyMasked;
     shadowResources._lastPassHadInstanced = passHasInstanced;
+    shadowResources._lastPassHadSkinned = anySkinned;
 
     // The shadow program samples the base-color texture on unit 0; save the
     // unit-0 2D binding and the active texture unit so the PBR renderer's
@@ -1537,6 +1608,10 @@
       if (!obj || obj.viewCulled) continue;
       if (!obj.castShadow) continue;
       var casterMask = maskInfo[i] || SCENE_SHADOW_UNMASKED;
+
+      // Skinned casters draw in the dedicated skinned section below so the
+      // shadow records the deformed silhouette rather than the bind pose.
+      if (sceneObjectHasSkinData(obj)) continue;
 
       if (obj.directVertices) {
         // Retained indexed geometry casts from its cached model-space vertex
@@ -1616,6 +1691,95 @@
         gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false, SHADOW_IDENTITY_MODEL_MATRIX);
       }
       gl.drawArrays(gl.TRIANGLES, 0, count);
+    }
+
+    // --- Skinned casters: GPU vertex skinning in a dedicated shadow depth
+    // program. The vertex stage applies the same 64-joint weighted palette
+    // before the model matrix as the PBR skinned color stage; joint palettes
+    // and model matrices are uploaded per draw (they mutate in place), and
+    // indexed vs nonindexed direct geometry both draw through the
+    // renderer-closure bind hook over the existing cached attribute/index
+    // buffers — no CPU reskinning, no per-frame GL resources.
+    if (anySkinned && typeof bindSkinnedCaster === "function") {
+      var skinnedShadow = shadowState.skinnedShadowProgram;
+      if (!skinnedShadow && !shadowState.skinnedShadowProgramFailed) {
+        skinnedShadow = createSceneShadowSkinnedProgram(gl);
+        if (skinnedShadow) {
+          shadowState.skinnedShadowProgram = skinnedShadow;
+        } else {
+          shadowState.skinnedShadowProgramFailed = true;
+        }
+      }
+      if (skinnedShadow) {
+        gl.useProgram(skinnedShadow.program);
+        gl.uniformMatrix4fv(skinnedShadow.uniforms.lightViewProjection, false, lightMatrix);
+        if (skinnedShadow.uniforms.albedoMap) {
+          gl.uniform1i(skinnedShadow.uniforms.albedoMap, 0);
+        }
+        // Neutralize stale instanced/PBR attribute state BEFORE the first
+        // skinned draw. bindScenePBRDirectAttribute only enables and points —
+        // it never resets divisors or disables foreign arrays. Zero the
+        // divisors on the skinned locations themselves (an instanced draw may
+        // have left divisor 1 on a reused location) and fully reset every
+        // non-skinned array so static, soup, color and instanced state can
+        // never contaminate the skinned draw.
+        var skinAllowed = {};
+        if (skinnedShadow.attributes.position >= 0) skinAllowed[skinnedShadow.attributes.position] = true;
+        if (skinnedShadow.attributes.uv >= 0) skinAllowed[skinnedShadow.attributes.uv] = true;
+        if (skinnedShadow.attributes.joints >= 0) skinAllowed[skinnedShadow.attributes.joints] = true;
+        if (skinnedShadow.attributes.weights >= 0) skinAllowed[skinnedShadow.attributes.weights] = true;
+        for (var skinAllowedKey in skinAllowed) {
+          gl.vertexAttribDivisor(Number(skinAllowedKey), 0);
+        }
+        sceneShadowResetVertexAttribArrays(gl, skinAllowed);
+        for (var ski2 = 0; ski2 < objects.length; ski2++) {
+          var skinnedObj = objects[ski2];
+          if (!skinnedObj || skinnedObj.viewCulled || !skinnedObj.castShadow) continue;
+          if (!sceneObjectHasSkinData(skinnedObj)) continue;
+          // Participation and palette validity are separate gates. An
+          // unusable palette skips the draw entirely: no skinned draw with
+          // u_hasSkin=1 over stale/zero uniforms, no silent bind-pose
+          // fallback. The anySkinned cache bypass already guarantees the
+          // stale deformed silhouette is flushed on this frame.
+          var skinnedJointMatrices = skinnedObj.skin.jointMatrices;
+          var skinnedJointCount = skinnedJointMatrices && typeof skinnedJointMatrices.length === "number"
+            ? Math.min(Math.floor(skinnedJointMatrices.length / 16), 64)
+            : 0;
+          if (!(skinnedJointCount > 0)) continue;
+          var skinnedBound = bindSkinnedCaster(skinnedObj, skinnedShadow, bundle);
+          if (!skinnedBound || !(skinnedBound.count > 0)) continue;
+          if (skinnedJointCount > 0 && skinnedShadow.uniforms.jointMatrices) {
+            var skinnedJointUpload = skinnedJointMatrices.length === skinnedJointCount * 16
+              ? skinnedJointMatrices
+              : skinnedJointMatrices.subarray(0, skinnedJointCount * 16);
+            gl.uniformMatrix4fv(skinnedShadow.uniforms.jointMatrices, false, skinnedJointUpload);
+          }
+          if (skinnedShadow.uniforms.hasSkin) {
+            gl.uniform1i(skinnedShadow.uniforms.hasSkin, 1);
+          }
+          // Same model-matrix semantics as the PBR skinned color stage: only
+          // direct-vertex casters carry their own transform; soup positions
+          // are world-space and project through identity.
+          if (skinnedShadow.uniforms.modelMatrix) {
+            gl.uniformMatrix4fv(skinnedShadow.uniforms.modelMatrix, false,
+              skinnedObj.directVertices && skinnedObj.modelMatrix
+                ? skinnedObj.modelMatrix
+                : SHADOW_IDENTITY_MODEL_MATRIX);
+          }
+          sceneShadowApplyMask(gl, skinnedShadow, maskInfo[ski2] || SCENE_SHADOW_UNMASKED);
+          if (skinnedBound.indexed) {
+            gl.drawElements(gl.TRIANGLES, skinnedBound.count, gl.UNSIGNED_INT, 0);
+          } else {
+            gl.drawArrays(gl.TRIANGLES, 0, skinnedBound.count);
+          }
+        }
+        // Always leave no skinned attribute or divisor state behind — even
+        // when the binder partially bound a caster and then returned null.
+        // Subsequent static, soup, instanced and color draws rebind every
+        // attribute they consume.
+        sceneShadowResetVertexAttribArrays(gl, null);
+        gl.useProgram(shadowProgram.program);
+      }
     }
 
     // --- Instanced casters: one drawArraysInstanced per mesh over the full
@@ -1868,6 +2032,47 @@
       },
     };
   }
+
+  // Skinned shadow depth program: the shared strict-mask fragment (same
+  // constant as the static program) with a vertex stage that performs the
+  // same 64-joint palette skinning — and the same skin-then-model
+  // composition — as the PBR skinned color stage before the light projection.
+  function createSceneShadowSkinnedProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_SHADOW_SKINNED_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, SCENE_SHADOW_FRAGMENT_SOURCE);
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Skinned shadow shader");
+    if (!program) return null;
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: {
+        position: gl.getAttribLocation(program, "a_position"),
+        uv: gl.getAttribLocation(program, "a_uv"),
+        joints: gl.getAttribLocation(program, "a_joints"),
+        weights: gl.getAttribLocation(program, "a_weights"),
+      },
+      uniforms: {
+        lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
+        modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+        jointMatrices: gl.getUniformLocation(program, "u_jointMatrices[0]"),
+        hasSkin: gl.getUniformLocation(program, "u_hasSkin"),
+        albedoMap: gl.getUniformLocation(program, "u_albedoMap"),
+        hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
+        opacity: gl.getUniformLocation(program, "u_opacity"),
+        alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
+      },
+    };
+  }
+
+  // --- End shadow depth program factories ---
 
   // --- Post-Processing Infrastructure ---
 
@@ -7992,7 +8197,7 @@
           // never drawn.
           for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
             var cascade = shadowSlots[candIdx].cascades[ci2];
-            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, textureCache, getInstancedGeometry);
+            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, textureCache, getInstancedGeometry, bindScenePBRDirectSkinnedShadowCaster);
           }
         }
 
@@ -8982,6 +9187,64 @@
       return indexCount;
     }
 
+    // bindScenePBRDirectSkinnedShadowCaster binds a skinned caster's shadow
+    // attributes through the same cached direct-attribute/index buffers the
+    // color stage uses: positions, joints, weights and (for masked casters)
+    // UVs. Indexed and nonindexed direct geometry are both supported; soup
+    // (non-direct) skinned meshes fall back to the shared dynamic buffers
+    // exactly like the color path. Returns { indexed, count } for the draw
+    // call, or null when the caster cannot participate.
+    function bindScenePBRDirectSkinnedShadowCaster(obj, shadowProgram, bundle) {
+      if (!obj || !obj.vertices || !shadowProgram) return null;
+      if (shadowProgram.attributes.joints < 0 || shadowProgram.attributes.weights < 0) return null;
+      var count = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
+      if (count <= 0) return null;
+      var directVertices = Boolean(obj.directVertices && obj.vertices);
+      var directPositions = directVertices ? scenePBRDirectAttribute(obj.vertices, "positions", count, 3) : null;
+      if (!bindScenePBRDirectAttribute(obj, "positions", shadowProgram.attributes.position, 3, directPositions)) {
+        if (!bundle || !bundle.worldMeshPositions || !Number.isFinite(obj.vertexOffset)) return null;
+        var positions = sliceToFloat32(bundle.worldMeshPositions, obj.vertexOffset, count, 3, "positions");
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(shadowProgram.attributes.position);
+        gl.vertexAttribPointer(shadowProgram.attributes.position, 3, gl.FLOAT, false, 0, 0);
+      }
+      var directJoints = directVertices ? scenePBRDirectAttribute(obj.vertices, "joints", count, 4) : null;
+      var directWeights = directVertices ? scenePBRDirectAttribute(obj.vertices, "weights", count, 4) : null;
+      if (!bindScenePBRDirectAttribute(obj, "joints", shadowProgram.attributes.joints, 4, directJoints)) {
+        var joints = obj.vertices.joints;
+        gl.bindBuffer(gl.ARRAY_BUFFER, jointsBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, joints instanceof Float32Array ? joints : new Float32Array(joints), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(shadowProgram.attributes.joints);
+        gl.vertexAttribPointer(shadowProgram.attributes.joints, 4, gl.FLOAT, false, 0, 0);
+      }
+      if (!bindScenePBRDirectAttribute(obj, "weights", shadowProgram.attributes.weights, 4, directWeights)) {
+        var weights = obj.vertices.weights;
+        gl.bindBuffer(gl.ARRAY_BUFFER, weightsBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, weights instanceof Float32Array ? weights : new Float32Array(weights), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(shadowProgram.attributes.weights);
+        gl.vertexAttribPointer(shadowProgram.attributes.weights, 4, gl.FLOAT, false, 0, 0);
+      }
+      if (shadowProgram.attributes.uv >= 0) {
+        var directUVs = directVertices ? scenePBRDirectAttribute(obj.vertices, "uvs", count, 2) : null;
+        if (!bindScenePBRDirectAttribute(obj, "uvs", shadowProgram.attributes.uv, 2, directUVs)) {
+          if (bundle && bundle.worldMeshUVs && !directVertices) {
+            var uvs = sliceToFloat32(bundle.worldMeshUVs, obj.vertexOffset, count, 2, "uvs");
+            gl.bindBuffer(gl.ARRAY_BUFFER, uvBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(shadowProgram.attributes.uv);
+            gl.vertexAttribPointer(shadowProgram.attributes.uv, 2, gl.FLOAT, false, 0, 0);
+          } else {
+            gl.disableVertexAttribArray(shadowProgram.attributes.uv);
+            gl.vertexAttrib2f(shadowProgram.attributes.uv, 0, 0);
+          }
+        }
+      }
+      var indexCount = bindScenePBRDirectIndexBuffer(directVertices ? obj : null);
+      if (indexCount > 0) return { indexed: true, count: indexCount };
+      return { indexed: false, count: count };
+    }
+
     // Ensure the points program is compiled (lazy init).
     function ensurePointsProgram() {
       if (pointsProgram) return pointsProgram;
@@ -9840,6 +10103,12 @@
         gl.deleteShader(shadowState.instancedShadowProgram.fragmentShader);
         gl.deleteProgram(shadowState.instancedShadowProgram.program);
         shadowState.instancedShadowProgram = null;
+      }
+      if (shadowState.skinnedShadowProgram) {
+        gl.deleteShader(shadowState.skinnedShadowProgram.vertexShader);
+        gl.deleteShader(shadowState.skinnedShadowProgram.fragmentShader);
+        gl.deleteProgram(shadowState.skinnedShadowProgram.program);
+        shadowState.skinnedShadowProgram = null;
       }
 
       textureCache._gosxGeneration.disposed = true;

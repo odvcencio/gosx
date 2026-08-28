@@ -98,6 +98,19 @@ if (!fs.existsSync(GLTF_CHUNK)) {
   console.error('missing built runtime asset: ' + GLTF_CHUNK);
   process.exit(2);
 }
+// Skinned-shadow cases exercise the animation feature chunk (mixer play/stop)
+// through the real built production asset. A missing chunk is fatal.
+const ANIM_CHUNK = path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-animation.js');
+if (!fs.existsSync(ANIM_CHUNK)) {
+  console.error('missing built runtime asset: ' + ANIM_CHUNK);
+  process.exit(2);
+}
+// Per-case served counters for the skinned-shadow GLB assets (reset on each
+// /case/ load, asserted positive for every case that mounts a skinned model).
+let skinnedGlbServed = { rest: 0, pose: 0 };
+// Counts actual /bootstrap-feature-scene3d-animation.js route serves for the
+// current case (reset on each /case/ load).
+let animChunkServed = 0;
 // Verified deterministic IBL fixture: one JSON object on stdout with base64
 // KTX2 radiance/irradiance/brdfLUT plus the real environment.ibl descriptor.
 // A missing or invalid fixture is fatal: no probe runs without it.
@@ -125,12 +138,11 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const ENGINE = 'gosx-engine-ior-browser';
 const MOUNT = 'scene-ior-browser';
 const W = 256, H = 192;
-// Raised 210000 -> 270000: probe grew from 207 to 231 cases; the last
-// required-native run reached 223 of 231 pages, including all 24 instanced
-// pages, then aborted solely on 'overall watchdog: probe exceeded 210000ms'
-// during gl-typed mask-mask before final comparisons, so the budget needs
-// more headroom for case growth plus final comparisons and teardown.
-const OVERALL_MS = 270000;
+// Raised 270000 -> 300000: probe grew from 251 to 267 cases plus four new
+// live skin transitions; the last run reached the final wg-instlife-lifecycle
+// case, then aborted solely on 'overall watchdog: probe exceeded 270000ms',
+// so the budget needs more headroom for the added whole-suite work.
+const OVERALL_MS = 300000;
 const CASE_WAIT_MS = 20000;
 const SETTLE_MS = 600;
 const FG_THRESHOLD = 12;   // min channel delta vs measured corner background
@@ -1634,6 +1646,84 @@ try {
 });
 CASES.forEach((c) => { byName[c.name] = c; });
 
+// ---- Native skinned-shadow regression slice (both backends, 16 cases) ----
+// Pure fixture helper is required directly from its testdata module: the
+// generated GLBs are validated here (chunk headers, accessor byte bounds,
+// skin, indices, outward triangle winding, materials, clip) before any case
+// is registered. A missing or invalid fixture is fatal.
+let SKIN_FIXTURE = null;
+try {
+  const skFixtureModule = require(path.join(REPO, 'client', 'js', 'testdata',
+    'skinned-shadow-fixture.cjs'));
+  SKIN_FIXTURE = skFixtureModule.buildSkinnedShadowFixture();
+  if (!SKIN_FIXTURE || !SKIN_FIXTURE.rest || !SKIN_FIXTURE.pose || !SKIN_FIXTURE.meta) {
+    throw new Error('incomplete skinned-shadow fixture payload');
+  }
+  skFixtureModule.validateSkinnedShadowGLB(Buffer.from(SKIN_FIXTURE.rest, 'base64'), false);
+  skFixtureModule.validateSkinnedShadowGLB(Buffer.from(SKIN_FIXTURE.pose, 'base64'), true);
+} catch (e) {
+  console.error('skinned-shadow-fixture failed: ' + ((e && e.message) || e));
+  process.exit(2);
+}
+
+// Static order per backend (8): empty(receiver only), ref-rest(unskinned box
+// at the baked caster location), ref-pose(box at +0.8x), rest(real skinned
+// GLB, no animation), pose(real GLB with the constant clip played at load),
+// mask-survive(.5 alpha /.5 cutoff on the posed skinned GLB), mask-discard
+// (.25/.5), live(rest -> play pose -> stop -> rest on the SAME mount via the
+// public hub event). Same/differs references always name the SAME backend.
+function addSkinnedShadowCases() {
+  const ROI = { x: 125, y: 99, width: 95, height: 35 };
+  const SK_LIGHTS = [{ id: 'key', kind: 'directional', intensity: 1.2,
+    directionX: 0.7, directionY: -0.7, directionZ: -1,
+    castShadow: true, shadowCascades: 1, shadowSize: 512 }];
+  const SK_RECEIVER = { id: 'receiver', kind: 'box', width: 3, height: 2.2,
+    depth: 0.1, x: 0, y: 0, z: -0.5, materialKind: 'standard', color: '#ffffff',
+    wireframe: false, ior: 1.5, roughness: 1, metalness: 0,
+    castShadow: false, receiveShadow: true };
+  const refCaster = (x) => ({ id: 'ref-caster', kind: 'box', width: 0.55,
+    height: 0.55, depth: 0.15, x, y: 0.35, z: 0.5, materialKind: 'standard',
+    color: '#ff0000', wireframe: false, ior: 1.5, roughness: 1, metalness: 0,
+    castShadow: true, receiveShadow: false });
+  const skModel = (glb, extra) => Object.assign({ id: 'skin-caster',
+    src: '/models/skinned-box-' + glb + '.glb', wireframe: false,
+    roughness: 1, metalness: 0, castShadow: true, receiveShadow: false },
+    extra || {});
+  [false, true].forEach((webgpu) => {
+    const pfx = webgpu ? 'wg-sk-' : 'gl-sk-';
+    const mk = (name, extra) => CASES.push(Object.assign({
+      name: pfx + name, webgpu, skinnedShadowGroup: true, f0: 0.04, f90: 1,
+      lights: SK_LIGHTS, objects: [SK_RECEIVER],
+      shadowROI: { x: ROI.x, y: ROI.y, width: ROI.width, height: ROI.height },
+    }, extra || {}));
+    mk('empty');
+    mk('ref-rest', { objects: [SK_RECEIVER, refCaster(-0.55)],
+      differs: pfx + 'empty', minChanged: 50 });
+    mk('ref-pose', { objects: [SK_RECEIVER, refCaster(0.25)],
+      differs: pfx + 'ref-rest', minChanged: 50 });
+    mk('rest', { model: skModel('rest'), skinnedGlb: 'rest',
+      same: pfx + 'ref-rest', differs: pfx + 'empty', minChanged: 50 });
+    mk('pose', { model: skModel('pose', { animation: 'pose', loop: true }),
+      skinnedGlb: 'pose', skinnedExpectPose: true, skinnedExpectMixer: true,
+      same: pfx + 'ref-pose', differs: pfx + 'empty', minChanged: 50 });
+    mk('mask-survive', { model: skModel('pose', { animation: 'pose', loop: true,
+        opacity: 0.5, alphaCutoff: 0.5 }),
+      skinnedGlb: 'pose', skinnedExpectPose: true, skinnedExpectMixer: true,
+      skinnedMaskOpacity: 0.5, skinnedMaskCutoff: 0.5,
+      same: pfx + 'ref-pose' });
+    mk('mask-discard', { model: skModel('pose', { animation: 'pose', loop: true,
+        opacity: 0.25, alphaCutoff: 0.5 }),
+      skinnedGlb: 'pose', skinnedExpectPose: true, skinnedExpectMixer: true,
+      skinnedMaskOpacity: 0.25, skinnedMaskCutoff: 0.5,
+      same: pfx + 'empty', differs: pfx + 'ref-pose', minChanged: 50 });
+    mk('live', { model: skModel('pose', { live: ['skin-pose'] }),
+      skinnedGlb: 'pose', skinnedLive: true, skinnedExpectMixer: true,
+      same: pfx + 'ref-rest' });
+  });
+}
+addSkinnedShadowCases();
+CASES.forEach((c) => { byName[c.name] = c; });
+
 // ---- Typed instanced-shadow lifecycle fixture (multi-instance, both
 // backends) ----
 // Verified Go fixture: one JSON object on stdout carrying exactly nine
@@ -1782,15 +1872,30 @@ const CASE_GROUP_ENV = process.env.GOSX_IOR_CASE_GROUP;
 const CASE_GROUP = CASE_GROUP_ENV || 'all';
 let RUN_CASES = CASES;
 if (CASE_GROUP_ENV != null && CASE_GROUP_ENV !== '' &&
-    CASE_GROUP_ENV !== 'instanced-lifecycle') {
+    CASE_GROUP_ENV !== 'instanced-lifecycle' &&
+    CASE_GROUP_ENV !== 'skinned-shadow') {
   console.error('GOSX_IOR_CASE_GROUP: unsupported group ' +
-    JSON.stringify(CASE_GROUP_ENV) + ' (only "instanced-lifecycle" or unset)');
+    JSON.stringify(CASE_GROUP_ENV) +
+    ' (only "instanced-lifecycle", "skinned-shadow" or unset)');
   process.exit(2);
 }
 if (CASE_GROUP_ENV === 'instanced-lifecycle') {
   RUN_CASES = CASES.filter((c) => c.instancedLifecycleGroup === true);
   if (RUN_CASES.length !== 20) {
     console.error('instanced-lifecycle group: expected exactly 20 cases, got ' +
+      RUN_CASES.length);
+    process.exit(2);
+  }
+}
+if (CASE_GROUP_ENV === 'skinned-shadow') {
+  if (CASES.length !== 267) {
+    console.error('skinned-shadow group: expected exactly 267 registered cases, got ' +
+      CASES.length);
+    process.exit(2);
+  }
+  RUN_CASES = CASES.filter((c) => c.skinnedShadowGroup === true);
+  if (RUN_CASES.length !== 16) {
+    console.error('skinned-shadow group: expected exactly 16 cases, got ' +
       RUN_CASES.length);
     process.exit(2);
   }
@@ -1898,6 +2003,16 @@ let server = http.createServer((req, res) => {
   } else if (req.url === '/models/quad-spec-ior242.glb') {
     res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glbSpecIor242.length });
     res.end(glbSpecIor242);
+  } else if (req.url === '/models/skinned-box-rest.glb') {
+    skinnedGlbServed.rest += 1;
+    const b = Buffer.from(SKIN_FIXTURE.rest, 'base64');
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': b.length });
+    res.end(b);
+  } else if (req.url === '/models/skinned-box-pose.glb') {
+    skinnedGlbServed.pose += 1;
+    const b = Buffer.from(SKIN_FIXTURE.pose, 'base64');
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': b.length });
+    res.end(b);
   } else if (req.url === '/bootstrap.js' || req.url === '/client/js/bootstrap.js') {
     const js = fs.readFileSync(BOOTSTRAP);
     res.writeHead(200, { 'content-type': 'text/javascript', 'content-length': js.length });
@@ -1908,6 +2023,11 @@ let server = http.createServer((req, res) => {
     res.end(js);
   } else if (req.url === '/gosx/bootstrap-feature-scene3d-gltf.js') {
     const js = fs.readFileSync(GLTF_CHUNK);
+    res.writeHead(200, { 'content-type': 'text/javascript', 'content-length': js.length });
+    res.end(js);
+  } else if (req.url === '/gosx/bootstrap-feature-scene3d-animation.js') {
+    animChunkServed += 1;
+    const js = fs.readFileSync(ANIM_CHUNK);
     res.writeHead(200, { 'content-type': 'text/javascript', 'content-length': js.length });
     res.end(js);
   } else if (req.url === '/ibl/spec-radiance.ktx2') {
@@ -1936,6 +2056,8 @@ let server = http.createServer((req, res) => {
     iblAssetCount = { radiance: 0, irradiance: 0, brdfLUT: 0 };
     texServed = {};
     Object.keys(TEX_PNGS).forEach((k) => { texServed[k] = 0; });
+    skinnedGlbServed = { rest: 0, pose: 0 };
+    animChunkServed = 0;
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(htmlFor(c));
   } else { res.writeHead(404); res.end(); }
@@ -2059,7 +2181,14 @@ const PRELOAD = `
     lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, lastDrawHasSpecColorMap: null,
     lastDrawHasAlbedoMap: null,
     instShadowDraws: 0, lastInstShadowInstances: 0,
-    programInfo: null, queriedUniforms: [], shadow: null, nativeCap: null, forcedCap: null };
+    programInfo: null, queriedUniforms: [], shadow: null, nativeCap: null, forcedCap: null,
+    skinColor: { draws: 0, lastHasSkin: null, lastProgramId: null,
+      lastModelMatrix: null, lastPalette0: null, lastOpacity: null,
+      lastAlphaCutoff: null },
+    skinShadow: { draws: 0, lastHasSkin: null, lastProgramId: null,
+      lastModelMatrix: null, lastPalette0: null, lastOpacity: null,
+      lastAlphaCutoff: null },
+    deletedProgramIds: [] };
   // Forced MAX_TEXTURE_IMAGE_UNITS caps, selected by the served case pathname
   // so no other case is affected. Used only by the shadow-budget cases.
   var __path = (typeof location !== "undefined" && location.pathname) || "";
@@ -2336,6 +2465,79 @@ const PRELOAD = `
       window.__gosxIOR.lastInstShadowInstances = n;
     } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
   }
+  // Stable native program IDs via WeakMap: each WebGLProgram object gets a
+  // monotonic integer id, assigned on first sight.
+  var __progIds = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+  var __progNextId = 0;
+  // Observer-owned qualification set. Skinned-draw qualification is
+  // recorded here instead of on the production WebGLProgram handle, so
+  // the observer never writes properties onto engine-owned objects.
+  var qualifiedPrograms = (typeof WeakSet !== "undefined") ? new WeakSet() : null;
+  function progId(p) {
+    if (!p || !__progIds) return null;
+    var id = __progIds.get(p);
+    if (id === undefined) {
+      __progNextId += 1;
+      id = __progNextId;
+      __progIds.set(p, id);
+    }
+    return id;
+  }
+  // Skinned forward-draw observation: called ONLY inside the forwarded
+  // non-instanced drawArrays/drawElements wrappers (never the instanced
+  // observer). Qualification requires the tracked u_hasSkin location whose
+  // NATIVE value at this draw is 1/true AND a tracked u_jointMatrices[0]
+  // location. COLOR draws additionally require tracked native specF0/F90
+  // locations; SHADOW draws additionally require the tracked
+  // u_lightViewProjection location. All reads are native getUniform at the
+  // CURRENT program; the native draw is never altered.
+  function observeSkinnedDraw(channel) {
+    try {
+      var cp = this.__origGetParameter.call(this, this.CURRENT_PROGRAM);
+      if (!cp) return;
+      var hs = this.__hslocs && this.__hslocs.get(cp);
+      var jm = this.__jm0locs && this.__jm0locs.get(cp);
+      if (!hs || !jm) return;
+      var hasSkin = this.__origGetUniform.call(this, cp, hs);
+      if (hasSkin !== 1 && hasSkin !== true) return;
+      var mm = this.__mmlocs && this.__mmlocs.get(cp);
+      var op = this.__oplocs && this.__oplocs.get(cp);
+      var ac = this.__aclocs && this.__aclocs.get(cp);
+      var extraA = null, extraB = null;
+      if (channel === "skinColor") {
+        extraA = this.__sf0locs && this.__sf0locs.get(cp);
+        extraB = this.__sf90locs && this.__sf90locs.get(cp);
+        if (!extraA || !extraB) return;
+      } else {
+        extraA = this.__lvlocs && this.__lvlocs.get(cp);
+        if (!extraA) return;
+      }
+      var rec = window.__gosxIOR[channel];
+      if (!rec) return;
+      if (qualifiedPrograms) qualifiedPrograms.add(cp);
+      var model = mm ? this.__origGetUniform.call(this, cp, mm) : null;
+      var pal0 = this.__origGetUniform.call(this, cp, jm);
+      rec.draws += 1;
+      rec.lastHasSkin = true;
+      rec.lastProgramId = progId(cp);
+      rec.lastModelMatrix = (model && model.length === 16) ?
+        Array.prototype.slice.call(model) : null;
+      rec.lastPalette0 = (pal0 && pal0.length === 16) ?
+        Array.prototype.slice.call(pal0) : null;
+      rec.lastOpacity = (op != null) ?
+        this.__origGetUniform.call(this, cp, op) : null;
+      rec.lastAlphaCutoff = (ac != null) ?
+        this.__origGetUniform.call(this, cp, ac) : null;
+      if (channel === "skinColor") {
+        rec.lastSpecF0 = this.__origGetUniform.call(this, cp, extraA);
+        rec.lastSpecF90 = this.__origGetUniform.call(this, cp, extraB);
+      } else {
+        var lvp = this.__origGetUniform.call(this, cp, extraA);
+        rec.lastLightViewProjection = (lvp && lvp.length === 16) ?
+          Array.prototype.slice.call(lvp) : null;
+      }
+    } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
+  }
   if (W1) {
     // WebGL1 and WebGL2 are separate interfaces: wrap each prototype once,
     // snapshotting its own natives. All observed F0 comes from the native
@@ -2472,11 +2674,33 @@ const PRELOAD = `
           var mlvp = this.__lvlocs || (this.__lvlocs = new Map());
           if (loc) mlvp.set(p, loc); else mlvp.delete(p);
         }
+        if (n === "u_hasSkin") {
+          var mhs = this.__hslocs || (this.__hslocs = new Map());
+          if (loc) mhs.set(p, loc); else mhs.delete(p);
+        }
+        if (n === "u_jointMatrices[0]") {
+          var mjm0 = this.__jm0locs || (this.__jm0locs = new Map());
+          if (loc) mjm0.set(p, loc); else mjm0.delete(p);
+        }
+        if (n === "u_modelMatrix") {
+          var mmm = this.__mmlocs || (this.__mmlocs = new Map());
+          if (loc) mmm.set(p, loc); else mmm.delete(p);
+        }
       } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
       return loc;
     };
-    if (da) proto.drawArrays = function () { observeDraw.call(this); return da.apply(this, arguments); };
-    if (de) proto.drawElements = function () { observeDraw.call(this); return de.apply(this, arguments); };
+    if (da) proto.drawArrays = function () {
+      observeDraw.call(this);
+      observeSkinnedDraw.call(this, "skinColor");
+      observeSkinnedDraw.call(this, "skinShadow");
+      return da.apply(this, arguments);
+    };
+    if (de) proto.drawElements = function () {
+      observeDraw.call(this);
+      observeSkinnedDraw.call(this, "skinColor");
+      observeSkinnedDraw.call(this, "skinShadow");
+      return de.apply(this, arguments);
+    };
     if (dai) proto.drawArraysInstanced = function () {
       observeDraw.call(this);
       observeInstShadow.call(this, arguments[3]);
@@ -2486,6 +2710,22 @@ const PRELOAD = `
       observeDraw.call(this);
       observeInstShadow.call(this, arguments[4]);
       return dei.apply(this, arguments);
+    };
+    // Strict forward, then record only programs that carried a QUALIFIED
+    // skinned draw (flagged inside observeSkinnedDraw).
+    var dp = proto.deleteProgram;
+    if (dp) proto.deleteProgram = function (program) {
+      var r = dp.apply(this, arguments);
+      try {
+        if (program && qualifiedPrograms && qualifiedPrograms.has(program)) {
+          var id = progId(program);
+          if (id !== null && window.__gosxIOR.deletedProgramIds.indexOf(id) < 0 &&
+              window.__gosxIOR.deletedProgramIds.length < 256) {
+            window.__gosxIOR.deletedProgramIds.push(id);
+          }
+        }
+      } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
+      return r;
     };
   }
   if (typeof GPUQueue !== "undefined" && GPUQueue.prototype && GPUQueue.prototype.writeBuffer) {
@@ -2772,6 +3012,9 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'shadow:(window.__gosxIOR?window.__gosxIOR.shadow:null),' +
   'nativeCap:(window.__gosxIOR?window.__gosxIOR.nativeCap:null),' +
   'forcedCap:(window.__gosxIOR?window.__gosxIOR.forcedCap:null),' +
+  'skinColor:(window.__gosxIOR.skinColor||null),' +
+  'skinShadow:(window.__gosxIOR.skinShadow||null),' +
+  'deletedProgramIds:(window.__gosxIOR.deletedProgramIds||[]),' +
   'obsErrors:(window.__gosxIOR.obsErrors||[]).slice(0,4)}:null,' +
   'wgpu:window.__gosxWGPU?{uploads:window.__gosxWGPU.materialUploads,' +
   'dumps:window.__gosxWGPU.dumps.slice(-4),' +
@@ -2781,7 +3024,44 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'lastDepthWrite:(window.__gosxWGPUDraws.lastDepthWrite===true||' +
   'window.__gosxWGPUDraws.lastDepthWrite===false?window.__gosxWGPUDraws.lastDepthWrite:null),' +
   'lastBlend:(window.__gosxWGPUDraws.lastBlend===true||' +
-  'window.__gosxWGPUDraws.lastBlend===false?window.__gosxWGPUDraws.lastBlend:null)}:null)}:null};})()';
+  'window.__gosxWGPUDraws.lastBlend===false?window.__gosxWGPUDraws.lastBlend:null)}:null)}:null,' +
+  'skinState:(function(){try{var st=m&&m.__gosxScene3DState;' +
+  'if(!st||!st._modelSkins)return null;' +
+  'var ms=st._modelSkins;var list=[];' +
+  'if(Array.isArray(ms)){list=ms;}' +
+  'else if(ms&&typeof ms.forEach==="function"){ms.forEach(function(s){list.push(s);});}' +
+  'var rec=null;for(var i=0;i<list.length;i+=1){' +
+  'if(list[i]&&list[i].id==="skin-caster"){rec=list[i];break;}}' +
+  'if(!rec)return null;' +
+  'var skin=(rec.skins&&rec.skins[0])||null;' +
+  'var pal=(skin&&skin.jointMatrices)?skin.jointMatrices:null;' +
+  'var palette=null;var paletteLength=0;' +
+  'if(pal&&pal.length===16){palette=Array.prototype.slice.call(pal);paletteLength=16;}' +
+  'else if(pal&&pal.length){paletteLength=pal.length;}' +
+  'var root=(rec.rootTransform&&rec.rootTransform.length===16)?' +
+  'Array.prototype.slice.call(rec.rootTransform):null;' +
+  'var objs=st.objects;var oid=(rec.objectIDs&&rec.objectIDs.length?' +
+  'rec.objectIDs[0]:null);' +
+  'var o=(objs&&oid!==null&&typeof objs.get==="function")?objs.get(oid):null;' +
+  'var obj=null;' +
+  'if(o&&o.skin&&o.vertices&&o.vertices.joints&&o.vertices.weights){' +
+  'obj={id:o.id,hasSkin:true,' +
+  'jointsLength:o.vertices.joints.length,weightsLength:o.vertices.weights.length,' +
+  'joints:Array.prototype.slice.call(o.vertices.joints,0,8),' +
+  'weights:Array.prototype.slice.call(o.vertices.weights,0,8),' +
+  'castShadow:(typeof o.castShadow==="boolean")?o.castShadow:null};}' +
+  'var anim=(typeof rec.animation==="string")?rec.animation:"";' +
+  'var api=window.__gosx_scene3d_animation_api;' +
+  'var apiCaps=(!!api&&typeof api.buildNodeTransforms==="function"&&' +
+  'typeof api.computeJointMatrices==="function");' +
+  'return {records:list.length,recordID:(rec.id||null),' +
+  'animation:(typeof anim==="string"?anim:(anim&&anim.name!==undefined?anim.name:null)),' +
+  'hasMixer:Boolean(rec.mixer||rec.wasmMixerActive),rootTransform:root,palette:palette,' +
+  'animationApiCapabilities:apiCaps,' +
+  'animationApiMatchesRecord:(!!api&&rec.animationApi===api),' +
+  'paletteLength:paletteLength,' +
+  'objectCount:(objs&&typeof objs.size==="number"?objs.size:list.length),' +
+  'object:obj};}catch(e){return null;}})()};})()';
 
 // Decode the actual screenshot with a native Image + 2D canvas. Measures the
 // real corner background from the image itself, then foreground pixels that
@@ -3187,6 +3467,267 @@ async function runInstancedLifecycleSteps(send, c, rec, initialCap, shots) {
   rec.lifecycleSteps = steps;
 }
 
+// ---- Skinned (INITIAL) shared pure helpers ----
+// skinMatrixMatches: exactly 16 finite numbers, identity except index 12 == tx.
+function skinMatrixMatches(actual, tx) {
+  // Finite tx guard: a NaN translation must never let a matrix "match".
+  if (!Number.isFinite(tx)) return false;
+  if (!Array.isArray(actual) || actual.length !== 16) return false;
+  for (let i = 0; i < 16; i += 1) {
+    const v = actual[i];
+    if (typeof v !== 'number' || !Number.isFinite(v)) return false;
+    const want = (i === 12) ? tx :
+      ((i === 0 || i === 5 || i === 10 || i === 15) ? 1 : 0);
+    if (Math.abs(v - want) > 1e-5) return false;
+  }
+  return true;
+}
+// skinStateReady: exactly one skin-caster record, real skinned object state,
+// full 16-entry palette, identity root transform, and the mixer/animation
+// fields this case expects. Shared by both backends for readiness and for
+// the post-settle re-assertion.
+function skinStateReady(snapshot, c, tx) {
+  const st = snapshot && snapshot.skinState;
+  if (!st || st.records !== 1 || st.recordID !== 'skin-caster') return false;
+  const o = st.object;
+  if (!o || o.hasSkin !== true || o.castShadow !== true) return false;
+  if (!(o.jointsLength >= 4) || !(o.weightsLength >= 4)) return false;
+  const j4 = (o.joints || []).slice(0, 4);
+  const w4 = (o.weights || []).slice(0, 4);
+  if (j4.length < 4 || w4.length < 4) return false;
+  for (let i = 0; i < 4; i += 1) {
+    // joints first 4 all 0; weights first 4 exactly [1, 0, 0, 0].
+    if (j4[i] !== 0) return false;
+    if (w4[i] !== (i === 0 ? 1 : 0)) return false;
+  }
+  if (st.paletteLength !== 16) return false;
+  // The ACTUAL joint palette must match the expected translation tx.
+  if (!skinMatrixMatches(st.palette, tx)) return false;
+  // The model root is ALWAYS identity; tx lives in the joint palette only.
+  if (!skinMatrixMatches(st.rootTransform, 0)) return false;
+  if (Boolean(c.skinnedExpectMixer) !== (st.hasMixer === true)) return false;
+  // Fail closed: the actually published animation API must expose the real
+  // capabilities and be the very API stored on the skin record.
+  if (st.animationApiCapabilities !== true ||
+      st.animationApiMatchesRecord !== true) return false;
+  return st.animation === (c.skinnedExpectPose ? 'pose' : '');
+}
+
+// skinDrawMatches: pure predicate over the ACTUAL native observer record
+// shape produced by observeSkinnedDraw (skinColor / skinShadow): draws,
+// lastHasSkin, lastProgramId, lastPalette0, lastModelMatrix, lastOpacity,
+// lastAlphaCutoff. Opacity/cutoff compare EXACTLY (0.5 / 0.25 are exact
+// binary fractions); tx is finite-guarded inside skinMatrixMatches.
+function skinDrawMatches(draw, tx, opacity, cutoff) {
+  if (!draw || !(draw.draws > 0)) return false;
+  if (!(draw.lastHasSkin === true || draw.lastHasSkin === 1)) return false;
+  if (typeof draw.lastProgramId !== 'number' ||
+      !Number.isInteger(draw.lastProgramId) || !(draw.lastProgramId > 0)) {
+    return false;
+  }
+  if (!skinMatrixMatches(draw.lastPalette0, tx)) return false;
+  if (!skinMatrixMatches(draw.lastModelMatrix, 0)) return false;
+  return draw.lastOpacity === opacity && draw.lastAlphaCutoff === cutoff;
+}
+
+// ---- Skinned LIVE 2-step public hub event run (test-only; state read-only).
+// Driven exclusively through the public document event seam (gosx:hub:event).
+// All MOUNT-dependent expressions are built inside these called functions so
+// the VM helper unit slice (skinMatrixMatches..watchdog) needs no MOUNT
+// global at definition time; cleanup deletes only the test-only window refs.
+function skinLiveHubDetail(animation) {
+  return { event: 'skin-pose', data: { 'skin-caster': {
+    animation: animation, loop: animation === 'pose',
+    animationFadeInMS: 0, animationFadeOutMS: 0 } } };
+}
+function skinLiveRefsSetExpr() {
+  return '(function(){var m=document.getElementById(' + JSON.stringify(MOUNT) + ');' +
+    'if(!m)return false;var cv=m.querySelector("canvas");var st=m.__gosxScene3DState;' +
+    'if(!cv||!st)return false;var sk=st._modelSkins;if(!Array.isArray(sk))return false;' +
+    'var rec=null;for(var i=0;i<sk.length;i+=1){' +
+    'if(sk[i]&&sk[i].id==="skin-caster"){rec=sk[i];break;}}if(!rec)return false;' +
+    'window.__skinLiveRefs={mount:m,canvas:cv,state:st,record:rec};return true;})()';
+}
+function skinLiveRefsCheckExpr() {
+  return '(function(){var r=window.__skinLiveRefs;if(!r)return null;' +
+    'var m=document.getElementById(' + JSON.stringify(MOUNT) + ');' +
+    'var cv=m&&m.querySelector("canvas");var st=m&&m.__gosxScene3DState;' +
+    'var rec=null;var sk=st&&st._modelSkins;if(Array.isArray(sk)){' +
+    'for(var i=0;i<sk.length;i+=1){' +
+    'if(sk[i]&&sk[i].id==="skin-caster"){rec=sk[i];break;}}}' +
+    'return {sameMount:m===r.mount,sameCanvas:cv===r.canvas,' +
+    'sameState:st===r.state,sameRecord:rec===r.record};})()';
+}
+function skinLiveDispatchExpr(detail) {
+  return '(function(){try{document.dispatchEvent(new CustomEvent("gosx:hub:event",' +
+    '{detail:' + JSON.stringify(detail) + '}));return true;}catch(e){return false;}})()';
+}
+async function runSkinnedShadowLiveSteps(send, c, rec, cap, shots, evidence) {
+  const steps = [];
+  const targetPfx = c.webgpu ? 'wg-sk-' : 'gl-sk-';
+  const phases = [{ name: 'pose', animation: 'pose', tx: 0.8, expectPose: true },
+    { name: 'rest', animation: '', tx: 0, expectPose: false }];
+  const identCheck = async (label) => {
+    const id = await evalSend(send, skinLiveRefsCheckExpr());
+    const ok = !!id && id.sameMount === true && id.sameCanvas === true &&
+      id.sameState === true && id.sameRecord === true;
+    if (!ok) fail(c.name + ': phase ' + label + ': mount/canvas/state/record identity changed');
+    return id;
+  };
+  const checkCommon = (snap, label) => {
+    if (snap.mounted !== 'true') fail(c.name + ': phase ' + label + ': mounted flag not true');
+    if (snap.ior.obsErrors.length || snap.wgpu.obsErrors.length) {
+      fail(c.name + ': phase ' + label + ': observation errors: GL=[' +
+        snap.ior.obsErrors.join('; ') + '] WG=[' + snap.wgpu.obsErrors.join('; ') + ']');
+    }
+    if (snap.renderer !== (c.webgpu ? 'webgpu' : 'webgl') ||
+        (c.webgpu && (snap.fallback === 'true' || snap.wgpuErr))) {
+      fail(c.name + ': phase ' + label + ': expected backend not active');
+    }
+  };
+  const checkShot = (s, label) => {
+    if (!s) throw new Error('skinned live phase ' + label + ': capture/decode failed');
+    if (s.clip.width !== W || s.clip.height !== H ||
+        s.metrics.w !== s.expectW || s.metrics.h !== s.expectH) {
+      fail(c.name + ': phase ' + label + ': capture dims mismatch rect=' + s.clip.width +
+        'x' + s.clip.height + ' shot=' + s.metrics.w + 'x' + s.metrics.h + ' expect=' +
+        s.expectW + 'x' + s.expectH);
+    }
+    if (!(s.metrics.fgPixels > 0) || !(s.metrics.fgFrac >= FG_COVERAGE) ||
+        !(s.metrics.maxDelta >= FG_THRESHOLD)) {
+      fail(c.name + ': phase ' + label + ': no measurable geometry foreground (fg=' +
+        s.metrics.fgPixels + ', frac=' + s.metrics.fgFrac.toFixed(4) + ')');
+    }
+  };
+  try {
+    if (await evalSend(send, skinLiveRefsSetExpr()) !== true) {
+      fail(c.name + ': could not retain test-only mount/canvas/state/record references');
+    }
+    let prevCap = cap || null;
+    for (let i = 0; i < phases.length; i += 1) {
+      const ph = phases[i];
+      const before = await evalSend(send, READ);
+      if (!before || !before.ior || !before.wgpu || !before.skinState ||
+          before.ior.obsErrors.length || before.wgpu.obsErrors.length) {
+        throw new Error('skinned live phase ' + (i + 1) +
+          ': before-event evidence read failed or observation errors present');
+      }
+      const prePose = skinStateReady(before, { ...c, skinnedExpectPose: !ph.expectPose },
+        ph.expectPose ? 0 : 0.8);
+      if (!prePose || (!c.webgpu && (!before.ior.skinColor || !before.ior.skinShadow))) {
+        throw new Error('skinned live phase ' + (i + 1) + ': before-event skin state is not ' +
+          (ph.expectPose ? 'rest tx=0' : 'pose tx=0.8') + ' or GL skin draw records missing');
+      }
+      // Public seam only: dispatch accepted merely means no throw; the
+      // recorded animation, actual palette pose and render advance prove it.
+      const dispatched = await evalSend(send,
+        skinLiveDispatchExpr(skinLiveHubDetail(ph.animation)), { awaitPromise: true });
+      if (dispatched !== true) fail(c.name + ': phase ' + ph.name + ': gosx:hub:event dispatch threw');
+      let applied = null;
+      const dl = Date.now() + CASE_WAIT_MS;
+      for (;;) {
+        applied = await evalSend(send, READ);
+        if (applied && applied.skinState && applied.ior && applied.wgpu) {
+          const stable = applied.mounted === 'true' &&
+            applied.renderer === (c.webgpu ? 'webgpu' : 'webgl') &&
+            (!c.webgpu || (applied.fallback !== 'true' && !applied.wgpuErr)) &&
+            applied.ior.obsErrors.length === 0 &&
+            applied.wgpu.obsErrors.length === 0;
+          const stateOk = skinStateReady(applied,
+            { ...c, skinnedExpectPose: ph.expectPose }, ph.tx);
+          const glOk = !c.webgpu && applied.ior.skinColor && applied.ior.skinShadow &&
+            applied.ior.skinColor.draws > before.ior.skinColor.draws &&
+            applied.ior.skinShadow.draws > before.ior.skinShadow.draws &&
+            skinDrawMatches(applied.ior.skinColor, ph.tx, 1, -1) &&
+            skinDrawMatches(applied.ior.skinShadow, ph.tx, 1, -1);
+          const wgOk = c.webgpu && !applied.wgpuErr &&
+            Number(applied.frameSeq || 0) > Number(before.frameSeq || 0);
+          if (stable && stateOk && (glOk || wgOk)) break;
+        }
+        if (Date.now() >= dl) break;
+        await sleep(50);
+      }
+      if (!applied || !applied.skinState || !applied.ior || !applied.wgpu) {
+        throw new Error('skinned live phase ' + (i + 1) + ': post-dispatch evidence read failed');
+      }
+      if (applied.skinState.animation !== ph.animation) fail(c.name + ': phase ' + ph.name + ': event accepted but recorded animation did not become ' + JSON.stringify(ph.animation) + ' within CASE_WAIT_MS');
+      checkCommon(applied, ph.name);
+      if (!skinStateReady(applied, { ...c, skinnedExpectPose: ph.expectPose }, ph.tx)) {
+        fail(c.name + ': phase ' + ph.name + ': actual skin state/palette did not reach ' + (ph.expectPose ? 'pose tx=0.8' : 'rest tx=0'));
+      }
+      await identCheck(ph.name);
+      await sleep(SETTLE_MS);
+      const settled = await evalSend(send, READ);
+      if (!settled || !settled.ior || !settled.wgpu || !settled.skinState) {
+        throw new Error('skinned live phase ' + (i + 1) + ': settled evidence read failed');
+      }
+      checkCommon(settled, ph.name);
+      if (!skinStateReady(settled, { ...c, skinnedExpectPose: ph.expectPose }, ph.tx)) {
+        fail(c.name + ': phase ' + ph.name + ': settled skin state/palette is not ' + (ph.expectPose ? 'pose tx=0.8' : 'rest tx=0'));
+      }
+      const glDelta = c.webgpu ? null : settled.ior.skinColor.draws - before.ior.skinColor.draws;
+      const shDelta = c.webgpu ? null : settled.ior.skinShadow.draws - before.ior.skinShadow.draws;
+      if (!c.webgpu && (!(glDelta > 0) || !(shDelta > 0))) {
+        fail(c.name + ': phase ' + ph.name + ': settled GL skin draws did not advance (color=+' + glDelta + ', shadow=+' + shDelta + ')');
+      }
+      if (!c.webgpu && (!skinDrawMatches(settled.ior.skinColor, ph.tx, 1, -1) ||
+          !skinDrawMatches(settled.ior.skinShadow, ph.tx, 1, -1))) {
+        fail(c.name + ': phase ' + ph.name + ': settled GL color/shadow draw records do not match palette tx=' + ph.tx + ' (opacity 1, alphaCutoff -1)');
+      }
+      if (c.webgpu && !(Number(settled.frameSeq || 0) > Number(before.frameSeq || 0))) fail(c.name + ': phase ' + ph.name + ': settled frame sequence did not advance');
+      const settledIdent = await identCheck(ph.name + ' settled');
+      const capStep = await capture(send);
+      checkShot(capStep, ph.name);
+      const targetName = targetPfx + 'ref-' + ph.name;
+      const targetShot = shots[targetName];
+      const refEv = (Array.isArray(evidence) ? evidence : []).find(
+        (ev) => ev && ev.name === targetName);
+      if (!refEv || refEv.skipped ||
+          refEv.renderer !== (c.webgpu ? 'webgpu' : 'webgl')) {
+        fail(c.name + ': phase ' + ph.name + ': reference evidence for ' + targetName +
+          ' missing, skipped, or actual renderer is not ' + (c.webgpu ? 'webgpu' : 'webgl'));
+      }
+      let dTarget = null;
+      if (!targetShot) {
+        fail(c.name + ': phase ' + ph.name + ': missing same-backend static reference capture ' + targetName);
+      } else {
+        dTarget = await diffShots(send, capStep.base64, targetShot.base64, c.shadowROI);
+        if (!dTarget || !dTarget.dimsMatch || dTarget.exactPixels !== 0 || dTarget.exactBytes !== 0) {
+          fail(c.name + ': phase ' + ph.name + ': receiver ROI not byte-identical to static ref-' + ph.name + ' (exactPixels=' + (dTarget && dTarget.exactPixels) + ', exactBytes=' + (dTarget && dTarget.exactBytes) + ')');
+        }
+      }
+      let dPrev = null;
+      if (prevCap) {
+        dPrev = await diffShots(send, prevCap.base64, capStep.base64, c.shadowROI);
+        if (!dPrev || !dPrev.dimsMatch || !(dPrev.meanChanged >= 50)) {
+          fail(c.name + ': phase ' + ph.name + ': expected >=50 changed receiver ROI pixels vs previous snapshot (meanChanged=' + (dPrev && dPrev.meanChanged) + ')');
+        }
+      }
+      saveArtifact(c.name + '-sklive-' + ph.name + '.png', capStep.base64);
+      steps.push({
+        phase: ph.name, eventDispatched: dispatched === true, identitySettled: settledIdent,
+        actualPalette: Array.isArray(settled.skinState.palette) ?
+          settled.skinState.palette.slice() : null,
+        animation: settled.skinState.animation,
+        renderAdvance: c.webgpu ? { frameSeqBefore: Number(before.frameSeq || 0),
+          frameSeqAfter: Number(settled.frameSeq || 0) } :
+          { skinColorDrawsBefore: before.ior.skinColor.draws,
+            skinColorDrawsAfter: settled.ior.skinColor.draws,
+            skinShadowDrawsBefore: before.ior.skinShadow.draws,
+            skinShadowDrawsAfter: settled.ior.skinShadow.draws },
+        glShadowDelta: shDelta, targetPixelDiff: dTarget, beforeAfterPixelDiff: dPrev,
+      });
+      prevCap = capStep;
+    }
+    if (steps.length !== 2) {
+      fail(c.name + ': expected 2 skinned live steps, ran ' + steps.length);
+    }
+    rec.skinnedLiveSteps = steps;
+  } finally {
+    await evalSend(send, '(function(){try{delete window.__skinLiveRefs;}catch(e){}return true;})()');
+  }
+}
+
 // ---- Overall watchdog (bounded, triggers the same central cleanup) ----
 setTimeout(() => {
   if (finished) return;
@@ -3446,6 +3987,46 @@ setTimeout(() => {
             CASE_WAIT_MS + 'ms');
         }
       }
+      // Shared skinned expectations: initial palette tx (rest/live 0, pose
+      // and mask 0.8) plus this case's exact draw opacity/cutoff values.
+      const skinTx = c.skinnedExpectPose ? 0.8 : 0;
+      const wantOp = (c.skinnedMaskOpacity !== undefined) ?
+        c.skinnedMaskOpacity : 1;
+      const wantCut = (c.skinnedMaskCutoff !== undefined) ?
+        c.skinnedMaskCutoff : -1;
+      if (c.skinnedGlb && ready) {
+        // INITIAL skinned readiness: the real skin state record plus actual
+        // backend skin output, before settle/READ/capture. Stable backends
+        // and empty observer error lists are part of the readiness
+        // predicate. Shadow draws are deliberately NOT required here: the
+        // old baseline has none, and that must be a recorded failure after
+        // ready, not a readiness abort.
+        const skinBackendStable = (sK) => Boolean(sK) &&
+          sK.fallback !== 'true' &&
+          Boolean(sK.ior) && sK.ior.obsErrors.length === 0 &&
+          Boolean(sK.wgpu) && sK.wgpu.obsErrors.length === 0;
+        let skinReady = false;
+        let skinDiag = null;
+        const skinDeadline = Date.now() + CASE_WAIT_MS;
+        while (Date.now() < skinDeadline) {
+          const sK = await evalSend(send, READ);
+          skinDiag = sK;
+          if (skinBackendStable(sK) && skinStateReady(sK, c, skinTx) &&
+              (c.webgpu
+                ? !sK.wgpuErr && Number(sK.frameSeq || 0) > 0
+                : skinDrawMatches(sK.ior.skinColor, skinTx, wantOp, wantCut))) {
+            skinReady = true;
+            break;
+          }
+          await sleep(100);
+        }
+        if (!skinReady) {
+          readinessFatal = true;
+          fail(c.name + ': skinned scene state/output not ready within ' +
+            CASE_WAIT_MS + 'ms; skinState: ' +
+            (skinDiag ? JSON.stringify(skinDiag.skinState) : String(skinDiag)));
+        }
+      }
       await sleep(SETTLE_MS);
       const s = await evalSend(send, READ);
       if (!s || !s.ior || !s.wgpu) throw new Error('evidence read failed');
@@ -3460,6 +4041,57 @@ setTimeout(() => {
         uniformF90: s.ior.lastDrawF90,
         wgpuUploads: s.wgpu.uploads,
       });
+
+      if (c.skinnedGlb) {
+        rec.skinEvidence = {
+          state: s.skinState, color: s.ior.skinColor,
+          shadow: s.ior.skinShadow,
+          glbServed: skinnedGlbServed[c.skinnedGlb],
+          animationChunkServed: animChunkServed,
+          animationSource: (animChunkServed > 0) ? 'chunk' :
+            ((s.skinState && s.skinState.animationApiCapabilities) ? 'embedded' : 'none'),
+          animationApiObserved: Boolean(s.skinState && s.skinState.animationApiCapabilities),
+          animationApiMatchesRecord: Boolean(s.skinState && s.skinState.animationApiMatchesRecord),
+          frameSeq: Number(s.frameSeq || 0),
+        };
+        if (!(rec.skinEvidence.glbServed > 0)) {
+          fail(c.name + ': skinned GLB asset not served: ' + c.skinnedGlb);
+        }
+        // The monolithic bootstrap embeds window.__gosx_scene3d_animation_api,
+        // so ensureAnimationFeatureLoaded normally resolves without a chunk
+        // request. The published API must be observed either way (embedded or
+        // an actually served chunk); report the real chunk count only.
+        if (!rec.skinEvidence.animationApiObserved) {
+          fail(c.name + ': scene3d animation API not observed (embedded API absent and no animation chunk served)');
+        }
+        if (!s.skinState || !s.skinState.object) {
+          fail(c.name + ': missing skinned state record/object (missing evidence fails, not skips)');
+        } else {
+          // Same predicates as readiness, asserted again post-settle (not
+          // transient-only) against ACTUAL observer fields.
+          if (!skinStateReady(s, c, skinTx)) {
+            fail(c.name + ': skinned state not ready after settle: ' +
+              JSON.stringify(s.skinState));
+          }
+          if (s.skinState.animationApiMatchesRecord !== true) {
+            fail(c.name + ': observed animation API does not match the skin record animationApi');
+          }
+          if (!c.webgpu) {
+            // BOTH channels must satisfy the full native draw record shape
+            // (the old baseline intentionally fails missing shadow later).
+            if (!skinDrawMatches(s.ior.skinColor, skinTx, wantOp, wantCut)) {
+              fail(c.name + ': skinned color draw record mismatch: ' +
+                JSON.stringify(s.ior.skinColor));
+            }
+            if (!skinDrawMatches(s.ior.skinShadow, skinTx, wantOp, wantCut)) {
+              fail(c.name + ': skinned shadow draw record mismatch: ' +
+                JSON.stringify(s.ior.skinShadow));
+            }
+          } else if (!(Number(s.frameSeq || 0) > 0)) {
+            fail(c.name + ': expected actual WebGPU frame presentation (frameSeq>0)');
+          }
+        }
+      }
 
       if (s.mounted !== 'true') fail(c.name + ': data-gosx-scene3d-mounted not true');
       if (s.ior.obsErrors.length) fail(c.name + ': GL observation errors: ' + s.ior.obsErrors.join('; '));
@@ -3923,6 +4555,10 @@ setTimeout(() => {
       if (c.lifecycle && Array.isArray(c.lifecycleTransitions)) {
         await runInstancedLifecycleSteps(send, c, rec, cap, shots);
       }
+      // Skinned LIVE 2-step public hub event run on this same mount.
+      if (c.skinnedLive) {
+        await runSkinnedShadowLiveSteps(send, c, rec, cap, shots, evidence);
+      }
 
       // CSS var case: real documentElement.style.setProperty --ior 1.33 -> 2.42.
       // Wait for the runtime's own MutationObserver-driven revision advance AND
@@ -3990,6 +4626,22 @@ setTimeout(() => {
         catch (e) { fail(c.name + ': dispose threw: ' + e.message); }
         rec.disposeRemovedState = disposed === true;
         if (!disposed) fail(c.name + ': __gosx_dispose_engine did not remove scene state');
+        if (c.skinnedGlb && !c.webgpu) {
+          let sPost = null;
+          try { sPost = await evalSend(send, READ); } catch (e) { sPost = null; }
+          const preId = (rec.skinEvidence && rec.skinEvidence.shadow &&
+            rec.skinEvidence.shadow.lastProgramId != null) ?
+            rec.skinEvidence.shadow.lastProgramId : null;
+          rec.skinShadowProgramDeleted = !!(preId !== null && sPost &&
+            sPost.ior && Array.isArray(sPost.ior.deletedProgramIds) &&
+            sPost.ior.deletedProgramIds.indexOf(preId) !== -1);
+          if (preId === null) {
+            fail(c.name + ': no skinned shadow program id observed before dispose');
+          } else if (!rec.skinShadowProgramDeleted) {
+            fail(c.name + ': skinned shadow program ' + preId +
+              ' not present in deletedProgramIds after dispose');
+          }
+        }
       }
     }
   }
@@ -4114,13 +4766,17 @@ setTimeout(() => {
       observedInstanceCount: r.observedInstanceCount,
       observedBatches: r.observedBatches,
       lifecycleSteps: r.lifecycleSteps || undefined,
+      skinnedLiveSteps: r.skinnedLiveSteps || undefined,
       shadowBudget: r.shadowBudget || undefined, shadow: r.shadow || undefined,
       nativeCap: r.nativeCap !== undefined ? r.nativeCap : undefined,
       instShadowDraws: r.instShadowDraws, instShadowInstances: r.instShadowInstances,
       initialInstShadowDraws: r.initialInstShadowDraws,
       initialInstShadowInstances: r.initialInstShadowInstances,
       instancedShadow: r.instancedShadow,
-      forcedCap: r.forcedCap !== undefined ? r.forcedCap : undefined })),
+      forcedCap: r.forcedCap !== undefined ? r.forcedCap : undefined,
+      skinEvidence: r.skinEvidence || undefined,
+      skinShadowProgramDeleted: r.skinShadowProgramDeleted,
+    })),
     caseGroup: CASE_GROUP,
     registeredCaseCount: CASES.length,
     selectedCaseCount: RUN_CASES.length,

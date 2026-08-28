@@ -233,10 +233,90 @@
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
       if (obj.directVertices) {
+        if (!obj.castShadow) continue;
+        // GPU-skinned casters take precedence over retained bind bounds: the
+        // GPU color path recognizes skin + streams, so when a caster carries
+        // both, its bind-pose bounds describe the wrong geometry. Skinned
+        // casters deform on the GPU, so obj.bounds (bind-pose or stale local)
+        // does not describe the posed geometry. Fold a conservative world
+        // bound: cached bind-pose per-joint influence AABBs transformed by
+        // the live model*joint matrices on every fit. Posed bounds are never
+        // cached because joint palettes mutate in place.
+        var skinObj = obj.skin;
+        var skinPalette = skinObj && skinObj.jointMatrices;
+        // skin.jointMatrices is ONE FLAT Float32Array of jointCount*16 floats
+        // (never an array of matrices): jointCount = floor(length / 16).
+        var skinJointCount = skinPalette && typeof skinPalette.length === "number"
+          ? Math.floor(skinPalette.length / 16)
+          : 0;
+        var skinVerts = obj.vertices;
+        var skinPositions = skinVerts && skinVerts.positions;
+        var skinJoints = skinVerts && skinVerts.joints;
+        var skinWeights = skinVerts && skinVerts.weights;
+        var skinModel = obj.modelMatrix;
+        var skinCountRaw = skinVerts && skinVerts.count != null
+          ? skinVerts.count
+          : (obj.vertexCount != null ? obj.vertexCount : 0);
+        var skinCount = Math.floor(Number(skinCountRaw));
+        var isSkinnedCaster = Boolean(
+          skinJointCount > 0 &&
+          typeof skinPalette[0] === "number" &&
+          skinPositions && typeof skinPositions.length === "number" && skinPositions.length > 0 &&
+          skinJoints && typeof skinJoints.length === "number" && skinJoints.length > 0 &&
+          skinWeights && typeof skinWeights.length === "number" && skinWeights.length > 0 &&
+          skinModel && skinModel.length >= 16 &&
+          Number.isFinite(skinCount) && skinCount > 0
+        );
+        if (isSkinnedCaster) {
+          var skinRevision = -1;
+          if (obj.geometryRevision != null) skinRevision = Math.floor(Number(obj.geometryRevision));
+          else if (skinVerts.revision != null) skinRevision = Math.floor(Number(skinVerts.revision));
+          if (!Number.isFinite(skinRevision) || skinRevision < 0) skinRevision = -1;
+          var influenceCache = skinVerts._gosxSkinnedShadowInfluences;
+          if (
+            !influenceCache ||
+            influenceCache.positions !== skinPositions ||
+            influenceCache.joints !== skinJoints ||
+            influenceCache.weights !== skinWeights ||
+            influenceCache.count !== skinCount ||
+            influenceCache.revision !== skinRevision ||
+            influenceCache.jointCount !== skinJointCount
+          ) {
+            influenceCache = sceneSkinnedShadowInfluenceAABBs(
+              skinPositions, skinJoints, skinWeights, skinCount, skinJointCount, skinRevision
+            );
+            skinVerts._gosxSkinnedShadowInfluences = influenceCache;
+          }
+          var skinInfluences = influenceCache.influences;
+          for (var jointSlot = 0; jointSlot < skinInfluences.length; jointSlot++) {
+            var influence = skinInfluences[jointSlot];
+            if (!influence) continue;
+            var jointOffset = jointSlot * 16;
+            for (var influenceCorner = 0; influenceCorner < 8; influenceCorner++) {
+              var localX = (influenceCorner & 1) ? influence.maxX : influence.minX;
+              var localY = (influenceCorner & 2) ? influence.maxY : influence.minY;
+              var localZ = (influenceCorner & 4) ? influence.maxZ : influence.minZ;
+              var jointX = skinPalette[jointOffset] * localX + skinPalette[jointOffset + 4] * localY + skinPalette[jointOffset + 8] * localZ + skinPalette[jointOffset + 12];
+              var jointY = skinPalette[jointOffset + 1] * localX + skinPalette[jointOffset + 5] * localY + skinPalette[jointOffset + 9] * localZ + skinPalette[jointOffset + 13];
+              var jointZ = skinPalette[jointOffset + 2] * localX + skinPalette[jointOffset + 6] * localY + skinPalette[jointOffset + 10] * localZ + skinPalette[jointOffset + 14];
+              var worldX = skinModel[0] * jointX + skinModel[4] * jointY + skinModel[8] * jointZ + skinModel[12];
+              var worldY = skinModel[1] * jointX + skinModel[5] * jointY + skinModel[9] * jointZ + skinModel[13];
+              var worldZ = skinModel[2] * jointX + skinModel[6] * jointY + skinModel[10] * jointZ + skinModel[14];
+              if (!isFinite(worldX) || !isFinite(worldY) || !isFinite(worldZ)) continue;
+              if (worldX < minX) minX = worldX;
+              if (worldY < minY) minY = worldY;
+              if (worldZ < minZ) minZ = worldZ;
+              if (worldX > maxX) maxX = worldX;
+              if (worldY > maxY) maxY = worldY;
+              if (worldZ > maxZ) maxZ = worldZ;
+            }
+          }
+          continue;
+        }
         // Retained casters draw from model-space vertex buffers and never land
         // in the baked soup, so fold their transformed world bounds into the
         // light-frustum fit instead of skipping them outright.
-        if (!obj.retainedGeometry || !obj.castShadow) continue;
+        if (!obj.retainedGeometry) continue;
         var casterBounds = obj.bounds;
         if (
           casterBounds &&
@@ -340,6 +420,59 @@
       return { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
     }
     return { minX: minX, minY: minY, minZ: minZ, maxX: maxX, maxY: maxY, maxZ: maxZ };
+  }
+
+  // Conservative bind-pose influence AABBs for one GPU-skinned shadow caster,
+  // cached on the vertices object by sceneShadowComputeBounds. The cache is
+  // keyed by stream identities, vertex count, explicit geometry revision and
+  // the joint count (floor(jointMatrices.length / 16) over the FLAT palette
+  // Float32Array) so stream replacement or a revision bump invalidates it.
+  // Zero and negative weights are not influences (glTF weights are normalized
+  // and nonnegative); malformed vertices, weights or joint indices are skipped
+  // rather than poisoning the boxes. Posed bounds are deliberately not cached:
+  // joint palettes mutate in place, so the corners are transformed by the live
+  // model*joint matrices on every light fit. The palette is read at its full
+  // flat length — skeletons larger than the GL uniform cap (WGSL supports
+  // more) are never truncated here.
+  function sceneSkinnedShadowInfluenceAABBs(positions, joints, weights, count, jointCount, revision) {
+    var influences = new Array(jointCount);
+    var posLimit = Math.min(count * 3, positions.length);
+    var attrLimit = Math.min(count * 4, weights.length, joints.length);
+    for (var v = 0; v < count; v++) {
+      var p = v * 3;
+      var q = v * 4;
+      if (p + 2 >= posLimit || q + 3 >= attrLimit) break;
+      var px = positions[p];
+      var py = positions[p + 1];
+      var pz = positions[p + 2];
+      if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz)) continue;
+      for (var k = 0; k < 4; k++) {
+        var w = Number(weights[q + k]);
+        if (!Number.isFinite(w) || w <= 0) continue;
+        var jointIndex = Math.floor(Number(joints[q + k]));
+        if (!Number.isFinite(jointIndex) || jointIndex < 0 || jointIndex >= jointCount) continue;
+        var box = influences[jointIndex];
+        if (!box) {
+          influences[jointIndex] = { minX: px, minY: py, minZ: pz, maxX: px, maxY: py, maxZ: pz };
+        } else {
+          if (px < box.minX) box.minX = px;
+          if (py < box.minY) box.minY = py;
+          if (pz < box.minZ) box.minZ = pz;
+          if (px > box.maxX) box.maxX = px;
+          if (py > box.maxY) box.maxY = py;
+          if (pz > box.maxZ) box.maxZ = pz;
+        }
+      }
+    }
+    return {
+      positions: positions,
+      joints: joints,
+      weights: weights,
+      count: count,
+      revision: revision,
+      jointCount: jointCount,
+      influences: influences,
+    };
   }
 
   // Generate PBR vertex data (positions, normals, UVs, tangents) for a geometry

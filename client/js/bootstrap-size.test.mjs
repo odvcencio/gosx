@@ -581,7 +581,9 @@ const budgets = [
   // measured 431033/346038 stayed green.
   // Instanced-shadow runtime support measured 1598280/432480/347347;
   // all three caps raised to the next 100 bytes.
-  { file: "bootstrap.js", raw: 1_598_300, gzip: 432_500, brotli: 347_400 },
+  // Skinned-shadow runtime plus posed influence bounds measured
+  // 1605600/434348/348351; all three caps raised to the next 100 bytes.
+  { file: "bootstrap.js", raw: 1_605_600, gzip: 434_400, brotli: 348_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -923,7 +925,9 @@ const budgets = [
   // 224161/61835/52427; all three caps raised with narrow rounding headroom.
   // Instanced-shadow runtime support measured 228942/62841/53167;
   // all three caps raised to the next 100 bytes.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 229_000, gzip: 62_900, brotli: 53_200 },
+  // Skinned-shadow runtime plus posed influence bounds measured
+  // 234228/63835/53941; all three caps raised to the next 100 bytes.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 234_300, gzip: 63_900, brotli: 54_000 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1022,7 +1026,9 @@ const budgets = [
   // headroom.
   // Instanced-shadow runtime support measured 555592/153343/126944;
   // all three caps raised to the next 100 bytes.
-  { file: "bootstrap-feature-scene3d.js", raw: 555_600, gzip: 153_400, brotli: 127_000 },
+  // Skinned-shadow runtime plus posed influence bounds measured
+  // 557751/154196/127549; all three caps raised to the next 100 bytes.
+  { file: "bootstrap-feature-scene3d.js", raw: 557_800, gzip: 154_200, brotli: 127_600 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1710,9 +1716,11 @@ const routeBudgets = [
     // headroom.
     // Instanced-shadow runtime support measured 1085257/300034/253897;
     // all three caps raised to the next 100 bytes.
-    raw: 1_085_300,
-    gzip: 300_100,
-    brotli: 253_900,
+    // Skinned-shadow runtime plus posed influence bounds measured
+    // 1092702/301881/255276; all three caps raised to the next 100 bytes.
+    raw: 1_092_800,
+    gzip: 301_900,
+    brotli: 255_300,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1846,9 +1854,11 @@ const routeBudgets = [
     // measured 394876/333383 stayed green.
     // Instanced-shadow runtime support measured 1485954/396353/334460;
     // all three caps raised to the next 100 bytes.
-    raw: 1_486_000,
-    gzip: 396_400,
-    brotli: 334_500,
+    // Skinned-shadow runtime plus posed influence bounds measured
+    // 1493399/398200/335839; all three caps raised to the next 100 bytes.
+    raw: 1_493_400,
+    gzip: 398_200,
+    brotli: 335_900,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1982,9 +1992,11 @@ const routeBudgets = [
     // all three caps raised with narrow rounding headroom.
     // Instanced-shadow runtime support measured 1104735/290180/242809;
     // all three caps raised to the next 100 bytes.
-    raw: 1_104_800,
-    gzip: 290_200,
-    brotli: 242_900,
+    // Skinned-shadow runtime plus posed influence bounds measured
+    // 1106894/291033/243414; all three caps raised to the next 100 bytes.
+    raw: 1_106_900,
+    gzip: 291_100,
+    brotli: 243_500,
   },
 
 ];
