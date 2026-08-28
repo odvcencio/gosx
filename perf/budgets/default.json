@@ -50,9 +50,9 @@
       ]
     },
     "water-ci": {
-      "description": "Water route under CI software rasterization. Gates load, the reviewed O-series browser-host and runtime payload, and total blocking time; long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary. Real-GPU cadence is certified separately.",
+      "description": "Water route under CI software rasterization. Gates load, the reviewed O-series browser-host and runtime payload, and total blocking time; long-task count is intentionally ungated because continuous software-raster frames straddle the 50ms boundary. Real-GPU cadence is certified separately. CI measured 1651.29KiB network payload after the reviewed specular-color checkpoint added 1825 bytes to the WebGPU chunk; the assertion allows 1653KiB.",
       "assertions": [
-        "network_kb <= 1650",
+        "network_kb <= 1653",
         "lcp <= 2000",
         "tbt <= 18000"
       ]
