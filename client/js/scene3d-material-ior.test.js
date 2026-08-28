@@ -562,7 +562,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   // The WebGPU struct keeps its legacy trailing dielectricF0 scalar at f40
   // for layout compatibility, then packs the live effective specular F0 as
   // an aligned vec3f (floats 44..46) and F90 (float 47), padding the struct
-  // to 192 bytes. Struct line matching allows the production aligned
+  // to 208 bytes. Struct line matching allows the production aligned
   // whitespace.
   const structStart = indexOfMatch(source, /"struct MaterialUniforms \{"/);
   const matrixLine = indexOfMatch(source, /"\s+modelMatrix: mat4x4f,"/);
@@ -583,11 +583,13 @@ test("WebGPU material uniform packing carries the effective specular factors wit
     const flagLine = indexOfMatch(source, new RegExp('"\\s+' + flag + ': u32,"'));
     assert.ok(flagLine > structStart && flagLine < matrixLine, flag + " texture-flag slot preserved");
   }
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(192\);/);
+  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(208\);/);
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
   // Fragment shader consumes the effective specular factors; the fixed 0.04
   // default is gone.
-  assert.match(source, /let specF0 = material\.specularF0( \* specIntensity)?;/);
+  // Production legitimately declares a mutable var: the color-texture slice
+  // updates the shared specF0 before it is mixed with albedo by metalness.
+  assert.match(source, /var specF0 = material\.specularF0( \* specIntensity)?;/);
   assert.match(source, /var F0 = mix\(specF0, albedo, metalness\);/);
   assert.doesNotMatch(source, /let F0 = mix\(vec3f\(0\.04\)/);
 
@@ -595,7 +597,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   // declarations (whitespace-tolerant) with the real shared numeric/color
   // helpers — no hand copies of the buffer views or the math.
   const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
-  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(192\);/);
+  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(208\);/);
   assert.match(bufferDecls, /var\s+_materialUniformF\s*=/);
   assert.match(bufferDecls, /var\s+_materialUniformU\s*=/);
   const context = createSceneCoreContext();
@@ -628,7 +630,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
 
   const packed = callIn(context,
     'materialUniformData({ color: "#ffffff", roughness: 0.25, metalness: 0.5, ior: 2.42 }, true, null, null)');
-  assert.strictEqual(packed.data.length, 48);
+  assert.strictEqual(packed.data.length, 52);
   // PBR scalars keep their slots.
   assert.ok(Math.abs(packed.data[3] - 0.25) <= 1e-6);
   assert.ok(Math.abs(packed.data[4] - 0.5) <= 1e-6);
@@ -662,4 +664,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   assert.ok(Math.abs(packed.data[45] - expectedDielectricF0(2.42)) <= 1e-6);
   assert.ok(Math.abs(packed.data[46] - expectedDielectricF0(2.42)) <= 1e-6);
   assert.ok(Math.abs(packed.data[47] - 1) <= 1e-6);
+  // Specular-color log coefficients at 48..50 and the neutral flag at u32 51.
+  for (let c = 0; c < 3; c++) assert.ok(Number.isFinite(packed.data[48 + c]));
+  assert.strictEqual(packed.u[51], 0);
 });

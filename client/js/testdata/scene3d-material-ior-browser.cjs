@@ -16,9 +16,11 @@
  *  - native u_specularF0 (vec3) + u_specularF90 uniform values observed at
  *    production GL draw calls (getUniformLocation program->location tracking
  *    + getParameter CURRENT_PROGRAM + getUniform at draw time, instanced
- *    forms included), and the 192-byte WebGPU material upload with the
+ *    forms included), and the 208-byte WebGPU material upload with the
  *    effective F0 read at float indices 44..46 and F90 at 47 (bytes
- *    176:192); all wrappers strictly forward and observation errors are
+ *    176:192, unchanged), the loaded-intensity flag at u32 index 41 (byte
+ *    164) and the loaded-color flag at u32 index 51 (byte 204); all wrappers
+ *    strictly forward and observation errors are
  *    recorded and fail the probe without changing native behavior;
  *  - actual rendered pixels via CDP screenshot clipped to the real canvas
  *    bounding rect, decoded with a native browser Image + 2D canvas, with
@@ -37,6 +39,11 @@
  *    override of that asset, and an instanced GLB batch inheriting the loaded
  *    factors exactly (no batch specular overrides) vs batch
  *    specularIntensity:0;
+ *  - real GLB KHR_materials_specular specularColorTexture: white/black/
+ *    tinted/HDR color textures against untextured linear-factor controls,
+ *    texture-alpha irrelevance for the color role, a combined color+intensity
+ *    texture case, fully metallic and IBL-isolated color-texture cases, with
+ *    both loaded flags and both actual texture fetches observed;
  *  - named-material table reference; real CSS var(--ior) 1.33 -> 2.42 change
  *    via documentElement.style.setProperty with observed revision advance,
  *    new uniform value and changed pixels (no remount, no manual writes);
@@ -251,6 +258,15 @@ const TEX_PNGS = {
   '/tex/spec-alpha0-white.png': makePNG([255, 255, 255], 0),
   '/tex/spec-alpha128-black.png': makePNG([0, 0, 0], 128),
   '/tex/spec-alpha128-red.png': makePNG([255, 0, 0], 128),
+  // Specular-COLOR texture slice: deterministic flat RGBA blocks. Only the
+  // sRGB RGB channels carry the color role; the alpha channel must not affect
+  // it (asserted by the tint vs tint-alpha0 exact pair below).
+  '/tex/spec-color-white.png': makePNG([255, 255, 255], 255),
+  '/tex/spec-color-black.png': makePNG([0, 0, 0], 255),
+  '/tex/spec-color-tint.png': makePNG([128, 64, 255], 255),
+  '/tex/spec-color-tint-alpha0.png': makePNG([128, 64, 255], 0),
+  '/tex/spec-color-tint-alpha128.png': makePNG([128, 64, 255], 128),
+  '/tex/spec-color-hdr.png': makePNG([64, 128, 255], 255),
 };
 let texServed = {};
 
@@ -283,10 +299,30 @@ function buildQuadGLBTex(opts) {
       metallicFactor: opts.metallic ? 1 : 0,
       roughnessFactor: 0.35,
     },
-    extensions: { KHR_materials_specular: { specularTexture: { index: 0 } } },
   };
-  const extUsed = ['KHR_materials_specular'];
+  const images = [];
+  const textures = [];
+  if (opts.png) { textures.push({ sampler: 0, source: images.length }); images.push({ uri: opts.png }); }
+  if (opts.colorTex) { textures.push({ sampler: 0, source: images.length }); images.push({ uri: opts.colorTex }); }
+  // Optional KHR_materials_specular inputs: extension texture indices are
+  // assigned from the ACTUAL textures array ordering (intensity texture is
+  // pushed first when present, color texture second when present), so a
+  // color-only fixture correctly references index 0 and a combined fixture
+  // references indices 0/1. Omitted factor inputs keep the importer defaults
+  // (intensity 1, white color), so the pre-existing png-only fixtures keep
+  // their exact semantics.
+  const specExt = {};
+  if (opts.png) specExt.specularTexture = { index: 0 };
+  if (opts.colorTex) specExt.specularColorTexture = { index: textures.length - 1 };
+  if (opts.specFactor != null) specExt.specularFactor = opts.specFactor;
+  if (opts.specColor) specExt.specularColorFactor = opts.specColor;
+  const extUsed = [];
+  if (Object.keys(specExt).length) {
+    material.extensions = { KHR_materials_specular: specExt };
+    extUsed.push('KHR_materials_specular');
+  }
   if (opts.ior != null) {
+    material.extensions = material.extensions || {};
     material.extensions.KHR_materials_ior = { ior: opts.ior };
     extUsed.push('KHR_materials_ior');
   }
@@ -301,9 +337,9 @@ function buildQuadGLBTex(opts) {
       { bufferView: uvv, componentType: 5126, count: 4, type: 'VEC2', min: [0, 0], max: [1, 1] },
       { bufferView: iv, componentType: 5123, count: 6, type: 'SCALAR', min: [0], max: [3] },
     ],
-    textures: [{ sampler: 0, source: 0 }],
+    textures: textures,
     samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 33071, wrapT: 33071 }],
-    images: [{ uri: opts.png }],
+    images: images,
     bufferViews: views, buffers: [{ byteLength: bin.length }],
     extensionsUsed: extUsed,
   };
@@ -339,6 +375,61 @@ const GLB_FILES = {
   '/models/quad-tex-ibl-alpha255.glb': glbTexIblAlpha255,
   '/models/quad-spec-128.glb': glbSpec128,
 };
+
+// ---- Specular-COLOR texture fixtures (color-texture slice) ----------------
+// Exact sRGB transfer function (IEC 61966-2-1), NOT a gamma-2.2
+// approximation: GPU sRGB texture formats decode with this exact curve, so
+// the untextured controls below author their LINEAR factors as the exactly
+// decoded texel values. Color factors are LINEAR; the color texture RGB is
+// sRGB and is decoded by the sampler path.
+function srgbToLinear8(c8) {
+  const c = c8 / 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+const TINT_SRGB = [128, 64, 255];
+const TINT_LINEAR = TINT_SRGB.map(srgbToLinear8);
+const HDRTEX_SRGB = [64, 128, 255];
+const HDRTEX_LINEAR = HDRTEX_SRGB.map(srgbToLinear8);
+const glbTexColorWhite = buildQuadGLBTex({ colorTex: '/tex/spec-color-white.png' });
+const glbTexColorBlack = buildQuadGLBTex({ colorTex: '/tex/spec-color-black.png' });
+const glbTexColorTint = buildQuadGLBTex({ colorTex: '/tex/spec-color-tint.png' });
+const glbTexColorTintAlpha0 = buildQuadGLBTex({ colorTex: '/tex/spec-color-tint-alpha0.png' });
+const glbTexColorTintAlpha128 = buildQuadGLBTex({
+  colorTex: '/tex/spec-color-tint-alpha128.png', png: '/tex/spec-alpha128-black.png',
+  specFactor: 0.5 });
+const glbTexColorHdr = buildQuadGLBTex({ colorTex: '/tex/spec-color-hdr.png',
+  specFactor: 0.5, specColor: [100, 50, 2] });
+const glbTexColorInt0 = buildQuadGLBTex({ colorTex: '/tex/spec-color-white.png', specFactor: 0 });
+const glbTexColorMetal = buildQuadGLBTex({ colorTex: '/tex/spec-color-tint.png', metallic: true });
+const glbTexIblColorBlack = buildQuadGLBTex({ colorTex: '/tex/spec-color-black.png',
+  specColor: [4, 1, 1] });
+const glbTexIblColorWhite = buildQuadGLBTex({ colorTex: '/tex/spec-color-white.png',
+  specColor: [4, 1, 1] });
+// Untextured importer-only factor controls (never duplicated as model or
+// batch overrides): each matches its textured case above per the case table.
+const glbSpecColorBlack = buildQuadGLB(false, { factor: 1, color: [0, 0, 0] });
+const glbSpecColorTint = buildQuadGLB(false, { factor: 1,
+  color: [TINT_LINEAR[0], TINT_LINEAR[1], TINT_LINEAR[2]] });
+const glbSpecColorHdr = buildQuadGLB(false, { factor: 0.5,
+  color: [100 * HDRTEX_LINEAR[0], 50 * HDRTEX_LINEAR[1], 2 * HDRTEX_LINEAR[2]] });
+const glbSpecColorInt = buildQuadGLB(false, { factor: 0.5 * (128 / 255),
+  color: [TINT_LINEAR[0], TINT_LINEAR[1], TINT_LINEAR[2]] });
+Object.assign(GLB_FILES, {
+  '/models/quad-tex-color-white.glb': glbTexColorWhite,
+  '/models/quad-tex-color-black.glb': glbTexColorBlack,
+  '/models/quad-tex-color-tint.glb': glbTexColorTint,
+  '/models/quad-tex-color-tint-alpha0.glb': glbTexColorTintAlpha0,
+  '/models/quad-tex-color-tint-int128.glb': glbTexColorTintAlpha128,
+  '/models/quad-tex-color-hdr.glb': glbTexColorHdr,
+  '/models/quad-tex-color-int0.glb': glbTexColorInt0,
+  '/models/quad-tex-color-metal.glb': glbTexColorMetal,
+  '/models/quad-tex-ibl-color-black.glb': glbTexIblColorBlack,
+  '/models/quad-tex-ibl-color-white.glb': glbTexIblColorWhite,
+  '/models/quad-spec-color-black.glb': glbSpecColorBlack,
+  '/models/quad-spec-color-tint.glb': glbSpecColorTint,
+  '/models/quad-spec-color-hdr.glb': glbSpecColorHdr,
+  '/models/quad-spec-color-int.glb': glbSpecColorInt,
+ });
 
 // ---- Case table (one object/scene per page; sequential, never batched) ----
 // Explicit unindexed quad mesh (6 triangle vertices). A bare kind:'box' would
@@ -538,7 +629,7 @@ const CASES = [
 });
 // ---- Specular-intensity-ALPHA texture cases (WebGPU only, ALPHA slice) ----
 // CPU factors stay at the pre-texture values (specularFactor defaults to 1),
-// so the 192-byte upload assertions expect F0 .04 / F90 1 while the final
+// so the 208-byte upload assertions expect F0 .04 / F90 1 while the final
 // per-pixel intensity comes from the texture ALPHA channel; those CPU factors
 // are NOT the final per-pixel factors. The observed hasSpecularIntensityMap
 // flag (float index 41 of the real upload) must reach 1 before capture and is
@@ -594,6 +685,107 @@ const CASES = [
     requiresIBL: true, keyLightIntensity: 0,
     environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0,
       envIntensity: 1, ibl: IBL_FIXTURE.descriptor } }),
+].forEach((c) => CASES.push(c));
+
+// ---- Specular-COLOR texture cases (WebGPU only, color slice) --------------
+// CPU factors stay at the pre-texture authored values, so the 208-byte upload
+// assertions expect the authored F0/F90 (float indices 44..47, bytes 176:192,
+// unchanged) while the final per-pixel F0 comes from the sRGB-decoded color
+// texture RGB; the texture ALPHA channel must not affect the color role. The
+// observed hasSpecularColorMap flag (u32 index 51, byte 204) must reach 1
+// before capture for every color-texture case, and BOTH flags must reach 1
+// for the combined color+intensity case. All comparisons stay within the
+// same quad geometry/backend/lighting family (never the OBJ fixture).
+const SPEC_COLOR_ENV = () => ({ ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0,
+  envIntensity: 1, ibl: IBL_FIXTURE.descriptor });
+[
+  // 1. White color texture: exactly the existing factor-1 GLB render.
+  WG({ name: 'wg-tex-color-white', model: MODEL({ src: '/models/quad-tex-color-white.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-white.png'], f0: 0.04, f90: 1,
+    same: 'wg-glb-spec-white' }),
+  // 2. Black color texture: equals the untextured black-color control
+  //    (F0 0, F90 1) exactly and differs from the white texture. The CPU
+  //    upload F0/F90 stay the authored pre-texture factors (.04 / 1): the
+  //    per-pixel black is sampled only on the GPU from the color texture,
+  //    never uploaded as the CPU F0.
+  WG({ name: 'wg-tex-color-black', model: MODEL({ src: '/models/quad-tex-color-black.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-black.png'], f0: 0.04, f90: 1,
+    same: 'wg-glb-spec-color-black', differs: 'wg-tex-color-white', minChanged: 20 }),
+  WG({ name: 'wg-glb-spec-color-black', model: MODEL({ src: '/models/quad-spec-color-black.glb' }),
+    f0: [0, 0, 0], f90: 1 }),
+  // 3. Tinted sRGB texel RGB [128,64,255]: matches an untextured GLB whose
+  //    linear color factors equal the exactly decoded RGB (within at most 1
+  //    channel quantization step) and differs visibly from white.
+  WG({ name: 'wg-tex-color-tint', model: MODEL({ src: '/models/quad-tex-color-tint.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-tint.png'], f0: 0.04, f90: 1,
+    nearSame: 'wg-glb-spec-color-tint', differs: 'wg-tex-color-white', minChanged: 1 }),
+  WG({ name: 'wg-glb-spec-color-tint', model: MODEL({ src: '/models/quad-spec-color-tint.glb' }),
+    f0: [0.04 * TINT_LINEAR[0], 0.04 * TINT_LINEAR[1], 0.04 * TINT_LINEAR[2]], f90: 1 }),
+  // 4. Same tinted RGB with alpha 0: must match the alpha-255 texture EXACTLY
+  //    (alpha must not affect the color role; this exposes any image-decoding
+  //    alpha loss).
+  WG({ name: 'wg-tex-color-tint-alpha0',
+    model: MODEL({ src: '/models/quad-tex-color-tint-alpha0.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-tint-alpha0.png'], f0: 0.04, f90: 1,
+    same: 'wg-tex-color-tint' }),
+  // 5. HDR authored color [100,50,2] at intensity 0.5 with texel RGB
+  //    [64,128,255]: equals an untextured control whose factors are the
+  //    authored color multiplied by the decoded RGB BEFORE clamping. The GPU
+  //    upload expectations remain the pre-texture authored factors
+  //    (clamp-before-intensity gives [0.5, 0.5, 0.04] / 0.5), not the final
+  //    pixels.
+  WG({ name: 'wg-tex-color-hdr', model: MODEL({ src: '/models/quad-tex-color-hdr.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-hdr.png'],
+    f0: [0.5, 0.5, 0.04], f90: 0.5,
+    nearSame: 'wg-glb-spec-color-hdr' }),
+  WG({ name: 'wg-glb-spec-color-hdr', model: MODEL({ src: '/models/quad-spec-color-hdr.glb' }),
+    f0: [Math.min(0.04 * 100 * HDRTEX_LINEAR[0], 1) * 0.5,
+         Math.min(0.04 * 50 * HDRTEX_LINEAR[1], 1) * 0.5,
+         Math.min(0.04 * 2 * HDRTEX_LINEAR[2], 1) * 0.5], f90: 0.5 }),
+  // 6. Combined color + intensity textures (alpha 128/255) at authored
+  //    intensity 0.5: matches an untextured control using the decoded color
+  //    and intensity 0.5*128/255. Both loaded flags and both actual texture
+  //    fetches are observed.
+  WG({ name: 'wg-tex-color-tint-int128',
+    model: MODEL({ src: '/models/quad-tex-color-tint-int128.glb' }),
+    specTex: true, specColorTex: true,
+    requiredTex: ['/tex/spec-color-tint-alpha128.png', '/tex/spec-alpha128-black.png'],
+    f0: 0.02, f90: 0.5,
+    nearSame: 'wg-glb-spec-color-int' }),
+  WG({ name: 'wg-glb-spec-color-int', model: MODEL({ src: '/models/quad-spec-color-int.glb' }),
+    f0: [0.04 * 0.5 * (128 / 255) * TINT_LINEAR[0], 0.04 * 0.5 * (128 / 255) * TINT_LINEAR[1],
+         0.04 * 0.5 * (128 / 255) * TINT_LINEAR[2]], f90: 0.5 * (128 / 255) }),
+  // 7. Authored intensity 0 plus a loaded color texture: exactly the existing
+  //    factor-0 GLB render (authored intensity is retained through the
+  //    texture path; the combined F90 is 0 so the color texel cannot revive
+  //    the specular response).
+  WG({ name: 'wg-tex-color-int0', model: MODEL({ src: '/models/quad-tex-color-int0.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-white.png'], f0: 0, f90: 0,
+    same: 'wg-glb-spec-zero' }),
+  // 8. Fully metallic textured-color case: the metal branch ignores the
+  //    dielectric lane, so the image equals the existing metallic alpha-255
+  //    texture case exactly while the dielectric uniforms stay 0.04 / 1.
+  WG({ name: 'wg-tex-color-metal', model: MODEL({ src: '/models/quad-tex-color-metal.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-tint.png'], f0: 0.04, f90: 1,
+    same: 'wg-tex-metal-alpha255' }),
+  // 9. Isolated IBL color pair: same real IBL fixture, direct/ambient/sky/
+  //    ground intensities 0, authored color [4,1,1]. Black vs white texels
+  //    must differ; the black case must match the existing same-quad
+  //    wg-tex-ibl-alpha255 case EXACTLY (IOR 1 gives F0=0 and F90=1 there;
+  //    the black texel forces F0=0 here and F90 stays authored 1, so the IBL
+  //    response B*F90 is identical and F90 remains active for black color).
+  WG({ name: 'wg-tex-ibl-color-black',
+    model: MODEL({ src: '/models/quad-tex-ibl-color-black.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-black.png'],
+    f0: [0.16, 0.04, 0.04], f90: 1,
+    requiresIBL: true, keyLightIntensity: 0, environment: SPEC_COLOR_ENV(),
+    same: 'wg-tex-ibl-alpha255' }),
+  WG({ name: 'wg-tex-ibl-color-white',
+    model: MODEL({ src: '/models/quad-tex-ibl-color-white.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-white.png'],
+    f0: [0.16, 0.04, 0.04], f90: 1,
+    requiresIBL: true, keyLightIntensity: 0, environment: SPEC_COLOR_ENV(),
+    differs: 'wg-tex-ibl-color-black', minChanged: 20 }),
 ].forEach((c) => CASES.push(c));
 const byName = {};
 CASES.forEach((c) => { byName[c.name] = c; });
@@ -819,7 +1011,7 @@ async function evalSend(send, expression, extra) {
 // Nothing is inferred from uniform1f/useProgram. GPUQueue.writeBuffer is
 // wrapped with its true signature (buffer, bufferOffset, data, dataOffset?,
 // size?) with correct element/byte dataOffset+size semantics, capturing only
-// 192-byte material uploads and reading F0 at float indices 44..46 and F90
+  // 208-byte material uploads and reading F0 at float indices 44..46 and F90
 // at 47.
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
@@ -972,20 +1164,23 @@ const PRELOAD = `
               hasEnvMap: dv80.getUint32(16 * 4, true)
             });
           }
-          if (byteLen === 192 && window.__gosxWGPU.dumps.length < 256 &&
-              byteOff >= 0 && byteOff + 192 <= totalBytes) {
-            // 192-byte material capture: production writes Float32Array(48);
+          if (byteLen === 208 && window.__gosxWGPU.dumps.length < 256 &&
+              byteOff >= 0 && byteOff + 208 <= totalBytes) {
+            // 208-byte material capture: production writes Float32Array(52);
             // the effective specular F0 lives at float indices 44..46 and F90
-            // at 47 (bytes 176:192). Slots 0..43 are pre-existing uniform
-            // data. Capped by the 256-entry dump limit.
-            var dv = new DataView(buf, base + byteOff, 192);
-            var floats = new Array(48);
-            for (var i = 0; i < 48; i++) floats[i] = dv.getFloat32(i * 4, true);
+            // at 47 (bytes 176:192, unchanged). Slots 0..43 are pre-existing
+            // uniform data; 48..50 are the color log coefficients. Capped by
+            // the 256-entry dump limit.
+            var dv = new DataView(buf, base + byteOff, 208);
+            var floats = new Array(52);
+            for (var i = 0; i < 52; i++) floats[i] = dv.getFloat32(i * 4, true);
             window.__gosxWGPU.dumps.push({
               f0: [floats[44], floats[45], floats[46]], f90: floats[47], floats: floats,
-              // hasSpecularIntensityMap flag at float index 41 (byte 164),
+              // hasSpecularIntensityMap flag at float index 41 (byte 164) and
+              // hasSpecularColorMap flag at float index 51 (byte 204), each
               // read as an integer word, never via Float32 reinterpretation.
-              hasSpecIntensityMap: dv.getUint32(164, true) });
+              hasSpecIntensityMap: dv.getUint32(164, true),
+              hasSpecColorMap: dv.getUint32(204, true) });
             window.__gosxWGPU.materialUploads += 1;
           }
         }
@@ -1348,21 +1543,43 @@ setTimeout(() => {
             CASE_WAIT_MS + 'ms');
         }
       }
-      if (c.specTex && ready) {
+      if ((c.specTex || c.specColorTex) && ready) {
         // Texture cases must additionally wait, boundedly, for the REAL
-        // hasSpecularIntensityMap flag (float index 41 of an actual 192-byte
-        // upload, read as a uint32 word) before settling/capturing.
-        let texFlagReady = false;
+        // texture-loaded flags of actual 208-byte uploads before settling/
+        // capturing: the intensity flag at u32 index 41 (byte 164) and the
+        // color flag at u32 index 51 (byte 204), each read as a uint32 word.
+        // Color cases require the color flag; intensity-only cases require
+        // the intensity flag; combined color+intensity cases require BOTH
+        // flags present in the SAME 208-byte dump (separate partial dumps
+        // never satisfy combined readiness).
+        let intFlagReady = !c.specTex;
+        let colorFlagReady = !c.specColorTex;
         const texDeadline = Date.now() + CASE_WAIT_MS;
-        while (Date.now() < texDeadline) {
+        while (Date.now() < texDeadline && !(intFlagReady && colorFlagReady)) {
           const sT = await evalSend(send, READ);
           const dumpsT = (sT && sT.wgpu && sT.wgpu.dumps) || [];
-          if (dumpsT.some((d) => d.hasSpecIntensityMap === 1)) { texFlagReady = true; break; }
+          if (c.specTex && c.specColorTex) {
+            if (dumpsT.some((d) => d.hasSpecIntensityMap === 1 && d.hasSpecColorMap === 1)) {
+              intFlagReady = true;
+              colorFlagReady = true;
+            }
+          } else {
+            if (!intFlagReady && dumpsT.some((d) => d.hasSpecIntensityMap === 1)) intFlagReady = true;
+            if (!colorFlagReady && dumpsT.some((d) => d.hasSpecColorMap === 1)) colorFlagReady = true;
+          }
+          if (intFlagReady && colorFlagReady) break;
           await sleep(100);
         }
-        rec.specIntensityMapFlag = texFlagReady ? 1 : 0;
-        if (!texFlagReady) {
-          fail(c.name + ': hasSpecularIntensityMap flag not observed as 1 in any 192-byte upload within ' +
+        // Report each flag only for a role the case actually uses; never
+        // claim a flag was loaded for an unused role.
+        if (c.specTex) rec.specIntensityMapFlag = intFlagReady ? 1 : 0;
+        if (c.specColorTex) rec.specColorMapFlag = colorFlagReady ? 1 : 0;
+        if (!intFlagReady) {
+          fail(c.name + ': hasSpecularIntensityMap flag not observed as 1 in any 208-byte upload within ' +
+            CASE_WAIT_MS + 'ms');
+        }
+        if (!colorFlagReady) {
+          fail(c.name + ': hasSpecularColorMap flag not observed as 1 in any 208-byte upload within ' +
             CASE_WAIT_MS + 'ms');
         }
       }
@@ -1487,7 +1704,7 @@ setTimeout(() => {
             // Unknown/missing state: fail, never silently accept.
             fail(c.name + ': unknown/missing data-gosx-scene3d-webgpu-bundle-state: ' + s.bundleState);
           }
-          if (!(s.wgpu.uploads > 0)) fail(c.name + ': no 192-byte material uploads observed');
+          if (!(s.wgpu.uploads > 0)) fail(c.name + ': no 208-byte material uploads observed');
           let hit = null;
           (s.wgpu.dumps || []).forEach((d) => {
             if (hit || !Array.isArray(d.f0) || d.f0.length !== 3) return;
@@ -1503,7 +1720,7 @@ setTimeout(() => {
           if (hit) { rec.uploadF0 = hit.f0; rec.uploadF90 = hit.f90; }
           if (!hit) {
             fail(c.name + ': expected F0 [' + expF0.join(',') + '] + F90 ' + expF90 +
-              ' not found at float indices 44..47 of any 192-byte upload');
+              ' not found at float indices 44..47 of any 208-byte upload');
           }
           if (s.wgpuErr) {
             fail(c.name + ': WebGPU renderer produced nonempty wgpuErr: ' + s.wgpuErr);
@@ -1713,7 +1930,8 @@ setTimeout(() => {
       webgpuBundleReplays: r.bundleReplays, webgpuBundleDraws: r.bundleDraws,
       glBackend: r.glBackend, draws: r.draws, pbrDraws: r.pbrDraws,
       uniformF0: r.uniformF0, uniformF90: r.uniformF90, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
-      specIntensityMapFlag: r.specIntensityMapFlag, textureServed: r.textureServed,
+      specIntensityMapFlag: r.specIntensityMapFlag, specColorMapFlag: r.specColorMapFlag,
+      textureServed: r.textureServed,
       iblState: r.iblState, iblAssetsServed: r.iblAssetsServed,
       uploadF0: r.uploadF0, uploadF90: r.uploadF90,
       objects: r.objects, fgPixels: r.litPixels, fgFrac: r.fgFrac, cornerBG: r.meanRGB, centerRGB: r.centerRGB,
@@ -1726,7 +1944,7 @@ setTimeout(() => {
     note: 'Real Chrome + real WebGL2/WebGPU PBR with the actual built bootstrap.js, real GLB ' +
       'loading and native draws. u_specularF0/u_specularF90 read from real uniform state at ' +
       'production draw calls (getUniformLocation tracking + CURRENT_PROGRAM + getUniform, ' +
-      'instanced forms) and at float indices 44..47 of 192-byte WebGPU material uploads; ' +
+      'instanced forms) and at float indices 44..47 of 208-byte WebGPU material uploads; ' +
       'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +

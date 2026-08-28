@@ -555,7 +555,11 @@ const budgets = [
   // Measured: bootstrap.js 1567838/425622/341812 raw/gzip/brotli.
   // Specular-intensity alpha texture slice measured 1568528/425727/342055;
   // all three caps raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_569_000, gzip: 425_800, brotli: 342_200 },
+  // Specular f32 packing + WGSL updates measured 1571127/426569/342530;
+  // all three caps raised with narrow rounding headroom.
+  // Specular-color decoding measured 1571241/426629/342751; caps set to the
+  // exact measured values.
+  { file: "bootstrap.js", raw: 1_571_241, gzip: 426_629, brotli: 342_751 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1148,7 +1152,11 @@ const budgets = [
   // Measured: WebGPU chunk 390659/94660/79194 (only raw exceeded; compressed caps kept).
   // Specular-intensity alpha texture slice measured 391349/94759/79319
   // (only raw exceeded again; compressed caps kept).
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 391_500, gzip: 94_800, brotli: 79_500 },
+  // Specular f32 packing + WGSL updates measured 393946/95539/80043;
+  // all three caps raised with narrow rounding headroom.
+  // Specular-color decoding measured 394066/95596/80055; caps set to the
+  // exact measured values.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_596, brotli: 80_055 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1742,9 +1750,13 @@ const routeBudgets = [
     // Measured: 1455773/389325/328976.
     // Specular-intensity alpha texture slice measured 1456499/389429/329035
     // (only raw exceeded; compressed caps kept).
-    raw: 1_456_700,
-    gzip: 389_500,
-    brotli: 329_100,
+    // Chromium WebGPU-device-loss route measured 1459096/390209/329759;
+    // all three caps raised with narrow rounding headroom.
+    // Specular-color decoding measured 1459216/390266/329771; caps set to
+    // the exact measured values.
+    raw: 1_459_216,
+    gzip: 390_266,
+    brotli: 329_771,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1856,9 +1868,13 @@ const routeBudgets = [
     // Measured: 1086596/286279/239719.
     // Specular-intensity alpha texture slice measured 1087322/286383/239778
     // (only raw exceeded; compressed caps kept).
-    raw: 1_087_500,
-    gzip: 286_400,
-    brotli: 239_900,
+    // Minimal WebGPU route measured 1089919/287163/240502; all three caps
+    // raised with narrow rounding headroom.
+    // Specular-color decoding measured 1090039/287220/240514; caps set to
+    // the exact measured values.
+    raw: 1_090_039,
+    gzip: 287_220,
+    brotli: 240_514,
   },
 
 ];

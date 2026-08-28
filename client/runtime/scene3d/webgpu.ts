@@ -162,14 +162,22 @@
     // effective specular factors (min(IOR F0 * colour, 1) * intensity as an
     // aligned vec3f, then the intensity as F90). Every texture flag slot and
     // the model transform/sign floats keep their existing offsets; the vec3f
-    // alignment pads the struct to 192 bytes total.
+    // trailing fields pad the struct to 208 bytes total.
     "    dielectricF0: f32,",
-    // Reuses the vec3f alignment word at u32 index 41, keeping the struct at
-    // 192 bytes; materialUniformData pre-zeroes it so a plain pack stays
+    // Reuses the vec3f alignment word at u32 index 41; materialUniformData
+    // pre-zeroes it so a plain pack stays
     // neutral until createMaterialBindGroup sets the real flag.
     "    hasSpecularIntensityMap: u32,",
     "    specularF0: vec3f,",
     "    specularF90: f32,",
+    // Per-channel log2 of the authored dielectric specular coefficient
+    // (log2(iorF0) + log2(color)), with an exact-zero coefficient encoded
+    // as the -1e30 sentinel so the shader can branch on it without any
+    // epsilon substitution. The vec3f alignment lands at u32 indices
+    // 48..50 and the trailing hasSpecularColorMap flag at index 51,
+    // padding the struct to 208 bytes total.
+      "    specularColorLog: vec3f,",
+      "    hasSpecularColorMap: u32,",
     "};",
   ].join("\n");
 
@@ -1562,6 +1570,12 @@
     "@group(1) @binding(13) var specularIntensityTex: texture_2d<f32>;",
     "@group(1) @binding(14) var specularIntensitySamp: sampler;",
     "",
+    // KHR specular-color map: the RGB channels are the sRGB-encoded
+    // authored specular tint. A missing, still-loading or failed map stays
+    // neutral via the hasSpecularColorMap gate in the fragment body.
+      "@group(1) @binding(15) var specularColorTex: texture_2d<f32>;",
+      "@group(1) @binding(16) var specularColorSamp: sampler;",
+      "",
     "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
     "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
@@ -1874,8 +1888,23 @@
       "    if (material.hasSpecularIntensityMap != 0u) {",
       "        specIntensity = textureSample(specularIntensityTex, specularIntensitySamp, in.uv).a;",
       "    }",
-      "    let specF0 = material.specularF0 * specIntensity;",
+      "    var specF0 = material.specularF0 * specIntensity;",
       "    let specF90 = material.specularF90 * specIntensity;",
+    "    if (material.hasSpecularColorMap != 0u) {",
+    "        let texColor = textureSample(specularColorTex, specularColorSamp, in.uv).rgb;",
+    "        var texF0 = vec3f(0.0);",
+    // Per-channel decode: exactly-1 texel keeps the untextured result
+    // bit-for-bit; exact-zero texel yields exact-zero F0; positive texel
+    // multiplies in log space, clamped to 0 BEFORE exp2 (no overflow).
+    // Combined specF90 scales every color-textured channel.
+    "        if (texColor.r == 1.0) { texF0.r = specF0.r; }",
+      "        else if (texColor.r > 0.0 && material.specularColorLog.r > -1e29) { texF0.r = exp2(min(material.specularColorLog.r + log2(texColor.r), 0.0)) * specF90; }",
+      "        if (texColor.g == 1.0) { texF0.g = specF0.g; }",
+      "        else if (texColor.g > 0.0 && material.specularColorLog.g > -1e29) { texF0.g = exp2(min(material.specularColorLog.g + log2(texColor.g), 0.0)) * specF90; }",
+      "        if (texColor.b == 1.0) { texF0.b = specF0.b; }",
+      "        else if (texColor.b > 0.0 && material.specularColorLog.b > -1e29) { texF0.b = exp2(min(material.specularColorLog.b + log2(texColor.b), 0.0)) * specF90; }",
+    "        specF0 = texF0;",
+      "    }",
       "    var F0 = mix(specF0, albedo, metalness);",
       "    var F90 = mix(specF90, 1.0, metalness);",
       "    if (metalness >= 1.0) {",
@@ -3249,6 +3278,13 @@
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
+        // Specular-color maps store meaningful RGB under a possibly-zero
+        // alpha channel (the shader samples .rgb only). Browser bitmap
+        // decode can premultiply, zeroing RGB wherever alpha is 0, which
+        // makes the specular tint collapse to black. Request explicitly
+        // unpremultiplied decode and copy for this role only; other roles
+        // keep their prior behavior.
+        var isSpecularColor = descriptor.role === "specular-color";
         var w = image.width;
         var h = image.height;
         var tex = device.createTexture({
@@ -3258,7 +3294,8 @@
         });
         // Use createImageBitmap for copyExternalImageToTexture.
         if (typeof createImageBitmap === "function") {
-          createImageBitmap(image).then(function(bitmap) {
+          var bitmapOptions = isSpecularColor ? { premultiplyAlpha: "none" } : undefined;
+          createImageBitmap(image, bitmapOptions).then(function(bitmap) {
             if (record.disposed || record.generation && record.generation.disposed) {
               tex.destroy();
               if (bitmap && typeof bitmap.close === "function") bitmap.close();
@@ -3266,7 +3303,7 @@
             }
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
-              { texture: tex },
+              isSpecularColor ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
               [w, h]
             );
             record.texture.destroy();
@@ -3475,6 +3512,8 @@
         { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
         { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 16, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     });
   }
@@ -7137,10 +7176,11 @@
     // scene warns once instead of every frame.
     var _lightIssuesReported = Object.create(null);
 
-    // 192 bytes: the previous 176-byte MaterialUniforms layout plus the
-    // vec3f-aligned effective specular F0 and the trailing F90 scalar. Only
-    // the material buffer grows; frame and shadow buffers are untouched.
-    var _materialUniformBuf = new ArrayBuffer(192);
+    // 208 bytes: the previous 192-byte MaterialUniforms layout plus the
+    // vec3f-aligned per-channel specular coefficient logs and the trailing
+    // hasSpecularColorMap flag. Only the material buffer grows; frame and
+    // shadow buffers are untouched.
+    var _materialUniformBuf = new ArrayBuffer(208);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -14127,6 +14167,35 @@
       };
     }
 
+    // Log-space coefficients for the optional specular-colour texture:
+    // log2(IOR F0) + log2(authored colour) per channel, so the shader can add
+    // log2 of the sampled texel and exp2 back the unclamped HDR product
+    // without ever forming a float32 overflow on the CPU. Exact-zero channels
+    // (IOR F0 or colour component 0) use a finite sentinel far below any real
+    // log2 value; the shader maps the sentinel to zero. Invalid or omitted
+    // colour arrays fall back to white, matching sceneWebGPUSpecularFactors.
+    function sceneWebGPUSpecularColorLogs(material) {
+      var mat = material || {};
+      var color = mat.specularColor;
+      var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+      if (valid) {
+        for (var i = 0; i < 3; i++) {
+          var component = color[i];
+          if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+            valid = false;
+            break;
+          }
+        }
+      }
+      var iorF0 = sceneWebGPUDielectricF0(mat.ior);
+      var out = [0, 0, 0];
+      for (var j = 0; j < 3; j++) {
+        var c = valid ? color[j] : 1;
+        out[j] = (iorF0 > 0 && c > 0) ? Math.log2(iorF0) + Math.log2(c) : -1e30;
+      }
+      return out;
+    }
+
     function materialUniformData(material, receiveShadow, modelMatrix, modelScaleSigns) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
@@ -14134,7 +14203,7 @@
       // MaterialUniforms: PBR fields (80 bytes) + per-object model matrix
       // (64 bytes) + three scale signs (16-byte aligned) + one trailing
       // dielectric-F0 scalar plus the vec3f-aligned effective specular
-      // factors and F90 (struct padded to 192 bytes). The signs recover
+      // factors and F90 (struct padded to 208 bytes). The signs recover
       // the rotation-only normal/tangent transform used by the CPU-baked path,
       // including negative and non-uniform scale. World-baked and instanced
       // draws receive identity.
@@ -14185,6 +14254,21 @@
       f[45] = specular.f0[1];
       f[46] = specular.f0[2];
       f[47] = specular.f90;
+      // Per-channel log2 of the authored dielectric specular coefficient.
+      // The shader reconstructs min(coefficient * texel, 1) * combined
+      // intensity via exp2(min(logCoef + log2(texel), 0)), so only safe
+      // finite logs are packed: an exact-zero coefficient uses the -1e30
+      // sentinel (shader maps it to exact-zero F0); finite log sums are
+      // stored as-is and the shader clamps the exponent to 0 before exp2.
+      // No arbitrary ceiling is applied to finite color components, so
+      // IOR = 1 + EPSILON with Number.MAX_VALUE color still keeps its huge
+      // finite log. hasSpecularColorMap (u[51]) stays zero here so a plain
+      // pack stays neutral until createMaterialBindGroup sets it.
+      var colorLogs = sceneWebGPUSpecularColorLogs(mat);
+      f[48] = colorLogs[0];
+      f[49] = colorLogs[1];
+      f[50] = colorLogs[2];
+      u[51] = 0; // hasSpecularColorMap, set by createMaterialBindGroup
       return { data: f, u: u };
     }
 
@@ -14229,6 +14313,7 @@
         { prop: "emissiveMap", descriptor: "emissive", role: "emissive", colorSpace: "srgb", index: 17 },
         { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", index: 19 },
         { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", index: 41 },
+        { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", index: 51 },
       ];
 
       var texViews = [];
@@ -14289,6 +14374,8 @@
           { binding: 12, resource: linearSampler },
           { binding: 13, resource: texViews[6] },
           { binding: 14, resource: linearSampler },
+          { binding: 15, resource: texViews[7] },
+          { binding: 16, resource: linearSampler },
         ],
       });
       owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews, bg: matBG };

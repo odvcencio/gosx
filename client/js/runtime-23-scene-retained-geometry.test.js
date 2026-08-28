@@ -159,8 +159,8 @@ function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry) 
 function latestPBRMaterialBuffer(fake) {
   for (let index = fake.state.bindGroups.length - 1; index >= 0; index -= 1) {
     const group = fake.state.bindGroups[index];
-    // The material bind group now carries 15 entries just like the frame
-    // group, so entry count alone misclassifies groups. Identify the real
+    // The material bind group now carries 17 entries to the frame group's
+    // 15, so entry count alone misclassifies groups. Identify the real
     // PBR material group by its gosx-material bind group layout descriptor.
     const layout = group && group.desc && group.desc.layout;
     const layoutDesc = layout && layout.desc;
@@ -521,9 +521,9 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes retire material uniforms w
   assert.ok(secondRetainedStats.hits >= firstRetainedStats.hits + 4);
   const materialWrite = secondWrites.find((call) => call.buffer === firstMaterialBuffer);
   assert.ok(materialWrite, "second frame must rewrite the identified retained material uniform buffer");
-  assert.ok(materialWrite.data && materialWrite.data.byteLength === 192,
-    "second frame must upload the current 192-byte material uniform to the identified buffer");
-  assert.equal(materialWrite.data.byteLength / 4, 48, "material uniform payload must be 48 floats");
+  assert.ok(materialWrite.data && materialWrite.data.byteLength === 208,
+    "second frame must upload the current 208-byte material uniform to the identified buffer");
+  assert.equal(materialWrite.data.byteLength / 4, 52, "material uniform payload must be 52 floats");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-retained-mesh-objects"), "1");
 
   object.vertices.positions[0] = -2;
