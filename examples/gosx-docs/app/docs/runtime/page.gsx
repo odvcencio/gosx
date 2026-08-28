@@ -205,17 +205,29 @@ func Page() Node {
 				.
 			</p>
 			<p>
-				The ping runs only while the document is visible:
+				The heartbeat never stops while the tab stays open:
 			</p>
 			<ul>
 				<li>
-					It pauses entirely while the document is hidden — no tick fires, no request goes out.
+					While the document is visible, the runtime pings on the declared interval.
 				</li>
 				<li>
-					It fires one immediate catch-up ping on visibility return, if at least one full interval elapsed while hidden.
+					The moment the document is hidden, the runtime switches to a slower interval instead of stopping — a heartbeat that stops while hidden looks the same, from the server, as a closed browser. Set
+					<span class="inline-code">data-gosx-heartbeat-hidden-interval</span>
+					to choose this period; it uses the same whole-second or whole-minute grammar and defaults to
+					<span class="inline-code">"60s"</span>
+					when absent.
 				</li>
 				<li>
-					At most one ping is ever in flight. A tick or a catch-up that lands while the previous ping has not settled is skipped outright, never queued or raced.
+					Every ping the hidden interval starts carries one request header,
+					<span class="inline-code">X-GoSX-Heartbeat-Visibility: hidden</span>
+					. A ping the visible interval starts carries no such header. Read the header in your own presence handler to tell a backgrounded tab from a closed browser.
+				</li>
+				<li>
+					The moment the document becomes visible again, the runtime switches back to the normal interval at once.
+				</li>
+				<li>
+					At most one ping is ever in flight. A tick that lands while the previous ping has not settled is skipped outright, never queued or raced.
 				</li>
 			</ul>
 			<p>
@@ -224,9 +236,11 @@ func Page() Node {
 			<p>
 				A cross-origin
 				<span class="inline-code">data-gosx-heartbeat</span>
-				or an invalid
+				, or an invalid
 				<span class="inline-code">data-gosx-heartbeat-interval</span>
-				logs one console warning and disables the heartbeat for the page. Teardown is automatic, on the same soft-navigation lifecycle
+				or
+				<span class="inline-code">data-gosx-heartbeat-hidden-interval</span>
+				, logs one console warning and disables the heartbeat for the page. Teardown is automatic, on the same soft-navigation lifecycle
 				<span class="inline-code">data-gosx-revalidate-interval</span>
 				follows.
 			</p>

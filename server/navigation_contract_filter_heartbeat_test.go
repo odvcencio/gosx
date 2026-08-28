@@ -24,8 +24,8 @@ func TestNavigationFilterAttrConstants(t *testing.T) {
 }
 
 // TestNavigationHeartbeatAttrConstants is TestNavigationFilterAttrConstants'
-// gosx#216 counterpart, pinning the two data-gosx-heartbeat* constants
-// against their identical literal values in
+// gosx#216 counterpart, pinning the data-gosx-heartbeat* constants and the
+// hidden-interval marker header against their identical literal values in
 // client/runtime/host/navigation.ts.
 func TestNavigationHeartbeatAttrConstants(t *testing.T) {
 	if got, want := NavigationHeartbeatAttr, "data-gosx-heartbeat"; got != want {
@@ -33,5 +33,11 @@ func TestNavigationHeartbeatAttrConstants(t *testing.T) {
 	}
 	if got, want := NavigationHeartbeatIntervalAttr, "data-gosx-heartbeat-interval"; got != want {
 		t.Fatalf("NavigationHeartbeatIntervalAttr = %q, want %q", got, want)
+	}
+	if got, want := NavigationHeartbeatHiddenIntervalAttr, "data-gosx-heartbeat-hidden-interval"; got != want {
+		t.Fatalf("NavigationHeartbeatHiddenIntervalAttr = %q, want %q", got, want)
+	}
+	if got, want := NavigationHeartbeatVisibilityHeader, "X-GoSX-Heartbeat-Visibility"; got != want {
+		t.Fatalf("NavigationHeartbeatVisibilityHeader = %q, want %q", got, want)
 	}
 }

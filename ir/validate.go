@@ -325,10 +325,12 @@ const (
 	regionIntervalAttr = "data-gosx-region-interval"
 )
 
-// revalidateIntervalAttr and heartbeatIntervalAttr (gosx#216, gosx#217)
-// share liveIntervalAttr and regionIntervalAttr's exact whole-seconds/
+// revalidateIntervalAttr, heartbeatIntervalAttr, and
+// heartbeatHiddenIntervalAttr (gosx#216, gosx#217) share
+// liveIntervalAttr and regionIntervalAttr's exact whole-seconds/
 // whole-minutes grammar (see isValidPollIntervalValue below), pinned
-// against NavigationRevalidateIntervalAttr and NavigationHeartbeatIntervalAttr
+// against NavigationRevalidateIntervalAttr,
+// NavigationHeartbeatIntervalAttr, and NavigationHeartbeatHiddenIntervalAttr
 // in server/navigation_contract.go and their shared parseRevalidateInterval
 // parser in client/runtime/host/navigation.ts.
 //
@@ -342,10 +344,11 @@ const (
 // nothing" shape gosx#213's countdown pairs check was written for, applied
 // to the link contract instead of the countdown one.
 const (
-	revalidateIntervalAttr = "data-gosx-revalidate-interval"
-	heartbeatIntervalAttr  = "data-gosx-heartbeat-interval"
-	linkCurrentPolicyAttr  = "data-gosx-link-current-policy"
-	prefetchAttr           = "data-gosx-prefetch"
+	revalidateIntervalAttr      = "data-gosx-revalidate-interval"
+	heartbeatIntervalAttr       = "data-gosx-heartbeat-interval"
+	heartbeatHiddenIntervalAttr = "data-gosx-heartbeat-hidden-interval"
+	linkCurrentPolicyAttr       = "data-gosx-link-current-policy"
+	prefetchAttr                = "data-gosx-prefetch"
 )
 
 // countdownThresholdIntegerPattern and countdownThresholdDurationPattern
@@ -629,7 +632,7 @@ func (v *validator) validateStaticCountdownAttr(node *Node, attr *Attr) {
 				Hint:    `a "cue:<name>" token's name must be "beep" or "chime"; a "class:<name>" token may add "@<selector>" to target another element`,
 			})
 		}
-	case liveIntervalAttr, regionIntervalAttr, revalidateIntervalAttr, heartbeatIntervalAttr:
+	case liveIntervalAttr, regionIntervalAttr, revalidateIntervalAttr, heartbeatIntervalAttr, heartbeatHiddenIntervalAttr:
 		if !isValidPollIntervalValue(attr.Value) {
 			v.diags = append(v.diags, Diagnostic{
 				Span:    node.Span,
