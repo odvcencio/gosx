@@ -6395,6 +6395,8 @@
     // Post-fx helpers from 15a-scene-postfx-shared.js.
     resolvePostFXFactor: typeof resolvePostFXFactor === "function" ? resolvePostFXFactor : undefined,
     resolveShadowSize: typeof resolveShadowSize === "function" ? resolveShadowSize : undefined,
+    scenePointShadowFaceMatrices: typeof scenePointShadowFaceMatrices === "function" ? scenePointShadowFaceMatrices : undefined,
+    resolvePointShadowSize: typeof resolvePointShadowSize === "function" ? resolvePointShadowSize : undefined,
 
     // Color helper from 11-scene-math.js (already visible, re-exported
     // explicitly so the webgpu chunk has a stable lookup path).

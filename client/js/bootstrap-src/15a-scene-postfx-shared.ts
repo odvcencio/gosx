@@ -46,6 +46,36 @@ function resolveShadowSize(requestedSize, shadowMaxPixels) {
   return Math.max(1, Math.floor(size * factor));
 }
 
+// Resolve the per-face size for point-light cube shadows. A cube atlas
+// packs six faces as 3*S by 2*S, so the total pixel cost is 6*S^2 and a
+// pixel cap must be divided by six before the usual sqrt scaling. The
+// per-face requested size clamps to the renderer's 256..4096 range and
+// additionally to the device texture dimension (atlas width 3*S must
+// fit, so floor(maxDimension / 3)). A positive pixel cap is never
+// silently exceeded: fewer than 6 budgeted pixels or a dimension below
+// 3 resolves to 0 (point shadows disabled).
+// A finite requested size of zero or below clamps to 256 exactly like
+// the renderer's floor, and any finite device dimension below 3
+// (including zero and negative) disables point shadows.
+function resolvePointShadowSize(requestedSize, shadowMaxPixels, maxTextureDimension) {
+  var size = 1024;
+  if (typeof requestedSize === "number" && isFinite(requestedSize)) {
+    size = Math.min(4096, Math.max(256, Math.floor(requestedSize)));
+  }
+  var cap = (typeof shadowMaxPixels === "number" && isFinite(shadowMaxPixels) && shadowMaxPixels > 0)
+    ? shadowMaxPixels
+    : 1048576; // ShadowMaxPixels1024 default
+  if (cap < 6) return 0;
+  var maxS = Math.floor(Math.sqrt(cap / 6));
+  if (typeof maxTextureDimension === "number" && isFinite(maxTextureDimension)) {
+    var byDevice = Math.floor(maxTextureDimension / 3);
+    if (byDevice < 1) return 0;
+    if (byDevice < maxS) maxS = byDevice;
+  }
+  if (maxS < 1) return 0;
+  return size < maxS ? size : maxS;
+}
+
 function sceneFiniteNumber(value, fallback) {
   return typeof value === "number" && isFinite(value) ? value : fallback;
 }
