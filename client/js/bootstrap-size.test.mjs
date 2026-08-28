@@ -565,7 +565,9 @@ const budgets = [
   // 1573965/427214/342907; all three caps raised with narrow rounding headroom.
   // Final rebuild removed dead activeShadowCount; measured 343015 brotli,
   // so the brotli cap was raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_576_300, gzip: 427_850, brotli: 343_500 },
+  // WebGPU alpha-mask color-pass rebuild measured 1577202/428025/343578; all
+  // three caps raised with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_577_300, gzip: 428_100, brotli: 343_650 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1170,7 +1172,9 @@ const budgets = [
   // all three caps raised with narrow rounding headroom.
   // Specular-color decoding measured 394066/95596/80055; caps set to the
   // exact measured values.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_596, brotli: 80_055 },
+  // WebGPU alpha-mask color-pass rebuild measured 394186 raw (only raw exceeded;
+  // compressed caps kept). Raw cap raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_250, gzip: 95_596, brotli: 80_055 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1780,9 +1784,11 @@ const routeBudgets = [
     // three caps raised with narrow rounding headroom.
     // Final rebuild removed dead activeShadowCount; measured 330165 brotli,
     // so the brotli cap was raised with narrow rounding headroom.
-    raw: 1_464_150,
-    gzip: 391_550,
-    brotli: 330_750,
+    // WebGPU alpha-mask color-pass rebuild measured 1465040/391707/330817; all
+    // three caps raised with narrow rounding headroom.
+    raw: 1_465_100,
+    gzip: 391_800,
+    brotli: 330_900,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1898,8 +1904,11 @@ const routeBudgets = [
     // raised with narrow rounding headroom.
     // Specular-color decoding measured 1090039/287220/240514; caps set to
     // the exact measured values.
-    raw: 1_090_850,
-    gzip: 287_220,
+    // WebGPU alpha-mask color-pass rebuild measured 1091757/287455 (only raw and
+    // gzip exceeded; brotli cap kept). Both raised with narrow rounding
+    // headroom.
+    raw: 1_091_800,
+    gzip: 287_500,
     brotli: 240_700,
   },
 

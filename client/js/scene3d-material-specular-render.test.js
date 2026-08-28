@@ -850,6 +850,98 @@ function setupWebGPURenderer() {
   return { source, context };
 }
 
+test("sceneNormalizeMaterialAlphaCutoff bridges from the base chunk into the WebGPU chunk", () => {
+  // Chunk 1: the base scene3d bundle publishing the normalizer via 16d.
+  const baseContext = createSceneCoreContext();
+  runFragment(baseContext, "window.__gosx_scene3d_api = {};", "init-api.js");
+  runFragment(baseContext, readBootstrapSource("16d-scene-webgl-bridge.ts"), "16d-scene-webgl-bridge.ts");
+  const bridgeApi = callIn(baseContext, "window.__gosx_scene3d_api");
+  assert.strictEqual(bridgeApi.sceneNormalizeMaterialAlphaCutoff,
+    callIn(baseContext, "sceneNormalizeMaterialAlphaCutoff"));
+  assert.equal(callIn(baseContext,
+    "window.__gosx_scene3d_api.sceneNormalizeMaterialAlphaCutoff(0, null)"), 0);
+
+  // Chunk 2: a different VM holding only the bridged API. The real lazy 26e
+  // WebGPU prefix is an open IIFE; close it here and probe the lexical
+  // alias materialUniformData resolves in the concatenated runtime.
+  const webgpuContext = vm.createContext({
+    console,
+    window: { __gosx_scene3d_api: bridgeApi },
+    navigator: { gpu: undefined },
+  });
+  runFragment(webgpuContext, [
+    readBootstrapSource("26e-feature-scene3d-webgpu-prefix.ts"),
+    "globalThis.__alphaCutoffProbe = {",
+    "  fn: sceneNormalizeMaterialAlphaCutoff,",
+    "  zero: sceneNormalizeMaterialAlphaCutoff(0, null),",
+    "  half: sceneNormalizeMaterialAlphaCutoff('.5', null),",
+    "  missing: sceneNormalizeMaterialAlphaCutoff(null, null),",
+    "};",
+    "})();",
+  ].join("\n"), "26e-scene-webgpu-prefix-probe.js");
+  const probe = vm.runInContext("globalThis.__alphaCutoffProbe", webgpuContext);
+  assert.equal(typeof probe.fn, "function", "lazy WebGPU prefix resolved the bridged normalizer");
+  assert.strictEqual(probe.zero, 0);
+  assert.ok(close6(probe.half, 0.5));
+  assert.strictEqual(probe.missing, null);
+});
+
+test("WebGPU materialUniformData normalizes alphaCutoff into slot 42", () => {
+  const { context } = setupWebGPURenderer();
+  const pack = (literal) => callIn(context,
+    "materialUniformData(" + literal + ", false, null, null)");
+  const cutoff = (literal) => pack("{ alphaCutoff: " + literal + " }").data[42];
+  for (const bad of ["undefined", "null", "-0.25", "NaN", "Infinity", "false",
+    "'oops'", "'var(--accent)'"]) {
+    assert.strictEqual(cutoff(bad), -1, "alphaCutoff " + bad + " normalizes to -1");
+  }
+  assert.strictEqual(cutoff("0"), 0);
+  assert.ok(close6(cutoff("'0.25'"), 0.25));
+  assert.ok(close6(cutoff("'.5'"), 0.5));
+  assert.strictEqual(cutoff("1"), 1);
+  // Above 1 clamps to the finite sentinel 2, matching the WebGL renderer.
+  assert.strictEqual(cutoff("Number.MAX_VALUE"), 2);
+});
+
+test("WebGPU material scratch buffer resets and neighbor slots stay put", () => {
+  const { context } = setupWebGPURenderer();
+  const pack = (literal) => callIn(context,
+    "materialUniformData(" + literal + ", false, null, null)");
+  const dirty = pack("{ alphaCutoff: 0.5, specularIntensity: 0.75 }");
+  assert.ok(close6(dirty.data[42], 0.5));
+  const clean = pack("{}");
+  assert.strictEqual(clean.data[42], -1, "stale cutoff must not survive a repack");
+  assert.strictEqual(clean.data[41], 0);
+  assert.strictEqual(clean.data[43], 0);
+  assert.strictEqual(clean.data.length, 52);
+  for (let c = 0; c < 3; c++) assert.ok(close6(clean.data[44 + c], 0.04));
+  assert.strictEqual(clean.data[47], 1);
+  assert.strictEqual(clean.u[51], 0);
+  const edge = pack("{ alphaCutoff: 1 }");
+  assert.strictEqual(edge.data[41], 0);
+  assert.strictEqual(edge.data[43], 0);
+  for (let c = 0; c < 3; c++) assert.ok(close6(edge.data[44 + c], 0.04));
+  const expectedLog = Math.log2(0.04);
+  for (let c = 0; c < 3; c++) {
+    assert.ok(Number.isFinite(edge.data[48 + c]));
+    assert.ok(Math.abs(edge.data[48 + c] - expectedLog) <= 1e-6);
+  }
+  assert.strictEqual(edge.data.buffer.byteLength, 208);
+});
+
+test("WebGPU fragment shaders pin coverage discard and corrected alpha selects", () => {
+  const { source } = setupWebGPURenderer();
+  assert.match(source, /texAlpha = texAlbedo\.a;/);
+  assert.ok((source.match(/coverage < cutoff/g) || []).length >= 3,
+    "strictly-less discard in unlit, main, and water paths");
+  assert.doesNotMatch(source, /coverage <= cutoff/);
+  assert.strictEqual(
+    (source.match(/select\(finalOpacity, 1\.0, alphaEnabled\)/g) || []).length, 2,
+    "unlit and main survivors emit full opacity");
+  assert.match(source, /select\(unmaskedOpacity, 1\.0, alphaEnabled\)/);
+  assert.doesNotMatch(source, /select\(\w+, coverage, alphaEnabled\)/);
+});
+
 test("WebGPU materialUniformData packs finite effective specular factors", () => {
   const { source, context } = setupWebGPURenderer();
   // The material buffer grew for the aligned vec3f plus the F90 scalar; the
@@ -872,11 +964,12 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
     assert.ok(Math.abs(def.data[48 + c] - defaultLog) <= 1e-6);
   }
   assert.strictEqual(def.u[51], 0);
-  // Legacy slots keep their offsets: dielectric F0 at 40, zeroed alignment
-  // padding at 41..43.
+  // Legacy slots keep their offsets: dielectric F0 at 40, the specular
+  // flag word at 41, the normalized alpha cutoff at 42 (-1 when unset),
+  // and padding at 43.
   assert.ok(close6(def.data[40], expectedDielectricF0(1.5)));
   assert.strictEqual(def.data[41], 0);
-  assert.strictEqual(def.data[42], 0);
+  assert.strictEqual(def.data[42], -1);
   assert.strictEqual(def.data[43], 0);
 
   // Explicit 0 intensity is valid and zeroes the lobe; black tints too.

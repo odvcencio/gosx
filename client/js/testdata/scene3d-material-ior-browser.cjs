@@ -554,13 +554,16 @@ const CASES = [
   { name: 'glb-alpha-override25',
     model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
     f0: F0(2.42), expectedOpacity: 0.25, same: 'glb-alpha-blend25' },
-  // glTF MASK: real WebGL COLOR-PASS alpha-mask checks restricted to
-  // factor-only fill masking (no alpha-mask texture, no shadow, and no
-  // WebGPU mask validation claims). Every MASK case forces wireframe:false
-  // so the comparison is FILL pixels only, made against the dedicated
-  // glb-mask-fill-control (alpha-opaque-a1 with wireframe:false and no
-  // authored cutoff), not a default-wireframe opaque case. The cutoff
-  // uniform is observed at the SAME F0/F90-qualified PBR draw as opacity.
+  // glTF MASK: real COLOR-PASS alpha-mask checks on BOTH backends restricted
+  // to factor-only fill masking (no alpha-mask texture, no cutout shadow,
+  // no wireframe). Every MASK case forces wireframe:false so the comparison
+  // is FILL pixels only, made against the dedicated per-backend FILL control
+  // (alpha-opaque-a1 with wireframe:false and no authored cutoff; the WebGL
+  // glb-mask-fill-control and the WebGPU wg-mask-fill-control), not a
+  // default-wireframe opaque case, and same/diff references always name the
+  // same-backend FILL control. The cutoff uniform (WebGL) / 208-byte upload
+  // float index 42 (WebGPU) is observed at the SAME opacity/F0/F90-qualified
+  // PBR draw/upload as opacity.
   // c5-f25: fill alpha 0.25 < cutoff 0.5 -> every fill fragment discarded,
   // strict empty screenshot (full background, zero foreground), meaningfully
   // different from the FILL control. c5-f5: fill alpha == cutoff keeps the
@@ -606,6 +609,27 @@ const CASES = [
   WG({ name: 'wg-alpha-override25',
     model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
     f0: F0(2.42), expectedOpacity: 0.25, same: 'wg-alpha-blend25' }),
+  // WebGPU MASK mirror of the glb-mask-* cases: same fixtures, same
+  // wireframe:false FILL-only comparisons, same expectedEmpty semantics;
+  // cutoff is validated in the 208-byte material upload (float index 42).
+  WG({ name: 'wg-mask-fill-control',
+    model: AMODEL('alpha-opaque-a1', { wireframe: false }), f0: F0(2.42),
+    expectedOpacity: 1, expectedAlphaCutoff: -1 }),
+  WG({ name: 'wg-mask-c5-f25', model: AMODEL('alpha-mask-c5-f25', { wireframe: false }),
+    expectedOpacity: 0.25, expectedAlphaCutoff: 0.5, expectedEmpty: true,
+    f0: F0(2.42), differs: 'wg-mask-fill-control', minChanged: 50 }),
+  WG({ name: 'wg-mask-c5-f5', model: AMODEL('alpha-mask-c5-f5', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+    same: 'wg-mask-fill-control' }),
+  WG({ name: 'wg-mask-c0-f0', model: AMODEL('alpha-mask-c0-f0', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 0, expectedAlphaCutoff: 0,
+    same: 'wg-mask-fill-control' }),
+  WG({ name: 'wg-mask-c2-f1', model: AMODEL('alpha-mask-c2-f1', { wireframe: false }),
+    expectedOpacity: 1, expectedAlphaCutoff: 2, expectedEmpty: true,
+    f0: F0(2.42), differs: 'wg-mask-fill-control', minChanged: 50 }),
+  WG({ name: 'wg-mask-c5-f1', model: AMODEL('alpha-mask-c5-f1', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'wg-mask-fill-control' }),
 ];
 
 // ---- Direct-light specular-factor cases (both backends) ----
@@ -1355,7 +1379,7 @@ async function evalSend(send, expression, extra) {
 // wrapped with its true signature (buffer, bufferOffset, data, dataOffset?,
 // size?) with correct element/byte dataOffset+size semantics, capturing only
   // 208-byte material uploads and reading F0 at float indices 44..46 and F90
-// at 47.
+// at 47, plus the alpha cutoff at float index 42 (byte 168).
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
     lastDrawOpacity: null,
@@ -1741,10 +1765,13 @@ const PRELOAD = `
             var dv = new DataView(buf, base + byteOff, 208);
             var floats = new Array(52);
             for (var i = 0; i < 52; i++) floats[i] = dv.getFloat32(i * 4, true);
-            // float index 6 is the material opacity, captured from the same
-            // actual 208-byte upload as F0/F90.
+            // float index 6 is the material opacity and float index 42
+            // (byte 168) is the alpha cutoff (-1 disabled, 0 valid, >1
+            // finite), both captured from the same actual 208-byte upload
+            // as F0/F90.
             window.__gosxWGPU.dumps.push({
               f0: [floats[44], floats[45], floats[46]], f90: floats[47], opacity: floats[6],
+              alphaCutoff: floats[42],
               floats: floats,
               // hasSpecularIntensityMap flag at float index 41 (byte 164) and
               // hasSpecularColorMap flag at float index 51 (byte 204), each
@@ -2333,9 +2360,10 @@ setTimeout(() => {
           });
           rec.f0InUpload = Boolean(hit);
           if (hit) { rec.uploadF0 = hit.f0; rec.uploadF90 = hit.f90; }
-          if (c.expectedOpacity != null) {
-            // Opacity (float index 6) must be present with the expected RGB
-            // F0 and F90 in the SAME 208-byte upload, not sighted apart.
+          if (c.expectedOpacity != null || c.expectedAlphaCutoff != null) {
+            // Opacity (float index 6) and the alpha cutoff (float index 42,
+            // byte 168) must be present with the expected RGB F0 and F90 in
+            // the SAME 208-byte upload, never sighted independently.
             let ohit = null;
             (s.wgpu.dumps || []).forEach((d) => {
               if (ohit || !Array.isArray(d.f0) || d.f0.length !== 3) return;
@@ -2345,15 +2373,25 @@ setTimeout(() => {
               }
               if (!(typeof d.f90 === 'number' && Number.isFinite(d.f90) &&
                     Math.abs(d.f90 - expF90) < 1e-4)) return;
-              if (!(typeof d.opacity === 'number' && Number.isFinite(d.opacity) &&
+              if (c.expectedOpacity != null &&
+                  !(typeof d.opacity === 'number' && Number.isFinite(d.opacity) &&
                     Math.abs(d.opacity - c.expectedOpacity) < 1e-4)) return;
-              ohit = true;
+              if (c.expectedAlphaCutoff != null &&
+                  !(typeof d.alphaCutoff === 'number' && Number.isFinite(d.alphaCutoff) &&
+                    Math.abs(d.alphaCutoff - c.expectedAlphaCutoff) < 1e-4)) return;
+              ohit = d;
             });
-            rec.opacityInUpload = Boolean(ohit);
+            if (c.expectedOpacity != null) rec.opacityInUpload = Boolean(ohit);
+            if (c.expectedAlphaCutoff != null) {
+              rec.alphaCutoffInUpload = Boolean(ohit);
+              if (ohit) rec.uploadAlphaCutoff = ohit.alphaCutoff;
+            }
             if (!ohit) {
-              fail(c.name + ': expected opacity ' + c.expectedOpacity +
+              fail(c.name + ': expected' +
+                (c.expectedOpacity != null ? ' opacity ' + c.expectedOpacity : '') +
+                (c.expectedAlphaCutoff != null ? ' cutoff ' + c.expectedAlphaCutoff : '') +
                 ' with F0 [' + expF0.join(',') + '] + F90 ' + expF90 +
-                ' not found together in any 208-byte upload (floats[6]/floats[44..47])');
+                ' not found together in any 208-byte upload (floats[6]/floats[42]/floats[44..47])');
             }
           }
           if (!hit) {
@@ -2664,6 +2702,7 @@ setTimeout(() => {
       expectedOpacity: r.expectedOpacity,
       expectedAlphaCutoff: r.expectedAlphaCutoff,
       uniformAlphaCutoff: r.uniformAlphaCutoff,
+      alphaCutoffInUpload: r.alphaCutoffInUpload, uploadAlphaCutoff: r.uploadAlphaCutoff,
       expectedEmpty: r.expectedEmpty,
       specIntensityMapFlag: r.specIntensityMapFlag, specColorMapFlag: r.specColorMapFlag,
       textureServed: r.textureServed,
@@ -2689,11 +2728,12 @@ setTimeout(() => {
       'u_hasSpecularColorMap draw-time uniform (WebGL, missing = null) or the byte-204 ' +
       'upload flag (WebGPU), with combined color+intensity readiness requiring BOTH flags ' +
       'in the same draw/snapshot; ' +
-      'MASK cases validate factor-only fill masking against the dedicated ' +
-      'wireframe:false opaque FILL control (alpha-opaque-a1, no authored ' +
-      'cutoff), with expectedEmpty cases asserting strict full-background + ' +
-      'zero-foreground screenshots and no alpha-mask texture, shadow, or ' +
-      'WebGPU mask claims made; ' +
+      'MASK cases on BOTH backends validate factor-only FILL masking against ' +
+      'the dedicated per-backend wireframe:false opaque FILL control ' +
+      '(alpha-opaque-a1, no authored cutoff; glb-mask-fill-control and ' +
+      'wg-mask-fill-control), with expectedEmpty cases asserting strict ' +
+      'full-background + zero-foreground screenshots and no alpha-mask ' +
+      'texture, cutout-shadow, or wireframe claims made; ' +
       'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +
