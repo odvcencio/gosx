@@ -571,7 +571,12 @@ const budgets = [
   // caps raised with narrow rounding headroom.
   // Alpha-masked shadows plus corrected shadow projection measured
   // 1587301/429835/345588; all three caps raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_587_400, gzip: 429_900, brotli: 345_600 },
+  // Final rebuilt routing payload measured 1590537/430679/345642; all three
+  // caps raised with narrow rounding headroom.
+  // CSS-aware masked routing plus the live-patch runtime rebuild measured
+  // 1592194/431002/346034; all three caps raised with narrow rounding
+  // headroom.
+  { file: "bootstrap.js", raw: 1_592_200, gzip: 431_100, brotli: 346_100 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1003,7 +1008,12 @@ const budgets = [
   // raised with narrow rounding headroom; brotli cap unchanged.
   // Alpha-masked shadows plus corrected shadow projection measured 125780
   // brotli (only brotli exceeded); cap raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 549_700, gzip: 151_700, brotli: 125_800 },
+  // Final rebuilt routing payload measured 552849/152464/126293; all three
+  // caps raised with narrow rounding headroom.
+  // CSS-aware masked routing plus the live-patch runtime rebuild measured
+  // 554504/152872/126607; all three caps raised with narrow rounding
+  // headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 554_600, gzip: 152_900, brotli: 126_700 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1682,9 +1692,14 @@ const routeBudgets = [
     // caps raised with narrow rounding headroom.
     // Alpha-masked shadows plus corrected shadow projection measured
     // 1074506/297353/251993; all three caps raised with narrow rounding headroom.
-    raw: 1_074_600,
-    gzip: 297_400,
-    brotli: 252_000,
+    // Final rebuilt routing payload measured 1077733/298149/252506; all three
+    // caps raised with narrow rounding headroom.
+    // CSS-aware masked routing plus the live-patch runtime rebuild measured
+    // 1079388/298557/252820; all three caps raised with narrow rounding
+    // headroom.
+    raw: 1_079_400,
+    gzip: 298_600,
+    brotli: 252_900,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1808,9 +1823,14 @@ const routeBudgets = [
     // caps raised with narrow rounding headroom.
     // Alpha-masked shadows plus corrected shadow projection measured
     // 1475051/393643/332475; all three caps raised with narrow rounding headroom.
-    raw: 1_475_100,
-    gzip: 393_700,
-    brotli: 332_500,
+    // Final rebuilt routing payload measured 1478278/394439/332988; all three
+    // caps raised with narrow rounding headroom.
+    // CSS-aware masked routing plus the live-patch runtime rebuild measured
+    // 1479933/394847/333302; all three caps raised with narrow rounding
+    // headroom.
+    raw: 1_480_000,
+    gzip: 394_900,
+    brotli: 333_400,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1935,9 +1955,14 @@ const routeBudgets = [
     // caps raised with narrow rounding headroom.
     // Alpha-masked shadows plus corrected shadow projection measured
     // 1098613/288476/241564; all three caps raised with narrow rounding headroom.
-    raw: 1_098_700,
-    gzip: 288_500,
-    brotli: 241_600,
+    // Final rebuilt routing payload measured 1101840/289272/242077; all three
+    // caps raised with narrow rounding headroom.
+    // CSS-aware masked routing plus the live-patch runtime rebuild measured
+    // 1103495/289680/242391; all three caps raised with narrow rounding
+    // headroom.
+    raw: 1_103_500,
+    gzip: 289_700,
+    brotli: 242_400,
   },
 
 ];

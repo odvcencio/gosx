@@ -778,17 +778,42 @@
 
   // Determine the render pass for an object given its material.
   function scenePBRObjectRenderPass(obj, material) {
-    if (obj && typeof obj.renderPass === "string" && obj.renderPass) {
+    // Derived object passes are cached computed defaults; freshly evaluated
+    // material routing (e.g. after real CSS substitution) wins. Raw and
+    // explicit object passes keep precedence.
+    if (obj && obj._renderPassDerived !== true &&
+        typeof obj.renderPass === "string" && obj.renderPass) {
       const pass = obj.renderPass.toLowerCase();
       if (pass === "alpha" || pass === "additive" || pass === "opaque") {
         return pass;
       }
+    }
+    // Derived (computed) material routes must be re-evaluated from the
+    // effective fields — notably after real CSS resolution replaced a
+    // var() alphaCutoff string — instead of replaying cached strings. Raw
+    // unmarked values keep the legacy thresholds (opacity < 1) below.
+    if (material && (material._renderPassDerived === true ||
+        material._blendModeDerived === true)) {
+      return sceneMaterialRenderPass(material);
     }
     if (material && typeof material.renderPass === "string" && material.renderPass) {
       const pass = material.renderPass.toLowerCase();
       if (pass === "alpha" || pass === "additive" || pass === "opaque") {
         return pass;
       }
+    }
+    // Preserve explicit alpha/additive blend choices before mask-default
+    // routing; unmarked raw values are authored.
+    const materialBlend = material && typeof material.blendMode === "string"
+      ? material.blendMode.toLowerCase() : "";
+    if (materialBlend === "additive") {
+      return "additive";
+    }
+    if (materialBlend === "alpha") {
+      return "alpha";
+    }
+    if (sceneMaterialMaskOpaqueRouting(material)) {
+      return "opaque";
     }
     // If material opacity < 1, default to alpha pass.
     if (material && sceneNumber(material.opacity, 1) < 1) {

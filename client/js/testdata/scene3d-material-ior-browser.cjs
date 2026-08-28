@@ -125,7 +125,10 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const ENGINE = 'gosx-engine-ior-browser';
 const MOUNT = 'scene-ior-browser';
 const W = 256, H = 192;
-const OVERALL_MS = 180000;
+// Raised 180000 -> 210000: probe grew from 181 to 197 cases; the last run
+// finished all 181 old cases, reproduced 14 new-case failures, and still hit
+// the overall watchdog near case 193, so the budget needs ~30s more headroom.
+const OVERALL_MS = 210000;
 const CASE_WAIT_MS = 20000;
 const SETTLE_MS = 600;
 const FG_THRESHOLD = 12;   // min channel delta vs measured corner background
@@ -1415,6 +1418,64 @@ function shadowCase(name, webgpu, mat) {
     { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a128.png' },
     { same: pfx + 'control', requiredTex: ['/tex/alb-white-a128.png'] });
 });
+
+// ---- Alpha-mask ROUTING defaults: direct built-in masked meshes on BOTH
+// backends. One single standard-material, wireframe:false OBJ mesh per case
+// (common shape/color/roughness/IOR); no imported GLB, because glTF already
+// authors an explicit pass. All expectations are authored constants, never
+// computed from runtime values. New native depth/blend observations gate
+// ONLY this group.
+const MASKROUTE_MAT = { color: '#3a7bd5', roughness: 0.35, metalness: 0, ior: 1.5 };
+[false, true].forEach((webgpu) => {
+  const pfx = webgpu ? 'wg-maskroute-' : 'gl-maskroute-';
+  const push = (name, objExtra, extra) => CASES.push(Object.assign({
+    name: pfx + name, webgpu, f0: 0.04, f90: 1,
+    obj: OBJ(Object.assign({}, MASKROUTE_MAT, objExtra)),
+  }, extra));
+  // Opaque control: direct built-in opaque PBR route, no authored cutoff
+  // (uniform/upload sentinel -1), depth-writing, no blend.
+  push('opaque', {},
+    { expectedOpacity: 1, expectedAlphaCutoff: -1,
+      expectedDepthWrite: true, expectedBlend: false });
+  // Built-in MASK inputs (.5/.5) still route as an opaque, depth-writing
+  // PBR draw (no blend pass); pixels match the opaque control.
+  push('mask-c5-f5', { opacity: 0.5, alphaCutoff: 0.5 },
+    { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+  // Zero/zero: alpha 0 is not below cutoff 0, so nothing is discarded and
+  // the draw survives on the opaque route, matching the control.
+  push('mask-c0-f0', { opacity: 0, alphaCutoff: 0 },
+    { expectedOpacity: 0, expectedAlphaCutoff: 0,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+  // Factor .25 with cutoff .5: every fragment discarded, strict empty image.
+  push('discard-c5-f25', { opacity: 0.25, alphaCutoff: 0.5 },
+    { expectedOpacity: 0.25, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: true, expectedBlend: false, expectedEmpty: true,
+      differs: pfx + 'opaque', minChanged: 1 });
+  // Explicit renderPass:'alpha' control: blended route, no depth write,
+  // sentinel cutoff, opaque factor 1.
+  push('alpha-opaque', { opacity: 1, renderPass: 'alpha' },
+    { expectedOpacity: 1, expectedAlphaCutoff: -1,
+      expectedDepthWrite: false, expectedBlend: true });
+  // MASK inputs on the explicit alpha route: surviving fragments force
+  // output alpha 1 in the built-in shader, so pixels match the alpha
+  // control with factor 1; routing (no depth write, blend on) is identical.
+  push('alpha-mask-c5-f5', { opacity: 0.5, alphaCutoff: 0.5, renderPass: 'alpha' },
+    { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: false, expectedBlend: true, same: pfx + 'alpha-opaque' });
+  // Mask disabled (explicit alphaCutoff null): fractional opacity routes to
+  // the blended alpha pass; cutoff uniform/upload sentinel -1.
+  push('mask-disabled', { opacity: 0.5, alphaCutoff: null },
+    { expectedOpacity: 0.5, expectedAlphaCutoff: -1,
+      expectedDepthWrite: false, expectedBlend: true });
+  // CSS-authored cutoff: the raw input stays the string
+  // var(--mask-cutoff, 0.5); the runtime effective cutoff is the numeric
+  // 0.5 resolved through the CSS var fallback (no htmlFor change needed).
+  // Still the opaque route.
+  push('mask-css-cutoff', { opacity: 0.5, alphaCutoff: 'var(--mask-cutoff, 0.5)' },
+    { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+});
 const byName = {};
 CASES.forEach((c) => { byName[c.name] = c; });
 
@@ -1660,6 +1721,8 @@ const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
     lastDrawOpacity: null,
     lastDrawAlphaCutoff: null,
+    lastDrawDepthWrite: null,
+    lastDrawBlend: null,
     lastDrawUnlit: null,
     lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, lastDrawHasSpecColorMap: null,
     lastDrawHasAlbedoMap: null,
@@ -1686,6 +1749,7 @@ const PRELOAD = `
     return id;
   }
   window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
+  window.__gosxWGPUDraws = { observed: 0, lastDepthWrite: null, lastBlend: null };
 (function () {
   var latest80 = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
   var frameBindGroups = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
@@ -1749,6 +1813,29 @@ const PRELOAD = `
           var cvv = (omc && omc.has(cp)) ? this.__origGetUniform.call(this, cp, omc.get(cp)) : null;
           window.__gosxIOR.lastDrawAlphaCutoff =
             (typeof cvv === "number" && Number.isFinite(cvv)) ? cvv : null;
+          // Native per-draw depth/blend routing observations at the SAME
+          // F0/F90-qualified PBR draw: the real DEPTH_WRITEMASK via the
+          // saved native getParameter and the real BLEND enable state via
+          // the saved native isEnabled. Strict booleans only; a missing or
+          // failed read is recorded as null and fails the route gates; it
+          // never defaults to an assumed routing state.
+          try {
+            var dwm = this.__origGetParameter.call(this, this.DEPTH_WRITEMASK);
+            window.__gosxIOR.lastDrawDepthWrite =
+              (dwm === true) ? true : (dwm === false) ? false : null;
+          } catch (e4) {
+            window.__gosxIOR.lastDrawDepthWrite = null;
+            noteErr(window.__gosxIOR.obsErrors, e4);
+          }
+          try {
+            var blv = this.__origIsEnabled
+              ? this.__origIsEnabled.call(this, this.BLEND) : null;
+            window.__gosxIOR.lastDrawBlend =
+              (blv === true) ? true : (blv === false) ? false : null;
+          } catch (e5) {
+            window.__gosxIOR.lastDrawBlend = null;
+            noteErr(window.__gosxIOR.obsErrors, e5);
+          }
           var mul = this.__ulocs;
           var ulv = (mul && mul.has(cp)) ? this.__origGetUniform.call(this, cp, mul.get(cp)) : null;
           // u_unlit read through the native getUniform at the SAME F0/F90-
@@ -1906,6 +1993,7 @@ const PRELOAD = `
     proto.__gosxIORWrapped = true;
     var gu = proto.getUniformLocation, gp = proto.getParameter, guf = proto.getUniform,
         gpp = proto.getProgramParameter, gau = proto.getActiveUniform,
+        ie = proto.isEnabled,
         da = proto.drawArrays, de = proto.drawElements,
         dai = proto.drawArraysInstanced, dei = proto.drawElementsInstanced,
         gat = proto.activeTexture, gfbt = proto.framebufferTexture2D;
@@ -1913,6 +2001,7 @@ const PRELOAD = `
     proto.__origGetUniform = guf;
     proto.__origGetProgramParameter = gpp;
     proto.__origGetActiveUniform = gau;
+    if (ie) proto.__origIsEnabled = ie;
     if (gat) proto.__origActiveTexture = gat;
     proto.__origGetUniformLocation = gu;
     // Forced-cap interception for MAX_TEXTURE_IMAGE_UNITS (0x8872) only, on
@@ -2150,6 +2239,97 @@ const PRELOAD = `
   }
   if (typeof GPURenderPassEncoder !== "undefined") wrapSetBindGroup(GPURenderPassEncoder.prototype);
   if (typeof GPURenderBundleEncoder !== "undefined") wrapSetBindGroup(GPURenderBundleEncoder.prototype);
+  if (typeof GPUDevice !== "undefined" && GPUDevice.prototype &&
+      GPUDevice.prototype.createRenderPipeline) {
+    var crp = GPUDevice.prototype.createRenderPipeline;
+    var crpa = GPUDevice.prototype.createRenderPipelineAsync;
+    var wgpuPipelineRoute = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+    // Snapshot only plain routing fields from the descriptor, synchronously;
+    // GPU handles are never stored, copied, or reported.
+    function snapshotRouteDescriptor(d) {
+      if (!d || typeof d !== "object") return null;
+      try {
+        var frag = d.fragment;
+        var tg = frag ? frag.targets : null;
+        var t0 = (tg && tg.length > 0) ? tg[0] : null;
+        var ds = d.depthStencil;
+        // PBR qualification: real gosx-pbr- label, built-in vertex and
+        // fragment entry points, an actual color target AND an explicit
+        // depth-stencil state. The label never supplies the depth/blend
+        // values; shadow-only or generic pipelines never qualify.
+        if (typeof d.label === "string" && d.label.indexOf("gosx-pbr-") === 0 &&
+            d.vertex && d.vertex.entryPoint === "vertexMain" &&
+            frag && frag.entryPoint === "fragmentMain" &&
+            t0 && typeof t0 === "object" && ds && typeof ds === "object") {
+          return {
+            depthWriteEnabled:
+              ds.depthWriteEnabled === true ? true :
+              ds.depthWriteEnabled === false ? false : null,
+            blend: (t0.blend && typeof t0.blend === "object") ? true : false
+          };
+        }
+      } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+      return null;
+    }
+    GPUDevice.prototype.createRenderPipeline = function () {
+      var p = crp.apply(this, arguments);
+      try {
+        var s = snapshotRouteDescriptor(arguments[0]);
+        if (s && wgpuPipelineRoute) wgpuPipelineRoute.set(p, s);
+      } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+      return p;
+    };
+    if (crpa) {
+      GPUDevice.prototype.createRenderPipelineAsync = function () {
+        var args = arguments;
+        // Snapshot synchronously BEFORE awaiting native creation; the
+        // descriptor may be mutated or reused later and is never re-read.
+        var s = null;
+        try { s = snapshotRouteDescriptor(args[0]); }
+        catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+        return crpa.apply(this, arguments).then(function (p) {
+          try { if (s && wgpuPipelineRoute) wgpuPipelineRoute.set(p, s); }
+          catch (e2) { noteErr(window.__gosxWGPU.obsErrors, e2); }
+          return p;
+        });
+      };
+    }
+    // Track the ACTUAL pipeline bound through setPipeline on both encoder
+    // kinds, then record draw count and routing states for successful
+    // native draws only: the native draw runs FIRST, observation after.
+    function wrapPipelineTrack(proto) {
+      if (!proto || !proto.setPipeline || proto.__gosxSPWrapped) return;
+      proto.__gosxSPWrapped = true;
+      var bound = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+      var sp = proto.setPipeline;
+      proto.setPipeline = function () {
+        var r = sp.apply(this, arguments);
+        try {
+          if (bound && arguments[0]) bound.set(this, arguments[0]);
+        } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+        return r;
+      };
+      ["draw", "drawIndexed"].forEach(function (m) {
+        var orig = proto[m];
+        if (!orig) return;
+        proto[m] = function () {
+          var r = orig.apply(this, arguments);
+          try {
+            var pi = bound ? bound.get(this) : null;
+            var s = (pi && wgpuPipelineRoute) ? wgpuPipelineRoute.get(pi) : null;
+            if (s) {
+              window.__gosxWGPUDraws.observed += 1;
+              window.__gosxWGPUDraws.lastDepthWrite = s.depthWriteEnabled;
+              window.__gosxWGPUDraws.lastBlend = s.blend;
+            }
+          } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
+          return r;
+        };
+      });
+    }
+    if (typeof GPURenderPassEncoder !== "undefined") wrapPipelineTrack(GPURenderPassEncoder.prototype);
+    if (typeof GPURenderBundleEncoder !== "undefined") wrapPipelineTrack(GPURenderBundleEncoder.prototype);
+  }
 })();
 `;
 
@@ -2198,6 +2378,10 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'window.__gosxIOR.lastDrawOpacity:null),' +
   'lastDrawAlphaCutoff:(typeof window.__gosxIOR.lastDrawAlphaCutoff==="number"?' +
   'window.__gosxIOR.lastDrawAlphaCutoff:null),' +
+  'lastDrawDepthWrite:(window.__gosxIOR.lastDrawDepthWrite===true||' +
+  'window.__gosxIOR.lastDrawDepthWrite===false?window.__gosxIOR.lastDrawDepthWrite:null),' +
+  'lastDrawBlend:(window.__gosxIOR.lastDrawBlend===true||' +
+  'window.__gosxIOR.lastDrawBlend===false?window.__gosxIOR.lastDrawBlend:null),' +
   'lastDrawHasIBL:window.__gosxIOR.lastDrawHasIBL,' +
   'lastDrawHasSpecIntensityMap:window.__gosxIOR.lastDrawHasSpecIntensityMap,' +
   'lastDrawHasSpecColorMap:window.__gosxIOR.lastDrawHasSpecColorMap,' +
@@ -2214,7 +2398,12 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'wgpu:window.__gosxWGPU?{uploads:window.__gosxWGPU.materialUploads,' +
   'dumps:window.__gosxWGPU.dumps.slice(-4),' +
   'envWords:((typeof window.__gosxWGPUReadEnvWords === "function") ? window.__gosxWGPUReadEnvWords() : null),' +
-  'obsErrors:(window.__gosxWGPU.obsErrors||[]).slice(0,4)}:null};})()';
+  'obsErrors:(window.__gosxWGPU.obsErrors||[]).slice(0,4),' +
+  'wgdraws:(window.__gosxWGPUDraws?{observed:window.__gosxWGPUDraws.observed,' +
+  'lastDepthWrite:(window.__gosxWGPUDraws.lastDepthWrite===true||' +
+  'window.__gosxWGPUDraws.lastDepthWrite===false?window.__gosxWGPUDraws.lastDepthWrite:null),' +
+  'lastBlend:(window.__gosxWGPUDraws.lastBlend===true||' +
+  'window.__gosxWGPUDraws.lastBlend===false?window.__gosxWGPUDraws.lastBlend:null)}:null)}:null};})()';
 
 // Decode the actual screenshot with a native Image + 2D canvas. Measures the
 // real corner background from the image itself, then foreground pixels that
@@ -2427,6 +2616,8 @@ setTimeout(() => {
     const rec = { name: c.name, skipped: false };
     if (c.expectedOpacity !== undefined) rec.expectedOpacity = c.expectedOpacity;
     if (c.expectedAlphaCutoff !== undefined) rec.expectedAlphaCutoff = c.expectedAlphaCutoff;
+    if (c.expectedDepthWrite !== undefined) rec.expectedDepthWrite = c.expectedDepthWrite;
+    if (c.expectedBlend !== undefined) rec.expectedBlend = c.expectedBlend;
     if (typeof c.expectedUnlit === 'boolean') rec.expectedUnlit = c.expectedUnlit;
     if (c.expectedEmpty === true) rec.expectedEmpty = true;
     evidence.push(rec);
@@ -2890,6 +3081,43 @@ setTimeout(() => {
         }
       }
 
+      // Native per-draw depth/blend routing gates: only cases carrying
+      // authored expectedDepthWrite/expectedBlend (the alpha-mask routing
+      // group) are gated. WebGL reads the real DEPTH_WRITEMASK and
+      // isEnabled(BLEND) at the F0/F90-qualified PBR draw; WebGPU reads the
+      // actually drawn PBR-qualified pipeline's descriptor snapshot (never
+      // creation alone, never a requested input, no raw GPU handles). A
+      // missing or failed observation fails; it never defaults.
+      if (c.expectedDepthWrite !== undefined || c.expectedBlend !== undefined) {
+        if (c.webgpu) {
+          const wd = (s.wgpu && s.wgpu.wgdraws) ? s.wgpu.wgdraws : null;
+          if (!wd || !(wd.observed > 0)) {
+            fail(c.name + ': no drawn PBR-qualified WebGPU pipeline observed');
+          } else {
+            rec.drawnPipeline = { depthWrite: wd.lastDepthWrite, blend: wd.lastBlend };
+            if (wd.lastDepthWrite !== c.expectedDepthWrite) {
+              fail(c.name + ': drawn pipeline depthWriteEnabled=' +
+                wd.lastDepthWrite + ' != expected ' + c.expectedDepthWrite);
+            }
+            if (wd.lastBlend !== c.expectedBlend) {
+              fail(c.name + ': drawn pipeline blend=' +
+                wd.lastBlend + ' != expected ' + c.expectedBlend);
+            }
+          }
+        } else {
+          if (s.ior.lastDrawDepthWrite !== c.expectedDepthWrite) {
+            fail(c.name + ': DEPTH_WRITEMASK=' + s.ior.lastDrawDepthWrite +
+              ' != expected ' + c.expectedDepthWrite + ' at the F0/F90-qualified PBR draw');
+          }
+          if (s.ior.lastDrawBlend !== c.expectedBlend) {
+            fail(c.name + ': isEnabled(BLEND)=' + s.ior.lastDrawBlend +
+              ' != expected ' + c.expectedBlend + ' at the F0/F90-qualified PBR draw');
+          }
+          rec.drawnDepthWrite = s.ior.lastDrawDepthWrite;
+          rec.drawnBlend = s.ior.lastDrawBlend;
+        }
+      }
+
       cap = await capture(send);
       if (!cap) throw new Error('screenshot capture/decode failed');
       if (cap.clip.width !== W || cap.clip.height !== H) {
@@ -3087,6 +3315,9 @@ setTimeout(() => {
       expectedAlphaCutoff: r.expectedAlphaCutoff,
       uniformAlphaCutoff: r.uniformAlphaCutoff,
       alphaCutoffInUpload: r.alphaCutoffInUpload, uploadAlphaCutoff: r.uploadAlphaCutoff,
+      expectedDepthWrite: r.expectedDepthWrite, expectedBlend: r.expectedBlend,
+      drawnDepthWrite: r.drawnDepthWrite, drawnBlend: r.drawnBlend,
+      drawnPipeline: r.drawnPipeline || undefined,
       expectedUnlit: r.expectedUnlit,
       uniformUnlit: r.uniformUnlit,
       unlitInUpload: r.unlitInUpload, uploadUnlit: r.uploadUnlit,
@@ -3135,6 +3366,14 @@ setTimeout(() => {
       'full-background + zero-foreground screenshots and no alpha-mask ' +
       'texture, cutout-shadow, or wireframe claims made for those older ' +
       'cases only; ' +
+      'the new alpha-mask routing cases add native per-draw depth/blend ' +
+      'observations gating only their own cases: WebGL reads the real ' +
+      'DEPTH_WRITEMASK/isEnabled(BLEND) at the F0/F90-qualified PBR draw and ' +
+      'WebGPU observes the actually drawn PBR pipeline descriptor ' +
+      '(depthWriteEnabled and color-target blend presence) tracked through ' +
+      'setPipeline on render-pass and render-bundle encoders; these certify ' +
+      'draw-route state only, not physical GPU depth hardware behavior or ' +
+      'full geometry correctness; ' +
       'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +
