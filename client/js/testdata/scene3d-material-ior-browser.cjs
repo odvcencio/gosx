@@ -859,6 +859,111 @@ const SPEC_COLOR_ENV = () => ({ ambientIntensity: 0, skyIntensity: 0, groundInte
     requiresIBL: true, keyLightIntensity: 0, environment: SPEC_COLOR_ENV(),
     differs: 'wg-tex-ibl-color-black', minChanged: 20 }),
 ].forEach((c) => CASES.push(c));
+
+// ---- Specular-COLOR texture cases (WebGL counterparts) --------------------
+// WebGL equivalents of ALL fourteen WebGPU color cases above, reusing the
+// exact same real GLB/PNG assets. The production WebGL change declares
+// u_hasSpecularColorMap + u_specularColorMap and samples the sRGB-decoded
+// texture RGB as the per-pixel specular color (the texture ALPHA channel
+// never affects the color role), while the CPU uniforms stay at the authored
+// pre-texture values, so the draw-time uniform assertions below expect the
+// authored F0/F90 exactly like the WebGPU upload assertions. The REAL
+// u_hasSpecularColorMap uniform is observed at production PBR draw time
+// (getUniformLocation tracking + getUniform) and must read true/1 within the
+// bounded timeout before capture; a missing location or observation is null
+// and never invented as readiness. Combined color+intensity readiness
+// requires BOTH draw-time flags true in the SAME sT.ior snapshot/PBR draw.
+// Comparisons reuse the existing WebGL factor controls (glb-spec-white /
+// glb-spec-zero / gl-tex-metal-alpha255 / gl-tex-ibl-alpha255) and the new
+// untextured GL color controls below, remapped from the WebGPU names; all
+// comparisons stay within the same quad geometry/backend/lighting family.
+[
+  // White color texture: exactly the existing WebGL factor-1 GLB render.
+  { name: 'gl-tex-color-white', model: MODEL({ src: '/models/quad-tex-color-white.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-white.png'], f0: 0.04, f90: 1,
+    same: 'glb-spec-white' },
+  // Black color texture: equals the untextured black-color control exactly
+  // and differs from the white texture. The CPU draw-time F0/F90 stay the
+  // authored pre-texture factors (.04 / 1): the per-pixel black is sampled
+  // only on the GPU from the color texture, never uploaded as the CPU F0.
+  { name: 'gl-tex-color-black', model: MODEL({ src: '/models/quad-tex-color-black.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-black.png'], f0: 0.04, f90: 1,
+    same: 'glb-spec-color-black', differs: 'gl-tex-color-white', minChanged: 20 },
+  { name: 'glb-spec-color-black', model: MODEL({ src: '/models/quad-spec-color-black.glb' }),
+    f0: [0, 0, 0], f90: 1 },
+  // Tinted sRGB texel RGB [128,64,255]: matches an untextured GLB whose
+  // linear color factors equal the exactly decoded RGB (within at most 1
+  // channel quantization step) and differs visibly from white.
+  { name: 'gl-tex-color-tint', model: MODEL({ src: '/models/quad-tex-color-tint.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-tint.png'], f0: 0.04, f90: 1,
+    nearSame: 'glb-spec-color-tint', differs: 'gl-tex-color-white', minChanged: 1 },
+  { name: 'glb-spec-color-tint', model: MODEL({ src: '/models/quad-spec-color-tint.glb' }),
+    f0: [0.04 * TINT_LINEAR[0], 0.04 * TINT_LINEAR[1], 0.04 * TINT_LINEAR[2]], f90: 1 },
+  // Same tinted RGB with alpha 0: must match the alpha-255 texture EXACTLY
+  // (alpha must not affect the color role; this exposes any image-decoding
+  // alpha loss).
+  { name: 'gl-tex-color-tint-alpha0',
+    model: MODEL({ src: '/models/quad-tex-color-tint-alpha0.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-tint-alpha0.png'], f0: 0.04, f90: 1,
+    same: 'gl-tex-color-tint' },
+  // HDR authored color [100,50,2] at intensity 0.5 with texel RGB
+  // [64,128,255]: equals an untextured control whose factors are the
+  // authored color multiplied by the decoded RGB BEFORE clamping. The
+  // draw-time uniform expectations remain the pre-texture authored factors
+  // (clamp-before-intensity gives [0.5, 0.5, 0.04] / 0.5), not the pixels.
+  { name: 'gl-tex-color-hdr', model: MODEL({ src: '/models/quad-tex-color-hdr.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-hdr.png'],
+    f0: [0.5, 0.5, 0.04], f90: 0.5,
+    nearSame: 'glb-spec-color-hdr' },
+  { name: 'glb-spec-color-hdr', model: MODEL({ src: '/models/quad-spec-color-hdr.glb' }),
+    f0: [Math.min(0.04 * 100 * HDRTEX_LINEAR[0], 1) * 0.5,
+         Math.min(0.04 * 50 * HDRTEX_LINEAR[1], 1) * 0.5,
+         Math.min(0.04 * 2 * HDRTEX_LINEAR[2], 1) * 0.5], f90: 0.5 },
+  // Combined color + intensity textures (alpha 128/255) at authored
+  // intensity 0.5: matches an untextured control using the decoded color
+  // and intensity 0.5*128/255. BOTH draw-time flags (same snapshot) and both
+  // actual texture fetches are observed.
+  { name: 'gl-tex-color-tint-int128',
+    model: MODEL({ src: '/models/quad-tex-color-tint-int128.glb' }),
+    specTex: true, specColorTex: true,
+    requiredTex: ['/tex/spec-color-tint-alpha128.png', '/tex/spec-alpha128-black.png'],
+    f0: 0.02, f90: 0.5,
+    nearSame: 'glb-spec-color-int' },
+  { name: 'glb-spec-color-int', model: MODEL({ src: '/models/quad-spec-color-int.glb' }),
+    f0: [0.04 * 0.5 * (128 / 255) * TINT_LINEAR[0], 0.04 * 0.5 * (128 / 255) * TINT_LINEAR[1],
+         0.04 * 0.5 * (128 / 255) * TINT_LINEAR[2]], f90: 0.5 * (128 / 255) },
+  // Authored intensity 0 plus a loaded color texture: exactly the existing
+  // factor-0 GLB render (authored intensity is retained through the texture
+  // path; the combined F90 is 0 so the color texel cannot revive the
+  // specular response).
+  { name: 'gl-tex-color-int0', model: MODEL({ src: '/models/quad-tex-color-int0.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-white.png'], f0: 0, f90: 0,
+    same: 'glb-spec-zero' },
+  // Fully metallic textured-color case: the metal branch ignores the
+  // dielectric lane, so the image equals the existing WebGL metallic
+  // alpha-255 texture case exactly while the dielectric uniforms stay .04/1.
+  { name: 'gl-tex-color-metal', model: MODEL({ src: '/models/quad-tex-color-metal.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-tint.png'], f0: 0.04, f90: 1,
+    same: 'gl-tex-metal-alpha255' },
+  // Isolated IBL color pair: same real IBL fixture, direct/ambient/sky/
+  // ground intensities 0, authored color [4,1,1]. Black vs white texels must
+  // differ; the black case must match the existing same-quad
+  // gl-tex-ibl-alpha255 case EXACTLY (IOR 1 gives F0=0 and F90=1 there; the
+  // black texel forces F0=0 here and F90 stays authored 1, so the IBL
+  // response B*F90 is identical and F90 remains active for black color).
+  { name: 'gl-tex-ibl-color-black',
+    model: MODEL({ src: '/models/quad-tex-ibl-color-black.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-black.png'],
+    f0: [0.16, 0.04, 0.04], f90: 1,
+    requiresIBL: true, keyLightIntensity: 0, environment: SPEC_COLOR_ENV(),
+    same: 'gl-tex-ibl-alpha255' },
+  { name: 'gl-tex-ibl-color-white',
+    model: MODEL({ src: '/models/quad-tex-ibl-color-white.glb' }),
+    specColorTex: true, requiredTex: ['/tex/spec-color-white.png'],
+    f0: [0.16, 0.04, 0.04], f90: 1,
+    requiresIBL: true, keyLightIntensity: 0, environment: SPEC_COLOR_ENV(),
+    differs: 'gl-tex-ibl-color-black', minChanged: 20 },
+].forEach((c) => CASES.push(c));
 const byName = {};
 CASES.forEach((c) => { byName[c.name] = c; });
 
@@ -1087,7 +1192,8 @@ async function evalSend(send, expression, extra) {
 // at 47.
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
-    lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, programInfo: null, queriedUniforms: [] };
+    lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, lastDrawHasSpecColorMap: null,
+    programInfo: null, queriedUniforms: [] };
   window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
 (function () {
   var latest80 = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
@@ -1170,6 +1276,25 @@ const PRELOAD = `
             // across draws and can never fake readiness.
             window.__gosxIOR.lastDrawHasSpecIntensityMap = null;
           }
+          var mcol = this.__shascolorlocs;
+          if (mcol && mcol.has(cp)) {
+            var vC = this.__origGetUniform.call(this, cp, mcol.get(cp));
+            // Real draw-time u_hasSpecularColorMap state, recorded with the
+            // same strict boolean/1-0 rules as the intensity flag and read at
+            // the SAME PBR draw as the intensity flag; any other value, and
+            // any missing tracked location, is null so combined readiness is
+            // never invented or leaked across draws.
+            window.__gosxIOR.lastDrawHasSpecColorMap =
+              (vC === true) ? true :
+              (vC === false) ? false :
+              (vC === 1 || vC === 1.0) ? true :
+              (vC === 0 || vC === 0.0) ? false : null;
+          } else {
+            // No tracked u_hasSpecularColorMap location for this PBR
+            // program: clear any previous observation so it cannot leak
+            // across draws and can never fake readiness.
+            window.__gosxIOR.lastDrawHasSpecColorMap = null;
+          }
           if (window.__gosxIOR.f0s.length < 4096) window.__gosxIOR.f0s.push(vec);
         }
       }
@@ -1220,6 +1345,10 @@ const PRELOAD = `
         if (n === "u_hasSpecularIntensityMap") {
           var mhas = this.__shaspeclocs || (this.__shaspeclocs = new Map());
           if (loc) mhas.set(p, loc); else mhas.delete(p);
+        }
+        if (n === "u_hasSpecularColorMap") {
+          var mcol = this.__shascolorlocs || (this.__shascolorlocs = new Map());
+          if (loc) mcol.set(p, loc); else mcol.delete(p);
         }
       } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
       return loc;
@@ -1385,6 +1514,7 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'lastDrawF0:window.__gosxIOR.lastDrawF0,lastDrawF90:window.__gosxIOR.lastDrawF90,gl:window.__gosxIOR.gl,' +
   'lastDrawHasIBL:window.__gosxIOR.lastDrawHasIBL,' +
   'lastDrawHasSpecIntensityMap:window.__gosxIOR.lastDrawHasSpecIntensityMap,' +
+  'lastDrawHasSpecColorMap:window.__gosxIOR.lastDrawHasSpecColorMap,' +
   'linkStatus:(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.linkStatus!==null?window.__gosxIOR.programInfo.linkStatus:null),' +
   'trackedF0:!!(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.trackedF0),' +
   'activeUniforms:((window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.activeUniforms)||[]).slice(0,100),' +
@@ -1665,13 +1795,30 @@ setTimeout(() => {
               if (!intFlagReady && dumpsT.some((d) => d.hasSpecIntensityMap === 1)) intFlagReady = true;
               if (!colorFlagReady && dumpsT.some((d) => d.hasSpecColorMap === 1)) colorFlagReady = true;
             }
+          } else if (c.specTex && c.specColorTex) {
+            // WebGL combined color+intensity case: BOTH draw-time flags must
+            // be observed true/1 in the SAME sT.ior snapshot (the same PBR
+            // draw); readiness is never accumulated from different draws.
+            if (sT && sT.ior &&
+                (sT.ior.lastDrawHasSpecIntensityMap === true ||
+                 sT.ior.lastDrawHasSpecIntensityMap === 1) &&
+                (sT.ior.lastDrawHasSpecColorMap === true ||
+                 sT.ior.lastDrawHasSpecColorMap === 1)) {
+              intFlagReady = true;
+              colorFlagReady = true;
+            }
           } else {
-            // WebGL intensity-texture cases: only an explicit draw-time
+            // WebGL single-role texture cases: only an explicit draw-time
             // observation of true/1 counts as loaded.
             if (!intFlagReady && sT && sT.ior &&
                 (sT.ior.lastDrawHasSpecIntensityMap === true ||
                  sT.ior.lastDrawHasSpecIntensityMap === 1)) {
               intFlagReady = true;
+            }
+            if (!colorFlagReady && sT && sT.ior &&
+                (sT.ior.lastDrawHasSpecColorMap === true ||
+                 sT.ior.lastDrawHasSpecColorMap === 1)) {
+              colorFlagReady = true;
             }
           }
           if (intFlagReady && colorFlagReady) break;
@@ -1688,7 +1835,9 @@ setTimeout(() => {
             CASE_WAIT_MS + 'ms');
         }
         if (!colorFlagReady) {
-          fail(c.name + ': hasSpecularColorMap flag not observed as 1 in any 208-byte upload within ' +
+          fail(c.name + (c.webgpu
+            ? ': hasSpecularColorMap flag not observed as 1 in any 208-byte upload within '
+            : ': u_hasSpecularColorMap not observed loaded (true/1) at production draw within ') +
             CASE_WAIT_MS + 'ms');
         }
       }
@@ -2056,7 +2205,10 @@ setTimeout(() => {
       'instanced forms) and at float indices 44..47 of 208-byte WebGPU material uploads; ' +
       'the intensity-texture loaded state is observed per backend as the real ' +
       'u_hasSpecularIntensityMap draw-time uniform (WebGL, missing = null) or the byte-164 ' +
-      'upload flag (WebGPU); ' +
+      'upload flag (WebGPU), and the color-texture loaded state as the real ' +
+      'u_hasSpecularColorMap draw-time uniform (WebGL, missing = null) or the byte-204 ' +
+      'upload flag (WebGPU), with combined color+intensity readiness requiring BOTH flags ' +
+      'in the same draw/snapshot; ' +
       'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +

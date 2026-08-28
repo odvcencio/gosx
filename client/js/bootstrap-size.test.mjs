@@ -559,7 +559,9 @@ const budgets = [
   // all three caps raised with narrow rounding headroom.
   // Specular-color decoding measured 1571241/426629/342751; caps set to the
   // exact measured values.
-  { file: "bootstrap.js", raw: 1_571_241, gzip: 426_629, brotli: 342_751 },
+  // Specular-color patch measured 1572890/426803/342577; raw and gzip raised
+  // with narrow rounding headroom; brotli cap unchanged.
+  { file: "bootstrap.js", raw: 1_573_000, gzip: 427_000, brotli: 342_751 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -891,7 +893,9 @@ const budgets = [
   // Measured: WebGL chunk 216900/59714/50773.
   // Raised for the specular-intensity texture slice (material slot6, shadows
   // begin7, 19 fragment samplers). Measured: 217769/59923/50835.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 217_950, gzip: 60_000, brotli: 50_900 },
+  // Specular-color patch measured 219449/60299/51206; all three caps raised
+  // with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 220_000, gzip: 60_500, brotli: 51_500 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1646,9 +1650,11 @@ const routeBudgets = [
     // Measured: 1065114/294665/249782.
     // Raised for the specular-intensity texture slice. Measured:
     // 1066019/294879/249778.
-    raw: 1_066_150,
-    gzip: 294_950,
-    brotli: 249_900,
+    // Specular-color patch measured 1067699/295255/250149; all three caps
+    // raised with narrow rounding headroom.
+    raw: 1_068_000,
+    gzip: 295_500,
+    brotli: 250_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1758,9 +1764,11 @@ const routeBudgets = [
     // all three caps raised with narrow rounding headroom.
     // Specular-color decoding measured 1459216/390266/329771; caps set to
     // the exact measured values.
-    raw: 1_459_216,
-    gzip: 390_266,
-    brotli: 329_771,
+    // Specular-color patch measured 1460873/390448/329817; all three caps
+    // raised with narrow rounding headroom.
+    raw: 1_461_000,
+    gzip: 390_500,
+    brotli: 330_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,

@@ -117,11 +117,14 @@ function setupWebGLRenderer() {
       "  const slots = { customUniforms: null };",
       "  const names = ['albedo', 'roughness', 'metalness', 'clearcoat', 'sheen',",
       "    'transmission', 'iridescence', 'anisotropy', 'specularF0', 'specularF90',",
+      "    'specularColorLog',",
       "    'emissive', 'opacity', 'unlit',",
       "    'albedoMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'occlusionMap',",
       "    'emissiveMap', 'specularIntensityMap',",
+      "    'specularColorMap',",
       "    'hasAlbedoMap', 'hasNormalMap', 'hasRoughnessMap', 'hasMetalnessMap',",
-      "    'hasOcclusionMap', 'hasEmissiveMap', 'hasSpecularIntensityMap'];",
+      "    'hasOcclusionMap', 'hasEmissiveMap', 'hasSpecularIntensityMap',",
+      "    'hasSpecularColorMap'];",
       "  for (const name of names) slots[name] = { name };",
       "  return slots;",
       "}",
@@ -383,13 +386,21 @@ test("WebGL pending specular-intensity map blocks the fast path and a late load 
   assert.equal(gl.binds.size, 0);
 });
 
-test("WebGL texture-unit allocator reserves the specular-intensity material slot", () => {
+test("WebGL texture-unit allocator reserves the specular material slots", () => {
   const { context } = setupWebGLRenderer();
   const layout = callIn(context,
     "sceneAllocateTextureUnits({ shadowCount: 2, ibl: true, maxUnits: 16 })");
   assert.equal(layout.material.specularIntensity, 6);
-  assert.deepEqual(Array.from(layout.shadows), [7, 8]);
-  assert.deepEqual({ ...layout.ibl }, { irradiance: 9, radiance: 10, brdfLUT: 11 });
+  assert.equal(layout.material.specularColor, 7);
+  assert.deepEqual(Array.from(layout.shadows), [8, 9]);
+  assert.deepEqual({ ...layout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
+  // Every returned slot is distinct: no material map collides with another
+  // material map, a shadow cascade or an IBL unit.
+  const materialUnits = Object.values(layout.material);
+  assert.equal(new Set(materialUnits).size, materialUnits.length);
+  assert.equal(new Set([...materialUnits, ...layout.shadows,
+    layout.ibl.irradiance, layout.ibl.radiance, layout.ibl.brdfLUT]).size,
+    materialUnits.length + layout.shadows.length + 3);
 });
 
 test("WebGL guarded max-texture-unit query falls back conservatively", () => {
@@ -410,24 +421,26 @@ test("WebGL frame layout threads real GL unit limits", () => {
     "{ ibl: { radiance: {}, irradiance: {}, brdfLUT: {} } }, " + maxUnits + ")");
   // A 32-unit GL retains 8 cascades plus the three IBL units.
   const wide = call(32);
-  assert.deepEqual(Array.from(wide.shadows), [7, 8, 9, 10, 11, 12, 13, 14]);
-  assert.deepEqual({ ...wide.ibl }, { irradiance: 15, radiance: 16, brdfLUT: 17 });
+  assert.deepEqual(Array.from(wide.shadows), [8, 9, 10, 11, 12, 13, 14, 15]);
+  assert.deepEqual({ ...wide.ibl }, { irradiance: 16, radiance: 17, brdfLUT: 18 });
   assert.equal(wide.warnings.length, 0);
   // A 16-unit GL keeps the supported non-HDR path with a boundary warning.
   const tight = call(16);
-  assert.deepEqual(Array.from(tight.shadows), [7, 8, 9, 10, 11, 12]);
+  // A 16-unit GL keeps the supported non-HDR path with a boundary warning:
+  // only 5 shadow slots fit after the 8 material units, leaving 3 for IBL.
+  assert.deepEqual(Array.from(tight.shadows), [8, 9, 10, 11, 12]);
   assert.deepEqual({ ...tight.ibl }, { irradiance: 13, radiance: 14, brdfLUT: 15 });
   assert.equal(tight.warnings.length > 0, true);
 });
 
-test("WebGL HDR IBL guard needs 19 sampler units", () => {
+test("WebGL HDR IBL guard needs 20 sampler units", () => {
   const { context } = setupWebGLRenderer();
   const source = readRuntimeSource("webgl.ts");
-  assert.match(source, /fragment-texture-units<19/);
-  assert.doesNotMatch(source, /fragment-texture-units<18/);
+  assert.match(source, /fragment-texture-units<20/);
+  assert.doesNotMatch(source, /fragment-texture-units<19/);
   assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(16))"), false);
-  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(18))"), false);
-  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(19))"), true);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(19))"), false);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(20))"), true);
   assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(32))"), true);
 });
 
@@ -479,6 +492,229 @@ test("WebGL PBR shader consumes the uploaded factors in direct and IBL paths", (
   const multiplyAt = source.indexOf('"        specF0 *= specTex;",');
   const mixAt = source.indexOf('"    vec3 F0 = mix(specF0, albedo, metalness);",');
   assert.ok(multiplyAt >= 0 && mixAt > multiplyAt, "alpha multiply precedes the metallic mix");
+});
+
+test("WebGL specular-color log coefficients stay finite at the extremes", () => {
+  const { context } = setupWebGLRenderer();
+  const logs = (literal) => callIn(context, "scenePBRSpecularColorLogs(" + literal + ")");
+  const defaultLog = Math.log2(0.04);
+
+  // Omitted colour falls back to white: the log is exactly log2(IOR F0).
+  const def = logs("{}");
+  for (let c = 0; c < 3; c++) {
+    assert.ok(Number.isFinite(def[c]), "default log coefficient finite");
+    assert.ok(Math.abs(def[c] - defaultLog) <= 1e-6);
+  }
+
+  // Exact-zero channels (black tint or ior 1) use the finite -1e30 sentinel.
+  const black = logs("{ specularColor: [0, 0, 0] }");
+  for (let c = 0; c < 3; c++) assert.strictEqual(black[c], -1e30);
+  const iorOne = logs("{ ior: 1, specularColor: [3, 3, 3] }");
+  for (let c = 0; c < 3; c++) assert.strictEqual(iorOne[c], -1e30);
+
+  // tinyIOR * hugeColor keeps a huge but finite positive log: no ceiling.
+  const extreme = logs("{ ior: 1 + Number.EPSILON, specularColor: [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE] }");
+  for (let c = 0; c < 3; c++) {
+    assert.ok(Number.isFinite(extreme[c]) && extreme[c] > 0, "extreme log stays finite and positive");
+  }
+
+  // Invalid colour arrays (wrong shape, negative, non-finite) fall back to
+  // white and never produce NaN or Infinity.
+  for (const bad of ["[1, 2]", "[-1, 0, 0]", "[Infinity, 1, 1]", '"junk"']) {
+    const invalid = logs("{ specularColor: " + bad + " }");
+    for (let c = 0; c < 3; c++) {
+      assert.ok(Number.isFinite(invalid[c]));
+      assert.ok(Math.abs(invalid[c] - defaultLog) <= 1e-6);
+    }
+  }
+});
+
+test("WebGL uploadMaterial uploads finite float32 specular-color log coefficients", () => {
+  const { context } = setupWebGLRenderer();
+  const upload = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
+    "uploadMaterial(gl, uniforms, " + literal + ", null);" +
+    "return gl.floats.get('specularColorLog'); })()");
+  const expect = (literal) => callIn(context, "scenePBRSpecularColorLogs(" + literal + ")");
+  const checkVec3 = (logs, label) => {
+    assert.ok(Array.isArray(logs) && logs.length === 3, label + " uploaded as a vec3");
+    for (let c = 0; c < 3; c++) assert.ok(Number.isFinite(logs[c]), label + " log coefficient finite");
+  };
+  const defaultLog = Math.log2(0.04);
+
+  // Default (omitted colour): exactly log2(IOR F0) on every channel.
+  const def = upload("{}");
+  checkVec3(def, "default");
+  for (let c = 0; c < 3; c++) assert.ok(Math.abs(def[c] - defaultLog) <= 1e-6);
+
+  // Invalid colour arrays fall back to white through the real upload path.
+  for (const bad of ["[1, 2]", "[-1, 0, 0]", "[Infinity, 1, 1]", '"junk"']) {
+    const invalid = upload("{ specularColor: " + bad + " }");
+    checkVec3(invalid, "invalid " + bad);
+    for (let c = 0; c < 3; c++) assert.ok(Math.abs(invalid[c] - defaultLog) <= 1e-6);
+  }
+
+  // The zero sentinel survives the upload as a finite number.
+  const black = upload("{ specularColor: [0, 0, 0] }");
+  checkVec3(black, "black sentinel");
+  for (let c = 0; c < 3; c++) assert.strictEqual(black[c], expect("{ specularColor: [0, 0, 0] }")[c]);
+
+  // tinyIOR * MAX_VALUE colour: used channels get the huge positive log,
+  // the unused (small) channel keeps the tinyIOR log, and everything the
+  // recorder captured is float32-representable where the magnitude allows.
+  const literal = "{ ior: 1 + Number.EPSILON, specularColor: [Number.MAX_VALUE, Number.MAX_VALUE, 1] }";
+  const extreme = upload(literal);
+  const expectedExtreme = expect(literal);
+  checkVec3(extreme, "extreme");
+  for (let c = 0; c < 3; c++) {
+    assert.strictEqual(extreme[c], expectedExtreme[c], "channel " + c + " matches the helper");
+    if (Math.abs(extreme[c]) < 1e29) {
+      assert.strictEqual(extreme[c], Math.fround(extreme[c]), "channel " + c + " float32-representable");
+    }
+  }
+  assert.ok(extreme[0] > 0 && extreme[1] > 0, "MAX_VALUE channels yield a positive log");
+  assert.ok(extreme[2] < 0 && Number.isFinite(extreme[2]), "unused channel retains the finite tinyIOR log");
+});
+
+test("WebGL specular-color map stays neutral when missing, pending or failed", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context, "setTextureState('pending-color.png', 'pending')");
+  callIn(context, "setTextureState('failed-color.png', 'failed')");
+  const upload = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
+    "uploadMaterial(gl, uniforms, " + literal + ", null);" +
+    "return { gl, uniforms }; })()");
+
+  // Missing: no flag, no sampler unit, no bind, fast path stays ready.
+  let result = upload("{}");
+  assert.equal(result.gl.ints.get("hasSpecularColorMap"), 0);
+  assert.equal(result.gl.ints.get("specularColorMap"), undefined);
+  assert.equal(result.gl.binds.size, 0);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, true);
+
+  // Pending: neutral now, fast path blocked so a late load takes effect.
+  result = upload("{ specularColorMap: 'pending-color.png' }");
+  assert.equal(result.gl.ints.get("hasSpecularColorMap"), 0);
+  assert.equal(result.gl.binds.get(7), undefined);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, false);
+
+  // Failed: neutral, and it must not block the ready cache.
+  result = upload("{ specularColorMap: 'failed-color.png' }");
+  assert.equal(result.gl.ints.get("hasSpecularColorMap"), 0);
+  assert.equal(result.gl.binds.get(7), undefined);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, true);
+});
+
+test("WebGL specular-color map binds unit 7 as sRGB with descriptor priority", () => {
+  const { context } = setupWebGLRenderer();
+  const colorUnit = callIn(context, "SCENE_TEXTURE_UNIT_MATERIALS.specularColor");
+  assert.equal(colorUnit, 7);
+
+  callIn(context, "setTextureState('color.png', 'loaded')");
+  let gl = callIn(context,
+    "(() => { const g = recordingGL(); uploadMaterial(g, uniformSlots()," +
+    " { specularColorMap: 'color.png' }, null); return g; })()");
+  assert.equal(gl.ints.get("hasSpecularColorMap"), 1);
+  assert.equal(gl.ints.get("specularColorMap"), colorUnit);
+  const bind = gl.binds.get(colorUnit);
+  assert.ok(bind, "specular colour texture bound on its own unit");
+  assert.equal(bind.target, gl.TEXTURE_2D);
+  assert.strictEqual(bind.texture,
+    callIn(context, "textureRecords().get('color.png').texture"));
+  let load = callIn(context, "textureLoads()[textureLoads().length - 1]");
+  assert.equal(load.url, "color.png");
+  assert.equal(load.role, "specular-color");
+  assert.equal(load.colorSpace, "srgb");
+
+  // The descriptor wins over the legacy prop.
+  callIn(context, "var colorDescriptor = { uri: 'color-descriptor.png' };");
+  callIn(context, "setTextureState('color-descriptor.png', 'loaded')");
+  gl = callIn(context,
+    "(() => { const g = recordingGL(); uploadMaterial(g, uniformSlots()," +
+    " { specularColorMap: 'color.png', textureDescriptors: { specularColor: colorDescriptor } }, null);" +
+    "return g; })()");
+  load = callIn(context, "textureLoads()[textureLoads().length - 1]");
+  assert.equal(load.url, "color-descriptor.png");
+  assert.strictEqual(load.descriptor, callIn(context, "colorDescriptor"));
+  assert.equal(load.role, "specular-color");
+  assert.equal(load.colorSpace, "srgb");
+  assert.strictEqual(gl.binds.get(colorUnit).texture,
+    callIn(context, "textureRecords().get('color-descriptor.png').texture"));
+});
+
+test("WebGL paired intensity and color maps bind distinct units without collisions", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context, "setTextureState('pair-i.png', 'loaded')");
+  callIn(context, "setTextureState('pair-c.png', 'loaded')");
+  const gl = callIn(context,
+    "(() => { const g = recordingGL(); uploadMaterial(g, uniformSlots()," +
+    " { specularIntensityMap: 'pair-i.png', specularColorMap: 'pair-c.png' }, null); return g; })()");
+  assert.equal(gl.ints.get("specularIntensityMap"), 6);
+  assert.equal(gl.ints.get("specularColorMap"), 7);
+  assert.equal(gl.binds.get(6).texture.gosxTestName, "pair-i.png");
+  assert.equal(gl.binds.get(7).texture.gosxTestName, "pair-c.png");
+  assert.equal(gl.binds.size, 2);
+});
+
+test("WebGL specular-color late load takes effect and the loaded cache short-circuits", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context,
+    "var colorMaterial = { specularColorMap: 'late-color.png' }; var colorUniforms = uniformSlots();");
+  const uploadPersisted = () => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, colorUniforms, colorMaterial, null);" +
+    "return gl; })()");
+
+  callIn(context, "setTextureState('late-color.png', 'pending')");
+  let gl = uploadPersisted();
+  assert.equal(callIn(context, "colorUniforms._lastMaterialTexturesReady"), false);
+  assert.equal(gl.ints.get("hasSpecularColorMap"), 0);
+  assert.equal(gl.binds.size, 0);
+
+  callIn(context, "setTextureState('late-color.png', 'loaded')");
+  gl = uploadPersisted();
+  assert.equal(callIn(context, "colorUniforms._lastMaterialTexturesReady"), true);
+  assert.equal(gl.ints.get("hasSpecularColorMap"), 1);
+  assert.equal(gl.ints.get("specularColorMap"), 7);
+  assert.strictEqual(gl.binds.get(7).texture,
+    callIn(context, "textureRecords().get('late-color.png').texture"));
+
+  // Same-material ready caching: the identical reference short-circuits.
+  gl = uploadPersisted();
+  assert.equal(gl.ints.size, 0);
+  assert.equal(gl.binds.size, 0);
+});
+
+test("WebGL PBR shader samples the specular-color map RGB-only before the metallic mix", () => {
+  const source = readRuntimeSource("webgl.ts");
+  assert.match(source, /uniform sampler2D u_specularColorMap;/);
+  assert.match(source, /uniform bool u_hasSpecularColorMap;/);
+  assert.match(source, /uniform vec3 u_specularColorLog;/);
+  assert.match(source, /specularColorMap: gl\.getUniformLocation\(program, "u_specularColorMap"\),/);
+  assert.match(source, /hasSpecularColorMap: gl\.getUniformLocation\(program, "u_hasSpecularColorMap"\),/);
+  assert.match(source, /specularColorLog: gl\.getUniformLocation\(program, "u_specularColorLog"\),/);
+  assert.match(source, /descriptor: "specularColor", role: "specular-color"/);
+  assert.match(source, /unit: SCENE_TEXTURE_UNIT_MATERIALS\.specularColor\s*\}/);
+  assert.match(source,
+    /gl\.uniform3f\(uniforms\.specularColorLog, specularColorLogs\[0\], specularColorLogs\[1\], specularColorLogs\[2\]\);/);
+  // Linear RGB only; alpha is never read.
+  const colorSample = source.match(/texture\(u_specularColorMap, v_uv\)[^;]*;/);
+  assert.ok(colorSample && /\.rgb\s*;/.test(colorSample[0]) && !/\.a\s*;/.test(colorSample[0]),
+    "specular-color sample reads RGB only");
+  // Per-channel reconstruction with the finite sentinel guard and the
+  // clamp-to-0-before-exp2 product scaled by the combined F90.
+  assert.match(source, /texColor\.r > 0\.0 && u_specularColorLog\.r > -1e29/);
+  assert.match(source,
+    /exp2\(min\(u_specularColorLog\.r \+ log2\(texColor\.r\), 0\.0\)\) \* specF90/);
+  // The colour-textured F0 lands in specF0 BEFORE the metallic mix, and the
+  // block never reassigns specF90.
+  const colorPos = source.indexOf('"    if (u_hasSpecularColorMap) {",');
+  const assignPos = source.indexOf('"        specF0 = texF0;",', colorPos);
+  const mixPos = source.indexOf('"    vec3 F0 = mix(specF0, albedo, metalness);",');
+  assert.ok(colorPos >= 0 && assignPos > colorPos && assignPos < mixPos,
+    "colour-textured specF0 is assigned before the metallic mix");
+  assert.doesNotMatch(source.slice(colorPos, mixPos), /specF90\s*=/);
+  // The fully-metal branch after the mix is untouched by the colour texture.
+  assert.match(source, /"    if \(metalness >= 1\.0\) \{",\s*\n\s*"        F0 = albedo;",\s*\n\s*"        F90 = 1\.0;",/);
 });
 
 // --- WebGPU ------------------------------------------------------------------

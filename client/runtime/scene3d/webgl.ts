@@ -104,6 +104,7 @@
     "uniform float u_anisotropy;",
     "uniform vec3 u_specularF0;",
     "uniform float u_specularF90;",
+    "uniform vec3 u_specularColorLog;",
     "uniform float u_emissive;",
     "uniform float u_opacity;",
     "uniform bool u_unlit;",
@@ -118,6 +119,7 @@
     "#endif",
     "uniform sampler2D u_emissiveMap;",
     "uniform sampler2D u_specularIntensityMap;",
+    "uniform sampler2D u_specularColorMap;",
     "uniform bool u_hasAlbedoMap;",
     "uniform bool u_hasNormalMap;",
     "uniform bool u_hasRoughnessMap;",
@@ -127,6 +129,7 @@
     "#endif",
     "uniform bool u_hasEmissiveMap;",
     "uniform bool u_hasSpecularIntensityMap;",
+    "uniform bool u_hasSpecularColorMap;",
     "",
     // Lights (max 8)
     "uniform int u_lightCount;",
@@ -445,6 +448,25 @@
     "        float specTex = texture(u_specularIntensityMap, v_uv).a;",
     "        specF0 *= specTex;",
     "        specF90 *= specTex;",
+    "    }",
+    // The specular-colour texture multiplies the authored HDR linear colour
+    // into the dielectric F0 BEFORE the metallic mix, reconstructing
+    // min(IOR F0 * authored colour, 1) * combined intensity per channel in
+    // log space so a finite HDR coefficient never overflows float32. The
+    // sample reads linear RGB from the sRGB-decoded texture and ignores
+    // alpha. An exactly-1 texel keeps the untextured result bit-for-bit, an
+    // exact-zero texel yields exact-zero F0, and the -1e30 sentinel maps to
+    // exact zero. specF90 already carries the intensity-map alpha.
+    "    if (u_hasSpecularColorMap) {",
+    "        vec3 texColor = texture(u_specularColorMap, v_uv).rgb;",
+    "        vec3 texF0 = vec3(0.0);",
+    "        if (texColor.r == 1.0) { texF0.r = specF0.r; }",
+    "        else if (texColor.r > 0.0 && u_specularColorLog.r > -1e29) { texF0.r = exp2(min(u_specularColorLog.r + log2(texColor.r), 0.0)) * specF90; }",
+    "        if (texColor.g == 1.0) { texF0.g = specF0.g; }",
+    "        else if (texColor.g > 0.0 && u_specularColorLog.g > -1e29) { texF0.g = exp2(min(u_specularColorLog.g + log2(texColor.g), 0.0)) * specF90; }",
+    "        if (texColor.b == 1.0) { texF0.b = specF0.b; }",
+    "        else if (texColor.b > 0.0 && u_specularColorLog.b > -1e29) { texF0.b = exp2(min(u_specularColorLog.b + log2(texColor.b), 0.0)) * specF90; }",
+    "        specF0 = texF0;",
     "    }",
     "    vec3 F0 = mix(specF0, albedo, metalness);",
     "    float F90 = mix(specF90, 1.0, metalness);",
@@ -5178,6 +5200,35 @@
     };
   }
 
+  // Log-space coefficients for the optional specular-colour texture:
+  // log2(IOR F0) + log2(authored colour) per channel, so the shader can add
+  // log2 of the sampled texel and exp2 back the unclamped HDR product
+  // without ever forming a float32 overflow on the CPU. Exact-zero channels
+  // (IOR F0 or colour component 0) use a finite sentinel far below any real
+  // log2 value; the shader maps the sentinel to zero. Invalid or omitted
+  // colour arrays fall back to white, matching scenePBRSpecularFactors.
+  function scenePBRSpecularColorLogs(material) {
+    var mat = material || {};
+    var color = mat.specularColor;
+    var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+    if (valid) {
+      for (var i = 0; i < 3; i++) {
+        var component = color[i];
+        if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+          valid = false;
+          break;
+        }
+      }
+    }
+    var iorF0 = scenePBRDielectricF0(mat.ior);
+    var out = [0, 0, 0];
+    for (var j = 0; j < 3; j++) {
+      var c = valid ? color[j] : 1;
+      out[j] = (iorF0 > 0 && c > 0) ? Math.log2(iorF0) + Math.log2(c) : -1e30;
+    }
+    return out;
+  }
+
   // Cache the base uniform locations shared between the static and skinned
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
@@ -5198,6 +5249,7 @@
       anisotropy: gl.getUniformLocation(program, "u_anisotropy"),
       specularF0: gl.getUniformLocation(program, "u_specularF0"),
       specularF90: gl.getUniformLocation(program, "u_specularF90"),
+      specularColorLog: gl.getUniformLocation(program, "u_specularColorLog"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
@@ -5209,6 +5261,7 @@
       occlusionMap: gl.getUniformLocation(program, "u_occlusionMap"),
       emissiveMap: gl.getUniformLocation(program, "u_emissiveMap"),
       specularIntensityMap: gl.getUniformLocation(program, "u_specularIntensityMap"),
+      specularColorMap: gl.getUniformLocation(program, "u_specularColorMap"),
       hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
       hasNormalMap: gl.getUniformLocation(program, "u_hasNormalMap"),
       hasRoughnessMap: gl.getUniformLocation(program, "u_hasRoughnessMap"),
@@ -5216,6 +5269,7 @@
       hasOcclusionMap: gl.getUniformLocation(program, "u_hasOcclusionMap"),
       hasEmissiveMap: gl.getUniformLocation(program, "u_hasEmissiveMap"),
       hasSpecularIntensityMap: gl.getUniformLocation(program, "u_hasSpecularIntensityMap"),
+      hasSpecularColorMap: gl.getUniformLocation(program, "u_hasSpecularColorMap"),
 
       lightCount: gl.getUniformLocation(program, "u_lightCount"),
       lightTypes: [],
@@ -5420,8 +5474,8 @@
     } catch (_error) {
       maxUnits = 0;
     }
-    // 7 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
-    return maxUnits >= 19;
+    // 8 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
+    return maxUnits >= 20;
   }
 
   function scenePBRFragmentSourceForContext(gl, source) {
@@ -6401,7 +6455,7 @@
       var model = typeof ibl.brdfModel === "string" ? ibl.brdfModel.trim() : "";
       if (!hdrIBLAvailable) {
         iblStatus.state = "unsupported";
-        iblStatus.reason = "fragment-texture-units<19";
+        iblStatus.reason = "fragment-texture-units<20";
       } else if (!radianceDescriptor || !irradianceDescriptor || !brdfDescriptor) {
         iblStatus.state = "unsupported";
         iblStatus.reason = "descriptor-role-color-view-format";
@@ -7177,6 +7231,8 @@
       const specularFactors = scenePBRSpecularFactors(mat);
       gl.uniform3f(uniforms.specularF0, specularFactors.f0[0], specularFactors.f0[1], specularFactors.f0[2]);
       gl.uniform1f(uniforms.specularF90, specularFactors.f90);
+      const specularColorLogs = scenePBRSpecularColorLogs(mat);
+      gl.uniform3f(uniforms.specularColorLog, specularColorLogs[0], specularColorLogs[1], specularColorLogs[2]);
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
       gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);
@@ -7190,6 +7246,7 @@
         { prop: "emissiveMap",  descriptor: "emissive",  role: "emissive", colorSpace: "srgb", has: "hasEmissiveMap",   sampler: "emissiveMap",  unit: 4 },
         { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", has: "hasOcclusionMap", sampler: "occlusionMap", unit: 5, hdrOnly: true },
         { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", has: "hasSpecularIntensityMap", sampler: "specularIntensityMap", unit: SCENE_TEXTURE_UNIT_MATERIALS.specularIntensity },
+        { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", has: "hasSpecularColorMap", sampler: "specularColorMap", unit: SCENE_TEXTURE_UNIT_MATERIALS.specularColor },
       ];
       for (var ti = 0; ti < textureMaps.length; ti++) {
         var tm = textureMaps[ti];
