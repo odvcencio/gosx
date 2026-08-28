@@ -223,7 +223,7 @@
   }
 
   // Compute the AABB of all objects in the bundle.
-  function sceneShadowComputeBounds(bundle) {
+  function sceneShadowComputeBounds(bundle, getInstancedGeometry) {
     var minX = Infinity, minY = Infinity, minZ = Infinity;
     var maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     var positions = bundle.worldMeshPositions;
@@ -267,6 +267,72 @@
         if (px > maxX) maxX = px;
         if (py > maxY) maxY = py;
         if (pz > maxZ) maxZ = pz;
+      }
+    }
+
+    // Instanced casters: fold conservative transformed bounds into the light
+    // fit even when no soup geometry exists. The resolver (supplied by the
+    // WebGL renderer) returns the actual cached instanced geometry so the
+    // bounds cannot drift from what is drawn; the local AABB is cached on
+    // that renderer-owned geometry object, so it is disposed alongside the
+    // renderer's instanced geometry cache. Each authored instance's 8 local
+    // AABB corners are transformed — a conservative bound of the transformed
+    // geometry, not exact per-triangle bounds — reading the raw authored
+    // transforms with no extra allocation. Offscreen instances matter:
+    // viewCulled is deliberately not consulted here.
+    if (typeof getInstancedGeometry === "function") {
+      var instancedMeshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+      for (var im = 0; im < instancedMeshes.length; im++) {
+        var instMesh = instancedMeshes[im];
+        if (!instMesh || !instMesh.castShadow) continue;
+        // Read the raw authored transforms (or the carried cached view)
+        // directly — no per-frame allocation — and only consider the
+        // matrices actually drawn: the authored instance count, floored,
+        // capped by the matrices available.
+        var instTransforms = instMesh._cachedTransforms || instMesh.transforms;
+        if (!instTransforms || typeof instTransforms.length !== "number") continue;
+        var instanceTotal = Math.max(0, Math.floor(sceneNumber(instMesh.instanceCount, sceneNumber(instMesh.count, 0))));
+        instanceTotal = Math.min(instanceTotal, Math.floor(instTransforms.length / 16));
+        if (instanceTotal <= 0) continue;
+        var instGeom = getInstancedGeometry(instMesh);
+        if (!instGeom || !instGeom.positions || !(instGeom.vertexCount > 0)) continue;
+        var instAABB = instGeom._gosxShadowLocalAABB;
+        if (!instAABB) {
+          var gminX = Infinity, gminY = Infinity, gminZ = Infinity;
+          var gmaxX = -Infinity, gmaxY = -Infinity, gmaxZ = -Infinity;
+          var posLimit = Math.min(instGeom.positions.length, instGeom.vertexCount * 3);
+          for (var gp = 0; gp + 2 < posLimit; gp += 3) {
+            var gx = instGeom.positions[gp];
+            var gy = instGeom.positions[gp + 1];
+            var gz = instGeom.positions[gp + 2];
+            if (gx < gminX) gminX = gx;
+            if (gy < gminY) gminY = gy;
+            if (gz < gminZ) gminZ = gz;
+            if (gx > gmaxX) gmaxX = gx;
+            if (gy > gmaxY) gmaxY = gy;
+            if (gz > gmaxZ) gmaxZ = gz;
+          }
+          if (!isFinite(gminX)) continue;
+          instAABB = { minX: gminX, minY: gminY, minZ: gminZ, maxX: gmaxX, maxY: gmaxY, maxZ: gmaxZ };
+          instGeom._gosxShadowLocalAABB = instAABB;
+        }
+        for (var inst = 0; inst < instanceTotal; inst++) {
+          var tb = inst * 16;
+          for (var corner = 0; corner < 8; corner++) {
+            var cx = (corner & 1) ? instAABB.maxX : instAABB.minX;
+            var cy = (corner & 2) ? instAABB.maxY : instAABB.minY;
+            var cz = (corner & 4) ? instAABB.maxZ : instAABB.minZ;
+            var wx = instTransforms[tb] * cx + instTransforms[tb + 4] * cy + instTransforms[tb + 8] * cz + instTransforms[tb + 12];
+            var wy = instTransforms[tb + 1] * cx + instTransforms[tb + 5] * cy + instTransforms[tb + 9] * cz + instTransforms[tb + 13];
+            var wz = instTransforms[tb + 2] * cx + instTransforms[tb + 6] * cy + instTransforms[tb + 10] * cz + instTransforms[tb + 14];
+            if (wx < minX) minX = wx;
+            if (wy < minY) minY = wy;
+            if (wz < minZ) minZ = wz;
+            if (wx > maxX) maxX = wx;
+            if (wy > maxY) maxY = wy;
+            if (wz > maxZ) maxZ = wz;
+          }
+        }
       }
     }
 

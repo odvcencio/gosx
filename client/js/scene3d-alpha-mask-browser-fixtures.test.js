@@ -183,8 +183,11 @@ test('masktex GLB materials and PNG texels match authored fixtures', () => {
 
 test('shadowROI probe cases: 20 unique, root material schema, verified factors/cutoffs/textures', () => {
   // Select by the shadowROI marker itself: a plain name regex would sweep in
-  // unrelated prior budget cases that merely contain "-shadow-".
-  const shadow = cases.filter((c) => c.shadowROI);
+  // unrelated prior budget cases that merely contain "-shadow-". The newer
+  // instanced-shadow cases also carry shadowROI but are a legitimate
+  // additional group (24 cases); they are covered by their own dedicated
+  // test below, so this test keeps its exact original 20 static cases.
+  const shadow = cases.filter((c) => c.shadowROI && !c.instancedShadow);
   const names = shadow.map((c) => c.name);
   assert.equal(names.length, 20);
   assert.equal(new Set(names).size, 20, 'no duplicate shadow case names');
@@ -269,6 +272,154 @@ test('shadowROI probe cases: 20 unique, root material schema, verified factors/c
       assert.deepEqual(c.requiredTex, [row.texture]);
     } else {
       assert.ok(!c.requiredTex, 'no requiredTex without a caster texture');
+    }
+  }
+});
+
+test('instanced-shadow probe cases: 24 unique (12 per backend), flat transforms, exact comparisons', () => {
+  const inst = cases.filter((c) => c.instancedShadow);
+  const names = inst.map((c) => c.name);
+  assert.equal(names.length, 24);
+  assert.equal(new Set(names).size, 24, 'no duplicate instanced-shadow case names');
+  const SUFFIXES = ['control', 'no-cast', 'cast-omit', 'mask-discard',
+    'mask-survive', 'inst-alpha-discard', 'inst-alpha-survive', 'zero-zero',
+    'tex-discard', 'tex-survive', 'combined-discard', 'cutoff2'];
+  for (const be of ['gl', 'wg'])
+    for (const s of SUFFIXES)
+      assert.ok(names.includes(be + '-instshadow-' + s), be + '-instshadow-' + s);
+  // Authored caster material deltas beyond the shared base caster, per
+  // suffix. Independent of any production logic.
+  const MAT = {
+    'control': {},
+    'no-cast': {},
+    'cast-omit': {},
+    'mask-discard': { opacity: 0.25, alphaCutoff: 0.5 },
+    'mask-survive': { opacity: 0.5, alphaCutoff: 0.5 },
+    'inst-alpha-discard': { opacity: 1, alphaCutoff: 0.5 },
+    'inst-alpha-survive': { opacity: 1, alphaCutoff: 0.5 },
+    'zero-zero': { opacity: 0, alphaCutoff: 0 },
+    'tex-discard': { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a0.png' },
+    'tex-survive': { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a255.png' },
+    'combined-discard': { opacity: 0.5, alphaCutoff: 0.5 },
+    'cutoff2': { opacity: 1, alphaCutoff: 2 },
+  };
+  // Per-instance colors are FLAT 4-number RGBA; the alpha channel varies
+  // per case (default 1).
+  const COLORS = {
+    'inst-alpha-discard': [0.2, 0.4, 1, 0.25],
+    'inst-alpha-survive': [0.2, 0.4, 1, 0.5],
+    'combined-discard': [0.2, 0.4, 1, 0.5],
+    'zero-zero': [0.2, 0.4, 1, 0],
+  };
+  // castShadow: explicit false, truly absent, or true.
+  const CASTSHADOW = { 'no-cast': false, 'cast-omit': 'absent' };
+  // expectInstShadowDraws: only the two disabled-draw cases carry it.
+  const DRAWS = { 'no-cast': false, 'cast-omit': false };
+  // [comparison key, referenced suffix, minChanged?] per suffix.
+  const COMPARE = {
+    'control': null,
+    'no-cast': ['differs', 'control', 50],
+    'cast-omit': ['same', 'no-cast'],
+    'mask-discard': ['same', 'no-cast'],
+    'mask-survive': ['same', 'control'],
+    'inst-alpha-discard': ['same', 'no-cast'],
+    'inst-alpha-survive': ['same', 'control'],
+    'zero-zero': ['same', 'control'],
+    'tex-discard': ['same', 'no-cast'],
+    'tex-survive': ['same', 'control'],
+    'combined-discard': ['same', 'no-cast'],
+    'cutoff2': ['same', 'no-cast'],
+  };
+  const TEX = {
+    'tex-discard': '/tex/alb-white-a0.png',
+    'tex-survive': '/tex/alb-white-a255.png',
+  };
+  const byName = new Map(cases.map((c) => [c.name, c]));
+  for (const c of inst) {
+    const be = c.name.startsWith('wg-') ? 'wg-' : 'gl-';
+    const suffix = c.name.slice(be.length + 'instshadow-'.length);
+    assert.ok(suffix in MAT, 'known instanced-shadow suffix: ' + suffix);
+    assert.equal(c.webgpu, be === 'wg-');
+    assert.equal(c.lights.length, 1);
+    assert.equal(c.lights[0].castShadow, true);
+    assert.equal(c.instancedMeshes.length, 1);
+    const caster = c.instancedMeshes[0];
+    assert.equal(caster.id, 'inst-caster');
+    assert.equal(caster.count, 1);
+    assert.equal(caster.kind, 'box');
+    assert.equal(caster.materialKind, 'standard');
+    assert.equal(caster.color, '#2040c0');
+    assert.equal(caster.wireframe, false);
+    assert.equal(caster.receiveShadow, false);
+    // FLAT column-major 4x4 transform: the normalizer does not flatten
+    // nested arrays, so this must be 16 numbers with tx=-0.55 at index 12.
+    assert.ok(Array.isArray(caster.transforms), 'transforms is a flat array');
+    assert.equal(caster.transforms.length, 16);
+    for (const v of caster.transforms) assert.equal(typeof v, 'number');
+    assert.deepEqual(caster.transforms,
+      [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.55, 0.35, 0.5, 1],
+      'exact flat column-major transform (tx=-0.55 aligns with the receiver ROI)');
+    assert.ok(!('material' in caster), 'no nested material object on the caster');
+    const colors = COLORS[suffix] || [0.2, 0.4, 1, 1];
+    assert.ok(Array.isArray(caster.colors), 'colors is a flat array');
+    assert.equal(caster.colors.length, 4);
+    for (const v of caster.colors) assert.equal(typeof v, 'number');
+    assert.deepEqual(caster.colors, colors);
+    // Material keys: authored deltas present with exact values; omitted
+    // keys truly absent from the caster.
+    for (const key of Object.keys(MAT[suffix]))
+      assert.deepEqual(caster[key], MAT[suffix][key], suffix + ' ' + key);
+    for (const key of ['opacity', 'alphaCutoff', 'texture'])
+      if (!(key in MAT[suffix]))
+        assert.ok(!(key in caster), suffix + ' has no ' + key);
+    if (suffix === 'cast-omit') {
+      assert.ok(!('castShadow' in caster),
+        'cast-omit removes castShadow entirely (not merely false)');
+      assert.equal(caster.castShadow, undefined);
+    } else {
+      assert.equal(caster.castShadow, CASTSHADOW[suffix] !== undefined ? false : true,
+        'castShadow true except no-cast (false) and cast-omit (absent)');
+      if (suffix === 'no-cast') assert.equal(caster.castShadow, false);
+    }
+    // Receiver is a separate static object that receives but never casts.
+    assert.equal(c.objects.length, 1);
+    const receiver = c.objects[0];
+    assert.equal(receiver.id, 'receiver');
+    assert.equal(receiver.castShadow, false);
+    assert.equal(receiver.receiveShadow, true);
+    assert.ok(!('material' in receiver), 'no nested material object on the receiver');
+    assert.deepEqual(c.shadowROI, { x: 125, y: 99, width: 50, height: 35 });
+    if (suffix in DRAWS) {
+      assert.equal(c.expectInstShadowDraws, DRAWS[suffix]);
+    } else {
+      assert.ok(!('expectInstShadowDraws' in c),
+        suffix + ' omits expectInstShadowDraws');
+    }
+    // Comparisons: exact same/differs target, same backend, ordered earlier,
+    // with minChanged only on the differs case.
+    const cmp = COMPARE[suffix];
+    if (cmp) {
+      const [key, refSuffix, minChanged] = cmp;
+      const refName = be + 'instshadow-' + refSuffix;
+      assert.equal(c[key], refName, suffix + ' references exactly ' + refName);
+      assert.ok(!((key === 'same' ? 'differs' : 'same') in c),
+        'no extra comparison key beyond ' + key);
+      const target = byName.get(refName);
+      assert.ok(target, key + ' target registered: ' + refName);
+      assert.ok(cases.indexOf(target) < cases.indexOf(c),
+        key + ' target ordered earlier');
+      assert.equal(!!target.webgpu, !!c.webgpu, key + ' target on same backend');
+      if (minChanged !== undefined) assert.equal(c.minChanged, minChanged);
+      else assert.ok(!('minChanged' in c), suffix + ' has no minChanged');
+    } else {
+      assert.ok(!c.same && !c.differs, 'control has no same/diff');
+    }
+    const tex = TEX[suffix];
+    if (tex) {
+      assert.ok(TEX_PNGS[tex], 'texture PNG fixture exists: ' + tex);
+      assert.deepEqual(c.requiredTex, [tex]);
+    } else {
+      assert.ok(!c.requiredTex, suffix + ' has no requiredTex');
     }
   }
 });

@@ -53,7 +53,7 @@
  *  - named-material table reference; real CSS var(--ior) 1.33 -> 2.42 change
  *    via documentElement.style.setProperty with observed revision advance,
  *    new uniform value and changed pixels (no remount, no manual writes);
- *  - dispose removes scene state; bounded waits; overall 3m watchdog;
+ *  - dispose removes scene state; bounded waits; overall 4.5min watchdog;
  *  - graceful+bounded Chrome teardown, CDP/server close, owned tmp profile
  *    removal on success/failure/timeout.
  * GPU hardware acceleration type is not certified (SwiftShader possible).
@@ -125,10 +125,12 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const ENGINE = 'gosx-engine-ior-browser';
 const MOUNT = 'scene-ior-browser';
 const W = 256, H = 192;
-// Raised 180000 -> 210000: probe grew from 181 to 197 cases; the last run
-// finished all 181 old cases, reproduced 14 new-case failures, and still hit
-// the overall watchdog near case 193, so the budget needs ~30s more headroom.
-const OVERALL_MS = 210000;
+// Raised 210000 -> 270000: probe grew from 207 to 231 cases; the last
+// required-native run reached 223 of 231 pages, including all 24 instanced
+// pages, then aborted solely on 'overall watchdog: probe exceeded 210000ms'
+// during gl-typed mask-mask before final comparisons, so the budget needs
+// more headroom for case growth plus final comparisons and teardown.
+const OVERALL_MS = 270000;
 const CASE_WAIT_MS = 20000;
 const SETTLE_MS = 600;
 const FG_THRESHOLD = 12;   // min channel delta vs measured corner background
@@ -1476,6 +1478,80 @@ const MASKROUTE_MAT = { color: '#3a7bd5', roughness: 0.35, metalness: 0, ior: 1.
     { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
       expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
 });
+// ---- Instanced-shadow receiver-pixel cases (both backends) ----
+// Every existing case, timeout, threshold and assertion is unchanged. The
+// caster is a real primitive instancedMeshes entry (NOT instancedGLBMeshes)
+// with count 1, a FLAT column-major 4x4 translation transform and FLAT
+// per-instance colors (the normalizer does not flatten nested arrays); the
+// receiver is the same static box geometry/light/camera/ROI family as
+// shadowCase, with the receiver ROI kept separate from the caster color so
+// the same/differs comparisons prove real received shadows, not caster
+// pixels.
+function instShadowCase(name, webgpu, inst, extra) {
+  const caster = Object.assign({
+    id: 'inst-caster', count: 1, kind: 'box',
+    width: 0.55, height: 0.55, depth: 0.15,
+    materialKind: 'standard', color: '#2040c0',
+    wireframe: false, ior: 1.5, roughness: 1, metalness: 0,
+    castShadow: true, receiveShadow: false,
+    // Flat column-major 4x4 translation (tx,ty,tz at indices 12..14); tx
+    // -0.55 aligns the caster with the shadowCase receiver ROI.
+    transforms: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.55, 0.35, 0.5, 1],
+    colors: [0.2, 0.4, 1, 1],
+  }, inst || {});
+  return Object.assign({
+    name, webgpu, instancedShadow: true, f0: 0.04, f90: 1,
+    lights: [{ id: 'key', kind: 'directional', intensity: 1.2,
+      directionX: 0.7, directionY: -0.7, directionZ: -1,
+      castShadow: true, shadowCascades: 1, shadowSize: 512 }],
+    instancedMeshes: [caster],
+    objects: [
+      { id: 'receiver', kind: 'box', width: 3, height: 2.2, depth: 0.1,
+        x: 0, y: 0, z: -0.5,
+        materialKind: 'standard', color: '#ffffff',
+        wireframe: false, ior: 1.5, roughness: 1, metalness: 0,
+        castShadow: false, receiveShadow: true },
+    ],
+    shadowROI: { x: 125, y: 99, width: 50, height: 35 },
+  }, extra || {});
+}
+[false, true].forEach((webgpu) => {
+  const pfx = webgpu ? 'wg-instshadow-' : 'gl-instshadow-';
+  const push = (name, inst, extra) => CASES.push(instShadowCase(
+    pfx + name, webgpu, inst || {}, extra || {}));
+  push('control');
+  push('no-cast', { castShadow: false },
+    { expectInstShadowDraws: false, differs: pfx + 'control', minChanged: 50 });
+  push('cast-omit', null,
+    { expectInstShadowDraws: false, same: pfx + 'no-cast' });
+  // cast-omit must remove the field entirely from the completed caster
+  // object (the production check treats undefined and false alike).
+  delete CASES[CASES.length - 1].instancedMeshes[0].castShadow;
+  push('mask-discard', { opacity: 0.25, alphaCutoff: 0.5 },
+    { same: pfx + 'no-cast' });
+  push('mask-survive', { opacity: 0.5, alphaCutoff: 0.5 },
+    { same: pfx + 'control' });
+  push('inst-alpha-discard',
+    { opacity: 1, alphaCutoff: 0.5, colors: [0.2, 0.4, 1, 0.25] },
+    { same: pfx + 'no-cast' });
+  push('inst-alpha-survive',
+    { opacity: 1, alphaCutoff: 0.5, colors: [0.2, 0.4, 1, 0.5] },
+    { same: pfx + 'control' });
+  push('zero-zero',
+    { opacity: 0, alphaCutoff: 0, colors: [0.2, 0.4, 1, 0] },
+    { same: pfx + 'control' });
+  push('tex-discard',
+    { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a0.png' },
+    { same: pfx + 'no-cast', requiredTex: ['/tex/alb-white-a0.png'] });
+  push('tex-survive',
+    { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a255.png' },
+    { same: pfx + 'control', requiredTex: ['/tex/alb-white-a255.png'] });
+  push('combined-discard',
+    { opacity: 0.5, alphaCutoff: 0.5, colors: [0.2, 0.4, 1, 0.5] },
+    { same: pfx + 'no-cast' });
+  push('cutoff2', { opacity: 1, alphaCutoff: 2 },
+    { same: pfx + 'no-cast' });
+});
 const byName = {};
 // Verified typed AlphaCutoff fixture: one JSON object on stdout carrying
 // exactly five same-geometry standard-material scenes lowered through the
@@ -1589,6 +1665,7 @@ function propsFor(c) {
   if (c.objects) p.objects = c.objects;
   if (c.model) p.models = [c.model];
   if (c.instanced) p.instancedGLBMeshes = [c.instanced];
+  if (c.instancedMeshes) p.instancedMeshes = c.instancedMeshes;
   // Shadow-budget cases: explicit scoped lights and camera near/far so the
   // two directional castShadow lights and depth range are exactly the ones
   // under test.
@@ -1805,6 +1882,7 @@ const PRELOAD = `
     lastDrawUnlit: null,
     lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, lastDrawHasSpecColorMap: null,
     lastDrawHasAlbedoMap: null,
+    instShadowDraws: 0, lastInstShadowInstances: 0,
     programInfo: null, queriedUniforms: [], shadow: null, nativeCap: null, forcedCap: null };
   // Forced MAX_TEXTURE_IMAGE_UNITS caps, selected by the served case pathname
   // so no other case is affected. Used only by the shadow-budget cases.
@@ -2058,6 +2136,29 @@ const PRELOAD = `
       }
     } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
   }
+  // Instanced shadow-depth draw observation: identifies the real instanced
+  // shadow program by a tracked u_lightViewProjection location plus a
+  // nonnegative a_instanceMatrix0 attribute location, both read through the
+  // saved native calls only. The native draw is always forwarded unchanged;
+  // any observation error is recorded (and fails the case) without altering
+  // native behavior.
+  function observeInstShadow(instanceCount) {
+    try {
+      var cp = this.__origGetParameter.call(this, this.CURRENT_PROGRAM);
+      if (!cp) return;
+      var lv = this.__lvlocs;
+      if (!lv || !lv.has(cp)) return;
+      var al = this.__origGetAttribLocation
+        ? this.__origGetAttribLocation.call(this, cp, "a_instanceMatrix0") : -1;
+      if (typeof al !== "number" || al < 0) return;
+      window.__gosxIOR.instShadowDraws += 1;
+      var n = (typeof instanceCount === "number" &&
+        Number.isFinite(instanceCount) && instanceCount > 0) ? instanceCount : 0;
+      if (n > window.__gosxIOR.lastInstShadowInstances) {
+        window.__gosxIOR.lastInstShadowInstances = n;
+      }
+    } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
+  }
   if (W1) {
     // WebGL1 and WebGL2 are separate interfaces: wrap each prototype once,
     // snapshotting its own natives. All observed F0 comes from the native
@@ -2072,6 +2173,7 @@ const PRELOAD = `
     proto.__gosxIORWrapped = true;
     var gu = proto.getUniformLocation, gp = proto.getParameter, guf = proto.getUniform,
         gpp = proto.getProgramParameter, gau = proto.getActiveUniform,
+        gal = proto.getAttribLocation,
         ie = proto.isEnabled,
         da = proto.drawArrays, de = proto.drawElements,
         dai = proto.drawArraysInstanced, dei = proto.drawElementsInstanced,
@@ -2083,6 +2185,7 @@ const PRELOAD = `
     if (ie) proto.__origIsEnabled = ie;
     if (gat) proto.__origActiveTexture = gat;
     proto.__origGetUniformLocation = gu;
+    if (gal) proto.__origGetAttribLocation = gal;
     // Forced-cap interception for MAX_TEXTURE_IMAGE_UNITS (0x8872) only, on
     // the shadow-budget case pages. The true native cap is recorded once via
     // the saved native; every other call forwards unchanged. A forced 32 is
@@ -2188,13 +2291,25 @@ const PRELOAD = `
           var msli1 = this.__sli1locs || (this.__sli1locs = new Map());
           if (loc) msli1.set(p, loc); else msli1.delete(p);
         }
+        if (n === "u_lightViewProjection") {
+          var mlvp = this.__lvlocs || (this.__lvlocs = new Map());
+          if (loc) mlvp.set(p, loc); else mlvp.delete(p);
+        }
       } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
       return loc;
     };
     if (da) proto.drawArrays = function () { observeDraw.call(this); return da.apply(this, arguments); };
     if (de) proto.drawElements = function () { observeDraw.call(this); return de.apply(this, arguments); };
-    if (dai) proto.drawArraysInstanced = function () { observeDraw.call(this); return dai.apply(this, arguments); };
-    if (dei) proto.drawElementsInstanced = function () { observeDraw.call(this); return dei.apply(this, arguments); };
+    if (dai) proto.drawArraysInstanced = function () {
+      observeDraw.call(this);
+      observeInstShadow.call(this, arguments[3]);
+      return dai.apply(this, arguments);
+    };
+    if (dei) proto.drawElementsInstanced = function () {
+      observeDraw.call(this);
+      observeInstShadow.call(this, arguments[4]);
+      return dei.apply(this, arguments);
+    };
   }
   if (typeof GPUQueue !== "undefined" && GPUQueue.prototype && GPUQueue.prototype.writeBuffer) {
     var wb = GPUQueue.prototype.writeBuffer;
@@ -2466,6 +2581,8 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'lastDrawHasSpecColorMap:window.__gosxIOR.lastDrawHasSpecColorMap,' +
   'lastDrawHasAlbedoMap:window.__gosxIOR.lastDrawHasAlbedoMap,' +
   'lastDrawUnlit:window.__gosxIOR.lastDrawUnlit,' +
+  'instShadowDraws:window.__gosxIOR.instShadowDraws,' +
+  'instShadowInstances:window.__gosxIOR.lastInstShadowInstances,' +
   'linkStatus:(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.linkStatus!==null?window.__gosxIOR.programInfo.linkStatus:null),' +
   'trackedF0:!!(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.trackedF0),' +
   'activeUniforms:((window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.activeUniforms)||[]).slice(0,100),' +
@@ -2868,6 +2985,30 @@ setTimeout(() => {
         c.requiredTex.forEach((u) => {
           if (!(texServed[u] > 0)) fail(c.name + ': required texture asset not served: ' + u);
         });
+      }
+      if (c.instancedShadow) {
+        rec.instancedShadow = true;
+        // Positive scene-state instance count: guards against accidentally
+        // testing only the static receiver geometry (READ.instances is the
+        // actual instancedMeshes state record count).
+        if (!(s.instances > 0)) {
+          fail(c.name + ': expected positive instancedMeshes scene-state count, got ' + s.instances);
+        }
+        if (!c.webgpu) {
+          rec.instShadowDraws = s.ior.instShadowDraws;
+          rec.instShadowInstances = s.ior.instShadowInstances;
+          if (c.expectInstShadowDraws === false) {
+            if (s.ior.instShadowDraws !== 0) {
+              fail(c.name + ': expected strict 0 instanced shadow-depth draws, got ' +
+                s.ior.instShadowDraws);
+            }
+          } else if (!(s.ior.instShadowDraws > 0)) {
+            fail(c.name + ': no instanced shadow-depth draws observed (u_lightViewProjection ' +
+              '+ a_instanceMatrix0 program)');
+          } else if (!(s.ior.instShadowInstances > 0)) {
+            fail(c.name + ': instanced shadow-depth draws reported zero instances');
+          }
+        }
       }
 
       if (iblExpected || iblDisabled) {
@@ -3412,6 +3553,8 @@ setTimeout(() => {
       disposeRemovedState: r.disposeRemovedState,
       shadowBudget: r.shadowBudget || undefined, shadow: r.shadow || undefined,
       nativeCap: r.nativeCap !== undefined ? r.nativeCap : undefined,
+      instShadowDraws: r.instShadowDraws, instShadowInstances: r.instShadowInstances,
+      instancedShadow: r.instancedShadow,
       forcedCap: r.forcedCap !== undefined ? r.forcedCap : undefined })),
     disposal: ran.length > 0 && ran.every((r) => r.disposeRemovedState === true),
     artifacts: ART || undefined,

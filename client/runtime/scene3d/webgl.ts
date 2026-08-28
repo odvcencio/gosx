@@ -705,27 +705,71 @@
     "}",
   ].join("\n");
 
-  const SCENE_SHADOW_FRAGMENT_SOURCE = [
+  // Shared fragment body for both shadow depth variants. The instanced
+  // variant adds a flat per-instance alpha input; mask comparison, texture
+  // readiness and cutoff semantics stay identical so the two programs cannot
+  // drift apart.
+  function sceneShadowFragmentSource(instanced) {
+    var lines = [
+      "#version 300 es",
+      "precision highp float;",
+      "in vec2 v_uv;",
+    ];
+    if (instanced) {
+      lines.push("flat in float v_instanceAlpha;");
+    }
+    lines.push(
+      "uniform sampler2D u_albedoMap;",
+      "uniform float u_hasAlbedoMap;",
+      "uniform float u_opacity;",
+      "uniform float u_alphaCutoff;",
+      // Coverage = opacity * loaded-texel alpha; without a ready albedo map the
+      // texel alpha is 1. Static instance alpha is constant 1 in the color pass,
+      // so it contributes nothing here. Cutoff is disabled when negative; 0
+      // keeps alpha-0 fragments (zero alpha never gets discarded away).
+      "void main() {",
+      "    float alpha = 1.0;",
+      "    if (u_hasAlbedoMap > 0.5) {",
+      "        alpha = texture(u_albedoMap, v_uv).a;",
+      "    }",
+      "    alpha *= u_opacity;"
+    );
+    if (instanced) {
+      lines.push("    alpha *= v_instanceAlpha;");
+    }
+    lines.push(
+      "    if (u_alphaCutoff >= 0.0 && alpha < u_alphaCutoff) {",
+      "        discard;",
+      "    }",
+      "}"
+    );
+    return lines.join("\n");
+  }
+
+  const SCENE_SHADOW_FRAGMENT_SOURCE = sceneShadowFragmentSource(false);
+
+  // Instanced shadow vertex variant: per-instance model matrices arrive as
+  // four vec4 attributes (column-major), and the per-instance color's alpha
+  // uses flat interpolation because it is constant across each instance's
+  // triangles.
+  const SCENE_SHADOW_INSTANCED_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
-    "in vec2 v_uv;",
-    "uniform sampler2D u_albedoMap;",
-    "uniform float u_hasAlbedoMap;",
-    "uniform float u_opacity;",
-    "uniform float u_alphaCutoff;",
-    // Coverage = opacity * loaded-texel alpha; without a ready albedo map the
-    // texel alpha is 1. Static instance alpha is constant 1 in the color pass,
-    // so it contributes nothing here. Cutoff is disabled when negative; 0
-    // keeps alpha-0 fragments (zero alpha never gets discarded away).
+    "in vec3 a_position;",
+    "in vec2 a_uv;",
+    "in vec4 a_instanceMatrix0;",
+    "in vec4 a_instanceMatrix1;",
+    "in vec4 a_instanceMatrix2;",
+    "in vec4 a_instanceMatrix3;",
+    "in vec4 a_instanceColor;",
+    "out vec2 v_uv;",
+    "flat out float v_instanceAlpha;",
+    "uniform mat4 u_lightViewProjection;",
     "void main() {",
-    "    float alpha = 1.0;",
-    "    if (u_hasAlbedoMap > 0.5) {",
-    "        alpha = texture(u_albedoMap, v_uv).a;",
-    "    }",
-    "    alpha *= u_opacity;",
-    "    if (u_alphaCutoff >= 0.0 && alpha < u_alphaCutoff) {",
-    "        discard;",
-    "    }",
+    "    mat4 instanceMatrix = mat4(a_instanceMatrix0, a_instanceMatrix1, a_instanceMatrix2, a_instanceMatrix3);",
+    "    gl_Position = u_lightViewProjection * (instanceMatrix * vec4(a_position, 1.0));",
+    "    v_uv = a_uv;",
+    "    v_instanceAlpha = a_instanceColor.a;",
     "}",
   ].join("\n");
 
@@ -1367,8 +1411,29 @@
   // caller-supplied bind hook.
   var SHADOW_IDENTITY_MODEL_MATRIX = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindIndexedCaster, textureCache) {
+  // sceneShadowResetVertexAttribArrays disables every vertex attrib array
+  // outside `allowed` and zeroes its divisor, so static, soup, color and
+  // instanced draws can never contaminate each other's attribute state.
+  function sceneShadowResetVertexAttribArrays(gl, allowed) {
+    var maxAttribs = Math.max(0, sceneNumber(gl.getParameter(gl.MAX_VERTEX_ATTRIBS), 0));
+    for (var i = 0; i < maxAttribs; i++) {
+      if (allowed && allowed[i]) continue;
+      gl.vertexAttribDivisor(i, 0);
+      gl.disableVertexAttribArray(i);
+    }
+  }
+
+  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindIndexedCaster, textureCache, resolveInstancedGeometry) {
     var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+    var instancedMeshes = typeof resolveInstancedGeometry === "function" &&
+      Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
+    var passHasInstanced = false;
+    for (var ici = 0; ici < instancedMeshes.length; ici++) {
+      if (instancedMeshes[ici] && instancedMeshes[ici].castShadow) {
+        passHasInstanced = true;
+        break;
+      }
+    }
     var passHash = sceneShadowPassHash(lightMatrix, objects, {
       cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
       splitNear: shadowResources && typeof shadowResources.splitNear === "number" ? shadowResources.splitNear : 0,
@@ -1402,6 +1467,8 @@
     // valid. Fully unmasked frames keep the existing hash optimization.
     if (
       !anyMasked &&
+      !passHasInstanced &&
+      !shadowResources._lastPassHadInstanced &&
       !shadowResources._lastPassMasked &&
       shadowResources._lastPassHash === passHash
     ) {
@@ -1409,6 +1476,7 @@
     }
     shadowResources._lastPassHash = passHash;
     shadowResources._lastPassMasked = anyMasked;
+    shadowResources._lastPassHadInstanced = passHasInstanced;
 
     // The shadow program samples the base-color texture on unit 0; save the
     // unit-0 2D binding and the active texture unit so the PBR renderer's
@@ -1548,6 +1616,115 @@
       gl.drawArrays(gl.TRIANGLES, 0, count);
     }
 
+    // --- Instanced casters: one drawArraysInstanced per mesh over the full
+    // authored instance arrays (never camera-frustum-compacted survivors —
+    // offscreen casters matter), GPU-side per-instance transforms and color
+    // alpha, gated on castShadow only.
+    if (passHasInstanced && instancedMeshes.length > 0) {
+      var instancedShadow = shadowState.instancedShadowProgram;
+      if (!instancedShadow && !shadowState.instancedShadowProgramFailed) {
+        instancedShadow = createSceneShadowInstancedProgram(gl);
+        if (instancedShadow) {
+          shadowState.instancedShadowProgram = instancedShadow;
+        } else {
+          shadowState.instancedShadowProgramFailed = true;
+        }
+      }
+      if (instancedShadow) {
+        gl.useProgram(instancedShadow.program);
+        gl.uniformMatrix4fv(instancedShadow.uniforms.lightViewProjection, false, lightMatrix);
+        if (instancedShadow.uniforms.albedoMap) {
+          gl.uniform1i(instancedShadow.uniforms.albedoMap, 0);
+        }
+
+        var instAllowed = {};
+        if (instancedShadow.attributes.position >= 0) instAllowed[instancedShadow.attributes.position] = true;
+        if (instancedShadow.attributes.uv >= 0) instAllowed[instancedShadow.attributes.uv] = true;
+        for (var iaa = 0; iaa < 4; iaa++) instAllowed[instancedShadow.attributes.instanceMatrix[iaa]] = true;
+        if (instancedShadow.attributes.instanceColor >= 0) instAllowed[instancedShadow.attributes.instanceColor] = true;
+        sceneShadowResetVertexAttribArrays(gl, instAllowed);
+
+        for (var imi2 = 0; imi2 < instancedMeshes.length; imi2++) {
+          var imesh = instancedMeshes[imi2];
+          if (!imesh || !imesh.castShadow) continue;
+          var instCount = Math.max(0, Math.floor(sceneNumber(imesh.instanceCount, sceneNumber(imesh.count, 0))));
+          if (instCount <= 0) continue;
+          var instTransforms = imesh._cachedTransforms;
+          if (!instTransforms) {
+            if (imesh.transforms instanceof Float32Array) {
+              instTransforms = imesh._cachedTransforms = imesh.transforms;
+            } else if (Array.isArray(imesh.transforms)) {
+              instTransforms = imesh._cachedTransforms = new Float32Array(imesh.transforms);
+            }
+          }
+          if (!instTransforms) continue;
+          instCount = Math.min(instCount, Math.floor(instTransforms.length / 16));
+          if (instCount <= 0) continue;
+          var igeom = resolveInstancedGeometry(imesh);
+          if (!igeom || !igeom.positions || !(igeom.vertexCount > 0)) continue;
+          var ensureInstancedVBO = shadowState.ensureInstancedVBO;
+          if (typeof ensureInstancedVBO !== "function") continue;
+          var instDrawCount = Math.min(igeom.vertexCount, Math.floor(igeom.positions.length / 3));
+          if (instDrawCount <= 0) continue;
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, ensureInstancedVBO(igeom.positions));
+          gl.enableVertexAttribArray(instancedShadow.attributes.position);
+          gl.vertexAttribPointer(instancedShadow.attributes.position, 3, gl.FLOAT, false, 0, 0);
+
+          var instUVCapacity = igeom.uvs ? Math.floor(igeom.uvs.length / 2) : 0;
+          if (instancedShadow.attributes.uv >= 0) {
+            if (instUVCapacity >= instDrawCount) {
+              gl.bindBuffer(gl.ARRAY_BUFFER, ensureInstancedVBO(igeom.uvs));
+              gl.enableVertexAttribArray(instancedShadow.attributes.uv);
+              gl.vertexAttribPointer(instancedShadow.attributes.uv, 2, gl.FLOAT, false, 0, 0);
+            } else {
+              gl.disableVertexAttribArray(instancedShadow.attributes.uv);
+              gl.vertexAttrib2f(instancedShadow.attributes.uv, 0, 0);
+            }
+          }
+
+          var instMatLocs = instancedShadow.attributes.instanceMatrix;
+          gl.bindBuffer(gl.ARRAY_BUFFER, ensureInstancedVBO(instTransforms));
+          for (var imc2 = 0; imc2 < 4; imc2++) {
+            gl.enableVertexAttribArray(instMatLocs[imc2]);
+            gl.vertexAttribPointer(instMatLocs[imc2], 4, gl.FLOAT, false, 64, imc2 * 16);
+            gl.vertexAttribDivisor(instMatLocs[imc2], 1);
+          }
+
+          if (instancedShadow.attributes.instanceColor >= 0) {
+            var instColorData = typeof shadowState.instanceColorData === "function"
+              ? shadowState.instanceColorData(imesh, instCount)
+              : null;
+            if (instColorData && instColorData.length >= instCount * 4) {
+              gl.bindBuffer(gl.ARRAY_BUFFER, ensureInstancedVBO(instColorData));
+              gl.enableVertexAttribArray(instancedShadow.attributes.instanceColor);
+              gl.vertexAttribPointer(instancedShadow.attributes.instanceColor, 4, gl.FLOAT, false, 0, 0);
+              gl.vertexAttribDivisor(instancedShadow.attributes.instanceColor, 1);
+            } else {
+              gl.disableVertexAttribArray(instancedShadow.attributes.instanceColor);
+              gl.vertexAttribDivisor(instancedShadow.attributes.instanceColor, 0);
+              gl.vertexAttrib4f(instancedShadow.attributes.instanceColor, 1, 1, 1, 1);
+            }
+          }
+
+          sceneShadowApplyMask(gl, instancedShadow, sceneShadowResolveMask(imesh, bundle, textureCache));
+
+          gl.drawArraysInstanced(gl.TRIANGLES, 0, instDrawCount, instCount);
+
+          for (var imr2 = 0; imr2 < 4; imr2++) {
+            gl.vertexAttribDivisor(instMatLocs[imr2], 0);
+          }
+          if (instancedShadow.attributes.instanceColor >= 0) {
+            gl.vertexAttribDivisor(instancedShadow.attributes.instanceColor, 0);
+          }
+        }
+
+        // Leave no instanced attribute or divisor state behind: subsequent
+        // static, soup, and color draws must not see stale arrays.
+        sceneShadowResetVertexAttribArrays(gl, null);
+      }
+    }
+
     // Restore cull state.
     gl.cullFace(gl.BACK);
     gl.disable(gl.CULL_FACE);
@@ -1640,6 +1817,48 @@
       uniforms: {
         lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+        albedoMap: gl.getUniformLocation(program, "u_albedoMap"),
+        hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
+        opacity: gl.getUniformLocation(program, "u_opacity"),
+        alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
+      },
+    };
+  }
+
+  // Instanced shadow depth program: same fragment mask semantics as the
+  // static program (shared source builder), with an instanced vertex stage
+  // that applies per-instance model matrices and a flat per-instance alpha.
+  // The four matrix columns are queried individually so no consecutive
+  // attribute-location assumption is load-bearing.
+  function createSceneShadowInstancedProgram(gl) {
+    var vertexShader = scenePBRCompileShader(gl, gl.VERTEX_SHADER, SCENE_SHADOW_INSTANCED_VERTEX_SOURCE);
+    if (!vertexShader) return null;
+    var fragmentShader = scenePBRCompileShader(gl, gl.FRAGMENT_SHADER, sceneShadowFragmentSource(true));
+    if (!fragmentShader) {
+      gl.deleteShader(vertexShader);
+      return null;
+    }
+
+    var program = scenePBRLinkProgram(gl, vertexShader, fragmentShader, "Instanced shadow shader");
+    if (!program) return null;
+
+    return {
+      program: program,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
+      attributes: {
+        position: gl.getAttribLocation(program, "a_position"),
+        uv: gl.getAttribLocation(program, "a_uv"),
+        instanceMatrix: [
+          gl.getAttribLocation(program, "a_instanceMatrix0"),
+          gl.getAttribLocation(program, "a_instanceMatrix1"),
+          gl.getAttribLocation(program, "a_instanceMatrix2"),
+          gl.getAttribLocation(program, "a_instanceMatrix3"),
+        ],
+        instanceColor: gl.getAttribLocation(program, "a_instanceColor"),
+      },
+      uniforms: {
+        lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
         albedoMap: gl.getUniformLocation(program, "u_albedoMap"),
         hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
         opacity: gl.getUniformLocation(program, "u_opacity"),
@@ -7295,6 +7514,14 @@
     var shadowState = {
       buffer: gl.createBuffer(),
       scratch: null,
+      // Instanced shadow casters reuse the renderer's identity-keyed static
+      // VBO cache (freed via pointsEntryBuffers on dispose) and the color
+      // pass's per-mesh cached instance colors — the shadow pass owns no
+      // parallel GPU buffers.
+      ensureInstancedVBO: function(data) {
+        return ensureStaticArrayVBO(staticMeshArrayVBOs, data);
+      },
+      instanceColorData: sceneInstancedColorBuffer,
       // Unit-0 fallback for the shadow pass: the shadow program's albedo
       // sampler stays active on unit 0 even when hasAlbedoMap is 0, so unit 0
       // must never still hold the attached depth texture at draw time
@@ -7754,7 +7981,7 @@
           // remaining cascade uses the legacy full-scene fit, so reduced
           // counts never truncate far coverage.
           if (!sceneBounds) {
-            sceneBounds = sceneShadowComputeBounds(bundle);
+            sceneBounds = sceneShadowComputeBounds(bundle, getInstancedGeometry);
           }
           computeShadowSlotCascadeMatrices(candidate.light, shadowSlots[candIdx], sceneBounds,
             viewMatrix, cam.fov, aspect, cam.near, cam.far);
@@ -7763,7 +7990,7 @@
           // never drawn.
           for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
             var cascade = shadowSlots[candIdx].cascades[ci2];
-            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, textureCache);
+            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, textureCache, getInstancedGeometry);
           }
         }
 
@@ -9606,6 +9833,12 @@
       computeParticleSystems.clear();
       lastComputeParticleTimeSeconds = null;
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
+      if (shadowState.instancedShadowProgram) {
+        gl.deleteShader(shadowState.instancedShadowProgram.vertexShader);
+        gl.deleteShader(shadowState.instancedShadowProgram.fragmentShader);
+        gl.deleteProgram(shadowState.instancedShadowProgram.program);
+        shadowState.instancedShadowProgram = null;
+      }
 
       textureCache._gosxGeneration.disposed = true;
       for (const record of textureCache.values()) {

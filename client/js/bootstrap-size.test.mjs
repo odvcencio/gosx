@@ -579,7 +579,9 @@ const budgets = [
   // WebGPU flat-varying fix (+152 bytes) measured 1592346 raw; only raw
   // exceeded. Raw cap raised with narrow rounding headroom; compressed
   // measured 431033/346038 stayed green.
-  { file: "bootstrap.js", raw: 1_592_400, gzip: 431_100, brotli: 346_100 },
+  // Instanced-shadow runtime support measured 1598280/432480/347347;
+  // all three caps raised to the next 100 bytes.
+  { file: "bootstrap.js", raw: 1_598_300, gzip: 432_500, brotli: 347_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -919,7 +921,9 @@ const budgets = [
   // so the brotli cap was raised with narrow rounding headroom.
   // Alpha-masked shadows plus corrected shadow projection measured
   // 224161/61835/52427; all three caps raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 224_200, gzip: 61_900, brotli: 52_500 },
+  // Instanced-shadow runtime support measured 228942/62841/53167;
+  // all three caps raised to the next 100 bytes.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 229_000, gzip: 62_900, brotli: 53_200 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1016,7 +1020,9 @@ const budgets = [
   // CSS-aware masked routing plus the live-patch runtime rebuild measured
   // 554504/152872/126607; all three caps raised with narrow rounding
   // headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 554_600, gzip: 152_900, brotli: 126_700 },
+  // Instanced-shadow runtime support measured 555592/153343/126944;
+  // all three caps raised to the next 100 bytes.
+  { file: "bootstrap-feature-scene3d.js", raw: 555_600, gzip: 153_400, brotli: 127_000 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1702,9 +1708,11 @@ const routeBudgets = [
     // CSS-aware masked routing plus the live-patch runtime rebuild measured
     // 1079388/298557/252820; all three caps raised with narrow rounding
     // headroom.
-    raw: 1_079_400,
-    gzip: 298_600,
-    brotli: 252_900,
+    // Instanced-shadow runtime support measured 1085257/300034/253897;
+    // all three caps raised to the next 100 bytes.
+    raw: 1_085_300,
+    gzip: 300_100,
+    brotli: 253_900,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1836,9 +1844,11 @@ const routeBudgets = [
     // WebGPU flat-varying fix (+152 bytes) measured 1480085 raw; only raw
     // exceeded. Raw cap raised with narrow rounding headroom; compressed
     // measured 394876/333383 stayed green.
-    raw: 1_480_100,
-    gzip: 394_900,
-    brotli: 333_400,
+    // Instanced-shadow runtime support measured 1485954/396353/334460;
+    // all three caps raised to the next 100 bytes.
+    raw: 1_486_000,
+    gzip: 396_400,
+    brotli: 334_500,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1970,9 +1980,11 @@ const routeBudgets = [
     // headroom.
     // WebGPU flat-varying fix (+152 bytes) measured 1103647/289709/242472;
     // all three caps raised with narrow rounding headroom.
-    raw: 1_103_700,
-    gzip: 289_800,
-    brotli: 242_500,
+    // Instanced-shadow runtime support measured 1104735/290180/242809;
+    // all three caps raised to the next 100 bytes.
+    raw: 1_104_800,
+    gzip: 290_200,
+    brotli: 242_900,
   },
 
 ];
