@@ -39,6 +39,12 @@
  *    override of that asset, and an instanced GLB batch inheriting the loaded
  *    factors exactly (no batch specular overrides) vs batch
  *    specularIntensity:0;
+ *  - real GLB KHR_materials_specular specularTexture (intensity-alpha slice)
+ *    on BOTH backends: saturated/zero/fractional/RGB-irrelevance/fully-
+ *    metallic/IBL-isolated textured cases plus the untextured fractional
+ *    control. WebGPU observes the real 208-byte upload flag; WebGL observes
+ *    the real u_hasSpecularIntensityMap uniform at production draw time
+ *    (missing locations/observations are null and never pass);
  *  - real GLB KHR_materials_specular specularColorTexture: white/black/
  *    tinted/HDR color textures against untextured linear-factor controls,
  *    texture-alpha irrelevance for the color role, a combined color+intensity
@@ -687,6 +693,72 @@ const CASES = [
       envIntensity: 1, ibl: IBL_FIXTURE.descriptor } }),
 ].forEach((c) => CASES.push(c));
 
+// ---- Specular-intensity-ALPHA texture cases (WebGL counterparts) ----------
+// WebGL equivalents of ALL nine WebGPU intensity cases above, reusing the
+// exact same real GLB/PNG assets. The production WebGL change declares
+// u_hasSpecularIntensityMap + u_specularIntensityMap, samples the texture
+// ALPHA channel only, scales the shared dielectric F0/F90 before metallic
+// mixing, and keeps the CPU uniforms at the authored pre-texture values, so
+// the draw-time uniform assertions below expect F0 .04 / F90 1 (or 0 / 1 for
+// the IOR 1 IBL pair) exactly like the WebGPU upload assertions. The REAL
+// u_hasSpecularIntensityMap uniform is observed at production PBR draw time
+// (getUniformLocation tracking + getUniform) and must read true/1 within the
+// bounded timeout before capture; a missing location or observation is null
+// and never invented as readiness. Comparisons reuse the existing WebGL
+// factor controls (glb-spec-white / glb-spec-zero), remapped from the WebGPU
+// reference names; no WebGL color-texture cases are added here.
+[
+  // alpha255 (non-white RGB): pixel-identical to the WebGL factor-1 GLB
+  // render, proving a saturated alpha is neutral and the texture RGB is
+  // ignored by the sampler path.
+  { name: 'gl-tex-alpha255', model: MODEL({ src: '/models/quad-tex-alpha255.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha255.png'], f0: 0.04, f90: 1,
+    same: 'glb-spec-white' },
+  // alpha0 (white RGB): pixel-identical to the WebGL factor-0 GLB and visibly
+  // different from factor 1.
+  { name: 'gl-tex-alpha0', model: MODEL({ src: '/models/quad-tex-alpha0.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha0-white.png'], f0: 0.04, f90: 1,
+    same: 'glb-spec-zero', differs: 'glb-spec-white', minChanged: 20 },
+  // Fractional alpha 128/255 with black RGB: must match the untextured
+  // specularFactor 128/255 GLB within 1 channel quantization step and differ
+  // visibly from factor 1.
+  { name: 'gl-tex-alpha128-black', model: MODEL({ src: '/models/quad-tex-alpha128-black.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha128-black.png'], f0: 0.04, f90: 1,
+    differs: 'glb-spec-white', minChanged: 1, nearSame: 'glb-spec-128' },
+  // Untextured WebGL fractional control for the near comparison above (the
+  // WebGPU block has its own wg-glb-spec-128 counterpart).
+  { name: 'glb-spec-128', model: MODEL({ src: '/models/quad-spec-128.glb' }),
+    f0: 0.04 * (128 / 255), f90: 128 / 255 },
+  // Identical alpha 128 with different RGB: pixel-identical to the black RGB
+  // variant, proving the texture RGB is ignored.
+  { name: 'gl-tex-alpha128-red', model: MODEL({ src: '/models/quad-tex-alpha128-red.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha128-red.png'], f0: 0.04, f90: 1,
+    same: 'gl-tex-alpha128-black' },
+  // Fully metallic pair: alpha 0 vs alpha 255 with identical geometry and
+  // metalness must stay pixel-identical (intensity scales dielectric F0/F90
+  // before metallic mixing only).
+  { name: 'gl-tex-metal-alpha0', model: MODEL({ src: '/models/quad-tex-metal-alpha0.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha0-white.png'], f0: 0.04, f90: 1,
+    same: 'gl-tex-metal-alpha255' },
+  { name: 'gl-tex-metal-alpha255', model: MODEL({ src: '/models/quad-tex-metal-alpha255.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha255.png'], f0: 0.04, f90: 1 },
+  // IBL-only isolation pair at ior 1 (F0 = 0 isolates F90): the same textured
+  // quad geometry and the shared IBL fixture environment; alpha 0 vs alpha
+  // 255 must differ. WebGL IBL readiness is the existing lastDrawHasIBL
+  // observation.
+  { name: 'gl-tex-ibl-alpha0', model: MODEL({ src: '/models/quad-tex-ibl-alpha0.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha0-white.png'], f0: 0, f90: 1,
+    requiresIBL: true, keyLightIntensity: 0,
+    environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0,
+      envIntensity: 1, ibl: IBL_FIXTURE.descriptor },
+    differs: 'gl-tex-ibl-alpha255', minChanged: 20 },
+  { name: 'gl-tex-ibl-alpha255', model: MODEL({ src: '/models/quad-tex-ibl-alpha255.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha255.png'], f0: 0, f90: 1,
+    requiresIBL: true, keyLightIntensity: 0,
+    environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0,
+      envIntensity: 1, ibl: IBL_FIXTURE.descriptor } },
+].forEach((c) => CASES.push(c));
+
 // ---- Specular-COLOR texture cases (WebGPU only, color slice) --------------
 // CPU factors stay at the pre-texture authored values, so the 208-byte upload
 // assertions expect the authored F0/F90 (float indices 44..47, bytes 176:192,
@@ -1015,7 +1087,7 @@ async function evalSend(send, expression, extra) {
 // at 47.
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
-    lastDrawHasIBL: null, programInfo: null, queriedUniforms: [] };
+    lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, programInfo: null, queriedUniforms: [] };
   window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
 (function () {
   var latest80 = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
@@ -1080,6 +1152,24 @@ const PRELOAD = `
             // previous observation so it cannot leak across draws.
             window.__gosxIOR.lastDrawHasIBL = null;
           }
+          var mhas = this.__shaspeclocs;
+          if (mhas && mhas.has(cp)) {
+            var vH = this.__origGetUniform.call(this, cp, mhas.get(cp));
+            // Real draw-time u_hasSpecularIntensityMap state: only an
+            // explicit boolean true/false or numeric 1/0 is recorded; any
+            // other value, and any missing tracked location, is null so
+            // readiness is never invented.
+            window.__gosxIOR.lastDrawHasSpecIntensityMap =
+              (vH === true) ? true :
+              (vH === false) ? false :
+              (vH === 1 || vH === 1.0) ? true :
+              (vH === 0 || vH === 0.0) ? false : null;
+          } else {
+            // No tracked u_hasSpecularIntensityMap location for this PBR
+            // program: clear any previous observation so it cannot leak
+            // across draws and can never fake readiness.
+            window.__gosxIOR.lastDrawHasSpecIntensityMap = null;
+          }
           if (window.__gosxIOR.f0s.length < 4096) window.__gosxIOR.f0s.push(vec);
         }
       }
@@ -1126,6 +1216,10 @@ const PRELOAD = `
         if (n === "u_hasIBL") {
           var mibl = this.__sibllocs || (this.__sibllocs = new Map());
           if (loc) mibl.set(p, loc); else mibl.delete(p);
+        }
+        if (n === "u_hasSpecularIntensityMap") {
+          var mhas = this.__shaspeclocs || (this.__shaspeclocs = new Map());
+          if (loc) mhas.set(p, loc); else mhas.delete(p);
         }
       } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
       return loc;
@@ -1290,6 +1384,7 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'ior:window.__gosxIOR?{draws:window.__gosxIOR.draws,pbrDraws:window.__gosxIOR.pbrDraws,' +
   'lastDrawF0:window.__gosxIOR.lastDrawF0,lastDrawF90:window.__gosxIOR.lastDrawF90,gl:window.__gosxIOR.gl,' +
   'lastDrawHasIBL:window.__gosxIOR.lastDrawHasIBL,' +
+  'lastDrawHasSpecIntensityMap:window.__gosxIOR.lastDrawHasSpecIntensityMap,' +
   'linkStatus:(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.linkStatus!==null?window.__gosxIOR.programInfo.linkStatus:null),' +
   'trackedF0:!!(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.trackedF0),' +
   'activeUniforms:((window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.activeUniforms)||[]).slice(0,100),' +
@@ -1545,27 +1640,39 @@ setTimeout(() => {
       }
       if ((c.specTex || c.specColorTex) && ready) {
         // Texture cases must additionally wait, boundedly, for the REAL
-        // texture-loaded flags of actual 208-byte uploads before settling/
-        // capturing: the intensity flag at u32 index 41 (byte 164) and the
-        // color flag at u32 index 51 (byte 204), each read as a uint32 word.
-        // Color cases require the color flag; intensity-only cases require
-        // the intensity flag; combined color+intensity cases require BOTH
-        // flags present in the SAME 208-byte dump (separate partial dumps
-        // never satisfy combined readiness).
+        // texture-loaded state before settling/capturing. WebGPU: the
+        // intensity flag at u32 index 41 (byte 164) and the color flag at u32
+        // index 51 (byte 204) of actual 208-byte uploads, each read as a
+        // uint32 word; combined color+intensity cases require BOTH flags
+        // present in the SAME 208-byte dump (separate partial dumps never
+        // satisfy combined readiness). WebGL: the real u_hasSpecularIntensityMap
+        // uniform observed at production PBR draw time (getUniformLocation
+        // tracking + getUniform), read as true/1; missing locations or
+        // observations are null and never pass as readiness.
         let intFlagReady = !c.specTex;
         let colorFlagReady = !c.specColorTex;
         const texDeadline = Date.now() + CASE_WAIT_MS;
         while (Date.now() < texDeadline && !(intFlagReady && colorFlagReady)) {
           const sT = await evalSend(send, READ);
-          const dumpsT = (sT && sT.wgpu && sT.wgpu.dumps) || [];
-          if (c.specTex && c.specColorTex) {
-            if (dumpsT.some((d) => d.hasSpecIntensityMap === 1 && d.hasSpecColorMap === 1)) {
-              intFlagReady = true;
-              colorFlagReady = true;
+          if (c.webgpu) {
+            const dumpsT = (sT && sT.wgpu && sT.wgpu.dumps) || [];
+            if (c.specTex && c.specColorTex) {
+              if (dumpsT.some((d) => d.hasSpecIntensityMap === 1 && d.hasSpecColorMap === 1)) {
+                intFlagReady = true;
+                colorFlagReady = true;
+              }
+            } else {
+              if (!intFlagReady && dumpsT.some((d) => d.hasSpecIntensityMap === 1)) intFlagReady = true;
+              if (!colorFlagReady && dumpsT.some((d) => d.hasSpecColorMap === 1)) colorFlagReady = true;
             }
           } else {
-            if (!intFlagReady && dumpsT.some((d) => d.hasSpecIntensityMap === 1)) intFlagReady = true;
-            if (!colorFlagReady && dumpsT.some((d) => d.hasSpecColorMap === 1)) colorFlagReady = true;
+            // WebGL intensity-texture cases: only an explicit draw-time
+            // observation of true/1 counts as loaded.
+            if (!intFlagReady && sT && sT.ior &&
+                (sT.ior.lastDrawHasSpecIntensityMap === true ||
+                 sT.ior.lastDrawHasSpecIntensityMap === 1)) {
+              intFlagReady = true;
+            }
           }
           if (intFlagReady && colorFlagReady) break;
           await sleep(100);
@@ -1575,7 +1682,9 @@ setTimeout(() => {
         if (c.specTex) rec.specIntensityMapFlag = intFlagReady ? 1 : 0;
         if (c.specColorTex) rec.specColorMapFlag = colorFlagReady ? 1 : 0;
         if (!intFlagReady) {
-          fail(c.name + ': hasSpecularIntensityMap flag not observed as 1 in any 208-byte upload within ' +
+          fail(c.name + (c.webgpu
+            ? ': hasSpecularIntensityMap flag not observed as 1 in any 208-byte upload within '
+            : ': u_hasSpecularIntensityMap not observed loaded (true/1) at production draw within ') +
             CASE_WAIT_MS + 'ms');
         }
         if (!colorFlagReady) {
@@ -1945,6 +2054,9 @@ setTimeout(() => {
       'loading and native draws. u_specularF0/u_specularF90 read from real uniform state at ' +
       'production draw calls (getUniformLocation tracking + CURRENT_PROGRAM + getUniform, ' +
       'instanced forms) and at float indices 44..47 of 208-byte WebGPU material uploads; ' +
+      'the intensity-texture loaded state is observed per backend as the real ' +
+      'u_hasSpecularIntensityMap draw-time uniform (WebGL, missing = null) or the byte-164 ' +
+      'upload flag (WebGPU); ' +
       'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +

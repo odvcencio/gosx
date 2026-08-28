@@ -117,6 +117,7 @@
     "uniform sampler2D u_occlusionMap;",
     "#endif",
     "uniform sampler2D u_emissiveMap;",
+    "uniform sampler2D u_specularIntensityMap;",
     "uniform bool u_hasAlbedoMap;",
     "uniform bool u_hasNormalMap;",
     "uniform bool u_hasRoughnessMap;",
@@ -125,6 +126,7 @@
     "uniform bool u_hasOcclusionMap;",
     "#endif",
     "uniform bool u_hasEmissiveMap;",
+    "uniform bool u_hasSpecularIntensityMap;",
     "",
     // Lights (max 8)
     "uniform int u_lightCount;",
@@ -435,6 +437,15 @@
     // fully-metal branch so a metal never reads the dielectric lane.
     "    vec3 specF0 = u_specularF0;",
     "    float specF90 = u_specularF90;",
+    // The specular-intensity texture scales the whole authored dielectric
+    // lobe: alpha-only sample, multiplying BOTH shared factors before the
+    // metallic mix so direct light, the diffuse weight and split-sum IBL all
+    // honour it while the fully-metal branch stays independent.
+    "    if (u_hasSpecularIntensityMap) {",
+    "        float specTex = texture(u_specularIntensityMap, v_uv).a;",
+    "        specF0 *= specTex;",
+    "        specF90 *= specTex;",
+    "    }",
     "    vec3 F0 = mix(specF0, albedo, metalness);",
     "    float F90 = mix(specF90, 1.0, metalness);",
     "    if (metalness >= 1.0) {",
@@ -5197,12 +5208,14 @@
       metalnessMap: gl.getUniformLocation(program, "u_metalnessMap"),
       occlusionMap: gl.getUniformLocation(program, "u_occlusionMap"),
       emissiveMap: gl.getUniformLocation(program, "u_emissiveMap"),
+      specularIntensityMap: gl.getUniformLocation(program, "u_specularIntensityMap"),
       hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
       hasNormalMap: gl.getUniformLocation(program, "u_hasNormalMap"),
       hasRoughnessMap: gl.getUniformLocation(program, "u_hasRoughnessMap"),
       hasMetalnessMap: gl.getUniformLocation(program, "u_hasMetalnessMap"),
       hasOcclusionMap: gl.getUniformLocation(program, "u_hasOcclusionMap"),
       hasEmissiveMap: gl.getUniformLocation(program, "u_hasEmissiveMap"),
+      hasSpecularIntensityMap: gl.getUniformLocation(program, "u_hasSpecularIntensityMap"),
 
       lightCount: gl.getUniformLocation(program, "u_lightCount"),
       lightTypes: [],
@@ -5407,8 +5420,8 @@
     } catch (_error) {
       maxUnits = 0;
     }
-    // 6 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
-    return maxUnits >= 18;
+    // 7 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
+    return maxUnits >= 19;
   }
 
   function scenePBRFragmentSourceForContext(gl, source) {
@@ -6144,6 +6157,20 @@
   var _scenePBRCascadeMatScratch = new Float32Array(64);
   var _scenePBRCascadeSplitScratch = new Float32Array(4);
 
+  // Guarded fragment texture-unit query for the shared allocator. Falls
+  // back to the allocator default when the context cannot be queried so a
+  // lost or sandboxed context still gets the conservative 16-unit layout.
+  function scenePBRMaxTextureUnits(gl) {
+    try {
+      var units = gl && typeof gl.getParameter === "function"
+        ? Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0))
+        : 0;
+      return units > 0 ? units : SCENE_TEXTURE_UNIT_DEFAULT_MAX;
+    } catch (_error) {
+      return SCENE_TEXTURE_UNIT_DEFAULT_MAX;
+    }
+  }
+
   function scenePBREnvironmentHasMap(environment) {
     var ibl = environment && environment.ibl;
     return Boolean(
@@ -6169,17 +6196,21 @@
     return count;
   }
 
-  function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment) {
+  function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment, maxUnits) {
     var shadowCount = scenePBRShadowTextureCount(shadowSlots, shadowLightIndices);
     if (scenePBREnvironmentHasMap(environment)) {
       // Keep the legacy two-shadow reservation for non-shadowed env-map scenes
       // while still moving IBL after all active CSM cascades.
       shadowCount = Math.max(2, shadowCount);
     }
-    return sceneAllocateTextureUnits({
+    var options = {
       shadowCount: shadowCount,
       ibl: scenePBREnvironmentHasMap(environment),
-    });
+    };
+    if (maxUnits != null) {
+      options.maxUnits = maxUnits;
+    }
+    return sceneAllocateTextureUnits(options);
   }
 
   // Upload cascaded-shadow uniforms for both slots to the given program's
@@ -6191,7 +6222,8 @@
     // cascades when an envMap is present. Slot offsets are packed, not
     // hard-coded to 4-wide blocks, so two single-cascade lights use units 5/6
     // and one 4-cascade CSM light uses 5/6/7/8.
-    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment);
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment,
+      scenePBRMaxTextureUnits(gl));
     var shadowUnits = layout.shadows;
 
     var unitBase = 0;
@@ -6337,12 +6369,13 @@
     var ibl = env.ibl && typeof env.ibl === "object" ? env.ibl : null;
     var envMap = typeof env.envMap === "string" ? env.envMap.trim() : "";
     var hdrIBLAvailable = scenePBRHDRIBLAvailable(gl);
-    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env);
+    var maxUnits = scenePBRMaxTextureUnits(gl);
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env, maxUnits);
     // An active samplerCube may not alias a sampler2D unit in WebGL even when
     // a branch flag is false. Assign both cube samplers to a real black cube
     // on a dedicated unit before considering authored products.
     if (hdrIBLAvailable) {
-      var safeLayout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, { ibl: { radiance: {}, irradiance: {}, brdfLUT: {} } });
+      var safeLayout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, { ibl: { radiance: {}, irradiance: {}, brdfLUT: {} } }, maxUnits);
       if (safeLayout && safeLayout.ibl) {
         var cubePlaceholder = scenePBRPlaceholderCube(gl, textureCache);
         scenePBRBindTexture(gl, safeLayout.ibl.radiance, cubePlaceholder.texture, gl.TEXTURE_CUBE_MAP);
@@ -6368,7 +6401,7 @@
       var model = typeof ibl.brdfModel === "string" ? ibl.brdfModel.trim() : "";
       if (!hdrIBLAvailable) {
         iblStatus.state = "unsupported";
-        iblStatus.reason = "fragment-texture-units<18";
+        iblStatus.reason = "fragment-texture-units<19";
       } else if (!radianceDescriptor || !irradianceDescriptor || !brdfDescriptor) {
         iblStatus.state = "unsupported";
         iblStatus.reason = "descriptor-role-color-view-format";
@@ -7156,6 +7189,7 @@
         { prop: "metalnessMap", descriptor: "metalness", role: "metalness", colorSpace: "linear", has: "hasMetalnessMap", sampler: "metalnessMap", unit: 3 },
         { prop: "emissiveMap",  descriptor: "emissive",  role: "emissive", colorSpace: "srgb", has: "hasEmissiveMap",   sampler: "emissiveMap",  unit: 4 },
         { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", has: "hasOcclusionMap", sampler: "occlusionMap", unit: 5, hdrOnly: true },
+        { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", has: "hasSpecularIntensityMap", sampler: "specularIntensityMap", unit: SCENE_TEXTURE_UNIT_MATERIALS.specularIntensity },
       ];
       for (var ti = 0; ti < textureMaps.length; ti++) {
         var tm = textureMaps[ti];

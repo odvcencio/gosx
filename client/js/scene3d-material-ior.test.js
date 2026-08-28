@@ -433,6 +433,11 @@ test("WebGL PBR shaders upload and consume the effective specular factors", () =
   assert.doesNotMatch(source, /uniform float u_dielectricF0;/);
   assert.match(source, /vec3 specF0 = u_specularF0;/);
   assert.match(source, /vec3 F0 = mix\(specF0, albedo, metalness\);/);
+  // The specular-intensity map multiplies both shared dielectric factors by
+  // its alpha channel before the metallic mix; colour channels are never read.
+  assert.match(source, /specF0 \*= specTex;/);
+  assert.match(source, /specF90 \*= specTex;/);
+  assert.match(source, /texture\(u_specularIntensityMap, v_uv\)\.a/);
   assert.doesNotMatch(source, /vec3 F0 = mix\(vec3\(0\.04\)/);
   assert.doesNotMatch(source, /dielectricF0:\s*gl\.getUniformLocation\(program,\s*"u_dielectricF0"\),/);
   assert.doesNotMatch(source, /gl\.uniform1f\(uniforms\.dielectricF0,/);
@@ -444,6 +449,8 @@ test("WebGL PBR shaders upload and consume the effective specular factors", () =
 
   const context = createSceneCoreContext();
   runFragment(context, [
+    sliceBetween(readBootstrapSource("15a1-scene-texture-budget.ts"),
+      "var SCENE_TEXTURE_UNIT_MATERIALS", "var SCENE_TEXTURE_UNIT_FIRST_SHARED"),
     sliceBetween(source, "function scenePBRSRGBChannelToLinear", "const SCENE_PBR_VERTEX_SOURCE"),
     sliceBetween(source, "function scenePBRDielectricF0", "function scenePBRCacheBaseUniforms"),
     sliceBetween(source, "function uploadCustomUniforms", "function uploadMaterial"),

@@ -19,8 +19,9 @@ var SCENE_TEXTURE_UNIT_MATERIALS = {
   metalness: 3,
   emissive: 4,
   occlusion: 5,
+  specularIntensity: 6,
 };
-var SCENE_TEXTURE_UNIT_FIRST_SHARED = 6;
+var SCENE_TEXTURE_UNIT_FIRST_SHARED = 7;
 var SCENE_TEXTURE_UNIT_DEFAULT_MAX = 16;
 var SCENE_TEXTURE_BUDGET_DEFAULT_BYTES = 26 * 1024 * 1024;
 
@@ -31,8 +32,9 @@ function sceneClampInteger(value, min, max) {
   return next;
 }
 // Allocates Scene3D texture units from one shared table:
-//   0-5: material maps (base, normal, roughness, metalness, emissive, AO)
-//   6..N: shadow maps / CSM cascades
+//   0-6: material maps (base, normal, roughness, metalness, emissive, AO,
+//        specular intensity)
+//   7..N: shadow maps / CSM cascades
 //   N+1..N+3: future IBL irradiance/radiance/BRDF textures
 //
 // Keeping this centralized prevents shadow cascades and IBL from silently
@@ -62,6 +64,7 @@ function sceneAllocateTextureUnits(options) {
       metalness: SCENE_TEXTURE_UNIT_MATERIALS.metalness,
       emissive: SCENE_TEXTURE_UNIT_MATERIALS.emissive,
       occlusion: SCENE_TEXTURE_UNIT_MATERIALS.occlusion,
+      specularIntensity: SCENE_TEXTURE_UNIT_MATERIALS.specularIntensity,
     },
     shadows: [],
     ibl: null,

@@ -889,7 +889,9 @@ const budgets = [
   // matching the WGSL packer. Measured: 213_478 / 58_799 / 50_056.
   // Indexed BufferGeometry exact measurement: 215_520 / 59_273 / 50_350.
   // Measured: WebGL chunk 216900/59714/50773.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 217_100, gzip: 59_900, brotli: 50_900 },
+  // Raised for the specular-intensity texture slice (material slot6, shadows
+  // begin7, 19 fragment samplers). Measured: 217769/59923/50835.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 217_950, gzip: 60_000, brotli: 50_900 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1642,8 +1644,10 @@ const routeBudgets = [
     // Authored specular color plumbing (pre-typed-copy) measured
     // 1_063_979 / 294_336 / 249_531; caps raised with narrow headroom.
     // Measured: 1065114/294665/249782.
-    raw: 1_065_300,
-    gzip: 294_800,
+    // Raised for the specular-intensity texture slice. Measured:
+    // 1066019/294879/249778.
+    raw: 1_066_150,
+    gzip: 294_950,
     brotli: 249_900,
   },
   {
