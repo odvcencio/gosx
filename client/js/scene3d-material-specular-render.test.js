@@ -942,6 +942,35 @@ test("WebGPU fragment shaders pin coverage discard and corrected alpha selects",
   assert.doesNotMatch(source, /select\(\w+, coverage, alphaEnabled\)/);
 });
 
+test("WebGPU instanceColor and masked shadow alpha varyings are flat (primitive-constant, no interpolation drift)", () => {
+  // Every producer writes a primitive constant (ordinary vec4f(1), cull
+  // vec4f(1), instanced per-instance constants), and every consumer (PBR,
+  // water, masked shadow) reads it back. Perspective-correct interpolation of
+  // a constant 1 can round just below 1, dropping opacity * alpha strictly
+  // under the cutoff and discarding real fragments. @interpolate(flat) is
+  // exact: provoking-vertex pass-through, no epsilon, no clamping. Output and
+  // input structs must declare matching modes for the pipelines to link.
+  const { source } = setupWebGPURenderer();
+  assert.strictEqual(
+    (source.match(/@location\(5\) @interpolate\(flat\) instanceColor: vec4f,/g) || []).length,
+    5,
+    "ordinary/instanced/cull vertex outputs + PBR/water fragment inputs all flat");
+  assert.strictEqual(
+    (source.match(/@location\(5\) instanceColor: vec4f,/g) || []).length, 0,
+    "no smooth instanceColor declaration remains on either side");
+  assert.strictEqual(
+    (source.match(/@location\(1\) @interpolate\(flat\) alpha: f32,/g) || []).length,
+    3,
+    "masked shadow alpha: non-instanced + instanced vertex outputs and fragment input all flat");
+  assert.strictEqual(
+    (source.match(/@location\(1\) alpha: f32,/g) || []).length, 0,
+    "no smooth masked-shadow alpha declaration remains");
+  // Genuinely per-vertex varyings keep smooth (default) interpolation.
+  assert.doesNotMatch(source,
+    /@interpolate\(flat\)[^\n]*(uv|normal|worldPos|tangent|bitangent)/,
+    "uv/normal/worldPos/tangent/bitangent must stay perspective-correct");
+});
+
 test("WebGPU materialUniformData packs finite effective specular factors", () => {
   const { source, context } = setupWebGPURenderer();
   // The material buffer grew for the aligned vec3f plus the F90 scalar; the

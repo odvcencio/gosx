@@ -160,6 +160,72 @@ func TestNoMaterialNoteWhenNothingIsIgnored(t *testing.T) {
 	}
 }
 
+// TestMaterialNoteCountsEnabledAlphaCutoffOnly proves the alphaCutoff count is
+// honest: only a numeric cutoff promises a pixel effect the CPU rasterizer
+// does not produce, so only it is counted; an explicit null disable and an
+// absent cutoff must not raise the note.
+func TestMaterialNoteCountsEnabledAlphaCutoffOnly(t *testing.T) {
+	doc := `{"schema":"gosx.scene3d.ir.v1","objects":[{"id":"a","kind":"cube","size":2,"color":"#ff8060","alphaCutoff":0.5}]}`
+	result, err := preview.RenderJSON([]byte(doc), preview.Options{Width: 48, Height: 32, DisableShadows: true, DisablePostFX: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics := diagnosticsByCode(result, "scene.preview.material_fields_ignored")
+	if len(diagnostics) != 1 {
+		t.Fatalf("expected one material coverage note for enabled alphaCutoff: %+v", result.Bundle.Diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "alphaCutoff(1)") {
+		t.Fatalf("material note missing alphaCutoff(1): %s", diagnostics[0].Message)
+	}
+
+	disabled := `{"schema":"gosx.scene3d.ir.v1","objects":[{"id":"a","kind":"cube","size":2,"color":"#ff8060","alphaCutoff":null}]}`
+	result, err = preview.RenderJSON([]byte(disabled), preview.Options{Width: 48, Height: 32, DisableShadows: true, DisablePostFX: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := diagnosticsByCode(result, "scene.preview.material_fields_ignored"); len(got) != 0 {
+		t.Fatalf("explicit null alphaCutoff must not raise the note: %+v", got)
+	}
+
+	// A numeric zero still promises a pixel effect, so it counts.
+	zero := `{"schema":"gosx.scene3d.ir.v1","objects":[{"id":"a","kind":"cube","size":2,"color":"#ff8060","alphaCutoff":0}]}`
+	result, err = preview.RenderJSON([]byte(zero), preview.Options{Width: 48, Height: 32, DisableShadows: true, DisablePostFX: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics = diagnosticsByCode(result, "scene.preview.material_fields_ignored")
+	if len(diagnostics) != 1 {
+		t.Fatalf("expected one material coverage note for numeric zero alphaCutoff: %+v", result.Bundle.Diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "alphaCutoff(1)") {
+		t.Fatalf("material note missing alphaCutoff(1) for zero cutoff: %s", diagnostics[0].Message)
+	}
+
+	// An omitted cutoff promises nothing and must not raise the note.
+	omitted := `{"schema":"gosx.scene3d.ir.v1","objects":[{"id":"a","kind":"cube","size":2,"color":"#ff8060"}]}`
+	result, err = preview.RenderJSON([]byte(omitted), preview.Options{Width: 48, Height: 32, DisableShadows: true, DisablePostFX: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := diagnosticsByCode(result, "scene.preview.material_fields_ignored"); len(got) != 0 {
+		t.Fatalf("omitted alphaCutoff must not raise the note: %+v", got)
+	}
+
+	// A numeric cutoff on an instanced mesh record counts too.
+	instanced := `{"schema":"gosx.scene3d.ir.v1","instancedMeshes":[{"id":"i","kind":"cube","count":1,"transforms":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"alphaCutoff":0.5}]}`
+	result, err = preview.RenderJSON([]byte(instanced), preview.Options{Width: 48, Height: 32, DisableShadows: true, DisablePostFX: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics = diagnosticsByCode(result, "scene.preview.material_fields_ignored")
+	if len(diagnostics) != 1 {
+		t.Fatalf("expected one material coverage note for instanced alphaCutoff: %+v", result.Bundle.Diagnostics)
+	}
+	if !strings.Contains(diagnostics[0].Message, "alphaCutoff(1)") {
+		t.Fatalf("material note missing alphaCutoff(1) for instanced cutoff: %s", diagnostics[0].Message)
+	}
+}
+
 func greenRGBA() color.RGBA { return color.RGBA{R: 20, G: 220, B: 90, A: 255} }
 
 func hasGreenDominantPixel(img *image.RGBA) bool {

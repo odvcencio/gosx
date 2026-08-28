@@ -1477,6 +1477,85 @@ const MASKROUTE_MAT = { color: '#3a7bd5', roughness: 0.35, metalness: 0, ior: 1.
       expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
 });
 const byName = {};
+// Verified typed AlphaCutoff fixture: one JSON object on stdout carrying
+// exactly five same-geometry standard-material scenes lowered through the
+// real Go Props{Graph}.SceneIR pipeline plus three real DiffCommands
+// transitions. A missing or invalid fixture is fatal: no probe runs
+// without it. The generated Go objects are used verbatim — no manual
+// alteration of object or material field data.
+let MASK_FIXTURE = null;
+try {
+  MASK_FIXTURE = JSON.parse(execFileSync('go',
+    ['run', './client/js/testdata/alpha-mask-typed-fixture'],
+    { cwd: REPO, encoding: 'utf8', timeout: 60000 }));
+  if (!MASK_FIXTURE || MASK_FIXTURE.schema !== 'gosx.alpha-cutoff.fixture.v1') {
+    throw new Error('bad fixture schema');
+  }
+  const maskSceneNames = Object.keys(MASK_FIXTURE.scenes || {}).sort();
+  if (JSON.stringify(maskSceneNames) !==
+      JSON.stringify(['disabled', 'discard', 'mask', 'opaque', 'zero'])) {
+    throw new Error('expected exactly five fixture scenes');
+  }
+  for (const n of maskSceneNames) {
+    const s = MASK_FIXTURE.scenes[n];
+    if (!s || !Array.isArray(s.objects) || s.objects.length !== 1) {
+      throw new Error('scene ' + n + ': expected exactly one object');
+    }
+    if (!s.objects[0] || s.objects[0].id !== 'typed-mask') {
+      throw new Error('scene ' + n + ': missing typed-mask object');
+    }
+  }
+  const maskTransitionNames = (MASK_FIXTURE.transitions || [])
+    .map((t) => t && t.name).sort();
+  if (JSON.stringify(maskTransitionNames) !==
+      JSON.stringify(['absent-to-zero', 'mask-to-absent', 'mask-to-disabled'])) {
+    throw new Error('expected exactly three fixture transitions');
+  }
+} catch (e) {
+  console.error('alpha-mask-typed-fixture failed: ' + ((e && e.message) || e));
+  process.exit(2);
+}
+// ---- Typed AlphaCutoff ROUTING: the real Go fixture objects on BOTH
+// backends. Each case uses the generated fixture object verbatim (same
+// geometry/color/roughness/IOR; no raw-JS object substitution, no material
+// rewrites). All expectations are authored constants from the fixture
+// contract, never computed from runtime values. The existing native
+// depth/blend/uniform/pixel gates above apply unchanged to this group.
+// Note: discard changes PIXELS only — its routing stays the depth-writing
+// opaque draw, exactly like the opaque control.
+[false, true].forEach((webgpu) => {
+  const pfx = webgpu ? 'wg-typedmask-' : 'gl-typedmask-';
+  const push = (suffix, sceneName, extra) => CASES.push(Object.assign({
+    name: pfx + suffix, webgpu, f0: 0.04, f90: 1,
+    obj: MASK_FIXTURE.scenes[sceneName].objects[0],
+  }, extra));
+  // Opaque control: no authored cutoff (sentinel -1), depth-writing,
+  // no blend, factor 1.
+  push('opaque', 'opaque',
+    { expectedOpacity: 1, expectedAlphaCutoff: -1,
+      expectedDepthWrite: true, expectedBlend: false });
+  // Mask .5/.5: opaque, depth-writing PBR draw; pixels match the control.
+  push('mask', 'mask',
+    { expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+  // Zero/zero: alpha 0 is not below cutoff 0; draw survives on the opaque
+  // route, matching the control.
+  push('zero', 'zero',
+    { expectedOpacity: 0, expectedAlphaCutoff: 0,
+      expectedDepthWrite: true, expectedBlend: false, same: pfx + 'opaque' });
+  // Cutoff disabled (null): fractional opacity routes to the blended alpha
+  // pass; sentinel cutoff.
+  push('disabled', 'disabled',
+    { expectedOpacity: 0.5, expectedAlphaCutoff: -1,
+      expectedDepthWrite: false, expectedBlend: true,
+      differs: pfx + 'opaque', minChanged: 1 });
+  // Discard 1/2: every fragment discarded, strict empty image, still the
+  // depth-writing opaque route (routing unchanged from the control).
+  push('discard', 'discard',
+    { expectedOpacity: 1, expectedAlphaCutoff: 2,
+      expectedDepthWrite: true, expectedBlend: false, expectedEmpty: true,
+      differs: pfx + 'opaque', minChanged: 1 });
+});
 CASES.forEach((c) => { byName[c.name] = c; });
 
 function propsFor(c) {

@@ -576,7 +576,10 @@ const budgets = [
   // CSS-aware masked routing plus the live-patch runtime rebuild measured
   // 1592194/431002/346034; all three caps raised with narrow rounding
   // headroom.
-  { file: "bootstrap.js", raw: 1_592_200, gzip: 431_100, brotli: 346_100 },
+  // WebGPU flat-varying fix (+152 bytes) measured 1592346 raw; only raw
+  // exceeded. Raw cap raised with narrow rounding headroom; compressed
+  // measured 431033/346038 stayed green.
+  { file: "bootstrap.js", raw: 1_592_400, gzip: 431_100, brotli: 346_100 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1196,7 +1199,9 @@ const budgets = [
   // compressed caps kept). Raw cap raised with narrow rounding headroom.
   // Alpha-masked shadows plus corrected shadow projection measured
   // 400545/96290/80482; all three caps raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 400_600, gzip: 96_300, brotli: 80_500 },
+  // WebGPU flat-varying fix (+152 bytes) measured 400697/96319/80563; all
+  // three caps raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 400_700, gzip: 96_400, brotli: 80_600 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1828,7 +1833,10 @@ const routeBudgets = [
     // CSS-aware masked routing plus the live-patch runtime rebuild measured
     // 1479933/394847/333302; all three caps raised with narrow rounding
     // headroom.
-    raw: 1_480_000,
+    // WebGPU flat-varying fix (+152 bytes) measured 1480085 raw; only raw
+    // exceeded. Raw cap raised with narrow rounding headroom; compressed
+    // measured 394876/333383 stayed green.
+    raw: 1_480_100,
     gzip: 394_900,
     brotli: 333_400,
   },
@@ -1960,9 +1968,11 @@ const routeBudgets = [
     // CSS-aware masked routing plus the live-patch runtime rebuild measured
     // 1103495/289680/242391; all three caps raised with narrow rounding
     // headroom.
-    raw: 1_103_500,
-    gzip: 289_700,
-    brotli: 242_400,
+    // WebGPU flat-varying fix (+152 bytes) measured 1103647/289709/242472;
+    // all three caps raised with narrow rounding headroom.
+    raw: 1_103_700,
+    gzip: 289_800,
+    brotli: 242_500,
   },
 
 ];

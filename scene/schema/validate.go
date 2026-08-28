@@ -176,6 +176,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		}
 		validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
 		validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
+		validateAlphaCutoff(report, mesh.ID, path+".alphaCutoff", mesh.AlphaCutoff)
 		validateSpecular(report, mesh.ID, path, mesh.SpecularIntensity, mesh.SpecularColor)
 	}
 	for i, particles := range doc.ComputeParticles {
@@ -232,6 +233,7 @@ func validateObject(report *Report, object scene.ObjectIR, path string) {
 	validatePrimitiveParameters(report, object.Kind, object.ID, path, object.Size, object.Width, object.Height, object.Depth, object.Radius, object.RadiusTop, object.RadiusBottom, object.Tube, object.Segments, object.RadialSegments, object.TubularSegments)
 	validateMaterialScalars(report, object.ID, path, object.Roughness, object.Metalness, object.Clearcoat, object.Sheen, object.Transmission, object.Iridescence, object.Anisotropy)
 	validateIOR(report, object.ID, path+".ior", object.IOR)
+	validateAlphaCutoff(report, object.ID, path+".alphaCutoff", object.AlphaCutoff)
 	validateSpecular(report, object.ID, path, object.SpecularIntensity, object.SpecularColor)
 	validateNumericFields(report, object.ID, path, map[string]float64{
 		"lineWidth":      object.LineWidth,
@@ -401,6 +403,7 @@ func validateInstancedMesh(report *Report, mesh scene.InstancedMeshIR, path stri
 	validateCompressedArrays(report, mesh.ID, path+".previewTransforms", mesh.PreviewTransforms)
 	validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
 	validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
+	validateAlphaCutoff(report, mesh.ID, path+".alphaCutoff", mesh.AlphaCutoff)
 	validateSpecular(report, mesh.ID, path, mesh.SpecularIntensity, mesh.SpecularColor)
 	validatePrimitiveParameters(report, mesh.Kind, mesh.ID, path, mesh.Size, mesh.Width, mesh.Height, mesh.Depth, mesh.Radius, mesh.RadiusTop, mesh.RadiusBottom, mesh.Tube, mesh.Segments, mesh.RadialSegments, mesh.TubularSegments)
 	validateLive(report, mesh.ID, path, mesh.Live)
@@ -986,6 +989,30 @@ func validateNumericFields(report *Report, id, path string, fields map[string]fl
 	for name, value := range fields {
 		validateFiniteFloat(report, id, path+"."+name, value)
 	}
+}
+
+// validateAlphaCutoff diagnoses an explicitly authored alpha cutoff. Omitted
+// and explicitly disabled cutoffs are valid and diagnose nothing. A numeric
+// cutoff must be finite and non-negative; zero and values above 1 are legal.
+// The authored value is retained by the scene constructors precisely so this
+// validator can report it instead of a sanitized substitute.
+func validateAlphaCutoff(report *Report, id, path string, cutoff scene.AlphaCutoff) string {
+	if cutoff.IsZero() {
+		return ""
+	}
+	value, ok := cutoff.Value()
+	if !ok {
+		return ""
+	}
+	if !finite(value) {
+		report.add(Error, "scene.material.alpha_cutoff_non_finite", "Material alphaCutoff must be finite", path, id, nil)
+		return "scene.material.alpha_cutoff_non_finite"
+	}
+	if value < 0 {
+		report.add(Error, "scene.material.alpha_cutoff_negative", "Material alphaCutoff must not be negative", path, id, map[string]any{"alphaCutoff": value})
+		return "scene.material.alpha_cutoff_negative"
+	}
+	return ""
 }
 
 func validateNonNegativeNumericFields(report *Report, id, path string, fields map[string]float64) {
