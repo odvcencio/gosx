@@ -81,7 +81,7 @@ const FG_THRESHOLD = 12;   // min channel delta vs measured corner background
 const FG_COVERAGE = 0.01;  // min fraction of foreground pixels
 
 // ---- GLB fixture: one quad facing +Z, positions + normals, metallic 0 ----
-function buildQuadGLB(withIor) {
+function buildQuadGLB(withIor, alpha) {
   const pos = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);
   const nrm = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
   const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
@@ -99,7 +99,7 @@ function buildQuadGLB(withIor) {
   const bin = Buffer.concat(parts);
   const material = {
     pbrMetallicRoughness: {
-      baseColorFactor: [0.69, 0.31, 0.24, 1],
+      baseColorFactor: [0.69, 0.31, 0.24, alpha ? alpha.alpha : 1],
       metallicFactor: 0, // glTF 2.0 spelling (metalnessFactor is invalid and
                          // silently loads as metallic 1 in strict loaders)
       roughnessFactor: 0.35,
@@ -108,6 +108,7 @@ function buildQuadGLB(withIor) {
   if (withIor) {
     material.extensions = { KHR_materials_ior: { ior: 2.42 } };
   }
+  if (alpha && alpha.mode) material.alphaMode = alpha.mode;
   const json = {
     asset: { version: '2.0', generator: 'scene3d-material-ior-browser probe' },
     scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: 'quad' }],
@@ -132,6 +133,24 @@ function buildQuadGLB(withIor) {
   return Buffer.concat([header, jh, jsonBuf, bh, binP]);
 }
 const glb242 = buildQuadGLB(true);
+
+// Alpha variants of the SAME valid quad (identical positions/normals/indices,
+// KHR IOR 2.42 in every variant); only baseColorFactor alpha and alphaMode
+// vary. Served at distinct /models/alpha-*.glb paths. No alpha textures and
+// no MASK claims; OPAQUE forces effective opacity 1 regardless of authored
+// alpha, BLEND preserves it.
+const glbAlphaOmitA0 = buildQuadGLB(true, { alpha: 0 });
+const glbAlphaOPA0 = buildQuadGLB(true, { alpha: 0, mode: 'OPAQUE' });
+const glbAlphaOPA25 = buildQuadGLB(true, { alpha: 0.25, mode: 'OPAQUE' });
+const alphaGLBs = {
+  'alpha-opaque-a1': buildQuadGLB(true, { alpha: 1, mode: 'OPAQUE' }),
+  'alpha-omit-a0': glbAlphaOmitA0,
+  'alpha-opaque-a0': glbAlphaOPA0,
+  'alpha-opaque-a25': glbAlphaOPA25,
+  'alpha-blend-a25': buildQuadGLB(true, { alpha: 0.25, mode: 'BLEND' }),
+  'alpha-blend-a1': buildQuadGLB(true, { alpha: 1, mode: 'BLEND' }),
+  'alpha-override-a25': glbAlphaOmitA0,
+};
 
 // ---- Case table (one object/scene per page; sequential, never batched) ----
 // Explicit unindexed quad mesh (6 triangle vertices). A bare kind:'box' would
@@ -159,6 +178,8 @@ const OBJ = (extra) => Object.assign({ id: 'probe', kind: 'box', materialKind: '
 const OBJNAMED = { id: 'probe', kind: 'box', materialKind: 'standard', wireframe: false,
   material: 'dielectric', roughness: 0.35, metalness: 0, vertices: QUAD_VERTICES };
 const MODEL = (extra) => Object.assign({ id: 'quad', src: '/models/quad242.glb', static: true }, extra);
+const AMODEL = (glb, extra) => Object.assign({ id: 'quad', src: '/models/' + glb + '.glb',
+  static: true }, extra);
 const BATCH = (extra) => Object.assign({ id: 'batch', src: '/models/quad242.glb',
   materialKind: 'standard', roughness: 0.35, metalness: 0,
   instances: [{ id: 'i0', x: 0, y: 0, z: 0 }] }, extra);
@@ -188,6 +209,54 @@ const CASES = [
   WG({ name: 'wg-ior242', obj: OBJ({ ior: 2.42 }), f0: F0(2.42), differs: 'wg-ior133', minChanged: 50 }),
   WG({ name: 'wg-metal133', obj: OBJ({ ior: 1.33, metalness: 1 }), f0: F0(1.33), base: 'wm133' }),
   WG({ name: 'wg-metal242', obj: OBJ({ ior: 2.42, metalness: 1 }), f0: F0(2.42), same: 'wg-metal133' }),
+  // Alpha pairing: the opaque-alpha1 control establishes the reference render;
+  // omitted mode at alpha0, and explicit OPAQUE at alpha0/alpha0.25 must all
+  // be pixel-identical to it (effective opacity forced to 1). Each backend
+  // also renders an explicit GoSX alpha-pass control: the same OPAQUE alpha1
+  // GLB rendered with the renderPass 'alpha' override, which must match the
+  // BLEND alpha1 byte-for-byte (GL blend pass edges are the only reason BLEND
+  // alpha1 need not equal the opaque control, so cross-pass identity at full
+  // opacity is documented but NOT asserted). BLEND at alpha0.25 preserves
+  // 0.25 and visibly differs from the opaque control. The override case
+  // imports an OPAQUE alpha0 GLB but applies the GoSX model overrides
+  // { opacity: 0.25, renderPass: 'alpha' }; an explicit imported renderPass
+  // takes precedence in WebGL, so it runs in the alpha pass at opacity 0.25
+  // and must match BLEND alpha0.25 pixel-for-pixel. Every alpha case keeps
+  // F0(2.42) and asserts the actual observed opacity.
+  { name: 'glb-alpha-pass1', model: AMODEL('alpha-opaque-a1', { renderPass: 'alpha' }),
+    f0: F0(2.42), expectedOpacity: 1, base: 'gap1' },
+  { name: 'glb-alpha-opaque1', model: AMODEL('alpha-opaque-a1'), f0: F0(2.42),
+    expectedOpacity: 1, base: 'ga1' },
+  { name: 'glb-alpha-omit0', model: AMODEL('alpha-omit-a0'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'glb-alpha-opaque1' },
+  { name: 'glb-alpha-opaque0', model: AMODEL('alpha-opaque-a0'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'glb-alpha-opaque1' },
+  { name: 'glb-alpha-opaque25', model: AMODEL('alpha-opaque-a25'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'glb-alpha-opaque1' },
+  { name: 'glb-alpha-blend25', model: AMODEL('alpha-blend-a25'), f0: F0(2.42),
+    expectedOpacity: 0.25, differs: 'glb-alpha-opaque1', minChanged: 50 },
+  { name: 'glb-alpha-blend1', model: AMODEL('alpha-blend-a1'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'glb-alpha-pass1' },
+  { name: 'glb-alpha-override25',
+    model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
+    f0: F0(2.42), expectedOpacity: 0.25, same: 'glb-alpha-blend25' },
+  WG({ name: 'wg-alpha-pass1', model: AMODEL('alpha-opaque-a1', { renderPass: 'alpha' }),
+    f0: F0(2.42), expectedOpacity: 1, base: 'wgap1' }),
+  WG({ name: 'wg-alpha-opaque1', model: AMODEL('alpha-opaque-a1'), f0: F0(2.42),
+    expectedOpacity: 1, base: 'wga1' }),
+  WG({ name: 'wg-alpha-omit0', model: AMODEL('alpha-omit-a0'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'wg-alpha-opaque1' }),
+  WG({ name: 'wg-alpha-opaque0', model: AMODEL('alpha-opaque-a0'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'wg-alpha-opaque1' }),
+  WG({ name: 'wg-alpha-opaque25', model: AMODEL('alpha-opaque-a25'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'wg-alpha-opaque1' }),
+  WG({ name: 'wg-alpha-blend25', model: AMODEL('alpha-blend-a25'), f0: F0(2.42),
+    expectedOpacity: 0.25, differs: 'wg-alpha-opaque1', minChanged: 50 }),
+  WG({ name: 'wg-alpha-blend1', model: AMODEL('alpha-blend-a1'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'wg-alpha-pass1' }),
+  WG({ name: 'wg-alpha-override25',
+    model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
+    f0: F0(2.42), expectedOpacity: 0.25, same: 'wg-alpha-blend25' }),
 ];
 const byName = {};
 CASES.forEach((c) => { byName[c.name] = c; });
@@ -226,6 +295,12 @@ let server = http.createServer((req, res) => {
   if (req.url === '/models/quad242.glb') {
     res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glb242.length });
     res.end(glb242);
+  } else if (req.url && req.url.indexOf('/models/alpha-') === 0) {
+    const aname = req.url.slice('/models/'.length).split('?')[0].replace(/\.glb$/, '');
+    const ab = alphaGLBs[aname];
+    if (!ab) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': ab.length });
+    res.end(ab);
   } else if (req.url === '/bootstrap.js' || req.url === '/client/js/bootstrap.js') {
     const js = fs.readFileSync(BOOTSTRAP);
     res.writeHead(200, { 'content-type': 'text/javascript', 'content-length': js.length });
@@ -354,7 +429,8 @@ async function evalSend(send, expression, extra) {
 // size?) with correct element/byte dataOffset+size semantics, capturing only
 // 176-byte material uploads and reading F0 at exactly float index 40.
 const PRELOAD = `
-  window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, f0s: [], obsErrors: [], gl: null,
+  window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawOpacity: null,
+    f0s: [], obsErrors: [], gl: null,
     programInfo: null, queriedUniforms: [] };
 window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
 (function () {
@@ -395,6 +471,12 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
           window.__gosxIOR.pbrDraws += 1;
           window.__gosxIOR.lastDrawF0 = v;
           if (window.__gosxIOR.f0s.length < 4096) window.__gosxIOR.f0s.push(v);
+          // u_opacity read through the native getUniform at the SAME
+          // F0-qualified PBR draw. Missing/inactive uniform stays null.
+          var om = this.__oplocs;
+          var ov = (om && om.has(cp)) ? this.__origGetUniform.call(this, cp, om.get(cp)) : null;
+          window.__gosxIOR.lastDrawOpacity =
+            (typeof ov === "number" && Number.isFinite(ov)) ? ov : null;
         }
       }
     } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
@@ -429,9 +511,14 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
         var q = window.__gosxIOR.queriedUniforms ||
           (window.__gosxIOR.queriedUniforms = []);
         if (q.length < 64 && q.indexOf(String(n)) < 0) q.push(String(n));
-        if (n === "u_dielectricF0") {
-          var m = this.__f0locs || (this.__f0locs = new Map());
-          if (loc) m.set(p, loc); else m.delete(p);
+        if (n === "u_dielectricF0" || n === "u_opacity") {
+          if (n === "u_dielectricF0") {
+            var m = this.__f0locs || (this.__f0locs = new Map());
+            if (loc) m.set(p, loc); else m.delete(p);
+          } else {
+            var om = this.__oplocs || (this.__oplocs = new Map());
+            if (om) { if (loc) om.set(p, loc); else om.delete(p); }
+          }
         }
       } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
       return loc;
@@ -467,7 +554,9 @@ window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
             for (var i = 0; i < 44; i++) floats[i] = dv.getFloat32(i * 4, true);
             // Production writes Float32Array(44); F0 lives at float index 40
             // (bytes 160:164). Slots 0..39 are pre-existing uniform data.
-            window.__gosxWGPU.dumps.push({ f0: floats[40], floats: floats });
+            // float index 6 is the material opacity, float index 40 is F0;
+            // both come from the same actual 176-byte upload.
+            window.__gosxWGPU.dumps.push({ f0: floats[40], opacity: floats[6], floats: floats });
             window.__gosxWGPU.materialUploads += 1;
           }
         }
@@ -518,7 +607,10 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'if(typeof im.length==="number")return im.length;' +
   'return Object.keys(im).length;})(),' +
   'ior:window.__gosxIOR?{draws:window.__gosxIOR.draws,pbrDraws:window.__gosxIOR.pbrDraws,' +
-  'lastDrawF0:window.__gosxIOR.lastDrawF0,gl:window.__gosxIOR.gl,' +
+  'lastDrawF0:window.__gosxIOR.lastDrawF0,' +
+  'lastDrawOpacity:(typeof window.__gosxIOR.lastDrawOpacity==="number"?' +
+  'window.__gosxIOR.lastDrawOpacity:null),' +
+  'gl:window.__gosxIOR.gl,' +
   'linkStatus:(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.linkStatus!==null?window.__gosxIOR.programInfo.linkStatus:null),' +
   'trackedF0:!!(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.trackedF0),' +
   'activeUniforms:((window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.activeUniforms)||[]).slice(0,100),' +
@@ -718,6 +810,7 @@ setTimeout(() => {
     }
 
     const rec = { name: c.name, skipped: false };
+    if (c.expectedOpacity !== undefined) rec.expectedOpacity = c.expectedOpacity;
     evidence.push(rec);
     let cap = null;
     try {
@@ -799,6 +892,19 @@ setTimeout(() => {
           const hit = (s.wgpu.dumps || []).some((d) =>
             typeof d.f0 === 'number' && Number.isFinite(d.f0) && Math.abs(d.f0 - c.f0) < 1e-4);
           rec.f0InUpload = hit;
+          if (c.expectedOpacity != null) {
+            // Opacity (float index 6) and F0 (float index 40) must be present
+            // with the expected values in the SAME 176-byte upload.
+            const ohit = (s.wgpu.dumps || []).some((d) =>
+              typeof d.f0 === 'number' && Number.isFinite(d.f0) && Math.abs(d.f0 - c.f0) < 1e-4 &&
+              typeof d.opacity === 'number' && Number.isFinite(d.opacity) &&
+              Math.abs(d.opacity - c.expectedOpacity) < 1e-4);
+            rec.opacityInUpload = ohit;
+            if (!ohit) {
+              fail(c.name + ': expected opacity ' + c.expectedOpacity + ' with F0 ' + c.f0 +
+                ' not found together in any 176-byte upload (floats[6]/floats[40])');
+            }
+          }
           if (!hit) {
             fail(c.name + ': expected F0 ' + c.f0 + ' not found at float index 40 of any 176-byte upload');
           }
@@ -817,6 +923,13 @@ setTimeout(() => {
           fail(c.name + ': no production PBR draws with u_dielectricF0 observed (draws=' + s.ior.draws + ')');
         }
         assertClose(s.ior.lastDrawF0, c.f0, c.name + ' u_dielectricF0 at draw');
+        if (c.expectedOpacity != null) {
+          if (typeof s.ior.lastDrawOpacity !== 'number' || !Number.isFinite(s.ior.lastDrawOpacity)) {
+            fail(c.name + ': u_opacity not observed at the F0-qualified PBR draw');
+          }
+          rec.uniformOpacity = s.ior.lastDrawOpacity;
+          assertClose(s.ior.lastDrawOpacity, c.expectedOpacity, c.name + ' u_opacity at draw');
+        }
       }
 
       cap = await capture(send);
@@ -962,6 +1075,8 @@ setTimeout(() => {
       webgpuBundleReplays: r.bundleReplays, webgpuBundleDraws: r.bundleDraws,
       glBackend: r.glBackend, draws: r.draws, pbrDraws: r.pbrDraws,
       uniformF0: r.uniformF0, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
+      uniformOpacity: r.uniformOpacity, opacityInUpload: r.opacityInUpload,
+      expectedOpacity: r.expectedOpacity,
       objects: r.objects, fgPixels: r.litPixels, fgFrac: r.fgFrac, cornerBG: r.meanRGB,
       cssAfter: r.cssAfter || undefined, sameAs: r.sameAs || undefined,
       differsFrom: r.differsFrom || undefined, disposeRemovedState: r.disposeRemovedState })),

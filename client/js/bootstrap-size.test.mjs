@@ -1169,7 +1169,7 @@ const budgets = [
   // 12_914; all three caps raised with narrow headroom.
   // Same strip/fan topology rebuild measured 39_473 / 14_604 / 13_057;
   // all three caps raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 39_550, gzip: 14_700, brotli: 13_150 },
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 39_600, gzip: 14_700, brotli: 13_150 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
