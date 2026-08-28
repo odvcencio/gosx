@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Changed: the declarative heartbeat pings while hidden, at a slower marked rate
+
+- `data-gosx-heartbeat` no longer pauses entirely while the document is
+  hidden. A hidden document used to produce the same silence
+  as a closed browser. A server that acted on that silence — for example
+  by shortening a timer or marking a player absent — could not tell a
+  backgrounded tab from a departed visitor.
+- The runtime now keeps pinging while hidden, on a separate, slower
+  interval: `data-gosx-heartbeat-hidden-interval`. This attribute uses
+  the same whole-second or whole-minute grammar as
+  `data-gosx-heartbeat-interval`. It is optional and defaults to 60s.
+- Every ping the hidden interval starts carries one request header:
+  `X-GoSX-Heartbeat-Visibility: hidden`. A ping the visible interval
+  starts carries no such header. A server that ignores the header keeps
+  seeing the same pings, at the same pace, while a tab stays visible.
+- A tab that returns to visible switches back to the normal interval at
+  once. It does not wait out the remaining time on the hidden interval.
+- Each ping's marker reflects the document's real visibility state at
+  the moment the ping fires. It does not depend on which of the two
+  timers the runtime believes started it. A background tab's timers are
+  already throttled by the browser, often to about once a minute, so a
+  tick can land after visibility already changed.
+- This removes the earlier "one immediate catch-up ping on visibility
+  return" behavior. That behavior compensated for a heartbeat that
+  stopped while hidden. The heartbeat no longer stops, so no gap remains
+  to catch up on.
+
 ## v0.53.8 (2026-08-24)
 
 ### Added: strict bundle boundary and safe staged artifacts

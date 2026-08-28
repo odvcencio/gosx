@@ -231,14 +231,29 @@ const (
 	// declares a same-origin endpoint the runtime pings with a plain GET,
 	// credentials included, on the NavigationHeartbeatIntervalAttr period
 	// (gosx#216) — the same whole-second/whole-minute duration grammar
-	// NavigationRevalidateIntervalAttr accepts. The ping runs only while
-	// the document is visible: it pauses entirely while hidden, and fires
-	// one immediate catch-up ping on visibility return if at least one
-	// full interval elapsed while hidden. At most one ping is ever in
-	// flight; an interval tick or catch-up that lands while the previous
-	// ping has not settled is skipped outright. Both a network failure and
-	// a non-2xx response are silent — presence detection must never
+	// NavigationRevalidateIntervalAttr accepts. At most one ping is ever
+	// in flight; an interval tick that lands while the previous ping has
+	// not settled is skipped outright. Both a network failure and a
+	// non-2xx response are silent — presence detection must never
 	// surface a console error for a dropped connection.
+	//
+	// The ping never stops while the tab stays open. A heartbeat that
+	// stops entirely while hidden looks the same, from the server, as a
+	// closed browser. That ambiguity punishes an engaged visitor whose
+	// tab merely lost focus.
+	//
+	// While the document is visible, the runtime pings on
+	// NavigationHeartbeatIntervalAttr. The moment the document is
+	// hidden, it switches to the slower
+	// NavigationHeartbeatHiddenIntervalAttr period instead of stopping.
+	// Every ping the hidden period starts carries
+	// NavigationHeartbeatVisibilityHeader with the value "hidden". A
+	// ping the visible period starts carries no such header. A server
+	// that never reads the header keeps seeing the pings it already
+	// sees, at the pace it already sees, while a tab stays visible. A
+	// hidden ping is new traffic; no earlier server relied on its
+	// absence. The moment the document becomes visible again, the
+	// runtime switches back to NavigationHeartbeatIntervalAttr at once.
 	//
 	// A body-level heartbeat is set through Context.BodyAttrs (gosx#236),
 	// not by wrapping the page body in a gosx.El div solely to carry the
@@ -267,6 +282,22 @@ const (
 	// attributes automatically through DocumentContext.BodyAttrs.
 	NavigationHeartbeatAttr         = "data-gosx-heartbeat"
 	NavigationHeartbeatIntervalAttr = "data-gosx-heartbeat-interval"
+
+	// NavigationHeartbeatHiddenIntervalAttr sets the ping period the
+	// runtime uses instead of NavigationHeartbeatIntervalAttr while the
+	// document is hidden. It uses the same whole-second or whole-minute
+	// grammar. It is optional. Absent, it defaults to 60s on the client.
+	// Present with a value the shared duration grammar cannot parse, it
+	// disables the whole heartbeat with one console.warn — the same
+	// fail-closed behavior NavigationHeartbeatIntervalAttr already has.
+	NavigationHeartbeatHiddenIntervalAttr = "data-gosx-heartbeat-hidden-interval"
+
+	// NavigationHeartbeatVisibilityHeader is the request header a hidden
+	// heartbeat ping carries, with the value "hidden". A ping the visible
+	// period starts carries no such header. Read this header in your own
+	// presence handler to tell a backgrounded tab from a closed browser.
+	// Without it, both cases produce the same signal: silence.
+	NavigationHeartbeatVisibilityHeader = "X-GoSX-Heartbeat-Visibility"
 )
 
 // NormalizeNavigationLinkCurrentPolicy normalizes the declarative "current"

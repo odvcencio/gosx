@@ -183,6 +183,43 @@ func Page() Node {
 	}
 }
 
+func TestValidateRejectsInvalidHeartbeatHiddenInterval(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <body data-gosx-heartbeat="/api/version" data-gosx-heartbeat-hidden-interval="1 minute"></body>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	diags := ir.Validate(prog)
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %+v", diags)
+	}
+	want := `invalid data-gosx-heartbeat-hidden-interval value "1 minute": must be a whole number of seconds or minutes`
+	if diags[0].Message != want {
+		t.Fatalf("unexpected diagnostic message: got %q, want %q", diags[0].Message, want)
+	}
+}
+
+func TestValidateAllowsValidHeartbeatHiddenInterval(t *testing.T) {
+	source := []byte(`package main
+
+func Page() Node {
+	return <body data-gosx-heartbeat="/api/version" data-gosx-heartbeat-hidden-interval="60s"></body>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	if diags := ir.Validate(prog); len(diags) != 0 {
+		t.Fatalf("expected no diagnostics for a valid heartbeat hidden interval, got %+v", diags)
+	}
+}
+
 func TestValidateRejectsInvalidLinkCurrentPolicy(t *testing.T) {
 	source := []byte(`package main
 
