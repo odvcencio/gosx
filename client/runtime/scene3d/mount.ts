@@ -19,12 +19,14 @@
  * @property {() => void} [dispose]
  */
   window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
-    if (!ctx.mount || typeof document.createElement !== "function") {
+    const mount = ctx.mount;
+    if (!mount || typeof document.createElement !== "function") {
       console.warn("[gosx] Scene3D requires a mount element");
       return {};
     }
 
     const props = ctx.props || {};
+    const sceneAttr = name => "data-gosx-scene3d-" + name;
     const capability = sceneCapabilityProfile(props);
     const viewportBase = sceneViewportBase(props);
     const adaptiveQuality = createSceneAdaptiveQualityState(props, viewportBase, capability);
@@ -37,7 +39,7 @@
     // dependency before either renderer freezes its resource layouts.
     await settleSceneIBLFeature(props);
     const sceneState = createSceneState(props, capability);
-    sceneState._modelStatusMount = ctx.mount;
+    sceneState._modelStatusMount = mount;
     // Model fetches start immediately, but glTF texture URI selection waits for
     // this mount's actual renderer. The scope key is available now for honest
     // cache separation even while its context Promise is still pending.
@@ -49,8 +51,8 @@
       typeof window.__gosx_scene3d_water_shader_sources_by_id === "object"
       ? window.__gosx_scene3d_water_shader_sources_by_id
       : sceneMountedWaterShaderSources();
-    if (ctx.mount && typeof window !== "undefined" && window.__gosx_scene3d_water_shader_sources_by_id) {
-      ctx.mount.__gosxScene3DWaterShaderSources = window.__gosx_scene3d_water_shader_sources_by_id;
+    if (mount && typeof window !== "undefined" && window.__gosx_scene3d_water_shader_sources_by_id) {
+      mount.__gosxScene3DWaterShaderSources = window.__gosx_scene3d_water_shader_sources_by_id;
     }
     // Attach the terminal rejection handler at creation time. Most hydration
     // failures are returned as structured transactional outcomes, but this
@@ -112,7 +114,6 @@
     let sceneAnimationPaused = false;
     let sceneAnimationToggle = null;
     let sceneAnimationToggleBound = false;
-    const sceneAnimationStateAttr = "data-gosx-scene3d-animation-state";
 
     function sceneAnimationState() {
       if (motion.reducedMotion) {
@@ -126,7 +127,7 @@
       if (sceneAnimationPaused) {
         return { wants: false, reason: "paused" };
       }
-      if (ctx.mount && ctx.mount.__gosxScene3DCSSDynamic && Date.now() < sceneCSSAnimationUntil) {
+      if (mount && mount.__gosxScene3DCSSDynamic && Date.now() < sceneCSSAnimationUntil) {
         return { wants: true, reason: "css-transition" };
       }
       if (sceneHasActiveTransitions(sceneState)) {
@@ -213,7 +214,7 @@
       // props is the source of truth for uniform declarations. The state
       // pools are still scanned as a fallback for callers that assembled
       // entries programmatically.
-      const rawScene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+      const rawScene = props && props.scene;
       const pools = [
         rawScene && rawScene.points,
         rawScene && rawScene.materials,
@@ -224,14 +225,8 @@
         state ? sceneStateObjects(state) : null,
       ];
       for (let p = 0; p < pools.length; p++) {
-        const pool = pools[p];
-        if (!Array.isArray(pool)) {
-          continue;
-        }
-        for (let i = 0; i < pool.length; i++) {
-          if (sceneEntryDeclaresTimeUniform(pool[i])) {
-            return true;
-          }
+        if (Array.isArray(pools[p]) && pools[p].some(sceneEntryDeclaresTimeUniform)) {
+          return true;
         }
       }
       return false;
@@ -241,26 +236,26 @@
     // planner can interpolate when resolved var values change. The planner
     // runs on the render bundle which no longer has the original materials
     // array, so we stash the timing on the mount element.
-    ctx.mount.__gosxScene3DCSSVarTransition = sceneExtractCSSVarTransitionTiming(props);
+    mount.__gosxScene3DCSSVarTransition = sceneExtractCSSVarTransitionTiming(props);
 
-    clearChildren(ctx.mount);
-    const readyAttr = "data-gosx-scene3d-ready";
-    const mountedAttr = "data-gosx-scene3d-mounted";
+    clearChildren(mount);
+    const readyAttr = sceneAttr("ready");
+    const mountedAttr = sceneAttr("mounted");
     // Opt-in first-content reveal: when the mount declares
     // data-gosx-scene3d-reveal-class, the runtime adds that class to the
     // document element (and stamps revealedAttr on the mount) after the
     // first frame that had drawable content — so pure CSS can fade out a
     // static boot placeholder without any app-authored JS. The class is
     // removed again on dispose so soft navigation starts clean.
-    const revealedAttr = "data-gosx-scene3d-revealed";
-    const revealClass = String(ctx.mount.getAttribute("data-gosx-scene3d-reveal-class") || "").trim();
-    ctx.mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
-    setAttrValue(ctx.mount, readyAttr, "false");
-    setAttrValue(ctx.mount, revealedAttr, "false");
-    setAttrValue(ctx.mount, "data-gosx-scene3d-controls", normalizeSceneControlsMode(props.controls));
-    setAttrValue(ctx.mount, "data-gosx-scene3d-pick-signals", scenePickSignalNamespace(props));
-    setAttrValue(ctx.mount, "data-gosx-scene3d-event-signals", sceneEventSignalNamespace(props));
-    applySceneCapabilityState(ctx.mount, props, capability);
+    const revealedAttr = sceneAttr("revealed");
+    const revealClass = String(mount.getAttribute(sceneAttr("reveal-class")) || "").trim();
+    mount.setAttribute("aria-label", props.ariaLabel || props.label || "Interactive GoSX 3D scene");
+    setAttrValue(mount, "data-gosx-scene3d-ready", "false");
+    setAttrValue(mount, "data-gosx-scene3d-revealed", "false");
+    setAttrValue(mount, "data-gosx-scene3d-controls", normalizeSceneControlsMode(props.controls));
+    setAttrValue(mount, "data-gosx-scene3d-pick-signals", scenePickSignalNamespace(props));
+    setAttrValue(mount, "data-gosx-scene3d-event-signals", sceneEventSignalNamespace(props));
+    applySceneCapabilityState(mount, props, capability);
     // Generic pause/resume contract: a control element carrying
     // data-gosx-scene3d-animation-toggle inside the mount's
     // data-gosx-scene3d-control-scope ancestor drives this scene's animation
@@ -274,16 +269,12 @@
     // -reason="paused" and -wants-animation="false" — so a paused scene
     // costs no requestAnimationFrame work instead of spinning at a frozen
     // clock; resume schedules a render and walks the loop back up.
-    function sceneAnimationMode() {
-      if (motion.reducedMotion === true) return "reduced-motion";
-      return sceneAnimationPaused ? "paused" : "playing";
-    }
     function publishSceneAnimationState() {
-      const mode = sceneAnimationMode();
-      setAttrValue(ctx.mount, sceneAnimationStateAttr, mode);
+      const mode = motion.reducedMotion ? "reduced-motion" : (sceneAnimationPaused ? "paused" : "playing");
+      setAttrValue(mount, "data-gosx-scene3d-animation-state", mode);
       if (!sceneAnimationToggle) return;
-      setAttrValue(sceneAnimationToggle, sceneAnimationStateAttr, mode);
-      if (motion.reducedMotion === true) {
+      setAttrValue(sceneAnimationToggle, sceneAttr("animation-state"), mode);
+      if (motion.reducedMotion) {
         sceneAnimationToggle.setAttribute("disabled", "disabled");
       } else {
         sceneAnimationToggle.removeAttribute("disabled");
@@ -291,7 +282,7 @@
       sceneAnimationToggle.setAttribute("aria-pressed", sceneAnimationPaused ? "true" : "false");
     }
     function onSceneAnimationToggleClick() {
-      if (motion.reducedMotion === true) return;
+      if (motion.reducedMotion) return;
       sceneAnimationPaused = !sceneAnimationPaused;
       // Both directions drop the stale per-frame timestamp. After PAUSING,
       // the settle render must not credit the tail of the last played
@@ -304,14 +295,14 @@
       scheduleRender("animation-toggle");
     }
     function bindSceneAnimationToggle() {
-      if (sceneAnimationToggleBound || typeof document === "undefined" || !ctx.mount.closest) return;
-      const scope = ctx.mount.closest("[data-gosx-scene3d-control-scope]");
+      if (sceneAnimationToggleBound || typeof document === "undefined" || !mount.closest) return;
+      const scope = mount.closest("[" + sceneAttr("control-scope") + "]");
       if (!scope || typeof scope.querySelectorAll !== "function") return;
-      const toggles = scope.querySelectorAll("[data-gosx-scene3d-animation-toggle]");
+      const toggles = scope.querySelectorAll("[" + sceneAttr("animation-toggle") + "]");
       for (let i = 0; i < toggles.length; i += 1) {
         const candidate = toggles[i];
-        if (candidate.__gosxScene3DAnimationOwner) continue;
-        candidate.__gosxScene3DAnimationOwner = ctx.mount;
+        if (candidate.__gosxScene3DOwner) continue;
+        candidate.__gosxScene3DOwner = mount;
         sceneAnimationToggle = candidate;
         break;
       }
@@ -322,12 +313,12 @@
       publishSceneAnimationState();
     }
     bindSceneAnimationToggle();
-    if (!ctx.mount.style.position) {
-      ctx.mount.style.position = "relative";
+    if (!mount.style.position) {
+      mount.style.position = "relative";
     }
     function createSceneMountCanvas() {
       const nextCanvas = document.createElement("canvas");
-      nextCanvas.setAttribute("data-gosx-scene3d-canvas", "true");
+      nextCanvas.setAttribute(sceneAttr("canvas"), "true");
       nextCanvas.setAttribute("role", "img");
       nextCanvas.setAttribute("aria-label", props.label || "Interactive GoSX 3D scene");
       nextCanvas.style.maxWidth = "100%";
@@ -340,18 +331,18 @@
     }
 
     let canvas = createSceneMountCanvas();
-    ctx.mount.appendChild(canvas);
-    scenePublishWaterShaderSourcesToMount(ctx.mount, canvas, mountedWaterShaderSources);
-    setAttrValue(ctx.mount, "data-gosx-scene3d-water-frame-seq",
+    mount.appendChild(canvas);
+    scenePublishWaterShaderSourcesToMount(mount, canvas, mountedWaterShaderSources);
+    setAttrValue(mount, "data-gosx-scene3d-water-frame-seq",
       Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length ? "0" : "");
-    setAttrValue(ctx.mount, "data-gosx-scene3d-water-simulation-seq",
+    setAttrValue(mount, "data-gosx-scene3d-water-simulation-seq",
       Array.isArray(sceneState.waterSystems) && sceneState.waterSystems.length ? "0" : "");
 
     const labelLayer = document.createElement("div");
-    labelLayer.setAttribute("data-gosx-scene3d-label-layer", "true");
+    labelLayer.setAttribute(sceneAttr("label-layer"), "true");
     labelLayer.setAttribute("aria-hidden", "true");
-    ctx.mount.appendChild(labelLayer);
-    const statsOverlay = createSceneStatsOverlay(ctx.mount, sceneBool(props.stats, false));
+    mount.appendChild(labelLayer);
+    const statsOverlay = createSceneStatsOverlay(mount, sceneBool(props.stats, false));
     let inspectorOverlay = null;
 
     const sentinelLayer = document.createElement("div");
@@ -365,17 +356,17 @@
     sentinelLayer.style.pointerEvents = "none";
 
     const sceneNodeSentinels = new Map();
-    ctx.mount.__gosxScene3DSentinels = sceneNodeSentinels;
+    mount.__gosxScene3DSentinels = sceneNodeSentinels;
     // Live sceneState handle for inspection (debug/test): lets callers read the
     // mutable object/material state — e.g. customUniforms written by the C3
     // material-motion seam — without going through the depth-clamped debug
     // snapshot.
-    ctx.mount.__gosxScene3DState = sceneState;
+    mount.__gosxScene3DState = sceneState;
     publishSceneWaterStateSnapshot(ctx.mount, sceneState);
-    ctx.mount.__gosxScene3DCSSDynamic = false;
-    ctx.mount.__gosxScene3DCSSRevision = 1;
-    ctx.mount.__gosxScene3DCSSAnimationUntil = 0;
-    applyScenePostFXState(ctx.mount, sceneState);
+    mount.__gosxScene3DCSSDynamic = false;
+    mount.__gosxScene3DCSSRevision = 1;
+    mount.__gosxScene3DCSSAnimationUntil = 0;
+    applyScenePostFXState(mount, sceneState);
 
     await settlePreferredWebGPUBackend(props, capability);
     // WebGL now lives in its own chunk. Settle it too, so a WebGL page has the
@@ -389,8 +380,8 @@
     // instanced mesh resolves immediately and fetches nothing.
     await settleSceneComputeFeature(sceneState);
 
-    let viewport = applySceneViewport(ctx.mount, canvas, labelLayer, sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
-    scenePrimeAdaptiveQuality(adaptiveQuality, viewport, ctx.mount, sceneState);
+    let viewport = applySceneViewport(mount, canvas, labelLayer, sceneViewportFromMount(mount, props, viewportBase, canvas, capability, adaptiveQuality), viewportBase);
+    scenePrimeAdaptiveQuality(adaptiveQuality, viewport, mount, sceneState);
 
     const initialRenderer = createSceneRenderer(canvas, props, capability);
     if (!initialRenderer || !initialRenderer.renderer) {
@@ -402,20 +393,20 @@
         sceneState._modelTextureVariantScope,
         sceneModelTextureVariantContextForRenderer(null)
       );
-      publishSceneModelTextureVariantContext(ctx.mount, sceneState._modelTextureVariantScope);
+      publishSceneModelTextureVariantContext(mount, sceneState._modelTextureVariantScope);
       console.warn("[gosx] Scene3D could not acquire a renderer");
       const unsupportedReason = initialRenderer && initialRenderer.unsupportedReason
         ? initialRenderer.unsupportedReason
         : (sceneRequiresWebGL(props) ? "webgl-required" : "renderer-unavailable");
-      applySceneRendererState(ctx.mount, { kind: "unsupported" }, unsupportedReason);
-      publishSceneWaterRendererState(ctx.mount, sceneState, null, unsupportedReason);
-      publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
-      setAttrValue(ctx.mount, readyAttr, "false");
-      if (canvas.parentNode === ctx.mount) {
-        ctx.mount.removeChild(canvas);
+      applySceneRendererState(mount, { kind: "unsupported" }, unsupportedReason);
+      publishSceneWaterRendererState(mount, sceneState, null, unsupportedReason);
+      publishSceneWaterLifecycleState(mount, sceneState, lifecycle, false);
+      setAttrValue(mount, readyAttr, "false");
+      if (canvas.parentNode === mount) {
+        mount.removeChild(canvas);
       }
-      if (labelLayer.parentNode === ctx.mount) {
-        ctx.mount.removeChild(labelLayer);
+      if (labelLayer.parentNode === mount) {
+        mount.removeChild(labelLayer);
       }
       if (statsOverlay) {
         statsOverlay.dispose();
@@ -423,20 +414,20 @@
       if (sentinelLayer.parentNode) {
         sentinelLayer.parentNode.removeChild(sentinelLayer);
       }
-      delete ctx.mount.__gosxScene3DSentinels;
-      delete ctx.mount.__gosxScene3DState;
-      delete ctx.mount.__gosxScene3DTextureVariantContext;
-      delete ctx.mount.__gosxScene3DCSSDynamic;
-      delete ctx.mount.__gosxScene3DCSSRevision;
-      delete ctx.mount.__gosxScene3DCSSAnimationUntil;
-      showSceneRequiredRendererMessage(ctx.mount, props, unsupportedReason);
+      delete mount.__gosxScene3DSentinels;
+      delete mount.__gosxScene3DState;
+      delete mount.__gosxScene3DTextureVariantContext;
+      delete mount.__gosxScene3DCSSDynamic;
+      delete mount.__gosxScene3DCSSRevision;
+      delete mount.__gosxScene3DCSSAnimationUntil;
+      showSceneRequiredRendererMessage(mount, props, unsupportedReason);
       return {
         dispose() {
-          const unsupported = ctx.mount.querySelector
-            ? ctx.mount.querySelector("[data-gosx-scene3d-unsupported]")
+          const unsupported = mount.querySelector
+            ? mount.querySelector("[" + sceneAttr("unsupported") + "]")
             : null;
-          if (unsupported && unsupported.parentNode === ctx.mount) {
-            ctx.mount.removeChild(unsupported);
+          if (unsupported && unsupported.parentNode === mount) {
+            mount.removeChild(unsupported);
           }
         },
       };
@@ -449,10 +440,10 @@
       sceneState._modelTextureVariantScope,
       sceneModelTextureVariantContextForRenderer(renderer)
     );
-    publishSceneModelTextureVariantContext(ctx.mount, sceneState._modelTextureVariantScope);
-    applySceneRendererState(ctx.mount, renderer, initialRenderer.fallbackReason || "", initialRenderer.degraded || []);
-    publishSceneWaterRendererState(ctx.mount, sceneState, renderer, "");
-    publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+    publishSceneModelTextureVariantContext(mount, sceneState._modelTextureVariantScope);
+    applySceneRendererState(mount, renderer, initialRenderer.fallbackReason || "", initialRenderer.degraded || []);
+    publishSceneWaterRendererState(mount, sceneState, renderer, "");
+    publishSceneWaterLifecycleState(mount, sceneState, lifecycle, false);
     let latestBundle = null;
     let lastSceneRenderNowMS = null;
     let rendererLifecycleActive = null;
@@ -705,15 +696,15 @@
     function applySceneRenderLoopState(reason) {
       const state = sceneRenderLoopSnapshot(reason);
       lastRenderLoopReason = state.reason || "";
-      setAttrValue(ctx.mount, "data-gosx-scene3d-render-loop", state.active ? "active" : "stopped");
-      setAttrValue(ctx.mount, "data-gosx-scene3d-render-loop-reason", state.reason || "");
-      setAttrValue(ctx.mount, "data-gosx-scene3d-render-loop-wants-animation", state.wantsAnimation ? "true" : "false");
+      setAttrValue(mount, "data-gosx-scene3d-render-loop", state.active ? "active" : "stopped");
+      setAttrValue(mount, "data-gosx-scene3d-render-loop-reason", state.reason || "");
+      setAttrValue(mount, "data-gosx-scene3d-render-loop-wants-animation", state.wantsAnimation ? "true" : "false");
       return state;
     }
 
     function readSceneWebGPUProgress() {
-      const seq = Number(sceneDebugAttr(ctx.mount, "data-gosx-scene3d-webgpu-frame-seq"));
-      const at = Number(sceneDebugAttr(ctx.mount, "data-gosx-scene3d-webgpu-frame-at"));
+      const seq = Number(sceneDebugAttr(mount, sceneAttr("webgpu-frame-seq")));
+      const at = Number(sceneDebugAttr(mount, sceneAttr("webgpu-frame-at")));
       return {
         seq: Number.isFinite(seq) ? seq : 0,
         at: Number.isFinite(at) ? at : 0,
@@ -721,15 +712,15 @@
     }
 
     function publishSceneRenderWatchdogState(reason, stalledFor) {
-      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog", reason ? "recovering" : "ok");
-      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-reason", reason || "");
-      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-stalled-ms", stalledFor > 0 ? Math.round(stalledFor) : "");
-      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-recoveries", renderWatchdogRecoveries || "");
-      setAttrValue(ctx.mount, "data-gosx-scene3d-render-watchdog-fallbacks", renderWatchdogFallbacks || "");
+      setAttrValue(mount, "data-gosx-scene3d-render-watchdog", reason ? "recovering" : "ok");
+      setAttrValue(mount, "data-gosx-scene3d-render-watchdog-reason", reason || "");
+      setAttrValue(mount, "data-gosx-scene3d-render-watchdog-stalled-ms", stalledFor > 0 ? Math.round(stalledFor) : "");
+      setAttrValue(mount, "data-gosx-scene3d-render-watchdog-recoveries", renderWatchdogRecoveries || "");
+      setAttrValue(mount, "data-gosx-scene3d-render-watchdog-fallbacks", renderWatchdogFallbacks || "");
       // Published only alongside an active reason (mirrors -reason above) so
       // a screenshot harness can read WHY a webgpu-device-lost recovery
       // happened without needing telemetry — see renderWatchdogDeviceLostInfo.
-      setAttrValue(ctx.mount, "data-gosx-scene3d-webgpu-device-lost-reason",
+      setAttrValue(mount, "data-gosx-scene3d-webgpu-device-lost-reason",
         reason && renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.reason || "" : "");
     }
 
@@ -840,7 +831,7 @@
       // its own render-empty check), so by the time a LATER probe-ready
       // event fires, that variable already reads "" even though this is
       // still, right now, a WebGPU-failure fallback.
-      if (!sceneFallbackRequiresReplacementCanvas(sceneDebugAttr(ctx.mount, "data-gosx-scene3d-renderer-fallback"))) {
+      if (!sceneFallbackRequiresReplacementCanvas(sceneDebugAttr(mount, sceneAttr("renderer-fallback")))) {
         return false;
       }
       const trialCanvas = prepareSceneReplacementCanvas();
@@ -936,7 +927,7 @@
       if (typeof renderer.enablePostProcessing !== "function" || !renderer.enablePostProcessing()) {
         return false;
       }
-      setAttrValue(ctx.mount, "data-gosx-scene3d-webgpu-postfx-demoted", "");
+      setAttrValue(mount, "data-gosx-scene3d-webgpu-postfx-demoted", "");
       gosxSceneEmit("info", "webgpu-postfx-restored", {
         cleanStreak: cleanStreak,
         restoreThreshold: restoreThreshold,
@@ -989,7 +980,7 @@
       }
       if (typeof renderer.disablePostProcessing === "function" && renderer.disablePostProcessing()) {
         postFXDemotionCount += 1;
-        setAttrValue(ctx.mount, "data-gosx-scene3d-webgpu-postfx-demoted", "true");
+        setAttrValue(mount, "data-gosx-scene3d-webgpu-postfx-demoted", "true");
         gosxSceneEmit("warn", "webgpu-postfx-demoted", {
           frameErrorStreak: streak,
           lastError: diagnostics.lastError || "",
@@ -1008,7 +999,7 @@
     }
 
     function checkSceneRenderWatchdog() {
-      if (disposed || !ctx.mount || !renderer) {
+      if (disposed || !mount || !renderer) {
         return;
       }
       if (renderer.kind !== "webgpu") {
@@ -1375,9 +1366,9 @@
       const previous = renderer;
       renderer = nextRenderer;
       const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, renderer);
-      publishSceneModelTextureVariantContext(ctx.mount, variantScopeChange.scope);
-      applySceneRendererState(ctx.mount, renderer, fallbackReason);
-      publishSceneWaterRendererState(ctx.mount, sceneState, renderer, "");
+      publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
+      applySceneRendererState(mount, renderer, fallbackReason);
+      publishSceneWaterRendererState(mount, sceneState, renderer, "");
       notifySceneRendererLifecycle(fallbackReason || "renderer-swap", true, false);
       renderWatchdogLastSeq = -1;
       renderWatchdogLastAt = 0;
@@ -1452,7 +1443,7 @@
 	    }
 
 	    function commitSceneCanvasReplacement(nextCanvas, reason) {
-	      if (!nextCanvas || nextCanvas === canvas || !ctx.mount) {
+	      if (!nextCanvas || nextCanvas === canvas || !mount) {
 	        return false;
 	      }
 	      const previousCanvas = canvas;
@@ -1460,13 +1451,13 @@
 	      if (sentinelLayer && sentinelLayer.parentNode === previousCanvas) {
 	        nextCanvas.appendChild(sentinelLayer);
 	      }
-	      if (previousCanvas && previousCanvas.parentNode === ctx.mount) {
-	        ctx.mount.insertBefore(nextCanvas, previousCanvas);
-	        ctx.mount.removeChild(previousCanvas);
-	      } else if (labelLayer && labelLayer.parentNode === ctx.mount) {
-	        ctx.mount.insertBefore(nextCanvas, labelLayer);
+	      if (previousCanvas && previousCanvas.parentNode === mount) {
+	        mount.insertBefore(nextCanvas, previousCanvas);
+	        mount.removeChild(previousCanvas);
+	      } else if (labelLayer && labelLayer.parentNode === mount) {
+	        mount.insertBefore(nextCanvas, labelLayer);
 	      } else {
-	        ctx.mount.appendChild(nextCanvas);
+	        mount.appendChild(nextCanvas);
 	      }
 	      canvas = nextCanvas;
 	      attachSceneCanvasContextListeners(canvas);
@@ -1624,8 +1615,8 @@
                 // simulation. Expose the backend failure instead of swapping
                 // to a renderer that would produce a plausible-but-blank demo.
                 const waterReason = "water-webgl2-unavailable";
-                applySceneRendererState(ctx.mount, renderer, waterReason);
-                publishSceneWaterRendererState(ctx.mount, sceneState, null, waterReason);
+                applySceneRendererState(mount, renderer, waterReason);
+                publishSceneWaterRendererState(mount, sceneState, null, waterReason);
                 gosxSceneEmit("warn", "water-renderer-fallback-unavailable", {
                   reason: fallbackReason,
                 });
@@ -1636,12 +1627,12 @@
                   reason: fallbackReason,
                   capable: backendCaps && Array.isArray(backendCaps.capable) ? backendCaps.capable.slice() : [],
                 });
-                applySceneRendererState(ctx.mount, renderer, fallbackReason || "no-capable-backend");
+                applySceneRendererState(mount, renderer, fallbackReason || "no-capable-backend");
                 return false;
               }
               if (sceneRequiresWebGL(props)) {
                 gosxSceneEmit("warn", "renderer-fallback-disabled", { reason: reason || "" });
-                applySceneRendererState(ctx.mount, renderer, reason || "webgl-required");
+                applySceneRendererState(mount, renderer, reason || "webgl-required");
                 return false;
               }
               if (!allowCanvasFallback) {
@@ -1649,7 +1640,7 @@
                   reason: fallbackReason,
                   capable: backendCaps && Array.isArray(backendCaps.capable) ? backendCaps.capable.slice() : [],
                 });
-                applySceneRendererState(ctx.mount, renderer, fallbackReason || "no-capable-backend");
+                applySceneRendererState(mount, renderer, fallbackReason || "no-capable-backend");
                 return false;
               }
               const canvas2dFallback = getFallbackCanvas2D(fallbackReason);
@@ -1708,7 +1699,7 @@
       recordScenePerfCounter("render:" + (reason || "restore"));
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(null));
-      recordSceneWaterFrame(ctx.mount, latestBundle);
+      recordSceneWaterFrame(mount, latestBundle);
       emitRendererWarmup(reason, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
@@ -1798,12 +1789,12 @@
         /* dispose errors on a lost context are expected */
       }
       renderer = sceneRendererLostStub;
-      applySceneRendererState(ctx.mount, renderer, "webgl-context-lost");
+      applySceneRendererState(mount, renderer, "webgl-context-lost");
       const swapped = fallbackSceneRenderer("webgl-context-lost");
       scheduleRender("webgl-context-lost");
       if (!swapped) {
         const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, sceneRendererLostStub);
-        publishSceneModelTextureVariantContext(ctx.mount, variantScopeChange.scope);
+        publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
         gosxSceneEmit("warn", "webgl-context-lost-no-fallback", {});
       }
     }
@@ -1859,9 +1850,9 @@
         return;
       }
       const key = String(name || "unknown");
-      const counters = ctx.mount.__gosxScene3DScheduleCounts || Object.create(null);
+      const counters = mount.__gosxScene3DScheduleCounts || Object.create(null);
       counters[key] = (counters[key] || 0) + 1;
-      ctx.mount.__gosxScene3DScheduleCounts = counters;
+      mount.__gosxScene3DScheduleCounts = counters;
     }
 
     function scheduleRender(reason) {
@@ -1934,16 +1925,16 @@
       : null;
 
     function markSceneCSSInvalidated(reason) {
-      const revision = Number(ctx.mount && ctx.mount.__gosxScene3DCSSRevision);
-      ctx.mount.__gosxScene3DCSSRevision = Number.isFinite(revision) ? revision + 1 : 1;
+      const revision = Number(mount && mount.__gosxScene3DCSSRevision);
+      mount.__gosxScene3DCSSRevision = Number.isFinite(revision) ? revision + 1 : 1;
       const transitionWindow = Math.max(
-        sceneCSSTransitionWindowMillis(ctx.mount),
+        sceneCSSTransitionWindowMillis(mount),
         sceneCSSTransitionWindowMillis(document && document.documentElement)
       );
       if (transitionWindow > 0) {
         sceneCSSAnimationUntil = Date.now() + transitionWindow;
       }
-      ctx.mount.__gosxScene3DCSSAnimationUntil = sceneCSSAnimationUntil;
+      mount.__gosxScene3DCSSAnimationUntil = sceneCSSAnimationUntil;
       scheduleRender(reason || "css");
     }
 
@@ -2058,13 +2049,13 @@
           }
           markSceneCSSInvalidated("css");
         });
-        observer.observe(ctx.mount, {
+        observer.observe(mount, {
           attributes: true,
           attributeFilter: ["class", "style"],
           attributeOldValue: true,
           subtree: false,
         });
-        if (document && document.documentElement && document.documentElement !== ctx.mount) {
+        if (document && document.documentElement && document.documentElement !== mount) {
           observer.observe(document.documentElement, {
             attributes: true,
             attributeFilter: ["class", "style"],
@@ -2144,12 +2135,12 @@
 	        latestScenePickDetail = detail ? sceneDebugClone(detail, 4) : null;
 	        dispatchSceneHTMLTexturePointer(latestBundle, htmlElements, detail);
 	        ctx.emit("scene-interaction", detail);
-	        if (ctx.mount && typeof ctx.mount.dispatchEvent === "function") {
+	        if (mount && typeof mount.dispatchEvent === "function") {
 	          const inputDetail = { kind: "pick", input: detail ? sceneDebugClone(detail, 4) : null };
 	          const inputEvent = typeof CustomEvent === "function"
 	            ? new CustomEvent("gosx:scene3d:input", { detail: inputDetail, bubbles: true })
 	            : { type: "gosx:scene3d:input", detail: inputDetail };
-	          ctx.mount.dispatchEvent(inputEvent);
+	          mount.dispatchEvent(inputEvent);
 	        }
 	      });
 	      // Gizmo drags own pointer-down near an active TransformControls form.
@@ -2178,12 +2169,12 @@
 	        if (typeof props.gizmoOutputSignal === "string" && props.gizmoOutputSignal) {
 	          queueInputSignal(props.gizmoOutputSignal, payload);
 	        }
-	        if (ctx.mount && typeof ctx.mount.dispatchEvent === "function") {
+	        if (mount && typeof mount.dispatchEvent === "function") {
 	          const gizmoDetail = { kind: "gizmo-commit", input: payload };
 	          const gizmoEvent = typeof CustomEvent === "function"
 	            ? new CustomEvent("gosx:scene3d:input", { detail: gizmoDetail, bubbles: true })
 	            : { type: "gosx:scene3d:input", detail: gizmoDetail };
-	          ctx.mount.dispatchEvent(gizmoEvent);
+	          mount.dispatchEvent(gizmoEvent);
 	        }
 	      });
 	      // Picking owns pointer-down on authored targets. Register it before
@@ -2218,12 +2209,12 @@
 	    // search results and replayed batches without exposing renderer internals.
 	    let lastMountCommandRevision = 0;
 	    function emitMountCommandsApplied(revision, commandCount) {
-	      if (!ctx.mount || typeof ctx.mount.dispatchEvent !== "function") return;
+	      if (!mount || typeof mount.dispatchEvent !== "function") return;
 	      const detail = { revision, commandCount };
 	      const event = typeof CustomEvent === "function"
 	        ? new CustomEvent("gosx:scene3d:commands-applied", { detail, bubbles: true })
 	        : { type: "gosx:scene3d:commands-applied", detail };
-	      ctx.mount.dispatchEvent(event);
+	      mount.dispatchEvent(event);
 	    }
 	    function onMountCommands(event) {
 	      const detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
@@ -2237,8 +2228,8 @@
 	        emitMountCommandsApplied(revision, commands.length);
 	      });
 	    }
-	    if (ctx.mount && typeof ctx.mount.addEventListener === "function") {
-	      ctx.mount.addEventListener("gosx:scene3d:commands", onMountCommands);
+	    if (mount && typeof mount.addEventListener === "function") {
+	      mount.addEventListener("gosx:scene3d:commands", onMountCommands);
 	    }
 
 	    let lastPublishedCamera = null;
@@ -2390,19 +2381,19 @@
     function buildSceneDebugSnapshot(mode) {
       const rendererKind = renderer && renderer.kind ? renderer.kind : "";
       const rendererDiagnostics = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
-      const surfaceID = sceneDebugMountID(ctx.mount, ctx.id);
+      const surfaceID = sceneDebugMountID(mount, ctx.id);
       const counts = sceneDebugBundleCounts(latestBundle, sceneState);
       const features = sceneDebugFeatureMatrix(latestBundle, sceneState, rendererKind);
       const snapshot = {
         schema: SCENE3D_DEBUG_SCHEMA,
         id: surfaceID,
-        mountID: ctx.mount && ctx.mount.id ? String(ctx.mount.id) : "",
+        mountID: mount && mount.id ? String(mount.id) : "",
         engineID: String(ctx.id || ""),
         component: String(ctx.component || ""),
         renderer: rendererKind,
-        fallbackReason: sceneDebugAttr(ctx.mount, "data-gosx-scene3d-renderer-fallback"),
-        ready: sceneDebugAttr(ctx.mount, readyAttr) === "true",
-        active: sceneDebugAttr(ctx.mount, "data-gosx-scene3d-active") !== "false",
+        fallbackReason: sceneDebugAttr(mount, sceneAttr("renderer-fallback")),
+        ready: sceneDebugAttr(mount, readyAttr) === "true",
+        active: sceneDebugAttr(mount, sceneAttr("active")) !== "false",
         renderLoop: sceneRenderLoopSnapshot(""),
         controls: normalizeSceneControlsMode(props.controls),
         viewport: {
@@ -2412,27 +2403,27 @@
         },
         counts,
         features,
-        diagnostics: sceneDebugDiagnostics(ctx.mount, rendererKind, rendererDiagnostics),
+        diagnostics: sceneDebugDiagnostics(mount, rendererKind, rendererDiagnostics),
         lastPick: latestScenePickDetail || (pickHandle && typeof pickHandle.getSnapshot === "function" ? pickHandle.getSnapshot() : null),
       };
       if (mode !== "summary") {
         snapshot.camera = currentMountedSceneCamera();
-        snapshot.gpuResources = sceneDebugGPUResources(ctx.mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
-        snapshot.webgpuStats = sceneDebugClone(ctx.mount && ctx.mount.__gosxScene3DWebGPUStats, 3);
+        snapshot.gpuResources = sceneDebugGPUResources(mount, canvas, renderer, latestBundle, viewport, labelLayer, rendererDiagnostics);
+        snapshot.webgpuStats = sceneDebugClone(mount && mount.__gosxScene3DWebGPUStats, 3);
         snapshot.waterShaderSources = { sceneState: [], bundle: [] };
         snapshot.rendererDiagnostics = sceneDebugClone(rendererDiagnostics, 3);
       }
       return snapshot;
     }
     const releaseSceneDebugSurface = sceneDebugRegisterSurface({
-      id: sceneDebugMountID(ctx.mount, ctx.id),
-      mountID: ctx.mount && ctx.mount.id ? String(ctx.mount.id) : "",
+      id: sceneDebugMountID(mount, ctx.id),
+      mountID: mount && mount.id ? String(mount.id) : "",
       engineID: String(ctx.id || ""),
       component: String(ctx.component || ""),
-      mount: ctx.mount,
+      mount: mount,
       snapshot: buildSceneDebugSnapshot,
       captureFrame() {
-        const surfaceID = sceneDebugMountID(ctx.mount, ctx.id);
+        const surfaceID = sceneDebugMountID(mount, ctx.id);
         if (!canvas || typeof canvas.toDataURL !== "function") {
           return { surfaceID, dataURL: null, reason: "capture-unavailable" };
         }
@@ -2447,7 +2438,7 @@
       props.inspector,
       typeof window !== "undefined" && window.__gosx_scene3d_inspector === true,
     );
-    inspectorOverlay = createSceneInspectorOverlay(ctx.mount, inspectorEnabled, function() {
+    inspectorOverlay = createSceneInspectorOverlay(mount, inspectorEnabled, function() {
       return buildSceneDebugSnapshot("full");
     });
     let pendingMotionData = null;
@@ -2585,11 +2576,11 @@
     // Viewport observer fires on canvas/mount resize. Mark dirty so
     // renderFrame re-measures the rect on the next tick — this is the
     // one place we genuinely need a fresh getBoundingClientRect.
-    const releaseViewportObserver = observeSceneViewport(ctx.mount, function(reason) {
+    const releaseViewportObserver = observeSceneViewport(mount, function(reason) {
       sceneUpdateScrollCameraMetrics(sceneState._scrollCamera, true);
       scheduleRenderWithViewport(reason);
     });
-    const releaseCapabilityObserver = observeSceneCapability(ctx.mount, props, capability, function(reason) {
+    const releaseCapabilityObserver = observeSceneCapability(mount, props, capability, function(reason) {
       // Capability change (DPR / WebGL availability shift) invalidates
       // the viewport — mark dirty so the next renderFrame re-measures.
       viewportDirty = true;
@@ -2601,15 +2592,15 @@
         fallbackSceneRenderer(desiredFallback || "environment-constrained");
       } else if (renderer && renderer.kind !== "webgl" && (webglPreference === "prefer" || webglPreference === "force")) {
         if (!restoreSceneWebGLRenderer("")) {
-          applySceneRendererState(ctx.mount, renderer, desiredFallback);
+          applySceneRendererState(mount, renderer, desiredFallback);
         }
       } else {
-        applySceneRendererState(ctx.mount, renderer, desiredFallback);
+        applySceneRendererState(mount, renderer, desiredFallback);
       }
       scheduleRender(reason || "capability");
     });
-    const releaseLifecycleObserver = observeSceneLifecycle(ctx.mount, lifecycle, function(reason) {
-      publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+    const releaseLifecycleObserver = observeSceneLifecycle(mount, lifecycle, function(reason) {
+      publishSceneWaterLifecycleState(mount, sceneState, lifecycle, false);
       notifySceneRendererLifecycle(reason || "lifecycle", false, false);
       if (!sceneCanRender()) {
         cancelFrame();
@@ -2633,7 +2624,15 @@
       }
       scheduleRenderWithViewport(reason || "lifecycle");
     });
-    const releaseMotionObserver = observeSceneMotion(ctx.mount, motion, function(reason) {
+    const releaseMotionObserver = observeSceneMotion(mount, motion, function(reason) {
+      // A preference transition changes both the loop decision and the
+      // control's public state. Keep the generic pause contract truthful in
+      // both directions, while preserving sceneAnimationPaused so a user
+      // pause survives a temporary reduced-motion preference. Reset the
+      // timestamp before the next render so a preference transition can
+      // never credit its wall-time gap to the declarative scene clock.
+      sceneClockLastFrameMs = null;
+      publishSceneAnimationState();
       cancelFrame();
       cancelScheduledRender();
       // Reduced-motion transition resets render state; safer to re-
@@ -2645,7 +2644,7 @@
       ? bindSceneManagedControlForms(ctx.mount, sceneState, function(commands) {
           const result = applySceneCommands(sceneState, commands);
           publishSceneWaterStateSnapshot(ctx.mount, sceneState);
-          publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+          publishSceneWaterLifecycleState(mount, sceneState, lifecycle, false);
           notifySceneRendererLifecycle("managed-control-forms", false, false);
           if (result && typeof result.then === "function") {
             result.then(function() {
@@ -2819,8 +2818,8 @@
         return;
       }
       readySent = true;
-      setAttrValue(ctx.mount, readyAttr, "true");
-      setAttrValue(ctx.mount, mountedAttr, "true");
+      setAttrValue(mount, readyAttr, "true");
+      setAttrValue(mount, mountedAttr, "true");
       ctx.emit("mounted", {
         width: viewport.cssWidth,
         height: viewport.cssHeight,
@@ -2862,7 +2861,7 @@
         return;
       }
       revealSent = true;
-      setAttrValue(ctx.mount, revealedAttr, "true");
+      setAttrValue(mount, revealedAttr, "true");
       if (revealClass && document.documentElement) {
         document.documentElement.classList.add(revealClass);
       }
@@ -2884,8 +2883,8 @@
       // skip the 4 getBoundingClientRect layout flushes that used to
       // run every frame.
       if (viewportDirty) {
-        const nextViewport = sceneViewportFromMount(ctx.mount, props, viewportBase, canvas, capability, adaptiveQuality);
-        viewport = applySceneViewport(ctx.mount, canvas, labelLayer, nextViewport, viewportBase);
+        const nextViewport = sceneViewportFromMount(mount, props, viewportBase, canvas, capability, adaptiveQuality);
+        viewport = applySceneViewport(mount, canvas, labelLayer, nextViewport, viewportBase);
         viewportDirty = false;
       }
       if (!sceneCanRender()) {
@@ -2901,20 +2900,20 @@
         ? 0
         : Math.max(0, Math.min(0.25, (now - sceneClockLastFrameMs) / 1000));
       sceneClockLastFrameMs = now;
-      if (!sceneAnimationPaused && motion.reducedMotion !== true) {
+      if (!sceneAnimationPaused && !motion.reducedMotion) {
         sceneClockSeconds += frameDeltaSeconds;
       }
       const timeSeconds = sceneClockSeconds;
       // Publish the scene clock for tests, QA diffing, and honest telemetry:
       // both render paths (wasm runtime bundle and JS fall-through) sample it,
       // so a frozen value proves the pause contract observably.
-      setAttrValue(ctx.mount, "data-gosx-scene3d-animation-clock", timeSeconds.toFixed(3));
+      setAttrValue(mount, "data-gosx-scene3d-animation-clock", timeSeconds.toFixed(3));
       const modelAnimationDelta = lastModelAnimationTimeSeconds == null
         ? 0
         : Math.max(0, Math.min(0.1, timeSeconds - lastModelAnimationTimeSeconds));
       lastModelAnimationTimeSeconds = timeSeconds;
       if (perfEnabled) performance.mark("scene3d-model-animations-start");
-      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta, motion.reducedMotion === true);
+      sceneAdvanceModelAnimations(sceneState, modelAnimationDelta, motion.reducedMotion);
       if (perfEnabled) {
         performance.mark("scene3d-model-animations-end");
         performance.measure("scene3d-model-animations", "scene3d-model-animations-start", "scene3d-model-animations-end");
@@ -2938,7 +2937,7 @@
           }
           syncSceneNodeSentinels(effectiveBundle);
           renderer.render(effectiveBundle, viewport, createSceneRenderFrameMeta(now));
-          recordSceneWaterFrame(ctx.mount, effectiveBundle);
+          recordSceneWaterFrame(mount, effectiveBundle);
           renderSceneLabels(labelLayer, effectiveBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneSprites(labelLayer, effectiveBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
           renderSceneHTML(labelLayer, effectiveBundle, htmlElements, viewport.cssWidth, viewport.cssHeight, htmlTextureState);
@@ -2948,7 +2947,7 @@
           if (inspectorOverlay) {
             inspectorOverlay.update();
           }
-          if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart, now, renderer)) {
+          if (sceneUpdateAdaptiveQuality(adaptiveQuality, mount, sceneState, viewport, frameStart, now, renderer)) {
             viewportDirty = true;
             scheduleRender("quality-transition");
           }
@@ -3028,15 +3027,15 @@
       // filtered bundle.points array both the WebGPU (16a-scene-webgpu.js
       // drawPointsEntries) and WebGL (16-scene-webgl.js drawPointsEntries)
       // backends draw from, so this single attribute covers both.
-      setAttrValue(ctx.mount, "data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
-      setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-scale", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualityPointBudgetScale || 1) : 1));
-      setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
-      setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
-      setAttrValue(ctx.mount, "data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
-      setAttrValue(ctx.mount, "data-gosx-scene3d-compute-quality-scale", String(computeQualityScale));
-      setAttrValue(ctx.mount, "data-gosx-scene3d-compute-quality-source-instances", String(computeQualitySourceInstances));
-      setAttrValue(ctx.mount, "data-gosx-scene3d-compute-quality-active-instances", String(computeQualityActiveInstances));
-      setAttrValue(ctx.mount, "data-gosx-scene3d-compute-quality-reduced-instances",
+      setAttrValue(mount, "data-gosx-scene3d-point-quality-skipped", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualitySkippedCount || 0) : 0));
+      setAttrValue(mount, "data-gosx-scene3d-point-budget-scale", String(Array.isArray(latestBundle.points) ? (latestBundle.points.qualityPointBudgetScale || 1) : 1));
+      setAttrValue(mount, "data-gosx-scene3d-point-budget-authored-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointAuthoredInstances || 0) : 0));
+      setAttrValue(mount, "data-gosx-scene3d-point-budget-draw-instances", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointDrawInstances || 0) : 0));
+      setAttrValue(mount, "data-gosx-scene3d-point-budget-scaled-entries", String(Array.isArray(latestBundle.points) ? Math.max(0, latestBundle.points.qualityPointBudgetScaledEntries || 0) : 0));
+      setAttrValue(mount, "data-gosx-scene3d-compute-quality-scale", String(computeQualityScale));
+      setAttrValue(mount, "data-gosx-scene3d-compute-quality-source-instances", String(computeQualitySourceInstances));
+      setAttrValue(mount, "data-gosx-scene3d-compute-quality-active-instances", String(computeQualityActiveInstances));
+      setAttrValue(mount, "data-gosx-scene3d-compute-quality-reduced-instances",
         String(Math.max(0, computeQualitySourceInstances - computeQualityActiveInstances)));
       if (perfEnabled) {
         performance.mark("scene3d-bundle-end");
@@ -3050,7 +3049,7 @@
       }
       syncSceneNodeSentinels(latestBundle);
       renderer.render(latestBundle, viewport, createSceneRenderFrameMeta(now));
-      recordSceneWaterFrame(ctx.mount, latestBundle);
+      recordSceneWaterFrame(mount, latestBundle);
       maybeEmitRenderEmpty(latestBundle);
       renderSceneLabels(labelLayer, latestBundle, labelLayoutCache, labelElements, viewport.cssWidth, viewport.cssHeight);
       renderSceneSprites(labelLayer, latestBundle, spriteElements, viewport.cssWidth, viewport.cssHeight);
@@ -3061,7 +3060,7 @@
       if (inspectorOverlay) {
         inspectorOverlay.update();
       }
-      if (sceneUpdateAdaptiveQuality(adaptiveQuality, ctx.mount, sceneState, viewport, frameStart, now, renderer)) {
+      if (sceneUpdateAdaptiveQuality(adaptiveQuality, mount, sceneState, viewport, frameStart, now, renderer)) {
         viewportDirty = true;
         scheduleRender("quality-transition");
       }
@@ -3207,7 +3206,7 @@
         sceneState.postEffects = sceneState._deferredPostEffects;
         sceneState._deferredPostEffects = null;
         sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
-        applyScenePostFXState(ctx.mount, sceneState);
+        applyScenePostFXState(mount, sceneState);
         if (domRegionTracker) {
           domRegionTracker.configure(sceneState.postEffects);
         }
@@ -3259,12 +3258,12 @@
 
     function applyProgressiveSceneModels(models) {
       const result = applySceneCommands(sceneState, [{ kind: 10, data: { models } }]);
-      applyScenePostFXState(ctx.mount, sceneState);
+      applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
         domRegionTracker.configure(sceneState.postEffects);
       }
       publishSceneWaterStateSnapshot(ctx.mount, sceneState);
-      publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+      publishSceneWaterLifecycleState(mount, sceneState, lifecycle, false);
       notifySceneRendererLifecycle("progressive-models", false, false);
       if (result && typeof result.then === "function") {
         scheduleRender("progressive-models");
@@ -3292,7 +3291,7 @@
     }
 
     function scheduleMountedProgressiveModelLifecycle(initialHydration) {
-      return scheduleSceneProgressiveModelLifecycle(sceneState, ctx.mount, initialHydration, applyProgressiveSceneModels, {
+      return scheduleSceneProgressiveModelLifecycle(sceneState, mount, initialHydration, applyProgressiveSceneModels, {
         canRender: sceneCanRender,
         renderTimeoutMS: sceneNumber(props && props.progressiveModelRenderTimeoutMS, 2000),
         restorePreview(models) {
@@ -3309,12 +3308,12 @@
         cancelSceneProgressiveModelLifecycle(sceneState);
       }
       const result = applySceneCommands(sceneState, commands);
-      applyScenePostFXState(ctx.mount, sceneState);
+      applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
         domRegionTracker.configure(sceneState.postEffects);
       }
       publishSceneWaterStateSnapshot(ctx.mount, sceneState);
-      publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, false);
+      publishSceneWaterLifecycleState(mount, sceneState, lifecycle, false);
       notifySceneRendererLifecycle(reason || "commands", false, false);
       if (result && typeof result.then === "function") {
         scheduleRender(reason || "commands");
@@ -3405,7 +3404,7 @@
           const nextPostFXMaxPixels = Math.max(0, Math.floor(sceneNumber(partial.postFXMaxPixels, sceneState.postFXMaxPixels)));
           if (nextPostFXMaxPixels !== sceneState.postFXMaxPixels) {
             sceneState.postFXMaxPixels = nextPostFXMaxPixels;
-            applyScenePostFXState(ctx.mount, sceneState);
+            applyScenePostFXState(mount, sceneState);
           }
         }
         if (Object.prototype.hasOwnProperty.call(partial, "postEffects") && domRegionTracker) {
@@ -3429,8 +3428,8 @@
           if (typeof sceneAnimationToggle.removeEventListener === "function") {
             sceneAnimationToggle.removeEventListener("click", onSceneAnimationToggleClick);
           }
-          if (sceneAnimationToggle.__gosxScene3DAnimationOwner === ctx.mount) {
-            delete sceneAnimationToggle.__gosxScene3DAnimationOwner;
+          if (sceneAnimationToggle.__gosxScene3DOwner === mount) {
+            delete sceneAnimationToggle.__gosxScene3DOwner;
           }
         }
         if (revealSent && revealClass && document.documentElement) {
@@ -3446,11 +3445,11 @@
           cancelEngineFrame(initHandle);
           initHandle = null;
         }
-	        if (ctx.mount && typeof ctx.mount.removeEventListener === "function") {
-	          ctx.mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
+	        if (mount && typeof mount.removeEventListener === "function") {
+	          mount.removeEventListener("gosx:scene3d:commands", onMountCommands);
 	        }
         handle.__gosxScene3DCommandReady = false;
-        publishSceneWaterLifecycleState(ctx.mount, sceneState, lifecycle, true);
+        publishSceneWaterLifecycleState(mount, sceneState, lifecycle, true);
         notifySceneRendererLifecycle("dispose", true, true);
         clearIdleContextRelease();
         clearVoluntaryRestoreWatchdog();
@@ -3514,11 +3513,11 @@
         if (labelRefreshHandle != null) {
           cancelEngineFrame(labelRefreshHandle);
         }
-        if (canvas.parentNode === ctx.mount) {
-          ctx.mount.removeChild(canvas);
+        if (canvas.parentNode === mount) {
+          mount.removeChild(canvas);
         }
-        if (labelLayer.parentNode === ctx.mount) {
-          ctx.mount.removeChild(labelLayer);
+        if (labelLayer.parentNode === mount) {
+          mount.removeChild(labelLayer);
         }
         if (statsOverlay) {
           statsOverlay.dispose();
@@ -3529,17 +3528,17 @@
         if (sentinelLayer.parentNode) {
           sentinelLayer.parentNode.removeChild(sentinelLayer);
         }
-        delete ctx.mount.__gosxScene3DSentinels;
-        delete ctx.mount.__gosxScene3DState;
-        delete ctx.mount.__gosxScene3DTextureVariantContext;
-        delete ctx.mount.__gosxScene3DCSSDynamic;
-        delete ctx.mount.__gosxScene3DCSSRevision;
-        delete ctx.mount.__gosxScene3DCSSAnimationUntil;
-        delete ctx.mount.__gosxScene3DHandle;
-        if (typeof ctx.mount.removeAttribute === "function") {
-          ctx.mount.removeAttribute("data-gosx-scene3d-command-ready");
-          ctx.mount.removeAttribute("data-gosx-scene3d-command-revision");
-          ctx.mount.removeAttribute("data-gosx-scene3d-command-applied-revision");
+        delete mount.__gosxScene3DSentinels;
+        delete mount.__gosxScene3DState;
+        delete mount.__gosxScene3DTextureVariantContext;
+        delete mount.__gosxScene3DCSSDynamic;
+        delete mount.__gosxScene3DCSSRevision;
+        delete mount.__gosxScene3DCSSAnimationUntil;
+        delete mount.__gosxScene3DHandle;
+        if (typeof mount.removeAttribute === "function") {
+          mount.removeAttribute(sceneAttr("command-ready"));
+          mount.removeAttribute(sceneAttr("command-revision"));
+          mount.removeAttribute(sceneAttr("command-applied-revision"));
         }
       },
     };
@@ -3553,9 +3552,9 @@
     // interactive (e.g. an app-level progressive-upgrade script) should
     // prefer reading it from here over window.__gosx.engines.get(id).handle.
     handle.__gosxScene3DCommandReady = true;
-    ctx.mount.__gosxScene3DHandle = handle;
-    if (typeof ctx.mount.setAttribute === "function") {
-      ctx.mount.setAttribute("data-gosx-scene3d-command-ready", "true");
+    mount.__gosxScene3DHandle = handle;
+    if (typeof mount.setAttribute === "function") {
+      mount.setAttribute(sceneAttr("command-ready"), "true");
     }
     scheduleMountedProgressiveModelLifecycle(sceneModelHydration);
     return handle;

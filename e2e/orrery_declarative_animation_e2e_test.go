@@ -23,6 +23,7 @@ package e2e
 
 import (
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -170,7 +171,15 @@ func TestOrreryDeclarativeAnimationPauseResume(t *testing.T) {
 	page.waitFor(t, `(function(){var m=document.querySelector("[data-gosx-scene3d-mounted]");return m&&m.getAttribute("data-gosx-scene3d-render-loop")==="active";})()`,
 		10*time.Second, "render loop active again after Space")
 
-	time.Sleep(600 * time.Millisecond)
+	// The resume path intentionally clears sceneClockLastFrameMs. Its first
+	// post-resume render therefore has zero delta; under software Chrome that
+	// first frame can arrive after the old fixed 600ms observation window. Wait
+	// for actual clock progress with a bounded condition instead of treating
+	// the first zero-delta frame as a stuck loop.
+	resumeWaitStart := time.Now()
+	page.waitFor(t, `(function(){var m=document.querySelector("[data-gosx-scene3d-mounted]");var c=m&&m.getAttribute("data-gosx-scene3d-animation-clock");return !!c&&c!==`+strconv.Quote(clockWhilePaused)+`;})()`,
+		10*time.Second, "scene clock progress after Space")
+	resumeWall := time.Since(resumeWaitStart).Seconds()
 	_, resumedClock, loopResumed, loopReasonResumed, wantsResumed := readState()
 	t.Logf("[orrery] post-resume loop=%q reason=%q wants=%q", loopResumed, loopReasonResumed, wantsResumed)
 	if loopResumed != "active" {
@@ -180,13 +189,18 @@ func TestOrreryDeclarativeAnimationPauseResume(t *testing.T) {
 		t.Fatalf("clock did not resume after unpausing (stuck at %q)", resumedClock)
 	}
 	parseClock := func(v string) float64 {
-		f, _ := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+			t.Fatalf("scene clock must be a finite non-negative number, got %q", v)
+		}
 		return f
 	}
 	jump := parseClock(resumedClock) - parseClock(clockWhilePaused)
-	const wall = 0.6 // seconds waited after resume; generous margin below
-	if jump > wall+1.5 {
-		t.Fatalf("resume jumped the scene clock by %.2fs after %.1fs of wall time: runaway delta", jump, wall)
+	if jump < 0 {
+		t.Fatalf("resume reset the scene clock from %q to %q", clockWhilePaused, resumedClock)
+	}
+	if jump > resumeWall+1.5 {
+		t.Fatalf("resume jumped the scene clock by %.2fs after %.1fs of observed wall time: runaway delta", jump, resumeWall)
 	}
 }
 

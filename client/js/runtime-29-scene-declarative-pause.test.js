@@ -91,7 +91,7 @@ async function mountPausedHarness() {
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
   await flushSceneInitialFrameBoundary(raf);
-  return { mount, toggle, raf };
+  return { mount, toggle, raf, env };
 }
 
 test("declarative pause stops the render loop instead of spinning at a frozen clock", async () => {
@@ -164,4 +164,85 @@ test("declarative resume schedules rendering and continues from the frozen pose"
   const laterClock = parseFloat(mount.getAttribute("data-gosx-scene3d-animation-clock"));
   assert.ok(laterClock > resumedClock, "the resumed clock advances again");
   assert.ok(laterClock - resumedClock <= 0.25, "played deltas stay inside the clamp");
+});
+
+test("declarative pause state follows reduced-motion preference changes", async () => {
+  const { mount, toggle, raf, env } = await mountPausedHarness();
+
+  // A live preference transition while playing must park the loop and then
+  // resume without charging the preference gap to the scene clock. The first
+  // frame after the transition is the deterministic zero-baseline proof;
+  // the following frame proves ordinary progress resumes without a click.
+  raf.flush(16);
+  await flushAsyncWork();
+  const playingClock = mount.getAttribute("data-gosx-scene3d-animation-clock");
+  env.matchMedia("(prefers-reduced-motion: reduce)").dispatch(true);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-state"), "reduced-motion");
+  assert.equal(toggle.getAttribute("disabled"), "disabled");
+  raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-clock"), playingClock);
+  assert.equal(raf.count(), 0, "reduced motion must park a playing loop");
+
+  env.matchMedia("(prefers-reduced-motion: reduce)").dispatch(false);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-state"), "playing");
+  assert.equal(toggle.getAttribute("disabled"), null);
+  raf.flush(1000);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-clock"), playingClock);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop"), "active");
+  raf.flush(1032);
+  await flushAsyncWork();
+  assert.ok(
+    parseFloat(mount.getAttribute("data-gosx-scene3d-animation-clock")) > parseFloat(playingClock),
+    "the second frame after lifting reduced motion must advance the clock",
+  );
+
+  // A user pause must survive a temporary reduced-motion preference, and the
+  // control must become usable again without silently resuming the scene.
+  // Keep the synthetic timestamps monotonic so this models real RAF time.
+  raf.flush(1048);
+  await flushAsyncWork();
+  toggle.dispatchEvent({ type: "click" });
+  raf.flush(1080);
+  await flushAsyncWork();
+  const frozenClock = mount.getAttribute("data-gosx-scene3d-animation-clock");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-state"), "paused");
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+
+  // A live reduced-motion preference supersedes the user-facing mode and
+  // disables the control, but must not erase the user's paused choice.
+  env.matchMedia("(prefers-reduced-motion: reduce)").dispatch(true);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-state"), "reduced-motion");
+  assert.equal(toggle.getAttribute("disabled"), "disabled");
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+  // The observer may request one viewport-settle frame to refresh renderer
+  // state; after that frame the reduced-motion loop must be parked.
+  raf.flush(1120);
+  await flushAsyncWork();
+  assert.equal(raf.count(), 0, "reduced motion must leave the loop stopped");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-clock"), frozenClock);
+
+  // When the preference is lifted, the mount returns to the preserved paused
+  // state and the control becomes usable again.
+  env.matchMedia("(prefers-reduced-motion: reduce)").dispatch(false);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-state"), "paused");
+  assert.equal(toggle.getAttribute("disabled"), null);
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+  raf.flush(1168);
+  await flushAsyncWork();
+  assert.equal(raf.count(), 0, "lifting reduced motion must not resume a user-paused scene");
+
+  // Resuming after the preference transition still gets a zero-baseline first
+  // frame, so the preference gap cannot become a scene-clock jump.
+  toggle.dispatchEvent({ type: "click" });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-state"), "playing");
+  raf.flush(2200);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-animation-clock"), frozenClock);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-render-loop"), "active");
 });

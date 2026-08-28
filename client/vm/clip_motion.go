@@ -40,8 +40,12 @@ func objectMatchesTarget(targetID, objectID string, objectIndex, nodeIndex int) 
 		return true
 	}
 	if parsed, err := strconv.Atoi(tid); err == nil {
-		if parsed == nodeIndex && nodeIndex >= 0 {
-			return true
+		// A resolved authored node index is authoritative for numeric targets.
+		// Do not continue into the flattened-object fallback when it is known:
+		// a light/point/helper before two meshes can otherwise make the same
+		// numeric target animate both meshes.
+		if nodeIndex >= 0 {
+			return parsed == nodeIndex
 		}
 	}
 	if tid == strconv.Itoa(objectIndex) {

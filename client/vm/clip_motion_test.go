@@ -47,6 +47,29 @@ func TestObjectMatchesTarget3Way(t *testing.T) {
 	}
 }
 
+func TestAuthoredNodeIndexPreventsLegacyTargetCollision(t *testing.T) {
+	// The authored node list contains a light at index 0, mesh a at index 1,
+	// and mesh b at index 2. Numeric target "1" addresses mesh a in that
+	// authored space. It must not also match mesh b through the old flattened
+	// object-index+1 convention.
+	anim := translationAnim("1")
+	meshA, _ := buildObjectClipTimeline([]rootengine.RenderAnimation{anim}, "a", 0, 1)
+	meshB, _ := buildObjectClipTimeline([]rootengine.RenderAnimation{anim}, "b", 1, 2)
+	if meshA == nil {
+		t.Fatal("authored numeric target should animate mesh a")
+	}
+	if meshB != nil {
+		t.Fatal("authored numeric target must not animate mesh b through legacy fallback")
+	}
+
+	// A payload without authored-index metadata still uses the legacy fallback
+	// for backwards compatibility.
+	legacy, _ := buildObjectClipTimeline([]rootengine.RenderAnimation{anim}, "b", 1, -1)
+	if legacy == nil {
+		t.Fatal("unknown authored index should retain legacy numeric fallback")
+	}
+}
+
 func translationAnim(targetID string) rootengine.RenderAnimation {
 	return rootengine.RenderAnimation{
 		Name:     "clip",
