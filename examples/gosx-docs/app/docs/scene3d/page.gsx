@@ -868,7 +868,9 @@ func Page() Node {
 	    Color:     "#cfe6ff",
 	    Intensity: 0.5,
 	}`)}
-			<h3>Lighting limits (point shadows are also unsupported)</h3>
+			<h3>
+				Lighting limits (point shadows are also unsupported)
+			</h3>
 			<ul>
 				<li>
 					<strong>Rect-area specular.</strong>
@@ -918,9 +920,7 @@ func Page() Node {
 				to sample it. A ground plane usually receives without casting.
 			</p>
 			<div class="scene3d-warning" role="note">
-				<p class="scene3d-warning__title">
-					Two shadow-light slots.
-				</p>
+				<p class="scene3d-warning__title">Two shadow-light slots.</p>
 				<p>
 					Both GPU backends support at most two shadow-casting lights per scene. Directional and spot lights both qualify, and a third shadow-casting light is ignored. Each directional uses one or more cascade maps; each spot uses a single perspective map. Unsupported spot lights — angle outside 0–90 degrees exclusive, or a non-projectable position or direction, after replacing a zero direction or nonpositive angle with defaults — are skipped before consuming slots. Point, hemisphere, rect-area, and light-probe lights do not cast shadows.
 				</p>
