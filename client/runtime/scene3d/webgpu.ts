@@ -164,6 +164,10 @@
     // the model transform/sign floats keep their existing offsets; the vec3f
     // alignment pads the struct to 192 bytes total.
     "    dielectricF0: f32,",
+    // Reuses the vec3f alignment word at u32 index 41, keeping the struct at
+    // 192 bytes; materialUniformData pre-zeroes it so a plain pack stays
+    // neutral until createMaterialBindGroup sets the real flag.
+    "    hasSpecularIntensityMap: u32,",
     "    specularF0: vec3f,",
     "    specularF90: f32,",
     "};",
@@ -1552,6 +1556,12 @@
     "@group(1) @binding(11) var occlusionTex: texture_2d<f32>;",
     "@group(1) @binding(12) var occlusionSamp: sampler;",
     "",
+    // KHR specular-intensity map: the ALPHA channel is a linear intensity
+    // multiplier. A missing, still-loading or failed map stays neutral via
+    // the hasSpecularIntensityMap gate in the fragment body.
+    "@group(1) @binding(13) var specularIntensityTex: texture_2d<f32>;",
+    "@group(1) @binding(14) var specularIntensitySamp: sampler;",
+    "",
     "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
     "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
@@ -1857,8 +1867,15 @@
       // so the packed buffer is always finite and bounded to [0, 1]. The
       // metallic mix keeps its exact fully-metal branch so a metal never
       // reads the dielectric lane.
-      "    let specF0 = material.specularF0;",
-      "    let specF90 = material.specularF90;",
+      // A bound specular-intensity texture multiplies its linear ALPHA into
+      // both shared factors BEFORE the metallic mix, so direct, scalar
+      // diffuse, IBL and equirect consumers all see the updated values.
+      "    var specIntensity = 1.0;",
+      "    if (material.hasSpecularIntensityMap != 0u) {",
+      "        specIntensity = textureSample(specularIntensityTex, specularIntensitySamp, in.uv).a;",
+      "    }",
+      "    let specF0 = material.specularF0 * specIntensity;",
+      "    let specF90 = material.specularF90 * specIntensity;",
       "    var F0 = mix(specF0, albedo, metalness);",
       "    var F90 = mix(specF90, 1.0, metalness);",
       "    if (metalness >= 1.0) {",
@@ -3456,6 +3473,8 @@
         { binding: 10, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 11, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
         { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     });
   }
@@ -14151,12 +14170,14 @@
       f[38] = modelScaleSigns ? sceneNumber(modelScaleSigns[2], 1) : 1;
       f[39] = 0;
       // Dedicated trailing material scalars: normal-incidence dielectric F0
-      // from the authored IOR, then the effective specular factors (F0 rgb,
-      // F90 = intensity) at the vec3f-aligned slots 44..47. Slots 41..43 are
-      // vec3f alignment padding; keep them zeroed so the packed material
-      // bytes stay deterministic.
+      // from the authored IOR, then the vec3f alignment word at index 41
+      // reused as the hasSpecularIntensityMap flag (u[41], set by
+      // createMaterialBindGroup and zeroed here so a plain pack stays
+      // neutral), then the effective specular factors (F0 rgb, F90 =
+      // intensity) at the vec3f-aligned slots 44..47. Slots 42..43 stay
+      // zeroed so the packed material bytes stay deterministic.
       f[40] = sceneWebGPUDielectricF0(mat.ior);
-      f[41] = 0;
+      f[41] = 0; // hasSpecularIntensityMap, set by createMaterialBindGroup
       f[42] = 0;
       f[43] = 0;
       var specular = sceneWebGPUSpecularFactors(mat);
@@ -14207,6 +14228,7 @@
         { prop: "metalnessMap", descriptor: "metalness", role: "metalness", colorSpace: "linear", index: 16 },
         { prop: "emissiveMap", descriptor: "emissive", role: "emissive", colorSpace: "srgb", index: 17 },
         { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", index: 19 },
+        { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", index: 41 },
       ];
 
       var texViews = [];
@@ -14265,6 +14287,8 @@
           { binding: 10, resource: linearSampler },
           { binding: 11, resource: texViews[5] },
           { binding: 12, resource: linearSampler },
+          { binding: 13, resource: texViews[6] },
+          { binding: 14, resource: linearSampler },
         ],
       });
       owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews, bg: matBG };

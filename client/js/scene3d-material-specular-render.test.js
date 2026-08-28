@@ -348,7 +348,7 @@ test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => 
   const source = readRuntimeSource("webgpu.ts");
   assert.match(source, /"    specularF0: vec3f,",/);
   assert.match(source, /"    specularF90: f32,",/);
-  assert.match(source, /let specF0 = material\.specularF0;/);
+  assert.match(source, /let specF0 = material\.specularF0( \* specIntensity)?;/);
   assert.match(source, /var F0 = mix\(specF0, albedo, metalness\);/);
   assert.match(source, /var F90 = mix\(specF90, 1\.0, metalness\);/);
   // Direct Schlick carries F90: an omitted intensity must scale the lobe.
@@ -370,9 +370,202 @@ test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => 
   assert.match(source, /rectAreaLightRadiance\(light, in\.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV\)/);
   // Fully-metal branch keeps dielectric settings out of a metal.
   assert.match(source, /"    if \(metalness >= 1\.0\) \{",\s*\n\s*"        F0 = albedo;",\s*\n\s*"        F90 = 1\.0;",/);
+  // Specular-intensity texture slice: group1 bindings 13/14 exist, the flag
+  // reuses the alignment word, and the linear ALPHA channel multiplies BOTH
+  // shared factors BEFORE the metallic mix.
+  assert.match(source, /"@group\(1\) @binding\(13\) var specularIntensityTex: texture_2d<f32>;"/);
+  assert.match(source, /"@group\(1\) @binding\(14\) var specularIntensitySamp: sampler;"/);
+  assert.match(source, /"    hasSpecularIntensityMap: u32,",/);
+  assert.match(source, /let specF0 = material\.specularF0 \* specIntensity;/);
+  assert.match(source, /let specF90 = material\.specularF90 \* specIntensity;/);
+  const specSample = source.match(/specIntensity = textureSample\(specularIntensityTex[^;]*;/);
+  assert.ok(specSample && /\.a\s*;/.test(specSample[0]) && !/\.rgb/.test(specSample[0]),
+    "specular-intensity sample reads the alpha channel only");
+  assert.match(source, /\{ prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", index: 41 \}/);
   // The effective-F0 clamp happens before the intensity, never inside it.
   const helper = sliceBetween(source, "function sceneWebGPUSpecularFactors", "    function materialUniformData");
   assert.match(helper, /Math\.min\(iorF0 \* color\[0\], 1\) \* intensity/);
   assert.doesNotMatch(helper, /Math\.min\(iorF0 \* intensity/);
   assert.doesNotMatch(helper, /color\[0\] \* intensity, 1\)/);
+});
+
+// --- WebGPU recording-boundary material binding ------------------------------
+
+function setupWebGPUMaterialBinding() {
+  const source = readRuntimeSource("webgpu.ts");
+  const context = createSceneCoreContext();
+  const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
+  runFragment(context, [
+    bufferDecls,
+    sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
+    sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
+    sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
+    sliceBetween(source, "function wgpuCachedBindGroup", "function createMaterialBindGroup"),
+    sliceBetween(source, "function createMaterialBindGroup", "    // _frameBindGroupCache memoizes"),
+  ].join("\n"), "webgpu-material-bind-extract.js");
+  return { source, context };
+}
+
+// Stubs only the GPU resource and texture-loader boundaries; the production
+// materialUniformData, createMaterialBindGroup and bind-group cache execute
+// for real against the real 192-byte shared buffer.
+function makeGPUHarness(context, textureStates) {
+  const calls = { loads: [], bindGroups: [], buffers: [] };
+  context.GPUBufferUsage = { UNIFORM: 0x40, COPY_DST: 0x8 };
+  context.placeholderView = { __view: "placeholder" };
+  context.linearSampler = { __sampler: "linear" };
+  context.textureCache = {};
+  context.defaultMaterialOwner = {};
+  context.materialBindGroupLayout = { __layout: "material" };
+  context.wgpuLoadTexture = function (device, url, cache, descriptor, role, colorSpace) {
+    calls.loads.push({ url, role, colorSpace });
+    const state = textureStates[url];
+    if (!state || !state.loaded) {
+      return state ? { loaded: false, pending: !!state.pending, failed: !!state.failed } : null;
+    }
+    if (!state.view) state.view = { __view: url };
+    return { loaded: true, view: state.view };
+  };
+  context.wgpuCachedTrackedBuffer = function (owner, slot) {
+    if (!owner[slot]) {
+      const buffer = { __buffer: slot };
+      owner[slot] = buffer;
+      calls.buffers.push(buffer);
+    }
+    return owner[slot];
+  };
+  context.device = {
+    createBindGroup: (desc) => {
+      calls.bindGroups.push(desc);
+      return { __bg: calls.bindGroups.length };
+    },
+  };
+  // Capture the shared uniform views the production function mutates; a
+  // second materialUniformData call would re-zero the flags.
+  const realPack = context.materialUniformData;
+  context.__lastUniform = null;
+  context.materialUniformData = function (...args) {
+    const packed = realPack(...args);
+    context.__lastUniform = packed;
+    return packed;
+  };
+  return calls;
+}
+
+function lastBoundResource(calls, binding) {
+  const last = calls.bindGroups[calls.bindGroups.length - 1];
+  assert.ok(last, "a bind group was created");
+  const entry = last.entries.find((candidate) => candidate.binding === binding);
+  assert.ok(entry, "binding " + binding + " present in the created bind group");
+  return entry.resource;
+}
+
+test("WebGPU specular-intensity map stays neutral while missing, pending or failed", () => {
+  const { context } = setupWebGPUMaterialBinding();
+  const calls = makeGPUHarness(context, {
+    "pending.png": { pending: true },
+    "failed.png": { failed: true },
+  });
+  context.owner = {};
+
+  // No map at all: flag 0, placeholder bound.
+  context.material = {};
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 0);
+  assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
+
+  // Pending load: pending flag consumed, hasSpecularIntensityMap stays 0 and
+  // the neutral placeholder is bound.
+  context.material = { textureDescriptors: { specularIntensity: { uri: "pending.png" } } };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 0);
+  assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
+  assert.strictEqual(calls.loads[calls.loads.length - 1].role, "specular-intensity");
+  assert.strictEqual(calls.loads[calls.loads.length - 1].colorSpace, "linear");
+
+  // Failed load: identical neutral treatment.
+  context.material = { textureDescriptors: { specularIntensity: { uri: "failed.png" } } };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 0);
+  assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
+});
+
+test("WebGPU specular-intensity loaded map binds the real view and reuses the bind group", () => {
+  const { context } = setupWebGPUMaterialBinding();
+  const view = { __view: "spec-intensity" };
+  const calls = makeGPUHarness(context, { "spec.png": { loaded: true, view } });
+  context.material = { textureDescriptors: { specularIntensity: { uri: "spec.png" } } };
+  context.owner = {};
+
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 1);
+  assert.strictEqual(lastBoundResource(calls, 13), view);
+  assert.strictEqual(lastBoundResource(calls, 14), context.linearSampler);
+  const load = calls.loads[calls.loads.length - 1];
+  assert.strictEqual(load.url, "spec.png");
+  assert.strictEqual(load.role, "specular-intensity");
+  assert.strictEqual(load.colorSpace, "linear");
+
+  // Same view again: the bind group is reused, not recreated.
+  const created = calls.bindGroups.length;
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(calls.bindGroups.length, created);
+  // The created bind group carries exactly the group1 uniform/texture/sampler
+  // pairs, including the new specular-intensity texture and sampler.
+  // entries is a VM-created array; Array.from copies it into a host array so
+  // deepStrictEqual compares primitive numbers rather than foreign prototypes.
+  const bindings = Array.from(calls.bindGroups[0].entries, (entry) => entry.binding);
+  assert.deepStrictEqual(bindings, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+});
+
+test("WebGPU specular-intensity late load and new view invalidate the cached bind group", () => {
+  const { context } = setupWebGPUMaterialBinding();
+  const state = { loaded: false };
+  const calls = makeGPUHarness(context, { "late.png": state });
+  context.material = { textureDescriptors: { specularIntensity: { uri: "late.png" } } };
+  context.owner = {};
+
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 0);
+  assert.strictEqual(calls.bindGroups.length, 1);
+
+  // Late load: the cache must invalidate and bind the actual view.
+  const lateView = { __view: "late-loaded" };
+  state.loaded = true;
+  state.view = lateView;
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 1);
+  assert.strictEqual(calls.bindGroups.length, 2);
+  assert.strictEqual(lastBoundResource(calls, 13), lateView);
+
+  // Same view: reuse, no new bind group.
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(calls.bindGroups.length, 2);
+
+  // A different view for the same URL invalidates again.
+  const otherView = { __view: "late-loaded-2" };
+  state.view = otherView;
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(calls.bindGroups.length, 3);
+  assert.strictEqual(lastBoundResource(calls, 13), otherView);
+});
+
+test("WebGPU material bind group layout declares specular-intensity texture and sampler at 13/14", () => {
+  const source = readRuntimeSource("webgpu.ts");
+  const context = createSceneCoreContext();
+  context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2 };
+  runFragment(context,
+    sliceBetween(source, "function wgpuCreateMaterialBindGroupLayout", "function wgpuCreatePointsBindGroupLayout"),
+    "webgpu-layout-extract.js");
+  context.device = { createBindGroupLayout: (desc) => desc };
+  const desc = callIn(context, "wgpuCreateMaterialBindGroupLayout(device)");
+  assert.strictEqual(desc.entries.length, 15);
+  // The found entry objects were created inside the VM with foreign Object
+  // prototypes; compare JSON roundtrips so only the values matter.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(
+    desc.entries.find((entry) => entry.binding === 13))),
+    { binding: 13, visibility: 2, texture: { sampleType: "float" } });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(
+    desc.entries.find((entry) => entry.binding === 14))),
+    { binding: 14, visibility: 2, sampler: {} });
 });

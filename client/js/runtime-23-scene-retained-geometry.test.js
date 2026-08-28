@@ -159,8 +159,14 @@ function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry) 
 function latestPBRMaterialBuffer(fake) {
   for (let index = fake.state.bindGroups.length - 1; index >= 0; index -= 1) {
     const group = fake.state.bindGroups[index];
-    const entries = group && group.desc && group.desc.entries;
-    if (!Array.isArray(entries) || entries.length !== 13) continue;
+    // The material bind group now carries 15 entries just like the frame
+    // group, so entry count alone misclassifies groups. Identify the real
+    // PBR material group by its gosx-material bind group layout descriptor.
+    const layout = group && group.desc && group.desc.layout;
+    const layoutDesc = layout && layout.desc;
+    if (!layoutDesc || layoutDesc.label !== "gosx-material") continue;
+    const entries = group.desc.entries;
+    if (!Array.isArray(entries)) continue;
     const uniform = entries.find((entry) => entry.binding === 0);
     if (uniform && uniform.resource && uniform.resource.buffer) {
       return uniform.resource.buffer;
@@ -513,7 +519,11 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes retire material uniforms w
   const secondRetainedStats = harness.renderer.diagnostics().retainedGeometry;
   assert.equal(secondRetainedStats.uploadCalls, firstRetainedStats.uploadCalls, "second frame must not upload retained vertex arrays");
   assert.ok(secondRetainedStats.hits >= firstRetainedStats.hits + 4);
-  assert.ok(secondWrites.some((call) => call.data && call.data.byteLength === 160), "second frame must upload compact material/model state");
+  const materialWrite = secondWrites.find((call) => call.buffer === firstMaterialBuffer);
+  assert.ok(materialWrite, "second frame must rewrite the identified retained material uniform buffer");
+  assert.ok(materialWrite.data && materialWrite.data.byteLength === 192,
+    "second frame must upload the current 192-byte material uniform to the identified buffer");
+  assert.equal(materialWrite.data.byteLength / 4, 48, "material uniform payload must be 48 floats");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-retained-mesh-objects"), "1");
 
   object.vertices.positions[0] = -2;

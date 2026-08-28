@@ -576,6 +576,9 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   const specF90Line = indexOfMatch(source, /"\s+specularF90: f32,"/);
   assert.ok(specF0Line > f0Line && specF90Line > specF0Line && specF90Line < structClose,
     "effective specular factors appended after dielectricF0");
+  const specIntensityFlagLine = indexOfMatch(source, /"\s+hasSpecularIntensityMap: u32,"/);
+  assert.ok(specIntensityFlagLine > f0Line && specIntensityFlagLine < specF0Line,
+    "hasSpecularIntensityMap declared after dielectricF0 and before specularF0");
   for (const flag of ["hasAlbedoMap", "hasNormalMap", "hasRoughnessMap", "hasMetalnessMap", "hasEmissiveMap", "receiveShadow", "hasOcclusionMap"]) {
     const flagLine = indexOfMatch(source, new RegExp('"\\s+' + flag + ': u32,"'));
     assert.ok(flagLine > structStart && flagLine < matrixLine, flag + " texture-flag slot preserved");
@@ -584,7 +587,7 @@ test("WebGPU material uniform packing carries the effective specular factors wit
   assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
   // Fragment shader consumes the effective specular factors; the fixed 0.04
   // default is gone.
-  assert.match(source, /let specF0 = material\.specularF0;/);
+  assert.match(source, /let specF0 = material\.specularF0( \* specIntensity)?;/);
   assert.match(source, /var F0 = mix\(specF0, albedo, metalness\);/);
   assert.doesNotMatch(source, /let F0 = mix\(vec3f\(0\.04\)/);
 

@@ -54,6 +54,7 @@
 
 const fs = require('fs'), os = require('os'), path = require('path');
 const http = require('http');
+const zlib = require('zlib');
 const { spawn, execFileSync } = require('child_process');
 
 const REPO = process.argv[2];
@@ -195,6 +196,149 @@ const glbSpecZero = buildQuadGLB(false, { factor: 0, color: [1, 1, 1] });
 // factor .5 yields F0 [.5, F0(2.42)*.25, F0(2.42)] and F90 .5. These inputs
 // are deliberately NOT duplicated as model or batch overrides.
 const glbSpecIor242 = buildQuadGLB(true, { factor: 0.5, color: [100, 0.5, 2] });
+
+// ---- Specular-INTENSITY-ALPHA texture slice (ALPHA-only addition) ---------
+// Deterministic RGBA PNG fixtures built with Node builtin zlib plus a local
+// CRC32, served as image/png. Each texture is a flat 4x4 block: production
+// consumes only the ALPHA channel as per-pixel specular intensity; the RGB
+// channels must be ignored by the sampler path (asserted below).
+function crc32(buf) {
+  let table = crc32.table;
+  if (!table) {
+    table = crc32.table = new Int32Array(256);
+    for (let n = 0; n < 256; n += 1) {
+      let c = n;
+      for (let k = 0; k < 8; k += 1) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c;
+    }
+  }
+  let c = -1;
+  for (let i = 0; i < buf.length; i += 1) c = (c >>> 8) ^ table[(c ^ buf[i]) & 0xFF];
+  return (c ^ -1) >>> 0;
+}
+function makePNG(rgb, alpha) {
+  const width = 4, height = 4;
+  const stride = 1 + width * 4;
+  const raw = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y += 1) {
+    raw[y * stride] = 0; // filter type None
+    for (let x = 0; x < width; x += 1) {
+      const o = y * stride + 1 + x * 4;
+      raw[o] = rgb[0]; raw[o + 1] = rgb[1]; raw[o + 2] = rgb[2]; raw[o + 3] = alpha;
+    }
+  }
+  function chunk(type, data) {
+    const out = Buffer.alloc(8 + data.length + 4);
+    out.writeUInt32BE(data.length, 0);
+    out.write(type, 4, 'ascii');
+    data.copy(out, 8);
+    out.writeUInt32BE(crc32(out.subarray(4, 8 + data.length)), 8 + data.length);
+    return out;
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;  // bit depth
+  ihdr[9] = 6;  // color type RGBA
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+const TEX_PNGS = {
+  '/tex/spec-alpha255.png': makePNG([200, 120, 60], 255),
+  '/tex/spec-alpha0-white.png': makePNG([255, 255, 255], 0),
+  '/tex/spec-alpha128-black.png': makePNG([0, 0, 0], 128),
+  '/tex/spec-alpha128-red.png': makePNG([255, 0, 0], 128),
+};
+let texServed = {};
+
+// Textured quad GLB variant: same geometry/material family as buildQuadGLB
+// but with valid TEXCOORD_0 UVs and KHR_materials_specular.specularTexture
+// pointing at a served same-origin PNG. The texture-derived intensity is NOT
+// duplicated as any model or batch specular override. The pre-existing
+// untextured buildQuadGLB fixtures stay byte-identical.
+function buildQuadGLBTex(opts) {
+  const pos = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);
+  const nrm = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  const uv = new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]);
+  const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
+  const parts = []; const views = []; let off = 0;
+  function addView(typed, target) {
+    const bytes = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
+    parts.push(bytes);
+    views.push({ buffer: 0, byteOffset: off, byteLength: bytes.length, target });
+    off += bytes.length;
+    const pad = (4 - (off % 4)) % 4;
+    if (pad) { parts.push(Buffer.alloc(pad)); off += pad; }
+    return views.length - 1;
+  }
+  const pv = addView(pos, 34962), nv = addView(nrm, 34962);
+  const uvv = addView(uv, 34962), iv = addView(idx, 34963);
+  const bin = Buffer.concat(parts);
+  const material = {
+    pbrMetallicRoughness: {
+      baseColorFactor: [0.69, 0.31, 0.24, 1],
+      metallicFactor: opts.metallic ? 1 : 0,
+      roughnessFactor: 0.35,
+    },
+    extensions: { KHR_materials_specular: { specularTexture: { index: 0 } } },
+  };
+  const extUsed = ['KHR_materials_specular'];
+  if (opts.ior != null) {
+    material.extensions.KHR_materials_ior = { ior: opts.ior };
+    extUsed.push('KHR_materials_ior');
+  }
+  const json = {
+    asset: { version: '2.0', generator: 'scene3d-material-ior-browser probe' },
+    scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name: 'quad' }],
+    meshes: [{ name: 'quad', primitives: [{ attributes: { POSITION: pv, NORMAL: nv, TEXCOORD_0: uvv }, indices: iv, mode: 4, material: 0 }] }],
+    materials: [material],
+    accessors: [
+      { bufferView: pv, componentType: 5126, count: 4, type: 'VEC3', min: [-1, -1, 0], max: [1, 1, 0] },
+      { bufferView: nv, componentType: 5126, count: 4, type: 'VEC3', min: [0, 0, 1], max: [0, 0, 1] },
+      { bufferView: uvv, componentType: 5126, count: 4, type: 'VEC2', min: [0, 0], max: [1, 1] },
+      { bufferView: iv, componentType: 5123, count: 6, type: 'SCALAR', min: [0], max: [3] },
+    ],
+    textures: [{ sampler: 0, source: 0 }],
+    samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 33071, wrapT: 33071 }],
+    images: [{ uri: opts.png }],
+    bufferViews: views, buffers: [{ byteLength: bin.length }],
+    extensionsUsed: extUsed,
+  };
+  let jsonBuf = Buffer.from(JSON.stringify(json), 'utf8');
+  const jp = (4 - (jsonBuf.length % 4)) % 4;
+  if (jp) jsonBuf = Buffer.concat([jsonBuf, Buffer.alloc(jp, 0x20)]);
+  const bp = (4 - (bin.length % 4)) % 4;
+  const binP = bp ? Buffer.concat([bin, Buffer.alloc(bp)]) : bin;
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546C67, 0); header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(12 + 8 + jsonBuf.length + 8 + binP.length, 8);
+  const jh = Buffer.alloc(8); jh.writeUInt32LE(jsonBuf.length, 0); jh.writeUInt32LE(0x4E4F534A, 4);
+  const bh = Buffer.alloc(8); bh.writeUInt32LE(binP.length, 0); bh.writeUInt32LE(0x004E4942, 4);
+  return Buffer.concat([header, jh, jsonBuf, bh, binP]);
+}
+const glbTexAlpha255 = buildQuadGLBTex({ png: '/tex/spec-alpha255.png' });
+const glbTexAlpha0 = buildQuadGLBTex({ png: '/tex/spec-alpha0-white.png' });
+const glbTexAlpha128Black = buildQuadGLBTex({ png: '/tex/spec-alpha128-black.png' });
+const glbTexAlpha128Red = buildQuadGLBTex({ png: '/tex/spec-alpha128-red.png' });
+const glbTexMetalAlpha0 = buildQuadGLBTex({ png: '/tex/spec-alpha0-white.png', metallic: true });
+const glbTexMetalAlpha255 = buildQuadGLBTex({ png: '/tex/spec-alpha255.png', metallic: true });
+const glbTexIblAlpha0 = buildQuadGLBTex({ png: '/tex/spec-alpha0-white.png', ior: 1 });
+const glbTexIblAlpha255 = buildQuadGLBTex({ png: '/tex/spec-alpha255.png', ior: 1 });
+const glbSpec128 = buildQuadGLB(false, { factor: 128 / 255, color: [1, 1, 1] });
+const GLB_FILES = {
+  '/models/quad-tex-alpha255.glb': glbTexAlpha255,
+  '/models/quad-tex-alpha0.glb': glbTexAlpha0,
+  '/models/quad-tex-alpha128-black.glb': glbTexAlpha128Black,
+  '/models/quad-tex-alpha128-red.glb': glbTexAlpha128Red,
+  '/models/quad-tex-metal-alpha0.glb': glbTexMetalAlpha0,
+  '/models/quad-tex-metal-alpha255.glb': glbTexMetalAlpha255,
+  '/models/quad-tex-ibl-alpha0.glb': glbTexIblAlpha0,
+  '/models/quad-tex-ibl-alpha255.glb': glbTexIblAlpha255,
+  '/models/quad-spec-128.glb': glbSpec128,
+};
 
 // ---- Case table (one object/scene per page; sequential, never batched) ----
 // Explicit unindexed quad mesh (6 triangle vertices). A bare kind:'box' would
@@ -392,6 +536,65 @@ const CASES = [
   delete w.wgName; delete w.wgSame; delete w.wgDiffers;
   CASES.push(w);
 });
+// ---- Specular-intensity-ALPHA texture cases (WebGPU only, ALPHA slice) ----
+// CPU factors stay at the pre-texture values (specularFactor defaults to 1),
+// so the 192-byte upload assertions expect F0 .04 / F90 1 while the final
+// per-pixel intensity comes from the texture ALPHA channel; those CPU factors
+// are NOT the final per-pixel factors. The observed hasSpecularIntensityMap
+// flag (float index 41 of the real upload) must reach 1 before capture and is
+// recorded in the evidence.
+[
+  // alpha255 (non-white RGB): pixel-identical to the factor-1 GLB render,
+  // proving a saturated alpha is neutral and the texture RGB is ignored.
+  WG({ name: 'wg-tex-alpha255', model: MODEL({ src: '/models/quad-tex-alpha255.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha255.png'], f0: 0.04, f90: 1,
+    same: 'wg-glb-spec-white' }),
+  // alpha0 (white RGB): pixel-identical to the factor-0 GLB and visibly
+  // different from factor 1.
+  WG({ name: 'wg-tex-alpha0', model: MODEL({ src: '/models/quad-tex-alpha0.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha0-white.png'], f0: 0.04, f90: 1,
+    same: 'wg-glb-spec-zero', differs: 'wg-glb-spec-white', minChanged: 20 }),
+  // Fractional alpha 128/255 with black RGB: must match the untextured
+  // specularFactor 128/255 GLB within 1 channel quantization step (the only
+  // new fractional comparison uses the near comparison below) and differ
+  // visibly from factor 1.
+  WG({ name: 'wg-tex-alpha128-black',
+    model: MODEL({ src: '/models/quad-tex-alpha128-black.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha128-black.png'], f0: 0.04, f90: 1,
+    differs: 'wg-glb-spec-white', minChanged: 1, nearSame: 'wg-glb-spec-128' }),
+  // Untextured fractional baseline for the near comparison above.
+  WG({ name: 'wg-glb-spec-128', model: MODEL({ src: '/models/quad-spec-128.glb' }),
+    f0: 0.04 * (128 / 255), f90: 128 / 255 }),
+  // Identical alpha 128 with different RGB: pixel-identical to the black RGB
+  // variant, proving the texture RGB is ignored.
+  WG({ name: 'wg-tex-alpha128-red',
+    model: MODEL({ src: '/models/quad-tex-alpha128-red.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha128-red.png'], f0: 0.04, f90: 1,
+    same: 'wg-tex-alpha128-black' }),
+  // Fully metallic pair: alpha 0 vs alpha 255 with identical geometry and
+  // metalness must stay pixel-identical.
+  WG({ name: 'wg-tex-metal-alpha0',
+    model: MODEL({ src: '/models/quad-tex-metal-alpha0.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha0-white.png'], f0: 0.04, f90: 1,
+    same: 'wg-tex-metal-alpha255' }),
+  WG({ name: 'wg-tex-metal-alpha255',
+    model: MODEL({ src: '/models/quad-tex-metal-alpha255.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha255.png'], f0: 0.04, f90: 1 }),
+  // IBL-only isolation pair at ior 1 (F0 = 0 isolates F90): the same textured
+  // quad geometry and the shared IBL fixture environment; alpha 0 vs alpha
+  // 255 must differ.
+  WG({ name: 'wg-tex-ibl-alpha0', model: MODEL({ src: '/models/quad-tex-ibl-alpha0.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha0-white.png'], f0: 0, f90: 1,
+    requiresIBL: true, keyLightIntensity: 0,
+    environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0,
+      envIntensity: 1, ibl: IBL_FIXTURE.descriptor },
+    differs: 'wg-tex-ibl-alpha255', minChanged: 20 }),
+  WG({ name: 'wg-tex-ibl-alpha255', model: MODEL({ src: '/models/quad-tex-ibl-alpha255.glb' }),
+    specTex: true, requiredTex: ['/tex/spec-alpha255.png'], f0: 0, f90: 1,
+    requiresIBL: true, keyLightIntensity: 0,
+    environment: { ambientIntensity: 0, skyIntensity: 0, groundIntensity: 0,
+      envIntensity: 1, ibl: IBL_FIXTURE.descriptor } }),
+].forEach((c) => CASES.push(c));
 const byName = {};
 CASES.forEach((c) => { byName[c.name] = c; });
 
@@ -443,7 +646,16 @@ function htmlFor(c) {
 }
 
 let server = http.createServer((req, res) => {
-  if (req.url === '/models/quad242.glb') {
+  if (GLB_FILES[req.url]) {
+    const b = GLB_FILES[req.url];
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': b.length });
+    res.end(b);
+  } else if (TEX_PNGS[req.url]) {
+    texServed[req.url] = (texServed[req.url] || 0) + 1;
+    const b = TEX_PNGS[req.url];
+    res.writeHead(200, { 'content-type': 'image/png', 'content-length': b.length });
+    res.end(b);
+  } else if (req.url === '/models/quad242.glb') {
     res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glb242.length });
     res.end(glb242);
   } else if (req.url === '/models/quad-default.glb') {
@@ -494,6 +706,8 @@ let server = http.createServer((req, res) => {
     const c = CASES.find((x) => x.name === name);
     if (!c) { res.writeHead(404); res.end(); return; }
     iblAssetCount = { radiance: 0, irradiance: 0, brdfLUT: 0 };
+    texServed = {};
+    Object.keys(TEX_PNGS).forEach((k) => { texServed[k] = 0; });
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(htmlFor(c));
   } else { res.writeHead(404); res.end(); }
@@ -768,7 +982,10 @@ const PRELOAD = `
             var floats = new Array(48);
             for (var i = 0; i < 48; i++) floats[i] = dv.getFloat32(i * 4, true);
             window.__gosxWGPU.dumps.push({
-              f0: [floats[44], floats[45], floats[46]], f90: floats[47], floats: floats });
+              f0: [floats[44], floats[45], floats[46]], f90: floats[47], floats: floats,
+              // hasSpecularIntensityMap flag at float index 41 (byte 164),
+              // read as an integer word, never via Float32 reinterpretation.
+              hasSpecIntensityMap: dv.getUint32(164, true) });
             window.__gosxWGPU.materialUploads += 1;
           }
         }
@@ -1131,6 +1348,24 @@ setTimeout(() => {
             CASE_WAIT_MS + 'ms');
         }
       }
+      if (c.specTex && ready) {
+        // Texture cases must additionally wait, boundedly, for the REAL
+        // hasSpecularIntensityMap flag (float index 41 of an actual 192-byte
+        // upload, read as a uint32 word) before settling/capturing.
+        let texFlagReady = false;
+        const texDeadline = Date.now() + CASE_WAIT_MS;
+        while (Date.now() < texDeadline) {
+          const sT = await evalSend(send, READ);
+          const dumpsT = (sT && sT.wgpu && sT.wgpu.dumps) || [];
+          if (dumpsT.some((d) => d.hasSpecIntensityMap === 1)) { texFlagReady = true; break; }
+          await sleep(100);
+        }
+        rec.specIntensityMapFlag = texFlagReady ? 1 : 0;
+        if (!texFlagReady) {
+          fail(c.name + ': hasSpecularIntensityMap flag not observed as 1 in any 192-byte upload within ' +
+            CASE_WAIT_MS + 'ms');
+        }
+      }
       await sleep(SETTLE_MS);
       const s = await evalSend(send, READ);
       if (!s || !s.ior || !s.wgpu) throw new Error('evidence read failed');
@@ -1149,6 +1384,14 @@ setTimeout(() => {
       if (s.mounted !== 'true') fail(c.name + ': data-gosx-scene3d-mounted not true');
       if (s.ior.obsErrors.length) fail(c.name + ': GL observation errors: ' + s.ior.obsErrors.join('; '));
       if (s.wgpu.obsErrors.length) fail(c.name + ': WebGPU observation errors: ' + s.wgpu.obsErrors.join('; '));
+      if (c.requiredTex) {
+        // Every texture asset used by a texture case must actually have been
+        // served by this probe origin for this case.
+        rec.textureServed = c.requiredTex.map((u) => ({ url: u, count: texServed[u] || 0 }));
+        c.requiredTex.forEach((u) => {
+          if (!(texServed[u] > 0)) fail(c.name + ': required texture asset not served: ' + u);
+        });
+      }
 
       if (iblExpected || iblDisabled) {
         // Record the IBL state from the SELECTED backend only: a GL boolean
@@ -1435,6 +1678,24 @@ setTimeout(() => {
           }
         }
       }
+      if (c.nearSame != null) {
+        // Fractional texture-intensity comparison: same backend, same
+        // dimensions, at most one channel quantization step of difference.
+        const B = shots[c.nearSame];
+        const recB = evidence.find((r) => r.name === c.nearSame);
+        if (!B || !recB) { fail(c.name + ': missing capture for near comparison vs ' + c.nearSame); }
+        else if (rec.renderer !== recB.renderer) {
+          rec.nearSameAs = { target: c.nearSame, skipped: 'renderer mismatch (' + rec.renderer + ' vs ' + recB.renderer + ')' };
+          fail(c.name + ': renderer mismatch vs ' + c.nearSame + ' (' + rec.renderer + ' vs ' + recB.renderer + ')');
+        } else {
+          const d = await diffShots(send, A.base64, B.base64);
+          rec.nearSameAs = { target: c.nearSame, diff: d };
+          if (!d || !d.dimsMatch || !(d.maxDelta <= 1)) {
+            fail(c.name + ': fractional intensity must match ' + c.nearSame +
+              ' within 1 channel quantization step (maxDelta=' + (d && d.maxDelta) + ')');
+          }
+        }
+      }
     } catch (e) {
       fail(c.name + ': comparison failed: ' + String((e && e.message) || e));
     }
@@ -1452,11 +1713,13 @@ setTimeout(() => {
       webgpuBundleReplays: r.bundleReplays, webgpuBundleDraws: r.bundleDraws,
       glBackend: r.glBackend, draws: r.draws, pbrDraws: r.pbrDraws,
       uniformF0: r.uniformF0, uniformF90: r.uniformF90, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
+      specIntensityMapFlag: r.specIntensityMapFlag, textureServed: r.textureServed,
       iblState: r.iblState, iblAssetsServed: r.iblAssetsServed,
       uploadF0: r.uploadF0, uploadF90: r.uploadF90,
       objects: r.objects, fgPixels: r.litPixels, fgFrac: r.fgFrac, cornerBG: r.meanRGB, centerRGB: r.centerRGB,
       cssAfter: r.cssAfter || undefined, sameAs: r.sameAs || undefined,
-      differsFrom: r.differsFrom || undefined, disposeRemovedState: r.disposeRemovedState })),
+      differsFrom: r.differsFrom || undefined, nearSameAs: r.nearSameAs || undefined,
+      disposeRemovedState: r.disposeRemovedState })),
     disposal: ran.length > 0 && ran.every((r) => r.disposeRemovedState === true),
     artifacts: ART || undefined,
     errors, warnings,

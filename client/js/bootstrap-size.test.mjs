@@ -553,7 +553,9 @@ const budgets = [
   // Authored specular color plumbing (pre-typed-copy) measured
   // 1_564_667 / 424_753 / 341_352; caps raised with narrow headroom.
   // Measured: bootstrap.js 1567838/425622/341812 raw/gzip/brotli.
-  { file: "bootstrap.js", raw: 1_568_000, gzip: 425_700, brotli: 342_000 },
+  // Specular-intensity alpha texture slice measured 1568528/425727/342055;
+  // all three caps raised with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_569_000, gzip: 425_800, brotli: 342_200 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1144,7 +1146,9 @@ const budgets = [
   // Measured: 387_272 / 93_709 / 78_460, plus rounding headroom.
   // Indexed BufferGeometry exact measurement: 389_362 / 94_293 / 79_001.
   // Measured: WebGPU chunk 390659/94660/79194 (only raw exceeded; compressed caps kept).
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 390_800, gzip: 94_800, brotli: 79_500 },
+  // Specular-intensity alpha texture slice measured 391349/94759/79319
+  // (only raw exceeded again; compressed caps kept).
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 391_500, gzip: 94_800, brotli: 79_500 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1736,7 +1740,9 @@ const routeBudgets = [
     // Authored specular color plumbing (pre-typed-copy) measured
     // 1_453_600 / 388_683 / 328_506; caps raised with narrow headroom.
     // Measured: 1455773/389325/328976.
-    raw: 1_455_900,
+    // Specular-intensity alpha texture slice measured 1456499/389429/329035
+    // (only raw exceeded; compressed caps kept).
+    raw: 1_456_700,
     gzip: 389_500,
     brotli: 329_100,
   },
@@ -1848,7 +1854,9 @@ const routeBudgets = [
     // Authored specular color plumbing (pre-typed-copy) measured
     // 1_085_489 / 285_944 / 239_562; caps raised with narrow headroom.
     // Measured: 1086596/286279/239719.
-    raw: 1_086_700,
+    // Specular-intensity alpha texture slice measured 1087322/286383/239778
+    // (only raw exceeded; compressed caps kept).
+    raw: 1_087_500,
     gzip: 286_400,
     brotli: 239_900,
   },
