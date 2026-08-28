@@ -833,14 +833,17 @@ func Page() Node {
 
 	// Spot — a cone with a soft edge.
 	scene.SpotLight{
-	    Color:     "#ffffff",
-	    Intensity: 1.5,
-	    Position:  scene.Vec3(0, 6, 0),
-	    Direction: scene.Vec3(0, -1, 0),
-	    Angle:     0.35, // outer cone, radians
-	    Penumbra:  0.2,  // 0 = hard edge, 1 = fully soft
-	    Range:     30,
-	    Decay:     2,
+	    Color:      "#ffffff",
+	    Intensity:  1.5,
+	    Position:   scene.Vec3(0, 6, 0),
+	    Direction:  scene.Vec3(0, -1, 0),
+	    Angle:      0.35, // half-angle of the cone, radians
+	    Penumbra:   0.2,  // 0 = hard edge, 1 = fully soft
+	    Range:      30,
+	    Decay:      2,
+	    CastShadow: true,
+	    ShadowBias: -0.001,
+	    ShadowSize: 1024,
 	}
 
 	// Hemisphere — a sky and ground gradient.
@@ -865,27 +868,28 @@ func Page() Node {
 	    Color:     "#cfe6ff",
 	    Intensity: 0.5,
 	}`)}
-			<h3>Two honest shortfalls remain</h3>
+			<h3>Lighting limits (point shadows are also unsupported)</h3>
 			<ul>
 				<li>
 					<strong>Rect-area specular.</strong>
 					The diffuse half is exact: the WebGPU shader evaluates the analytic polygon form factor over the four world corners. The specular half substitutes a representative-point lobe for the fitted linearly transformed cosine (LTC) tables. Energy lands in roughly the right place. The highlight shape is wrong on glossy surfaces. On WebGL2 a rect-area light has no shape at all; it draws as a point light, and Width and Height stop at the IR.
 				</li>
-				<li>
-					<strong>Spot shadows.</strong>
-					A spot light casts no shadow on either backend. Both shadow passes skip any light whose kind is not
-					<span class="inline-code">directional</span>
-					, even though
-					<span class="inline-code">SpotLight</span>
-					accepts
-					<span class="inline-code">CastShadow</span>
-					,
-					<span class="inline-code">ShadowBias</span>
-					, and
-					<span class="inline-code">ShadowSize</span>
-					.
-				</li>
 			</ul>
+			<p>
+				Spot lights now cast shadows on WebGL2 and WebGPU. Set
+				<span class="inline-code">CastShadow</span>
+				,
+				<span class="inline-code">ShadowBias</span>
+				, and
+				<span class="inline-code">ShadowSize</span>
+				on a
+				<span class="inline-code">SpotLight</span>
+				just as on a directional. The
+				<span class="inline-code">Angle</span>
+				is the cone's half-angle in radians and must be strictly greater than 0 and less than 90 degrees, with a finite, projectable position and direction; a zero direction or nonpositive angle is replaced with a default. A positive finite
+				<span class="inline-code">Range</span>
+				caps the fitted far plane, and geometry closer than the near plane is not shadowed. Each spot uses a single perspective map — no spot cascades or point-light cube shadows — sharing the two shadow-light slots with directional lights.
+			</p>
 			<p>
 				Light-probe spherical harmonics is implemented on both GPU backends. When
 				<span class="inline-code">LightProbe.Coefficients</span>
@@ -915,12 +919,10 @@ func Page() Node {
 			</p>
 			<div class="scene3d-warning" role="note">
 				<p class="scene3d-warning__title">
-					Two shadow slots, directional lights only.
+					Two shadow-light slots.
 				</p>
 				<p>
-					Both GPU backends allocate at most two shadow maps per scene, and both skip any light that is not a
-					<span class="inline-code">DirectionalLight</span>
-					. A third shadow-casting directional light is ignored. A shadow-casting spot light is ignored.
+					Both GPU backends support at most two shadow-casting lights per scene. Directional and spot lights both qualify, and a third shadow-casting light is ignored. Each directional uses one or more cascade maps; each spot uses a single perspective map. Unsupported spot lights — angle outside 0–90 degrees exclusive, or a non-projectable position or direction, after replacing a zero direction or nonpositive angle with defaults — are skipped before consuming slots. Point, hemisphere, rect-area, and light-probe lights do not cast shadows.
 				</p>
 			</div>
 		</section>
