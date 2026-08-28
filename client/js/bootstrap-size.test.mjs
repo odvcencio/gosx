@@ -583,7 +583,9 @@ const budgets = [
   // all three caps raised to the next 100 bytes.
   // Skinned-shadow runtime plus posed influence bounds measured
   // 1605600/434348/348351; all three caps raised to the next 100 bytes.
-  { file: "bootstrap.js", raw: 1_605_600, gzip: 434_400, brotli: 348_400 },
+  // CUBICSPLINE mixer rebuild measured 1605983/434569/348416; all three
+  // caps raised to the next 100 bytes.
+  { file: "bootstrap.js", raw: 1_606_000, gzip: 434_600, brotli: 348_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1249,7 +1251,9 @@ const budgets = [
   { file: "bootstrap-feature-scene3d-gltf.js", raw: 40_800, gzip: 15_000, brotli: 13_400 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
-  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
+  // CUBICSPLINE mixer rebuild measured 8551/3636/3260 raw/gzip/brotli; raw
+  // 8_500 -> 8_600; gzip and brotli caps unchanged (inside 4_000 caps).
+  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_600, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
