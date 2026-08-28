@@ -171,6 +171,29 @@ var patchFieldOrder = []string{fieldTransform, fieldMaterial, fieldLight}
 // to prevent.
 var ErrEmptyObjectID = errors.New("scene3d: command needs a non-empty objectId")
 
+// ErrRemountRequired reports a SceneIR diff that includes fields the command
+// stream cannot carry. The caller must resend the full scene and remount the
+// surface instead of applying a partial command update.
+var ErrRemountRequired = errors.New("scene3d: scene diff requires a full remount")
+
+// RemountRequiredError reports the stable SceneIR field names that changed
+// outside the command protocol. DiffScene returns it before mutating the
+// document, including when the same diff also contains supported commands.
+// The caller must resend the full scene and remount the surface so the update
+// is not applied partially.
+type RemountRequiredError struct {
+	Fields []string
+}
+
+func (e *RemountRequiredError) Error() string {
+	if e == nil || len(e.Fields) == 0 {
+		return ErrRemountRequired.Error()
+	}
+	return fmt.Sprintf("%s: changed fields %s; resend the full scene and remount the surface", ErrRemountRequired, strings.Join(e.Fields, ", "))
+}
+
+func (e *RemountRequiredError) Unwrap() error { return ErrRemountRequired }
+
 // Doc binds one crdt.Doc to one Scene3D namespace inside that document. Bind
 // several namespaces to one document to replicate several scenes over one
 // socket.
@@ -343,12 +366,22 @@ func kindForSlot(slot string) scene.CommandKind {
 // into the document, and commits one change. It returns the commands it wrote
 // so a caller can also push them straight to a mounted surface.
 //
+// If scene.DiffScene reports one or more RemountFields, DiffScene returns a
+// RemountRequiredError before writing anything. It returns no commands or hash
+// in that case; resend the full next scene and remount the surface. A partial
+// command update cannot reproduce the requested scene.
+//
 // An empty diff writes nothing and returns a zero hash. Committing an empty
 // change would grow the history and wake every peer for no reason.
 func (d *Doc) DiffScene(previous, next scene.SceneIR, message string) ([]scene.Command, crdt.ChangeHash, error) {
-	commands := scene.DiffCommands(previous, next)
-	hash, err := d.Apply(commands, message)
-	return commands, hash, err
+	diff := scene.DiffScene(previous, next, scene.DiffOptions{})
+	if len(diff.RemountFields) > 0 {
+		return nil, crdt.ChangeHash{}, &RemountRequiredError{
+			Fields: append([]string(nil), diff.RemountFields...),
+		}
+	}
+	hash, err := d.Apply(diff.Commands, message)
+	return diff.Commands, hash, err
 }
 
 // DiffProps lowers two typed Scene3D props values and applies the diff.
