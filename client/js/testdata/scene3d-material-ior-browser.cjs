@@ -964,6 +964,44 @@ const SPEC_COLOR_ENV = () => ({ ambientIntensity: 0, skyIntensity: 0, groundInte
     requiresIBL: true, keyLightIntensity: 0, environment: SPEC_COLOR_ENV(),
     differs: 'gl-tex-ibl-color-black', minChanged: 20 },
 ].forEach((c) => CASES.push(c));
+// ---- Real-browser shadow-budget cases: the existing OBJ fixture with
+// castShadow/receiveShadow, two directional castShadow lights each requesting
+// 4 cascades at size 256 with distinct directions, explicit camera near/far,
+// and the served envMap /tex/spec-color-white.png. Each case forces the GL
+// MAX_TEXTURE_IMAGE_UNITS value reported to the engine (16 or 32) via a
+// strictly forwarding getParameter wrapper, exercising the shadow-map
+// allocator's unit budget on real GL. This tests allocator limits only; it is
+// NOT an actual 16-unit hardware certification.
+[
+  { name: 'gl-shadow-budget-16',
+    obj: OBJ({ castShadow: true, receiveShadow: true }),
+    shadowBudget: 16, f0: 0.04, f90: 1,
+    lights: [
+      { id: 'shadowKey', kind: 'directional', intensity: 1.2,
+        directionX: 0.5, directionY: 1, directionZ: 0.5,
+        castShadow: true, shadowCascades: 4, shadowSize: 256 },
+      { id: 'shadowFill', kind: 'directional', intensity: 0.8,
+        directionX: -0.6, directionY: 0.8, directionZ: -0.4,
+        castShadow: true, shadowCascades: 4, shadowSize: 256 },
+    ],
+    cameraNear: 0.1, cameraFar: 100,
+    environment: { envMap: '/tex/spec-color-white.png' },
+    requiredTex: ['/tex/spec-color-white.png'] },
+  { name: 'gl-shadow-budget-32',
+    obj: OBJ({ castShadow: true, receiveShadow: true }),
+    shadowBudget: 32, f0: 0.04, f90: 1,
+    lights: [
+      { id: 'shadowKey', kind: 'directional', intensity: 1.2,
+        directionX: 0.5, directionY: 1, directionZ: 0.5,
+        castShadow: true, shadowCascades: 4, shadowSize: 256 },
+      { id: 'shadowFill', kind: 'directional', intensity: 0.8,
+        directionX: -0.6, directionY: 0.8, directionZ: -0.4,
+        castShadow: true, shadowCascades: 4, shadowSize: 256 },
+    ],
+    cameraNear: 0.1, cameraFar: 100,
+    environment: { envMap: '/tex/spec-color-white.png' },
+    requiredTex: ['/tex/spec-color-white.png'] },
+].forEach((c) => CASES.push(c));
 const byName = {};
 CASES.forEach((c) => { byName[c.name] = c; });
 
@@ -997,6 +1035,14 @@ function propsFor(c) {
   if (c.obj) p.objects = [c.obj];
   if (c.model) p.models = [c.model];
   if (c.instanced) p.instancedGLBMeshes = [c.instanced];
+  // Shadow-budget cases: explicit scoped lights and camera near/far so the
+  // two directional castShadow lights and depth range are exactly the ones
+  // under test.
+  if (c.lights) p.lights = c.lights;
+  if (typeof c.cameraNear === 'number') {
+    p.camera.near = c.cameraNear;
+    p.camera.far = c.cameraFar;
+  }
   return p;
 }
 
@@ -1193,7 +1239,28 @@ async function evalSend(send, expression, extra) {
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
     lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, lastDrawHasSpecColorMap: null,
-    programInfo: null, queriedUniforms: [] };
+    programInfo: null, queriedUniforms: [], shadow: null, nativeCap: null, forcedCap: null };
+  // Forced MAX_TEXTURE_IMAGE_UNITS caps, selected by the served case pathname
+  // so no other case is affected. Used only by the shadow-budget cases.
+  var __path = (typeof location !== "undefined" && location.pathname) || "";
+  if (__path.indexOf("/case/gl-shadow-budget-16") === 0) window.__gosxIORForcedCap = 16;
+  if (__path.indexOf("/case/gl-shadow-budget-32") === 0) window.__gosxIORForcedCap = 32;
+  var __gosxShadowEnabled = !!window.__gosxIORForcedCap;
+  var __shadowTexIds = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+  var __shadowNextTexId = 0;
+  var __shadowDepthIds = new Set();
+  // WeakMap has no .size: assign stable unique native texture IDs from a
+  // monotonic integer counter instead.
+  function __shadowTexId(t) {
+    if (!t || !__shadowTexIds) return null;
+    var id = __shadowTexIds.get(t);
+    if (id === undefined) {
+      __shadowNextTexId += 1;
+      id = __shadowNextTexId;
+      __shadowTexIds.set(t, id);
+    }
+    return id;
+  }
   window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
 (function () {
   var latest80 = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
@@ -1295,6 +1362,78 @@ const PRELOAD = `
             // across draws and can never fake readiness.
             window.__gosxIOR.lastDrawHasSpecColorMap = null;
           }
+          // Shadow-budget cases: on each native PBR draw, capture the real
+          // has/cascade/light-index uniforms for both slots and the actual
+          // u_shadowMap{slot}_{cascade} sampler unit bindings for the active
+          // cascades, read from the current PBR program via the saved native
+          // calls (the previously active unit is restored in a finally
+          // block). A whole-unit scan would be wrong here: the source binds
+          // many MATERIAL textures too.
+          if (__gosxShadowEnabled) {
+            var sh = { cascades: [], has: [], lightIndices: [], units: [],
+              textures: [], linkStatus: null,
+              depthAttachmentCount: 0, depthAttachmentIds: [], error: null };
+            try {
+              // Native LINK_STATUS of the CURRENT program at this draw.
+              sh.linkStatus = this.__origGetProgramParameter.call(this, cp, 0x8B82 /* LINK_STATUS */);
+              if (this.__scasc0locs && this.__scasc0locs.has(cp) &&
+                  this.__scasc1locs && this.__scasc1locs.has(cp) &&
+                  this.__shas0locs && this.__shas0locs.has(cp) &&
+                  this.__shas1locs && this.__shas1locs.has(cp) &&
+                  this.__sli0locs && this.__sli0locs.has(cp) &&
+                  this.__sli1locs && this.__sli1locs.has(cp)) {
+                sh.cascades.push(this.__origGetUniform.call(this, cp, this.__scasc0locs.get(cp)));
+                sh.cascades.push(this.__origGetUniform.call(this, cp, this.__scasc1locs.get(cp)));
+                sh.has.push(this.__origGetUniform.call(this, cp, this.__shas0locs.get(cp)));
+                sh.has.push(this.__origGetUniform.call(this, cp, this.__shas1locs.get(cp)));
+                sh.lightIndices.push(this.__origGetUniform.call(this, cp, this.__sli0locs.get(cp)));
+                sh.lightIndices.push(this.__origGetUniform.call(this, cp, this.__sli1locs.get(cp)));
+              } else {
+                sh.error = 'shadow uniform locations missing at PBR draw';
+              }
+              var natCap = window.__gosxIOR.nativeCap;
+              if (!sh.error && typeof natCap === "number" && natCap > 0 &&
+                  this.__origActiveTexture && this.__origGetUniformLocation) {
+                var prevUnit = this.__origGetParameter.call(this, 0x84E0 /* ACTIVE_TEXTURE */);
+                try {
+                  for (var slot = 0; slot < 2 && !sh.error; slot += 1) {
+                    var ncasc = sh.cascades[slot];
+                    for (var ci = 0; ci < ncasc; ci += 1) {
+                      var sname = 'u_shadowMap' + slot + '_' + ci;
+                      var sloc = this.__origGetUniformLocation.call(this, cp, sname);
+                      if (!sloc) { sh.error = 'missing shadow sampler uniform ' + sname; break; }
+                      var unit = this.__origGetUniform.call(this, cp, sloc);
+                      var forcedNow = window.__gosxIORForcedCap;
+                      if (typeof unit !== 'number' || unit < 0 || unit >= natCap ||
+                          (typeof forcedNow === 'number' && unit >= forcedNow)) {
+                        sh.error = 'sampler ' + sname + ' bound to out-of-range unit ' + unit; break;
+                      }
+                      // Switch to that exact unit only; never scan all units.
+                      this.__origActiveTexture.call(this, 0x84C0 + unit /* TEXTURE0 + unit */);
+                      var tobj = this.__origGetParameter.call(this, 0x8069 /* TEXTURE_BINDING_2D */);
+                      var tid = tobj ? __shadowTexId(tobj) : null;
+                      if (tid === null) { sh.error = 'no texture bound on unit ' + unit + ' for ' + sname; break; }
+                      sh.units.push(unit);
+                      sh.textures.push(tid);
+                    }
+                  }
+                } finally {
+                  this.__origActiveTexture.call(this, prevUnit);
+                }
+              } else if (!sh.error) {
+                sh.error = 'native cap or native GL accessors missing at PBR draw';
+              }
+              sh.depthAttachmentCount = __shadowDepthIds.size;
+              sh.depthAttachmentIds = Array.from(__shadowDepthIds).sort(function (a, b) { return a - b; });
+            } catch (se) {
+              sh.error = String((se && se.message) || se);
+              // Observation errors are fatal: record them on every draw so
+              // they cannot be lost if a later draw overwrites the snapshot.
+              noteErr(window.__gosxIOR.obsErrors, se);
+            }
+            if (sh.error) noteErr(window.__gosxIOR.obsErrors, sh.error);
+            window.__gosxIOR.shadow = sh;
+          }
           if (window.__gosxIOR.f0s.length < 4096) window.__gosxIOR.f0s.push(vec);
         }
       }
@@ -1315,11 +1454,49 @@ const PRELOAD = `
     var gu = proto.getUniformLocation, gp = proto.getParameter, guf = proto.getUniform,
         gpp = proto.getProgramParameter, gau = proto.getActiveUniform,
         da = proto.drawArrays, de = proto.drawElements,
-        dai = proto.drawArraysInstanced, dei = proto.drawElementsInstanced;
+        dai = proto.drawArraysInstanced, dei = proto.drawElementsInstanced,
+        gat = proto.activeTexture, gfbt = proto.framebufferTexture2D;
     proto.__origGetParameter = gp;
     proto.__origGetUniform = guf;
     proto.__origGetProgramParameter = gpp;
     proto.__origGetActiveUniform = gau;
+    if (gat) proto.__origActiveTexture = gat;
+    proto.__origGetUniformLocation = gu;
+    // Forced-cap interception for MAX_TEXTURE_IMAGE_UNITS (0x8872) only, on
+    // the shadow-budget case pages. The true native cap is recorded once via
+    // the saved native; every other call forwards unchanged. A forced 32 is
+    // never claimed to prove 32-unit hardware: the engine sees
+    // min(forced, native), and the runner fails the case explicitly when the
+    // native cap is below the forced value.
+    proto.getParameter = function (p) {
+      var forced = window.__gosxIORForcedCap;
+      if (p === 0x8872 && typeof forced === "number") {
+        if (window.__gosxIOR.nativeCap === null) {
+          var nat = gp.call(this, p);
+          window.__gosxIOR.nativeCap = nat;
+        }
+        var eff = Math.min(forced, window.__gosxIOR.nativeCap);
+        window.__gosxIOR.forcedCap = eff;
+        return eff;
+      }
+      return gp.apply(this, arguments);
+    };
+    // Strictly forwarded framebufferTexture2D: the native is called with the
+    // exact original arguments and its return value passes through. DEPTH
+    // _ATTACHMENT (0x8D00) textures get stable counter IDs for evidence,
+    // tracked only on shadow-budget pages (texture is argument 3).
+    if (gfbt) {
+      proto.framebufferTexture2D = function () {
+        var r = gfbt.apply(this, arguments);
+        try {
+          if (__gosxShadowEnabled && arguments[1] === 0x8D00 && arguments.length > 3 && arguments[3]) {
+            var id = __shadowTexId(arguments[3]);
+            if (id !== null) __shadowDepthIds.add(id);
+          }
+        } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
+        return r;
+      };
+    }
     // Note: stored on the prototype (shared by contexts) is fine because the
     // draw observer receives the context as |this|.
     proto.getUniformLocation = function (p, n) {
@@ -1349,6 +1526,30 @@ const PRELOAD = `
         if (n === "u_hasSpecularColorMap") {
           var mcol = this.__shascolorlocs || (this.__shascolorlocs = new Map());
           if (loc) mcol.set(p, loc); else mcol.delete(p);
+        }
+        if (n === "u_hasShadow0") {
+          var ms0 = this.__shas0locs || (this.__shas0locs = new Map());
+          if (loc) ms0.set(p, loc); else ms0.delete(p);
+        }
+        if (n === "u_hasShadow1") {
+          var ms1 = this.__shas1locs || (this.__shas1locs = new Map());
+          if (loc) ms1.set(p, loc); else ms1.delete(p);
+        }
+        if (n === "u_shadowCascades0") {
+          var msc0 = this.__scasc0locs || (this.__scasc0locs = new Map());
+          if (loc) msc0.set(p, loc); else msc0.delete(p);
+        }
+        if (n === "u_shadowCascades1") {
+          var msc1 = this.__scasc1locs || (this.__scasc1locs = new Map());
+          if (loc) msc1.set(p, loc); else msc1.delete(p);
+        }
+        if (n === "u_shadowLightIndex0") {
+          var msli0 = this.__sli0locs || (this.__sli0locs = new Map());
+          if (loc) msli0.set(p, loc); else msli0.delete(p);
+        }
+        if (n === "u_shadowLightIndex1") {
+          var msli1 = this.__sli1locs || (this.__sli1locs = new Map());
+          if (loc) msli1.set(p, loc); else msli1.delete(p);
         }
       } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
       return loc;
@@ -1519,6 +1720,9 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'trackedF0:!!(window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.trackedF0),' +
   'activeUniforms:((window.__gosxIOR.programInfo&&window.__gosxIOR.programInfo.activeUniforms)||[]).slice(0,100),' +
   'queriedUniforms:(window.__gosxIOR.queriedUniforms||[]).slice(0,64),' +
+  'shadow:(window.__gosxIOR?window.__gosxIOR.shadow:null),' +
+  'nativeCap:(window.__gosxIOR?window.__gosxIOR.nativeCap:null),' +
+  'forcedCap:(window.__gosxIOR?window.__gosxIOR.forcedCap:null),' +
   'obsErrors:(window.__gosxIOR.obsErrors||[]).slice(0,4)}:null,' +
   'wgpu:window.__gosxWGPU?{uploads:window.__gosxWGPU.materialUploads,' +
   'dumps:window.__gosxWGPU.dumps.slice(-4),' +
@@ -2003,6 +2207,74 @@ setTimeout(() => {
           }
         }
         assertClose(s.ior.lastDrawF90, expF90, c.name + ' u_specularF90 at draw');
+        if (c.shadowBudget) {
+          rec.shadowBudget = c.shadowBudget;
+          rec.nativeCap = s.ior.nativeCap;
+          rec.forcedCap = s.ior.forcedCap;
+          if (typeof s.ior.nativeCap !== 'number' || s.ior.nativeCap <= 0) {
+            fail(c.name + ': true native MAX_TEXTURE_IMAGE_UNITS was not observed');
+          }
+          if (rec.forcedCap !== c.shadowBudget) {
+            fail(c.name + ': effective forced cap ' + rec.forcedCap + ' != requested shadowBudget ' + c.shadowBudget);
+          }
+          if (s.ior.nativeCap < c.shadowBudget) {
+            fail(c.name + ': forced cap ' + c.shadowBudget + ' requested but native cap is only ' + s.ior.nativeCap +
+              '; this case cannot be validated on this hardware/driver');
+          }
+          const sh = s.ior.shadow;
+          if (!sh) {
+            fail(c.name + ': no shadow snapshot captured at a real PBR draw');
+          } else {
+            rec.shadow = sh;
+            if (sh.error) fail(c.name + ': shadow snapshot error: ' + sh.error);
+            // The first draw may use the depth program; require the native
+            // LINK_STATUS of the CURRENT PBR program captured in the snapshot.
+            if (sh.linkStatus !== true) {
+              fail(c.name + ': current PBR program native LINK_STATUS not true at snapshot');
+            }
+            if (!(s.ior.pbrDraws > 0)) {
+              fail(c.name + ': no PBR draws at shadow snapshot');
+            }
+            const expCasc = (c.shadowBudget === 16) ? [4, 1] : [4, 4];
+            if (JSON.stringify(sh.cascades) !== JSON.stringify(expCasc)) {
+              fail(c.name + ': expected shadow cascades [' + expCasc.join(',') +
+                '], got [' + (sh.cascades || []).join(',') + ']');
+            }
+            const hasStr = JSON.stringify(sh.has || []);
+            if (hasStr !== JSON.stringify([1, 1]) && hasStr !== JSON.stringify([true, true])) {
+              fail(c.name + ': expected u_hasShadow0/1 both enabled, got [' + (sh.has || []).join(',') + ']');
+            }
+            if (JSON.stringify(sh.lightIndices || []) !== JSON.stringify([0, 1])) {
+              fail(c.name + ': expected shadow light indices [0,1], got [' +
+                (sh.lightIndices || []).join(',') + ']');
+            }
+            const expUnits = (c.shadowBudget === 16) ? 5 : 8;
+            const units = sh.units || [];
+            const uniq = Array.from(new Set(units));
+            if (units.length !== expUnits || uniq.length !== expUnits) {
+              fail(c.name + ': expected exactly ' + expUnits + ' distinct in-range active sampler units, got ' +
+                JSON.stringify(units));
+            }
+            if (!units.every((u) => Number.isInteger(u) && u >= 0 &&
+                u < Math.min(s.ior.nativeCap, c.shadowBudget))) {
+              fail(c.name + ': sampler units must be integers below both caps, got ' + JSON.stringify(units));
+            }
+            const texs = sh.textures || [];
+            if (texs.length !== expUnits || texs.some((t) => t == null) ||
+                new Set(texs).size !== expUnits) {
+              fail(c.name + ': expected ' + expUnits + ' distinct non-null bound textures, got ' +
+                JSON.stringify(texs));
+            }
+            const depthIds = sh.depthAttachmentIds || [];
+            if (sh.depthAttachmentCount !== expUnits || depthIds.length !== expUnits) {
+              fail(c.name + ': expected ' + expUnits + ' distinct depth attachments, got ' +
+                sh.depthAttachmentCount);
+            }
+            if (!texs.every((t) => depthIds.indexOf(t) >= 0)) {
+              fail(c.name + ': not every selected sampler texture was observed as a DEPTH_ATTACHMENT');
+            }
+          }
+        }
       }
 
       cap = await capture(send);
@@ -2195,7 +2467,10 @@ setTimeout(() => {
       objects: r.objects, fgPixels: r.litPixels, fgFrac: r.fgFrac, cornerBG: r.meanRGB, centerRGB: r.centerRGB,
       cssAfter: r.cssAfter || undefined, sameAs: r.sameAs || undefined,
       differsFrom: r.differsFrom || undefined, nearSameAs: r.nearSameAs || undefined,
-      disposeRemovedState: r.disposeRemovedState })),
+      disposeRemovedState: r.disposeRemovedState,
+      shadowBudget: r.shadowBudget || undefined, shadow: r.shadow || undefined,
+      nativeCap: r.nativeCap !== undefined ? r.nativeCap : undefined,
+      forcedCap: r.forcedCap !== undefined ? r.forcedCap : undefined })),
     disposal: ran.length > 0 && ran.every((r) => r.disposeRemovedState === true),
     artifacts: ART || undefined,
     errors, warnings,
@@ -2212,7 +2487,9 @@ setTimeout(() => {
       'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +
-      'proof in every case. GPU hardware acceleration type is NOT certified (SwiftShader possible).',
+      'proof in every case. Forced 16/32 MAX_TEXTURE_IMAGE_UNITS allocator-cap testing on native ' +
+      'WebGL is not physical 16-unit hardware certification. GPU hardware acceleration type is ' +
+      'NOT certified (SwiftShader possible).',
   };
   if (ART) {
     // Persist the full report to the artifact path before emitting, so the
