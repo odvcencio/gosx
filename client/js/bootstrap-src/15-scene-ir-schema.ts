@@ -151,6 +151,7 @@
    * @property {string} [kind]
    * @property {string} [color]
    * @property {number} [opacity]
+   * @property {boolean} [unlit] Disable lighting response for this material. Absent inherits (normalizers default false); an explicit false overrides an inherited true.
    * @property {number} [roughness]
    * @property {number} [metalness]
    * @property {number} [ior] Index of refraction. Absent uses the renderer default (1.5); 0 selects the special 1-reflectance case; values must be 0 or at least 1.

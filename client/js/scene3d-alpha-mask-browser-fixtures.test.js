@@ -51,7 +51,7 @@ const TABLE = [
 const SUFFIX = ['a255', 'a0', 'a0', 'a255', 'a128', 'a128', 'a0', 'a255', 'a128', 'a128'];
 
 test('masktex probe cases are registered and reference valid controls', () => {
-  assert.ok(CASES.length >= 157, 'all case groups registered');
+  assert.ok(CASES.length >= 161, 'all case groups registered');
   const mask = cases.filter((c) => /-masktex-/.test(c.name));
   const names = mask.map((c) => c.name);
   assert.equal(names.length, 20);
@@ -70,6 +70,9 @@ test('masktex probe cases are registered and reference valid controls', () => {
     assert.ok(row);
     assert.equal(c.expectedOpacity, row[4]);
     assert.equal(c.expectedAlphaCutoff, row[2]);
+    // expectedUnlit must mirror the authored material: true for the unlit
+    // rows (last 3), explicitly false for every lit row.
+    assert.equal(c.expectedUnlit, row[0].startsWith('unlit'));
     assert.equal(c.expectedEmpty, row[6] ? true : undefined);
     const refKey = row[5] && Object.keys(row[5])[0];
     if (refKey) {
@@ -82,6 +85,44 @@ test('masktex probe cases are registered and reference valid controls', () => {
     } else {
       assert.ok(!c.same && !c.differs, 'controls have no same/diff');
     }
+  }
+});
+
+test('masktex unlit/lit dark probe cases gate on expectedUnlit', () => {
+  // [name, expectedUnlit, src, control name, comparison key]
+  const DARK = [
+    ['gl-unlit-dark', true, '/models/gl-masktex-unlit-control.glb',
+      'gl-masktex-unlit-control', 'same'],
+    ['wg-unlit-dark', true, '/models/gl-masktex-unlit-control.glb',
+      'wg-masktex-unlit-control', 'same'],
+    ['gl-lit-dark', false, '/models/gl-masktex-control.glb',
+      'gl-masktex-control', 'differs'],
+    ['wg-lit-dark', false, '/models/gl-masktex-control.glb',
+      'wg-masktex-control', 'differs'],
+  ];
+  const byName = new Map(cases.map((c) => [c.name, c]));
+  for (const [name, unlit, src, refName, refKey] of DARK) {
+    const c = byName.get(name);
+    assert.ok(c, `${name} registered`);
+    assert.equal(c.model.src, src);
+    assert.equal(c.model.wireframe, false);
+    // No material overrides on the model: GLB data governs shading.
+    assert.deepEqual(Object.keys(c.model).sort(), ['id', 'src', 'static', 'wireframe']);
+    assert.equal(c.keyLightIntensity, 0, 'dark: key light off');
+    assert.equal(c.albedoTex, true);
+    assert.deepEqual(c.requiredTex, ['/tex/alb-white-a255.png']);
+    assert.equal(c.expectedOpacity, 1);
+    assert.equal(c.expectedAlphaCutoff, -1);
+    assert.equal(c.expectedUnlit, unlit);
+    assert.equal(c.expectedEmpty, undefined, 'no empty expectation');
+    const otherKey = refKey === 'same' ? 'differs' : 'same';
+    assert.ok(!(otherKey in c), 'no extra comparison key');
+    const ref = byName.get(refName);
+    assert.ok(ref, 'control registered');
+    assert.ok(cases.indexOf(ref) < cases.indexOf(c), 'control registered earlier');
+    assert.equal(!!ref.webgpu, !!c.webgpu, 'same backend');
+    assert.equal(c[refKey], refName);
+    if (refKey === 'differs') assert.equal(c.minChanged, 50);
   }
 });
 

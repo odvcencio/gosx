@@ -1686,6 +1686,7 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.emissive, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.roughness, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.metalness, 0));
+    hash = scenePlannerHashString(hash, String(sceneBool(material && material.unlit, false)));
     // Authored ior drives the dielectric F0 uniform; hash it explicitly so
     // material records without a stable profile key still invalidate the
     // prepared-scene signature when it changes.

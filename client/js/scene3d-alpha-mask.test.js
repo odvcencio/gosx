@@ -128,6 +128,228 @@ function callIn(context, expression) {
   return vm.runInContext(expression, context, { filename: "scene3d-alpha-mask-expression.js" });
 }
 
+test("sceneObjectMaterialProfile retains earlier profiles and unlit drives key and planner hash", () => {
+  const scene = createSceneCoreContext();
+  const scenarioJson = callIn(scene, "(function () {" +
+    "const raw = { unlit: true };" +
+    "const profileTrue = sceneObjectMaterialProfile(raw);" +
+    "raw.unlit = false;" +
+    "const profileFalse = sceneObjectMaterialProfile(raw);" +
+    "const profileDefault = sceneObjectMaterialProfile({});" +
+    "const profileStringFalse = sceneObjectMaterialProfile({ unlit: 'false' });" +
+    "const keys = {" +
+    "  omitted: sceneMaterialProfileKey(profileDefault)," +
+    "  falseKey: sceneMaterialProfileKey(profileFalse)," +
+    "  stringFalse: sceneMaterialProfileKey(profileStringFalse)," +
+    "  trueKey: sceneMaterialProfileKey(profileTrue)" +
+    "};" +
+    "const hashes = {" +
+    "  omitted: scenePlannerHashMaterial(0, { key: 'stable' })," +
+    "  falseHash: scenePlannerHashMaterial(0, { key: 'stable', unlit: false })," +
+    "  stringFalse: scenePlannerHashMaterial(0, { key: 'stable', unlit: 'false' })," +
+    "  trueHash: scenePlannerHashMaterial(0, { key: 'stable', unlit: true })" +
+    "};" +
+    "return JSON.stringify({" +
+    "  defaultUnlit: profileDefault.unlit," +
+    "  stringFalseUnlit: profileStringFalse.unlit," +
+    "  retainedTrueUnlit: profileTrue.unlit," +
+    "  toggledFalseUnlit: profileFalse.unlit," +
+    "  keys: keys," +
+    "  hashes: hashes" +
+    "});" +
+  "})()");
+  const scenario = JSON.parse(scenarioJson);
+
+  assert.equal(scenario.defaultUnlit, false);
+  assert.equal(scenario.stringFalseUnlit, false);
+  assert.equal(scenario.retainedTrueUnlit, true);
+  assert.equal(scenario.toggledFalseUnlit, false);
+
+  assert.equal(scenario.keys.omitted, scenario.keys.falseKey);
+  assert.equal(scenario.keys.stringFalse, scenario.keys.falseKey);
+  assert.notEqual(scenario.keys.trueKey, scenario.keys.falseKey);
+
+  assert.equal(scenario.hashes.omitted, scenario.hashes.falseHash);
+  assert.equal(scenario.hashes.stringFalse, scenario.hashes.falseHash);
+  assert.notEqual(scenario.hashes.trueHash, scenario.hashes.falseHash);
+});
+
+test("sceneApplyMaterialOverride normalizes unlit fallbacks without mutating raws, models, or override sources", () => {
+  const overridesSource = sliceBetween(
+    readRuntimeSource("mount-webgl.ts"),
+    "function sceneModelMaterialOverrideSource",
+    "function sceneApplyModelLOD");
+  const scene = createSceneCoreContext();
+  runFragment(scene, overridesSource, "mount-webgl-overrides.ts");
+
+  const scenarioJson = callIn(scene, "(function () {" +
+    "const raw = { material: { unlit: true, ior: 2.42, alphaCutoff: 0.5 } };" +
+    "const inputs = [{ unlit: false }, { material: { unlit: false } }, { unlit: 'false' }, {}, { unlit: undefined }, { unlit: 'bogus' }];" +
+    "const cases = [];" +
+    "for (let index = 0; index < inputs.length; index += 1) {" +
+    "  const modelInput = inputs[index];" +
+    "  const rawBefore = JSON.stringify(raw);" +
+    "  const modelBefore = JSON.stringify(modelInput);" +
+    "  const normalizedModel = normalizeSceneModel(modelInput, 0);" +
+    "  const normalizedBefore = JSON.stringify(normalizedModel);" +
+    "  const applied = sceneApplyMaterialOverride(raw, normalizedModel);" +
+    "  cases.push({" +
+    "    modelBefore: modelBefore," +
+    "    modelAfter: JSON.stringify(modelInput)," +
+    "    rawBefore: rawBefore," +
+    "    rawAfter: JSON.stringify(raw)," +
+    "    normalizedBefore: normalizedBefore," +
+    "    normalizedAfter: JSON.stringify(normalizedModel)," +
+    "    materialUnlit: applied.material ? applied.material.unlit : undefined," +
+    "    ior: applied.material ? applied.material.ior : undefined," +
+    "    alphaCutoff: applied.material ? applied.material.alphaCutoff : undefined" +
+    "  });" +
+    "}" +
+    "const rawDirect = { material: { unlit: true } };" +
+    "const directOverride = { unlit: 'false' };" +
+    "const directApplied = sceneApplyMaterialOverride(rawDirect, directOverride);" +
+    "const direct = {" +
+    "  materialUnlit: directApplied.material ? directApplied.material.unlit : undefined," +
+    "  overrideUnlitAfter: directOverride.unlit," +
+    "  overrideOwnUnlit: Object.prototype.hasOwnProperty.call(directOverride, 'unlit')" +
+    "};" +
+    "const batchFalse = normalizeSceneInstancedGLBMeshEntry({ src: 'x.glb', instances: [{}], unlit: false }, 0, { unlit: true });" +
+    "const batchUndefined = normalizeSceneInstancedGLBMeshEntry({ src: 'x.glb', instances: [{}], unlit: undefined }, 0, { unlit: true });" +
+    "const batchOmitted = normalizeSceneInstancedGLBMeshEntry({ src: 'x.glb', instances: [{}] }, 0);" +
+    "const falseModels = sceneInstancedGLBMeshToModels(batchFalse, 0);" +
+    "const undefinedModels = sceneInstancedGLBMeshToModels(batchUndefined, 0);" +
+    "const omittedModels = sceneInstancedGLBMeshToModels(batchOmitted, 0);" +
+    "const batch = {" +
+    "  falseCase: {" +
+    "    unlit: batchFalse.unlit," +
+    "    modelUnlit: falseModels[0].materialOverride ? falseModels[0].materialOverride.unlit : null" +
+    "  }," +
+    "  undefinedCase: {" +
+    "    unlit: batchUndefined.unlit," +
+    "    modelUnlit: undefinedModels[0].materialOverride ? undefinedModels[0].materialOverride.unlit : null" +
+    "  }," +
+    "  omittedCase: {" +
+    "    hasOwnUnlit: Object.prototype.hasOwnProperty.call(batchOmitted, 'unlit')," +
+    "    overrideIsNull: omittedModels[0].materialOverride === null," +
+    "    modelOverrideHasUnlit: omittedModels[0].materialOverride" +
+    "      ? Object.prototype.hasOwnProperty.call(omittedModels[0].materialOverride, 'unlit')" +
+    "      : false" +
+    "  }" +
+    "};" +
+    "return JSON.stringify({ cases: cases, direct: direct, batch: batch });" +
+    "})()");
+  const scenario = JSON.parse(scenarioJson);
+
+  const expectedUnlit = [false, false, false, true, true, true];
+  assert.strictEqual(scenario.cases.length, expectedUnlit.length);
+  for (let index = 0; index < expectedUnlit.length; index += 1) {
+    assert.strictEqual(scenario.cases[index].materialUnlit, expectedUnlit[index],
+      "case " + index + " unlit");
+    assert.strictEqual(scenario.cases[index].ior, 2.42, "case " + index + " ior preserved");
+    assert.strictEqual(scenario.cases[index].alphaCutoff, 0.5, "case " + index + " cutoff preserved");
+    assert.strictEqual(scenario.cases[index].rawAfter, scenario.cases[index].rawBefore,
+      "case " + index + " raw snapshot unchanged");
+    assert.strictEqual(scenario.cases[index].modelAfter, scenario.cases[index].modelBefore,
+      "case " + index + " model input snapshot unchanged");
+    assert.strictEqual(scenario.cases[index].normalizedAfter, scenario.cases[index].normalizedBefore,
+      "case " + index + " normalized model snapshot unchanged");
+  }
+
+  assert.strictEqual(scenario.direct.materialUnlit, false);
+  assert.strictEqual(scenario.direct.overrideUnlitAfter, "false");
+  assert.strictEqual(scenario.direct.overrideOwnUnlit, true);
+
+  assert.strictEqual(scenario.batch.falseCase.unlit, false);
+  assert.strictEqual(scenario.batch.falseCase.modelUnlit, false);
+  assert.strictEqual(scenario.batch.undefinedCase.unlit, true);
+  assert.strictEqual(scenario.batch.undefinedCase.modelUnlit, true);
+  assert.strictEqual(scenario.batch.omittedCase.hasOwnUnlit, false);
+  assert.ok(scenario.batch.omittedCase.overrideIsNull || !scenario.batch.omittedCase.modelOverrideHasUnlit,
+    "omitted no-fallback converted model override carries no unlit field");
+});
+
+test("normalizeSceneObject keeps raw intact while glTF unlit/MASK/IOR feed the material profile", () => {
+  const { context } = createLoaderContext();
+  const recordJson = callIn(context,
+    "JSON.stringify(gltfExtractMaterial({ asset: { version: '2.0' }, materials: [{ " +
+    "alphaMode: 'MASK', alphaCutoff: 0.5, " +
+    "extensions: { KHR_materials_unlit: {}, KHR_materials_ior: { ior: 2.42 } } }] }, 0, null))");
+  const scene = createSceneCoreContext();
+  const res = callIn(scene,
+    "(function (recordJson) {" +
+    "  var rec = JSON.parse(recordJson);" +
+    "  var raw = { kind: 'box', materialKind: 'standard', material: rec };" +
+    "  var before = JSON.stringify(raw);" +
+    "  var normalized = normalizeSceneObject(raw, 0);" +
+    "  var after = JSON.stringify(raw);" +
+    "  var profile = sceneObjectMaterialProfile(normalized);" +
+    "  var bareProfile = sceneObjectMaterialProfile(normalizeSceneObject({ kind: 'box', materialKind: 'standard' }, 0));" +
+    "  return JSON.stringify({ before: before, after: after, profile: profile, bareProfile: bareProfile });" +
+    "})(" + JSON.stringify(recordJson) + ")");
+  const out = JSON.parse(res);
+  assert.equal(out.before, out.after, "normalizeSceneObject must not mutate the raw object");
+  assert.equal(out.profile.unlit, true);
+  assert.equal(out.profile.kind, "standard");
+  assert.equal(out.profile.alphaCutoff, 0.5);
+  assert.equal(out.profile.ior, 2.42);
+  assert.equal(out.bareProfile.unlit, false, "absent unlit extension normalizes to false");
+  assert.equal(out.bareProfile.ior, 1.5, "absent IOR extension falls back to the default");
+});
+
+test("unlit inheritance contract across normalizers and named material application", () => {
+  const context = createSceneCoreContext();
+  const res = callIn(context,
+    "(function () {" +
+    "  var cases = [" +
+    "    { raw: { unlit: true }, fallback: null, expected: true }," +
+    "    { raw: { unlit: false }, fallback: null, expected: false }," +
+    "    { raw: { unlit: 'false' }, fallback: null, expected: false }," +
+    "    { raw: { unlit: undefined }, fallback: { unlit: true }, expected: true }," +
+    "    { raw: {}, fallback: { unlit: true }, expected: true }," +
+    "    { raw: { unlit: 'bogus' }, fallback: { unlit: true }, expected: true }," +
+    "    { raw: {}, fallback: null, expected: false }," +
+    "    { raw: { material: { unlit: true } }, fallback: null, expected: true }," +
+    "    { raw: { material: { unlit: false } }, fallback: null, expected: false }," +
+    "    { raw: { material: { unlit: 'false' } }, fallback: null, expected: false }" +
+    "  ];" +
+    "  var normalizers = [normalizeSceneObject, normalizeSceneInstancedMeshEntry];" +
+    "  for (var n = 0; n < normalizers.length; n++) {" +
+    "    for (var i = 0; i < cases.length; i++) {" +
+    "      var out = normalizers[n](cases[i].raw, 0, cases[i].fallback);" +
+    "      if (out.unlit !== cases[i].expected) {" +
+    "        return JSON.stringify({ ok: false, normalizer: n, case: i });" +
+    "      }" +
+    "    }" +
+    "  }" +
+    "  var omitted = normalizeSceneMaterialRecord({}, 0, null);" +
+    "  var ownUndefined = normalizeSceneMaterialRecord({ unlit: undefined }, 0, null);" +
+    "  var inheritedOwn = normalizeSceneMaterialRecord({ unlit: undefined }, 0, { unlit: true });" +
+    "  var inheritedOmitted = normalizeSceneMaterialRecord({}, 0, { unlit: true });" +
+    "  var explicitFalse = normalizeSceneMaterialRecord({ unlit: false }, 0, { unlit: true });" +
+    "  var preserved = sceneApplyNamedMaterialToObject({ unlit: true }, { kind: 'standard' });" +
+    "  var cleared = sceneApplyNamedMaterialToObject({ unlit: true }, { kind: 'standard', unlit: false });" +
+    "  return JSON.stringify({" +
+    "    ok: true," +
+    "    omittedAbsent: !Object.prototype.hasOwnProperty.call(omitted, 'unlit')," +
+    "    ownUndefinedAbsent: !Object.prototype.hasOwnProperty.call(ownUndefined, 'unlit')," +
+    "    inheritedOwn: inheritedOwn.unlit," +
+    "    inheritedOmitted: inheritedOmitted.unlit," +
+    "    explicitFalse: explicitFalse.unlit," +
+    "    preserved: preserved.unlit," +
+    "    cleared: cleared.unlit" +
+    "  });" +
+    "})()");
+  const out = JSON.parse(res);
+  assert.ok(out.ok, "unlit mismatch at normalizer " + out.normalizer + " case " + out.case);
+  assert.equal(out.omittedAbsent, true, "omission without fallback leaves unlit absent");
+  assert.equal(out.ownUndefinedAbsent, true, "own undefined without fallback leaves unlit absent");
+  assert.equal(out.inheritedOwn, true, "own undefined inherits fallback true");
+  assert.equal(out.inheritedOmitted, true, "omission inherits fallback true");
+  assert.equal(out.explicitFalse, false, "explicit false overrides fallback true");
+  assert.equal(out.preserved, true, "named application without unlit preserves the object flag");
+  assert.equal(out.cleared, false, "named application with explicit false clears the object flag");
+});
+
 test("keyed material hashing keeps alphaCutoff states distinct", () => {
   const context = createSceneCoreContext();
   const res = callIn(context,

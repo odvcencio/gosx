@@ -692,6 +692,7 @@
     const materialColor = sceneObjectMaterialHasValue(item, "color") ? sceneObjectMaterialValue(item, "color") : current.color;
     const textureValue = sceneObjectMaterialHasValue(item, "texture") ? sceneObjectMaterialValue(item, "texture") : current.texture;
     const texture = typeof textureValue === "string" ? textureValue.trim() : "";
+    const unlit = sceneBool(sceneObjectMaterialValue(item, "unlit"), sceneBool(current.unlit, false));
     const opacity = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)), 0, 1);
     const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)));
     const blendMode = normalizeSceneMaterialBlendMode(
@@ -730,6 +731,7 @@
       materialKind,
       color: typeof materialColor === "string" && materialColor ? materialColor : (typeof current.color === "string" && current.color ? current.color : "#8de1ff"),
       texture,
+      unlit,
       opacity,
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
@@ -1314,6 +1316,13 @@
     if (sceneObjectMaterialHasValue(current, "metalness")) {
       override.metalness = sceneObjectMaterialValue(current, "metalness");
     }
+    if (sceneObjectMaterialHasValue(current, "unlit")) {
+      const rawUnlit = sceneObjectMaterialValue(current, "unlit");
+      const unlit = sceneBool(rawUnlit, undefined);
+      if (unlit !== undefined) {
+        override.unlit = unlit;
+      }
+    }
     // Authored ior is normalized under the KHR contract (CSS var text
     // trimmed, explicit zero preserved) while genuine absence stays absent.
     if (sceneObjectMaterialHasValue(current, "ior")) {
@@ -1492,6 +1501,16 @@
     if (batch.specularColor === undefined) {
       delete batch.specularColor;
     }
+    // Unlit follows the raw-or-inherited contract: a defined raw or current
+    // value is normalized through sceneBool, and the batch field is assigned
+    // only when the boolean result is defined so plumbing never erases an
+    // imported asset-authored true.
+    const batchUnlit = sceneBool(
+      sceneObjectMaterialValue(raw, "unlit"),
+      sceneBool(current.unlit, undefined));
+    if (batchUnlit !== undefined) {
+      batch.unlit = batchUnlit;
+    }
     // Alpha cutoff follows the shared mask contract: a defined raw (nested or
     // direct) or inherited current value is normalized with the inherited
     // fallback, explicit null disables, and genuine absence stays absent so
@@ -1540,7 +1559,7 @@
         scaleY: instance.scaleY,
         scaleZ: instance.scaleZ,
       };
-      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "pickable", "visible", "static"]) {
+      for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "unlit", "pickable", "visible", "static"]) {
         if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
           raw[key] = batch[key];
         }
@@ -1897,6 +1916,7 @@
     const tubularSegmentSource = Object.prototype.hasOwnProperty.call(item, "tubularSegments") ? item.tubularSegments : current.tubularSegments;
     const materialKind = normalizeSceneMaterialKind(sceneObjectMaterialKindValue(item) || current.materialKind);
     const opacity = sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "opacity"), sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)), 0, 1);
+    const unlit = sceneBool(sceneObjectMaterialValue(item, "unlit"), sceneBool(current.unlit, false));
     const numericOpacity = sceneNumber(opacity, sceneNumber(current.opacity, sceneDefaultMaterialOpacity(materialKind)));
     const blendMode = normalizeSceneMaterialBlendMode(
       sceneObjectMaterialHasValue(item, "blendMode") ? sceneObjectMaterialValue(item, "blendMode") : current.blendMode,
@@ -1925,6 +1945,7 @@
       color: typeof sceneObjectMaterialValue(item, "color") === "string" && sceneObjectMaterialValue(item, "color") ? sceneObjectMaterialValue(item, "color") : (typeof current.color === "string" ? current.color : "#8de1ff"),
       texture: typeof sceneObjectMaterialValue(item, "texture") === "string" ? sceneObjectMaterialValue(item, "texture").trim() : (typeof current.texture === "string" ? current.texture : ""),
       opacity,
+      unlit,
       emissive: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "emissive"), sceneNumber(current.emissive, sceneDefaultMaterialEmissive(materialKind)), 0, 1),
       roughness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "roughness"), sceneNumber(current.roughness, 0.5)),
       metalness: sceneNumberOrCSSVar(sceneObjectMaterialValue(item, "metalness"), sceneNumber(current.metalness, 0)),
@@ -2417,6 +2438,17 @@
       _blendModeSpecified: blendModeSpecified || current._blendModeSpecified === true,
       _depthWriteSpecified: depthWriteSpecified || current._depthWriteSpecified === true,
     };
+    // Normalize unlit from the raw record value: omission and own undefined
+    // inherit the current flag; malformed values fall back to it too, so a
+    // bad override can neither erase the inherited flag nor define a new one.
+    // Only a valid boolean (or inherited valid flag) reaches the output.
+    const normalizedUnlit = sceneBool(
+      sceneObjectMaterialValue(item, "unlit"),
+      sceneBool(current.unlit, undefined),
+    );
+    if (normalizedUnlit !== undefined) {
+      out.unlit = normalizedUnlit;
+    }
     const rawAlphaCutoff = sceneObjectMaterialValue(item, "alphaCutoff");
     if (rawAlphaCutoff !== undefined) {
       out.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(rawAlphaCutoff, sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null));
@@ -3030,6 +3062,7 @@
       color: material.color || object.color,
       texture: material.texture || object.texture,
       opacity: material.opacity != null ? material.opacity : object.opacity,
+      unlit: material.unlit !== undefined ? material.unlit : object.unlit,
       emissive: material.emissive != null ? material.emissive : object.emissive,
       roughness: material.roughness != null ? material.roughness : object.roughness,
       metalness: material.metalness != null ? material.metalness : object.metalness,

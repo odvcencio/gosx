@@ -567,7 +567,9 @@ const budgets = [
   // so the brotli cap was raised with narrow rounding headroom.
   // WebGPU alpha-mask color-pass rebuild measured 1577202/428025/343578; all
   // three caps raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_577_300, gzip: 428_100, brotli: 343_650 },
+  // Unlit-propagation rebuild measured 1577740/428205/343899; all three
+  // caps raised with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_577_800, gzip: 428_300, brotli: 343_900 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -993,7 +995,9 @@ const budgets = [
   // caps set from measured bytes plus small headroom.
   // Authored specular color plumbing (pre-typed-copy) measured
   // 547_422 / 151_079 / 125_285; caps raised with narrow headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 549_200, gzip: 151_550, brotli: 125_750 },
+  // Unlit-propagation rebuild measured 549_622 / 151_667; raw and gzip
+  // raised with narrow rounding headroom; brotli cap unchanged.
+  { file: "bootstrap-feature-scene3d.js", raw: 549_700, gzip: 151_700, brotli: 125_750 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1666,9 +1670,11 @@ const routeBudgets = [
     // raised with narrow rounding headroom.
     // Initial shadow allocation fix measured 1068775/295701/250406; raw and
     // gzip raised with narrow rounding headroom; brotli cap unchanged.
-    raw: 1_070_950,
-    gzip: 296_350,
-    brotli: 251_100,
+    // Unlit-propagation rebuild measured 1071351/296437/251170; all three
+    // caps raised with narrow rounding headroom.
+    raw: 1_071_400,
+    gzip: 296_500,
+    brotli: 251_200,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1788,9 +1794,11 @@ const routeBudgets = [
     // three caps raised with narrow rounding headroom.
     // Both-backends-with-labels build measured 331043 brotli; cap raised
     // with narrow rounding headroom.
-    raw: 1_465_100,
-    gzip: 391_800,
-    brotli: 331_100,
+    // Unlit-propagation rebuild measured 1465560/391876/331151; all three
+    // caps raised with narrow rounding headroom.
+    raw: 1_465_600,
+    gzip: 391_900,
+    brotli: 331_200,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1911,9 +1919,11 @@ const routeBudgets = [
     // headroom.
     // Minimal WebGPU rebuild measured 240866 brotli; cap raised with
     // narrow rounding headroom.
-    raw: 1_091_800,
-    gzip: 287_500,
-    brotli: 240_900,
+    // Unlit-propagation rebuild measured 1092277/287624/240974; all three
+    // caps raised with narrow rounding headroom.
+    raw: 1_092_300,
+    gzip: 287_700,
+    brotli: 241_000,
   },
 
 ];

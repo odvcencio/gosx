@@ -742,7 +742,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -819,6 +819,13 @@ function gosxConfigureSceneScript(script, role, src) {
     // override never touches the asset's authored masking.
     if (override.alphaCutoff !== undefined) {
       sceneAssignMaterialOverride(next, material, "alphaCutoff", "alphaCutoff", override);
+    }
+    // Unlit flag: normalize via sceneBool without mutating the override
+    // source; undefined (absent) leaves the asset's authored lighting as-is,
+    // an explicit false clears any inherited unlit flag.
+    const unlitOverride = sceneBool(override.unlit, undefined);
+    if (unlitOverride !== undefined) {
+      sceneAssignMaterialOverride(next, material, "unlit", "unlit", { unlit: unlitOverride });
     }
     sceneAssignMaterialOverride(next, material, "clearcoat", "clearcoat", override);
     sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
