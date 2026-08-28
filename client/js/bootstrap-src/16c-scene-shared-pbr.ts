@@ -138,9 +138,158 @@
 
   // --- Shadow Map Infrastructure ---
 
+  // Build a perspective light-space matrix for ONE authored spot light.
+  // Returns null when the spot cannot be projected faithfully; callers treat
+  // null as "this spot takes no shadow slot and leaves no stale enabled
+  // shadow":
+  //   - position or direction missing/non-finite, or an exactly zero
+  //     direction. Zero directions reaching this helper are never silently
+  //     re-aimed here. Note these rules apply to the values as they arrive
+  //     at this helper: callers that route through the public
+  //     normalizeSceneLight first get zero-direction and nonpositive-angle
+  //     defaults applied before this rejection runs, so a user-authored
+  //     zero angle or zero direction is not necessarily rejected end-to-end;
+  //   - Angle <= 0 or non-finite (as evaluated by this helper, post any
+  //     caller-side normalization). An empty cone at this point shades
+  //     nothing in the BRDF, so it casts no shadow and no cone is invented;
+  //   - Angle >= pi/2. A single perspective map covers a half-angle strictly
+  //     below 90 degrees: tan(halfFov) = tan(Angle) diverges at 90 degrees
+  //     and fov = 2*Angle reaches 180 degrees there, which no planar
+  //     frustum can contain. Cones that wide would need multiple faces
+  //     (cube-style), which the one-map-per-spot budget cannot provide.
+  //     This limitation is reported as null, never papered over by widening
+  //     or re-aiming the authored cone.
+  //
+  // Direction normalization is overflow/underflow safe: components are
+  // scaled by the largest magnitude BEFORE squaring, so very large finite
+  // directions (1e200-scale) cannot overflow the square-sum to Infinity and
+  // very small finite ones (1e-200-scale) cannot underflow to a rejected
+  // zero. This guarantee covers the JS-side helper only: GPU float32 light
+  // packing and the BRDF are not certified for such magnitudes.
+  //
+  // Far plane: the largest finite depth of the 8 scene-bounds corners along
+  // the light direction (scene geometry gives coverage without author
+  // input), floored to a small positive fallback and capped by a finite
+  // positive Range. Nonpositive Range is unbounded in the current BRDF and
+  // keeps the geometry-derived far plane. Near plane (documented finite
+  // strategy): near = clamp(far * 0.001, 0.01, 0.1); if that lands at or
+  // beyond far (degenerate bounds), near falls back to far/2. Geometry
+  // CLOSER to the
+  // light than this near plane lies outside the shadow clip volume and is
+  // not shadow-covered: near is small relative to the scene extent, but
+  // geometry arbitrarily close to the eye is NOT claimed to remain covered.
+  //
+  // The eye itself maps to w = 0 (never w > 0): the view Z row carries
+  // -forward and the perspective w row is -viewZ, so every point in front of
+  // the light gets w equal to its positive forward distance, and two points
+  // on one forward ray share projected XY and order in depth.
+  function sceneSpotShadowLightSpaceMatrix(light, sceneBounds) {
+    var px = sceneNumber(light.x, NaN);
+    var py = sceneNumber(light.y, NaN);
+    var pz = sceneNumber(light.z, NaN);
+    var dx = sceneNumber(light.directionX, NaN);
+    var dy = sceneNumber(light.directionY, NaN);
+    var dz = sceneNumber(light.directionZ, NaN);
+    var angle = sceneNumber(light.angle, 0);
+    var range = sceneNumber(light.range, 0);
+    if (!isFinite(px) || !isFinite(py) || !isFinite(pz)) return null;
+    if (!isFinite(dx) || !isFinite(dy) || !isFinite(dz)) return null;
+    // Overflow/underflow-safe normalization (see comment above): ratios to
+    // the max-magnitude component stay in [-1, 1] for ANY finite input, and
+    // the sub-norm sqrt stays in [1, sqrt(3)], so no square overflows and no
+    // small nonzero direction is mistaken for zero.
+    var scale = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(dz));
+    if (!(scale > 0)) return null; // exactly zero direction: never re-aimed
+    var sx = dx / scale, sy = dy / scale, sz = dz / scale;
+    var sub = Math.sqrt(sx * sx + sy * sy + sz * sz);
+    dx = sx / sub; dy = sy / sub; dz = sz / sub;
+    if (!isFinite(angle) || !(angle > 0)) return null; // empty/invalid cone
+    if (angle >= Math.PI / 2) return null; // single-perspective limit
+
+    // Far plane along the light axis from the scene geometry bounds.
+    var far = 0;
+    if (
+      sceneBounds &&
+      isFinite(sceneBounds.minX) && isFinite(sceneBounds.maxX) &&
+      isFinite(sceneBounds.minY) && isFinite(sceneBounds.maxY) &&
+      isFinite(sceneBounds.minZ) && isFinite(sceneBounds.maxZ)
+    ) {
+      for (var corner = 0; corner < 8; corner++) {
+        var bx = (corner & 1) ? sceneBounds.maxX : sceneBounds.minX;
+        var by = (corner & 2) ? sceneBounds.maxY : sceneBounds.minY;
+        var bz = (corner & 4) ? sceneBounds.maxZ : sceneBounds.minZ;
+        var depth = (bx - px) * dx + (by - py) * dy + (bz - pz) * dz;
+        if (isFinite(depth) && depth > far) far = depth;
+      }
+    }
+    if (!(far > 0)) far = 10; // degenerate/absent bounds fallback
+    if (range > 0 && isFinite(range)) far = Math.min(far, range);
+    if (!isFinite(far) || far <= 0) return null;
+    var near = Math.min(0.1, Math.max(0.01, far * 0.001));
+    if (near >= far) near = far * 0.5;
+
+    // LookAt view from the light position along its authored direction. Same
+    // row convention as the directional fit; vertical directions swap the up
+    // basis instead of re-aiming the authored direction (forward x up gives
+    // right = (-1, 0, 0) for a straight-down spot, so the X row is negative).
+    var fx = dx, fy = dy, fz = dz;
+    var upX = 0, upY = 1, upZ = 0;
+    if (Math.abs(fy) > 0.99) {
+      upX = 0; upY = 0; upZ = 1;
+    }
+    var rx = fy * upZ - fz * upY;
+    var ry = fz * upX - fx * upZ;
+    var rz = fx * upY - fy * upX;
+    var rLen = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    if (rLen < 0.0001) rLen = 1;
+    rx /= rLen; ry /= rLen; rz /= rLen;
+    upX = ry * fz - rz * fy;
+    upY = rz * fx - rx * fz;
+    upZ = rx * fy - ry * fx;
+
+    var tx = -(rx * px + ry * py + rz * pz);
+    var ty = -(upX * px + upY * py + upZ * pz);
+    var tz = fx * px + fy * py + fz * pz;
+
+    var view = new Float32Array([
+      rx, upX, -fx, 0,
+      ry, upY, -fy, 0,
+      rz, upZ, -fz, 0,
+      tx, ty, tz, 1,
+    ]);
+
+    // Perspective projection, aspect 1, vertical fov = 2*Angle (radians,
+    // authored cone semantics preserved — never widened). tan(Angle) is
+    // finite by the angle guard, but intermediate entries can still go
+    // non-finite through pathological near/far magnitudes; the final
+    // float32 finiteness sweep rejects any such matrix.
+    var tanHalf = Math.tan(angle);
+    var rangeInv = 1 / (near - far);
+    var proj = new Float32Array([
+      1 / tanHalf, 0, 0, 0,
+      0, 1 / tanHalf, 0, 0,
+      0, 0, (near + far) * rangeInv, -1,
+      0, 0, 2 * near * far * rangeInv, 0,
+    ]);
+
+    var m = sceneMat4Multiply(proj, view);
+    for (var i = 0; i < 16; i++) {
+      if (!isFinite(m[i])) return null;
+    }
+    return m;
+  }
+
   // Compute an orthographic light-space matrix for a directional light.
   // sceneBounds is { minX, minY, minZ, maxX, maxY, maxZ }.
   function sceneShadowLightSpaceMatrix(light, sceneBounds) {
+    // Spot lights route through the perspective builder via this existing
+    // exported entry point, so both backends — and the lazy WebGPU chunk's
+    // existing sceneApi bridge — gain spot shadows with no new global API
+    // export. Directional inputs keep the orthographic path unchanged.
+    if (light && typeof light.kind === "string" &&
+        light.kind.toLowerCase() === "spot") {
+      return sceneSpotShadowLightSpaceMatrix(light, sceneBounds);
+    }
     // Light direction (normalized).
     var dx = sceneNumber(light.directionX, 0);
     var dy = sceneNumber(light.directionY, -1);

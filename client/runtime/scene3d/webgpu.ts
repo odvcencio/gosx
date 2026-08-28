@@ -1596,10 +1596,26 @@
     "    return vec3f(projCoords3.x * 0.5 + 0.5, 0.5 - projCoords3.y * 0.5, projCoords3.z);",
     "}",
     "",
+    // Spot lights (type 3) project with a perspective w row, so both slot
+    // receivers now reject at/behind-the-eye fragments (w <= 0) BEFORE the
+    // divide and reject points outside the shadow clip volume before any
+    // compare sample — no invalid coordinates. textureSampleCompareLevel is
+    // level-based, so explicit-level sampling needs no derivative-uniform
+    // control flow. This full clip rejection is NEW intentional correctness
+    // work: the previous code only used the inside test to zero the result
+    // while still sampling clamped coordinates, and directional maps (w = 1)
+    // now also reject out-of-volume fragments.
     // 4-tap Poisson disk PCF shadow sampling for shadow slot 0.
     "fn shadowFactor0(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
+    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
+    "    if (lightSpacePos.w <= 0.0) {",
+    "        return 1.0;",
+    "    }",
     "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
     "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
+    "    if (!inside) {",
+    "        return 1.0;",
+    "    }",
     "    let poissonDisk = array<vec2f, 4>(",
     "        vec2f(-0.94201624, -0.39906216),",
     "        vec2f(0.94558609, -0.76890725),",
@@ -1616,13 +1632,20 @@
     "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
     "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap0, shadowSampler0, sampleUV, refDepth);",
     "    }",
-    "    return select(1.0, shadowVal / 4.0, inside);",
+    "    return shadowVal / 4.0;",
     "}",
     "",
     // 4-tap Poisson disk PCF shadow sampling for shadow slot 1.
     "fn shadowFactor1(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
+    "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
+    "    if (lightSpacePos.w <= 0.0) {",
+    "        return 1.0;",
+    "    }",
     "    let projCoords = shadowProjectedCoords(worldPos, lightSpaceMatrix);",
     "    let inside = projCoords.x >= 0.0 && projCoords.x <= 1.0 && projCoords.y >= 0.0 && projCoords.y <= 1.0 && projCoords.z >= 0.0 && projCoords.z <= 1.0;",
+    "    if (!inside) {",
+    "        return 1.0;",
+    "    }",
     "    let poissonDisk = array<vec2f, 4>(",
     "        vec2f(-0.94201624, -0.39906216),",
     "        vec2f(0.94558609, -0.76890725),",
@@ -1639,7 +1662,7 @@
     "        let refDepth = clamp(projCoords.z - bias, 0.0, 1.0);",
     "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap1, shadowSampler1, sampleUV, refDepth);",
     "    }",
-    "    return select(1.0, shadowVal / 4.0, inside);",
+    "    return shadowVal / 4.0;",
     "}",
     "",
     // GGX/Trowbridge-Reitz normal distribution function.
@@ -2019,9 +2042,10 @@
     "        let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
     "        let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
-    // Shadow attenuation for directional lights.
+    // Shadow attenuation for directional (1) and spot (3) lights. The slot
+    // index checks below keep the attenuation on the slot's OWN light only.
     "        var shadowAtten: f32 = 1.0;",
-    "        if (material.receiveShadow != 0u && lightType == 1u) {",
+    "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {",
     "            if (shadow.hasShadow0 != 0u && i32(i) == shadow.shadowLightIndex0) {",
     "                shadowAtten = shadowFactor0(in.worldPos, shadow.lightSpaceMatrix0, shadow.shadowBias0);",
     "            } else if (shadow.hasShadow1 != 0u && i32(i) == shadow.shadowLightIndex1) {",
@@ -18411,9 +18435,24 @@
         var light = lightArray[li];
         if (!light || !light.castShadow) continue;
         var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-        if (kind !== "directional") continue;
+        var isSpot = kind === "spot";
+        if (kind !== "directional" && !isSpot) continue;
+        // Defensive check on the raw angle here; callers going through the
+        // public normalizeSceneLight get zero/nonpositive-angle defaults
+        // before the shadow helper, so a cone empty at this point shades
+        // nothing and casts no shadow.
+        if (isSpot && !(sceneNumber(light.angle, 0) > 0)) continue;
 
         if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
+
+        // A malformed/non-projectable spot (non-finite position or direction,
+        // zero direction, Angle >= pi/2) returns null and is rejected BEFORE
+        // it consumes one of the two slots or any budget, so a valid third
+        // light is never excluded by invalid ones. The validated matrix is
+        // cached and converted once; this spot's slot state simply stays
+        // cleared this frame (matrices/indices reset per frame above).
+        var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+        if (!rawLightMatrix) continue;
 
         var slot = activeShadowCount;
         var shadowSize = sceneNumber(light.shadowSize, 1024);
@@ -18425,7 +18464,7 @@
           shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
         }
 
-        var lightMatrix = sceneWebGPUShadowDepthMatrix(sceneShadowLightSpaceMatrix(light, sceneBounds));
+        var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
         shadowLightMatrices[slot] = lightMatrix;
         shadowLightIndices[slot] = li;
 

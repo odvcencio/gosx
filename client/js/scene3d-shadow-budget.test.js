@@ -716,3 +716,108 @@ test("32-unit WebGL renegotiates shadow budget across cap changes and light remo
 
   assert.equal(env.consoleLogs.error.length, 0);
 });
+
+// --- spot shadow slice (appended; no earlier assertion is altered) ---------
+
+test("spot slice: negotiator grants a spot's single map and directional the remainder", () => {
+  const { context } = setupUploadContext();
+  const run = (req, env, units) => {
+    context.__req = req;
+    context.__env = env;
+    context.__units = units;
+    return callIn(context, "scenePBRNegotiateShadowCascades(__req, __env, __units)");
+  };
+  // 16-unit GL with IBL: 8 shared units minus 3 IBL = 5 shadow units; the
+  // spot's single map leaves the rest for the directional's request.
+  assert.deepEqual([...run([1, 4], { envMap: "studio.png" }, 16)], [1, 4]);
+  assert.deepEqual([...run([4, 1], { envMap: "studio.png" }, 16)], [4, 1]);
+  // Corrected budgets: 12 units with IBL leaves ONE shadow unit
+  // (8 material + 3 IBL + 1); 11 units leave ZERO — [1,0] and [0,0].
+  assert.deepEqual([...run([1, 4], { envMap: "studio.png" }, 12)], [1, 0]);
+  assert.deepEqual([...run([1, 4], { envMap: "studio.png" }, 11)], [0, 0]);
+  // No environment: no IBL reservation.
+  assert.deepEqual([...run([1, 4], null, 16)], [1, 4]);
+});
+
+// Real production render path: the mount harness below executes the actual
+// candidate collection (with spot validation BEFORE the two-candidate limit),
+// negotiation, slot creation, depth passes and PBR draw inside the
+// recording-GL harness. Two INVALID spots (unsupported half-cones wider than
+// 90 degrees, well-directed with nonzero directions) are authored FIRST so a
+// fix that only validates after collection fails this. A zero direction is
+// NOT invalid at the renderer boundary: normalizeSceneLight re-aims it to the
+// legacy default, so only true renderer-side rejection (angle >= pi/2) counts.
+async function mountSpotShadowScene(maxUnits) {
+  const TrackingContext = trackingContextClass(maxUnits);
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-spot-shadow-root";
+  const env = createContext({
+    elements: [mount],
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    createWebGL2Context: () => new TrackingContext(),
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-spot-shadow",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-spot-shadow-root",
+          props: {
+            width: 320,
+            height: 180,
+            camera: { x: 0, y: 0, z: 6, near: 0.1, far: 100, fov: 72 },
+            environment: { envMap: "/hdri/studio.png", envIntensity: 1 },
+            scene: {
+              lights: [
+                {
+                  id: "spot-invalid-wide-cone-1", kind: "spot", castShadow: true,
+                  x: -1.5, y: 3, z: 0.5,
+                  directionX: 0.5, directionY: -1, directionZ: -0.2,
+                  angle: 1.8, range: 0, shadowSize: 256,
+                },
+                {
+                  id: "spot-invalid-wide-cone-2", kind: "spot", castShadow: true,
+                  x: 1.5, y: 3.2, z: -0.4,
+                  directionX: -0.3, directionY: -1, directionZ: -0.5,
+                  angle: 2.2, range: 0, shadowSize: 256,
+                },
+                {
+                  id: "spot-valid", kind: "spot", castShadow: true,
+                  x: 0, y: 3, z: 0,
+                  directionX: 0, directionY: -1, directionZ: 0,
+                  angle: 0.5, range: 0, shadowSize: 256, shadowBias: 0.005,
+                },
+                {
+                  id: "sun-valid", kind: "directional", castShadow: true,
+                  shadowCascades: 4, shadowSize: 256, shadowSoftness: 0.05,
+                  directionX: 0.2, directionY: -1, directionZ: -0.35,
+                },
+              ],
+              objects: [JSON.parse(JSON.stringify(SCENE_TRIANGLE))],
+            },
+          },
+        },
+      ],
+    },
+  });
+  env.context.WebGL2RenderingContext = TrackingContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  await flushAsyncWork();
+  const gl = mount.children[0].getContext("webgl2");
+  return { mount, gl, env };
+}
+
+test("16-unit WebGL: invalid spots never consume slots; valid spot and directional win", async () => {
+  const { mount, gl } = await mountSpotShadowScene(16);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  // The two invalid spots must consume neither candidate slot nor budget:
+  // the valid spot takes slot 0 with exactly ONE map and the valid
+  // directional slot 1 with its negotiated cascades (5 depth resources:
+  // 1 + 4 under the 5-unit IBL budget).
+  const snap = assertDrawTimeShadowEvidence(gl, 5);
+  assert.deepEqual(snap.lightIndices, [2, 3]);
+  assert.deepEqual(snap.hasShadow, [1, 1]);
+  assert.deepEqual(snap.cascades, [1, 4]);
+});

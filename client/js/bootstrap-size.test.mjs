@@ -595,7 +595,8 @@ const budgets = [
   // source (multi-buffer accessors plus all runtime features above) measured
   // 1_615_272 / 437_705 / 350_871 raw/gzip/brotli; all three caps raised to
   // 1_615_400 / 437_800 / 351_000 with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_615_400, gzip: 437_800, brotli: 351_000 },
+  // measured raw/gzip/brotli: 1617438/438502/351377; caps rounded to 100 for spot-shadow support
+  { file: "bootstrap.js", raw: 1_617_500, gzip: 438_600, brotli: 351_400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -941,7 +942,8 @@ const budgets = [
   // 234228/63835/53941; all three caps raised to the next 100 bytes.
   // SH light-probe irradiance measured 235307/64182/54176; all three caps
   // raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 235_400, gzip: 64_300, brotli: 54_300 },
+  // measured raw/gzip/brotli: 235668/64318/54342; caps rounded to 100 for spot-shadow support
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 235_700, gzip: 64_400, brotli: 54_400 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1044,7 +1046,8 @@ const budgets = [
   // 557751/154196/127549; all three caps raised to the next 100 bytes.
   // SH light-probe irradiance measured 559335/154843/128091; all three caps
   // raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 559_400, gzip: 154_900, brotli: 128_200 },
+  // measured raw/gzip/brotli: 560706/155511/128547; caps rounded to 100 for spot-shadow support
+  { file: "bootstrap-feature-scene3d.js", raw: 560_800, gzip: 155_600, brotli: 128_600 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1231,7 +1234,8 @@ const budgets = [
   // three caps raised with narrow rounding headroom.
   // SH light-probe irradiance measured 403033/97232/81186; all three caps
   // raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 403_100, gzip: 97_300, brotli: 81_300 },
+  // measured raw/gzip/brotli: 403448/97303/81318; caps rounded to 100 for spot-shadow support
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 403_500, gzip: 97_400, brotli: 81_400 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1747,9 +1751,10 @@ const routeBudgets = [
     // 1092702/301881/255276; all three caps raised to the next 100 bytes.
     // SH light-probe irradiance measured 1095365/302875/256053; all three
     // caps raised with narrow rounding headroom.
-    raw: 1_095_400,
-    gzip: 302_900,
-    brotli: 256_100,
+    // Spot-shadow runtime measured 1097097/303679/256675.
+    raw: 1_097_100,
+    gzip: 303_700,
+    brotli: 256_700,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1887,9 +1892,10 @@ const routeBudgets = [
     // 1493399/398200/335839; all three caps raised to the next 100 bytes.
     // SH light-probe irradiance measured 1498398/400107/337239; all three
     // caps raised with narrow rounding headroom.
-    raw: 1_498_500,
-    gzip: 400_200,
-    brotli: 337_300,
+    // Spot-shadow runtime measured 1500545/400982/337993.
+    raw: 1_500_600,
+    gzip: 401_000,
+    brotli: 338_000,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2027,9 +2033,10 @@ const routeBudgets = [
     // 1106894/291033/243414; all three caps raised to the next 100 bytes.
     // SH light-probe irradiance measured 1110814/292593/244579; all three
     // caps raised with narrow rounding headroom.
-    raw: 1_110_900,
-    gzip: 292_700,
-    brotli: 244_700,
+    // Spot-shadow runtime measured 1112600/293332/245167.
+    raw: 1_112_600,
+    gzip: 293_400,
+    brotli: 245_200,
   },
 
 ];

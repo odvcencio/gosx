@@ -241,12 +241,22 @@
     // penumbra from the receiver-to-blocker distance, and then PCF with a
     // filter radius scaled to the penumbra. When softness is 0 we skip the
     // extra samples and just return a hard comparison.
+    // Spot lights project with a perspective w row, so the receiver now
+    // rejects at/behind-the-eye fragments (w <= 0) BEFORE the divide and
+    // rejects points outside the shadow clip volume before any sample: no
+    // invalid texel coordinates, no non-finite divide. This full clip
+    // rejection is NEW intentional correctness work — the previous GLSL
+    // guarded only projCoords.z > 1.0 AFTER the remap (no w guard, no x/y or
+    // lower-z rejection), so directional edge behavior tightens too; it is
+    // not a claim that directional out-of-volume behavior was identical.
     "float shadowFactor(sampler2D shadowMap, mat4 lightSpaceMatrix, float bias, float softness) {",
     "    vec4 lightSpacePos = lightSpaceMatrix * vec4(v_worldPosition, 1.0);",
+    "    if (lightSpacePos.w <= 0.0) return 1.0;",
     "    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;",
+    "    if (projCoords.x < -1.0 || projCoords.x > 1.0 ||",
+    "        projCoords.y < -1.0 || projCoords.y > 1.0 ||",
+    "        projCoords.z < -1.0 || projCoords.z > 1.0) return 1.0;",
     "    projCoords = projCoords * 0.5 + 0.5;",
-    "",
-    "    if (projCoords.z > 1.0) return 1.0;",
     "",
     "    float receiverDepth = projCoords.z;",
     "    float texelSize = 1.0 / float(textureSize(shadowMap, 0).x);",
@@ -582,9 +592,10 @@
     "        vec3 Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
     "        float kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
-    // Shadow attenuation for directional lights.
+    // Shadow attenuation for directional (1) and spot (3) lights. The slot
+    // index checks below keep the attenuation on the slot's OWN light only.
     "        float shadow = 1.0;",
-    "        if (u_receiveShadow && lightType == 1) {",
+    "        if (u_receiveShadow && (lightType == 1 || lightType == 3)) {",
     "            if (u_hasShadow0 && i == u_shadowLightIndex0) {",
     "                shadow = shadowFactorSlot0(viewDepth);",
     "            } else if (u_hasShadow1 && i == u_shadowLightIndex1) {",
@@ -1142,10 +1153,12 @@
   // for the given shadow slot. When numCascades === 1 the function falls back
   // to the legacy full-scene ortho fit so behaviour is identical to pre-CSM
   // single-map output.
-  function computeShadowSlotCascadeMatrices(light, slot, sceneBounds, viewMatrix, fovDeg, aspect, camNear, camFar) {
+  function computeShadowSlotCascadeMatrices(light, slot, sceneBounds, viewMatrix, fovDeg, aspect, camNear, camFar, precomputedMatrix) {
     var n = slot.numCascades;
     if (n <= 1) {
-      var m = sceneShadowLightSpaceMatrix(light, sceneBounds);
+      // precomputedMatrix carries a spot matrix already validated during
+      // candidate collection; directional fits compute here as before.
+      var m = precomputedMatrix || sceneShadowLightSpaceMatrix(light, sceneBounds);
       slot.cascades[0].lightMatrix = m;
       slot.cascades[0].splitNear = 0;
       slot.cascades[0].splitFar = camFar || 100;
@@ -8193,11 +8206,36 @@
           var light = lightArray[li];
           if (!light || !light.castShadow) continue;
           var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-          if (kind !== "directional") continue;
+          var isSpot = kind === "spot";
+          if (kind !== "directional" && !isSpot) continue;
+          // Defensive check on the raw angle here; callers going through
+          // the public normalizeSceneLight get zero/nonpositive-angle
+          // defaults before the shadow helper, so a cone empty at this
+          // point shades nothing in the BRDF and casts no shadow.
+          if (isSpot && !(sceneNumber(light.angle, 0) > 0)) continue;
+          // A malformed/non-projectable spot (non-finite position or
+          // direction, zero direction, Angle >= pi/2) is validated BEFORE it
+          // consumes one of the two candidate slots or any budget, so a
+          // valid third light is never excluded by invalid ones. The
+          // validated matrix is cached and reused for the fit below.
+          var spotMatrix = null;
+          if (isSpot) {
+            if (!sceneBounds) {
+              sceneBounds = sceneShadowComputeBounds(bundle, getInstancedGeometry);
+            }
+            spotMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+            if (!spotMatrix) continue;
+          }
           shadowCandidates.push({
             lightIndex: li,
             light: light,
-            requestedCascades: Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1)),
+            isSpot: isSpot,
+            validatedMatrix: spotMatrix,
+            // Spots use exactly ONE map: untyped payloads may still carry
+            // shadowCascades, but cascade splitting is directional-only.
+            requestedCascades: isSpot
+              ? 1
+              : Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1)),
             shadowSize: resolveShadowSize(
               Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
               shadowMaxPixels),
@@ -8239,12 +8277,13 @@
           // Fit per-cascade matrices for the EFFECTIVE count: the full
           // camera range (near..far) is re-split into N ranges, and a single
           // remaining cascade uses the legacy full-scene fit, so reduced
-          // counts never truncate far coverage.
+          // counts never truncate far coverage. Spot candidates reuse the
+          // matrix validated during collection instead of refitting.
           if (!sceneBounds) {
             sceneBounds = sceneShadowComputeBounds(bundle, getInstancedGeometry);
           }
           computeShadowSlotCascadeMatrices(candidate.light, shadowSlots[candIdx], sceneBounds,
-            viewMatrix, cam.fov, aspect, cam.near, cam.far);
+            viewMatrix, cam.fov, aspect, cam.near, cam.far, candidate.validatedMatrix);
 
           // One depth pass per EFFECTIVE cascade; unbudgeted cascades are
           // never drawn.
