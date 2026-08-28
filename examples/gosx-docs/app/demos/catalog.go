@@ -128,6 +128,16 @@ var demoCatalog = []DemoDefinition{
 		Status: "live", RenderMode: "SSR + client-side draft editor",
 		Limitations: "Adding blocks and live preview run entirely in the browser; publish validates and stores the full draft in memory only — there is no persistence across restarts, no reordering, and no block removal.",
 	},
+	{
+		Slug: "orrery", Title: "Lodestar Meridian", Tag: "declarative animation choreography",
+		Promise: "Watch a clockwork star-system engine run a 24-second demonstration cycle: ignition ramp, three keyframed planetary orbits, and a transit moon whose mid-transit alignment fires the heart flare on the same beat.",
+		Lesson:  "GoSX Scene3D ships graph animation channels and material keyframe tracks as typed data — targets, keys, and timing stay stable, deterministic, and asset-free, with declared node, vertex, and pixel budgets.",
+		Accent:  "#c4b5fd", Facets: []string{"Scene3D", "Animation channels", "MaterialAnims", "PostFX", "Points", "WebGPU", "WebGL2"},
+		SourcePath: "examples/gosx-docs/app/demos/orrery/program.go", Packages: []string{"scene", "route"},
+		Status: "live", RenderMode: "SSR + Scene3D GPU runtime",
+		Limitations:  "The choreography is one declared keyframe cycle played by the shared client runtime; it has no user-authored interaction beyond orbit controls and no server state. WebGPU depends on browser and hardware support; GoSX falls back honestly to WebGL2 or its bounded primitive fallback. The scene caps rendering at 60 frames per second (FPS), device pixel ratio (DPR) 1.5, and a 720p render surface, and under prefers-reduced-motion its animation loop is suppressed to a still.",
+		ShowcaseRank: 0,
+	},
 }
 
 func Demos() []DemoDefinition {

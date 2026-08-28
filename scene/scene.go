@@ -1240,6 +1240,13 @@ type AnimationClip struct {
 }
 
 // AnimationChannel describes one keyframe track targeting a single node property.
+// TargetNode indexes the AUTHORED node list (which interleaves lights, points,
+// clips, and other node kinds) — never a flattened renderable-array position;
+// lowering resolves it to a stable TargetID for consumers. Translation values
+// are composed by the shared runtime bundle path as offsets from the target
+// node's authored pose (rotation replaces orientation; scale replaces scale),
+// so authoring keys relative to each node's authored pose keeps the opening
+// frame stable.
 type AnimationChannel struct {
 	TargetNode    int       // index of the target node in the scene node list
 	Property      string    // "translation", "rotation", "scale"
@@ -1525,6 +1532,12 @@ type graphLowerer struct {
 	computeParticles   []ComputeParticlesIR
 	waterSystems       []WaterSystemIR
 	animations         []AnimationClipIR
+	// rootNodes is the AUTHORED top-level node list being lowered. Animation
+	// channels address targets by index into this list (the index space authors
+	// write, which interleaves lights, points, clips, and other node kinds), so
+	// lowerAnimationClip resolves each TargetNode back to its stable node ID
+	// here instead of letting consumers guess from flattened renderable arrays.
+	rootNodes          []Node
 	pending            []pendingLabel
 	pendingSprites     []pendingSprite
 	pendingHTML        []pendingHTML
@@ -3737,6 +3750,7 @@ func (l *graphLowerer) lowerAnimationClip(clip AnimationClip) {
 		}
 		channels = append(channels, AnimationChannelIR{
 			TargetNode:    ch.TargetNode,
+			TargetID:      animationTargetIDFor(l.rootNodes, ch.TargetNode),
 			Property:      prop,
 			Interpolation: interp,
 			Times:         append([]float64(nil), ch.Times...),

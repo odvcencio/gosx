@@ -279,7 +279,7 @@ func TestValidateJSONHardensReferencesArraysCompressionAndAnimations(t *testing.
 		"instancedMeshes":[{"id":"bad-batch","count":2,"kind":"cube","transforms":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"colors":["#fff"]}],
 		"computeParticles":[{"id":"bad-particles","count":1,"bounds":-1,"emitter":{"radius":-1,"arms":-2},"material":{"size":-1}}],
 		"html":[{"id":"bad-html","target":"missing","mode":"dom","html":"<div></div>"}],
-		"animations":[{"name":"bad-animation","duration":-1,"channels":[{"targetNode":8,"property":"","times":[0,0.5,0.25]}]}],
+		"animations":[{"name":"bad-animation","duration":-1,"channels":[{"targetNode":-1,"property":"translation","times":[0,0.5,0.25]},{"targetNode":8,"targetID":"missing","property":"","times":[0,0.5,0.25]}]}],
 		"postFXMaxPixels":-1,
 		"shadowMaxPixels":-1
 	}`), Options{})
@@ -295,6 +295,7 @@ func TestValidateJSONHardensReferencesArraysCompressionAndAnimations(t *testing.
 		"scene.particles.invalid_emitter",
 		"scene.html.invalid_target",
 		"scene.animation.invalid_target",
+		"scene.animation.unknown_target",
 		"scene.animation.invalid_time",
 		"scene.animation.values_missing",
 		"scene.postfx.invalid_max_pixels",

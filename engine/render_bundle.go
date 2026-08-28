@@ -432,11 +432,23 @@ type RenderBundle struct {
 	WorldNormals     []float64                `json:"worldNormals,omitempty"`
 	WorldUVs         []float64                `json:"worldUVs,omitempty"`
 	WorldTangents    []float64                `json:"worldTangents,omitempty"`
-	ObjectCount      int                      `json:"objectCount,omitempty"`
-	Animations       []RenderAnimation        `json:"animations,omitempty"`
-	PostEffects      []RenderPostEffect       `json:"postEffects,omitempty"`
-	PostFXMaxPixels  int                      `json:"postFXMaxPixels,omitempty"`
-	Diagnostics      []RenderDiagnostic       `json:"diagnostics,omitempty"`
+	// Triangle/PBR bundle streams for typed primitive meshes. Objects that
+	// carry solid shaded geometry land here; line-only wireframes keep using
+	// the worldPositions/worldColors path above. MeshObjects entries point at
+	// vertices in WorldMeshPositions with VertexOffset/VertexCount exactly like
+	// Objects do for WorldPositions, so pickers and cullers can treat both
+	// uniformly.
+	MeshObjects          []RenderObject     `json:"meshObjects,omitempty"`
+	WorldMeshPositions   []float64          `json:"worldMeshPositions,omitempty"`
+	WorldMeshNormals     []float64          `json:"worldMeshNormals,omitempty"`
+	WorldMeshUVs         []float64          `json:"worldMeshUVs,omitempty"`
+	WorldMeshColors      []float64          `json:"worldMeshColors,omitempty"`
+	WorldMeshVertexCount int                `json:"worldMeshVertexCount,omitempty"`
+	ObjectCount          int                `json:"objectCount,omitempty"`
+	Animations           []RenderAnimation  `json:"animations,omitempty"`
+	PostEffects          []RenderPostEffect `json:"postEffects,omitempty"`
+	PostFXMaxPixels      int                `json:"postFXMaxPixels,omitempty"`
+	Diagnostics          []RenderDiagnostic `json:"diagnostics,omitempty"`
 	// ShaderLib carries deduplicated shader sources forwarded from the scene IR
 	// payload. The native renderer receives kernels via Config override and may
 	// ignore this field; server-side bundle consumers that read ComputeWGSL

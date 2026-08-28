@@ -565,12 +565,12 @@ const budgets = [
   // 1573965/427214/342907; all three caps raised with narrow rounding headroom.
   // Final rebuild removed dead activeShadowCount; measured 343015 brotli,
   // so the brotli cap was raised with narrow rounding headroom.
-  // Multi-buffer glTF foundation (buffer-indexed accessors, sparse overlays,
-  // embedded images and mixed GLB/.gltf buffers) measured
-  // 1_578_361 / 428_416 / 343_964. The old 1_574_000 / 427_250 / 343_100
-  // ceilings therefore move to 1_578_550 / 428_500 / 344_050, leaving only
-  // 189 / 84 / 86 bytes of rounding headroom.
-  { file: "bootstrap.js", raw: 1_578_550, gzip: 428_500, brotli: 344_050 },
+  // Combined orrery pause/reduced-motion, authored-index, and multi-buffer
+  // glTF foundation work measured after regenerating from the merged source:
+  // 1_578_296 / 428_783 / 344_121 raw/gzip/brotli. Keep the loader's approved
+  // raw allocation at 1_578_550; gzip moves 428_500 -> 428_900 and Brotli
+  // 344_050 -> 344_250 for narrow measured headroom.
+  { file: "bootstrap.js", raw: 1_578_550, gzip: 428_900, brotli: 344_250 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -996,7 +996,11 @@ const budgets = [
   // caps set from measured bytes plus small headroom.
   // Authored specular color plumbing (pre-typed-copy) measured
   // 547_422 / 151_079 / 125_285; caps raised with narrow headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 547_700, gzip: 151_200, brotli: 125_400 },
+  // Orrery pause/reduced-motion and authored-index fixes measured
+  // 547_457 / 151_409 / 125_421 raw/gzip/brotli after restoring the
+  // pause-control guards. Raw remains within the existing ceiling; gzip
+  // 151_200 -> 151_450. Brotli remains within the allocated 125_600 cap.
+  { file: "bootstrap-feature-scene3d.js", raw: 547_700, gzip: 151_450, brotli: 125_600 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1671,9 +1675,13 @@ const routeBudgets = [
     // raised with narrow rounding headroom.
     // Initial shadow allocation fix measured 1068775/295701/250406; raw and
     // gzip raised with narrow rounding headroom; brotli cap unchanged.
+    // Orrery pause/reduced-motion and authored-index fixes measured across
+    // this five-chunk route: 1_068_638 / 295_977 / 250_761 raw/gzip/brotli.
+    // Raw remains within the existing ceiling; gzip 295_750 -> 296_000 and
+    // brotli 250_500 -> 250_950.
     raw: 1_069_000,
-    gzip: 295_750,
-    brotli: 250_500,
+    gzip: 296_000,
+    brotli: 250_950,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1789,9 +1797,13 @@ const routeBudgets = [
     // three caps raised with narrow rounding headroom.
     // Final rebuild removed dead activeShadowCount; measured 330165 brotli,
     // so the brotli cap was raised with narrow rounding headroom.
+    // Orrery pause/reduced-motion and authored-index fixes measured across
+    // this six-chunk route: 1_461_812 / 391_170 / 330_429 raw/gzip/brotli.
+    // Raw remains within the existing ceiling; gzip 390_950 -> 391_250 and
+    // brotli 330_250 -> 330_650.
     raw: 1_462_000,
-    gzip: 390_950,
-    brotli: 330_250,
+    gzip: 391_250,
+    brotli: 330_650,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,

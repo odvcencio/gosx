@@ -1017,7 +1017,16 @@ type AnimationClipIR struct {
 // Times and Values are the raw float arrays; CompressedTimes/CompressedValues
 // replace them when TurboQuant compression is enabled.
 type AnimationChannelIR struct {
-	TargetNode    int    `json:"targetNode"`
+	TargetNode int `json:"targetNode"`
+	// TargetID is the stable node ID the channel targets, resolved at lowering
+	// time from the authored node list. TargetNode alone is an index into the
+	// AUTHORED node list (which interleaves lights, points, and other node
+	// kinds), so consumers must never match it against a flattened renderable
+	// array position. TargetID gives every consumer a position-independent
+	// handle; it is omitted when the target index is out of range or the node
+	// carries no ID. The browser runtime and native bundle consumers prefer
+	// TargetID and fall back to TargetNode-as-authored-index.
+	TargetID      string `json:"targetID,omitempty"`
 	Property      string `json:"property"`
 	Interpolation string `json:"interpolation,omitempty"`
 
@@ -1206,6 +1215,51 @@ func requiredBackends(p Props) []capability.Backend {
 	return nil
 }
 
+// animationTargetIDFor resolves the stable node ID for an index into an
+// AUTHORED node list. Channel TargetNode values address this list — the list
+// authors write, which interleaves lights, points, clips, and helpers — so
+// target resolution must never fall back to a flattened renderable-array
+// position. Returns "" when the index is out of range or the node kind carries
+// no ID; callers omit TargetID then.
+func animationTargetIDFor(nodes []Node, index int) string {
+	if index < 0 || index >= len(nodes) {
+		return ""
+	}
+	switch n := nodes[index].(type) {
+	case Mesh:
+		return strings.TrimSpace(n.ID)
+	case *Mesh:
+		if n != nil {
+			return strings.TrimSpace(n.ID)
+		}
+	case Points:
+		return strings.TrimSpace(n.ID)
+	case *Points:
+		if n != nil {
+			return strings.TrimSpace(n.ID)
+		}
+	case InstancedMesh:
+		return strings.TrimSpace(n.ID)
+	case *InstancedMesh:
+		if n != nil {
+			return strings.TrimSpace(n.ID)
+		}
+	case InstancedGLBMesh:
+		return strings.TrimSpace(n.ID)
+	case *InstancedGLBMesh:
+		if n != nil {
+			return strings.TrimSpace(n.ID)
+		}
+	case Group:
+		return strings.TrimSpace(n.ID)
+	case *Group:
+		if n != nil {
+			return strings.TrimSpace(n.ID)
+		}
+	}
+	return ""
+}
+
 // SceneIR lowers a typed graph into a typed intermediate representation.
 //
 // The returned slices alias the graphLowerer's internal accumulators
@@ -1242,9 +1296,10 @@ func (g Graph) SceneIR() SceneIR {
 	// still spare.
 	counts := countGraphNodes(g.Nodes)
 	lowerer := &graphLowerer{
-		anchors: make(map[string]worldTransform, counts.total),
-		objects: make([]ObjectIR, 0, counts.objectLike),
-		lights:  make([]LightIR, 0, counts.lights),
+		anchors:   make(map[string]worldTransform, counts.total),
+		objects:   make([]ObjectIR, 0, counts.objectLike),
+		lights:    make([]LightIR, 0, counts.lights),
+		rootNodes: g.Nodes,
 	}
 	for _, node := range g.Nodes {
 		lowerer.lowerNode(node, identityTransform())

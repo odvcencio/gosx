@@ -11,6 +11,7 @@ import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/html-surface"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/orrery"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/playground"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/scene3d"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/demos/scene3d-bench"
