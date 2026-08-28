@@ -749,20 +749,23 @@ func intersectSphere(ray Ray, radius float64) (RayHit, bool) {
 
 func intersectPlane(ray Ray, width, height float64) (RayHit, bool) {
 	const epsilon = 1e-9
-	if math.Abs(ray.Direction.Z) < epsilon {
+	// PlaneGeometry lies in the local XZ plane at y=0 with a +Y normal,
+	// matching the renderer. A ray parallel to that surface cannot hit it.
+	if math.Abs(ray.Direction.Y) < epsilon {
 		return RayHit{}, false
 	}
-	t := -ray.Origin.Z / ray.Direction.Z
+	t := -ray.Origin.Y / ray.Direction.Y
 	if t < 0 {
 		return RayHit{}, false
 	}
 	point := addVectors(ray.Origin, scaleVector(ray.Direction, t))
-	if math.Abs(point.X) > width/2 || math.Abs(point.Y) > height/2 {
+	if math.Abs(point.X) > width/2 || math.Abs(point.Z) > height/2 {
 		return RayHit{}, false
 	}
-	normal := Vector3{Z: 1}
-	if ray.Direction.Z > 0 {
-		normal.Z = -1
+	// Keep the face-forward behavior: the normal points back toward the ray.
+	normal := Vector3{Y: 1}
+	if ray.Direction.Y > 0 {
+		normal.Y = -1
 	}
 	return RayHit{Distance: t, Point: point, Normal: normal}, true
 }

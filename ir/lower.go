@@ -1723,17 +1723,21 @@ func (l *lowerer) walkStrictHops(rootLabel, rootType string, path []string) stri
 // whichever root (props or an <Each> binding name) walkStrictHops was
 // given.
 func strictHopMessage(componentName string, res strictHopResult) string {
+	return componentHopMessage("strict component", componentName, res)
+}
+
+func componentHopMessage(kind, componentName string, res strictHopResult) string {
 	switch res.failKind {
 	case strictHopTooDeep:
-		return fmt.Sprintf("strict component %s selector %s is too deep; the strict renderer resolves at most three fields", componentName, res.pathText)
+		return fmt.Sprintf("%s %s selector %s is too deep; the strict renderer resolves at most three fields", kind, componentName, res.pathText)
 	case strictHopPointer:
-		return fmt.Sprintf("strict component %s cannot select through %s of pointer type %s; pointer fields cannot preserve Go nil-pointer behavior in the file renderer", componentName, res.pathText, res.failType)
+		return fmt.Sprintf("%s %s cannot select through %s of pointer type %s; pointer fields cannot preserve Go nil-pointer behavior in the file renderer", kind, componentName, res.pathText, res.failType)
 	case strictHopThroughScalar:
-		return fmt.Sprintf("strict component %s cannot select %q through %s of type %s; selector paths cross same-file struct fields only", componentName, res.failField, res.pathText, res.failType)
+		return fmt.Sprintf("%s %s cannot select %q through %s of type %s; selector paths cross same-file struct fields only", kind, componentName, res.failField, res.pathText, res.failType)
 	case strictHopUndeclaredStruct:
-		return fmt.Sprintf("strict component %s cannot resolve %s.%s: struct %s is not declared in this .gsx file; declare the renderer-visible struct beside the component", componentName, res.pathText, res.failField, res.failType)
+		return fmt.Sprintf("%s %s cannot resolve %s.%s: struct %s is not declared in this .gsx file; declare the renderer-visible struct beside the component", kind, componentName, res.pathText, res.failField, res.failType)
 	case strictHopUnknownFieldDeep, strictHopUnknownField:
-		return fmt.Sprintf("strict component %s cannot resolve %s.%s: struct %s declares no visible field %s; promoted, unexported, and unknown fields cannot cross the file renderer boundary", componentName, res.pathText, res.failField, res.failType, res.failField)
+		return fmt.Sprintf("%s %s cannot resolve %s.%s: struct %s declares no visible field %s; promoted, unexported, and unknown fields cannot cross the file renderer boundary", kind, componentName, res.pathText, res.failField, res.failType, res.failField)
 	default:
 		return ""
 	}
@@ -2686,6 +2690,7 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	var propsFields, propsPaths map[string]string
 	if propsTyped {
 		propsFields, propsPaths = l.copyStrictPropTypes(propsType, l.strictReads[name])
+		l.validateTypedLegacyEachBindings(rootID, name, propsType)
 	}
 
 	comp := Component{

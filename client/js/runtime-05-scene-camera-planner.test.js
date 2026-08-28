@@ -13,8 +13,10 @@ const path = require("node:path");
 
 const {
   bootstrapSource,
+  bootstrapRuntimeSource,
   FakeElement,
   createContext,
+  freshFeatureBundleSource,
   runScript,
   flushAsyncWork,
   makeSceneApiEnv,
@@ -373,4 +375,54 @@ test("bootstrap resolves Scene3D CSS custom properties in the planner", async ()
   assert.notEqual(updated, prepared);
   assert.equal(updated.ir.materials[0].color, "#1e3a8a");
   assert.ok(computedStyleCalls > firstComputedStyleCalls);
+});
+
+test("bootstrap Scene3D planner invalidates cached spot-light attenuation and cone fields", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const light = {
+    id: "key",
+    kind: "spot",
+    color: "#ffffff",
+    intensity: 1,
+    x: 0,
+    y: 3,
+    z: 2,
+    directionX: 0,
+    directionY: -1,
+    directionZ: 0,
+    angle: 0.5,
+    penumbra: 0.1,
+    range: 6,
+    decay: 2,
+  };
+
+  for (const [field, value] of [["range", 12], ["decay", 3], ["angle", 0.75], ["penumbra", 0.4]]) {
+    const bundle = {
+      bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+      camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+      environment: {},
+      lights: [Object.assign({}, light)],
+      materials: [],
+      meshObjects: [],
+      objects: [],
+      points: [],
+      worldPositions: new Float32Array(0),
+      worldColors: new Float32Array(0),
+      worldMeshPositions: new Float32Array(0),
+      worldMeshNormals: new Float32Array(0),
+    };
+    const prepared = api.prepareScene(bundle, bundle.camera, viewport, null);
+    bundle.lights = [Object.assign({}, light, { [field]: value })];
+
+    const updated = api.prepareScene(bundle, bundle.camera, viewport, prepared);
+    assert.notEqual(updated, prepared, field + " mutation must invalidate the prepared scene");
+    assert.notEqual(updated.signature, prepared.signature, field + " mutation must change the signature");
+    assert.equal(updated.rebuilds, prepared.rebuilds + 1);
+    assert.equal(api.prepareScene(bundle, bundle.camera, viewport, updated), updated);
+  }
 });

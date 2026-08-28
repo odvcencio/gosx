@@ -2,6 +2,7 @@ package scene
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,22 +46,129 @@ func TestBufferGeometryLowersToInlineVertices(t *testing.T) {
 	}
 }
 
-func TestBufferGeometryExpandsIndices(t *testing.T) {
+func TestBufferGeometryPreservesIndexedQuad(t *testing.T) {
 	props := Props{Graph: NewGraph(Mesh{
 		ID: "buf",
 		Geometry: BufferGeometry{
 			Positions: []float64{0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0},
+			Normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},
+			UVs:       []float64{0, 0, 1, 0, 0, 1, 1, 1},
 			Indices:   []int{0, 1, 2, 0, 2, 3},
 		},
 		Material: StandardMaterial{Color: "#ffffff"},
 	})}
 	ir := props.SceneIR()
 	obj := ir.Objects[0]
-	if obj.Vertices == nil || obj.Vertices.Count != 6 {
-		t.Fatalf("expected 6 expanded vertices, got %+v", obj.Vertices)
+	if obj.Vertices == nil || obj.Vertices.Count != 4 {
+		t.Fatalf("expected 4 unique vertices, got %+v", obj.Vertices)
 	}
-	if len(obj.Vertices.Positions) != 18 {
-		t.Fatalf("expected 18 position floats after expand, got %d", len(obj.Vertices.Positions))
+	if len(obj.Vertices.Positions) != 12 {
+		t.Fatalf("expected 12 position floats (unique vertices, not soup), got %d", len(obj.Vertices.Positions))
+	}
+	if len(obj.Vertices.Normals) != 12 || len(obj.Vertices.UVs) != 8 {
+		t.Fatalf("expected unique normal and uv streams, got %d/%d", len(obj.Vertices.Normals), len(obj.Vertices.UVs))
+	}
+	if got := obj.Vertices.Indices; !slices.Equal(got, []uint32{0, 1, 2, 0, 2, 3}) {
+		t.Fatalf("expected authored indices [0 1 2 0 2 3], got %v", got)
+	}
+	// The serialized wire form must keep the integer index stream lossless.
+	b, err := json.Marshal(props)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"indices":[0,1,2,0,2,3]`) {
+		t.Fatalf("serialized scene missing the index stream: %s", b)
+	}
+}
+
+func TestBufferGeometryIndexedSnapshotIsIndependentOfSourceSlices(t *testing.T) {
+	positions := []float64{0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0}
+	normals := []float64{0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1}
+	uvs := []float64{0, 0, 1, 0, 0, 1, 1, 1}
+	tangents := []float64{
+		1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1,
+		1, 0, 0, 1,
+	}
+	indices := []int{0, 1, 2, 0, 2, 3}
+	g := BufferGeometry{
+		Positions: positions,
+		Normals:   normals,
+		UVs:       uvs,
+		Tangents:  tangents,
+		Indices:   indices,
+	}
+	vertices := bufferGeometryVertices(g)
+	if vertices == nil {
+		t.Fatal("expected lowered vertices")
+	}
+	// Mutating the source slices after lowering must not mutate the snapshot.
+	for i := range positions {
+		positions[i] = -7
+	}
+	for i := range normals {
+		normals[i] = -7
+	}
+	for i := range uvs {
+		uvs[i] = -7
+	}
+	for i := range tangents {
+		tangents[i] = -7
+	}
+	for i := range indices {
+		indices[i] = 3
+	}
+	if vertices.Positions[0] != 0 || vertices.Positions[len(vertices.Positions)-1] != 0 {
+		t.Fatal("source position mutation leaked into the IR snapshot")
+	}
+	if vertices.Normals[0] != 0 || vertices.UVs[0] != 0 || vertices.Tangents[0] != 1 {
+		t.Fatal("source attribute mutation leaked into the IR snapshot")
+	}
+	if !slices.Equal(vertices.Indices, []uint32{0, 1, 2, 0, 2, 3}) {
+		t.Fatalf("source index mutation leaked into the IR snapshot: %v", vertices.Indices)
+	}
+}
+
+func TestBufferGeometryFailsClosedOnMalformedIndexStreams(t *testing.T) {
+	cases := map[string][]int{
+		"negative":      {0, -1, 2, 0, 2, 3},
+		"out-of-range":  {0, 1, 4, 0, 2, 3},
+		"not-triangles": {0, 1, 2, 3},
+		"truncated":     {0, 1, 2, 0, 2},
+	}
+	for name, indices := range cases {
+		g := BufferGeometry{
+			Positions: []float64{0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0},
+			Indices:   indices,
+		}
+		vertices := bufferGeometryVertices(g)
+		if vertices != nil {
+			t.Fatalf("%s: malformed index stream lowered to %+v, want nil (fail closed)", name, vertices)
+		}
+		props := Props{Graph: NewGraph(Mesh{ID: "buf", Geometry: g, Material: StandardMaterial{Color: "#ffffff"}})}
+		b, err := json.Marshal(props)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), `"indices"`) || strings.Contains(string(b), `"vertices":{`) {
+			t.Fatalf("%s: malformed mesh reached the wire: %s", name, b)
+		}
+	}
+}
+
+func TestBufferGeometryUnindexedLoweringIsUnchanged(t *testing.T) {
+	g := BufferGeometry{
+		Positions: []float64{0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0},
+		Normals:   []float64{0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1},
+	}
+	vertices := bufferGeometryVertices(g)
+	if vertices == nil || vertices.Count != 6 {
+		t.Fatalf("unindexed lowering changed shape: %+v", vertices)
+	}
+	if len(vertices.Positions) != 18 || len(vertices.Normals) != 18 {
+		t.Fatalf("unindexed streams must pass through untouched: %d/%d", len(vertices.Positions), len(vertices.Normals))
+	}
+	if vertices.Indices != nil {
+		t.Fatalf("unindexed geometry must not grow an index stream: %v", vertices.Indices)
 	}
 }
 

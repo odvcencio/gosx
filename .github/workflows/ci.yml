@@ -16,7 +16,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Shallow checkout: the release gate only needs the checked-out
+          # tree. Exact event base/head commits missing from the shallow
+          # history are fetched individually by the whitespace-check step.
+          fetch-depth: 1
 
       - name: Patch whitespace check
         env:
@@ -29,6 +32,12 @@ jobs:
           base_sha="$EVENT_BASE_SHA"
           if [ -z "$base_sha" ] || [ "$base_sha" = "$zero_sha" ]; then
             base_sha="$(git hash-object -t tree /dev/null)"
+          elif ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$base_sha"
+          fi
+          # The event head may also be absent from the shallow history.
+          if ! git cat-file -e "${EVENT_HEAD_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$EVENT_HEAD_SHA"
           fi
           echo "checking whitespace in ${EVENT_NAME} patch ${base_sha}..${EVENT_HEAD_SHA}"
           git diff --check "$base_sha" "$EVENT_HEAD_SHA"
@@ -64,7 +73,19 @@ jobs:
           cache: true
 
       - name: Install Danmuji
-        run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
+        # Bounded retry for transient module-proxy errors; pinned args and
+        # checksum validation are unchanged, and exhaustion fails the step.
+        run: |
+          set -eu
+          attempt=1
+          until go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2; do
+            echo "danmuji install attempt ${attempt}/3 failed" >&2
+            if [ "$attempt" -ge 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 5))
+            attempt=$((attempt + 1))
+          done
 
       - name: Format check
         run: make fmt-check

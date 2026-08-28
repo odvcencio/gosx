@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.53.1**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.53.8**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -314,7 +314,26 @@ count    // local to the declaring island
 
 **Sessions and Auth** — Cookie-backed sessions with HMAC-SHA256 signing, optional AES-GCM encryption, previous-secret rotation, CSRF protection with constant-time token comparison, and flash values. Auth supports sessions, magic links, OAuth 2.0 (GitHub, Google), and WebAuthn/Passkeys.
 
-**Actions** — Named server-side mutation handlers with form/JSON parsing, field-level validation errors, redirect-safe flash state, and `action.WantsJSON` as the shared authority when application code must distinguish a managed action from a native form submission.
+**Actions** — Named server-side mutation handlers with form/JSON parsing, field-level validation errors, redirect-safe flash state, and `action.WantsJSON` as the shared authority when application code must distinguish a managed action from a native form submission. Native forms can preserve an exact path, query, and fragment by rendering the reserved return-target field:
+
+```go
+<input
+    type="hidden"
+    name={action.ReturnTargetField}
+    value="/board?page=2#board-pool"
+/>
+```
+
+Return targets must be root-relative and same-origin. An explicit handler redirect takes precedence; otherwise GoSX falls back to a safe same-site referrer and then the action route. Managed navigation preserves authored fragments across fetches and same-origin HTTP redirects, and same-document fragment changes do not refetch the page.
+
+Actions that should return to the submitting page can opt in with
+`ctx.RedirectBackWithMessage("/fallback", "Saved.")`. GoSX chooses the valid
+`__gosx_return_to` target first, then the sanitized root-relative fallback;
+invalid or empty values resolve to `/`. Query strings and fragments are
+preserved, and the reserved field never enters `Context.FormData` or the
+returned values. Use `ctx.RedirectWithMessage` when the action intentionally
+chooses a different destination; explicit non-empty redirects are sanitized to
+a same-origin root-relative path, with unsafe values resolving to `/`.
 
 **Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
 
@@ -809,6 +828,40 @@ manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
 `dist/app.appinstaller` for AppInstaller-based updates.
 
+### Bundle boundary and mutable state
+
+The production build is a clean-room staging boundary. It validates the
+project before removing an old dist/ directory, then stages app/, content/,
+and public/ with Lstat-based containment checks. Secrets, credential files,
+private metadata directories, symlinks, sockets, devices, FIFOs, and mutable
+database/state files are not deployable artifacts.
+
+Applications that intentionally ship immutable server data can declare exact
+paths in gosx.config.json:
+
+    {
+      "build": {
+        "bundle": {
+          "allow": ["app/catalog.db"],
+          "allowPublic": ["public/seed.db"],
+          "exclude": ["content/drafts"]
+        }
+      }
+    }
+
+allow entries are for immutable app/ or content/ data. allowPublic is a
+separate, loudly warned exception for one exact public file and therefore
+makes that file anonymously readable. No allowance can re-enable secrets or
+symlinks, and exclusions cannot hide them. SQLite -wal, -shm, and -journal
+sidecars must be handled outside the bundle and are never implied by an
+allow entry.
+
+Runtime databases, write-ahead logs, uploads, sessions, and other mutable
+state should live in an explicitly mounted runtime volume or external state
+service, not under app/, content/, or public/. The offline, static, image, and
+server consumers all use the filtered staged tree, and a final artifact audit
+protects it from build hooks reintroducing denied material.
+
 ## Deploy
 
 Three tiers:
@@ -923,7 +976,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.53.1**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.53.8**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 
