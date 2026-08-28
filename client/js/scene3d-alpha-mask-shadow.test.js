@@ -86,6 +86,13 @@ function createContext() {
   return context;
 }
 
+// Shadow slot resource allocation block: createSceneShadowResources,
+// createSceneShadowSlot and disposeShadowSlot, sliced from webgl.ts between
+// exact checked markers.
+const SHADOW_ALLOC_SOURCE = sliceBetween(WEBGL,
+  "function createSceneShadowResources",
+  "function computeShadowSlotCascadeMatrices");
+
 const TEX_URI = "/tex/alb-white-a128.png";
 
 function descriptorFor(uri) {
@@ -111,13 +118,74 @@ function makeShadowResources() {
   return { framebuffer: { id: "shadow-fbo" }, size: 512 };
 }
 
+// Minimal explicit fake allocation ports for the slot resource fragment:
+// records create/delete/texImage2D calls, no permissive Proxy.
+function createAllocGL() {
+  const calls = [];
+  const created = { fbos: [], textures: [] };
+  let id = 0;
+  return {
+    calls,
+    created,
+    TEXTURE_2D: 0x0de1,
+    FRAMEBUFFER: 0x8d40,
+    DEPTH_ATTACHMENT: 0x8d00,
+    DEPTH_COMPONENT24: 0x81a6,
+    DEPTH_COMPONENT: 0x1902,
+    UNSIGNED_INT: 0x1405,
+    TEXTURE_MIN_FILTER: 0x2801,
+    TEXTURE_MAG_FILTER: 0x2800,
+    TEXTURE_WRAP_S: 0x2802,
+    TEXTURE_WRAP_T: 0x2803,
+    NEAREST: 0x2600,
+    CLAMP_TO_EDGE: 0x812f,
+    createFramebuffer() {
+      const fbo = { id: "fbo" + (++id) };
+      created.fbos.push(fbo);
+      calls.push(["createFramebuffer", fbo]);
+      return fbo;
+    },
+    createTexture() {
+      const tex = { id: "tex" + (++id) };
+      created.textures.push(tex);
+      calls.push(["createTexture", tex]);
+      return tex;
+    },
+    deleteFramebuffer(fbo) { calls.push(["deleteFramebuffer", fbo]); },
+    deleteTexture(tex) { calls.push(["deleteTexture", tex]); },
+    texImage2D(target, level, internalFormat, w, h, border, fmt, type, data) {
+      calls.push(["texImage2D", target, level, internalFormat, w, h, border, fmt, type, data]);
+    },
+    texParameteri(target, pname, value) { calls.push(["texParameteri", target, pname, value]); },
+    bindTexture(target, tex) { calls.push(["bindTexture", target, tex]); },
+    bindFramebuffer(target, fbo) { calls.push(["bindFramebuffer", target, fbo]); },
+    framebufferTexture2D(target, attachment, texTarget, tex, level) {
+      calls.push(["framebufferTexture2D", target, attachment, texTarget, tex, level]);
+    },
+  };
+}
+
+function createAllocContext() {
+  const context = createContext();
+  vm.runInContext(SHADOW_ALLOC_SOURCE, context,
+    { filename: "webgl.ts#shadow-alloc" });
+  return context;
+}
+
 const LIGHT_MATRIX = Float32Array.from({ length: 16 }, (_, i) => i + 1);
 
 // Recording fake GL: only the methods the production pass actually calls,
 // no permissive Proxy.
 function createRecordingGL() {
   const calls = [];
-  const state = { activeTexture: 0x84c0, bindings: {} };
+  const state = {
+    activeTexture: 0x84c0,
+    bindings: {},
+    viewport: [0, 0, 1, 1],
+    scissorEnabled: false,
+    scissorBox: [0, 0, 0, 0],
+    depthMask: true,
+  };
   const gl = {
     calls,
     _state: state,
@@ -138,10 +206,18 @@ function createRecordingGL() {
     DYNAMIC_DRAW: 0x88e8,
     FLOAT: 0x1406,
     TEXTURE_2D: 0x0de1,
+    VIEWPORT: 0x0ba2,
+    SCISSOR_TEST: 0x0c11,
+    SCISSOR_BOX: 0x0c10,
+    DEPTH_WRITEMASK: 0x0d33,
     activeTexture(u) { calls.push(["activeTexture", u]); state.activeTexture = u; },
     getParameter(p) {
       if (p === 0x84e0) return state.activeTexture;
       if (p === 0x8069) return state.bindings[state.activeTexture] || null;
+      if (p === gl.VIEWPORT) return state.viewport.slice();
+      if (p === gl.SCISSOR_TEST) return state.scissorEnabled;
+      if (p === gl.SCISSOR_BOX) return state.scissorBox.slice();
+      if (p === gl.DEPTH_WRITEMASK) return state.depthMask;
       return null;
     },
     bindTexture(target, tex) {
@@ -149,18 +225,45 @@ function createRecordingGL() {
       state.bindings[state.activeTexture] = tex;
     },
     bindFramebuffer(t, fbo) { calls.push(["bindFramebuffer", t, fbo]); },
-    viewport(x, y, w, h) { calls.push(["viewport", x, y, w, h]); },
+    viewport(x, y, w, h) {
+      calls.push(["viewport", x, y, w, h]);
+      state.viewport = [x, y, w, h];
+    },
+    scissor(x, y, w, h) {
+      calls.push(["scissor", x, y, w, h]);
+      state.scissorBox = [x, y, w, h];
+    },
     clearDepth(d) { calls.push(["clearDepth", d]); },
-    clear(m) { calls.push(["clear", m]); },
+    clear(m) {
+      calls.push(["clear", m]);
+      // Snapshot the scissor/viewport/depth-writemask state AT CLEAR TIME:
+      // the point atlas must clear exactly its tile with a writable mask.
+      gl.clearSnapshots.push({
+        mask: m,
+        scissorEnabled: state.scissorEnabled,
+        scissorBox: state.scissorBox.slice(),
+        viewport: state.viewport.slice(),
+        depthMask: state.depthMask,
+      });
+    },
     useProgram(p) { calls.push(["useProgram", p]); },
     uniformMatrix4fv(loc, transpose, m) {
       calls.push(["uniformMatrix4fv", loc, transpose, Array.from(m)]);
     },
     uniform1i(loc, v) { calls.push(["uniform1i", loc, v]); },
     uniform1f(loc, v) { calls.push(["uniform1f", loc, v]); },
-    enable(cap) { calls.push(["enable", cap]); },
-    disable(cap) { calls.push(["disable", cap]); },
-    depthMask(v) { calls.push(["depthMask", v]); },
+    enable(cap) {
+      calls.push(["enable", cap]);
+      if (cap === gl.SCISSOR_TEST) state.scissorEnabled = true;
+    },
+    disable(cap) {
+      calls.push(["disable", cap]);
+      if (cap === gl.SCISSOR_TEST) state.scissorEnabled = false;
+    },
+    depthMask(v) {
+      calls.push(["depthMask", v]);
+      state.depthMask = v;
+    },
     depthFunc(f) { calls.push(["depthFunc", f]); },
     cullFace(f) { calls.push(["cullFace", f]); },
     bindBuffer(t, b) { calls.push(["bindBuffer", t, b]); },
@@ -193,6 +296,7 @@ function createRecordingGL() {
     },
   };
   gl._drawTimeUnit0 = [];
+  gl.clearSnapshots = [];
   return gl;
 }
 
@@ -215,6 +319,33 @@ function makeOpaqueBundle() {
     materials: [{ opacity: 1, alphaCutoff: null }],
     worldMeshPositions: Float32Array.from({ length: 12 }, (_, i) => i + 1),
   };
+}
+
+// Point-atlas point pass resources: shared atlas framebuffer, 64px tiles,
+// face index and light matrix so the production point-face gate fires.
+function makePointFace(framebuffer, face) {
+  return {
+    framebuffer,
+    size: 64,
+    point: true,
+    pointFace: face,
+    lightMatrix: LIGHT_MATRIX,
+  };
+}
+
+// Opaque bundle with an offscreen caster (viewCulled true — point faces must
+// still draw it) plus a castShadow=false control that must never draw.
+function makePointBundle() {
+  const bundle = makeOpaqueBundle();
+  bundle.meshObjects[0].viewCulled = true;
+  bundle.meshObjects.push({
+    castShadow: false,
+    viewCulled: false,
+    vertexOffset: 1,
+    vertexCount: 3,
+    materialIndex: 0,
+  });
+  return bundle;
 }
 
 function uniform1fValues(gl) {
@@ -469,6 +600,145 @@ test("identical unmasked frames hit the pass cache and issue no GL writes", () =
   args[4].worldMeshPositions = Float32Array.from({ length: 18 }, (_, i) => i + 1);
   ctx.renderSceneShadowPass(...args);
   assert.equal(gl.calls.filter((c) => c[0] === "drawArrays").length, 2);
+});
+
+test("point-face atlas clears only its tile and restores exact prior GL state", () => {
+  const ctx = createContext();
+  const gl = createRecordingGL();
+  const bundle = makePointBundle();
+  const shadowState = { buffer: { id: "shadow-vbo" } };
+  const program = makeShadowProgram();
+  // Six persistent face records built once, all sharing a single atlas
+  // framebuffer, mirroring the production slot allocator.
+  const sharedFBO = { id: "atlas-fbo" };
+  const pointFaces = Array.from({ length: 6 }, (_, face) =>
+    makePointFace(sharedFBO, face));
+  const savedTexture0 = { id: "unit0-color" };
+  const savedTexture3 = { id: "unit3-color" };
+  const args = [gl, program, null, LIGHT_MATRIX, bundle, shadowState,
+    null, new Map(), undefined, undefined];
+
+  // Each round visits faces 0-5 then repeats face 5 with identical inputs, so
+  // the final repetition only draws if point faces bypass the pass cache.
+  const faceOrder = [0, 1, 2, 3, 4, 5, 5];
+  for (let round = 0; round < 2; round++) {
+    for (const face of faceOrder) {
+      const priorScissor = round === 1;
+      gl._state.viewport = [2, 3, 300, 200];
+      gl._state.scissorBox = [7, 11, 17, 19];
+      gl._state.scissorEnabled = priorScissor;
+      gl._state.depthMask = false;
+      gl._state.bindings[gl.TEXTURE0] = savedTexture0;
+      gl._state.bindings[gl.TEXTURE0 + 3] = savedTexture3;
+      gl._state.activeTexture = gl.TEXTURE0 + 3;
+      args[2] = pointFaces[face];
+      const before = gl.calls.length;
+      const clearsBefore = gl.clearSnapshots.length;
+      ctx.renderSceneShadowPass(...args);
+      const slice = gl.calls.slice(before);
+
+      // Offscreen (viewCulled) caster draws exactly once per call even with
+      // the same pass hash; the castShadow=false control never draws.
+      assert.equal(slice.filter((c) => c[0] === "drawArrays").length, 1,
+        "exactly one new draw per point-face call");
+      assert.equal(gl.clearSnapshots.length, clearsBefore + 1,
+        "exactly one new clear per point-face call");
+      const snap = gl.clearSnapshots[gl.clearSnapshots.length - 1];
+      const tx = (face % 3) * 64;
+      const ty = Math.floor(face / 3) * 64;
+      assert.equal(snap.mask, gl.DEPTH_BUFFER_BIT, "clear is DEPTH only");
+      assert.equal(snap.depthMask, true, "clear happens with writable mask");
+      assert.equal(snap.scissorEnabled, true);
+      assert.deepEqual(snap.scissorBox, [tx, ty, 64, 64]);
+      assert.deepEqual(snap.viewport, [tx, ty, 64, 64]);
+
+      // Exact prior state restored: viewport, scissor box, scissor enable,
+      // distinct unit-0 and unit-3 texture bindings and the incoming active
+      // texture unit (TEXTURE0+3). The shadow pass intentionally leaves
+      // depthMask true (the same contract as ordinary shadows); it restores
+      // viewport/scissor/texture state, not the old depthMask.
+      assert.deepEqual(gl._state.viewport, [2, 3, 300, 200]);
+      assert.deepEqual(gl._state.scissorBox, [7, 11, 17, 19]);
+      assert.equal(gl._state.scissorEnabled, priorScissor);
+      assert.equal(gl._state.depthMask, true);
+      assert.equal(gl._state.bindings[gl.TEXTURE0], savedTexture0);
+      assert.equal(gl._state.bindings[gl.TEXTURE0 + 3], savedTexture3);
+      assert.equal(gl._state.activeTexture, gl.TEXTURE0 + 3);
+    }
+  }
+
+  // 14 calls, each with exactly one new clear and one draw; repeating face 5
+  // proves point faces bypass the pass-hash cache. Flags never mutated.
+  assert.equal(gl.clearSnapshots.length, 14);
+  assert.equal(gl.calls.filter((c) => c[0] === "drawArrays").length, 14);
+  assert.equal(bundle.meshObjects[0].castShadow, true);
+  assert.equal(bundle.meshObjects[1].castShadow, false);
+  assert.equal(bundle.meshObjects[0].viewCulled, true);
+  assert.equal(bundle.meshObjects[1].viewCulled, false);
+  assert.deepEqual(gl.calls[gl.calls.length - 1],
+    ["bindFramebuffer", gl.FRAMEBUFFER, null]);
+});
+
+test("ordinary non-point pass still skips view-culled casters", () => {
+  const ctx = createContext();
+  const gl = createRecordingGL();
+  const bundle = makePointBundle();
+  const shadowState = { buffer: { id: "shadow-vbo" } };
+  ctx.renderSceneShadowPass(gl, makeShadowProgram(), makeShadowResources(),
+    LIGHT_MATRIX, bundle, shadowState, null, new Map(), undefined, undefined);
+  assert.equal(gl.calls.filter((c) => c[0] === "drawArrays").length, 0);
+});
+
+test("point atlas slot allocates ONE shared depth texture and disposes exactly once", () => {
+  const ctx = createAllocContext();
+  const gl = createAllocGL();
+  const slot = ctx.createSceneShadowSlot(gl, 64, 1, true);
+  assert.equal(slot.numCascades, 1);
+  assert.equal(slot.point, true);
+  assert.equal(slot.cascades.length, 1);
+  assert.equal(slot.pointFaces.length, 6);
+  assert.equal(gl.created.fbos.length, 1);
+  assert.equal(gl.created.textures.length, 1);
+  const uploads = gl.calls.filter((c) => c[0] === "texImage2D");
+  assert.equal(uploads.length, 1);
+  assert.equal(uploads[0][4], 192);
+  assert.equal(uploads[0][5], 128);
+  assert.equal(uploads[0][9], null);
+  assert.equal(new Set(slot.pointFaces).size, 6);
+  assert.deepEqual(Array.from(slot.pointFaces, (f) => f.pointFace),
+    [0, 1, 2, 3, 4, 5]);
+  for (const face of slot.pointFaces) {
+    // Six non-owning face records alias the sole owner's resources.
+    assert.equal(face.framebuffer, slot.cascades[0].framebuffer);
+    assert.equal(face.depthTexture, slot.cascades[0].depthTexture);
+    assert.equal(face.size, 64);
+    assert.equal(face.point, true);
+    assert.equal(face.cascadeIndex, 0);
+  }
+  ctx.disposeShadowSlot(gl, slot);
+  assert.equal(gl.calls.filter((c) => c[0] === "deleteTexture").length, 1);
+  assert.equal(gl.calls.filter((c) => c[0] === "deleteFramebuffer").length, 1);
+});
+
+test("ordinary slot allocates one 64x64 depth resource per cascade", () => {
+  const ctx = createAllocContext();
+  const gl = createAllocGL();
+  const slot = ctx.createSceneShadowSlot(gl, 64, 2, false);
+  assert.equal(slot.numCascades, 2);
+  assert.equal(slot.cascades.length, 2);
+  assert.equal(gl.created.textures.length, 2);
+  assert.equal(gl.created.fbos.length, 2);
+  const uploads = gl.calls.filter((c) => c[0] === "texImage2D");
+  assert.equal(uploads.length, 2);
+  for (const up of uploads) {
+    assert.equal(up[4], 64);
+    assert.equal(up[5], 64);
+  }
+  assert.notEqual(slot.cascades[0].depthTexture, slot.cascades[1].depthTexture);
+  assert.notEqual(slot.cascades[0].framebuffer, slot.cascades[1].framebuffer);
+  ctx.disposeShadowSlot(gl, slot);
+  assert.equal(gl.calls.filter((c) => c[0] === "deleteTexture").length, 2);
+  assert.equal(gl.calls.filter((c) => c[0] === "deleteFramebuffer").length, 2);
 });
 
 test("masked frames bypass the cache on readiness/opacity/cutoff edits, then recache when unmasked", () => {

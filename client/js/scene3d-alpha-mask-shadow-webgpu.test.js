@@ -298,6 +298,8 @@ function createRecordingEnvironment(ctx) {
 function createRecordingPass() {
   const draws = [];
   const log = [];
+  const viewports = [];
+  const scissors = [];
   const bindGroups = [null, null, null, null];
   const bindOffsets = [null, null, null, null];
   const vertexBuffers = {};
@@ -332,6 +334,14 @@ function createRecordingPass() {
     setIndexBuffer(buffer, format) {
       log.push(["setIndexBuffer", buffer, format]);
     },
+    setViewport(x, y, width, height, minDepth, maxDepth) {
+      viewports.push([x, y, width, height, minDepth, maxDepth]);
+      log.push(["setViewport", x, y, width, height, minDepth, maxDepth]);
+    },
+    setScissorRect(x, y, width, height) {
+      scissors.push([x, y, width, height]);
+      log.push(["setScissorRect", x, y, width, height]);
+    },
     draw(count, instanceCount) {
       draws.push(snapshotDraw("draw", count, instanceCount === undefined ? 1 : instanceCount));
     },
@@ -342,11 +352,11 @@ function createRecordingPass() {
       log.push(["end"]);
     },
   };
-  return { pass, draws, log };
+  return { pass, draws, log, viewports, scissors };
 }
 
-function runShadowPass(ctx, bundle, lightMatrix, pbrBuffers, shadowResource) {
-  const { pass, draws, log } = createRecordingPass();
+function runShadowPass(ctx, bundle, lightMatrix, pbrBuffers, shadowResource, matrixBaseSlot, pointFace) {
+  const { pass, draws, log, viewports, scissors } = createRecordingPass();
   let passDescriptor = null;
   const encoder = {
     beginRenderPass(descriptor) {
@@ -360,9 +370,11 @@ function runShadowPass(ctx, bundle, lightMatrix, pbrBuffers, shadowResource) {
     lightMatrix,
     bundle,
     shadowResource || { view: { id: "shadow-view" } },
-    pbrBuffers || null
+    pbrBuffers || null,
+    matrixBaseSlot === undefined ? 0 : matrixBaseSlot,
+    pointFace === undefined ? -1 : pointFace
   );
-  return { draws, log, passDescriptor, result };
+  return { draws, log, passDescriptor, result, viewports, scissors };
 }
 
 // Independent column-major oracle used only to compute expected matrices for
@@ -815,6 +827,210 @@ test("drawInstancedShadowMeshes: masked pos0/UV1/transform2/color3 + group 1, un
   const transformUpload = env.rec.cachedUploads.find((u) => u.key === "_gosxWGPUInstanceTransformBuffer");
   assert.ok(transformUpload, "instance transforms upload through the transform cache key");
   assert.deepEqual(transformUpload.data, Array.from({ length: 48 }, (_, i) => i + 1));
+});
+
+test("point shadow faces: six-face atlas via the ACTUAL renderShadowPass with per-face matrix slots and cast gating", () => {
+  const ctx = createHarness();
+  const env = createRecordingEnvironment(ctx);
+
+  // Shared shadow arena with real bytes so each recorded draw's dynamic
+  // binding offset can be read back against its expected matrix region.
+  const sharedShadowFrameBuffer = {
+    id: "shared-shadow-frame-buffer",
+    __bytes: new ArrayBuffer(32 * 256),
+  };
+  ctx.shadowFrameBuffer = sharedShadowFrameBuffer;
+  const realWriteBuffer = env.device.queue.writeBuffer.bind(env.device.queue);
+  env.device.queue.writeBuffer = (buffer, offset, data, dataOffset, size) => {
+    if (buffer && buffer.__bytes) {
+      const start = dataOffset || 0;
+      const end = size === undefined ? data.length : start + size;
+      new Float32Array(buffer.__bytes).set(
+        Array.from(data.slice(start, end)), offset / 4);
+    }
+    realWriteBuffer(buffer, offset, data, dataOffset, size);
+  };
+
+  const material = { alphaCutoff: 0.5 };
+  const modelMatrix = Float32Array.from(
+    [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 3, 1]);
+  const maskedSoup = {
+    castShadow: true, viewCulled: true, materialIndex: 0,
+    vertexOffset: 0, vertexCount: 3,
+  };
+  const soupControl = {
+    castShadow: false, viewCulled: false, materialIndex: 0,
+    vertexOffset: 3, vertexCount: 3,
+  };
+  const retainedCaster = {
+    castShadow: true, viewCulled: true, materialIndex: 0,
+    retainedGeometry: true, directVertices: { id: "retained-point" },
+    vertices: { indices: Uint32Array.from([0, 1, 2, 2, 1, 0]) },
+    modelMatrix,
+    vertexOffset: 6, vertexCount: 3,
+    __retainedAttributes: { positions: new Float32Array(9), uvs: new Float32Array(6) },
+    __indexCount: 6,
+  };
+  const retainedControl = {
+    castShadow: false, viewCulled: false, materialIndex: 0,
+    retainedGeometry: true, directVertices: { id: "retained-control" },
+    vertices: { indices: Uint32Array.from([0, 1, 2, 2, 1, 0]) },
+    modelMatrix,
+    vertexOffset: 9, vertexCount: 3,
+    __retainedAttributes: { positions: new Float32Array(9), uvs: new Float32Array(6) },
+    __indexCount: 6,
+  };
+  const instancedGeom = {
+    vertexCount: 4,
+    positions: Float32Array.from({ length: 12 }, (_, i) => i + 1),
+    uvs: Float32Array.from({ length: 8 }, (_, i) => i),
+  };
+  const instancedCaster = {
+    castShadow: true, viewCulled: true, materialIndex: 0, instanceCount: 2,
+    transforms: Float32Array.from({ length: 32 }, (_, i) => i + 1),
+    __geometry: instancedGeom,
+  };
+  const instancedControl = {
+    castShadow: false, viewCulled: false, materialIndex: 0, instanceCount: 2,
+    transforms: Float32Array.from({ length: 32 }, (_, i) => i + 2),
+    __geometry: {
+      vertexCount: 4,
+      positions: Float32Array.from({ length: 12 }, (_, i) => i + 1),
+      uvs: Float32Array.from({ length: 8 }, (_, i) => i),
+    },
+  };
+  const objects = [maskedSoup, soupControl, retainedCaster, retainedControl];
+  const bundle = {
+    meshObjects: objects,
+    instancedMeshes: [instancedCaster, instancedControl],
+    materials: [material],
+  };
+  const pbrBuffers = {
+    positions: { buffer: { id: "soup-positions" }, components: 3 },
+    uvs: { buffer: { id: "soup-uvs" }, components: 2 },
+  };
+  const shadowResource = { view: { id: "shared-atlas-view" }, size: 256 };
+
+  const flagsBefore = [maskedSoup, soupControl, retainedCaster, retainedControl,
+    instancedCaster, instancedControl].map((o) => [o.viewCulled, o.castShadow]);
+
+  // Immutable, mutually distinct light matrices, one per cube face.
+  const faceMatrices = [];
+  for (let face = 0; face < 6; face++) {
+    const m = new Float32Array(16);
+    m[0] = face + 1;
+    m[5] = 1;
+    m[10] = 1;
+    m[15] = 1;
+    faceMatrices.push(Array.from(m));
+  }
+
+  const passes = [];
+  for (let face = 0; face < 6; face++) {
+    passes.push(runShadowPass(ctx, bundle, new Float32Array(faceMatrices[face]),
+      pbrBuffers, shadowResource, face * (objects.length + 1), face));
+  }
+
+  // Load ops: whole-atlas clear on the first face only, the other five load.
+  passes.forEach((p, face) => {
+    assert.equal(p.passDescriptor.depthStencilAttachment.depthLoadOp,
+      face === 0 ? "clear" : "load",
+      "face " + face + " uses the expected depth load op");
+    assert.equal(p.passDescriptor.depthStencilAttachment.view, shadowResource.view,
+      "face " + face + " renders into the shared atlas view");
+  });
+
+  // Tile coordinates: col = face % 3, row = floor(face / 3), 256px tiles.
+  passes.forEach((p, face) => {
+    const tileX = (face % 3) * 256;
+    const tileY = Math.floor(face / 3) * 256;
+    assert.deepEqual(p.viewports, [[tileX, tileY, 256, 256, 0, 1]],
+      "face " + face + " sets exactly one viewport at its atlas tile");
+    assert.deepEqual(p.scissors, [[tileX, tileY, 256, 256]],
+      "face " + face + " sets exactly one scissor rect at its atlas tile");
+  });
+
+  // Queue writes: per face, the base light matrix at face*5 and the retained
+  // caster's combined matrix at face*5 + 1, all 256-byte aligned, all
+  // non-overlapping across the whole six-face sequence.
+  assert.equal(env.rec.queueWrites.length, 12,
+    "each face writes exactly its base matrix and one retained caster matrix");
+  const expectedOffsets = [];
+  for (let face = 0; face < 6; face++) {
+    const baseSlot = face * (objects.length + 1);
+    expectedOffsets.push(baseSlot * 256, (baseSlot + 1) * 256);
+  }
+  assert.deepEqual(env.rec.queueWrites.map((w) => w.offset), expectedOffsets,
+    "per-face base and retained matrix write offsets are exactly expected");
+  const writeOffsets = env.rec.queueWrites.map((w) => w.offset);
+  assert.ok(writeOffsets.every((o) => o % 256 === 0),
+    "all matrix writes are 256-byte aligned");
+  assert.equal(new Set(writeOffsets).size, writeOffsets.length,
+    "no matrix write offset is reused across faces (non-overlapping slots)");
+  for (let face = 0; face < 6; face++) {
+    assert.deepEqual(env.rec.queueWrites[face * 2].data, faceMatrices[face],
+      "face " + face + " base slot carries its own immutable light matrix");
+    assert.deepEqual(env.rec.queueWrites[face * 2 + 1].data,
+      multiplyMat4Oracle(faceMatrices[face], Array.from(modelMatrix)),
+      "face " + face + " retained slot carries light * model from the actual multiply");
+    assert.notDeepEqual(env.rec.queueWrites[face * 2].data,
+      env.rec.queueWrites[face * 2 + 1].data,
+      "face " + face + " base and retained matrices are distinct");
+  }
+
+  // Draws: exactly the three castShadow:true objects per face; every
+  // castShadow:false control is skipped on every face.
+  function bytesAtDraw(d) {
+    const bg = d.bindGroups[0];
+    const entry = bg.entries.find((e) => e.binding === 0);
+    assert.ok(entry, "draw bind group exposes binding 0");
+    const resource = entry.resource;
+    assert.ok(resource && resource.buffer, "binding 0 has a static buffer resource");
+    const offset = (resource.offset || 0) + d.bindOffsets[0][0];
+    return Array.from(new Float32Array(resource.buffer.__bytes, offset, 16));
+  }
+  passes.forEach((p, face) => {
+    assert.equal(p.draws.length, 3,
+      "face " + face + " draws exactly the three castShadow casters");
+    const [soupDraw, retainedDraw, instancedDraw] = p.draws;
+    assert.equal(soupDraw.kind, "draw");
+    assert.equal(soupDraw.count, 3);
+    assert.equal(soupDraw.pipeline, env.maskedShadowPipeline,
+      "masked soup caster uses the masked shadow pipeline");
+    assert.equal(retainedDraw.kind, "drawIndexed");
+    assert.equal(retainedDraw.count, 6,
+      "retained caster draws through its real index count");
+    assert.equal(instancedDraw.kind, "draw");
+    assert.equal(instancedDraw.count, 4);
+    assert.equal(instancedDraw.instances, 2);
+    assert.equal(instancedDraw.pipeline, env.maskedInstancedShadowPipeline,
+      "instanced caster uses the masked instanced pipeline");
+    assert.deepEqual(bytesAtDraw(soupDraw), faceMatrices[face],
+      "face " + face + " soup draw binding reads its own base matrix");
+    assert.deepEqual(bytesAtDraw(retainedDraw),
+      multiplyMat4Oracle(faceMatrices[face], Array.from(modelMatrix)),
+      "face " + face + " retained draw binding reads its combined matrix");
+    const instancedTransform = env.rec.cachedUploads.find(
+      (u) => u.key === "_gosxWGPUInstanceTransformBuffer" && u.owner === instancedCaster);
+    assert.ok(instancedTransform, "instanced caster uploads its transforms");
+  });
+
+  // Authored flags were never mutated by any pass.
+  [maskedSoup, soupControl, retainedCaster, retainedControl,
+    instancedCaster, instancedControl].forEach((o, i) => {
+    assert.deepEqual([o.viewCulled, o.castShadow], flagsBefore[i],
+      "object " + i + " visibility/castShadow untouched");
+  });
+
+  // Regular (non-point) passes still skip viewCulled objects entirely.
+  const regular = runShadowPass(ctx, bundle, new Float32Array(faceMatrices[0]),
+    pbrBuffers, shadowResource, 0, -1);
+  assert.equal(regular.draws.length, 0,
+    "regular non-point pass skips viewCulled objects and castShadow:false controls");
+  assert.equal(regular.viewports.length, 0,
+    "regular non-point pass sets no viewport");
+  assert.equal(regular.scissors.length, 0,
+    "regular non-point pass sets no scissor rect");
 });
 
 test("deferred-submit shadow arena: two lights encode disjoint 512-aligned slots with default base slot zero and no growth", () => {

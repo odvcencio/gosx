@@ -354,11 +354,15 @@ test("WGSL receivers guard w<=0 and out-of-volume before any compare sample", ()
   }
 });
 
-test("both backends apply shadows to spot lights (types 1 and 3) via the slot index", () => {
+test("both backends apply shadows to spot and point lights (types 1, 2 and 3) via the slot index", () => {
   const glsl = readRuntimeSource("webgl.ts");
-  assert.ok(glsl.includes(
-    "if (u_receiveShadow && (lightType == 1 || lightType == 3)) {"));
+  const glslCondition = glsl.match(/u_receiveShadow && \(([^)]*)\)/);
+  assert.ok(glslCondition, "GL receiveShadow gating condition located");
+  assert.ok(["1", "2", "3"].every((t) => glslCondition[1].includes("lightType == " + t)),
+    "GL receiveShadow requires light types 1, 2 and 3");
   const wgsl = readRuntimeSource("webgpu.ts");
-  assert.ok(wgsl.includes(
-    "if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {"));
+  const wgslCondition = wgsl.match(/material\.receiveShadow != 0u && \(([^)]*)\)/);
+  assert.ok(wgslCondition, "WebGPU receiveShadow gating condition located");
+  assert.ok(["1u", "2u", "3u"].every((t) => wgslCondition[1].includes("lightType == " + t)),
+    "WebGPU receiveShadow requires light types 1, 2 and 3");
 });

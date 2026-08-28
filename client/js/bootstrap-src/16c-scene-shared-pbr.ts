@@ -481,7 +481,7 @@
   }
 
   // Compute the AABB of all objects in the bundle.
-  function sceneShadowComputeBounds(bundle, getInstancedGeometry) {
+  function sceneShadowComputeBounds(bundle, getInstancedGeometry, includeAll) {
     var minX = Infinity, minY = Infinity, minZ = Infinity;
     var maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     var positions = bundle.worldMeshPositions;
@@ -489,9 +489,13 @@
 
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
-      if (!obj || obj.viewCulled) continue;
+      // includeAll (point-light cube fits) bypasses viewCulled and
+      // castShadow filtering so receivers and offscreen prepared geometry
+      // widen the bounds; every other filter and all detailed skinned /
+      // retained / instanced bounds math and cache behavior is unchanged.
+      if (!obj || (!includeAll && obj.viewCulled)) continue;
       if (obj.directVertices) {
-        if (!obj.castShadow) continue;
+        if (!includeAll && !obj.castShadow) continue;
         // GPU-skinned casters take precedence over retained bind bounds: the
         // GPU color path recognizes skin + streams, so when a caster carries
         // both, its bind-pose bounds describe the wrong geometry. Skinned
@@ -622,7 +626,7 @@
       var instancedMeshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       for (var im = 0; im < instancedMeshes.length; im++) {
         var instMesh = instancedMeshes[im];
-        if (!instMesh || !instMesh.castShadow) continue;
+        if (!instMesh || (!includeAll && !instMesh.castShadow)) continue;
         // Read the raw authored transforms (or the carried cached view)
         // directly — no per-frame allocation — and only consider the
         // matrices actually drawn: the authored instance count, floored,

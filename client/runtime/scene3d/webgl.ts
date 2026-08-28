@@ -198,6 +198,16 @@
     "uniform float u_shadowBias1;",
     "uniform float u_shadowSoftness1;",
     "",
+    // Point-light shadows reuse the slot's cascade-0 atlas texture; the
+    // point branch in shadowFactorSlotS decodes cube-face tiles from it.
+    "uniform bool u_pointShadow0;",
+    "uniform vec4 u_pointPositionNear0; // xyz = light pos, w = near",
+    "uniform float u_pointFar0;",
+    "",
+    "uniform bool u_pointShadow1;",
+    "uniform vec4 u_pointPositionNear1; // xyz = light pos, w = near",
+    "uniform float u_pointFar1;",
+    "",
     // Per-object shadow receive control
     "uniform bool u_receiveShadow;",
     "",
@@ -306,12 +316,60 @@
     "    return shadow / 8.0;",
     "}",
     "",
+    // Point-light shadow lookup against the 3x2 face atlas stored in the
+    // slot's cascade-0 depth texture. Depth is stored projected
+    // (0..1 = f/(f-n)*(1-n/z)), NOT linear. positionNear.w carries the near
+    // plane. Dominant-axis face selection resolves ties X, then Y, then Z
+    // (face order +X,-X,+Y,-Y,+Z,-Z), matching the CPU face matrices.
+    "float pointFactor(sampler2D shadowMap, vec4 positionNear, float far, float bias, float softness) {",
+    "    vec3 delta = v_worldPosition - positionNear.xyz;",
+    "    float depth = max(abs(delta.x), max(abs(delta.y), abs(delta.z)));",
+    "    if (depth <= 0.0 || depth < positionNear.w || depth > far) return 1.0;",
+    "    float ax = abs(delta.x);",
+    "    float ay = abs(delta.y);",
+    "    float az = abs(delta.z);",
+    "    int face = 0;",
+    "    if (ax >= ay && ax >= az) { face = delta.x >= 0.0 ? 0 : 1; }",
+    "    else if (ay >= az) { face = delta.y >= 0.0 ? 2 : 3; }",
+    "    else { face = delta.z >= 0.0 ? 4 : 5; }",
+    "    vec3 right = face < 2 ? vec3(0.0, 0.0, face == 0 ? 1.0 : -1.0) :",
+    "                face < 4 ? vec3(face == 2 ? 1.0 : -1.0, 0.0, 0.0) :",
+    "                vec3(face == 4 ? -1.0 : 1.0, 0.0, 0.0);",
+    "    vec3 up = face < 2 ? vec3(0.0, 1.0, 0.0) :",
+    "              face < 4 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);",
+    "    vec2 localUV = vec2(0.5) + 0.5 * vec2(dot(delta, right), dot(delta, up)) / depth;",
+    "    int col = face - (face / 3) * 3;",
+    "    int row = face / 3;",
+    "    vec2 tileOrigin = vec2(float(col), float(row)) / vec2(3.0, 2.0);",
+    "    vec2 atlasUV = tileOrigin + localUV / vec2(3.0, 2.0);",
+    "    float n = positionNear.w;",
+    "    float receiverDepth = far / (far - n) * (1.0 - n / depth);",
+    "    vec2 halfTexel = 0.5 / vec2(textureSize(shadowMap, 0));",
+    "    vec2 tileMin = tileOrigin + halfTexel;",
+    "    vec2 tileMax = tileOrigin + vec2(1.0 / 3.0, 0.5) - halfTexel;",
+    "    vec2 uv = clamp(atlasUV, tileMin, tileMax);",
+    "    float soft = clamp(softness, 0.0, 1.0);",
+    "    if (soft <= 0.0) {",
+    "        float d = texture(shadowMap, uv).r;",
+    "        return (receiverDepth - bias > d) ? 0.0 : 1.0;",
+    "    }",
+    "    float shadow = 0.0;",
+    "    for (int i = 0; i < 4; i++) {",
+    "        vec2 offset = kPoissonDisk8[i] * soft * 2.0 / vec2(textureSize(shadowMap, 0));",
+    "        vec2 suv = clamp(atlasUV + offset, tileMin, tileMax);",
+    "        float d = texture(shadowMap, suv).r;",
+    "        shadow += (receiverDepth - bias > d) ? 0.0 : 1.0;",
+    "    }",
+    "    return shadow / 4.0;",
+    "}",
+    "",
     // Cascaded-shadow dispatchers for up to 4 cascades per slot.
     // View-space positive depth is compared against u_shadowCascadeSplits*[c],
     // where split[c] is the far plane of cascade c. Sampler selection is
     // unrolled because GLSL ES 3.00 disallows dynamic uniform-int indexing of
     // sampler arrays; mat4 and float arrays are indexed normally.
     "float shadowFactorSlot0(float viewDepth) {",
+    "    if (u_pointShadow0) return pointFactor(u_shadowMap0_0, u_pointPositionNear0, u_pointFar0, u_shadowBias0, u_shadowSoftness0);",
     "    int c = 0;",
     "    if (u_shadowCascades0 >= 2 && viewDepth >= u_shadowCascadeSplits0[0]) c = 1;",
     "    if (u_shadowCascades0 >= 3 && viewDepth >= u_shadowCascadeSplits0[1]) c = 2;",
@@ -324,6 +382,7 @@
     "}",
     "",
     "float shadowFactorSlot1(float viewDepth) {",
+    "    if (u_pointShadow1) return pointFactor(u_shadowMap1_0, u_pointPositionNear1, u_pointFar1, u_shadowBias1, u_shadowSoftness1);",
     "    int c = 0;",
     "    if (u_shadowCascades1 >= 2 && viewDepth >= u_shadowCascadeSplits1[0]) c = 1;",
     "    if (u_shadowCascades1 >= 3 && viewDepth >= u_shadowCascadeSplits1[1]) c = 2;",
@@ -592,10 +651,10 @@
     "        vec3 Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
     "        float kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
-    // Shadow attenuation for directional (1) and spot (3) lights. The slot
+    // Shadow attenuation for directional (1), point (2) and spot (3) lights. The slot
     // index checks below keep the attenuation on the slot's OWN light only.
     "        float shadow = 1.0;",
-    "        if (u_receiveShadow && (lightType == 1 || lightType == 3)) {",
+    "        if (u_receiveShadow && (lightType == 1 || lightType == 2 || lightType == 3)) {",
     "            if (u_hasShadow0 && i == u_shadowLightIndex0) {",
     "                shadow = shadowFactorSlot0(viewDepth);",
     "            } else if (u_hasShadow1 && i == u_shadowLightIndex1) {",
@@ -1083,14 +1142,19 @@
   // --- Matrix Helpers ---
 
   // Create a framebuffer with a depth-only texture for shadow mapping.
-  function createSceneShadowResources(gl, size) {
+  function createSceneShadowResources(gl, size, point) {
     const framebuffer = gl.createFramebuffer();
     const depthTexture = gl.createTexture();
 
+    // Point-light cube shadows pack all six 90-degree faces into ONE
+    // depth-only atlas texture of 3*S by 2*S (six tiles in fixed cube-face
+    // order). Ordinary square shadow maps keep size x size exactly as before.
+    var texWidth = point ? size * 3 : size;
+    var texHeight = point ? size * 2 : size;
     gl.bindTexture(gl.TEXTURE_2D, depthTexture);
     gl.texImage2D(
       gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24,
-      size, size, 0,
+      texWidth, texHeight, 0,
       gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null
     );
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -1104,13 +1168,62 @@
     );
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-    return { framebuffer: framebuffer, depthTexture: depthTexture, size: size };
+    return {
+      framebuffer: framebuffer,
+      depthTexture: depthTexture,
+      size: size,
+      texWidth: texWidth,
+      texHeight: texHeight,
+    };
   }
 
   // Create a shadow slot with N cascades. Each cascade gets its own
   // framebuffer+depth-texture pair. Cascade-specific matrices and view-space
   // far plane (splitFar) are filled in by computeShadowSlotCascadeMatrices().
-  function createSceneShadowSlot(gl, size, numCascades) {
+  function createSceneShadowSlot(gl, size, numCascades, point) {
+    // Point-light cube slot: ONE depth texture (3*S by 2*S atlas) and ONE
+    // framebuffer are allocated, and cascades[0] is the SOLE resource owner.
+    // Six persistent non-owning face records alias that texture/FBO so each
+    // face renders through the same renderSceneShadowPass path. The face
+    // records carry no GPU resources of their own, so disposeShadowSlot —
+    // which iterates only cascades — frees the atlas exactly once and never
+    // double-deletes an aliased texture/framebuffer.
+    if (point) {
+      var pRes = createSceneShadowResources(gl, size, true);
+      var pOwner = {
+        framebuffer: pRes.framebuffer,
+        depthTexture: pRes.depthTexture,
+        size: size,
+        cascadeIndex: 0,
+        splitNear: 0,
+        splitFar: 0,
+        lightMatrix: null,
+        _lastPassHash: null,
+      };
+      var pFaces = [];
+      for (var pf = 0; pf < 6; pf++) {
+        pFaces.push({
+          framebuffer: pRes.framebuffer,
+          depthTexture: pRes.depthTexture,
+          size: size,
+          point: true,
+          pointFace: pf,
+          cascadeIndex: 0,
+          splitNear: 0,
+          splitFar: 0,
+          lightMatrix: null,
+          _lastPassHash: null,
+        });
+      }
+      return {
+        size: size,
+        numCascades: 1,
+        cascades: [pOwner],
+        point: true,
+        pointFaces: pFaces,
+        pointData: null,
+      };
+    }
     var n = Math.max(1, Math.min(4, numCascades | 0));
     var cascades = [];
     for (var i = 0; i < n; i++) {
@@ -1534,6 +1647,15 @@
       shadowSize: shadowResources && typeof shadowResources.size === "number" ? shadowResources.size : 0,
     });
 
+    // Point-light cube face passes bypass the static pass-hash cache
+    // entirely: the existing hash cannot see culled-edge geometry changes
+    // that alter a cube face's silhouette, so point faces always redraw.
+    var isPointFace = !!(shadowResources &&
+      shadowResources.point === true &&
+      typeof shadowResources.pointFace === "number" &&
+      shadowResources.lightMatrix &&
+      shadowResources.framebuffer);
+
     // Resolve per-caster alpha-mask info BEFORE touching GL state. This reads
     // the shared texture cache directly using the same descriptor cache key
     // that scenePBRLoadTexture uses, and never loads: the color pass owns
@@ -1546,7 +1668,7 @@
     var maskInfo = shadowState.maskInfo || (shadowState.maskInfo = []);
     for (var mi = 0; mi < objects.length; mi++) {
       var mo = objects[mi];
-      var mask = (mo && mo.castShadow && !mo.viewCulled)
+      var mask = (mo && mo.castShadow && (isPointFace || !mo.viewCulled))
         ? sceneShadowResolveMask(mo, bundle, textureCache)
         : null;
       if (mask && mask.masked) anyMasked = true;
@@ -1561,7 +1683,8 @@
     var anySkinned = false;
     for (var ski = 0; ski < objects.length; ski++) {
       var skinCandidate = objects[ski];
-      if (!skinCandidate || !skinCandidate.castShadow || skinCandidate.viewCulled) continue;
+      if (!skinCandidate || !skinCandidate.castShadow ||
+          (skinCandidate.viewCulled && !isPointFace)) continue;
       if (sceneObjectHasSkinData(skinCandidate)) {
         anySkinned = true;
         break;
@@ -1577,6 +1700,7 @@
     // frame after the final skinned caster disappears, flushing the stale
     // deformed silhouette before purely static caching resumes.
     if (
+      !isPointFace &&
       !anyMasked &&
       !anySkinned &&
       !passHasInstanced &&
@@ -1605,10 +1729,35 @@
     // is restored after the pass exactly as before.
     gl.bindTexture(gl.TEXTURE_2D, shadowState.fallbackTexture || null);
 
-    gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
-    gl.viewport(0, 0, shadowResources.size, shadowResources.size);
-    gl.clearDepth(1);
-    gl.clear(gl.DEPTH_BUFFER_BIT);
+    var savedViewport = null;
+    var savedScissorEnabled = null;
+    var savedScissorBox = null;
+    if (isPointFace) {
+      // Clear ONLY this face's atlas tile: scissor the tile ((face % 3) * S,
+      // floor(face / 3) * S) so the five sibling faces' recorded depth
+      // survives, then restore the exact prior viewport/scissor state at the
+      // end of the pass. The atlas FBO is the slot's single shared framebuffer.
+      var ptS = shadowResources.size;
+      var ptX = (shadowResources.pointFace % 3) * ptS;
+      var ptY = Math.floor(shadowResources.pointFace / 3) * ptS;
+      savedViewport = gl.getParameter(gl.VIEWPORT);
+      savedScissorEnabled = gl.getParameter(gl.SCISSOR_TEST);
+      savedScissorBox = gl.getParameter(gl.SCISSOR_BOX);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
+      gl.viewport(ptX, ptY, ptS, ptS);
+      gl.scissor(ptX, ptY, ptS, ptS);
+      gl.enable(gl.SCISSOR_TEST);
+      gl.clearDepth(1);
+      // Restore a writable depth mask: a previous pass may have left it
+      // false, which would silently skip the atlas tile clear.
+      gl.depthMask(true);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+    } else {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
+      gl.viewport(0, 0, shadowResources.size, shadowResources.size);
+      gl.clearDepth(1);
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+    }
 
     gl.useProgram(shadowProgram.program);
     gl.uniformMatrix4fv(shadowProgram.uniforms.lightViewProjection, false, lightMatrix);
@@ -1646,7 +1795,9 @@
 
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
-      if (!obj || obj.viewCulled) continue;
+      // Point faces bypass viewCulled only; castShadow is ALWAYS required,
+      // even for point lights.
+      if (!obj || (obj.viewCulled && !isPointFace)) continue;
       if (!obj.castShadow) continue;
       var casterMask = maskInfo[i] || SCENE_SHADOW_UNMASKED;
 
@@ -1775,7 +1926,7 @@
         sceneShadowResetVertexAttribArrays(gl, skinAllowed);
         for (var ski2 = 0; ski2 < objects.length; ski2++) {
           var skinnedObj = objects[ski2];
-          if (!skinnedObj || skinnedObj.viewCulled || !skinnedObj.castShadow) continue;
+          if (!skinnedObj || (skinnedObj.viewCulled && !isPointFace) || !skinnedObj.castShadow) continue;
           if (!sceneObjectHasSkinData(skinnedObj)) continue;
           // Participation and palette validity are separate gates. An
           // unusable palette skips the draw entirely: no skinned draw with
@@ -1940,6 +2091,16 @@
     // active texture unit the PBR renderer expects across frames.
     gl.bindTexture(gl.TEXTURE_2D, savedTexture0);
     gl.activeTexture(savedActiveTexture);
+
+    if (isPointFace) {
+      gl.viewport(savedViewport[0], savedViewport[1], savedViewport[2], savedViewport[3]);
+      gl.scissor(savedScissorBox[0], savedScissorBox[1], savedScissorBox[2], savedScissorBox[3]);
+      if (savedScissorEnabled) {
+        gl.enable(gl.SCISSOR_TEST);
+      } else {
+        gl.disable(gl.SCISSOR_TEST);
+      }
+    }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
@@ -5963,6 +6124,9 @@
       shadowBias0: gl.getUniformLocation(program, "u_shadowBias0"),
       shadowSoftness0: gl.getUniformLocation(program, "u_shadowSoftness0"),
       shadowLightIndex0: gl.getUniformLocation(program, "u_shadowLightIndex0"),
+      pointShadow0: gl.getUniformLocation(program, "u_pointShadow0"),
+      pointPositionNear0: gl.getUniformLocation(program, "u_pointPositionNear0"),
+      pointFar0: gl.getUniformLocation(program, "u_pointFar0"),
 
       shadowMap1_0: gl.getUniformLocation(program, "u_shadowMap1_0"),
       shadowMap1_1: gl.getUniformLocation(program, "u_shadowMap1_1"),
@@ -5975,6 +6139,9 @@
       shadowBias1: gl.getUniformLocation(program, "u_shadowBias1"),
       shadowSoftness1: gl.getUniformLocation(program, "u_shadowSoftness1"),
       shadowLightIndex1: gl.getUniformLocation(program, "u_shadowLightIndex1"),
+      pointShadow1: gl.getUniformLocation(program, "u_pointShadow1"),
+      pointPositionNear1: gl.getUniformLocation(program, "u_pointPositionNear1"),
+      pointFar1: gl.getUniformLocation(program, "u_pointFar1"),
 
       receiveShadow: gl.getUniformLocation(program, "u_receiveShadow"),
 
@@ -7031,7 +7198,19 @@
     var biasKey = slotIndex === 0 ? "shadowBias0" : "shadowBias1";
     var softKey = slotIndex === 0 ? "shadowSoftness0" : "shadowSoftness1";
     var indexKey = slotIndex === 0 ? "shadowLightIndex0" : "shadowLightIndex1";
+    var pointFlagKey = slotIndex === 0 ? "pointShadow0" : "pointShadow1";
+    var pointPosKey = slotIndex === 0 ? "pointPositionNear0" : "pointPositionNear1";
+    var pointFarKey = slotIndex === 0 ? "pointFar0" : "pointFar1";
     var base = Math.max(0, unitBase | 0);
+
+    // Reset point uniforms FIRST so disabled/dropped slots never inherit a
+    // previous frame's point state. Legacy programs without these locations
+    // are skipped (location may be 0, so only null disables).
+    if (uniforms[pointFlagKey] != null) {
+      gl.uniform1i(uniforms[pointFlagKey], 0);
+      gl.uniform4f(uniforms[pointPosKey], 0, 0, 0, 0);
+      gl.uniform1f(uniforms[pointFarKey], 0);
+    }
 
     var numCascades = slot ? Math.max(0, Math.min(4, slot.numCascades | 0)) : 0;
     var primaryUnit = numCascades > 0 && shadowUnits.length > base ? shadowUnits[base] : null;
@@ -7101,6 +7280,12 @@
     gl.uniform1f(uniforms[biasKey], sceneNumber(light.shadowBias, 0.005));
     gl.uniform1f(uniforms[softKey], Math.max(0, sceneNumber(light.shadowSoftness, 0)));
     gl.uniform1i(uniforms[indexKey], lightIndex);
+    var pd = slot.point ? slot.pointData : null;
+    if (pd && uniforms[pointFlagKey] != null) {
+      gl.uniform1i(uniforms[pointFlagKey], 1);
+      gl.uniform4f(uniforms[pointPosKey], pd.position[0], pd.position[1], pd.position[2], pd.near);
+      gl.uniform1f(uniforms[pointFarKey], pd.far);
+    }
   }
 
   var SCENE_IBL_BRDF_MODEL = "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel";
@@ -8195,6 +8380,9 @@
       if (shadowProgram) {
         var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
         var sceneBounds = null;
+        // Point bounds are computed once per frame, separate from the
+        // ordinary scene bounds (receivers + offscreen casters widen them).
+        var pointBounds = null;
         var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
         // Collect eligible lights (max 2) first, then negotiate effective
@@ -8207,7 +8395,8 @@
           if (!light || !light.castShadow) continue;
           var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
           var isSpot = kind === "spot";
-          if (kind !== "directional" && !isSpot) continue;
+          var isPoint = kind === "point";
+          if (kind !== "directional" && !isSpot && !isPoint) continue;
           // Defensive check on the raw angle here; callers going through
           // the public normalizeSceneLight get zero/nonpositive-angle
           // defaults before the shadow helper, so a cone empty at this
@@ -8226,19 +8415,44 @@
             spotMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
             if (!spotMatrix) continue;
           }
+          // Point lights validate BEFORE consuming a candidate slot: resolve
+          // the per-face size against the pixel cap and device limit, fit all
+          // six cube faces against separate includeAll bounds (receivers +
+          // offscreen casters widen the cube), and reject non-projectable
+          // cubes so invalid points never crowd out a later valid light.
+          var pointCube = null;
+          var pointSize = 0;
+          if (isPoint) {
+            pointSize = resolvePointShadowSize(
+              Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
+              shadowMaxPixels,
+              gl.getParameter(gl.MAX_TEXTURE_SIZE));
+            if (!(pointSize > 0)) continue;
+            if (!pointBounds) {
+              pointBounds = sceneShadowComputeBounds(bundle, getInstancedGeometry, true);
+            }
+            pointCube = scenePointShadowFaceMatrices(light, pointBounds);
+            if (!pointCube) continue;
+          }
           shadowCandidates.push({
             lightIndex: li,
             light: light,
             isSpot: isSpot,
+            isPoint: isPoint,
             validatedMatrix: spotMatrix,
+            pointCube: pointCube,
             // Spots use exactly ONE map: untyped payloads may still carry
             // shadowCascades, but cascade splitting is directional-only.
-            requestedCascades: isSpot
+            // Point lights are ONE allocation unit: a single atlas slot
+            // holding six faces, so the raw shadowCascades request is ignored.
+            requestedCascades: (isSpot || isPoint)
               ? 1
               : Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1)),
-            shadowSize: resolveShadowSize(
-              Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
-              shadowMaxPixels),
+            shadowSize: isPoint
+              ? pointSize
+              : resolveShadowSize(
+                  Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
+                  shadowMaxPixels),
           });
         }
 
@@ -8259,8 +8473,9 @@
           // no depth passes, no advertised-but-unbindable cascade count.
           if (shadowSlots[candIdx] &&
               (effectiveCascades <= 0 ||
-               shadowSlots[candIdx].size !== candidate.shadowSize ||
-               shadowSlots[candIdx].numCascades !== effectiveCascades)) {
+              (shadowSlots[candIdx].point === true) !== candidate.isPoint ||
+              shadowSlots[candIdx].size !== candidate.shadowSize ||
+              shadowSlots[candIdx].numCascades !== effectiveCascades)) {
             disposeShadowSlot(gl, shadowSlots[candIdx]);
             shadowSlots[candIdx] = null;
           }
@@ -8269,7 +8484,9 @@
             continue;
           }
           if (!shadowSlots[candIdx]) {
-            shadowSlots[candIdx] = createSceneShadowSlot(gl, candidate.shadowSize, effectiveCascades);
+            shadowSlots[candIdx] = candidate.isPoint
+              ? createSceneShadowSlot(gl, candidate.shadowSize, 1, true)
+              : createSceneShadowSlot(gl, candidate.shadowSize, effectiveCascades);
           }
 
           shadowLightIndices[candIdx] = candidate.lightIndex;
@@ -8279,17 +8496,40 @@
           // remaining cascade uses the legacy full-scene fit, so reduced
           // counts never truncate far coverage. Spot candidates reuse the
           // matrix validated during collection instead of refitting.
-          if (!sceneBounds) {
-            sceneBounds = sceneShadowComputeBounds(bundle, getInstancedGeometry);
-          }
-          computeShadowSlotCascadeMatrices(candidate.light, shadowSlots[candIdx], sceneBounds,
-            viewMatrix, cam.fov, aspect, cam.near, cam.far, candidate.validatedMatrix);
+          if (candidate.isPoint) {
+            // Point slot: store receiver data for the shader upload, alias
+            // cascades[0].lightMatrix to face 0 so the existing
+            // matrix packer works, then render SIX faces via the same
+            // renderSceneShadowPass entry point with the SAME exact ten
+            // arguments in existing order. Raw GL matrices are passed with
+            // NO WGSL remap; authored lights are never mutated.
+            var pSlot = shadowSlots[candIdx];
+            pSlot.pointData = {
+              position: candidate.pointCube.position,
+              near: candidate.pointCube.near,
+              far: candidate.pointCube.far,
+            };
+            pSlot.cascades[0].lightMatrix = candidate.pointCube.matrices[0];
+            for (var pfi = 0; pfi < pSlot.pointFaces.length; pfi++) {
+              var pFace = pSlot.pointFaces[pfi];
+              pFace.lightMatrix = candidate.pointCube.matrices[pfi];
+              pFace.splitNear = 0;
+              pFace.splitFar = candidate.pointCube.far;
+              renderSceneShadowPass(gl, shadowProgram, pFace, pFace.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, textureCache, getInstancedGeometry, bindScenePBRDirectSkinnedShadowCaster);
+            }
+          } else {
+            if (!sceneBounds) {
+              sceneBounds = sceneShadowComputeBounds(bundle, getInstancedGeometry);
+            }
+            computeShadowSlotCascadeMatrices(candidate.light, shadowSlots[candIdx], sceneBounds,
+              viewMatrix, cam.fov, aspect, cam.near, cam.far, candidate.validatedMatrix);
 
-          // One depth pass per EFFECTIVE cascade; unbudgeted cascades are
-          // never drawn.
-          for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
-            var cascade = shadowSlots[candIdx].cascades[ci2];
-            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, textureCache, getInstancedGeometry, bindScenePBRDirectSkinnedShadowCaster);
+            // One depth pass per EFFECTIVE cascade; unbudgeted cascades are
+            // never drawn.
+            for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
+              var cascade = shadowSlots[candIdx].cascades[ci2];
+              renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, textureCache, getInstancedGeometry, bindScenePBRDirectSkinnedShadowCaster);
+            }
           }
         }
 
