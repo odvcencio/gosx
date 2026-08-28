@@ -693,19 +693,40 @@
     "#version 300 es",
     "precision highp float;",
     "in vec3 a_position;",
+    "in vec2 a_uv;",
+    "out vec2 v_uv;",
     "uniform mat4 u_lightViewProjection;",
     // Retained indexed geometry casts from model-space vertices, so the shadow
     // pass must apply the caster's own transform. Soup casters pass identity.
     "uniform mat4 u_modelMatrix;",
     "void main() {",
     "    gl_Position = u_lightViewProjection * (u_modelMatrix * vec4(a_position, 1.0));",
+    "    v_uv = a_uv;",
     "}",
   ].join("\n");
 
   const SCENE_SHADOW_FRAGMENT_SOURCE = [
     "#version 300 es",
     "precision highp float;",
-    "void main() {}",
+    "in vec2 v_uv;",
+    "uniform sampler2D u_albedoMap;",
+    "uniform float u_hasAlbedoMap;",
+    "uniform float u_opacity;",
+    "uniform float u_alphaCutoff;",
+    // Coverage = opacity * loaded-texel alpha; without a ready albedo map the
+    // texel alpha is 1. Static instance alpha is constant 1 in the color pass,
+    // so it contributes nothing here. Cutoff is disabled when negative; 0
+    // keeps alpha-0 fragments (zero alpha never gets discarded away).
+    "void main() {",
+    "    float alpha = 1.0;",
+    "    if (u_hasAlbedoMap > 0.5) {",
+    "        alpha = texture(u_albedoMap, v_uv).a;",
+    "    }",
+    "    alpha *= u_opacity;",
+    "    if (u_alphaCutoff >= 0.0 && alpha < u_alphaCutoff) {",
+    "        discard;",
+    "    }",
+    "}",
   ].join("\n");
 
   // --- Points Shader Sources ---
@@ -1346,18 +1367,61 @@
   // caller-supplied bind hook.
   var SHADOW_IDENTITY_MODEL_MATRIX = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindIndexedCaster) {
-    var meshObjectsForHash = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-    var passHash = sceneShadowPassHash(lightMatrix, meshObjectsForHash, {
+  function renderSceneShadowPass(gl, shadowProgram, shadowResources, lightMatrix, bundle, shadowState, bindIndexedCaster, textureCache) {
+    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+    var passHash = sceneShadowPassHash(lightMatrix, objects, {
       cascadeIndex: shadowResources && typeof shadowResources.cascadeIndex === "number" ? shadowResources.cascadeIndex : 0,
       splitNear: shadowResources && typeof shadowResources.splitNear === "number" ? shadowResources.splitNear : 0,
       splitFar: shadowResources && typeof shadowResources.splitFar === "number" ? shadowResources.splitFar : 0,
       shadowSize: shadowResources && typeof shadowResources.size === "number" ? shadowResources.size : 0,
     });
-    if (shadowResources._lastPassHash === passHash) {
+
+    // Resolve per-caster alpha-mask info BEFORE touching GL state. This reads
+    // the shared texture cache directly using the same descriptor cache key
+    // that scenePBRLoadTexture uses, and never loads: the color pass owns
+    // loading, so the shadow pass (including this early-return path) cannot
+    // disturb texture bindings or the active texture unit. A caster is masked
+    // whenever its normalized cutoff >= 0 — matching the color pass coverage
+    // test even without an albedo map (cutoff 0 survives opacity 0; a cutoff
+    // above 1 normalizes to 2 and discards everything).
+    var anyMasked = false;
+    var maskInfo = shadowState.maskInfo || (shadowState.maskInfo = []);
+    for (var mi = 0; mi < objects.length; mi++) {
+      var mo = objects[mi];
+      var mask = (mo && mo.castShadow && !mo.viewCulled)
+        ? sceneShadowResolveMask(mo, bundle, textureCache)
+        : null;
+      if (mask && mask.masked) anyMasked = true;
+      maskInfo[mi] = mask;
+    }
+
+    // Conservative cache bypass: while any participating caster is masked the
+    // pass always redraws, so texture-readiness, opacity and cutoff changes
+    // can never reuse a stale shadow map. After a masked frame the next
+    // unmasked frame also redraws — the masked pass's hash is not retained as
+    // valid. Fully unmasked frames keep the existing hash optimization.
+    if (
+      !anyMasked &&
+      !shadowResources._lastPassMasked &&
+      shadowResources._lastPassHash === passHash
+    ) {
       return;
     }
     shadowResources._lastPassHash = passHash;
+    shadowResources._lastPassMasked = anyMasked;
+
+    // The shadow program samples the base-color texture on unit 0; save the
+    // unit-0 2D binding and the active texture unit so the PBR renderer's
+    // unit-0/active-texture state survives every masked frame.
+    var savedActiveTexture = gl.getParameter(gl.ACTIVE_TEXTURE);
+    gl.activeTexture(gl.TEXTURE0);
+    var savedTexture0 = gl.getParameter(gl.TEXTURE_BINDING_2D);
+    // Break the feedback loop before any draw: bind the white placeholder on
+    // unit 0 (masked casters overwrite this with their real texture in
+    // sceneShadowApplyMask). Standalone callers without a fallbackTexture
+    // field bind null, which is also feedback-safe. The saved unit-0 binding
+    // is restored after the pass exactly as before.
+    gl.bindTexture(gl.TEXTURE_2D, shadowState.fallbackTexture || null);
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, shadowResources.framebuffer);
     gl.viewport(0, 0, shadowResources.size, shadowResources.size);
@@ -1366,6 +1430,9 @@
 
     gl.useProgram(shadowProgram.program);
     gl.uniformMatrix4fv(shadowProgram.uniforms.lightViewProjection, false, lightMatrix);
+    if (shadowProgram.uniforms.albedoMap) {
+      gl.uniform1i(shadowProgram.uniforms.albedoMap, 0);
+    }
     // Soup casters bake world-space positions, so they project through identity;
     // retained indexed casters overwrite this with their model matrix per draw.
     if (shadowProgram.uniforms.modelMatrix) {
@@ -1395,12 +1462,11 @@
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.FRONT);
 
-    var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
       if (!obj || obj.viewCulled) continue;
       if (!obj.castShadow) continue;
+      var casterMask = maskInfo[i] || SCENE_SHADOW_UNMASKED;
 
       if (obj.directVertices) {
         // Retained indexed geometry casts from its cached model-space vertex
@@ -1412,6 +1478,7 @@
         if (typeof bindIndexedCaster !== "function") continue;
         var casterIndexCount = bindIndexedCaster(obj, shadowProgram);
         if (!(casterIndexCount > 0)) continue;
+        sceneShadowApplyMask(gl, shadowProgram, casterMask);
         gl.drawElements(gl.TRIANGLES, casterIndexCount, gl.UNSIGNED_INT, 0);
         continue;
       }
@@ -1421,21 +1488,59 @@
       var offset = obj.vertexOffset;
       var count = obj.vertexCount;
 
-      // Upload positions, reusing scratch typed array.
-      var length = count * 3;
-      var start = offset * 3;
-      if (!shadowState.scratch || shadowState.scratch.length < length) {
-        shadowState.scratch = new Float32Array(length);
-      }
-      var positions = shadowState.scratch;
-      for (var vi = 0; vi < length; vi++) {
-        positions[vi] = bundle.worldMeshPositions[start + vi] || 0;
+      if (casterMask.masked && bundle.worldMeshUVs) {
+        // Masked soup caster: one interleaved position+UV upload into the
+        // single persistent shadow buffer (stride 5 floats) — no extra
+        // per-frame GL buffers.
+        var interLength = count * 5;
+        if (!shadowState.scratch || shadowState.scratch.length < interLength) {
+          shadowState.scratch = new Float32Array(interLength);
+        }
+        var interleaved = shadowState.scratch;
+        var pBase = offset * 3;
+        var uBase = offset * 2;
+        for (var svi = 0; svi < count; svi++) {
+          var so = svi * 5;
+          interleaved[so] = bundle.worldMeshPositions[pBase + svi * 3] || 0;
+          interleaved[so + 1] = bundle.worldMeshPositions[pBase + svi * 3 + 1] || 0;
+          interleaved[so + 2] = bundle.worldMeshPositions[pBase + svi * 3 + 2] || 0;
+          interleaved[so + 3] = bundle.worldMeshUVs[uBase + svi * 2] || 0;
+          interleaved[so + 4] = bundle.worldMeshUVs[uBase + svi * 2 + 1] || 0;
+        }
+        gl.bindBuffer(gl.ARRAY_BUFFER, shadowState.buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, interleaved.subarray(0, interLength), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(shadowProgram.attributes.position);
+        gl.vertexAttribPointer(shadowProgram.attributes.position, 3, gl.FLOAT, false, 20, 0);
+        if (shadowProgram.attributes.uv >= 0) {
+          gl.enableVertexAttribArray(shadowProgram.attributes.uv);
+          gl.vertexAttribPointer(shadowProgram.attributes.uv, 2, gl.FLOAT, false, 20, 12);
+        }
+      } else {
+        // Upload positions, reusing scratch typed array. Masked casters with
+        // no soup UVs fall back to a neutralized (0,0) generic attribute,
+        // matching the color pass; the uv attribute is explicitly disabled and
+        // neutralized so nothing leaks from a previous draw.
+        var posLength = count * 3;
+        var start = offset * 3;
+        if (!shadowState.scratch || shadowState.scratch.length < posLength) {
+          shadowState.scratch = new Float32Array(posLength);
+        }
+        var positions = shadowState.scratch;
+        for (var vi = 0; vi < posLength; vi++) {
+          positions[vi] = bundle.worldMeshPositions[start + vi] || 0;
+        }
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, shadowState.buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, positions.subarray(0, posLength), gl.DYNAMIC_DRAW);
+        gl.enableVertexAttribArray(shadowProgram.attributes.position);
+        gl.vertexAttribPointer(shadowProgram.attributes.position, 3, gl.FLOAT, false, 0, 0);
+        if (shadowProgram.attributes.uv >= 0) {
+          gl.disableVertexAttribArray(shadowProgram.attributes.uv);
+          gl.vertexAttrib2f(shadowProgram.attributes.uv, 0, 0);
+        }
       }
 
-      gl.bindBuffer(gl.ARRAY_BUFFER, shadowState.buffer);
-      gl.bufferData(gl.ARRAY_BUFFER, positions.subarray(0, length), gl.DYNAMIC_DRAW);
-      gl.enableVertexAttribArray(shadowProgram.attributes.position);
-      gl.vertexAttribPointer(shadowProgram.attributes.position, 3, gl.FLOAT, false, 0, 0);
+      sceneShadowApplyMask(gl, shadowProgram, casterMask);
 
       if (shadowProgram.uniforms.modelMatrix) {
         gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false, SHADOW_IDENTITY_MODEL_MATRIX);
@@ -1447,7 +1552,68 @@
     gl.cullFace(gl.BACK);
     gl.disable(gl.CULL_FACE);
 
+    // Restore the unit-0 texture binding (including a null binding) and the
+    // active texture unit the PBR renderer expects across frames.
+    gl.bindTexture(gl.TEXTURE_2D, savedTexture0);
+    gl.activeTexture(savedActiveTexture);
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  // Neutral shadow-mask state: identical to the historical opaque depth path.
+  var SCENE_SHADOW_UNMASKED = { masked: false, opacity: 1, cutoff: -1, hasAlbedoMap: false, texture: null };
+
+  // sceneShadowResolveMask reads (never mutates) the caster's material and the
+  // shared texture cache. Material resolution matches the color path
+  // (materials[sceneNumber(obj.materialIndex, 0)]); no new loader, no GL calls.
+  function sceneShadowResolveMask(obj, bundle, textureCache) {
+    var materials = Array.isArray(bundle && bundle.materials) ? bundle.materials : [];
+    var mat = materials[sceneNumber(obj && obj.materialIndex, 0)] || null;
+    if (!mat || typeof mat !== "object") return SCENE_SHADOW_UNMASKED;
+
+    var cutoffRaw = sceneNormalizeMaterialAlphaCutoff(mat.alphaCutoff, null);
+    var cutoff = (typeof cutoffRaw === "number" && Number.isFinite(cutoffRaw) && cutoffRaw >= 0)
+      ? (cutoffRaw <= 1 ? Math.fround(cutoffRaw) : 2)
+      : -1;
+    if (cutoff < 0) return SCENE_SHADOW_UNMASKED;
+
+    var opacity = clamp01(sceneNumber(mat.opacity, 1));
+    var descriptor = mat.textureDescriptors && mat.textureDescriptors.baseColor;
+    var url = descriptor && typeof descriptor.uri === "string" && descriptor.uri.trim()
+      ? descriptor.uri.trim()
+      : mat.texture;
+    var record = null;
+    if (url && textureCache && typeof textureCache.get === "function") {
+      var cacheKey = scenePBRTextureCacheKey(scenePBRTextureDescriptor(descriptor, url, "base-color", "srgb"));
+      record = textureCache.get(cacheKey) || null;
+    }
+    var loaded = Boolean(record && record.texture && record.loaded);
+    return {
+      masked: true,
+      opacity: opacity,
+      cutoff: cutoff,
+      hasAlbedoMap: loaded,
+      texture: loaded ? record.texture : null,
+    };
+  }
+
+  // sceneShadowApplyMask resets every mask uniform per caster (opacity, cutoff
+  // and hasAlbedoMap) so state never leaks between draws, and binds the
+  // caster's base-color texture on the already-active unit 0.
+  function sceneShadowApplyMask(gl, shadowProgram, mask) {
+    var m = mask || SCENE_SHADOW_UNMASKED;
+    if (shadowProgram.uniforms.hasAlbedoMap) {
+      gl.uniform1f(shadowProgram.uniforms.hasAlbedoMap, m.hasAlbedoMap ? 1 : 0);
+    }
+    if (shadowProgram.uniforms.opacity) {
+      gl.uniform1f(shadowProgram.uniforms.opacity, m.masked ? m.opacity : 1);
+    }
+    if (shadowProgram.uniforms.alphaCutoff) {
+      gl.uniform1f(shadowProgram.uniforms.alphaCutoff, m.masked ? m.cutoff : -1);
+    }
+    if (m.masked && m.texture && shadowProgram.uniforms.albedoMap) {
+      gl.bindTexture(gl.TEXTURE_2D, m.texture);
+    }
   }
 
   // Compile the shadow depth shader program.
@@ -1469,10 +1635,15 @@
       fragmentShader: fragmentShader,
       attributes: {
         position: gl.getAttribLocation(program, "a_position"),
+        uv: gl.getAttribLocation(program, "a_uv"),
       },
       uniforms: {
         lightViewProjection: gl.getUniformLocation(program, "u_lightViewProjection"),
         modelMatrix: gl.getUniformLocation(program, "u_modelMatrix"),
+        albedoMap: gl.getUniformLocation(program, "u_albedoMap"),
+        hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
+        opacity: gl.getUniformLocation(program, "u_opacity"),
+        alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
       },
     };
   }
@@ -7121,7 +7292,16 @@
 
     // Persistent shadow pass state — reuses one GL buffer and one scratch
     // Float32Array across all objects and lights, grown as needed.
-    var shadowState = { buffer: gl.createBuffer(), scratch: null };
+    var shadowState = {
+      buffer: gl.createBuffer(),
+      scratch: null,
+      // Unit-0 fallback for the shadow pass: the shadow program's albedo
+      // sampler stays active on unit 0 even when hasAlbedoMap is 0, so unit 0
+      // must never still hold the attached depth texture at draw time
+      // (framebuffer feedback). Reuse the renderer's existing 1x1 fully
+      // white placeholder texture — no extra allocation, no loader.
+      fallbackTexture: selenaPlaceholderTexture,
+    };
 
 	    // Pre-allocated scratch buffers for view/projection matrices (Fix 8).
 	    var scratchViewMatrix = new Float32Array(16);
@@ -7583,7 +7763,7 @@
           // never drawn.
           for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
             var cascade = shadowSlots[candIdx].cascades[ci2];
-            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster);
+            renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster, textureCache);
           }
         }
 
@@ -8552,6 +8732,19 @@
       if (count <= 0) return 0;
       var positions = scenePBRDirectAttribute(obj.vertices, "positions", count, 3);
       bindScenePBRDirectAttribute(obj, "positions", shadowProgram.attributes.position, 3, positions);
+      // Carry UVs through the existing cached direct-UV attribute helper so a
+      // masked caster samples the correct base-color texels; missing UVs are
+      // explicitly neutralized so the attribute never leaks from a previous
+      // draw.
+      if (shadowProgram.attributes.uv >= 0) {
+        var uvs = scenePBRDirectAttribute(obj.vertices, "uvs", count, 2);
+        if (uvs) {
+          bindScenePBRDirectAttribute(obj, "uvs", shadowProgram.attributes.uv, 2, uvs);
+        } else {
+          gl.disableVertexAttribArray(shadowProgram.attributes.uv);
+          gl.vertexAttrib2f(shadowProgram.attributes.uv, 0, 0);
+        }
+      }
       var indexCount = bindScenePBRDirectIndexBuffer(obj);
       if (!(indexCount > 0)) return 0;
       if (shadowProgram.uniforms.modelMatrix) {

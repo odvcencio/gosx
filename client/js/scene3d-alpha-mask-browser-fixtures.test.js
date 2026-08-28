@@ -3,7 +3,9 @@
 // scene3d-material-ior-browser.cjs: (1) the case array was not registered via
 // CASES.push, (2) specFactor was authored where baseAlpha was intended.
 // This executes the pure fixture+case source prefix only; it checks fixture
-// DATA, not renderer shading. Native tests remain required.
+// DATA, not renderer shading. The diffExpr section validates ROI comparison
+// semantics only with scripted image fixtures — it does NOT validate PNG
+// decoding. Native tests remain required.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -176,5 +178,221 @@ test('masktex GLB materials and PNG texels match authored fixtures', () => {
         assert.equal(raw[o + 3], wantA, `alpha at ${x},${y}`);
       }
     }
+  }
+});
+
+test('shadowROI probe cases: 20 unique, root material schema, verified factors/cutoffs/textures', () => {
+  // Select by the shadowROI marker itself: a plain name regex would sweep in
+  // unrelated prior budget cases that merely contain "-shadow-".
+  const shadow = cases.filter((c) => c.shadowROI);
+  const names = shadow.map((c) => c.name);
+  assert.equal(names.length, 20);
+  assert.equal(new Set(names).size, 20, 'no duplicate shadow case names');
+  const SUFFIXES = ['control', 'no-cast', 'factor-discard', 'factor-survive',
+    'tex-discard', 'tex-survive', 'zero', 'opaque-a0', 'factor-tex', 'threshold'];
+  for (const be of ['gl', 'wg'])
+    for (const s of SUFFIXES)
+      assert.ok(names.includes(be + '-shadow-' + s), be + '-shadow-' + s);
+  // Extra caster material keys beyond the shared root schema, per suffix.
+  const MATRIX = {
+    'control': {},
+    'no-cast': {},
+    'factor-discard': { opacity: 0.25, alphaCutoff: 0.5 },
+    'factor-survive': { opacity: 0.5, alphaCutoff: 0.5 },
+    'tex-discard': { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a0.png' },
+    'tex-survive': { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a255.png' },
+    'zero': { opacity: 0, alphaCutoff: 0, texture: '/tex/alb-white-a0.png' },
+    'opaque-a0': { opacity: 1, texture: '/tex/alb-white-a0.png' },
+    'factor-tex': { opacity: 0.5, alphaCutoff: 0.5, texture: '/tex/alb-white-a128.png' },
+    'threshold': { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a128.png' },
+  };
+  // [comparison key, referenced suffix] per suffix — verified per case, not
+  // merely "some earlier case exists".
+  const REF = {
+    'control': null,
+    'no-cast': ['differs', 'control'],
+    'factor-discard': ['same', 'no-cast'],
+    'factor-survive': ['same', 'control'],
+    'tex-discard': ['same', 'no-cast'],
+    'tex-survive': ['same', 'control'],
+    'zero': ['same', 'control'],
+    'opaque-a0': ['same', 'control'],
+    'factor-tex': ['same', 'no-cast'],
+    'threshold': ['same', 'control'],
+  };
+  const byName = new Map(cases.map((c) => [c.name, c]));
+  for (const c of shadow) {
+    const be = c.name.startsWith('wg-') ? 'wg-' : 'gl-';
+    const suffix = c.name.slice(be.length + 'shadow-'.length);
+    const row = MATRIX[suffix];
+    assert.ok(row, 'known shadow suffix: ' + suffix);
+    assert.equal(c.webgpu, be === 'wg-');
+    assert.equal(c.lights.length, 1);
+    assert.equal(c.lights[0].castShadow, true);
+    const caster = c.objects[0], receiver = c.objects[1];
+    assert.equal(caster.id, 'caster');
+    assert.equal(receiver.id, 'receiver');
+    // Root material schema: authored material keys live on the object itself,
+    // for both the caster and the receiver.
+    assert.ok(!('material' in caster), 'no nested material object on the caster');
+    assert.ok(!('material' in receiver), 'no nested material object on the receiver');
+    for (const key of Object.keys(row)) assert.deepEqual(caster[key], row[key]);
+    for (const key of ['opacity', 'alphaCutoff', 'texture'])
+      if (!(key in row)) assert.ok(!(key in caster), suffix + ' has no ' + key);
+    assert.equal(caster.castShadow, suffix !== 'no-cast',
+      'castShadow true except the explicit no-cast case');
+    assert.equal(caster.receiveShadow, false);
+    assert.equal(caster.wireframe, false);
+    assert.equal(receiver.castShadow, false);
+    assert.equal(receiver.receiveShadow, true);
+    assert.equal(receiver.wireframe, false);
+    assert.deepEqual(c.shadowROI, { x: 125, y: 99, width: 50, height: 35 });
+    const ref = REF[suffix];
+    if (ref) {
+      const [refKey, refSuffix] = ref;
+      const refName = be + 'shadow-' + refSuffix;
+      assert.equal(c[refKey], refName,
+        suffix + ' references exactly ' + refName + ' via ' + refKey);
+      assert.ok(!((refKey === 'same' ? 'differs' : 'same') in c),
+        'no extra comparison key beyond ' + refKey);
+      const target = byName.get(refName);
+      assert.ok(target, refKey + ' control registered: ' + refName);
+      assert.ok(cases.indexOf(target) < cases.indexOf(c),
+        refKey + ' control ordered earlier');
+      assert.equal(!!target.webgpu, !!c.webgpu, refKey + ' control on same backend');
+      if (refKey === 'differs') assert.equal(c.minChanged, 50);
+    } else {
+      assert.ok(!c.same && !c.differs, 'control has no same/diff');
+    }
+    if (row.texture) {
+      assert.ok(TEX_PNGS[row.texture], 'texture PNG fixture exists: ' + row.texture);
+      assert.deepEqual(c.requiredTex, [row.texture]);
+    } else {
+      assert.ok(!c.requiredTex, 'no requiredTex without a caster texture');
+    }
+  }
+});
+
+// --- diffExpr ROI semantics, executed against the actual browser source ---
+
+const DIFF_START = SRC.indexOf('function diffExpr(');
+const DIFF_END = SRC.indexOf('async function capture(');
+assert.ok(DIFF_START >= 0 && DIFF_END > DIFF_START, 'diffExpr slice markers found');
+const DIFF_SOURCE = SRC.slice(DIFF_START, DIFF_END);
+
+// Scripted 4x4 RGBA image fixtures for the fake Image below. This validates
+// the diffExpr ROI/delta semantics only — no PNG encoding or decoding is
+// exercised or claimed here (the real PNG fixture is covered by the masktex
+// test above).
+const DIFF_W = 4, DIFF_H = 4;
+const FIXTURE_A = 'data:image/png;base64,scene3d-diff-fixture-a';
+const FIXTURE_B = 'data:image/png;base64,scene3d-diff-fixture-b';
+
+function diffFixtureData(fill) {
+  const data = new Uint8ClampedArray(DIFF_W * DIFF_H * 4);
+  for (let y = 0; y < DIFF_H; y++) {
+    for (let x = 0; x < DIFF_W; x++) {
+      const p = fill(x, y);
+      const o = (y * DIFF_W + x) * 4;
+      data[o] = p[0]; data[o + 1] = p[1]; data[o + 2] = p[2]; data[o + 3] = p[3];
+    }
+  }
+  return data;
+}
+
+const DATA_A = diffFixtureData(() => [0, 0, 0, 0]);
+const DATA_B = diffFixtureData((x, y) =>
+  (x === 2 && y === 1) ? [255, 255, 255, 255] : [0, 0, 0, 0]);
+
+class FakeDiffImage {
+  constructor() { this.onload = null; this.onerror = null; }
+  set src(v) {
+    const img = this;
+    const key = String(v);
+    const data = key === FIXTURE_A ? DATA_A : key === FIXTURE_B ? DATA_B : null;
+    if (!data) {
+      setTimeout(() => { if (img.onerror) img.onerror(new Error('unknown diff fixture src')); }, 0);
+      return;
+    }
+    img.width = DIFF_W;
+    img.height = DIFF_H;
+    img._data = data;
+    setTimeout(() => { if (img.onload) img.onload(); }, 0);
+  }
+}
+
+function makeDiffDocument() {
+  return {
+    createElement(tag) {
+      assert.equal(tag, 'canvas');
+      const cv = { width: 0, height: 0, _img: null };
+      cv.getContext = () => ({
+        drawImage(img) { cv._img = img; },
+        clearRect() { cv._img = null; },
+        getImageData(x, y, w, h) {
+          assert.equal(x, 0); assert.equal(y, 0);
+          return { data: cv._img._data };
+        },
+      });
+      return cv;
+    },
+  };
+}
+
+const DIFF_CTX = vm.createContext({
+  Promise, Math, JSON, setTimeout,
+  Image: FakeDiffImage, document: makeDiffDocument(),
+});
+vm.runInContext(DIFF_SOURCE, DIFF_CTX,
+  { filename: 'scene3d-material-ior-browser.cjs#diffExpr' });
+
+async function evalDiff(roi) {
+  // diffExpr builds the data: URI prefix itself; pass payload tokens only.
+  // FakeDiffImage still sees full URIs because diffExpr re-adds the prefix.
+  const payloadA = FIXTURE_A.slice('data:image/png;base64,'.length);
+  const payloadB = FIXTURE_B.slice('data:image/png;base64,'.length);
+  const expr = DIFF_CTX.diffExpr(payloadA, payloadB, roi);
+  assert.equal(typeof expr, 'string');
+  return await vm.runInContext(expr, DIFF_CTX, { filename: 'diffExpr-eval' });
+}
+
+test('diffExpr ROI compares only inside the region', async () => {
+  const inside = await evalDiff({ x: 2, y: 1, width: 1, height: 1 });
+  assert.equal(inside.dimsMatch, true);
+  assert.equal(inside.exactPixels, 1);
+  assert.equal(inside.exactBytes, 4);
+  assert.equal(inside.maxDelta, 255);
+  const outside = await evalDiff({ x: 0, y: 0, width: 2, height: 4 });
+  assert.equal(outside.dimsMatch, true);
+  assert.equal(outside.exactPixels, 0, 'no changes outside the ROI');
+});
+
+test('diffExpr with absent/null ROI compares the whole canvas', async () => {
+  const whole = await evalDiff(undefined);
+  assert.equal(whole.dimsMatch, true);
+  assert.equal(whole.exactPixels, 1);
+  assert.equal(whole.exactBytes, 4);
+  assert.ok(whole.meanChanged >= 1);
+  assert.deepEqual(await evalDiff(null), whole);
+});
+
+test('diffExpr invalid ROIs resolve null and never fall back to the whole canvas', async () => {
+  const bad = [
+    { x: 1.5, y: 0, width: 1, height: 1 },
+    { x: 0, y: 0.5, width: 1, height: 1 },
+    { x: 0, y: 0, width: 1.5, height: 1 },
+    { x: 0, y: 0, width: 1, height: 1.5 },
+    { x: -1, y: 0, width: 1, height: 1 },
+    { x: 0, y: -1, width: 1, height: 1 },
+    { x: 0, y: 0, width: 0, height: 1 },
+    { x: 0, y: 0, width: 1, height: 0 },
+    { x: 0, y: 0, width: -2, height: 1 },
+    { x: 3, y: 3, width: 2, height: 1 },
+    { x: 3, y: 3, width: 1, height: 2 },
+    { x: 0, y: 0, width: 5, height: 1 },
+  ];
+  for (const roi of bad) {
+    const r = await evalDiff(roi);
+    assert.equal(r, null, 'ROI resolves null, no fallback: ' + JSON.stringify(roi));
   }
 });

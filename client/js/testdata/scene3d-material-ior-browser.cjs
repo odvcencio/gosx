@@ -1361,6 +1361,60 @@ const SPEC_COLOR_ENV = () => ({ ambientIntensity: 0, skyIntensity: 0, groundInte
     environment: { envMap: '/tex/spec-color-white.png' },
     requiredTex: ['/tex/spec-color-white.png'] },
 ].forEach((c) => CASES.push(c));
+
+function shadowCase(name, webgpu, mat) {
+  return {
+    name, webgpu,
+    lights: [{ id: 'key', kind: 'directional', intensity: 1.2,
+      directionX: 0.7, directionY: -0.7, directionZ: -1,
+      castShadow: true, shadowCascades: 1, shadowSize: 512 }],
+    objects: [
+      Object.assign({ id: 'caster', kind: 'box',
+        width: 0.55, height: 0.55, depth: 0.15,
+        x: -0.55, y: 0.35, z: 0.5,
+        materialKind: 'standard', color: '#ff0000',
+        wireframe: false, ior: 1.5, roughness: 1, metalness: 0,
+        castShadow: true, receiveShadow: false }, mat),
+      { id: 'receiver', kind: 'box', width: 3, height: 2.2, depth: 0.1,
+        x: 0, y: 0, z: -0.5,
+        materialKind: 'standard', color: '#ffffff',
+        wireframe: false, ior: 1.5, roughness: 1, metalness: 0,
+        castShadow: false, receiveShadow: true },
+    ],
+    shadowROI: { x: 125, y: 99, width: 50, height: 35 },
+  };
+}
+[false, true].forEach((webgpu) => {
+  const pfx = webgpu ? 'wg-shadow-' : 'gl-shadow-';
+  const push = (name, mat, extra) => CASES.push(Object.assign(
+    shadowCase(pfx + name, webgpu, mat || {}), { f0: 0.04, f90: 1 },
+    extra || {}));
+  push('control');
+  push('no-cast', { castShadow: false },
+    { differs: pfx + 'control', minChanged: 50 });
+  push('factor-discard', { opacity: 0.25, alphaCutoff: 0.5 },
+    { same: pfx + 'no-cast' });
+  push('factor-survive', { opacity: 0.5, alphaCutoff: 0.5 },
+    { same: pfx + 'control' });
+  push('tex-discard',
+    { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a0.png' },
+    { same: pfx + 'no-cast', requiredTex: ['/tex/alb-white-a0.png'] });
+  push('tex-survive',
+    { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a255.png' },
+    { same: pfx + 'control', requiredTex: ['/tex/alb-white-a255.png'] });
+  push('zero',
+    { opacity: 0, alphaCutoff: 0, texture: '/tex/alb-white-a0.png' },
+    { same: pfx + 'control', requiredTex: ['/tex/alb-white-a0.png'] });
+  push('opaque-a0',
+    { opacity: 1, texture: '/tex/alb-white-a0.png' },
+    { same: pfx + 'control', requiredTex: ['/tex/alb-white-a0.png'] });
+  push('factor-tex',
+    { opacity: 0.5, alphaCutoff: 0.5, texture: '/tex/alb-white-a128.png' },
+    { same: pfx + 'no-cast', requiredTex: ['/tex/alb-white-a128.png'] });
+  push('threshold',
+    { opacity: 1, alphaCutoff: 0.5, texture: '/tex/alb-white-a128.png' },
+    { same: pfx + 'control', requiredTex: ['/tex/alb-white-a128.png'] });
+});
 const byName = {};
 CASES.forEach((c) => { byName[c.name] = c; });
 
@@ -1392,6 +1446,7 @@ function propsFor(c) {
   }
   if (c.materials) p.materials = c.materials;
   if (c.obj) p.objects = [c.obj];
+  if (c.objects) p.objects = c.objects;
   if (c.model) p.models = [c.model];
   if (c.instanced) p.instancedGLBMeshes = [c.instanced];
   // Shadow-budget cases: explicit scoped lights and camera near/far so the
@@ -2191,19 +2246,37 @@ function decodeExpr(b64) {
 
 // Compare two plain-base64 PNGs. exactBytes/exactPixels = zero-tolerance
 // equality; meanChanged/maxDelta = meaningful-channel difference (>2 / max).
-function diffExpr(a, b) {
-  return 'new Promise(function(res){var A=new Image(),B=new Image();var n=0;' +
+function diffExpr(a, b, roi) {
+  // Optional ROI: absent/null compares the whole image. A provided ROI must
+  // be Number.isInteger for ALL of x/y/width/height (no flooring, no
+  // coercion, no whole-image fallback) with non-negative origin and
+  // positive size, otherwise the expression resolves null, which fails the
+  // same/diff assertion downstream.
+  if (roi != null) {
+    if (!Number.isInteger(roi.x) || !Number.isInteger(roi.y) ||
+        !Number.isInteger(roi.width) || !Number.isInteger(roi.height) ||
+        roi.x < 0 || roi.y < 0 || roi.width <= 0 || roi.height <= 0) {
+      return 'Promise.resolve(null)';
+    }
+  }
+  const R = roi ? JSON.stringify({ x: roi.x, y: roi.y,
+    width: roi.width, height: roi.height }) : 'null';
+  return 'new Promise(function(res){var A=new Image(),B=new Image(),R=' + R + ';var n=0;' +
     'function done(){try{if(++n<2)return;' +
     'if(A.width!==B.width||A.height!==B.height){res({dimsMatch:false});return;}' +
     'var c=document.createElement("canvas");c.width=A.width;c.height=A.height;' +
     'var x=c.getContext("2d");x.drawImage(A,0,0);var d1=x.getImageData(0,0,c.width,c.height).data;' +
     'x.clearRect(0,0,c.width,c.height);x.drawImage(B,0,0);var d2=x.getImageData(0,0,c.width,c.height).data;' +
+    'var x0=0,y0=0,w=c.width,h=c.height;' +
+    'if(R){x0=R.x;y0=R.y;w=R.width;h=R.height;' +
+    'if(x0+w>c.width||y0+h>c.height){res(null);return;}}' +
     'var eb=0,ep=0,mp=0,md=0;' +
-    'for(var i=0;i<d1.length;i+=4){' +
+    'for(var yy=y0;yy<y0+h;yy++){for(var xx=x0;xx<x0+w;xx++){' +
+    'var i=(yy*c.width+xx)*4;' +
     'var mx=Math.max(Math.abs(d1[i]-d2[i]),Math.abs(d1[i+1]-d2[i+1]),Math.abs(d1[i+2]-d2[i+2]),Math.abs(d1[i+3]-d2[i+3]));' +
     'if(mx>0){if(d1[i]!==d2[i])eb++;if(d1[i+1]!==d2[i+1])eb++;' +
     'if(d1[i+2]!==d2[i+2])eb++;if(d1[i+3]!==d2[i+3])eb++;ep++;' +
-    'if(mx>md)md=mx;if(mx>2){mp++;}}}' +
+    'if(mx>md)md=mx;if(mx>2){mp++;}}}}' +
     'res({dimsMatch:true,exactBytes:eb,exactPixels:ep,meanChanged:mp,maxDelta:md});}catch(e){res(null);}}' +
     'A.onload=B.onload=done;A.onerror=B.onerror=function(){res(null);};' +
     'A.src="data:image/png;base64,' + a + '";B.src="data:image/png;base64,' + b + '";})';
@@ -2225,8 +2298,8 @@ async function capture(send) {
     expectW: Math.round(rect.width * rect.dpr), expectH: Math.round(rect.height * rect.dpr) };
 }
 
-async function diffShots(send, a, b) {
-  return evalSend(send, diffExpr(a, b), { awaitPromise: true });
+async function diffShots(send, a, b, roi) {
+  return evalSend(send, diffExpr(a, b, roi), { awaitPromise: true });
 }
 
 async function dispose(send) {
@@ -2948,8 +3021,8 @@ setTimeout(() => {
           rec.sameAs = { target: c.same, skipped: 'renderer mismatch (' + rec.renderer + ' vs ' + recB.renderer + ')' };
           fail(c.name + ': renderer mismatch vs ' + c.same + ' (' + rec.renderer + ' vs ' + recB.renderer + ')');
         } else {
-          const d = await diffShots(send, A.base64, B.base64);
-          rec.sameAs = { target: c.same, diff: d };
+          const d = await diffShots(send, A.base64, B.base64, c.shadowROI);
+          rec.sameAs = { target: c.same, roi: c.shadowROI || undefined, diff: d };
           // Exact equality: zero changed pixels AND zero changed RGBA bytes.
           if (!d || !d.dimsMatch || d.exactPixels !== 0 || d.exactBytes !== 0) {
             fail(c.name + ': image must be byte-identical to ' + c.same +
@@ -2965,8 +3038,8 @@ setTimeout(() => {
           rec.differsFrom = { target: c.differs, skipped: 'renderer mismatch (' + rec.renderer + ' vs ' + recB.renderer + ')' };
           fail(c.name + ': renderer mismatch vs ' + c.differs + ' (' + rec.renderer + ' vs ' + recB.renderer + ')');
         } else {
-          const d = await diffShots(send, A.base64, B.base64);
-          rec.differsFrom = { target: c.differs, diff: d };
+          const d = await diffShots(send, A.base64, B.base64, c.shadowROI);
+          rec.differsFrom = { target: c.differs, roi: c.shadowROI || undefined, diff: d };
           // Distinct IOR: meaningful change (channel > 2) AND maxDelta >= 3.
           if (!d || !d.dimsMatch || !(d.meanChanged >= (c.minChanged || 1)) || !(d.maxDelta >= 3)) {
             fail(c.name + ': distinct IOR must change visible pixels vs ' + c.differs +

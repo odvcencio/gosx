@@ -569,7 +569,9 @@ const budgets = [
   // three caps raised with narrow rounding headroom.
   // Unlit-propagation rebuild measured 1577740/428205/343899; all three
   // caps raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_577_800, gzip: 428_300, brotli: 343_900 },
+  // Alpha-masked shadows plus corrected shadow projection measured
+  // 1587301/429835/345588; all three caps raised with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_587_400, gzip: 429_900, brotli: 345_600 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -907,7 +909,9 @@ const budgets = [
   // raised with narrow rounding headroom; brotli cap unchanged.
   // Final rebuild removed dead activeShadowCount; measured 51554 brotli,
   // so the brotli cap was raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 221_100, gzip: 61_000, brotli: 51_750 },
+  // Alpha-masked shadows plus corrected shadow projection measured
+  // 224161/61835/52427; all three caps raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 224_200, gzip: 61_900, brotli: 52_500 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -997,7 +1001,9 @@ const budgets = [
   // 547_422 / 151_079 / 125_285; caps raised with narrow headroom.
   // Unlit-propagation rebuild measured 549_622 / 151_667; raw and gzip
   // raised with narrow rounding headroom; brotli cap unchanged.
-  { file: "bootstrap-feature-scene3d.js", raw: 549_700, gzip: 151_700, brotli: 125_750 },
+  // Alpha-masked shadows plus corrected shadow projection measured 125780
+  // brotli (only brotli exceeded); cap raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 549_700, gzip: 151_700, brotli: 125_800 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1178,7 +1184,9 @@ const budgets = [
   // exact measured values.
   // WebGPU alpha-mask color-pass rebuild measured 394186 raw (only raw exceeded;
   // compressed caps kept). Raw cap raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_250, gzip: 95_596, brotli: 80_055 },
+  // Alpha-masked shadows plus corrected shadow projection measured
+  // 400545/96290/80482; all three caps raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 400_600, gzip: 96_300, brotli: 80_500 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1672,9 +1680,11 @@ const routeBudgets = [
     // gzip raised with narrow rounding headroom; brotli cap unchanged.
     // Unlit-propagation rebuild measured 1071351/296437/251170; all three
     // caps raised with narrow rounding headroom.
-    raw: 1_071_400,
-    gzip: 296_500,
-    brotli: 251_200,
+    // Alpha-masked shadows plus corrected shadow projection measured
+    // 1074506/297353/251993; all three caps raised with narrow rounding headroom.
+    raw: 1_074_600,
+    gzip: 297_400,
+    brotli: 252_000,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1796,9 +1806,11 @@ const routeBudgets = [
     // with narrow rounding headroom.
     // Unlit-propagation rebuild measured 1465560/391876/331151; all three
     // caps raised with narrow rounding headroom.
-    raw: 1_465_600,
-    gzip: 391_900,
-    brotli: 331_200,
+    // Alpha-masked shadows plus corrected shadow projection measured
+    // 1475051/393643/332475; all three caps raised with narrow rounding headroom.
+    raw: 1_475_100,
+    gzip: 393_700,
+    brotli: 332_500,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1921,9 +1933,11 @@ const routeBudgets = [
     // narrow rounding headroom.
     // Unlit-propagation rebuild measured 1092277/287624/240974; all three
     // caps raised with narrow rounding headroom.
-    raw: 1_092_300,
-    gzip: 287_700,
-    brotli: 241_000,
+    // Alpha-masked shadows plus corrected shadow projection measured
+    // 1098613/288476/241564; all three caps raised with narrow rounding headroom.
+    raw: 1_098_700,
+    gzip: 288_500,
+    brotli: 241_600,
   },
 
 ];

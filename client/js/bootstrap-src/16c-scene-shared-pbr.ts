@@ -192,13 +192,17 @@
     // View matrix (column-major).
     var tx = -(rx * eyeX + ry * eyeY + rz * eyeZ);
     var ty = -(upX * eyeX + upY * eyeY + upZ * eyeZ);
-    var tz = -(fx * eyeX + fy * eyeY + fz * eyeZ);
+    var tz = fx * eyeX + fy * eyeY + fz * eyeZ;
 
-    // Note: forward is positive — we look along +forward, so no negation.
+    // Standard lookAt: the view Z row uses the negated forward vector
+    // (including the translation term), so that geometry in front of the
+    // light camera lands at negative view Z where the orthographic
+    // projection below expects it. The X/Y rows and the projection matrix
+    // are unchanged.
     var view = new Float32Array([
-      rx,  upX, fx,  0,
-      ry,  upY, fy,  0,
-      rz,  upZ, fz,  0,
+      rx,  upX, -fx,  0,
+      ry,  upY, -fy,  0,
+      rz,  upZ, -fz,  0,
       tx,  ty,  tz,  1,
     ]);
 

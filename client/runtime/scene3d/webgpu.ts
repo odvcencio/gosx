@@ -1584,7 +1584,7 @@
     "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
     "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
-    "    return projCoords3 * 0.5 + 0.5;",
+    "    return vec3f(projCoords3.x * 0.5 + 0.5, 0.5 - projCoords3.y * 0.5, projCoords3.z);",
     "}",
     "",
     // 4-tap Poisson disk PCF shadow sampling for shadow slot 0.
@@ -2201,6 +2201,108 @@
   // Shadow fragment shader is empty -- depth-only pass.
   var WGSL_SHADOW_FRAGMENT = [
     "@fragment fn fragmentMain() {}",
+  ].join("\n");
+
+  // Alpha-masked shadow shaders. These are a separate depth-only pipeline
+  // family: the legacy opaque shaders above keep their exact WGSL, vertex
+  // layouts, pipeline layouts and native-Go drift contract untouched. The
+  // masked variants add UV + per-instance alpha so casters whose material
+  // carries a finite >= 0 alphaCutoff can discard texels below the coverage
+  // threshold (material.opacity * instance alpha * loaded albedo texel alpha).
+  var WGSL_SHADOW_MASKED_VERTEX = [
+    "struct ShadowFrameUniforms {",
+    "    lightViewProjection: mat4x4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
+    "",
+    "struct MaskVertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) uv: vec2f,",
+    "};",
+    "",
+    "struct MaskVertexOutput {",
+    "    @builtin(position) position: vec4f,",
+    "    @location(0) uv: vec2f,",
+    "    @location(1) alpha: f32,",
+    "};",
+    "",
+    "@vertex",
+    "fn vertexMain(in: MaskVertexInput) -> MaskVertexOutput {",
+    "    var out: MaskVertexOutput;",
+    "    out.position = shadowFrame.lightViewProjection * vec4f(in.position, 1.0);",
+    "    out.uv = in.uv;",
+    "    out.alpha = 1.0;",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  var WGSL_SHADOW_MASKED_INSTANCED_VERTEX = [
+    "struct ShadowFrameUniforms {",
+    "    lightViewProjection: mat4x4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
+    "",
+    "struct MaskVertexInput {",
+    "    @location(0) position: vec3f,",
+    "    @location(1) uv: vec2f,",
+    "    @location(4) instanceMatrix0: vec4f,",
+    "    @location(5) instanceMatrix1: vec4f,",
+    "    @location(6) instanceMatrix2: vec4f,",
+    "    @location(7) instanceMatrix3: vec4f,",
+    "    @location(8) instanceColor: vec4f,",
+    "};",
+    "",
+    "struct MaskVertexOutput {",
+    "    @builtin(position) position: vec4f,",
+    "    @location(0) uv: vec2f,",
+    "    @location(1) alpha: f32,",
+    "};",
+    "",
+    "@vertex",
+    "fn vertexMain(in: MaskVertexInput) -> MaskVertexOutput {",
+    "    var out: MaskVertexOutput;",
+    "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
+    "    out.position = shadowFrame.lightViewProjection * model * vec4f(in.position, 1.0);",
+    "    out.uv = in.uv;",
+    "    out.alpha = clamp(in.instanceColor.a, 0.0, 1.0);",
+    "    return out;",
+    "}",
+  ].join("\n");
+
+  // Masked shadow fragment: depth-only (no color targets), but it reads the
+  // same group(1) material bindings (uniforms / albedo texture / sampler) and
+  // the same WGSL_MATERIAL_STRUCT the PBR color pass uses. textureSampleLevel
+  // with an explicit LOD 0 keeps derivative uniformity trivially satisfied.
+  var WGSL_SHADOW_MASKED_FRAGMENT = [
+    WGSL_MATERIAL_STRUCT,
+    "",
+    "struct ShadowFrameUniforms {",
+    "    lightViewProjection: mat4x4f,",
+    "};",
+    "",
+    "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
+    "@group(1) @binding(0) var<uniform> materialUniform: MaterialUniforms;",
+    "@group(1) @binding(1) var maskedAlbedoTexture: texture_2d<f32>;",
+    "@group(1) @binding(2) var maskedAlbedoSampler: sampler;",
+    "",
+    "struct MaskFragmentInput {",
+    "    @location(0) uv: vec2f,",
+    "    @location(1) alpha: f32,",
+    "};",
+    "",
+    "@fragment",
+    "fn fragmentMain(in: MaskFragmentInput) {",
+    "    var coverage = materialUniform.opacity * in.alpha;",
+    "    if (materialUniform.hasAlbedoMap == 1u) {",
+    "        let texel = textureSampleLevel(maskedAlbedoTexture, maskedAlbedoSampler, in.uv, 0.0);",
+    "        coverage = coverage * texel.a;",
+    "    }",
+    "    if (coverage < materialUniform.alphaCutoff) {",
+    "        discard;",
+    "    }",
+    "}",
   ].join("\n");
 
   var WGSL_SCENE_COLOR_FRAGMENT = [
@@ -3678,6 +3780,37 @@
     },
   ]);
 
+  // Dedicated masked-shadow vertex layouts. These are separate from (and never
+  // mutate) WGPU_SHADOW_VERTEX_LAYOUT / WGPU_SHADOW_INSTANCED_VERTEX_LAYOUT,
+  // which also feed picking and must stay byte-identical. Masked buffers:
+  // slot 0 position, slot 1 UV, slot 2 per-instance transform, slot 3
+  // per-instance color. Shader locations mirror the instanced opaque layout
+  // (matrix rows at 4..7) with UV at 1 and color at 8.
+  var WGPU_SHADOW_MASKED_VERTEX_LAYOUT = [
+    { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
+    { arrayStride: 8, stepMode: "vertex", attributes: [{ format: "float32x2", offset: 0, shaderLocation: 1 }] },
+  ];
+
+  var WGPU_SHADOW_MASKED_INSTANCED_VERTEX_LAYOUT = WGPU_SHADOW_MASKED_VERTEX_LAYOUT.concat([
+    {
+      arrayStride: 64,
+      stepMode: "instance",
+      attributes: [
+        { format: "float32x4", offset: 0,  shaderLocation: 4 },
+        { format: "float32x4", offset: 16, shaderLocation: 5 },
+        { format: "float32x4", offset: 32, shaderLocation: 6 },
+        { format: "float32x4", offset: 48, shaderLocation: 7 },
+      ],
+    },
+    {
+      arrayStride: 16,
+      stepMode: "instance",
+      attributes: [
+        { format: "float32x4", offset: 0, shaderLocation: 8 },
+      ],
+    },
+  ]);
+
   var WGPU_SCENE_COLOR_VERTEX_LAYOUT = [
     { arrayStride: 12, stepMode: "vertex", attributes: [{ format: "float32x3", offset: 0, shaderLocation: 0 }] },
     { arrayStride: 16, stepMode: "vertex", attributes: [{ format: "float32x4", offset: 0, shaderLocation: 1 }] },
@@ -3854,6 +3987,55 @@
         format: "depth24plus",
         depthWriteEnabled: true,
         depthCompare: "less-equal",
+      },
+    });
+  }
+
+  // Masked shadow pipelines. Depth state matches the opaque shadow
+  // pipelines, but the pipeline layout carries the material bind group layout
+  // at group 1 and the fragment stage declares no color targets.
+  function wgpuCreateShadowMaskedPipeline(device, shadowLayout, materialLayout, vertexModule, fragmentModule) {
+    return device.createRenderPipeline({
+      label: "gosx-shadow-masked",
+      layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout, materialLayout] }),
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SHADOW_MASKED_VERTEX_LAYOUT,
+      },
+      primitive: { topology: "triangle-list", cullMode: "front" },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: true,
+        depthCompare: "less-equal",
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [],
+      },
+    });
+  }
+
+  function wgpuCreateShadowMaskedInstancedPipeline(device, shadowLayout, materialLayout, vertexModule, fragmentModule) {
+    return device.createRenderPipeline({
+      label: "gosx-shadow-masked-instanced",
+      layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout, materialLayout] }),
+      vertex: {
+        module: vertexModule,
+        entryPoint: "vertexMain",
+        buffers: WGPU_SHADOW_MASKED_INSTANCED_VERTEX_LAYOUT,
+      },
+      primitive: { topology: "triangle-list", cullMode: "front" },
+      depthStencil: {
+        format: "depth24plus",
+        depthWriteEnabled: true,
+        depthCompare: "less-equal",
+      },
+      fragment: {
+        module: fragmentModule,
+        entryPoint: "fragmentMain",
+        targets: [],
       },
     });
   }
@@ -8984,6 +9166,52 @@
       return shadowInstancedPipeline;
     }
 
+    // Masked shadow pipelines and their shader modules are created lazily on
+    // first use; the legacy shadow module variables and their creation calls
+    // above are untouched.
+    var shadowMaskedPipeline = null;
+    var shadowMaskedInstancedPipeline = null;
+    var shadowMaskedVertexModule = null;
+    var shadowMaskedInstancedVertexModule = null;
+    var shadowMaskedFragmentModule = null;
+
+    function getShadowMaskedFragmentModule() {
+      if (!shadowMaskedFragmentModule) {
+        shadowMaskedFragmentModule = device.createShaderModule({ code: WGSL_SHADOW_MASKED_FRAGMENT });
+      }
+      return shadowMaskedFragmentModule;
+    }
+
+    function getShadowMaskedPipeline() {
+      if (shadowMaskedPipeline) return shadowMaskedPipeline;
+      if (!shadowMaskedVertexModule) {
+        shadowMaskedVertexModule = device.createShaderModule({ code: WGSL_SHADOW_MASKED_VERTEX });
+      }
+      shadowMaskedPipeline = wgpuCreateShadowMaskedPipeline(
+        device,
+        shadowBindGroupLayout,
+        materialBindGroupLayout,
+        shadowMaskedVertexModule,
+        getShadowMaskedFragmentModule()
+      );
+      return shadowMaskedPipeline;
+    }
+
+    function getShadowMaskedInstancedPipeline() {
+      if (shadowMaskedInstancedPipeline) return shadowMaskedInstancedPipeline;
+      if (!shadowMaskedInstancedVertexModule) {
+        shadowMaskedInstancedVertexModule = device.createShaderModule({ code: WGSL_SHADOW_MASKED_INSTANCED_VERTEX });
+      }
+      shadowMaskedInstancedPipeline = wgpuCreateShadowMaskedInstancedPipeline(
+        device,
+        shadowBindGroupLayout,
+        materialBindGroupLayout,
+        shadowMaskedInstancedVertexModule,
+        getShadowMaskedFragmentModule()
+      );
+      return shadowMaskedInstancedPipeline;
+    }
+
     // Get or create a points pipeline for the given blend mode.
     function getPointsPipeline(blendMode, depthWrite) {
       var key = wgpuPipelineKey("points", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
@@ -14086,6 +14314,26 @@
       device.queue.writeBuffer(envUniformBuffer, 0, data);
     }
 
+    // WebGPU depth range is [0, 1] rather than GL's [-1, 1]. The shared
+    // light-space matrices are produced in GL clip convention and the legacy
+    // shadow depth vertex shaders must keep returning the uniform matrix
+    // directly (native-Go drift contract), so the clip-Z remap is folded
+    // into the matrix itself here: each Z row becomes (zRow + wRow) * 0.5.
+    // The source matrix is never mutated and a fresh buffer is returned so
+    // per-light matrices never alias each other or the shared scratch. The
+    // same converted matrix is used for both the depth pass and the receiver
+    // uniform.
+    function sceneWebGPUShadowDepthMatrix(matrix) {
+      var out = new Float32Array(16);
+      for (var col = 0; col < 4; col++) {
+        out[col * 4 + 0] = matrix[col * 4 + 0];
+        out[col * 4 + 1] = matrix[col * 4 + 1];
+        out[col * 4 + 2] = (matrix[col * 4 + 2] + matrix[col * 4 + 3]) * 0.5;
+        out[col * 4 + 3] = matrix[col * 4 + 3];
+      }
+      return out;
+    }
+
     function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
       var lightArray = Array.isArray(lights) ? lights : [];
       // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + pad(8) = 160. Round up to 256.
@@ -15450,6 +15698,20 @@
       return Boolean(shadowFrameBuffer);
     }
 
+  function shadowObjectMaterial(bundle, obj) {
+    if (!obj) return null;
+    var materials = bundle && Array.isArray(bundle.materials) ? bundle.materials : [];
+    var matIndex = sceneNumber(obj.materialIndex, 0);
+    return materials[matIndex] || null;
+    }
+
+    // The scalar cutoff normalizer yields a number, a CSS var reference or
+    // null; only a finite number >= 0 selects the masked shadow path here.
+    function shadowMaskedCutoff(material) {
+      var cutoff = sceneNormalizeMaterialAlphaCutoff(material && material.alphaCutoff, null);
+      return typeof cutoff === "number" && Number.isFinite(cutoff) && cutoff >= 0 ? cutoff : null;
+    }
+
     function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
       var sp = getShadowPipeline();
       if (!sp) return;
@@ -15494,9 +15756,27 @@
         if (!obj.castShadow) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
 
+        var shadowMaterial = shadowObjectMaterial(bundle, obj);
+        var shadowMasked = shadowMaskedCutoff(shadowMaterial) !== null;
+
         if (webGPUObjectIsSkinned(obj)) {
           var skinnedPositionBuffer = obj._gosxWGPUElioSkinOutputBuffer;
           if (!skinnedPositionBuffer) continue;
+          if (shadowMasked) {
+            if (currentShadowPipeline !== "masked-static") {
+              pass.setPipeline(getShadowMaskedPipeline());
+              currentShadowPipeline = "masked-static";
+            }
+            pass.setBindGroup(0, shadowBG, [0]);
+            pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
+            pass.setVertexBuffer(0, skinnedPositionBuffer);
+            var skinnedMaskedUVs = webGPUDefaultAttributeData(obj, "uvs", obj.vertexCount, 2, [0, 0]);
+            pass.setVertexBuffer(1, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedUVs", skinnedMaskedUVs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+            var skinnedMaskedIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            if (skinnedMaskedIndexCount > 0) pass.drawIndexed(skinnedMaskedIndexCount);
+            else pass.draw(obj.vertexCount);
+            continue;
+          }
           if (currentShadowPipeline !== "static") {
             pass.setPipeline(sp);
             currentShadowPipeline = "static";
@@ -15511,6 +15791,20 @@
 
         var computedMorphRecord = webGPUObjectComputedMorphDrawRecord(obj);
         if (computedMorphRecord) {
+          if (shadowMasked) {
+            if (currentShadowPipeline !== "masked-static") {
+              pass.setPipeline(getShadowMaskedPipeline());
+              currentShadowPipeline = "masked-static";
+            }
+            pass.setBindGroup(0, shadowBG, [0]);
+            pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
+            if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
+            if (!webGPUBindSceneMeshVertexBuffer(pass, 1, pbrBuffers && pbrBuffers.uvs, obj.vertexOffset, obj.vertexCount)) continue;
+            var morphMaskedIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            if (morphMaskedIndexCount > 0) pass.drawIndexed(morphMaskedIndexCount);
+            else pass.draw(obj.vertexCount);
+            continue;
+          }
           if (currentShadowPipeline !== "static") {
             pass.setPipeline(sp);
             currentShadowPipeline = "static";
@@ -15530,6 +15824,33 @@
           // transform in per draw and restore the base matrix afterwards.
           var casterIndices = obj.vertices && obj.vertices.indices;
           if (!(casterIndices instanceof Uint32Array) || casterIndices.length < 3 || casterIndices.length % 3 !== 0) continue;
+          if (shadowMasked) {
+            if (currentShadowPipeline !== "masked-static") {
+              pass.setPipeline(getShadowMaskedPipeline());
+              currentShadowPipeline = "masked-static";
+            }
+            if (!webGPUBindRetainedMeshAttribute(pass, 0, obj, "positions", 3)) continue;
+            if (!webGPUBindRetainedMeshAttribute(pass, 1, obj, "uvs", 2)) {
+              var retainedMaskedUVs = webGPUDefaultAttributeData(obj, "uvs", obj.vertexCount, 2, [0, 0]);
+              pass.setVertexBuffer(1, wgpuCachedTrackedBuffer(obj, "_gosxWGPUShadowMaskedUVs", retainedMaskedUVs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+            }
+            var casterMaskedIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            if (!(casterMaskedIndexCount > 0)) continue;
+            var casterMaskedModel = obj.modelMatrix;
+            var casterMaskedMatrix = lightMatrix;
+            if (casterMaskedModel && casterMaskedModel.length >= 16) {
+              if (!_shadowCombinedMatrixScratch) _shadowCombinedMatrixScratch = new Float32Array(16);
+              sceneMat4MultiplyInto(_shadowCombinedMatrixScratch, lightMatrix, casterMaskedModel);
+              casterMaskedMatrix = _shadowCombinedMatrixScratch;
+            }
+            var casterMaskedMatrixOffset = retainedShadowMatrixSlot * shadowFrameBufferStride;
+            retainedShadowMatrixSlot += 1;
+            device.queue.writeBuffer(shadowFrameBuffer, casterMaskedMatrixOffset, casterMaskedMatrix, 0, 16);
+            pass.setBindGroup(0, shadowBG, [casterMaskedMatrixOffset]);
+            pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
+            pass.drawIndexed(casterMaskedIndexCount);
+            continue;
+          }
           if (currentShadowPipeline !== "static") {
             pass.setPipeline(sp);
             currentShadowPipeline = "static";
@@ -15549,6 +15870,19 @@
           device.queue.writeBuffer(shadowFrameBuffer, casterMatrixOffset, casterMatrix, 0, 16);
           pass.setBindGroup(0, shadowBG, [casterMatrixOffset]);
           pass.drawIndexed(casterIndexCount);
+          continue;
+        }
+
+        if (shadowMasked) {
+          if (currentShadowPipeline !== "masked-static") {
+            pass.setPipeline(getShadowMaskedPipeline());
+            currentShadowPipeline = "masked-static";
+          }
+          pass.setBindGroup(0, shadowBG, [0]);
+          pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
+          if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
+          if (!webGPUBindSceneMeshVertexBuffer(pass, 1, pbrBuffers && pbrBuffers.uvs, obj.vertexOffset, obj.vertexCount)) continue;
+          pass.draw(obj.vertexCount);
           continue;
         }
 
@@ -16076,7 +16410,8 @@
 
     function drawInstancedShadowMeshes(pass, bundle) {
       var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
-      var drew = false;
+      var materials = bundle && bundle.materials;
+      var drewPipeline = "";
       for (var i = 0; i < meshes.length; i++) {
         var mesh = meshes[i];
         if (!mesh || mesh.viewCulled || !mesh.castShadow) continue;
@@ -16085,12 +16420,23 @@
         if (!transformData) continue;
         var geom = getInstancedGeometry(mesh);
         if (!geom || geom.vertexCount <= 0) continue;
-        if (!drew) {
-          pass.setPipeline(getShadowInstancedPipeline());
-          drew = true;
+        var meshMaterial = instancedMeshMaterial(mesh, materials);
+        var meshMasked = shadowMaskedCutoff(meshMaterial) !== null;
+        if (meshMasked && !geom.uvs) continue;
+        var want = meshMasked ? "masked" : "plain";
+        if (drewPipeline !== want) {
+          pass.setPipeline(meshMasked ? getShadowMaskedInstancedPipeline() : getShadowInstancedPipeline());
+          drewPipeline = want;
         }
         pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedShadowPositionBuffer", geom.positions));
-        pass.setVertexBuffer(1, ensureInstancedTransformGPUBuffer(mesh, transformData));
+        if (meshMasked) {
+          pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedShadowUVBuffer", geom.uvs));
+          pass.setVertexBuffer(2, ensureInstancedTransformGPUBuffer(mesh, transformData));
+          pass.setVertexBuffer(3, ensureInstancedColorGPUBuffer(mesh, instancedMeshColorData(mesh, instanceCount)));
+          pass.setBindGroup(1, createMaterialBindGroup(meshMaterial, false, mesh));
+        } else {
+          pass.setVertexBuffer(1, ensureInstancedTransformGPUBuffer(mesh, transformData));
+        }
         pass.draw(geom.vertexCount, instanceCount);
       }
     }
@@ -17988,7 +18334,7 @@
           shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
         }
 
-        var lightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+        var lightMatrix = sceneWebGPUShadowDepthMatrix(sceneShadowLightSpaceMatrix(light, sceneBounds));
         shadowLightMatrices[slot] = lightMatrix;
         shadowLightIndices[slot] = li;
 
