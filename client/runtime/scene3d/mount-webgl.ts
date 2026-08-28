@@ -554,7 +554,12 @@ function gosxConfigureSceneScript(script, role, src) {
       return false;
     }
     const material = sceneObjectMaterialProfile(object);
-    return !sceneMaterialUsesAuthoredMeshShader(material);
+    // Zero authored opacity only hides the draw when the material cannot
+    // mask its own fill: authored mesh shaders and materials carrying an
+    // enabled numeric alpha cutoff (0 included) keep rendering the masked
+    // fill, so the hide gate spares them alongside the shader exemption.
+    return !sceneMaterialUsesAuthoredMeshShader(material) &&
+      !sceneMaterialHasEnabledNumericAlphaCutoff(material);
   }
 
   function sceneModelEffectivelyHidden(model, object) {

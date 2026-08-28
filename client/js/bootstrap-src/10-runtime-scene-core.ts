@@ -5302,13 +5302,27 @@
     if (object._modelHidden) {
       return true;
     }
-    if (material && sceneNumber(material.opacity, 1) <= 0.0001 && !sceneMaterialUsesAuthoredMeshShader(material)) {
+    if (material && sceneNumber(material.opacity, 1) <= 0.0001 &&
+        !sceneMaterialUsesAuthoredMeshShader(material) &&
+        !sceneMaterialHasEnabledNumericAlphaCutoff(material)) {
       return true;
     }
     const scaleX = Math.abs(sceneNumber(object.scaleX, sceneNumber(object.scale, 1)));
     const scaleY = Math.abs(sceneNumber(object.scaleY, sceneNumber(object.scale, 1)));
     const scaleZ = Math.abs(sceneNumber(object.scaleZ, sceneNumber(object.scale, 1)));
     return Math.max(scaleX, scaleY, scaleZ) <= 0.0015;
+  }
+
+  // sceneMaterialHasEnabledNumericAlphaCutoff reports whether the material
+  // carries a normalized numeric alpha cutoff that is considered enabled:
+  // finite numbers >= 0 qualify (0 included), while null, undefined, invalid
+  // values and unresolved CSS var strings do not.
+  function sceneMaterialHasEnabledNumericAlphaCutoff(material) {
+    if (!material || typeof material !== "object") {
+      return false;
+    }
+    const cutoff = sceneNormalizeMaterialAlphaCutoff(material.alphaCutoff, null);
+    return typeof cutoff === "number" && Number.isFinite(cutoff);
   }
 
   function sceneMaterialUsesAuthoredMeshShader(material) {

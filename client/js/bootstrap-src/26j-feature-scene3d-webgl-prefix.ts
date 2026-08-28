@@ -110,6 +110,10 @@
   var sceneFallbackMaterialData = sceneApi.sceneFallbackMaterialData;
   var sceneMaterialEmissive = sceneApi.sceneMaterialEmissive;
   var sceneMaterialOpacity = sceneApi.sceneMaterialOpacity;
+  // --- Alpha-mask cutoff (13-scene-material.js). uploadMaterial normalizes
+  // mat.alphaCutoff on every upload; without this bridge line the WebGL
+  // chunk fails on the first material it uploads.
+  var sceneNormalizeMaterialAlphaCutoff = sceneApi.sceneNormalizeMaterialAlphaCutoff;
   var sceneMaterialShaderData = sceneApi.sceneMaterialShaderData;
 
   // --- Water clock (10-runtime-scene-core.js). The WebGL2 water runtime

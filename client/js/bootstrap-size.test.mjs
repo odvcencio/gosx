@@ -565,7 +565,7 @@ const budgets = [
   // 1573965/427214/342907; all three caps raised with narrow rounding headroom.
   // Final rebuild removed dead activeShadowCount; measured 343015 brotli,
   // so the brotli cap was raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_575_650, gzip: 427_650, brotli: 343_500 },
+  { file: "bootstrap.js", raw: 1_576_300, gzip: 427_850, brotli: 343_500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -903,7 +903,7 @@ const budgets = [
   // raised with narrow rounding headroom; brotli cap unchanged.
   // Final rebuild removed dead activeShadowCount; measured 51554 brotli,
   // so the brotli cap was raised with narrow rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 220_750, gzip: 60_800, brotli: 51_600 },
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 221_100, gzip: 61_000, brotli: 51_750 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -991,7 +991,7 @@ const budgets = [
   // caps set from measured bytes plus small headroom.
   // Authored specular color plumbing (pre-typed-copy) measured
   // 547_422 / 151_079 / 125_285; caps raised with narrow headroom.
-  { file: "bootstrap-feature-scene3d.js", raw: 549_050, gzip: 151_500, brotli: 125_750 },
+  { file: "bootstrap-feature-scene3d.js", raw: 549_200, gzip: 151_550, brotli: 125_750 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1662,8 +1662,8 @@ const routeBudgets = [
     // raised with narrow rounding headroom.
     // Initial shadow allocation fix measured 1068775/295701/250406; raw and
     // gzip raised with narrow rounding headroom; brotli cap unchanged.
-    raw: 1_070_250,
-    gzip: 296_050,
+    raw: 1_070_950,
+    gzip: 296_350,
     brotli: 251_100,
   },
   {
@@ -1780,8 +1780,8 @@ const routeBudgets = [
     // three caps raised with narrow rounding headroom.
     // Final rebuild removed dead activeShadowCount; measured 330165 brotli,
     // so the brotli cap was raised with narrow rounding headroom.
-    raw: 1_463_450,
-    gzip: 391_250,
+    raw: 1_464_150,
+    gzip: 391_550,
     brotli: 330_750,
   },
   {
@@ -1898,7 +1898,7 @@ const routeBudgets = [
     // raised with narrow rounding headroom.
     // Specular-color decoding measured 1090039/287220/240514; caps set to
     // the exact measured values.
-    raw: 1_090_700,
+    raw: 1_090_850,
     gzip: 287_220,
     brotli: 240_700,
   },

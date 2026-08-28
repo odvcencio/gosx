@@ -65,6 +65,15 @@ function createSceneCoreContext() {
     trimBeforeSharedApiExport(readBootstrapSource("10-runtime-scene-core.ts")),
     "10-runtime-scene-core.ts");
   runFragment(context, readBootstrapSource("15b-scene-planner.ts"), "15b-scene-planner.ts");
+  // Mount-side model hide-gate fragment: the actual production mount-webgl
+  // model-hidden functions, sliced between stable function markers so no
+  // engine-frame monolith tail is evaluated. They call only helpers already
+  // present in the scene-core context loaded above.
+  runFragment(context,
+    sliceBetween(readRuntimeSource("mount-webgl.ts"),
+      "function sceneModelMaxScale",
+      "function sceneModelRotateDirection"),
+    "mount-webgl.ts#scene-model-hidden");
   return context;
 }
 
@@ -586,4 +595,80 @@ test("material record normalization feeds named-material application", () => {
   const omittedKey = record({}, undefined).key;
   const zeroKey = record({ alphaCutoff: 0 }, undefined).key;
   assert.notEqual(omittedKey, zeroKey, "profile key distinguishes omitted cutoff from 0");
+});
+
+test("opacity-based invisibility cull spares enabled numeric alpha cutoffs", () => {
+  const context = createSceneCoreContext();
+  const invisible = (object, material) => callIn(context,
+    "(function () { return sceneMeshObjectEffectivelyInvisible(" +
+    JSON.stringify(object) + ", " + JSON.stringify(material) + "); })()");
+
+  // cutoff 0 with opacity 0 must survive the opacity-based cull (equality
+  // matters: 0 is a valid enabled cutoff).
+  assert.equal(invisible({}, { opacity: 0, alphaCutoff: 0 }), false,
+    "cutoff 0 + opacity 0 is not CPU-culled as invisible");
+  // Small positive cutoff with tiny opacity also survives.
+  assert.equal(invisible({}, { opacity: 0.00001, alphaCutoff: 0.01 }), false,
+    "small positive cutoff + tiny opacity is not CPU-culled");
+
+  // Non-numeric or non-enabled cutoff states retain the legacy cull.
+  assert.equal(invisible({}, { opacity: 0 }), true, "absent cutoff + opacity 0 stays invisible");
+  assert.equal(invisible({}, { opacity: 0, alphaCutoff: null }), true,
+    "null cutoff + opacity 0 stays invisible");
+  assert.equal(invisible({}, { opacity: 0, alphaCutoff: "nope" }), true,
+    "invalid cutoff + opacity 0 stays invisible");
+  assert.equal(invisible({}, { opacity: 0, alphaCutoff: " var(--cut) " }), true,
+    "unresolved CSS var cutoff + opacity 0 stays invisible");
+
+  // Other culling paths are untouched for masked materials.
+  assert.equal(invisible({ visible: false }, { opacity: 1, alphaCutoff: 0.5 }), true,
+    "visible:false still culls masked materials");
+  assert.equal(invisible({ _modelHidden: true }, { opacity: 1, alphaCutoff: 0.5 }), true,
+    "_modelHidden still culls masked materials");
+  assert.equal(invisible({ scaleX: 0, scaleY: 0, scaleZ: 0 }, { opacity: 1, alphaCutoff: 0.5 }), true,
+    "zero scale still culls masked materials");
+
+  // Opaque unmasked materials behave exactly as before.
+  assert.equal(invisible({}, { opacity: 1 }), false, "opacity 1 without cutoff stays visible");
+});
+
+// The mount-side model zero-opacity hide gate must mirror the core CPU-cull:
+// a normalized object material carrying an enabled numeric alpha cutoff
+// (0 included) keeps the object out of the _modelHidden draw gate even at
+// model opacity 0 / fill factor 0, while absent or null cutoffs keep the
+// legacy hide. Authored visible:false and zero-scale paths stay untouched.
+test("scene model zero-opacity hide gate spares enabled numeric alpha cutoffs", () => {
+  const context = createSceneCoreContext();
+  const hidden = (model, object) => callIn(context,
+    "(function () { return sceneModelEffectivelyHidden(" +
+    JSON.stringify(model) + ", normalizeSceneObject(" +
+    JSON.stringify(object) + ", 0, " + JSON.stringify(model) + ")); })()");
+  const appliedHidden = (object, model) => callIn(context,
+    "(function () { var o = normalizeSceneObject(" +
+    JSON.stringify(object) + ", 0, " + JSON.stringify(model) + ");" +
+    " sceneApplyModelObjectHiddenState(o, " + JSON.stringify(model) + ");" +
+    " return o._modelHidden === true; })()");
+
+  const zeroFactorModel = { opacity: 0 };
+  // cutoff 0 with fill factor 0: the masked model stays out of the hide gate.
+  assert.equal(hidden(zeroFactorModel, { material: { alphaCutoff: 0 } }), false,
+    "cutoff 0 + factor 0 masked model is not effectively hidden");
+  assert.equal(appliedHidden({ material: { alphaCutoff: 0 } }, zeroFactorModel), false,
+    "cutoff 0 masked model draw gate stays open (_modelHidden false)");
+
+  // Absent / null cutoff states retain the legacy zero-opacity hide.
+  assert.equal(hidden(zeroFactorModel, {}), true,
+    "absent cutoff + factor 0 stays effectively hidden");
+  assert.equal(hidden(zeroFactorModel, { material: { alphaCutoff: null } }), true,
+    "null cutoff + factor 0 stays effectively hidden");
+  assert.equal(appliedHidden({}, zeroFactorModel), true,
+    "absent cutoff draw gate closes (_modelHidden true)");
+
+  // Other hide paths are untouched for masked models.
+  assert.equal(
+    hidden({ opacity: 0, visible: false }, { material: { alphaCutoff: 0 } }),
+    true, "visible:false still hides masked models");
+  assert.equal(
+    hidden({ opacity: 0, scaleX: 0, scaleY: 0, scaleZ: 0 }, { material: { alphaCutoff: 0 } }),
+    true, "zero scale still hides masked models");
 });

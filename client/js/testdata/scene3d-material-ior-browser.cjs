@@ -164,6 +164,9 @@ function buildQuadGLB(withIor, spec, alpha) {
     material.extensions = { KHR_materials_ior: { ior: 2.42 } };
   }
   if (alpha && alpha.mode) material.alphaMode = alpha.mode;
+  // MASK fixtures only: a defined cutoff (including the explicit 0) is
+  // copied to material.alphaCutoff and nothing else in the fixture changes.
+  if (alpha && alpha.cutoff !== undefined) material.alphaCutoff = alpha.cutoff;
   if (spec) {
     material.extensions = material.extensions || {};
     material.extensions.KHR_materials_specular = {
@@ -442,8 +445,9 @@ Object.assign(GLB_FILES, {
 // Alpha variants of the SAME valid quad (identical positions/normals/indices,
 // KHR IOR 2.42 in every variant); only baseColorFactor alpha and alphaMode
 // vary. Served at distinct /models/alpha-*.glb paths. No alpha textures and
-// no MASK claims; OPAQUE forces effective opacity 1 regardless of authored
-// alpha, BLEND preserves it.
+// no unlit variants; OPAQUE forces effective opacity 1 regardless of authored
+// alpha, BLEND preserves it. The MASK variants add only material.alphaCutoff
+// (factor-only masking, cutoff .5 / 0 / 2); no texture-based MASK fixtures.
 const glbAlphaOmitA0 = buildQuadGLB(true, null, { alpha: 0 });
 const glbAlphaOPA0 = buildQuadGLB(true, null, { alpha: 0, mode: 'OPAQUE' });
 const glbAlphaOPA25 = buildQuadGLB(true, null, { alpha: 0.25, mode: 'OPAQUE' });
@@ -455,6 +459,11 @@ const alphaGLBs = {
   'alpha-blend-a25': buildQuadGLB(true, null, { alpha: 0.25, mode: 'BLEND' }),
   'alpha-blend-a1': buildQuadGLB(true, null, { alpha: 1, mode: 'BLEND' }),
   'alpha-override-a25': glbAlphaOmitA0,
+  'alpha-mask-c5-f25': buildQuadGLB(true, null, { alpha: 0.25, mode: 'MASK' }),
+  'alpha-mask-c5-f5': buildQuadGLB(true, null, { alpha: 0.5, mode: 'MASK', cutoff: 0.5 }),
+  'alpha-mask-c0-f0': buildQuadGLB(true, null, { alpha: 0, mode: 'MASK', cutoff: 0 }),
+  'alpha-mask-c2-f1': buildQuadGLB(true, null, { alpha: 1, mode: 'MASK', cutoff: 2 }),
+  'alpha-mask-c5-f1': buildQuadGLB(true, null, { alpha: 1, mode: 'MASK', cutoff: 0.5 }),
 };
 
 // ---- Case table (one object/scene per page; sequential, never batched) ----
@@ -545,6 +554,41 @@ const CASES = [
   { name: 'glb-alpha-override25',
     model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
     f0: F0(2.42), expectedOpacity: 0.25, same: 'glb-alpha-blend25' },
+  // glTF MASK: real WebGL COLOR-PASS alpha-mask checks restricted to
+  // factor-only fill masking (no alpha-mask texture, no shadow, and no
+  // WebGPU mask validation claims). Every MASK case forces wireframe:false
+  // so the comparison is FILL pixels only, made against the dedicated
+  // glb-mask-fill-control (alpha-opaque-a1 with wireframe:false and no
+  // authored cutoff), not a default-wireframe opaque case. The cutoff
+  // uniform is observed at the SAME F0/F90-qualified PBR draw as opacity.
+  // c5-f25: fill alpha 0.25 < cutoff 0.5 -> every fill fragment discarded,
+  // strict empty screenshot (full background, zero foreground), meaningfully
+  // different from the FILL control. c5-f5: fill alpha == cutoff keeps the
+  // fragment (>= comparison), pixel-identical to the FILL control. c0-f0:
+  // explicit cutoff 0 keeps fill-alpha-0 fragments, still matching the FILL
+  // control (CPU hide-gate regression for a cutoff of exactly 0). c2-f1:
+  // cutoff 2 discards fill alpha 1 -> strict empty screenshot. c5-f1:
+  // survives and matches the FILL control. expectedEmpty cases still perform
+  // a real PBR draw with expected uniforms and full readiness; only the
+  // pixel-content assertion differs (strict all-background, zero-foreground).
+  { name: 'glb-mask-fill-control',
+    model: AMODEL('alpha-opaque-a1', { wireframe: false }), f0: F0(2.42),
+    expectedOpacity: 1, expectedAlphaCutoff: -1 },
+  { name: 'glb-mask-c5-f25', model: AMODEL('alpha-mask-c5-f25', { wireframe: false }),
+    expectedOpacity: 0.25, expectedAlphaCutoff: 0.5, expectedEmpty: true,
+    f0: F0(2.42), differs: 'glb-mask-fill-control', minChanged: 50 },
+  { name: 'glb-mask-c5-f5', model: AMODEL('alpha-mask-c5-f5', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 0.5, expectedAlphaCutoff: 0.5,
+    same: 'glb-mask-fill-control' },
+  { name: 'glb-mask-c0-f0', model: AMODEL('alpha-mask-c0-f0', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 0, expectedAlphaCutoff: 0,
+    same: 'glb-mask-fill-control' },
+  { name: 'glb-mask-c2-f1', model: AMODEL('alpha-mask-c2-f1', { wireframe: false }),
+    expectedOpacity: 1, expectedAlphaCutoff: 2, expectedEmpty: true,
+    f0: F0(2.42), differs: 'glb-mask-fill-control', minChanged: 50 },
+  { name: 'glb-mask-c5-f1', model: AMODEL('alpha-mask-c5-f1', { wireframe: false }),
+    f0: F0(2.42), expectedOpacity: 1, expectedAlphaCutoff: 0.5,
+    same: 'glb-mask-fill-control' },
   WG({ name: 'wg-alpha-pass1', model: AMODEL('alpha-opaque-a1', { renderPass: 'alpha' }),
     f0: F0(2.42), expectedOpacity: 1, base: 'wgap1' }),
   WG({ name: 'wg-alpha-opaque1', model: AMODEL('alpha-opaque-a1'), f0: F0(2.42),
@@ -1315,6 +1359,7 @@ async function evalSend(send, expression, extra) {
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
     lastDrawOpacity: null,
+    lastDrawAlphaCutoff: null,
     lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, lastDrawHasSpecColorMap: null,
     programInfo: null, queriedUniforms: [], shadow: null, nativeCap: null, forcedCap: null };
   // Forced MAX_TEXTURE_IMAGE_UNITS caps, selected by the served case pathname
@@ -1395,6 +1440,13 @@ const PRELOAD = `
           var ov = (om && om.has(cp)) ? this.__origGetUniform.call(this, cp, om.get(cp)) : null;
           window.__gosxIOR.lastDrawOpacity =
             (typeof ov === "number" && Number.isFinite(ov)) ? ov : null;
+          // u_alphaCutoff read through the native getUniform at the SAME
+          // F0/F90-qualified PBR draw, mirroring u_opacity. Missing/inactive
+          // uniform or a nonfinite value stays null and fails the gate.
+          var omc = this.__aclocs;
+          var cvv = (omc && omc.has(cp)) ? this.__origGetUniform.call(this, cp, omc.get(cp)) : null;
+          window.__gosxIOR.lastDrawAlphaCutoff =
+            (typeof cvv === "number" && Number.isFinite(cvv)) ? cvv : null;
           var mibl = this.__sibllocs;
           if (mibl && mibl.has(cp)) {
             var vI = this.__origGetUniform.call(this, cp, mibl.get(cp));
@@ -1593,6 +1645,10 @@ const PRELOAD = `
         if (n === "u_opacity") {
           var mop = this.__oplocs || (this.__oplocs = new Map());
           if (loc) mop.set(p, loc); else mop.delete(p);
+        }
+        if (n === "u_alphaCutoff") {
+          var mac = this.__aclocs || (this.__aclocs = new Map());
+          if (loc) mac.set(p, loc); else mac.delete(p);
         }
         if (n === "u_specularF0") {
           var m0 = this.__sf0locs || (this.__sf0locs = new Map());
@@ -1805,6 +1861,8 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'lastDrawF0:window.__gosxIOR.lastDrawF0,lastDrawF90:window.__gosxIOR.lastDrawF90,gl:window.__gosxIOR.gl,' +
   'lastDrawOpacity:(typeof window.__gosxIOR.lastDrawOpacity==="number"?' +
   'window.__gosxIOR.lastDrawOpacity:null),' +
+  'lastDrawAlphaCutoff:(typeof window.__gosxIOR.lastDrawAlphaCutoff==="number"?' +
+  'window.__gosxIOR.lastDrawAlphaCutoff:null),' +
   'lastDrawHasIBL:window.__gosxIOR.lastDrawHasIBL,' +
   'lastDrawHasSpecIntensityMap:window.__gosxIOR.lastDrawHasSpecIntensityMap,' +
   'lastDrawHasSpecColorMap:window.__gosxIOR.lastDrawHasSpecColorMap,' +
@@ -2013,6 +2071,8 @@ setTimeout(() => {
 
     const rec = { name: c.name, skipped: false };
     if (c.expectedOpacity !== undefined) rec.expectedOpacity = c.expectedOpacity;
+    if (c.expectedAlphaCutoff !== undefined) rec.expectedAlphaCutoff = c.expectedAlphaCutoff;
+    if (c.expectedEmpty === true) rec.expectedEmpty = true;
     evidence.push(rec);
     // IBL expectation: requiresIBL === true selects the positive gate;
     // noIBL === true selects the explicit-disabled assertions. Cases
@@ -2398,6 +2458,14 @@ setTimeout(() => {
           rec.uniformOpacity = s.ior.lastDrawOpacity;
           assertClose(s.ior.lastDrawOpacity, c.expectedOpacity, c.name + ' u_opacity at draw');
         }
+        if (c.expectedAlphaCutoff !== undefined) {
+          if (typeof s.ior.lastDrawAlphaCutoff !== 'number' ||
+              !Number.isFinite(s.ior.lastDrawAlphaCutoff)) {
+            fail(c.name + ': u_alphaCutoff not observed at the F0/F90-qualified PBR draw');
+          }
+          rec.uniformAlphaCutoff = s.ior.lastDrawAlphaCutoff;
+          assertClose(s.ior.lastDrawAlphaCutoff, c.expectedAlphaCutoff, c.name + ' u_alphaCutoff at draw');
+        }
       }
 
       cap = await capture(send);
@@ -2412,9 +2480,18 @@ setTimeout(() => {
       const m = cap.metrics;
       rec.litPixels = m.fgPixels; rec.fgFrac = m.fgFrac; rec.meanRGB = m.bg;
       rec.centerRGB = Array.isArray(m.center) ? m.center : null;
-      // Foreground-vs-background proof in ALL cases (including IOR 0 / F0 1).
-      // A pure background image (fg=0) fails this assertion.
-      if (!(m.fgPixels > 0) || !(m.fgFrac >= FG_COVERAGE) || !(m.maxDelta >= FG_THRESHOLD)) {
+      // Only the explicitly tagged new expectedEmpty:true MASK cases assert
+      // an exact background image (every pixel classified background, zero
+      // foreground); readiness, the real PBR draw and the uniform gates above
+      // are never relaxed for them. All older cases keep the unchanged
+      // foreground-vs-background proof (including IOR 0 / F0 1): a pure
+      // background image (fg=0) fails that assertion.
+      if (c.expectedEmpty === true) {
+        if (m.bgPixels !== m.w * m.h || m.fgPixels !== 0) {
+          fail(c.name + ': expectedEmpty case must leave only background ' +
+            '(bg=' + m.bgPixels + ' != ' + (m.w * m.h) + ' or fg=' + m.fgPixels + ')');
+        }
+      } else if (!(m.fgPixels > 0) || !(m.fgFrac >= FG_COVERAGE) || !(m.maxDelta >= FG_THRESHOLD)) {
         fail(c.name + ': no measurable geometry foreground vs measured corner background ' +
           '(fg=' + m.fgPixels + ', frac=' + m.fgFrac.toFixed(4) + ', maxDelta=' + m.maxDelta + ')');
       }
@@ -2585,6 +2662,9 @@ setTimeout(() => {
       uniformF0: r.uniformF0, uniformF90: r.uniformF90, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
       uniformOpacity: r.uniformOpacity, opacityInUpload: r.opacityInUpload,
       expectedOpacity: r.expectedOpacity,
+      expectedAlphaCutoff: r.expectedAlphaCutoff,
+      uniformAlphaCutoff: r.uniformAlphaCutoff,
+      expectedEmpty: r.expectedEmpty,
       specIntensityMapFlag: r.specIntensityMapFlag, specColorMapFlag: r.specColorMapFlag,
       textureServed: r.textureServed,
       iblState: r.iblState, iblAssetsServed: r.iblAssetsServed,
@@ -2609,10 +2689,17 @@ setTimeout(() => {
       'u_hasSpecularColorMap draw-time uniform (WebGL, missing = null) or the byte-204 ' +
       'upload flag (WebGPU), with combined color+intensity readiness requiring BOTH flags ' +
       'in the same draw/snapshot; ' +
+      'MASK cases validate factor-only fill masking against the dedicated ' +
+      'wireframe:false opaque FILL control (alpha-opaque-a1, no authored ' +
+      'cutoff), with expectedEmpty cases asserting strict full-background + ' +
+      'zero-foreground screenshots and no alpha-mask texture, shadow, or ' +
+      'WebGPU mask claims made; ' +
       'all wrappers strictly forward and ' +
       'observation errors fail the probe. Pixels come from CDP screenshots clipped to the real ' +
       'canvas rect, decoded with a native Image+2D canvas, with foreground-vs-measured-background ' +
-      'proof in every case. Forced 16/32 MAX_TEXTURE_IMAGE_UNITS allocator-cap testing on native ' +
+      'observations recorded for every case: foreground controls prove actual visible draw, while ' +
+      'expectedEmpty cases are strict background-only, proving zero-foreground full-background ' +
+      'output rather than visible draw. Forced 16/32 MAX_TEXTURE_IMAGE_UNITS allocator-cap testing on native ' +
       'WebGL is not physical 16-unit hardware certification. GPU hardware acceleration type is ' +
       'NOT certified (SwiftShader possible).',
   };

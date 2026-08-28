@@ -118,7 +118,7 @@ function setupWebGLRenderer() {
       "  const names = ['albedo', 'roughness', 'metalness', 'clearcoat', 'sheen',",
       "    'transmission', 'iridescence', 'anisotropy', 'specularF0', 'specularF90',",
       "    'specularColorLog',",
-      "    'emissive', 'opacity', 'unlit',",
+    "    'emissive', 'opacity', 'unlit', 'alphaCutoff',",
       "    'albedoMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'occlusionMap',",
       "    'emissiveMap', 'specularIntensityMap',",
       "    'specularColorMap',",
@@ -384,6 +384,124 @@ test("WebGL pending specular-intensity map blocks the fast path and a late load 
   assert.equal(callIn(context, "persistUniforms._lastMaterialTexturesReady"), true);
   assert.equal(gl.ints.size, 0);
   assert.equal(gl.binds.size, 0);
+});
+
+test("WebGL uploadMaterial normalizes alphaCutoff through the shared normalizer", () => {
+  const { context } = setupWebGLRenderer();
+  const cutoffOf = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, uniformSlots(), { alphaCutoff: " + literal + " }, null);" +
+    "return gl.floats.get('alphaCutoff'); })()");
+  // Disabled: missing, null, false, negative, non-finite, non-numeric text.
+  assert.equal(cutoffOf("undefined"), -1);
+  assert.equal(cutoffOf("null"), -1);
+  assert.equal(cutoffOf("false"), -1);
+  assert.equal(cutoffOf("-0.5"), -1);
+  assert.equal(cutoffOf("NaN"), -1);
+  assert.equal(cutoffOf("Infinity"), -1);
+  assert.equal(cutoffOf("'var(--cut)'"), -1);
+  assert.equal(cutoffOf("'nope'"), -1);
+  // Enabled: numeric strings and numbers pack exactly via fround.
+  assert.ok(close6(cutoffOf("'.5'"), 0.5));
+  assert.ok(close6(cutoffOf("0.5"), 0.5));
+  assert.equal(cutoffOf("0"), 0);
+  assert.equal(cutoffOf("1"), 1);
+  // Above 1 packs the float32-exact sentinel 2.
+  assert.equal(cutoffOf("1.5"), 2);
+  assert.equal(cutoffOf("Number.MAX_VALUE"), 2);
+});
+
+test("WebGL alphaCutoff resets to disabled on the same uniforms after a masked material", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context, "var seqUniforms = uniformSlots();");
+  const cutoffOf = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, seqUniforms, " + literal + ", null);" +
+    "return gl.floats.get('alphaCutoff'); })()");
+  assert.ok(close6(cutoffOf("{ alphaCutoff: 0.5 }"), 0.5));
+  // Different material identities on the same uniform slots: the disabled
+  // sentinel must come back, not the previous material's cutoff.
+  assert.equal(cutoffOf("{}"), -1);
+  assert.equal(cutoffOf("{ alphaCutoff: null }"), -1);
+  assert.ok(close6(cutoffOf("{ alphaCutoff: '0.25' }"), 0.25));
+});
+
+test("WebGL pending albedo texture keeps alphaCutoff and updates hasAlbedoMap on load", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context,
+    "var maskMaterial = { alphaCutoff: 0.25, texture: 'late-albedo.png' };" +
+    "var maskUniforms = uniformSlots();");
+  const uploadMasked = () => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, maskUniforms, maskMaterial, null); return gl; })()");
+
+  callIn(context, "setTextureState('late-albedo.png', 'pending')");
+  let gl = uploadMasked();
+  assert.ok(close6(gl.floats.get("alphaCutoff"), 0.25));
+  assert.equal(gl.ints.get("hasAlbedoMap"), 0);
+
+  callIn(context, "setTextureState('late-albedo.png', 'loaded')");
+  gl = uploadMasked();
+  // Same material identity, so the cutoff must survive the texture load and
+  // the albedo map must flip on without losing the masked state.
+  assert.ok(close6(gl.floats.get("alphaCutoff"), 0.25));
+  assert.equal(gl.ints.get("hasAlbedoMap"), 1);
+  assert.equal(gl.ints.get("albedoMap"), 0);
+  assert.strictEqual(gl.binds.get(0).texture,
+    callIn(context, "textureRecords().get('late-albedo.png').texture"));
+});
+
+test("WebGL alpha-mask shader wiring: coverage discard precedes unlit, alpha forced only at output", () => {
+  const source = readRuntimeSource("webgl.ts");
+  assert.match(source, /alphaCutoff: gl\.getUniformLocation\(program, "u_alphaCutoff"\),/);
+  assert.match(source, /gl\.uniform1f\(uniforms\.alphaCutoff, cutoffValue\);/);
+  const coverageAt = source.indexOf('"    if (masked && coverage < u_alphaCutoff) {",');
+  const discardAt = source.indexOf('"        discard;",');
+  const unlitAt = source.indexOf('"    if (u_unlit) {",');
+  assert.ok(coverageAt >= 0 && discardAt > coverageAt, "coverage discard block present");
+  assert.ok(unlitAt > discardAt, "coverage discard runs before the unlit branch");
+  // Both branches force masked output alpha to 1, and neither clobbers the
+  // authored opacity handed to gosxApplyCustomFragment.
+  const forcedAlpha = "masked ? 1.0 : opacity * v_instanceColor.a";
+  assert.equal(source.split(forcedAlpha).length - 1, 2, "both shader branches force masked alpha at output");
+  assert.doesNotMatch(source, /"        if \(masked\) \{",\s*\n\s*"            opacity = 1\.0;",/);
+  assert.doesNotMatch(source, /"    if \(masked\) \{",\s*\n\s*"        opacity = 1\.0;",/);
+  assert.match(source,
+    /"    float opacity = u_opacity;",\s*\n\s*"    gosxApplyCustomFragment\(color, opacity, N, v_worldPosition, v_uv\);",/);
+});
+
+test("sceneNormalizeMaterialAlphaCutoff bridges from the base chunk into the WebGL chunk", () => {
+  // Chunk 1: the base scene3d bundle. 13-scene-material.ts defines the
+  // production normalizer; the real 16d fragment must publish it.
+  const baseContext = createSceneCoreContext();
+  runFragment(baseContext, "window.__gosx_scene3d_api = {};", "init-api.js");
+  runFragment(baseContext, readBootstrapSource("16d-scene-webgl-bridge.ts"), "16d-scene-webgl-bridge.ts");
+  const bridgeApi = callIn(baseContext, "window.__gosx_scene3d_api");
+  assert.strictEqual(bridgeApi.sceneNormalizeMaterialAlphaCutoff,
+    callIn(baseContext, "sceneNormalizeMaterialAlphaCutoff"));
+  assert.equal(callIn(baseContext,
+    "window.__gosx_scene3d_api.sceneNormalizeMaterialAlphaCutoff(0, null)"), 0);
+  assert.ok(close6(callIn(baseContext,
+    "window.__gosx_scene3d_api.sceneNormalizeMaterialAlphaCutoff('.5', null)"), 0.5));
+
+  // Chunk 2: a different VM holding only the bridged API. The real lazy
+  // prefix is an open IIFE; close it here and probe the lexical alias.
+  const webglContext = vm.createContext({
+    console,
+    window: { __gosx_scene3d_api: bridgeApi },
+  });
+  runFragment(webglContext, [
+    readBootstrapSource("26j-feature-scene3d-webgl-prefix.ts"),
+    "globalThis.__alphaCutoffProbe = {",
+    "  fn: sceneNormalizeMaterialAlphaCutoff,",
+    "  zero: sceneNormalizeMaterialAlphaCutoff(0, null),",
+    "  half: sceneNormalizeMaterialAlphaCutoff('.5', null),",
+    "  missing: sceneNormalizeMaterialAlphaCutoff(null, null),",
+    "};",
+    "})();",
+  ].join("\n"), "26j-scene-webgl-prefix-probe.js");
+  const probe = vm.runInContext("globalThis.__alphaCutoffProbe", webglContext);
+  assert.equal(typeof probe.fn, "function", "lazy prefix resolved the bridged normalizer");
+  assert.strictEqual(probe.zero, 0);
+  assert.ok(close6(probe.half, 0.5));
+  assert.strictEqual(probe.missing, null);
 });
 
 test("WebGL texture-unit allocator reserves the specular material slots", () => {
