@@ -3300,13 +3300,14 @@
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
-        // Specular-color maps store meaningful RGB under a possibly-zero
-        // alpha channel (the shader samples .rgb only). Browser bitmap
-        // decode can premultiply, zeroing RGB wherever alpha is 0, which
-        // makes the specular tint collapse to black. Request explicitly
-        // unpremultiplied decode and copy for this role only; other roles
-        // keep their prior behavior.
-        var isSpecularColor = descriptor.role === "specular-color";
+        // Specular-color and base-color maps store meaningful RGB under a
+        // possibly-zero alpha channel; base-color alpha additionally drives
+        // MASK coverage. Browser bitmap decode can premultiply, zeroing RGB
+        // wherever alpha is 0, which makes the specular tint or albedo
+        // collapse to black. Request explicitly unpremultiplied decode and
+        // copy for these roles only; other roles keep their prior behavior.
+        var needsUnpremultipliedAlpha = descriptor.role === "specular-color" ||
+          descriptor.role === "base-color";
         var w = image.width;
         var h = image.height;
         var tex = device.createTexture({
@@ -3316,7 +3317,7 @@
         });
         // Use createImageBitmap for copyExternalImageToTexture.
         if (typeof createImageBitmap === "function") {
-          var bitmapOptions = isSpecularColor ? { premultiplyAlpha: "none" } : undefined;
+          var bitmapOptions = needsUnpremultipliedAlpha ? { premultiplyAlpha: "none" } : undefined;
           createImageBitmap(image, bitmapOptions).then(function(bitmap) {
             if (record.disposed || record.generation && record.generation.disposed) {
               tex.destroy();
@@ -3325,7 +3326,7 @@
             }
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
-              isSpecularColor ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
+              needsUnpremultipliedAlpha ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
               [w, h]
             );
             record.texture.destroy();

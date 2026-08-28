@@ -1786,9 +1786,11 @@ const routeBudgets = [
     // so the brotli cap was raised with narrow rounding headroom.
     // WebGPU alpha-mask color-pass rebuild measured 1465040/391707/330817; all
     // three caps raised with narrow rounding headroom.
+    // Both-backends-with-labels build measured 331043 brotli; cap raised
+    // with narrow rounding headroom.
     raw: 1_465_100,
     gzip: 391_800,
-    brotli: 330_900,
+    brotli: 331_100,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1907,9 +1909,11 @@ const routeBudgets = [
     // WebGPU alpha-mask color-pass rebuild measured 1091757/287455 (only raw and
     // gzip exceeded; brotli cap kept). Both raised with narrow rounding
     // headroom.
+    // Minimal WebGPU rebuild measured 240866 brotli; cap raised with
+    // narrow rounding headroom.
     raw: 1_091_800,
     gzip: 287_500,
-    brotli: 240_700,
+    brotli: 240_900,
   },
 
 ];
