@@ -46,7 +46,7 @@
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
-    "out vec4 v_instanceColor;",
+    "flat out vec4 v_instanceColor;",
     "",
     "void gosxApplyCustomVertex(inout vec3 position, inout vec3 normal, inout vec2 uv) {}",
     "",
@@ -87,7 +87,7 @@
     "in vec2 v_uv;",
     "in vec3 v_tangent;",
     "in vec3 v_bitangent;",
-    "in vec4 v_instanceColor;",
+    "flat in vec4 v_instanceColor;",
     "",
     // Camera
     "uniform vec3 u_cameraPosition;",
@@ -401,6 +401,8 @@
     // Alpha-mask coverage: material opacity * clamped instance/vertex alpha
     // * base-color texel alpha (texel alpha defaults to 1 with no map).
     // Negative cutoff is the disabled sentinel; an exact match survives.
+    // v_instanceColor is flat-interpolated: perspective-correct smooth
+    // interpolation can drift alpha below an exact cutoff mid-triangle.
     "    float coverage = u_opacity * clamp(v_instanceColor.a, 0.0, 1.0) * texAlpha;",
     "    bool masked = u_alphaCutoff >= 0.0;",
     "    if (masked && coverage < u_alphaCutoff) {",
@@ -923,7 +925,7 @@
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
-    "out vec4 v_instanceColor;",
+    "flat out vec4 v_instanceColor;",
     "",
     "void main() {",
     "    vec4 worldPos = a_instanceMatrix * vec4(a_position, 1.0);",
@@ -970,7 +972,7 @@
     "out vec2 v_uv;",
     "out vec3 v_tangent;",
     "out vec3 v_bitangent;",
-    "out vec4 v_instanceColor;",
+    "flat out vec4 v_instanceColor;",
     "",
     "void main() {",
     "    vec4 pos = vec4(a_position, 1.0);",

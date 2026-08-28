@@ -1634,6 +1634,172 @@ try {
 });
 CASES.forEach((c) => { byName[c.name] = c; });
 
+// ---- Typed instanced-shadow lifecycle fixture (multi-instance, both
+// backends) ----
+// Verified Go fixture: one JSON object on stdout carrying exactly nine
+// same-lighting SceneIR scenes (empty, reference-left, reference-right,
+// both, left, right, moved-opaque, moved, one) lowered through the real
+// scene.Props{Graph}.SceneIR pipeline plus six chained DiffCommands
+// transitions whose commands are all kind 8 (instancedMeshes). A missing or
+// invalid fixture is fatal: no probe runs without it. The old alpha-mask
+// typed fixture is left byte-for-byte unchanged.
+let INST_FIXTURE = null;
+try {
+  INST_FIXTURE = JSON.parse(execFileSync('go',
+    ['run', './client/js/testdata/instanced-shadow-typed-fixture'],
+    { cwd: REPO, encoding: 'utf8', timeout: 60000 }));
+  if (!INST_FIXTURE || INST_FIXTURE.schema !== 'gosx.instanced-shadow.fixture.v1') {
+    throw new Error('bad fixture schema');
+  }
+  const instSceneNames = Object.keys(INST_FIXTURE.scenes || {}).sort();
+  if (JSON.stringify(instSceneNames) !== JSON.stringify([
+      'both', 'empty', 'left', 'moved', 'moved-opaque', 'one',
+      'reference-left', 'reference-right', 'right'])) {
+    throw new Error('expected exactly nine fixture scenes');
+  }
+  const INST_SCENE_COUNTS = { both: 2, left: 2, right: 2, 'moved-opaque': 2,
+    moved: 2, one: 1, empty: 0, 'reference-left': 0, 'reference-right': 0 };
+  for (const n of instSceneNames) {
+    const sc = INST_FIXTURE.scenes[n];
+    if (!sc || !Array.isArray(sc.objects) || sc.objects.length < 1 ||
+        !Array.isArray(sc.lights) || sc.lights.length < 1) {
+      throw new Error('scene ' + n + ': missing generated objects/lights');
+    }
+    const wantBatches = INST_SCENE_COUNTS[n] > 0 ? 1 : 0;
+    const im = Array.isArray(sc.instancedMeshes) ? sc.instancedMeshes : [];
+    if (im.length !== wantBatches) {
+      throw new Error('scene ' + n + ': expected ' + wantBatches +
+        ' instancedMeshes entries, got ' + im.length);
+    }
+    if (wantBatches === 1 && Number(im[0] && im[0].count) !== INST_SCENE_COUNTS[n]) {
+      throw new Error('scene ' + n + ': instancedMeshes count mismatch');
+    }
+  }
+  const instTransitions = Array.isArray(INST_FIXTURE.transitions)
+    ? INST_FIXTURE.transitions : [];
+  const wantChain = [['both', 'left'], ['left', 'right'], ['right', 'moved'],
+    ['moved', 'one'], ['one', 'empty'], ['empty', 'both']];
+  if (instTransitions.length !== 6) {
+    throw new Error('expected exactly six fixture transitions');
+  }
+  instTransitions.forEach((t, i) => {
+    if (!t || t.name !== (wantChain[i][0] + '-to-' + wantChain[i][1]) ||
+        t.from !== wantChain[i][0] || t.to !== wantChain[i][1] ||
+        !Array.isArray(t.commands) || t.commands.length !== 1 ||
+        !t.commands.every((cmd) => cmd && cmd.kind === 8)) {
+      throw new Error('transition ' + i +
+        ': bad chain or commands (exactly one command, strict kind 8)');
+    }
+  });
+} catch (e) {
+  console.error('instanced-shadow-typed-fixture failed: ' + ((e && e.message) || e));
+  process.exit(2);
+}
+
+// Register the 20 instanced-lifecycle cases (ten per backend: nine typed
+// fixture scenes plus one live six-step sequence). Static order per backend:
+// empty, reference-left, reference-right, both, left, right, moved-opaque,
+// moved, one,
+// then the lifecycle case. Coverage bounds: these cases certify ONLY real
+// native multi-instance scene lifecycle (typed fixture scenes, chained
+// kind-8 instancedMeshes commands, per-step instance/batch counts, read-only
+// transform/color state, receiver-ROI pixel identity against the fresh
+// static target scenes, and per-step native render advances). They are
+// deliberately NOT tagged instancedShadow — that tag belongs to the existing
+// 24-case single-instance group — and no renderer algorithms are duplicated
+// here: all evidence comes from the existing wrappers, the READ snapshot and
+// CDP screenshots.
+function registerInstancedLifecycleCases(fixture) {
+  const ORDER = ['empty', 'reference-left', 'reference-right', 'both',
+    'left', 'right', 'moved-opaque', 'moved', 'one'];
+  const COUNTS = { empty: 0, 'reference-left': 0, 'reference-right': 0,
+    both: 2, left: 2, right: 2, 'moved-opaque': 2, moved: 2, one: 1 };
+  // Receiver-only ROI: excludes the caster silhouettes so same/differs
+  // comparisons prove received shadows, not caster pixels.
+  const ROI = { x: 125, y: 99, width: 95, height: 35 };
+  [false, true].forEach((webgpu) => {
+    const pfx = webgpu ? 'wg-instlife-' : 'gl-instlife-';
+    ORDER.forEach((sceneName) => {
+      const c = {
+        name: pfx + sceneName, webgpu,
+        typedInstancedScene: fixture.scenes[sceneName],
+        instancedLifecycleScene: sceneName,
+        expectedInstancedCount: COUNTS[sceneName],
+        instancedLifecycleGroup: true,
+        f0: 0.04, f90: 1,
+        shadowROI: { x: ROI.x, y: ROI.y, width: ROI.width, height: ROI.height },
+      };
+      // Receiver-ROI expectations: left and one are byte-identical to the
+      // ordinary unmasked reference-left render; right to reference-right;
+      // reference-left/reference-right/both differ from empty by >=50
+      // pixels; moved differs from right by >=50. The existing same/differs
+      // comparison machinery carries both directions via shadowROI.
+      if (sceneName === 'left' || sceneName === 'one') c.same = pfx + 'reference-left';
+      if (sceneName === 'right') c.same = pfx + 'reference-right';
+      if (sceneName === 'reference-left' || sceneName === 'reference-right' ||
+          sceneName === 'both') {
+        c.differs = pfx + 'empty';
+        c.minChanged = 50;
+      }
+      if (sceneName === 'moved') { c.differs = pfx + 'right'; c.minChanged = 50; }
+      // Full-image control: moved must be byte-identical to the opaque
+      // moved-opaque render across the COMPLETE screenshot (no ROI). This
+      // is the regression assertion for the flat instanceColor fix.
+      if (sceneName === 'moved') { c.sameFull = pfx + 'moved-opaque'; }
+      CASES.push(c);
+    });
+    // Live sequence: starts at the typed 'both' scene; after the initial
+    // normal capture, the six fixture transitions are applied on the SAME
+    // mount/canvas/state via the public gosx:scene3d:commands mount event
+    // (never internal applySceneCommands, never remount/reload, never
+    // synthesized commands).
+    CASES.push({
+      name: pfx + 'lifecycle', webgpu,
+      typedInstancedScene: fixture.scenes.both,
+      instancedLifecycleScene: 'both',
+      expectedInstancedCount: 2,
+      instancedLifecycleGroup: true,
+      lifecycle: true,
+      lifecycleTransitions: fixture.transitions,
+      f0: 0.04, f90: 1,
+      shadowROI: { x: ROI.x, y: ROI.y, width: ROI.width, height: ROI.height },
+    });
+  });
+}
+registerInstancedLifecycleCases(INST_FIXTURE);
+// Keep the full registration (CASES and byName) intact alongside the
+// optional group filter below.
+CASES.forEach((c) => { byName[c.name] = c; });
+
+// ---- Optional diagnostic case-group filter (execution only) ----
+// GOSX_IOR_CASE_GROUP=instanced-lifecycle selects exactly the 20 new
+// instanced-lifecycle cases (static references included). Unset => all
+// cases. Any other nonempty value is rejected. RUN_CASES drives execution
+// AND comparison only; CASES/byName stay fully registered, and the final
+// report carries caseGroup + registeredCaseCount + selectedCaseCount so a
+// filtered run can never masquerade as a full one.
+const CASE_GROUP_ENV = process.env.GOSX_IOR_CASE_GROUP;
+const CASE_GROUP = CASE_GROUP_ENV || 'all';
+let RUN_CASES = CASES;
+if (CASE_GROUP_ENV != null && CASE_GROUP_ENV !== '' &&
+    CASE_GROUP_ENV !== 'instanced-lifecycle') {
+  console.error('GOSX_IOR_CASE_GROUP: unsupported group ' +
+    JSON.stringify(CASE_GROUP_ENV) + ' (only "instanced-lifecycle" or unset)');
+  process.exit(2);
+}
+if (CASE_GROUP_ENV === 'instanced-lifecycle') {
+  RUN_CASES = CASES.filter((c) => c.instancedLifecycleGroup === true);
+  if (RUN_CASES.length !== 20) {
+    console.error('instanced-lifecycle group: expected exactly 20 cases, got ' +
+      RUN_CASES.length);
+    process.exit(2);
+  }
+}
+if (!Array.isArray(RUN_CASES) || RUN_CASES.length === 0) {
+  console.error('no cases selected for execution');
+  process.exit(2);
+}
+
 function propsFor(c) {
   const p = { width: W, height: H, autoRotate: false, animation: false,
     responsive: false, maxDevicePixelRatio: 1,
@@ -1673,6 +1839,16 @@ function propsFor(c) {
   if (typeof c.cameraNear === 'number') {
     p.camera.near = c.cameraNear;
     p.camera.far = c.cameraFar;
+  }
+  // Typed instanced-lifecycle cases: the generated Go fixture SceneIR arrays
+  // (objects, lights, instancedMeshes) are passed through VERBATIM — no
+  // manual rewriting of object, light or instanced data.
+  if (c.typedInstancedScene) {
+    if (Array.isArray(c.typedInstancedScene.lights)) p.lights = c.typedInstancedScene.lights;
+    if (Array.isArray(c.typedInstancedScene.objects)) p.objects = c.typedInstancedScene.objects;
+    if (Array.isArray(c.typedInstancedScene.instancedMeshes)) {
+      p.instancedMeshes = c.typedInstancedScene.instancedMeshes;
+    }
   }
   return p;
 }
@@ -2154,9 +2330,10 @@ const PRELOAD = `
       window.__gosxIOR.instShadowDraws += 1;
       var n = (typeof instanceCount === "number" &&
         Number.isFinite(instanceCount) && instanceCount > 0) ? instanceCount : 0;
-      if (n > window.__gosxIOR.lastInstShadowInstances) {
-        window.__gosxIOR.lastInstShadowInstances = n;
-      }
+      // Record the most recent qualified draw unconditionally: per-step and
+      // settled assertions need the LAST observed normalized instance count,
+      // never a running maximum.
+      window.__gosxIOR.lastInstShadowInstances = n;
     } catch (e) { noteErr(window.__gosxIOR.obsErrors, e); }
   }
   if (W1) {
@@ -2566,6 +2743,11 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'if(typeof im.size==="number")return im.size;' +
   'if(typeof im.length==="number")return im.length;' +
   'return Object.keys(im).length;})(),' +
+  'instBatches:(function(){var st=m&&m.__gosxScene3DState;var im=st&&st.instancedMeshes;' +
+  'if(!im)return 0;' +
+  'if(typeof im.size==="number")return im.size;' +
+  'if(typeof im.length==="number")return im.length;' +
+  'return 0;})(),' +
   'ior:window.__gosxIOR?{draws:window.__gosxIOR.draws,pbrDraws:window.__gosxIOR.pbrDraws,' +
   'lastDrawF0:window.__gosxIOR.lastDrawF0,lastDrawF90:window.__gosxIOR.lastDrawF90,gl:window.__gosxIOR.gl,' +
   'lastDrawOpacity:(typeof window.__gosxIOR.lastDrawOpacity==="number"?' +
@@ -2701,6 +2883,310 @@ function saveArtifact(name, base64) {
   catch (e) { warnings.push('artifact write failed for ' + name + ': ' + e.message); }
 }
 
+// ---- Instanced multi-instance lifecycle execution helpers ----
+// Test-only: production state is read through the existing READ snapshot
+// plus read-only state extraction; renderer state, caches and revisions are
+// never written and applySceneCommands is never called directly. Authored
+// per-transition instance totals come from the fixture contract
+// (both->left->right->moved->one->empty->both).
+const INSTLIFE_TARGET_COUNTS = { left: 2, right: 2, moved: 2, one: 1,
+  empty: 0, both: 2 };
+const INSTLIFE_ID_SET = '(function(){var m=document.getElementById("' + MOUNT + '");' +
+  'if(!m)return false;var cv=m.querySelector("canvas");var st=m.__gosxScene3DState;' +
+  'if(!cv||!st)return false;' +
+  'window.__instlifeRefs={mount:m,canvas:cv,state:st};return true;})()';
+const INSTLIFE_ID_CHECK = '(function(){var r=window.__instlifeRefs;if(!r)return null;' +
+  'var m=document.getElementById("' + MOUNT + '");var cv=m&&m.querySelector("canvas");' +
+  'var st=m&&m.__gosxScene3DState;' +
+  'return {sameMount:m===r.mount,sameCanvas:cv===r.canvas,sameState:st===r.state};})()';
+const INSTLIFE_STATE_READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
+  'var st=m&&m.__gosxScene3DState;if(!st)return null;' +
+  'var im=st.instancedMeshes;if(!Array.isArray(im))return null;' +
+  'var total=0;var entries=[];' +
+  'for(var i=0;i<im.length;i+=1){var e=im[i];' +
+  'if(!e||typeof e.count!=="number"||!isFinite(e.count)||e.count<0)return null;' +
+  'if(e.transforms!==undefined&&!Array.isArray(e.transforms))return null;' +
+  'if(e.colors!==undefined&&!Array.isArray(e.colors))return null;' +
+  'total+=e.count;' +
+  'entries.push({count:e.count,' +
+  'transforms:Array.isArray(e.transforms)?e.transforms.slice():null,' +
+  'colors:Array.isArray(e.colors)?e.colors.slice():null});}' +
+  'return {batches:im.length,instances:total,entries:entries};})()';
+function instlifeDispatchExpr(cmds, revision, commandCount) {
+  return '(function(){return new Promise(function(res){' +
+    'var cmds=JSON.parse(' + JSON.stringify(JSON.stringify(cmds)) + ');' +
+    'var REV=' + Number(revision) + ',COUNT=' + Number(commandCount) + ';' +
+    'var WAIT=' + CASE_WAIT_MS + ';' +
+    'var m=document.getElementById("' + MOUNT + '");' +
+    'if(!m||typeof m.dispatchEvent!=="function")return res(false);' +
+    'var timer=null,h=null,done=false;' +
+    'var finish=function(v){if(done)return;done=true;' +
+    'if(timer!==null)clearTimeout(timer);' +
+    'if(m.removeEventListener)m.removeEventListener("gosx:scene3d:commands-applied",h);' +
+    'res(v);};' +
+    'h=function(ev){var d=(ev&&ev.detail)||{};' +
+    'if(typeof d.revision==="number"&&d.revision===REV&&' +
+    'typeof d.commandCount==="number"&&d.commandCount===COUNT)finish(true);};' +
+    'm.addEventListener("gosx:scene3d:commands-applied",h);' +
+    'timer=setTimeout(function(){finish(false);},WAIT);' +
+    'try{m.dispatchEvent(new CustomEvent("gosx:scene3d:commands",' +
+    '{detail:{revision:REV,commands:cmds}}));}catch(e){finish(false);}});})()';
+}
+async function runInstancedLifecycleSteps(send, c, rec, initialCap, shots) {
+  const steps = [];
+  const targetPfx = c.webgpu ? 'wg-instlife-' : 'gl-instlife-';
+  const refsOk = await evalSend(send, INSTLIFE_ID_SET);
+  if (refsOk !== true) {
+    fail(c.name + ': could not retain test-only mount/canvas/state references');
+  }
+  let prevCap = initialCap || null;
+  for (let i = 0; i < c.lifecycleTransitions.length; i += 1) {
+    const tr = c.lifecycleTransitions[i];
+    const target = tr.to;
+    const expCount = INSTLIFE_TARGET_COUNTS[target];
+    const before = await evalSend(send, READ);
+    if (!before || !before.ior || !before.wgpu) {
+      throw new Error('lifecycle step ' + (i + 1) + ': pre-step evidence read failed');
+    }
+    // Public mount command seam only: gosx:scene3d:commands with a monotonic
+    // revision; the applied event must match revision AND commandCount and
+    // arrive within CASE_WAIT_MS (listener+timer cleaned up in-page).
+    const ack = await evalSend(send,
+      instlifeDispatchExpr(tr.commands, i + 1, tr.commands.length),
+      { awaitPromise: true });
+    if (ack !== true) {
+      fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): gosx:scene3d:commands-applied' +
+        ' (revision ' + (i + 1) + ', commandCount ' + tr.commands.length + ')' +
+        ' not observed within ' + CASE_WAIT_MS + 'ms');
+    }
+    // Positive new native render after the ack, on the expected backend with
+    // no fallback/error and empty observer error arrays. WebGL evidence is
+    // the pbrDraws advance; WebGPU evidence is the actual presented frame
+    // sequence advance (never synthetic GL counters).
+    let after = null;
+    let advanced = false;
+    const dl = Date.now() + CASE_WAIT_MS;
+    while (Date.now() < dl) {
+      after = await evalSend(send, READ);
+      if (after && after.ior && after.wgpu) {
+        const adv = c.webgpu
+          ? Number(after.frameSeq) > Number(before.frameSeq || 0)
+          : after.ior.pbrDraws > before.ior.pbrDraws;
+        const backendOk = c.webgpu
+          ? after.renderer === 'webgpu' && after.fallback !== 'true' && !after.wgpuErr
+          : after.renderer === 'webgl';
+        if (adv && backendOk &&
+            after.ior.obsErrors.length === 0 && after.wgpu.obsErrors.length === 0) {
+          advanced = true;
+          break;
+        }
+      }
+      await sleep(100);
+    }
+    if (!advanced || !after) {
+      fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): no positive new native render' +
+        ' advance after command ack on the expected backend');
+    }
+    // WebGL native shadow-depth evidence only: additional instanced shadow
+    // draws with the expected nonempty targets, and NO additional instanced
+    // shadow draws on removal while the receiver PBR path still advances.
+    let shadowDelta = null;
+    if (!c.webgpu && advanced) {
+      shadowDelta = after.ior.instShadowDraws - before.ior.instShadowDraws;
+      if (expCount > 0) {
+        if (!(shadowDelta > 0)) {
+          fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): expected additional' +
+            ' instanced shadow-depth draws for instanceCount ' + expCount);
+        } else if (after.ior.instShadowInstances !== expCount) {
+          fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): instanced shadow-depth' +
+            ' last instanceCount ' + after.ior.instShadowInstances +
+            ' != expected ' + expCount);
+        }
+      } else if (shadowDelta !== 0) {
+        fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): expected NO additional' +
+          ' instanced shadow draws on removal, got +' + shadowDelta);
+      }
+    }
+    // Same canvas, mount and state identities across updates, proven through
+    // test-only retained references (production state is never mutated).
+    const ident = advanced ? await evalSend(send, INSTLIFE_ID_CHECK) : null;
+    if (!ident || ident.sameMount !== true || ident.sameCanvas !== true ||
+        ident.sameState !== true) {
+      fail(c.name + ': step ' + (i + 1) + ': mount/canvas/state identity changed across update');
+    }
+    // Actual normalized instanced state: exact authored instance total and
+    // batch count, plus read-only transform/color match against the target
+    // fixture scene arrays. Absent or malformed evidence fails closed.
+    const st = advanced ? await evalSend(send, INSTLIFE_STATE_READ) : null;
+    if (!st) {
+      fail(c.name + ': step ' + (i + 1) + ': instanced state read failed');
+    } else {
+      if (st.instances !== expCount) {
+        fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): expected total authored' +
+          ' instance count ' + expCount + ', got ' + st.instances);
+      }
+      if (st.batches !== (expCount > 0 ? 1 : 0)) {
+        fail(c.name + ': step ' + (i + 1) + ': expected ' + (expCount > 0 ? 1 : 0) +
+          ' instanced batch(es), got ' + st.batches);
+      }
+      const fxMesh = (INST_FIXTURE.scenes[target] &&
+        Array.isArray(INST_FIXTURE.scenes[target].instancedMeshes))
+        ? INST_FIXTURE.scenes[target].instancedMeshes[0] : null;
+      if (expCount > 0) {
+        if (!fxMesh || !st.entries[0]) {
+          fail(c.name + ': step ' + (i + 1) + ': missing fixture or observed instanced' +
+            ' entry for ' + target);
+        } else {
+          const obs = st.entries[0];
+          const fxT = Array.isArray(fxMesh.transforms) ? fxMesh.transforms : null;
+          const fxC = Array.isArray(fxMesh.colors) ? fxMesh.colors : null;
+          if (!fxT || fxT.length !== 16 * expCount ||
+              !fxC || fxC.length !== expCount) {
+            fail(c.name + ': step ' + (i + 1) + ': fixture scene ' + target +
+              ' transforms/colors not resolvable for ' + expCount + ' instances');
+          } else if (!Array.isArray(obs.transforms) || obs.transforms.length !== 16 * expCount ||
+                     !Array.isArray(obs.colors) || obs.colors.length !== expCount) {
+            fail(c.name + ': step ' + (i + 1) + ': observed instanced transforms/colors' +
+              ' are not flat arrays of the expected size');
+          } else if (JSON.stringify(obs.transforms) !== JSON.stringify(fxT) ||
+                     JSON.stringify(obs.colors) !== JSON.stringify(fxC)) {
+            fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): observed instanced' +
+              ' transforms/colors are not exactly equal to fixture scene ' + target);
+          }
+        }
+      }
+    }
+    // Settle, re-check dimensions/errors, then capture this step.
+    await sleep(SETTLE_MS);
+    const settled = advanced ? await evalSend(send, READ) : null;
+    if (!settled || !settled.ior || !settled.wgpu) {
+      throw new Error('lifecycle step ' + (i + 1) + ': settled evidence read failed');
+    }
+    if (settled.mounted !== 'true') {
+      fail(c.name + ': step ' + (i + 1) + ': data-gosx-scene3d-mounted not true after settle');
+    }
+    if (settled.ior.obsErrors.length) {
+      fail(c.name + ': step ' + (i + 1) + ': GL observation errors: ' +
+        settled.ior.obsErrors.join('; '));
+    }
+    if (settled.wgpu.obsErrors.length) {
+      fail(c.name + ': step ' + (i + 1) + ': WebGPU observation errors: ' +
+        settled.wgpu.obsErrors.join('; '));
+    }
+    if (c.webgpu && (settled.renderer !== 'webgpu' || settled.fallback === 'true' ||
+        settled.wgpuErr)) {
+      fail(c.name + ': step ' + (i + 1) + ': WebGPU backend not active after settle');
+    }
+    if (!c.webgpu && settled.renderer !== 'webgl') {
+      fail(c.name + ': step ' + (i + 1) + ': WebGL backend not active after settle');
+    }
+    // Settled re-verification: a transient early good state must never
+    // certify a bad settled state. Identity, observed count/batches and the
+    // GL shadow evidence are all re-checked on the settled read before any
+    // screenshot is taken.
+    const settledIdent = await evalSend(send, INSTLIFE_ID_CHECK);
+    if (!settledIdent || settledIdent.sameMount !== true ||
+        settledIdent.sameCanvas !== true || settledIdent.sameState !== true) {
+      fail(c.name + ': step ' + (i + 1) + ': mount/canvas/state identity changed after settle');
+    }
+    const settledState = await evalSend(send, INSTLIFE_STATE_READ);
+    if (!settledState) {
+      fail(c.name + ': step ' + (i + 1) + ': settled instanced state read failed or malformed');
+    } else {
+      if (settledState.instances !== expCount) {
+        fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): settled instance count ' +
+          settledState.instances + ' != expected ' + expCount);
+      }
+      if (settledState.batches !== (expCount > 0 ? 1 : 0)) {
+        fail(c.name + ': step ' + (i + 1) + ': settled batch count ' +
+          settledState.batches + ' != expected ' + (expCount > 0 ? 1 : 0));
+      }
+    }
+    if (!c.webgpu) {
+      const settledDelta = settled.ior.instShadowDraws - before.ior.instShadowDraws;
+      if (expCount > 0) {
+        if (!(typeof settledDelta === 'number' && Number.isFinite(settledDelta) &&
+              settledDelta > 0)) {
+          fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): settled instanced' +
+            ' shadow-depth draws did not advance for instanceCount ' + expCount);
+        } else if (settled.ior.instShadowInstances !== expCount) {
+          fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): settled instanced' +
+            ' shadow-depth last instanceCount ' + settled.ior.instShadowInstances +
+            ' != expected ' + expCount);
+        }
+      } else if (settledDelta !== 0) {
+        fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): settled instanced shadow' +
+          ' draws changed on removal, got +' + settledDelta);
+      }
+    }
+    const capStep = await capture(send);
+    if (!capStep) throw new Error('lifecycle step ' + (i + 1) + ': capture/decode failed');
+    if (capStep.clip.width !== W || capStep.clip.height !== H) {
+      fail(c.name + ': step ' + (i + 1) + ': canvas rect ' + capStep.clip.width + 'x' +
+        capStep.clip.height + ' != expected ' + W + 'x' + H);
+    }
+    if (capStep.metrics.w !== capStep.expectW || capStep.metrics.h !== capStep.expectH) {
+      fail(c.name + ': step ' + (i + 1) + ': screenshot dimensions ' + capStep.metrics.w +
+        'x' + capStep.metrics.h + ' != expected ' + capStep.expectW + 'x' + capStep.expectH);
+    }
+    if (!(capStep.metrics.fgPixels > 0) || !(capStep.metrics.fgFrac >= FG_COVERAGE) ||
+        !(capStep.metrics.maxDelta >= FG_THRESHOLD)) {
+      fail(c.name + ': step ' + (i + 1) + ': no measurable geometry foreground after settle' +
+        ' (fg=' + capStep.metrics.fgPixels + ', frac=' + capStep.metrics.fgFrac.toFixed(4) + ')');
+    }
+    // Receiver ROI must be byte-for-byte identical to the FRESH static target
+    // scene captured earlier on the same backend.
+    const targetShot = shots[targetPfx + target];
+    let dTarget = null;
+    if (!targetShot) {
+      fail(c.name + ': step ' + (i + 1) + ': missing fresh static target capture for ' + target);
+    } else {
+      dTarget = await diffShots(send, capStep.base64, targetShot.base64, c.shadowROI);
+      if (!dTarget || !dTarget.dimsMatch || dTarget.exactPixels !== 0 ||
+          dTarget.exactBytes !== 0) {
+        fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): receiver ROI not' +
+          ' byte-identical to fresh static ' + target + ' (exactPixels=' +
+          (dTarget && dTarget.exactPixels) + ', exactBytes=' +
+          (dTarget && dTarget.exactBytes) + ')');
+      }
+    }
+    // Meaningful visible change vs the previous lifecycle snapshot.
+    let dPrev = null;
+    if (prevCap) {
+      dPrev = await diffShots(send, prevCap.base64, capStep.base64, c.shadowROI);
+      if (!dPrev || !dPrev.dimsMatch || !(dPrev.meanChanged >= 50)) {
+        fail(c.name + ': step ' + (i + 1) + ' (' + tr.name + '): expected >=50 changed' +
+          ' receiver ROI pixels vs the previous lifecycle snapshot (meanChanged=' +
+          (dPrev && dPrev.meanChanged) + ')');
+      }
+    }
+    saveArtifact(c.name + '-step' + (i + 1) + '.png', capStep.base64);
+    // Report the SETTLED evidence: draw/frame advances and identity are taken
+    // from the settled read, not the transient post-update read.
+    const renderAdvance = (advanced && settled) ? (c.webgpu
+      ? { frameSeqBefore: Number(before.frameSeq || 0),
+          frameSeqAfter: Number(settled.frameSeq || 0) }
+      : { pbrDrawsBefore: before.ior.pbrDraws,
+          pbrDrawsAfter: settled.ior.pbrDraws }) : null;
+    steps.push({
+      step: i + 1, transition: tr.name, from: tr.from, to: target,
+      commandAck: ack === true, revision: i + 1, commandCount: tr.commands.length,
+      renderAdvance,
+      shadowDepthDrawsDelta: shadowDelta,
+      settledShadowDepthDrawsDelta: c.webgpu ? null :
+        (settled.ior.instShadowDraws - before.ior.instShadowDraws),
+      shadowDepthLastInstanceCount: c.webgpu ? null : settled.ior.instShadowInstances,
+      observedInstanceCount: settledState ? settledState.instances : null,
+      observedBatches: settledState ? settledState.batches : null,
+      identity: settledIdent,
+      targetPixelDiff: dTarget,
+      beforeAfterPixelDiff: dPrev,
+    });
+    prevCap = capStep;
+  }
+  rec.lifecycleSteps = steps;
+}
+
 // ---- Overall watchdog (bounded, triggers the same central cleanup) ----
 setTimeout(() => {
   if (finished) return;
@@ -2792,7 +3278,7 @@ setTimeout(() => {
   // record the remaining cases as aborted (preserving all cases) and exit
   // nonzero via the diagnostic failure below. Normal cases still all run.
   let readinessFatal = false;
-  for (const c of CASES) {
+  for (const c of RUN_CASES) {
     if (readinessFatal) {
       evidence.push({ name: c.name, skipped: true, skipReason: 'aborted after readiness fatal in earlier case' });
       continue;
@@ -3007,6 +3493,52 @@ setTimeout(() => {
               '+ a_instanceMatrix0 program)');
           } else if (!(s.ior.instShadowInstances > 0)) {
             fail(c.name + ': instanced shadow-depth draws reported zero instances');
+          }
+        }
+      }
+
+      // Typed instanced-lifecycle static cases: the actual scene-state
+      // instance count and batch count must match the authored fixture
+      // contract exactly (read-only; never relaxed for missing evidence).
+      if (c.typedInstancedScene) {
+        rec.instancedLifecycleScene = c.instancedLifecycleScene;
+        rec.expectedInstancedCount = c.expectedInstancedCount;
+        const instRead = await evalSend(send, INSTLIFE_STATE_READ);
+        if (!instRead) {
+          fail(c.name + ': instanced scene-state read failed or malformed');
+        } else {
+          rec.observedInstanceCount = instRead.instances;
+          rec.observedBatches = instRead.batches;
+          if (instRead.instances !== c.expectedInstancedCount) {
+            fail(c.name + ': expected ' + c.expectedInstancedCount +
+              ' instanced scene-state instances, got ' + instRead.instances);
+          }
+          if (c.expectedInstancedCount > 0 && instRead.batches !== 1) {
+            fail(c.name + ': expected exactly 1 instanced batch, got ' + instRead.batches);
+          }
+          if (c.expectedInstancedCount === 0 && instRead.batches !== 0) {
+            fail(c.name + ': expected 0 instanced batches, got ' + instRead.batches);
+          }
+          if (!c.webgpu) {
+            rec.initialInstShadowDraws = s.ior.instShadowDraws;
+            rec.initialInstShadowInstances = s.ior.instShadowInstances;
+            if (c.expectedInstancedCount === 0 && s.ior.instShadowDraws !== 0) {
+              fail(c.name + ': expected strictly 0 instanced shadow draws for' +
+                ' the static empty/reference GL scene, got ' +
+                s.ior.instShadowDraws);
+            }
+            if (c.expectedInstancedCount > 0) {
+              if (!(s.ior.instShadowDraws > 0)) {
+                fail(c.name + ': expected instanced shadow draws > 0 for the' +
+                  ' static GL scene with ' + c.expectedInstancedCount +
+                  ' instance(s), got ' + s.ior.instShadowDraws);
+              }
+              if (s.ior.instShadowInstances !== c.expectedInstancedCount) {
+                fail(c.name + ': static GL instanced shadow-depth last' +
+                  ' instanceCount ' + s.ior.instShadowInstances +
+                  ' != expected ' + c.expectedInstancedCount);
+              }
+            }
           }
         }
       }
@@ -3385,6 +3917,13 @@ setTimeout(() => {
       saveArtifact(c.name + '.png', cap.base64);
       shots[c.name] = cap;
 
+      // Instanced multi-instance lifecycle: apply the six typed fixture
+      // transitions on THIS same mount via the public command seam, with
+      // per-step native evidence, screenshots and ROI comparisons.
+      if (c.lifecycle && Array.isArray(c.lifecycleTransitions)) {
+        await runInstancedLifecycleSteps(send, c, rec, cap, shots);
+      }
+
       // CSS var case: real documentElement.style.setProperty --ior 1.33 -> 2.42.
       // Wait for the runtime's own MutationObserver-driven revision advance AND
       // the new observed uniform value AND changed pixels (no remount, no
@@ -3456,7 +3995,7 @@ setTimeout(() => {
   }
 
   // ---- Cross-case image comparisons (real rendered output, fixed camera) ----
-  for (const c of CASES) {
+  for (const c of RUN_CASES) {
     const rec = evidence.find((r) => r.name === c.name);
     const A = shots[c.name];
     if (!rec || rec.skipped || !A) continue;
@@ -3492,6 +4031,24 @@ setTimeout(() => {
           if (!d || !d.dimsMatch || !(d.meanChanged >= (c.minChanged || 1)) || !(d.maxDelta >= 3)) {
             fail(c.name + ': distinct IOR must change visible pixels vs ' + c.differs +
               ' (meanChanged=' + (d && d.meanChanged) + ', maxDelta=' + (d && d.maxDelta) + ')');
+          }
+        }
+      }
+      if (c.sameFull != null) {
+        // Full-image comparison: same backend, COMPLETE screenshots via
+        // diffShots WITHOUT ROI; exact changed pixels AND bytes both 0.
+        const B = shots[c.sameFull];
+        const recB = evidence.find((r) => r.name === c.sameFull);
+        if (!B || !recB) { fail(c.name + ': missing capture for full-image comparison vs ' + c.sameFull); }
+        else if (rec.renderer !== recB.renderer) {
+          rec.fullImageComparison = { target: c.sameFull, skipped: 'renderer mismatch (' + rec.renderer + ' vs ' + recB.renderer + ')' };
+          fail(c.name + ': renderer mismatch vs ' + c.sameFull + ' (' + rec.renderer + ' vs ' + recB.renderer + ')');
+        } else {
+          const d = await diffShots(send, A.base64, B.base64);
+          rec.fullImageComparison = { target: c.sameFull, diff: d };
+          if (!d || !d.dimsMatch || d.exactPixels !== 0 || d.exactBytes !== 0) {
+            fail(c.name + ': full image must be byte-identical to ' + c.sameFull +
+              ' (exactChangedPixels=' + (d && d.exactPixels) + ', exactChangedBytes=' + (d && d.exactBytes) + ')');
           }
         }
       }
@@ -3550,12 +4107,23 @@ setTimeout(() => {
       objects: r.objects, fgPixels: r.litPixels, fgFrac: r.fgFrac, cornerBG: r.meanRGB, centerRGB: r.centerRGB,
       cssAfter: r.cssAfter || undefined, sameAs: r.sameAs || undefined,
       differsFrom: r.differsFrom || undefined, nearSameAs: r.nearSameAs || undefined,
+      fullImageComparison: r.fullImageComparison || undefined,
       disposeRemovedState: r.disposeRemovedState,
+      instancedLifecycleScene: r.instancedLifecycleScene,
+      expectedInstancedCount: r.expectedInstancedCount,
+      observedInstanceCount: r.observedInstanceCount,
+      observedBatches: r.observedBatches,
+      lifecycleSteps: r.lifecycleSteps || undefined,
       shadowBudget: r.shadowBudget || undefined, shadow: r.shadow || undefined,
       nativeCap: r.nativeCap !== undefined ? r.nativeCap : undefined,
       instShadowDraws: r.instShadowDraws, instShadowInstances: r.instShadowInstances,
+      initialInstShadowDraws: r.initialInstShadowDraws,
+      initialInstShadowInstances: r.initialInstShadowInstances,
       instancedShadow: r.instancedShadow,
       forcedCap: r.forcedCap !== undefined ? r.forcedCap : undefined })),
+    caseGroup: CASE_GROUP,
+    registeredCaseCount: CASES.length,
+    selectedCaseCount: RUN_CASES.length,
     disposal: ran.length > 0 && ran.every((r) => r.disposeRemovedState === true),
     artifacts: ART || undefined,
     errors, warnings,
