@@ -1959,6 +1959,15 @@ type materialState struct {
 	// 0.04 applies only when the lane was never written.
 	dielectricF0 float32
 
+	// specularF0 is the effective dielectric F0 in linear light and
+	// specularF90 its grazing reflectance, decoded from the prepared
+	// specular vec4 at byte 112 of the material uniform. When that vec4 is
+	// absent the legacy IOR F0 at byte 100 is replicated across RGB with
+	// F90 = 1. A full vec4 of zeros is a legitimate authored intensity of
+	// zero and is kept as zeros, never re-defaulted.
+	specularF0  [3]float32
+	specularF90 float32
+
 	hasNormalMap   bool
 	hasRoughMap    bool
 	hasMetalMap    bool
@@ -1981,6 +1990,8 @@ func defaultMaterialState() materialState {
 		roughness:      0.6,
 		useVertexColor: true,
 		dielectricF0:   dielectricF0,
+		specularF0:     [3]float32{dielectricF0, dielectricF0, dielectricF0},
+		specularF90:    1,
 		baseColorMap:   textureBinding{layer: -1},
 		normalMap:      textureBinding{layer: -1},
 		roughMap:       textureBinding{layer: -1},
@@ -2010,13 +2021,26 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 				continue
 			}
 			offset := entry.Offset
-			if offset < 0 || offset+16 > len(buf.data) {
+			// Bounds-check the offset without overflow: only subtract.
+			if offset < 0 || offset > len(buf.data) {
 				continue
 			}
 			// Every lane past the base colour reads through a bounds-checked
 			// helper. A unit test binds a short buffer on purpose, and a short
-			// buffer must yield zeros rather than panic.
+			// buffer must yield zeros rather than panic. When the entry declares
+			// an explicit size, clip the local slice to it so reads never cross
+			// the binding's end into unrelated buffer bytes. size <= 0 keeps the
+			// unbounded convention: the buffer length is the only bound.
 			data := buf.data
+			if entry.Size > 0 && entry.Size <= len(data)-offset {
+				data = data[:offset+entry.Size]
+			}
+			// Guard the base colour pair: a binding too short to hold the
+			// full 16-byte vec4 must not overwrite any default with zeros.
+			// Continue past this entry entirely, leaving the state as-is.
+			if len(data)-offset < 16 {
+				continue
+			}
 			state.baseColor = readVec3At(data, offset+0)
 			state.opacity = clamp01f(readFloat32At(data, offset+12))
 			state.metalness = readFloat32At(data, offset+16)
@@ -2035,6 +2059,18 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 			state.anisotropy = readFloat32At(data, offset+96)
 			if f0, ok := materialDielectricF0(data, offset); ok {
 				state.dielectricF0 = f0
+			}
+			// Assign the specular params unconditionally. When the vec4 is
+			// absent the caller must still carry the legacy fallback: the
+			// dielectric F0 replicated across RGB with F90 = 1, so the state
+			// never holds a stale or zero default.
+			specF0, specF90, ok := materialSpecularParams(data, offset, entry.Size, state.dielectricF0)
+			if ok {
+				state.specularF0 = specF0
+				state.specularF90 = specF90
+			} else {
+				state.specularF0 = [3]float32{state.dielectricF0, state.dielectricF0, state.dielectricF0}
+				state.specularF90 = 1
 			}
 		case 1:
 			state.baseColorMap = bind(entry)
@@ -2057,10 +2093,40 @@ func (r *RenderPassEncoder) activeMaterial() materialState {
 // full buffer with a zero lane is a legitimate authored F0 (IOR 1) and is
 // returned as zero, never re-defaulted.
 func materialDielectricF0(data []byte, offset int) (float32, bool) {
-	if offset < 0 || offset+104 > len(data) {
+	// Subtraction form is overflow-safe for large offsets.
+	if offset < 0 || 104 > len(data)-offset {
 		return dielectricF0, false
 	}
 	return readFloat32At(data, offset+100), true
+}
+
+// materialSpecularParams reads the prepared specular vec4 at byte 112 of the
+// material uniform: the effective dielectric F0 in linear light, then F90.
+//
+// size bounds the binding the entry declared. A legacy 112-byte binding that
+// sits inside a bigger buffer must not read unrelated bytes past its end, so
+// an entry bounded shorter than 128 bytes counts as absent. size <= 0 means
+// the entry declared no explicit size and the buffer length bounds the read.
+//
+// ok is false when the full vec4 is not present; the caller then keeps the
+// legacy dielectric F0 replicated across RGB with F90 = 1 (the default 0.04
+// when even the byte-100 lane is missing). A full vec4 of zeros is a
+// legitimate authored intensity of zero and is returned as zeros, never
+// re-defaulted. Absence is the boolean, not a sentinel float.
+func materialSpecularParams(data []byte, offset, size int, legacyF0 float32) ([3]float32, float32, bool) {
+	if offset < 0 {
+		return [3]float32{legacyF0, legacyF0, legacyF0}, 1, false
+	}
+	// available is how many bytes the read may touch from offset, computed
+	// with subtraction so a huge offset cannot overflow.
+	available := len(data) - offset
+	if size > 0 && size < available {
+		available = size
+	}
+	if available < 128 {
+		return [3]float32{legacyF0, legacyF0, legacyF0}, 1, false
+	}
+	return readVec3At(data, offset+112), readFloat32At(data, offset+124), true
 }
 
 // solidColor returns the untextured base colour and the opacity, which is what
@@ -2503,17 +2569,18 @@ func geometrySmith(NdotV, NdotL, roughness float32) float32 {
 	return 0.5 / max(ggxV+ggxL, 1e-5)
 }
 
-// fresnelSchlick is the Schlick approximation, copied from litWGSL. The fifth
-// power runs as four multiplications, because math.Pow on a constant integer
-// exponent costs about twenty times as much and this call sits in the pixel loop.
-func fresnelSchlick(f0 [3]float32, VdotH float32) [3]float32 {
+// fresnelSchlick is the Schlick approximation with an explicit F90, copied
+// from litWGSL. The fifth power runs as four multiplications, because math.Pow
+// on a constant integer exponent costs about twenty times as much and this
+// call sits in the pixel loop.
+func fresnelSchlick(f0 [3]float32, f90 float32, VdotH float32) [3]float32 {
 	t := clamp01f(1 - VdotH)
 	t2 := t * t
 	k := t2 * t2 * t
 	return [3]float32{
-		f0[0] + (1-f0[0])*k,
-		f0[1] + (1-f0[1])*k,
-		f0[2] + (1-f0[2])*k,
+		f0[0] + (f90-f0[0])*k,
+		f0[1] + (f90-f0[1])*k,
+		f0[2] + (f90-f0[2])*k,
 	}
 }
 
@@ -2594,6 +2661,9 @@ const (
 func (p *litProgram) directLight(
 	f fragment,
 	N, V, baseColor, f0 [3]float32,
+	f90 float32,
+	dielectricF0 [3]float32,
+	dielectricF90 float32,
 	metalness, roughness, NdotV float32,
 ) [3]float32 {
 	const invPi = float32(1 / math.Pi)
@@ -2642,7 +2712,9 @@ func (p *litProgram) directLight(
 
 		d := distributionGGX(NdotH, roughness)
 		g := geometrySmith(NdotV, NdotL, roughness)
-		fresnel := fresnelSchlick(f0, VdotH)
+		fresnel := fresnelSchlick(f0, f90, VdotH)
+		fdiel := fresnelSchlick(dielectricF0, dielectricF90, VdotH)
+		dielectricMax := max32(fdiel[0], max32(fdiel[1], fdiel[2]))
 		dg := d * g
 
 		shadow := float32(1)
@@ -2650,9 +2722,11 @@ func (p *litProgram) directLight(
 			shadow = p.lighting.sampleShadow(f.world)
 		}
 		for i := 0; i < 3; i++ {
-			// Energy conservation: what the specular lobe reflects, the diffuse
-			// lobe cannot, and a metal has no diffuse lobe at all.
-			kD := (1 - fresnel[i]) * (1 - metalness)
+			// Energy conservation: the diffuse weight is a scalar built from
+			// the dielectric Fresnel alone, so the dielectric specular tint
+			// no longer adds an inverse RGB tint to the diffuse lobe; the
+			// base colour still multiplies the diffuse term itself.
+			kD := (1 - dielectricMax) * (1 - metalness)
 			diffuse := kD * baseColor[i] * invPi
 			specular := dg * fresnel[i]
 			// The falloff rides in the radiance, exactly as litWGSL puts it
@@ -2710,25 +2784,33 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 	anisotropy := clampSignedUnit(m.anisotropy)
 	roughness = clampRange(roughness*(1-absf(anisotropy)*anisotropyRoughnessGain), roughnessFloor, 1)
 
-	// F0 is the authored dielectric reflectance (default 0.04) and the base
-	// colour for a metal.
+	// F0 is the effective dielectric F0 the material preparation uploaded
+	// (min(IOR F0 * colour, 1) * intensity), and F90 its grazing reflectance
+	// (the intensity). A fully metallic surface takes the base colour
+	// exactly, so no dielectric lane can leak in through lerp rounding.
 	f0 := [3]float32{
-		mix(m.dielectricF0, baseColor[0], metalness),
-		mix(m.dielectricF0, baseColor[1], metalness),
-		mix(m.dielectricF0, baseColor[2], metalness),
+		mix(m.specularF0[0], baseColor[0], metalness),
+		mix(m.specularF0[1], baseColor[1], metalness),
+		mix(m.specularF0[2], baseColor[2], metalness),
 	}
-	// Fresnel and kD at the primary light. The image-based terms at the end reuse
-	// both, so a cubemap keeps the exact response it had before the light array
-	// arrived. Each light in the loop below computes its own pair.
-	fresnel := fresnelSchlick(f0, VdotH)
-	kD := [3]float32{
-		(1 - fresnel[0]) * (1 - metalness),
-		(1 - fresnel[1]) * (1 - metalness),
-		(1 - fresnel[2]) * (1 - metalness),
+	f90 := mix(m.specularF90, float32(1), metalness)
+	if metalness >= 1 {
+		f0 = baseColor
+		f90 = 1
 	}
+	// Fresnel at the primary light. The image-based terms at the end reuse it,
+	// so a cubemap keeps the exact response it had before the light array
+	// arrived. Each light in the loop below computes its own pair. The
+	// diffuse weight is a scalar built from the dielectric Fresnel alone:
+	// (1 - maxRGB(Fdiel)) * (1 - metalness). The earlier componentwise mixed
+	// form tinted the diffuse by the metallic Fresnel and double-counted the
+	// base colour; the browser copy still does. See the divergence ledger.
+	fresnel := fresnelSchlick(f0, f90, VdotH)
+	fdiel := fresnelSchlick(m.specularF0, m.specularF90, VdotH)
+	kD := (1 - max32(fdiel[0], max32(fdiel[1], fdiel[2]))) * (1 - metalness)
 
 	// Direct light: one Cook-Torrance lobe per scene light, summed.
-	color := p.directLight(f, N, V, baseColor, f0, metalness, roughness, NdotV)
+	color := p.directLight(f, N, V, baseColor, f0, f90, m.specularF0, m.specularF90, metalness, roughness, NdotV)
 
 	// Environment ambient: three independent terms, each gated by its own
 	// intensity only. The sky and ground intensities arrive premultiplied into
@@ -2752,7 +2834,7 @@ func (p *litProgram) shade(f fragment) [3]float32 {
 		gain := l.envParams[0] * l.envParams[2]
 		roughFade := 1 - roughness*envSpecularRoughFade
 		for i := 0; i < 3; i++ {
-			cubeDiffuse := diffuseEnv[i] * baseColor[i] * kD[i]
+			cubeDiffuse := diffuseEnv[i] * baseColor[i] * kD
 			cubeSpecular := specularEnv[i] * fresnel[i] * roughFade
 			color[i] += (cubeDiffuse + cubeSpecular) * gain
 		}

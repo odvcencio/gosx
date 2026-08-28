@@ -425,20 +425,32 @@ test("planner CSS input signature invalidates when authored ior changes", () => 
 
 // --- WebGL PBR ----------------------------------------------------------------
 
-test("WebGL PBR shaders upload and consume the authored dielectric F0", () => {
+test("WebGL PBR shaders upload and consume the effective specular factors", () => {
   const source = readRuntimeSource("webgl.ts");
 
-  // The GLSL declares the dedicated uniform and consumes it for the
-  // dielectric/metallic Fresnel blend; the fixed 0.04 default is gone.
-  assert.match(source, /uniform float u_dielectricF0;/);
-  assert.match(source, /vec3 F0 = mix\(vec3\(u_dielectricF0\), albedo, metalness\);/);
+  // The dead u_dielectricF0 uniform is fully removed: declaration, cache
+  // slot and upload. Shading reads only the effective uniforms.
+  assert.doesNotMatch(source, /uniform float u_dielectricF0;/);
+  assert.match(source, /vec3 specF0 = u_specularF0;/);
+  assert.match(source, /vec3 F0 = mix\(specF0, albedo, metalness\);/);
+  // The specular-intensity map multiplies both shared dielectric factors by
+  // its alpha channel before the metallic mix; colour channels are never read.
+  assert.match(source, /specF0 \*= specTex;/);
+  assert.match(source, /specF90 \*= specTex;/);
+  assert.match(source, /texture\(u_specularIntensityMap, v_uv\)\.a/);
   assert.doesNotMatch(source, /vec3 F0 = mix\(vec3\(0\.04\)/);
-  // The location cache and the material upload are wired to the same scalar.
-  assert.match(source, /dielectricF0:\s*gl\.getUniformLocation\(program,\s*"u_dielectricF0"\),/);
-  assert.match(source, /gl\.uniform1f\(uniforms\.dielectricF0,\s*scenePBRDielectricF0\(mat\.ior\)\);/);
+  assert.doesNotMatch(source, /dielectricF0:\s*gl\.getUniformLocation\(program,\s*"u_dielectricF0"\),/);
+  assert.doesNotMatch(source, /gl\.uniform1f\(uniforms\.dielectricF0,/);
+  // The live effective specular uniforms are cached and uploaded.
+  assert.match(source, /specularF0: gl\.getUniformLocation\(program, "u_specularF0"\),/);
+  assert.match(source, /specularF90: gl\.getUniformLocation\(program, "u_specularF90"\),/);
+  assert.match(source, /gl\.uniform3f\(uniforms\.specularF0, specularFactors\.f0\[0\], specularFactors\.f0\[1\], specularFactors\.f0\[2\]\);/);
+  assert.match(source, /gl\.uniform1f\(uniforms\.specularF90, specularFactors\.f90\);/);
 
   const context = createSceneCoreContext();
   runFragment(context, [
+    sliceBetween(readBootstrapSource("15a1-scene-texture-budget.ts"),
+      "var SCENE_TEXTURE_UNIT_MATERIALS", "var SCENE_TEXTURE_UNIT_FIRST_SHARED"),
     sliceBetween(source, "function scenePBRSRGBChannelToLinear", "const SCENE_PBR_VERTEX_SOURCE"),
     sliceBetween(source, "function scenePBRDielectricF0", "function scenePBRCacheBaseUniforms"),
     sliceBetween(source, "function uploadCustomUniforms", "function uploadMaterial"),
@@ -461,7 +473,8 @@ test("WebGL PBR shaders upload and consume the authored dielectric F0", () => {
     "function uniformSlots() {" +
       "const slots = { customUniforms: null };" +
       "for (const name of ['albedo', 'roughness', 'metalness', 'clearcoat', 'sheen'," +
-        "'transmission', 'iridescence', 'anisotropy', 'dielectricF0', 'emissive', 'opacity'," +
+        "'transmission', 'iridescence', 'anisotropy', 'specularF0', 'specularF90'," +
+        "'emissive', 'opacity'," +
         "'unlit', 'hasAlbedoMap', 'hasNormalMap', 'hasRoughnessMap', 'hasMetalnessMap'," +
         "'hasEmissiveMap', 'hasOcclusionMap']) {" +
         "slots[name] = { name };" +
@@ -475,11 +488,12 @@ test("WebGL PBR shaders upload and consume the authored dielectric F0", () => {
     "function scenePBRBindTexture() {}",
   ].join("\n"), "webgl-upload-extract.js");
 
-  const uploadWithIor = (iorLiteral, uniformName) => callIn(context,
+  const uploadWithIor = (iorLiteral) => callIn(context,
     "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
     "uploadMaterial(gl, uniforms, { color: '#ffffff', ior: " + iorLiteral + " }, null);" +
-    "return gl.floats.get('" + uniformName + "'); })()");
-  const uploadedF0 = (iorLiteral) => uploadWithIor(iorLiteral, "dielectricF0");
+    "return { f0: gl.floats.get('specularF0'), f90: gl.floats.get('specularF90') }; })()");
+  const uploadedF0 = (iorLiteral) => uploadWithIor(iorLiteral).f0;
+  const uploadedF90 = (iorLiteral) => uploadWithIor(iorLiteral).f90;
 
   // The production numeric helper implements the contract end to end.
   const f0 = (expression) => callIn(context, "scenePBRDielectricF0(" + expression + ")");
@@ -514,32 +528,49 @@ test("WebGL PBR shaders upload and consume the authored dielectric F0", () => {
   // uniform call for every contract branch: authored default, glTF zero
   // mode, bounds, above the legacy max=5, and invalid inputs.
   const unit = (actual, expected) => Math.abs(actual - expected) <= 1e-6;
-  assert.ok(unit(uploadedF0("undefined"), defaultF0));
-  assert.ok(unit(uploadedF0("1.5"), defaultF0));
-  assert.strictEqual(uploadedF0("0"), 1);
-  assert.strictEqual(uploadedF0("1"), 0);
-  assert.ok(unit(uploadedF0("1.33"), ((1.33 - 1) / (1.33 + 1)) ** 2));
-  assert.ok(unit(uploadedF0("2.42"), ((2.42 - 1) / (2.42 + 1)) ** 2));
-  assert.ok(unit(uploadedF0("6"), ((6 - 1) / (6 + 1)) ** 2));
-  assert.ok(unit(uploadedF0("42"), ((42 - 1) / (42 + 1)) ** 2));
-  assert.ok(unit(uploadedF0("0.5"), defaultF0));
-  assert.ok(unit(uploadedF0("-1"), defaultF0));
-  assert.ok(unit(uploadedF0("NaN"), defaultF0));
-  assert.ok(unit(uploadedF0('"var(--glass-ior)"'), defaultF0));
-  assert.ok(unit(uploadedF0("1e300"), 1));
+  // The upload is the live vec3 effective F0: every channel must match.
+  const uploadedChannels = (actual, expected) => {
+    assert.ok(Array.isArray(actual) && actual.length === 3, "specularF0 uploaded as a vec3");
+    for (let c = 0; c < 3; c++) {
+      assert.ok(unit(actual[c], expected), "f0[" + c + "] = " + actual[c] + ", want " + expected);
+    }
+  };
+  uploadedChannels(uploadedF0("undefined"), defaultF0);
+  uploadedChannels(uploadedF0("1.5"), defaultF0);
+  uploadedChannels(uploadedF0("0"), 1);
+  uploadedChannels(uploadedF0("1"), 0);
+  uploadedChannels(uploadedF0("1.33"), ((1.33 - 1) / (1.33 + 1)) ** 2);
+  uploadedChannels(uploadedF0("2.42"), ((2.42 - 1) / (2.42 + 1)) ** 2);
+  uploadedChannels(uploadedF0("6"), ((6 - 1) / (6 + 1)) ** 2);
+  uploadedChannels(uploadedF0("42"), ((42 - 1) / (42 + 1)) ** 2);
+  uploadedChannels(uploadedF0("0.5"), defaultF0);
+  uploadedChannels(uploadedF0("-1"), defaultF0);
+  uploadedChannels(uploadedF0("NaN"), defaultF0);
+  uploadedChannels(uploadedF0('"var(--glass-ior)"'), defaultF0);
+  uploadedChannels(uploadedF0("1e300"), 1);
+  // Every branch uploads F90 = 1 (no authored specularIntensity).
+  for (const iorLiteral of ["undefined", "1.5", "0", "1", "1.33", "2.42", "6", "42", "0.5", "-1", "NaN", '"var(--glass-ior)"', "1e300"]) {
+    assert.ok(unit(uploadedF90(iorLiteral), 1), "specularF90 for ior " + iorLiteral);
+  }
   // Neighbouring scalars still ride the same upload call.
-  assert.strictEqual(uploadWithIor("2.42", "roughness"), 0.5);
-  assert.strictEqual(uploadWithIor("2.42", "opacity"), 1);
+  const scalarFor = (iorLiteral, name) => callIn(context,
+    "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
+    "uploadMaterial(gl, uniforms, { color: '#ffffff', ior: " + iorLiteral + " }, null);" +
+    "return gl.floats.get('" + name + "'); })()");
+  assert.strictEqual(scalarFor("2.42", "roughness"), 0.5);
+  assert.strictEqual(scalarFor("2.42", "opacity"), 1);
 });
 
 // --- WebGPU PBR ---------------------------------------------------------------
 
-test("WebGPU material uniform packing carries dielectric F0 without moving existing slots", () => {
+test("WebGPU material uniform packing carries the effective specular factors without moving existing slots", () => {
   const source = readRuntimeSource("webgpu.ts");
 
-  // Dedicated trailing scalar after the scale signs; the struct pads to 176
-  // bytes and the material buffer grows with it. Struct line matching allows
-  // the production aligned whitespace.
+  // The WebGPU struct keeps its legacy trailing dielectricF0 scalar at f40
+  // for layout compatibility, then packs the live effective specular F0 as
+  // an aligned vec3f (floats 44..46) and F90 (float 47), padding the struct
+  // to 208 bytes. Struct line matching allows the production aligned
+  // whitespace.
   const structStart = indexOfMatch(source, /"struct MaterialUniforms \{"/);
   const matrixLine = indexOfMatch(source, /"\s+modelMatrix: mat4x4f,"/);
   const signsLine = indexOfMatch(source, /"\s+modelScaleSigns: vec4f,"/);
@@ -548,22 +579,32 @@ test("WebGPU material uniform packing carries dielectric F0 without moving exist
   assert.ok(structStart >= 0, "MaterialUniforms struct found");
   assert.ok(matrixLine > structStart && signsLine > matrixLine, "model transform slots preserved");
   assert.ok(f0Line > signsLine && f0Line < structClose, "dielectricF0 appended inside the struct");
+  const specF0Line = indexOfMatch(source, /"\s+specularF0: vec3f,"/);
+  const specF90Line = indexOfMatch(source, /"\s+specularF90: f32,"/);
+  assert.ok(specF0Line > f0Line && specF90Line > specF0Line && specF90Line < structClose,
+    "effective specular factors appended after dielectricF0");
+  const specIntensityFlagLine = indexOfMatch(source, /"\s+hasSpecularIntensityMap: u32,"/);
+  assert.ok(specIntensityFlagLine > f0Line && specIntensityFlagLine < specF0Line,
+    "hasSpecularIntensityMap declared after dielectricF0 and before specularF0");
   for (const flag of ["hasAlbedoMap", "hasNormalMap", "hasRoughnessMap", "hasMetalnessMap", "hasEmissiveMap", "receiveShadow", "hasOcclusionMap"]) {
     const flagLine = indexOfMatch(source, new RegExp('"\\s+' + flag + ': u32,"'));
     assert.ok(flagLine > structStart && flagLine < matrixLine, flag + " texture-flag slot preserved");
   }
-  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
-  assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(160\);/);
-  // Fragment shader consumes the packed scalar; the fixed 0.04 default is
-  // gone.
-  assert.match(source, /let F0 = mix\(vec3f\(material\.dielectricF0\), albedo, metalness\);/);
+  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(208\);/);
+  assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
+  // Fragment shader consumes the effective specular factors; the fixed 0.04
+  // default is gone.
+  // Production legitimately declares a mutable var: the color-texture slice
+  // updates the shared specF0 before it is mixed with albedo by metalness.
+  assert.match(source, /var specF0 = material\.specularF0( \* specIntensity)?;/);
+  assert.match(source, /var F0 = mix\(specF0, albedo, metalness\);/);
   assert.doesNotMatch(source, /let F0 = mix\(vec3f\(0\.04\)/);
 
   // Execute the production packing function against the production buffer
   // declarations (whitespace-tolerant) with the real shared numeric/color
   // helpers — no hand copies of the buffer views or the math.
   const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
-  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
+  assert.match(bufferDecls, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(208\);/);
   assert.match(bufferDecls, /var\s+_materialUniformF\s*=/);
   assert.match(bufferDecls, /var\s+_materialUniformU\s*=/);
   const context = createSceneCoreContext();
@@ -574,20 +615,29 @@ test("WebGPU material uniform packing carries dielectric F0 without moving exist
     sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
   ].join("\n"), "webgpu-material-extract.js");
 
-  const f0At = (materialLiteral) => callIn(context,
-    "materialUniformData(" + materialLiteral + ", false, null, null).data[40]");
-  assert.ok(Math.abs(f0At("{}") - expectedDielectricF0(1.5)) <= 1e-6);
-  assert.ok(Math.abs(f0At("{ ior: 1.33 }") - expectedDielectricF0(1.33)) <= 1e-6);
-  assert.ok(Math.abs(f0At("{ ior: 2.42 }") - expectedDielectricF0(2.42)) <= 1e-6);
-  assert.ok(Math.abs(f0At("{ ior: 42 }") - expectedDielectricF0(42)) <= 1e-6);
-  assert.strictEqual(f0At("{ ior: 0 }"), 1);
-  assert.ok(Math.abs(f0At("{ ior: 0.5 }") - expectedDielectricF0(1.5)) <= 1e-6);
-  assert.ok(Math.abs(f0At("{ ior: -1 }") - expectedDielectricF0(1.5)) <= 1e-6);
-  assert.strictEqual(f0At("{ ior: 1e300 }"), 1);
+  // IOR-only materials have white colour and intensity 1, so the effective
+  // F0 equals the IOR F0 in all three channels and F90 is 1.
+  const effectiveF0At = (materialLiteral, expected) => {
+    const packed = callIn(context,
+      "materialUniformData(" + materialLiteral + ", false, null, null)");
+    for (let c = 0; c < 3; c++) {
+      assert.ok(Math.abs(packed.data[44 + c] - expected) <= 1e-6,
+        "specularF0[" + c + "] = " + packed.data[44 + c] + ", want " + expected);
+    }
+    assert.ok(Math.abs(packed.data[47] - 1) <= 1e-6, "specularF90 = " + packed.data[47] + ", want 1");
+  };
+  effectiveF0At("{}", expectedDielectricF0(1.5));
+  effectiveF0At("{ ior: 1.33 }", expectedDielectricF0(1.33));
+  effectiveF0At("{ ior: 2.42 }", expectedDielectricF0(2.42));
+  effectiveF0At("{ ior: 42 }", expectedDielectricF0(42));
+  effectiveF0At("{ ior: 0 }", 1);
+  effectiveF0At("{ ior: 0.5 }", expectedDielectricF0(1.5));
+  effectiveF0At("{ ior: -1 }", expectedDielectricF0(1.5));
+  effectiveF0At("{ ior: 1e300 }", 1);
 
   const packed = callIn(context,
     'materialUniformData({ color: "#ffffff", roughness: 0.25, metalness: 0.5, ior: 2.42 }, true, null, null)');
-  assert.strictEqual(packed.data.length, 44);
+  assert.strictEqual(packed.data.length, 52);
   // PBR scalars keep their slots.
   assert.ok(Math.abs(packed.data[3] - 0.25) <= 1e-6);
   assert.ok(Math.abs(packed.data[4] - 0.5) <= 1e-6);
@@ -610,9 +660,18 @@ test("WebGPU material uniform packing carries dielectric F0 without moving exist
   assert.strictEqual(packed.data[37], 1);
   assert.strictEqual(packed.data[38], 1);
   assert.strictEqual(packed.data[39], 0);
-  // Trailing scalar plus deterministic padding.
+  // Trailing scalar plus deterministic padding, then the effective specular
+  // factors at the vec3f-aligned slots: F0 = min(IOR F0 * white, 1) *
+  // intensity and F90 = intensity 1.
   assert.ok(Math.abs(packed.data[40] - expectedDielectricF0(2.42)) <= 1e-6);
   assert.strictEqual(packed.data[41], 0);
   assert.strictEqual(packed.data[42], 0);
   assert.strictEqual(packed.data[43], 0);
+  assert.ok(Math.abs(packed.data[44] - expectedDielectricF0(2.42)) <= 1e-6);
+  assert.ok(Math.abs(packed.data[45] - expectedDielectricF0(2.42)) <= 1e-6);
+  assert.ok(Math.abs(packed.data[46] - expectedDielectricF0(2.42)) <= 1e-6);
+  assert.ok(Math.abs(packed.data[47] - 1) <= 1e-6);
+  // Specular-color log coefficients at 48..50 and the neutral flag at u32 51.
+  for (let c = 0; c < 3; c++) assert.ok(Number.isFinite(packed.data[48 + c]));
+  assert.strictEqual(packed.u[51], 0);
 });

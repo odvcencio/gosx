@@ -430,7 +430,8 @@ func materialFromObject(o scene.ObjectIR) engine.RenderMaterial {
 	return newMaterial(o.MaterialKind, o.Color, o.Texture, o.Opacity, o.Emissive, o.BlendMode, o.RenderPass,
 		boolValue(o.Wireframe), o.Roughness, o.Metalness, o.Clearcoat, o.Sheen, o.Transmission,
 		o.Iridescence, o.Anisotropy, o.NormalMap, o.RoughnessMap, o.MetalnessMap, o.EmissiveMap,
-		o.CustomVertex, o.CustomFragment, o.CustomVertexWGSL, o.CustomFragmentWGSL, o.CustomUniforms, o.ShaderBackend, o.ShaderLayout, previewIOR(o.IOR))
+		o.CustomVertex, o.CustomFragment, o.CustomVertexWGSL, o.CustomFragmentWGSL, o.CustomUniforms, o.ShaderBackend, o.ShaderLayout, previewIOR(o.IOR),
+		previewSpecularIntensity(o.SpecularIntensity), previewSpecularColor(o.SpecularColor))
 }
 
 func materialFromInstance(m scene.InstancedMeshIR) engine.RenderMaterial {
@@ -438,7 +439,46 @@ func materialFromInstance(m scene.InstancedMeshIR) engine.RenderMaterial {
 		boolValue(m.Wireframe), m.Roughness, m.Metalness, m.Clearcoat, m.Sheen, m.Transmission,
 		m.Iridescence, m.Anisotropy, m.NormalMap, m.RoughnessMap, m.MetalnessMap, m.EmissiveMap,
 		m.CustomVertex, m.CustomFragment, m.CustomVertexWGSL, m.CustomFragmentWGSL,
-		m.CustomUniforms, m.ShaderBackend, m.ShaderLayout, previewIOR(m.IOR))
+		m.CustomUniforms, m.ShaderBackend, m.ShaderLayout, previewIOR(m.IOR),
+		previewSpecularIntensity(m.SpecularIntensity), previewSpecularColor(m.SpecularColor))
+}
+
+// previewSpecularIntensity passes an authored specular intensity through only
+// when the native runtime can honour it verbatim: finite and within [0, 1],
+// with an explicit zero preserved. Anything else is dropped so the renderer
+// falls back to its own default of 1, and the JSON material key stays
+// marshallable and stable. The value is snapshotted into a fresh pointer so
+// later mutation of the IR field cannot retroactively invalidate a material
+// that was already keyed.
+func previewSpecularIntensity(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	f := *v
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > 1 {
+		return nil
+	}
+	return &f
+}
+
+// previewSpecularColor passes an authored linear RGB specular colour through
+// only when every channel is finite and non-negative; zero and HDR values
+// above 1 are honoured. Any invalid channel drops the whole pointer so the
+// renderer falls back to linear white. Like previewSpecularIntensity the
+// array is snapshotted, so later mutation of the IR cannot change a material
+// after its key was minted.
+func previewSpecularColor(c *[3]float64) *[3]float64 {
+	if c == nil {
+		return nil
+	}
+	out := [3]float64{}
+	for i, ch := range c {
+		if math.IsNaN(ch) || math.IsInf(ch, 0) || ch < 0 {
+			return nil
+		}
+		out[i] = ch
+	}
+	return &out
 }
 
 // previewIOR passes an authored IOR through only when the native runtime can
@@ -465,7 +505,8 @@ func previewIOR(ior *float64) *float64 {
 func newMaterial(kind, color, texture string, opacity, emissive *float64, blend, pass string, wire bool,
 	roughness, metalness, clearcoat, sheen, transmission, iridescence, anisotropy float64,
 	normalMap, roughnessMap, metalnessMap, emissiveMap, vertex, fragment, vertexWGSL, fragmentWGSL string,
-	uniforms map[string]any, backend string, layout map[string]any, ior *float64) engine.RenderMaterial {
+	uniforms map[string]any, backend string, layout map[string]any, ior *float64,
+	specularIntensity *float64, specularColor *[3]float64) engine.RenderMaterial {
 	if kind == "" {
 		kind = "standard"
 	}
@@ -489,6 +530,12 @@ func newMaterial(kind, color, texture string, opacity, emissive *float64, blend,
 		CustomUniforms: uniforms, ShaderBackend: backend, ShaderLayout: layout}
 	if ior != nil {
 		m.IOR = ior
+	}
+	if specularIntensity != nil {
+		m.SpecularIntensity = specularIntensity
+	}
+	if specularColor != nil {
+		m.SpecularColor = specularColor
 	}
 	keyBytes, _ := json.Marshal(m)
 	m.Key = string(keyBytes)

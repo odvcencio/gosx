@@ -697,7 +697,7 @@ test("the fragment shader carries a branch for every light type it declares", ()
   assert.match(body, /lightType == 3u/, "spot");
   assert.match(body, /spotConeAttenuation\(L, light\.direction\.xyz, light\.params\.w, light\.groundPenumbra\.a\)/);
   assert.match(body, /mix\(light\.groundPenumbra\.rgb, lightColor, hBlend\)/);
-  assert.match(body, /rectAreaLightRadiance\(light, in\.worldPos, N, V, albedo, roughness, metalness, F0, NoV\)/);
+  assert.match(body, /rectAreaLightRadiance\(light, in\.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV\)/);
 });
 
 test("the WGSL spot cone reproduces the WebGL2 cone, term for term", () => {

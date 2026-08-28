@@ -64,6 +64,7 @@ struct Material {
   textureParams2: vec4<f32>, // x=hasEmissiveMap
   physicalParams : vec4<f32>, // x=clearcoat, y=sheen, z=transmission, w=iridescence
   physicalParams2: vec4<f32>, // x=anisotropy, y=dielectricF0
+  specularParams : vec4<f32>, // xyz = effective dielectric F0, w = F90
 };
 
 @group(0) @binding(0) var<uniform> scene             : Scene;
@@ -175,9 +176,9 @@ fn geometrySmith(NdotV : f32, NdotL : f32, roughness : f32) -> f32 {
   return 0.5 / max(ggxV + ggxL, 1e-5);
 }
 
-fn fresnelSchlick(F0 : vec3<f32>, VdotH : f32) -> vec3<f32> {
+fn fresnelSchlick(F0 : vec3<f32>, F90 : f32, VdotH : f32) -> vec3<f32> {
   let k = pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
-  return F0 + (vec3<f32>(1.0) - F0) * k;
+  return F0 + (vec3<f32>(F90) - F0) * k;
 }
 
 // Point light distance falloff. A light with a range uses the windowed inverse
@@ -272,17 +273,35 @@ fn fs_main(in : VSOut) -> FSOut {
   let anisotropy = clamp(material.physicalParams2.x, -1.0, 1.0);
   roughness = clamp(roughness * (1.0 - abs(anisotropy) * 0.28), 0.04, 1.0);
 
-  // F0: the authored dielectric reflectance carried in physicalParams2.y
-  // (default 0.04), baseColor for metals, linearly interpolated.
-  let F0 = mix(vec3<f32>(material.physicalParams2.y), baseColor, metalness);
+  // Specular: the prepared material carries the effective dielectric F0 in
+  // linear light in specularParams.xyz (min(IOR F0 * colour, 1) * intensity)
+  // and its grazing reflectance F90 in specularParams.w (= the intensity).
+  // Byte 100 still carries the legacy IOR F0 for readers without the vec4;
+  // this shader reads the prepared one.
+  let specF0 = material.specularParams.xyz;
+  let specF90 = material.specularParams.w;
+
+  // F0: the dielectric F0, the base colour for metals. A fully metallic
+  // surface takes the base colour exactly, so no dielectric lane can leak in
+  // through a rounding of the lerp.
+  var F0 = mix(material.specularParams.xyz, baseColor, metalness);
+  var F90 = mix(material.specularParams.w, 1.0, metalness);
+  if (metalness >= 1.0) {
+    F0 = baseColor;
+    F90 = 1.0;
+  }
 
   // Fresnel at the primary light. The image-based terms below reuse it, so a
   // cubemap keeps the exact response it had before the light array arrived.
-  let F = fresnelSchlick(F0, VdotH);
+  let F = fresnelSchlick(F0, F90, VdotH);
 
-  // Energy-conserving diffuse (kD = (1 - F) * (1 - metalness)).
-  let kS = F;
-  let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
+  // Energy-conserving diffuse. The weight is a scalar built from the
+  // dielectric Fresnel alone: (1 - maxRGB(Fdiel)) * (1 - metalness). The
+  // earlier componentwise mixed form tinted the diffuse by the metallic
+  // Fresnel, double-counting the base colour. The browser copy still uses
+  // that form; see the divergence ledger.
+  let Fdiel = fresnelSchlick(specF0, specF90, VdotH);
+  let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);
 
   // Direct light: one Cook-Torrance lobe per scene light.
   //
@@ -351,12 +370,13 @@ fn fs_main(in : VSOut) -> FSOut {
 
     let D = distributionGGX(NdotH, roughness);
     let G = geometrySmith(NdotV, NdotL, roughness);
-    let F = fresnelSchlick(F0, VdotH);
+    let F = fresnelSchlick(F0, F90, VdotH);
+
+    let FdielL = fresnelSchlick(specF0, specF90, VdotH);
+    let kD = (1.0 - max(FdielL.x, max(FdielL.y, FdielL.z))) * (1.0 - metalness);
 
     let specular = D * G * F;
 
-    let kS = F;
-    let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
     let diffuse = kD * baseColor / 3.141592653589793;
 
     let radiance = lightColor * intensity * attenuation;

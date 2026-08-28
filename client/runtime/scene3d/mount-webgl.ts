@@ -737,7 +737,7 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "color", "texture", "opacity", "emissive", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -746,11 +746,29 @@ function gosxConfigureSceneScript(script, role, src) {
     return null;
   }
 
+  // The specular tint is a freshly authored RGB array on the override bag;
+  // snapshot it per target so later mutation of the override RGB (or of one
+  // copied target) can never alias through to the other copy.
+  function sceneSnapshotSpecularOverrideColor(value) {
+    if (Array.isArray(value)) return value.slice();
+    if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+      return new value.constructor(value);
+    }
+    return value;
+  }
+
   function sceneAssignMaterialOverride(next, material, sourceKey, targetKey, override) {
     if (!override || !Object.prototype.hasOwnProperty.call(override, sourceKey)) {
       return;
     }
     const key = targetKey || sourceKey;
+    if (sourceKey === "specularColor") {
+      next[key] = sceneSnapshotSpecularOverrideColor(override[sourceKey]);
+      if (material) {
+        material[key] = sceneSnapshotSpecularOverrideColor(override[sourceKey]);
+      }
+      return;
+    }
     next[key] = override[sourceKey];
     if (material) {
       material[key] = override[sourceKey];
@@ -789,6 +807,8 @@ function gosxConfigureSceneScript(script, role, src) {
     sceneAssignMaterialOverride(next, material, "roughness", "roughness", override);
     sceneAssignMaterialOverride(next, material, "metalness", "metalness", override);
     sceneAssignMaterialOverride(next, material, "ior", "ior", override);
+    sceneAssignMaterialOverride(next, material, "specularIntensity", "specularIntensity", override);
+    sceneAssignMaterialOverride(next, material, "specularColor", "specularColor", override);
     sceneAssignMaterialOverride(next, material, "clearcoat", "clearcoat", override);
     sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
     sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
