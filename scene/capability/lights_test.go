@@ -18,6 +18,7 @@ import (
 const (
 	webgpuRendererPath = "../../client/runtime/scene3d/webgpu.ts"
 	webglRendererPath  = "../../client/runtime/scene3d/webgl.ts"
+	sharedPbrPath      = "../../client/js/bootstrap-src/16c-scene-shared-pbr.ts"
 	sceneGraphPath     = "../scene.go"
 )
 
@@ -299,49 +300,40 @@ func TestRectAreaSpecularUnimplementedEverywhere(t *testing.T) {
 	}
 }
 
-// TestLightProbeSHUnimplementedEverywhere corroborates the false cells. Neither
-// renderer reads LightIR.Coefficients. Both fold a probe into the ambient term,
-// which is defensible and equal across backends, but it is not an SH
-// evaluation.
-func TestLightProbeSHUnimplementedEverywhere(t *testing.T) {
-	for backend, path := range map[Backend]string{
-		BackendWebGPU: webgpuRendererPath,
-		BackendWebGL:  webglRendererPath,
-	} {
-		if Matrix[FeatureLightProbeSH][backend] {
-			t.Errorf("Matrix[light-probe-sh][%s] is true; add the SH evaluation evidence to this test", backend)
-			continue
-		}
-		source := readRenderer(t, path)
-		// Reading the coefficients to COUNT them is fine; the WebGPU renderer
-		// does that to warn the author. Shading with them would need a
-		// spherical-harmonic basis, so look for that instead.
-		for _, symbol := range []string{"shBasis", "sphericalHarmonic", "shCoefficients"} {
-			if strings.Contains(source, symbol) {
-				t.Errorf("%s references %q; SH probe shading may exist now, so re-check Matrix[light-probe-sh][%s]",
-					path, symbol, backend)
-			}
-		}
-	}
-	// Both backends must fold a probe into ambient, never into point. Point
-	// invents a distance falloff a positionless probe cannot have.
-	webgpu := readRenderer(t, webgpuRendererPath)
-	if !strings.Contains(webgpu, `case "light-probe": return 0;`) {
-		t.Errorf("the WebGPU probe must shade as ambient (code 0); see sceneWebGPULightTypeCode in %s",
-			webgpuRendererPath)
-	}
-	webgl := readRenderer(t, webglRendererPath)
-	anchor := strings.Index(webgl, `} else if (kind === "light-probe") {`)
-	if anchor < 0 {
-		t.Fatalf("the WebGL light-probe branch moved; re-check the probe fold")
-	}
-	if !strings.Contains(webgl[anchor:anchor+120], "lightType = 0;") {
-		t.Error("the WebGL probe no longer folds into ambient; the two backends have diverged")
-	}
-	if !strings.Contains(webgpu, `code: "light-probe-sh"`) {
-		t.Errorf("the renderer must report the ignored coefficients to the author; "+
-			"see sceneWebGPULightIssues in %s", webgpuRendererPath)
-	}
+// TestLightProbeSHBidirectionalEvidence ties the true GPU cells to the
+// shipped renderers, in whichever direction. The named symbols are the
+// load-bearing parts of the SH path: the shared structural validation and
+// double-precision aggregation, each renderer's nine-coefficient upload, and
+// the per-fragment second-order evaluation against the shading normal.
+// Coefficientless and malformed probes keep the legacy ambient fallback.
+func TestLightProbeSHBidirectionalEvidence(t *testing.T) {
+	sharedPbr := readRenderer(t, sharedPbrPath)
+	evidenceFor(t, FeatureLightProbeSH, BackendWebGPU).
+		needs(sharedPbrPath, sharedPbr,
+			"function scenePBRProbeCoefficientsValid(",
+			"function scenePBRProbeAggregate(",
+		).
+		needs(webgpuRendererPath, readRenderer(t, webgpuRendererPath),
+			"hasProbeSH: u32,",
+			"probeSH: array<vec4f, 9>",
+			"scenePBRProbeAggregate(lightArray, count, _sceneWebGPUProbeAgg)",
+			"device.queue.writeBuffer(envUniformBuffer, 68, _envUniformF, 17, 39)",
+			"if (env.hasProbeSH != 0u) {",
+			"ps0 * 0.886227",
+			"ps8 * (0.429043 * (N.x * N.x - N.y * N.y))",
+		).
+		assertAgrees("a WebGPU probe needs the shared valid9 aggregate, the nine-coefficient " +
+			"EnvUniforms tail upload, and the per-fragment SH irradiance evaluation")
+
+	evidenceFor(t, FeatureLightProbeSH, BackendWebGL).
+		needs(webglRendererPath, readRenderer(t, webglRendererPath),
+			"uniform vec3 u_probeSH[9];",
+			"uniform bool u_hasProbeSH;",
+			"probeIrr = max(u_probeSH[0] * 0.886227",
+			"+ u_probeSH[8] * (0.429043 * (N.x * N.x - N.y * N.y))",
+		).
+		assertAgrees("a WebGL2 probe needs the u_probeSH uniform array and the per-fragment " +
+			"SH irradiance evaluation in the fragment shader")
 }
 
 // TestLightFeaturesNeverExcludeWebGPU pins the gate's shape. Every feature in
@@ -374,13 +366,14 @@ func TestLightFeaturesNeverExcludeWebGPU(t *testing.T) {
 			t.Errorf("no light feature may exclude a backend; got %+v", reason)
 		}
 	}
-	// WebGPU degrades on the two gaps it shares with WebGL, and on nothing
-	// else. WebGL degrades on all three, because it has no rect-area shape.
-	if got := len(caps.Degraded[BackendWebGPU]); got != 2 {
-		t.Errorf("WebGPU must degrade on exactly the two shared gaps; got %v", caps.Degraded[BackendWebGPU])
+	// WebGPU degrades only on rect-area-specular: light-probe SH now
+	// evaluates on both GPU backends. WebGL degrades on rect-area-light and
+	// rect-area-specular, because it has no rect-area shape.
+	if got := len(caps.Degraded[BackendWebGPU]); got != 1 {
+		t.Errorf("WebGPU must degrade on exactly rect-area-specular; got %v", caps.Degraded[BackendWebGPU])
 	}
-	if got := len(caps.Degraded[BackendWebGL]); got != 3 {
-		t.Errorf("WebGL must degrade on all three light features; got %v", caps.Degraded[BackendWebGL])
+	if got := len(caps.Degraded[BackendWebGL]); got != 2 {
+		t.Errorf("WebGL must degrade on exactly the two rect-area features; got %v", caps.Degraded[BackendWebGL])
 	}
 }
 

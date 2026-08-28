@@ -68,8 +68,10 @@
   // WebGL2 renderer (0=ambient, 1=directional, 2=point, 3=spot,
   // 4=hemisphere), so both backends read the same numbers. Code 5 is
   // rect-area, which only this renderer shades as a rectangle. A LightProbe
-  // arrives as code 0, because a probe is a first-order ambient term with no
-  // position and no distance falloff.
+  // arrives as code 0 — a flat ambient term with no position and no
+  // distance falloff — unless it carries nine structurally valid SH
+  // coefficients, in which case it arrives as code 6 and its diffuse comes
+  // from the aggregated env.probeSH tail instead of this record.
   //
   // Keep this layout in step with sceneWebGPUPackLights and with
   // SCENE_WEBGPU_LIGHT_FLOATS. The struct is 7 * vec4f = 112 bytes.
@@ -116,9 +118,16 @@
     "    hasIBL: u32,",
     "    radianceMipLevels: u32,",
     "    hasEnvMap: u32,",
-    "    _pad1: u32,",
+    "    // Word 17: aggregated-probe flag. uploadLights owns bytes 68..223",
+    "    // of this buffer; uploadEnvUniforms owns bytes 0..67.",
+    "    hasProbeSH: u32,",
     "    _pad2: u32,",
     "    _pad3: u32,",
+    "    // Aggregated second-order SH light-probe coefficients: nine vec4f",
+    "    // whose xyz are linear-RGB radiance coefficients in basis order",
+    "    // 0..8 (probe intensity already multiplied in CPU-side) and whose",
+    "    // w is unused. All zeros when no valid probe exists.",
+    "    probeSH: array<vec4f, 9>,",
     "};",
     "",
     "struct ShadowUniforms {",
@@ -1938,10 +1947,18 @@
     "        let range = light.color.a;",
     "        let decay = light.params.x;",
     "",
-    // Ambient light (type 0): flat contribution, no BRDF. A light probe
-    // arrives here too; see sceneWebGPULightTypeCode.
+    // Ambient light (type 0): flat contribution, no BRDF. Legacy and
+    // malformed light probes arrive here; probes with valid SH coefficients
+    // take code 6 below. See sceneWebGPUPackLights.
     "        if (lightType == 0u) {",
     "            Lo = Lo + albedo * lightColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
+    "    // Light probe with valid SH (code 6): its diffuse is the aggregated",
+    "    // env.probeSH irradiance in the ambient section below, so this",
+    "    // per-light loop must not double-count it.",
+    "        if (lightType == 6u) {",
     "            continue;",
     "        }",
     "",
@@ -2045,6 +2062,27 @@
     "                       + env.skyColor * env.skyIntensity * hemi",
     "                       + env.groundColor * env.groundIntensity * (1.0 - hemi);",
     "        ambient = envDiffuse * albedo;",
+    "    }",
+    "    // Aggregated second-order SH light probes: irradiance against the",
+    "    // world-space shading normal, clamped nonnegative only after every",
+    "    // valid probe was summed. Lambert diffuse (albedo*(1-metalness)/PI);",
+    "    // the AO multiply below treats the result as indirect light.",
+    "    if (env.hasProbeSH != 0u) {",
+    "        let ps0 = env.probeSH[0].xyz;",
+    "        let ps1 = env.probeSH[1].xyz;",
+    "        let ps2 = env.probeSH[2].xyz;",
+    "        let ps3 = env.probeSH[3].xyz;",
+    "        let ps4 = env.probeSH[4].xyz;",
+    "        let ps5 = env.probeSH[5].xyz;",
+    "        let ps6 = env.probeSH[6].xyz;",
+    "        let ps7 = env.probeSH[7].xyz;",
+    "        let ps8 = env.probeSH[8].xyz;",
+    "        let probeIrr = max(ps0 * 0.886227",
+    "            + (ps1 * N.y + ps2 * N.z + ps3 * N.x) * 1.023328",
+    "            + (ps4 * (N.x * N.y) + ps5 * (N.y * N.z) + ps7 * (N.x * N.z)) * 0.858086",
+    "            + ps6 * (0.743125 * N.z * N.z - 0.247708)",
+    "            + ps8 * (0.429043 * (N.x * N.x - N.y * N.y)), vec3f(0.0));",
+    "        ambient = ambient + albedo * (1.0 - metalness) / PI * probeIrr;",
     "    }",
     "    ambient = ambient * ambientOcclusion;",
     "",
@@ -5786,7 +5824,10 @@
   // directly and folds LightProbe into the ambient term:
   //
   //   ambient      -> code 0, flat term
-  //   light-probe  -> code 0, flat term (coefficients ignored)
+  //   light-probe  -> code 0 flat term for legacy (coefficientless) and
+  //                   malformed probes; code 6 when the probe carries nine
+  //                   structurally valid SH coefficients — those shade
+  //                   through the aggregated env.probeSH tail instead
   //   directional  -> code 1, plus the two shadow slots
   //   point        -> code 2, distance falloff
   //   spot         -> code 3, cone falloff times distance falloff
@@ -5794,8 +5835,11 @@
   //   rect-area    -> code 5, polygon form factor plus representative-point
   //                   specular
   //
-  // Codes 0..4 are the same numbers the WebGL2 renderer writes, so a scene
-  // reads the same type on both GPU backends.
+  // Codes 0..4 match the WebGL2 renderer. Rect-area diverges by design: GL
+  // packs it as a point light (code 2), this renderer shades the rectangle
+  // (code 5). Code 6 marks a valid-SH probe on both backends. The legacy
+  // (coefficientless) probe is a flat Color/Intensity ambient term, not a
+  // first-order SH evaluation.
 
   // One Light is 7 * vec4f. Keep in step with the WGSL struct.
   var SCENE_WEBGPU_LIGHT_FLOATS = 28;
@@ -5824,8 +5868,10 @@
   // light-probe maps to ambient, not point. A LightProbe carries no position,
   // so a point light would invent a falloff the author never asked for. The
   // WebGL2 renderer makes the same choice, which keeps the two backends equal.
-  // Neither renderer reads LightProbe.Coefficients; see the light-probe-sh
-  // cell in scene/capability/capability.go.
+  // Probes with nine structurally valid SH coefficients are overridden to
+  // code 6 by sceneWebGPUPackLights; their diffuse comes from the
+  // aggregated EnvUniforms.probeSH tail. Legacy and malformed probes stay
+  // on this code-0 ambient path.
   function sceneWebGPULightTypeCode(kind) {
     switch (kind) {
       case "ambient": return 0;
@@ -5923,6 +5969,8 @@
       rectArea: 0,
       lightProbe: 0,
       lightProbeWithCoefficients: 0,
+      lightProbeValidSH: 0,
+      lightProbeMalformedSH: 0,
     };
     var list = Array.isArray(lightArray) ? lightArray : [];
     var limit = Math.max(0, Math.min(Math.floor(Number(count) || 0), list.length));
@@ -5930,6 +5978,14 @@
       var light = list[i] || {};
       var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
       var typeCode = sceneWebGPULightTypeCode(kind);
+      // A probe with structurally valid SH coefficients shades through the
+      // aggregated EnvUniforms tail, so it takes code 6 (no per-light
+      // contribution). Legacy and malformed probes keep the Color/Intensity
+      // ambient of code 0.
+      if (kind === "light-probe" && Array.isArray(light.coefficients) && light.coefficients.length > 0
+          && scenePBRProbeCoefficientsValid(light.coefficients)) {
+        typeCode = 6;
+      }
       var base = i * SCENE_WEBGPU_LIGHT_FLOATS;
 
       // position.xyz + type code
@@ -5999,6 +6055,11 @@
         census.lightProbe += 1;
         if (Array.isArray(light.coefficients) && light.coefficients.length > 0) {
           census.lightProbeWithCoefficients += 1;
+          if (scenePBRProbeCoefficientsValid(light.coefficients)) {
+            census.lightProbeValidSH += 1;
+          } else {
+            census.lightProbeMalformedSH += 1;
+          }
         }
       }
     }
@@ -6047,10 +6108,10 @@
         message: census.rectArea + " rect-area light(s): diffuse is exact, specular is a representative-point approximation (no LTC tables).",
       });
     }
-    if (census && census.lightProbeWithCoefficients > 0) {
+    if (census && census.lightProbeMalformedSH > 0) {
       issues.push({
-        code: "light-probe-sh",
-        message: census.lightProbeWithCoefficients + " light probe(s): spherical-harmonic coefficients are ignored, the probe shades as ambient.",
+        code: "light-probe-sh-malformed",
+        message: census.lightProbeMalformedSH + " light probe(s) have malformed SH coefficients (need exactly 9 Vector3 entries with finite components); shading them as Color/Intensity ambient.",
       });
     }
     return issues;
@@ -6064,6 +6125,10 @@
     window.__gosx_scene3d_api.sceneWebGPURectAreaBasis = sceneWebGPURectAreaBasis;
     window.__gosx_scene3d_api.sceneWebGPULightCapacityFor = sceneWebGPULightCapacityFor;
     window.__gosx_scene3d_api.sceneWebGPULightIssues = sceneWebGPULightIssues;
+    // Note: scenePBRProbeCoefficientsValid / scenePBRProbeAggregate are NOT
+    // published here — they are defined in 16c-scene-shared-pbr.js and this
+    // IIFE cannot resolve them lexically. The base chunk publishes them on
+    // __gosx_scene3d_api (see 10-runtime-scene-core.js).
     window.__gosx_scene3d_api.SCENE_WEBGPU_LIGHT_FLOATS = SCENE_WEBGPU_LIGHT_FLOATS;
     window.__gosx_scene3d_api.SCENE_WEBGPU_LIGHT_BYTES = SCENE_WEBGPU_LIGHT_BYTES;
     window.__gosx_scene3d_api.SCENE_WEBGPU_LIGHT_CAPACITY_MAX = SCENE_WEBGPU_LIGHT_CAPACITY_MAX;
@@ -7365,9 +7430,14 @@
     var _shadowUniformU   = new Uint32Array(_shadowUniformBuf);
     var _shadowUniformI   = new Int32Array(_shadowUniformBuf);
 
-    var _envUniformBuf = new ArrayBuffer(80);
+    // EnvUniforms staging: words 0..16 are the environment state that
+    // uploadEnvUniforms writes; words 17..55 are the aggregated SH probe
+    // tail (flag word, two pads, nine vec4f) that uploadLights writes. The
+    // GPU buffer is 224 bytes; the two uploads cover disjoint ranges.
+    var _envUniformBuf = new ArrayBuffer(224);
     var _envUniformF = new Float32Array(_envUniformBuf);
     var _envUniformU = new Uint32Array(_envUniformBuf);
+    var _sceneWebGPUProbeAgg = new Float32Array(27);
 
     var _lightCountBuf  = new Uint32Array(1);
     var _lightCapacity  = SCENE_WEBGPU_LIGHT_CAPACITY_MIN;
@@ -7933,7 +8003,9 @@
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        envUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        // EnvUniforms: 80 bytes of environment state plus the 144-byte
+        // aggregated SH probe tail = 224.
+        envUniformBuffer = device.createBuffer({ size: 224, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowFrameBufferStride = Math.max(
           256,
@@ -14138,6 +14210,23 @@
       var census = sceneWebGPUPackLights(lightArray, count, _lightDataF, _lightColorCache);
       reportLightIssuesOnce(sceneWebGPULightIssues(census, lightArray.length, _lightCapacity));
 
+      // Aggregate the SH probes of the accepted prefix into the EnvUniforms
+      // tail (bytes 68..223: flag word, two pads, nine vec4f) and upload it.
+      // Runs even when count is 0, so clearing or removing the last probe
+      // clears the aggregate the shader sees too.
+      var probeCensus = scenePBRProbeAggregate(lightArray, count, _sceneWebGPUProbeAgg);
+      _envUniformU[17] = probeCensus.valid ? 1 : 0;
+      _envUniformU[18] = 0;
+      _envUniformU[19] = 0;
+      for (var probeI = 0; probeI < 9; probeI++) {
+        var probeWord = 20 + probeI * 4;
+        _envUniformF[probeWord] = _sceneWebGPUProbeAgg[probeI * 3];
+        _envUniformF[probeWord + 1] = _sceneWebGPUProbeAgg[probeI * 3 + 1];
+        _envUniformF[probeWord + 2] = _sceneWebGPUProbeAgg[probeI * 3 + 2];
+        _envUniformF[probeWord + 3] = 0;
+      }
+      device.queue.writeBuffer(envUniformBuffer, 68, _envUniformF, 17, 39);
+
       if (count > 0) {
         // Write only the used prefix. The shader stops at lightCount, so stale
         // floats past that point never reach a fragment.
@@ -14295,8 +14384,11 @@
       var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
       var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
 
-      // EnvUniforms: three vec3+scalar pairs, one IBL control vec4, and one
-      // envMap control vec4 (only word 0 used today) = 80 bytes.
+      // EnvUniforms words 0..16: three vec3+scalar pairs, one IBL control
+      // vec4, and one envMap control vec4. Words 17..55 are the aggregated
+      // SH probe tail owned by uploadLights; this upload covers exactly the
+      // first 68 bytes so the two never overwrite each other regardless of
+      // the order they run in.
       var data = _envUniformF;
       var words = _envUniformU;
       data[0] = ambientColorRGBA[0]; data[1] = ambientColorRGBA[1]; data[2] = ambientColorRGBA[2];
@@ -14310,8 +14402,7 @@
       words[14] = ibl.active ? 1 : 0;
       words[15] = ibl.active ? Math.max(1, ibl.diagnostics.radianceMipLevels | 0) : 0;
       words[16] = envMap.active ? 1 : 0;
-      words[17] = 0; words[18] = 0; words[19] = 0;
-      device.queue.writeBuffer(envUniformBuffer, 0, data);
+      device.queue.writeBuffer(envUniformBuffer, 0, data, 0, 17);
     }
 
     // WebGPU depth range is [0, 1] rather than GL's [-1, 1]. The shared

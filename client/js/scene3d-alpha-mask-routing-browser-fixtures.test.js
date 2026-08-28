@@ -355,3 +355,122 @@ test('READ snapshot exposes routing state without raw GPU handles', () => {
   assert.deepEqual(Object.keys(s.wgpu.wgdraws).sort(),
     ['lastBlend', 'lastDepthWrite', 'observed']);
 });
+
+test('scripted PRELOAD: WebGPU env writeBuffer snapshot (68/80, offsets, SH tail, forwarding)', () => {
+  const window = {};
+  function GPUBuffer() {}
+  function GPUTextureView() {}
+  function GPUSampler() {}
+  function GPUQueue() {}
+  function GPUDevice() {}
+  const nativeWriteCalls = [];
+  const nativeResult = { marker: true };
+  GPUQueue.prototype.writeBuffer = function () {
+    nativeWriteCalls.push({ thisArg: this, args: Array.from(arguments) });
+    return nativeResult;
+  };
+  GPUDevice.prototype.createBindGroup = function () { return { native: true }; };
+  function GPURenderPassEncoder() {}
+  GPURenderPassEncoder.prototype.setBindGroup = function () {};
+  function GPURenderBundleEncoder() {}
+  GPURenderBundleEncoder.prototype.setBindGroup = function () {};
+  const sbx = vm.createContext({
+    window, console, GPUQueue, GPUDevice, GPUBuffer, GPUTextureView, GPUSampler,
+    GPURenderPassEncoder, GPURenderBundleEncoder,
+  });
+  vm.runInContext(PRELOAD, sbx, { filename: 'preload.js' });
+  const W = window.__gosxWGPU;
+  assert.ok(W, 'preload installed __gosxWGPU');
+  assert.equal(typeof window.__gosxWGPUReadEnvWords, 'function');
+  const readEnv = () => JSON.parse(JSON.stringify(window.__gosxWGPUReadEnvWords()));
+
+  // Real binding-3 environment buffer, bound through a production-shaped
+  // 15-entry frame bind group and setBindGroup(0, group).
+  const envBuffer = new GPUBuffer();
+  const otherBuffer = new GPUBuffer();
+  const views = [new GPUTextureView(), new GPUTextureView(), new GPUTextureView()];
+  const sampler = new GPUSampler();
+  const entries = [];
+  for (let i = 0; i < 15; i += 1) {
+    if (i === 3) entries.push({ binding: i, resource: { buffer: envBuffer } });
+    else if (i >= 9 && i <= 11) entries.push({ binding: i, resource: views[i - 9] });
+    else if (i === 12) entries.push({ binding: i, resource: sampler });
+    else entries.push({ binding: i, resource: { buffer: new GPUBuffer() } });
+  }
+  const device = new GPUDevice();
+  const queue = new GPUQueue();
+  const group = device.createBindGroup({ entries });
+  new GPURenderPassEncoder().setBindGroup(0, group);
+  assert.equal(readEnv(), null, 'no env words before any write');
+
+  // Current production shape: exact 68-byte prefix (words 0..16) at
+  // bufferOffset 0.
+  const f = new Float32Array(17);
+  const u = new Uint32Array(f.buffer);
+  u[14] = 1; u[15] = 6; u[16] = 1;
+  assert.equal(queue.writeBuffer(envBuffer, 0, f), nativeResult,
+    'exact result forwarded through the wrapper');
+  assert.deepEqual(readEnv(), { hasIBL: 1, mips: 6, hasEnvMap: 1 });
+
+  // Legacy shape: full 80-byte prefix at bufferOffset 0.
+  const f20 = new Float32Array(20);
+  const u20 = new Uint32Array(f20.buffer);
+  u20[14] = 0; u20[15] = 0; u20[16] = 1;
+  queue.writeBuffer(envBuffer, 0, f20);
+  assert.deepEqual(readEnv(), { hasIBL: 0, mips: 0, hasEnvMap: 1 });
+
+  // Nonzero dataOffset/size: elements 4..20 of a larger source, still a
+  // 68-byte prefix at bufferOffset 0.
+  const big = new Float32Array(64);
+  const bigU = new Uint32Array(big.buffer);
+  bigU[4 + 14] = 1; bigU[4 + 15] = 3; bigU[4 + 16] = 0;
+  queue.writeBuffer(envBuffer, 0, big, 4, 17);
+  assert.deepEqual(readEnv(), { hasIBL: 1, mips: 3, hasEnvMap: 0 });
+
+  // Nonzero view byteOffset (subarray) honors base+byteOff bounds.
+  bigU[8 + 14] = 0; bigU[8 + 15] = 5; bigU[8 + 16] = 1;
+  const sub = big.subarray(8, 25);
+  queue.writeBuffer(envBuffer, 0, sub);
+  assert.deepEqual(readEnv(), { hasIBL: 0, mips: 5, hasEnvMap: 1 });
+
+  // Truncated write (64 bytes at offset 0) is never snapshotted.
+  const short = new Float32Array(16);
+  new Uint32Array(short.buffer)[14] = 7;
+  queue.writeBuffer(envBuffer, 0, short);
+  assert.deepEqual(readEnv(), { hasIBL: 0, mips: 5, hasEnvMap: 1 });
+
+  // SH tail (uploadLights writes bufferOffset 68, 39 elements) never
+  // overrides the env words, even with a 68-byte payload at offset 68.
+  const tail = new Float32Array(39);
+  new Uint32Array(tail.buffer)[0] = 1;
+  queue.writeBuffer(envBuffer, 68, tail, 0, 39);
+  queue.writeBuffer(envBuffer, 68, f);
+  assert.deepEqual(readEnv(), { hasIBL: 0, mips: 5, hasEnvMap: 1 });
+
+  // Unrelated buffers never affect the bound env buffer.
+  queue.writeBuffer(otherBuffer, 0, f);
+  assert.deepEqual(readEnv(), { hasIBL: 0, mips: 5, hasEnvMap: 1 });
+
+  // Subsequent real env update is visible on the bound buffer.
+  u[14] = 1; u[15] = 2; u[16] = 0;
+  queue.writeBuffer(envBuffer, 0, f);
+  assert.deepEqual(readEnv(), { hasIBL: 1, mips: 2, hasEnvMap: 0 });
+
+  // Exact native arguments and this forwarding; only the 9 real writes ran.
+  assert.equal(nativeWriteCalls.length, 9);
+  assert.ok(nativeWriteCalls.every((c) => c.thisArg === queue));
+  const a = nativeWriteCalls;
+  assert.ok(a[0].args.length === 3 && a[0].args[0] === envBuffer &&
+    a[0].args[1] === 0 && a[0].args[2] === f);
+  assert.ok(a[2].args.length === 5 && a[2].args[0] === envBuffer &&
+    a[2].args[1] === 0 && a[2].args[2] === big &&
+    a[2].args[3] === 4 && a[2].args[4] === 17);
+  assert.ok(a[5].args.length === 5 && a[5].args[1] === 68 &&
+    a[5].args[3] === 0 && a[5].args[4] === 39);
+  assert.ok(a[6].args.length === 3 && a[6].args[1] === 68 && a[6].args[2] === f);
+  assert.ok(a[7].args.length === 3 && a[7].args[0] === otherBuffer);
+  assert.ok(a[8].args.length === 3 && a[8].args[0] === envBuffer && a[8].args[2] === f);
+  assert.equal(W.dumps.length, 0);
+  assert.equal(W.materialUploads, 0);
+  assert.equal(W.obsErrors.length, 0);
+});

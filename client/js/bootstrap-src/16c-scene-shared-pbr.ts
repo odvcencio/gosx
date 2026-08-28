@@ -951,7 +951,152 @@
     h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSize, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowCascades, 0));
     h = scenePBRLightsHashNumber(h, sceneNumber(l.shadowSoftness, 0));
+    // SH light-probe coefficients: hash the nine RGB triples so a live
+    // coefficient edit invalidates the frame hash even when every scalar
+    // field is unchanged. Nonempty malformed sets hash by length plus a
+    // marker instead, so repairing them still refreshes too. Absent
+    // components (Go's omitempty drops zero Vector3 channels) hash as zero
+    // via scenePBRLightsHashNumber, identical to explicit zeros.
+    var probeCoefs = Array.isArray(l.coefficients) ? l.coefficients : null;
+    if (probeCoefs !== null && probeCoefs.length > 0) {
+      h = scenePBRLightsHashNumber(h, probeCoefs.length);
+      if (scenePBRProbeCoefficientsValid(probeCoefs)) {
+        for (var probeI = 0; probeI < 9; probeI++) {
+          h = scenePBRLightsHashNumber(h, probeCoefs[probeI].x);
+          h = scenePBRLightsHashNumber(h, probeCoefs[probeI].y);
+          h = scenePBRLightsHashNumber(h, probeCoefs[probeI].z);
+        }
+      } else {
+        h = scenePBRLightsHashString(h, "sh-malformed");
+      }
+    }
     return h;
+  }
+
+  // -- Second-order spherical-harmonic light probes --
+  //
+  // LightProbe.Coefficients are nine linear-RGB SH radiance coefficients
+  // (one Vector3 each, basis order 0..8). Every structurally valid probe in
+  // a frame aggregates into ONE coefficient set — probe intensity is
+  // multiplied in exactly once here — which both renderers upload as a
+  // fixed 9-entry tail and evaluate per fragment against the world-space
+  // shading normal. Probes that are not structurally valid never reach the
+  // GPU as SH: they fall back to the Color/Intensity ambient of an ordinary
+  // flat light, so malformed data can neither upload NaN/Infinity nor
+  // contaminate the valid aggregate. Coefficientless legacy probes are not
+  // represented here at all; they keep the legacy ambient path.
+
+  // scenePBRProbeComponentValid accepts one coefficient component. Absent
+  // (undefined) means zero: Go's Vector3 JSON tags omit zero channels, so
+  // sparse coefficients like {} and {x:1} are valid and mean zero for the
+  // missing channels. Anything else present must be a finite number that
+  // survives float32 rounding — null, strings, NaN, Infinity and f64 values
+  // beyond float32 range are all rejected.
+  function scenePBRProbeComponentValid(v) {
+    if (v === undefined) return true;
+    if (typeof v !== "number") return false;
+    return isFinite(v) && isFinite(Math.fround(v));
+  }
+
+  // scenePBRProbeCoefficientsValid reports whether `coefficients` is a
+  // structurally valid second-order probe: exactly 9 entries (plain
+  // objects, not arrays) whose present x/y/z components pass
+  // scenePBRProbeComponentValid. The check is structural only — nine zero
+  // coefficients are legal and shade black rather than falling back to
+  // ambient.
+  function scenePBRProbeCoefficientsValid(coefficients) {
+    if (!Array.isArray(coefficients) || coefficients.length !== 9) {
+      return false;
+    }
+    for (var i = 0; i < 9; i++) {
+      var c = coefficients[i];
+      if (!c || typeof c !== "object" || Array.isArray(c)) return false;
+      if (!scenePBRProbeComponentValid(c.x)) return false;
+      if (!scenePBRProbeComponentValid(c.y)) return false;
+      if (!scenePBRProbeComponentValid(c.z)) return false;
+    }
+    return true;
+  }
+
+  // Aggregate coefficients clamp to this bound, sufficiently below F32_MAX
+  // that summing the 9 SH terms per fragment in float32 stays finite even
+  // when the aggregate sits at the clamp. Accumulation itself runs in
+  // double precision (see _scenePBRProbeAccum below); the clamp exists so
+  // the single final float32 conversion cannot produce Infinity.
+  var SCENE_PBR_PROBE_AGGREGATE_MAX = 1e30;
+
+  // Shared double-precision accumulation scratch. Adding into a Float32Array
+  // can overflow to Infinity mid-sum and then add -Infinity, producing NaN
+  // that no final clamp can repair. Summing in f64 and converting once after
+  // all probes makes +MAX followed by -MAX cancel to zero exactly. Cleared at
+  // the top of every aggregate call; safe at module level because the
+  // aggregate is synchronous and never reentrant.
+  var _scenePBRProbeAccum = new Float64Array(27);
+
+  // Shared result object: scenePBRProbeAggregate runs a few times per frame
+  // at most and every caller reads it synchronously, so returning this
+  // keeps the aggregate allocation-free.
+  var _scenePBRProbeCensus = { valid: false, malformed: 0 };
+
+  // scenePBRProbeAggregate sums every valid SH light probe among the first
+  // `count` entries of `lights` into `out` (27 floats: 9 linear-RGB
+  // coefficient triples, probe intensity already multiplied in exactly
+  // once) and returns { valid, malformed }: valid is true when at least one
+  // valid probe contributed, malformed counts nonempty-but-invalid probes
+  // that the caller reports and shades as ambient instead. A malformed probe
+  // never contributes, so it cannot contaminate the aggregate. Accumulation
+  // is double precision; the single conversion to `out` clamps to
+  // SCENE_PBR_PROBE_AGGREGATE_MAX. Irradiance is clamped nonnegative in the
+  // shader, AFTER the linear combine of all probes.
+  function scenePBRProbeAggregate(lights, count, out) {
+    for (var i = 0; i < 27; i++) _scenePBRProbeAccum[i] = 0;
+    var valid = false;
+    var malformed = 0;
+    var list = Array.isArray(lights) ? lights : [];
+    var limit = Math.max(0, Math.min(count | 0, list.length));
+    for (var li = 0; li < limit; li++) {
+      var l = list[li];
+      if (!l) continue;
+      var kind = typeof l.kind === "string" ? l.kind.toLowerCase() : "";
+      if (kind !== "light-probe") continue;
+      var coefs = l.coefficients;
+      if (!Array.isArray(coefs) || coefs.length === 0) continue;
+      if (!scenePBRProbeCoefficientsValid(coefs)) {
+        malformed += 1;
+        continue;
+      }
+      // normalizeSceneLight clamps intensity to 0..6, but the shared
+      // aggregate also sees raw, pre-normalization lights. Clamp here to
+      // the same band so a pathological finite intensity cannot push the
+      // double accumulator to Infinity, whose cancellation would surface
+      // as NaN that no final clamp can repair.
+      var intensity = sceneNumber(l.intensity, 1);
+      if (!(intensity > 0)) intensity = 0;
+      else if (intensity > 6) intensity = 6;
+      for (var ci = 0; ci < 9; ci++) {
+        var c = coefs[ci];
+        // Absent channels mean zero (Go's Vector3 JSON tags omit zero
+        // channels); multiplying them directly would poison the f64 sum
+        // with NaN. Valid components are finite numbers by
+        // scenePBRProbeCoefficientsValid, so only undefined needs the 0.
+        _scenePBRProbeAccum[ci * 3] += intensity * (c.x === undefined ? 0 : c.x);
+        _scenePBRProbeAccum[ci * 3 + 1] += intensity * (c.y === undefined ? 0 : c.y);
+        _scenePBRProbeAccum[ci * 3 + 2] += intensity * (c.z === undefined ? 0 : c.z);
+      }
+      valid = true;
+    }
+    for (var fi = 0; fi < 27; fi++) {
+      var v = _scenePBRProbeAccum[fi];
+      if (v > SCENE_PBR_PROBE_AGGREGATE_MAX) {
+        v = SCENE_PBR_PROBE_AGGREGATE_MAX;
+      } else if (v < -SCENE_PBR_PROBE_AGGREGATE_MAX) {
+        v = -SCENE_PBR_PROBE_AGGREGATE_MAX;
+      }
+      out[fi] = v;
+    }
+    _scenePBRProbeCensus.valid = valid;
+    _scenePBRProbeCensus.malformed = malformed;
+    return _scenePBRProbeCensus;
   }
 
   // hashEnvironmentContent is the env-side counterpart to hashLightContent.

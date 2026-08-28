@@ -170,5 +170,9 @@
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;
   var hashLightContent = sceneApi.hashLightContent;
   var hashEnvironmentContent = sceneApi.hashEnvironmentContent;
+  // SH light-probe helpers from 16c-scene-shared-pbr.js, consumed by
+  // scenePBRUploadLights inside 16-scene-webgl.js.
+  var scenePBRProbeCoefficientsValid = sceneApi.scenePBRProbeCoefficientsValid;
+  var scenePBRProbeAggregate = sceneApi.scenePBRProbeAggregate;
 
   // --- file 16 (scene-webgl.js) is concatenated next.

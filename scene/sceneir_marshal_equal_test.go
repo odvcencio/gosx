@@ -53,6 +53,15 @@ import (
 // degraded entries and reason records dropped out of the verdict. WebGL2
 // still gates ibl on fragment texture units, so its degraded entry for ibl
 // stays. See scene/capability/capability.go for both row rewrites.
+//
+// REGENERATED again for the spherical-harmonics light-probe capability
+// promotion. The SH capability rows now set light-probe-sh true for WebGL
+// and WebGPU, while Canvas2D still degrades light-probe-sh. In the golden
+// diff, 52 of the 400 scene+props digests changed and 348 were unchanged
+// byte for byte. Where present, the GPU SH degradation entries and reason
+// records disappear from the verdict; the marshal algorithm and field
+// layout are untouched. Regeneration was done with the existing
+// GOSX_UPDATE_SCENEIR_GOLDEN=1 generator above.
 const sceneIRGoldenPath = "testdata/sceneir_marshal_golden.json"
 
 // sceneIRGoldenCases is the number of generated scenes in the corpus.

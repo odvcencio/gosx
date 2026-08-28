@@ -87,6 +87,11 @@
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
+  // SH light-probe helpers from 16c-scene-shared-pbr.js (base chunk). 16a
+  // references them inside packLights; this IIFE cannot see them lexically,
+  // so bridge them exactly like the other base symbols above.
+  var scenePBRProbeCoefficientsValid = sceneApi.scenePBRProbeCoefficientsValid;
+  var scenePBRProbeAggregate = sceneApi.scenePBRProbeAggregate;
   // sceneIsNumericTypedArray: typed-array guard used by drawPointsEntries in
   // 16a to validate entry.positions / sizes / colors before caching them.
   // Exported from __gosx_scene3d_api by 10-runtime-scene-core.js; fall back

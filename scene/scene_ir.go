@@ -3300,14 +3300,18 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 		}
 	}
 
-	// Per-light-kind features. The WebGPU renderer honours all seven light
-	// kinds, but two carry a known shortfall that the author must be told
-	// about: rect-area specular substitutes a representative-point lobe for
-	// the fitted LTC tables, and a light probe folds to ambient rather than
-	// evaluating its spherical-harmonic coefficients. capability.Matrix marks
-	// both false on every backend, so each reports a degradation. None of the
-	// three light features sits in DefaultPolicy().Required, so none can
-	// exclude a backend.
+	// Per-light-kind features. WebGPU honours all seven light kinds,
+	// including the spherical-harmonic evaluation of a light probe; WebGL
+	// honours the light kinds but not the rect-area shape itself, so its
+	// rect-area degradation remains. Shortfalls the author must still be
+	// told about: rect-area specular substitutes a representative-point lobe
+	// for the fitted LTC tables on both GPU backends, and Canvas2D shades a
+	// rect-area shape and a probe's spherical-harmonic coefficients as flat
+	// approximations.
+	// capability.Matrix marks those cells, so each reports a degradation on
+	// exactly the backends that lack the real math. None of the three light
+	// features sits in DefaultPolicy().Required, so none can exclude a
+	// backend.
 	for i := range ir.Lights {
 		for _, f := range capability.LightKindFeatures(ir.Lights[i].Kind) {
 			seen[f] = true

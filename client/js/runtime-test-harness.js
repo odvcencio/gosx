@@ -588,6 +588,10 @@ class FakeWebGLContext {
     this.ops.push(["uniform1fv", location && location.name, value && value.length, value && Array.from(value).slice(0, 4)]);
   }
 
+  uniform3fv(location, value) {
+    this.ops.push(["uniform3fv", location && location.name, value && value.length, value && Array.from(value).slice(0, 4)]);
+  }
+
   uniformMatrix4fv(location, transpose, value) {
     this.ops.push(["uniformMatrix4fv", location && location.name, Boolean(transpose), value && value.length]);
   }

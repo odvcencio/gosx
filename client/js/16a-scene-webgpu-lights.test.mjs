@@ -91,6 +91,11 @@ function createContext() {
   `;
   vm.runInContext(prelude, context, { filename: "prelude.js" });
   vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  // 16c-scene-shared-pbr.ts defines the SH probe helpers (validity and
+  // aggregate) that webgpu.ts calls as free identifiers. The shipped bundle
+  // bridges them through __gosx_scene3d_api; in this sandbox the top-level
+  // function declarations from 16c become globals, which is the same wiring.
+  vm.runInContext(readSource("16c-scene-shared-pbr.ts"), context, { filename: "16c-scene-shared-pbr.ts" });
   vm.runInContext(readSource("17-scene-input.ts"), context, { filename: "17-scene-input.ts" });
   vm.runInContext(webgpuSource, context, { filename: "16a-scene-webgpu.js" });
   return { context, sandbox };
@@ -120,14 +125,17 @@ function webglTypeCodes() {
   const anchor = webglSource.indexOf('var lightType = 2; // default: point');
   assert.notEqual(anchor, -1, "the WebGL kind mapping moved; update this parser");
   const block = webglSource.slice(anchor, webglSource.indexOf("gl.uniform1i(uniforms.lightTypes[i]", anchor));
+  // New explanatory comments sit between the kind branch and its lightType
+  // assignment; strip them so the shipped mapping itself is what's parsed.
+  const stripped = block.replace(/\/\/[^\n]*/g, " ");
   // WebGL never names "point": code 2 is its declared default, which the
   // anchor line above pins.
   const codes = { "": 2, point: 2 };
   const pattern = /kind === "([a-z-]+)"\)\s*\{\s*lightType = (\d)/g;
-  let match = pattern.exec(block);
+  let match = pattern.exec(stripped);
   while (match) {
     codes[match[1]] = Number(match[2]);
-    match = pattern.exec(block);
+    match = pattern.exec(stripped);
   }
   return codes;
 }
@@ -255,15 +263,25 @@ test("a hemisphere light packs sky colour and ground colour separately", () => {
   assert.equal(out[7], 1.25);
 });
 
-test("a light probe packs as an ambient term and never as a point light", () => {
+test("a malformed probe packs as an ambient term and never as a point light", () => {
   const { out, census } = packOne({
     kind: "light-probe", color: "#ffffff", intensity: 0.7,
     coefficients: [{ x: 1, y: 1, z: 1 }],
   });
-  assert.equal(out[3], 0, "a probe shades as ambient");
+  assert.equal(out[3], 0, "a malformed probe shades as ambient");
   assert.equal(out[11], 0, "a probe carries no range");
   assert.equal(census.lightProbe, 1);
-  assert.equal(census.lightProbeWithCoefficients, 1, "ignored coefficients must be counted");
+  assert.equal(census.lightProbeWithCoefficients, 1);
+  assert.equal(census.lightProbeMalformedSH, 1);
+});
+
+test("a probe with nine valid SH coefficients packs as type 6", () => {
+  const coefficients = [];
+  for (let i = 0; i < 9; i++) coefficients.push({ x: i * 0.1, y: 0, z: -0.2 });
+  const { out, census } = packOne({ kind: "light-probe", intensity: 0.7, coefficients });
+  assert.equal(out[3], 6, "a valid-SH probe shades through the aggregate tail");
+  assert.equal(census.lightProbeValidSH, 1);
+  assert.equal(census.lightProbeMalformedSH, 0);
 });
 
 test("non-rect lights zero the area edge vectors", () => {
@@ -468,12 +486,22 @@ test("a rect-area light reports its approximate specular lobe", () => {
   assert.match(issues[0].message, /LTC/, "the message must name what is missing");
 });
 
-test("a light probe reports its ignored spherical-harmonic coefficients", () => {
+test("a valid-SH probe reports no lighting issue", () => {
   const codes = issueCodes(
-    { ...emptyCensus, count: 1, lightProbe: 1, lightProbeWithCoefficients: 1 },
+    { ...emptyCensus, count: 1, lightProbe: 1, lightProbeWithCoefficients: 1, lightProbeValidSH: 1 },
     1, 8,
   );
-  assert.deepEqual(codes, ["light-probe-sh"]);
+  assert.deepEqual(codes, []);
+});
+
+test("a malformed probe reports light-probe-sh-malformed", () => {
+  const scene = api();
+  const issues = scene.sceneWebGPULightIssues(
+    { ...emptyCensus, count: 1, lightProbe: 1, lightProbeWithCoefficients: 1, lightProbeMalformedSH: 1 },
+    1, 8,
+  );
+  assert.deepEqual(Array.from(issues, (i) => i.code), ["light-probe-sh-malformed"]);
+  assert.match(issues[0].message, /malformed SH coefficients/);
 });
 
 test("a probe without coefficients reports nothing", () => {
@@ -526,6 +554,16 @@ function loadUploadLights() {
     createBuffer: makeBuffer,
     queue: {
       writeBuffer(buffer, offset, data, dataOffset, size) {
+        let uintWords = null;
+        if (data instanceof Uint32Array) {
+          uintWords = Array.from(data);
+        } else if (data && data.buffer) {
+          // Snapshot the Uint32 bits of the same backing buffer so U32
+          // words (e.g. the WG flag word) can be asserted against float
+          // data; future writes must not mutate the observation.
+          uintWords = Array.from(new Uint32Array(
+            data.buffer, data.byteOffset, Math.floor(data.byteLength / 4)));
+        }
         writes.push({
           label: buffer.label,
           bufferOffset: offset,
@@ -533,6 +571,7 @@ function loadUploadLights() {
           size: size === undefined ? data.length : size,
           words: data instanceof Uint32Array ? Array.from(data) : null,
           floats: data instanceof Float32Array ? Array.from(data) : null,
+          uintWords,
         });
       },
     },
@@ -555,6 +594,15 @@ function loadUploadLights() {
       "  var _lightColorCache = {};",
       "  var _retiredLightBuffers = [];",
       "  var _lightIssuesReported = Object.create(null);",
+      "  var _sceneWebGPUProbeAgg = new Float32Array(27);",
+      "  var _envUniformBuf = new ArrayBuffer(224);",
+      "  var _envUniformF = new Float32Array(_envUniformBuf);",
+      "  var _envUniformU = new Uint32Array(_envUniformBuf);",
+      "  var envUniformBuffer = device.createBuffer({",
+      "    label: \"gosx-env\",",
+      "    size: 224,",
+      "    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,",
+      "  });",
       body,
       "  return {",
       "    uploadLights: uploadLights,",
@@ -682,6 +730,49 @@ test("uploadLights does not grow when the light count falls back", () => {
   harness.uploadLights([{ kind: "point" }]);
   assert.equal(created.length, afterGrowth, "shrinking must not reallocate");
   assert.equal(harness.capacity(), 16);
+});
+
+test("uploadLights writes the SH aggregate tail into the env uniform at byte 68", () => {
+  const { harness, writes } = loadUploadLights();
+  const coefs = [];
+  for (let i = 0; i < 9; i += 1) coefs.push(i === 0 ? { x: 2 } : {});
+  const census = harness.uploadLights([{ kind: "light-probe", intensity: 3, coefficients: coefs }]);
+  assert.equal(census.count, 1, "count prefix still reflects the light list");
+  const env = writes.find((w) => w.label === "gosx-env");
+  assert.ok(env, "the env uniform tail must be written");
+  assert.equal(env.bufferOffset, 68, "the SH tail starts at byte 68 of EnvUniforms");
+  assert.equal(env.dataOffset, 17, "the source slice starts at float word 17 (flag word)");
+  assert.equal(env.size, 39, "flag + two pads + nine vec4f = 39 floats");
+  const f = env.floats;
+  const u = env.uintWords;
+  assert.ok(u, "uint bit snapshot of the same buffer must be recorded");
+  assert.equal(u[17], 1,
+    "flag word 17 is U32 1 for a valid probe (a float view reads the denormal 1.401298464324817e-45)");
+  assert.equal(f[18], 0, "pad word 18");
+  assert.equal(f[19], 0, "pad word 19");
+  for (let i = 0; i < 9; i += 1) {
+    const base = 20 + i * 4;
+    assert.equal(f[base], i === 0 ? 6 : 0, "sparse x=2 * intensity 3, multiplied once");
+    assert.equal(f[base + 1], 0);
+    assert.equal(f[base + 2], 0);
+    assert.equal(f[base + 3], 0, "each vec4 is padded with w=0");
+  }
+  for (const v of f.slice(17, 56)) assert.ok(Number.isFinite(v), "every tail field must be finite");
+});
+
+test("uploadLights clears the SH tail when the last probe is removed", () => {
+  const { harness, writes } = loadUploadLights();
+  const coefs = [];
+  for (let i = 0; i < 9; i += 1) coefs.push({ x: 1 });
+  harness.uploadLights([{ kind: "light-probe", intensity: 1, coefficients: coefs }]);
+  harness.uploadLights([]);
+  const envWrites = writes.filter((w) => w.label === "gosx-env");
+  assert.equal(envWrites.length, 2, "the env tail is rewritten even with no lights");
+  const last = envWrites[1];
+  assert.equal(last.bufferOffset, 68);
+  const f = last.floats;
+  assert.equal(last.uintWords[17], 0, "the flag word clears (U32 0)");
+  for (let i = 20; i < 56; i += 1) assert.equal(f[i], 0, "all nine vec4f clear after the last probe is removed");
 });
 
 // --- WGSL shading paths -----------------------------------------------------

@@ -1215,9 +1215,16 @@ type RectAreaLight struct {
 	Live       []string
 }
 
-// LightProbe contributes ambient probe lighting. Coefficients are reserved for
-// spherical-harmonics probes; current renderers use Color/Intensity as a
-// first-order ambient probe.
+// LightProbe contributes ambient probe lighting. When Coefficients holds
+// exactly nine Vector3 entries, both renderers treat them as second-order
+// spherical-harmonics radiance coefficients in linear RGB (basis order
+// 0..8): probe irradiance is evaluated against the world-space shading
+// normal with Intensity multiplying the coefficients exactly once, and
+// Color is ignored because the coefficients already carry RGB. Any other
+// nonempty Coefficients value is malformed: it never reaches the GPU as SH
+// and shades as the Color/Intensity ambient fallback instead. An empty
+// Coefficients keeps the legacy flat Color/Intensity ambient probe — not a
+// first-order SH evaluation; the ambient term is uniform in all directions.
 type LightProbe struct {
 	ID           string
 	Color        string

@@ -33,6 +33,11 @@
       // WebGL renderer recomputes them per frame to skip unchanged uploads.
       hashLightContent: typeof hashLightContent === "function" ? hashLightContent : undefined,
       hashEnvironmentContent: typeof hashEnvironmentContent === "function" ? hashEnvironmentContent : undefined,
+      // 16c-scene-shared-pbr.js — SH probe validation and aggregation. The
+      // WebGL renderer calls both from scenePBRUploadLights; without these
+      // lines the lazily fetched chunk cannot resolve them.
+      scenePBRProbeCoefficientsValid: typeof scenePBRProbeCoefficientsValid === "function" ? scenePBRProbeCoefficientsValid : undefined,
+      scenePBRProbeAggregate: typeof scenePBRProbeAggregate === "function" ? scenePBRProbeAggregate : undefined,
       // 10-runtime-scene-core.js — typed float coercion. The legacy renderer
       // moved to 16e-scene-webgl-legacy.js, which now runs in the WebGL chunk,
       // but this helper stayed here because mesh and animation normalization

@@ -145,6 +145,13 @@
     "uniform float u_lightPenumbras[8];",
     "uniform vec3 u_lightGroundColors[8];",
     "",
+    // Aggregated second-order SH light probes: nine linear-RGB radiance
+    // coefficient triples in basis order 0..8, probe intensity already
+    // multiplied in CPU-side. Zero unless at least one scene LightProbe
+    // carries structurally valid coefficients.
+    "uniform vec3 u_probeSH[9];",
+    "uniform bool u_hasProbeSH;",
+    "",
     // Environment
     "uniform vec3 u_ambientColor;",
     "uniform float u_ambientIntensity;",
@@ -505,7 +512,9 @@
     "        vec3 lightColor = u_lightColors[i];",
     "        float intensity = u_lightIntensities[i];",
     "",
-    // Ambient light (type 0): add flat contribution, no BRDF.
+    // Ambient light (type 0): add flat contribution, no BRDF. Legacy and
+    // malformed light probes arrive here; probes with valid SH coefficients
+    // take type 6 below instead.
     "        if (lightType == 0) {",
     "            Lo += albedo * lightColor * intensity;",
     "            continue;",
@@ -516,6 +525,13 @@
     "            float hBlend = N.y * 0.5 + 0.5;",
     "            vec3 hemiColor = mix(u_lightGroundColors[i], lightColor, hBlend);",
     "            Lo += albedo * hemiColor * intensity;",
+    "            continue;",
+    "        }",
+    "",
+    // Light probe with valid SH (type 6): its diffuse reaches the fragment
+    // through the aggregated u_probeSH term in the ambient section below,
+    // so this per-light loop must not shade it a second time.
+    "        if (lightType == 6) {",
     "            continue;",
     "        }",
     "",
@@ -613,6 +629,18 @@
     "                        + u_skyColor * u_skyIntensity * hemi",
     "                        + u_groundColor * u_groundIntensity * (1.0 - hemi);",
     "        ambient = envDiffuse * albedo;",
+    "    }",
+    // Aggregated SH light probes: second-order irradiance against the
+    // world-space shading normal, clamped nonnegative only after every
+    // valid probe was summed. Lambert diffuse (albedo*(1-metalness)/PI);
+    // the AO multiply below treats the result as indirect light.
+    "    if (u_hasProbeSH) {",
+    "        vec3 probeIrr = max(u_probeSH[0] * 0.886227",
+    "            + (u_probeSH[1] * N.y + u_probeSH[2] * N.z + u_probeSH[3] * N.x) * 1.023328",
+    "            + (u_probeSH[4] * (N.x * N.y) + u_probeSH[5] * (N.y * N.z) + u_probeSH[7] * (N.x * N.z)) * 0.858086",
+    "            + u_probeSH[6] * (0.743125 * N.z * N.z - 0.247708)",
+    "            + u_probeSH[8] * (0.429043 * (N.x * N.x - N.y * N.y)), vec3(0.0));",
+    "        ambient += albedo * (1.0 - metalness) / PI * probeIrr;",
     "    }",
     "#if GOSX_HDR_IBL",
     "    ambient *= ambientOcclusion;",
@@ -5892,6 +5920,8 @@
       lightAngles: [],
       lightPenumbras: [],
       lightGroundColors: [],
+      probeSH: gl.getUniformLocation(program, "u_probeSH[0]"),
+      hasProbeSH: gl.getUniformLocation(program, "u_hasProbeSH"),
 
       ambientColor: gl.getUniformLocation(program, "u_ambientColor"),
       ambientIntensity: gl.getUniformLocation(program, "u_ambientIntensity"),
@@ -6663,7 +6693,15 @@
       } else if (kind === "rect-area") {
         lightType = 2;
       } else if (kind === "light-probe") {
+        // Probes with structurally valid SH coefficients shade through the
+        // aggregated u_probeSH term, so they take type 6 (no per-light
+        // contribution). Legacy (coefficientless) and malformed probes keep
+        // the Color/Intensity ambient of type 0.
         lightType = 0;
+        var probeCoefs = light.coefficients;
+        if (Array.isArray(probeCoefs) && probeCoefs.length > 0 && scenePBRProbeCoefficientsValid(probeCoefs)) {
+          lightType = 6;
+        }
       }
 
       gl.uniform1i(uniforms.lightTypes[i], lightType);
@@ -6715,6 +6753,21 @@
       gl.uniform1f(uniforms.lightAngles[j], 0);
       gl.uniform1f(uniforms.lightPenumbras[j], 0);
       gl.uniform3f(uniforms.lightGroundColors[j], 0, 0, 0);
+    }
+
+    // Aggregate second-order SH probes over the accepted prefix and upload
+    // the fixed 9-coefficient set. Valid probes shade through u_probeSH in
+    // the ambient section (they were sent as type 6 above); legacy and
+    // malformed probes keep type 0's Color/Intensity ambient. Runs on every
+    // hash miss, so clearing or removing the last probe clears the
+    // aggregate the shader sees too.
+    var probeScratch = uniforms._probeSH || (uniforms._probeSH = new Float32Array(27));
+    var probeCensus = scenePBRProbeAggregate(lightArray, count, probeScratch);
+    if (uniforms.hasProbeSH) {
+      gl.uniform1i(uniforms.hasProbeSH, probeCensus.valid ? 1 : 0);
+    }
+    if (uniforms.probeSH) {
+      gl.uniform3fv(uniforms.probeSH, probeScratch);
     }
 
     // Environment uniforms — also use the per-call cache.

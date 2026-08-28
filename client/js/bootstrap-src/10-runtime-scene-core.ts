@@ -921,6 +921,38 @@
     }
   }
 
+  // sceneSnapshotProbeCoefficients defensively copies SH probe coefficient
+  // components into fresh plain objects. The previous shallow .slice()
+  // kept the author's Vector3 references alive, so an in-place component
+  // edit left both the cached _lightHash (stamped below) and the
+  // renderers' view stale. Malformed entries are preserved as-is; the
+  // renderers validate and fall back to ambient for those. Returns null
+  // for non-array input so callers can fall through to the previous value.
+  function sceneSnapshotProbeCoefficients(value) {
+    if (!Array.isArray(value)) {
+      return null;
+    }
+    const out = new Array(value.length);
+    for (let i = 0; i < value.length; i++) {
+      const c = value[i];
+      if (c && typeof c === "object" && !Array.isArray(c)) {
+        // Defensive copy: the renderers and the hash read this snapshot, so
+        // the author's Vector3 must not stay aliased. Absent channels are
+        // simply left off the copy — undefined and absent both mean zero.
+        const copy = {};
+        if (c.x !== undefined) copy.x = c.x;
+        if (c.y !== undefined) copy.y = c.y;
+        if (c.z !== undefined) copy.z = c.z;
+        out[i] = copy;
+      } else {
+        // Malformed entries (null, arrays, primitives) are preserved as-is;
+        // an array must never become a structurally valid sparse vector.
+        out[i] = c;
+      }
+    }
+    return out;
+  }
+
   function normalizeSceneLight(light, index, fallback) {
     const current = sceneIsPlainObject(fallback) ? fallback : {};
     const item = sceneIsPlainObject(light) ? light : {};
@@ -947,7 +979,10 @@
       decay: Math.max(0.1, Math.min(8, sceneNumber(item.decay, sceneNumber(current.decay, (kind === "point" || kind === "spot" || kind === "rect-area") ? 1.35 : 1)))),
       width: Math.max(0, sceneNumber(item.width, sceneNumber(current.width, kind === "rect-area" ? 1 : 0))),
       height: Math.max(0, sceneNumber(item.height, sceneNumber(current.height, kind === "rect-area" ? 1 : 0))),
-      coefficients: Array.isArray(item.coefficients) ? item.coefficients.slice() : (Array.isArray(current.coefficients) ? current.coefficients.slice() : []),
+      // Snapshot SH coefficient components (see helper above) so the cached
+      // _lightHash stays correct against in-place edits of the author's
+      // Vector3 objects.
+      coefficients: sceneSnapshotProbeCoefficients(item.coefficients) || sceneSnapshotProbeCoefficients(current.coefficients) || [],
       castShadow: sceneBool(Object.prototype.hasOwnProperty.call(item, "castShadow") ? item.castShadow : current.castShadow, false),
       shadowBias: sceneNumber(item.shadowBias, sceneNumber(current.shadowBias, 0)),
       shadowSize: Math.max(0, Math.floor(sceneNumber(item.shadowSize, sceneNumber(current.shadowSize, 0)))),
@@ -6364,6 +6399,12 @@
     // Color helper from 11-scene-math.js (already visible, re-exported
     // explicitly so the webgpu chunk has a stable lookup path).
     sceneColorRGBA: typeof sceneColorRGBA === "function" ? sceneColorRGBA : undefined,
+
+    // SH light-probe helpers from 16c-scene-shared-pbr.js. Both feature
+    // chunks (WebGL and WebGPU) run in their own IIFEs and cannot see these
+    // lexically, so publish them here alongside the other shared helpers.
+    scenePBRProbeCoefficientsValid: typeof scenePBRProbeCoefficientsValid === "function" ? scenePBRProbeCoefficientsValid : undefined,
+    scenePBRProbeAggregate: typeof scenePBRProbeAggregate === "function" ? scenePBRProbeAggregate : undefined,
 
     // Ortho-2D board camera helpers from 11-scene-math.js — the JS half of
     // the native computeOrthoCamera2DMVP golden contract, consumed by the

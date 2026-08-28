@@ -17,9 +17,11 @@ import (
 // scene/capability/lights_test.go.
 //
 // Expected shape: rect-area-light degrades on WebGL and canvas2d because only
-// WebGPU draws the shape. rect-area-specular and light-probe-sh degrade
-// everywhere, because no backend uploads the fitted LTC tables or evaluates
-// spherical harmonics. No light feature may exclude a backend.
+// WebGPU draws the shape. rect-area-specular degrades on both GPU backends,
+// because neither uploads the fitted LTC tables. light-probe-sh degrades only
+// on canvas2d: both GPU backends evaluate the spherical harmonics, and
+// Canvas2D shades the probe as flat ambient. No light feature may exclude a
+// backend.
 func TestLightKindFeaturesReachTheWireVerdict(t *testing.T) {
 	wired := runtimeFeatureCollectionWired(t, "capability.LightKindFeatures(")
 	for _, tc := range []struct {
@@ -67,6 +69,16 @@ func TestLightKindFeaturesReachTheWireVerdict(t *testing.T) {
 					if f == capability.FeatureRectAreaLight || f == capability.FeatureRectAreaSpecular || f == capability.FeatureLightProbeSH {
 						t.Errorf("%s: unexpected light feature %s on %s", tc.name, f, backend)
 					}
+				}
+			}
+		}
+		if tc.name == "light-probe" {
+			// SH evaluates on both GPU backends; the probe stays degraded on
+			// canvas2d only.
+			for backend, feats := range got {
+				if (backend == capability.BackendWebGPU || backend == capability.BackendWebGL) &&
+					slices.Contains(feats, capability.FeatureLightProbeSH) {
+					t.Errorf("%s: light-probe-sh must not degrade on %s", tc.name, backend)
 				}
 			}
 		}

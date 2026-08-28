@@ -80,12 +80,16 @@ const (
 //	spot         same cone: cos(angle), cos(angle*(1-penumbra)), clamp
 //	hemisphere   same sky/ground blend by normal Y
 //
-// The two that remain carry real gaps. See the Matrix rows below.
+// The remaining two raise features. rect-area still carries real gaps:
+// WebGL2 has no rectangle shape, and neither GPU backend uploads the fitted
+// LTC specular tables. light-probe evaluates its spherical-harmonic
+// coefficients on both GPU backends, but Canvas2D shades it as flat
+// ambient, so the feature still degrades there.
 //
 // collectFeatures in scene/scene_ir.go calls this for every LightIR the graph
 // lowerer emits, so a rect-area light or a light probe raises its features on
-// the wire. The WebGPU renderer also reports the same two gaps to the author
-// itself, through the "rect-area-specular" and "light-probe-sh" issue codes in
+// the wire. The WebGPU renderer reports the rect-area specular gap to the
+// author itself, through the "rect-area-specular" issue code in
 // 16a-scene-webgpu.js.
 func LightKindFeatures(kind string) []Feature {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
@@ -284,13 +288,16 @@ var Matrix = map[Feature]map[Backend]bool{
 	FeatureRectAreaSpecular: {BackendWebGPU: false, BackendWebGL: false},
 	// light-probe-sh: spherical-harmonic probe coefficients.
 	//
-	// False everywhere. LightProbe.Coefficients survives lowering into
-	// LightIR.Coefficients, and then no renderer reads it. Both GPU backends
-	// shade a probe as a flat ambient term built from Color and Intensity.
-	// Ambient is the right fold — a probe carries no position, so a point
-	// light would invent a distance falloff — but it is not an SH evaluation,
-	// so the cell stays false until one exists.
-	FeatureLightProbeSH: {BackendWebGPU: false, BackendWebGL: false},
+	// True on both GPU backends. LightProbe.Coefficients survives lowering
+	// into LightIR.Coefficients; the shared PBR aggregate
+	// (scenePBRProbeAggregate) sums every structurally valid probe, and each
+	// GPU renderer uploads the nine-coefficient tail and evaluates the
+	// second-order SH irradiance per fragment against the world-space
+	// shading normal (u_probeSH in WebGL2, env.probeSH in WebGPU).
+	// Coefficientless and malformed probes keep the Color/Intensity ambient
+	// fallback. Canvas2D shades a probe as flat ambient and carries no row
+	// here, so the wire reports a degradation on canvas only.
+	FeatureLightProbeSH: {BackendWebGPU: true, BackendWebGL: true},
 	// sky-environment: does the backend draw the environment-cube/equirect sky
 	// mode. False everywhere at this row's introduction — no backend draws any
 	// sky yet. Gradient sky (the other Sky.Mode) draws on every backend

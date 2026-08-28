@@ -2213,14 +2213,14 @@ const PRELOAD = `
   window.__gosxWGPU = { materialUploads: 0, dumps: [], obsErrors: [] };
   window.__gosxWGPUDraws = { observed: 0, lastDepthWrite: null, lastBlend: null };
 (function () {
-  var latest80 = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
+  var latestEnv = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
   var frameBindGroups = (typeof WeakMap !== "undefined") ? new WeakMap() : null;
   var boundEnvBuffer = null;
   // Dynamic read of the latest environment words for the currently bound
   // environment buffer: resolved at read time (never a stale snapshot), and
   // never a raw buffer/weakmap exposed in the JSON evidence.
   window.__gosxWGPUReadEnvWords = function () {
-    return (latest80 && boundEnvBuffer) ? (latest80.get(boundEnvBuffer) || null) : null;
+    return (latestEnv && boundEnvBuffer) ? (latestEnv.get(boundEnvBuffer) || null) : null;
   };
   function noteErr(store, e) {
     if (store.length < 16) store.push(String((e && e.message) || e));
@@ -2745,16 +2745,21 @@ const PRELOAD = `
           var totalBytes = data.byteLength;
           var byteOff = (dataOffset == null) ? 0 : dataOffset * elem;
           var byteLen = (size == null) ? (totalBytes - byteOff) : size * elem;
-          if (byteLen === 80 && bufferOffset === 0 && byteOff >= 0 && byteOff + 80 <= totalBytes) {
-            // 80-byte environment word snapshot: hasIBL/mips/hasEnvMap are
-            // words 14/15/16 (bytes 56/60/64). Every bounded 80-byte full
-            // write is snapshotted, independently of the 192-byte material
-            // dump cap below.
-            var dv80 = new DataView(buf, base + byteOff, 80);
-            if (latest80) latest80.set(buffer, {
-              hasIBL: dv80.getUint32(14 * 4, true),
-              mips: dv80.getUint32(15 * 4, true),
-              hasEnvMap: dv80.getUint32(16 * 4, true)
+          if (bufferOffset === 0 && (byteLen === 68 || byteLen === 80) &&
+              byteOff >= 0 && byteOff + byteLen <= totalBytes) {
+            // Environment word snapshot: production uploadEnvUniforms now
+            // writes exactly the first 68 bytes (words 0..16) at
+            // bufferOffset 0; the legacy upload covered a full 80-byte
+            // prefix. hasIBL/mips/hasEnvMap are words 14/15/16 (bytes
+            // 56/60/64), present in both shapes. The separate SH tail
+            // write at bufferOffset 68 never matches this shape and never
+            // overrides the env words. Snapshots stay independent of the
+            // 208-byte material dump cap below.
+            var dvEnv = new DataView(buf, base + byteOff, byteLen);
+            if (latestEnv) latestEnv.set(buffer, {
+              hasIBL: dvEnv.getUint32(14 * 4, true),
+              mips: dvEnv.getUint32(15 * 4, true),
+              hasEnvMap: dvEnv.getUint32(16 * 4, true)
             });
           }
           if (byteLen === 208 && window.__gosxWGPU.dumps.length < 256 &&
@@ -2840,8 +2845,8 @@ const PRELOAD = `
         if (arguments[0] === 0 && frameBindGroups) {
           // Keep the bound environment buffer identity, including null when
           // the frame bind group is unknown; readEnvWords resolves the words
-          // dynamically so a later 80-byte write is never shadowed by a
-          // stale snapshot taken at bind time.
+          // dynamically so a later 68-byte write (80 under the legacy layout)
+          // is never shadowed by a stale snapshot taken at bind time.
           boundEnvBuffer = frameBindGroups.get(arguments[1]) || null;
         }
       } catch (e) { noteErr(window.__gosxWGPU.obsErrors, e); }
@@ -3757,20 +3762,35 @@ setTimeout(() => {
   // chrome.once('error', onErr) handler); a synchronous-event throw here
   // would escape the promise chain and skip central cleanup.
   const wsUrl = await new Promise((resolve, reject) => {
+    // Stable local child reference: central cleanup may null the outer
+    // `chrome` binding while this promise is still pending, so listeners
+    // must never dereference it. Every settle path (URL found, exit, spawn
+    // error, timeout) removes ALL listeners, including the stderr data
+    // listener that previously outlived resolution.
+    const child = chrome;
     let buf = '';
-    const t = setTimeout(() => reject(new Error('no DevTools ws URL')), 20000);
-    const onExit = () => { clearTimeout(t); reject(new Error('chrome exited early: ' + buf)); };
-    const onErr = (e) => { clearTimeout(t); reject(new Error('chrome spawn error: ' + e.message)); };
-    chrome.stderr.on('data', (d) => {
+    let settled = false;
+    const stderr = child.stderr;
+    function settle(cont) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(t);
+      stderr.removeListener('data', onData);
+      child.removeListener('exit', onExit);
+      child.removeListener('error', onErr);
+      cont();
+    }
+    const onData = (d) => {
       buf += d.toString();
       const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[^\s]+/);
-      if (m) {
-        clearTimeout(t); chrome.removeListener('exit', onExit); chrome.removeListener('error', onErr);
-        resolve(m[0]);
-      }
-    });
-    chrome.once('exit', onExit);
-    chrome.once('error', onErr);
+      if (m) settle(() => resolve(m[0]));
+    };
+    const onExit = () => settle(() => reject(new Error('chrome exited early: ' + buf)));
+    const onErr = (e) => settle(() => reject(new Error('chrome spawn error: ' + e.message)));
+    const t = setTimeout(() => settle(() => reject(new Error('no DevTools ws URL'))), 20000);
+    stderr.on('data', onData);
+    child.once('exit', onExit);
+    child.once('error', onErr);
   });
   ws = new WebSocket(wsUrl);
   await new Promise((res, rej) => {
