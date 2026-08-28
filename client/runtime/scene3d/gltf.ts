@@ -1729,6 +1729,16 @@
     // unknown modes pass the authored factor through without validation.
     var effectiveOpacity = effectiveAlphaMode === "OPAQUE" ? 1 : baseColorFactor[3];
 
+    // MASK-only alpha cutoff: a finite authored numeric >= 0 (including 0
+    // and values above 1) is preserved; anything else — numeric strings,
+    // negatives, non-finite, null — takes the glTF 0.5 default. There is no
+    // numeric-string coercion in glTF, and OPAQUE/BLEND/omitted materials
+    // never receive a cutoff even when their source material carries one.
+    var alphaCutoff = 0.5;
+    if (effectiveAlphaMode === "MASK" && typeof mat.alphaCutoff === "number" && Number.isFinite(mat.alphaCutoff) && mat.alphaCutoff >= 0) {
+      alphaCutoff = mat.alphaCutoff;
+    }
+
     var textureDescriptors = gltfMaterialTextureDescriptors(
       baseColorURL,
       normalURL,
@@ -1755,6 +1765,9 @@
       alphaMode: effectiveAlphaMode,
       doubleSided: mat.doubleSided || false,
     };
+    if (effectiveAlphaMode === "MASK") {
+      record.alphaCutoff = alphaCutoff;
+    }
     if (Object.keys(textureDescriptors).length) {
       record.textureDescriptors = textureDescriptors;
     }
@@ -1865,9 +1878,15 @@
   }
 
   // Shared alpha-pass gate: BLEND or sub-unit opacity renders in the alpha
-  // pass. One predicate backs the points/lines blendMode strings and the mesh
-  // renderPass so the three sites cannot drift apart.
+  // pass, except MASK. MASK belongs to opaque/depth-writing routing and
+  // carries the authored alphaCutoff through this checkpoint; fragment
+  // discard and shadow alpha handling are still pending. One predicate
+  // backs the points/lines blendMode strings and the mesh renderPass so
+  // the three sites cannot drift apart.
   function gltfIsAlphaMaterial(material) {
+    if (material.alphaMode === "MASK") {
+      return false;
+    }
     return material.alphaMode === "BLEND" || material.opacity < 0.999;
   }
 

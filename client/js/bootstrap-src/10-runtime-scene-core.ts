@@ -742,6 +742,7 @@
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
@@ -1327,6 +1328,13 @@
     if (sceneObjectMaterialHasValue(current, "specularColor")) {
       override.specularColor = sceneNormalizeMaterialSpecularColor(sceneObjectMaterialValue(current, "specularColor"), null);
     }
+    // Authored alpha cutoffs follow the shared KHR mask contract: a defined
+    // value is normalized (explicit null disables masking) while genuine
+    // absence — including an own undefined field — must never erase imported
+    // asset masking.
+    if (sceneObjectMaterialValue(current, "alphaCutoff") !== undefined) {
+      override.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(current, "alphaCutoff"), null);
+    }
     for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
@@ -1484,6 +1492,18 @@
     if (batch.specularColor === undefined) {
       delete batch.specularColor;
     }
+    // Alpha cutoff follows the shared mask contract: a defined raw (nested or
+    // direct) or inherited current value is normalized with the inherited
+    // fallback, explicit null disables, and genuine absence stays absent so
+    // asset-authored masking is never erased by defaulted plumbing.
+    const rawAlphaCutoff = sceneObjectMaterialValue(raw, "alphaCutoff");
+    if (rawAlphaCutoff !== undefined) {
+      batch.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(
+        rawAlphaCutoff,
+        current.alphaCutoff !== undefined ? current.alphaCutoff : null);
+    } else if (current.alphaCutoff !== undefined) {
+      batch.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null);
+    }
     return batch;
   }
 
@@ -1524,6 +1544,11 @@
         if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") {
           raw[key] = batch[key];
         }
+      }
+      // Alpha cutoff is copied separately so an explicit null (masking
+      // disabled) survives: the legacy loop above deliberately excludes null.
+      if (batch.alphaCutoff !== undefined) {
+        raw.alphaCutoff = batch.alphaCutoff;
       }
       models.push(normalizeSceneModel(raw, batchIndex + "-" + index));
     }
@@ -1911,6 +1936,7 @@
       transmission: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "transmission"), sceneNumber(current.transmission, 0), 0, 1),
       iridescence: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "iridescence"), sceneNumber(current.iridescence, 0), 0, 1),
       anisotropy: sceneClampNumberOrCSSVar(sceneObjectMaterialValue(item, "anisotropy"), sceneNumber(current.anisotropy, 0), -1, 1),
+      alphaCutoff: sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(item, "alphaCutoff"), current.alphaCutoff),
       normalMap: typeof sceneObjectMaterialValue(item, "normalMap") === "string" ? sceneObjectMaterialValue(item, "normalMap").trim() : (typeof current.normalMap === "string" ? current.normalMap : ""),
       roughnessMap: typeof sceneObjectMaterialValue(item, "roughnessMap") === "string" ? sceneObjectMaterialValue(item, "roughnessMap").trim() : (typeof current.roughnessMap === "string" ? current.roughnessMap : ""),
       metalnessMap: typeof sceneObjectMaterialValue(item, "metalnessMap") === "string" ? sceneObjectMaterialValue(item, "metalnessMap").trim() : (typeof current.metalnessMap === "string" ? current.metalnessMap : ""),
@@ -2391,6 +2417,12 @@
       _blendModeSpecified: blendModeSpecified || current._blendModeSpecified === true,
       _depthWriteSpecified: depthWriteSpecified || current._depthWriteSpecified === true,
     };
+    const rawAlphaCutoff = sceneObjectMaterialValue(item, "alphaCutoff");
+    if (rawAlphaCutoff !== undefined) {
+      out.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(rawAlphaCutoff, sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null));
+    } else if (current.alphaCutoff !== undefined) {
+      out.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(current.alphaCutoff, null);
+    }
     out.key = sceneMaterialProfileKey(out);
     out.shaderData = sceneMaterialShaderData(out);
     return out;
@@ -3009,6 +3041,7 @@
       transmission: material.transmission != null ? material.transmission : object.transmission,
       iridescence: material.iridescence != null ? material.iridescence : object.iridescence,
       anisotropy: material.anisotropy != null ? material.anisotropy : object.anisotropy,
+      alphaCutoff: material.alphaCutoff !== undefined ? material.alphaCutoff : object.alphaCutoff,
       normalMap: material.normalMap || object.normalMap,
       roughnessMap: material.roughnessMap || object.roughnessMap,
       metalnessMap: material.metalnessMap || object.metalnessMap,

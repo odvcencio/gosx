@@ -209,13 +209,16 @@ test("gltfExtractMaterial: OPAQUE forces opacity 1, other modes preserve alpha",
   const blendOne = extractMaterial(context, { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1] } });
   assert.equal(blendOne.opacity, 1);
 
-  // MASK keeps its authored alpha; full cutoff support is not asserted here.
+  // MASK keeps its authored alpha and gains a default alphaCutoff; alpha
+  // rendering itself is not wired at this stage.
   const mask = extractMaterial(context, { alphaMode: "MASK", pbrMetallicRoughness: { baseColorFactor: [1, 1, 0, 0.4] } });
   assert.equal(mask.alphaMode, "MASK");
   assert.equal(mask.opacity, 0.4);
+  assert.equal(mask.alphaCutoff, 0.5);
 
   // The production gate itself: BLEND is always alpha, otherwise by opacity.
   assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "BLEND", opacity: 1 })`), true);
+  assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "MASK", opacity: 0.4 })`), false);
   assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "OPAQUE", opacity: 0.5 })`), true);
   assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "OPAQUE", opacity: 1 })`), false);
 });
@@ -248,8 +251,10 @@ test("gltfExtractScene propagates effective alpha to points, lines and meshes", 
     { name: "OPAQUE-a25", material: { alphaMode: "OPAQUE", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.25] } }, opacity: 1, alpha: false, depthWrite: true },
     { name: "BLEND-a25", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.25] } }, opacity: 0.25, alpha: true, depthWrite: false },
     { name: "BLEND-a1", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } }, opacity: 1, alpha: true, depthWrite: false },
-    // MASK keeps its authored alpha; production points use alphaMode !== "BLEND", so MASK retains depthWrite: true.
-    { name: "MASK-a04", material: { alphaMode: "MASK", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.4] } }, opacity: 0.4, alpha: true, depthWrite: true },
+    // MASK keeps its authored alpha and depthWrite (points gate on
+    // alphaMode !== "BLEND"), but stage 1 does not route MASK through the
+    // alpha pass, so the shared predicate maps it to the opaque pass.
+    { name: "MASK-a04", material: { alphaMode: "MASK", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.4] } }, opacity: 0.4, alpha: false, depthWrite: true },
     // BLEND with alpha 0 is still alpha (alphaMode === "BLEND" gate) and disables depthWrite.
     { name: "BLEND-a0", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } }, opacity: 0, alpha: true, depthWrite: false },
   ];

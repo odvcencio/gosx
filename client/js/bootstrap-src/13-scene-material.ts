@@ -378,6 +378,41 @@
     return [1, 1, 1];
   }
 
+  // Scene/glTF-authored alpha cutoff (stage 1 of alpha-masked materials):
+  // finite numbers >= 0 are valid with no upper clamp — 0 and values above
+  // 1 included; nonempty numeric strings are accepted. An explicit null
+  // disables the cutoff outright. undefined inherits a validated fallback;
+  // booleans, empty strings, unparseable text, non-finite and negative
+  // values fall back safely, terminating at null. CSS var strings ride the
+  // existing explicit-var machinery and come back trimmed; null, false and
+  // empty strings are never coerced to 0.
+  function sceneNormalizeMaterialAlphaCutoff(value, fallback) {
+    if (value === null) {
+      return null;
+    }
+    if (sceneCSSVarReference(value)) {
+      return String(value).trim();
+    }
+    var numeric = value;
+    if (typeof numeric === "string") {
+      numeric = numeric.trim() !== "" ? Number(numeric) : NaN;
+    } else if (typeof numeric !== "number") {
+      numeric = NaN;
+    }
+    if (Number.isFinite(numeric) && numeric >= 0) {
+      return numeric;
+    }
+    if (fallback === null) {
+      return null;
+    }
+    if (sceneCSSVarReference(fallback)) {
+      return String(fallback).trim();
+    }
+    // The inherited fallback must satisfy the same numeric contract as the
+    // direct value; the hard null default always terminates the recursion.
+    return sceneNormalizeMaterialAlphaCutoff(fallback, null);
+  }
+
   function sceneObjectMaterialSource(item) {
     return item && item.material && typeof item.material === "object" ? item.material : null;
   }
@@ -461,6 +496,7 @@
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
       ior: sceneNormalizeMaterialIor(object && object.ior, 1.5),
+      alphaCutoff: sceneNormalizeMaterialAlphaCutoff(object && object.alphaCutoff, null),
       specularIntensity: sceneNormalizeMaterialSpecularIntensity(object && object.specularIntensity, 1),
       specularColor: sceneNormalizeMaterialSpecularColor(object && object.specularColor, null),
       clearcoat: sceneNumberOrCSSVar(object && object.clearcoat, 0),
@@ -513,6 +549,11 @@
       // (null/false/"") go through sceneNormalizeMaterialIor onto the 1.5
       // shader default instead of colliding with an explicit 0 (F0 = 1).
       sceneCSSVarReference(profile && profile.ior) ? String(profile.ior).trim() : sceneNormalizeMaterialIor(profile && profile.ior),
+      // Authored alpha cutoff keys at full precision — no toFixed
+      // quantization — so distinct valid cutoffs never share a cached
+      // material. A disabled cutoff (null) stringifies distinctly from an
+      // explicit 0 threshold; CSS vars keep their trimmed form.
+      sceneCSSVarReference(profile && profile.alphaCutoff) ? String(profile.alphaCutoff).trim() : String(sceneNormalizeMaterialAlphaCutoff(profile && profile.alphaCutoff)),
       // Specular factors key at full precision — intensity is never
       // quantized and the tint is serialized exactly — so distinct valid
       // values (per RGB component and per intensity, however close) never

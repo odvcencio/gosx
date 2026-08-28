@@ -389,6 +389,7 @@
     hash = sceneCSSHashCollection(hash, bundle && bundle.materials, [
       "id", "name", "kind", "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "specularIntensity", "specularColor",
+      "alphaCutoff",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "blendMode",
       "renderPass", "depthWrite", "style", "size", "attenuation",
     ]);
@@ -399,12 +400,12 @@
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.objects, [
       "id", "kind", "material", "materialIndex", "color", "opacity", "emissive",
-      "roughness", "metalness", "ior", "specularIntensity", "specularColor", "lineWidth", "x", "y", "z", "rotationX",
+      "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "lineWidth", "x", "y", "z", "rotationX",
       "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, [
       "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
-      "vertexCount", "color", "opacity", "roughness", "metalness", "ior",
+      "vertexCount", "color", "opacity", "roughness", "metalness", "ior", "alphaCutoff",
       "specularIntensity", "specularColor",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.points, [
@@ -414,7 +415,7 @@
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.instancedMeshes, [
       "id", "kind", "material", "materialIndex", "count", "color", "roughness",
-      "metalness", "ior", "specularIntensity", "specularColor", "width", "height", "depth", "radius",
+      "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "width", "height", "depth", "radius",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.labels, [
       "id", "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
@@ -457,6 +458,36 @@
     return hash;
   }
 
+  function scenePlannerAlphaCutoffRawText(value) {
+    // Type-aware raw scalar text for CSS input hashing of alphaCutoff:
+    // undefined (absence / inheritance), explicit null (disabled) and 0
+    // must stay distinct, and numbers keep full precision (no *1000
+    // quantization, which would collapse close cutoffs).
+    if (value === undefined) {
+      return "undefined";
+    }
+    if (value === null) {
+      return "null";
+    }
+    if (typeof value === "number") {
+      return String(value);
+    }
+    if (typeof value === "string") {
+      return "s:" + value;
+    }
+    return String(value);
+  }
+
+  function scenePlannerAlphaCutoffText(value) {
+    // Exact text for the already-normalized cutoff: omitted and explicit
+    // null both normalize to the disabled state, while any valid number
+    // serializes at full precision so .3 and .3000001 stay distinct.
+    if (value === null || value === undefined) {
+      return "null";
+    }
+    return String(value);
+  }
+
   function sceneCSSHashRecordKeys(hash, record, keys) {
     if (!record || typeof record !== "object") {
       return scenePlannerHashString(hash, "null");
@@ -472,6 +503,14 @@
         // objects, meshObjects and instancedMeshes without changing hash
         // semantics for any other field.
         hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(record[key]));
+        continue;
+      }
+      if (key === "alphaCutoff") {
+        // Full-precision, type-aware hashing for the alpha cutoff only:
+        // absence, explicit null and 0 are distinct CSS inputs, and close
+        // numeric values must not collapse. No other field's hashing
+        // changes.
+        hash = scenePlannerHashString(hash, scenePlannerAlphaCutoffRawText(record[key]));
         continue;
       }
       hash = scenePlannerHashAny(hash, record[key], 0);
@@ -632,6 +671,7 @@
     sceneCSSResolveCollectionKeys(state, css, "materials", [
       "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "specularIntensity", "specularColor",
+      "alphaCutoff",
       "clearcoat", "sheen", "transmission", "iridescence", "anisotropy",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap",
     ], null);
@@ -643,12 +683,14 @@
     sceneCSSResolveCollectionKeys(state, css, "objects", [
       "color", "opacity", "emissive", "roughness", "metalness", "ior",
       "specularIntensity", "specularColor",
+      "alphaCutoff",
       "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineWidth",
       "x", "y", "z", "rotationX", "rotationY", "rotationZ",
       "spinX", "spinY", "spinZ",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "meshObjects", [
       "depthCenter", "vertexOffset", "vertexCount", "ior", "specularIntensity", "specularColor",
+      "alphaCutoff",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "points", [
       "color", "size", "opacity", "x", "y", "z",
@@ -656,7 +698,7 @@
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "instancedMeshes", [
       "color", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
-      "width", "height", "depth", "radius",
+      "alphaCutoff", "width", "height", "depth", "radius",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "labels", [
       "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
@@ -1656,6 +1698,14 @@
     // the prepared-scene signature when they change.
     hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(sceneNormalizeMaterialSpecularIntensity(material && material.specularIntensity, 1)));
     hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(sceneNormalizeMaterialSpecularColor(material && material.specularColor, null)));
+    // Normalized alpha cutoff feeds planner profile preparation; hash it
+    // via the existing normalizer so omitted and explicit null both hash
+    // as the disabled state (matching at the finalized profile level),
+    // disabled stays distinct from an explicit 0, and the exact string
+    // serialization keeps .3 and .3000001 distinct even when the material
+    // has a stable key. The shared *1000 quantization would collapse
+    // these cases.
+    hash = scenePlannerHashString(hash, scenePlannerAlphaCutoffText(sceneNormalizeMaterialAlphaCutoff(material && material.alphaCutoff)));
     return scenePlannerHashNumber(hash, material && material.wireframe ? 1 : 0);
   }
 
