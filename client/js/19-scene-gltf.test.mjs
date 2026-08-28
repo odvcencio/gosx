@@ -562,7 +562,7 @@ test("invalid buffer indices and declared ranges raise named glTF errors", () =>
   assert.throws(() => call(context, `gltfReadAccessor({
     buffers: [{ byteLength: 16 }],
     bufferViews: [{ buffer: 0, byteOffset: 4, byteLength: 4 }],
-    accessors: [{ bufferView: 0, byteOffset: 2, componentType: 5126, count: 1, type: "SCALAR" }],
+    accessors: [{ bufferView: 0, byteOffset: 0, componentType: 5126, count: 2, type: "SCALAR" }],
   }, 0, new ArrayBuffer(16))`), /accessor 0 exceeds bufferView 0 bounds/);
 });
 
