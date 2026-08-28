@@ -506,6 +506,7 @@ func CheckTreeWithOptions(ctx context.Context, root string, opts Options) error 
 	// single-file "gosx check" cannot see an unmounted-page finding --
 	// intentional; see that function's own doc comment.
 	validateRouteMountContract(abs, sources, opts)
+	validateLayoutDataContract(abs, sources, opts)
 	return checkSourcePackages(ctx, sources, opts, abs)
 }
 

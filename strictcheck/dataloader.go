@@ -34,6 +34,11 @@ func validateDataLoaderKeysContract(files []transpile.PackageFile, opts Options)
 		if file.Program == nil {
 			continue
 		}
+		if isFileRouteLayout(file.Path) {
+			// Layout data comes from the descendant page's ctx.Data; a
+			// layout's own FileModule.Load is never invoked.
+			continue
+		}
 		keys, ok := resolveDataKeysForFile(file.Path)
 		if !ok {
 			continue

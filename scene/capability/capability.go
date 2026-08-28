@@ -110,25 +110,24 @@ func LightKindFeatures(kind string) []Feature {
 // Props.SceneIR applies the answer as a post-filter over Capable. See
 // TestCustomShaderHasNoFlatCellOnPurpose in customshader_test.go.
 var Matrix = map[Feature]map[Backend]bool{
-	// Both GPU backends deform a skinned mesh, so both cells are true.
+	// Both GPU backends skin a skinned mesh fully — positions, normals AND
+	// tangents — so both cells are true.
 	//
 	// WebGL2 skins in the vertex shader: SCENE_PBR_SKINNED_VERTEX_SOURCE builds
-	// skinMatrix from a_joints, a_weights and u_jointMatrices[64].
+	// skinMatrix from a_joints, a_weights and u_jointMatrices[64], and applies
+	// mat3(skinMatrix) to both the normal and the tangent.
 	// WebGPU skins in a compute pass: SCENE_ELIO_SKIN_LBS_SOURCE runs linear
-	// blend skinning over a storage buffer of bone matrices, and
-	// webGPUBindElioSkinnedBuffers binds the result as vertex slot 0.
+	// blend skinning over a storage buffer of bone matrices and writes three
+	// packed regions per vertex — positions at byte 0, joint-matrix-skinned,
+	// renormalized normals at paddedCount*12, and tangents (with preserved w)
+	// at paddedCount*24. webGPUBindElioSkinnedBuffers binds those regions to
+	// vertex slots 0, 1 and 3 of the same output buffer.
 	//
-	// The two are NOT equally faithful, and the difference has no cell today.
-	// The WGSL kernel writes three floats per vertex — position only. Its 28
-	// lines contain the strings "normal" and "tangent" zero times. WebGL2 skins
-	// all three: "pos = skinMatrix * pos", "norm = mat3(skinMatrix) * norm" and
-	// "tang = mat3(skinMatrix) * tang". So a skinned limb on WebGPU lights from
-	// rest-pose normals.
-	//
-	// TestSkinnedNormalGapIsRecordedNotClaimed states the recommended follow-up:
-	// a skinned-normals feature, false on WebGPU and true on WebGL2. It needs a
-	// key in both renderer manifests, so it is a reported finding here, not a
-	// silent row.
+	// The two backends differ in mechanism; what the evidence establishes is
+	// full attribute coverage — both deform all three vectors with the blended
+	// joint matrices, so every position, normal and tangent reaching the draw
+	// has been joint-skinned on either backend. Pixel-level lighting parity
+	// between the two renderers is a separate question this row does not claim.
 	FeatureSkinning: {BackendWebGPU: true, BackendWebGL: true},
 	// WebGPU true, WebGL2 false. Both cells are corroborated against renderer
 	// source; see ibl_test.go.
@@ -147,12 +146,12 @@ var Matrix = map[Feature]map[Backend]bool{
 	// WebGL2 holds the same three samplers (u_iblIrradiance, u_iblRadiance,
 	// u_iblBRDFLUT, behind #if GOSX_HDR_IBL) and the same runtime asset path
 	// (scenePBRUploadEnvironmentMap), but scenePBRHDRIBLAvailable gates the
-	// whole branch on MAX_TEXTURE_IMAGE_UNITS >= 18. A Matrix cell answers an
+	// whole branch on MAX_TEXTURE_IMAGE_UNITS >= 20. A Matrix cell answers an
 	// unconditional question — "does this backend shade IBL for every
 	// authoring scene" — and a device below the gate does not, regardless of
 	// what the shader compiles. See assetpipe/ibl/contract.go:38-46 for the
 	// gate's rationale and PR-8 (ibl_test.go) for the SH9 irradiance fallback
-	// that keeps sub-18-unit devices from losing ambient light entirely.
+	// that keeps sub-20-unit devices from losing ambient light entirely.
 	//
 	// The ad hoc (1.0 - roughness * 0.65) legacy equirect-tap response —
 	// unrelated to this row — lives under FeatureEnvironmentMap below.

@@ -247,6 +247,9 @@
         "transmission": { "type": "number" },
         "iridescence": { "type": "number" },
         "anisotropy": { "type": "number" },
+        "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
+        "specularIntensity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "specularColor": { "type": ["array", "null"], "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 },
         "normalMap": { "type": "string" },
         "roughnessMap": { "type": "string" },
         "metalnessMap": { "type": "string" },
@@ -486,6 +489,9 @@
             "color": { "type": "string" },
             "roughness": { "type": "number" },
             "metalness": { "type": "number" },
+            "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
+            "specularIntensity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "specularColor": { "type": ["array", "null"], "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 },
             "transforms": { "$ref": "#/$defs/numberArray" },
             "colors": { "$ref": "#/$defs/stringArray" },
             "attributes": {
@@ -515,6 +521,9 @@
             },
             "roughness": { "type": "number" },
             "metalness": { "type": "number" },
+            "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
+            "specularIntensity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "specularColor": { "type": ["array", "null"], "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 },
             "instances": {
               "type": "array",
               "items": { "$ref": "#/$defs/meshInstance" }

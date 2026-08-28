@@ -236,6 +236,148 @@
     }
   }
 
+  // Scene/glTF-authored index of refraction (the KHR_materials_ior numeric
+  // contract): finite ior >= 1 is valid with no upper truncation; an
+  // explicit numeric 0 is the glTF compatibility mode that pins the
+  // dielectric Fresnel to 1 (it is neither a default nor a clamp); missing,
+  // null, invalid, non-finite, negative and 0<ior<1 all default safely.
+  // CSS var strings ride the existing explicit-var machinery and come back
+  // trimmed; null, false and empty strings are never coerced to zero.
+  function sceneNormalizeMaterialIor(value, fallback) {
+    if (sceneCSSVarReference(value)) {
+      return String(value).trim();
+    }
+    var numeric = value;
+    if (typeof numeric === "string") {
+      numeric = numeric.trim() !== "" ? Number(numeric) : NaN;
+    } else if (typeof numeric !== "number") {
+      numeric = NaN;
+    }
+    if (numeric === 0) {
+      return 0;
+    }
+    if (Number.isFinite(numeric) && numeric >= 1) {
+      return numeric;
+    }
+    if (sceneCSSVarReference(fallback)) {
+      return String(fallback).trim();
+    }
+    // The inherited fallback must satisfy the same numeric contract as the
+    // direct value: sceneNumber(fallback, 1.5) coerces null, false and ""
+    // to 0 — silently enabling the glTF zero mode — and passes negative or
+    // 0<ior<1 numbers straight through. Revalidating under the same rule
+    // terminates because the hard 1.5 default is always valid.
+    return sceneNormalizeMaterialIor(fallback, 1.5);
+  }
+
+  // Specular intensity (KHR-style numeric contract): finite intensity within
+  // [0, 1] is valid with an explicit 0 preserved; missing, null, booleans,
+  // empty strings, non-finite and out-of-range values fall back to a valid
+  // inherited value or the hard default of 1. CSS var strings ride the
+  // existing explicit-var machinery and come back trimmed.
+  function sceneNormalizeMaterialSpecularIntensity(value, fallback) {
+    if (sceneCSSVarReference(value)) {
+      return String(value).trim();
+    }
+    var numeric = value;
+    if (typeof numeric === "string") {
+      numeric = numeric.trim() !== "" ? Number(numeric) : NaN;
+    } else if (typeof numeric !== "number") {
+      numeric = NaN;
+    }
+    if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 1) {
+      return numeric;
+    }
+    if (sceneCSSVarReference(fallback)) {
+      return String(fallback).trim();
+    }
+    // The inherited fallback must satisfy the same numeric contract as the
+    // direct value; the hard default of 1 is always valid, so revalidation
+    // terminates.
+    return sceneNormalizeMaterialSpecularIntensity(fallback, 1);
+  }
+
+  function sceneIsSpecularColorArray(value) {
+    if (Array.isArray(value)) {
+      return true;
+    }
+    if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView) {
+      return ArrayBuffer.isView(value) && !(typeof DataView !== "undefined" && value instanceof DataView);
+    }
+    return false;
+  }
+
+  function sceneSpecularColorComponent(component) {
+    if (typeof component === "string") {
+      component = component.trim() !== "" ? Number(component) : NaN;
+    } else if (typeof component !== "number") {
+      component = NaN;
+    }
+    return Number.isFinite(component) && component >= 0 ? component : NaN;
+  }
+
+  // A specular tint triple is valid only as a whole: exactly three
+  // components, each a finite non-negative number (numeric component
+  // strings parse under the scalar convention). Only arrays and typed
+  // arrays qualify — arbitrary array-like objects, strings (which would
+  // index characters), holes, nulls, booleans, negative and non-finite
+  // components invalidate the entire triple.
+  function sceneParseSpecularColorTriple(value) {
+    if (!sceneIsSpecularColorArray(value) || value.length !== 3) {
+      return null;
+    }
+    const triple = [
+      sceneSpecularColorComponent(value[0]),
+      sceneSpecularColorComponent(value[1]),
+      sceneSpecularColorComponent(value[2]),
+    ];
+    return triple.every(Number.isFinite) ? triple : null;
+  }
+
+  // Numeric CSS-style triples ("0.5 0.5 0.5" / "0.5,0.5,0.5") are accepted
+  // as explicit LINEAR-space colors: exactly three numeric tokens separated
+  // by whitespace or commas. Anything else (bare numbers like "123", wrong
+  // token counts, junk tokens, negatives) is rejected wholesale. No gamma
+  // conversion happens here and CSS var text never reaches this parser —
+  // var references are resolved by the caller first.
+  function sceneParseSpecularColorText(text) {
+    if (typeof text !== "string") {
+      return null;
+    }
+    const parts = text.trim().split(/[\s,]+/).filter(Boolean);
+    if (parts.length !== 3) {
+      return null;
+    }
+    const triple = parts.map(sceneSpecularColorComponent);
+    return triple.every(Number.isFinite) ? triple : null;
+  }
+
+  // Specular tint (KHR-style color factor): LINEAR RGB, never sRGB. A valid
+  // triple is consumed whole; any invalid shape or component (including a
+  // single bad channel) makes the whole color invalid, so the inherited
+  // fallback color or the hard [1, 1, 1] default applies — there is no
+  // per-channel repair. The returned value is always a fresh snapshot so
+  // mutating author inputs cannot mutate normalized or cached materials.
+  function sceneNormalizeMaterialSpecularColor(value, fallback) {
+    if (sceneCSSVarReference(value)) {
+      return String(value).trim();
+    }
+    const parsed = sceneParseSpecularColorTriple(value)
+      || sceneParseSpecularColorText(value);
+    if (parsed) {
+      return parsed;
+    }
+    if (sceneCSSVarReference(fallback)) {
+      return String(fallback).trim();
+    }
+    const fallbackParsed = sceneParseSpecularColorTriple(fallback)
+      || sceneParseSpecularColorText(fallback);
+    if (fallbackParsed) {
+      return fallbackParsed;
+    }
+    return [1, 1, 1];
+  }
+
   function sceneObjectMaterialSource(item) {
     return item && item.material && typeof item.material === "object" ? item.material : null;
   }
@@ -318,6 +460,9 @@
       emissive: sceneCSSVarReference(object && object.emissive) ? String(object.emissive).trim() : clamp01(sceneNumber(object && object.emissive, sceneDefaultMaterialEmissive(kind))),
       roughness: sceneNumberOrCSSVar(object && object.roughness, 0.5),
       metalness: sceneNumberOrCSSVar(object && object.metalness, 0),
+      ior: sceneNormalizeMaterialIor(object && object.ior, 1.5),
+      specularIntensity: sceneNormalizeMaterialSpecularIntensity(object && object.specularIntensity, 1),
+      specularColor: sceneNormalizeMaterialSpecularColor(object && object.specularColor, null),
       clearcoat: sceneNumberOrCSSVar(object && object.clearcoat, 0),
       sheen: sceneNumberOrCSSVar(object && object.sheen, 0),
       transmission: sceneNumberOrCSSVar(object && object.transmission, 0),
@@ -363,6 +508,18 @@
       sceneCSSVarReference(profile && profile.emissive) ? String(profile.emissive).trim() : clamp01(sceneNumber(profile && profile.emissive, 0)).toFixed(3),
       sceneCSSVarReference(profile && profile.roughness) ? String(profile.roughness).trim() : sceneNumber(profile && profile.roughness, 0.5).toFixed(3),
       sceneCSSVarReference(profile && profile.metalness) ? String(profile.metalness).trim() : sceneNumber(profile && profile.metalness, 0).toFixed(3),
+      // Authored ior keys at full precision — no toFixed quantization — so
+      // distinct valid iors never share a cached material. Raw invalid values
+      // (null/false/"") go through sceneNormalizeMaterialIor onto the 1.5
+      // shader default instead of colliding with an explicit 0 (F0 = 1).
+      sceneCSSVarReference(profile && profile.ior) ? String(profile.ior).trim() : sceneNormalizeMaterialIor(profile && profile.ior),
+      // Specular factors key at full precision — intensity is never
+      // quantized and the tint is serialized exactly — so distinct valid
+      // values (per RGB component and per intensity, however close) never
+      // share a cached material. Raw invalid values normalize onto the
+      // defaults instead of colliding with explicit zero/black.
+      sceneCSSVarReference(profile && profile.specularIntensity) ? String(profile.specularIntensity).trim() : sceneNormalizeMaterialSpecularIntensity(profile && profile.specularIntensity),
+      sceneCSSVarReference(profile && profile.specularColor) ? String(profile.specularColor).trim() : JSON.stringify(sceneNormalizeMaterialSpecularColor(profile && profile.specularColor, null)),
       sceneCSSVarReference(profile && profile.clearcoat) ? String(profile.clearcoat).trim() : sceneNumber(profile && profile.clearcoat, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.sheen) ? String(profile.sheen).trim() : sceneNumber(profile && profile.sheen, 0).toFixed(3),
       sceneCSSVarReference(profile && profile.transmission) ? String(profile.transmission).trim() : sceneNumber(profile && profile.transmission, 0).toFixed(3),

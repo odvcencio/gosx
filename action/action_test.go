@@ -420,6 +420,43 @@ func TestServeHandlerWithOptionsZeroFallsBackToPackageDefault(t *testing.T) {
 	}
 }
 
+func TestWantsJSON(t *testing.T) {
+	tests := []struct {
+		name          string
+		contentType   string
+		accept        string
+		requestedWith string
+		nilRequest    bool
+		want          bool
+	}{
+		{name: "nil request", nilRequest: true, want: true},
+		{name: "JSON Accept", accept: "application/json", want: true},
+		{name: "JSON content type", contentType: "application/json; charset=utf-8", want: true},
+		{name: "managed X-Requested-With", requestedWith: "XMLHttpRequest", want: true},
+		{
+			name:        "native form",
+			contentType: "application/x-www-form-urlencoded",
+			accept:      "text/html,application/xhtml+xml",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if !tt.nilRequest {
+				req = httptest.NewRequest(http.MethodPost, "/account/__actions/save", nil)
+				req.Header.Set("Content-Type", tt.contentType)
+				req.Header.Set("Accept", tt.accept)
+				req.Header.Set("X-Requested-With", tt.requestedWith)
+			}
+			if got := WantsJSON(req); got != tt.want {
+				t.Fatalf("WantsJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRegistryHTTPStructuredValidationError(t *testing.T) {
 	r := NewRegistry()
 	r.Register("submit", func(ctx *Context) error {
@@ -510,6 +547,43 @@ func TestRegistryHTTPContextRedirect(t *testing.T) {
 	}
 	if got := w.Header().Get("Location"); got != "/users" {
 		t.Fatalf("expected redirect to /users, got %q", got)
+	}
+}
+
+func TestRegistryHTTPContextRedirectWithMessageUsesOneResultForManagedAndNativeForms(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		ctx.RedirectWithMessage("/users", "  Profile saved.  ")
+		return nil
+	})
+
+	jsonReq := httptest.NewRequest(http.MethodPost, "/gosx/action/submit", strings.NewReader("name=Ada"))
+	jsonReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	jsonReq.Header.Set("Accept", "application/json")
+	jsonReq.SetPathValue("name", "submit")
+	jsonRes := httptest.NewRecorder()
+	r.ServeHTTP(jsonRes, jsonReq)
+	if jsonRes.Code != http.StatusSeeOther {
+		t.Fatalf("managed response status = %d, want %d", jsonRes.Code, http.StatusSeeOther)
+	}
+	var got Result
+	if err := json.NewDecoder(jsonRes.Body).Decode(&got); err != nil {
+		t.Fatalf("decode managed response: %v", err)
+	}
+	if !got.OK || got.Message != "Profile saved." || got.Redirect != "/users" {
+		t.Fatalf("managed response = %+v", got)
+	}
+
+	nativeReq := httptest.NewRequest(http.MethodPost, "/gosx/action/submit", strings.NewReader("name=Ada"))
+	nativeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	nativeReq.SetPathValue("name", "submit")
+	nativeRes := httptest.NewRecorder()
+	r.ServeHTTP(nativeRes, nativeReq)
+	if nativeRes.Code != http.StatusSeeOther {
+		t.Fatalf("native response status = %d, want %d", nativeRes.Code, http.StatusSeeOther)
+	}
+	if got := nativeRes.Header().Get("Location"); got != "/users" {
+		t.Fatalf("native redirect = %q, want /users", got)
 	}
 }
 

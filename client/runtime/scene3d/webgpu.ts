@@ -158,6 +158,26 @@
     "    hasOcclusionMap: u32,",
     "    modelMatrix: mat4x4f,",
     "    modelScaleSigns: vec4f,",
+    // Trailing dedicated material scalars: the authored dielectric F0 and the
+    // effective specular factors (min(IOR F0 * colour, 1) * intensity as an
+    // aligned vec3f, then the intensity as F90). Every texture flag slot and
+    // the model transform/sign floats keep their existing offsets; the vec3f
+    // trailing fields pad the struct to 208 bytes total.
+    "    dielectricF0: f32,",
+    // Reuses the vec3f alignment word at u32 index 41; materialUniformData
+    // pre-zeroes it so a plain pack stays
+    // neutral until createMaterialBindGroup sets the real flag.
+    "    hasSpecularIntensityMap: u32,",
+    "    specularF0: vec3f,",
+    "    specularF90: f32,",
+    // Per-channel log2 of the authored dielectric specular coefficient
+    // (log2(iorF0) + log2(color)), with an exact-zero coefficient encoded
+    // as the -1e30 sentinel so the shader can branch on it without any
+    // epsilon substitution. The vec3f alignment lands at u32 indices
+    // 48..50 and the trailing hasSpecularColorMap flag at index 51,
+    // padding the struct to 208 bytes total.
+      "    specularColorLog: vec3f,",
+      "    hasSpecularColorMap: u32,",
     "};",
   ].join("\n");
 
@@ -213,6 +233,16 @@
   // Emitted by m31labs.dev/elio/emit/wgsl from stdlib.Skin().
   // The runtime pads dispatch buffers to the 64-wide workgroup size, so the
   // generated kernel can stay byte-for-byte aligned with Elio's current output.
+  //
+  // One dispatch writes three contiguous regions of a single tracked output
+  // buffer, each paddedCount elements wide: positions (vec3) first, then
+  // normals (vec3), then tangents (vec4). Each invocation blends the four
+  // bone influences into ONE weighted mat4x4 blend: its translation
+  // column skins the position while the linear xyz columns skin the packed
+  // source normal and tangent, safe-normalized so degenerate vectors pass
+  // through as zero instead of NaN. Tangent w is carried through untouched so
+  // bitangent handedness survives skinning. paddedCount comes from
+  // arrayLength(&verts) to place the normal/tangent region bases.
   var SCENE_ELIO_SKIN_LBS_SOURCE = [
     "struct SkinVertex {",
     "  px : f32,",
@@ -226,6 +256,13 @@
     "  b1 : u32,",
     "  b2 : u32,",
     "  b3 : u32,",
+    "  nx : f32,",
+    "  ny : f32,",
+    "  nz : f32,",
+    "  tx : f32,",
+    "  ty : f32,",
+    "  tz : f32,",
+    "  tw : f32,",
     "};",
     "",
     "@group(0) @binding(0) var<storage, read> bones : array<mat4x4<f32>>;",
@@ -235,11 +272,29 @@
     "@compute @workgroup_size(64)",
     "fn skin(@builtin(global_invocation_id) gid : vec3<u32>) {",
     "  let i = gid.x;",
+    "  let paddedCount = arrayLength(&verts);",
     "  let v = verts[i];",
-    "  let skinned = ((((((((bones[v.b0][0u] * v.px) + (bones[v.b0][1u] * v.py)) + (bones[v.b0][2u] * v.pz)) + bones[v.b0][3u]) * v.w0) + (((((bones[v.b1][0u] * v.px) + (bones[v.b1][1u] * v.py)) + (bones[v.b1][2u] * v.pz)) + bones[v.b1][3u]) * v.w1)) + (((((bones[v.b2][0u] * v.px) + (bones[v.b2][1u] * v.py)) + (bones[v.b2][2u] * v.pz)) + bones[v.b2][3u]) * v.w2)) + (((((bones[v.b3][0u] * v.px) + (bones[v.b3][1u] * v.py)) + (bones[v.b3][2u] * v.pz)) + bones[v.b3][3u]) * v.w3));",
-    "  out[((i * 3u) + 0u)] = skinned.x;",
-    "  out[((i * 3u) + 1u)] = skinned.y;",
-    "  out[((i * 3u) + 2u)] = skinned.z;",
+    "  let m = (bones[v.b0] * v.w0 + bones[v.b1] * v.w1) + (bones[v.b2] * v.w2 + bones[v.b3] * v.w3);",
+    "  let skinned = (m * vec4f(v.px, v.py, v.pz, 1.0)).xyz;",
+    "  let rawNormal = (m * vec4f(v.nx, v.ny, v.nz, 0.0)).xyz;",
+    "  let rawTangent = (m * vec4f(v.tx, v.ty, v.tz, 0.0)).xyz;",
+    "  let nLen = length(rawNormal);",
+    "  let sn = select(rawNormal, rawNormal / nLen, nLen > 0.000001);",
+    "  let tLen = length(rawTangent);",
+    "  let st = select(rawTangent, rawTangent / tLen, tLen > 0.000001);",
+    "  let posBase = i * 3u;",
+    "  out[posBase] = skinned.x;",
+    "  out[posBase + 1u] = skinned.y;",
+    "  out[posBase + 2u] = skinned.z;",
+    "  let normBase = (paddedCount * 3u) + posBase;",
+    "  out[normBase] = sn.x;",
+    "  out[normBase + 1u] = sn.y;",
+    "  out[normBase + 2u] = sn.z;",
+    "  let tanBase = (paddedCount * 6u) + (i * 4u);",
+    "  out[tanBase] = st.x;",
+    "  out[tanBase + 1u] = st.y;",
+    "  out[tanBase + 2u] = st.z;",
+    "  out[tanBase + 3u] = v.tw;",
     "}",
   ].join("\n");
 
@@ -1509,6 +1564,18 @@
     "@group(1) @binding(11) var occlusionTex: texture_2d<f32>;",
     "@group(1) @binding(12) var occlusionSamp: sampler;",
     "",
+    // KHR specular-intensity map: the ALPHA channel is a linear intensity
+    // multiplier. A missing, still-loading or failed map stays neutral via
+    // the hasSpecularIntensityMap gate in the fragment body.
+    "@group(1) @binding(13) var specularIntensityTex: texture_2d<f32>;",
+    "@group(1) @binding(14) var specularIntensitySamp: sampler;",
+    "",
+    // KHR specular-color map: the RGB channels are the sRGB-encoded
+    // authored specular tint. A missing, still-loading or failed map stays
+    // neutral via the hasSpecularColorMap gate in the fragment body.
+      "@group(1) @binding(15) var specularColorTex: texture_2d<f32>;",
+      "@group(1) @binding(16) var specularColorSamp: sampler;",
+      "",
     "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
     "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
@@ -1585,13 +1652,15 @@
     "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
     "}",
     "",
-    // Schlick fresnel approximation.
-    "fn fresnelSchlick(cosTheta: f32, F0: vec3f) -> vec3f {",
-    "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    // Schlick fresnel approximation. F90 is the authored specular intensity:
+    // the grazing reflectance the KHR specular extension scales, so an
+    // intensity below 1 dims the whole lobe, not just the F0 floor.
+    "fn fresnelSchlick(cosTheta: f32, F0: vec3f, F90: f32) -> vec3f {",
+    "    return F0 + (vec3f(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
-    "fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3f, roughness: f32) -> vec3f {",
-    "    return F0 + (max(vec3f(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3f, F90: f32, roughness: f32) -> vec3f {",
+    "    return F0 + (max(vec3f(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
     "fn rotateEnvY(dir: vec3f, radians: f32) -> vec3f {",
@@ -1723,7 +1792,7 @@
     // three.js multiplies the diffuse term by diffuseColor, which already folds
     // in metalness. The form factor carries the cosine and the solid angle, so
     // there is no separate NdotL or 1/PI in the diffuse line.
-    "fn rectAreaLightRadiance(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, NoV: f32) -> vec3f {",
+    "fn rectAreaLightRadiance(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, F90: f32, NoV: f32) -> vec3f {",
     "    let center = light.position.xyz;",
     "    let halfWidth = light.areaHalfWidth.xyz;",
     "    let halfHeight = light.areaHalfHeight.xyz;",
@@ -1742,7 +1811,7 @@
     "        let H = normalize(V + L);",
     "        let D = distributionGGX(N, H, roughness);",
     "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
     "        let brdf = (D * G * F) / (4.0 * NoV * NdotL + 0.0001);",
     "        out = out + radiance * brdf * formFactor;",
     "    }",
@@ -1801,9 +1870,47 @@
     "",
     "    let V = normalize(frame.cameraPos - in.worldPos);",
     "    let NoV = max(dot(N, V), 0.0);",
-    "",
-    // Fresnel reflectance at normal incidence.
-    "    let F0 = mix(vec3f(0.04), albedo, metalness);",
+      "",
+      // Fresnel reflectance at normal incidence — the material's authored
+      // dielectric F0 = ((ior-1)/(ior+1))^2 blended with metallic albedo.
+      // Defaults to 0.04 (ior 1.5); 1.0 in the glTF ior=0 compatibility mode.
+      // Direct and environment consumers share this single F0.
+      // The authored KHR specular factors refine the dielectric lane:
+      // material.specularF0 is min(IOR F0 * linear colour, 1) * intensity and
+      // material.specularF90 is the intensity itself, both prepared CPU-side
+      // so the packed buffer is always finite and bounded to [0, 1]. The
+      // metallic mix keeps its exact fully-metal branch so a metal never
+      // reads the dielectric lane.
+      // A bound specular-intensity texture multiplies its linear ALPHA into
+      // both shared factors BEFORE the metallic mix, so direct, scalar
+      // diffuse, IBL and equirect consumers all see the updated values.
+      "    var specIntensity = 1.0;",
+      "    if (material.hasSpecularIntensityMap != 0u) {",
+      "        specIntensity = textureSample(specularIntensityTex, specularIntensitySamp, in.uv).a;",
+      "    }",
+      "    var specF0 = material.specularF0 * specIntensity;",
+      "    let specF90 = material.specularF90 * specIntensity;",
+    "    if (material.hasSpecularColorMap != 0u) {",
+    "        let texColor = textureSample(specularColorTex, specularColorSamp, in.uv).rgb;",
+    "        var texF0 = vec3f(0.0);",
+    // Per-channel decode: exactly-1 texel keeps the untextured result
+    // bit-for-bit; exact-zero texel yields exact-zero F0; positive texel
+    // multiplies in log space, clamped to 0 BEFORE exp2 (no overflow).
+    // Combined specF90 scales every color-textured channel.
+    "        if (texColor.r == 1.0) { texF0.r = specF0.r; }",
+      "        else if (texColor.r > 0.0 && material.specularColorLog.r > -1e29) { texF0.r = exp2(min(material.specularColorLog.r + log2(texColor.r), 0.0)) * specF90; }",
+      "        if (texColor.g == 1.0) { texF0.g = specF0.g; }",
+      "        else if (texColor.g > 0.0 && material.specularColorLog.g > -1e29) { texF0.g = exp2(min(material.specularColorLog.g + log2(texColor.g), 0.0)) * specF90; }",
+      "        if (texColor.b == 1.0) { texF0.b = specF0.b; }",
+      "        else if (texColor.b > 0.0 && material.specularColorLog.b > -1e29) { texF0.b = exp2(min(material.specularColorLog.b + log2(texColor.b), 0.0)) * specF90; }",
+    "        specF0 = texF0;",
+      "    }",
+      "    var F0 = mix(specF0, albedo, metalness);",
+      "    var F90 = mix(specF90, 1.0, metalness);",
+      "    if (metalness >= 1.0) {",
+      "        F0 = albedo;",
+      "        F90 = 1.0;",
+      "    }",
     "",
     // Accumulate direct lighting.
     "    var Lo = vec3f(0.0);",
@@ -1839,7 +1946,7 @@
     // form factor already carries the cosine and the falloff, so the shared
     // BRDF block below does not apply.
     "        if (lightType == 5u) {",
-    "            Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, NoV);",
+    "            Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV);",
     "            continue;",
     "        }",
     "",
@@ -1870,14 +1977,18 @@
     // Cook-Torrance specular BRDF.
     "        let D = distributionGGX(N, H, roughness);",
     "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
     "",
     "        let numerator = D * G * F;",
     "        let denominator = 4.0 * NoV * NdotL + 0.0001;",
     "        let specular = numerator / denominator;",
     "",
-    // Energy conservation: diffuse complement of specular.
-    "        let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+    // Energy conservation: diffuse complement of the dielectric specular.
+    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
+    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
+    // the Fresnel colour and never borrows the metallic Fresnel.
+    "        let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
+    "        let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
     // Shadow attenuation for directional lights.
     "        var shadowAtten: f32 = 1.0;",
@@ -1898,22 +2009,23 @@
     "    if (env.hasIBL != 0u) {",
     "        let Nr = rotateEnvY(N, env.envRotation);",
     "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
-    "        let Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
-    "        let kDenv = (vec3f(1.0) - Fenv) * (1.0 - metalness);",
+    "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        let irradiance = textureSample(iblIrradiance, iblSampler, Nr).rgb;",
     "        let maxLod = f32(max(env.radianceMipLevels, 1u) - 1u);",
     "        let prefiltered = textureSampleLevel(iblRadiance, iblSampler, Rr, roughness * maxLod).rgb;",
     "        let brdf = textureSample(iblBRDFLUT, iblSampler, vec2f(NoV, roughness)).rg;",
     "        let diffuseIBL = irradiance * albedo * kDenv;",
-    "        let specularIBL = prefiltered * (F0 * brdf.x + brdf.y);",
+    "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
     "        let Nr = rotateEnvY(N, env.envRotation);",
     "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
     "        let envDiffuse = textureSample(envMapTex, envMapSampler, envEquirectUV(Nr)).rgb * albedo;",
     "        let envSpecular = textureSample(envMapTex, envMapSampler, envEquirectUV(Rr)).rgb;",
-    "        let Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
-    "        let kDenv = (vec3f(1.0) - Fenv) * (1.0 - metalness);",
+    "        let Fenv = fresnelSchlickRoughness(NoV, F0, F90, roughness);",
+    "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
@@ -3166,6 +3278,13 @@
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
+        // Specular-color maps store meaningful RGB under a possibly-zero
+        // alpha channel (the shader samples .rgb only). Browser bitmap
+        // decode can premultiply, zeroing RGB wherever alpha is 0, which
+        // makes the specular tint collapse to black. Request explicitly
+        // unpremultiplied decode and copy for this role only; other roles
+        // keep their prior behavior.
+        var isSpecularColor = descriptor.role === "specular-color";
         var w = image.width;
         var h = image.height;
         var tex = device.createTexture({
@@ -3175,7 +3294,8 @@
         });
         // Use createImageBitmap for copyExternalImageToTexture.
         if (typeof createImageBitmap === "function") {
-          createImageBitmap(image).then(function(bitmap) {
+          var bitmapOptions = isSpecularColor ? { premultiplyAlpha: "none" } : undefined;
+          createImageBitmap(image, bitmapOptions).then(function(bitmap) {
             if (record.disposed || record.generation && record.generation.disposed) {
               tex.destroy();
               if (bitmap && typeof bitmap.close === "function") bitmap.close();
@@ -3183,7 +3303,7 @@
             }
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
-              { texture: tex },
+              isSpecularColor ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
               [w, h]
             );
             record.texture.destroy();
@@ -3390,6 +3510,10 @@
         { binding: 10, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 11, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
         { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 16, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     });
   }
@@ -3417,7 +3541,7 @@
     return device.createBindGroupLayout({
       label: "gosx-shadow-frame",
       entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 64 } },
       ],
     });
   }
@@ -6872,6 +6996,8 @@
     // Shadow pass buffer.
     var shadowPositionBuffer = null;
     var shadowFrameBuffer = null;
+    var shadowFrameBufferStride = 256;
+    var shadowFrameBufferCapacity = 0;
 
     // Depth texture for main render pass.
     var mainDepthTexture = null;
@@ -7050,7 +7176,11 @@
     // scene warns once instead of every frame.
     var _lightIssuesReported = Object.create(null);
 
-    var _materialUniformBuf = new ArrayBuffer(160);
+    // 208 bytes: the previous 192-byte MaterialUniforms layout plus the
+    // vec3f-aligned per-channel specular coefficient logs and the trailing
+    // hasSpecularColorMap flag. Only the material buffer grows; frame and
+    // shadow buffers are untouched.
+    var _materialUniformBuf = new ArrayBuffer(208);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -7077,16 +7207,6 @@
         return scratchTangents;
       }
       return new Float32Array(length);
-    }
-
-    function sliceToFloat32(source, offset, count, stride, scratchName) {
-      var length = count * stride;
-      var start = offset * stride;
-      var buf = ensureScratch(scratchName, length);
-      for (var i = 0; i < length; i++) {
-        buf[i] = source && source[start + i] !== undefined ? +source[start + i] : 0;
-      }
-      return buf.subarray(0, length);
     }
 
     function wgpuCreateTrackedBuffer(usage, dataOrSize) {
@@ -7610,7 +7730,15 @@
         fogUniformBuffer = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         envUniformBuffer = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         shadowUniformBuffer = device.createBuffer({ size: 256, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        shadowFrameBuffer = device.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        shadowFrameBufferStride = Math.max(
+          256,
+          Math.floor(sceneNumber(device && device.limits && device.limits.minUniformBufferOffsetAlignment, 256))
+        );
+        shadowFrameBufferCapacity = 1;
+        shadowFrameBuffer = device.createBuffer({
+          size: shadowFrameBufferStride,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
 
         // Create samplers.
         linearSampler = device.createSampler({
@@ -13976,12 +14104,106 @@
       device.queue.writeBuffer(shadowUniformBuffer, 0, f);
     }
 
+    // Normal-incidence dielectric Fresnel for an authored material IOR:
+    // F0 = ((ior-1)/(ior+1))^2. Total function — missing, null, invalid,
+    // non-finite, negative and 0<ior<1 inputs fall back to the default ior
+    // 1.5 (F0 0.04); the glTF explicit-zero compatibility mode maps to a
+    // Fresnel of exactly 1. The (ior-1)/(ior+1) form stays stable for huge
+    // finite inputs and the result always fits float32 for upload.
+    function sceneWebGPUDielectricF0(ior) {
+      var value = typeof ior === "number"
+        ? ior
+        : (typeof ior === "string" && ior.trim() !== "" ? Number(ior) : NaN);
+      if (!(Number.isFinite(value) && (value >= 1 || value === 0))) {
+        value = 1.5;
+      }
+      if (value === 0) {
+        return 1;
+      }
+      var t = (value - 1) / (value + 1);
+      return t * t;
+    }
+
+    // Effective dielectric specular factors from the authored KHR-style
+    // specularIntensity / specularColor factors. The intensity contract is a
+    // finite number in [0, 1] — an explicit 0 is valid, an omitted value
+    // means 1 — and the color contract is exactly three finite non-negative
+    // LINEAR components, omitted meaning white. The effective F0 is
+    // min(IOR F0 * color, 1) * intensity with the clamp applied BEFORE the
+    // intensity so a finite HDR tint above 1 clamps to 1 rather than scaling
+    // past it, and F90 is the intensity itself. Every returned component is
+    // finite and non-negative, so the packed buffer can never see NaN or
+    // Infinity, and the result is bounded to [0, 1]. A future specular
+    // texture must multiply its colour into `color` BEFORE this clamp, never
+    // into an already-clamped F0.
+    function sceneWebGPUSpecularFactors(material) {
+      var mat = material || {};
+      var intensity = mat.specularIntensity;
+      if (!(typeof intensity === "number" && Number.isFinite(intensity) && intensity >= 0 && intensity <= 1)) {
+        intensity = 1;
+      }
+      var color = mat.specularColor;
+      var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+      if (valid) {
+        for (var i = 0; i < 3; i++) {
+          var component = color[i];
+          if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+            valid = false;
+            break;
+          }
+        }
+      }
+      if (!valid) {
+        color = [1, 1, 1];
+      }
+      var iorF0 = sceneWebGPUDielectricF0(mat.ior);
+      return {
+        f0: [
+          Math.min(iorF0 * color[0], 1) * intensity,
+          Math.min(iorF0 * color[1], 1) * intensity,
+          Math.min(iorF0 * color[2], 1) * intensity,
+        ],
+        f90: intensity,
+      };
+    }
+
+    // Log-space coefficients for the optional specular-colour texture:
+    // log2(IOR F0) + log2(authored colour) per channel, so the shader can add
+    // log2 of the sampled texel and exp2 back the unclamped HDR product
+    // without ever forming a float32 overflow on the CPU. Exact-zero channels
+    // (IOR F0 or colour component 0) use a finite sentinel far below any real
+    // log2 value; the shader maps the sentinel to zero. Invalid or omitted
+    // colour arrays fall back to white, matching sceneWebGPUSpecularFactors.
+    function sceneWebGPUSpecularColorLogs(material) {
+      var mat = material || {};
+      var color = mat.specularColor;
+      var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+      if (valid) {
+        for (var i = 0; i < 3; i++) {
+          var component = color[i];
+          if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+            valid = false;
+            break;
+          }
+        }
+      }
+      var iorF0 = sceneWebGPUDielectricF0(mat.ior);
+      var out = [0, 0, 0];
+      for (var j = 0; j < 3; j++) {
+        var c = valid ? color[j] : 1;
+        out[j] = (iorF0 > 0 && c > 0) ? Math.log2(iorF0) + Math.log2(c) : -1e30;
+      }
+      return out;
+    }
+
     function materialUniformData(material, receiveShadow, modelMatrix, modelScaleSigns) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
       // MaterialUniforms: PBR fields (80 bytes) + per-object model matrix
-      // (64 bytes) + three scale signs (16-byte aligned). The signs recover
+      // (64 bytes) + three scale signs (16-byte aligned) + one trailing
+      // dielectric-F0 scalar plus the vec3f-aligned effective specular
+      // factors and F90 (struct padded to 208 bytes). The signs recover
       // the rotation-only normal/tangent transform used by the CPU-baked path,
       // including negative and non-uniform scale. World-baked and instanced
       // draws receive identity.
@@ -14016,6 +14238,37 @@
       f[37] = modelScaleSigns ? sceneNumber(modelScaleSigns[1], 1) : 1;
       f[38] = modelScaleSigns ? sceneNumber(modelScaleSigns[2], 1) : 1;
       f[39] = 0;
+      // Dedicated trailing material scalars: normal-incidence dielectric F0
+      // from the authored IOR, then the vec3f alignment word at index 41
+      // reused as the hasSpecularIntensityMap flag (u[41], set by
+      // createMaterialBindGroup and zeroed here so a plain pack stays
+      // neutral), then the effective specular factors (F0 rgb, F90 =
+      // intensity) at the vec3f-aligned slots 44..47. Slots 42..43 stay
+      // zeroed so the packed material bytes stay deterministic.
+      f[40] = sceneWebGPUDielectricF0(mat.ior);
+      f[41] = 0; // hasSpecularIntensityMap, set by createMaterialBindGroup
+      f[42] = 0;
+      f[43] = 0;
+      var specular = sceneWebGPUSpecularFactors(mat);
+      f[44] = specular.f0[0];
+      f[45] = specular.f0[1];
+      f[46] = specular.f0[2];
+      f[47] = specular.f90;
+      // Per-channel log2 of the authored dielectric specular coefficient.
+      // The shader reconstructs min(coefficient * texel, 1) * combined
+      // intensity via exp2(min(logCoef + log2(texel), 0)), so only safe
+      // finite logs are packed: an exact-zero coefficient uses the -1e30
+      // sentinel (shader maps it to exact-zero F0); finite log sums are
+      // stored as-is and the shader clamps the exponent to 0 before exp2.
+      // No arbitrary ceiling is applied to finite color components, so
+      // IOR = 1 + EPSILON with Number.MAX_VALUE color still keeps its huge
+      // finite log. hasSpecularColorMap (u[51]) stays zero here so a plain
+      // pack stays neutral until createMaterialBindGroup sets it.
+      var colorLogs = sceneWebGPUSpecularColorLogs(mat);
+      f[48] = colorLogs[0];
+      f[49] = colorLogs[1];
+      f[50] = colorLogs[2];
+      u[51] = 0; // hasSpecularColorMap, set by createMaterialBindGroup
       return { data: f, u: u };
     }
 
@@ -14059,6 +14312,8 @@
         { prop: "metalnessMap", descriptor: "metalness", role: "metalness", colorSpace: "linear", index: 16 },
         { prop: "emissiveMap", descriptor: "emissive", role: "emissive", colorSpace: "srgb", index: 17 },
         { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", index: 19 },
+        { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", index: 41 },
+        { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", index: 51 },
       ];
 
       var texViews = [];
@@ -14117,6 +14372,10 @@
           { binding: 10, resource: linearSampler },
           { binding: 11, resource: texViews[5] },
           { binding: 12, resource: linearSampler },
+          { binding: 13, resource: texViews[6] },
+          { binding: 14, resource: linearSampler },
+          { binding: 15, resource: texViews[7] },
+          { binding: 16, resource: linearSampler },
         ],
       });
       owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews, bg: matBG };
@@ -14332,7 +14591,11 @@
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || !obj.retainedGeometry || !obj.vertices) continue;
+        // Direct-vertex entries (including skinned/morph draws that carry an
+        // authored index stream) are marked so their cached GPU buffers survive
+        // the sweep exactly like fully retained ones.
+        if (!obj || !obj.vertices) continue;
+        if (!obj.retainedGeometry && !obj.directVertices) continue;
         var entry = retainedMeshAttributeCache.get(obj.vertices);
         if (entry) entry.lastSeenEpoch = retainedMeshAttributeEpoch;
       }
@@ -14427,6 +14690,68 @@
       return true;
     }
 
+    // webGPUBindRetainedMeshIndexBuffer uploads (once) and binds the optional
+    // authored index stream of a direct-vertex mesh as a uint32 index buffer,
+    // returning its triangle-index count. Retained entries rebuild on revision
+    // change and retire with their attribute buffers; non-retained direct
+    // geometry (skinned draws) reuses while the Uint32Array identity is stable.
+    // Returns 0 when there are no valid indices so callers keep draw().
+    function webGPUBindRetainedMeshIndexBuffer(pass, obj) {
+      if (!pass) return 0;
+      var vertices = obj && obj.vertices;
+      if (!vertices) return 0;
+      var data = vertices.indices;
+      if (!(data instanceof Uint32Array) || data.length < 3 || data.length % 3 !== 0) {
+        return 0;
+      }
+      var retained = obj.retainedGeometry === true;
+      var entry = retainedMeshAttributeCache.get(vertices);
+      if (entry && retained && entry.revision !== obj.geometryRevision) {
+        retainedMeshBufferStats.rebuilds += 1;
+        retainedMeshBufferStats.revisionInvalidations += 1;
+        webGPURetireRetainedMeshEntry(vertices, entry);
+        entry = null;
+      }
+      if (!entry) {
+        entry = {
+          revision: retained ? obj.geometryRevision : undefined,
+          lastSeenEpoch: retainedMeshAttributeEpoch,
+          attributes: Object.create(null),
+        };
+        retainedMeshAttributeCache.set(vertices, entry);
+      }
+      var materialSource = webGPURetainedMaterialSource(obj);
+      if (materialSource && typeof materialSource === "object" && !entry.materialSource) {
+        entry.materialSource = materialSource;
+        entry.materialOwner = retainedMaterialOwners.get(materialSource) || null;
+      }
+      entry.lastSeenEpoch = retainedMeshAttributeEpoch;
+      var record = entry.attributes.indices;
+      if (!record || record.data !== data) {
+        if (record) {
+          retainedMeshBufferStats.rebuilds += 1;
+          webGPURetireRetainedMeshAttribute(entry, "indices");
+        }
+        var buffer = wgpuCreateTrackedBuffer(
+          GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+          data.byteLength || 4
+        );
+        if (!buffer) return 0;
+        device.queue.writeBuffer(buffer, 0, data);
+        record = { buffer: buffer, data: data, components: 1, byteLength: data.byteLength };
+        entry.attributes.indices = record;
+        retainedMeshBufferStats.misses += 1;
+        retainedMeshBufferStats.allocations += 1;
+        retainedMeshBufferStats.uploadCalls += 1;
+        retainedMeshBufferStats.uploadBytes += data.byteLength;
+        retainedMeshBufferStats.liveBytes += data.byteLength;
+      } else {
+        retainedMeshBufferStats.hits += 1;
+      }
+      pass.setIndexBuffer(record.buffer, "uint32");
+      return data.length;
+    }
+
     function webGPUDefaultAttributeData(obj, key, count, tupleSize, defaults) {
       var direct = webGPUDirectAttribute(obj, key, count, tupleSize);
       if (direct) return direct;
@@ -14493,13 +14818,19 @@
       var positions = webGPUDirectAttribute(obj, "positions", count, 3);
       var joints = webGPUDirectAttribute(obj, "joints", count, 4);
       var weights = webGPUDirectAttribute(obj, "weights", count, 4);
-      if (!vertices || !positions || !joints || !weights || count <= 0 || paddedCount <= 0) return null;
+      // Same source defaults the CPU draw path used before skinning moved to
+      // the compute pass: normals fall back to +Z, tangents to (1,0,0,w=1).
+      var normals = webGPUDefaultAttributeData(obj, "normals", count, 3, [0, 0, 1]);
+      var tangents = webGPUDefaultAttributeData(obj, "tangents", count, 4, [1, 0, 0, 1]);
+      if (!vertices || !positions || !joints || !weights || !normals || !tangents || count <= 0 || paddedCount <= 0) return null;
       var cache = vertices._gosxWGPUElioSkinVertexData;
       if (
         cache &&
         cache.positions === positions &&
         cache.joints === joints &&
         cache.weights === weights &&
+        cache.normals === normals &&
+        cache.tangents === tangents &&
         cache.count === count &&
         cache.paddedCount === paddedCount &&
         cache.jointCount === jointCount
@@ -14507,7 +14838,7 @@
         return cache.data;
       }
 
-      var stride = 44;
+      var stride = 72;
       var bytes = new Uint8Array(paddedCount * stride);
       var view = new DataView(bytes.buffer);
       var maxJoint = Math.max(0, jointCount - 1);
@@ -14537,6 +14868,13 @@
           view.setUint32(off + 32, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 1], 0)))), true);
           view.setUint32(off + 36, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 2], 0)))), true);
           view.setUint32(off + 40, Math.min(maxJoint, Math.max(0, Math.floor(sceneNumber(joints[q + 3], 0)))), true);
+          view.setFloat32(off + 44, sceneNumber(normals[p], 0), true);
+          view.setFloat32(off + 48, sceneNumber(normals[p + 1], 0), true);
+          view.setFloat32(off + 52, sceneNumber(normals[p + 2], 0), true);
+          view.setFloat32(off + 56, sceneNumber(tangents[q], 1), true);
+          view.setFloat32(off + 60, sceneNumber(tangents[q + 1], 0), true);
+          view.setFloat32(off + 64, sceneNumber(tangents[q + 2], 0), true);
+          view.setFloat32(off + 68, sceneNumber(tangents[q + 3], 1), true);
         } else {
           view.setFloat32(off + 12, 1, true);
         }
@@ -14546,6 +14884,8 @@
         positions: positions,
         joints: joints,
         weights: weights,
+        normals: normals,
+        tangents: tangents,
         count: count,
         paddedCount: paddedCount,
         jointCount: jointCount,
@@ -14556,7 +14896,21 @@
     }
 
     function webGPUElioEnsureOutputBuffer(record, paddedCount) {
-      var bytes = Math.max(4, paddedCount * 3 * 4);
+      var bytes = Math.max(4, paddedCount * 10 * 4);
+      // Cross-renderer staleness guard: scene objects retain their skin
+      // records across renderer rebuilds, but dispose() destroys every buffer
+      // tracked in pointsEntryGPUBuffers. A cached outputBuffer absent from
+      // THIS renderer's set belongs to a dead device — drop the stale JS
+      // reference WITHOUT calling destroy() again (dispose already destroyed
+      // it), so the alloc path below creates a fresh buffer on the current
+      // device. Mirrors the owner[slot] guard in sceneCachedTrackedBuffer.
+      // The bind group is invalidated too: it was created on the dead device
+      // and references the destroyed buffer, so no cache path below may
+      // return with a live-looking bindGroup around the dead buffer.
+      if (record.outputBuffer && !pointsEntryGPUBuffers.has(record.outputBuffer)) {
+        record.outputBuffer = null;
+        record.bindGroup = null;
+      }
       if (record.outputBuffer && wgpuTrackedBufferSize(record.outputBuffer) >= bytes) return record.outputBuffer;
       if (record.outputBuffer && typeof record.outputBuffer.destroy === "function") {
         pointsEntryGPUBuffers.delete(record.outputBuffer);
@@ -14598,12 +14952,15 @@
         false
       );
       var outputBuffer = webGPUElioEnsureOutputBuffer(record, paddedCount);
+      // paddedCount places the normal/tangent regions inside the single
+      // output buffer; the kernel derives it from arrayLength(&verts).
       if (!boneBuffer || !vertexBuffer || !outputBuffer) return null;
 
       if (
         !record.bindGroup ||
         record.boneBuffer !== boneBuffer ||
         record.vertexBuffer !== vertexBuffer ||
+        record.paddedCount !== paddedCount ||
         record.outputBuffer !== outputBuffer
       ) {
         record.bindGroup = device.createBindGroup({
@@ -14622,6 +14979,7 @@
       record.paddedCount = paddedCount;
       record.workgroups = Math.ceil(paddedCount / 64);
       obj._gosxWGPUElioSkinOutputBuffer = outputBuffer;
+      obj._gosxWGPUElioSkinOutputPaddedCount = paddedCount;
       return record;
     }
 
@@ -14869,63 +15227,21 @@
       return true;
     }
 
-    function webGPUTransformVec3Attribute(obj, key, count, defaults, scratchName) {
-      var source = webGPUDefaultAttributeData(obj, key, count, 3, defaults);
-      var out = ensureScratch(scratchName, count * 3);
-      var m = webGPUObjectModelMatrix(obj);
-      for (var i = 0; i < count; i++) {
-        var off = i * 3;
-        var x = sceneNumber(source[off], defaults && defaults[0] || 0);
-        var y = sceneNumber(source[off + 1], defaults && defaults[1] || 0);
-        var z = sceneNumber(source[off + 2], defaults && defaults[2] || 0);
-        var tx = sceneNumber(m[0], 1) * x + sceneNumber(m[4], 0) * y + sceneNumber(m[8], 0) * z;
-        var ty = sceneNumber(m[1], 0) * x + sceneNumber(m[5], 1) * y + sceneNumber(m[9], 0) * z;
-        var tz = sceneNumber(m[2], 0) * x + sceneNumber(m[6], 0) * y + sceneNumber(m[10], 1) * z;
-        var len = Math.hypot(tx, ty, tz);
-        if (len > 0.000001) {
-          tx /= len; ty /= len; tz /= len;
-        }
-        out[off] = tx;
-        out[off + 1] = ty;
-        out[off + 2] = tz;
-      }
-      return out.subarray(0, count * 3);
-    }
-
-    function webGPUTransformTangentAttribute(obj, count) {
-      var source = webGPUDefaultAttributeData(obj, "tangents", count, 4, [1, 0, 0, 1]);
-      var out = ensureScratch("tangents", count * 4);
-      var m = webGPUObjectModelMatrix(obj);
-      for (var i = 0; i < count; i++) {
-        var off = i * 4;
-        var x = sceneNumber(source[off], 1);
-        var y = sceneNumber(source[off + 1], 0);
-        var z = sceneNumber(source[off + 2], 0);
-        var tx = sceneNumber(m[0], 1) * x + sceneNumber(m[4], 0) * y + sceneNumber(m[8], 0) * z;
-        var ty = sceneNumber(m[1], 0) * x + sceneNumber(m[5], 1) * y + sceneNumber(m[9], 0) * z;
-        var tz = sceneNumber(m[2], 0) * x + sceneNumber(m[6], 0) * y + sceneNumber(m[10], 1) * z;
-        var len = Math.hypot(tx, ty, tz);
-        if (len > 0.000001) {
-          tx /= len; ty /= len; tz /= len;
-        }
-        out[off] = tx;
-        out[off + 1] = ty;
-        out[off + 2] = tz;
-        out[off + 3] = sceneNumber(source[off + 3], 1);
-      }
-      return out.subarray(0, count * 4);
-    }
-
     function webGPUBindElioSkinnedBuffers(pass, obj, count) {
       var outputBuffer = obj && obj._gosxWGPUElioSkinOutputBuffer;
       if (!outputBuffer) return false;
-      var normals = webGPUTransformVec3Attribute(obj, "normals", count, [0, 0, 1], "normals");
+      // One tracked buffer holds three contiguous paddedCount-sized regions:
+      // positions at byte 0, normals at paddedCount*12, tangents at
+      // paddedCount*24. Bind each region at its exact offset and the logical
+      // (unpadded) draw size; slot 2 stays on its own UV buffer.
+      var paddedCount = sceneNumber(obj && obj._gosxWGPUElioSkinOutputPaddedCount, 0);
+      if (!(paddedCount > 0)) return false;
       var uvs = webGPUDefaultAttributeData(obj, "uvs", count, 2, [0, 0]);
-      var tangents = webGPUTransformTangentAttribute(obj, count);
-      pass.setVertexBuffer(0, outputBuffer);
-      pass.setVertexBuffer(1, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedNormals", normals, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      var vec3Bytes = Math.max(4, count * 3 * 4);
+      pass.setVertexBuffer(0, outputBuffer, 0, vec3Bytes);
+      pass.setVertexBuffer(1, outputBuffer, paddedCount * 12, vec3Bytes);
       pass.setVertexBuffer(2, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedUVs", uvs, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
-      pass.setVertexBuffer(3, wgpuCachedTrackedBuffer(obj, "_gosxWGPUSkinnedTangents", tangents, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
+      pass.setVertexBuffer(3, outputBuffer, paddedCount * 24, Math.max(4, count * 4 * 4));
       return true;
     }
 
@@ -15087,17 +15403,44 @@
     // Shadow pass
     // -----------------------------------------------------------------------
 
+    // Scratch for the per-caster combined (lightVP × model) matrix used by
+    // retained indexed casters; allocated lazily, reused every frame.
+    var _shadowCombinedMatrixScratch = null;
+
+    function ensureShadowFrameBufferCapacity(matrixCount) {
+      var required = Math.max(1, Math.floor(sceneNumber(matrixCount, 1)));
+      if (shadowFrameBuffer && shadowFrameBufferCapacity >= required) {
+        return true;
+      }
+      var capacity = Math.max(1, shadowFrameBufferCapacity);
+      while (capacity < required) capacity *= 2;
+      destroyRendererGPUResource(shadowFrameBuffer);
+      shadowFrameBuffer = device.createBuffer({
+        size: capacity * shadowFrameBufferStride,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      shadowFrameBufferCapacity = capacity;
+      return Boolean(shadowFrameBuffer);
+    }
+
     function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
       var sp = getShadowPipeline();
       if (!sp) return;
 
+      var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+      // Slot zero carries the shared light matrix. Every retained caster gets
+      // its own aligned slot so queue writes are immutable for the lifetime of
+      // the encoded pass; mutating one shared uniform before submit would make
+      // every draw observe the final caster's matrix.
+      if (!ensureShadowFrameBufferCapacity(objects.length + 1)) return;
+
       // Upload light space matrix.
-      device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix);
+      device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix, 0, 16);
 
       var shadowBG = device.createBindGroup({
         layout: shadowBindGroupLayout,
         entries: [
-          { binding: 0, resource: { buffer: shadowFrameBuffer } },
+          { binding: 0, resource: { buffer: shadowFrameBuffer, offset: 0, size: 64 } },
         ],
       });
 
@@ -15114,10 +15457,10 @@
       if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
       var pass = encoder.beginRenderPass(shadowPassDescriptor);
 
-      pass.setBindGroup(0, shadowBG);
+      pass.setBindGroup(0, shadowBG, [0]);
       var currentShadowPipeline = "";
+      var retainedShadowMatrixSlot = 1;
 
-      var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
         if (!obj || obj.viewCulled) continue;
@@ -15129,11 +15472,13 @@
           if (!skinnedPositionBuffer) continue;
           if (currentShadowPipeline !== "static") {
             pass.setPipeline(sp);
-            pass.setBindGroup(0, shadowBG);
             currentShadowPipeline = "static";
           }
+          pass.setBindGroup(0, shadowBG, [0]);
           pass.setVertexBuffer(0, skinnedPositionBuffer);
-          pass.draw(obj.vertexCount);
+          var skinnedShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+          if (skinnedShadowIndexCount > 0) pass.drawIndexed(skinnedShadowIndexCount);
+          else pass.draw(obj.vertexCount);
           continue;
         }
 
@@ -15141,24 +15486,56 @@
         if (computedMorphRecord) {
           if (currentShadowPipeline !== "static") {
             pass.setPipeline(sp);
-            pass.setBindGroup(0, shadowBG);
             currentShadowPipeline = "static";
           }
+          pass.setBindGroup(0, shadowBG, [0]);
           if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
-          pass.draw(obj.vertexCount);
+          var morphShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+          if (morphShadowIndexCount > 0) pass.drawIndexed(morphShadowIndexCount);
+          else pass.draw(obj.vertexCount);
+          continue;
+        }
+
+        if (obj.retainedGeometry && obj.directVertices) {
+          // Retained indexed geometry casts from cached model-space buffers
+          // through a uint32 index buffer. The shadow uniform carries the light
+          // view-projection alone, so model-space casters fold their own
+          // transform in per draw and restore the base matrix afterwards.
+          var casterIndices = obj.vertices && obj.vertices.indices;
+          if (!(casterIndices instanceof Uint32Array) || casterIndices.length < 3 || casterIndices.length % 3 !== 0) continue;
+          if (currentShadowPipeline !== "static") {
+            pass.setPipeline(sp);
+            currentShadowPipeline = "static";
+          }
+          if (!webGPUBindRetainedMeshAttribute(pass, 0, obj, "positions", 3)) continue;
+          var casterIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+          if (!(casterIndexCount > 0)) continue;
+          var casterModel = obj.modelMatrix;
+          var casterMatrix = lightMatrix;
+          if (casterModel && casterModel.length >= 16) {
+            if (!_shadowCombinedMatrixScratch) _shadowCombinedMatrixScratch = new Float32Array(16);
+            sceneMat4MultiplyInto(_shadowCombinedMatrixScratch, lightMatrix, casterModel);
+            casterMatrix = _shadowCombinedMatrixScratch;
+          }
+          var casterMatrixOffset = retainedShadowMatrixSlot * shadowFrameBufferStride;
+          retainedShadowMatrixSlot += 1;
+          device.queue.writeBuffer(shadowFrameBuffer, casterMatrixOffset, casterMatrix, 0, 16);
+          pass.setBindGroup(0, shadowBG, [casterMatrixOffset]);
+          pass.drawIndexed(casterIndexCount);
           continue;
         }
 
         if (currentShadowPipeline !== "static") {
           pass.setPipeline(sp);
-          pass.setBindGroup(0, shadowBG);
           currentShadowPipeline = "static";
         }
 
+        pass.setBindGroup(0, shadowBG, [0]);
         if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
         pass.draw(obj.vertexCount);
       }
 
+      pass.setBindGroup(0, shadowBG, [0]);
       drawInstancedShadowMeshes(pass, bundle);
       pass.end();
     }
@@ -15269,7 +15646,9 @@
               // Skinned positions live in the compute-pass output buffer; bind via
               // the shared 4-slot skinned binding (slot0=skinned pos, 1-3=base).
               if (webGPUBindElioSkinnedBuffers(pass, obj, count)) {
-                pass.draw(count);
+                var selenaSkinIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+                if (selenaSkinIndexCount > 0) pass.drawIndexed(selenaSkinIndexCount);
+                else pass.draw(count);
                 if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
               }
               continue;
@@ -15294,7 +15673,9 @@
             lastMaterialOwner = skinnedOwner;
           }
           if (webGPUBindElioSkinnedBuffers(pass, obj, count)) {
-            pass.draw(count);
+            var skinnedPBRIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+            if (skinnedPBRIndexCount > 0) pass.drawIndexed(skinnedPBRIndexCount);
+            else pass.draw(count);
             if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
           }
           continue;
@@ -15333,7 +15714,12 @@
           if (!webGPUBindRetainedMeshAttribute(pass, 1, obj, "normals", 3)) continue;
           if (!webGPUBindRetainedMeshAttribute(pass, 2, obj, "uvs", 2)) continue;
           if (!webGPUBindRetainedMeshAttribute(pass, 3, obj, "tangents", 4)) continue;
-          pass.draw(count);
+          var pbrIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
+          if (pbrIndexCount > 0) {
+            pass.drawIndexed(pbrIndexCount);
+          } else {
+            pass.draw(count);
+          }
           if (stats) stats.meshDrawCalls = (stats.meshDrawCalls || 0) + 1;
           continue;
         }

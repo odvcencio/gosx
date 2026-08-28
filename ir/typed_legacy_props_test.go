@@ -1,6 +1,7 @@
 package ir_test
 
 import (
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/ir"
@@ -64,6 +65,92 @@ func Row(props RowProps) Node {
 	}
 	if row.PropsPaths["Team.Abbreviation"] != "string" {
 		t.Fatalf("Row.PropsPaths = %#v", row.PropsPaths)
+	}
+}
+
+func TestLowerValidatesTypedLegacyEachExportedSelectors(t *testing.T) {
+	prog := lowerTypedLegacySource(t, `package app
+
+type Player struct {
+	Name    string
+	NFLTeam string
+}
+
+type RosterProps struct {
+	Players []Player
+}
+
+func Roster(props RosterProps) Node {
+	return <ul>
+		<Each of={props.Players} as="player">
+			<li>{player.Name} {player.NFLTeam}</li>
+		</Each>
+	</ul>
+}
+`)
+	roster := componentByName(t, prog, "Roster")
+	if !roster.PropsTyped {
+		t.Fatal("Roster.PropsTyped = false, want true")
+	}
+}
+
+func TestLowerValidatesTypedLegacyEachFilteredSource(t *testing.T) {
+	lowerTypedLegacySource(t, `package app
+
+type Player struct {
+	Name        string
+	DisplayName string
+}
+
+type RosterProps struct {
+	Players []Player
+}
+
+func Roster(props RosterProps) Node {
+	return <ul>
+		<Each of={props.Players.filter(func(player Player) bool { return player.Name != "" })} as="player">
+			<li>{player.DisplayName}</li>
+		</Each>
+	</ul>
+}
+`)
+}
+
+func TestLowerRejectsTypedLegacyEachNonExportedSelectors(t *testing.T) {
+	for _, field := range []string{"name", "nfl_team"} {
+		t.Run(field, func(t *testing.T) {
+			_, err := parse(t, []byte(`package app
+
+type Player struct {
+	Name    string
+	NFLTeam string
+}
+
+type RosterProps struct {
+	Players []Player
+}
+
+func Roster(props RosterProps) Node {
+	return <ul>
+		<Each of={props.Players} as="player">
+			<li>{player.`+field+`}</li>
+		</Each>
+	</ul>
+}
+`))
+			if err == nil {
+				t.Fatalf("Lower accepted typed legacy selector player.%s", field)
+			}
+			message := err.Error()
+			for _, want := range []string{
+				"typed legacy component Roster cannot resolve player." + field,
+				"struct Player declares no visible field " + field,
+			} {
+				if !strings.Contains(message, want) {
+					t.Fatalf("Lower error = %v, want substring %q", err, want)
+				}
+			}
+		})
 	}
 }
 

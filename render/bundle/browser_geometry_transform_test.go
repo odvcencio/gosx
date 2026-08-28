@@ -38,8 +38,10 @@ func TestBrowserWorldBakeTransformContract(t *testing.T) {
 		"x: normalTransform[0] * normal.x + normalTransform[3] * normal.y + normalTransform[6] * normal.z",
 		"let x = modelMatrix[0] * tangent.x + modelMatrix[4] * tangent.y + modelMatrix[8] * tangent.z;",
 		"w: tangent.w * orientation,",
-		"const source1 = reverseWinding ? tri + 2 : tri + 1;",
-		"const source2 = reverseWinding ? tri + 1 : tri + 2;",
+		"const base1 = authoredIndices ? authoredIndices[tri + 1] : tri + 1;",
+		"const base2 = authoredIndices ? authoredIndices[tri + 2] : tri + 2;",
+		"const source1 = reverseWinding ? base2 : base1;",
+		"const source2 = reverseWinding ? base1 : base2;",
 	} {
 		if !strings.Contains(core, needle) {
 			t.Errorf("shared browser world-bake contract lost %q", needle)

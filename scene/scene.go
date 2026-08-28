@@ -1466,24 +1466,27 @@ type MatteMaterial MaterialStyle
 
 // StandardMaterial is a PBR material using the roughness/metalness workflow.
 type StandardMaterial struct {
-	Color        string
-	Texture      string
-	Roughness    float64
-	Metalness    float64
-	Clearcoat    float64
-	Sheen        float64
-	Transmission float64
-	Iridescence  float64
-	Anisotropy   float64
-	NormalMap    string
-	RoughnessMap string
-	MetalnessMap string
-	OcclusionMap string
-	EmissiveMap  string
-	Emissive     float64
-	Opacity      *float64
-	BlendMode    MaterialBlendMode
-	Wireframe    *bool
+	Color             string
+	Texture           string
+	Roughness         float64
+	Metalness         float64
+	Clearcoat         float64
+	Sheen             float64
+	Transmission      float64
+	Iridescence       float64
+	Anisotropy        float64
+	SpecularIntensity *float64
+	SpecularColor     *[3]float64
+	IOR               *float64
+	NormalMap         string
+	RoughnessMap      string
+	MetalnessMap      string
+	OcclusionMap      string
+	EmissiveMap       string
+	Emissive          float64
+	Opacity           *float64
+	BlendMode         MaterialBlendMode
+	Wireframe         *bool
 }
 
 type quaternion struct {
@@ -2932,6 +2935,15 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		record.Transmission = mapFloat64(materialProps["transmission"])
 		record.Iridescence = mapFloat64(materialProps["iridescence"])
 		record.Anisotropy = mapFloat64(materialProps["anisotropy"])
+		if ior, ok := mapFloat64OK(materialProps["ior"]); ok {
+			record.IOR = Float(ior)
+		}
+		if si, ok := mapFloat64OK(materialProps["specularIntensity"]); ok {
+			record.SpecularIntensity = Float(si)
+		}
+		if sc, ok := specularColorFromAny(materialProps["specularColor"]); ok {
+			record.SpecularColor = &sc
+		}
 		if normalMap, ok := mapStringValue(materialProps["normalMap"]); ok {
 			record.NormalMap = normalMap
 		}
@@ -3493,6 +3505,19 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		}
 		record.Roughness = mapFloat64(mat["roughness"])
 		record.Metalness = mapFloat64(mat["metalness"])
+		if v, ok := mat["ior"]; ok {
+			if f, ok2 := toFloat64(v); ok2 {
+				record.IOR = &f
+			}
+		}
+		if v, ok := mat["specularIntensity"]; ok {
+			if f, ok2 := toFloat64(v); ok2 {
+				record.SpecularIntensity = &f
+			}
+		}
+		if c, ok := specularColorFromAny(mat["specularColor"]); ok {
+			record.SpecularColor = &c
+		}
 		if v, ok := mat["opacity"]; ok {
 			if f, ok2 := toFloat64(v); ok2 {
 				record.Opacity = &f
@@ -4021,6 +4046,15 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	record.Transmission = mapFloat64(props["transmission"])
 	record.Iridescence = mapFloat64(props["iridescence"])
 	record.Anisotropy = mapFloat64(props["anisotropy"])
+	if ior, ok := mapFloat64OK(props["ior"]); ok {
+		record.IOR = Float(ior)
+	}
+	if si, ok := mapFloat64OK(props["specularIntensity"]); ok {
+		record.SpecularIntensity = Float(si)
+	}
+	if sc, ok := specularColorFromAny(props["specularColor"]); ok {
+		record.SpecularColor = &sc
+	}
 	if normalMap, ok := mapStringValue(props["normalMap"]); ok {
 		record.NormalMap = normalMap
 	}
@@ -4333,6 +4367,15 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.Transmission = m.Transmission
 		record.Iridescence = m.Iridescence
 		record.Anisotropy = m.Anisotropy
+		if m.IOR != nil {
+			record.IOR = m.IOR
+		}
+		if m.SpecularIntensity != nil {
+			record.SpecularIntensity = Float(*m.SpecularIntensity)
+		}
+		if m.SpecularColor != nil {
+			record.SpecularColor = copySpecularColor(m.SpecularColor)
+		}
 		record.NormalMap = strings.TrimSpace(m.NormalMap)
 		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
 		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
@@ -4495,6 +4538,9 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setNumeric(out, "transmission", m.Transmission)
 	setNumeric(out, "iridescence", m.Iridescence)
 	setNumeric(out, "anisotropy", m.Anisotropy)
+	setNumericPtr(out, "ior", m.IOR)
+	setNumericPtr(out, "specularIntensity", m.SpecularIntensity)
+	setColor3Ptr(out, "specularColor", m.SpecularColor)
 	setString(out, "normalMap", m.NormalMap)
 	setString(out, "roughnessMap", m.RoughnessMap)
 	setString(out, "metalnessMap", m.MetalnessMap)

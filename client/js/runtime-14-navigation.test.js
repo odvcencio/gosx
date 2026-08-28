@@ -431,6 +431,165 @@ test("state-only refresh with a hash stays synchronous and does not advance the 
   assert.deepEqual(env.fetchCalls, []);
 });
 
+test("navigation carries an authored fragment across a fetch response that omits it and follows redirects", async () => {
+  const requestedURL = "http://localhost:3000/board?view=mine#board-pool";
+  const responseURL = "http://localhost:3000/board?view=all";
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: {
+      [requestedURL]: {
+        text: "__REDIRECTED_BOARD__",
+        url: responseURL,
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  const main = new FakeElement("main", null);
+  main.id = "board-main";
+  const pool = new FakeElement("section", null);
+  pool.id = "board-pool";
+  main.appendChild(pool);
+  parsedDocs.set("__REDIRECTED_BOARD__", buildNavigatedDocument({
+    title: "Board",
+    bodyNodes: [main],
+  }));
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const historyCalls = [];
+  env.context.history = {
+    pushState(_state, _title, url) {
+      historyCalls.push(["push", String(url)]);
+      env.context.location.href = String(url);
+    },
+    replaceState(_state, _title, url) {
+      historyCalls.push(["replace", String(url)]);
+      env.context.location.href = String(url);
+    },
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(await env.context.__gosx.navigation.navigate(requestedURL), true);
+  await flushAsyncWork();
+
+  assert.deepEqual(historyCalls, [["push", "http://localhost:3000/board?view=all#board-pool"]]);
+  assert.equal(env.context.location.href, "http://localhost:3000/board?view=all#board-pool");
+  assert.equal(env.fetchCalls[0].url, requestedURL);
+  const renderedPool = env.document.getElementById("board-pool");
+  assert.equal(renderedPool.scrollIntoViewCalls.length, 1);
+  assert.equal(env.scrollCalls.length, 0);
+  assert.equal(env.document.activeElement, renderedPool);
+});
+
+test("same-resource fragment navigation updates history and a11y without fetching", async () => {
+  const pageURL = "http://localhost:3000/board";
+  const env = createContext({});
+  env.context.location.href = pageURL;
+  const main = new FakeElement("main", null);
+  main.id = "board-main";
+  const first = new FakeElement("section", null);
+  first.id = "first";
+  const second = new FakeElement("section", null);
+  second.id = "second";
+  main.appendChild(first);
+  main.appendChild(second);
+  env.document.body.appendChild(main);
+  const historyCalls = [];
+  env.context.history = {
+    pushState(_state, _title, url) {
+      historyCalls.push(["push", String(url)]);
+      env.context.location.href = String(url);
+    },
+    replaceState(_state, _title, url) {
+      historyCalls.push(["replace", String(url)]);
+      env.context.location.href = String(url);
+    },
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(await env.context.__gosx.navigation.navigate(pageURL + "#first"), true);
+  assert.equal(await env.context.__gosx.navigation.navigate(pageURL + "#second", { replace: true }), true);
+  assert.equal(await env.context.__gosx.navigation.navigate(pageURL), true);
+  assert.equal(await env.context.__gosx.navigation.navigate(pageURL), true);
+
+  assert.deepEqual(historyCalls, [
+    ["push", pageURL + "#first"],
+    ["replace", pageURL + "#second"],
+    ["push", pageURL],
+  ]);
+  assert.deepEqual(env.fetchCalls, []);
+  assert.equal(first.scrollIntoViewCalls.length, 1);
+  assert.equal(second.scrollIntoViewCalls.length, 1);
+  assert.equal(env.scrollCalls.length, 2);
+  assert.equal(env.scrollCalls[0][0].top, 0);
+  assert.equal(env.scrollCalls[1][0].top, 0);
+  assert.equal(env.document.activeElement, main);
+});
+
+test("managed action hash redirects revalidate, replace history, and scroll to the authored target", async () => {
+  const pageURL = "http://localhost:3000/board";
+  const redirectURL = pageURL + "#board-pool";
+  const actionURL = pageURL + "/__actions/add";
+  const parsedDocs = new Map();
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]: { text: '{"ok":true,"redirect":"/board#board-pool"}', url: actionURL },
+      [redirectURL]: { text: "__FRESH_BOARD__", url: pageURL },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  env.context.location.href = pageURL;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const main = new FakeElement("main", null);
+  main.id = "board-main";
+  const pool = new FakeElement("section", null);
+  pool.id = "board-pool";
+  main.appendChild(pool);
+  parsedDocs.set("__FRESH_BOARD__", buildNavigatedDocument({
+    title: "Board",
+    bodyNodes: [main],
+  }));
+  const stale = Promise.resolve({ html: "__STALE_BOARD__", url: pageURL });
+  stale.__gosxCachedAt = Date.now();
+  env.context.__gosx_page_cache = new Map([[redirectURL, stale]]);
+  const historyCalls = [];
+  env.context.history = {
+    pushState(_state, _title, url) {
+      historyCalls.push(["push", String(url)]);
+      env.context.location.href = String(url);
+    },
+    replaceState(_state, _title, url) {
+      historyCalls.push(["replace", String(url)]);
+      env.context.location.href = String(url);
+    },
+  };
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  assert.deepEqual(env.fetchCalls.map((call) => call.url), [actionURL, redirectURL]);
+  assert.notEqual(env.context.__gosx_page_cache.get(redirectURL), stale);
+  assert.deepEqual(historyCalls, [["replace", redirectURL]]);
+  assert.equal(env.scrollCalls.length, 0);
+  assert.equal(env.document.getElementById("board-pool").scrollIntoViewCalls.length, 1);
+  assert.equal(env.document.activeElement, env.document.getElementById("board-pool"));
+});
+
 test("navigation revalidate rejects cleanly so callers can use the documented hard-load fallback", async () => {
   const url = "http://localhost:3000/agenda";
   const oldMain = new FakeElement("main", null);
@@ -4670,6 +4829,114 @@ test("managed form result projection can be explicitly disabled", async () => {
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
   assert.equal(status.textContent, "Island-owned");
   assert.equal(env.document.querySelector("[data-gosx-announcer]"), null);
+});
+
+test("managed redirect results become dismissible visible feedback in the destination toast host", async () => {
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/profile/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-form-state", "idle");
+
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      "http://localhost:3000/profile/save": {
+        ok: false,
+        status: 303,
+        text: '{"ok":true,"message":"Profile saved.","redirect":"/profile"}',
+        url: "http://localhost:3000/profile/save",
+      },
+      "http://localhost:3000/profile": {
+        text: "__PROFILE_PAGE__",
+        url: "http://localhost:3000/profile",
+      },
+    },
+    parseHTML(html) {
+      return parsedDocs.get(html);
+    },
+  });
+  installManualTimers(env.context);
+
+  const toastHost = new FakeElement("div", null);
+  toastHost.setAttribute("data-gosx-toast-host", "");
+  toastHost.setAttribute("aria-live", "polite");
+  const main = new FakeElement("main", null);
+  main.textContent = "Profile";
+  parsedDocs.set("__PROFILE_PAGE__", buildNavigatedDocument({
+    title: "Profile",
+    bodyNodes: [toastHost, main],
+  }));
+
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  const liveHost = env.document.querySelector("[data-gosx-toast-host]");
+  const toast = liveHost.querySelector("[data-gosx-toast]");
+  assert.ok(toast);
+  assert.equal(toast.getAttribute("data-gosx-toast-kind"), "success");
+  assert.equal(toast.getAttribute("role"), "status");
+  assert.equal(toast.querySelector(".gosx-toast__message").textContent, "Profile saved.");
+  assert.equal(env.context.location.href, "http://localhost:3000/profile");
+  const resultEvent = env.document.dispatchedEvents.find((event) => event.type === "gosx:form:result");
+  assert.equal(resultEvent.detail.ok, true, "structured action truth wins over Fetch response.ok for HTTP 303");
+  assert.equal(env.document.dispatchedEvents.some((event) => event.type === "gosx:toast:show"), true);
+
+  const dismiss = toast.querySelector("[data-gosx-toast-dismiss]");
+  env.document.eventListeners.get("click")[0]({
+    type: "click",
+    target: dismiss,
+    preventDefault() {},
+  });
+  assert.equal(liveHost.querySelector("[data-gosx-toast]"), null);
+  assert.equal(env.document.dispatchedEvents.at(-1).type, "gosx:toast:dismiss");
+});
+
+test("managed action failures remain inline and also surface as persistent alert toasts", async () => {
+  const host = new FakeElement("div", null);
+  host.setAttribute("data-gosx-toast-host", "");
+  const form = new FakeElement("form", null);
+  form.setAttribute("action", "/profile/save");
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const status = new FakeElement("p", null);
+  status.setAttribute("class", "form-status");
+  form.appendChild(status);
+
+  const env = createContext({
+    elements: [host, form],
+    fetchRoutes: {
+      "http://localhost:3000/profile/save": {
+        ok: false,
+        status: 422,
+        text: '{"ok":false,"message":"Choose a valid team."}',
+      },
+    },
+  });
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit",
+    target: form,
+    defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+
+  const toast = host.querySelector("[data-gosx-toast]");
+  assert.ok(toast);
+  assert.equal(toast.getAttribute("data-gosx-toast-kind"), "error");
+  assert.equal(toast.getAttribute("role"), "alert");
+  assert.equal(status.textContent, "Choose a valid team.");
+  assert.equal(timers.count(), 0, "error feedback must not schedule auto-dismissal");
+  assert.equal(host.querySelector("[data-gosx-toast]"), toast);
 });
 
 test("managed form result projection skips a form detached while its action is pending", async () => {

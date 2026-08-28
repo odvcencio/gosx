@@ -698,6 +698,21 @@ func Page() Node {
 				across a swap — useful when the region itself is a scrolling container, such as an activity feed with its own internal scroll.
 			</p>
 			<p>
+				A refresh sets
+				<span class="inline-code">data-gosx-region-state="pending"</span>
+				and
+				<span class="inline-code">aria-busy="true"</span>
+				until it settles. A 2xx response replaces the fragment and moves to
+				<span class="inline-code">ready</span>
+				; a 304 moves to ready without replacing it. A 4xx or 5xx response preserves the server-rendered or last successful DOM, moves to
+				<span class="inline-code">error</span>
+				, and clears both the busy and request markers. It also dispatches
+				<span class="inline-code">gosx:region:error</span>
+				with exactly
+				<span class="inline-code">&#123;element, url, status&#125;</span>
+				— never the response body, headers, or status text. A later successful trigger replaces the retained content and recovers the region to ready.
+			</p>
+			<p>
 				<span class="inline-code">data-gosx-live-interval</span>
 				and
 				<span class="inline-code">data-gosx-region-interval</span>
@@ -714,7 +729,7 @@ func Page() Node {
 				endpoint must render the same markup a page's own component already produces — otherwise the polled fragment and the page drift apart. Load the page's compiled program with
 				<span class="inline-code">route.LoadFileProgramHere</span>
 				and render one component from it with
-				<span class="inline-code">route.RenderProgramComponent</span>
+				<span class="inline-code">route.RenderProgramComponentNode</span>
 				, from a plain
 				<span class="inline-code">http.Handler</span>
 				in the same package as the page.
@@ -743,21 +758,26 @@ func Page() Node {
 	    </ul>
 	}`)}
 			{CodeBlock("go", `// page.server.go — same package as page.gsx
+	type FragmentProps struct {
+	    Label string
+	    Value string
+	}
+
 	func ServeSignalFragment(w http.ResponseWriter, r *http.Request) {
 	    prog, err := route.LoadFileProgramHere("page.gsx")
 	    if err != nil {
 	        http.Error(w, err.Error(), http.StatusInternalServerError)
 	        return
 	    }
-	    html, err := route.RenderProgramComponent(prog, "SignalCard", route.ProgramRenderEnv{
-	        Props: SignalCardProps{Label: "Passing Yards", Value: currentValue()},
+	    node, err := route.RenderProgramComponentNode(prog, "SignalCard", route.ProgramRenderEnv{
+	        Props: FragmentProps{Label: "Passing Yards", Value: currentValue()},
 	    })
 	    if err != nil {
 	        http.Error(w, err.Error(), http.StatusInternalServerError)
 	        return
 	    }
 	    w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	    w.Write([]byte(html))
+	    w.Write([]byte(gosx.RenderHTML(node)))
 	}`)}
 			<p>
 				<span class="inline-code">route.LoadFileProgramHere</span>
@@ -771,8 +791,8 @@ func Page() Node {
 				declaration keeps its strict props boundary at this entry point: pass
 				<span class="inline-code">route.ProgramRenderEnv.Props</span>
 				a real
-				<span class="inline-code">SignalCardProps</span>
-				value, and the renderer proves every rendered field's presence and declared type before it renders — the same proof a nested strict-component call from inside another component's own body already runs on every render. A
+				<span class="inline-code">FragmentProps</span>
+				value with the same rendered fields; the name may differ from the .gsx type because the renderer proves the shape structurally. It checks every rendered field's presence and declared type before it renders — the same proof a nested strict-component call from inside another component's own body already runs on every render. A
 				<span class="inline-code">map[string]any</span>
 				never satisfies that proof, no matter how it is shaped, and a
 				<span class="inline-code">nil</span>

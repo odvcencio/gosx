@@ -117,6 +117,15 @@
   const ANNOUNCE_ATTR = "data-gosx-announce";
   const ANNOUNCER_ATTR = "data-gosx-announcer";
   const MANAGED_FOCUS_ATTR = "data-gosx-focus-managed";
+  // A page opts into visible managed-action feedback by rendering one toast
+  // host. The runtime owns semantics and lifecycle; applications own visual
+  // styling through the stable gosx-toast class hooks.
+  const TOAST_HOST_ATTR = "data-gosx-toast-host";
+  const TOAST_ATTR = "data-gosx-toast";
+  const TOAST_KIND_ATTR = "data-gosx-toast-kind";
+  const TOAST_DISMISS_ATTR = "data-gosx-toast-dismiss";
+  const TOAST_SUCCESS_LIFETIME_MS = 6000;
+  const TOAST_MAX_VISIBLE = 4;
   const NAV_INLINE_REPLAY_ATTR = "data-gosx-navigation-replay";
   const NAV_INLINE_REPLAYED_ATTR = "data-gosx-navigation-replayed";
   const URL_ATTRS = ["href", "src", "action", "poster"];
@@ -153,6 +162,7 @@
   let activeNavigationURL = "";
   let announceSeq = 0;
   let formErrorSeq = 0;
+  let toastSeq = 0;
   let navigationFrameSequence = 0;
   // A Set (not a WeakSet) so its size doubles as the "a managed form
   // submission is in flight" signal periodic revalidation reads — see
@@ -777,8 +787,28 @@
       origin: parsed.origin,
       path: normalizedNavigationPath(parsed.pathname),
       search: String(parsed.search || ""),
+      hash: String(parsed.hash || ""),
       href: parsed.href,
     };
+  }
+
+  // Fetch deliberately omits URL fragments from the request and therefore
+  // from Response.url. Keep the authored fragment attached to the final
+  // same-origin response URL while allowing an HTTP redirect to change the
+  // destination path and query. A response fragment remains authoritative
+  // only when the original request did not name one.
+  function mergeNavigationResponseHash(requestURL, responseURL) {
+    const requested = navigationURLParts(requestURL);
+    const response = navigationURLParts(responseURL || requestURL);
+    if (!response) {
+      return responseURL || requestURL;
+    }
+    if (!requested || !requested.hash || requested.origin !== response.origin) {
+      return response.href;
+    }
+    const merged = new URL(response.href);
+    merged.hash = requested.hash;
+    return merged.href;
   }
 
   function isHTTPNavigationURL(url) {
@@ -1440,6 +1470,92 @@
     return text;
   }
 
+  function managedToastHost() {
+    return findElement(document.body, function(node) {
+      return node.hasAttribute && node.hasAttribute(TOAST_HOST_ATTR);
+    });
+  }
+
+  function removeManagedToast(toast, reason) {
+    if (!toast || !toast.parentNode) return false;
+    const host = toast.parentNode;
+    host.removeChild(toast);
+    dispatchManagedEvent("gosx:toast:dismiss", {
+      detail: {
+        id: toast.getAttribute ? String(toast.getAttribute("id") || "") : "",
+        reason: String(reason || "dismiss"),
+      },
+    });
+    return true;
+  }
+
+  function managedToastDismissTarget(node) {
+    let current = node;
+    while (current && current !== document.body) {
+      if (current.hasAttribute && current.hasAttribute(TOAST_DISMISS_ATTR)) return current;
+      current = current.parentNode;
+    }
+    return null;
+  }
+
+  function managedToastForDismiss(button) {
+    let current = button;
+    while (current && current !== document.body) {
+      if (current.hasAttribute && current.hasAttribute(TOAST_ATTR)) return current;
+      current = current.parentNode;
+    }
+    return null;
+  }
+
+  function presentManagedFormToast(response, result) {
+    const host = managedToastHost();
+    if (!host) return null;
+
+    const failed = managedActionFailed(response, result);
+    const message = normalizeTextValue(result && result.message) || (failed ? "Action failed." : "");
+    if (!message) return null;
+
+    toastSeq += 1;
+    const toast = document.createElement("div");
+    const id = "gosx-toast-" + toastSeq;
+    toast.setAttribute("id", id);
+    toast.setAttribute(TOAST_ATTR, "");
+    toast.setAttribute(TOAST_KIND_ATTR, failed ? "error" : "success");
+    toast.setAttribute("class", "gosx-toast gosx-toast--" + (failed ? "error" : "success"));
+    toast.setAttribute("role", failed ? "alert" : "status");
+
+    const copy = document.createElement("span");
+    copy.setAttribute("class", "gosx-toast__message");
+    copy.textContent = message;
+    toast.appendChild(copy);
+
+    const dismiss = document.createElement("button");
+    dismiss.setAttribute("type", "button");
+    dismiss.setAttribute("class", "gosx-toast__dismiss");
+    dismiss.setAttribute(TOAST_DISMISS_ATTR, "");
+    dismiss.setAttribute("aria-label", "Dismiss notification");
+    dismiss.textContent = "×";
+    toast.appendChild(dismiss);
+    host.appendChild(toast);
+
+    const visible = collectElements(host, function(node) {
+      return node.hasAttribute && node.hasAttribute(TOAST_ATTR);
+    });
+    while (visible.length > TOAST_MAX_VISIBLE) {
+      removeManagedToast(visible.shift(), "overflow");
+    }
+
+    dispatchManagedEvent("gosx:toast:show", {
+      detail: { id: id, kind: failed ? "error" : "success", message: message },
+    });
+    if (!failed && typeof setTimeout === "function") {
+      setTimeout(function() {
+        removeManagedToast(toast, "timeout");
+      }, TOAST_SUCCESS_LIFETIME_MS);
+    }
+    return toast;
+  }
+
   function customAnnouncement(root) {
     const node = findElement(root, function(candidate) {
       return candidate.hasAttribute && candidate.hasAttribute(ANNOUNCE_ATTR);
@@ -1958,11 +2074,25 @@
       detail: {
         action: action,
         method: method,
-        ok: !!(response && response.ok),
+        ok: !managedActionFailed(response, result),
         status: response ? response.status : 0,
         result: result,
       },
     });
+  }
+
+  // A managed redirect intentionally returns a structured action Result with
+  // HTTP 303. Fetch's response.ok is false for every 3xx status even when the
+  // action contract says {ok:true}, so the parsed result is authoritative when
+  // it carries a boolean ok field. Transport status remains the fallback for
+  // non-action or malformed responses; field errors always fail the action.
+  function managedActionFailed(response, result) {
+    const fieldErrors = result && result.fieldErrors && typeof result.fieldErrors === "object"
+      ? Object.keys(result.fieldErrors)
+      : [];
+    if (fieldErrors.length > 0) return true;
+    if (result && typeof result.ok === "boolean") return result.ok === false;
+    return !response || !response.ok;
   }
 
   async function parseJSONResponse(response) {
@@ -2131,7 +2261,7 @@
       }
     }
 
-    const failed = !response || !response.ok || !!(result && result.ok === false) || names.length > 0;
+    const failed = managedActionFailed(response, result);
     const message = normalizeTextValue(result && result.message);
     const announcement = message || (failed ? "Action failed." : "Action completed.");
     if (status) status.textContent = announcement;
@@ -2210,7 +2340,7 @@
             revalidate: true,
             mutationBarrier: true,
             replace: redirectsCurrent,
-            preserveScroll: redirectsCurrent,
+            preserveScroll: redirectsCurrent && !redirectURL.hash,
           });
         } catch (err) {
           reportManagedActionResponseFailure("form action redirect", err, redirectURL.href, method);
@@ -2221,6 +2351,14 @@
           }
         }
       }
+    }
+    try {
+      // This runs after a redirect-backed soft navigation settles, so the
+      // result is projected into the destination page's host rather than the
+      // outgoing host that body replacement just detached.
+      presentManagedFormToast(response, result);
+    } catch (err) {
+      reportManagedActionResponseFailure("form action toast", err, url.href, method);
     }
     try {
       dispatchManagedFormResult(url.href, method, response, result);
@@ -2459,6 +2597,21 @@
       }
       if (opts.revalidate) pageCache.delete(target.href);
     }
+    const currentNavigation = currentNavigationURL();
+    const sameDocument = sameNavigationURL(target, currentNavigation);
+    if (!sharesPendingFetch && !opts.force && sameDocument && target.hash !== currentNavigation.hash) {
+      activeNavigationController = null;
+      activeNavigationURL = "";
+      updateHistory(target.href, !!opts.replace);
+      setNavigationState({
+        phase: "idle",
+        currentURL: target.href,
+        pendingURL: "",
+      }, "navigate:fragment");
+      observeNavigation("debug", "navigation fragment changed", { url: target.href });
+      finalizeNavigation(target.href, opts, resolveNavigationA11y(target.href));
+      return true;
+    }
     if (!sharesPendingFetch && !opts.force && sameNavigationURL(target, currentNavigationURL())) {
       activeNavigationController = null;
       activeNavigationURL = "";
@@ -2542,7 +2695,7 @@
 
   async function resolveNavigationPage(url, signal) {
     const page = await fetchPage(url, signal, true);
-    const nextURL = page.url || url;
+    const nextURL = mergeNavigationResponseHash(url, page.url || url);
     return {
       nextURL: nextURL,
       nextDoc: parseDocument(page.html),
@@ -5878,6 +6031,12 @@
   }
 
   function onClick(event) {
+    const toastDismiss = managedToastDismissTarget(event.target);
+    if (toastDismiss) {
+      event.preventDefault();
+      removeManagedToast(managedToastForDismiss(toastDismiss), "dismiss");
+      return;
+    }
     const anchor = closestLink(event.target);
     if (!shouldHandleLink(anchor, event)) return;
     event.preventDefault();

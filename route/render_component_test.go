@@ -31,11 +31,10 @@ component Page() {
 }
 `
 
-// SignalCardProps mirrors signalCardFixtureSource's declared props type by
-// name: the strict boundary matches a runtime value against the source's
-// declared struct name, so a Go caller must supply a type with this exact
-// identifier — the same rule a nested {...props} spread call already proves
-// against (see requireStrictStructValue / strictSpreadProps).
+// SignalCardProps mirrors signalCardFixtureSource's declared props type for
+// the named entry test below. The strict render-entry boundary used by
+// ProgramRenderEnv.Props proves rendered fields structurally; it does not
+// require a Go caller's struct to reuse the .gsx type name.
 type SignalCardProps struct {
 	Label string
 	Value string
@@ -70,6 +69,31 @@ func TestRenderProgramComponentStrictEntryMatchesNestedRenderByteForByte(t *test
 	}
 	if viaEntry != viaPage {
 		t.Fatalf("strict entry render = %q, does not byte-match the page's own nested render %q", viaEntry, viaPage)
+	}
+}
+
+// TestRenderProgramComponentStrictEntryAcceptsStructurallyMatchingProps is a
+// success proof for a production fragment handler's normal shape: its Go
+// loader type has a different name from the .gsx props type, but supplies every
+// rendered field with the declared leaf type.
+func TestRenderProgramComponentStrictEntryAcceptsStructurallyMatchingProps(t *testing.T) {
+	type fragmentSignalCardProps struct {
+		Label string
+		Value string
+	}
+	prog, err := gosx.Compile([]byte(signalCardFixtureSource))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "SignalCard", ProgramRenderEnv{
+		Props: fragmentSignalCardProps{Label: "Passing Yards", Value: "317"},
+	})
+	if err != nil {
+		t.Fatalf("render structurally matching props: %v", err)
+	}
+	const want = `<li class="signal-card"><span class="signal-card__label">Passing Yards</span><strong class="signal-card__value">317</strong></li>`
+	if html != want {
+		t.Fatalf("rendered HTML = %q, want %q", html, want)
 	}
 }
 

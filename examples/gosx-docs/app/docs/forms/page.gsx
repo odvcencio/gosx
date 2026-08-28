@@ -5,13 +5,15 @@ func Page() Node {
 		<section id="html-forms" class="docs-section-block">
 			<h2>HTML Forms</h2>
 			<p>
-				GoSX forms are plain HTML forms. Post to a colocated action endpoint using the standard
+				GoSX forms are plain HTML forms. Add
+				<span class="inline-code">data-gosx-managed</span>
+				to progressively enhance a form with no-reload submission, pending state, structured validation, and accessible result announcements. Post to a colocated action endpoint using the standard
 				<span class="inline-code">method="post"</span>
 				and
 				<span class="inline-code">action</span>
-				attributes. No JavaScript fetch layer, no custom hooks — just a browser form post that flows through the server and redirects back with the result flashed into the session.
+				attributes. Without the runtime, the same markup remains an ordinary browser form.
 			</p>
-			{CodeBlock("gsx", "<form method=\"post\" action={actionPath(\"subscribe\")}>\n\t<input type=\"hidden\" name=\"csrf_token\" value={csrf.token} />\n\t<input name=\"email\" type=\"email\" placeholder=\"you@example.com\" />\n\t<button type=\"submit\">Subscribe</button>\n</form>")}
+			{CodeBlock("gsx", "<form method=\"post\" action={actionPath(\"subscribe\")} data-gosx-managed>\n\t<input type=\"hidden\" name=\"csrf_token\" value={csrf.token} />\n\t<input name=\"email\" type=\"email\" placeholder=\"you@example.com\" />\n\t<button type=\"submit\">Subscribe</button>\n</form>")}
 		</section>
 		<section id="server-actions" class="docs-section-block">
 			<h2>Server Actions</h2>
@@ -93,15 +95,49 @@ func Page() Node {
 			<h2>Redirects</h2>
 			<p>
 				Call
-				<span class="inline-code">ctx.Redirect</span>
-				from an action to send the browser to a different URL after a successful post. This is the standard POST-redirect-GET pattern and prevents double-submission on browser refresh.
+				<span class="inline-code">ctx.RedirectWithMessage</span>
+				from an action to send the browser to a different URL after a successful post while carrying one human-readable completion message through both native and managed submissions. This preserves the POST-redirect-GET safety model without forcing an enhanced page to reload.
 			</p>
-			{CodeBlock("go", "// Redirect to a confirmation page after success.\nctx.Redirect(\"/subscribe/confirmed\")")}
+			{CodeBlock("go", "// Redirect safely and explain what changed.\nctx.RedirectWithMessage(\"/subscribe/confirmed\", \"Subscription confirmed.\")")}
 			<p>
-				For redirect-backed flows where you want the action state to survive the redirect, the framework flashes the result automatically through the session when
-				<span class="inline-code">sessions.Protect</span>
-				middleware is active.
+				When the action should return to the page that submitted it, opt in with
+				<span class="inline-code">ctx.RedirectBackWithMessage</span>
+				. It prefers a valid
+				<span class="inline-code">__gosx_return_to</span>
+				field, then uses the sanitized root-relative fallback. Empty, malformed, absolute, and protocol-relative targets resolve to
+				<span class="inline-code">/</span>
+				; valid query strings and fragments are preserved. The reserved field is removed before the handler sees
+				<span class="inline-code">ctx.FormData</span>
+				.
 			</p>
+			{CodeBlock("go", "// In the form:\n<input type=\"hidden\" name={action.ReturnTargetField} value=\"/board?tab=all#roster\" />\n\n// In the action:\nctx.RedirectBackWithMessage(\"/account\", \"Profile saved.\")")}
+			<p>
+				Use
+				<span class="inline-code">ctx.RedirectWithMessage</span>
+				when the action intentionally changes destination. Explicit non-empty redirect values are sanitized to same-origin root-relative paths before either native
+				<span class="inline-code">Location</span>
+				or managed JSON is emitted; unsafe values resolve to
+				<span class="inline-code">/</span>
+				.
+			</p>
+			<p>
+				Most actions never need to inspect their transport mode. When application code genuinely must branch, call
+				<span class="inline-code">action.WantsJSON(ctx.Request)</span>
+				to share GoSX's authoritative managed-action negotiation instead of parsing request headers again.
+			</p>
+			{CodeBlock("go", "if action.WantsJSON(ctx.Request) {\n    // Managed action: return structured feedback.\n}")}
+			<p>
+				Render one
+				<span class="inline-code">data-gosx-toast-host</span>
+				in your layout to make managed-action messages visibly float. The runtime supplies accessible status and dismiss behavior; style the stable
+				<span class="inline-code">gosx-toast</span>
+				,
+				<span class="inline-code">gosx-toast--success</span>
+				, and
+				<span class="inline-code">gosx-toast--error</span>
+				classes to match your product.
+			</p>
+			{CodeBlock("gsx", "<div class=\"toast-stack\" data-gosx-toast-host aria-live=\"polite\" aria-relevant=\"additions\"></div>")}
 		</section>
 		<div class="demo-well" role="region" aria-label="Form demo">
 			<p class="demo-well__label">Live demo</p>
