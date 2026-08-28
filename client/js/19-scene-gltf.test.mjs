@@ -188,6 +188,105 @@ test("gltfExtractMaterial normalizes KHR_materials_ior to the spec contract", ()
   assert.equal(plain(nonFinite).ior, 1.5);
 });
 
+// --- Effective alpha mode ---------------------------------------------------
+
+test("gltfExtractMaterial: OPAQUE forces opacity 1, other modes preserve alpha", () => {
+  const { context } = createLoaderContext();
+
+  const omitted = extractMaterial(context, { pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } });
+  assert.equal(omitted.alphaMode, "OPAQUE");
+  assert.equal(omitted.opacity, 1);
+  assert.equal(omitted.color, "#ff0000");
+
+  const opaque = extractMaterial(context, { alphaMode: "OPAQUE", pbrMetallicRoughness: { baseColorFactor: [0, 1, 0, 0.25] } });
+  assert.equal(opaque.alphaMode, "OPAQUE");
+  assert.equal(opaque.opacity, 1);
+
+  const blendQuarter = extractMaterial(context, { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [0, 0, 1, 0.25] } });
+  assert.equal(blendQuarter.alphaMode, "BLEND");
+  assert.equal(blendQuarter.opacity, 0.25);
+
+  const blendOne = extractMaterial(context, { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1] } });
+  assert.equal(blendOne.opacity, 1);
+
+  // MASK keeps its authored alpha; full cutoff support is not asserted here.
+  const mask = extractMaterial(context, { alphaMode: "MASK", pbrMetallicRoughness: { baseColorFactor: [1, 1, 0, 0.4] } });
+  assert.equal(mask.alphaMode, "MASK");
+  assert.equal(mask.opacity, 0.4);
+
+  // The production gate itself: BLEND is always alpha, otherwise by opacity.
+  assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "BLEND", opacity: 1 })`), true);
+  assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "OPAQUE", opacity: 0.5 })`), true);
+  assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "OPAQUE", opacity: 1 })`), false);
+});
+
+// One shared in-memory scene: three primitives (points mode 0, LINE_STRIP
+// mode 3, triangles mode 4) over a single 3-vertex noncollinear accessor.
+function alphaSceneDoc(material) {
+  return {
+    asset: { version: "2.0" },
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [
+      { attributes: { POSITION: 0 }, mode: 0, material: 0 },
+      { attributes: { POSITION: 0 }, mode: 3, material: 0 },
+      { attributes: { POSITION: 0 }, mode: 4, material: 0 },
+    ] }],
+    materials: [material],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0] }],
+    bufferViews: [{ buffer: 0, byteLength: 36 }],
+    buffers: [{ byteLength: 36 }],
+  };
+}
+
+test("gltfExtractScene propagates effective alpha to points, lines and meshes", () => {
+  const { context } = createLoaderContext();
+  const cases = [
+    { name: "omitted-a0", material: { pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } }, opacity: 1, alpha: false, depthWrite: true },
+    { name: "omitted-a25", material: { pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.25] } }, opacity: 1, alpha: false, depthWrite: true },
+    { name: "OPAQUE-a0", material: { alphaMode: "OPAQUE", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } }, opacity: 1, alpha: false, depthWrite: true },
+    { name: "OPAQUE-a25", material: { alphaMode: "OPAQUE", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.25] } }, opacity: 1, alpha: false, depthWrite: true },
+    { name: "BLEND-a25", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.25] } }, opacity: 0.25, alpha: true, depthWrite: false },
+    { name: "BLEND-a1", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } }, opacity: 1, alpha: true, depthWrite: false },
+    // MASK keeps its authored alpha; production points use alphaMode !== "BLEND", so MASK retains depthWrite: true.
+    { name: "MASK-a04", material: { alphaMode: "MASK", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.4] } }, opacity: 0.4, alpha: true, depthWrite: true },
+    // BLEND with alpha 0 is still alpha (alphaMode === "BLEND" gate) and disables depthWrite.
+    { name: "BLEND-a0", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } }, opacity: 0, alpha: true, depthWrite: false },
+  ];
+  for (const c of cases) {
+    const doc = JSON.stringify(alphaSceneDoc(c.material));
+    // Run extraction against a live VM doc object and serialize the SAME
+    // object before and after, so the mutation check cannot be vacuous.
+    const res = plain(call(context,
+      `(function () {` +
+      `  var docObj = ${doc};` +
+      `  var before = JSON.stringify(docObj);` +
+      `  var scene = gltfExtractScene(docObj, new Float32Array([0,0,0, 1,0,0, 0,1,0]).buffer);` +
+      `  return { before: before, after: JSON.stringify(docObj), scene: scene };` +
+      `})()`));
+    const scene = res.scene;
+    assert.equal(res.before, res.after, `${c.name}: gltfExtractScene mutated the source doc`);
+
+    assert.equal(scene.points.length, 1);
+    assert.equal(scene.points[0].opacity, c.opacity);
+    assert.equal(scene.points[0].blendMode, c.alpha ? "alpha" : "");
+    assert.equal(scene.points[0].depthWrite, c.depthWrite);
+
+    assert.equal(scene.objects.length, 2);
+    const lines = scene.objects.find((o) => o.kind === "lines");
+    const mesh = scene.objects.find((o) => o.kind === "gltf-mesh");
+    assert.ok(lines && mesh);
+    assert.equal(lines.opacity, c.opacity);
+    assert.equal(lines.blendMode, c.alpha ? "alpha" : "");
+    assert.equal(mesh.renderPass, c.alpha ? "alpha" : "opaque");
+    assert.equal(mesh.material.opacity, c.opacity);
+
+    // Extraction never mutates the RGB channels (doc immutability is proven
+    // by the before/after comparison above).
+    assert.equal(mesh.material.color, "#ff0000");
+  }
+});
+
 // --- accessor lookup tables -------------------------------------------------
 
 // A hostile or corrupt componentType or type string must fall through to the

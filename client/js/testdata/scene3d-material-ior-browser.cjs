@@ -134,8 +134,9 @@ const FG_COVERAGE = 0.01;  // min fraction of foreground pixels
 // ---- GLB fixture: one quad facing +Z, positions + normals, metallic 0 ----
 // buildQuadGLB(true) remains byte-identical to the original IOR 2.42 fixture;
 // the optional second argument adds KHR_materials_specular factor inputs that
-// only the importer (never model/batch duplication) consumes.
-function buildQuadGLB(withIor, spec) {
+// only the importer (never model/batch duplication) consumes; the optional
+// third argument adds the opacity alpha inputs, also importer-only.
+function buildQuadGLB(withIor, spec, alpha) {
   const pos = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);
   const nrm = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
   const idx = new Uint16Array([0, 1, 2, 0, 2, 3]);
@@ -153,7 +154,7 @@ function buildQuadGLB(withIor, spec) {
   const bin = Buffer.concat(parts);
   const material = {
     pbrMetallicRoughness: {
-      baseColorFactor: [0.69, 0.31, 0.24, 1],
+      baseColorFactor: [0.69, 0.31, 0.24, alpha ? alpha.alpha : 1],
       metallicFactor: 0, // glTF 2.0 spelling (metalnessFactor is invalid and
                          // silently loads as metallic 1 in strict loaders)
       roughnessFactor: 0.35,
@@ -162,6 +163,7 @@ function buildQuadGLB(withIor, spec) {
   if (withIor) {
     material.extensions = { KHR_materials_ior: { ior: 2.42 } };
   }
+  if (alpha && alpha.mode) material.alphaMode = alpha.mode;
   if (spec) {
     material.extensions = material.extensions || {};
     material.extensions.KHR_materials_specular = {
@@ -437,6 +439,24 @@ Object.assign(GLB_FILES, {
   '/models/quad-spec-color-int.glb': glbSpecColorInt,
  });
 
+// Alpha variants of the SAME valid quad (identical positions/normals/indices,
+// KHR IOR 2.42 in every variant); only baseColorFactor alpha and alphaMode
+// vary. Served at distinct /models/alpha-*.glb paths. No alpha textures and
+// no MASK claims; OPAQUE forces effective opacity 1 regardless of authored
+// alpha, BLEND preserves it.
+const glbAlphaOmitA0 = buildQuadGLB(true, null, { alpha: 0 });
+const glbAlphaOPA0 = buildQuadGLB(true, null, { alpha: 0, mode: 'OPAQUE' });
+const glbAlphaOPA25 = buildQuadGLB(true, null, { alpha: 0.25, mode: 'OPAQUE' });
+const alphaGLBs = {
+  'alpha-opaque-a1': buildQuadGLB(true, null, { alpha: 1, mode: 'OPAQUE' }),
+  'alpha-omit-a0': glbAlphaOmitA0,
+  'alpha-opaque-a0': glbAlphaOPA0,
+  'alpha-opaque-a25': glbAlphaOPA25,
+  'alpha-blend-a25': buildQuadGLB(true, null, { alpha: 0.25, mode: 'BLEND' }),
+  'alpha-blend-a1': buildQuadGLB(true, null, { alpha: 1, mode: 'BLEND' }),
+  'alpha-override-a25': glbAlphaOmitA0,
+};
+
 // ---- Case table (one object/scene per page; sequential, never batched) ----
 // Explicit unindexed quad mesh (6 triangle vertices). A bare kind:'box' would
 // also generate primitive geometry in normalizeSceneObject, but this fixture
@@ -463,6 +483,8 @@ const OBJ = (extra) => Object.assign({ id: 'probe', kind: 'box', materialKind: '
 const OBJNAMED = { id: 'probe', kind: 'box', materialKind: 'standard', wireframe: false,
   material: 'dielectric', roughness: 0.35, metalness: 0, vertices: QUAD_VERTICES };
 const MODEL = (extra) => Object.assign({ id: 'quad', src: '/models/quad242.glb', static: true }, extra);
+const AMODEL = (glb, extra) => Object.assign({ id: 'quad', src: '/models/' + glb + '.glb',
+  static: true }, extra);
 const BATCH = (extra) => Object.assign({ id: 'batch', src: '/models/quad242.glb',
   materialKind: 'standard', roughness: 0.35, metalness: 0,
   instances: [{ id: 'i0', x: 0, y: 0, z: 0 }] }, extra);
@@ -492,6 +514,54 @@ const CASES = [
   WG({ name: 'wg-ior242', obj: OBJ({ ior: 2.42 }), f0: F0(2.42), differs: 'wg-ior133', minChanged: 50 }),
   WG({ name: 'wg-metal133', obj: OBJ({ ior: 1.33, metalness: 1 }), f0: F0(1.33), base: 'wm133' }),
   WG({ name: 'wg-metal242', obj: OBJ({ ior: 2.42, metalness: 1 }), f0: F0(2.42), same: 'wg-metal133' }),
+  // Alpha pairing: the opaque-alpha1 control establishes the reference render;
+  // omitted mode at alpha0, and explicit OPAQUE at alpha0/alpha0.25 must all
+  // be pixel-identical to it (effective opacity forced to 1). Each backend
+  // also renders an explicit GoSX alpha-pass control: the same OPAQUE alpha1
+  // GLB rendered with the renderPass 'alpha' override, which must match the
+  // BLEND alpha1 byte-for-byte (GL blend pass edges are the only reason BLEND
+  // alpha1 need not equal the opaque control, so cross-pass identity at full
+  // opacity is documented but NOT asserted). BLEND at alpha0.25 preserves
+  // 0.25 and visibly differs from the opaque control. The override case
+  // imports an OPAQUE alpha0 GLB but applies the GoSX model overrides
+  // { opacity: 0.25, renderPass: 'alpha' }; an explicit imported renderPass
+  // takes precedence in WebGL, so it runs in the alpha pass at opacity 0.25
+  // and must match BLEND alpha0.25 pixel-for-pixel. Every alpha case keeps
+  // F0(2.42) and asserts the actual observed opacity.
+  { name: 'glb-alpha-pass1', model: AMODEL('alpha-opaque-a1', { renderPass: 'alpha' }),
+    f0: F0(2.42), expectedOpacity: 1, base: 'gap1' },
+  { name: 'glb-alpha-opaque1', model: AMODEL('alpha-opaque-a1'), f0: F0(2.42),
+    expectedOpacity: 1, base: 'ga1' },
+  { name: 'glb-alpha-omit0', model: AMODEL('alpha-omit-a0'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'glb-alpha-opaque1' },
+  { name: 'glb-alpha-opaque0', model: AMODEL('alpha-opaque-a0'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'glb-alpha-opaque1' },
+  { name: 'glb-alpha-opaque25', model: AMODEL('alpha-opaque-a25'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'glb-alpha-opaque1' },
+  { name: 'glb-alpha-blend25', model: AMODEL('alpha-blend-a25'), f0: F0(2.42),
+    expectedOpacity: 0.25, differs: 'glb-alpha-opaque1', minChanged: 50 },
+  { name: 'glb-alpha-blend1', model: AMODEL('alpha-blend-a1'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'glb-alpha-pass1' },
+  { name: 'glb-alpha-override25',
+    model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
+    f0: F0(2.42), expectedOpacity: 0.25, same: 'glb-alpha-blend25' },
+  WG({ name: 'wg-alpha-pass1', model: AMODEL('alpha-opaque-a1', { renderPass: 'alpha' }),
+    f0: F0(2.42), expectedOpacity: 1, base: 'wgap1' }),
+  WG({ name: 'wg-alpha-opaque1', model: AMODEL('alpha-opaque-a1'), f0: F0(2.42),
+    expectedOpacity: 1, base: 'wga1' }),
+  WG({ name: 'wg-alpha-omit0', model: AMODEL('alpha-omit-a0'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'wg-alpha-opaque1' }),
+  WG({ name: 'wg-alpha-opaque0', model: AMODEL('alpha-opaque-a0'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'wg-alpha-opaque1' }),
+  WG({ name: 'wg-alpha-opaque25', model: AMODEL('alpha-opaque-a25'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'wg-alpha-opaque1' }),
+  WG({ name: 'wg-alpha-blend25', model: AMODEL('alpha-blend-a25'), f0: F0(2.42),
+    expectedOpacity: 0.25, differs: 'wg-alpha-opaque1', minChanged: 50 }),
+  WG({ name: 'wg-alpha-blend1', model: AMODEL('alpha-blend-a1'), f0: F0(2.42),
+    expectedOpacity: 1, same: 'wg-alpha-pass1' }),
+  WG({ name: 'wg-alpha-override25',
+    model: AMODEL('alpha-override-a25', { opacity: 0.25, renderPass: 'alpha' }),
+    f0: F0(2.42), expectedOpacity: 0.25, same: 'wg-alpha-blend25' }),
 ];
 
 // ---- Direct-light specular-factor cases (both backends) ----
@@ -1073,6 +1143,12 @@ let server = http.createServer((req, res) => {
   } else if (req.url === '/models/quad242.glb') {
     res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glb242.length });
     res.end(glb242);
+  } else if (req.url && req.url.indexOf('/models/alpha-') === 0) {
+    const aname = req.url.slice('/models/'.length).split('?')[0].replace(/\.glb$/, '');
+    const ab = alphaGLBs[aname];
+    if (!ab) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': ab.length });
+    res.end(ab);
   } else if (req.url === '/models/quad-default.glb') {
     res.writeHead(200, { 'content-type': 'model/gltf-binary', 'content-length': glbDefaultIor.length });
     res.end(glbDefaultIor);
@@ -1238,6 +1314,7 @@ async function evalSend(send, expression, extra) {
 // at 47.
 const PRELOAD = `
   window.__gosxIOR = { draws: 0, pbrDraws: 0, lastDrawF0: null, lastDrawF90: null, f0s: [], obsErrors: [], gl: null,
+    lastDrawOpacity: null,
     lastDrawHasIBL: null, lastDrawHasSpecIntensityMap: null, lastDrawHasSpecColorMap: null,
     programInfo: null, queriedUniforms: [], shadow: null, nativeCap: null, forcedCap: null };
   // Forced MAX_TEXTURE_IMAGE_UNITS caps, selected by the served case pathname
@@ -1312,6 +1389,12 @@ const PRELOAD = `
           window.__gosxIOR.pbrDraws += 1;
           window.__gosxIOR.lastDrawF0 = vec;
           window.__gosxIOR.lastDrawF90 = v90;
+          // u_opacity read through the native getUniform at the SAME
+          // F0/F90-qualified PBR draw. Missing/inactive uniform stays null.
+          var om = this.__oplocs;
+          var ov = (om && om.has(cp)) ? this.__origGetUniform.call(this, cp, om.get(cp)) : null;
+          window.__gosxIOR.lastDrawOpacity =
+            (typeof ov === "number" && Number.isFinite(ov)) ? ov : null;
           var mibl = this.__sibllocs;
           if (mibl && mibl.has(cp)) {
             var vI = this.__origGetUniform.call(this, cp, mibl.get(cp));
@@ -1507,6 +1590,10 @@ const PRELOAD = `
         var q = window.__gosxIOR.queriedUniforms ||
           (window.__gosxIOR.queriedUniforms = []);
         if (q.length < 64 && q.indexOf(String(n)) < 0) q.push(String(n));
+        if (n === "u_opacity") {
+          var mop = this.__oplocs || (this.__oplocs = new Map());
+          if (loc) mop.set(p, loc); else mop.delete(p);
+        }
         if (n === "u_specularF0") {
           var m0 = this.__sf0locs || (this.__sf0locs = new Map());
           if (loc) m0.set(p, loc); else m0.delete(p);
@@ -1598,8 +1685,11 @@ const PRELOAD = `
             var dv = new DataView(buf, base + byteOff, 208);
             var floats = new Array(52);
             for (var i = 0; i < 52; i++) floats[i] = dv.getFloat32(i * 4, true);
+            // float index 6 is the material opacity, captured from the same
+            // actual 208-byte upload as F0/F90.
             window.__gosxWGPU.dumps.push({
-              f0: [floats[44], floats[45], floats[46]], f90: floats[47], floats: floats,
+              f0: [floats[44], floats[45], floats[46]], f90: floats[47], opacity: floats[6],
+              floats: floats,
               // hasSpecularIntensityMap flag at float index 41 (byte 164) and
               // hasSpecularColorMap flag at float index 51 (byte 204), each
               // read as an integer word, never via Float32 reinterpretation.
@@ -1713,6 +1803,8 @@ const READ = '(function(){var m=document.getElementById("' + MOUNT + '");' +
   'return Object.keys(im).length;})(),' +
   'ior:window.__gosxIOR?{draws:window.__gosxIOR.draws,pbrDraws:window.__gosxIOR.pbrDraws,' +
   'lastDrawF0:window.__gosxIOR.lastDrawF0,lastDrawF90:window.__gosxIOR.lastDrawF90,gl:window.__gosxIOR.gl,' +
+  'lastDrawOpacity:(typeof window.__gosxIOR.lastDrawOpacity==="number"?' +
+  'window.__gosxIOR.lastDrawOpacity:null),' +
   'lastDrawHasIBL:window.__gosxIOR.lastDrawHasIBL,' +
   'lastDrawHasSpecIntensityMap:window.__gosxIOR.lastDrawHasSpecIntensityMap,' +
   'lastDrawHasSpecColorMap:window.__gosxIOR.lastDrawHasSpecColorMap,' +
@@ -1920,6 +2012,7 @@ setTimeout(() => {
     }
 
     const rec = { name: c.name, skipped: false };
+    if (c.expectedOpacity !== undefined) rec.expectedOpacity = c.expectedOpacity;
     evidence.push(rec);
     // IBL expectation: requiresIBL === true selects the positive gate;
     // noIBL === true selects the explicit-disabled assertions. Cases
@@ -2180,6 +2273,29 @@ setTimeout(() => {
           });
           rec.f0InUpload = Boolean(hit);
           if (hit) { rec.uploadF0 = hit.f0; rec.uploadF90 = hit.f90; }
+          if (c.expectedOpacity != null) {
+            // Opacity (float index 6) must be present with the expected RGB
+            // F0 and F90 in the SAME 208-byte upload, not sighted apart.
+            let ohit = null;
+            (s.wgpu.dumps || []).forEach((d) => {
+              if (ohit || !Array.isArray(d.f0) || d.f0.length !== 3) return;
+              for (var ci = 0; ci < 3; ci += 1) {
+                if (!(typeof d.f0[ci] === 'number' && Number.isFinite(d.f0[ci]) &&
+                      Math.abs(d.f0[ci] - expF0[ci]) < 1e-4)) return;
+              }
+              if (!(typeof d.f90 === 'number' && Number.isFinite(d.f90) &&
+                    Math.abs(d.f90 - expF90) < 1e-4)) return;
+              if (!(typeof d.opacity === 'number' && Number.isFinite(d.opacity) &&
+                    Math.abs(d.opacity - c.expectedOpacity) < 1e-4)) return;
+              ohit = true;
+            });
+            rec.opacityInUpload = Boolean(ohit);
+            if (!ohit) {
+              fail(c.name + ': expected opacity ' + c.expectedOpacity +
+                ' with F0 [' + expF0.join(',') + '] + F90 ' + expF90 +
+                ' not found together in any 208-byte upload (floats[6]/floats[44..47])');
+            }
+          }
           if (!hit) {
             fail(c.name + ': expected F0 [' + expF0.join(',') + '] + F90 ' + expF90 +
               ' not found at float indices 44..47 of any 208-byte upload');
@@ -2274,6 +2390,13 @@ setTimeout(() => {
               fail(c.name + ': not every selected sampler texture was observed as a DEPTH_ATTACHMENT');
             }
           }
+        }
+        if (c.expectedOpacity != null) {
+          if (typeof s.ior.lastDrawOpacity !== 'number' || !Number.isFinite(s.ior.lastDrawOpacity)) {
+            fail(c.name + ': u_opacity not observed at the F0/F90-qualified PBR draw');
+          }
+          rec.uniformOpacity = s.ior.lastDrawOpacity;
+          assertClose(s.ior.lastDrawOpacity, c.expectedOpacity, c.name + ' u_opacity at draw');
         }
       }
 
@@ -2460,6 +2583,8 @@ setTimeout(() => {
       webgpuBundleReplays: r.bundleReplays, webgpuBundleDraws: r.bundleDraws,
       glBackend: r.glBackend, draws: r.draws, pbrDraws: r.pbrDraws,
       uniformF0: r.uniformF0, uniformF90: r.uniformF90, f0InUpload: r.f0InUpload, wgpuUploads: r.wgpuUploads,
+      uniformOpacity: r.uniformOpacity, opacityInUpload: r.opacityInUpload,
+      expectedOpacity: r.expectedOpacity,
       specIntensityMapFlag: r.specIntensityMapFlag, specColorMapFlag: r.specColorMapFlag,
       textureServed: r.textureServed,
       iblState: r.iblState, iblAssetsServed: r.iblAssetsServed,

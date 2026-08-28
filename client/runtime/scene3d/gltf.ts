@@ -1724,6 +1724,11 @@
       emissiveStrength *= gltfExtensionFactor(emissiveExtension, "emissiveStrength", 1, 0, 1000);
     }
 
+    var effectiveAlphaMode = mat.alphaMode || "OPAQUE";
+    // OPAQUE (explicit or omitted) ignores baseColor alpha; BLEND, MASK and
+    // unknown modes pass the authored factor through without validation.
+    var effectiveOpacity = effectiveAlphaMode === "OPAQUE" ? 1 : baseColorFactor[3];
+
     var textureDescriptors = gltfMaterialTextureDescriptors(
       baseColorURL,
       normalURL,
@@ -1739,7 +1744,7 @@
       color: gltfBaseColorToHex(baseColorFactor),
       roughness: pbr.roughnessFactor != null ? pbr.roughnessFactor : 1.0,
       metalness: pbr.metallicFactor != null ? pbr.metallicFactor : 0.0,
-      opacity: baseColorFactor[3],
+      opacity: effectiveOpacity,
       emissive: emissiveStrength,
       texture: baseColorURL,
       normalMap: normalURL,
@@ -1747,7 +1752,7 @@
       metalnessMap: metallicRoughnessURL,
       occlusionMap: occlusionURL,
       emissiveMap: emissiveURL,
-      alphaMode: mat.alphaMode || "OPAQUE",
+      alphaMode: effectiveAlphaMode,
       doubleSided: mat.doubleSided || false,
     };
     if (Object.keys(textureDescriptors).length) {
