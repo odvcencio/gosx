@@ -90,12 +90,40 @@ var litSharedTerms = []sharedTerm{
 		effect: "Every non-metal highlight changes brightness.",
 		// The dielectric F0 is authored (derived from the optional IOR) and
 		// dynamic, so no literal can be pinned. This row is a presence check:
-		// each copy must read its own authored F0 lane, and the negative
-		// mutations below prove that replacing it with the old fixed 0.04
-		// fails this row on both backends.
-		goPat: `mix\(vec3f\(material\.physicalParams2\.y\), baseColor, metalness\)`,
-		jsPat: `mix\(vec3f\(material\.dielectricF0\), albedo, metalness\)`,
+		// the native copy must read the prepared effective F0 the material
+		// uploaded (specularParams.xyz), and the negative mutation below
+		// proves that reverting it fails this row.
+		goPat: `mix\(material\.specularParams\.xyz, baseColor, metalness\)`,
+		jsPat: `mix\(specF0, albedo, metalness\)`,
 		want:  "",
+	},
+	{
+		// Both copies weight the diffuse lobe by the scalar max-RGB of the
+		// dielectric Fresnel term, so the diffuse tint never carries the
+		// inverse of a per-channel Fresnel colour and never borrows the
+		// metallic Fresnel. The row pins the direct-loop form on each side;
+		// the environment paths carry the same shape.
+		id:     "diffuse-weight-scalar-dielectric",
+		effect: "Diffuse brightness for a mixed-metal material shifts between the backends.",
+		goPat:  `let kD = \(1\.0 - max\(FdielL\.x, max\(FdielL\.y, FdielL\.z\)\)\) \* \(1\.0 - metalness\);`,
+		jsPat:  `let kD = \(1\.0 - max\(Fdiel\.x, max\(Fdiel\.y, Fdiel\.z\)\)\) \* \(1\.0 - metalness\);`,
+	},
+	{
+		// Both copies take F90 from the authored specular intensity, so a
+		// sub-1 intensity dims the whole specular lobe on both backends.
+		id:     "specular-f90-authored",
+		effect: "An authored specular intensity below 1 dims the specular lobe on one backend only.",
+		goPat:  `var F90 = mix\(material\.specularParams\.w, 1\.0, metalness\);`,
+		jsPat:  `var F90 = mix\(specF90, 1\.0, metalness\);`,
+	},
+	{
+		// A fully metallic surface takes the base colour exactly on both
+		// sides, so no dielectric specular setting can leak into a metal
+		// through a rounding of the mix.
+		id:     "fully-metal-specular-branch",
+		effect: "A fully metallic surface picks up dielectric specular settings on one backend.",
+		goPat:  `if \(metalness >= 1\.0\) \{\nF0 = baseColor;\nF90 = 1\.0;\n\}`,
+		jsPat:  `if \(metalness >= 1\.0\) \{\nF0 = albedo;\nF90 = 1\.0;\n\}`,
 	},
 	{
 		id:     "roughness-floor",
@@ -135,12 +163,6 @@ var litSharedTerms = []sharedTerm{
 		goPat:  `pow\(clamp\(1\.0 - [A-Za-z]+, 0\.0, 1\.0\), ([0-9.]+)\)`,
 		jsPat:  `pow\(clamp\(1\.0 - [A-Za-z]+, 0\.0, 1\.0\), ([0-9.]+)\)`,
 		want:   "5.0",
-	},
-	{
-		id:     "energy-conserving-diffuse-weight",
-		effect: "A metal picks up a diffuse term, or a dielectric loses one.",
-		goPat:  `\(vec3f\(1\.0\) - kS\) \* \(1\.0 - metalness\)`,
-		jsPat:  `\(vec3f\(1\.0\) - F\) \* \(1\.0 - metalness\)`,
 	},
 	{
 		id:     "lambert-diffuse-normalization",
@@ -865,7 +887,7 @@ var litDivergentTerms = []divergentTerm{
 		effect:  "A rect-area light lights the scene in the browser under WebGPU and contributes nothing under server side rendering, on the desktop, or in a poster.",
 		verdict: "Keep the native copy silent. The browser evaluates the exact three.js diffuse form factor plus a representative-point specular lobe. The native path has no rectangle to integrate, because engine.RenderLight carries no width and no height, so any native answer would be invented. scene/preview/coverage.go reports the drop to the author.",
 		goLine:  "if (kind == 5u) {",
-		jsLine:  "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, NoV);",
+		jsLine:  "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV);",
 	},
 }
 
@@ -1012,16 +1034,44 @@ var litSharedGuardMutations = []litGuardMutation{
 	{
 		name:    "native renderer replaces the authored F0 with the fixed default",
 		side:    "go",
-		from:    "mix(vec3f(material.physicalParams2.y), baseColor, metalness)",
+		from:    "mix(material.specularParams.xyz, baseColor, metalness)",
 		to:      "mix(vec3f(0.04), baseColor, metalness)",
 		wantRow: "dielectric-f0-authored",
 	},
 	{
 		name:    "browser replaces the authored F0 with the fixed default",
 		side:    "js",
-		from:    "mix(vec3f(material.dielectricF0), albedo, metalness)",
+		from:    "mix(specF0, albedo, metalness)",
 		to:      "mix(vec3f(0.04), albedo, metalness)",
 		wantRow: "dielectric-f0-authored",
+	},
+	{
+		name:    "browser drops the authored F90 from the specular mix",
+		side:    "js",
+		from:    "var F90 = mix(specF90, 1.0, metalness);",
+		to:      "var F90 = 1.0;",
+		wantRow: "specular-f90-authored",
+	},
+	{
+		name:    "native renderer drops the authored F90 from the specular mix",
+		side:    "go",
+		from:    "var F90 = mix(material.specularParams.w, 1.0, metalness);",
+		to:      "var F90 = 1.0;",
+		wantRow: "specular-f90-authored",
+	},
+	{
+		name:    "browser reverts the scalar diffuse weight to the componentwise form",
+		side:    "js",
+		from:    "let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);\nlet kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
+		to:      "let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+		wantRow: "diffuse-weight-scalar-dielectric",
+	},
+	{
+		name:    "native renderer reverts the scalar diffuse weight to the componentwise form",
+		side:    "go",
+		from:    "let FdielL = fresnelSchlick(specF0, specF90, VdotH);\nlet kD = (1.0 - max(FdielL.x, max(FdielL.y, FdielL.z))) * (1.0 - metalness);",
+		to:      "let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+		wantRow: "diffuse-weight-scalar-dielectric",
 	},
 	{
 		name:    "browser widens the clear coat power range",
@@ -1285,7 +1335,7 @@ var litDivergentGuardMutations = []litGuardMutation{
 	{
 		name:    "browser stops shading a rect-area light without updating the ledger",
 		side:    "js",
-		from:    "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, NoV);",
+		from:    "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV);",
 		to:      "Lo = Lo + vec3f(0.0);",
 		wantRow: "rect-area-light",
 	},

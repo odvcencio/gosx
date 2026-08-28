@@ -335,6 +335,25 @@
     return texture;
   }
 
+  // WebGL2 texImage2D requires a Uint16Array view for HALF_FLOAT (0x140B)
+  // data. Handing it the KTX2 reader's Uint8Array is a driver-side
+  // INVALID_OPERATION with no JS throw, which silently leaves white
+  // placeholder textures. Reinterpret the face slice so the exact half bits
+  // reach the driver as words: even-offset slices are viewed in place, odd
+  // offset slices are copied to aligned storage first, and an odd byte length
+  // is a named error rather than a silent truncation.
+  function sceneKTX2HalfFloatView(payload) {
+    if (payload.byteLength % 2 !== 0) {
+      throw sceneKTX2Error("half-float-size", "half-float payload needs an even byte length, got " + payload.byteLength);
+    }
+    if (payload.byteOffset % 2 === 0) {
+      return new Uint16Array(payload.buffer, payload.byteOffset, payload.byteLength / 2);
+    }
+    var aligned = new Uint8Array(payload.byteLength);
+    aligned.set(payload);
+    return new Uint16Array(aligned.buffer, 0, payload.byteLength / 2);
+  }
+
   // sceneKTX2UploadWebGL2 binds a texture and uploads one mip level per call.
   //
   // getExtension is what turns a compressed internal format on, so the uploader
@@ -366,7 +385,7 @@
         if (layout.compressed) {
           gl.compressedTexImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, payload);
         } else {
-          gl.texImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, layout.webglFormat, layout.webglType, payload);
+          gl.texImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, layout.webglFormat, layout.webglType, sceneKTX2HalfFloatView(payload));
         }
       }
     }

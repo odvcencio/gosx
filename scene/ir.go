@@ -138,6 +138,8 @@ type IRMaterial struct {
 	Transmission       float64                      `json:"transmission,omitempty"`
 	Iridescence        float64                      `json:"iridescence,omitempty"`
 	Anisotropy         float64                      `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64                     `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64                  `json:"specularColor,omitempty"`
 	IOR                *float64                     `json:"ior,omitempty"`
 	Texture            string                       `json:"texture,omitempty"`
 	NormalMap          string                       `json:"normalMap,omitempty"`
@@ -180,6 +182,8 @@ type IRMaterialVariant struct {
 	Transmission       float64                    `json:"transmission,omitempty"`
 	Iridescence        float64                    `json:"iridescence,omitempty"`
 	Anisotropy         float64                    `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64                   `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64                `json:"specularColor,omitempty"`
 	IOR                *float64                   `json:"ior,omitempty"`
 	Texture            string                     `json:"texture,omitempty"`
 	NormalMap          string                     `json:"normalMap,omitempty"`
@@ -897,6 +901,8 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		Transmission:       object.Transmission,
 		Iridescence:        object.Iridescence,
 		Anisotropy:         object.Anisotropy,
+		SpecularIntensity:  object.SpecularIntensity,
+		SpecularColor:      copySpecularColor(object.SpecularColor),
 		IOR:                object.IOR,
 		NormalMap:          object.NormalMap,
 		RoughnessMap:       object.RoughnessMap,
@@ -937,6 +943,8 @@ func materialFromInstancedIR(mesh InstancedMeshIR) IRMaterial {
 		Transmission:       mesh.Transmission,
 		Iridescence:        mesh.Iridescence,
 		Anisotropy:         mesh.Anisotropy,
+		SpecularIntensity:  mesh.SpecularIntensity,
+		SpecularColor:      copySpecularColor(mesh.SpecularColor),
 		IOR:                mesh.IOR,
 		NormalMap:          mesh.NormalMap,
 		RoughnessMap:       mesh.RoughnessMap,

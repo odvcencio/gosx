@@ -151,6 +151,40 @@
     return Math.max(min, Math.min(max, value));
   }
 
+  // Read a strictly typed scalar factor. Unlike gltfExtensionFactor this
+  // never coerces: Number("0.5") or Number(true) would silently accept a
+  // malformed asset and change how it renders. Only finite numbers qualify;
+  // they clamp to [min, max], so an explicit zero stays zero and out-of-range
+  // values saturate. Everything else — missing, null, boolean, string, object
+  // or non-finite — returns the fallback.
+  function gltfExtensionStrictFactor(extension, key, fallback, min, max) {
+    var value = extension ? extension[key] : undefined;
+    if (typeof value !== "number" || !isFinite(value)) {
+      return fallback;
+    }
+    return Math.max(min, Math.min(max, value));
+  }
+
+  // Read a linear RGB colour triple from an extension. The spec triple is
+  // exactly three finite, nonnegative numbers; anything else — wrong length,
+  // a string, boolean, null, negative or non-finite component — rejects the
+  // whole triple, so a malformed asset never renders half a colour. HDR
+  // components above 1 stay unclamped and unconverted. The result is a fresh
+  // array, so extracted materials never alias the document or each other.
+  function gltfExtensionColor3(extension, key) {
+    var value = extension ? extension[key] : null;
+    if (!Array.isArray(value) || value.length !== 3) {
+      return null;
+    }
+    for (var i = 0; i < 3; i++) {
+      var component = value[i];
+      if (typeof component !== "number" || !isFinite(component) || component < 0) {
+        return null;
+      }
+    }
+    return [value[0], value[1], value[2]];
+  }
+
   // Compression extensions rewrite the bytes a bufferView or primitive points
   // at. The loader has no decoder for them, so reading the raw bytes would
   // build a corrupt mesh. Throw instead, with the extension named.
@@ -1534,7 +1568,7 @@
     };
   }
 
-  function gltfMaterialTextureDescriptors(baseColor, normal, roughness, metalness, occlusion, emissive) {
+  function gltfMaterialTextureDescriptors(baseColor, normal, roughness, metalness, occlusion, emissive, specularIntensity, specularColor) {
     var descriptors = {};
     function add(name, descriptor) {
       if (descriptor) {
@@ -1547,6 +1581,8 @@
     add("metalness", gltfTextureDescriptor(metalness, "metalness", "linear", "b"));
     add("occlusion", gltfTextureDescriptor(occlusion, "ambient-occlusion", "linear", "r"));
     add("emissive", gltfTextureDescriptor(emissive, "emissive", "srgb", "rgb"));
+    add("specularIntensity", gltfTextureDescriptor(specularIntensity, "specular-intensity", "linear", "a"));
+    add("specularColor", gltfTextureDescriptor(specularColor, "specular-color", "srgb", "rgb"));
     return descriptors;
   }
 
@@ -1673,6 +1709,9 @@
     var metallicRoughnessURL = gltfResolveTexture(gltf, pbr.metallicRoughnessTexture, binaryBuffer);
     var occlusionURL = gltfResolveTexture(gltf, mat.occlusionTexture, binaryBuffer);
     var emissiveURL = gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer);
+    var specular = gltfExtension(mat, "KHR_materials_specular");
+    var specularIntensityURL = specular ? gltfResolveTexture(gltf, specular.specularTexture, binaryBuffer) : "";
+    var specularColorURL = specular ? gltfResolveTexture(gltf, specular.specularColorTexture, binaryBuffer) : "";
 
     var emissiveFactor = mat.emissiveFactor || [0, 0, 0];
     var emissiveStrength = Math.max(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2]);
@@ -1691,7 +1730,9 @@
       metallicRoughnessURL,
       metallicRoughnessURL,
       occlusionURL,
-      emissiveURL
+      emissiveURL,
+      specularIntensityURL,
+      specularColorURL
     );
     var record = {
       kind: "standard",
@@ -1757,6 +1798,19 @@
       var strength = gltfExtensionFactor(anisotropy, "anisotropyStrength", 0, 0, 1);
       var rotation = Number(anisotropy.anisotropyRotation) || 0;
       record.anisotropy = Math.max(-1, Math.min(1, strength * Math.cos(2 * rotation)));
+    }
+
+    // KHR_materials_specular -> StandardMaterial.specularIntensity and
+    // .specularColor. The intensity is the [0, 1] specular strength and the
+    // colour is the linear-space F0 tint; both import straight through with
+    // the spec defaults when missing or malformed. The texture inputs resolve
+    // through the shared descriptor path above — intensity samples the alpha
+    // channel in linear space, the colour is sRGB RGB — but the extension
+    // still stays off GLTF_SUPPORTED_EXTENSIONS until renderer sampling and
+    // the broader textureInfo semantics are validated.
+    if (specular) {
+      record.specularIntensity = gltfExtensionStrictFactor(specular, "specularFactor", 1, 0, 1);
+      record.specularColor = gltfExtensionColor3(specular, "specularColorFactor") || [1, 1, 1];
     }
 
     // KHR_materials_ior records the index of refraction. Spec contract:

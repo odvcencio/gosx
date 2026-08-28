@@ -388,6 +388,7 @@
     hash = scenePlannerHashAny(hash, bundle && bundle.environment, 0);
     hash = sceneCSSHashCollection(hash, bundle && bundle.materials, [
       "id", "name", "kind", "color", "opacity", "emissive", "roughness", "metalness", "ior",
+      "specularIntensity", "specularColor",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap", "blendMode",
       "renderPass", "depthWrite", "style", "size", "attenuation",
     ]);
@@ -398,12 +399,13 @@
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.objects, [
       "id", "kind", "material", "materialIndex", "color", "opacity", "emissive",
-      "roughness", "metalness", "ior", "lineWidth", "x", "y", "z", "rotationX",
+      "roughness", "metalness", "ior", "specularIntensity", "specularColor", "lineWidth", "x", "y", "z", "rotationX",
       "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.meshObjects, [
       "id", "kind", "material", "materialIndex", "depthCenter", "vertexOffset",
       "vertexCount", "color", "opacity", "roughness", "metalness", "ior",
+      "specularIntensity", "specularColor",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.points, [
       "id", "material", "materialIndex", "count", "color", "size", "opacity",
@@ -412,7 +414,7 @@
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.instancedMeshes, [
       "id", "kind", "material", "materialIndex", "count", "color", "roughness",
-      "metalness", "ior", "width", "height", "depth", "radius",
+      "metalness", "ior", "specularIntensity", "specularColor", "width", "height", "depth", "radius",
     ]);
     hash = sceneCSSHashCollection(hash, bundle && bundle.labels, [
       "id", "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
@@ -462,6 +464,16 @@
     for (let index = 0; index < keys.length; index += 1) {
       const key = keys[index];
       hash = scenePlannerHashString(hash, key);
+      if (key === "specularIntensity" || key === "specularColor") {
+        // Full-precision factor hashing: the shared *1000 number
+        // quantization would collapse close specular factors, so these
+        // fields hash their exact normalized serialization instead. This
+        // keeps CSS-resolved rewrites invalidating across materials,
+        // objects, meshObjects and instancedMeshes without changing hash
+        // semantics for any other field.
+        hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(record[key]));
+        continue;
+      }
       hash = scenePlannerHashAny(hash, record[key], 0);
     }
     return hash;
@@ -619,6 +631,7 @@
     ], css.mount);
     sceneCSSResolveCollectionKeys(state, css, "materials", [
       "color", "opacity", "emissive", "roughness", "metalness", "ior",
+      "specularIntensity", "specularColor",
       "clearcoat", "sheen", "transmission", "iridescence", "anisotropy",
       "normalMap", "roughnessMap", "metalnessMap", "emissiveMap",
     ], null);
@@ -629,19 +642,21 @@
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "objects", [
       "color", "opacity", "emissive", "roughness", "metalness", "ior",
+      "specularIntensity", "specularColor",
       "clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "lineWidth",
       "x", "y", "z", "rotationX", "rotationY", "rotationZ",
       "spinX", "spinY", "spinZ",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "meshObjects", [
-      "depthCenter", "vertexOffset", "vertexCount", "ior",
+      "depthCenter", "vertexOffset", "vertexCount", "ior", "specularIntensity", "specularColor",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "points", [
       "color", "size", "opacity", "x", "y", "z",
       "rotationX", "rotationY", "rotationZ", "spinX", "spinY", "spinZ",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "instancedMeshes", [
-      "color", "roughness", "metalness", "ior", "width", "height", "depth", "radius",
+      "color", "roughness", "metalness", "ior", "specularIntensity", "specularColor",
+      "width", "height", "depth", "radius",
     ], sceneCSSRecordElement);
     sceneCSSResolveCollectionKeys(state, css, "labels", [
       "color", "background", "borderColor", "offsetX", "offsetY", "opacity",
@@ -699,10 +714,13 @@
         }
         state.dynamic = true;
         if (resolved.hasValue) {
-          if (sceneCSSMaybeTransitionValue(state, "record", collectionKey, index, key, resolved.value)) {
+          const value = key === "specularColor"
+            ? sceneCSSCoerceSpecularColorValue(resolved.value)
+            : resolved.value;
+          if (sceneCSSMaybeTransitionValue(state, "record", collectionKey, index, key, value)) {
             continue;
           }
-          sceneCSSSetRecordKey(state, collectionKey, index, key, resolved.value);
+          sceneCSSSetRecordKey(state, collectionKey, index, key, value);
         }
       }
     }
@@ -1073,6 +1091,17 @@
       }
     }
     return text;
+  }
+
+  // Resolved specular tint text ("0.5 0.5 0.5" / "0.5,0.5,0.5") becomes a
+  // real LINEAR triple so material profiles and rendering consume a valid
+  // color instead of leftover CSS text. Var references and junk text pass
+  // through untouched; the downstream color normalizer owns rejection.
+  function sceneCSSCoerceSpecularColorValue(value) {
+    if (typeof value !== "string" || sceneCSSVarReference(value)) {
+      return value;
+    }
+    return sceneParseSpecularColorText(value) || value;
   }
 
   function sceneCSSSameValue(left, right) {
@@ -1619,6 +1648,14 @@
     // material records without a stable profile key still invalidate the
     // prepared-scene signature when it changes.
     hash = scenePlannerHashNumber(hash, sceneNumber(material && material.ior, 1.5));
+    // Authored specular factors drive the specular F0/F90 uniforms; hash
+    // them normalized (so omitted values hash identically to their hard
+    // defaults) and at full precision — the shared *1000 number
+    // quantization would collapse close factors like .5 vs .500001 — so
+    // material records, with or without a stable profile key, invalidate
+    // the prepared-scene signature when they change.
+    hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(sceneNormalizeMaterialSpecularIntensity(material && material.specularIntensity, 1)));
+    hash = scenePlannerHashString(hash, scenePlannerSpecularFactorText(sceneNormalizeMaterialSpecularColor(material && material.specularColor, null)));
     return scenePlannerHashNumber(hash, material && material.wireframe ? 1 : 0);
   }
 
@@ -1811,6 +1848,40 @@
       hash = Math.imul(hash, 16777619) >>> 0;
     }
     return hash;
+  }
+
+  // Exact serialization for specular factor fields: numbers serialize
+  // losslessly via String(), so close values (.5 vs .500001, per-channel
+  // 1 vs 1.0000001) always produce different hash input. Color triples
+  // serialize component-wise; CSS var text and other strings hash as-is;
+  // anything non-numeric hashes as invalid.
+  function scenePlannerExactNumberText(value) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value === "string" && value.trim() !== "") {
+      const number = Number(value);
+      if (Number.isFinite(number)) {
+        return String(number);
+      }
+    }
+    return "invalid";
+  }
+
+  function scenePlannerSpecularFactorText(value) {
+    if (typeof value === "string") {
+      return value;
+    }
+    if (Array.isArray(value) || (
+      typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView && ArrayBuffer.isView(value)
+    )) {
+      let text = "";
+      for (let index = 0; index < value.length; index += 1) {
+        text += (index ? ":" : "") + scenePlannerExactNumberText(value[index]);
+      }
+      return text;
+    }
+    return scenePlannerExactNumberText(value);
   }
 
   function arrayLength(value) {

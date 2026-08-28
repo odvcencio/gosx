@@ -24,7 +24,15 @@ type materialFingerprint struct {
 	// deliberately bypasses quantize(): the 1/1024 lattice would move the
 	// default 0.04 to a different bit pattern, and an authored F0 of exactly
 	// zero (IOR 1) must stay distinct from "lane never written".
-	dielectricF0                    float32
+	dielectricF0 float32
+	// Effective dielectric specular terms after the authored specular
+	// intensity and linear RGB colour are applied: specF0R/G/B is the
+	// per-channel F0 and specF90 the F90 term (= intensity). These are exact
+	// float32 values on purpose — like dielectricF0, quantizing them to the
+	// 1/1024 lattice would move the default bit patterns and collapse the
+	// "lane never written" vs "explicitly zero" distinction.
+	specF0R, specF0G, specF0B       float32
+	specF90                         float32
 	emissiveR, emissiveG, emissiveB uint16
 	emissiveStrength                uint16
 	// textureURL: "" means no texture; the fallback 1×1 white is bound so
@@ -57,9 +65,9 @@ type materialResources struct {
 }
 
 // materialUniformSize is the std140-aligned size of the WGSL Material struct.
-// Seven vec4 records = 112 bytes (baseColor + pbrParams + emissive + two
-// texture-flag vectors + two physical-material vectors).
-const materialUniformSize = 112
+// Eight vec4 records = 128 bytes (baseColor + pbrParams + emissive + two
+// texture-flag vectors + two physical-material vectors + one specular vector).
+const materialUniformSize = 128
 
 // resolveMaterialFingerprint picks the effective material for one instanced
 // mesh. Lookup prefers materials[MaterialIndex]; out-of-range or missing
@@ -135,6 +143,10 @@ func defaultVertexColorMaterial() materialFingerprint {
 		iridescence:      0,
 		anisotropy:       0,
 		dielectricF0:     defaultDielectricF0,
+		specF0R:          defaultDielectricF0,
+		specF0G:          defaultDielectricF0,
+		specF0B:          defaultDielectricF0,
+		specF90:          1,
 		emissiveR:        0,
 		emissiveG:        0,
 		emissiveB:        0,
@@ -190,13 +202,16 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 	emissiveStrength := float32(mat.Emissive)
 	// Authored dielectric F0 from the optional IOR. Computed in float64 and
 	// cast once, with the default 0.04 for nil, non-finite, negative, or
-	// sub-unity values other than an explicit zero.
-	dielectricF0 := defaultDielectricF0
+	// sub-unity values other than an explicit zero. The float64 value feeds the
+	// effective specular computation below so an HDR colour cannot overflow on
+	// the way to the clamp; only the final lane is float32.
+	dielectricF0 := 0.04
 	if mat.IOR != nil {
 		if f0, ok := dielectricF0FromIOR(*mat.IOR); ok {
-			dielectricF0 = float32(f0)
+			dielectricF0 = f0
 		}
 	}
+	specF0, specF90 := effectiveDielectricSpecular(mat, dielectricF0)
 	return materialFingerprint{
 		baseColorR:       quantize(base[0]),
 		baseColorG:       quantize(base[1]),
@@ -209,7 +224,11 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		transmission:     quantize(clamp01f(float32(mat.Transmission))),
 		iridescence:      quantize(clamp01f(float32(mat.Iridescence))),
 		anisotropy:       quantizeSignedUnit(float32(mat.Anisotropy)),
-		dielectricF0:     dielectricF0,
+		dielectricF0:     float32(dielectricF0),
+		specF0R:          specF0[0],
+		specF0G:          specF0[1],
+		specF0B:          specF0[2],
+		specF90:          specF90,
 		emissiveR:        quantize(base[0]),
 		emissiveG:        quantize(base[1]),
 		emissiveB:        quantize(base[2]),
@@ -221,6 +240,49 @@ func materialFromRender(mat engine.RenderMaterial) materialFingerprint {
 		emissiveURL:      mat.EmissiveMap,
 		useVertexColor:   false,
 	}
+}
+
+// effectiveDielectricSpecular folds the authored specular intensity and
+// linear RGB colour into the IOR-derived dielectric F0:
+//
+//	F0_rgb = min(f0 * color, 1) * intensity
+//	F90    = intensity
+//
+// A nil intensity means 1; a finite [0,1] value is honoured verbatim,
+// including an explicit zero. Anything else (non-finite, negative, >1) falls
+// back to 1. A nil colour means linear white; a finite non-negative RGB is
+// honoured verbatim, including zero and HDR values above 1. An invalid vector
+// (any NaN, Inf, or negative channel) falls back to white. The clamp runs
+// BEFORE the intensity multiply, and everything is computed in float64 so a
+// colour at math.MaxFloat64 cannot overflow before the clamp; an IOR of 1
+// (f0 = 0) yields exact zeros, never NaN.
+func effectiveDielectricSpecular(mat engine.RenderMaterial, f0 float64) ([3]float32, float32) {
+	intensity := 1.0
+	if mat.SpecularIntensity != nil {
+		v := *mat.SpecularIntensity
+		if !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v <= 1 {
+			intensity = v
+		}
+	}
+	color := [3]float64{1, 1, 1}
+	if mat.SpecularColor != nil {
+		c := *mat.SpecularColor
+		valid := true
+		for _, ch := range c {
+			if math.IsNaN(ch) || math.IsInf(ch, 0) || ch < 0 {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			color = c
+		}
+	}
+	var out [3]float32
+	for i := range out {
+		out[i] = float32(math.Min(f0*color[i], 1) * intensity)
+	}
+	return out, float32(intensity)
 }
 
 func materialOpacity(mat engine.RenderMaterial) float32 {
@@ -368,6 +430,7 @@ func (r *Renderer) createMaterialBindGroup(layout gpu.BindGroupLayout, buf gpu.B
 //	64..80  textureParams2 vec4 (hasEmissiveMap, 0, 0, 0)
 //	80..96  physicalParams vec4 (clearcoat, sheen, transmission, iridescence)
 //	96..112 physicalParams2 vec4 (anisotropy, dielectricF0, 0, 0)
+//	112..128 specularParams vec4 (effective F0 rgb, F90)
 func materialUniformBytes(fp materialFingerprint) []byte {
 	useVertex := float32(0)
 	if fp.useVertexColor {
@@ -394,6 +457,8 @@ func materialUniformBytes(fp materialFingerprint) []byte {
 		dequantize(fp.clearcoat), dequantize(fp.sheen), dequantize(fp.transmission), dequantize(fp.iridescence),
 		// physicalParams2 (anisotropy, dielectricF0, 0, 0)
 		dequantizeSignedUnit(fp.anisotropy), fp.dielectricF0, 0, 0,
+		// specularParams (effective dielectric F0 rgb, F90)
+		fp.specF0R, fp.specF0G, fp.specF0B, fp.specF90,
 	}
 	out := make([]byte, materialUniformSize)
 	copy(out[:len(values)*4], float32sToBytes(values))

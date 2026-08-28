@@ -507,12 +507,15 @@ function recordingGL(extensions) {
     bindTexture: () => {},
     texParameteri: () => {},
     compressedTexImage2D(target, level, internalFormat, width, height, border, data) {
-      calls.compressedTexImage2D.push({ level, internalFormat, width, height, border, byteLength: data.byteLength });
+      calls.compressedTexImage2D.push({
+        level, internalFormat, width, height, border,
+        byteLength: data.byteLength, view: data.constructor.name, data,
+      });
     },
     texImage2D(target, level, internalFormat, width, height, border, format, type, data) {
       calls.texImage2D.push({
         target, level, internalFormat, width, height, border, format, type,
-        byteLength: data.byteLength,
+        byteLength: data.byteLength, view: data.constructor.name, data,
       });
     },
   };
@@ -537,6 +540,9 @@ test("the WebGL2 uploader passes the logical level size and the right internal f
   // WebGL2 wants the LOGICAL level size, unlike WebGPU.
   assert.deepEqual([uploads[2].width, uploads[2].height], [2, 2]);
   assert.equal(uploads[2].byteLength, 16, "a 2x2 level still carries one whole block");
+  for (const upload of uploads) {
+    assert.ok(upload.data instanceof Uint8Array, "compressed payloads stay Uint8Array, got " + upload.view);
+  }
 });
 
 test("the WebGL2 uploader refuses a context without the matching extension", async () => {
@@ -577,13 +583,133 @@ test("the WebGL2 uploader preserves the native half-float IBL cube faces and mip
     assert.equal(upload.internalFormat, 0x881A);
     assert.equal(upload.format, 0x1908);
     assert.equal(upload.type, 0x140B);
+    assert.ok(upload.data instanceof Uint16Array, "half-float uploads must be Uint16Array, got " + upload.view);
     assert.equal(upload.byteLength, 4 * 4 * 8);
   }
   for (let face = 0; face < 6; face++) {
     const upload = gl.calls.texImage2D[6 + face];
     assert.equal(upload.target, gl.TEXTURE_CUBE_MAP_POSITIVE_X + face);
     assert.equal(upload.level, 1);
+    assert.ok(upload.data instanceof Uint16Array, "half-float uploads must be Uint16Array, got " + upload.view);
     assert.equal(upload.byteLength, 2 * 2 * 8);
+  }
+});
+
+test("the WebGL2 uploader passes exact half bits as Uint16Array for RG16F LUTs", async () => {
+  const { api } = loadKTX2();
+  const image = await api.decode(buildIBLContainer(
+    83,
+    1,
+    1,
+    1,
+    [new Uint8Array([0x00, 0x38, 0x00, 0x34])],
+    {
+      GoSXiblRole: "brdf-lut",
+      GoSXColorSpace: "linear",
+      GoSXiblModel: IBL_BRDF_MODEL,
+    },
+  ));
+  const gl = recordingGL(["OES_texture_float_linear"]);
+  api.uploadWebGL2(gl, image);
+
+  assert.equal(gl.calls.texImage2D.length, 1);
+  const upload = gl.calls.texImage2D[0];
+  assert.equal(upload.internalFormat, 0x822F, "RG16F");
+  assert.equal(upload.type, 0x140B, "HALF_FLOAT");
+  assert.ok(upload.data instanceof Uint16Array, "expected Uint16Array, got " + upload.view);
+  assert.deepEqual(Array.from(upload.data), [0x3800, 0x3400],
+    "half bits must arrive as words, not numerically converted byte values");
+  assert.deepEqual(
+    Array.from(new Uint8Array(upload.data.buffer, upload.data.byteOffset, upload.data.byteLength)),
+    [0x00, 0x38, 0x00, 0x34],
+    "byte-for-byte preservation",
+  );
+});
+
+test("odd-offset half-float slices are copied to aligned storage without changing bits", async () => {
+  const { api } = loadKTX2();
+  const image = await api.decode(buildIBLContainer(
+    83,
+    1,
+    1,
+    1,
+    [new Uint8Array([0x00, 0x38, 0x00, 0x34])],
+    {
+      GoSXiblRole: "brdf-lut",
+      GoSXColorSpace: "linear",
+      GoSXiblModel: IBL_BRDF_MODEL,
+    },
+  ));
+  const source = image.levels[0].bytes;
+  const padded = new Uint8Array(source.byteLength + 1);
+  padded.set(source, 1);
+  image.levels[0].bytes = new Uint8Array(padded.buffer, 1, source.byteLength);
+  const gl = recordingGL(["OES_texture_float_linear"]);
+  api.uploadWebGL2(gl, image);
+
+  const upload = gl.calls.texImage2D[0];
+  assert.ok(upload.data instanceof Uint16Array, "expected Uint16Array, got " + upload.view);
+  assert.equal(upload.data.byteOffset % 2, 0, "uploaded view must be 2-byte aligned");
+  assert.deepEqual(Array.from(upload.data), [0x3800, 0x3400]);
+  assert.deepEqual(
+    Array.from(new Uint8Array(upload.data.buffer, upload.data.byteOffset, upload.data.byteLength)),
+    [0x00, 0x38, 0x00, 0x34],
+    "byte-for-byte preservation for offset-1 source views",
+  );
+});
+
+test("odd-length half-float payloads fail with a named error instead of truncating", async () => {
+  const { api } = loadKTX2();
+  const image = await api.decode(buildIBLContainer(
+    83,
+    1,
+    1,
+    1,
+    [new Uint8Array([0x00, 0x38, 0x00, 0x00])],
+    {
+      GoSXiblRole: "brdf-lut",
+      GoSXColorSpace: "linear",
+      GoSXiblModel: IBL_BRDF_MODEL,
+    },
+  ));
+  image.levels[0].bytes = new Uint8Array(image.levels[0].bytes.buffer, 0, 3);
+  const gl = recordingGL(["OES_texture_float_linear"]);
+  assert.throws(() => api.uploadWebGL2(gl, image), (error) => {
+    assert.equal(error.code, "half-float-size");
+    assert.match(error.message, /even byte length/);
+    return true;
+  });
+  assert.equal(gl.calls.texImage2D.length, 0);
+});
+
+test("unaligned cube face and mip slices also reach the driver as aligned Uint16Array views", async () => {
+  const { api } = loadKTX2();
+  const image = await api.decode(buildIBLContainer(
+    97,
+    4,
+    4,
+    6,
+    [new Uint8Array(4 * 4 * 6 * 8), new Uint8Array(2 * 2 * 6 * 8)],
+    {
+      GoSXiblRole: "radiance",
+      GoSXColorSpace: "linear",
+      GoSXiblModel: IBL_BRDF_MODEL,
+    },
+  ));
+  for (const level of image.levels) {
+    const bytes = level.bytes;
+    const padded = new Uint8Array(bytes.byteLength + 1);
+    padded.set(bytes, 1);
+    level.bytes = new Uint8Array(padded.buffer, 1, bytes.byteLength);
+  }
+  const gl = recordingGL(["OES_texture_float_linear"]);
+  api.uploadWebGL2(gl, image);
+
+  assert.equal(gl.calls.texImage2D.length, 12);
+  for (const upload of gl.calls.texImage2D) {
+    assert.ok(upload.data instanceof Uint16Array, "expected Uint16Array, got " + upload.view);
+    assert.equal(upload.data.byteOffset % 2, 0, "uploaded view must be 2-byte aligned");
+    assert.equal(upload.byteLength, upload.level === 0 ? 4 * 4 * 8 : 2 * 2 * 8);
   }
 });
 

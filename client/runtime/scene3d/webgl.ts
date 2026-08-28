@@ -102,7 +102,9 @@
     "uniform float u_transmission;",
     "uniform float u_iridescence;",
     "uniform float u_anisotropy;",
-    "uniform float u_dielectricF0;",
+    "uniform vec3 u_specularF0;",
+    "uniform float u_specularF90;",
+    "uniform vec3 u_specularColorLog;",
     "uniform float u_emissive;",
     "uniform float u_opacity;",
     "uniform bool u_unlit;",
@@ -116,6 +118,8 @@
     "uniform sampler2D u_occlusionMap;",
     "#endif",
     "uniform sampler2D u_emissiveMap;",
+    "uniform sampler2D u_specularIntensityMap;",
+    "uniform sampler2D u_specularColorMap;",
     "uniform bool u_hasAlbedoMap;",
     "uniform bool u_hasNormalMap;",
     "uniform bool u_hasRoughnessMap;",
@@ -124,6 +128,8 @@
     "uniform bool u_hasOcclusionMap;",
     "#endif",
     "uniform bool u_hasEmissiveMap;",
+    "uniform bool u_hasSpecularIntensityMap;",
+    "uniform bool u_hasSpecularColorMap;",
     "",
     // Lights (max 8)
     "uniform int u_lightCount;",
@@ -336,13 +342,15 @@
     "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
     "}",
     "",
-    // Schlick fresnel approximation.
-    "vec3 fresnelSchlick(float cosTheta, vec3 F0) {",
-    "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    // Schlick fresnel approximation. F90 is the authored specular intensity:
+    // the grazing reflectance the KHR specular extension scales, so an
+    // intensity below 1 dims the whole lobe, not just the F0 floor.
+    "vec3 fresnelSchlick(float cosTheta, vec3 F0, float F90) {",
+    "    return F0 + (vec3(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
-    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {",
-    "    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float F90, float roughness) {",
+    "    return F0 + (max(vec3(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
     "vec3 rotateEnvY(vec3 dir, float radians) {",
@@ -424,9 +432,48 @@
     "",
     // Fresnel reflectance at normal incidence — the material's authored
     // dielectric F0 = ((ior-1)/(ior+1))^2 blended with metallic albedo.
-    // u_dielectricF0 defaults to 0.04 (ior 1.5) and uploads 1.0 in the glTF
-    // ior=0 compatibility mode. Direct and environment consumers share it.
-    "    vec3 F0 = mix(vec3(u_dielectricF0), albedo, metalness);",
+    // The authored KHR specular factors refine the dielectric lane:
+    // u_specularF0 is min(IOR F0 * linear specularColor, 1) * intensity and
+    // u_specularF90 is the intensity itself, both prepared CPU-side so the
+    // upload is always finite and bounded to [0, 1]. Shading consumes only
+    // these effective uniforms. The metallic mix keeps its exact
+    // fully-metal branch so a metal never reads the dielectric lane.
+    "    vec3 specF0 = u_specularF0;",
+    "    float specF90 = u_specularF90;",
+    // The specular-intensity texture scales the whole authored dielectric
+    // lobe: alpha-only sample, multiplying BOTH shared factors before the
+    // metallic mix so direct light, the diffuse weight and split-sum IBL all
+    // honour it while the fully-metal branch stays independent.
+    "    if (u_hasSpecularIntensityMap) {",
+    "        float specTex = texture(u_specularIntensityMap, v_uv).a;",
+    "        specF0 *= specTex;",
+    "        specF90 *= specTex;",
+    "    }",
+    // The specular-colour texture multiplies the authored HDR linear colour
+    // into the dielectric F0 BEFORE the metallic mix, reconstructing
+    // min(IOR F0 * authored colour, 1) * combined intensity per channel in
+    // log space so a finite HDR coefficient never overflows float32. The
+    // sample reads linear RGB from the sRGB-decoded texture and ignores
+    // alpha. An exactly-1 texel keeps the untextured result bit-for-bit, an
+    // exact-zero texel yields exact-zero F0, and the -1e30 sentinel maps to
+    // exact zero. specF90 already carries the intensity-map alpha.
+    "    if (u_hasSpecularColorMap) {",
+    "        vec3 texColor = texture(u_specularColorMap, v_uv).rgb;",
+    "        vec3 texF0 = vec3(0.0);",
+    "        if (texColor.r == 1.0) { texF0.r = specF0.r; }",
+    "        else if (texColor.r > 0.0 && u_specularColorLog.r > -1e29) { texF0.r = exp2(min(u_specularColorLog.r + log2(texColor.r), 0.0)) * specF90; }",
+    "        if (texColor.g == 1.0) { texF0.g = specF0.g; }",
+    "        else if (texColor.g > 0.0 && u_specularColorLog.g > -1e29) { texF0.g = exp2(min(u_specularColorLog.g + log2(texColor.g), 0.0)) * specF90; }",
+    "        if (texColor.b == 1.0) { texF0.b = specF0.b; }",
+    "        else if (texColor.b > 0.0 && u_specularColorLog.b > -1e29) { texF0.b = exp2(min(u_specularColorLog.b + log2(texColor.b), 0.0)) * specF90; }",
+    "        specF0 = texF0;",
+    "    }",
+    "    vec3 F0 = mix(specF0, albedo, metalness);",
+    "    float F90 = mix(specF90, 1.0, metalness);",
+    "    if (metalness >= 1.0) {",
+    "        F0 = albedo;",
+    "        F90 = 1.0;",
+    "    }",
     "",
     // Accumulate direct lighting.
     "    vec3 Lo = vec3(0.0);",
@@ -492,14 +539,18 @@
     // Cook-Torrance specular BRDF.
     "        float D = distributionGGX(N, H, roughness);",
     "        float G = geometrySmith(N, V, L, roughness);",
-    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "        vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
     "",
     "        vec3 numerator = D * G * F;",
     "        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;",
     "        vec3 specular = numerator / denominator;",
     "",
-    // Energy conservation: diffuse complement of specular.
-    "        vec3 kD = (vec3(1.0) - F) * (1.0 - metalness);",
+    // Energy conservation: diffuse complement of the dielectric specular.
+    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
+    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
+    // the Fresnel colour and never borrows the metallic Fresnel.
+    "        vec3 Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
+    "        float kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
     // Shadow attenuation for directional lights.
     "        float shadow = 1.0;",
@@ -523,13 +574,13 @@
     "    if (u_hasIBL) {",
     "        vec3 Nr = rotateEnvY(N, u_envRotation);",
     "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
-    "        vec3 Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
-    "        vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metalness);",
+    "        vec3 FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        vec3 irradiance = texture(u_iblIrradiance, Nr).rgb;",
     "        vec3 prefiltered = textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod).rgb;",
     "        vec2 brdf = texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg;",
     "        vec3 diffuseIBL = irradiance * albedo * kDenv;",
-    "        vec3 specularIBL = prefiltered * (F0 * brdf.x + brdf.y);",
+    "        vec3 specularIBL = prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * u_envIntensity;",
     "    } else",
     "#endif",
@@ -538,8 +589,9 @@
     "        vec3 Rr = rotateEnvY(reflect(-V, N), u_envRotation);",
     "        vec3 envDiffuse = texture(u_envMap, envEquirectUV(Nr)).rgb * albedo;",
     "        vec3 envSpecular = texture(u_envMap, envEquirectUV(Rr)).rgb;",
-    "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);",
-    "        vec3 kDenv = (vec3(1.0) - Fenv) * (1.0 - metalness);",
+    "        vec3 Fenv = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, F90, roughness);",
+    "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
+    "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
     "    } else {",
     "        float hemi = N.y * 0.5 + 0.5;",
@@ -5105,6 +5157,78 @@
     return t * t;
   }
 
+  // Effective dielectric specular factors from the authored KHR-style
+  // specularIntensity / specularColor factors. The intensity contract is a
+  // finite number in [0, 1] — an explicit 0 is valid, an omitted value means
+  // 1 — and the color contract is exactly three finite non-negative LINEAR
+  // components, omitted meaning white. The effective F0 is
+  // min(IOR F0 * color, 1) * intensity with the clamp applied BEFORE the
+  // intensity so a finite HDR tint above 1 clamps to 1 rather than scaling
+  // past it, and F90 is the intensity itself. Every returned component is
+  // finite and non-negative, so the GL upload can never see NaN or Infinity,
+  // and the result is bounded to [0, 1]. A future specular texture must
+  // multiply its colour into `color` BEFORE this clamp, never into an
+  // already-clamped F0.
+  function scenePBRSpecularFactors(material) {
+    var mat = material || {};
+    var intensity = mat.specularIntensity;
+    if (!(typeof intensity === "number" && Number.isFinite(intensity) && intensity >= 0 && intensity <= 1)) {
+      intensity = 1;
+    }
+    var color = mat.specularColor;
+    var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+    if (valid) {
+      for (var i = 0; i < 3; i++) {
+        var component = color[i];
+        if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+          valid = false;
+          break;
+        }
+      }
+    }
+    if (!valid) {
+      color = [1, 1, 1];
+    }
+    var iorF0 = scenePBRDielectricF0(mat.ior);
+    return {
+      f0: [
+        Math.min(iorF0 * color[0], 1) * intensity,
+        Math.min(iorF0 * color[1], 1) * intensity,
+        Math.min(iorF0 * color[2], 1) * intensity,
+      ],
+      f90: intensity,
+    };
+  }
+
+  // Log-space coefficients for the optional specular-colour texture:
+  // log2(IOR F0) + log2(authored colour) per channel, so the shader can add
+  // log2 of the sampled texel and exp2 back the unclamped HDR product
+  // without ever forming a float32 overflow on the CPU. Exact-zero channels
+  // (IOR F0 or colour component 0) use a finite sentinel far below any real
+  // log2 value; the shader maps the sentinel to zero. Invalid or omitted
+  // colour arrays fall back to white, matching scenePBRSpecularFactors.
+  function scenePBRSpecularColorLogs(material) {
+    var mat = material || {};
+    var color = mat.specularColor;
+    var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+    if (valid) {
+      for (var i = 0; i < 3; i++) {
+        var component = color[i];
+        if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+          valid = false;
+          break;
+        }
+      }
+    }
+    var iorF0 = scenePBRDielectricF0(mat.ior);
+    var out = [0, 0, 0];
+    for (var j = 0; j < 3; j++) {
+      var c = valid ? color[j] : 1;
+      out[j] = (iorF0 > 0 && c > 0) ? Math.log2(iorF0) + Math.log2(c) : -1e30;
+    }
+    return out;
+  }
+
   // Cache the base uniform locations shared between the static and skinned
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
@@ -5123,7 +5247,9 @@
       transmission: gl.getUniformLocation(program, "u_transmission"),
       iridescence: gl.getUniformLocation(program, "u_iridescence"),
       anisotropy: gl.getUniformLocation(program, "u_anisotropy"),
-      dielectricF0: gl.getUniformLocation(program, "u_dielectricF0"),
+      specularF0: gl.getUniformLocation(program, "u_specularF0"),
+      specularF90: gl.getUniformLocation(program, "u_specularF90"),
+      specularColorLog: gl.getUniformLocation(program, "u_specularColorLog"),
       emissive: gl.getUniformLocation(program, "u_emissive"),
       opacity: gl.getUniformLocation(program, "u_opacity"),
       unlit: gl.getUniformLocation(program, "u_unlit"),
@@ -5134,12 +5260,16 @@
       metalnessMap: gl.getUniformLocation(program, "u_metalnessMap"),
       occlusionMap: gl.getUniformLocation(program, "u_occlusionMap"),
       emissiveMap: gl.getUniformLocation(program, "u_emissiveMap"),
+      specularIntensityMap: gl.getUniformLocation(program, "u_specularIntensityMap"),
+      specularColorMap: gl.getUniformLocation(program, "u_specularColorMap"),
       hasAlbedoMap: gl.getUniformLocation(program, "u_hasAlbedoMap"),
       hasNormalMap: gl.getUniformLocation(program, "u_hasNormalMap"),
       hasRoughnessMap: gl.getUniformLocation(program, "u_hasRoughnessMap"),
       hasMetalnessMap: gl.getUniformLocation(program, "u_hasMetalnessMap"),
       hasOcclusionMap: gl.getUniformLocation(program, "u_hasOcclusionMap"),
       hasEmissiveMap: gl.getUniformLocation(program, "u_hasEmissiveMap"),
+      hasSpecularIntensityMap: gl.getUniformLocation(program, "u_hasSpecularIntensityMap"),
+      hasSpecularColorMap: gl.getUniformLocation(program, "u_hasSpecularColorMap"),
 
       lightCount: gl.getUniformLocation(program, "u_lightCount"),
       lightTypes: [],
@@ -5344,8 +5474,8 @@
     } catch (_error) {
       maxUnits = 0;
     }
-    // 6 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
-    return maxUnits >= 18;
+    // 8 material samplers + 8 declared CSM samplers + legacy env + 3 IBL.
+    return maxUnits >= 20;
   }
 
   function scenePBRFragmentSourceForContext(gl, source) {
@@ -6081,6 +6211,20 @@
   var _scenePBRCascadeMatScratch = new Float32Array(64);
   var _scenePBRCascadeSplitScratch = new Float32Array(4);
 
+  // Guarded fragment texture-unit query for the shared allocator. Falls
+  // back to the allocator default when the context cannot be queried so a
+  // lost or sandboxed context still gets the conservative 16-unit layout.
+  function scenePBRMaxTextureUnits(gl) {
+    try {
+      var units = gl && typeof gl.getParameter === "function"
+        ? Math.floor(sceneNumber(gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS), 0))
+        : 0;
+      return units > 0 ? units : SCENE_TEXTURE_UNIT_DEFAULT_MAX;
+    } catch (_error) {
+      return SCENE_TEXTURE_UNIT_DEFAULT_MAX;
+    }
+  }
+
   function scenePBREnvironmentHasMap(environment) {
     var ibl = environment && environment.ibl;
     return Boolean(
@@ -6106,17 +6250,77 @@
     return count;
   }
 
-  function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment) {
+  function scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment, maxUnits) {
     var shadowCount = scenePBRShadowTextureCount(shadowSlots, shadowLightIndices);
     if (scenePBREnvironmentHasMap(environment)) {
       // Keep the legacy two-shadow reservation for non-shadowed env-map scenes
       // while still moving IBL after all active CSM cascades.
       shadowCount = Math.max(2, shadowCount);
     }
-    return sceneAllocateTextureUnits({
+    var options = {
       shadowCount: shadowCount,
       ibl: scenePBREnvironmentHasMap(environment),
-    });
+    };
+    if (maxUnits != null) {
+      options.maxUnits = maxUnits;
+    }
+    return sceneAllocateTextureUnits(options);
+  }
+
+  // Negotiate effective per-light cascade counts against the real shared
+  // texture-unit budget BEFORE any slot is created, matrix fit, or depth
+  // pass. Fair baseline: when the budget covers at least one cascade per
+  // eligible light, each light gets one, then remaining units fill the first
+  // (priority) light up to its request. A reduced count is refit across the
+  // FULL camera range by computeShadowSlotCascadeMatrices, so far coverage
+  // is never truncated. Authored lights are never modified.
+  function scenePBRNegotiateShadowCascades(requestedPerLight, environment, maxUnits) {
+    var requested = Array.isArray(requestedPerLight) ? requestedPerLight : [];
+    var counts = [];
+    var wants = [];
+    var totalRequested = 0;
+    for (var i = 0; i < requested.length; i++) {
+      var want = Math.max(1, Math.min(4, requested[i] | 0));
+      counts.push(want);
+      wants.push(want);
+      totalRequested += want;
+    }
+    if (totalRequested === 0) {
+      return counts;
+    }
+    var placeholderSlots = [];
+    var placeholderIndices = [];
+    for (var j = 0; j < counts.length; j++) {
+      placeholderSlots.push({ numCascades: counts[j], cascades: [] });
+      placeholderIndices.push(j);
+    }
+    var layout = scenePBRTextureLayoutForFrame(
+      placeholderSlots, placeholderIndices, environment, maxUnits);
+    var budget = layout && Array.isArray(layout.shadows) ? layout.shadows.length : 0;
+    if (budget >= counts.length) {
+      // Reserve one cascade per eligible light, then fill first priority.
+      for (var k = 0; k < counts.length; k++) {
+        counts[k] = 1;
+      }
+      var remaining = budget - counts.length;
+      for (var p = 0; p < counts.length && remaining > 0; p++) {
+        // Fill from the pre-clamped per-light requests.
+        var extra = Math.min(Math.min(wants[p], 4) - counts[p], remaining);
+        if (extra > 0) {
+          counts[p] += extra;
+          remaining -= extra;
+        }
+      }
+    } else {
+      // Budget cannot cover one cascade per light: grant one cascade to
+      // earlier (priority) lights while units remain; later lights get 0
+      // (upload disables slots with 0 effective cascades rather than
+      // advertising a count it cannot bind).
+      for (var z = 0; z < counts.length; z++) {
+        counts[z] = z < budget ? 1 : 0;
+      }
+    }
+    return counts;
   }
 
   // Upload cascaded-shadow uniforms for both slots to the given program's
@@ -6124,11 +6328,12 @@
   // or an object produced by createSceneShadowSlot with up to 4 cascades.
   function scenePBRUploadShadowUniforms(gl, uniforms, shadowSlots, shadowLightIndices, lights, environment) {
     var lightArray = Array.isArray(lights) ? lights : [];
-    // Allocate only the active cascade count, while reserving IBL after the
-    // cascades when an envMap is present. Slot offsets are packed, not
-    // hard-coded to 4-wide blocks, so two single-cascade lights use units 5/6
-    // and one 4-cascade CSM light uses 5/6/7/8.
-    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment);
+    // Allocate only the negotiated cascade counts, while reserving IBL after
+    // the cascades when an envMap is present. Slot offsets are packed, not
+    // hard-coded to 4-wide blocks: units start at 8, so two single-cascade
+    // lights use units 8/9 and one 4-cascade CSM light uses 8/9/10/11.
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, environment,
+      scenePBRMaxTextureUnits(gl));
     var shadowUnits = layout.shadows;
 
     var unitBase = 0;
@@ -6152,30 +6357,48 @@
     var indexKey = slotIndex === 0 ? "shadowLightIndex0" : "shadowLightIndex1";
     var base = Math.max(0, unitBase | 0);
 
-    if (!slot || lightIndex < 0) {
+    var numCascades = slot ? Math.max(0, Math.min(4, slot.numCascades | 0)) : 0;
+    var primaryUnit = numCascades > 0 && shadowUnits.length > base ? shadowUnits[base] : null;
+
+    // Absent light, no budgeted unit, or a stale slot whose cascade count
+    // exceeds its remaining units: disable the WHOLE slot
+    // (has=0, index -1, cascade count 0) instead of truncating old fitted
+    // splits — truncation would lose far coverage while still advertising
+    // shadows. Never bind any texture here; a disabled slot must not steal
+    // another slot's unit.
+    if (!slot || lightIndex < 0 || numCascades <= 0 || primaryUnit == null ||
+        base + numCascades > shadowUnits.length) {
       gl.uniform1i(uniforms[hasKey], 0);
       gl.uniform1f(uniforms[softKey], 0);
       gl.uniform1i(uniforms[indexKey], -1);
-      gl.uniform1i(uniforms[cascadesKey], 1);
+      gl.uniform1i(uniforms[cascadesKey], 0);
+      // Reset ALL unused 2D sampler uniforms: an unused 2D sampler points at
+      // material unit 0, which is always safe, and setting a sampler uniform
+      // binds no texture.
+      for (var di = 0; di < 4; di++) {
+        gl.uniform1i(uniforms[samplerKeys[di]], 0);
+      }
       return;
     }
 
     var light = lightArray[lightIndex] || {};
-    var numCascades = Math.max(1, Math.min(4, slot.numCascades | 0));
 
-    // Bind each cascade's depth texture. When the allocator doesn't have
-    // enough units for all cascades, fall back to reusing cascade 0's unit
-    // — the shader's c=0 branch will dominate because the split comparison
-    // against Infinity always returns cascade 0.
-    for (var ci = 0; ci < 4; ci++) {
-      var effectiveCascade = ci < numCascades ? slot.cascades[ci] : slot.cascades[0];
-      var unit = shadowUnits[base + ci];
-      if (unit == null) unit = shadowUnits[base] || shadowUnits[0] || null;
-      if (unit == null) continue;
-      scenePBRBindTexture(gl, unit, effectiveCascade.depthTexture);
+    // Bind each ACTIVE cascade exactly once to its unique negotiated unit —
+    // negotiation guarantees every rendered cascade owns a unit, so there is
+    // no fallback re-bind of one texture over another's unit.
+    for (var ci = 0; ci < numCascades; ci++) {
+      var unit = shadowUnits.length > base + ci ? shadowUnits[base + ci] : null;
+      if (unit == null) break;
+      scenePBRBindTexture(gl, unit, slot.cascades[ci].depthTexture);
       gl.uniform1i(uniforms[samplerKeys[ci]], unit);
     }
 
+    // Alias unused samplers to cascade 0's unit WITHOUT re-binding (that
+    // texture is already bound there); the shader never selects them because
+    // u_shadowCascades matches the effective count.
+    for (var ai = numCascades; ai < 4; ai++) {
+      gl.uniform1i(uniforms[samplerKeys[ai]], primaryUnit);
+    }
     // Pack matrices and splits. Matrix array = 4*16 = 64 floats; cascades
     // beyond numCascades are filled with cascade 0's matrix as a safe
     // fallback (shader never selects them when numCascades is set correctly,
@@ -6274,12 +6497,13 @@
     var ibl = env.ibl && typeof env.ibl === "object" ? env.ibl : null;
     var envMap = typeof env.envMap === "string" ? env.envMap.trim() : "";
     var hdrIBLAvailable = scenePBRHDRIBLAvailable(gl);
-    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env);
+    var maxUnits = scenePBRMaxTextureUnits(gl);
+    var layout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, env, maxUnits);
     // An active samplerCube may not alias a sampler2D unit in WebGL even when
     // a branch flag is false. Assign both cube samplers to a real black cube
     // on a dedicated unit before considering authored products.
     if (hdrIBLAvailable) {
-      var safeLayout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, { ibl: { radiance: {}, irradiance: {}, brdfLUT: {} } });
+      var safeLayout = scenePBRTextureLayoutForFrame(shadowSlots, shadowLightIndices, { ibl: { radiance: {}, irradiance: {}, brdfLUT: {} } }, maxUnits);
       if (safeLayout && safeLayout.ibl) {
         var cubePlaceholder = scenePBRPlaceholderCube(gl, textureCache);
         scenePBRBindTexture(gl, safeLayout.ibl.radiance, cubePlaceholder.texture, gl.TEXTURE_CUBE_MAP);
@@ -6305,7 +6529,7 @@
       var model = typeof ibl.brdfModel === "string" ? ibl.brdfModel.trim() : "";
       if (!hdrIBLAvailable) {
         iblStatus.state = "unsupported";
-        iblStatus.reason = "fragment-texture-units<18";
+        iblStatus.reason = "fragment-texture-units<20";
       } else if (!radianceDescriptor || !irradianceDescriptor || !brdfDescriptor) {
         iblStatus.state = "unsupported";
         iblStatus.reason = "descriptor-role-color-view-format";
@@ -7078,7 +7302,11 @@
       gl.uniform1f(uniforms.transmission, clamp01(sceneNumber(mat.transmission, 0)));
       gl.uniform1f(uniforms.iridescence, clamp01(sceneNumber(mat.iridescence, 0)));
       gl.uniform1f(uniforms.anisotropy, Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0))));
-      gl.uniform1f(uniforms.dielectricF0, scenePBRDielectricF0(mat.ior));
+      const specularFactors = scenePBRSpecularFactors(mat);
+      gl.uniform3f(uniforms.specularF0, specularFactors.f0[0], specularFactors.f0[1], specularFactors.f0[2]);
+      gl.uniform1f(uniforms.specularF90, specularFactors.f90);
+      const specularColorLogs = scenePBRSpecularColorLogs(mat);
+      gl.uniform3f(uniforms.specularColorLog, specularColorLogs[0], specularColorLogs[1], specularColorLogs[2]);
       gl.uniform1f(uniforms.emissive, sceneNumber(mat.emissive, 0));
       gl.uniform1f(uniforms.opacity, clamp01(sceneNumber(mat.opacity, 1)));
       gl.uniform1i(uniforms.unlit, mat.unlit ? 1 : 0);
@@ -7091,6 +7319,8 @@
         { prop: "metalnessMap", descriptor: "metalness", role: "metalness", colorSpace: "linear", has: "hasMetalnessMap", sampler: "metalnessMap", unit: 3 },
         { prop: "emissiveMap",  descriptor: "emissive",  role: "emissive", colorSpace: "srgb", has: "hasEmissiveMap",   sampler: "emissiveMap",  unit: 4 },
         { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", has: "hasOcclusionMap", sampler: "occlusionMap", unit: 5, hdrOnly: true },
+        { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", has: "hasSpecularIntensityMap", sampler: "specularIntensityMap", unit: SCENE_TEXTURE_UNIT_MATERIALS.specularIntensity },
+        { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", has: "hasSpecularColorMap", sampler: "specularColorMap", unit: SCENE_TEXTURE_UNIT_MATERIALS.specularColor },
       ];
       for (var ti = 0; ti < textureMaps.length; ti++) {
         var tm = textureMaps[ti];
@@ -7258,53 +7488,90 @@
       // cascade depth maps. Reset per-frame shadow state (closure-scoped for
       // drawPBRObjectList access).
       shadowLightIndices[0] = -1; shadowLightIndices[1] = -1;
-      var activeShadowCount = 0;
 
       if (shadowProgram) {
         var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
         var sceneBounds = null;
         var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
-        for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
+        // Collect eligible lights (max 2) first, then negotiate effective
+        // cascade counts against the shared texture budget BEFORE creating
+        // slots, fitting matrices, or rendering depth passes. Authored lights
+        // are never modified; light.shadowCascades is only a request.
+        var shadowCandidates = [];
+        for (var li = 0; li < lightArray.length && shadowCandidates.length < 2; li++) {
           var light = lightArray[li];
           if (!light || !light.castShadow) continue;
           var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
           if (kind !== "directional") continue;
+          shadowCandidates.push({
+            lightIndex: li,
+            light: light,
+            requestedCascades: Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1)),
+            shadowSize: resolveShadowSize(
+              Math.max(256, Math.min(4096, sceneNumber(light.shadowSize, 1024))),
+              shadowMaxPixels),
+          });
+        }
 
-          // Compute scene bounds lazily (only if we have shadow casters).
+        var negotiatedCounts = shadowCandidates.length > 0
+          ? scenePBRNegotiateShadowCascades(
+              shadowCandidates.map(function (c) { return c.requestedCascades; }),
+              bundle.environment,
+              scenePBRMaxTextureUnits(gl))
+          : [];
+
+        for (var candIdx = 0; candIdx < shadowCandidates.length; candIdx++) {
+          var candidate = shadowCandidates[candIdx];
+          var effectiveCascades = negotiatedCounts[candIdx] | 0;
+
+          // Reallocate per-cascade resources whenever the budget or the
+          // authored request changes the effective count. A zero effective
+          // count disposes the slot and disables it — no stale resources,
+          // no depth passes, no advertised-but-unbindable cascade count.
+          if (shadowSlots[candIdx] &&
+              (effectiveCascades <= 0 ||
+               shadowSlots[candIdx].size !== candidate.shadowSize ||
+               shadowSlots[candIdx].numCascades !== effectiveCascades)) {
+            disposeShadowSlot(gl, shadowSlots[candIdx]);
+            shadowSlots[candIdx] = null;
+          }
+          if (effectiveCascades <= 0) {
+            shadowLightIndices[candIdx] = -1;
+            continue;
+          }
+          if (!shadowSlots[candIdx]) {
+            shadowSlots[candIdx] = createSceneShadowSlot(gl, candidate.shadowSize, effectiveCascades);
+          }
+
+          shadowLightIndices[candIdx] = candidate.lightIndex;
+
+          // Fit per-cascade matrices for the EFFECTIVE count: the full
+          // camera range (near..far) is re-split into N ranges, and a single
+          // remaining cascade uses the legacy full-scene fit, so reduced
+          // counts never truncate far coverage.
           if (!sceneBounds) {
             sceneBounds = sceneShadowComputeBounds(bundle);
           }
-
-          var slot = activeShadowCount;
-          var numCascades = Math.max(1, Math.min(4, (light.shadowCascades | 0) || 1));
-          var shadowSize = sceneNumber(light.shadowSize, 1024);
-          shadowSize = Math.max(256, Math.min(4096, shadowSize));
-          shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
-
-          // Create or resize shadow resources for this slot (per cascade).
-          if (!shadowSlots[slot] ||
-              shadowSlots[slot].size !== shadowSize ||
-              shadowSlots[slot].numCascades !== numCascades) {
-            disposeShadowSlot(gl, shadowSlots[slot]);
-            shadowSlots[slot] = createSceneShadowSlot(gl, shadowSize, numCascades);
-          }
-
-          shadowLightIndices[slot] = li;
-
-          // Fit a per-cascade light-space matrix. When numCascades > 1 the
-          // camera's view frustum is split into N sub-frusta (PSSM); each
-          // cascade's corners are fit to a tight ortho box in light-space.
-          // numCascades == 1 matches the legacy full-scene ortho fit.
-          computeShadowSlotCascadeMatrices(light, shadowSlots[slot], sceneBounds,
+          computeShadowSlotCascadeMatrices(candidate.light, shadowSlots[candIdx], sceneBounds,
             viewMatrix, cam.fov, aspect, cam.near, cam.far);
 
-          // Render one depth pass per cascade.
-          for (var ci = 0; ci < shadowSlots[slot].numCascades; ci++) {
-            var cascade = shadowSlots[slot].cascades[ci];
+          // One depth pass per EFFECTIVE cascade; unbudgeted cascades are
+          // never drawn.
+          for (var ci2 = 0; ci2 < shadowSlots[candIdx].numCascades; ci2++) {
+            var cascade = shadowSlots[candIdx].cascades[ci2];
             renderSceneShadowPass(gl, shadowProgram, cascade, cascade.lightMatrix, bundle, shadowState, bindScenePBRDirectShadowCaster);
           }
-          activeShadowCount++;
+        }
+
+        // Dispose slots whose light disappeared this frame so GPU resources
+        // follow the effective allocation.
+        for (var staleSlot = shadowCandidates.length; staleSlot < shadowSlots.length; staleSlot++) {
+          if (shadowSlots[staleSlot]) {
+            disposeShadowSlot(gl, shadowSlots[staleSlot]);
+            shadowSlots[staleSlot] = null;
+          }
+          shadowLightIndices[staleSlot] = -1;
         }
       }
 

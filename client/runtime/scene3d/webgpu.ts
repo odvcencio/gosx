@@ -158,10 +158,26 @@
     "    hasOcclusionMap: u32,",
     "    modelMatrix: mat4x4f,",
     "    modelScaleSigns: vec4f,",
-    // Trailing dedicated material scalar: the authored dielectric F0. Every
-    // texture flag slot and the model transform/sign floats keep their
-    // existing offsets; the struct pads to 176 bytes total.
+    // Trailing dedicated material scalars: the authored dielectric F0 and the
+    // effective specular factors (min(IOR F0 * colour, 1) * intensity as an
+    // aligned vec3f, then the intensity as F90). Every texture flag slot and
+    // the model transform/sign floats keep their existing offsets; the vec3f
+    // trailing fields pad the struct to 208 bytes total.
     "    dielectricF0: f32,",
+    // Reuses the vec3f alignment word at u32 index 41; materialUniformData
+    // pre-zeroes it so a plain pack stays
+    // neutral until createMaterialBindGroup sets the real flag.
+    "    hasSpecularIntensityMap: u32,",
+    "    specularF0: vec3f,",
+    "    specularF90: f32,",
+    // Per-channel log2 of the authored dielectric specular coefficient
+    // (log2(iorF0) + log2(color)), with an exact-zero coefficient encoded
+    // as the -1e30 sentinel so the shader can branch on it without any
+    // epsilon substitution. The vec3f alignment lands at u32 indices
+    // 48..50 and the trailing hasSpecularColorMap flag at index 51,
+    // padding the struct to 208 bytes total.
+      "    specularColorLog: vec3f,",
+      "    hasSpecularColorMap: u32,",
     "};",
   ].join("\n");
 
@@ -1548,6 +1564,18 @@
     "@group(1) @binding(11) var occlusionTex: texture_2d<f32>;",
     "@group(1) @binding(12) var occlusionSamp: sampler;",
     "",
+    // KHR specular-intensity map: the ALPHA channel is a linear intensity
+    // multiplier. A missing, still-loading or failed map stays neutral via
+    // the hasSpecularIntensityMap gate in the fragment body.
+    "@group(1) @binding(13) var specularIntensityTex: texture_2d<f32>;",
+    "@group(1) @binding(14) var specularIntensitySamp: sampler;",
+    "",
+    // KHR specular-color map: the RGB channels are the sRGB-encoded
+    // authored specular tint. A missing, still-loading or failed map stays
+    // neutral via the hasSpecularColorMap gate in the fragment body.
+      "@group(1) @binding(15) var specularColorTex: texture_2d<f32>;",
+      "@group(1) @binding(16) var specularColorSamp: sampler;",
+      "",
     "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
     "    let projCoords3 = lightSpacePos.xyz / lightSpacePos.w;",
@@ -1624,13 +1652,15 @@
     "    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);",
     "}",
     "",
-    // Schlick fresnel approximation.
-    "fn fresnelSchlick(cosTheta: f32, F0: vec3f) -> vec3f {",
-    "    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    // Schlick fresnel approximation. F90 is the authored specular intensity:
+    // the grazing reflectance the KHR specular extension scales, so an
+    // intensity below 1 dims the whole lobe, not just the F0 floor.
+    "fn fresnelSchlick(cosTheta: f32, F0: vec3f, F90: f32) -> vec3f {",
+    "    return F0 + (vec3f(F90) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
-    "fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3f, roughness: f32) -> vec3f {",
-    "    return F0 + (max(vec3f(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
+    "fn fresnelSchlickRoughness(cosTheta: f32, F0: vec3f, F90: f32, roughness: f32) -> vec3f {",
+    "    return F0 + (max(vec3f(1.0 - roughness) * F90, F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);",
     "}",
     "",
     "fn rotateEnvY(dir: vec3f, radians: f32) -> vec3f {",
@@ -1762,7 +1792,7 @@
     // three.js multiplies the diffuse term by diffuseColor, which already folds
     // in metalness. The form factor carries the cosine and the solid angle, so
     // there is no separate NdotL or 1/PI in the diffuse line.
-    "fn rectAreaLightRadiance(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, NoV: f32) -> vec3f {",
+    "fn rectAreaLightRadiance(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, F90: f32, NoV: f32) -> vec3f {",
     "    let center = light.position.xyz;",
     "    let halfWidth = light.areaHalfWidth.xyz;",
     "    let halfHeight = light.areaHalfHeight.xyz;",
@@ -1781,7 +1811,7 @@
     "        let H = normalize(V + L);",
     "        let D = distributionGGX(N, H, roughness);",
     "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
     "        let brdf = (D * G * F) / (4.0 * NoV * NdotL + 0.0001);",
     "        out = out + radiance * brdf * formFactor;",
     "    }",
@@ -1845,7 +1875,42 @@
       // dielectric F0 = ((ior-1)/(ior+1))^2 blended with metallic albedo.
       // Defaults to 0.04 (ior 1.5); 1.0 in the glTF ior=0 compatibility mode.
       // Direct and environment consumers share this single F0.
-      "    let F0 = mix(vec3f(material.dielectricF0), albedo, metalness);",
+      // The authored KHR specular factors refine the dielectric lane:
+      // material.specularF0 is min(IOR F0 * linear colour, 1) * intensity and
+      // material.specularF90 is the intensity itself, both prepared CPU-side
+      // so the packed buffer is always finite and bounded to [0, 1]. The
+      // metallic mix keeps its exact fully-metal branch so a metal never
+      // reads the dielectric lane.
+      // A bound specular-intensity texture multiplies its linear ALPHA into
+      // both shared factors BEFORE the metallic mix, so direct, scalar
+      // diffuse, IBL and equirect consumers all see the updated values.
+      "    var specIntensity = 1.0;",
+      "    if (material.hasSpecularIntensityMap != 0u) {",
+      "        specIntensity = textureSample(specularIntensityTex, specularIntensitySamp, in.uv).a;",
+      "    }",
+      "    var specF0 = material.specularF0 * specIntensity;",
+      "    let specF90 = material.specularF90 * specIntensity;",
+    "    if (material.hasSpecularColorMap != 0u) {",
+    "        let texColor = textureSample(specularColorTex, specularColorSamp, in.uv).rgb;",
+    "        var texF0 = vec3f(0.0);",
+    // Per-channel decode: exactly-1 texel keeps the untextured result
+    // bit-for-bit; exact-zero texel yields exact-zero F0; positive texel
+    // multiplies in log space, clamped to 0 BEFORE exp2 (no overflow).
+    // Combined specF90 scales every color-textured channel.
+    "        if (texColor.r == 1.0) { texF0.r = specF0.r; }",
+      "        else if (texColor.r > 0.0 && material.specularColorLog.r > -1e29) { texF0.r = exp2(min(material.specularColorLog.r + log2(texColor.r), 0.0)) * specF90; }",
+      "        if (texColor.g == 1.0) { texF0.g = specF0.g; }",
+      "        else if (texColor.g > 0.0 && material.specularColorLog.g > -1e29) { texF0.g = exp2(min(material.specularColorLog.g + log2(texColor.g), 0.0)) * specF90; }",
+      "        if (texColor.b == 1.0) { texF0.b = specF0.b; }",
+      "        else if (texColor.b > 0.0 && material.specularColorLog.b > -1e29) { texF0.b = exp2(min(material.specularColorLog.b + log2(texColor.b), 0.0)) * specF90; }",
+    "        specF0 = texF0;",
+      "    }",
+      "    var F0 = mix(specF0, albedo, metalness);",
+      "    var F90 = mix(specF90, 1.0, metalness);",
+      "    if (metalness >= 1.0) {",
+      "        F0 = albedo;",
+      "        F90 = 1.0;",
+      "    }",
     "",
     // Accumulate direct lighting.
     "    var Lo = vec3f(0.0);",
@@ -1881,7 +1946,7 @@
     // form factor already carries the cosine and the falloff, so the shared
     // BRDF block below does not apply.
     "        if (lightType == 5u) {",
-    "            Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, NoV);",
+    "            Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV);",
     "            continue;",
     "        }",
     "",
@@ -1912,14 +1977,18 @@
     // Cook-Torrance specular BRDF.
     "        let D = distributionGGX(N, H, roughness);",
     "        let G = geometrySmith(N, V, L, roughness);",
-    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0);",
+    "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
     "",
     "        let numerator = D * G * F;",
     "        let denominator = 4.0 * NoV * NdotL + 0.0001;",
     "        let specular = numerator / denominator;",
     "",
-    // Energy conservation: diffuse complement of specular.
-    "        let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+    // Energy conservation: diffuse complement of the dielectric specular.
+    // The weight is the scalar (1 - maxRGB(dielectric Fresnel)) *
+    // (1 - metalness), so the diffuse lobe is never tinted by the inverse of
+    // the Fresnel colour and never borrows the metallic Fresnel.
+    "        let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);",
+    "        let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
     "",
     // Shadow attenuation for directional lights.
     "        var shadowAtten: f32 = 1.0;",
@@ -1940,22 +2009,23 @@
     "    if (env.hasIBL != 0u) {",
     "        let Nr = rotateEnvY(N, env.envRotation);",
     "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
-    "        let Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
-    "        let kDenv = (vec3f(1.0) - Fenv) * (1.0 - metalness);",
+    "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        let irradiance = textureSample(iblIrradiance, iblSampler, Nr).rgb;",
     "        let maxLod = f32(max(env.radianceMipLevels, 1u) - 1u);",
     "        let prefiltered = textureSampleLevel(iblRadiance, iblSampler, Rr, roughness * maxLod).rgb;",
     "        let brdf = textureSample(iblBRDFLUT, iblSampler, vec2f(NoV, roughness)).rg;",
     "        let diffuseIBL = irradiance * albedo * kDenv;",
-    "        let specularIBL = prefiltered * (F0 * brdf.x + brdf.y);",
+    "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
     "        let Nr = rotateEnvY(N, env.envRotation);",
     "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
     "        let envDiffuse = textureSample(envMapTex, envMapSampler, envEquirectUV(Nr)).rgb * albedo;",
     "        let envSpecular = textureSample(envMapTex, envMapSampler, envEquirectUV(Rr)).rgb;",
-    "        let Fenv = fresnelSchlickRoughness(NoV, F0, roughness);",
-    "        let kDenv = (vec3f(1.0) - Fenv) * (1.0 - metalness);",
+    "        let Fenv = fresnelSchlickRoughness(NoV, F0, F90, roughness);",
+    "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        ambient = (kDenv * envDiffuse + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
@@ -3208,6 +3278,13 @@
       record.image = image;
       image.onload = function() {
         if (record.disposed || record.generation && record.generation.disposed) return;
+        // Specular-color maps store meaningful RGB under a possibly-zero
+        // alpha channel (the shader samples .rgb only). Browser bitmap
+        // decode can premultiply, zeroing RGB wherever alpha is 0, which
+        // makes the specular tint collapse to black. Request explicitly
+        // unpremultiplied decode and copy for this role only; other roles
+        // keep their prior behavior.
+        var isSpecularColor = descriptor.role === "specular-color";
         var w = image.width;
         var h = image.height;
         var tex = device.createTexture({
@@ -3217,7 +3294,8 @@
         });
         // Use createImageBitmap for copyExternalImageToTexture.
         if (typeof createImageBitmap === "function") {
-          createImageBitmap(image).then(function(bitmap) {
+          var bitmapOptions = isSpecularColor ? { premultiplyAlpha: "none" } : undefined;
+          createImageBitmap(image, bitmapOptions).then(function(bitmap) {
             if (record.disposed || record.generation && record.generation.disposed) {
               tex.destroy();
               if (bitmap && typeof bitmap.close === "function") bitmap.close();
@@ -3225,7 +3303,7 @@
             }
             device.queue.copyExternalImageToTexture(
               { source: bitmap },
-              { texture: tex },
+              isSpecularColor ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
               [w, h]
             );
             record.texture.destroy();
@@ -3432,6 +3510,10 @@
         { binding: 10, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 11, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
         { binding: 12, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 13, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 16, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     });
   }
@@ -7094,10 +7176,11 @@
     // scene warns once instead of every frame.
     var _lightIssuesReported = Object.create(null);
 
-    // 176 bytes: the previous 160-byte MaterialUniforms layout plus the
-    // trailing dielectric-F0 scalar and struct padding. Only the material
-    // buffer grows; frame and shadow buffers are untouched.
-    var _materialUniformBuf = new ArrayBuffer(176);
+    // 208 bytes: the previous 192-byte MaterialUniforms layout plus the
+    // vec3f-aligned per-channel specular coefficient logs and the trailing
+    // hasSpecularColorMap flag. Only the material buffer grows; frame and
+    // shadow buffers are untouched.
+    var _materialUniformBuf = new ArrayBuffer(208);
     var _materialUniformF   = new Float32Array(_materialUniformBuf);
     var _materialUniformU   = new Uint32Array(_materialUniformBuf);
 
@@ -14041,13 +14124,86 @@
       return t * t;
     }
 
+    // Effective dielectric specular factors from the authored KHR-style
+    // specularIntensity / specularColor factors. The intensity contract is a
+    // finite number in [0, 1] — an explicit 0 is valid, an omitted value
+    // means 1 — and the color contract is exactly three finite non-negative
+    // LINEAR components, omitted meaning white. The effective F0 is
+    // min(IOR F0 * color, 1) * intensity with the clamp applied BEFORE the
+    // intensity so a finite HDR tint above 1 clamps to 1 rather than scaling
+    // past it, and F90 is the intensity itself. Every returned component is
+    // finite and non-negative, so the packed buffer can never see NaN or
+    // Infinity, and the result is bounded to [0, 1]. A future specular
+    // texture must multiply its colour into `color` BEFORE this clamp, never
+    // into an already-clamped F0.
+    function sceneWebGPUSpecularFactors(material) {
+      var mat = material || {};
+      var intensity = mat.specularIntensity;
+      if (!(typeof intensity === "number" && Number.isFinite(intensity) && intensity >= 0 && intensity <= 1)) {
+        intensity = 1;
+      }
+      var color = mat.specularColor;
+      var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+      if (valid) {
+        for (var i = 0; i < 3; i++) {
+          var component = color[i];
+          if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+            valid = false;
+            break;
+          }
+        }
+      }
+      if (!valid) {
+        color = [1, 1, 1];
+      }
+      var iorF0 = sceneWebGPUDielectricF0(mat.ior);
+      return {
+        f0: [
+          Math.min(iorF0 * color[0], 1) * intensity,
+          Math.min(iorF0 * color[1], 1) * intensity,
+          Math.min(iorF0 * color[2], 1) * intensity,
+        ],
+        f90: intensity,
+      };
+    }
+
+    // Log-space coefficients for the optional specular-colour texture:
+    // log2(IOR F0) + log2(authored colour) per channel, so the shader can add
+    // log2 of the sampled texel and exp2 back the unclamped HDR product
+    // without ever forming a float32 overflow on the CPU. Exact-zero channels
+    // (IOR F0 or colour component 0) use a finite sentinel far below any real
+    // log2 value; the shader maps the sentinel to zero. Invalid or omitted
+    // colour arrays fall back to white, matching sceneWebGPUSpecularFactors.
+    function sceneWebGPUSpecularColorLogs(material) {
+      var mat = material || {};
+      var color = mat.specularColor;
+      var valid = Boolean(color) && typeof color.length === "number" && color.length === 3;
+      if (valid) {
+        for (var i = 0; i < 3; i++) {
+          var component = color[i];
+          if (!(typeof component === "number" && Number.isFinite(component) && component >= 0)) {
+            valid = false;
+            break;
+          }
+        }
+      }
+      var iorF0 = sceneWebGPUDielectricF0(mat.ior);
+      var out = [0, 0, 0];
+      for (var j = 0; j < 3; j++) {
+        var c = valid ? color[j] : 1;
+        out[j] = (iorF0 > 0 && c > 0) ? Math.log2(iorF0) + Math.log2(c) : -1e30;
+      }
+      return out;
+    }
+
     function materialUniformData(material, receiveShadow, modelMatrix, modelScaleSigns) {
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
       // MaterialUniforms: PBR fields (80 bytes) + per-object model matrix
       // (64 bytes) + three scale signs (16-byte aligned) + one trailing
-      // dielectric-F0 scalar (struct padded to 176 bytes). The signs recover
+      // dielectric-F0 scalar plus the vec3f-aligned effective specular
+      // factors and F90 (struct padded to 208 bytes). The signs recover
       // the rotation-only normal/tangent transform used by the CPU-baked path,
       // including negative and non-uniform scale. World-baked and instanced
       // draws receive identity.
@@ -14082,13 +14238,37 @@
       f[37] = modelScaleSigns ? sceneNumber(modelScaleSigns[1], 1) : 1;
       f[38] = modelScaleSigns ? sceneNumber(modelScaleSigns[2], 1) : 1;
       f[39] = 0;
-      // Dedicated trailing material scalar: normal-incidence dielectric F0
-      // from the authored IOR. Slots 41..43 are struct padding; keep them
+      // Dedicated trailing material scalars: normal-incidence dielectric F0
+      // from the authored IOR, then the vec3f alignment word at index 41
+      // reused as the hasSpecularIntensityMap flag (u[41], set by
+      // createMaterialBindGroup and zeroed here so a plain pack stays
+      // neutral), then the effective specular factors (F0 rgb, F90 =
+      // intensity) at the vec3f-aligned slots 44..47. Slots 42..43 stay
       // zeroed so the packed material bytes stay deterministic.
       f[40] = sceneWebGPUDielectricF0(mat.ior);
-      f[41] = 0;
+      f[41] = 0; // hasSpecularIntensityMap, set by createMaterialBindGroup
       f[42] = 0;
       f[43] = 0;
+      var specular = sceneWebGPUSpecularFactors(mat);
+      f[44] = specular.f0[0];
+      f[45] = specular.f0[1];
+      f[46] = specular.f0[2];
+      f[47] = specular.f90;
+      // Per-channel log2 of the authored dielectric specular coefficient.
+      // The shader reconstructs min(coefficient * texel, 1) * combined
+      // intensity via exp2(min(logCoef + log2(texel), 0)), so only safe
+      // finite logs are packed: an exact-zero coefficient uses the -1e30
+      // sentinel (shader maps it to exact-zero F0); finite log sums are
+      // stored as-is and the shader clamps the exponent to 0 before exp2.
+      // No arbitrary ceiling is applied to finite color components, so
+      // IOR = 1 + EPSILON with Number.MAX_VALUE color still keeps its huge
+      // finite log. hasSpecularColorMap (u[51]) stays zero here so a plain
+      // pack stays neutral until createMaterialBindGroup sets it.
+      var colorLogs = sceneWebGPUSpecularColorLogs(mat);
+      f[48] = colorLogs[0];
+      f[49] = colorLogs[1];
+      f[50] = colorLogs[2];
+      u[51] = 0; // hasSpecularColorMap, set by createMaterialBindGroup
       return { data: f, u: u };
     }
 
@@ -14132,6 +14312,8 @@
         { prop: "metalnessMap", descriptor: "metalness", role: "metalness", colorSpace: "linear", index: 16 },
         { prop: "emissiveMap", descriptor: "emissive", role: "emissive", colorSpace: "srgb", index: 17 },
         { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", index: 19 },
+        { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", index: 41 },
+        { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", index: 51 },
       ];
 
       var texViews = [];
@@ -14190,6 +14372,10 @@
           { binding: 10, resource: linearSampler },
           { binding: 11, resource: texViews[5] },
           { binding: 12, resource: linearSampler },
+          { binding: 13, resource: texViews[6] },
+          { binding: 14, resource: linearSampler },
+          { binding: 15, resource: texViews[7] },
+          { binding: 16, resource: linearSampler },
         ],
       });
       owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews, bg: matBG };
