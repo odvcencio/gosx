@@ -599,7 +599,8 @@ const budgets = [
   // multi-light shadow uniform isolation measured 1617592/438620/351825; breached caps raised to 1617600/438700/351900
   // six-face point-shadow geometry/API bridge measured 1619355/439303/351995; breached caps raised to 1619400/439400/352000
   // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 1632175/442471/354787; all three caps raised to 1632200/442500/354800
-  { file: "bootstrap.js", raw: 1_632_200, gzip: 442_500, brotli: 354_800 },
+  // WebGPU offscreen-caster compute flag measured 1632414/442664/354729; breached raw/gzip caps raised to 1632500/442700 (brotli unchanged)
+  { file: "bootstrap.js", raw: 1_632_500, gzip: 442_700, brotli: 354_800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1245,7 +1246,8 @@ const budgets = [
   // multi-light shadow uniform isolation measured 403588/97355/81396; breached raw cap raised to 403600 (gzip/brotli unchanged)
   // six-face point-shadow geometry/API bridge measured 403674/97370/81414; breached raw/brotli caps raised to 403700/81500 (gzip unchanged)
   // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 411354/99399/83068; breached caps raised to 411400/99400/83100
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 411_400, gzip: 99_400, brotli: 83_100 },
+  // WebGPU offscreen-caster compute flag measured 411606/99499/83087; breached raw/gzip caps raised to 411700/99500 (brotli unchanged)
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 411_700, gzip: 99_500, brotli: 83_100 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1908,8 +1910,9 @@ const routeBudgets = [
     // multi-light shadow uniform isolation measured 1500685/401034/338071; breached caps raised to 1500700/401100/338100
     // six-face point-shadow geometry/API bridge measured 1502625/401694/338644; breached caps raised to 1502700/401700/338700
     // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 1515411/404989/341361; breached caps raised to 1515500/405000/341400
-    raw: 1_515_500,
-    gzip: 405_000,
+    // WebGPU offscreen-caster compute flag measured 1515663/405089/341380; breached raw/gzip caps raised to 1515700/405100 (brotli unchanged)
+    raw: 1_515_700,
+    gzip: 405_100,
     brotli: 341_400,
   },
   {
@@ -2052,9 +2055,10 @@ const routeBudgets = [
     // multi-light shadow uniform isolation measured 1112740/293384/245245; breached raw/brotli caps raised to 1112800/245300 (gzip unchanged)
     // six-face point-shadow geometry/API bridge measured 1114595/294018/245682; breached caps raised to 1114600/294100/245700
     // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 1122288/296054/247388; breached caps raised to 1122300/296100/247400
-    raw: 1_122_300,
-    gzip: 296_100,
-    brotli: 247_400,
+    // WebGPU offscreen-caster compute flag measured 1122540/296154/247407; all three breached caps raised to 1122600/296200/247500
+    raw: 1_122_600,
+    gzip: 296_200,
+    brotli: 247_500,
   },
 
 ];

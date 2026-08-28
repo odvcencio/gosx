@@ -15547,7 +15547,7 @@
       return record;
     }
 
-    function updateElioSkinnedMeshes(bundle, encoder) {
+    function updateElioSkinnedMeshes(bundle, encoder, includeOffscreenShadowCasters) {
       var stats = {
         elioSkinningDispatches: 0,
         elioSkinningVertices: 0,
@@ -15557,7 +15557,12 @@
       var pass = null;
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || obj.viewCulled || !webGPUObjectIsSkinned(obj)) continue;
+        if (!obj || !webGPUObjectIsSkinned(obj)) continue;
+        // Default behavior (flag undefined/falsy) is unchanged: viewCulled
+        // objects are always skipped. With the flag set, a viewCulled object
+        // participates only when it is a shadow caster. Object flags are
+        // never mutated here.
+        if (obj.viewCulled && !(includeOffscreenShadowCasters && obj.castShadow)) continue;
         var record = webGPUElioSkinRecord(obj);
         if (!record) continue;
         if (!pass) {
@@ -15753,7 +15758,7 @@
       return record;
     }
 
-    function updateComputedMorphMeshes(bundle, encoder) {
+    function updateComputedMorphMeshes(bundle, encoder, includeOffscreenShadowCasters) {
       var stats = {
         computedMorphDispatches: 0,
         computedMorphVertices: 0,
@@ -15763,7 +15768,13 @@
       var pass = null;
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || obj.viewCulled || webGPUObjectIsSkinned(obj)) continue;
+        if (!obj) continue;
+        // Default behavior (flag undefined/falsy) is unchanged: viewCulled
+        // objects are always skipped. With the flag set, a viewCulled object
+        // participates only when it is a shadow caster. Object flags are
+        // never mutated here.
+        if (obj.viewCulled && !(includeOffscreenShadowCasters && obj.castShadow)) continue;
+        if (webGPUObjectIsSkinned(obj)) continue;
         var record = webGPUComputedMorphRecord(obj);
         if (!record) continue;
         if (!pass) {
@@ -18613,27 +18624,6 @@
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
       selenaFrame.time = frameTimeSeconds; // feed auto time uniform; set before every selena draw this frame
-      var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
-      var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
-      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
-      var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
-      activePickMeshPositions = pbrSceneBuffers;
-      if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
-        bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
-        bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
-      }
-      var waterDebugMode = sceneWebGPUWaterDebugMode();
-      var waterUpdateStats = sceneWebGPUWaterDebugSkipsUpdate(waterDebugMode)
-        ? updateWaterSystems([], encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH)
-        : updateWaterSystems(bundle.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH);
-      // GPU frustum cull: runs AFTER uploadFrameUniforms so scratchSelenaViewProjection
-      // is ready (WebGPU post-depth-remap VP). Runs BEFORE shadow and main passes
-      // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
-      // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
-      // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
-      var instancedCullMap = updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
-      var webGPUCullTotals = webGPUSummarizeCullSystems();
-
       var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
       var sceneBounds = null;
       var pointBounds = null;
@@ -18709,6 +18699,44 @@
       if (totalShadowPasses > 0 && !ensureShadowFrameBufferCapacity(shadowArenaSlotsPerLight * totalShadowPasses)) {
         shadowCandidates.length = 0;
       }
+
+      // Derive the offscreen shadow-caster flag from the ACTUALLY admitted
+      // candidates, AFTER any arena failure has cleared the list: only a
+      // surviving admitted point light (kind === "point") justifies letting
+      // offscreen casters participate in the morph/skin compute
+      // passes this frame.
+      var includeOffscreenShadowCasters = false;
+      for (var sci = 0; sci < shadowCandidates.length; sci++) {
+        var flagCand = shadowCandidates[sci];
+        if (flagCand && flagCand.light) {
+          var flagKind = typeof flagCand.light.kind === "string" ? flagCand.light.kind.toLowerCase() : "";
+          if (flagCand.isPoint === true || flagKind === "point") {
+            includeOffscreenShadowCasters = true;
+            break;
+          }
+        }
+      }
+
+      var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
+      var computedMorphStats = updateComputedMorphMeshes(bundle, encoder, includeOffscreenShadowCasters);
+      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder, includeOffscreenShadowCasters);
+      var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
+      activePickMeshPositions = pbrSceneBuffers;
+      if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
+        bundle.waterSystems = sceneHydrateWaterEntriesFromSources(bundle.waterSystems, incomingWaterShaderSourcesByID);
+        bundle.waterShaderSourcesByID = incomingWaterShaderSourcesByID;
+      }
+      var waterDebugMode = sceneWebGPUWaterDebugMode();
+      var waterUpdateStats = sceneWebGPUWaterDebugSkipsUpdate(waterDebugMode)
+        ? updateWaterSystems([], encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH)
+        : updateWaterSystems(bundle.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH);
+      // GPU frustum cull: runs AFTER uploadFrameUniforms so scratchSelenaViewProjection
+      // is ready (WebGPU post-depth-remap VP). Runs BEFORE shadow and main passes
+      // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
+      // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
+      // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
+      var instancedCullMap = updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
+      var webGPUCullTotals = webGPUSummarizeCullSystems();
 
       var nextMatrixSlot = 0;
       var pointShadowData = [null, null];
