@@ -15827,19 +15827,29 @@
       return typeof cutoff === "number" && Number.isFinite(cutoff) && cutoff >= 0 ? cutoff : null;
     }
 
-    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
+    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers, matrixBaseSlot) {
       var sp = getShadowPipeline();
       if (!sp) return;
 
+      // Base arena slot for this light's shared light matrix. Defaults to
+      // zero so existing direct callers (and the structural tests) keep the
+      // historical layout. Each shadow light encodes into its own contiguous
+      // arena region: base bindings (soup, skinned, computed morph,
+      // instanced) read the base slot and retained casters start at base+1,
+      // so queue writes recorded for one encoded pass can never be
+      // overwritten by a later light's pass on the same shared
+      // shadowFrameBuffer before the single encoder submission.
+      var baseSlot = Math.max(0, Math.floor(sceneNumber(matrixBaseSlot, 0)));
+      var baseMatrixOffset = baseSlot * shadowFrameBufferStride;
       var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-      // Slot zero carries the shared light matrix. Every retained caster gets
-      // its own aligned slot so queue writes are immutable for the lifetime of
-      // the encoded pass; mutating one shared uniform before submit would make
-      // every draw observe the final caster's matrix.
-      if (!ensureShadowFrameBufferCapacity(objects.length + 1)) return;
+      // The per-pass base slot carries this light's shared light matrix. Every
+      // retained caster gets its own aligned slot so queue writes are immutable
+      // for the lifetime of the encoded pass; mutating one shared uniform
+      // before submit would make every draw observe the final caster's matrix.
+      if (!ensureShadowFrameBufferCapacity(baseSlot + objects.length + 1)) return;
 
-      // Upload light space matrix.
-      device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix, 0, 16);
+      // Upload light space matrix into this light's base arena slot.
+      device.queue.writeBuffer(shadowFrameBuffer, baseMatrixOffset, lightMatrix, 0, 16);
 
       var shadowBG = device.createBindGroup({
         layout: shadowBindGroupLayout,
@@ -15861,9 +15871,9 @@
       if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
       var pass = encoder.beginRenderPass(shadowPassDescriptor);
 
-      pass.setBindGroup(0, shadowBG, [0]);
+      pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
       var currentShadowPipeline = "";
-      var retainedShadowMatrixSlot = 1;
+      var retainedShadowMatrixSlot = baseSlot + 1;
 
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
@@ -15882,7 +15892,7 @@
               pass.setPipeline(getShadowMaskedPipeline());
               currentShadowPipeline = "masked-static";
             }
-            pass.setBindGroup(0, shadowBG, [0]);
+            pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
             pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
             pass.setVertexBuffer(0, skinnedPositionBuffer);
             var skinnedMaskedUVs = webGPUDefaultAttributeData(obj, "uvs", obj.vertexCount, 2, [0, 0]);
@@ -15896,7 +15906,7 @@
             pass.setPipeline(sp);
             currentShadowPipeline = "static";
           }
-          pass.setBindGroup(0, shadowBG, [0]);
+          pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
           pass.setVertexBuffer(0, skinnedPositionBuffer);
           var skinnedShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
           if (skinnedShadowIndexCount > 0) pass.drawIndexed(skinnedShadowIndexCount);
@@ -15911,7 +15921,7 @@
               pass.setPipeline(getShadowMaskedPipeline());
               currentShadowPipeline = "masked-static";
             }
-            pass.setBindGroup(0, shadowBG, [0]);
+            pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
             pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
             if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
             if (!webGPUBindSceneMeshVertexBuffer(pass, 1, pbrBuffers && pbrBuffers.uvs, obj.vertexOffset, obj.vertexCount)) continue;
@@ -15924,7 +15934,7 @@
             pass.setPipeline(sp);
             currentShadowPipeline = "static";
           }
-          pass.setBindGroup(0, shadowBG, [0]);
+          pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
           if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
           var morphShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
           if (morphShadowIndexCount > 0) pass.drawIndexed(morphShadowIndexCount);
@@ -15993,7 +16003,7 @@
             pass.setPipeline(getShadowMaskedPipeline());
             currentShadowPipeline = "masked-static";
           }
-          pass.setBindGroup(0, shadowBG, [0]);
+          pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
           pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
           if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
           if (!webGPUBindSceneMeshVertexBuffer(pass, 1, pbrBuffers && pbrBuffers.uvs, obj.vertexOffset, obj.vertexCount)) continue;
@@ -16006,12 +16016,12 @@
           currentShadowPipeline = "static";
         }
 
-        pass.setBindGroup(0, shadowBG, [0]);
+        pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
         if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
         pass.draw(obj.vertexCount);
       }
 
-      pass.setBindGroup(0, shadowBG, [0]);
+      pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
       drawInstancedShadowMeshes(pass, bundle);
       pass.end();
     }
@@ -18431,6 +18441,10 @@
       var sceneBounds = null;
       var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
 
+      // Per-light arena region size: one base matrix slot plus worst-case
+      // retained caster slots (one per mesh object).
+      var shadowArenaSlotsPerLight =
+        (Array.isArray(bundle.meshObjects) ? bundle.meshObjects.length : 0) + 1;
       for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
         var light = lightArray[li];
         if (!light || !light.castShadow) continue;
@@ -18454,6 +18468,14 @@
         var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
         if (!rawLightMatrix) continue;
 
+        // Reserve the persistent shadow uniform arena ONCE at the first
+        // valid candidate, sized for both existing shadow-light slots, so no
+        // later renderShadowPass in this frame can grow or destroy the arena
+        // buffer after this encoder has already referenced it.
+        if (activeShadowCount === 0) {
+          if (!ensureShadowFrameBufferCapacity(shadowArenaSlotsPerLight * 2)) continue;
+        }
+
         var slot = activeShadowCount;
         var shadowSize = sceneNumber(light.shadowSize, 1024);
         shadowSize = Math.max(256, Math.min(4096, shadowSize));
@@ -18468,7 +18490,8 @@
         shadowLightMatrices[slot] = lightMatrix;
         shadowLightIndices[slot] = li;
 
-        renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot], pbrSceneBuffers);
+        renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot], pbrSceneBuffers,
+          activeShadowCount * shadowArenaSlotsPerLight);
         activeShadowCount++;
       }
 

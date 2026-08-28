@@ -596,7 +596,8 @@ const budgets = [
   // 1_615_272 / 437_705 / 350_871 raw/gzip/brotli; all three caps raised to
   // 1_615_400 / 437_800 / 351_000 with narrow rounding headroom.
   // measured raw/gzip/brotli: 1617438/438502/351377; caps rounded to 100 for spot-shadow support
-  { file: "bootstrap.js", raw: 1_617_500, gzip: 438_600, brotli: 351_400 },
+  // multi-light shadow uniform isolation measured 1617592/438620/351825; breached caps raised to 1617600/438700/351900
+  { file: "bootstrap.js", raw: 1_617_600, gzip: 438_700, brotli: 351_900 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1235,7 +1236,8 @@ const budgets = [
   // SH light-probe irradiance measured 403033/97232/81186; all three caps
   // raised with narrow rounding headroom.
   // measured raw/gzip/brotli: 403448/97303/81318; caps rounded to 100 for spot-shadow support
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 403_500, gzip: 97_400, brotli: 81_400 },
+  // multi-light shadow uniform isolation measured 403588/97355/81396; breached raw cap raised to 403600 (gzip/brotli unchanged)
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 403_600, gzip: 97_400, brotli: 81_400 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1893,9 +1895,10 @@ const routeBudgets = [
     // SH light-probe irradiance measured 1498398/400107/337239; all three
     // caps raised with narrow rounding headroom.
     // Spot-shadow runtime measured 1500545/400982/337993.
-    raw: 1_500_600,
-    gzip: 401_000,
-    brotli: 338_000,
+    // multi-light shadow uniform isolation measured 1500685/401034/338071; breached caps raised to 1500700/401100/338100
+    raw: 1_500_700,
+    gzip: 401_100,
+    brotli: 338_100,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2034,9 +2037,10 @@ const routeBudgets = [
     // SH light-probe irradiance measured 1110814/292593/244579; all three
     // caps raised with narrow rounding headroom.
     // Spot-shadow runtime measured 1112600/293332/245167.
-    raw: 1_112_600,
+    // multi-light shadow uniform isolation measured 1112740/293384/245245; breached raw/brotli caps raised to 1112800/245300 (gzip unchanged)
+    raw: 1_112_800,
     gzip: 293_400,
-    brotli: 245_200,
+    brotli: 245_300,
   },
 
 ];

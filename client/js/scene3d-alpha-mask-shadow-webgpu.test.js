@@ -816,3 +816,219 @@ test("drawInstancedShadowMeshes: masked pos0/UV1/transform2/color3 + group 1, un
   assert.ok(transformUpload, "instance transforms upload through the transform cache key");
   assert.deepEqual(transformUpload.data, Array.from({ length: 48 }, (_, i) => i + 1));
 });
+
+test("deferred-submit shadow arena: two lights encode disjoint 512-aligned slots with default base slot zero and no growth", () => {
+  const ctx = createHarness();
+  const env = createRecordingEnvironment(ctx);
+
+  // Nondefault alignment: the arena stride follows the device uniform offset
+  // alignment, so per-light regions must stay disjoint at 512-byte slots.
+  ctx.shadowFrameBufferStride = 512;
+  ctx.shadowFrameBuffer = null;
+  ctx.shadowFrameBufferCapacity = 0;
+  env.rec.destroyedBuffers = [];
+  ctx.destroyRendererGPUResource = (resource) => {
+    // The production helper treats null as a no-op, so fake destruction
+    // must not count null resources either.
+    if (resource) env.rec.destroyedBuffers.push(resource);
+  };
+
+  // Exercise the ACTUAL persistent capacity helper against a minimal fake
+  // device port (concrete object, no Proxy): allocation is counted and the
+  // arena keeps real mutable bytes so submits can be simulated faithfully.
+  // Evaluate the ACTUAL helper inside the harness context via vm; slice alone
+  // returns source text, so the resulting function is retained here before
+  // the counted wrapper below is installed over ctx.ensureShadowFrameBufferCapacity.
+  const nodeVm = require("node:vm");
+  const realEnsure = nodeVm.runInContext(
+    "(" + sliceFunction(WEBGPU_SOURCE, "ensureShadowFrameBufferCapacity") + ")",
+    nodeVm.createContext(ctx),
+  );
+  const createdBuffers = [];
+  env.device.createBuffer = (descriptor) => {
+    const buffer = {
+      id: "shadow-arena-" + createdBuffers.length,
+      size: descriptor.size,
+      usage: descriptor.usage,
+      __bytes: new Uint8Array(descriptor.size),
+    };
+    createdBuffers.push(buffer);
+    return buffer;
+  };
+  ctx.ensureShadowFrameBufferCapacity = (count) => {
+    env.rec.capacityRequests.push(count);
+    return realEnsure(count);
+  };
+
+  // Deferred-submit semantics: queue writes mutate the shared arena bytes in
+  // record order; matrices are only read back at simulated submit time, never
+  // from snapshots of the write arguments. These are recording-fake
+  // assertions only — no native GPU certification is claimed.
+  env.device.queue.writeBuffer = (buffer, offset, data, dataOffset, size) => {
+    const start = dataOffset || 0;
+    const end = size === undefined ? data.length : start + size;
+    new Float32Array(buffer.__bytes.buffer, offset, end - start).set(data.subarray(start, end));
+    env.rec.queueWrites.push({ buffer, offset, data: Array.from(data.slice(start, end)) });
+  };
+
+  const lightMatrix1 = Float32Array.from({ length: 16 }, (_, i) => 10 + i);
+  const lightMatrix2 = Float32Array.from({ length: 16 }, (_, i) => 40 + i);
+  const modelA = Float32Array.from([2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 3, 0, 0, 1]);
+  const modelB = Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 7, 0, 1]);
+  const maskedMaterial = { alphaCutoff: 0.5 };
+  const opaqueMaterial = {};
+  const retainedMasked = {
+    castShadow: true, viewCulled: false,
+    retainedGeometry: true, directVertices: { id: "retained-a" },
+    vertices: { indices: Uint32Array.from([0, 1, 2, 2, 1, 0]) },
+    modelMatrix: modelA,
+    vertexOffset: 0, vertexCount: 3, materialIndex: 0,
+    __retainedAttributes: { positions: new Float32Array(9), uvs: new Float32Array(6) },
+    __indexCount: 6,
+  };
+  const retainedOpaque = {
+    castShadow: true, viewCulled: false,
+    retainedGeometry: true, directVertices: { id: "retained-b" },
+    vertices: { indices: Uint32Array.from([0, 1, 2, 2, 1, 0]) },
+    modelMatrix: modelB,
+    vertexOffset: 3, vertexCount: 3, materialIndex: 1,
+    __retainedAttributes: { positions: new Float32Array(9), uvs: new Float32Array(6) },
+    __indexCount: 6,
+  };
+  const soupObject = {
+    castShadow: true, viewCulled: false,
+    vertexOffset: 0, vertexCount: 3, materialIndex: 1,
+  };
+  const bundle = {
+    meshObjects: [retainedMasked, retainedOpaque, soupObject],
+    materials: [maskedMaterial, opaqueMaterial],
+  };
+  const pbrBuffers = {
+    positions: { buffer: { id: "soup-positions" }, components: 3 },
+    uvs: { buffer: { id: "soup-uvs" }, components: 2 },
+  };
+
+  // Both renderShadowPass invocations literally share ONE recording encoder,
+  // making the same-encoder claim concrete rather than simulated. Each
+  // beginRenderPass returns a FRESH recording pass (an ended pass cannot be
+  // reused); each invocation's draws are the ones recorded by that pass.
+  const encoder = {
+    beginRenderPass() {
+      const { pass, draws } = createRecordingPass();
+      currentPassDraws = draws;
+      return pass;
+    },
+  };
+  let currentPassDraws = [];
+  function runPass(lightMatrix, matrixBaseSlot) {
+    ctx.renderShadowPass(encoder, lightMatrix, bundle,
+      { view: { id: "shadow-view" } }, pbrBuffers, matrixBaseSlot);
+    return currentPassDraws.slice(0);
+  }
+
+  // Preallocate the persistent arena ONCE before encoding, mirroring the
+  // production first-candidate reservation: meshObjects count plus 1 slots
+  // per light, for both shadow-light slots, covers the worst case where every
+  // mesh object is a retained caster needing its own slot.
+  const slotsPerLight = bundle.meshObjects.length + 1;
+  assert.equal(ctx.ensureShadowFrameBufferCapacity(slotsPerLight * 2), true);
+  assert.equal(createdBuffers.length, 1, "arena buffer allocated once");
+  const arena = createdBuffers[0];
+  assert.equal(arena.size, slotsPerLight * 2 * ctx.shadowFrameBufferStride);
+  assert.equal(env.rec.destroyedBuffers.length, 0);
+
+  // Pass one uses the DEFAULT matrixBaseSlot: slot zero must remain the base
+  // light slot for existing direct callers.
+  const draws1 = runPass(lightMatrix1, undefined);
+  assert.deepEqual(env.rec.queueWrites.map((w) => w.offset), [0, 512, 1024],
+    "default base slot zero: light matrix at slot 0, retained casters at base+1 onward");
+  assert.equal(env.rec.queueWrites[0].buffer, arena);
+  const indexed1 = draws1.filter((d) => d.kind === "drawIndexed");
+  assert.equal(indexed1.length, 2);
+  assert.equal(indexed1[0].pipeline, env.maskedShadowPipeline,
+    "masked retained caster takes the masked shadow pipeline");
+  assert.equal(indexed1[1].pipeline, env.opaqueShadowPipeline,
+    "opaque retained caster takes the opaque shadow pipeline");
+  assert.deepEqual(indexed1.map((d) => d.bindOffsets[0]), [[512], [1024]]);
+  const soupDraw1 = draws1[draws1.length - 1];
+  assert.equal(soupDraw1.kind, "draw");
+  assert.deepEqual(soupDraw1.bindOffsets[0], [0],
+    "base/soup draw reads the light's base slot");
+
+  const buffersAfterPass1 = createdBuffers.length;
+  const destroysAfterPass1 = env.rec.destroyedBuffers.length;
+  const capacityRequestsAfterPass1 = env.rec.capacityRequests.length;
+
+  // Pass two encodes the second light into its own arena region.
+  const draws2 = runPass(lightMatrix2, slotsPerLight);
+  assert.deepEqual(env.rec.queueWrites.slice(3).map((w) => w.offset), [2048, 2560, 3072],
+    "second light's base and retained slots are disjoint from pass one");
+  const indexed2 = draws2.filter((d) => d.kind === "drawIndexed");
+  assert.deepEqual(indexed2.map((d) => d.bindOffsets[0]), [[2560], [3072]]);
+  const soupDraw2 = draws2[draws2.length - 1];
+  assert.deepEqual(soupDraw2.bindOffsets[0], [2048],
+    "second light's base/soup draw reads its own base slot");
+
+  // It must be impossible for the second renderShadowPass to grow or destroy
+  // the arena buffer already referenced by the same encoder.
+  assert.equal(createdBuffers.length, buffersAfterPass1,
+    "no arena buffer created after the first encoding");
+  assert.equal(env.rec.destroyedBuffers.length, destroysAfterPass1,
+    "no arena buffer destroyed after the first encoding");
+  assert.deepEqual(env.rec.capacityRequests.slice(capacityRequestsAfterPass1),
+    [slotsPerLight * 2],
+    "per-pass capacity requests stay inside the preallocated arena");
+
+  // Disjoint, aligned byte offsets across both encoded passes.
+  const allOffsets = env.rec.queueWrites.map((w) => w.offset);
+  assert.equal(new Set(allOffsets).size, allOffsets.length,
+    "every matrix write lands in a disjoint arena slot");
+  assert.ok(allOffsets.every((offset) => offset % 512 === 0),
+    "all writes respect the nondefault 512-byte arena alignment");
+
+  // Simulated submit: read FINAL arena bytes, not write-argument snapshots.
+  // A pre-fix implementation overwrites slot zero (and pass one's retained
+  // slots) with the second light, so these checks fail before the fix.
+  function slotAt(slot) {
+    return Array.from(new Float32Array(arena.__bytes.buffer, slot * 512, 16));
+  }
+  assert.deepEqual(slotAt(0), Array.from(lightMatrix1),
+    "pass one's base slot still holds light matrix one at submit time");
+  assert.deepEqual(slotAt(1), multiplyMat4Oracle(Array.from(lightMatrix1), Array.from(modelA)),
+    "pass one's masked retained slot keeps its combined matrix");
+  assert.deepEqual(slotAt(2), multiplyMat4Oracle(Array.from(lightMatrix1), Array.from(modelB)),
+    "pass one's opaque retained slot keeps its combined matrix");
+  assert.deepEqual(slotAt(slotsPerLight), Array.from(lightMatrix2),
+    "pass two's base slot holds light matrix two");
+  assert.deepEqual(slotAt(slotsPerLight + 1), multiplyMat4Oracle(Array.from(lightMatrix2), Array.from(modelA)),
+    "pass two's masked retained slot holds its own combined matrix");
+  assert.deepEqual(slotAt(slotsPerLight + 2), multiplyMat4Oracle(Array.from(lightMatrix2), Array.from(modelB)),
+    "pass two's opaque retained slot holds its own combined matrix");
+
+  // The proof must follow the ACTUAL encoded bindings: read the final bytes
+  // through each recorded draw's bind group buffer + dynamic offset and
+  // require that draw's expected light/model matrix.
+  function bytesAtDraw(d) {
+    const bg = d.bindGroups[0];
+    const entry = bg.entries.find((e) => e.binding === 0);
+    assert.ok(entry, "bind group exposes binding 0");
+    const resource = entry.resource;
+    assert.ok(resource && resource.buffer, "binding 0 has a static buffer resource");
+    const offset = (resource.offset || 0) + d.bindOffsets[0][0];
+    return Array.from(new Float32Array(resource.buffer.__bytes.buffer, offset, 16));
+  }
+  const light1 = Array.from(lightMatrix1);
+  const light2 = Array.from(lightMatrix2);
+  assert.deepEqual(bytesAtDraw(soupDraw1), light1,
+    "pass one soup draw's binding reads its base light matrix");
+  assert.deepEqual(bytesAtDraw(indexed1[0]), multiplyMat4Oracle(light1, Array.from(modelA)),
+    "pass one masked draw's binding reads its combined matrix");
+  assert.deepEqual(bytesAtDraw(indexed1[1]), multiplyMat4Oracle(light1, Array.from(modelB)),
+    "pass one opaque draw's binding reads its combined matrix");
+  assert.deepEqual(bytesAtDraw(soupDraw2), light2,
+    "pass two soup draw's binding reads its base light matrix");
+  assert.deepEqual(bytesAtDraw(indexed2[0]), multiplyMat4Oracle(light2, Array.from(modelA)),
+    "pass two masked draw's binding reads its combined matrix");
+  assert.deepEqual(bytesAtDraw(indexed2[1]), multiplyMat4Oracle(light2, Array.from(modelB)),
+    "pass two opaque draw's binding reads its combined matrix");
+});
