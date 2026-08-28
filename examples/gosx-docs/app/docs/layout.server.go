@@ -4,6 +4,7 @@ import (
 	"log"
 
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	demoscatalog "m31labs.dev/gosx/examples/gosx-docs/app/demos"
 	"m31labs.dev/gosx/route"
 )
 
@@ -24,6 +25,7 @@ func init() {
 				"docsNext":             pageLinks["next"],
 				"docsSourceURL":        pageLinks["sourceURL"],
 				"docsSourcePath":       pageLinks["sourcePath"],
+				"docsLiveDemo":         docsLiveDemoValue(currentPath),
 				"site":                 docsapp.SiteBuildInfo(),
 			}}
 		},
@@ -39,4 +41,19 @@ func docsLayoutSectionClassName(data any) string {
 		className += " light"
 	}
 	return className
+}
+
+// docsLiveDemoValue resolves the catalog demo that proves the current guide's
+// subject live, so the docs header can link straight to it. Guides without a
+// live proof bind an untyped nil so templates can test `!= nil` exactly like
+// docsPrevious and docsNext.
+func docsLiveDemoValue(currentPath string) any {
+	demo, ok := demoscatalog.LiveDemoForGuide(currentPath)
+	if !ok {
+		return nil
+	}
+	return map[string]any{
+		"href":  "/demos/" + demo.Slug,
+		"title": demo.Title,
+	}
 }

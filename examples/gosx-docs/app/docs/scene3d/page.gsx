@@ -298,8 +298,8 @@ func Page() Node {
 						</tr>
 						<tr>
 							<th scope="row">light-probe-sh</th>
-							<td>no</td>
-							<td>no</td>
+							<td>yes</td>
+							<td>yes</td>
 							<td>no</td>
 							<td>no</td>
 						</tr>
@@ -860,38 +860,36 @@ func Page() Node {
 	    Height:    2,
 	}
 
-	// Light probe — an ambient probe.
+	// Light probe — legacy ambient probe (no coefficients).
 	scene.LightProbe{
 	    Color:     "#cfe6ff",
 	    Intensity: 0.5,
 	}`)}
 			<h3>Two honest shortfalls remain</h3>
-			<p>
-				Both shortfalls report themselves through the capability system, so tooling sees them.
-			</p>
 			<ul>
 				<li>
 					<strong>Rect-area specular.</strong>
 					The diffuse half is exact: the WebGPU shader evaluates the analytic polygon form factor over the four world corners. The specular half substitutes a representative-point lobe for the fitted linearly transformed cosine (LTC) tables. Energy lands in roughly the right place. The highlight shape is wrong on glossy surfaces. On WebGL2 a rect-area light has no shape at all; it draws as a point light, and Width and Height stop at the IR.
 				</li>
 				<li>
-					<strong>Light-probe spherical harmonics.</strong>
-					<span class="inline-code">LightProbe.Coefficients</span>
-					reaches the IR, and then no renderer reads it. Both GPU backends fold a probe into a flat ambient term built from Color and Intensity. Ambient is the right fold — a probe carries no position, so a point light would invent a falloff — but it is not a spherical-harmonic evaluation.
+					<strong>Spot shadows.</strong>
+					A spot light casts no shadow on either backend. Both shadow passes skip any light whose kind is not
+					<span class="inline-code">directional</span>
+					, even though
+					<span class="inline-code">SpotLight</span>
+					accepts
+					<span class="inline-code">CastShadow</span>
+					,
+					<span class="inline-code">ShadowBias</span>
+					, and
+					<span class="inline-code">ShadowSize</span>
+					.
 				</li>
 			</ul>
 			<p>
-				One more gap carries no capability flag yet: a spot light casts no shadow on either backend. Both shadow passes skip any light whose kind is not
-				<span class="inline-code">directional</span>
-				, even though
-				<span class="inline-code">SpotLight</span>
-				accepts
-				<span class="inline-code">CastShadow</span>
-				,
-				<span class="inline-code">ShadowBias</span>
-				, and
-				<span class="inline-code">ShadowSize</span>
-				.
+				Light-probe spherical harmonics is implemented on both GPU backends. When
+				<span class="inline-code">LightProbe.Coefficients</span>
+				holds nine entries whose present components are finite and float32-representable — omitted components read as zero — both renderers evaluate second-order spherical harmonics in linear RGB (basis order 0..8): probe irradiance is computed against the world-space shading normal, Intensity multiplies the coefficients exactly once, and Color is ignored because the coefficients already carry RGB. Nine all-zero coefficients shade black. Any malformed coefficients — including a nine-entry list with a non-finite or non-float32-representable component, not just a wrong-length list — never reach the GPU as SH and shade as the Color/Intensity ambient fallback instead; that is the legacy ambient probe in the sample above. Canvas2D still shades every probe as flat ambient and remains a reported degradation.
 			</p>
 		</section>
 		<section id="shadows">

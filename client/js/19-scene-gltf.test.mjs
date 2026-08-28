@@ -33,7 +33,7 @@ function readSource(name) {
   return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-function createLoaderContext() {
+function createLoaderContext(options = {}) {
   const warnings = [];
   const sandbox = {
     console: {
@@ -66,10 +66,12 @@ function createLoaderContext() {
         this.type = options && options.type;
       }
     },
+    fetch: options.fetch || (() => Promise.reject(new Error("fetch not configured"))),
+    location: options.location || { href: "http://localhost:3000/" },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  sandbox.URL = { createObjectURL: () => "blob:fake" };
+  sandbox.URL = options.urlAPI || { createObjectURL: () => "blob:fake" };
 
   const context = vm.createContext(sandbox);
   vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
@@ -331,6 +333,428 @@ test("accessor lookup tables ignore inherited and unknown keys", () => {
       `${row.key} must read interleaved elements through the Float32 fallback`,
     );
   }
+});
+
+test("multi-buffer accessors honor buffer indices, interleaving, sparse views, animation and skin data", () => {
+  const { context, sandbox } = createLoaderContext();
+  const positionBuffer = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]).buffer;
+  const interleavedBuffer = new ArrayBuffer(3 * 16);
+  const interleaved = new DataView(interleavedBuffer);
+  for (let i = 0; i < 3; i++) {
+    interleaved.setFloat32(i * 16, 0, true);
+    interleaved.setFloat32(i * 16 + 4, 0, true);
+    interleaved.setFloat32(i * 16 + 8, 1, true);
+    interleaved.setFloat32(i * 16 + 12, 99, true);
+  }
+  const indicesBuffer = new Uint16Array([2, 1, 0]).buffer;
+  const sparseIndexBuffer = new Uint8Array([2]).buffer;
+  const sparseValueBuffer = new Float32Array([9, 8, 7]).buffer;
+  const animationBuffer = new Float32Array([0, 1, 0, 0, 0, 1, 0, 0]).buffer;
+  const inverseBindBuffer = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]).buffer;
+  const buffers = [
+    positionBuffer, interleavedBuffer, indicesBuffer, sparseIndexBuffer,
+    sparseValueBuffer, animationBuffer, inverseBindBuffer,
+  ];
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: buffers.map((buffer) => ({ byteLength: buffer.byteLength })),
+    bufferViews: [
+      { buffer: 0, byteLength: 36 },
+      { buffer: 1, byteLength: 48, byteStride: 16 },
+      { buffer: 2, byteLength: 6 },
+      { buffer: 3, byteLength: 1 },
+      { buffer: 4, byteLength: 12 },
+      { buffer: 5, byteOffset: 0, byteLength: 8 },
+      { buffer: 5, byteOffset: 8, byteLength: 24 },
+      { buffer: 6, byteLength: 64 },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: 1, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: 2, componentType: 5123, count: 3, type: "SCALAR" },
+      {
+        componentType: 5126,
+        count: 3,
+        type: "VEC3",
+        sparse: {
+          count: 1,
+          indices: { bufferView: 3, componentType: 5121 },
+          values: { bufferView: 4 },
+        },
+      },
+      { bufferView: 5, componentType: 5126, count: 2, type: "SCALAR" },
+      { bufferView: 6, componentType: 5126, count: 2, type: "VEC3" },
+      { bufferView: 7, componentType: 5126, count: 1, type: "MAT4" },
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 2 }] }],
+    nodes: [{ mesh: 0, skin: 0 }],
+    scenes: [{ nodes: [0] }],
+    skins: [{ joints: [0], inverseBindMatrices: 6 }],
+    animations: [{
+      name: "move",
+      samplers: [{ input: 4, output: 5, interpolation: "LINEAR" }],
+      channels: [{ sampler: 0, target: { node: 0, path: "translation" } }],
+    }],
+  };
+  sandbox.__multiDoc = doc;
+  sandbox.__multiBuffers = buffers;
+  const result = plain(call(context, `
+    var sparse = gltfReadAccessor(__multiDoc, 3, __multiBuffers);
+    var scene = gltfExtractScene(__multiDoc, __multiBuffers);
+    ({
+      regular: Array.from(gltfReadAccessor(__multiDoc, 0, __multiBuffers)),
+      interleaved: Array.from(gltfReadAccessor(__multiDoc, 1, __multiBuffers)),
+      indices: Array.from(gltfReadAccessor(__multiDoc, 2, __multiBuffers)),
+      sparse: Array.from(sparse),
+      positions: Array.from(scene.objects[0].vertices.positions),
+      normals: Array.from(scene.objects[0].vertices.normals),
+      animationTimes: Array.from(scene.animations[0].channels[0].times),
+      animationValues: Array.from(scene.animations[0].channels[0].values),
+      inverseBind: Array.from(scene.skins[0].inverseBindMatrices),
+    });
+  `));
+
+  // The normal accessor lives in buffer 1. Reading buffer 0 by mistake would
+  // produce zeros (and the interleaved sentinel would never be observed).
+  assert.deepEqual(result.regular, [0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  assert.deepEqual(result.interleaved, [0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  assert.deepEqual(result.indices, [2, 1, 0]);
+  assert.deepEqual(result.sparse, [0, 0, 0, 0, 0, 0, 9, 8, 7]);
+  assert.deepEqual(result.positions, [0, 1, 0, 1, 0, 0, 0, 0, 0]);
+  assert.deepEqual(result.normals, [0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  assert.deepEqual(result.animationTimes, [0, 1]);
+  assert.deepEqual(result.animationValues, [0, 0, 0, 1, 0, 0]);
+  assert.equal(result.inverseBind[0], 1);
+  assert.equal(result.inverseBind[5], 1);
+  assert.equal(result.inverseBind[10], 1);
+  assert.equal(result.inverseBind[15], 1);
+});
+
+test("sparse overlays normalize after merging without mutating base bytes", () => {
+  const { context, sandbox } = createLoaderContext();
+  const base = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80, 90]).buffer;
+  const indices = new Uint8Array([1]).buffer;
+  const values = new Uint8Array([255, 128, 0]).buffer;
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: [
+      { byteLength: base.byteLength },
+      { byteLength: indices.byteLength },
+      { byteLength: values.byteLength },
+    ],
+    bufferViews: [
+      { buffer: 0, byteLength: base.byteLength },
+      { buffer: 1, byteLength: indices.byteLength },
+      { buffer: 2, byteLength: values.byteLength },
+    ],
+    accessors: [{
+      bufferView: 0,
+      componentType: 5121,
+      normalized: true,
+      count: 3,
+      type: "VEC3",
+      sparse: {
+        count: 1,
+        indices: { bufferView: 1, componentType: 5121 },
+        values: { bufferView: 2 },
+      },
+    }],
+  };
+  sandbox.__sparseDoc = doc;
+  sandbox.__sparseBuffers = [base, indices, values];
+  const result = plain(call(context, `
+    var first = gltfReadAccessor(__sparseDoc, 0, __sparseBuffers);
+    var second = gltfReadAccessor(__sparseDoc, 0, __sparseBuffers);
+    ({ first: Array.from(first), second: Array.from(second), base: Array.from(new Uint8Array(__sparseBuffers[0])) });
+  `));
+  const expected = Array.from(new Float32Array([
+    10 / 255, 20 / 255, 30 / 255, 1, 128 / 255, 0,
+    70 / 255, 80 / 255, 90 / 255,
+  ]));
+  assert.deepEqual(result.first, expected);
+  assert.deepEqual(result.second, result.first);
+  assert.deepEqual(result.base, [10, 20, 30, 40, 50, 60, 70, 80, 90]);
+
+  sandbox.__duplicateDoc = {
+    buffers: [{ byteLength: 9 }, { byteLength: 2 }, { byteLength: 6 }],
+    bufferViews: [
+      { buffer: 0, byteLength: 9 },
+      { buffer: 1, byteLength: 2 },
+      { buffer: 2, byteLength: 6 },
+    ],
+    accessors: [{
+      bufferView: 0, componentType: 5121, count: 3, type: "VEC3",
+      sparse: {
+        count: 2,
+        indices: { bufferView: 1, componentType: 5121 },
+        values: { bufferView: 2 },
+      },
+    }],
+  };
+  sandbox.__duplicateBuffers = [base, new Uint8Array([1, 1]).buffer, new Uint8Array(6).buffer];
+  assert.throws(
+    () => call(context, "gltfReadAccessor(__duplicateDoc, 0, __duplicateBuffers)"),
+    /strictly increasing/,
+  );
+});
+
+test("embedded bufferView images resolve the referenced buffer in a multi-buffer source", () => {
+  const { context, sandbox } = createLoaderContext();
+  const payload = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const imageBytes = new Uint8Array(3 + payload.length + 2);
+  imageBytes.fill(0xee, 0, 3);
+  imageBytes.set(payload, 3);
+  imageBytes.fill(0xdd, 3 + payload.length);
+  const buffers = [new ArrayBuffer(1), imageBytes.buffer];
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: buffers.map((buffer) => ({ byteLength: buffer.byteLength })),
+    bufferViews: [{ buffer: 1, byteOffset: 3, byteLength: payload.length }],
+    images: [{ bufferView: 0, mimeType: "image/png" }],
+    textures: [{ source: 0 }],
+    materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+  };
+  const blobs = [];
+  sandbox.URL.createObjectURL = (blob) => {
+    blobs.push(blob);
+    return "blob:multi-image-" + blobs.length;
+  };
+  sandbox.__imageDoc = doc;
+  sandbox.__imageBuffers = buffers;
+  const material = plain(call(context,
+    "gltfExtractMaterial(__imageDoc, 0, __imageBuffers)"));
+  assert.equal(material.texture, "blob:multi-image-1");
+  assert.equal(blobs.length, 1);
+  assert.equal(blobs[0].type, "image/png");
+  assert.deepEqual(Array.from(new Uint8Array(blobs[0].parts[0])), payload);
+});
+
+test("single ArrayBuffer accessor callers remain compatible", () => {
+  const { context, sandbox } = createLoaderContext();
+  const buffer = new Float32Array([4, 5, 6]).buffer;
+  sandbox.__singleDoc = {
+    asset: { version: "2.0" },
+    buffers: [{ byteLength: buffer.byteLength }],
+    bufferViews: [{ buffer: 0, byteLength: buffer.byteLength }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 1, type: "VEC3" }],
+  };
+  sandbox.__singleBuffer = buffer;
+  assert.deepEqual(plain(call(context,
+    "Array.from(gltfReadAccessor(__singleDoc, 0, __singleBuffer))")), [4, 5, 6]);
+});
+
+test("invalid buffer indices and declared ranges raise named glTF errors", () => {
+  const { context } = createLoaderContext();
+  assert.throws(() => call(context, `gltfReadAccessor({
+    buffers: [{ byteLength: 4 }],
+    bufferViews: [{ buffer: 9, byteLength: 4 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 1, type: "SCALAR" }],
+  }, 0, new ArrayBuffer(4))`), /buffer 9/);
+  assert.throws(() => call(context, `gltfReadAccessor({
+    buffers: [{ byteLength: 4 }],
+    bufferViews: [{ buffer: 0, byteLength: 8 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 1, type: "SCALAR" }],
+  }, 0, new ArrayBuffer(8))`), /bufferView 0.*bounds/);
+  assert.throws(() => call(context, `gltfReadAccessor({
+    buffers: [{ byteLength: 16 }],
+    bufferViews: [{ buffer: 0, byteOffset: 4, byteLength: 4 }],
+    accessors: [{ bufferView: 0, byteOffset: 0, componentType: 5126, count: 2, type: "SCALAR" }],
+  }, 0, new ArrayBuffer(16))`), /accessor 0 exceeds bufferView 0 bounds/);
+});
+
+function networkURLAPI() {
+  class LoaderURL extends URL {}
+  LoaderURL.createObjectURL = () => "blob:network";
+  return LoaderURL;
+}
+
+function okJSON(value) {
+  return { ok: true, status: 200, json: async () => value };
+}
+
+function okBytes(bytes) {
+  return { ok: true, status: 200, arrayBuffer: async () => bytes };
+}
+
+function makeTestGLB(json, binary) {
+  let jsonBytes = Buffer.from(JSON.stringify(json));
+  const jsonPadding = (4 - (jsonBytes.length % 4)) % 4;
+  if (jsonPadding) jsonBytes = Buffer.concat([jsonBytes, Buffer.alloc(jsonPadding, 0x20)]);
+  const binaryPadding = (4 - (binary.length % 4)) % 4;
+  const binaryBytes = binaryPadding ? Buffer.concat([binary, Buffer.alloc(binaryPadding)]) : binary;
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(12 + 8 + jsonBytes.length + 8 + binaryBytes.length, 8);
+  const jsonHeader = Buffer.alloc(8);
+  jsonHeader.writeUInt32LE(jsonBytes.length, 0);
+  jsonHeader.writeUInt32LE(0x4e4f534a, 4);
+  const binaryHeader = Buffer.alloc(8);
+  binaryHeader.writeUInt32LE(binaryBytes.length, 0);
+  binaryHeader.writeUInt32LE(0x004e4942, 4);
+  return Buffer.concat([header, jsonHeader, jsonBytes, binaryHeader, binaryBytes]);
+}
+
+test(".gltf loading fetches mixed data and relative buffer URIs by index", async () => {
+  const positionBytes = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]).buffer;
+  const indexBytes = new Uint16Array([2, 1, 0]).buffer;
+  const dataURI = "data:application/octet-stream;base64," + Buffer.from(positionBytes).toString("base64");
+  const modelURL = "/models/multi.gltf";
+  const fetched = [];
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: [
+      { uri: dataURI, byteLength: positionBytes.byteLength },
+      { uri: "mesh/indices.bin", byteLength: indexBytes.byteLength },
+    ],
+    bufferViews: [
+      { buffer: 0, byteLength: positionBytes.byteLength },
+      { buffer: 1, byteLength: indexBytes.byteLength },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: 1, componentType: 5123, count: 3, type: "SCALAR" },
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+    nodes: [{ mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+  };
+  const { context } = createLoaderContext({
+    location: { href: "http://localhost:3000/" },
+    urlAPI: networkURLAPI(),
+    fetch: async (url, init) => {
+      fetched.push({ url, init });
+      if (url === modelURL) return okJSON(doc);
+      if (url === dataURI) return okBytes(positionBytes);
+      if (url === "http://localhost:3000/models/mesh/indices.bin") return okBytes(indexBytes);
+      throw new Error("unexpected fetch: " + url);
+    },
+  });
+  const scene = await call(context,
+    `sceneLoadGLTFModel(${JSON.stringify(modelURL)})`);
+  assert.deepEqual(Array.from(scene.objects[0].vertices.positions), [0, 1, 0, 1, 0, 0, 0, 0, 0]);
+  assert.deepEqual(fetched.map((entry) => entry.url), [
+    modelURL,
+    dataURI,
+    "http://localhost:3000/models/mesh/indices.bin",
+  ]);
+  assert.ok(fetched.every((entry) => entry.init.credentials === "same-origin"));
+});
+
+test(".gltf buffer fetch failures identify the buffer index and URL", async () => {
+  const dataURI = "data:application/octet-stream;base64,AAAA";
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: [
+      { uri: dataURI, byteLength: 3 },
+      { uri: "missing.bin", byteLength: 4 },
+    ],
+    scenes: [{ nodes: [] }],
+    scene: 0,
+    nodes: [],
+  };
+  const { context } = createLoaderContext({
+    location: { href: "http://localhost:3000/" },
+    urlAPI: networkURLAPI(),
+    fetch: async (url) => {
+      if (url === "/models/failure.gltf") return okJSON(doc);
+      if (url === dataURI) return okBytes(new Uint8Array([1, 2, 3]).buffer);
+      if (url === "http://localhost:3000/models/missing.bin") {
+        return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
+      }
+      throw new Error("unexpected fetch: " + url);
+    },
+  });
+  await assert.rejects(
+    call(context, "sceneLoadGLTFModel('/models/failure.gltf')"),
+    /Failed to fetch glTF buffer 1: http:\/\/localhost:3000\/models\/missing\.bin \(HTTP 404\)/,
+  );
+});
+
+test("GLB BIN buffer 0 can share a document with external buffer 1", async () => {
+  const positionBytes = Buffer.from(new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]).buffer);
+  const indexBytes = Buffer.from(new Uint16Array([2, 1, 0]).buffer);
+  const glbBinary = Buffer.concat([positionBytes, Buffer.alloc(1)]);
+  const doc = {
+    asset: { version: "2.0" },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: 1, componentType: 5123, count: 3, type: "SCALAR" },
+    ],
+    buffers: [
+      // The BIN chunk is padded from 37 declared bytes to 40, exercising the
+      // allowed three-byte GLB padding while the accessor reads 36 bytes.
+      { byteLength: positionBytes.length + 1 },
+      { uri: "indices.bin", byteLength: indexBytes.length },
+    ],
+    bufferViews: [
+      { buffer: 0, byteLength: positionBytes.length },
+      { buffer: 1, byteLength: indexBytes.length },
+    ],
+  };
+  const glb = makeTestGLB(doc, glbBinary);
+  const shortGlb = makeTestGLB(doc, positionBytes.subarray(0, 32));
+  const overpaddedGlb = makeTestGLB(doc, Buffer.concat([positionBytes, Buffer.alloc(8)]));
+  const glbArrayBuffer = glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
+  const shortGlbArrayBuffer = shortGlb.buffer.slice(shortGlb.byteOffset, shortGlb.byteOffset + shortGlb.byteLength);
+  const overpaddedGlbArrayBuffer = overpaddedGlb.buffer.slice(
+    overpaddedGlb.byteOffset, overpaddedGlb.byteOffset + overpaddedGlb.byteLength,
+  );
+  const paddedIndices = Buffer.concat([indexBytes, Buffer.alloc(3)]);
+  const paddedIndicesArrayBuffer = paddedIndices.buffer.slice(
+    paddedIndices.byteOffset, paddedIndices.byteOffset + paddedIndices.byteLength,
+  );
+  const fetched = [];
+  const { context } = createLoaderContext({
+    location: { href: "http://localhost:3000/" },
+    urlAPI: networkURLAPI(),
+    fetch: async (url, init) => {
+      fetched.push({ url, init });
+      if (url === "/models/mixed.glb") return okBytes(glbArrayBuffer);
+      if (url === "/models/short.glb") return okBytes(shortGlbArrayBuffer);
+      if (url === "/models/overpadded.glb") return okBytes(overpaddedGlbArrayBuffer);
+      if (url === "http://localhost:3000/models/indices.bin") {
+        return okBytes(paddedIndicesArrayBuffer);
+      }
+      throw new Error("unexpected fetch: " + url);
+    },
+  });
+  const scene = await call(context, "sceneLoadGLTFModel('/models/mixed.glb')");
+  assert.deepEqual(Array.from(scene.objects[0].vertices.positions), [0, 1, 0, 1, 0, 0, 0, 0, 0]);
+  assert.deepEqual(fetched.map((entry) => entry.url), [
+    "/models/mixed.glb",
+    "http://localhost:3000/models/indices.bin",
+  ]);
+  assert.ok(fetched.every((entry) => entry.init.credentials === "same-origin"));
+  await assert.rejects(
+    call(context, "sceneLoadGLTFModel('/models/short.glb')"),
+    /glTF buffer 0 is shorter than declared byteLength 37/,
+  );
+  await assert.rejects(
+    call(context, "sceneLoadGLTFModel('/models/overpadded.glb')"),
+    /glTF buffer 0 embedded BIN has more than 3 padding bytes/,
+  );
 });
 
 // --- KHR_materials_* factor mapping ----------------------------------------
@@ -1040,6 +1464,86 @@ test('CUBICSPLINE weights channel yields componentCount 5, not 15', () => {
   context.gltfReadAccessor = (gltfDocument, accessorIndex, binaryBuffer) => accessorIndex === 0 ? new Float32Array([0, 1]) : new Float32Array(30);
   const [anim] = call(context, `gltfExtractAnimations(${JSON.stringify({ animations: [{ samplers: [{ input: 0, output: 1, interpolation: 'CUBICSPLINE' }], channels: [{ sampler: 0, target: { node: 2, path: 'weights' } }] }] })})`);
   assert.equal(anim.channels[0].componentCount, 5);
+});
+
+test("CUBICSPLINE channels read real multi-buffer accessors with full triplet fidelity", () => {
+  const { context, sandbox } = createLoaderContext();
+  // Integration coverage for the multi-buffer + CUBICSPLINE merge: input key
+  // times live in buffer 0 while each channel's output triplets (inTangent,
+  // value, outTangent per keyframe) live in separate nonzero-index buffers.
+  // No accessor stubs: gltfExtractAnimations reads every sample through
+  // gltfReadAccessor against declared buffers/bufferViews.
+  const timesBuffer = new Float32Array([0, 1]).buffer;
+  const translationBuffer = new Float32Array([
+    // Key 0: inTangent, value, outTangent (width 3 each).
+    0, 0, 0,  1, 2, 3,  4, 5, 6,
+    // Key 1.
+    7, 8, 9,  10, 11, 12,  13, 14, 15,
+  ]).buffer;
+  const weightsBuffer = new Float32Array([
+    // Key 0: inTangent, value, outTangent (width 5 each).
+    0, 0, 0, 0, 0,  1, 2, 3, 4, 5,  0, 0, 0, 0, 0,
+    // Key 1.
+    0, 0, 0, 0, 0,  6, 7, 8, 9, 10,  0, 0, 0, 0, 0,
+  ]).buffer;
+  const buffers = [timesBuffer, translationBuffer, weightsBuffer];
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: buffers.map((buffer) => ({ byteLength: buffer.byteLength })),
+    bufferViews: [
+      { buffer: 0, byteLength: 8 },
+      { buffer: 1, byteLength: 72 },
+      { buffer: 2, byteLength: 120 },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 2, type: "SCALAR" },
+      { bufferView: 1, componentType: 5126, count: 6, type: "VEC3" },
+      { bufferView: 2, componentType: 5126, count: 30, type: "SCALAR" },
+    ],
+    animations: [{
+      name: "spline",
+      samplers: [
+        { input: 0, output: 1, interpolation: "CUBICSPLINE" },
+        { input: 0, output: 2, interpolation: "CUBICSPLINE" },
+      ],
+      channels: [
+        { sampler: 0, target: { node: 3, path: "translation" } },
+        { sampler: 1, target: { node: 4, path: "weights" } },
+      ],
+    }],
+  };
+  sandbox.__splineDoc = doc;
+  sandbox.__splineBuffers = buffers;
+  // plain()/JSON turns realm TypedArrays into numeric-keyed objects with no
+  // length, so flatten times/values to real arrays inside the VM first.
+  const [anim] = plain(call(context, `
+    gltfExtractAnimations(__splineDoc, __splineBuffers).map((animation) => ({
+      ...animation,
+      channels: animation.channels.map((channel) => ({
+        ...channel,
+        times: Array.from(channel.times),
+        values: Array.from(channel.values),
+      })),
+    }))
+  `));
+  assert.equal(anim.name, "spline");
+  assert.equal(anim.duration, 1);
+  assert.deepEqual(anim.channels.map((ch) => [ch.targetID, ch.targetNode, ch.property]), [
+    [3, 3, "translation"],
+    [4, 4, "weights"],
+  ]);
+  assert.deepEqual(anim.channels.map((ch) => ch.interpolation), ["CUBICSPLINE", "CUBICSPLINE"]);
+  assert.deepEqual(anim.channels.map((ch) => ch.componentCount), [3, 5]);
+  assert.deepEqual(anim.channels[0].times, [0, 1]);
+  assert.deepEqual(anim.channels[1].times, [0, 1]);
+  assert.deepEqual(anim.channels[0].values, [
+    0, 0, 0, 1, 2, 3, 4, 5, 6,
+    7, 8, 9, 10, 11, 12, 13, 14, 15,
+  ]);
+  assert.deepEqual(anim.channels[1].values, [
+    0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 6, 7, 8, 9, 10, 0, 0, 0, 0, 0,
+  ]);
 });
 
 // --- KHR_mesh_quantization --------------------------------------------------

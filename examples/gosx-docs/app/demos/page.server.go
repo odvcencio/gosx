@@ -17,6 +17,14 @@ func init() {
 					"additional": AdditionalDemos(),
 				}, nil
 			},
+			Bindings: func(_ *route.RouteContext, _ route.FilePage, _ any) route.FileTemplateBindings {
+				return route.FileTemplateBindings{Funcs: map[string]any{
+					// Resolves the documentation guides that teach the
+					// concepts behind a demo, straight from the shared
+					// catalogs; unmapped demos render no guide links.
+					"demoGuides": RelatedGuides,
+				}}
+			},
 		},
 	)
 }

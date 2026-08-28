@@ -8,7 +8,7 @@
   /**
    * @typedef {object} GoSXSceneModelAsset
    * @property {object} json
-   * @property {ArrayBuffer|null} [binaryBuffer]
+   * @property {ArrayBuffer|ArrayBuffer[]|null} [binaryBuffer]
    */
 
   // ---------------------------------------------------------------------------
@@ -206,37 +206,183 @@
     }
   }
 
-  function gltfReadAccessor(gltf, accessorIndex, binaryBuffer) {
-    var accessor = gltf.accessors[accessorIndex];
-    var bufferView = gltf.bufferViews[accessor.bufferView];
-    gltfRejectCompressedBufferView(bufferView);
-    var buffer = binaryBuffer;
+  function gltfNonnegativeInteger(value) {
+    return typeof value === "number" && isFinite(value) && value >= 0 && Math.floor(value) === value;
+  }
 
-    var byteOffset = (bufferView.byteOffset || 0) + (accessor.byteOffset || 0);
+  function gltfResolveBuffer(gltf, source, index, owner) {
+    if (!gltfNonnegativeInteger(index)) {
+      throw new Error("glTF " + owner + " has invalid buffer index " + index);
+    }
+    var declarations = gltf && gltf.buffers;
+    if (declarations != null && !Array.isArray(declarations)) {
+      throw new Error("glTF buffers are invalid for " + owner);
+    }
+    if (declarations && index >= declarations.length) {
+      throw new Error("glTF " + owner + " references unavailable buffer " + index);
+    }
+    var declaration = declarations ? declarations[index] : null;
+    if (declarations && (!declaration || typeof declaration !== "object")) {
+      throw new Error("glTF buffer " + index + " is unavailable for " + owner);
+    }
+    var buffer = Array.isArray(source) ? source[index] : index === 0 ? source : null;
+    if (!(typeof ArrayBuffer !== "undefined" && buffer instanceof ArrayBuffer)) {
+      throw new Error("glTF buffer " + index + " is unavailable for " + owner);
+    }
+    var bytes = new Uint8Array(buffer);
+    var declaredLength = declaration && declaration.byteLength;
+    if (declaredLength != null && !gltfNonnegativeInteger(declaredLength)) {
+      throw new Error("glTF buffer " + index + " has invalid byteLength " + declaredLength);
+    }
+    var byteLength = declaredLength == null ? bytes.byteLength : declaredLength;
+    if (bytes.byteLength < byteLength) {
+      throw new Error("glTF buffer " + index + " is shorter than declared byteLength " + byteLength);
+    }
+    return { bytes: bytes, byteLength: byteLength };
+  }
+
+  function gltfResolveBufferView(gltf, source, index, owner) {
+    if (!gltf || !gltfNonnegativeInteger(index) || !Array.isArray(gltf.bufferViews) ||
+        index >= gltf.bufferViews.length || !gltf.bufferViews[index] ||
+        typeof gltf.bufferViews[index] !== "object") {
+      throw new Error("glTF " + owner + " references unavailable bufferView " + index);
+    }
+    var bufferView = gltf.bufferViews[index];
+    gltfRejectCompressedBufferView(bufferView);
+    var bufferIndex = bufferView.buffer == null ? 0 : bufferView.buffer;
+    var resolved = gltfResolveBuffer(gltf, source, bufferIndex, owner + " bufferView " + index);
+    var offset = bufferView.byteOffset == null ? 0 : bufferView.byteOffset;
+    if (!gltfNonnegativeInteger(offset)) {
+      throw new Error("glTF bufferView " + index + " has invalid byteOffset " + offset);
+    }
+    var length = bufferView.byteLength == null ? resolved.byteLength - offset : bufferView.byteLength;
+    if (!gltfNonnegativeInteger(length) || offset > resolved.byteLength ||
+        length > resolved.byteLength - offset) {
+      throw new Error("glTF bufferView " + index + " exceeds buffer " + bufferIndex + " bounds");
+    }
+    return {
+      record: bufferView,
+      bytes: resolved.bytes,
+      bufferByteLength: resolved.byteLength,
+      offset: offset,
+      byteLength: length,
+    };
+  }
+
+  function gltfReadAccessorBase(gltf, accessor, label, source) {
     var componentCount = gltfAccessorTypeCount(accessor.type);
     var componentFormat = GLTF_COMPONENT_FORMATS[accessor.componentType] || GLTF_FLOAT32_FORMAT;
     var componentSize = componentFormat[0];
-    var stride = bufferView.byteStride || 0;
-    var totalElements = accessor.count * componentCount;
+    var count = accessor.count;
+    if (!gltfNonnegativeInteger(count)) {
+      throw new Error("glTF " + label + " has invalid count " + count);
+    }
+    var totalElements = count * componentCount;
+    if (!isFinite(totalElements)) {
+      throw new Error("glTF " + label + " has an oversized element count");
+    }
+    if (accessor.bufferView == null) {
+      return new componentFormat[1](totalElements);
+    }
+    var view = gltfResolveBufferView(gltf, source, accessor.bufferView, label);
+    var accessorOffset = accessor.byteOffset == null ? 0 : accessor.byteOffset;
+    if (!gltfNonnegativeInteger(accessorOffset)) {
+      throw new Error("glTF " + label + " has invalid byteOffset " + accessorOffset);
+    }
+    var elementBytes = componentCount * componentSize;
+    var stride = view.record.byteStride == null ? 0 : view.record.byteStride;
+    if (!gltfNonnegativeInteger(stride) || (stride && stride < elementBytes) ||
+        (stride && stride % componentSize !== 0)) {
+      throw new Error("glTF bufferView " + accessor.bufferView + " has invalid byteStride " + stride);
+    }
+    var step = stride || elementBytes;
+    var required = count ? (count - 1) * step + elementBytes : 0;
+    if (!isFinite(required) || accessorOffset > view.byteLength ||
+        required > view.byteLength - accessorOffset) {
+      throw new Error("glTF " + label + " exceeds bufferView " + accessor.bufferView + " bounds");
+    }
+    var byteOffset = view.offset + accessorOffset;
+    if (byteOffset % componentSize !== 0) {
+      throw new Error("glTF " + label + " has an unaligned byteOffset " + byteOffset);
+    }
+    if (!stride || stride === elementBytes) {
+      return gltfTypedArrayView(
+        view.bytes.buffer, view.bytes.byteOffset + byteOffset,
+        accessor.componentType, totalElements);
+    }
+    // Interleaved: copy element-by-element.
+    var result = new Float32Array(totalElements);
+    var src = new DataView(view.bytes.buffer, view.bytes.byteOffset, view.bufferByteLength);
+    for (var i = 0; i < count; i++) {
+      var elemOffset = byteOffset + i * stride;
+      for (var c = 0; c < componentCount; c++) {
+        var co = elemOffset + c * componentSize;
+        // One reader per componentType, little-endian throughout; single-byte
+        // readers ignore the endianness argument and unknown types read
+        // through the getFloat32 fallback recorded above.
+        result[i * componentCount + c] = src[componentFormat[2]](co, true);
+      }
+    }
+    return result;
+  }
 
-    // Fast path: tightly packed data with no stride.
-    var result;
-    if (!stride || stride === componentCount * componentSize) {
-      result = gltfTypedArrayView(buffer, byteOffset, accessor.componentType, totalElements);
-    } else {
-      // Interleaved: copy element-by-element.
-      result = new Float32Array(totalElements);
-      var src = new DataView(buffer);
-      for (var i = 0; i < accessor.count; i++) {
-        var elemOffset = byteOffset + i * stride;
-        for (var c = 0; c < componentCount; c++) {
-          var co = elemOffset + c * componentSize;
-          // One reader per componentType, little-endian throughout; single-byte
-          // readers ignore the endianness argument and unknown types read
-          // through the getFloat32 fallback recorded above.
-          result[i * componentCount + c] =
-            src[componentFormat[2]](co, true);
+  function gltfReadAccessor(gltf, accessorIndex, binaryBuffer) {
+    if (!gltf || !Array.isArray(gltf.accessors) || !gltf.accessors[accessorIndex]) {
+      throw new Error("glTF accessor " + accessorIndex + " is unavailable");
+    }
+    var accessor = gltf.accessors[accessorIndex];
+    var result = gltfReadAccessorBase(gltf, accessor, "accessor " + accessorIndex, binaryBuffer);
+    var sparse = accessor.sparse;
+    if (sparse && typeof sparse === "object") {
+      var sparseCount = sparse.count;
+      if (!gltfNonnegativeInteger(sparseCount) || sparseCount > accessor.count) {
+        throw new Error("glTF accessor " + accessorIndex + " has invalid sparse count " + sparseCount);
+      }
+      if (sparseCount) {
+        var indices = sparse.indices;
+        var values = sparse.values;
+        if (!indices || !values || indices.bufferView == null || values.bufferView == null) {
+          throw new Error("glTF accessor " + accessorIndex + " has incomplete sparse data");
         }
+        if (indices.componentType !== 5121 && indices.componentType !== 5123 && indices.componentType !== 5125) {
+          throw new Error("glTF accessor " + accessorIndex + " has invalid sparse index componentType " + indices.componentType);
+        }
+        var indexAccessor = {
+          bufferView: indices.bufferView,
+          byteOffset: indices.byteOffset == null ? 0 : indices.byteOffset,
+          componentType: indices.componentType,
+          count: sparseCount,
+          type: "SCALAR",
+        };
+        var valueAccessor = {
+          bufferView: values.bufferView,
+          byteOffset: values.byteOffset == null ? 0 : values.byteOffset,
+          componentType: accessor.componentType,
+          count: sparseCount,
+          type: accessor.type,
+        };
+        var sparseIndices = gltfReadAccessorBase(
+          gltf, indexAccessor, "accessor " + accessorIndex + " sparse indices", binaryBuffer);
+        var sparseValues = gltfReadAccessorBase(
+          gltf, valueAccessor, "accessor " + accessorIndex + " sparse values", binaryBuffer);
+        var componentCount = gltfAccessorTypeCount(accessor.type);
+        var componentFormat = GLTF_COMPONENT_FORMATS[accessor.componentType] || GLTF_FLOAT32_FORMAT;
+        var sparseResult = new componentFormat[1](result);
+        var previous = -1;
+        for (var s = 0; s < sparseCount; s++) {
+          var destination = sparseIndices[s];
+          if (!gltfNonnegativeInteger(destination) || destination >= accessor.count) {
+            throw new Error("glTF accessor " + accessorIndex + " sparse index " + destination + " is out of range");
+          }
+          if (destination <= previous) {
+            throw new Error("glTF accessor " + accessorIndex + " sparse indices are not strictly increasing");
+          }
+          previous = destination;
+          for (var c = 0; c < componentCount; c++) {
+            sparseResult[destination * componentCount + c] = sparseValues[s * componentCount + c];
+          }
+        }
+        result = sparseResult;
       }
     }
     return accessor.normalized ? gltfNormalizeAccessorValues(result, accessor.componentType) : result;
@@ -1622,7 +1768,7 @@
     }
 
     // Embedded image: create a blob URL from the buffer view.
-    if (image.bufferView != null && binaryBuffer) {
+    if (image.bufferView != null) {
       return gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer);
     }
 
@@ -1630,11 +1776,10 @@
   }
 
   function gltfCreateBlobURLFromBufferView(gltf, image, binaryBuffer) {
-    var bufferView = gltf.bufferViews[image.bufferView];
-    var byteOffset = bufferView.byteOffset || 0;
-    var byteLength = bufferView.byteLength;
+    var view = gltfResolveBufferView(gltf, binaryBuffer, image.bufferView, "image");
     var mimeType = image.mimeType || "application/octet-stream";
-    var slice = binaryBuffer.slice(byteOffset, byteOffset + byteLength);
+    var start = view.bytes.byteOffset + view.offset;
+    var slice = view.bytes.buffer.slice(start, start + view.byteLength);
     var blob = new Blob([slice], { type: mimeType });
     return URL.createObjectURL(blob);
   }
@@ -1878,9 +2023,10 @@
   }
 
   // Shared alpha-pass gate: BLEND or sub-unit opacity renders in the alpha
-  // pass, except MASK. MASK belongs to opaque/depth-writing routing and
-  // carries the authored alphaCutoff through this checkpoint; fragment
-  // discard and shadow alpha handling are still pending. One predicate
+  // pass. MASK belongs to opaque/depth-writing routing and carries the
+  // authored alphaCutoff through this checkpoint, where the masked PBR path
+  // performs strict alphaCutoff fragment discard while writing depth like
+  // opaque geometry. One predicate
   // backs the points/lines blendMode strings and the mesh renderPass so
   // the three sites cannot drift apart.
   function gltfIsAlphaMaterial(material) {
@@ -2620,30 +2766,51 @@
     return response;
   }
 
-  async function gltfFetchExternalBuffers(gltf, baseURL) {
-    if (!gltf.buffers || !gltf.buffers.length) {
-      return null;
+  async function gltfFetchExternalBuffers(gltf, baseURL, embeddedBuffer) {
+    var declarations = gltf && gltf.buffers;
+    if (declarations != null && !Array.isArray(declarations)) {
+      throw new Error("glTF buffers are invalid");
     }
-
-    // For .gltf files with a single buffer (the common case), fetch it
-    // and return the ArrayBuffer directly. Multi-buffer gltf files are
-    // rare; we handle only buffer 0 for now and fall back gracefully.
-    var buffer0 = gltf.buffers[0];
-    if (!buffer0 || !buffer0.uri) {
-      return null;
+    if (!Array.isArray(declarations) || !declarations.length) {
+      return embeddedBuffer == null ? null : embeddedBuffer;
     }
-
-    var uri = buffer0.uri;
-
-    // Data URI.
-    if (uri.indexOf("data:") === 0) {
-      var response = await fetch(uri);
-      return await response.arrayBuffer();
+    var buffers = [];
+    for (var i = 0; i < declarations.length; i++) {
+      var declaration = declarations[i];
+      if (!declaration || typeof declaration !== "object") {
+        throw new Error("glTF buffer " + i + " is unavailable");
+      }
+      var uri = typeof declaration.uri === "string" ? declaration.uri.trim() : "";
+      if (!uri && i === 0 && embeddedBuffer != null) {
+        var embeddedLength = declaration.byteLength;
+        if (embeddedLength != null && !gltfNonnegativeInteger(embeddedLength)) {
+          throw new Error("glTF buffer 0 has invalid byteLength " + embeddedLength);
+        }
+        if (embeddedLength != null && embeddedBuffer.byteLength < embeddedLength) {
+          throw new Error("glTF buffer 0 is shorter than declared byteLength " + embeddedLength);
+        }
+        if (embeddedLength != null && embeddedBuffer.byteLength > embeddedLength + 3) {
+          throw new Error("glTF buffer 0 embedded BIN has more than 3 padding bytes");
+        }
+        buffers.push(embeddedBuffer);
+        continue;
+      }
+      if (!uri) {
+        throw new Error("glTF buffer " + i + " has no URI or embedded data");
+      }
+      var resolved = /^data:/i.test(uri) ? uri : new URL(uri, baseURL).toString();
+      var response = await gltfFetchModelResource(resolved, "glTF buffer " + i);
+      var data = await response.arrayBuffer();
+      var declaredLength = declaration.byteLength;
+      if (declaredLength != null && !gltfNonnegativeInteger(declaredLength)) {
+        throw new Error("glTF buffer " + i + " has invalid byteLength " + declaredLength);
+      }
+      if (declaredLength != null && data.byteLength < declaredLength) {
+        throw new Error("glTF buffer " + i + " is shorter than declared byteLength " + declaredLength);
+      }
+      buffers.push(data);
     }
-
-    // Relative or absolute URL.
-    var resolved = new URL(uri, baseURL).toString();
-    return (await gltfFetchModelResource(resolved, "glTF buffer")).arrayBuffer();
+    return buffers.length === 1 ? buffers[0] : buffers;
   }
 
   function gltfAbsoluteURL(url) {
@@ -2894,20 +3061,26 @@
       response = await gltfFetchModelResource(url, "GLB");
       var arrayBuffer = await response.arrayBuffer();
       var parsed = sceneParseGLB(arrayBuffer);
+      var parsedBufferPromise = gltfFetchExternalBuffers(parsed.json, assetURL, parsed.binaryBuffer);
+      parsedBufferPromise.catch(function() {});
       var baseSrc = gltfPointOverlayBaseSrc(parsed.json);
       if (baseSrc) {
         var baseURL = new URL(baseSrc, assetURL).toString();
         var baseResponse = await gltfFetchModelResource(baseURL, "GLB base");
         var baseParsed = sceneParseGLB(await baseResponse.arrayBuffer());
+        var baseBufferPromise = gltfFetchExternalBuffers(baseParsed.json, baseURL, baseParsed.binaryBuffer);
+        baseBufferPromise.catch(function() {});
         gltfResolveExternalImageURIs(baseParsed.json, baseURL, await variantContextPromise);
-        var baseScene = gltfExtractScene(baseParsed.json, baseParsed.binaryBuffer);
-        gltfApplyPointOverlay(baseScene, gltfCollectPointOverlay(parsed.json, parsed.binaryBuffer));
+        var baseBuffers = await baseBufferPromise;
+        var parsedBuffers = await parsedBufferPromise;
+        var baseScene = gltfExtractScene(baseParsed.json, baseBuffers);
+        gltfApplyPointOverlay(baseScene, gltfCollectPointOverlay(parsed.json, parsedBuffers));
         // A layer that exists only in this rotation — a phenomenon absent from
         // the reference geometry — ships as a full mesh in the overlay. Those
         // extract standalone here; append the ones the base does not already
         // carry so presence drift adds content instead of dropping it.
         // Attribute-only overlay meshes have no POSITION and never extract.
-        var overlayScene = gltfExtractScene(parsed.json, parsed.binaryBuffer);
+        var overlayScene = gltfExtractScene(parsed.json, parsedBuffers);
         if (overlayScene.points && overlayScene.points.length) {
           var basePointIDs = {};
           for (var bi = 0; bi < baseScene.points.length; bi++) {
@@ -2922,7 +3095,7 @@
         return baseScene;
       }
       gltfResolveExternalImageURIs(parsed.json, assetURL, await variantContextPromise);
-      return gltfExtractScene(parsed.json, parsed.binaryBuffer);
+      return gltfExtractScene(parsed.json, await parsedBufferPromise);
     }
 
     // .gltf JSON file.

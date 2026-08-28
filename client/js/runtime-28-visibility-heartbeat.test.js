@@ -1,9 +1,13 @@
 "use strict";
-// Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216): the
-// same-origin GET on an interval, paused while the document is hidden, a
-// catch-up ping on visibility return, and never more than one ping in
-// flight at a time. The lifecycle deliberately mirrors periodic
-// revalidation's own tests in runtime-14-navigation.test.js.
+// Visibility-aware heartbeat ping (data-gosx-heartbeat, gosx#216): a
+// same-origin GET on an interval while the document is visible, and a
+// slower same-origin GET on a separate, configurable interval
+// (data-gosx-heartbeat-hidden-interval) while the document is hidden, so a
+// server can tell a backgrounded tab from a closed browser. A hidden ping
+// carries the X-GoSX-Heartbeat-Visibility: hidden header; a visible ping
+// carries no such header. Never more than one ping in flight at a time.
+// The lifecycle deliberately mirrors periodic revalidation's own tests in
+// runtime-14-navigation.test.js.
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -15,7 +19,6 @@ const {
   runScript,
   flushAsyncWork,
   installManualTimers,
-  installManualClock,
   buildNavigatedDocument,
 } = require("./runtime-test-harness.js");
 
@@ -40,6 +43,11 @@ test("declarative heartbeat pings its endpoint on the declared interval while th
   assert.equal(env.fetchCalls[0].url, pingURL);
   assert.equal(env.fetchCalls[0].init.method, "GET");
   assert.equal(env.fetchCalls[0].init.credentials, "same-origin");
+  assert.equal(
+    env.fetchCalls[0].init.headers,
+    undefined,
+    "a visible tick must carry no hidden marker",
+  );
 });
 
 test("declarative heartbeat pings an element other than body the same way", async () => {
@@ -62,11 +70,12 @@ test("declarative heartbeat pings an element other than body the same way", asyn
   assert.equal(env.fetchCalls[0].url, pingURL);
 });
 
-test("declarative heartbeat skips a tick while the document is hidden", async () => {
+test("declarative heartbeat does not fire a normal-interval tick while the document is hidden", async () => {
   const pingURL = "http://localhost:3000/api/presence/ping";
   const main = new FakeElement("main", null);
   main.setAttribute("data-gosx-heartbeat", "/api/presence/ping");
-  main.setAttribute("data-gosx-heartbeat-interval", "30s");
+  main.setAttribute("data-gosx-heartbeat-interval", "4s");
+  main.setAttribute("data-gosx-heartbeat-hidden-interval", "60s");
   const env = createContext({
     elements: [main],
     fetchRoutes: { [pingURL]: { text: "ok" } },
@@ -76,66 +85,116 @@ test("declarative heartbeat skips a tick while the document is hidden", async ()
   const timers = installManualTimers(env.context);
   runScript(navigationSource, env.context, "navigation_runtime.js");
 
-  timers.runInterval(30000);
+  // A hidden document must arm the hidden cadence, not the normal one — the
+  // normal 4s delay has no interval registered against it at all.
+  const fired = timers.runInterval(4000);
   await flushAsyncWork();
 
-  assert.equal(env.fetchCalls.length, 0, "a hidden document must skip the tick entirely");
+  assert.equal(fired, 0, "the normal interval must not be armed while hidden");
+  assert.equal(env.fetchCalls.length, 0, "a hidden document must not tick at the normal interval");
 });
 
-test("declarative heartbeat runs one immediate catch-up ping when a full interval elapsed while hidden", async () => {
+test("declarative heartbeat fires at the hidden interval while the document is hidden, marked hidden", async () => {
   const pingURL = "http://localhost:3000/api/presence/ping";
   const main = new FakeElement("main", null);
   main.setAttribute("data-gosx-heartbeat", "/api/presence/ping");
-  main.setAttribute("data-gosx-heartbeat-interval", "30s");
+  main.setAttribute("data-gosx-heartbeat-interval", "4s");
+  main.setAttribute("data-gosx-heartbeat-hidden-interval", "60s");
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: { [pingURL]: { text: "ok" } },
+    visibilityState: "hidden",
+  });
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  timers.runInterval(60000);
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1, "a hidden document still pings, at the slower hidden interval");
+  assert.equal(env.fetchCalls[0].url, pingURL);
+  assert.equal(env.fetchCalls[0].init.method, "GET");
+  assert.equal(
+    env.fetchCalls[0].init.headers && env.fetchCalls[0].init.headers["X-GoSX-Heartbeat-Visibility"],
+    "hidden",
+    "a hidden ping must carry the hidden marker header",
+  );
+});
+
+test("declarative heartbeat defaults its hidden interval to 60s when the attribute is absent", async () => {
+  const pingURL = "http://localhost:3000/api/presence/ping";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-heartbeat", "/api/presence/ping");
+  main.setAttribute("data-gosx-heartbeat-interval", "4s");
+  const env = createContext({
+    elements: [main],
+    fetchRoutes: { [pingURL]: { text: "ok" } },
+    visibilityState: "hidden",
+  });
+
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  timers.runInterval(60000);
+  await flushAsyncWork();
+
+  assert.equal(env.fetchCalls.length, 1, "the hidden interval defaults to 60s with no attribute present");
+});
+
+test("declarative heartbeat resumes the normal interval promptly when the document becomes visible again", async () => {
+  const pingURL = "http://localhost:3000/api/presence/ping";
+  const main = new FakeElement("main", null);
+  main.setAttribute("data-gosx-heartbeat", "/api/presence/ping");
+  main.setAttribute("data-gosx-heartbeat-interval", "4s");
+  main.setAttribute("data-gosx-heartbeat-hidden-interval", "60s");
   const env = createContext({
     elements: [main],
     fetchRoutes: { [pingURL]: { text: "ok" } },
   });
 
-  const clock = installManualClock(env.context, 0);
   const timers = installManualTimers(env.context);
   runScript(navigationSource, env.context, "navigation_runtime.js");
 
   env.document.visibilityState = "hidden";
   env.document.dispatchEvent({ type: "visibilitychange" });
 
-  clock.advance(30000);
+  // The hidden cadence is now armed; the normal 4s cadence must be torn
+  // down, not merely left to finish counting down.
+  assert.equal(timers.runInterval(4000), 0, "the normal interval must not survive a transition to hidden");
+
   env.document.visibilityState = "visible";
   env.document.dispatchEvent({ type: "visibilitychange" });
+
+  // Visibility recovery must rearm the normal cadence immediately — a
+  // browser throttles a hidden tab's timers independently of this
+  // rearming, so the test never depends on the hidden timer firing on
+  // schedule, only on the runtime's own rearm-on-visible behavior.
+  const fired = timers.runInterval(4000);
   await flushAsyncWork();
 
-  assert.equal(env.fetchCalls.length, 1, "one full interval elapsed while hidden, so visibility recovery pings immediately");
-
-  // A second visible event without an intervening hidden period must not
-  // fire another catch-up ping.
-  env.document.dispatchEvent({ type: "visibilitychange" });
-  await flushAsyncWork();
-  assert.equal(env.fetchCalls.length, 1, "the catch-up ping fires at most once per hidden period");
+  assert.equal(fired, 1, "visibility recovery must rearm the normal interval promptly");
+  assert.equal(env.fetchCalls.length, 1);
+  assert.equal(
+    env.fetchCalls[0].init.headers,
+    undefined,
+    "a normal-interval tick after visibility recovery carries no hidden marker",
+  );
 });
 
-test("declarative heartbeat skips the catch-up ping when less than a full interval elapsed while hidden", async () => {
-  const pingURL = "http://localhost:3000/api/presence/ping";
+test("declarative heartbeat logs one warning and stays disabled for an invalid hidden interval", () => {
   const main = new FakeElement("main", null);
   main.setAttribute("data-gosx-heartbeat", "/api/presence/ping");
-  main.setAttribute("data-gosx-heartbeat-interval", "30s");
-  const env = createContext({
-    elements: [main],
-    fetchRoutes: { [pingURL]: { text: "ok" } },
-  });
+  main.setAttribute("data-gosx-heartbeat-interval", "5s");
+  main.setAttribute("data-gosx-heartbeat-hidden-interval", "not-a-duration");
+  const env = createContext({ elements: [main] });
+  const timers = installManualTimers(env.context);
 
-  const clock = installManualClock(env.context, 0);
-  installManualTimers(env.context);
   runScript(navigationSource, env.context, "navigation_runtime.js");
 
-  env.document.visibilityState = "hidden";
-  env.document.dispatchEvent({ type: "visibilitychange" });
-
-  clock.advance(10000);
-  env.document.visibilityState = "visible";
-  env.document.dispatchEvent({ type: "visibilitychange" });
-  await flushAsyncWork();
-
-  assert.equal(env.fetchCalls.length, 0, "under one interval elapsed while hidden, so no catch-up ping runs");
+  assert.equal(timers.count(), 0);
+  assert.equal(env.consoleLogs.warn.length, 1);
+  assert.match(env.consoleLogs.warn[0], /data-gosx-heartbeat-hidden-interval/);
 });
 
 test("declarative heartbeat never starts a second overlapping ping while the previous one is in flight", async () => {

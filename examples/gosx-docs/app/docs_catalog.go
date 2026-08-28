@@ -15,6 +15,12 @@ type DocEntry struct {
 	Section     string
 	Source      string
 	Keywords    []string
+	// Demo, when non-empty, is the slug of the catalog demo that proves this
+	// guide's subject live in the browser. The docs shell renders a "See it
+	// live" link from it, and the demos index mirrors it back as related
+	// guides. Only set it when the demo genuinely exercises the capability
+	// the guide documents; the cross-link tests enforce the pairing.
+	Demo string
 }
 
 // DocSection groups guides into a stable learning path.
@@ -60,6 +66,7 @@ var docsCatalog = []DocSection{
 				Section:     "start",
 				Source:      "examples/gosx-docs/app/docs/components/page.gsx",
 				Keywords:    []string{"component", "props", "strict", "tsx", "legacy", "markup"},
+				Demo:        "playground",
 			},
 			{
 				Title:       "Compiler",
@@ -68,6 +75,7 @@ var docsCatalog = []DocSection{
 				Section:     "start",
 				Source:      "examples/gosx-docs/app/docs/compiler/page.gsx",
 				Keywords:    []string{"compiler", "grammar", "parser", "tree-sitter", "ir", "diagnostics"},
+				Demo:        "playground",
 			},
 		},
 	},
@@ -91,6 +99,7 @@ var docsCatalog = []DocSection{
 				Section:     "server",
 				Source:      "examples/gosx-docs/app/docs/forms/page.gsx",
 				Keywords:    []string{"forms", "actions", "validation", "csrf", "redirect", "errors"},
+				Demo:        "cms",
 			},
 			{
 				Title:       "Auth",
@@ -138,6 +147,7 @@ var docsCatalog = []DocSection{
 				Section:     "interactive",
 				Source:      "examples/gosx-docs/app/docs/islands/page.gsx",
 				Keywords:    []string{"islands", "hydration", "events", "handlers", "wasm", "vm"},
+				Demo:        "playground",
 			},
 			{
 				Title:       "Hubs & CRDT",
@@ -146,6 +156,7 @@ var docsCatalog = []DocSection{
 				Section:     "interactive",
 				Source:      "examples/gosx-docs/app/docs/hubs/page.gsx",
 				Keywords:    []string{"hubs", "websocket", "presence", "crdt", "sync", "collaboration"},
+				Demo:        "collab",
 			},
 		},
 	},
@@ -193,6 +204,7 @@ var docsCatalog = []DocSection{
 				Section:     "visual",
 				Source:      "examples/gosx-docs/app/docs/scene3d/page.gsx",
 				Keywords:    []string{"3d", "scene3d", "webgpu", "webgl", "pbr", "scene graph", "selena"},
+				Demo:        "scene3d",
 			},
 			{
 				Title:       "Debugging Scene3D",
@@ -201,6 +213,7 @@ var docsCatalog = []DocSection{
 				Section:     "visual",
 				Source:      "examples/gosx-docs/app/docs/debugging-scene3d/page.gsx",
 				Keywords:    []string{"scene3d", "debug", "webgpu", "webgl", "telemetry", "visual regression"},
+				Demo:        "scene3d-bench",
 			},
 			{
 				Title:       "Scene3D vs three.js",

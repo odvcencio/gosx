@@ -1,6 +1,10 @@
 package docs
 
-import "strings"
+import (
+	"strings"
+
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+)
 
 // DemoDefinition is the single product contract behind the demos index, dock,
 // and metadata drawer. Keep claims here specific and verifiable.
@@ -171,4 +175,40 @@ func demoValues(values []string) string {
 
 func demoSourceURL(path string) string {
 	return "https://github.com/odvcencio/gosx/blob/main/" + path
+}
+
+// LiveDemoForGuide resolves the catalog demo that proves a documentation
+// guide's subject live in the browser. The pairing is owned by the docs
+// catalog (DocEntry.Demo); this is the read side used by the docs shell.
+func LiveDemoForGuide(docHref string) (DemoDefinition, bool) {
+	if docHref == "" {
+		return DemoDefinition{}, false
+	}
+	for _, section := range docsapp.DocsCatalog() {
+		for _, entry := range section.Entries {
+			if entry.Href == docHref && entry.Demo != "" {
+				return FindDemo(entry.Demo)
+			}
+		}
+	}
+	return DemoDefinition{}, false
+}
+
+// RelatedGuides returns the documentation guides that teach the concepts a
+// demo applies, in stable catalog order. It mirrors LiveDemoForGuide so both
+// directions of the docs-to-demos cross-navigation stay consistent, and it
+// returns nil for demos without a mapped guide.
+func RelatedGuides(demoSlug string) []docsapp.DocEntry {
+	guides := make([]docsapp.DocEntry, 0, 2)
+	for _, section := range docsapp.DocsCatalog() {
+		for _, entry := range section.Entries {
+			if entry.Demo != "" && entry.Demo == demoSlug {
+				guides = append(guides, entry)
+			}
+		}
+	}
+	if len(guides) == 0 {
+		return nil
+	}
+	return guides
 }

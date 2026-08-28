@@ -588,7 +588,14 @@ const budgets = [
   // SH light-probe irradiance (env uniform tail) measured
   // 1610838/436484/349906; all three caps raised with narrow rounding
   // headroom.
-  { file: "bootstrap.js", raw: 1_610_900, gzip: 436_600, brotli: 350_000 },
+  // Multi-buffer glTF foundation (buffer-indexed accessors, sparse overlays,
+  // embedded images and mixed GLB/.gltf buffers) measured
+  // 1_578_361 / 428_416 / 343_964. The old 1_574_000 / 427_250 / 343_100
+  // ceilings therefore moved to 1_578_550 / 428_500 / 344_050. The combined
+  // source (multi-buffer accessors plus all runtime features above) measured
+  // 1_615_272 / 437_705 / 350_871 raw/gzip/brotli; all three caps raised to
+  // 1_615_400 / 437_800 / 351_000 with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_615_400, gzip: 437_800, brotli: 351_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1257,7 +1264,14 @@ const budgets = [
   // Same strip/fan topology rebuild measured 39_473 / 14_604 / 13_057;
   // all three caps raised with narrow rounding headroom.
   // Measured: bootstrap-feature-scene3d-gltf.js 40491/14915/13301 raw/gzip/brotli.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 40_800, gzip: 15_000, brotli: 13_400 },
+  // Multi-buffer glTF foundation (buffer-indexed accessors, sparse overlays,
+  // embedded images and mixed GLB/.gltf buffers) measured
+  // 44_944 / 16_128 / 14_351. The old 40_650 / 15_000 / 13_400 ceilings
+  // moved to 45_000 / 16_200 / 14_420. The combined source (multi-buffer
+  // accessors plus the authored feature history above) measured
+  // 45_122 / 16_180 / 14_389 raw/gzip/brotli; raw raised 45_000 -> 45_200,
+  // gzip and brotli caps retained at 16_200 / 14_420.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 45_200, gzip: 16_200, brotli: 14_420 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE mixer rebuild measured 8551/3636/3260 raw/gzip/brotli; raw
