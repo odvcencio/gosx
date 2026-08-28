@@ -8,7 +8,7 @@ import (
 // webgpuComputePath is the compute module that owns the cull system.
 // webgpuRendererPath and webglRendererPath come from lights_test.go, and
 // readRenderer with them.
-const webgpuComputePath = "../../client/js/bootstrap-src/16b-scene-compute.js"
+const webgpuComputePath = "../../client/runtime/scene3d/compute.ts"
 
 // TestGPUCullRendererEvidence ties the gpu-cull Matrix cell to the shipped
 // renderer source, the way TestGPUPickingRendererEvidence does for picking. The

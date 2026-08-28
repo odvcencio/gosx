@@ -827,6 +827,8 @@ func TestRaycastMethodManifest(t *testing.T) {
 			// own axis, so those two get an offset ray.
 			probe := ray
 			switch testCase.geometry.(type) {
+			case PlaneGeometry:
+				probe = Ray{Origin: Vec3(0, 6, 0), Direction: Vec3(0, -1, 0)}
 			case TorusGeometry:
 				probe.Origin = Vec3(1, 0, 6)
 			case TorusKnotGeometry:

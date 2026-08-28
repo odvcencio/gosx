@@ -96,23 +96,57 @@ func normalizeSecurityPolicy(policy SecurityPolicy) SecurityPolicy {
 	}
 	if policy.SharedContentSecurityPolicy == "" && policy.ContentSecurityPolicy != "" {
 		policy.SharedContentSecurityPolicy = removeNonceSources(policy.ContentSecurityPolicy)
+		if policy.SharedContentSecurityPolicy == "" {
+			// A shared response cannot carry a request nonce. If removing the
+			// nonce leaves no usable policy, fail closed instead of emitting a
+			// header that browsers will ignore or pretending the cached body has
+			// a nonce it does not carry.
+			policy.SharedContentSecurityPolicy = "default-src 'none'"
+		}
 	}
 	return policy
 }
 
-// removeNonceSources strips every quoted nonce source from a policy value. It
-// runs when the caller supplies no shared policy and the response cannot carry
-// a nonce.
+// removeNonceSources strips every quoted nonce source from a policy value while
+// retaining the directive grammar. strings.Fields alone is not sufficient:
+// CSP uses semicolons as directive boundaries, and collapsing the whole value
+// can accidentally turn the first source of the next directive into a source
+// of the previous one when callers omit whitespace around a semicolon.
 func removeNonceSources(policy string) string {
-	fields := strings.Fields(policy)
-	kept := make([]string, 0, len(fields))
-	for _, field := range fields {
-		if strings.HasPrefix(field, "'nonce-") {
+	trimmed := strings.TrimSpace(policy)
+	if trimmed == "" {
+		return ""
+	}
+	trailingSemicolon := strings.HasSuffix(trimmed, ";")
+	directives := strings.Split(trimmed, ";")
+	kept := make([]string, 0, len(directives))
+	for _, directive := range directives {
+		fields := strings.Fields(directive)
+		if len(fields) == 0 {
 			continue
 		}
-		kept = append(kept, field)
+		filtered := fields[:0]
+		removedNonce := false
+		for _, field := range fields {
+			if strings.HasPrefix(strings.ToLower(field), "'nonce-") {
+				removedNonce = true
+				continue
+			}
+			filtered = append(filtered, field)
+		}
+		// A source directive containing only its name after nonce removal must
+		// remain present and fail closed. Dropping it would make script-src fall
+		// back to a potentially broader default-src on the shared response.
+		if removedNonce && len(filtered) <= 1 {
+			filtered = append(filtered, "'none'")
+		}
+		kept = append(kept, strings.Join(filtered, " "))
 	}
-	return strings.Join(kept, " ")
+	result := strings.Join(kept, "; ")
+	if trailingSemicolon && result != "" {
+		result += ";"
+	}
+	return result
 }
 
 // securityHeaders resolves the configured policy when Build wraps the handler.
@@ -206,7 +240,7 @@ func applySharedCacheSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state.sharedPolicy == "" {
-		w.Header().Del(state.headerName)
+		w.Header().Set(state.headerName, "default-src 'none'")
 		return
 	}
 	w.Header().Set(state.headerName, state.sharedPolicy)

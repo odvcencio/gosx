@@ -1,0 +1,521 @@
+  // --------------------------------------------------------------------------
+  // Selective runtime bootstrap
+  // --------------------------------------------------------------------------
+
+  const bootstrapFeatureFactories = window.__gosx_bootstrap_features || Object.create(null);
+  const activeBootstrapFeatures = new Map();
+  // In-flight feature loads, keyed by name. Two callers can ask for the same
+  // feature in the same tick — the document gate and the manifest gate both ask
+  // for "textlayout" — and a feature factory must run exactly once.
+  const pendingBootstrapFeatures = new Map();
+  let pendingFeatureLoad = Promise.resolve([]);
+
+  window.__gosx_bootstrap_features = bootstrapFeatureFactories;
+  window.__gosx_register_bootstrap_feature = function(name, factory) {
+    const featureName = String(name || "").trim();
+    if (!featureName || typeof factory !== "function") {
+      console.error("[gosx] invalid bootstrap feature registration");
+      return;
+    }
+    bootstrapFeatureFactories[featureName] = factory;
+  };
+
+  function hasAttributeName(el, attr) {
+    return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
+  }
+
+  function bootstrapFeatureAPI() {
+    return {
+      engineFactories,
+      fetchProgram,
+      inferProgramFormat,
+      loadScriptTag,
+      engineFrame,
+      cancelEngineFrame,
+      capabilityList,
+      requiredCapabilityList,
+      runtimeCapabilityStatus,
+      engineCapabilityStatus,
+      browserCapabilitySupported,
+      applyRuntimeCapabilityState,
+      activateInputProviders,
+      releaseInputProviders,
+      clearChildren,
+      sceneNumber,
+      sceneBool,
+      gosxReadSharedSignal,
+      gosxNotifySharedSignal,
+      gosxSubscribeSharedSignal,
+      setSharedSignalJSON,
+      setSharedSignalValue,
+    };
+  }
+
+  function runtimeFeatureAssets() {
+    if (window.__gosx && window.__gosx.document && typeof window.__gosx.document.get === "function") {
+      const state = window.__gosx.document.get();
+      if (state && state.assets && state.assets.runtime) {
+        return state.assets.runtime;
+      }
+    }
+    return {};
+  }
+
+  function runtimeFeaturePreloadPath(fileName) {
+    const head = document && document.head;
+    const nodes = head && head.children ? Array.from(head.children) : [];
+    for (const node of nodes) {
+      if (!node || String(node.tagName || "").toUpperCase() !== "LINK") {
+        continue;
+      }
+      const rel = String((node.getAttribute && node.getAttribute("rel")) || node.rel || "").toLowerCase();
+      const as = String((node.getAttribute && node.getAttribute("as")) || node.as || "").toLowerCase();
+      const href = String((node.getAttribute && node.getAttribute("href")) || node.href || "");
+      if (rel === "preload" && as === "script" && href.includes(fileName)) {
+        return href;
+      }
+    }
+    return "";
+  }
+
+  function bootstrapFeatureURL(name) {
+    const assets = runtimeFeatureAssets();
+    switch (name) {
+      case "islands":
+        return String(assets.bootstrapFeatureIslandsPath || runtimeFeaturePreloadPath("bootstrap-feature-islands") || "/gosx/bootstrap-feature-islands.js").trim();
+      case "engines":
+        return String(assets.bootstrapFeatureEnginesPath || runtimeFeaturePreloadPath("bootstrap-feature-engines") || "/gosx/bootstrap-feature-engines.js").trim();
+      case "hubs":
+        return String(assets.bootstrapFeatureHubsPath || runtimeFeaturePreloadPath("bootstrap-feature-hubs") || "/gosx/bootstrap-feature-hubs.js").trim();
+      case "controllers":
+        return String(assets.bootstrapFeatureControllersPath || runtimeFeaturePreloadPath("bootstrap-feature-controllers") || "/gosx/bootstrap-feature-controllers.js").trim();
+      case "textlayout":
+        return String(assets.bootstrapFeatureTextLayoutPath || runtimeFeaturePreloadPath("bootstrap-feature-textlayout") || "/gosx/bootstrap-feature-textlayout.js").trim();
+      case "scene3d":
+        return assets && assets.bootstrapFeatureScene3dPath;
+      default:
+        return "";
+    }
+  }
+
+  function ensureBootstrapFeature(name) {
+    if (activeBootstrapFeatures.has(name)) {
+      return Promise.resolve(activeBootstrapFeatures.get(name));
+    }
+    if (pendingBootstrapFeatures.has(name)) {
+      return pendingBootstrapFeatures.get(name);
+    }
+    const pending = initBootstrapFeature(name).then(function(feature) {
+      pendingBootstrapFeatures.delete(name);
+      return feature;
+    }, function(error) {
+      pendingBootstrapFeatures.delete(name);
+      throw error;
+    });
+    pendingBootstrapFeatures.set(name, pending);
+    return pending;
+  }
+
+  async function initBootstrapFeature(name) {
+    if (activeBootstrapFeatures.has(name)) {
+      return activeBootstrapFeatures.get(name);
+    }
+
+    // The monolithic bootstrap.js carries the text-layout engine inline, so the
+    // forwarders in 00-textlayout.js already reach a registered engine. Skip
+    // the fetch in that case.
+    if (name === "textlayout"
+      && typeof window.__gosx_text_layout_engine_ready === "function"
+      && window.__gosx_text_layout_engine_ready()) {
+      const inlineFeature = { name: "textlayout" };
+      activeBootstrapFeatures.set(name, inlineFeature);
+      return inlineFeature;
+    }
+
+    // Scene3D is loaded via an async <script> tag emitted by the Go renderer,
+    // not dynamically by the runtime. Wait for it to signal readiness.
+    if (name === "scene3d") {
+      if (!window.__gosx_scene3d_available) {
+        await new Promise(function(resolve) {
+          if (window.__gosx_scene3d_available) { resolve(); return; }
+          var prev = window.__gosx_scene3d_loaded;
+          window.__gosx_scene3d_loaded = function() {
+            if (typeof prev === "function") { prev(); }
+            resolve();
+          };
+        });
+      }
+      var scene3dFeature = { name: "scene3d" };
+      activeBootstrapFeatures.set(name, scene3dFeature);
+      return scene3dFeature;
+    }
+
+    let factory = bootstrapFeatureFactories[name];
+    if (!factory) {
+      const jsRef = bootstrapFeatureURL(name);
+      if (!jsRef) {
+        return null;
+      }
+      await loadScriptTag(jsRef, "feature-" + name);
+      factory = bootstrapFeatureFactories[name];
+    }
+
+    if (typeof factory !== "function") {
+      console.error("[gosx] missing bootstrap feature:", name);
+      return null;
+    }
+
+    try {
+      const feature = factory(bootstrapFeatureAPI()) || {};
+      activeBootstrapFeatures.set(name, feature);
+      return feature;
+    } catch (error) {
+      console.error("[gosx] failed to initialize bootstrap feature " + name + ":", error);
+      return null;
+    }
+  }
+
+  // documentNeedsTextLayoutFeature gates the text-layout engine fetch. The
+  // engine is 42.7 KB of minified browser typography — Intl.Segmenter wrappers,
+  // CJK line-break tables, hyphenation, vertical writing mode — and it used to
+  // ship in every bundle. One querySelector answers for managed text blocks.
+  function documentNeedsTextLayoutFeature() {
+    if (typeof window.__gosx_document_has_text_layout !== "function") {
+      return false;
+    }
+    return window.__gosx_document_has_text_layout(document);
+  }
+
+  // manifestNeedsTextLayoutFeature answers for Scene3D. A Scene3D Label lays out
+  // through layoutBrowserText, so a scene that ships a label needs the engine
+  // before its first frame. A scene with no label — a galaxy, a particle field,
+  // a CSS-driven scene — must not pay 42.7 KB for typography it never calls.
+  //
+  // The test scans the raw manifest text rather than walking the parsed props.
+  // Scene props reach megabytes on compressed geometry, and a substring test on
+  // a string the page already holds allocates nothing. A false positive costs
+  // one extra fetch, never a wrong frame.
+  //
+  // A label that arrives after mount, through applyCommands, does not appear in
+  // this text. The forwarders in 00-textlayout.js cover that case: the first
+  // layout call starts the fetch, and the invalidation listener in
+  // 20-scene-mount.js lays the label out again once the engine registers.
+  function manifestNeedsTextLayoutFeature(featureNames) {
+    if (featureNames.indexOf("scene3d") < 0) {
+      return false;
+    }
+    const node = typeof document.getElementById === "function" ? document.getElementById("gosx-manifest") : null;
+    // The label flag is captured at parse time in loadManifest, because a page
+    // that opted into data-gosx-release no longer has the JSON text in the DOM
+    // by the time this runs.
+    const memo = window.__gosx_manifest;
+    if (node && memo && memo.element === node) {
+      return memo.textHasLabel === true;
+    }
+    const raw = node ? String(node.textContent || "") : "";
+    return raw.indexOf('"label"') >= 0;
+  }
+
+  function manifestFeatureNames(manifest) {
+    const names = [];
+    if (manifestHasEntries(manifest, "engines")) {
+      names.push("engines");
+      // Check if any engine is GoSXScene3D
+      for (var i = 0; i < manifest.engines.length; i++) {
+        if (manifest.engines[i].component === "GoSXScene3D") {
+          names.push("scene3d");
+          break;
+        }
+      }
+    }
+    if (manifestHasEntries(manifest, "hubs")) {
+      names.push("hubs");
+    }
+    if (manifestHasEntries(manifest, "controllers")) {
+      names.push("controllers");
+    }
+    if (manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
+      names.push("islands");
+    }
+    return names;
+  }
+
+  function manifestHasEntries(manifest, key) {
+    return Boolean(manifest && manifest[key] && manifest[key].length > 0);
+  }
+
+  function manifestNeedsWASMRuntime(manifest) {
+    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || manifestNeedsSharedEngineRuntime(manifest);
+  }
+
+  function manifestNeedsSharedEngineRuntime(manifest) {
+    if (!manifestHasEntries(manifest, "engines")) {
+      return false;
+    }
+    return manifest.engines.some(function(entry) {
+      return entry && entry.runtime === "shared";
+    });
+  }
+
+  function setSharedSignalJSON(name, valueJSON) {
+    const signalName = String(name || "").trim();
+    if (!signalName) {
+      return null;
+    }
+
+    const setSharedSignal = window.__gosx_set_shared_signal;
+    if (typeof setSharedSignal === "function") {
+      try {
+        const result = setSharedSignal(signalName, valueJSON);
+        if (typeof result === "string" && result !== "") {
+          console.error("[gosx] shared signal update error (" + signalName + "):", result);
+          gosxNotifySharedSignal(signalName, valueJSON);
+        }
+        return result;
+      } catch (error) {
+        console.error("[gosx] shared signal update error (" + signalName + "):", error);
+      }
+    }
+
+    gosxNotifySharedSignal(signalName, valueJSON);
+    return null;
+  }
+
+  function setSharedSignalValue(name, value) {
+    return setSharedSignalJSON(name, JSON.stringify(value == null ? null : value));
+  }
+
+  function ensureManifestFeatures(manifest) {
+    const names = manifestFeatureNames(manifest);
+    if (manifestNeedsTextLayoutFeature(names)) {
+      names.push("textlayout");
+    }
+    if (names.length === 0) {
+      return Promise.resolve([]);
+    }
+    return Promise.all(names.map(function(name) {
+      return ensureBootstrapFeature(name);
+    })).then(function(features) {
+      return features.filter(Boolean);
+    });
+  }
+
+  async function runRuntimeReadyForPendingManifest() {
+    if (typeof window.__gosx_text_layout === "function" && window.__gosx_text_layout !== gosxTextLayout) {
+      adoptTextLayoutImpl(window.__gosx_text_layout);
+      window.__gosx_text_layout = gosxTextLayout;
+    }
+    if (typeof window.__gosx_text_layout_metrics === "function" && window.__gosx_text_layout_metrics !== gosxTextLayoutMetrics) {
+      adoptTextLayoutMetricsImpl(window.__gosx_text_layout_metrics);
+      window.__gosx_text_layout_metrics = gosxTextLayoutMetrics;
+    }
+    if (typeof window.__gosx_text_layout_ranges === "function" && window.__gosx_text_layout_ranges !== gosxTextLayoutRanges) {
+      adoptTextLayoutRangesImpl(window.__gosx_text_layout_ranges);
+      window.__gosx_text_layout_ranges = gosxTextLayoutRanges;
+    }
+    refreshManagedTextLayouts();
+    refreshGosxDocumentState("runtime-ready");
+    refreshGosxEnvironmentState("runtime-ready");
+    if (!pendingManifest) {
+      window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
+      return;
+    }
+
+    const manifest = pendingManifest;
+    const features = await pendingFeatureLoad;
+    await Promise.all(features.map(function(feature) {
+      if (!feature || typeof feature.runtimeReady !== "function") {
+        return null;
+      }
+      return feature.runtimeReady(manifest, pendingEngineReuseIDs, pendingIsNavigationBootstrap);
+    }));
+    window.__gosx.ready = true;
+    refreshGosxDocumentState("ready");
+    document.dispatchEvent(new CustomEvent("gosx:ready"));
+  }
+
+  window.__gosx_runtime_ready = function() {
+    runRuntimeReadyForPendingManifest().catch(function(error) {
+      console.error("[gosx] bootstrap failed:", error);
+      window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
+    });
+  };
+
+  function normalizeRuntimePayload(entry) {
+    const props = entry && entry.props ? entry.props : null;
+    const component = String((entry && entry.component) || "");
+    const normalizers = window.__gosx_runtime_payload_normalizers;
+    const normalize = normalizers && normalizers[component];
+    if (typeof normalize !== "function") {
+      return props;
+    }
+    try {
+      return normalize(props, entry, { inflateSceneShaderLib: inflateSceneShaderLib }) || null;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function runtimePayloadIdentical(outgoingEntry, incomingEntry) {
+    try {
+      return JSON.stringify(normalizeRuntimePayload(outgoingEntry)) === JSON.stringify(normalizeRuntimePayload(incomingEntry));
+    } catch (_e) {
+      return false;
+    }
+  }
+
+  function reusableEngines(nextDoc) {
+    const reusable = new Set();
+    if (!nextDoc || !pendingManifest || !Array.isArray(pendingManifest.engines)) {
+      return reusable;
+    }
+    let nextManifest = null;
+    try {
+      const el = typeof nextDoc.getElementById === "function" ? nextDoc.getElementById("gosx-manifest") : null;
+      if (el) nextManifest = JSON.parse(el.textContent);
+    } catch (_e) {
+      return reusable;
+    }
+    if (!nextManifest || !Array.isArray(nextManifest.engines)) {
+      return reusable;
+    }
+    const nextByID = new Map();
+    for (const entry of nextManifest.engines) {
+      if (entry && entry.id) nextByID.set(String(entry.id), entry);
+    }
+    for (const outgoingEntry of pendingManifest.engines) {
+      if (!outgoingEntry || !outgoingEntry.id) continue;
+      const engineID = String(outgoingEntry.id);
+      const record = window.__gosx.engines.get(engineID);
+      if (!record || record.disposed) continue;
+      const incomingEntry = nextByID.get(engineID);
+      if (!incomingEntry) continue;
+      if (String(outgoingEntry.component || "") !== String(incomingEntry.component || "")) continue;
+      if (String(outgoingEntry.mountId || outgoingEntry.id || "") !== String(incomingEntry.mountId || incomingEntry.id || "")) continue;
+      if (!runtimePayloadIdentical(outgoingEntry, incomingEntry)) continue;
+      reusable.add(engineID);
+    }
+    return reusable;
+  }
+
+  async function disposePage(reuseEngineIDs) {
+    const reuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
+    if (gosxHost.dom && typeof gosxHost.dom.dispose === "function") {
+      gosxHost.dom.dispose(document.body || document.documentElement);
+    } else {
+      if (gosxHost.regions && typeof gosxHost.regions.dispose === "function") {
+        gosxHost.regions.dispose(document.body || document.documentElement);
+      }
+      if (gosxHost.surfaces && typeof gosxHost.surfaces.dispose === "function") {
+        gosxHost.surfaces.dispose(document.body || document.documentElement);
+      }
+      disposeManagedMotion();
+      disposeManagedTextLayouts();
+    }
+    for (const feature of Array.from(activeBootstrapFeatures.values())) {
+      if (feature && typeof feature.disposePage === "function") {
+        feature.disposePage(reuseIDs);
+      }
+    }
+    pendingManifest = null;
+    pendingFeatureLoad = Promise.resolve([]);
+    pendingEngineReuseIDs = new Set();
+    pendingIsNavigationBootstrap = false;
+    window.__gosx.ready = false;
+  }
+
+  // pendingIsNavigationBootstrap records whether the CURRENT bootstrapPage()
+  // call's original argument was a real Set, captured before
+  // pendingEngineReuseIDs coerces a missing/non-Set argument away — mirrors
+  // client/js/bootstrap-src/30-tail.js. That original distinction is what
+  // tells a first page load apart from a soft navigation for
+  // mountAllEngines' "engine-remounted" telemetry.
+  let pendingEngineReuseIDs = new Set();
+  let pendingIsNavigationBootstrap = false;
+
+  async function bootstrapPage(reuseEngineIDs) {
+    pendingIsNavigationBootstrap = reuseEngineIDs instanceof Set;
+    pendingEngineReuseIDs = pendingIsNavigationBootstrap ? reuseEngineIDs : new Set();
+    refreshGosxEnvironmentState("bootstrap-page");
+    refreshGosxDocumentState("bootstrap-page");
+
+    // Start the text-layout engine fetch before any mount work. The document
+    // scan answers the question now, so the request goes out in parallel with
+    // the manifest read and the runtime download. The forwarders in
+    // 00-textlayout.js queue mountManagedTextLayouts below and replay it when
+    // the engine registers, so the fetch never blocks first paint.
+    const textLayoutLoad = documentNeedsTextLayoutFeature()
+      ? ensureBootstrapFeature("textlayout")
+      : null;
+
+    if (gosxHost.dom && typeof gosxHost.dom.mount === "function") {
+      gosxHost.dom.mount(document.body || document.documentElement);
+    } else {
+      mountManagedMotion(document.body || document.documentElement);
+      mountManagedTextLayouts(document.body || document.documentElement);
+      if (gosxHost.surfaces && typeof gosxHost.surfaces.mount === "function") {
+        gosxHost.surfaces.mount(document.body || document.documentElement);
+      }
+      if (gosxHost.stream && typeof gosxHost.stream.consume === "function") {
+        gosxHost.stream.consume(document.body || document.documentElement);
+      }
+      if (gosxHost.regions && typeof gosxHost.regions.mount === "function") {
+        gosxHost.regions.mount(document.body || document.documentElement);
+      }
+    }
+
+    const manifest = loadManifest();
+    if (!manifest) {
+      pendingManifest = null;
+      // A page can hold text blocks and no manifest. Keep the text-layout load
+      // in the pending set so window.__gosx.ready waits for the engine.
+      pendingFeatureLoad = textLayoutLoad
+        ? textLayoutLoad.then(function(feature) { return feature ? [feature] : []; }, function() { return []; })
+        : Promise.resolve([]);
+      pendingEngineReuseIDs = new Set();
+      pendingIsNavigationBootstrap = false;
+      await pendingFeatureLoad;
+      window.__gosx.ready = true;
+      refreshGosxDocumentState("ready");
+      return;
+    }
+
+    inflateManifestShaderLibs(manifest);
+    pendingManifest = manifest;
+    pendingFeatureLoad = ensureManifestFeatures(manifest);
+    window.__gosx.ready = false;
+
+    if (manifestNeedsWASMRuntime(manifest)) {
+      if (!manifest.runtime || !manifest.runtime.path) {
+        console.error("[gosx] islands, compute islands, and shared runtime engines require manifest.runtime.path");
+        window.__gosx_runtime_ready();
+        return;
+      }
+      if (runtimeReady()) {
+        window.__gosx_runtime_ready();
+        return;
+      }
+      await Promise.all([
+        pendingFeatureLoad,
+        loadRuntime(manifest.runtime),
+      ]);
+      return;
+    }
+
+    await pendingFeatureLoad;
+    window.__gosx_runtime_ready();
+  }
+
+  gosxHost.lifecycle = Object.assign(gosxHost.lifecycle || {}, { bootstrapPage, disposePage, reusableEngines });
+  gosxHostCompatibility.install("__gosx_bootstrap_page", bootstrapPage);
+  gosxHostCompatibility.install("__gosx_dispose_page", disposePage);
+  gosxHostCompatibility.install("__gosx_reusable_engines", reusableEngines);
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootstrapPage);
+  } else {
+    bootstrapPage();
+  }
+})();

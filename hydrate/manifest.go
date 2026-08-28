@@ -128,13 +128,22 @@ type ControllerEntry struct {
 	Config controller.Config `json:"config"`
 }
 
-// HubBinding maps a hub event to a shared signal name.
+// HubBinding maps an inbound hub event to a shared signal, a soft page
+// refresh, or both. Direction, throttle, and debounce also describe outbound
+// signal bindings.
 type HubBinding struct {
 	Event      string `json:"event"`
-	Signal     string `json:"signal"`
+	Signal     string `json:"signal,omitempty"`
 	Direction  string `json:"direction,omitempty"`
 	ThrottleMS int    `json:"throttleMs,omitempty"`
 	DebounceMS int    `json:"debounceMs,omitempty"`
+	// Refresh forces a same-URL soft navigation after a matching inbound event.
+	Refresh bool `json:"refresh,omitempty"`
+	// RefreshDebounceMS joins the hub connection's refresh burst and rearms its
+	// single timer. Zero still coalesces matching events until the current task ends.
+	RefreshDebounceMS int `json:"refreshDebounceMs,omitempty"`
+	// RefreshPreserveScroll defaults to true; false wins within a pending burst.
+	RefreshPreserveScroll *bool `json:"refreshPreserveScroll,omitempty"`
 }
 
 // HubInputConfig lets the browser bootstrap forward bounded, page-declared
@@ -230,8 +239,17 @@ type RuntimeRef struct {
 	// Hash for cache busting.
 	Hash string `json:"hash,omitempty"`
 
+	// ManifestHash identifies the exact browser/WASM ABI contract.
+	ManifestHash string `json:"manifestHash,omitempty"`
+
 	// Size in bytes (compressed).
 	Size int64 `json:"size,omitempty"`
+
+	// Variant is the capability-linked runtime selected for this page.
+	Variant string `json:"variant,omitempty"`
+
+	// FeatureMask is the ABI capability declaration expected from Variant.
+	FeatureMask uint32 `json:"featureMask,omitempty"`
 }
 
 // IslandEntry describes a single island instance in the rendered HTML.
@@ -249,7 +267,7 @@ type IslandEntry struct {
 	Props json.RawMessage `json:"props"`
 
 	// Events lists the event bindings for this island.
-	Events []EventSlot `json:"events,omitempty"`
+	Events []EventSlot `json:"events"`
 
 	// Static is true if the island has no dynamic content and can skip hydration.
 	Static bool `json:"static,omitempty"`
@@ -363,6 +381,7 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 		Component: component,
 		BundleID:  bundleID,
 		Props:     propsJSON,
+		Events:    []EventSlot{},
 	}
 	m.Islands = append(m.Islands, entry)
 	return id, nil

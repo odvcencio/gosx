@@ -550,7 +550,7 @@ test("bootstrap prefers engine-batched Scene3D pass payloads when present", asyn
 });
 
 test("legacy WebGL pass cache uploads first static pass when cacheKey is empty", () => {
-  const legacyWebGL = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.js"), "utf8");
+  const legacyWebGL = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.ts"), "utf8");
   assert.match(legacyWebGL, /key:\s*null,\s*\n\s*vertexCount:\s*0/);
   assert.match(legacyWebGL, /record\.key !== pass\.cacheKey \|\|/);
   assert.match(legacyWebGL, /record\.vertexCount !== vertexCount \|\|/);
@@ -2048,7 +2048,7 @@ test("WebGL customPost receives reserved auto-uniforms: time is nonzero and adva
 });
 
 test("WebGL post processor is constructed with the Selena uniform resolver injected", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
   // The injection is what supplies reserved auto-uniforms to custom post
   // passes; without it applyCustomPost silently falls back to author values
   // only. Mirrors the WebGPU side's wgpuCreatePostProcessor(..., sceneSelenaUniformData).

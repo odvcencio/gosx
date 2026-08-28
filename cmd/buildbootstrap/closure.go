@@ -107,16 +107,19 @@ func (t *typeofGuarded) Exit(js.INode) {}
 // chunkFreeIdentifiers parses one chunk and returns the names it reads but
 // never declares, minus the browser globals and the typeof-guarded names.
 func chunkFreeIdentifiers(dir string, entry output) ([]string, error) {
-	var b strings.Builder
+	bodies := make([]string, 0, len(entry.sources))
 	for _, src := range entry.sources {
 		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
 		if err != nil {
 			return nil, err
 		}
-		b.WriteString(normalizeNewlines(string(data)))
-		b.WriteByte('\n')
+		bodies = append(bodies, normalizeNewlines(string(data)))
 	}
-	ast, err := js.Parse(parse.NewInputString(b.String()), js.Options{})
+	chunkSource, err := transpileTypedChunk(entry, bodies)
+	if err != nil {
+		return nil, err
+	}
+	ast, err := js.Parse(parse.NewInputString(chunkSource), js.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", entry.name, err)
 	}
@@ -137,10 +140,16 @@ func chunkFreeIdentifiers(dir string, entry output) ([]string, error) {
 }
 
 // verifyChunkClosure fails when any chunk reads an identifier that neither the
-// chunk nor the browser supplies.
+// chunk nor the browser supplies. It checks both the fetched bundle graph
+// (outputs) and the inline-embed assets (inlineAssets): an inline asset is
+// still one script the browser evaluates on its own, so it needs the same
+// closure guarantee.
 func verifyChunkClosure(dir string) error {
 	var report []string
-	for _, entry := range outputs {
+	entries := make([]output, 0, len(outputs)+len(inlineAssets))
+	entries = append(entries, outputs...)
+	entries = append(entries, inlineAssets...)
+	for _, entry := range entries {
 		free, err := chunkFreeIdentifiers(dir, entry)
 		if err != nil {
 			return err

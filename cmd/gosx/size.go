@@ -3,15 +3,19 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/perf/ouroboros"
 )
 
 type sizeReport struct {
@@ -39,6 +43,7 @@ type sizeReportFile struct {
 	Name        string `json:"name"`
 	File        string `json:"file"`
 	Role        string `json:"role"`
+	SHA256      string `json:"sha256,omitempty"`
 	Bytes       int64  `json:"bytes"`
 	GzipBytes   int64  `json:"gzipBytes"`
 	BrotliBytes int64  `json:"brotliBytes"`
@@ -51,11 +56,45 @@ func cmdSizeReport() {
 		os.Exit(1)
 	}
 	jsonOut := false
+	ouroborosOut := ""
+	inventoryPath := ""
+	repoRoot := "."
+	canonicalR10Target := ""
 	target := ""
-	for _, arg := range os.Args[2:] {
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "--json":
 			jsonOut = true
+		case "--ouroboros-out":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --ouroboros-out requires a directory")
+				os.Exit(1)
+			}
+			ouroborosOut = args[i]
+		case "--inventory":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --inventory requires a file")
+				os.Exit(1)
+			}
+			inventoryPath = args[i]
+		case "--root":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --root requires a directory")
+				os.Exit(1)
+			}
+			repoRoot = args[i]
+		case "--canonical-r10":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --canonical-r10 requires a dist directory or build.json")
+				os.Exit(1)
+			}
+			canonicalR10Target = args[i]
 		default:
 			if strings.HasPrefix(arg, "--") {
 				fmt.Fprintf(os.Stderr, "size error: unknown flag %s\n", arg)
@@ -67,6 +106,17 @@ func cmdSizeReport() {
 	if target == "" {
 		fmt.Fprintln(os.Stderr, "size error: missing dist directory or build.json")
 		os.Exit(1)
+	}
+	if canonicalR10Target != "" && ouroborosOut == "" {
+		fmt.Fprintln(os.Stderr, "size error: --canonical-r10 requires --ouroboros-out")
+		os.Exit(1)
+	}
+	if ouroborosOut != "" {
+		outPath := filepath.Join(ouroborosOut, "size", "route-assets.json")
+		if err := ouroboros.EnsureNewJSONFilePath(outPath); err != nil {
+			fmt.Fprintf(os.Stderr, "size error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	report, err := buildSizeReport(target)
 	if err != nil {
@@ -80,18 +130,60 @@ func cmdSizeReport() {
 			os.Exit(1)
 		}
 		fmt.Println(string(data))
-		return
+	} else {
+		printSizeReport(report)
 	}
-	printSizeReport(report)
+	if ouroborosOut != "" {
+		evidence, err := buildSizeEvidence(target, canonicalR10Target, ouroborosOut, inventoryPath, repoRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "size error: build Ouroboros evidence: %v\n", err)
+			os.Exit(1)
+		}
+		outPath := filepath.Join(ouroborosOut, "size", "route-assets.json")
+		if err := ouroboros.WriteNewCanonicalSizeEvidence(outPath, evidence); err != nil {
+			fmt.Fprintf(os.Stderr, "size error: write Ouroboros evidence: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Ouroboros size evidence: %s\n", outPath)
+	}
 }
 
 func sizeUsage(w io.Writer) {
 	fmt.Fprintf(w, `gosx size - Report runtime bundle sizes
 
 Usage:
-  gosx size [--json] <dist|build.json>
+  gosx size [--json] [--ouroboros-out dir] [--inventory file] [--root repo] [--canonical-r10 dist|build.json] <dist|build.json>
+
+  --canonical-r10 combines the external examples/gosx-docs R10 export with
+  the primary Ouroboros corpus export. It is valid only with canonical evidence.
 
 `)
+}
+
+func buildSizeEvidence(target, canonicalR10Target, artifactRoot, inventoryPath, repoRoot string) (*ouroboros.SizeEvidence, error) {
+	manifestPath, distDir, err := resolveSizeReportTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	r10ManifestPath := ""
+	r10DistDir := ""
+	if strings.TrimSpace(canonicalR10Target) != "" {
+		r10ManifestPath, r10DistDir, err = resolveSizeReportTarget(canonicalR10Target)
+		if err != nil {
+			return nil, fmt.Errorf("resolve canonical R10 target: %w", err)
+		}
+	}
+	return ouroboros.BuildSizeEvidenceWithOptions(ouroboros.SizeEvidenceOptions{
+		ManifestPath:    manifestPath,
+		DistDir:         distDir,
+		GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
+		RepoRoot:        repoRoot,
+		ArtifactRoot:    artifactRoot,
+		InventoryPath:   inventoryPath,
+		R10ManifestPath: r10ManifestPath,
+		R10DistDir:      r10DistDir,
+		Canonical:       true,
+	})
 }
 
 func buildSizeReport(target string) (sizeReport, error) {
@@ -187,6 +279,7 @@ func sizeReportEntry(runtimeDir string, asset runtimeSizeAsset) (sizeReportFile,
 	if err != nil {
 		return sizeReportFile{}, fmt.Errorf("read runtime asset %s: %w", path, err)
 	}
+	sum := sha256.Sum256(data)
 	gzipBytes := gzipLength(data)
 	if sidecar, err := os.ReadFile(path + ".gz"); err == nil && int64(len(sidecar)) < gzipBytes {
 		gzipBytes = int64(len(sidecar))
@@ -199,6 +292,7 @@ func sizeReportEntry(runtimeDir string, asset runtimeSizeAsset) (sizeReportFile,
 		Name:        asset.name,
 		File:        asset.file,
 		Role:        asset.role,
+		SHA256:      hex.EncodeToString(sum[:]),
 		Bytes:       int64(len(data)),
 		GzipBytes:   gzipBytes,
 		BrotliBytes: brotliBytes,

@@ -28,7 +28,7 @@
 // examples/gosx-docs/app/demos/water/page.gsx's
 // data-gosx-scene3d-control-form="fluid-object" form and
 // sceneManagedFluidObjectBindForm/sceneManagedFluidObjectReadControls in
-// client/js/bootstrap-src/19b-scene-control-forms.js): it sets the select's
+// client/js/bootstrap-src/19b-scene-control-forms.ts): it sets the select's
 // value via the native value setter (bypassing React-style property
 // shadowing) and dispatches bubbling "input"+"change" events, which is
 // exactly what the form's own `form.addEventListener("change", schedule)`
@@ -86,7 +86,7 @@ const fpsSampleJS = `(function(seconds){
 // survives even if some framework layer shadows the plain DOM property),
 // then dispatch bubbling "input" and "change" so
 // sceneManagedFluidObjectBindForm's `form.addEventListener("change",
-// schedule)` (19b-scene-control-forms.js) picks it up on its next rAF and
+// schedule)` (19b-scene-control-forms.ts) picks it up on its next rAF and
 // calls sceneManagedFluidObjectApply. Returns the select's resolved value
 // (or an "error:..." string) so the caller can confirm the DOM accepted it
 // before waiting on the async duck-attrs poll.
@@ -228,7 +228,7 @@ const waterDropCountersJS = `(function(){
 // tight loop, so every move lands before the browser gets a chance to paint
 // a frame) directly at the water canvas -- exactly the "fast stroke, many
 // pointermove events between two rendered frames" scenario Fix 1 targets
-// (see sceneManagedFluidObjectQueueDrop in 19b-scene-control-forms.js and
+// (see sceneManagedFluidObjectQueueDrop in 19b-scene-control-forms.ts and
 // its bounded controlState.dropEvents queue). dispatchEvent() invokes
 // listeners synchronously and untrusted (isTrusted:false) synthetic events
 // still reach addEventListener callbacks, so this reliably reproduces "many
@@ -304,8 +304,8 @@ func runDragBurstPhase(ctx context.Context, saveDir string, startX, startY, endX
 // clientY) using the LIVE pick camera (window.__gosx_scene3d_telemetry()
 // .camera, backed by currentMountedSceneCamera() in 20-scene-mount.js -- the
 // SAME function sceneManagedControlCamera/options.getCamera() calls for hit
-// testing, see 19b-scene-control-forms.js:870-876). Mirrors
-// sceneProjectPoint's exact math (11-scene-math.js:120-181): camera-local
+// testing, see 19b-scene-control-forms.ts:870-876). Mirrors
+// sceneProjectPoint's exact math (11-scene-math.ts:120-181): camera-local
 // translate, inverse Z/Y/X rotation, fovY-based perspective divide -- so a
 // coordinate this reports as "on the sphere" is provably where the CURRENT
 // pick camera also believes the sphere to be. It is deliberately NOT an
@@ -350,7 +350,7 @@ const sphereScreenPositionJS = `(function(wx, wy, wz){
 // NOT pointerModeJS/data-gosx-scene3d-fluid-pointer-mode: that attribute is
 // only reflected on pointer END (sceneManagedFluidObjectReflectPointerMode's
 // two call sites are both in the release/pinch-cancel paths, see
-// 19b-scene-control-forms.js), never at pointerdown when the mode is first
+// 19b-scene-control-forms.ts), never at pointerdown when the mode is first
 // resolved -- reading it here would always observe the stale "" from the
 // previous interaction's cleanup, not the just-resolved mode.
 const dropEventCounterJS = `(function(){

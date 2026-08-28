@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
-	"m31labs.dev/gosx/action"
+	_ "m31labs.dev/gosx/examples/dashboard/modules"
 	"m31labs.dev/gosx/highlight"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/island"
@@ -32,32 +32,6 @@ import (
 )
 
 func main() {
-	// Action registry for server-callable actions
-	actions := action.NewRegistry()
-	actions.Register("createUser", func(ctx *action.Context) error {
-		name := strings.TrimSpace(ctx.FormData["name"])
-		email := strings.TrimSpace(ctx.FormData["email"])
-		fieldErrors := map[string]string{}
-		if name == "" {
-			fieldErrors["name"] = "Name is required."
-		}
-		if email == "" {
-			fieldErrors["email"] = "Email is required."
-		}
-		if len(fieldErrors) > 0 {
-			ctx.ValidationFailure("Please correct the highlighted fields.", fieldErrors)
-			return nil
-		}
-		log.Printf("Creating user: %s <%s>", name, email)
-		ctx.Redirect("/users")
-		return nil
-	})
-	actions.Register("deleteUser", func(ctx *action.Context) error {
-		log.Printf("Deleting user from request")
-		ctx.Redirect("/users")
-		return nil
-	})
-
 	// Build the Counter island program.
 	// This uses the reference CounterProgram which has real signals, handlers,
 	// and expression opcodes the VM can execute. The .gsx compilation pipeline
@@ -114,43 +88,37 @@ func main() {
 		return r
 	}
 
+	// The default layout wraps only the document shell (doctype, head, css).
+	// The sidebar/main/footer chrome lives in app/layout.gsx and applies
+	// automatically to every page AddDir discovers below — /counter and
+	// /kitchen-sink keep their own Layout override (see below) because they
+	// inject island preload hints and page-head scripts this shell has no
+	// hook for; see the comment on app/layout.gsx's Layout entry.
 	router.SetLayout(func(ctx *route.RouteContext, content gosx.Node) gosx.Node {
-		return Layout("Dashboard", nil, content)
+		return gosx.RawHTML(fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%s</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+`, ctx.Title("Dashboard")) + gosx.RenderHTML(content) + "\n\n</body>\n</html>")
 	})
 
+	if err := router.AddDir(filepath.Join(baseDir, "app"), route.FileRoutesOptions{}); err != nil {
+		log.Fatal(err)
+	}
+
 	router.Add(
-		route.Route{
-			Pattern: "/",
-			Handler: func(ctx *route.RouteContext) gosx.Node {
-				return HomePage()
-			},
-		},
-		route.Route{
-			Pattern: "/users",
-			Handler: func(ctx *route.RouteContext) gosx.Node {
-				q := ctx.Query("q")
-				return UsersPage(q)
-			},
-		},
-		route.Route{
-			Pattern: "/users/new",
-			Handler: func(ctx *route.RouteContext) gosx.Node {
-				return NewUserPage()
-			},
-		},
-		route.Route{
-			Pattern: "/settings",
-			Handler: func(ctx *route.RouteContext) gosx.Node {
-				return SettingsPage()
-			},
-		},
 		route.Route{
 			Pattern: "/counter",
 			Layout: func(ctx *route.RouteContext, content gosx.Node) gosx.Node {
 				isl := newIslands()
 				countStr := ctx.Query("count")
 				count, _ := strconv.Atoi(countStr)
-				return Layout("Dashboard", isl, CounterPage(count, isl))
+				return chromeLayout("Dashboard", isl, CounterPage(count, isl))
 			},
 			Handler: func(ctx *route.RouteContext) gosx.Node {
 				return gosx.Text("") // content built in layout
@@ -160,7 +128,7 @@ func main() {
 			Pattern: "/kitchen-sink",
 			Layout: func(ctx *route.RouteContext, content gosx.Node) gosx.Node {
 				isl := newIslands()
-				return Layout("Dashboard", isl, KitchenSinkPage(isl))
+				return chromeLayout("Dashboard", isl, KitchenSinkPage(isl))
 			},
 			Handler: func(ctx *route.RouteContext) gosx.Node {
 				return gosx.Text("")
@@ -169,7 +137,6 @@ func main() {
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /gosx/action/{name}", actions)
 
 	// Resolve paths relative to this source file so it works from any working directory
 	exampleDir := baseDir
@@ -230,240 +197,64 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
-// Layout wraps all pages with shared navigation and structure.
-func Layout(title string, islands *island.Renderer, content gosx.Node) gosx.Node {
-	// Preload hints go in <head> — browser starts WASM download during HTML parse
-	preloadHTML := ""
+// chromeLayout wraps content with layout.gsx's Layout component: the
+// shared navigation, document shell, and island hydration hooks every
+// /counter and /kitchen-sink response needs (gosx#249). Sidebar nests
+// inside Layout's own body with no data of its own to supply — see
+// layout.gsx. Footer needs one per-request value (chromeFooter's message,
+// built with time.Now()), which a strict .gsx expression cannot compute,
+// so it renders through chromeFooter here and folds into the same
+// Fragment as content, matching this file's pre-conversion nesting of
+// content and the footer together inside the layout's main element.
+//
+// islands, when non-nil, has already registered every island content
+// contains by the time this function runs: content is a fully built
+// gosx.Node BEFORE chromeLayout is called (CounterPage/KitchenSinkPage run
+// as an argument to this call, and Go evaluates a function's arguments
+// before the call), so PreloadHints and PageHead already reflect it here —
+// the same "content built first, then the layout wraps it" order
+// route.LayoutFunc's own contract guarantees for a file-routed layout
+// (route/filesystem.go's applyLayoutFuncs), not a special case this
+// function has to arrange for itself.
+func chromeLayout(title string, islands *island.Renderer, content gosx.Node) gosx.Node {
+	preloadHints := gosx.Text("")
+	pageHead := gosx.Text("")
 	if islands != nil {
-		preloadHTML = gosx.RenderHTML(islands.PreloadHints())
+		preloadHints = islands.PreloadHints()
+		pageHead = islands.PageHead()
 	}
-
-	return gosx.RawHTML(fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>%s</title>
-<link rel="stylesheet" href="/static/styles.css">
-%s</head>
-<body>
-`, title, preloadHTML) + gosx.RenderHTML(
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "layout")),
-			Sidebar(),
-			gosx.El("main", gosx.Attrs(gosx.Attr("class", "main")),
-				content,
-				Footer(),
-			),
-		),
-	) + "\n" + func() string {
-		if islands != nil {
-			return gosx.RenderHTML(islands.PageHead())
-		}
-		return ""
-	}() + "\n</body>\n</html>")
+	html, err := route.RenderProgramComponent(layoutProgram, "Layout", route.ProgramRenderEnv{
+		Slots: map[string]gosx.Node{
+			"Title":        gosx.Text(title),
+			"PreloadHints": preloadHints,
+			"PageHead":     pageHead,
+		},
+	}, gosx.Fragment(content, chromeFooter()))
+	if err != nil {
+		log.Fatalf("render layout.gsx Layout: %v", err)
+	}
+	// <!DOCTYPE html> has no .gsx element spelling — a doctype is not a tag
+	// — so it is prepended here, in Go, the one part of the pre-conversion
+	// document shell layout.gsx's Layout component does not itself express.
+	return gosx.RawHTML("<!DOCTYPE html>\n" + html)
 }
 
-// Sidebar renders the navigation sidebar.
-func Sidebar() gosx.Node {
-	type navItem struct {
-		href  string
-		label string
+// chromeFooter renders layout.gsx's Footer component with the one
+// per-request value it needs: a version-and-timestamp line built with
+// time.Now(), which a strict .gsx expression cannot call (calls are
+// categorically unsupported in a strict server expression — see
+// strictcomponent.validate's CallExpr case). Message is a proved prop, not
+// a slot: it is scalar data, not markup, and a slot's contract carries
+// only "one opaque gosx.Node" the same way children's does.
+func chromeFooter() gosx.Node {
+	message := fmt.Sprintf("GoSX v%s — Server rendered at %s", gosx.Version, time.Now().Format("15:04:05"))
+	node, err := route.RenderProgramComponentNode(layoutProgram, "Footer", route.ProgramRenderEnv{
+		Props: struct{ Message string }{Message: message},
+	})
+	if err != nil {
+		log.Fatalf("render layout.gsx Footer: %v", err)
 	}
-	items := []navItem{
-		{"/", "Home"},
-		{"/users", "Users"},
-		{"/users/new", "New User"},
-		{"/counter", "Counter"},
-		{"/kitchen-sink", "Kitchen Sink"},
-		{"/settings", "Settings"},
-	}
-
-	return gosx.El("aside", gosx.Attrs(gosx.Attr("class", "sidebar")),
-		gosx.El("h2", gosx.Text("GoSX Dashboard")),
-		gosx.El("nav",
-			gosx.Map(items, func(item navItem, _ int) gosx.Node {
-				return gosx.El("a", gosx.Attrs(gosx.Attr("href", item.href)), gosx.Text(item.label))
-			}),
-		),
-	)
-}
-
-// Footer renders the page footer.
-func Footer() gosx.Node {
-	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "footer")),
-		gosx.Text(fmt.Sprintf("GoSX v%s — Server rendered at %s", gosx.Version, time.Now().Format("15:04:05"))),
-	)
-}
-
-// HomePage renders the dashboard home.
-func HomePage() gosx.Node {
-	return gosx.Fragment(
-		gosx.El("h1", gosx.Text("Dashboard")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "grid")),
-			StatCard("Users", "1,247"),
-			StatCard("Active", "892"),
-			StatCard("Revenue", "$48,290"),
-			StatCard("Growth", "+12.5%"),
-		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h3", gosx.Text("Recent Activity")),
-			ActivityTable(),
-		),
-	)
-}
-
-// StatCard renders a statistics card.
-func StatCard(label, value string) gosx.Node {
-	return gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-		gosx.El("h3", gosx.Text(label)),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "stat")), gosx.Text(value)),
-	)
-}
-
-// ActivityTable renders recent activity.
-func ActivityTable() gosx.Node {
-	type activity struct {
-		user   string
-		action string
-		when   string
-	}
-	activities := []activity{
-		{"Alice", "Created account", "2 min ago"},
-		{"Bob", "Updated profile", "15 min ago"},
-		{"Carol", "Uploaded document", "1 hour ago"},
-		{"Dave", "Changed settings", "3 hours ago"},
-		{"Eve", "Logged in", "5 hours ago"},
-	}
-
-	return gosx.El("table",
-		gosx.El("thead",
-			gosx.El("tr",
-				gosx.El("th", gosx.Text("User")),
-				gosx.El("th", gosx.Text("Action")),
-				gosx.El("th", gosx.Text("When")),
-			),
-		),
-		gosx.El("tbody",
-			gosx.Map(activities, func(a activity, _ int) gosx.Node {
-				return gosx.El("tr",
-					gosx.El("td", gosx.Text(a.user)),
-					gosx.El("td", gosx.Text(a.action)),
-					gosx.El("td", gosx.Text(a.when)),
-				)
-			}),
-		),
-	)
-}
-
-// UsersPage renders the users list with search filtering.
-func UsersPage(query string) gosx.Node {
-	type user struct {
-		name   string
-		email  string
-		role   string
-		active bool
-	}
-	users := []user{
-		{"Alice Johnson", "alice@example.com", "Admin", true},
-		{"Bob Smith", "bob@example.com", "Editor", true},
-		{"Carol Williams", "carol@example.com", "Viewer", false},
-		{"Dave Brown", "dave@example.com", "Editor", true},
-		{"Eve Davis", "eve@example.com", "Admin", true},
-		{"Frank Miller", "frank@example.com", "Viewer", false},
-	}
-
-	// Filter by query
-	if query != "" {
-		var filtered []user
-		q := strings.ToLower(query)
-		for _, u := range users {
-			if strings.Contains(strings.ToLower(u.name), q) || strings.Contains(strings.ToLower(u.email), q) {
-				filtered = append(filtered, u)
-			}
-		}
-		users = filtered
-	}
-
-	return gosx.Fragment(
-		gosx.El("h1", gosx.Text("Users")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "search-bar")),
-			gosx.RawHTML(fmt.Sprintf(`<form method="get" action="/users" class="search-form">
-				<input type="text" name="q" placeholder="Search users..." value="%s" />
-				<button type="submit" class="btn btn-primary">Search</button>
-			</form>`, query)),
-			gosx.El("a", gosx.Attrs(gosx.Attr("href", "/users/new"), gosx.Attr("class", "btn btn-primary")), gosx.Text("+ New User")),
-		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("table",
-				gosx.El("thead",
-					gosx.El("tr",
-						gosx.El("th", gosx.Text("Name")),
-						gosx.El("th", gosx.Text("Email")),
-						gosx.El("th", gosx.Text("Role")),
-						gosx.El("th", gosx.Text("Status")),
-						gosx.El("th", gosx.Text("Actions")),
-					),
-				),
-				gosx.El("tbody",
-					gosx.Map(users, func(u user, _ int) gosx.Node {
-						badgeClass := gosx.IfElse(u.active,
-							gosx.Text("badge badge-active"),
-							gosx.Text("badge badge-inactive"),
-						)
-						statusText := "Active"
-						if !u.active {
-							statusText = "Inactive"
-						}
-						return gosx.El("tr",
-							gosx.El("td", gosx.Text(u.name)),
-							gosx.El("td", gosx.Text(u.email)),
-							gosx.El("td", gosx.Text(u.role)),
-							gosx.El("td",
-								gosx.El("span", gosx.Attrs(gosx.Attr("class", gosx.RenderHTML(badgeClass))),
-									gosx.Text(statusText)),
-							),
-							gosx.El("td",
-								gosx.El("button", gosx.Attrs(gosx.Attr("class", "btn btn-danger btn-sm")), gosx.Text("Delete")),
-							),
-						)
-					}),
-				),
-			),
-			gosx.Show(len(users) == 0,
-				gosx.El("p", gosx.Attrs(gosx.Attr("class", "empty-state")),
-					gosx.Text("No users found matching your search.")),
-			),
-		),
-	)
-}
-
-// NewUserPage renders the user creation form.
-func NewUserPage() gosx.Node {
-	return gosx.Fragment(
-		gosx.El("h1", gosx.Text("New User")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.RawHTML(`<form method="post" action="/gosx/action/createUser">
-				<div class="form-group">
-					<label>Name</label>
-					<input type="text" name="name" placeholder="Full name" required />
-				</div>
-				<div class="form-group">
-					<label>Email</label>
-					<input type="email" name="email" placeholder="email@example.com" required />
-				</div>
-				<div class="form-group">
-					<label>Role</label>
-					<select name="role">
-						<option value="viewer">Viewer</option>
-						<option value="editor">Editor</option>
-						<option value="admin">Admin</option>
-					</select>
-				</div>
-				<button type="submit" class="btn btn-primary">Create User</button>
-				<a href="/users" class="btn btn-cancel">Cancel</a>
-			</form>`),
-		),
-	)
+	return node
 }
 
 // CounterPage demonstrates an interactive island compiled from counter.gsx.
@@ -504,22 +295,9 @@ func CounterPage(count int, islands *island.Renderer) gosx.Node {
 	noscriptFallback := gosx.RawHTML(fmt.Sprintf(`<noscript><div class="counter-display"><a href="/counter?count=%d">-</a> <span>%d</span> <a href="/counter?count=%d">+</a></div></noscript>`, count-1, count, count+1))
 
 	return gosx.Fragment(
-		gosx.El("h1", gosx.Text("Counter (Island Demo)")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h3", gosx.Text("Interactive Island")),
-			gosx.El("p", gosx.Text("This counter is compiled from counter.gsx and hydrated via WASM.")),
-			gosx.El("br"),
-			islandNode,
-			noscriptFallback,
-		),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h3", gosx.Text("How It Works")),
-			gosx.El("p", gosx.Text("1. counter.gsx is compiled to an IslandProgram at server startup")),
-			gosx.El("p", gosx.Text("2. Server renders the counter HTML with data-gosx-handler attributes")),
-			gosx.El("p", gosx.Text("3. Bootstrap loads the shared WASM runtime and fetches the IslandProgram")),
-			gosx.El("p", gosx.Text("4. Event delegation catches clicks and dispatches to the VM")),
-			gosx.El("p", gosx.Text("5. Signal updates trigger reconciliation and DOM patching")),
-		),
+		chrome("CounterIntro"),
+		chromeCard(chrome("CounterCardHeader"), islandNode, noscriptFallback),
+		chrome("CounterHowItWorksCard"),
 	)
 }
 
@@ -724,57 +502,15 @@ func main() {
 </script>`)
 
 	return gosx.Fragment(
-		gosx.El("h1", gosx.Text("Kitchen Sink — SPA Patterns")),
-		gosx.El("p", gosx.Text("Every pattern below is a GoSX island: server-rendered HTML hydrated with a shared WASM runtime. Click to interact — no page reloads.")),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h2", gosx.Text("Counter")),
-			gosx.El("p", gosx.Text("Signal-driven increment/decrement.")),
-			counterIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h2", gosx.Text("Tabs")),
-			gosx.El("p", gosx.Text("Conditional rendering via OpCond with dynamic CSS class toggling on active tab.")),
-			tabsIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h2", gosx.Text("Toggle")),
-			gosx.El("p", gosx.Text("Boolean signal with show/hide. Click or press Enter to toggle (keyboard handler).")),
-			toggleIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h2", gosx.Text("Todo List")),
-			gosx.El("p", gosx.Text("String concatenation for list items.")),
-			todoIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h2", gosx.Text("Form Validation")),
-			gosx.El("p", gosx.Text("Two-way input binding via OpEventGet. Type in the input to see live updates.")),
-			formIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h2", gosx.Text("Price Calculator")),
-			gosx.El("p", gosx.Text("Derived values: total = price x qty - discount.")),
-			derivedIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h2", gosx.Text("Dynamic List")),
-			gosx.El("p", gosx.Text("Add/remove items from a list. Items stored as comma-separated string, count tracked separately.")),
-			listIsland,
-		),
-
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h2", gosx.Text("Code Editor")),
-			gosx.El("p", gosx.Text("Overlay editor with WASM-powered Go syntax highlighting, line numbers, and live char count.")),
-			editorIsland,
-			editorScript,
-		),
+		chrome("KitchenSinkIntro"),
+		chromeCard(chrome("KSCounterHeader"), counterIsland),
+		chromeCard(chrome("KSTabsHeader"), tabsIsland),
+		chromeCard(chrome("KSToggleHeader"), toggleIsland),
+		chromeCard(chrome("KSTodoHeader"), todoIsland),
+		chromeCard(chrome("KSFormHeader"), formIsland),
+		chromeCard(chrome("KSPriceHeader"), derivedIsland),
+		chromeCard(chrome("KSListHeader"), listIsland),
+		chromeCard(chrome("KSEditorHeader"), editorIsland, editorScript),
 	)
 }
 
@@ -786,32 +522,4 @@ func serverHighlight(source string) string {
 
 func lineNumbersHTML(count int) string {
 	return highlight.LineNumbers(count)
-}
-
-// SettingsPage renders application settings.
-func SettingsPage() gosx.Node {
-	return gosx.Fragment(
-		gosx.El("h1", gosx.Text("Settings")),
-		gosx.El("div", gosx.Attrs(gosx.Attr("class", "card")),
-			gosx.El("h3", gosx.Text("Application Settings")),
-			gosx.RawHTML(`<form method="post" action="/gosx/action/saveSettings">
-				<div class="form-group">
-					<label>Site Name</label>
-					<input type="text" name="siteName" value="GoSX Dashboard" />
-				</div>
-				<div class="form-group">
-					<label>Theme</label>
-					<select name="theme">
-						<option value="light">Light</option>
-						<option value="dark">Dark</option>
-					</select>
-				</div>
-				<div class="form-group">
-					<label>Items per page</label>
-					<input type="number" name="pageSize" value="25" min="10" max="100" />
-				</div>
-				<button type="submit" class="btn btn-primary">Save Settings</button>
-			</form>`),
-		),
-	)
 }

@@ -32,133 +32,119 @@ func Page() Node {
 		<div class="page-topper">
 			<span class="eyebrow">Operations</span>
 			<p class="lede">
-				One
-				<span class="inline-code">go build</span>
-				produces a self-contained binary. Static export, ISR, and edge bundles are configuration choices, not architecture rewrites.
+				A production build stages one deployable
+				<span class="inline-code">dist/</span>
+				bundle: the server binary when the project is runnable, file-route inputs, public content, hashed browser assets, prerendered pages, and platform metadata.
 			</p>
 		</div>
-		<h1 id="build-modes">Build Modes</h1>
+		<h2 id="build-output">Build the deployable bundle</h2>
 		<p>
-			GoSX supports three production build modes. All three share the same source tree; the mode is selected at build time via the
 			<span class="inline-code">gosx build</span>
-			CLI flag.
+			accepts an application directory. Development is the default; select production explicitly for hashed assets, a production server build, static prerendering, and edge/platform output.
 		</p>
-		<section class="feature-grid">
-			<div class="card">
-				<strong>SSR binary</strong>
-				<p>
-					Default mode. A single Go binary serves all routes with server-side rendering, ISR caching, and WebSocket hubs.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Static export</strong>
-				<p>
-					All routes are pre-rendered to HTML files. Suitable for CDN deployment with no server process.
-				</p>
-			</div>
-			<div class="card">
-				<strong>Edge bundle</strong>
-				<p>
-					Routes compile to a lightweight WASM bundle for execution at the edge. Islands and 3D engines are excluded from the edge target.
-				</p>
-			</div>
-		</section>
 		<CodeBlock lang="bash" source={data.sampleBuildModes} />
-		<h2 id="static-export">Static Export</h2>
 		<p>
-			<span class="inline-code">gosx export</span>
-			crawls every route registered in the application, calls each
-			<span class="inline-code">Load</span>
-			function with a synthetic request context, renders the full HTML document, and writes the result to disk. The output directory mirrors the route tree.
+			Outputs are additive. The offline and Windows packaging flags extend the same production bundle; edge and platform files are part of the normal runnable production output rather than a separate target mode.
+		</p>
+		<CodeBlock lang="text" source={data.sampleOutput} />
+		<h2 id="static-export">Static export</h2>
+		<p>
+			<span class="inline-code">gosx export .</span>
+			builds the runnable application, requests each eligible non-parameterized file route, and writes HTML below
+			<span class="inline-code">dist/static</span>
+			plus route metadata in
+			<span class="inline-code">dist/export.json</span>
+			. Dynamic parameter routes are not invented during export, and a route scope can opt out with
+			<span class="inline-code">&#123; "prerender": false &#125;</span>
+			in
+			<span class="inline-code">route.config.json</span>
+			.
 		</p>
 		<CodeBlock lang="bash" source={data.sampleExport} />
 		<p>
-			Assets under
-			<span class="inline-code">public/</span>
-			are copied verbatim. CSS is collected per-route and written to
-			<span class="inline-code">_gosx/css/</span>
-			with content-addressed filenames. The export step runs at Go speed — the entire gosx-docs site exports in under two seconds on a laptop.
-		</p>
-		<h2 id="github-pages">GitHub Pages</h2>
-		<p>
-			A static export deploys to GitHub Pages with the official Pages actions. The workflow builds the site with
-			<span class="inline-code">gosx build --prod</span>
-			, disables Jekyll processing with a
-			<span class="inline-code">.nojekyll</span>
-			file, and publishes
+			The exporter rewrites page and asset references for nested static paths and copies only runtime assets referenced by exported documents. Treat
 			<span class="inline-code">dist/static</span>
-			as the Pages artifact.
+			as the static-host root and retain
+			<span class="inline-code">dist/export.json</span>
+			when another GoSX deployment layer needs route metadata.
 		</p>
-		<CodeBlock lang="yaml" source={data.sampleGitHubPages} />
-		<h2 id="server-deployment">Server Deployment</h2>
+		<h2 id="edge-output">Prerender edge worker</h2>
 		<p>
-			The production binary is statically linked and ships with all templates, assets, and the WASM runtime embedded. No external files are required at runtime. The binary listens on the port specified by
-			<span class="inline-code">PORT</span>
-			(default 8080) and responds to
-			<span class="inline-code">SIGTERM</span>
-			with a graceful drain.
-		</p>
-		<CodeBlock lang="bash" source={data.sampleServerBuild} />
-		<p>
-			All pages cached under ISR are stored in memory by default. Persistent ISR across restarts requires an external cache backend bound at startup with
-			<span class="inline-code">app.SetISRStore</span>
-			— see the
-			<a href="#isr" class="inline-link">ISR section</a>
-			below.
-		</p>
-		<CodeBlock lang="go" source={data.sampleServerMain} />
-		<h2 id="isr">ISR — Incremental Static Regeneration</h2>
-		<p>
-			ISR serves a cached pre-rendered page while revalidating in the background. The first request after a cache miss pays the render cost; every subsequent request is served from cache until the TTL expires. Stale-while-revalidate semantics mean there is no cold-start penalty on cache expiry.
-		</p>
-		<CodeBlock lang="go" source={data.sampleISR} />
-		<p>
-			Dynamic routes can opt out of ISR on a per-request basis by calling
-			<span class="inline-code">ctx.NoCache()</span>
-			inside
-			<span class="inline-code">Load</span>
-			. This is useful for authenticated pages where the response varies per user.
-		</p>
-		<section class="callout">
-			<strong>ISR and islands</strong>
-			<p>
-				ISR caches the server-rendered HTML shell. Island state is initialised from the serialised signal values embedded in that shell. If the shell is stale, islands boot from stale initial values and update when signals change — which is usually correct for display data.
-			</p>
-		</section>
-		<h2 id="edge-bundles">Edge Bundles</h2>
-		<p>
-			The edge target compiles route handlers and templates to a WASM module suitable for execution in Cloudflare Workers, Deno Deploy, or any runtime that supports the
-			<span class="inline-code">wasi_snapshot_preview1</span>
-			ABI. Islands and the 3D engine are excluded; edge routes must be pure SSR.
+			A production build of a runnable app writes
+			<span class="inline-code">dist/edge/worker.js</span>
+			and
+			<span class="inline-code">dist/platform/deployment.json</span>
+			. The worker serves exported routes and static assets through an
+			<span class="inline-code">ASSETS</span>
+			binding, then proxies misses, dynamic routes, and mutations to
+			<span class="inline-code">GOSX_ORIGIN</span>
+			(or
+			<span class="inline-code">ORIGIN</span>
+			).
 		</p>
 		<CodeBlock lang="bash" source={data.sampleEdge} />
-		<p>
-			The manifest maps URL patterns to exported WASM function names so the edge adapter can route requests without parsing the WASM module. All static assets are expected to be served from a CDN; the edge handler returns only HTML and API responses.
-		</p>
-		<h2 id="docker">Docker</h2>
-		<p>
-			The recommended pattern is a two-stage Dockerfile: a builder stage that compiles the binary and a minimal runtime stage that ships it. Because the binary is statically linked and embeds all assets, the runtime image can be as small as
-			<span class="inline-code">scratch</span>
-			or
-			<span class="inline-code">gcr.io/distroless/static</span>
-			.
-		</p>
-		<CodeBlock lang="dockerfile" source={data.sampleDockerfile} />
-		<p>
-			The resulting image is typically 15–20 MB. No Node.js, no asset pipeline, no runtime dependencies beyond the OS libc provided by distroless. Push to any OCI-compatible registry and deploy with
-			<span class="inline-code">kubectl</span>
-			, Fly, or Railway.
-		</p>
-		<CodeBlock lang="bash" source={data.sampleDockerDeploy} />
 		<section class="callout">
-			<strong>No --build-context needed</strong>
+			<strong>Not an edge WASM server</strong>
 			<p>
-				gotreesitter is a released Go module, not a local C extension. The Dockerfile does not need
-				<span class="inline-code">--build-context</span>
-				or any CGo toolchain. A plain
-				<span class="inline-code">docker build</span>
-				is sufficient.
+				The generated worker does not compile Go route handlers into a portable server-side WASM module. Keep an origin for anything absent from the prerendered route table.
 			</p>
 		</section>
+		<h2 id="server-deployment">Server deployment</h2>
+		<p>
+			For a runnable
+			<span class="inline-code">package main</span>
+			, the build places the executable at
+			<span class="inline-code">dist/server/app</span>
+			and writes
+			<span class="inline-code">dist/run.sh</span>
+			. Deploy the whole bundle: file-routed apps can read staged
+			<span class="inline-code">app/</span>
+			,
+			<span class="inline-code">content/</span>
+			, and
+			<span class="inline-code">public/</span>
+			at runtime, while
+			<span class="inline-code">build.json</span>
+			maps hashed browser assets.
+		</p>
+		<CodeBlock lang="bash" source={data.sampleServerRun} />
+		<h2 id="isr">Incremental static regeneration</h2>
+		<p>
+			ISR serves pages represented in the production export manifest and refreshes stale entries in the background. Enable it on the server and give an exported route a public cache lifetime. Cache tags travel into the export metadata for explicit invalidation.
+		</p>
+		<CodeBlock lang="json" source={data.sampleISRConfig} />
+		<CodeBlock lang="go" source={data.sampleISRApp} />
+		<p>
+			The default ISR store is process-local. A multi-instance deployment can install a shared
+			<span class="inline-code">server.ISRStore</span>
+			with
+			<span class="inline-code">app.SetISRStore</span>
+			; the Redis package provides
+			<span class="inline-code">redis.NewISRStore</span>
+			. This artifact store is distinct from the revalidation-version store.
+		</p>
+		<h2 id="offline-windows">Offline and Windows bundles</h2>
+		<p>
+			<span class="inline-code">--offline</span>
+			stages
+			<span class="inline-code">dist/offline</span>
+			with its own versioned manifest and the available static, runtime, app, and public inputs. The desktop host can open that directory through its
+			<span class="inline-code">app://gosx</span>
+			bundle transport.
+		</p>
+		<CodeBlock lang="bash" source={data.sampleOffline} />
+		<p>
+			<span class="inline-code">--msix</span>
+			packages a runnable Windows build. It requires a Windows target or host and the Windows packaging tools; signing and AppInstaller generation are additional explicit options.
+		</p>
+		<h2 id="docker">Container example</h2>
+		<p>
+			Build in a toolchain image, then copy
+			<span class="inline-code">dist/</span>
+			as a unit into an image with a shell for
+			<span class="inline-code">run.sh</span>
+			. Choose a smaller base only after proving your own binary and system-library requirements.
+		</p>
+		<CodeBlock lang="dockerfile" source={data.sampleDockerfile} />
 	</article>
 }

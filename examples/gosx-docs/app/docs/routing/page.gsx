@@ -1,7 +1,7 @@
 package docs
 
 func Page() Node {
-	return <div>
+	return <article class="prose">
 		<section class="doc-scene" aria-labelledby={docScene.HeadingID}>
 			<div id={docScene.SurfaceID} class="doc-scene__surface">
 				<Scene3D class="doc-scene__mount" {...docScene.Scene} respectReducedMotion={true}>
@@ -10,9 +10,7 @@ func Page() Node {
 			</div>
 			<div class="doc-scene__teaching">
 				<p class="doc-scene__eyebrow">{docScene.Eyebrow}</p>
-				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">
-					{docScene.Title}
-				</p>
+				<p id={docScene.HeadingID} class="doc-scene__title" role="heading" aria-level="2">{docScene.Title}</p>
 				<p class="doc-scene__summary">{docScene.Summary}</p>
 				<dl class="doc-scene__facts">
 					<div>
@@ -24,119 +22,96 @@ func Page() Node {
 						<dd>{docScene.InteractionHint}</dd>
 					</div>
 				</dl>
-				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">
-					{docScene.DemoLabel}
-				</a>
+				<a href={docScene.DemoHref} data-gosx-link="true" class="doc-scene__link">{docScene.DemoLabel}</a>
 			</div>
 		</section>
-		<section id="file-routes" class="docs-section-block">
-			<h2>File Routes</h2>
-			<p>
-				GoSX uses the
-				<span class="inline-code">app/</span>
-				directory as the source of truth for routes. Every
-				<span class="inline-code">page.gsx</span>
-				file becomes a route. The URL path mirrors the directory path under
-				<span class="inline-code">app/</span>
-				.
+		<div class="page-topper">
+			<span class="eyebrow">Filesystem to request handler</span>
+			<p class="lede">
+				GoSX discovers page and layout files, maps directory names to route patterns, and pairs each page with an optional request-aware server module.
 			</p>
-			{CodeBlock("text", "app/\n├── page.gsx              → /\n├── about/\n│   └── page.gsx          → /about\n└── blog/\n    ├── page.gsx          → /blog\n    └── [slug]/\n        └── page.gsx      → /blog/:slug")}
-			<p>
-				Routes are registered at startup by calling
-				<span class="inline-code">router.AddDir</span>
-				from
-				<span class="inline-code">main.go</span>
-				. The router walks the directory tree and wires every
-				<span class="inline-code">page.gsx</span>
-				to its corresponding URL pattern.
-			</p>
-			{CodeBlock("go", "router := route.NewRouter()\nif err := router.AddDir(filepath.Join(root, \"app\"), route.FileRoutesOptions{}); err != nil {\n\tlog.Fatal(err)\n}")}
-		</section>
-		<section id="dynamic-params" class="docs-section-block">
-			<h2>Dynamic Params</h2>
-			<p>
-				Wrap a directory name in square brackets to create a dynamic segment. The matched value is available in the server module as
-				<span class="inline-code">ctx.Params</span>
-				and in the template as the
-				<span class="inline-code">params</span>
-				binding.
-			</p>
-			{CodeBlock("text", "app/\n└── blog/\n    └── [slug]/\n        ├── page.gsx\n        └── page.server.go")}
-			{CodeBlock("go", "// app/blog/[slug]/page.server.go\nfunc init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\tslug := ctx.Params[\"slug\"]\n\t\t\tpost, err := db.FindPost(slug)\n\t\t\tif err != nil {\n\t\t\t\treturn nil, err\n\t\t\t}\n\t\t\treturn map[string]any{\"post\": post}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
-			{CodeBlock("gsx", "<h1>{data.post.title}</h1>\n<p>{params.slug}</p>")}
-			<p>
-				Use
-				<span class="inline-code">__catch-all</span>
-				as the directory name to match any remaining path segments. The full unmatched path is available as
-				<span class="inline-code">params[\"*\"]</span>
-				.
-			</p>
-		</section>
-		<section id="layouts" class="docs-section-block">
-			<h2>Layouts</h2>
-			<p>
-				A
-				<span class="inline-code">layout.gsx</span>
-				file wraps every page in its directory and all subdirectories. The page content is injected via the
-				<span class="inline-code">Slot</span>
-				component. Layouts nest: a subdirectory layout wraps its pages inside the parent layout.
-			</p>
-			{CodeBlock("gsx", "// app/docs/layout.gsx\npackage docs\n\nfunc Layout() Node {\n\treturn <div class=\"docs-wrapper\">\n\t\t<nav class=\"docs-nav\">\n\t\t\t<Each of={data.toc} as=\"entry\">\n\t\t\t\t<a href={entry.href}>{entry.label}</a>\n\t\t\t</Each>\n\t\t</nav>\n\t\t<main>\n\t\t\t<Slot />\n\t\t</main>\n\t</div>\n}")}
-			<p>
-				The root layout lives at
-				<span class="inline-code">app/layout.gsx</span>
-				and is used as the document shell. The server sets the HTML document wrapper separately so the root layout focuses on the visual chrome.
-			</p>
-		</section>
-		<section id="data-loading" class="docs-section-block">
-			<h2>Data Loading</h2>
-			<p>
-				Each page can have a sibling
-				<span class="inline-code">page.server.go</span>
-				that registers a
-				<span class="inline-code">Load</span>
-				function. The function runs on the server before the page is rendered. Its return value is available in the template as
-				<span class="inline-code">data</span>
-				.
-			</p>
-			{CodeBlock("go", "func init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\titems, err := db.ListItems()\n\t\t\tif err != nil {\n\t\t\t\treturn nil, err\n\t\t\t}\n\t\t\treturn map[string]any{\n\t\t\t\t\"items\": items,\n\t\t\t\t\"count\": len(items),\n\t\t\t}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
-			<p>
-				Return any Go value — a struct, a map, a slice. The template binds it as
-				<span class="inline-code">data</span>
-				and accesses fields with dot notation:
-				<span class="inline-code">{"{data.count}"}</span>
-				.
-			</p>
-		</section>
-		<section id="redirects-and-rewrites" class="docs-section-block">
-			<h2>Redirects &amp; Rewrites</h2>
-			<p>
-				Register redirects and rewrites directly on the
-				<span class="inline-code">server.App</span>
-				instance. Redirects send the browser to a new URL. Rewrites proxy the request to a different internal path without changing the browser URL.
-			</p>
-			{CodeBlock("go", "app.Redirect(\"GET /docs\", \"/docs/getting-started\", http.StatusTemporaryRedirect)\napp.Redirect(\"GET /old-path\", \"/new-path\", http.StatusMovedPermanently)")}
-			<p>
-				Use
-				<span class="inline-code">route.Config</span>
-				files in a directory to set page-level options such as caching policies and revalidation intervals without touching Go code.
-			</p>
-		</section>
-		<section id="client-navigation" class="docs-section-block">
-			<h2>Client Navigation</h2>
-			<p>
-				Add the
-				<span class="inline-code">data-gosx-link</span>
-				attribute to any anchor to enable client-side navigation. The runtime fetches the next page over a persistent connection, swaps the content, and updates the browser history — no full page reload.
-			</p>
-			{CodeBlock("gsx", "<a href=\"/docs/forms\" data-gosx-link=\"true\">Forms</a>")}
-			<p>
-				The navigation script is injected by calling
-				<span class="inline-code">server.NavigationScript()</span>
-				from the root layout function in
-				<span class="inline-code">main.go</span>
-				. Omit it to keep every navigation as a full server round-trip.
-			</p>
-		</section>
-	</div>
+		</div>
+		<h2 id="file-routes">File routes</h2>
+		<CodeBlock lang="text" source={data.treeSample} />
+		<p>
+			<span class="inline-code">page.gsx</span>
+			or
+			<span class="inline-code">index.gsx</span>
+			creates a route. Directories in parentheses are route groups and do not appear in the URL. Scoped
+			<span class="inline-code">not-found.gsx</span>
+			and
+			<span class="inline-code">error.gsx</span>
+			files handle failures below their directory.
+		</p>
+		<h2 id="params">Dynamic and catch-all parameters</h2>
+		<p>
+			Use
+			<span class="inline-code">[slug]</span>
+			or Go-package-friendly
+			<span class="inline-code">_slug</span>
+			for one segment. Use
+			<span class="inline-code">[...path]</span>
+			or
+			<span class="inline-code">__path</span>
+			for a catch-all. In both spellings, the parameter name is the declared name:
+			<span class="inline-code">ctx.Param("path")</span>
+			.
+		</p>
+		<h2 id="layouts">Layouts</h2>
+		<p>
+			A
+			<span class="inline-code">layout.gsx</span>
+			wraps pages below its directory. Nested layouts compose from root to leaf, and
+			<span class="inline-code">&lt;Slot /&gt;</span>
+			marks where the child layout or page renders.
+		</p>
+		<h2 id="modules">Server modules and loader data</h2>
+		<CodeBlock lang="go" source={data.moduleSample} />
+		<CodeBlock lang="gosx" source={data.pageSample} />
+		<p>
+			<span class="inline-code">RegisterFileModuleHere</span>
+			infers the sibling page source from its caller. A module may provide
+			<span class="inline-code">Load</span>
+			,
+			<span class="inline-code">Metadata</span>
+			,
+			<span class="inline-code">Actions</span>
+			,
+			<span class="inline-code">Bindings</span>
+			, or a custom
+			<span class="inline-code">Render</span>
+			. Handle registration errors instead of using deprecated must-register helpers.
+		</p>
+		<p>
+			Loader results appear as the dynamic
+			<span class="inline-code">data</span>
+			binding in legacy page components. Typed strict route-props binding is not part of v0.39.
+		</p>
+		<h2 id="configuration">Directory configuration</h2>
+		<CodeBlock lang="json" source={data.configSample} />
+		<p>
+			<span class="inline-code">route.config.json</span>
+			is directory-scoped and inherited. It supports cache policy, cache tags, response headers, and static-export
+			<span class="inline-code">prerender</span>
+			selection. More specific directories override inherited fields.
+		</p>
+		<p>
+			Use
+			<span class="inline-code">route.NotFound</span>
+			from a loader for a route-level 404. Configure server redirects with
+			<span class="inline-code">app.Redirect</span>
+			. GoSX does not expose a file-route rewrite declaration in this release.
+		</p>
+		<h2 id="navigation">Managed navigation</h2>
+		<p>
+			Enable navigation on the server with
+			<span class="inline-code">app.EnableNavigation()</span>
+			at the composition root. Links marked
+			<span class="inline-code">data-gosx-link="true"</span>
+			can fetch the next server-rendered document and swap managed content while preserving the browser history contract.
+		</p>
+		<p>
+			The server remains authoritative on every navigation. External links, downloads, modified clicks, and links outside the managed contract continue through native browser navigation.
+		</p>
+	</article>
 }

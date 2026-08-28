@@ -98,6 +98,7 @@ type RouteContext struct {
 	Data       any
 	parentData map[string]any
 	handlerErr error
+	pattern    string
 	server.PageState
 }
 
@@ -175,6 +176,25 @@ func (ctx *RouteContext) ActionForm(name string, args ...any) gosx.Node {
 	return server.Form(prefixed...)
 }
 
+// Document composes the complete native document context for this route.
+// It preserves request, route pattern, response status, title, language,
+// page identity/path, request ID, metadata, runtime, navigation, head,
+// body attributes, nonce, and the framework document contract. Pass the
+// returned context to server.HTMLDocument from a document-owning layout.
+func (ctx *RouteContext) Document(defaultTitle string, body gosx.Node) *server.DocumentContext {
+	if ctx == nil {
+		var state *server.PageState
+		return state.DocumentContext(nil, "", defaultTitle, body, false)
+	}
+	return ctx.PageState.DocumentContext(
+		ctx.Request,
+		ctx.pattern,
+		defaultTitle,
+		body,
+		ctx.NavigationEnabled(),
+	)
+}
+
 // Router builds an http.Handler from a route tree.
 type Router struct {
 	routes         []Route
@@ -187,6 +207,8 @@ type Router struct {
 	errorLayout    LayoutFunc
 	revalidator    *server.Revalidator
 	observers      []server.RequestObserver
+	fileRouteDirs  []fileRouteDirSource
+	navigationHead func(nonce string) gosx.Node
 }
 
 type handlerRoute struct {
@@ -246,6 +268,15 @@ func (r *Router) SetLayout(layout LayoutFunc) {
 	r.defaultLayout = layout
 }
 
+// SetNavigationHead registers the framework-owned navigation-runtime head
+// builder RouteContext carries into PageState.Head. server.App.Mount calls
+// this automatically (via server.NavigationConfigurable) when the owning App
+// has EnableNavigation set, so a file-routed app needs only
+// app.EnableNavigation() in its composition root.
+func (r *Router) SetNavigationHead(fn func(nonce string) gosx.Node) {
+	r.navigationHead = fn
+}
+
 // SetNotFound sets the 404 handler.
 func (r *Router) SetNotFound(handler PageHandler) {
 	r.notFound = handler
@@ -290,6 +321,7 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 	if r == nil {
 		return nil, fmt.Errorf("route router is nil")
 	}
+	r.logUnregisteredFileModuleWarnings()
 	mux := http.NewServeMux()
 	for _, extra := range r.handlers {
 		var h http.Handler = extra.handler
@@ -332,10 +364,30 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 
 		r.renderNotFound(w, req)
 	})
+	var handler http.Handler = root
 	if len(r.observers) > 0 {
-		return server.ObserveHandler(root, append([]server.RequestObserver(nil), r.observers...)), nil
+		handler = server.ObserveHandler(root, append([]server.RequestObserver(nil), r.observers...))
 	}
-	return root, nil
+	return &builtRouter{router: r, handler: handler}, nil
+}
+
+// builtRouter is what Build/BuildChecked return. It serves exactly like the
+// compiled mux handler, but keeps a live pointer back to the Router so
+// server.App.Mount can still reach Router.SetNavigationHead after Build has
+// erased the concrete *Router type into an http.Handler.
+type builtRouter struct {
+	router  *Router
+	handler http.Handler
+}
+
+func (b *builtRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	b.handler.ServeHTTP(w, req)
+}
+
+// SetNavigationHead implements server.NavigationConfigurable by forwarding to
+// the wrapped Router.
+func (b *builtRouter) SetNavigationHead(fn func(nonce string) gosx.Node) {
+	b.router.SetNavigationHead(fn)
 }
 
 func buildErrorHandler(err error) http.Handler {
@@ -395,7 +447,8 @@ func (r *Router) buildHandler(pattern string, route Route, layouts []LayoutFunc,
 
 	return func(w http.ResponseWriter, req *http.Request) {
 		server.MarkObservedRequest(req, "page", pattern)
-		ctx := newRouteContext(req)
+		ctx := r.newRouteContext(req)
+		ctx.pattern = pattern
 		ctx.Params = extractParamsByNames(req, paramNames)
 
 		defer func() {
@@ -435,9 +488,12 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 		ctx.SetStatus(defaultStatus)
 	}
 
+	requestNonce := ctx.Nonce()
 	// Drop the nonce before the layouts run when a shared cache may store the
 	// body. One stored copy reaches many clients, so a per-request nonce in that
-	// copy would name a value the next client never received.
+	// copy would name a value the next client never received. Keep requestNonce
+	// separately so WriteHTML can remove attributes already baked into the route
+	// handler's nodes before CachePublic was observed here.
 	if ctx.CacheState().SharedCacheable() {
 		ctx.SetNonce("")
 	}
@@ -462,14 +518,14 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 		Request:            ctx.Request,
 		Cache:              ctx.CacheState(),
 		Revalidator:        r.Revalidator(),
-		CacheDigestExclude: []string{ctx.Nonce()},
-		Nonce:              ctx.Nonce(),
+		CacheDigestExclude: []string{requestNonce},
+		Nonce:              requestNonce,
 	})
 }
 
 func (r *Router) renderNotFound(w http.ResponseWriter, req *http.Request) {
 	server.MarkObservedRequest(req, "not_found", "")
-	ctx := newRouteContext(req)
+	ctx := r.newRouteContext(req)
 	ctx.SetStatus(http.StatusNotFound)
 
 	layouts := []LayoutFunc{}
@@ -480,6 +536,7 @@ func (r *Router) renderNotFound(w http.ResponseWriter, req *http.Request) {
 	var node gosx.Node
 	rootNotFoundUsed := false
 	if scope, ok := r.matchNotFoundScope(req); ok {
+		ctx.pattern = scope.pattern
 		ctx.Params = extractPatternParams(scope.pattern, req.URL.Path)
 		if scope.handler != nil {
 			node = scope.handler(ctx)
@@ -507,8 +564,9 @@ func (r *Router) renderNotFound(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) renderError(w http.ResponseWriter, ctx *RouteContext, layouts []LayoutFunc, errorHandler ErrorHandler, errorLayout LayoutFunc, err error, pattern string) {
 	if ctx == nil {
-		ctx = newRouteContext(nil)
+		ctx = r.newRouteContext(nil)
 	}
+	ctx.pattern = pattern
 	server.MarkObservedRequest(ctx.Request, "error", pattern)
 	if ctx.StatusCode() == 0 {
 		ctx.SetStatus(http.StatusInternalServerError)
@@ -572,7 +630,7 @@ func extractPatternParams(pattern string, requestPath string) map[string]string 
 	return params
 }
 
-func newRouteContext(req *http.Request) *RouteContext {
+func (r *Router) newRouteContext(req *http.Request) *RouteContext {
 	// Params is left nil; reads from a nil map are valid and the build-time
 	// closure assigns a sized map only when the route declares parameters.
 	ctx := &RouteContext{
@@ -582,6 +640,9 @@ func newRouteContext(req *http.Request) *RouteContext {
 	// Carry the generated Content-Security-Policy nonce, so the document shell
 	// and the streamed chunks attach the same value the header names.
 	ctx.SetNonce(server.RequestNonce(req))
+	if r != nil && r.navigationHead != nil {
+		ctx.SetNavigationHead(r.navigationHead)
+	}
 	return ctx
 }
 

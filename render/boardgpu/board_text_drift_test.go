@@ -17,7 +17,7 @@ import (
 // JS stale (wrong bindings/offsets → broken glyphs or a silent pipeline-create
 // fallback). This test fails when the two diverge.
 func TestBoardTextJSWGSLMatchesGo(t *testing.T) {
-	jsPath := filepath.Join("..", "..", "client", "js", "bootstrap-src", "16a-scene-webgpu.js")
+	jsPath := filepath.Join("..", "..", "client", "runtime", "scene3d", "webgpu.ts")
 	data, err := os.ReadFile(jsPath)
 	if err != nil {
 		// Fail, never skip. This is the only Go-to-JavaScript shader drift guard

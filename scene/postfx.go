@@ -201,12 +201,32 @@ type DOMRegionUniforms struct {
 	Meta   string
 }
 
+// CustomPostDOMRegionBoundsMode selects how DOM regions bound a CustomPost
+// pass. The zero value keeps the pass full-frame.
+type CustomPostDOMRegionBoundsMode string
+
+const (
+	// CustomPostDOMRegionBoundsOff keeps current full-frame execution.
+	CustomPostDOMRegionBoundsOff CustomPostDOMRegionBoundsMode = ""
+	// CustomPostDOMRegionBoundsUnion bounds execution to the visible union
+	// of measured DOM regions plus PaddingPx.
+	CustomPostDOMRegionBoundsUnion CustomPostDOMRegionBoundsMode = "union"
+)
+
+// CustomPostDOMRegionBounds configures optional execution bounds for a
+// DOMRegions CustomPost pass. PaddingPx uses CSS pixels.
+type CustomPostDOMRegionBounds struct {
+	Mode      CustomPostDOMRegionBoundsMode
+	PaddingPx float64
+}
+
 // CustomPostDOMRegions configures browser-side DOM measurement for a
 // CustomPost pass. Max defaults to 8 and is capped at 16.
 type CustomPostDOMRegions struct {
 	Selector string
 	Max      int
 	Uniforms DOMRegionUniforms
+	Bounds   CustomPostDOMRegionBounds
 }
 
 // FXAA applies fast approximate anti-aliasing (the FXAA 3.11 quality

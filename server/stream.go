@@ -66,9 +66,13 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 	streaming := res.Deferred != nil && res.Deferred.HasDeferred()
 
 	if res.Cache.SharedCacheable() {
-		// A shared cache stores one body and replays it to every client, so the
-		// response must carry no per-request value. The body already dropped the
-		// request ID and the nonce; align the policy header with it.
+		// Handler and layout nodes can capture the request nonce before they mark
+		// the response shared-cacheable. Remove that exact rendered attribute
+		// from the completed document before hashing or writing it; the remaining
+		// inline scripts are governed by the nonce-free, fail-closed shared CSP.
+		html = stripResponseNonceAttribute(html, res.Nonce)
+		// A shared cache stores one body and replays it to every client. Align the
+		// policy header with the now nonce-free body.
 		applySharedCacheSecurityHeaders(w, res.Request)
 		res.Nonce = ""
 	}
@@ -115,6 +119,14 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 	if marked {
 		io.WriteString(w, suffix)
 	}
+}
+
+func stripResponseNonceAttribute(markup, nonce string) string {
+	if nonce == "" {
+		return markup
+	}
+	nonceAttr := gosx.RenderAttrs(gosx.Attrs(gosx.Attr("nonce", nonce)))
+	return strings.ReplaceAll(markup, nonceAttr, "")
 }
 
 // cacheDigestBody returns the bytes that describe the resource representation.

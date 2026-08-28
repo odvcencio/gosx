@@ -5,7 +5,12 @@ func Page() Node {
 		<header class="play__header">
 			<h1 class="play__title">GoSX Playground</h1>
 			<p class="play__subtitle">
-				Edit gsx on the left. Preview hydrates on the right.
+				Edit a constrained island component on the left. GoSX compiles its browser program and hydrates the preview on the right.
+			</p>
+			<p class="play__subtitle">
+				For strict typed server components, use the project-aware CLI and read the
+				<a href="/docs/components" data-gosx-link="true">Components guide</a>
+				.
 			</p>
 		</header>
 		<div class="play__body">

@@ -13,8 +13,10 @@ const path = require("node:path");
 
 const {
   bootstrapSource,
+  bootstrapRuntimeSource,
   FakeElement,
   createContext,
+  freshFeatureBundleSource,
   runScript,
   flushAsyncWork,
   makeSceneApiEnv,
@@ -248,10 +250,10 @@ test("bootstrap Scene3D world planner keeps front bounds and drops behind bounds
 
 test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
   // The legacy vertex-colour renderer and its shaders left
-  // 10-runtime-scene-core.js for 16e-scene-webgl-legacy.js, which ships in the
+  // 10-runtime-scene-core.js for 16e-scene-webgl-legacy.ts, which ships in the
   // WebGL chunk instead of on every Scene3D page. Read the file that holds the
   // shaders now, and keep every assertion the depth contract had.
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.ts"), "utf8");
 
   assert.match(core, /uniform vec2 u_depth_range;/);
   assert.match(core, /a_position\.z - u_camera\.z/);
@@ -273,8 +275,8 @@ test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
 });
 
 test("bootstrap Scene3D WebGL and WebGPU consume shared PBR view matrix", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   assert.match(webgl, /scenePBRViewMatrix\(cam, scratchViewMatrix\)/);
   assert.match(webgl, /gl\.uniformMatrix4fv\(uniforms\.viewMatrix, false, viewMatrix\)/);
@@ -284,8 +286,8 @@ test("bootstrap Scene3D WebGL and WebGPU consume shared PBR view matrix", () => 
 });
 
 test("bootstrap Scene3D PBR cameraPos uniforms use world eye position", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   assert.match(webgl, /vec3 V = normalize\(u_cameraPosition - v_worldPosition\);/);
   assert.match(webgl, /gl\.uniform3f\(uniforms\.cameraPosition, cam\.x, cam\.y, cam\.z\)/);
@@ -373,4 +375,54 @@ test("bootstrap resolves Scene3D CSS custom properties in the planner", async ()
   assert.notEqual(updated, prepared);
   assert.equal(updated.ir.materials[0].color, "#1e3a8a");
   assert.ok(computedStyleCalls > firstComputedStyleCalls);
+});
+
+test("bootstrap Scene3D planner invalidates cached spot-light attenuation and cone fields", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const light = {
+    id: "key",
+    kind: "spot",
+    color: "#ffffff",
+    intensity: 1,
+    x: 0,
+    y: 3,
+    z: 2,
+    directionX: 0,
+    directionY: -1,
+    directionZ: 0,
+    angle: 0.5,
+    penumbra: 0.1,
+    range: 6,
+    decay: 2,
+  };
+
+  for (const [field, value] of [["range", 12], ["decay", 3], ["angle", 0.75], ["penumbra", 0.4]]) {
+    const bundle = {
+      bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+      camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+      environment: {},
+      lights: [Object.assign({}, light)],
+      materials: [],
+      meshObjects: [],
+      objects: [],
+      points: [],
+      worldPositions: new Float32Array(0),
+      worldColors: new Float32Array(0),
+      worldMeshPositions: new Float32Array(0),
+      worldMeshNormals: new Float32Array(0),
+    };
+    const prepared = api.prepareScene(bundle, bundle.camera, viewport, null);
+    bundle.lights = [Object.assign({}, light, { [field]: value })];
+
+    const updated = api.prepareScene(bundle, bundle.camera, viewport, prepared);
+    assert.notEqual(updated, prepared, field + " mutation must invalidate the prepared scene");
+    assert.notEqual(updated.signature, prepared.signature, field + " mutation must change the signature");
+    assert.equal(updated.rebuilds, prepared.rebuilds + 1);
+    assert.equal(api.prepareScene(bundle, bundle.camera, viewport, updated), updated);
+  }
 });

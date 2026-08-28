@@ -60,7 +60,9 @@ func NewSceneAdapter(prog *rootengine.Program, propsJSON string) *SceneAdapter {
 	}
 	rawProps := parseRawProps(propsJSON)
 	vmProg := &islandprogram.Program{
-		Exprs: prog.Exprs,
+		Exprs:     prog.Exprs,
+		Signals:   prog.Signals,
+		Computeds: prog.Computeds,
 	}
 	rt := &SceneAdapter{
 		program:        prog,
@@ -119,6 +121,7 @@ func (rt *SceneAdapter) Dispose() {
 		unsub()
 		delete(rt.unsubs, name)
 	}
+	rt.vm.stopComputeds()
 	rt.prev = nil
 }
 
@@ -166,10 +169,7 @@ func vmProps(raw map[string]any) map[string]Value {
 }
 
 func initSceneSignals(machine *VM, prog *rootengine.Program) {
-	for _, def := range prog.Signals {
-		initVal := machine.Eval(def.Init)
-		machine.SetSignal(def.Name, signal.New(initVal))
-	}
+	initSignals(machine, prog)
 }
 
 func (rt *SceneAdapter) resolveAll() []resolvedNode {
@@ -445,6 +445,11 @@ func buildSignalDeps(prog *rootengine.Program) map[string][]int {
 	deps := make(map[string][]int)
 	memo := make(map[islandprogram.ExprID]map[string]struct{}, len(prog.Exprs))
 	visiting := make(map[islandprogram.ExprID]bool, len(prog.Exprs))
+	computedExprs := make(map[string]islandprogram.ExprID, len(prog.Computeds))
+	for _, def := range prog.Computeds {
+		computedExprs[def.Name] = def.Expr
+	}
+	computedVisiting := make(map[string]bool, len(prog.Computeds))
 
 	for index, node := range prog.EngineNodes {
 		if node.Static {
@@ -452,7 +457,7 @@ func buildSignalDeps(prog *rootengine.Program) map[string][]int {
 		}
 		nodeSignals := make(map[string]struct{})
 		for _, exprID := range node.Props {
-			for name := range collectExprSignals(prog.Exprs, exprID, memo, visiting) {
+			for name := range collectExprSignals(prog.Exprs, exprID, memo, visiting, computedExprs, computedVisiting) {
 				nodeSignals[name] = struct{}{}
 			}
 		}
@@ -469,6 +474,8 @@ func collectExprSignals(
 	id islandprogram.ExprID,
 	memo map[islandprogram.ExprID]map[string]struct{},
 	visiting map[islandprogram.ExprID]bool,
+	computedExprs map[string]islandprogram.ExprID,
+	computedVisiting map[string]bool,
 ) map[string]struct{} {
 	if deps, ok := memo[id]; ok {
 		return deps
@@ -488,10 +495,17 @@ func collectExprSignals(
 	case islandprogram.OpSignalGet, islandprogram.OpSignalSet, islandprogram.OpSignalUpdate:
 		if expr.Value != "" {
 			deps[expr.Value] = struct{}{}
+			if computedExpr, ok := computedExprs[expr.Value]; ok && !computedVisiting[expr.Value] {
+				computedVisiting[expr.Value] = true
+				for name := range collectExprSignals(exprs, computedExpr, memo, visiting, computedExprs, computedVisiting) {
+					deps[name] = struct{}{}
+				}
+				delete(computedVisiting, expr.Value)
+			}
 		}
 	}
 	for _, operand := range expr.Operands {
-		for name := range collectExprSignals(exprs, operand, memo, visiting) {
+		for name := range collectExprSignals(exprs, operand, memo, visiting, computedExprs, computedVisiting) {
 			deps[name] = struct{}{}
 		}
 	}

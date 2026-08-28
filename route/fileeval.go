@@ -29,7 +29,81 @@ type fileRenderEnv struct {
 	renderEngine    func(engine.Config, gosx.Node) gosx.Node
 	renderIsland    func(*islandprogram.Program, any) gosx.Node
 	enableBootstrap func()
+	// islandPreloadHints and islandPageHead compute the two framework-filled
+	// named slots a strict component may declare — {slotPreloadHints} and
+	// {slotPageHead} (gosx#249) — from the same page runtime renderIsland
+	// already mutates as island children render. Nil unless the caller
+	// wired an island-capable env (see newFileRenderEnv), in which case
+	// writeLocalComponentWithChildren calls them only after the call
+	// site's own children have fully rendered, so the values they return
+	// reflect every island those children registered.
+	//
+	// Neither is a caller-suppliable named slot the way Slots (gosx.Slots
+	// map[string]gosx.Node on ProgramRenderEnv) is: no author writes a
+	// value for these anywhere, at any call site, in any .gsx expression.
+	// The renderer computes them itself and binds them the same way it
+	// binds children — the "framework-filled slot" that lets a pure
+	// .gsx-to-.gsx layout composition place an end-of-body island manifest
+	// without a strict expression ever computing a value that depends on a
+	// sibling's render order (strict expressions still admit no function
+	// calls; this is the renderer filling a reserved hole, not the .gsx
+	// author computing one).
+	islandPreloadHints func() gosx.Node
+	islandPageHead     func() gosx.Node
+	// strictSpreadSource is the raw, already-boundary-proved value that
+	// localComponentProps used to build the CURRENT strict component
+	// render frame's own "props" binding — set only when that frame came
+	// from the single-spread call shape (nil for an explicit-attrs call).
+	// writeLocalComponent resets it on every strict-component call, so it
+	// is never stale across an unrelated nested component, and it survives
+	// unchanged through any HTML/If/Each nodes in between, the same way
+	// the "props" scope binding itself does.
+	//
+	// It exists only to make a BARE {...props} spread forward, from
+	// inside a strict body, work at the map-backed file renderer boundary
+	// (gosx#182/#184 M-1): "props" in scope is always the reduced
+	// map[string]any localComponentProps builds for the current frame
+	// (never a real Go struct, even when every field it needs was proved
+	// from one), so re-spreading it verbatim into strictSpreadProps always
+	// fails the struct-kind check there — the same struct-kind check that
+	// correctly rejects an arbitrary map. Re-running that same proof
+	// against strictSpreadSource instead is sound unconditionally, not
+	// just for a statically-proven tier-1 chain: strictSpreadProps always
+	// re-proves every field the callee needs against the concrete runtime
+	// value, so a mismatched shape still fails closed, just against the
+	// right value instead of an artificially reduced map. See
+	// localComponentProps' single-spread branch.
+	strictSpreadSource any
+
+	// propsFrame records which component category owns the "props" binding
+	// currently in scope (gosx#240). strictSpreadSource alone no longer
+	// answers that: a typed legacy frame now carries a raw source too, and
+	// a nil source means "this frame came from named attributes" for both
+	// categories. writeLocalComponent overwrites it on every local
+	// component call, exactly as it overwrites strictSpreadSource, so it is
+	// never stale.
+	propsFrame propsFrameKind
 }
+
+// propsFrameKind names the component category that built the "props"
+// binding in scope. It exists so the strict spread boundary can tell a
+// typed legacy frame's flattened map (which its own declared schema makes
+// provable) from an untyped one (which nothing makes provable), and from a
+// strict frame's reduced map.
+type propsFrameKind uint8
+
+const (
+	// propsFrameNone is a page or layout entry, an untyped legacy frame, or
+	// any scope outside a local component call. Its props binding carries
+	// no declared schema.
+	propsFrameNone propsFrameKind = iota
+	// propsFrameStrict is a strict component's own render frame.
+	propsFrameStrict
+	// propsFrameTypedLegacy is a typed legacy component's render frame:
+	// a flattened map like every legacy frame, but backed by a props
+	// struct declared in the same .gsx file.
+	propsFrameTypedLegacy
+)
 
 // fileRenderScope is one copy-on-write binding in the render environment.
 //
@@ -110,6 +184,7 @@ func (env fileRenderEnv) flattenedValues() map[string]any {
 
 type fileRequestBindings struct {
 	requestPath   string
+	requestTarget string
 	method        string
 	requestID     string
 	query         map[string]string
@@ -135,12 +210,14 @@ func (env fileRenderEnv) withValue(name string, value any) fileRenderEnv {
 // request, not per node, so it may pay the full map copy.
 func (env fileRenderEnv) withBindings(bindings FileTemplateBindings) fileRenderEnv {
 	next := fileRenderEnv{
-		values:          env.flattenedValues(),
-		funcs:           make(map[string]any, len(env.funcs)+len(bindings.Funcs)),
-		components:      make(map[string]any, len(env.components)+len(bindings.Components)),
-		renderEngine:    env.renderEngine,
-		renderIsland:    env.renderIsland,
-		enableBootstrap: env.enableBootstrap,
+		values:             env.flattenedValues(),
+		funcs:              make(map[string]any, len(env.funcs)+len(bindings.Funcs)),
+		components:         make(map[string]any, len(env.components)+len(bindings.Components)),
+		renderEngine:       env.renderEngine,
+		renderIsland:       env.renderIsland,
+		enableBootstrap:    env.enableBootstrap,
+		islandPreloadHints: env.islandPreloadHints,
+		islandPageHead:     env.islandPageHead,
 	}
 	for key, value := range env.funcs {
 		next.funcs[key] = value
@@ -217,6 +294,8 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		env.renderEngine = ctx.Engine
 		env.renderIsland = ctx.Runtime().Island
 		env.enableBootstrap = ctx.Runtime().EnableBootstrap
+		env.islandPreloadHints = ctx.Runtime().PreloadHints
+		env.islandPageHead = func() gosx.Node { return ctx.Runtime().PageHeadWithNonce(ctx.Nonce()) }
 		env.funcs["actionPath"] = func(name string) string {
 			return ctx.ActionPath(name)
 		}
@@ -239,6 +318,10 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 	}
 
 	bindings.requestPath = ctx.Request.URL.Path
+	bindings.requestTarget = bindings.requestPath
+	if ctx.Request.URL.RawQuery != "" {
+		bindings.requestTarget += "?" + ctx.Request.URL.RawQuery
+	}
 	bindings.method = ctx.Request.Method
 	bindings.requestID = serverRequestID(ctx.Request)
 	bindings.query = flattenQueryValues(ctx.Request.URL.Query())
@@ -276,11 +359,13 @@ func baseFileRenderValues(page FilePage, bindings fileRequestBindings) map[strin
 			"route":   page.RoutePath,
 			"source":  page.Source,
 			"path":    bindings.requestPath,
+			"target":  bindings.requestTarget,
 		},
 		"request": map[string]any{
 			"id":     bindings.requestID,
 			"method": bindings.method,
 			"path":   bindings.requestPath,
+			"target": bindings.requestTarget,
 		},
 	}
 }

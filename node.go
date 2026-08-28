@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"html"
 	"strings"
+
+	"m31labs.dev/gosx/internal/htmlattr"
 )
 
 // Node is the runtime representation of a GoSX component tree node.
@@ -27,8 +29,9 @@ const (
 )
 
 type nodeAttr struct {
-	name  string
-	value any
+	name     string
+	value    any
+	presence bool
 }
 
 // El creates an element node. The variadic args can be AttrList or Node children.
@@ -119,7 +122,7 @@ func Attr(name string, value any) nodeAttr {
 
 // BoolAttr creates a boolean attribute (e.g., disabled, checked).
 func BoolAttr(name string) nodeAttr {
-	return nodeAttr{name: name, value: true}
+	return nodeAttr{name: name, value: true, presence: true}
 }
 
 // Spread merges attributes from a map.
@@ -129,6 +132,26 @@ func Spread(attrs map[string]any) AttrList {
 		list = append(list, nodeAttr{name: k, value: v})
 	}
 	return list
+}
+
+// RenderAttrs renders an attribute list the same way El renders an
+// element's own attributes: the same escaping, and the same boolean and
+// presence-attribute rules renderAttrHTML applies everywhere else. It is
+// for a caller that builds an HTML tag's opening angle bracket directly, as
+// a string, instead of through a Node tree — for example gosx/server's
+// document shell, which writes the <html> and <body> tags by hand for
+// performance (see server/document_attrs.go) and uses RenderAttrs to fold
+// in app-supplied attributes (Context.BodyAttrs) without a second,
+// divergent escaping rule.
+func RenderAttrs(attrs AttrList) string {
+	if len(attrs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, attr := range attrs {
+		renderAttrHTML(&b, attr)
+	}
+	return b.String()
 }
 
 // Props is an alias for Attrs used when passing props to components.
@@ -202,7 +225,11 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 		safeTag := html.EscapeString(n.tag)
 		b.WriteByte('<')
 		b.WriteString(safeTag)
-		for _, attr := range n.attrs {
+		attrs := n.attrs
+		if strings.EqualFold(n.tag, "form") {
+			attrs = expandManagedFormAttrs(attrs)
+		}
+		for _, attr := range attrs {
 			renderAttrHTML(b, attr)
 		}
 		if isVoidElement(n.tag) && len(n.children) == 0 {
@@ -233,12 +260,76 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 	}
 }
 
+// expandManagedFormAttrs replaces a truthy ManagedFormShorthandAttr on a
+// <form> element's attribute list with the ManagedFormAttrs default set
+// (state idle, layer bootstrap, fallback native-form). The HTML method
+// attribute, if present on the same element, stays authoritative for the
+// navigation runtime; the shorthand does not add ManagedFormModeAttr.
+//
+// Merge rule: any contract attribute the author already wrote (for example
+// an explicit data-gosx-form-state) is left exactly as authored, in its
+// original position — only the missing contract attributes are inserted,
+// in place of the shorthand attribute. Attribute order and values outside
+// the contract are untouched. If the shorthand attribute is absent, or
+// present but not truthy, attrs is returned unchanged.
+func expandManagedFormAttrs(attrs []nodeAttr) []nodeAttr {
+	idx := -1
+	for i, attr := range attrs {
+		if attr.name == ManagedFormShorthandAttr {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || !managedFormShorthandTruthy(attrs[idx]) {
+		return attrs
+	}
+
+	have := make(map[string]bool, len(attrs))
+	for _, attr := range attrs {
+		have[attr.name] = true
+	}
+
+	var fill []nodeAttr
+	for _, d := range ManagedFormAttrs(ManagedFormOptions{}) {
+		if !have[d.name] {
+			fill = append(fill, d)
+		}
+	}
+
+	out := make([]nodeAttr, 0, len(attrs)-1+len(fill))
+	out = append(out, attrs[:idx]...)
+	out = append(out, fill...)
+	out = append(out, attrs[idx+1:]...)
+	return out
+}
+
+// managedFormShorthandTruthy reports whether a ManagedFormShorthandAttr
+// value opts the element in. It delegates to ManagedFormShorthandTruthy
+// (runtime_contract.go), the single shared definition of the truthy rule
+// used by both this Node render path and the route package's .gsx render
+// path, so `data-gosx-managed` and `data-gosx-managed="true"` opt in and
+// `data-gosx-managed="false"` opts out the same way in either surface.
+func managedFormShorthandTruthy(attr nodeAttr) bool {
+	return ManagedFormShorthandTruthy(attr.presence, attr.value)
+}
+
 func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
 	switch v := attr.value.(type) {
 	case bool:
-		if v {
+		if attr.presence || htmlattr.IsBoolean(attr.name) {
+			if !v {
+				return
+			}
 			b.WriteByte(' ')
 			b.WriteString(html.EscapeString(attr.name))
+			return
+		}
+		b.WriteByte(' ')
+		b.WriteString(html.EscapeString(attr.name))
+		if v {
+			b.WriteString(`="true"`)
+		} else {
+			b.WriteString(`="false"`)
 		}
 	case string:
 		// Direct byte writes instead of fmt.Fprintf — each Fprintf boxes

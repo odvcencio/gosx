@@ -152,4 +152,4 @@ func TestWaterSimStaysRequired(t *testing.T) {
 // webglMountChunkPath resolves the WebGL2 water renderer at mount time. A
 // definition nobody reaches is a promise, not an implementation, so the true
 // WebGL2 cell rests on this file as much as on the renderer.
-const webglMountChunkPath = "../../client/js/bootstrap-src/20b-scene-mount-webgl-chunk.js"
+const webglMountChunkPath = "../../client/runtime/scene3d/mount-webgl.ts"

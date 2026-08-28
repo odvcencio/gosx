@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	webglRendererPath  = "../../client/js/bootstrap-src/16-scene-webgl.js"
-	webgpuRendererPath = "../../client/js/bootstrap-src/16a-scene-webgpu.js"
+	webglRendererPath  = "../../client/runtime/scene3d/webgl.ts"
+	webgpuRendererPath = "../../client/runtime/scene3d/webgpu.ts"
 )
 
 func readRenderer(t *testing.T, path string) string {
@@ -33,7 +33,7 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 		"uniform sampler2D u_iblBRDFLUT;",
 		"textureLod(u_iblRadiance, Rr, roughness * u_iblRadianceMaxLod)",
 		"texture(u_iblBRDFLUT, vec2(NoV, roughness)).rg",
-		"prefiltered * (F0 * brdf.x + brdf.y)",
+		"prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y)",
 		"irradiance * albedo * kDenv",
 		"scenePBRLinearHDRPixels",
 		"gl.RGBA16F || 0x881A",
@@ -43,7 +43,7 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 			t.Errorf("the WebGL IBL consumer is missing %q in %s", marker, webglRendererPath)
 		}
 	}
-	for _, marker := range []string{"maxUnits >= 18", "fragment-texture-units<18"} {
+	for _, marker := range []string{"maxUnits >= 20", "fragment-texture-units<20"} {
 		if !strings.Contains(source, marker) {
 			t.Errorf("the WebGL staged capability gate is missing %q", marker)
 		}
@@ -51,34 +51,44 @@ func TestWebGLEnvironmentPathConsumesPrefilteredIBL(t *testing.T) {
 }
 
 // TestBothRenderersConsumeTheGeneratedIBLProducts pins the shared metadata and
-// exact split-sum convention in both runtime backends.
+// the exact, backend-specific F90 split-sum convention in both runtime
+// backends. The old unweighted-B form (F0 * brdf.x + brdf.y) must not appear.
 func TestBothRenderersConsumeTheGeneratedIBLProducts(t *testing.T) {
-	for _, path := range []string{webglRendererPath, webgpuRendererPath} {
-		source := readRenderer(t, path)
+	for _, tc := range []struct {
+		path     string
+		splitSum string
+	}{
+		{webglRendererPath, "prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y)"},
+		{webgpuRendererPath, "prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y)"},
+	} {
+		source := readRenderer(t, tc.path)
 		for _, marker := range []string{
 			"GoSXiblRole",
 			"GoSXColorSpace",
 			"GoSXiblModel",
 			"ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
-			"prefiltered * (F0 * brdf.x + brdf.y)",
+			tc.splitSum,
 			"irradiance * albedo * kDenv",
 		} {
 			if !strings.Contains(source, marker) {
-				t.Errorf("%s does not consume the generated IBL contract marker %q", path, marker)
+				t.Errorf("%s does not consume the generated IBL contract marker %q", tc.path, marker)
 			}
+		}
+		if strings.Contains(source, "prefiltered * (F0 * brdf.x + brdf.y)") {
+			t.Errorf("%s still contains the old unweighted-B split-sum form", tc.path)
 		}
 	}
 }
 
 // TestTheIBLTextureSlotsAreAllocatedAndBound records the WebGL resource path.
 func TestTheIBLTextureSlotsAreAllocatedAndBound(t *testing.T) {
-	// The three units moved out of 15a-scene-postfx-shared.js into
-	// 15a1-scene-texture-budget.js when the base 3D chunk was split by feature.
+	// The three units moved out of 15a-scene-postfx-shared.ts into
+	// 15a1-scene-texture-budget.ts when the base 3D chunk was split by feature.
 	// 15a1 ships in the WebGL chunk now, because 16-scene-webgl.js is its only
 	// caller, so a WebGPU page stops paying for a WebGL2 sampler table.
 	//
 	// The units are negotiated against the cascaded-shadow allocator.
-	const sharedPath = "../../client/js/bootstrap-src/15a1-scene-texture-budget.js"
+	const sharedPath = "../../client/js/bootstrap-src/15a1-scene-texture-budget.ts"
 	data, err := os.ReadFile(sharedPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", sharedPath, err)

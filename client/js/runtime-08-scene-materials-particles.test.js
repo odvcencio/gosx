@@ -34,7 +34,7 @@ test("bootstrap guards WebGPU points shaders against zero/stale viewport uniform
   // shaders adopt the same clamp-to-1 form the thick-line shader uses, and
   // that neither still divides by the unguarded frame.viewportWidth /
   // frame.viewportHeight fields directly.
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
 
   const pointsVertexStart = source.indexOf("var WGSL_POINTS_VERTEX = [");
   const pointsInstancedStart = source.indexOf("var WGSL_POINTS_INSTANCED_VERTEX = [");
@@ -705,7 +705,7 @@ test("bootstrap keeps Scene3D initial point buffers out of entry transitions", a
 });
 
 test("bootstrap keeps Scene3D CSS transition diagnostics opt-in", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.ts"), "utf8");
 
   assert.match(source, /function sceneCSSDebugLog\(\)/);
   assert.match(source, /__gosx_scene3d_css_debug/);
@@ -733,7 +733,7 @@ test("bootstrap gates Scene3D viewport refreshes to viewport-shaped environment 
 });
 
 test("bootstrap skips redundant runtime style and attribute writes", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "00-textlayout.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "00-textlayout.ts"), "utf8");
 
   assert.match(source, /style\.getPropertyValue\(name\) === next/);
   assert.match(source, /style\.setProperty\(name,\s*next\)/);
@@ -743,26 +743,26 @@ test("bootstrap skips redundant runtime style and attribute writes", () => {
 
 test("bootstrap derives selective runtime utilities from the Scene3D core source", () => {
   const builder = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
-  const utils = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-utils.js"), "utf8");
-  const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
+  const utils = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-utils.ts"), "utf8");
+  const primitives = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-primitives.ts"), "utf8");
 
   // The selective runtime bundle carries the runtime-utils head as a real
   // file. The build used to cut it out of the scene core with two literal
   // source markers, so a rename or a re-indent changed what shipped.
   assert.deepEqual(
     bootstrapChunkSources("bootstrap-runtime.js").filter((s) => s.includes("10-runtime-scene")),
-    ["bootstrap-src/10-runtime-scene-utils.js"],
+    ["bootstrap-src/10-runtime-scene-utils.ts"],
   );
   // The scene3d chunk carries no copy of the utils file. It bridges the ten
   // names it reads from window.__gosx_runtime_api instead, so the Chromium
   // Scene3D route downloads those helpers once, not twice.
   assert.deepEqual(
     bootstrapChunkSources("bootstrap-feature-scene3d.js").filter((s) => s.includes("10-runtime-scene")),
-    ["bootstrap-src/10-runtime-scene-core.js"],
+    ["bootstrap-src/10-runtime-scene-core.ts"],
   );
   const scene3dPrefix = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26d-feature-scene3d-prefix.js"), "utf8",
+    path.join(__dirname, "bootstrap-src", "26d-feature-scene3d-prefix.ts"), "utf8",
   );
   for (const name of [
     "browserCapabilitySupported", "cancelEngineFrame", "engineCapabilityStatus", "engineFrame",
@@ -777,11 +777,11 @@ test("bootstrap derives selective runtime utilities from the Scene3D core source
   assert.match(primitives, /function sceneBool\(/);
   assert.match(primitives, /function clearChildren\(/);
   assert.equal(
-    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    (bootstrapSourceMapSource("bootstrap.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function sceneSegmentResolution\(/g) || []).length,
     1,
   );
   assert.equal(
-    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.js").match(/function sceneSegmentResolution\(/g) || []).length,
+    (bootstrapSourceMapSource("bootstrap-feature-scene3d.js.map", "bootstrap-src/12-scene-geometry.ts").match(/function sceneSegmentResolution\(/g) || []).length,
     1,
   );
 });
@@ -1021,4 +1021,50 @@ test("bootstrap preserves Scene3D instanced primitive parameters", async () => {
   assert.equal(torus.positions.length, torus.vertexCount * 3);
   assert.equal(cylinder.normals.length, cylinder.vertexCount * 3);
   assert.equal(cone.uvs.length, cone.vertexCount * 2);
+});
+
+test("bootstrap carries a screen-space pixel floor onto points and compute particles", async () => {
+  // Attenuation scales a sprite by distance, so any moving system sweeps each
+  // sprite's projected size every frame. A sprite that dips below one pixel
+  // stops covering a pixel and winks on and off against the pixel grid, which
+  // reads as flicker. Point layers have always had MinPixelSize; compute
+  // particles and named materials did not, so the only way to stop a
+  // scintillating particle system was to disable Attenuation and lose the
+  // depth cue with it. Both now carry the floor.
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+
+  // A named material may declare the floor for the layers bound to it. A
+  // GLB-derived layer has no Points struct of its own, so this is the only
+  // route it has.
+  const state = api.createSceneState({
+    scene: {
+      materials: [{ name: "gas", minPixelSize: 1.05, maxPixelSize: 12 }],
+      points: [{ id: "galaxy-gas", count: 1, material: "gas", attenuation: true }],
+    },
+  });
+  const withMaterials = api.sceneStatePointsWithMaterials(state);
+  assert.equal(withMaterials[0].minPixelSize, 1.05, "named material must set the point layer's floor");
+  assert.equal(withMaterials[0].maxPixelSize, 12, "named material must set the point layer's cap");
+
+  // A compute particle material carries it too, so a particle system can keep
+  // attenuation on and still be steady.
+  const computeState = api.createSceneState({
+    scene: {
+      computeParticles: [
+        {
+          id: "forge",
+          count: 8,
+          emitter: { kind: "sphere", radius: 4 },
+          material: { color: "#ffffff", size: 9.4, attenuation: true, minPixelSize: 1.4, maxPixelSize: 10 },
+        },
+      ],
+    },
+  });
+  const system = computeState.computeParticles[0];
+  assert.equal(system.material.attenuation, true, "attenuation stays available");
+  assert.equal(system.material.minPixelSize, 1.4, "compute particle material must carry the floor");
+  assert.equal(system.material.maxPixelSize, 10, "compute particle material must carry the cap");
 });

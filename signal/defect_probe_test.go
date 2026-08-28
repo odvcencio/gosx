@@ -55,6 +55,53 @@ func TestComputedNotifiesOncePerDependencyChange(t *testing.T) {
 	}
 }
 
+// TestComputedSwitchesDependenciesAndStopFreezesTheLastValue pins the complete
+// computed lifecycle current main exposes to island state: a recompute replaces
+// stale dependency subscriptions, and Stop detaches the active set without
+// retroactively changing the last published value.
+func TestComputedSwitchesDependenciesAndStopFreezesTheLastValue(t *testing.T) {
+	useLeft := New(true)
+	left := New(1)
+	right := New(10)
+	selected := Derive(func() int {
+		if useLeft.Get() {
+			return left.Get()
+		}
+		return right.Get()
+	})
+
+	var calls atomic.Int32
+	selected.Subscribe(func() { calls.Add(1) })
+
+	left.Set(2)
+	right.Set(20)
+	if got := selected.Get(); got != 2 {
+		t.Fatalf("selected left value = %d, want 2", got)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("active/inactive writes produced %d notifications, want 1", got)
+	}
+
+	useLeft.Set(false)
+	left.Set(3)
+	right.Set(30)
+	if got := selected.Get(); got != 30 {
+		t.Fatalf("selected right value = %d, want 30", got)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("dependency switch produced %d notifications, want 3", got)
+	}
+
+	selected.Stop()
+	right.Set(40)
+	if got := selected.Get(); got != 30 {
+		t.Fatalf("stopped computed value = %d, want frozen value 30", got)
+	}
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("stopped computed received %d notifications, want 3", got)
+	}
+}
+
 // TestSignalSuppressesIdenticalValueByDefault proves that a signal over a
 // comparable type must not notify when the value does not change.
 func TestSignalSuppressesIdenticalValueByDefault(t *testing.T) {

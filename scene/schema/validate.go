@@ -72,6 +72,7 @@ func ValidateJSON(data []byte, opts Options) Report {
 		report.Valid = false
 		return report
 	}
+	validateSpecularRawDocument(&report, data)
 	validateDocument(&report, doc, opts)
 	report.Valid = !hasError(report.Diagnostics)
 	return report
@@ -139,7 +140,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		addID(model.ID, path+".id", model.Pickable != nil && *model.Pickable)
 		addTargetID(model.ID)
 		validateObject(report, model.ObjectIR, path)
-		if strings.TrimSpace(model.Src) == "" {
+		if !modelHasValidAssetSource(model) {
 			report.add(Error, "scene.asset.missing", "Model scene record requires src", path+".src", model.ID, nil)
 		}
 		validateModel(report, model, path)
@@ -174,6 +175,8 @@ func validateDocument(report *Report, doc Document, opts Options) {
 			validateMeshInstance(report, instance, instancePath, mesh.ID)
 		}
 		validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
+		validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
+		validateSpecular(report, mesh.ID, path, mesh.SpecularIntensity, mesh.SpecularColor)
 	}
 	for i, particles := range doc.ComputeParticles {
 		path := fmt.Sprintf("computeParticles[%d]", i)
@@ -218,9 +221,18 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	}
 }
 
+func modelHasValidAssetSource(model scene.ModelIR) bool {
+	if strings.TrimSpace(model.Src) != "" {
+		return true
+	}
+	return model.Progressive && strings.TrimSpace(model.PreviewSrc) != "" && strings.TrimSpace(model.FullSrc) != ""
+}
+
 func validateObject(report *Report, object scene.ObjectIR, path string) {
 	validatePrimitiveParameters(report, object.Kind, object.ID, path, object.Size, object.Width, object.Height, object.Depth, object.Radius, object.RadiusTop, object.RadiusBottom, object.Tube, object.Segments, object.RadialSegments, object.TubularSegments)
 	validateMaterialScalars(report, object.ID, path, object.Roughness, object.Metalness, object.Clearcoat, object.Sheen, object.Transmission, object.Iridescence, object.Anisotropy)
+	validateIOR(report, object.ID, path+".ior", object.IOR)
+	validateSpecular(report, object.ID, path, object.SpecularIntensity, object.SpecularColor)
 	validateNumericFields(report, object.ID, path, map[string]float64{
 		"lineWidth":      object.LineWidth,
 		"dashSize":       object.DashSize,
@@ -388,6 +400,8 @@ func validateInstancedMesh(report *Report, mesh scene.InstancedMeshIR, path stri
 	}
 	validateCompressedArrays(report, mesh.ID, path+".previewTransforms", mesh.PreviewTransforms)
 	validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
+	validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
+	validateSpecular(report, mesh.ID, path, mesh.SpecularIntensity, mesh.SpecularColor)
 	validatePrimitiveParameters(report, mesh.Kind, mesh.ID, path, mesh.Size, mesh.Width, mesh.Height, mesh.Depth, mesh.Radius, mesh.RadiusTop, mesh.RadiusBottom, mesh.Tube, mesh.Segments, mesh.RadialSegments, mesh.TubularSegments)
 	validateLive(report, mesh.ID, path, mesh.Live)
 }
@@ -874,6 +888,30 @@ func validateCustomPostDOMRegions(report *Report, record map[string]any, path st
 			}
 		}
 	}
+	if rawBounds, ok := dom["bounds"]; ok && rawBounds != nil {
+		bounds, ok := rawBounds.(map[string]any)
+		if !ok {
+			report.add(Error, "scene.post_effect.dom_regions.bounds", "CustomPost domRegions bounds must be an object", path+".domRegions.bounds", "", nil)
+			return
+		}
+		if rawMode, ok := bounds["mode"]; ok && rawMode != nil {
+			mode, ok := rawMode.(string)
+			if !ok || !validCustomPostDOMRegionBoundsMode(mode) {
+				report.add(Error, "scene.post_effect.dom_regions.bounds_mode", "CustomPost domRegions bounds mode is invalid", path+".domRegions.bounds.mode", "", nil)
+			}
+		}
+		if rawPadding, ok := bounds["paddingPx"]; ok && rawPadding != nil {
+			padding, ok := rawPadding.(float64)
+			if !ok || math.IsNaN(padding) || math.IsInf(padding, 0) || padding < 0 || padding > 2048 {
+				report.add(Error, "scene.post_effect.dom_regions.bounds_padding", "CustomPost domRegions bounds paddingPx must be finite and between 0 and 2048", path+".domRegions.bounds.paddingPx", "", nil)
+			}
+		}
+	}
+}
+
+func validCustomPostDOMRegionBoundsMode(value string) bool {
+	mode := strings.TrimSpace(value)
+	return mode == "" || mode == "union"
 }
 
 func validCustomPostUniformName(value string) bool {
@@ -917,6 +955,31 @@ func validateMaterialScalars(report *Report, id, path string, values ...float64)
 			report.add(Error, "scene.material.non_finite", "Material scalar must be finite", path+"."+name, id, nil)
 		}
 	}
+}
+
+// validateIOR diagnoses an explicitly authored index of refraction. Absent
+// (nil) is valid and means the renderer default. Zero is valid and selects the
+// special 1-reflectance case. Any value in (0, 1), any negative value, and any
+// non-finite value violates the authored material contract, which requires 0
+// or a finite value of at least 1.
+func validateIOR(report *Report, id, path string, ior *float64) string {
+	if ior == nil {
+		return ""
+	}
+	value := *ior
+	if !finite(value) {
+		report.add(Error, "scene.material.ior_non_finite", "Material ior must be finite", path, id, nil)
+		return "scene.material.ior_non_finite"
+	}
+	if value < 0 {
+		report.add(Error, "scene.material.ior_negative", "Material ior must not be negative; use 0 or a value of at least 1", path, id, map[string]any{"ior": value})
+		return "scene.material.ior_negative"
+	}
+	if value > 0 && value < 1 {
+		report.add(Error, "scene.material.ior_out_of_range", "Material ior must be 0 or at least 1", path, id, map[string]any{"ior": value})
+		return "scene.material.ior_out_of_range"
+	}
+	return ""
 }
 
 func validateNumericFields(report *Report, id, path string, fields map[string]float64) {

@@ -1,25 +1,18 @@
 package server
 
 import (
-	_ "embed"
 	"html"
 
 	"m31labs.dev/gosx"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 )
 
-//go:embed navigation_runtime.js
-var navigationRuntime string
-
-// NavigationScript returns the inline GoSX page-navigation runtime.
-func NavigationScript() gosx.Node {
-	return NavigationScriptWithNonce("")
-}
-
-// NavigationScriptWithNonce returns the inline GoSX page-navigation runtime
-// with a CSP nonce attribute attached. Passing an empty nonce is equivalent to
-// NavigationScript.
-func NavigationScriptWithNonce(nonce string) gosx.Node {
-	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + `>` + navigationRuntime + `</script>`)
+// navigationScriptWithNonce renders the framework-owned page-navigation
+// runtime. It is intentionally unexported: App.EnableNavigation is the sole
+// owner of this script, which prevents applications from accidentally
+// creating a second runtime with a stale or missing request nonce.
+func navigationScriptWithNonce(nonce string) gosx.Node {
+	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + `>` + runtimehost.NavigationRuntime + `</script>`)
 }
 
 func nonceAttr(nonce string) string {

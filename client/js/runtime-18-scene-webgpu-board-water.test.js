@@ -877,7 +877,7 @@ test("Scene3D fake WebGPU water drains an ENTIRE queued dropEvents burst in one 
 
   // Simulate a fast drag: 5 drops queued between two rendered frames, the
   // shape sceneManagedFluidObjectQueueDrop's bounded controlState.dropEvents
-  // array produces (19b-scene-control-forms.js). Before Fix 1 this would
+  // array produces (19b-scene-control-forms.ts). Before Fix 1 this would
   // have coalesced to a single scalar dropEventID/dropX/dropZ and only the
   // LAST drop would ever reach the simulation.
   entry.dropEvents = [
@@ -1070,7 +1070,7 @@ test("Scene3D fake WebGPU timing partial allocation failure destroys candidates 
 });
 
 test("Scene3D WebGL water binds the full Selena object contract", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
   assert.match(source, /mvp: mvp, modelMatrix: identity4, normalMatrix: identity3/,
     "direct analytic objects must receive an identity model matrix when their vertices are already world-baked");
   assert.match(source, /name: "causticTexture", target: gl\.TEXTURE_2D, tex: causticTex/,
@@ -1284,7 +1284,7 @@ test("Scene3D fake WebGL water executes fixed ticks, normals, and queued events 
 
   // water-parity/p6 Fix 1: a fast drag queues MULTIPLE drops between two
   // rendered frames (entry.dropEvents, see sceneManagedFluidObjectQueueDrop
-  // in 19b-scene-control-forms.js) -- the WebGL queueWaterEvents/
+  // in 19b-scene-control-forms.ts) -- the WebGL queueWaterEvents/
   // drainWaterEvents Map-based drain (16-scene-webgl.js) must consume every
   // one of them in the same tick, not just entry.dropEventID's scalar
   // latest. Appended at the end (a fresh, later nowMS not reused anywhere
@@ -2149,4 +2149,269 @@ test("16a Selena skinned mesh draws preserve per-object doubleSided cull mode", 
     ["back", "none"],
     "skinned Selena pipelines must cache and draw distinct single- and double-sided variants",
   );
+});
+
+test("16a Selena skinned LBS packs per-vertex normals/tangents into the gosx-elio-skin-lbs compute input", async () => {
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+
+  // Both fixtures share one body: a single 3-vertex direct skinned object on
+  // one identity joint matrix, so the only difference between cases is how
+  // the LBS packing stage fills the normals/tangents lanes of its input.
+  async function runSkinPackCase(caseLabel, explicitNormalsTangents) {
+    const harness = await createBoardWebGPUHarness();
+    const uvs = new Float32Array([0, 0, 1, 0, 0, 1]);
+    function skinnedMesh(id, depthCenter) {
+      const vertices = {
+        count: 3,
+        positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        joints: new Float32Array(12),
+        weights: new Float32Array([
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+          1, 0, 0, 0,
+        ]),
+        uvs,
+      };
+      if (explicitNormalsTangents) {
+        vertices.normals = new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]);
+        vertices.tangents = new Float32Array([
+          0, 0, 1, -1,
+          0, 0, 1, -1,
+          0, 0, 1, -1,
+        ]);
+      }
+      return {
+        id,
+        kind: "gltf-mesh",
+        materialIndex: 0,
+        vertexOffset: 0,
+        vertexCount: 3,
+        viewCulled: false,
+        depthCenter,
+        directVertices: true,
+        modelMatrix: identity,
+        skin: { jointMatrices: identity },
+        vertices,
+      };
+    }
+    const bundle = {
+      camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+      environment: {},
+      materials: [selenaMaterial],
+      meshObjects: [skinnedMesh("skin-pack-" + caseLabel, 4)],
+      objects: [],
+      worldPositions: new Float32Array(0),
+      worldColors: new Float32Array(0),
+      worldMeshPositions: new Float32Array(0),
+      worldMeshNormals: new Float32Array(0),
+    };
+
+    harness.renderer.render(bundle, {});
+
+    // (1) Exactly one LBS dispatch, one workgroup for the 64-slot padded batch.
+    const lbsDispatches = [];
+    for (const computePass of harness.fake.state.computePasses) {
+      for (const dispatch of computePass.dispatches) {
+        if (dispatch.pipeline && dispatch.pipeline.label === "gosx-elio-skin-lbs") {
+          lbsDispatches.push({ computePass, dispatch });
+        }
+      }
+    }
+    assert.equal(lbsDispatches.length, 1, caseLabel + ": exactly one gosx-elio-skin-lbs dispatch per frame");
+    assert.equal(lbsDispatches[0].dispatch.workgroupCountX, 1, caseLabel + ": paddedCount 64 fits in one 64-thread workgroup");
+
+    // (2) The dispatch bind group hands binding 1 the packed CPU→GPU input
+    // and binding 2 the skinned output storage buffer (the padded-count
+    // uniform was removed, shifting the output storage down to slot 2).
+    let packedInputBuffer = null;
+    let outputBuffer = null;
+    for (const record of lbsDispatches[0].computePass.bindGroups) {
+      const entries = record.group.desc.entries;
+      const inputEntry = entries.find((entry) => entry.binding === 1);
+      const outputEntry = entries.find((entry) => entry.binding === 2);
+      if (inputEntry && outputEntry) {
+        packedInputBuffer = inputEntry.resource.buffer;
+        outputBuffer = outputEntry.resource.buffer;
+        break;
+      }
+    }
+    assert.ok(packedInputBuffer, caseLabel + ": LBS bind group exposes the packed input at binding 1");
+    assert.ok(outputBuffer, caseLabel + ": LBS bind group exposes the skinned output at binding 2");
+
+    // (3) Decode the queue.writeBuffer payload copied into THAT input buffer:
+    // stride 72 B/vertex, normals at byte offsets 44/48/52, tangents at
+    // 56/60/64/68 (w lane included).
+    const inputWrite = harness.fake.state.writeBufferCalls.find(
+      (call) => call.buffer === packedInputBuffer,
+    );
+    assert.ok(inputWrite, caseLabel + ": the packed input staging reached queue.writeBuffer");
+    const view = new DataView(inputWrite.data.buffer, inputWrite.data.byteOffset, inputWrite.data.byteLength);
+    const readF32 = (byteOffset) => view.getFloat32(byteOffset, true);
+    for (let vertex = 0; vertex < 3; vertex += 1) {
+      const base = vertex * 72;
+      if (explicitNormalsTangents) {
+        assert.deepEqual(
+          [readF32(base + 44), readF32(base + 48), readF32(base + 52)],
+          [0, 1, 0],
+          caseLabel + ": vertex " + vertex + " keeps its authored normal",
+        );
+        assert.deepEqual(
+          [readF32(base + 56), readF32(base + 60), readF32(base + 64), readF32(base + 68)],
+          [0, 0, 1, -1],
+          caseLabel + ": vertex " + vertex + " keeps its authored tangent (w=-1)",
+        );
+      } else {
+        assert.deepEqual(
+          [readF32(base + 44), readF32(base + 48), readF32(base + 52)],
+          [0, 0, 1],
+          caseLabel + ": vertex " + vertex + " falls back to the default +Z normal",
+        );
+        assert.deepEqual(
+          [readF32(base + 56), readF32(base + 60), readF32(base + 64), readF32(base + 68)],
+          [1, 0, 0, 1],
+          caseLabel + ": vertex " + vertex + " falls back to the default identity tangent (w=1)",
+        );
+      }
+    }
+
+    // (4) The main render passes bind the SAME output storage back as vertex
+    // buffers: positions/normals/tangents sub-ranges of the one buffer
+    // (paddedCount 64 → 768-byte vec3 regions), while UVs ride a distinct
+    // buffer in slot 2.
+    const mains = mainRenderPasses(harness.fake);
+    assert.ok(mains.length >= 1, caseLabel + ": the frame encodes a main render pass");
+    const bound = {};
+    for (const pass of mains) {
+      for (const vb of pass.vertexBuffers) {
+        bound[vb.slot] = vb;
+      }
+    }
+    assert.strictEqual(bound[0].buffer, outputBuffer, caseLabel + ": slot 0 reads skinned positions from the LBS output");
+    assert.equal(bound[0].offset, 0, caseLabel + ": positions start at the top of the output");
+    assert.equal(bound[0].size, 36, caseLabel + ": 3 vec3 positions = 36 bytes");
+    assert.strictEqual(bound[1].buffer, outputBuffer, caseLabel + ": slot 1 reads skinned normals from the LBS output");
+    assert.equal(bound[1].offset, 768, caseLabel + ": normals sit past the 64-vertex padded position region");
+    assert.equal(bound[1].size, 36, caseLabel + ": 3 vec3 normals = 36 bytes");
+    assert.strictEqual(bound[3].buffer, outputBuffer, caseLabel + ": slot 3 reads skinned tangents from the LBS output");
+    assert.equal(bound[3].offset, 1536, caseLabel + ": tangents sit past the 64-vertex padded normal region");
+    assert.equal(bound[3].size, 48, caseLabel + ": 3 vec4 tangents = 48 bytes");
+    assert.ok(bound[2], caseLabel + ": the skinned draw binds a slot-2 UV buffer");
+    assert.notStrictEqual(bound[2].buffer, outputBuffer, caseLabel + ": UVs ride their own buffer, never the packed output");
+  }
+
+  await runSkinPackCase("A-explicit-normals-tangents", true);
+  await runSkinPackCase("B-default-normals-tangents", false);
+});
+
+test("16a skinned LBS output survives renderer disposal with a fresh bind group on the next WebGPU renderer", async () => {
+  // Regression: a scene object keeps its _gosxWGPUElioSkinRecord (output
+  // buffer + compute bind group) across renderer rebuilds, but dispose()
+  // destroys every buffer in pointsEntryGPUBuffers. webGPUElioEnsureOutputBuffer
+  // must therefore invalidate BOTH record.outputBuffer AND record.bindGroup
+  // when the cached buffer belongs to a dead renderer — never hand the old
+  // bind group back around the dead buffer. fresh:true builds the renderer
+  // straight from client/runtime/scene3d/webgpu.ts instead of the committed
+  // bootstrap bundle, which predates this guard.
+  const selenaMaterial = JSON.parse(goBoardBundleRectsJSON).materials[0];
+  const identity = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+  function skinnedMesh(id) {
+    return {
+      id,
+      kind: "gltf-mesh",
+      materialIndex: 0,
+      vertexOffset: 0,
+      vertexCount: 3,
+      viewCulled: false,
+      depthCenter: 4,
+      directVertices: true,
+      modelMatrix: identity,
+      skin: { jointMatrices: identity },
+      vertices: {
+        count: 3,
+        positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        joints: new Float32Array(12),
+        weights: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+        uvs: new Float32Array([0, 0, 1, 0, 0, 1]),
+        normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]),
+        tangents: new Float32Array([0, 0, 1, -1, 0, 0, 1, -1, 0, 0, 1, -1]),
+      },
+    };
+  }
+  const bundle = {
+    camera: { x: 0, y: 0, z: 6, fov: 60, near: 0.1, far: 100 },
+    environment: {},
+    materials: [selenaMaterial],
+    meshObjects: [skinnedMesh("skin-reuse-across-renderers")],
+    objects: [],
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+  };
+  const meshObject = bundle.meshObjects[0];
+
+  // Renderer 1: one frame caches the skin record, output buffer and bind group.
+  const first = await createBoardWebGPUHarness({ fresh: true });
+  first.renderer.render(bundle, {});
+  const record = meshObject._gosxWGPUElioSkinRecord;
+  assert.ok(record && record.outputBuffer, "first render must cache a skin record with an LBS output buffer");
+  assert.ok(record.bindGroup, "first render must cache a compute bind group");
+  const deadBuffer = record.outputBuffer;
+  const staleBindGroup = record.bindGroup;
+
+  first.renderer.dispose();
+  assert.equal(deadBuffer.destroyed, true, "dispose must destroy every tracked buffer, including the LBS output");
+
+  // Renderer 2 (own fake device): render the SAME object. The stale guard
+  // must drop the dead buffer reference AND its bind group, then reallocate.
+  const second = await createBoardWebGPUHarness({ fresh: true });
+  second.renderer.render(bundle, {});
+
+  const record2 = meshObject._gosxWGPUElioSkinRecord;
+  assert.strictEqual(record2, record, "the skin record persists across renderers by design");
+  const freshBuffer = record2.outputBuffer;
+  assert.ok(freshBuffer, "the second render must have an LBS output buffer");
+  assert.notStrictEqual(freshBuffer, deadBuffer, "the second renderer allocates a distinct LBS output buffer");
+  assert.ok(!freshBuffer.destroyed, "the fresh output buffer must be live on the second device");
+  assert.notStrictEqual(record2.bindGroup, staleBindGroup, "the stale compute bind group must be invalidated, not reused");
+
+  // Compute side: the dispatched bind group's binding 2 carries the fresh buffer.
+  let computedBinding2 = null;
+  let sawDispatch = false;
+  for (const computePass of second.fake.state.computePasses) {
+    for (const dispatch of computePass.dispatches) {
+      if (!(dispatch.pipeline && dispatch.pipeline.label === "gosx-elio-skin-lbs")) continue;
+      sawDispatch = true;
+      for (const bg of computePass.bindGroups) {
+        const entry = bg.group.desc.entries.find((e) => e.binding === 2);
+        if (entry) {
+          computedBinding2 = entry.resource.buffer;
+          break;
+        }
+      }
+    }
+  }
+  assert.ok(sawDispatch, "the second frame must dispatch gosx-elio-skin-lbs");
+  assert.strictEqual(computedBinding2, freshBuffer,
+    "LBS compute bind group binding 2 must reference the fresh output buffer");
+
+  // Draw side: vertex slots 0/1/3 all read from the same fresh buffer.
+  const bound = {};
+  for (const pass of mainRenderPasses(second.fake)) {
+    for (const vb of pass.vertexBuffers) bound[vb.slot] = vb;
+  }
+  assert.strictEqual(bound[0].buffer, freshBuffer, "slot 0 reads skinned positions from the fresh output");
+  assert.strictEqual(bound[1].buffer, freshBuffer, "slot 1 reads skinned normals from the fresh output");
+  assert.strictEqual(bound[3].buffer, freshBuffer, "slot 3 reads skinned tangents from the fresh output");
 });

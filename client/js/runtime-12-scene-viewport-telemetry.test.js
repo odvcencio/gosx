@@ -22,7 +22,64 @@ const {
   flushAsyncWork,
   telemetryPostBodies,
   telemetryEvents,
+  resolveSceneViewportForTest,
 } = require("./runtime-test-harness.js");
+
+test("Scene3D viewport honors minDevicePixelRatio as a sharpness floor after capability selection", () => {
+  const viewport = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 2,
+    maxPixels: 2073600,
+  }, {
+    devicePixelRatio: 1.85,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(viewport.devicePixelRatio, 1.85);
+  assert.ok(viewport.pixelWidth >= 720, "mobile backing width must stay at or above 720px");
+  assert.ok(viewport.pixelWidth * viewport.pixelHeight <= 2073600, "1080p max-pixel budget must remain a hard cap");
+});
+
+test("Scene3D viewport constrains the DPR floor with maxPixels and authored maxDevicePixelRatio", () => {
+  const pixelCapped = resolveSceneViewportForTest({
+    width: 1000,
+    height: 500,
+    minDevicePixelRatio: 1.8,
+    maxDevicePixelRatio: 2,
+    maxPixels: 720000,
+  }, { devicePixelRatio: 2 });
+  assert.ok(Math.abs(pixelCapped.devicePixelRatio - 1.2) < 0.001);
+  assert.equal(pixelCapped.pixelWidth * pixelCapped.pixelHeight, 720000);
+
+  const authoredMaxCapped = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 1.5,
+    maxPixels: 2073600,
+  }, { devicePixelRatio: 2 });
+  assert.equal(authoredMaxCapped.devicePixelRatio, 1.5);
+});
+
+test("Scene3D viewport preserves low-power DPR caps unless an authored floor raises them", () => {
+  const capped = resolveSceneViewportForTest({ width: 390, height: 844 }, {
+    devicePixelRatio: 3,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(capped.devicePixelRatio, 1.25);
+
+  const floored = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 2,
+  }, {
+    devicePixelRatio: 3,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(floored.devicePixelRatio, 1.85);
+});
 
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
   const mount = new FakeElement("div", null);
@@ -1276,4 +1333,185 @@ test("bootstrap defers offscreen shared-runtime Scene3D rerenders until the moun
 
   const last = renderArgs[renderArgs.length - 1];
   assert.deepEqual(last.slice(2, 4), [320, 180]);
+});
+
+test("Scene3D webgl loss recovery rebuilds without a contextrestored event", async () => {
+  // Chrome does not guarantee `webglcontextrestored` after an involuntary
+  // loss, and in a real browser the Canvas2D stand-in lands on a REPLACEMENT
+  // canvas (the original is context-tainted), detaching the only restored
+  // listener with it. Before the recovery watchdog either path left the
+  // scene degraded forever. The watchdog must rebuild a real WebGL renderer
+  // on its own — on a fresh canvas when the original context stays lost —
+  // with no restored event ever firing.
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-loss-recovery";
+  let now = 0;
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    performanceNow: () => now,
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-loss-recovery",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-loss-recovery",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            forceWebGL: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+
+  const originalCanvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const lostGL = originalCanvas.getContext("webgl");
+  originalCanvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+
+  // The original context never comes back: getContext keeps handing out the
+  // same lost context, exactly like a browser that never restores.
+  lostGL.isContextLost = () => true;
+
+  // Hidden-tab time must not spend recovery attempts.
+  env.context.document.visibilityState = "hidden";
+  now = 60000;
+  timers.runInterval(2000);
+  now = 120000;
+  timers.runInterval(2000);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+
+  env.context.document.visibilityState = "visible";
+  now = 130000;
+  timers.runInterval(2000); // arms the eligibility baseline
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  now = 134100;
+  timers.runInterval(2000); // first attempt after the 4s base delay
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  const recoveredCanvas = mount.children[0];
+  assert.notEqual(recoveredCanvas, originalCanvas);
+  const recoveredGL = recoveredCanvas.getContext("webgl");
+  assert.notEqual(recoveredGL, lostGL);
+  assert.ok(
+    recoveredGL.ops.some((entry) => entry[0] === "bufferData" && entry[3] > 0),
+    "recovered renderer must upload geometry buffers to the fresh GL context",
+  );
+});
+
+test("webgl authored points feed the frame clock to the time uniform", async () => {
+  // `time` is a reserved auto-uniform: the WGSL packer always resolves it
+  // from the per-frame clock and ignores the authored placeholder. The WebGL
+  // authored-points path used to upload entry.customUniforms verbatim —
+  // `time: 0` on every frame — so every shader-clock effect (twinkle, depth
+  // wrap, impulses) froze on WebGL while the same material animated on
+  // WebGPU. The content-route starfields were the canonical casualty.
+  let now = 0;
+  const env = createContext({
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    performanceNow: () => now,
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const backend = api.sceneBackendRegistry.select({
+    webgl: true,
+    webgl2: true,
+    webgpu: false,
+    canvas: false,
+    canvas2d: false,
+  });
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 180;
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  assert.equal(renderer && renderer.type, "webgl-pbr");
+
+  const point = {
+    id: "clock-stars",
+    count: 2,
+    positions: [0, 0, 0, 1, 0, -4],
+    sizes: [1, 1],
+    colors: ["#ffffff", "#88ccff"],
+    size: 1,
+    opacity: 1,
+    blendMode: "additive",
+    depthWrite: false,
+    attenuation: false,
+    customVertex: "#version 300 es\nin vec3 a_position;\nuniform mat4 u_viewMatrix;\nuniform mat4 u_projectionMatrix;\nuniform float time;\nvoid main() { gl_Position = u_projectionMatrix * u_viewMatrix * vec4(a_position + vec3(time, 0.0, 0.0), 1.0); gl_PointSize = 2.0; }",
+    customFragment: "#version 300 es\nprecision highp float;\nout vec4 fragColor;\nvoid main() { fragColor = vec4(1.0); }",
+    customUniforms: { time: 0, twinkleBoost: 0.5 },
+    shaderBackend: "custom",
+  };
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    background: "#000000",
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    points: [point],
+    instancedMeshes: [],
+    computeParticles: [],
+    objects: [],
+    meshObjects: [],
+    materials: [],
+    labels: [],
+    sprites: [],
+    lights: [],
+    positions: new Float32Array(0),
+    colors: new Float32Array(0),
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+    worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0,
+    worldVertexCount: 0,
+    postEffects: [],
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  now = 1500;
+  renderer.render(bundle, viewport);
+  now = 3000;
+  renderer.render(bundle, viewport);
+
+  const gl = canvas.getContext("webgl2");
+  const timeWrites = gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
+    .map((entry) => entry[2]);
+  assert.deepEqual(timeWrites, [1.5, 3], "time must carry the frame clock each frame, never the authored 0");
+  const boostWrites = gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "twinkleBoost")
+    .map((entry) => entry[2]);
+  assert.deepEqual(boostWrites, [0.5, 0.5], "non-reserved authored uniforms must still upload");
 });

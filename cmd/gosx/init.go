@@ -316,12 +316,13 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
+		ctx.SetLanguage("en")
 		ctx.SetMetadata(server.Metadata{
 			Links: []server.LinkTag{
 				{Rel: "stylesheet", Href: "/styles.css"},
 			},
 		})
-		return server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document(appName, body))
 	})
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
 		log.Fatal(err)

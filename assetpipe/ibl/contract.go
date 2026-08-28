@@ -55,7 +55,7 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"byteOffset and byteLength. Inflate scheme 3 with DecompressionStream(\"deflate\"). " +
 				"Read the key/value block to check GoSXiblRole, GoSXColorSpace and GoSXiblModel for the formats this " +
 				"pipeline writes: R16G16B16A16_SFLOAT and R16G16_SFLOAT.",
-			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.ts",
 			Present: true,
 		},
 		{
@@ -68,7 +68,7 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"Require OES_texture_float_linear before enabling linear half-float sampling. " +
 				"KTX2 face order is +X, -X, +Y, -Y, +Z, -Z, which matches the GL cube face enums in " +
 				"order. Upload the irradiance cube the same way with one level.",
-			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js, 16-scene-webgl.js and 16a-scene-webgpu.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.ts, 16-scene-webgl.js and 16a-scene-webgpu.js",
 			Present: true,
 		},
 		{
@@ -78,7 +78,7 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"roughness, both sampled at texel centres, so the shader must sample with " +
 				"CLAMP_TO_EDGE and LINEAR filtering and must not offset the coordinates. The table " +
 				"is scene independent, so one upload serves every page in a project.",
-			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js, 16-scene-webgl.js and 16a-scene-webgpu.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.ts, 16-scene-webgl.js and 16a-scene-webgpu.js",
 			Present: true,
 		},
 		{

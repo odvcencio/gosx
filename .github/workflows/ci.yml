@@ -16,7 +16,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Shallow checkout: the release gate only needs the checked-out
+          # tree. Exact event base/head commits missing from the shallow
+          # history are fetched individually by the whitespace-check step.
+          fetch-depth: 1
 
       - name: Patch whitespace check
         env:
@@ -29,6 +32,12 @@ jobs:
           base_sha="$EVENT_BASE_SHA"
           if [ -z "$base_sha" ] || [ "$base_sha" = "$zero_sha" ]; then
             base_sha="$(git hash-object -t tree /dev/null)"
+          elif ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$base_sha"
+          fi
+          # The event head may also be absent from the shallow history.
+          if ! git cat-file -e "${EVENT_HEAD_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$EVENT_HEAD_SHA"
           fi
           echo "checking whitespace in ${EVENT_NAME} patch ${base_sha}..${EVENT_HEAD_SHA}"
           git diff --check "$base_sha" "$EVENT_HEAD_SHA"
@@ -45,10 +54,10 @@ jobs:
   # go-tests: every root package except cmd/gosx, plus the editor, fuzz and
   # desktop gates. The production-build CLI suite runs in go-cli-tests beside
   # this job, so its ~6 minute TinyGo integration tests no longer serialize all
-  # other Go checks. PR117 measured the superseded serial lane at 6m31s for
-  # unit tests plus 10m48s for race tests (BC7 alone took 504.697s), which is
-  # why it temporarily needed 30 minutes. This lane needs neither TinyGo nor
-  # Node and returns to a 15-minute fail-safe.
+  # other Go checks. The go-race-tests job now runs the race detector in
+  # parallel, so this lane needs neither TinyGo nor Node. A recent PR-path run
+  # measured 12m01s without its race step (run 31573355088, job 94042534187),
+  # so it keeps a 15-minute fail-safe.
   go-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -64,7 +73,19 @@ jobs:
           cache: true
 
       - name: Install Danmuji
-        run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
+        # Bounded retry for transient module-proxy errors; pinned args and
+        # checksum validation are unchanged, and exhaustion fails the step.
+        run: |
+          set -eu
+          attempt=1
+          until go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2; do
+            echo "danmuji install attempt ${attempt}/3 failed" >&2
+            if [ "$attempt" -ge 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 5))
+            attempt=$((attempt + 1))
+          done
 
       - name: Format check
         run: make fmt-check
@@ -88,16 +109,6 @@ jobs:
       - name: Editor module tests
         run: make test-editor
 
-      - name: Focused shared-state race tests
-        if: github.event_name == 'pull_request'
-        run: make test-race-pr
-
-      # Pushes reaching main/master retain the exhaustive race gate, including
-      # the expensive BC7 and vector-search kernels omitted from the PR lane.
-      - name: Full repository race tests
-        if: github.event_name == 'push'
-        run: make test-race
-
       - name: Fuzz smoke tests
         run: make test-fuzz-smoke
 
@@ -109,12 +120,51 @@ jobs:
       - name: Desktop tests and Windows cross-compile gate
         run: make test-desktop
 
+  # go-race-tests: the race detector gates split out of go-tests so they run
+  # in parallel instead of serializing after the unit lane. This lane needs
+  # neither TinyGo nor Node. The pull-request path runs the focused
+  # test-race-pr suite within the shared job ceiling. The push path instead
+  # race-builds every package and runs the full package set except nine named,
+  # validated perf/ouroboros tests whose real-repository evidence scans spend
+  # tens of minutes in deterministic parsing/Brotli work under instrumentation.
+  # Ordinary tests still gate all nine. A second scoped perf/ouroboros race run
+  # retains every fixture-sized test plus direct concurrent coverage of its
+  # mutex-protected network capture. The broad lane includes the expensive BC7
+  # and vector-search kernels omitted from pull requests and keeps a 40-minute
+  # per-package alarm inside this 50-minute job ceiling.
+  go-race-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Focused shared-state race tests
+        if: github.event_name == 'pull_request'
+        run: make test-race-pr
+
+      # Pushes reaching main/master retain exhaustive package coverage, with
+      # only the validated deterministic evidence recomputations split out.
+      - name: Full repository race tests
+        if: github.event_name == 'push'
+        run: make test-race
+
   # cmd/gosx/build_test.go runs real production builds and therefore requires
   # TinyGo. Isolating it gives PRs a ~6 minute Go critical path while preserving
-  # every production-build assertion and the standalone CLI build gate.
+  # every production-build assertion and the standalone CLI build gate. A cold
+  # merged-main run reached Go's default 10-minute package timeout in the final
+  # generated-docs fixture, so the suite has a 15-minute Go timeout inside this
+  # 20-minute job ceiling.
   go-cli-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -129,12 +179,7 @@ jobs:
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
-        run: |
-          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
-          sudo dpkg -i tinygo.deb
-          go install golang.org/dl/go1.25.5@latest
-          go1.25.5 download
-          tinygo version
+        run: scripts/install-ci-tinygo.sh
 
       - name: CLI production-build integration tests
         run: make test-cli
@@ -162,8 +207,8 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Node is only needed as a bare runtime for `node --test` (stdlib-only
-      # JS unit tests). There are no npm dependencies to install.
+      # Node also runs the pinned strict TypeScript compiler for the generated
+      # ABI contract. make test-js performs the reproducible npm ci.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -199,12 +244,7 @@ jobs:
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
-        run: |
-          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
-          sudo dpkg -i tinygo.deb
-          go install golang.org/dl/go1.25.5@latest
-          go1.25.5 download
-          tinygo version
+        run: scripts/install-ci-tinygo.sh
 
       # Guards the zero-CGo portability claim: README states every package
       # compiles to WASM. It had stopped being true and nothing noticed,
@@ -249,7 +289,7 @@ jobs:
   # executes the WASM itself; nothing here shells out to `node`.
   browser-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Check out repository
@@ -271,17 +311,25 @@ jobs:
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
-        run: |
-          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
-          sudo dpkg -i tinygo.deb
-          go install golang.org/dl/go1.25.5@latest
-          go1.25.5 download
-          tinygo version
+        run: scripts/install-ci-tinygo.sh
 
       - name: Browser docs E2E gate
         env:
           GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
         run: make test-e2e
+
+      # This fixture test validates that the committed MP4 has browser-readable
+      # metadata. It deliberately requires an explicit browser so a Chrome
+      # binary that merely happens to exist on the generic unit runner cannot
+      # turn the unit partition into a flaky browser lane.
+      - name: Ouroboros media metadata browser smoke
+        # setup-chrome supplies Chromium, whose Linux build omits the MP4
+        # codec exercised by this fixture. GitHub's Ubuntu image also ships
+        # codec-capable Google Chrome; resolve it explicitly so this remains
+        # a browser-lane proof instead of silently skipping the media check.
+        run: |
+          chrome_bin="$(command -v google-chrome-stable || command -v google-chrome)"
+          GOSX_CHROME_BIN="$chrome_bin" go test ./examples/ouroboros-corpus -run '^TestFixtureMP4BrowserLoadsMetadata$' -count=1
 
       # The perf driver's own browser tests. They sit behind `//go:build
       # browser` and nothing passed that tag before this step existed, so 11
@@ -312,6 +360,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - go-tests
+      - go-race-tests
       - go-cli-tests
       - js-tests
       - wasm-tests
@@ -320,7 +369,7 @@ jobs:
 
     steps:
       - name: All test jobs passed
-        run: echo "go-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
+        run: echo "go-tests, go-race-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame

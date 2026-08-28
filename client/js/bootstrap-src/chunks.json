@@ -4,255 +4,294 @@
     {
       "name": "bootstrap.js",
       "sources": [
-        "bootstrap-src/00-textlayout.js",
-        "bootstrap-src/01a-textlayout-inline-prefix.js",
-        "bootstrap-src/01-textlayout-engine.js",
-        "bootstrap-src/01b-textlayout-inline-suffix.js",
-        "bootstrap-src/04-telemetry.js",
-        "bootstrap-src/05-document-env.js",
-        "bootstrap-src/06-declarative-actions.js",
-        "bootstrap-src/09-scene3d-command-bridge.js",
-        "bootstrap-src/07-declarative-regions.js",
-        "bootstrap-src/08-controllers.js",
-        "bootstrap-src/26-runtime-surfaces.js",
-        "bootstrap-src/26-runtime-stream.js",
-        "bootstrap-src/26-runtime-dom.js",
-        "bootstrap-src/26-runtime-blocks.js",
-        "bootstrap-src/10-runtime-primitives.js",
-        "bootstrap-src/10-runtime-scene-utils.js",
-        "bootstrap-src/10-runtime-scene-core.js",
-        "bootstrap-src/11-scene-math.js",
-        "bootstrap-src/11-scene-base64.js",
-        "bootstrap-src/11a-scene-decompress.js",
-        "bootstrap-src/11b-scene-points-generate.js",
-        "bootstrap-src/12-scene-geometry.js",
-        "bootstrap-src/13-scene-material.js",
-        "bootstrap-src/14-scene-lighting.js",
-        "bootstrap-src/15-scene-ir-schema.js",
-        "bootstrap-src/15-scene-draw-plan.js",
-        "bootstrap-src/15b-scene-planner.js",
-        "bootstrap-src/15c-scene-backend-registry.js",
-        "bootstrap-src/15a-scene-postfx-shared.js",
-        "bootstrap-src/15d-scene-dom-regions.js",
-        "bootstrap-src/15a1-scene-texture-budget.js",
-        "bootstrap-src/16b-scene-hdr.js",
-        "bootstrap-src/16c-scene-shared-pbr.js",
-        "bootstrap-src/16e-scene-webgl-legacy.js",
-        "bootstrap-src/16-scene-webgl.js",
-        "bootstrap-src/16z-scene-webgpu-probe.js",
-        "bootstrap-src/16a-scene-webgpu.js",
-        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.js",
-        "bootstrap-src/16b-scene-compute.js",
-        "bootstrap-src/17-scene-input.js",
-        "bootstrap-src/18-scene-canvas.js",
-        "bootstrap-src/19a-scene-ktx2.js",
-        "bootstrap-src/19-scene-gltf.js",
-        "bootstrap-src/19a-scene-animation.js",
-        "bootstrap-src/19b-scene-control-forms.js",
-        "bootstrap-src/16d-scene-webgl-bridge.js",
-        "bootstrap-src/20a-scene-mount-backend.js",
-        "bootstrap-src/20b-scene-mount-webgl-chunk.js",
-        "bootstrap-src/20c-scene-mount-quality.js",
-        "bootstrap-src/20d-scene-mount-overlays.js",
-        "bootstrap-src/20e-scene-mount-viewport.js",
-        "bootstrap-src/20f-scene-mount-overlay-dom.js",
-        "bootstrap-src/20g-scene-mount-controls.js",
-        "bootstrap-src/20h-scene-mount-telemetry.js",
-        "bootstrap-src/20-scene-mount.js",
-        "bootstrap-src/28-video-sync-fallback.js",
-        "bootstrap-src/30a-tail-event-delegation.js",
-        "bootstrap-src/30b-tail-engine-mounting.js",
-        "bootstrap-src/30c-tail-hub-connections.js",
-        "bootstrap-src/30c1-tail-hub-fight-input.js",
-        "bootstrap-src/30c2-tail-arcade-audio.js",
-        "bootstrap-src/30d-tail-island-dispose.js",
-        "bootstrap-src/30e-tail-engine-dispose.js",
-        "bootstrap-src/30f-tail-hub-disconnect.js",
-        "bootstrap-src/30g-tail-page-dispose.js",
-        "bootstrap-src/30h-tail-capability-probe.js",
-        "bootstrap-src/30i-tail-hydration.js",
-        "bootstrap-src/30j-tail-runtime-ready.js",
-        "bootstrap-src/30k-tail-init.js"
+        "bootstrap-src/00-textlayout.ts",
+        "bootstrap-src/01a-textlayout-inline-prefix.ts",
+        "bootstrap-src/01-textlayout-engine.ts",
+        "bootstrap-src/01b-textlayout-inline-suffix.ts",
+        "bootstrap-src/04-telemetry.ts",
+        "bootstrap-src/05-document-env.ts",
+        "../runtime/host/compatibility.ts",
+        "../runtime/generated/runtime-abi.ts",
+        "../runtime/wasm/abi.ts",
+        "../runtime/wasm/mailbox.ts",
+        "../runtime/wasm/loader.ts",
+        "../runtime/host/disclosure.ts",
+        "../runtime/host/actions.ts",
+        "../runtime/scene3d/command-bridge.ts",
+        "../runtime/host/regions.ts",
+        "../runtime/host/controllers.ts",
+        "../runtime/host/facade.ts",
+        "../runtime/host/stream.ts",
+        "../runtime/host/dom.ts",
+        "bootstrap-src/26-runtime-blocks.ts",
+        "bootstrap-src/10-runtime-primitives.ts",
+        "bootstrap-src/10-runtime-scene-utils.ts",
+        "bootstrap-src/10-runtime-scene-core.ts",
+        "bootstrap-src/11-scene-math.ts",
+        "bootstrap-src/11-scene-base64.ts",
+        "bootstrap-src/11a-scene-decompress.ts",
+        "bootstrap-src/11b-scene-points-generate.ts",
+        "bootstrap-src/12-scene-geometry.ts",
+        "bootstrap-src/13-scene-material.ts",
+        "bootstrap-src/14-scene-lighting.ts",
+        "bootstrap-src/15-scene-ir-schema.ts",
+        "bootstrap-src/15-scene-draw-plan.ts",
+        "bootstrap-src/15b-scene-planner.ts",
+        "bootstrap-src/15c-scene-backend-registry.ts",
+        "bootstrap-src/15a-scene-postfx-shared.ts",
+        "../runtime/scene3d/dom-regions.ts",
+        "bootstrap-src/15a1-scene-texture-budget.ts",
+        "bootstrap-src/16b-scene-hdr.ts",
+        "bootstrap-src/16c-scene-shared-pbr.ts",
+        "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl.ts",
+        "bootstrap-src/16z-scene-webgpu-probe.ts",
+        "../runtime/scene3d/webgpu.ts",
+        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "../runtime/scene3d/compute.ts",
+        "bootstrap-src/17-scene-input.ts",
+        "bootstrap-src/18-scene-canvas.ts",
+        "bootstrap-src/19a-scene-ktx2.ts",
+        "../runtime/scene3d/gltf.ts",
+        "../runtime/scene3d/animation.ts",
+        "bootstrap-src/19b-scene-control-forms.ts",
+        "bootstrap-src/16d-scene-webgl-bridge.ts",
+        "../runtime/scene3d/mount-backend.ts",
+        "../runtime/scene3d/mount-webgl.ts",
+        "../runtime/scene3d/mount-quality.ts",
+        "../runtime/scene3d/overlays.ts",
+        "../runtime/scene3d/mount-viewport.ts",
+        "../runtime/scene3d/overlay-dom.ts",
+        "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-telemetry.ts",
+        "../runtime/scene3d/mount.ts",
+        "bootstrap-src/28-video-sync-fallback.ts",
+        "../runtime/host/events.ts",
+        "bootstrap-src/30b-tail-engine-mounting.ts",
+        "../runtime/host/hubs.ts",
+        "bootstrap-src/30c1-tail-hub-fight-input.ts",
+        "bootstrap-src/30c2-tail-arcade-audio.ts",
+        "../runtime/host/disposal.ts",
+        "../runtime/host/engine-disposal.ts",
+        "../runtime/host/hub-disposal.ts",
+        "../runtime/host/page-disposal.ts",
+        "bootstrap-src/30h-tail-capability-probe.ts",
+        "../runtime/host/hydration.ts",
+        "bootstrap-src/30j-tail-runtime-ready.ts",
+        "bootstrap-src/30k-tail-init.ts"
       ]
     },
     {
       "name": "bootstrap-lite.js",
       "sources": [
-        "bootstrap-src/00-textlayout.js",
-        "bootstrap-src/04-telemetry.js",
-        "bootstrap-src/05-document-env.js",
-        "bootstrap-src/06-declarative-actions.js",
-        "bootstrap-src/07-declarative-regions.js",
-        "bootstrap-src/26-runtime-surfaces.js",
-        "bootstrap-src/26-runtime-stream.js",
-        "bootstrap-src/26-runtime-dom.js",
-        "bootstrap-src/26-runtime-blocks.js",
-        "bootstrap-src/25-lite-tail.js"
+        "bootstrap-src/00-textlayout.ts",
+        "bootstrap-src/04-telemetry.ts",
+        "bootstrap-src/05-document-env.ts",
+        "../runtime/host/compatibility.ts",
+        "../runtime/host/disclosure.ts",
+        "../runtime/host/actions.ts",
+        "../runtime/host/regions.ts",
+        "../runtime/host/facade.ts",
+        "../runtime/host/stream.ts",
+        "../runtime/host/dom.ts",
+        "bootstrap-src/26-runtime-blocks.ts",
+        "bootstrap-src/25-lite-tail.ts"
       ]
     },
     {
       "name": "bootstrap-runtime.js",
       "sources": [
-        "bootstrap-src/00-textlayout.js",
-        "bootstrap-src/04-telemetry.js",
-        "bootstrap-src/05-document-env.js",
-        "bootstrap-src/06-declarative-actions.js",
-        "bootstrap-src/07-declarative-regions.js",
-        "bootstrap-src/26-runtime-surfaces.js",
-        "bootstrap-src/26-runtime-stream.js",
-        "bootstrap-src/26-runtime-dom.js",
-        "bootstrap-src/26-runtime-blocks.js",
-        "bootstrap-src/10-runtime-scene-utils.js",
-        "bootstrap-src/10-runtime-primitives.js",
-        "bootstrap-src/26-runtime-tail.js"
+        "bootstrap-src/00-textlayout.ts",
+        "bootstrap-src/04-telemetry.ts",
+        "bootstrap-src/05-document-env.ts",
+        "../runtime/host/compatibility.ts",
+        "../runtime/generated/runtime-abi.ts",
+        "../runtime/wasm/abi.ts",
+        "../runtime/wasm/mailbox.ts",
+        "../runtime/wasm/loader.ts",
+        "../runtime/host/disclosure.ts",
+        "../runtime/host/actions.ts",
+        "../runtime/host/regions.ts",
+        "../runtime/host/facade.ts",
+        "../runtime/host/stream.ts",
+        "../runtime/host/dom.ts",
+        "bootstrap-src/26-runtime-blocks.ts",
+        "bootstrap-src/10-runtime-scene-utils.ts",
+        "bootstrap-src/10-runtime-primitives.ts",
+        "bootstrap-src/26-runtime-tail.ts"
       ]
     },
     {
       "name": "bootstrap-feature-islands.js",
       "sources": [
-        "bootstrap-src/26a-feature-islands-prefix.js",
-        "bootstrap-src/30a-tail-event-delegation.js",
-        "bootstrap-src/30d-tail-island-dispose.js",
-        "bootstrap-src/30h-tail-capability-probe.js",
-        "bootstrap-src/30i-tail-hydration.js",
-        "bootstrap-src/26a-feature-islands-suffix.js"
+        "bootstrap-src/26a-feature-islands-prefix.ts",
+        "../runtime/host/compatibility.ts",
+        "../runtime/host/events.ts",
+        "../runtime/host/disposal.ts",
+        "bootstrap-src/30h-tail-capability-probe.ts",
+        "../runtime/host/hydration.ts",
+        "bootstrap-src/26a-feature-islands-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-engines.js",
       "sources": [
-        "bootstrap-src/26b-feature-engines-prefix.js",
-        "bootstrap-src/26b1-canvas2d-painter.js",
-        "bootstrap-src/26b2-canvas-board-labels.js",
-        "bootstrap-src/28-video-sync-fallback.js",
-        "bootstrap-src/30h-tail-capability-probe.js",
-        "bootstrap-src/30b-tail-engine-mounting.js",
-        "bootstrap-src/30e-tail-engine-dispose.js",
-        "bootstrap-src/26b-feature-engines-suffix.js"
+        "bootstrap-src/26b-feature-engines-prefix.ts",
+        "../runtime/host/compatibility.ts",
+        "bootstrap-src/26b1-canvas2d-painter.ts",
+        "bootstrap-src/26b2-canvas-board-labels.ts",
+        "bootstrap-src/28-video-sync-fallback.ts",
+        "bootstrap-src/30h-tail-capability-probe.ts",
+        "bootstrap-src/30b-tail-engine-mounting.ts",
+        "../runtime/host/engine-disposal.ts",
+        "bootstrap-src/26b-feature-engines-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-hubs.js",
       "sources": [
-        "bootstrap-src/26c-feature-hubs-prefix.js",
-        "bootstrap-src/30c-tail-hub-connections.js",
-        "bootstrap-src/30c1-tail-hub-fight-input.js",
-        "bootstrap-src/30c2-tail-arcade-audio.js",
-        "bootstrap-src/30f-tail-hub-disconnect.js",
-        "bootstrap-src/26c-feature-hubs-suffix.js"
+        "bootstrap-src/26c-feature-hubs-prefix.ts",
+        "../runtime/host/compatibility.ts",
+        "../runtime/host/hubs.ts",
+        "bootstrap-src/30c1-tail-hub-fight-input.ts",
+        "bootstrap-src/30c2-tail-arcade-audio.ts",
+        "../runtime/host/hub-disposal.ts",
+        "bootstrap-src/26c-feature-hubs-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-controllers.js",
       "sources": [
-        "bootstrap-src/26h-feature-controllers-prefix.js",
-        "bootstrap-src/08-controllers.js",
-        "bootstrap-src/26h-feature-controllers-suffix.js"
+        "bootstrap-src/26h-feature-controllers-prefix.ts",
+        "../runtime/host/compatibility.ts",
+        "../runtime/host/controllers.ts",
+        "bootstrap-src/26h-feature-controllers-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
-        "bootstrap-src/26i-feature-textlayout-prefix.js",
-        "bootstrap-src/01-textlayout-engine.js",
-        "bootstrap-src/26i-feature-textlayout-suffix.js"
+        "bootstrap-src/26i-feature-textlayout-prefix.ts",
+        "bootstrap-src/01-textlayout-engine.ts",
+        "bootstrap-src/26i-feature-textlayout-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d.js",
       "sources": [
-        "bootstrap-src/26d-feature-scene3d-prefix.js",
-        "bootstrap-src/09-scene3d-command-bridge.js",
-        "bootstrap-src/10-runtime-primitives.js",
-        "bootstrap-src/10-runtime-scene-core.js",
-        "bootstrap-src/11-scene-math.js",
-        "bootstrap-src/11-scene-base64.js",
-        "bootstrap-src/12-scene-geometry.js",
-        "bootstrap-src/13-scene-material.js",
-        "bootstrap-src/14-scene-lighting.js",
-        "bootstrap-src/15-scene-ir-schema.js",
-        "bootstrap-src/15-scene-draw-plan.js",
-        "bootstrap-src/15b-scene-planner.js",
-        "bootstrap-src/15c-scene-backend-registry.js",
-        "bootstrap-src/15a-scene-postfx-shared.js",
-        "bootstrap-src/15d-scene-dom-regions.js",
-        "bootstrap-src/16c-scene-shared-pbr.js",
-        "bootstrap-src/16z-scene-webgpu-probe.js",
-        "bootstrap-src/17-scene-input.js",
-        "bootstrap-src/18-scene-canvas.js",
-        "bootstrap-src/19b-scene-control-forms.js",
-        "bootstrap-src/16d-scene-webgl-bridge.js",
-        "bootstrap-src/20a-scene-mount-backend.js",
-        "bootstrap-src/20b-scene-mount-webgl-chunk.js",
-        "bootstrap-src/20c-scene-mount-quality.js",
-        "bootstrap-src/20d-scene-mount-overlays.js",
-        "bootstrap-src/20e-scene-mount-viewport.js",
-        "bootstrap-src/20f-scene-mount-overlay-dom.js",
-        "bootstrap-src/20g-scene-mount-controls.js",
-        "bootstrap-src/20h-scene-mount-telemetry.js",
-        "bootstrap-src/20-scene-mount.js",
-        "bootstrap-src/26d-feature-scene3d-suffix.js"
+        "bootstrap-src/26d-feature-scene3d-prefix.ts",
+        "../runtime/scene3d/command-bridge.ts",
+        "bootstrap-src/10-runtime-primitives.ts",
+        "bootstrap-src/10-runtime-scene-core.ts",
+        "bootstrap-src/11-scene-math.ts",
+        "bootstrap-src/11-scene-base64.ts",
+        "bootstrap-src/12-scene-geometry.ts",
+        "bootstrap-src/13-scene-material.ts",
+        "bootstrap-src/14-scene-lighting.ts",
+        "bootstrap-src/15-scene-ir-schema.ts",
+        "bootstrap-src/15-scene-draw-plan.ts",
+        "bootstrap-src/15b-scene-planner.ts",
+        "bootstrap-src/15c-scene-backend-registry.ts",
+        "bootstrap-src/15a-scene-postfx-shared.ts",
+        "../runtime/scene3d/dom-regions.ts",
+        "bootstrap-src/16c-scene-shared-pbr.ts",
+        "bootstrap-src/16z-scene-webgpu-probe.ts",
+        "bootstrap-src/17-scene-input.ts",
+        "bootstrap-src/18-scene-canvas.ts",
+        "bootstrap-src/19b-scene-control-forms.ts",
+        "bootstrap-src/16d-scene-webgl-bridge.ts",
+        "../runtime/scene3d/mount-backend.ts",
+        "../runtime/scene3d/mount-webgl.ts",
+        "../runtime/scene3d/mount-quality.ts",
+        "../runtime/scene3d/overlays.ts",
+        "../runtime/scene3d/mount-viewport.ts",
+        "../runtime/scene3d/overlay-dom.ts",
+        "../runtime/scene3d/mount-controls.ts",
+        "../runtime/scene3d/mount-telemetry.ts",
+        "../runtime/scene3d/mount.ts",
+        "bootstrap-src/26d-feature-scene3d-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-webgl.js",
       "sources": [
-        "bootstrap-src/26j-feature-scene3d-webgl-prefix.js",
-        "bootstrap-src/15a1-scene-texture-budget.js",
-        "bootstrap-src/16b-scene-hdr.js",
-        "bootstrap-src/16e-scene-webgl-legacy.js",
-        "bootstrap-src/16-scene-webgl.js",
-        "bootstrap-src/26j-feature-scene3d-webgl-suffix.js"
+        "bootstrap-src/26j-feature-scene3d-webgl-prefix.ts",
+        "bootstrap-src/15a1-scene-texture-budget.ts",
+        "bootstrap-src/16b-scene-hdr.ts",
+        "bootstrap-src/16e-scene-webgl-legacy.ts",
+        "../runtime/scene3d/webgl.ts",
+        "bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-command.js",
       "sources": [
-        "bootstrap-src/09a-scene3d-command-runtime.js"
+        "../runtime/scene3d/command-runtime.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-webgpu.js",
       "sources": [
-        "bootstrap-src/26e-feature-scene3d-webgpu-prefix.js",
-        "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.js",
-        "bootstrap-src/16a-scene-webgpu.js",
-        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.js",
-        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.js"
+        "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
+        "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
+        "../runtime/scene3d/webgpu.ts",
+        "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
+        "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-compute.js",
       "sources": [
-        "bootstrap-src/26k-feature-scene3d-compute-prefix.js",
-        "bootstrap-src/16b-scene-compute.js",
-        "bootstrap-src/26k-feature-scene3d-compute-suffix.js"
+        "bootstrap-src/26k-feature-scene3d-compute-prefix.ts",
+        "../runtime/scene3d/compute.ts",
+        "bootstrap-src/26k-feature-scene3d-compute-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-decompress.js",
       "sources": [
-        "bootstrap-src/26l-feature-scene3d-decompress-prefix.js",
-        "bootstrap-src/11a-scene-decompress.js",
-        "bootstrap-src/11b-scene-points-generate.js",
-        "bootstrap-src/26l-feature-scene3d-decompress-suffix.js"
+        "bootstrap-src/26l-feature-scene3d-decompress-prefix.ts",
+        "bootstrap-src/11a-scene-decompress.ts",
+        "bootstrap-src/11b-scene-points-generate.ts",
+        "bootstrap-src/26l-feature-scene3d-decompress-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-gltf.js",
       "sources": [
-        "bootstrap-src/26f-feature-scene3d-gltf-prefix.js",
-        "bootstrap-src/19a-scene-ktx2.js",
-        "bootstrap-src/19-scene-gltf.js",
-        "bootstrap-src/26f-feature-scene3d-gltf-suffix.js"
+        "bootstrap-src/26f-feature-scene3d-gltf-prefix.ts",
+        "bootstrap-src/19a-scene-ktx2.ts",
+        "../runtime/scene3d/gltf.ts",
+        "bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"
       ]
     },
     {
       "name": "bootstrap-feature-scene3d-animation.js",
       "sources": [
-        "bootstrap-src/26g-feature-scene3d-animation-prefix.js",
-        "bootstrap-src/19a-scene-animation.js",
-        "bootstrap-src/26g-feature-scene3d-animation-suffix.js"
+        "bootstrap-src/26g-feature-scene3d-animation-prefix.ts",
+        "../runtime/scene3d/animation.ts",
+        "bootstrap-src/26g-feature-scene3d-animation-suffix.ts"
+      ]
+    },
+    {
+      "name": "patch.js",
+      "sources": [
+        "../runtime/host/compatibility.ts",
+        "../runtime/host/patch.ts"
+      ]
+    },
+    {
+      "name": "relay.js",
+      "sources": [
+        "../runtime/host/compatibility.ts",
+        "../runtime/host/relay.ts"
+      ]
+    },
+    {
+      "name": "stripe-bridge.js",
+      "sources": [
+        "../runtime/host/compatibility.ts",
+        "../runtime/host/stripe-bridge.ts"
       ]
     }
   ]

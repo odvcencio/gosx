@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -78,6 +81,68 @@ func TestInspectConcurrencySourceRejectsInvalidGo(t *testing.T) {
 	_, _, err := inspectConcurrencySource("broken.go", []byte("package broken\nfunc"))
 	if err == nil {
 		t.Fatal("inspectConcurrencySource() accepted invalid Go")
+	}
+}
+
+func TestResolveExhaustiveRacePackagesValidatesExactOuroborosSkips(t *testing.T) {
+	ouroboros := writeOuroborosRaceFixture(t, len(ouroborosRaceSkips))
+	all := []listedPackage{
+		{ImportPath: "example.dev/gosx/action"},
+		ouroboros,
+		{ImportPath: "example.dev/gosx/server"},
+	}
+	fullRace, scoped, err := resolveExhaustiveRacePackages("example.dev/gosx", all)
+	if err != nil {
+		t.Fatalf("resolveExhaustiveRacePackages() error = %v", err)
+	}
+	if len(fullRace) != 2 || scoped.ImportPath != ouroboros.ImportPath {
+		t.Fatalf("race split = full %#v scoped %#v", fullRace, scoped)
+	}
+	if scoped.testCount != len(ouroborosRaceSkips)+1 || len(scoped.skips) != len(ouroborosRaceSkips) {
+		t.Fatalf("scoped test accounting = tests %d skips %d", scoped.testCount, len(scoped.skips))
+	}
+	pattern, err := regexp.Compile(raceSkipPattern(scoped.skips))
+	if err != nil {
+		t.Fatalf("race skip pattern does not compile: %v", err)
+	}
+	for _, skip := range ouroborosRaceSkips {
+		if !pattern.MatchString(skip.testName) {
+			t.Fatalf("race skip pattern does not match %s", skip.testName)
+		}
+		if pattern.MatchString(skip.testName + "Suffix") {
+			t.Fatalf("race skip pattern is not exact for %s", skip.testName)
+		}
+	}
+	if pattern.MatchString("TestRetainedRaceCoverage") {
+		t.Fatal("race skip pattern matched the retained coverage test")
+	}
+}
+
+func TestResolveExhaustiveRacePackagesRejectsStaleSkipName(t *testing.T) {
+	ouroboros := writeOuroborosRaceFixture(t, len(ouroborosRaceSkips)-1)
+	_, _, err := resolveExhaustiveRacePackages("example.dev/gosx", []listedPackage{ouroboros})
+	if err == nil || !strings.Contains(err.Error(), "does not name a current test") {
+		t.Fatalf("resolveExhaustiveRacePackages() error = %v, want stale skip", err)
+	}
+}
+
+func writeOuroborosRaceFixture(t *testing.T, skipCount int) listedPackage {
+	t.Helper()
+	dir := t.TempDir()
+	var source strings.Builder
+	source.WriteString("package ouroboros\n\nimport \"testing\"\n\n")
+	for _, skip := range ouroborosRaceSkips[:skipCount] {
+		source.WriteString("func " + skip.testName + "(t *testing.T) {}\n")
+	}
+	source.WriteString("func TestRetainedRaceCoverage(t *testing.T) {}\n")
+	name := "race_test.go"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(source.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return listedPackage{
+		Dir:         dir,
+		ImportPath:  "example.dev/gosx/" + ouroborosRaceRelativePath,
+		TestGoFiles: []string{name},
 	}
 }
 

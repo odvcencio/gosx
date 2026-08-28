@@ -84,9 +84,10 @@ type FetchResource struct {
 	Immediate     *bool             `json:"immediate,omitempty"`
 }
 
-// Storage declares optional browser storage access. Loads publish item values
-// to outputs at controller start; Saves subscribe to input signals and persist
-// JSON values under the configured namespace.
+// Storage declares optional browser storage access. Loads can write decoded
+// JSON directly to shared signals, publish structured controller events, or do
+// both at controller start. Saves subscribe to signals and persist JSON values
+// under the configured namespace.
 type Storage struct {
 	Area      string        `json:"area,omitempty"`
 	Namespace string        `json:"namespace,omitempty"`
@@ -94,7 +95,11 @@ type Storage struct {
 	Save      []StorageSlot `json:"save,omitempty"`
 }
 
-// StorageSlot maps storage keys to shared signals.
+// StorageSlot maps a storage key to a shared Signal and/or controller Output.
+// Signal receives a successfully decoded stored JSON value directly; missing,
+// empty, or invalid storage leaves the signal's typed default unchanged.
+// Output receives the structured storage event used by earlier controller
+// configurations, including a nil value when no valid value was loaded.
 type StorageSlot struct {
 	Key    string `json:"key"`
 	Signal string `json:"signal,omitempty"`

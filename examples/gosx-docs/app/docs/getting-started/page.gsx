@@ -32,9 +32,11 @@ func Page() Node {
 		<section id="overview" class="docs-section-block">
 			<h2>Overview</h2>
 			<p>
-				GoSX is a Go-native web platform. You write Go, and the framework takes care of server rendering, routing, forms, auth, and real-time sync. There is no JavaScript build step and no second language. One
-				<span class="inline-code">go build</span>
-				produces a deployable binary with everything included.
+				GoSX is a Go-native web platform for server rendering, routing, forms, auth, interactive islands, realtime hubs, and managed graphics. GSX adds HTML-shaped markup to Go packages; the browser runtime is generated and managed by the framework, so an application does not need a JavaScript app toolchain.
+				<span class="inline-code">gosx build --prod .</span>
+				stages the server, file-route inputs, public content, hashed browser assets, and deployment metadata together in
+				<span class="inline-code">dist/</span>
+				.
 			</p>
 		</section>
 		<section id="install" class="docs-section-block">
@@ -47,7 +49,7 @@ func Page() Node {
 			{CodeBlock("bash", "go install m31labs.dev/gosx/cmd/gosx@latest")}
 			<p>
 				Verify the installation by running
-				<span class="inline-code">gosx --version</span>
+				<span class="inline-code">gosx version</span>
 				.
 			</p>
 		</section>
@@ -84,10 +86,37 @@ func Page() Node {
 				<span class="inline-code">page.server.go</span>
 				sibling registers a server module that supplies data to the template through the
 				<span class="inline-code">data</span>
-				binding.
+				binding. Loader data is not available to a strict component yet. A route that reads
+				<span class="inline-code">data</span>
+				keeps the older
+				<span class="inline-code">func Page() Node</span>
+				form below; see "Component Syntax" further down.
 			</p>
 			{CodeBlock("go", "// app/page.server.go\npackage app\n\nimport (\n\t\"log\"\n\n\t\"m31labs.dev/gosx/route\"\n)\n\nfunc init() {\n\tif err := route.RegisterFileModuleHere(route.FileModuleOptions{\n\t\tLoad: func(ctx *route.RouteContext, page route.FilePage) (any, error) {\n\t\t\treturn map[string]any{\n\t\t\t\t\"greeting\": \"Hello from the server\",\n\t\t\t}, nil\n\t\t},\n\t}); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}")}
 			{CodeBlock("gsx", "// app/page.gsx\npackage app\n\nfunc Page() Node {\n\treturn <div>\n\t\t<h1>{data.greeting}</h1>\n\t</div>\n}")}
+		</section>
+		<section id="authoring-styles" class="docs-section-block">
+			<h2>Component Syntax</h2>
+			<p>
+				Declare every component with the strict, typed form:
+				<span class="inline-code">component Name(props: Type)</span>
+				. The project-aware CLI checks
+				<span class="inline-code">props</span>
+				as an ordinary Go type.
+			</p>
+			{CodeBlock("gsx", "package app\n\ntype BadgeProps struct {\n\tLabel string\n\tCount int\n}\n\ncomponent Badge(props: BadgeProps) {\n\treturn <span className=\"badge\">\n\t\t{props.Label}: {props.Count}\n\t</span>\n}\n\ncomponent Page() {\n\treturn <main><Badge label=\"Inbox\" count={0} /></main>\n}")}
+			<p>
+				A strict server component allows one top-level GSX return and a narrow, renderer-safe expression set. A call uses an exact or unambiguous lower-camel prop name. It passes every field the callee renders explicitly, even a zero value.
+			</p>
+			<p>
+				The older
+				<span class="inline-code">func Name(...) Node</span>
+				form is deprecated for ordinary components; GoSX removes its untyped variant before v1.0.
+				<span class="inline-code">gosx check</span>
+				already warns on it. It remains necessary today only for loader-bound routes (as above), islands, and engines. See
+				<a href="/docs/components" data-gosx-link="true">Components</a>
+				for the exact boundary and the migration note.
+			</p>
 		</section>
 		<section id="dev-server" class="docs-section-block">
 			<h2>Dev Server</h2>
@@ -102,7 +131,7 @@ func Page() Node {
 			</p>
 			{CodeBlock("bash", "gosx dev")}
 			<p>
-				Template changes reload the affected page without a full compile. Go source changes trigger a fast incremental rebuild. The browser tab reconnects automatically when the server is ready.
+				The command watches project source, rebuilds when needed, and refreshes connected browser tabs after a successful change. Compiler diagnostics remain in the terminal when a change is invalid.
 			</p>
 		</section>
 		<section id="next-steps" class="docs-section-block">
@@ -111,6 +140,10 @@ func Page() Node {
 				Now that the dev server is running, explore what GoSX can do.
 			</p>
 			<ul>
+				<li>
+					<a href="/docs/components" data-gosx-link="true">Components</a>
+					— Strict component syntax, props, renderer boundaries, and the legacy migration note.
+				</li>
 				<li>
 					<a href="/docs/routing" data-gosx-link="true">Routing</a>
 					— File-based routing, dynamic params, and nested layouts.

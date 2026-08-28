@@ -21,6 +21,10 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const patchSource = fs.readFileSync(path.join(here, "patch.js"), "utf8");
+const patchAuthoritySource = [
+  fs.readFileSync(path.join(here, "../runtime/host/compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(here, "../runtime/host/patch.ts"), "utf8"),
+].join("\n");
 
 const ELEMENT_NODE = 1;
 const TEXT_NODE = 3;
@@ -256,7 +260,7 @@ function makeDocument(stats) {
 
 // loadApplier runs patch.js inside a fresh context and returns the applier plus
 // its document, stats and warning log.
-function loadApplier() {
+function loadApplier(source = patchSource) {
   const stats = newStats();
   const doc = makeDocument(stats);
   const warnings = [];
@@ -284,7 +288,7 @@ function loadApplier() {
   };
   sandbox.window = sandbox;
   const context = vm.createContext(sandbox);
-  new vm.Script(patchSource, { filename: "patch.js" }).runInContext(context);
+  new vm.Script(source, { filename: "patch-authority.js" }).runInContext(context);
   return { apply: sandbox.__gosx_apply_patches, doc, stats, warnings, sandbox };
 }
 
@@ -421,8 +425,8 @@ function refSetAttr(el, name, value) {
 
 // buildScene creates the island wrapper plus a component root, then lets the
 // caller populate the root. Every applier instance gets an identical tree.
-function buildScene(populate) {
-  const loaded = loadApplier();
+function buildScene(populate, source = patchSource) {
+  const loaded = loadApplier(source);
   const wrapper = new FakeElement("div", loaded.stats, loaded.doc);
   wrapper.id = "island";
   loaded.doc.register(wrapper);
@@ -430,6 +434,12 @@ function buildScene(populate) {
   wrapper.appendChild(root);
   populate(root, loaded.doc, loaded.stats);
   return { ...loaded, wrapper, root };
+}
+
+function runAuthority(populate, ops) {
+  const scene = buildScene(populate, patchAuthoritySource);
+  scene.apply("island", JSON.stringify(ops));
+  return scene;
 }
 
 function serialize(node) {
@@ -683,11 +693,59 @@ test("patch applier sets attributes, values and removals identically", () => {
   };
   const ops = [
     { kind: 8, path: "0/0", attrName: "value", text: "new" },
-    { kind: 1, path: "0/0", attrName: "disabled", text: "true" },
     { kind: 2, path: "0/0", attrName: "placeholder" },
     { kind: 1, path: "0/0", attrName: "aria-label", text: "field" },
   ];
   assertMatchesOracles("attributes", populate, ops);
+});
+
+test("authored patch treats boolean attributes as presence regardless of value text", () => {
+  const populate = (root, doc, stats) => {
+    const input = new FakeElement("input", stats, doc);
+    input.disabled = false;
+    input.required = false;
+    root.appendChild(input);
+  };
+  const scene = runAuthority(populate, [
+    { kind: 1, path: "0", attrName: "disabled", text: "false" },
+    { kind: 1, path: "0", attrName: "required", text: "" },
+  ]);
+  const input = scene.root.kids[0];
+  assert.equal(input.getAttribute("disabled"), "");
+  assert.equal(input.getAttribute("required"), "");
+  assert.equal(input.disabled, true);
+  assert.equal(input.required, true);
+});
+
+test("authored patch maps reflected boolean property names and clears them on removal", () => {
+  const populate = (root, doc, stats) => {
+    const input = new FakeElement("input", stats, doc);
+    input.readOnly = false;
+    root.appendChild(input);
+  };
+  const scene = runAuthority(populate, [
+    { kind: 1, path: "0", attrName: "readonly", text: "true" },
+    { kind: 2, path: "0", attrName: "readonly" },
+  ]);
+  const input = scene.root.kids[0];
+  assert.equal(input.getAttribute("readonly"), null);
+  assert.equal(input.readOnly, false);
+});
+
+test("authored patch preserves hidden=until-found and writes value as a live property", () => {
+  const populate = (root, doc, stats) => {
+    const input = new FakeElement("input", stats, doc);
+    input.value = "old";
+    root.appendChild(input);
+  };
+  const scene = runAuthority(populate, [
+    { kind: 1, path: "0", attrName: "hidden", text: "until-found" },
+    { kind: 1, path: "0", attrName: "value", text: "new" },
+  ]);
+  const input = scene.root.kids[0];
+  assert.equal(input.getAttribute("hidden"), "until-found");
+  assert.equal(input.getAttribute("value"), null);
+  assert.equal(input.value, "new");
 });
 
 test("patch applier survives a long randomized op stream", () => {

@@ -51,20 +51,26 @@ test("bootstrap allocates Scene3D texture units without CSM and IBL collisions",
   assert.equal(typeof api.allocateTextureUnits, "function");
 
   const twoShadowLayout = api.allocateTextureUnits({ shadowCount: 2, ibl: true, maxUnits: 16 });
-  assert.deepEqual(Array.from(twoShadowLayout.shadows), [6, 7]);
-  assert.deepEqual({ ...twoShadowLayout.ibl }, { irradiance: 8, radiance: 9, brdfLUT: 10 });
+  assert.deepEqual({ ...twoShadowLayout.material },
+    { albedo: 0, normal: 1, roughness: 2, metalness: 3, emissive: 4, occlusion: 5,
+      specularIntensity: 6, specularColor: 7 });
+  assert.deepEqual(Array.from(twoShadowLayout.shadows), [8, 9]);
+  assert.deepEqual({ ...twoShadowLayout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
 
   const defaultLayout = api.allocateTextureUnits({ shadowCount: 2, ibl: true });
-  assert.deepEqual(Array.from(defaultLayout.shadows), [6, 7]);
-  assert.deepEqual({ ...defaultLayout.ibl }, { irradiance: 8, radiance: 9, brdfLUT: 10 });
+  assert.deepEqual(Array.from(defaultLayout.shadows), [8, 9]);
+  assert.deepEqual({ ...defaultLayout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
 
   const csmLayout = api.allocateTextureUnits({ shadowCount: 4, ibl: true, maxUnits: 16 });
-  assert.deepEqual(Array.from(csmLayout.shadows), [6, 7, 8, 9]);
-  assert.deepEqual({ ...csmLayout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
+  assert.deepEqual(Array.from(csmLayout.shadows), [8, 9, 10, 11]);
+  assert.deepEqual({ ...csmLayout.ibl }, { irradiance: 12, radiance: 13, brdfLUT: 14 });
 
+  // With the specular-colour unit reserved the shared pool starts at 8, so a
+  // 10-unit budget fits only the eight material samplers: IBL needs three
+  // shared units and is disabled with a warning instead of colliding.
   const constrained = api.allocateTextureUnits({ shadowCount: 6, ibl: true, maxUnits: 10 });
-  assert.deepEqual(Array.from(constrained.shadows), [6]);
-  assert.deepEqual({ ...constrained.ibl }, { irradiance: 7, radiance: 8, brdfLUT: 9 });
+  assert.deepEqual(Array.from(constrained.shadows), []);
+  assert.equal(constrained.ibl, null);
   assert.equal(constrained.warnings.length > 0, true);
 });
 
@@ -346,7 +352,7 @@ test("bootstrap binds Scene3D environment maps for WebGL PBR", async () => {
     "a static scene must schedule a post-load frame when its environment texture becomes ready",
   );
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_hasEnvMap" && entry[2] === 1));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 8));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 10));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_envIntensity" && entry[2] === 1.25));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1f" && entry[1] === "u_envRotation" && entry[2] === 0.5));
   assert.equal(env.consoleLogs.error.length, 0);
@@ -421,11 +427,11 @@ test("bootstrap keeps Scene3D CSM shadow units ahead of IBL units", async () => 
   const gl = mount.children[0].getContext("webgl2");
   assert.equal(gl.ops.filter((entry) => entry[0] === "createFramebuffer").length, 4);
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowCascades0" && entry[2] === 4));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_0" && entry[2] === 6));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_1" && entry[2] === 7));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_2" && entry[2] === 8));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_3" && entry[2] === 9));
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 10));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_0" && entry[2] === 8));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_1" && entry[2] === 9));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_2" && entry[2] === 10));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_shadowMap0_3" && entry[2] === 11));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 12));
   assert.ok(gl.ops.some((entry) => entry[0] === "uniform1fv" && entry[1] === "u_shadowCascadeSplits0" && entry[2] === 4));
   assert.equal(env.consoleLogs.error.length, 0);
 });
@@ -497,7 +503,7 @@ test("bootstrap fetches Radiance HDR Scene3D environment maps for WebGL PBR", as
   assert.equal(env.imageLoads.includes("/hdri/studio.hdr"), false);
   const gl = mount.children[0].getContext("webgl2");
   assert.ok(gl.ops.filter((entry) => entry[0] === "texImage2D").length >= 2);
-  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 8));
+  assert.ok(gl.ops.some((entry) => entry[0] === "uniform1i" && entry[1] === "u_envMap" && entry[2] === 10));
   assert.equal(env.consoleLogs.error.length, 0);
 });
 

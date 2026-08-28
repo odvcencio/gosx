@@ -295,7 +295,7 @@ func TestAppHeadDecoratorsRunInRegistrationOrder(t *testing.T) {
 }
 
 func TestHTMLDocument(t *testing.T) {
-	doc := HTMLDocument("Test Page", gosx.Text(""), gosx.Text("hello"))
+	doc := HTMLDocument(&DocumentContext{Title: "Test Page", Body: gosx.Text("hello")})
 	html := gosx.RenderHTML(doc)
 
 	if !strings.Contains(html, "<!DOCTYPE html>") {
@@ -314,6 +314,18 @@ func TestHTMLDocument(t *testing.T) {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)
 		}
+	}
+}
+
+func TestHTMLDocumentLanguageComposition(t *testing.T) {
+	doc := HTMLDocument(&DocumentContext{Title: "English Docs", Language: " en-US ", Body: gosx.Text("hello")})
+	html := gosx.RenderHTML(doc)
+
+	if !strings.Contains(html, `<html data-gosx-document="true" lang="en-US">`) {
+		t.Fatalf("expected language on the html element, got %q", html)
+	}
+	if withEmpty, plain := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Body: gosx.Text("body")})), gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Language: " \t", Body: gosx.Text("body")})); withEmpty != plain {
+		t.Fatalf("expected empty language document to match plain output")
 	}
 }
 
@@ -2338,6 +2350,24 @@ func TestAppServesPublicFilesAtRoot(t *testing.T) {
 	}
 }
 
+func TestAppServesWebManifestWithStandardContentType(t *testing.T) {
+	publicDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(publicDir, "site.webmanifest"), []byte(`{"name":"GoSX"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetPublicDir(publicDir)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/site.webmanifest", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/manifest+json; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+}
+
 func TestAppCustomNotFoundWinsOverRootRouteCatchall(t *testing.T) {
 	app := New()
 	app.Route("/", func(r *http.Request) gosx.Node {
@@ -2719,6 +2749,25 @@ func TestHandleAPIAppliesRouteMiddleware(t *testing.T) {
 	}
 }
 
+func TestResolveNavigationLinkCurrentQuerySemantics(t *testing.T) {
+	for _, test := range []struct {
+		name, href, current, want string
+	}{
+		{name: "queryless same path", href: "/docs/forms", current: "/docs/forms?tab=posting", want: "page"},
+		{name: "authored query exact", href: "/docs/forms?tab=posting", current: "/docs/forms?tab=posting", want: "page"},
+		{name: "authored query differs", href: "/docs/forms?tab=history", current: "/docs/forms?tab=posting", want: "none"},
+		{name: "path ancestor ignores current query", href: "/docs", current: "/docs/forms?tab=posting", want: "ancestor"},
+		{name: "root is not ancestor", href: "/", current: "/docs/forms?tab=posting", want: "none"},
+		{name: "queryless root same path", href: "/", current: "/?tab=posting", want: "page"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ResolveNavigationLinkCurrent(test.href, test.current, "auto"); got != test.want {
+				t.Fatalf("ResolveNavigationLinkCurrent(%q, %q) = %q, want %q", test.href, test.current, got, test.want)
+			}
+		})
+	}
+}
+
 func TestEnableNavigationInjectsRuntimeIntoDefaultDocument(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
@@ -3079,6 +3128,100 @@ func TestMountAppIncludesRoutesRegisteredAfterMount(t *testing.T) {
 	}
 	if childSawPath != "/late" {
 		t.Fatalf("expected child to see /late after prefix strip, got %q", childSawPath)
+	}
+}
+
+func TestMountWildcardPatternPopulatesPathValue(t *testing.T) {
+	app := New()
+	var sawTeamID string
+	app.Mount("GET /avatars/{teamID}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawTeamID = r.PathValue("teamID")
+		_, _ = w.Write([]byte("avatar-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/avatars/broncos.png", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if sawTeamID != "broncos.png" {
+		t.Fatalf("expected PathValue(teamID) to be %q, got %q", "broncos.png", sawTeamID)
+	}
+}
+
+func TestMountPatternWithMultipleWildcardsPopulatesEach(t *testing.T) {
+	app := New()
+	var sawLeague, sawTeamID string
+	app.Mount("GET /leagues/{league}/teams/{teamID}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawLeague = r.PathValue("league")
+		sawTeamID = r.PathValue("teamID")
+		_, _ = w.Write([]byte("team-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/leagues/nfl/teams/broncos", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if sawLeague != "nfl" {
+		t.Fatalf("expected PathValue(league) to be %q, got %q", "nfl", sawLeague)
+	}
+	if sawTeamID != "broncos" {
+		t.Fatalf("expected PathValue(teamID) to be %q, got %q", "broncos", sawTeamID)
+	}
+}
+
+func TestMountUnmatchedRequestFallsThroughToPageRouter(t *testing.T) {
+	app := New()
+	app.Mount("GET /avatars/{teamID}/logo", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("avatar-ok"))
+	}))
+	app.SetNotFound(func(ctx *Context) gosx.Node {
+		return gosx.Text("custom-not-found")
+	})
+
+	handler := app.Build()
+	// One path segment short of the mounted pattern: no mount match, so
+	// dispatch must still fall through to the page router's 404 handler.
+	req := httptest.NewRequest(http.MethodGet, "/avatars/broncos", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "custom-not-found") {
+		t.Fatalf("expected custom-not-found body, got %q", body)
+	}
+}
+
+func TestMountSubtreePatternStillMatches(t *testing.T) {
+	app := New()
+	var sawPath string
+	app.Mount("/legacy/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPath = r.URL.Path
+		_, _ = w.Write([]byte("legacy-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/legacy/reports/2024.csv", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "legacy-ok") {
+		t.Fatalf("expected legacy-ok body, got %q", body)
+	}
+	if sawPath != "/legacy/reports/2024.csv" {
+		t.Fatalf("expected subtree handler to see full path, got %q", sawPath)
 	}
 }
 

@@ -376,6 +376,10 @@ func (g *gameSession) runCPU(sourceRevision, generation uint64) {
 
 func init() {
 	Hub = hub.New("checkers")
+	Hub.MaxClients = 24
+	Hub.RequireOrigin = true
+	Hub.MaxMessagesPerSecond = 20
+	Hub.MaxMessageBurst = 40
 	Hub.On("join", func(ctx *hub.Context) { ctx.Hub.Send(ctx.Client.ID, stateEvent, liveGame.snapshot()) })
 	Hub.On("checkers:source", func(ctx *hub.Context) {
 		if h, ok := decodeHole(ctx.Data); ok {

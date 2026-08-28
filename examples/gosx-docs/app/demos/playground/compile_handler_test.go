@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"m31labs.dev/gosx/examples/gosx-docs/app/demos/democtl"
+	"m31labs.dev/gosx/island/program"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,6 +37,12 @@ func TestCompileSourceDefaultPresetRoundTrip(t *testing.T) {
 	}
 	if result.Component != "Counter" {
 		t.Fatalf("Component = %q; want Counter", result.Component)
+	}
+	if strings.Contains(result.HTML, "<button") {
+		t.Fatalf("HTML must not contain authored preview markup: %s", result.HTML)
+	}
+	if !previewHasAttr(result.Preview, "data-gosx-on-click") || !previewHasAttr(result.Preview, "data-gosx-handler") || !previewHasText(result.Preview, "0") {
+		t.Fatalf("structured preview does not contain an interactive counter baseline: %#v", result.Preview)
 	}
 	if len(result.Diagnostics) != 0 {
 		t.Fatalf("expected zero diagnostics, got: %v", result.Diagnostics)
@@ -63,7 +75,152 @@ func TestCompileSourceAllPresets(t *testing.T) {
 			if result.NodeCount <= 0 {
 				t.Fatalf("preset %q: expected NodeCount > 0, got %d", p.Slug, result.NodeCount)
 			}
+			decoded, err := program.DecodeBinary(result.Program)
+			if err != nil {
+				t.Fatalf("preset %q: decode program: %v", p.Slug, err)
+			}
+			if len(decoded.Handlers) == 0 {
+				t.Fatalf("preset %q: compiled without event handlers", p.Slug)
+			}
+			if p.Slug == "greeter" && !previewHasAttr(result.Preview, "data-gosx-on-input") {
+				t.Fatalf("preset %q: structured preview is missing its input marker", p.Slug)
+			}
 		})
+	}
+}
+
+func TestCompileSourceRejectsActivePlaygroundMarkup(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"static img onerror", `<img src="/missing.png" onerror="alert(1)" />`},
+		{"dynamic img onerror", `<img src="/missing.png" onerror={payload.Get()} />`},
+		{"dynamic onerror", `<div onerror={payload.Get()}>unsafe</div>`},
+		{"mixed case onerror", `<div OnErRoR="alert(1)">unsafe</div>`},
+		{"javascript href", `<a href="javascript:alert(1)">unsafe</a>`},
+		{"mixed case javascript href", `<a HREF="JaVaScRiPt:alert(1)">unsafe</a>`},
+		{"iframe srcdoc", `<iframe srcdoc="unsafe"></iframe>`},
+		{"srcdoc attribute", `<div srcdoc="unsafe">unsafe</div>`},
+		{"svg onload", `<svg onload="alert(1)"></svg>`},
+		{"dynamic href", `<a href={payload.Get()}>unsafe</a>`},
+		{"srcset", `<div srcset="/safe.png 1x">unsafe</div>`},
+		{"custom element is", `<div is="script-widget">unsafe</div>`},
+		{"reserved runtime attribute", `<div data-gosx-path="0">unsafe</div>`},
+		{"unsupported mouseover", `<button data-on-mouseover="payload.Set(value)">unsafe</button>`},
+		{"script element", `<script>window.__gosxPlaygroundPwned = true</script>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := `package playground
+
+//gosx:island
+func Attack() Node {
+	payload := signal.New("safe")
+	return ` + tt.body + `
+}
+`
+			result, err := CompileSource([]byte(source))
+			if err != nil {
+				t.Fatalf("CompileSource: %v", err)
+			}
+			if len(result.Diagnostics) == 0 {
+				t.Fatalf("unsafe source compiled without a diagnostic: %s", tt.body)
+			}
+			if len(result.Program) != 0 || result.HTML != "" || len(result.Preview.Nodes) != 0 {
+				t.Fatalf("unsafe source returned runnable output: %#v", result)
+			}
+		})
+	}
+}
+
+func TestCompileSourceRejectsFragmentRoot(t *testing.T) {
+	source := `package playground
+
+//gosx:island
+func FragmentRoot() Node {
+	return <><span>one</span><span>two</span></>
+}
+`
+	result, err := CompileSource([]byte(source))
+	if err != nil {
+		t.Fatalf("CompileSource: %v", err)
+	}
+	if len(result.Diagnostics) == 0 || !strings.Contains(result.Diagnostics[0].Message, "root must be one HTML element") {
+		t.Fatalf("fragment root diagnostic = %#v", result.Diagnostics)
+	}
+	if len(result.Program) != 0 || result.HTML != "" || len(result.Preview.Nodes) != 0 {
+		t.Fatalf("fragment root returned runnable output: %#v", result)
+	}
+}
+
+func previewHasAttr(tree PlaygroundPreviewTree, name string) bool {
+	for _, node := range tree.Nodes {
+		for _, attr := range node.Attrs {
+			if attr.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func previewHasText(tree PlaygroundPreviewTree, text string) bool {
+	for _, node := range tree.Nodes {
+		if node.Text == text {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPlaygroundEditorSafeDOMPolicyMatchesServer(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source path")
+	}
+	editorPath := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "public", "playground-editor.js")
+	source, err := os.ReadFile(editorPath)
+	if err != nil {
+		t.Fatalf("read playground editor: %v", err)
+	}
+	if bytes.Contains(source, []byte("innerHTML")) || bytes.Contains(source, []byte("outerHTML")) || bytes.Contains(source, []byte("insertAdjacentHTML")) {
+		t.Fatal("playground editor must not parse compiled source as HTML")
+	}
+
+	assertClientSetMatches(t, source, "allowedTags", playgroundAllowedTags)
+	assertClientSetMatches(t, source, "allowedAttrs", playgroundAllowedAttrs)
+	assertClientSetMatches(t, source, "urlAttrs", playgroundURLAttrs)
+	assertClientSetMatches(t, source, "eventMarkers", playgroundAllowedEvents)
+}
+
+func assertClientSetMatches(t *testing.T, source []byte, name string, server map[string]struct{}) {
+	t.Helper()
+	pattern := `(?s)var ` + regexp.QuoteMeta(name) + ` = new Set\(\[(.*?)\]\);`
+	block := regexp.MustCompile(pattern).FindSubmatch(source)
+	if len(block) != 2 {
+		t.Fatalf("playground editor %s set was not found", name)
+	}
+	client := make(map[string]struct{})
+	for _, match := range regexp.MustCompile(`"([a-z0-9:_-]+)"`).FindAllSubmatch(block[1], -1) {
+		client[string(match[1])] = struct{}{}
+	}
+
+	var missing, extra []string
+	for value := range server {
+		if _, ok := client[value]; !ok {
+			missing = append(missing, value)
+		}
+	}
+	for value := range client {
+		if _, ok := server[value]; !ok {
+			extra = append(extra, value)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	if len(missing) != 0 || len(extra) != 0 {
+		t.Fatalf("client/server %s policy differs; missing=%v extra=%v", name, missing, extra)
 	}
 }
 
@@ -341,6 +498,47 @@ func TestCompilerParseTimeout(t *testing.T) {
 	}
 }
 
+func TestCompilerTimeoutKeepsConcurrencySlotUntilWorkerExits(t *testing.T) {
+	orig := compileSourceWithCountsFn
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	compileSourceWithCountsFn = func(source []byte) (CompileResult, int, int, error) {
+		started <- struct{}{}
+		<-release
+		return CompileResult{}, 0, 0, nil
+	}
+	defer func() { compileSourceWithCountsFn = orig }()
+
+	limiter := democtl.NewLimiter(100, 1000)
+	c := newTestCompiler(t, limiter, func(cfg *CompileConfig) {
+		cfg.ParseTimeout = 20 * time.Millisecond
+		cfg.MaxConcurrent = 1
+	})
+
+	_, err := c.Compile("", []byte("first"))
+	if !errors.Is(err, ErrParseTimeout) {
+		t.Fatalf("first compile: expected ErrParseTimeout, got %v", err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("compile worker did not start")
+	}
+
+	if _, err := c.Compile("", []byte("second")); !errors.Is(err, ErrCompilerBusy) {
+		t.Fatalf("second compile while timed-out worker remains: got %v, want ErrCompilerBusy", err)
+	}
+
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for len(c.compileSlots) != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := len(c.compileSlots); got != 0 {
+		t.Fatalf("worker slot count after release = %d, want 0", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Cache unit tests
 // ---------------------------------------------------------------------------
@@ -405,9 +603,9 @@ func TestClientIPFromRequestStripsPort(t *testing.T) {
 		{"ipv4 with port", "127.0.0.1:49352", "", "127.0.0.1"},
 		{"ipv4 different port same host", "127.0.0.1:49999", "", "127.0.0.1"},
 		{"ipv6 with port", "[::1]:49352", "", "::1"},
-		{"xff single", "10.0.0.1:80", "203.0.113.5", "203.0.113.5"},
-		{"xff chain takes first", "10.0.0.1:80", "203.0.113.5, 10.0.0.2", "203.0.113.5"},
-		{"xff with spaces", "10.0.0.1:80", " 203.0.113.5 , 10.0.0.2", "203.0.113.5"},
+		{"xff single ignored", "10.0.0.1:80", "203.0.113.5", "10.0.0.1"},
+		{"xff chain ignored", "10.0.0.1:80", "203.0.113.5, 10.0.0.2", "10.0.0.1"},
+		{"xff spaces ignored", "10.0.0.1:80", " 203.0.113.5 , 10.0.0.2", "10.0.0.1"},
 		{"no port fallback", "bare-host", "", "bare-host"},
 	}
 	for _, tc := range cases {

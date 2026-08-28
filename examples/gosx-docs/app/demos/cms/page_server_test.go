@@ -1,6 +1,23 @@
 package docs
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
+
+func TestCMSClientIPIgnoresUntrustedForwardingHeader(t *testing.T) {
+	r := &http.Request{
+		RemoteAddr: "10.0.0.7:43120",
+		Header:     http.Header{"X-Forwarded-For": []string{"203.0.113.1, 10.0.0.1"}},
+	}
+	if got := cmsClientIP(r); got != "10.0.0.7" {
+		t.Fatalf("cmsClientIP = %q, want server-observed address", got)
+	}
+	r.Header.Set("X-Forwarded-For", "198.51.100.99")
+	if got := cmsClientIP(r); got != "10.0.0.7" {
+		t.Fatalf("spoofed forwarding header changed limiter key to %q", got)
+	}
+}
 
 func TestCMSBlocksFromFormPreservesSubmittedContent(t *testing.T) {
 	blocks, errs := cmsBlocksFromForm(map[string]string{

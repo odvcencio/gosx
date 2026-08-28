@@ -397,7 +397,7 @@ test("Scene3D WebGPU water retires replaced systems after submitted work drains"
 });
 
 test("Scene3D managed fluid controls clamp rounded pool radius like upstream", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     querySelector() { return null; },
@@ -418,7 +418,7 @@ test("Scene3D managed fluid controls clamp rounded pool radius like upstream", (
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidObjectTest = { read: sceneManagedFluidObjectReadControls, effective: sceneManagedFluidObjectEffectivePoolControls, reflect: sceneManagedFluidObjectReflectForm, maxCornerRadius: sceneManagedFluidObjectMaxCornerRadius };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const api = context.window.__managedFluidObjectTest;
@@ -470,7 +470,7 @@ test("Scene3D managed fluid controls clamp rounded pool radius like upstream", (
 
 
 test("Scene3D managed fluid controls sync previous position on pool resize like upstream", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     getElementById() { return null; },
@@ -496,7 +496,7 @@ test("Scene3D managed fluid controls sync previous position on pool resize like 
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidPoolResizeTest = { apply: sceneManagedFluidObjectApply };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const profile = {
@@ -586,7 +586,7 @@ test("Scene3D managed fluid controls sync previous position on pool resize like 
 
 
 test("Scene3D managed fluid dragging threads the pre-drag position into the water displacement payload", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
 
   // Source-shape guard: the drag handler must hand its pre-drag snapshot to the
   // next objectStep() via the pendingPrevious mechanism. The old code wrote it
@@ -626,7 +626,7 @@ test("Scene3D managed fluid dragging threads the pre-drag position into the wate
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidDragTest = { apply: sceneManagedFluidObjectApply, objectState: sceneManagedFluidObjectObjectState };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const duck = {
@@ -716,7 +716,7 @@ test("Scene3D managed fluid dragging threads the pre-drag position into the wate
 
 
 test("Scene3D managed fluid controls queue every drop event in a fast pointer burst (water-parity/p6 Fix 1)", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
 
   // Source-shape guard: the queue must be a bounded ARRAY push (mirroring
   // the existing objectDisplacementEvents 12-entry pattern at
@@ -752,7 +752,7 @@ test("Scene3D managed fluid controls queue every drop event in a fast pointer bu
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidDropBurstTest = { queueDrop: sceneManagedFluidObjectQueueDrop };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const canvas = {
@@ -814,7 +814,7 @@ test("Scene3D managed fluid controls queue every drop event in a fast pointer bu
 
 
 test("Scene3D managed fluid controls queue outgoing object displacement when selection becomes None", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     getElementById() { return null; },
@@ -839,7 +839,7 @@ test("Scene3D managed fluid controls queue outgoing object displacement when sel
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidObjectExitTest = { apply: sceneManagedFluidObjectApply };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
 
   const profile = {
@@ -924,7 +924,7 @@ test("Scene3D managed fluid controls queue outgoing object displacement when sel
 
 
 test("Scene3D managed fluid object hit policy matches upstream water objects", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     querySelector() { return null; },
@@ -968,7 +968,7 @@ test("Scene3D managed fluid object hit policy matches upstream water objects", (
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidHitTest = { active: sceneManagedFluidObjectActiveObjectHit, mode: sceneManagedFluidObjectHitTestMode };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
   const api = context.window.__managedFluidHitTest;
   const profile = {
@@ -1046,7 +1046,7 @@ test("Scene3D managed fluid object hit policy matches upstream water objects", (
 
 
 test("Scene3D managed fluid interactions stop camera inertia before consuming water events", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = {
     documentElement: { setAttribute() {} },
     querySelector() { return null; },
@@ -1073,7 +1073,7 @@ test("Scene3D managed fluid interactions stop camera inertia before consuming wa
   vm.runInContext(
     controlsSource + "\nwindow.__managedFluidStartTest = { start: sceneManagedFluidObjectStartInteraction };",
     context,
-    { filename: "19b-scene-control-forms.js" },
+    { filename: "19b-scene-control-forms.ts" },
   );
   const api = context.window.__managedFluidStartTest;
   const profile = { interaction: { profile: "water-object-drop-orbit", pointerDrops: true }, objects: {} };
@@ -1113,9 +1113,128 @@ test("Scene3D managed fluid interactions stop camera inertia before consuming wa
   assert.equal(form.__gosxScene3DFluidObjectState.pointerMode, "AddDrops");
 });
 
+function loadWaterTapAPI(overrides) {
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
+  const document = { documentElement: { setAttribute() {} }, querySelector() { return null; } };
+  const context = vm.createContext(Object.assign({
+    Date,
+    JSON,
+    Math,
+    Number,
+    Array,
+    Object,
+    String,
+    document,
+    performance: { now: () => 0 },
+    sceneNumber(value, fallback) {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    },
+    SCENE_CMD_SET_PARTICLES: 6,
+    window: { document },
+  }, overrides || {}));
+  vm.runInContext(
+    controlsSource + "\nwindow.__waterTapTest = { dropCenter: sceneManagedPoolTapDropCenter, bind: sceneManagedPoolTapBind };",
+    context,
+    { filename: "19b-scene-control-forms.ts" },
+  );
+  return context.window.__waterTapTest;
+}
+
+function fakeCanvasMount() {
+  const listeners = new Map();
+  return {
+    tagName: "canvas",
+    getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; },
+    addEventListener(type, handler) { listeners.set(type, handler); },
+    removeEventListener(type) { listeners.delete(type); },
+    dispatch(type, event) {
+      const handler = listeners.get(type);
+      if (handler) handler(event);
+    },
+  };
+}
+
+test("water-tap: sceneManagedPoolTapDropCenter normalizes by the WaterSystem's own pool half-extents, not a fixed 1x1 lab pool", () => {
+  const api = loadWaterTapAPI();
+  const system = { id: "blackglass-cove", poolWidth: 34, poolLength: 24 };
+  const inside = api.dropCenter({ x: 8.5, z: -6 }, system);
+  assert.ok(inside, "hit well inside a 34x24 pool must register");
+  assert.ok(Math.abs(inside.x - 0.25) < 1e-9, "dropX = " + inside.x);
+  assert.ok(Math.abs(inside.z + 0.25) < 1e-9, "dropZ = " + inside.z);
+  const outside = api.dropCenter({ x: 40, z: 0 }, system);
+  assert.equal(outside, null, "a hit past the declared pool width must not register");
+});
+
+test("water-tap: a pointer hit inside the pool patches only the matching WaterSystem's drop fields and leaves points/computeParticles/other systems untouched", () => {
+  const api = loadWaterTapAPI({
+    sceneScreenToRay() { return { origin: { x: 0, y: 5, z: 10 }, dir: { x: 0, y: -1, z: -1 } }; },
+    sceneRayIntersectYPlane() { return { x: 5, y: 0, z: -3 }; },
+  });
+  const otherSystem = { id: "other-pool", poolWidth: 1, poolLength: 1 };
+  const targetSystem = { id: "blackglass-cove", poolWidth: 34, poolLength: 24, dropEventID: 2, seedDrops: 18 };
+  const points = [{ id: "p1" }];
+  const computeParticles = [{ id: "embers" }];
+  const sceneState = { camera: { x: 0, y: 5, z: 10 }, waterSystems: [targetSystem, otherSystem], points, computeParticles };
+  const form = {
+    getAttribute(name) {
+      return name === "data-gosx-scene3d-control-subject" ? "blackglass-cove" : null;
+    },
+  };
+  const mount = fakeCanvasMount();
+  const calls = [];
+  const binding = api.bind(form, mount, sceneState, function(commands) { calls.push(commands); }, {});
+  assert.ok(binding, "bind must succeed against an unscoped control-target");
+  let prevented = false;
+  mount.dispatch("pointerdown", {
+    clientX: 50, clientY: 50, pointerType: "mouse", button: 0,
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+  assert.equal(calls.length, 1, "a pool hit must dispatch exactly one command batch");
+  assert.ok(prevented, "a pool hit must not also let native orbit rotate the camera");
+  const command = calls[0][0];
+  assert.equal(command.kind, 6);
+  assert.equal(command.data.points, points, "points must pass through unchanged");
+  assert.equal(command.data.computeParticles, computeParticles, "computeParticles must pass through unchanged");
+  const [patched, untouched] = command.data.waterSystems;
+  assert.equal(patched.id, "blackglass-cove");
+  assert.equal(patched.dropEventID, 3, "dropEventID must increment from the live system, not reset");
+  assert.ok(Math.abs(patched.dropX - 5 / 34) < 1e-9);
+  assert.ok(Math.abs(patched.dropZ - -3 / 24) < 1e-9);
+  assert.equal(patched.seedDrops, 18, "unrelated WaterSystem fields must survive the patch");
+  assert.equal(untouched, otherSystem, "a non-matching WaterSystem must pass through by reference, unmodified");
+  binding.dispose();
+});
+
+test("water-tap: a pointer hit outside the pool dispatches nothing and leaves the event for native orbit controls", () => {
+  const api = loadWaterTapAPI({
+    sceneScreenToRay() { return { origin: { x: 0, y: 5, z: 10 }, dir: { x: 0, y: -1, z: -1 } }; },
+    sceneRayIntersectYPlane() { return { x: 100, y: 0, z: 0 }; },
+  });
+  const targetSystem = { id: "blackglass-cove", poolWidth: 34, poolLength: 24, dropEventID: 2 };
+  const sceneState = { camera: { x: 0, y: 5, z: 10 }, waterSystems: [targetSystem] };
+  const form = {
+    getAttribute(name) {
+      return name === "data-gosx-scene3d-control-subject" ? "blackglass-cove" : null;
+    },
+  };
+  const mount = fakeCanvasMount();
+  const calls = [];
+  const binding = api.bind(form, mount, sceneState, function(commands) { calls.push(commands); }, {});
+  let prevented = false;
+  mount.dispatch("pointerdown", {
+    clientX: 99, clientY: 99, pointerType: "mouse", button: 0,
+    preventDefault() { prevented = true; },
+    stopImmediatePropagation() {},
+  });
+  assert.equal(calls.length, 0, "a miss outside the pool must not queue a drop");
+  assert.equal(prevented, false, "a miss must leave the pointer event alone for native orbit controls");
+  binding.dispose();
+});
 
 test("Scene3D managed fluid L key light direction points toward camera like upstream", () => {
-  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
+  const controlsSource = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
   const document = { documentElement: { setAttribute() {} }, querySelector() { return null; } };
   const context = vm.createContext({
     Date,
@@ -1150,7 +1269,7 @@ test("Scene3D managed fluid L key light direction points toward camera like upst
     },
     window: { document },
   });
-  vm.runInContext(controlsSource + "\nwindow.__managedFluidLightTest = { light: sceneManagedFluidObjectCameraLightDirection, key: sceneManagedFluidObjectCameraLightKey, changed: sceneManagedFluidObjectLightCameraChanged, dragNormal: sceneManagedFluidObjectCameraDragNormal, zoom: sceneManagedFluidObjectZoomCameraByScale, wheel: sceneManagedFluidObjectZoomCameraByWheel };", context, { filename: "19b-scene-control-forms.js" });
+  vm.runInContext(controlsSource + "\nwindow.__managedFluidLightTest = { light: sceneManagedFluidObjectCameraLightDirection, key: sceneManagedFluidObjectCameraLightKey, changed: sceneManagedFluidObjectLightCameraChanged, dragNormal: sceneManagedFluidObjectCameraDragNormal, zoom: sceneManagedFluidObjectZoomCameraByScale, wheel: sceneManagedFluidObjectZoomCameraByWheel };", context, { filename: "19b-scene-control-forms.ts" });
   const api = context.window.__managedFluidLightTest;
   const pitched = api.light({ rotationX: Math.PI / 6, rotationY: 0, rotationZ: 0 });
   assert.ok(Math.abs(pitched.x - 0) < 0.000001, "pitched x=" + pitched.x);
@@ -1898,7 +2017,7 @@ test("P1 hub outbound binding: signal publishes to socket and in-binding still w
 });
 
 test("Selena context-class fields resolve to live per-frame scene state on WebGL", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
 
   // The per-frame updater exists and derives every reserved name from real
   // scene state: camera, the
@@ -1931,16 +2050,16 @@ test("Selena context-class fields resolve to live per-frame scene state on WebGL
 });
 
 // Regression guard: cylinder, cone and pyramid drew as wireframes.
-// scenePrimitiveTriangleMesh (12-scene-geometry.js) had no case for them, so
+// scenePrimitiveTriangleMesh (12-scene-geometry.ts) had no case for them, so
 // 10-runtime-scene-core.js never set vertices, appendSceneObjectToBundle fell
-// through to sceneObjectSegments, 15-scene-draw-plan.js kept the object on the
+// through to sceneObjectSegments, 15-scene-draw-plan.ts kept the object on the
 // line pass, and the WebGPU backend drew it with topology "line-list". All
 // three are documented primitive kinds. The plane case was broken too: it
 // sliced the first four boxVertices, which all share z = -depth/2, so a solid
 // plane was a zero-area strip.
 test("Scene3D primitive kinds all build solid triangle meshes", () => {
-  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.js"), "utf8");
-  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.js"), "utf8");
+  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.ts"), "utf8");
+  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.ts"), "utf8");
   const context = {
     window: {}, document: {}, console, Math, Number, Float32Array, Array,
     Object, String, Boolean, JSON,

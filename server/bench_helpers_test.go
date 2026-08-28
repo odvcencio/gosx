@@ -13,7 +13,7 @@ func benchSimplePageNode() gosx.Node {
 
 // benchComplexPageNode is a moderately deep body — nav, hero, list of cards,
 // footer — that exercises attribute writing and nested children. Mirrors the
-// shape of a typical landing page so renderDocumentWithContext bench numbers
+// shape of a typical landing page so HTMLDocument bench numbers
 // reflect realistic work.
 func benchComplexPageNode() gosx.Node {
 	cardsArgs := []any{gosx.Attrs(gosx.Attr("class", "cards"))}

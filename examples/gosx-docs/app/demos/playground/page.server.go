@@ -22,7 +22,7 @@ func init() {
 
 	docsapp.RegisterStaticDocsPage(
 		"Playground",
-		"A live .gsx editor. Type a component on the left, watch it hydrate on the right.",
+		"A live editor for the constrained GoSX island language and shared browser VM.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				def := DefaultPreset()

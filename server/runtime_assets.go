@@ -18,7 +18,19 @@ import (
 // bootstrap.js has not been built yet (e.g. during `go run` development).
 const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
 (function(){
-  window.__gosx = window.__gosx || { version: "dev", islands: new Map(), engines: new Map(), hubs: new Map(), controllers: new Map(), textLayouts: new Map(), sharedSignals: { values: new Map(), subscribers: new Map() }, input: {}, ready: true };
+  var gosx = window.__gosx || {};
+  window.__gosx = gosx;
+  if (!gosx.navigation && window.__gosx_page_nav) gosx.navigation = window.__gosx_page_nav;
+  gosx.version = "dev";
+  gosx.islands = new Map();
+  gosx.computeIslands = new Map();
+  gosx.engines = new Map();
+  gosx.hubs = new Map();
+  gosx.controllers = new Map();
+  gosx.textLayouts = new Map();
+  gosx.sharedSignals = { values: new Map(), subscribers: new Map(), nextID: 0 };
+  gosx.input = { pending: null, frameHandle: 0, providers: Object.create(null) };
+  gosx.ready = false;
   window.__gosx_engine_factories = window.__gosx_engine_factories || Object.create(null);
   window.__gosx_register_engine_factory = window.__gosx_register_engine_factory || function(name, factory) { window.__gosx_engine_factories[name] = factory; };
   // Mount engines from page manifest
@@ -39,6 +51,7 @@ const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
       } catch(ex) {}
     });
   } catch(ex) {}
+  gosx.ready = true;
 })();
 `
 
@@ -92,6 +105,17 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, "/gosx/")), "/")
 	if name == "" || strings.HasPrefix(name, "../") {
 		http.NotFound(w, r)
+		return
+	}
+
+	// Embedded runtime assets resolve before (and independently of) the
+	// runtime asset root.
+	if name == "devtools-lantern.js" {
+		serveDevtoolsLantern(w, r)
+		return
+	}
+	if name == "youtube-audio.js" {
+		serveYouTubeAudioBridge(w, r)
 		return
 	}
 
@@ -247,6 +271,9 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 	candidates := map[string]string{
 		"runtime.wasm":                         filepath.Join(buildDir, "gosx-runtime.wasm"),
 		"runtime-islands.wasm":                 filepath.Join(buildDir, "gosx-runtime-islands.wasm"),
+		"runtime-core.wasm":                    filepath.Join(buildDir, "gosx-runtime-core.wasm"),
+		"runtime-engine.wasm":                  filepath.Join(buildDir, "gosx-runtime-engine.wasm"),
+		"runtime-collab.wasm":                  filepath.Join(buildDir, "gosx-runtime-collab.wasm"),
 		"wasm_exec.js":                         filepath.Join(buildDir, "wasm_exec.js"),
 		"standard-go-wasm_exec.js":             filepath.Join(buildDir, "standard-go-wasm_exec.js"),
 		"bootstrap.js":                         filepath.Join(buildDir, "bootstrap.js"),
@@ -321,6 +348,12 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 			return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASM.File)
 		}
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMIslands.File)
+	case "runtime-core.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "core")
+	case "runtime-engine.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "engine")
+	case "runtime-collab.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "collab")
 	case "wasm_exec.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMExec.File)
 	case "standard-go-wasm_exec.js":
@@ -388,6 +421,17 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func runtimeManifestVariantAssetPath(assetsDir string, manifest *buildmanifest.Manifest, variant string) (string, bool) {
+	if manifest == nil {
+		return "", false
+	}
+	asset, ok := manifest.Runtime.WASMVariants[strings.TrimSpace(variant)]
+	if !ok {
+		return "", false
+	}
+	return runtimeManifestAssetPath(assetsDir, "runtime", asset.File)
 }
 
 func runtimeManifestAssetPath(assetsDir, bucket, file string) (string, bool) {

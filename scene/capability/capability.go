@@ -31,7 +31,7 @@ var allBackends = []Backend{BackendWebGPU, BackendWebGL, BackendCanvas2D}
 // CANVAS2D BLANKET RULE.
 //
 // Canvas2D draws exactly two things: line segments and screen-space point
-// sprites. Read createSceneCanvasRenderer in 18-scene-canvas.js — it calls
+// sprites. Read createSceneCanvasRenderer in 18-scene-canvas.ts — it calls
 // renderSceneCanvasPoints and renderSceneCanvasWorldBundle, and nothing else.
 // It rasterizes no triangle, so it shades no material, reads no light, runs no
 // pass and samples no texture.
@@ -60,6 +60,11 @@ const (
 	FeatureRectAreaLight             Feature = "rect-area-light"
 	FeatureRectAreaSpecular          Feature = "rect-area-specular"
 	FeatureLightProbeSH              Feature = "light-probe-sh"
+	// FeatureSkyEnvironment tracks only the environment-cube sky mode. Gradient
+	// sky draws on every backend, including Canvas2D (a genuine ctx2d gradient
+	// fill, not a degrade), so it earns no row: an absent feature is supported
+	// everywhere, per the Matrix contract. See sky_test.go.
+	FeatureSkyEnvironment Feature = "sky-environment"
 )
 
 // LightKindFeatures returns the features a light of the given LightIR.Kind
@@ -105,89 +110,79 @@ func LightKindFeatures(kind string) []Feature {
 // Props.SceneIR applies the answer as a post-filter over Capable. See
 // TestCustomShaderHasNoFlatCellOnPurpose in customshader_test.go.
 var Matrix = map[Feature]map[Backend]bool{
-	// Both GPU backends deform a skinned mesh, so both cells are true.
+	// Both GPU backends skin a skinned mesh fully — positions, normals AND
+	// tangents — so both cells are true.
 	//
 	// WebGL2 skins in the vertex shader: SCENE_PBR_SKINNED_VERTEX_SOURCE builds
-	// skinMatrix from a_joints, a_weights and u_jointMatrices[64].
+	// skinMatrix from a_joints, a_weights and u_jointMatrices[64], and applies
+	// mat3(skinMatrix) to both the normal and the tangent.
 	// WebGPU skins in a compute pass: SCENE_ELIO_SKIN_LBS_SOURCE runs linear
-	// blend skinning over a storage buffer of bone matrices, and
-	// webGPUBindElioSkinnedBuffers binds the result as vertex slot 0.
+	// blend skinning over a storage buffer of bone matrices and writes three
+	// packed regions per vertex — positions at byte 0, joint-matrix-skinned,
+	// renormalized normals at paddedCount*12, and tangents (with preserved w)
+	// at paddedCount*24. webGPUBindElioSkinnedBuffers binds those regions to
+	// vertex slots 0, 1 and 3 of the same output buffer.
 	//
-	// The two are NOT equally faithful, and the difference has no cell today.
-	// The WGSL kernel writes three floats per vertex — position only. Its 28
-	// lines contain the strings "normal" and "tangent" zero times. WebGL2 skins
-	// all three: "pos = skinMatrix * pos", "norm = mat3(skinMatrix) * norm" and
-	// "tang = mat3(skinMatrix) * tang". So a skinned limb on WebGPU lights from
-	// rest-pose normals.
-	//
-	// TestSkinnedNormalGapIsRecordedNotClaimed states the recommended follow-up:
-	// a skinned-normals feature, false on WebGPU and true on WebGL2. It needs a
-	// key in both renderer manifests, so it is a reported finding here, not a
-	// silent row.
+	// The two backends differ in mechanism; what the evidence establishes is
+	// full attribute coverage — both deform all three vectors with the blended
+	// joint matrices, so every position, normal and tangent reaching the draw
+	// has been joint-skinned on either backend. Pixel-level lighting parity
+	// between the two renderers is a separate question this row does not claim.
 	FeatureSkinning: {BackendWebGPU: true, BackendWebGL: true},
-	// False everywhere. The WebGL2 cell read true and no code backed it.
+	// WebGPU true, WebGL2 false. Both cells are corroborated against renderer
+	// source; see ibl_test.go.
 	//
 	// Image-based lighting (IBL) needs a prefiltered specular cube, an
 	// irradiance cube and a split-sum bidirectional reflectance distribution
-	// function (BRDF) lookup table. The WebGL2 path has none of the three. It
-	// tone maps the source environment to an 8-bit low-dynamic-range texture
-	// through scenePBRTonemapHDRPixels, taps that one equirectangular texture
-	// twice, and scales the result by (1.0 - roughness * 0.65). The renderer
-	// holds no samplerCube, no textureCubeLod and no u_brdfLUT.
+	// function (BRDF) lookup table. The WebGPU renderer holds all three: group(0)
+	// bindings 9-12 bind iblIrradiance/iblRadiance/iblBRDFLUT/iblSampler
+	// (16a-scene-webgpu.js), and syncEnvironmentIBL loads the KTX2 products,
+	// validates the BRDF model and the roughnessPerLevel mapping, and binds them
+	// through the frame bind group every frame with no texture-unit budget to
+	// negotiate — RGBA16F cube sampling is unconditional in core WebGPU. A
+	// validation failure degrades per frame with a recorded render-truth reason
+	// rather than silently shading wrong, so the cell is unconditionally true.
 	//
-	// (1.0 - roughness * 0.65) HAS NO DERIVATION, and the criticism reaches
-	// further than this cell. render/bundle/lit.go carries the SAME factor on
-	// the SAME line shape: it taps one cube at level zero for the diffuse term,
-	// taps it again along the reflection vector, and scales the second tap by
-	// that expression. So the ad hoc roughness response is a property of the
-	// whole engine, not of the WebGL2 renderer. A split-sum fit would read
-	// roughness through a prefiltered mip chain and a two-term BRDF lookup, and
-	// no backend does. render/bundle/lit_drift_test.go carries the
-	// environment-map row that states this and pins both halves.
+	// WebGL2 holds the same three samplers (u_iblIrradiance, u_iblRadiance,
+	// u_iblBRDFLUT, behind #if GOSX_HDR_IBL) and the same runtime asset path
+	// (scenePBRUploadEnvironmentMap), but scenePBRHDRIBLAvailable gates the
+	// whole branch on MAX_TEXTURE_IMAGE_UNITS >= 20. A Matrix cell answers an
+	// unconditional question — "does this backend shade IBL for every
+	// authoring scene" — and a device below the gate does not, regardless of
+	// what the shader compiles. See assetpipe/ibl/contract.go:38-46 for the
+	// gate's rationale and PR-8 (ibl_test.go) for the SH9 irradiance fallback
+	// that keeps sub-20-unit devices from losing ambient light entirely.
 	//
-	// sceneAllocateTextureUnits in 15a-scene-postfx-shared.js already reserves
-	// three units named irradiance, radiance and brdfLUT, and negotiates them
-	// against the cascaded shadow allocator. Only irradiance is ever bound, and
-	// what binds into it is the tone-mapped 2D texture, not an irradiance cube.
-	// So the unit budget a real consumer needs is solved; the content is not.
-	//
-	// assetpipe/ibl produces the correct products and pins the convention. See
-	// ibl.ConsumerRequirements for the five pieces a consumer must add. Flip
-	// this cell when one exists, and not before.
-	FeatureIBL: {BackendWebGPU: false, BackendWebGL: false},
+	// The ad hoc (1.0 - roughness * 0.65) legacy equirect-tap response —
+	// unrelated to this row — lives under FeatureEnvironmentMap below.
+	FeatureIBL: {BackendWebGPU: true, BackendWebGL: false},
 	// environment-map: does the backend READ Environment.EnvMap at all.
 	//
-	// This row exists because the ibl row above reads as parity and is not. Both
-	// ibl cells are false, correctly, because neither browser backend runs a
-	// split-sum fit. That hid a much larger gap underneath: one backend samples
-	// the authored image and the other never opens it.
+	// This row exists because the ibl row above reads as parity and is not.
+	// Neither browser backend runs a split-sum fit for this legacy path — WebGL2
+	// tone maps and taps one equirectangular texture twice; WebGPU now does the
+	// same. Both are the ad hoc (1.0 - roughness * 0.65) legacy response, not
+	// split-sum IBL, which is why that critique lives here and not on the ibl
+	// row above.
 	//
-	// Count the three authored identifiers, case-insensitive, over
-	// client/js/bootstrap-src:
+	// WebGPU: group(0) bindings 13/14 bind envMapTex/envMapSampler (dedicated
+	// repeat/clamp-to-edge sampler, distinct from iblSampler, for the equirect
+	// wrap seam). syncEnvironmentMap loads the authored image through the same
+	// wgpuLoadTexture path material albedo maps use, and the fragment shader
+	// taps envEquirectUV(N) and envEquirectUV(R) exactly where WebGL2 orders
+	// them: after the IBL branch, before the hemisphere fallback. IBL wins —
+	// syncEnvironmentMap suppresses the equirect map once ibl.active is true,
+	// mirroring WebGL2's iblStatus.active gate — so an author who authors both
+	// products on the same scene gets one term, not two stacked ambient terms.
 	//
-	//	identifier      16a-scene-webgpu.js   16-scene-webgl.js
-	//	envMap                            0                  16
-	//	envIntensity                      0                   7
-	//	envRotation                       0                   6
-	//
-	// So an author who writes EnvMap gets a reflection on WebGL2, gets one in a
-	// poster (render/bundle/environment.go loads a cube and lit.go samples it),
-	// and gets NOTHING on WebGPU — which is the preferred backend, so it is the
-	// one most viewers see. Nothing told the author that before this row.
-	//
-	// The cell is a RECORD, not a plan. It is absent from DefaultPolicy, so it
-	// excludes no backend; it adds one name to the WebGPU degraded list, which
-	// is the honest report. Implementing the WebGPU environment map is renderer
-	// work: a cube texture, a sampler, three uniform lanes and the two taps.
-	// Flip this cell when 16a-scene-webgpu.js carries them, and not before.
-	// TestWebGPUReadsNoEnvironmentMap in environmentmap_test.go fails on the day
-	// it does, and names the three edits the flip needs.
-	FeatureEnvironmentMap: {BackendWebGPU: false, BackendWebGL: true},
+	// See environmentmap_test.go for the corroboration and the identifier
+	// counts before this row flipped.
+	FeatureEnvironmentMap: {BackendWebGPU: true, BackendWebGL: true},
 	// gpu-picking is implemented on both GPU backends.
 	//
 	// The pick CONTRACT — the gosx:scene3d:input events, the pick/drag/event
 	// signal namespaces, and every hit field including the world-space ray — is
-	// produced by setupScenePickInteractions in 17-scene-input.js. That function
+	// produced by setupScenePickInteractions in 17-scene-input.ts. That function
 	// takes no renderer argument and has no backend branch, so a page returns
 	// identical pick results whichever GPU backend draws it.
 	//
@@ -208,7 +203,7 @@ var Matrix = map[Feature]map[Backend]bool{
 	//	16-scene-webgl.js       "dash" appears 0 times, case-insensitive
 	//	16a-scene-webgpu.js     "lineDash" appears 3 times, all of them in
 	//	                        webGPUUnsupportedLineStyles, which REFUSES the draw
-	//	18-scene-canvas.js      "dash" appears 16 times, and line 31 calls
+	//	18-scene-canvas.ts      "dash" appears 16 times, and line 31 calls
 	//	                        ctx2d.setLineDash([dashSize, gapSize])
 	//
 	// So WebGL2 draws a dashed line as a SOLID line, WebGPU drops the line data
@@ -296,6 +291,12 @@ var Matrix = map[Feature]map[Backend]bool{
 	// light would invent a distance falloff — but it is not an SH evaluation,
 	// so the cell stays false until one exists.
 	FeatureLightProbeSH: {BackendWebGPU: false, BackendWebGL: false},
+	// sky-environment: does the backend draw the environment-cube/equirect sky
+	// mode. False everywhere at this row's introduction — no backend draws any
+	// sky yet. Gradient sky (the other Sky.Mode) draws on every backend
+	// including Canvas2D and earns no row of its own; see the const doc.
+	// Flip each cell as its draw lands. See sky_test.go.
+	FeatureSkyEnvironment: {BackendWebGPU: false, BackendWebGL: false},
 }
 
 func supports(b Backend, f Feature) bool {

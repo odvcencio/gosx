@@ -3,6 +3,7 @@ package dev
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -110,6 +111,88 @@ func TestHotSwapIslandChangeEmitsProgramNotReload(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(payload.Program), &island); err != nil || island.Name != "Counter" {
 		t.Fatalf("expected island program for Counter, got name=%q err=%v", island.Name, err)
+	}
+}
+
+func TestHotSwapRunsPreflightBeforeIslandClassification(t *testing.T) {
+	dir := t.TempDir()
+	gsxPath := filepath.Join(dir, "counter.gsx")
+	writeTestFile(t, gsxPath, []byte(islandGSX))
+
+	preflightCalls := 0
+	onChangeCalls := 0
+	s := &Server{
+		Dir: dir,
+		PreflightChange: func(paths []string) error {
+			preflightCalls++
+			if len(paths) != 1 || paths[0] != gsxPath {
+				t.Fatalf("preflight paths = %v", paths)
+			}
+			return fmt.Errorf("strict package invalid")
+		},
+		OnChange: func() error {
+			onChangeCalls++
+			return nil
+		},
+	}
+	events := captureEvents(t, s)
+	s.emitChange([]string{gsxPath})
+
+	if preflightCalls != 1 || onChangeCalls != 0 {
+		t.Fatalf("preflight calls = %d, OnChange calls = %d", preflightCalls, onChangeCalls)
+	}
+	got := drainEvents(events)
+	if _, ok := got["build-error"]; !ok {
+		t.Fatalf("invalid hot swap did not emit build-error: %v", keys(got))
+	}
+	for _, forbidden := range []string{"program", "reload"} {
+		if _, ok := got[forbidden]; ok {
+			t.Fatalf("invalid hot swap emitted %s: %v", forbidden, keys(got))
+		}
+	}
+}
+
+func TestHotSwapValidIslandAfterPreflightFailureRestartsQuarantinedApp(t *testing.T) {
+	dir := t.TempDir()
+	gsxPath := filepath.Join(dir, "counter.gsx")
+	writeTestFile(t, gsxPath, []byte(islandGSX))
+
+	valid := false
+	restarts := 0
+	s := &Server{
+		Dir: dir,
+		PreflightChange: func([]string) error {
+			if !valid {
+				return fmt.Errorf("strict package invalid")
+			}
+			return nil
+		},
+		OnChange: func() error {
+			restarts++
+			return nil
+		},
+	}
+	events := captureEvents(t, s)
+	s.emitChange([]string{gsxPath})
+	if !s.isQuarantined() {
+		t.Fatal("failed strict preflight did not quarantine the dev server")
+	}
+	_ = drainEvents(events)
+
+	valid = true
+	s.emitChange([]string{gsxPath})
+	got := drainEvents(events)
+	if restarts != 1 {
+		t.Fatalf("restarts = %d, want 1", restarts)
+	}
+	if s.isQuarantined() {
+		t.Fatal("successful recovery restart did not clear quarantine")
+	}
+	if _, ok := got["reload"]; !ok {
+		t.Fatalf("recovery did not reload clients: %v", keys(got))
+	}
+	if _, ok := got["program"]; ok {
+		t.Fatalf("recovery incorrectly hot-swapped into a stopped upstream: %v", keys(got))
 	}
 }
 

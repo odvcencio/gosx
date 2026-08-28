@@ -2,6 +2,7 @@ package docs
 
 func Page() Node {
 	return <form class="cms-demo" id="cms-content-form" method="post" action={actionPath("publish")}>
+		<h1 class="visually-hidden">CMS Editor</h1>
 		<input type="hidden" name="csrf_token" value={csrf.token} />
 		<input type="hidden" name="block_count" id="cms-block-count" value={len(data.blocks)} />
 		<script src="/cms-client.js" defer></script>
@@ -181,7 +182,7 @@ func Page() Node {
 						<div class={"cms-preview-block cms-preview-block--" + block.kind} data-block-index={i}>
 							<If cond={block.kind == "hero"}>
 								<div class="cms-preview-hero">
-									<h1 data-preview-field="title">{block.title}</h1>
+									<h2 data-preview-field="title">{block.title}</h2>
 									<span class="cms-preview-hero__divider"></span>
 									<p data-preview-field="subtitle">{block.subtitle}</p>
 								</div>

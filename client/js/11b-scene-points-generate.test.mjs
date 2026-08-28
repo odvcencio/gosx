@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "11b-scene-points-generate.js"),
+  path.join(__dirname, "bootstrap-src", "11b-scene-points-generate.ts"),
   "utf8"
 );
 const golden = JSON.parse(

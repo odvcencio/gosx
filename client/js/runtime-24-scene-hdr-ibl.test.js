@@ -18,6 +18,10 @@ function readSource(name) {
   return fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8");
 }
 
+function readRuntimeSource(name) {
+  return fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
+}
+
 function iblDescriptor() {
   return {
     schemaVersion: 1,
@@ -137,8 +141,87 @@ test("fresh Scene3D state and render bundles preserve the complete HDR descripto
   assert.equal(bundle.materials[0].textureDescriptors.emissive.colorSpace, "srgb");
 });
 
+test("scene state and render bundles keep both specular texture slots distinct over one URI", () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  const api = env.context.__gosx_scene3d_api;
+
+  // One shared URI feeds both specular slots: normalization must keep the
+  // two roles separate instead of collapsing them.
+  const sharedUri = "/materials/spec-shared.png";
+  const descriptors = {
+    specularIntensity: { uri: sharedUri, role: "specular-intensity", colorSpace: "linear", channels: "a", view: "2d", format: "rgba8" },
+    specularColor: { uri: sharedUri, role: "specular-color", colorSpace: "srgb", channels: "rgb", view: "2d", format: "rgba8" },
+  };
+  const state = api.createSceneState({
+    scene: {
+      materials: [{
+        name: "spec",
+        kind: "standard",
+        color: "#ffffff",
+        specularIntensity: 0.5,
+        specularColor: [0.8, 0.6, 0.4],
+        textureDescriptors: descriptors,
+      }],
+      objects: [{ id: "spec-box", kind: "box", material: "spec" }],
+    },
+  });
+
+  const objects = api.sceneStateObjectsWithMaterials(state);
+  assert.equal(objects.length, 1);
+  assert.equal(objects[0].specularIntensity, 0.5);
+  assert.deepEqual(Array.from(objects[0].specularColor), [0.8, 0.6, 0.4]);
+  // Normalization adds zero mip/size/face fields to every descriptor; compare
+  // the FULL normalized shape via a JSON roundtrip so VM-realm prototypes
+  // never skew deepStrictEqual across realms.
+  const normalized = (value) => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(normalized(objects[0].textureDescriptors.specularIntensity), {
+    uri: sharedUri, role: "specular-intensity", colorSpace: "linear", channels: "a",
+    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0,
+  });
+  assert.deepEqual(normalized(objects[0].textureDescriptors.specularColor), {
+    uri: sharedUri, role: "specular-color", colorSpace: "srgb", channels: "rgb",
+    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0,
+  });
+
+  const bundle = api.createSceneRenderBundle(
+    320, 180, "#000000",
+    { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    objects, [], [], [], [],
+    state.environment, 0, [], [], [], [], [], 0, false,
+  );
+  assert.equal(bundle.materials.length, 1);
+  assert.equal(bundle.materials[0].textureDescriptors.specularIntensity.role, "specular-intensity");
+  assert.equal(bundle.materials[0].textureDescriptors.specularColor.role, "specular-color");
+  assert.equal(bundle.materials[0].textureDescriptors.specularColor.colorSpace, "srgb");
+  assert.equal(bundle.materials[0].textureDescriptors.specularIntensity.colorSpace, "linear");
+  assert.deepEqual(normalized(bundle.materials[0].textureDescriptors.specularIntensity), {
+    uri: sharedUri, role: "specular-intensity", colorSpace: "linear", channels: "a",
+    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0,
+  });
+  assert.deepEqual(normalized(bundle.materials[0].textureDescriptors.specularColor), {
+    uri: sharedUri, role: "specular-color", colorSpace: "srgb", channels: "rgb",
+    view: "2d", format: "rgba8", mipLevels: 0, width: 0, height: 0, faces: 0,
+  });
+
+  // The normalized state and bundle descriptors must be copies, never aliases
+  // of the authored input. Mutate the input only AFTER the bundle exists so
+  // the earlier assertions exercise the untouched normalized objects.
+  descriptors.specularIntensity.uri = "/materials/mutated-intensity.png";
+  descriptors.specularColor.role = "mutated-role";
+  assert.equal(objects[0].textureDescriptors.specularIntensity.uri, sharedUri);
+  assert.equal(objects[0].textureDescriptors.specularColor.uri, sharedUri);
+  assert.equal(objects[0].textureDescriptors.specularIntensity.role, "specular-intensity");
+  assert.equal(objects[0].textureDescriptors.specularColor.role, "specular-color");
+  assert.equal(bundle.materials[0].textureDescriptors.specularIntensity.uri, sharedUri);
+  assert.equal(bundle.materials[0].textureDescriptors.specularColor.uri, sharedUri);
+  assert.equal(bundle.materials[0].textureDescriptors.specularIntensity.role, "specular-intensity");
+  assert.equal(bundle.materials[0].textureDescriptors.specularColor.role, "specular-color");
+});
+
 test("WebGL HDR IBL compiles the bounded variant and consumes split-sum products in linear space", () => {
-  const source = readSource("16-scene-webgl.js");
+  const source = readRuntimeSource("webgl.ts");
   const vertexStart = source.indexOf("const SCENE_PBR_VERTEX_SOURCE");
   const fragmentStart = source.indexOf("const SCENE_PBR_FRAGMENT_SOURCE");
   const fragmentEnd = source.indexOf("const SCENE_PBR_INSTANCED_VERTEX_SOURCE");
@@ -147,11 +230,13 @@ test("WebGL HDR IBL compiles the bounded variant and consumes split-sum products
 
   assert.doesNotMatch(vertex, /#define GOSX_HDR_IBL/);
   assert.match(fragment, /"#define GOSX_HDR_IBL 1"/);
-  assert.match(source, /scenePBRHDRIBLAvailable\(gl\)[\s\S]*maxUnits >= 18/);
+  assert.match(source, /scenePBRHDRIBLAvailable\(gl\)[\s\S]*maxUnits >= 20/);
+  assert.match(fragment, /"uniform sampler2D u_specularIntensityMap;",/);
+  assert.match(fragment, /"uniform bool u_hasSpecularIntensityMap;",/);
   assert.match(source, /scenePBRFragmentSourceForContext\(gl, SCENE_PBR_FRAGMENT_SOURCE\)/);
   assert.match(fragment, /textureLod\(u_iblRadiance, Rr, roughness \* u_iblRadianceMaxLod\)/);
   assert.match(fragment, /texture\(u_iblBRDFLUT, vec2\(NoV, roughness\)\)\.rg/);
-  assert.match(fragment, /prefiltered \* \(F0 \* brdf\.x \+ brdf\.y\)/);
+  assert.match(fragment, /prefiltered \* \(F0 \* brdf\.x \+ vec3\(F90\) \* brdf\.y\)/);
   assert.match(fragment, /irradiance \* albedo \* kDenv/);
   assert.match(fragment, /ambient \*= ambientOcclusion/);
   assert.match(source, /gl\.SRGB8_ALPHA8 \|\| 0x8C43/);
@@ -167,12 +252,12 @@ test("WebGL HDR IBL compiles the bounded variant and consumes split-sum products
 });
 
 test("WebGPU consumes the same split-sum contract and keeps color/data texture formats distinct", () => {
-  const source = readSource("16a-scene-webgpu.js");
+  const source = readRuntimeSource("webgpu.ts");
 
   assert.match(source, new RegExp(BRDF_MODEL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(source, /textureSampleLevel\(iblRadiance, iblSampler, Rr, roughness \* maxLod\)/);
   assert.match(source, /textureSample\(iblBRDFLUT, iblSampler, vec2f\(NoV, roughness\)\)\.rg/);
-  assert.match(source, /prefiltered \* \(F0 \* brdf\.x \+ brdf\.y\)/);
+  assert.match(source, /prefiltered \* \(F0 \* brdf\.x \+ vec3f\(F90\) \* brdf\.y\)/);
   assert.match(source, /irradiance \* albedo \* kDenv/);
   assert.match(source, /ambient = ambient \* ambientOcclusion/);
   assert.match(source, /descriptor\.colorSpace === "srgb" \? "rgba8unorm-srgb" : "rgba8unorm"/);
@@ -188,7 +273,7 @@ test("WebGPU consumes the same split-sum contract and keeps color/data texture f
 });
 
 test("mount preloads the real KTX2 reader for complete IBL descriptors and never flips support silently", () => {
-  const mount = readSource("20-scene-mount.js") + "\n" + readSource("20b-scene-mount-webgl-chunk.js");
+  const mount = readRuntimeSource("mount.ts") + "\n" + readRuntimeSource("mount-webgl.ts");
   assert.match(mount, /await settleSceneIBLFeature\(props\)/);
   assert.match(mount, /scenePropsHasIBLProducts/);
   assert.match(mount, /ensureGLTFFeatureLoaded\(\)/);

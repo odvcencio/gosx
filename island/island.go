@@ -10,6 +10,7 @@ package island
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -17,12 +18,14 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
@@ -35,6 +38,7 @@ type Renderer struct {
 	manifest                           *hydrate.Manifest
 	counter                            int
 	bundleID                           string
+	releaseManifestText                bool
 	programDir                         string // directory where island programs are stored
 	programFormat                      string // "json" or "bin"
 	programAssets                      map[string]programAsset
@@ -77,6 +81,7 @@ type Renderer struct {
 	videoHLSPath                   string
 	relayPath                      string
 	islandRuntime                  hydrate.RuntimeRef
+	runtimeVariants                map[string]hydrate.RuntimeRef
 	runtimeAssets                  buildmanifest.RuntimeAssets
 	bootstrapOnly                  bool
 }
@@ -179,11 +184,12 @@ func NewRenderer(bundleID string) *Renderer {
 		runtimeAssets = manifest.Runtime
 	}
 	renderer := &Renderer{
-		manifest:      hydrate.NewManifest(),
-		bundleID:      bundleID,
-		programFormat: "json", // default to dev mode
-		programAssets: make(map[string]programAsset),
-		runtimeAssets: runtimeAssets,
+		manifest:        hydrate.NewManifest(),
+		bundleID:        bundleID,
+		programFormat:   "json", // default to dev mode
+		programAssets:   make(map[string]programAsset),
+		runtimeVariants: make(map[string]hydrate.RuntimeRef),
+		runtimeAssets:   runtimeAssets,
 	}
 	renderer.wasmExecPath = renderer.versionCompatRuntimePath("/gosx/wasm_exec.js", strings.TrimSpace(runtimeAssets.WASMExec.Hash))
 	renderer.standardGoWASMExecPath = renderer.versionCompatRuntimePath("/gosx/standard-go-wasm_exec.js", strings.TrimSpace(runtimeAssets.StandardGoWASMExec.Hash))
@@ -369,10 +375,14 @@ func (r *Renderer) SetRuntime(path string, hash string, size int64) {
 	}
 	path = r.versionCompatRuntimePath(path, hash)
 	r.manifest.Runtime = hydrate.RuntimeRef{
-		Path: path,
-		Hash: hash,
-		Size: size,
+		Path:         path,
+		Hash:         hash,
+		ManifestHash: runtimewasm.ManifestIdentity(),
+		Size:         size,
+		Variant:      string(runtimewasm.VariantFull),
+		FeatureMask:  uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantFull)),
 	}
+	r.setRuntimeVariant(r.manifest.Runtime)
 }
 
 // SetIslandRuntime registers the smaller shared WASM runtime used by pages
@@ -386,10 +396,28 @@ func (r *Renderer) SetIslandRuntime(path string, hash string, size int64) {
 	}
 	path = r.versionCompatRuntimePath(path, hash)
 	r.islandRuntime = hydrate.RuntimeRef{
-		Path: path,
-		Hash: hash,
-		Size: size,
+		Path:         path,
+		Hash:         hash,
+		ManifestHash: runtimewasm.ManifestIdentity(),
+		Size:         size,
+		Variant:      string(runtimewasm.VariantIslands),
+		FeatureMask:  uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantIslands)),
 	}
+	r.setRuntimeVariant(r.islandRuntime)
+}
+
+func (r *Renderer) setRuntimeVariant(ref hydrate.RuntimeRef) {
+	if r == nil || strings.TrimSpace(ref.Path) == "" {
+		return
+	}
+	if r.runtimeVariants == nil {
+		r.runtimeVariants = make(map[string]hydrate.RuntimeRef)
+	}
+	variant := strings.TrimSpace(ref.Variant)
+	if variant == "" {
+		variant = string(runtimewasm.VariantFull)
+	}
+	r.runtimeVariants[variant] = ref
 }
 
 // SetBundle registers a WASM bundle in the manifest.
@@ -571,54 +599,95 @@ func (r *Renderer) SetVideoHLSPath(path string) {
 }
 
 func (r *Renderer) compatRuntimeHash(path string) string {
+	if asset, ok := r.runtimeScriptAsset(path); ok {
+		return strings.TrimSpace(asset.Hash)
+	}
 	switch compatRuntimePath(path) {
 	case "/gosx/runtime.wasm":
 		return strings.TrimSpace(r.runtimeAssets.WASM.Hash)
 	case "/gosx/runtime-islands.wasm":
 		return strings.TrimSpace(r.runtimeAssets.WASMIslands.Hash)
-	case "/gosx/wasm_exec.js":
-		return strings.TrimSpace(r.runtimeAssets.WASMExec.Hash)
-	case "/gosx/standard-go-wasm_exec.js":
-		return strings.TrimSpace(r.runtimeAssets.StandardGoWASMExec.Hash)
-	case "/gosx/bootstrap.js":
-		return strings.TrimSpace(r.runtimeAssets.Bootstrap.Hash)
-	case "/gosx/bootstrap-lite.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapLite.Hash)
-	case "/gosx/bootstrap-runtime.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapRuntime.Hash)
-	case "/gosx/bootstrap-feature-islands.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureIslands.Hash)
-	case "/gosx/bootstrap-feature-engines.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureEngines.Hash)
-	case "/gosx/bootstrap-feature-hubs.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureHubs.Hash)
-	case "/gosx/bootstrap-feature-controllers.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureControllers.Hash)
-	case "/gosx/bootstrap-feature-scene3d.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3D.Hash)
-	case "/gosx/bootstrap-feature-scene3d-command.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DCommand.Hash)
-	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash)
-	case "/gosx/bootstrap-feature-scene3d-webgl.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGL.Hash)
-	case "/gosx/bootstrap-feature-scene3d-gltf.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DGLTF.Hash)
-	case "/gosx/bootstrap-feature-scene3d-animation.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DAnimation.Hash)
-	case "/gosx/bootstrap-feature-scene3d-compute.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DCompute.Hash)
-	case "/gosx/bootstrap-feature-scene3d-decompress.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DDecompress.Hash)
-	case "/gosx/bootstrap-feature-textlayout.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureTextlayout.Hash)
-	case "/gosx/patch.js":
-		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
-	case "/gosx/hls.min.js":
-		return strings.TrimSpace(r.runtimeAssets.VideoHLS.Hash)
 	default:
 		return ""
 	}
+}
+
+func (r *Renderer) compatRuntimeIntegrity(path string) string {
+	asset, ok := r.runtimeScriptAsset(path)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(asset.Integrity)
+}
+
+// runtimeScriptAsset resolves both stable compatibility URLs and the hashed
+// production URLs installed by ApplyBuildManifest. A resolved path is trusted
+// to carry an asset's digest only when it still ends in that manifest file;
+// a later caller that points a setter at unrelated bytes must not inherit stale
+// SRI metadata merely because it occupies the same renderer field.
+func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, bool) {
+	target := compatRuntimePath(path)
+	switch {
+	case runtimeScriptAssetPathMatches(target, "/gosx/wasm_exec.js", r.wasmExecPath, r.runtimeAssets.WASMExec):
+		return r.runtimeAssets.WASMExec, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/standard-go-wasm_exec.js", r.standardGoWASMExecPath, r.runtimeAssets.StandardGoWASMExec):
+		return r.runtimeAssets.StandardGoWASMExec, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap.js", r.bootstrapPath, r.runtimeAssets.Bootstrap):
+		return r.runtimeAssets.Bootstrap, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-lite.js", r.bootstrapLitePath, r.runtimeAssets.BootstrapLite):
+		return r.runtimeAssets.BootstrapLite, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-runtime.js", r.bootstrapRuntimePath, r.runtimeAssets.BootstrapRuntime):
+		return r.runtimeAssets.BootstrapRuntime, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-islands.js", r.bootstrapFeatureIslandsPath, r.runtimeAssets.BootstrapFeatureIslands):
+		return r.runtimeAssets.BootstrapFeatureIslands, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-engines.js", r.bootstrapFeatureEnginesPath, r.runtimeAssets.BootstrapFeatureEngines):
+		return r.runtimeAssets.BootstrapFeatureEngines, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-hubs.js", r.bootstrapFeatureHubsPath, r.runtimeAssets.BootstrapFeatureHubs):
+		return r.runtimeAssets.BootstrapFeatureHubs, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-controllers.js", r.bootstrapFeatureControllersPath, r.runtimeAssets.BootstrapFeatureControllers):
+		return r.runtimeAssets.BootstrapFeatureControllers, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d.js", r.bootstrapFeatureScene3dPath, r.runtimeAssets.BootstrapFeatureScene3D):
+		return r.runtimeAssets.BootstrapFeatureScene3D, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-command.js", r.bootstrapFeatureScene3dCommandPath, r.runtimeAssets.BootstrapFeatureScene3DCommand):
+		return r.runtimeAssets.BootstrapFeatureScene3DCommand, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgpu.js", r.bootstrapFeatureScene3dWebGPUPath, r.runtimeAssets.BootstrapFeatureScene3DWebGPU):
+		return r.runtimeAssets.BootstrapFeatureScene3DWebGPU, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgl.js", r.bootstrapFeatureScene3dWebGLPath, r.runtimeAssets.BootstrapFeatureScene3DWebGL):
+		return r.runtimeAssets.BootstrapFeatureScene3DWebGL, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-gltf.js", r.bootstrapFeatureScene3dGLTFPath, r.runtimeAssets.BootstrapFeatureScene3DGLTF):
+		return r.runtimeAssets.BootstrapFeatureScene3DGLTF, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-animation.js", r.bootstrapFeatureScene3dAnimationPath, r.runtimeAssets.BootstrapFeatureScene3DAnimation):
+		return r.runtimeAssets.BootstrapFeatureScene3DAnimation, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-compute.js", r.bootstrapFeatureScene3dComputePath, r.runtimeAssets.BootstrapFeatureScene3DCompute):
+		return r.runtimeAssets.BootstrapFeatureScene3DCompute, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-decompress.js", r.bootstrapFeatureScene3dDecompressPath, r.runtimeAssets.BootstrapFeatureScene3DDecompress):
+		return r.runtimeAssets.BootstrapFeatureScene3DDecompress, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-textlayout.js", r.bootstrapFeatureTextlayoutPath, r.runtimeAssets.BootstrapFeatureTextlayout):
+		return r.runtimeAssets.BootstrapFeatureTextlayout, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/patch.js", r.patchPath, r.runtimeAssets.Patch):
+		return r.runtimeAssets.Patch, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/hls.min.js", r.videoHLSPath, r.runtimeAssets.VideoHLS):
+		return r.runtimeAssets.VideoHLS, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/relay.js", r.relayPath, r.runtimeAssets.Relay):
+		return r.runtimeAssets.Relay, true
+	default:
+		return buildmanifest.HashedAsset{}, false
+	}
+}
+
+func runtimeScriptAssetPathMatches(target, canonical, resolved string, asset buildmanifest.HashedAsset) bool {
+	if target == canonical {
+		return true
+	}
+	resolvedPath := compatRuntimePath(resolved)
+	if target == "" || target != resolvedPath {
+		return false
+	}
+	file := strings.TrimLeft(strings.TrimSpace(asset.File), "/")
+	if file == "" {
+		return false
+	}
+	return target == "/"+file || strings.HasSuffix(target, "/"+file)
 }
 
 func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
@@ -631,7 +700,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -651,6 +720,35 @@ func compatRuntimePath(path string) string {
 	return strings.TrimSpace(parsed.Path)
 }
 
+// runtimeScriptAttrs returns the browser policy attributes shared by every
+// GoSX-owned external script. Runtime scripts are always DOM scripts during a
+// soft navigation; explicit type/cross-origin/referrer policy values keep the
+// browser's behavior deterministic instead of inheriting page defaults.
+//
+// Build manifests store content hashes as hex. Convert a complete SHA-256 hash
+// to the SRI form when one is available; compatibility/test hashes that are not
+// complete digests deliberately omit integrity rather than emitting a value the
+// browser would reject.
+func (r *Renderer) runtimeScriptAttrs(path string, nonce string) string {
+	attrs := ` type="text/javascript" crossorigin="anonymous" referrerpolicy="no-referrer"`
+	integrity := r.compatRuntimeIntegrity(path)
+	if integrity == "" {
+		integrity = sriIntegrity(r.compatRuntimeHash(path))
+	}
+	if integrity != "" {
+		attrs += ` integrity="` + html.EscapeString(integrity) + `"`
+	}
+	return attrs + cspNonceAttr(nonce)
+}
+
+func sriIntegrity(hash string) string {
+	raw, err := hex.DecodeString(strings.TrimSpace(hash))
+	if err != nil || len(raw) != sha256.Size {
+		return ""
+	}
+	return "sha256-" + base64.StdEncoding.EncodeToString(raw)
+}
+
 // ApplyBuildManifest wires hashed runtime and island asset URLs into the renderer.
 // assetBaseURL should be the public URL prefix that serves dist/assets.
 func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBaseURL string) error {
@@ -659,12 +757,41 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 
 	runtime := manifest.RuntimeURLs(assetBaseURL)
+	r.runtimeAssets = manifest.Runtime
 	if runtime.WASM != "" {
 		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
 		r.SetBundle(r.bundleID, runtime.WASM)
 	}
 	if runtime.WASMIslands != "" {
 		r.SetIslandRuntime(runtime.WASMIslands, manifest.Runtime.WASMIslands.Hash, manifest.Runtime.WASMIslands.Size)
+	}
+	for id, asset := range manifest.Runtime.WASMVariants {
+		path := runtime.WASMVariants[id]
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		variant := strings.TrimSpace(asset.Variant)
+		if variant == "" {
+			variant = strings.TrimSpace(id)
+		}
+		mask := asset.FeatureMask
+		if mask == 0 {
+			mask = uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant)))
+		}
+		r.setRuntimeVariant(hydrate.RuntimeRef{
+			Path:         path,
+			Hash:         asset.Hash,
+			ManifestHash: firstNonEmptyRuntimeManifestHash(asset.ManifestHash),
+			Size:         asset.Size,
+			Variant:      variant,
+			FeatureMask:  mask,
+		})
+	}
+	// WASMIslands remains a compatibility artifact for manifests that predate
+	// capability-linked profiles. Once a manifest advertises variants, the
+	// alias must not compete with core as an independent fifth profile.
+	if len(manifest.Runtime.WASMVariants) > 0 {
+		delete(r.runtimeVariants, string(runtimewasm.VariantIslands))
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
 	r.SetStandardGoWASMExecPath(runtime.StandardGoWASMExec)
@@ -688,6 +815,13 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 
 	return nil
+}
+
+func firstNonEmptyRuntimeManifestHash(value string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return runtimewasm.ManifestIdentity()
 }
 
 // LoadBuildManifest reads a build manifest from disk and applies its asset URLs.
@@ -737,7 +871,7 @@ func (r *Renderer) RenderIslandWithEvents(componentName string, props any, event
 
 	// Add events and program ref to the last island entry
 	lastIdx := len(r.manifest.Islands) - 1
-	r.manifest.Islands[lastIdx].Events = events
+	r.manifest.Islands[lastIdx].Events = append([]hydrate.EventSlot{}, events...)
 	r.applyProgramRef(&r.manifest.Islands[lastIdx], componentName)
 
 	r.counter++
@@ -822,11 +956,31 @@ func (r *Renderer) ManifestScriptWithNonce(nonce string) gosx.Node {
 	if err != nil {
 		return gosx.Text("")
 	}
+	// data-gosx-release tells the bootstrap runtime it may drop the JSON text
+	// from the DOM after its one memoized parse; without the attribute the text
+	// is retained for the page's lifetime. The manifest can reach hundreds of
+	// kilobytes, so the drop is a per-tab memory saving, but it is opt-in: an
+	// app whose own inline scripts read the element's text later must not set
+	// it until those readers consume window.__gosx_manifest instead.
+	release := ""
+	if r.releaseManifestText || os.Getenv("GOSX_RELEASE_MANIFEST_TEXT") == "1" {
+		release = ` data-gosx-release`
+	}
 	return gosx.RawHTML(fmt.Sprintf(
-		`<script id="gosx-manifest" type="application/json"%s>%s</script>`,
+		`<script id="gosx-manifest" type="application/json"%s%s>%s</script>`,
 		cspNonceAttr(nonce),
+		release,
 		string(data),
 	))
+}
+
+// ReleaseManifestText marks the emitted manifest script tag with
+// data-gosx-release, allowing the browser runtime to drop the manifest JSON
+// text from the DOM once it has been parsed. Opt in only when no script on the
+// page reads the element's textContent after boot; late consumers must use the
+// published window.__gosx_manifest parse instead.
+func (r *Renderer) ReleaseManifestText() {
+	r.releaseManifestText = true
 }
 
 // BootstrapScript returns the script tags needed for island hydration.
@@ -849,25 +1003,26 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	// the relay's message listener is installed before any cross-frame
 	// signals arrive — see plan section C and client/js/relay.js.
 	if plan.PreviewRelay && r.relayPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"%s></script>`, html.EscapeString(r.relayPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"%s></script>`, html.EscapeString(r.relayPath), r.runtimeScriptAttrs(r.relayPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.StandardGoWASMExec && r.standardGoWASMExecPath != "" {
 		// wasm_exec.js declares globals that must execute as a real script. Mark
 		// the wrapped standard-Go shim for DOM loading during managed navigation
 		// so strict-CSP pages never fall back to indirect eval.
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="standard-go-wasm-exec" data-gosx-script-load="dom" src="%s"%s></script>`, html.EscapeString(r.standardGoWASMExecPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="standard-go-wasm-exec" data-gosx-script-load="dom" src="%s"%s></script>`, html.EscapeString(r.standardGoWASMExecPath), r.runtimeScriptAttrs(r.standardGoWASMExecPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.WASMExec && r.wasmExecPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"%s></script>`, html.EscapeString(r.wasmExecPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"%s></script>`, html.EscapeString(r.wasmExecPath), r.runtimeScriptAttrs(r.wasmExecPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.Patch && r.patchPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"%s></script>`, html.EscapeString(r.patchPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"%s></script>`, html.EscapeString(r.patchPath), r.runtimeScriptAttrs(r.patchPath, nonce)))
 		b.WriteByte('\n')
 	}
-	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"%s></script>`, plan.Mode, html.EscapeString(r.selectedBootstrapPath()), nonceAttr))
+	bootstrapPath := r.selectedBootstrapPath()
+	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"%s></script>`, plan.Mode, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		b.WriteByte('\n')
 		b.WriteString(`<script defer data-gosx-script="feature-scene3d"`)
@@ -919,7 +1074,7 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		b.WriteString(` src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString(`"`)
-		b.WriteString(nonceAttr)
+		b.WriteString(r.runtimeScriptAttrs(scene3dPath, nonce))
 		b.WriteString(">\x3c/script>")
 
 		// WebGPU sub-feature: lazy-load only when navigator.gpu exists.
@@ -951,7 +1106,17 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			// a syntax error, silently dropping the entire inline loader.
 			b.WriteString(`<script data-gosx-script="feature-scene3d-webgpu-loader"`)
 			b.WriteString(nonceAttr)
-			b.WriteString(`>if(navigator.gpu&&!window.__gosx_scene3d_webgpu_api&&!window.__gosx_scene3d_webgpu_feature_promise){var _n=document.currentScript&&(document.currentScript.nonce||document.currentScript.getAttribute('nonce'))||'';var _w=function(){if(window.__gosx_scene3d_webgpu_api||window.__gosx_scene3d_webgpu_feature_promise)return;window.__gosx_scene3d_webgpu_feature_promise=new Promise(function(r,j){var s=document.createElement('script');s.async=false;s.dataset.gosxScript='feature-scene3d-webgpu';if(_n){s.nonce=_n;}s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
+			b.WriteString(`>if(navigator.gpu&&!window.__gosx_scene3d_webgpu_api&&!window.__gosx_scene3d_webgpu_feature_promise){var _n=document.currentScript&&(document.currentScript.nonce||document.currentScript.getAttribute('nonce'))||'';var _w=function(){if(window.__gosx_scene3d_webgpu_api||window.__gosx_scene3d_webgpu_feature_promise)return;window.__gosx_scene3d_webgpu_feature_promise=new Promise(function(r,j){var s=document.createElement('script');s.async=false;s.type='text/javascript';s.setAttribute('crossorigin','anonymous');s.setAttribute('referrerpolicy','no-referrer');s.dataset.gosxScript='feature-scene3d-webgpu';if(_n){s.nonce=_n;}if(_n){s.setAttribute('nonce',_n);}`)
+			integrity := r.compatRuntimeIntegrity(webgpuPath)
+			if integrity == "" {
+				integrity = sriIntegrity(r.compatRuntimeHash(webgpuPath))
+			}
+			if integrity != "" {
+				b.WriteString(`s.setAttribute('integrity',`)
+				b.WriteString(htmlJSStringLiteral(integrity))
+				b.WriteString(`);`)
+			}
+			b.WriteString(`s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
 			b.WriteString(htmlJSStringLiteral(webgpuPath))
 			b.WriteString(";document.head.appendChild(s);});};")
 			b.WriteString("if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_w);}else{_w();}}")
@@ -1054,7 +1219,20 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		attrs = append(attrs, gosx.Attr("data-gosx-scene3d-poster", poster.Poster))
 	}
 	mountStyle := ""
-	for name, value := range cfg.MountAttrs {
+	// mountNames iterates in sorted order (gosx#204, mirroring gosx#188): Go's
+	// map iteration order is randomized per run, so two renders of the same
+	// cfg.MountAttrs previously emitted the data-gosx-engine-* mount
+	// attributes in a different order each time — byte-identity goldens and
+	// exports (gosx export on examples/gosx-docs) churned on unchanged
+	// content. Sorting names before emission makes the output deterministic
+	// across runs and processes.
+	mountNames := make([]string, 0, len(cfg.MountAttrs))
+	for name := range cfg.MountAttrs {
+		mountNames = append(mountNames, name)
+	}
+	sort.Strings(mountNames)
+	for _, name := range mountNames {
+		value := cfg.MountAttrs[name]
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
@@ -1221,10 +1399,10 @@ func (r *Renderer) RenderIslandFromProgram(prog *program.Program, props any) gos
 // Each slot gets a stable path-derived ID and selector relative to the island root.
 func extractEventSlots(prog *program.Program) []hydrate.EventSlot {
 	if len(prog.Nodes) == 0 {
-		return nil
+		return []hydrate.EventSlot{}
 	}
 
-	var slots []hydrate.EventSlot
+	slots := make([]hydrate.EventSlot, 0)
 
 	var walk func(nodeID program.NodeID, path string)
 	walk = func(nodeID program.NodeID, path string) {
@@ -1273,10 +1451,36 @@ func eventNameToType(name string) string {
 		return "focus"
 	case "onBlur":
 		return "blur"
+	case "onDragStart":
+		return "dragstart"
+	case "onDragEnd":
+		return "dragend"
+	case "onDragOver":
+		return "dragover"
+	case "onDragLeave":
+		return "dragleave"
+	case "onDrop":
+		return "drop"
+	case "onPointerDown":
+		return "pointerdown"
+	case "onPointerMove":
+		return "pointermove"
+	case "onPointerUp":
+		return "pointerup"
+	case "onPointerCancel":
+		return "pointercancel"
+	case "onDocumentKeyDown":
+		return "document-keydown"
+	case "onDocumentKeyUp":
+		return "document-keyup"
+	case "onWindowResize":
+		return "window-resize"
 	default:
-		// Strip "on" prefix and lowercase
+		// DOM event names are case-insensitive but addEventListener strings are
+		// conventionally lowercase. Lower the entire suffix so multiword event
+		// names do not leak source spelling such as pointerDown into the manifest.
 		if len(name) > 2 && name[:2] == "on" {
-			return strings.ToLower(name[2:3]) + name[3:]
+			return strings.ToLower(name[2:])
 		}
 		return name
 	}
@@ -1339,7 +1543,11 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 	b.WriteByte('<')
 	b.WriteString(safeTag)
 
-	for _, attr := range renderResolvedAttrs(&node, path) {
+	attrs := renderResolvedAttrs(&node, path)
+	if strings.EqualFold(node.Tag, "form") {
+		attrs = expandIslandManagedFormAttrs(attrs)
+	}
+	for _, attr := range attrs {
 		safeName := html.EscapeString(attr.Name)
 		if attr.Bool {
 			b.WriteByte(' ')
@@ -1363,6 +1571,71 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 	b.WriteString("</")
 	b.WriteString(safeTag)
 	b.WriteByte('>')
+}
+
+// expandIslandManagedFormAttrs applies the data-gosx-managed shorthand
+// expansion to a resolved <form> element's attributes (gosx#179 F2). Before
+// this, the island renderer was a third form-rendering surface that never
+// expanded the shorthand: it copied a resolved node's attributes straight
+// through, so a served island form kept the raw shorthand attribute
+// instead of the managed-form contract. The browser navigation runtime
+// still intercepted it — see managedFormShorthandTruthy in
+// client/runtime/host/navigation.ts — so the form was never left both
+// un-expanded and un-managed, but the server HTML did not match the other
+// two render paths' output.
+//
+// This mirrors node.go's expandManagedFormAttrs: it calls the same shared
+// truthy rule (gosx.ManagedFormShorthandTruthy) and inserts the same
+// default contract attributes in place of the shorthand attribute, only
+// filling in a contract attribute the author has not already written.
+// Like the other two render paths, it does not add
+// gosx.ManagedFormModeAttr — the HTML method attribute, if present, stays
+// authoritative for the navigation runtime. If the shorthand attribute is
+// absent, or present but not truthy, attrs is returned unchanged.
+func expandIslandManagedFormAttrs(attrs []vm.ResolvedAttr) []vm.ResolvedAttr {
+	idx := -1
+	for i, attr := range attrs {
+		if attr.Name == gosx.ManagedFormShorthandAttr {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return attrs
+	}
+	shorthand := attrs[idx]
+	var value any
+	if !shorthand.Bool {
+		value = shorthand.Value
+	}
+	if !gosx.ManagedFormShorthandTruthy(shorthand.Bool, value) {
+		return attrs
+	}
+
+	have := make(map[string]bool, len(attrs))
+	for _, attr := range attrs {
+		have[attr.Name] = true
+	}
+
+	defaults := []vm.ResolvedAttr{
+		{Name: gosx.ManagedFormAttr, Bool: true},
+		{Name: gosx.ManagedFormStateAttr, Value: "idle"},
+		{Name: gosx.EnhancementAttr, Value: "form"},
+		{Name: gosx.EnhancementLayerAttr, Value: "bootstrap"},
+		{Name: gosx.RuntimeFallbackAttr, Value: "native-form"},
+	}
+	var fill []vm.ResolvedAttr
+	for _, d := range defaults {
+		if !have[d.Name] {
+			fill = append(fill, d)
+		}
+	}
+
+	out := make([]vm.ResolvedAttr, 0, len(attrs)-1+len(fill))
+	out = append(out, attrs[:idx]...)
+	out = append(out, fill...)
+	out = append(out, attrs[idx+1:]...)
+	return out
 }
 
 func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {
@@ -1543,7 +1816,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
 				continue
 			}
-			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script">`, path))
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
 			b.WriteByte('\n')
 		}
 	}
@@ -1788,10 +2061,71 @@ func (r *Renderer) selectedRuntimeRef() hydrate.RuntimeRef {
 	if r == nil {
 		return hydrate.RuntimeRef{}
 	}
+	if required := r.requiredRuntimeFeatures(); required != 0 {
+		if ref, ok := r.smallestCompatibleRuntimeRef(required); ok {
+			return ref
+		}
+	}
 	if (len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0) && !r.needsSharedRuntimeEngineBridge() && strings.TrimSpace(r.islandRuntime.Path) != "" {
 		return r.islandRuntime
 	}
 	return r.manifest.Runtime
+}
+
+func (r *Renderer) smallestCompatibleRuntimeRef(required runtimewasm.FeatureMask) (hydrate.RuntimeRef, bool) {
+	var best hydrate.RuntimeRef
+	for _, ref := range r.runtimeVariants {
+		if strings.TrimSpace(ref.Path) == "" {
+			continue
+		}
+		features := runtimewasm.FeatureMask(ref.FeatureMask)
+		if features == 0 {
+			features = runtimewasm.FeatureMaskForVariant(runtimewasm.Variant(ref.Variant))
+		}
+		if features&required != required {
+			continue
+		}
+		if strings.TrimSpace(best.Path) == "" || runtimeRefIsSmaller(ref, best) {
+			best = ref
+		}
+	}
+	return best, strings.TrimSpace(best.Path) != ""
+}
+
+func runtimeRefIsSmaller(candidate, current hydrate.RuntimeRef) bool {
+	if candidate.Size > 0 && current.Size <= 0 {
+		return true
+	}
+	if candidate.Size <= 0 {
+		return false
+	}
+	if candidate.Size != current.Size {
+		return candidate.Size < current.Size
+	}
+	return candidate.Path < current.Path
+}
+
+func (r *Renderer) requiredRuntimeFeatures() runtimewasm.FeatureMask {
+	if r == nil || r.manifest == nil || !r.clientRuntimePlan().SharedRuntime {
+		return 0
+	}
+	var required runtimewasm.FeatureMask
+	if len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0 {
+		required |= runtimewasm.FeatureIslands
+	}
+	if r.needsSharedRuntimeEngineBridge() {
+		required |= runtimewasm.FeatureEngine
+		if r.hasSceneEngines() {
+			required |= runtimewasm.FeatureScene3D
+		}
+	}
+	if len(r.manifest.Hubs) > 0 && required != 0 {
+		required |= runtimewasm.FeatureCollab
+	}
+	if required == 0 {
+		required = runtimewasm.FeatureCore
+	}
+	return runtimewasm.FeatureCore | required
 }
 
 func (r *Renderer) selectedWASMExecPath() string {
@@ -1840,8 +2174,8 @@ func (r *Renderer) hasVideoEngines() bool {
 // and a few slice headers, not a full generic decode.
 //
 // The field names match the readers in
-// client/js/bootstrap-src/11a-scene-decompress.js and
-// 11b-scene-points-generate.js. Add a field here whenever one of those files
+// client/js/bootstrap-src/11a-scene-decompress.ts and
+// 11b-scene-points-generate.ts. Add a field here whenever one of those files
 // learns to read a new key, or the page will not advertise the chunk that
 // reads it.
 type scene3DChunkRecord struct {

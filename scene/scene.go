@@ -78,7 +78,10 @@ type Environment struct {
 	EnvironmentMap   string
 	// IBL carries prefiltered HDR products and their sampling semantics. It is
 	// additive metadata; renderer capability remains governed by capability.Matrix.
-	IBL          EnvironmentIBL
+	IBL EnvironmentIBL
+	// Sky selects the background source drawn behind the scene. A nil Sky
+	// keeps the flat Props.Background clear color. See sky.go.
+	Sky          *Sky
 	EnvIntensity float64
 	EnvRotation  float64
 	Exposure     float64
@@ -909,6 +912,17 @@ type ParticleMaterial struct {
 	OpacityEnd  float64
 	BlendMode   MaterialBlendMode
 	Attenuation bool
+	// MinPixelSize is a screen-space floor for particle sprites, matching
+	// Points.MinPixelSize. Attenuation scales a sprite by distance, so a
+	// moving system sweeps each sprite's projected size every frame; any
+	// sprite that dips below one pixel stops covering a pixel and winks on
+	// and off against the pixel grid. That scintillation reads as flicker,
+	// and until this field existed the only workaround was to disable
+	// Attenuation entirely and lose the depth cue with it.
+	MinPixelSize float64
+	// MaxPixelSize caps sprite growth as particles approach the camera,
+	// matching Points.MaxPixelSize. Zero leaves the size uncapped.
+	MaxPixelSize float64
 }
 
 // Label lowers into one legacy scene label.
@@ -1063,6 +1077,9 @@ type HTMLSurface struct {
 type Model struct {
 	ID                 string
 	Src                string
+	PreviewSrc         string
+	FullSrc            string
+	Progressive        bool
 	Position           Vector3
 	Rotation           Euler
 	Scale              Vector3
@@ -1449,24 +1466,27 @@ type MatteMaterial MaterialStyle
 
 // StandardMaterial is a PBR material using the roughness/metalness workflow.
 type StandardMaterial struct {
-	Color        string
-	Texture      string
-	Roughness    float64
-	Metalness    float64
-	Clearcoat    float64
-	Sheen        float64
-	Transmission float64
-	Iridescence  float64
-	Anisotropy   float64
-	NormalMap    string
-	RoughnessMap string
-	MetalnessMap string
-	OcclusionMap string
-	EmissiveMap  string
-	Emissive     float64
-	Opacity      *float64
-	BlendMode    MaterialBlendMode
-	Wireframe    *bool
+	Color             string
+	Texture           string
+	Roughness         float64
+	Metalness         float64
+	Clearcoat         float64
+	Sheen             float64
+	Transmission      float64
+	Iridescence       float64
+	Anisotropy        float64
+	SpecularIntensity *float64
+	SpecularColor     *[3]float64
+	IOR               *float64
+	NormalMap         string
+	RoughnessMap      string
+	MetalnessMap      string
+	OcclusionMap      string
+	EmissiveMap       string
+	Emissive          float64
+	Opacity           *float64
+	BlendMode         MaterialBlendMode
+	Wireframe         *bool
 }
 
 type quaternion struct {
@@ -2915,6 +2935,15 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		record.Transmission = mapFloat64(materialProps["transmission"])
 		record.Iridescence = mapFloat64(materialProps["iridescence"])
 		record.Anisotropy = mapFloat64(materialProps["anisotropy"])
+		if ior, ok := mapFloat64OK(materialProps["ior"]); ok {
+			record.IOR = Float(ior)
+		}
+		if si, ok := mapFloat64OK(materialProps["specularIntensity"]); ok {
+			record.SpecularIntensity = Float(si)
+		}
+		if sc, ok := specularColorFromAny(materialProps["specularColor"]); ok {
+			record.SpecularColor = &sc
+		}
 		if normalMap, ok := mapStringValue(materialProps["normalMap"]); ok {
 			record.NormalMap = normalMap
 		}
@@ -3030,15 +3059,17 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 		},
 		Forces: forces,
 		Material: ParticleMaterialIR{
-			Color:       strings.TrimSpace(cp.Material.Color),
-			ColorEnd:    strings.TrimSpace(cp.Material.ColorEnd),
-			Style:       strings.TrimSpace(string(cp.Material.Style)),
-			Size:        cp.Material.Size,
-			SizeEnd:     cp.Material.SizeEnd,
-			Opacity:     cp.Material.Opacity,
-			OpacityEnd:  cp.Material.OpacityEnd,
-			BlendMode:   strings.TrimSpace(string(cp.Material.BlendMode)),
-			Attenuation: cp.Material.Attenuation,
+			Color:        strings.TrimSpace(cp.Material.Color),
+			ColorEnd:     strings.TrimSpace(cp.Material.ColorEnd),
+			Style:        strings.TrimSpace(string(cp.Material.Style)),
+			Size:         cp.Material.Size,
+			SizeEnd:      cp.Material.SizeEnd,
+			Opacity:      cp.Material.Opacity,
+			OpacityEnd:   cp.Material.OpacityEnd,
+			BlendMode:    strings.TrimSpace(string(cp.Material.BlendMode)),
+			Attenuation:  cp.Material.Attenuation,
+			MinPixelSize: cp.Material.MinPixelSize,
+			MaxPixelSize: cp.Material.MaxPixelSize,
 		},
 		Bounds:         cp.Bounds,
 		Transition:     lowerTransition(cp.Transition),
@@ -3366,7 +3397,15 @@ func mat4FromTRS(t Vector3, q quaternion, s Vector3) []float64 {
 }
 
 func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
+	previewSrc := strings.TrimSpace(model.PreviewSrc)
+	fullSrc := strings.TrimSpace(model.FullSrc)
 	src := strings.TrimSpace(model.Src)
+	if src == "" {
+		src = fullSrc
+	}
+	if src == "" {
+		src = previewSrc
+	}
 	if src == "" {
 		return
 	}
@@ -3383,13 +3422,16 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 			OutState:   model.OutState.legacyProps(),
 			Live:       normalizeLive(model.Live),
 		},
-		Src:      src,
-		ScaleX:   model.Scale.X,
-		ScaleY:   model.Scale.Y,
-		ScaleZ:   model.Scale.Z,
-		Bounds:   model.Bounds,
-		Fit:      strings.TrimSpace(model.Fit),
-		FitAlign: strings.TrimSpace(model.FitAlign),
+		Src:         src,
+		PreviewSrc:  previewSrc,
+		FullSrc:     fullSrc,
+		Progressive: model.Progressive,
+		ScaleX:      model.Scale.X,
+		ScaleY:      model.Scale.Y,
+		ScaleZ:      model.Scale.Z,
+		Bounds:      model.Bounds,
+		Fit:         strings.TrimSpace(model.Fit),
+		FitAlign:    strings.TrimSpace(model.FitAlign),
 	}
 	rotation := eulerFromQuaternion(world.Rotation)
 	record.RotationX = rotation.X
@@ -3463,6 +3505,19 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		}
 		record.Roughness = mapFloat64(mat["roughness"])
 		record.Metalness = mapFloat64(mat["metalness"])
+		if v, ok := mat["ior"]; ok {
+			if f, ok2 := toFloat64(v); ok2 {
+				record.IOR = &f
+			}
+		}
+		if v, ok := mat["specularIntensity"]; ok {
+			if f, ok2 := toFloat64(v); ok2 {
+				record.SpecularIntensity = &f
+			}
+		}
+		if c, ok := specularColorFromAny(mat["specularColor"]); ok {
+			record.SpecularColor = &c
+		}
 		if v, ok := mat["opacity"]; ok {
 			if f, ok2 := toFloat64(v); ok2 {
 				record.Opacity = &f
@@ -3991,6 +4046,15 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	record.Transmission = mapFloat64(props["transmission"])
 	record.Iridescence = mapFloat64(props["iridescence"])
 	record.Anisotropy = mapFloat64(props["anisotropy"])
+	if ior, ok := mapFloat64OK(props["ior"]); ok {
+		record.IOR = Float(ior)
+	}
+	if si, ok := mapFloat64OK(props["specularIntensity"]); ok {
+		record.SpecularIntensity = Float(si)
+	}
+	if sc, ok := specularColorFromAny(props["specularColor"]); ok {
+		record.SpecularColor = &sc
+	}
 	if normalMap, ok := mapStringValue(props["normalMap"]); ok {
 		record.NormalMap = normalMap
 	}
@@ -4303,6 +4367,15 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.Transmission = m.Transmission
 		record.Iridescence = m.Iridescence
 		record.Anisotropy = m.Anisotropy
+		if m.IOR != nil {
+			record.IOR = m.IOR
+		}
+		if m.SpecularIntensity != nil {
+			record.SpecularIntensity = Float(*m.SpecularIntensity)
+		}
+		if m.SpecularColor != nil {
+			record.SpecularColor = copySpecularColor(m.SpecularColor)
+		}
 		record.NormalMap = strings.TrimSpace(m.NormalMap)
 		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
 		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
@@ -4465,6 +4538,9 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setNumeric(out, "transmission", m.Transmission)
 	setNumeric(out, "iridescence", m.Iridescence)
 	setNumeric(out, "anisotropy", m.Anisotropy)
+	setNumericPtr(out, "ior", m.IOR)
+	setNumericPtr(out, "specularIntensity", m.SpecularIntensity)
+	setColor3Ptr(out, "specularColor", m.SpecularColor)
 	setString(out, "normalMap", m.NormalMap)
 	setString(out, "roughnessMap", m.RoughnessMap)
 	setString(out, "metalnessMap", m.MetalnessMap)

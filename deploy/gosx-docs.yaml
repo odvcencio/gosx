@@ -7,8 +7,23 @@ metadata:
   namespace: draco-quest
   labels:
     app: gosx-docs
+  annotations:
+    kubernetes.io/change-cause: "Deploy gosx-docs __GIT_REVISION__ at __BUILT_AT__ (sha256:__IMAGE_DIGEST__)"
 spec:
   replicas: 1
+  # Keep the prior ready pod serving while ingress controllers observe the
+  # candidate endpoint. A single successful readiness probe is not enough to
+  # declare a one-replica public rollout stable.
+  minReadySeconds: 10
+  # Keep enough rollout history for an immediate operator rollback without
+  # retaining an unbounded set of old ReplicaSets.
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: gosx-docs
@@ -17,10 +32,67 @@ spec:
       labels:
         app: gosx-docs
     spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: isr-static
+          # The image root remains read-only; ISR refreshes only this bounded
+          # copy of the prerendered static tree.
+          emptyDir:
+            sizeLimit: 128Mi
+      initContainers:
+        - name: stage-isr
+          image: harbor.draco.quest/orchard/gosx-docs@sha256:__IMAGE_DIGEST__
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - cp -R /opt/gosx-docs/static/. /isr-static/
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: isr-static
+              mountPath: /isr-static
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
       containers:
         - name: gosx-docs
-          image: harbor.draco.quest/library/gosx-docs@sha256:e1094630018a1a0951fdaed35a972fe3cfe59ed86f297e92079abd09e9744b18
+          # scripts/deploy-gosx-docs.sh requires an immutable digest and
+          # substitutes it into this checked-in placeholder before apply.
+          image: harbor.draco.quest/orchard/gosx-docs@sha256:__IMAGE_DIGEST__
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: isr-static
+              mountPath: /opt/gosx-docs/static
           ports:
             - containerPort: 8080
               name: http
@@ -29,6 +101,10 @@ spec:
               value: "8080"
             - name: PUBLIC_URL
               value: https://gosx.m31labs.dev
+            - name: GOSX_DOCS_REVISION
+              value: __GIT_REVISION__
+            - name: GOSX_DOCS_BUILT_AT
+              value: __BUILT_AT__
             - name: SESSION_SECRET
               valueFrom:
                 secretKeyRef:
@@ -40,19 +116,23 @@ spec:
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
+              cpu: 100m
+              memory: 128Mi
             limits:
-              cpu: 250m
-              memory: 256Mi
+              cpu: 500m
+              memory: 512Mi
 ---
 apiVersion: v1
 kind: Service

@@ -290,6 +290,16 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 		return err
 	}
 	r.Add(routes...)
+	// Remembered for Build/BuildChecked, which re-checks the registry at build
+	// time rather than here: registration in the shared registry usually runs
+	// from package init() blocks that execute before AddDir either way, but
+	// checking at build time keeps the diagnostic tied to where a developer
+	// actually observes the empty-data symptom.
+	r.fileRouteDirs = append(r.fileRouteDirs, fileRouteDirSource{
+		root:     root,
+		registry: registrar.moduleRegistry,
+		pages:    bundle.Pages,
+	})
 	return nil
 }
 
@@ -467,7 +477,7 @@ func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
 		}
 	}
 	if len(resolved.module.Actions) > 0 {
-		r.router.Handle(filePageActionPattern(resolved.page.Pattern), buildFileActionHandler(resolved.page, resolved.module.Actions), routeMiddleware...)
+		r.router.Handle(filePageActionPattern(resolved.page.Pattern), buildFileActionHandler(resolved.page, resolved.module.Actions, resolved.module.MaxActionBodyBytes), routeMiddleware...)
 	}
 	return Route{
 		Pattern:      resolved.page.Pattern,
@@ -544,6 +554,15 @@ func renderFilePage(ctx *RouteContext, page FilePage, module FileModule, renderF
 	if renderFn == nil {
 		return renderFileNode(page.FilePath, fileRenderOptions{
 			EvalEnv: filePageRenderEnv(ctx, page, module),
+			// EntryProps threads this page's own Load return value to a
+			// strict Page/not-found/error entry that declares props
+			// (gosx#248): ctx.Data already holds it, set by
+			// prepareFileRouteContext before this renders. A legacy
+			// component never reads EntryProps (see
+			// renderFileProgramHTML's strict-entry branch), so this is a
+			// no-op for every non-strict page and does not change what
+			// ctx.Data itself renders through data.X.
+			EntryProps: ctx.Data,
 		})
 	}
 	return renderFn(ctx, page)
@@ -623,7 +642,7 @@ func filePageActionPattern(pattern string) string {
 	return "POST " + strings.TrimSuffix(pattern, "/") + "/__actions/{__gosx_action}"
 }
 
-func buildFileActionHandler(page FilePage, handlers FileActions) http.Handler {
+func buildFileActionHandler(page FilePage, handlers FileActions, maxActionBodyBytes int64) http.Handler {
 	handlers = cloneFileActions(handlers)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("__gosx_action")
@@ -636,7 +655,9 @@ func buildFileActionHandler(page FilePage, handlers FileActions) http.Handler {
 			http.Error(w, fmt.Sprintf("action %q not found for %s", name, page.Source), http.StatusNotFound)
 			return
 		}
-		action.ServeHandler(w, r, handler)
+		action.ServeHandlerWithOptions(w, r, handler, action.ServeHandlerOptions{
+			MaxBodyBytes: maxActionBodyBytes,
+		})
 	})
 }
 

@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,6 +30,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/scheduled"
 )
 
@@ -85,6 +88,7 @@ type App struct {
 	notFound           PageHandler
 	errorPage          ErrorHandler
 	publicDir          string
+	publicPolicy       bundlepolicy.PolicyFile
 	imageDir           string
 	runtimeRoot        string
 	runtimeMeta        *runtimeManifestCache
@@ -105,6 +109,12 @@ type App struct {
 	schedulerOnce sync.Once
 	scheduler     *scheduled.Scheduler
 	srv           *http.Server
+
+	// staleIslandsOnce guards warnStaleIslands, so hashing every island's
+	// source runs at most once per App even if Build() runs more than once
+	// (a test harness may call it directly, more than once, without ever
+	// calling ListenAndServe).
+	staleIslandsOnce sync.Once
 }
 
 // New creates a new GoSX server app.
@@ -151,6 +161,35 @@ func (a *App) SetErrorPage(handler ErrorHandler) {
 // SetPublicDir sets the public asset directory served at the site root.
 // An empty directory disables automatic public asset serving.
 func (a *App) SetPublicDir(dir string) {
+	a.publicDir = ""
+	a.publicPolicy = bundlepolicy.PolicyFile{}
+	if strings.TrimSpace(dir) == "" {
+		return
+	}
+	sidecar := filepath.Join(filepath.Dir(dir), "bundle-policy.json")
+	if info, statErr := os.Lstat(sidecar); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return
+		}
+		data, readErr := os.ReadFile(sidecar)
+		if readErr != nil {
+			return
+		}
+		policy, decodeErr := bundlepolicy.DecodePolicyFile(data)
+		if decodeErr != nil {
+			return
+		}
+		a.publicPolicy = policy
+		a.publicDir = dir
+		return
+	} else if !os.IsNotExist(statErr) {
+		return
+	}
+	policy, policyErr := bundlepolicy.LoadProjectPolicy(filepath.Dir(dir))
+	if policyErr != nil {
+		return
+	}
+	a.publicPolicy = policy
 	a.publicDir = dir
 }
 
@@ -286,6 +325,11 @@ func (a *App) HandleAPI(route APIRoute) {
 
 // EnableNavigation injects the built-in client-side page navigation runtime
 // into document/head-aware responses.
+//
+// Call it any time before Build(): Build() is what wires the navigation-runtime
+// head builder into every mounted NavigationConfigurable handler (see Mount and
+// registerMountRoutes), so EnableNavigation, Mount, and MountApp may run in any
+// order relative to each other as long as all of them run before Build().
 func (a *App) EnableNavigation() {
 	a.navigation = true
 }
@@ -337,7 +381,22 @@ func (a *App) HandleRewrite(route RewriteRoute) {
 	}
 }
 
-// Mount registers an arbitrary HTTP handler under the given pattern.
+// NavigationConfigurable is implemented by mountable handlers — such as the
+// value route.Router.Build/BuildChecked returns — that keep a live reference
+// to their own document assembly and can accept the navigation-runtime head
+// builder. Mount uses this to carry EnableNavigation through to a file-routed
+// app: server cannot import route (route already imports server), so the seam
+// is a structural interface rather than a route.Router type check.
+type NavigationConfigurable interface {
+	SetNavigationHead(fn func(nonce string) gosx.Node)
+}
+
+// Mount registers an arbitrary HTTP handler under the given pattern. When
+// EnableNavigation is set and handler implements NavigationConfigurable, Build
+// wires the navigation-runtime head builder into it (see registerMountRoutes),
+// so a file-routed app built with route.NewRouter and mounted here needs only
+// app.EnableNavigation() in the composition root. EnableNavigation and Mount may run in either order; only
+// Build reads a.navigation, so both must run before Build.
 func (a *App) Mount(pattern string, handler http.Handler) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || handler == nil {
@@ -468,6 +527,7 @@ func (a *App) preloadGrammarBlob() {
 
 func (a *App) Build() http.Handler {
 	a.preloadGrammarBlob()
+	a.warnStaleIslands()
 	mux := http.NewServeMux()
 	redirectMux := http.NewServeMux()
 	rewriteMux := http.NewServeMux()
@@ -502,6 +562,8 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 	if !a.hasRoute("GET /gosx/") {
 		mux.Handle("GET /gosx/", http.HandlerFunc(a.serveRuntimeAsset))
 	}
+	registerStaticExportImageResolver(a)
+	registerImageManifestLookup(a)
 	if imageDir := a.effectiveImageDir(); imageDir != "" && !a.hasRoute(defaultImageEndpoint) {
 		mux.Handle("GET "+defaultImageEndpoint, ImageHandler(imageDir))
 	}
@@ -633,6 +695,15 @@ func (a *App) registerMountRoutes(mux *http.ServeMux) {
 	for _, route := range a.mounts {
 		pattern := route.pattern
 		handler := route.handler
+		// Wired here, at Build time, rather than back in Mount — see the N3
+		// ordering note on EnableNavigation and Mount. This makes
+		// EnableNavigation order-independent relative to Mount: it only has
+		// to run before Build.
+		if a.navigation {
+			if configurable, ok := handler.(NavigationConfigurable); ok {
+				configurable.SetNavigationHead(navigationScriptWithNonce)
+			}
+		}
 		mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			MarkObservedRequest(r, "mount", pattern)
 			handler.ServeHTTP(w, r)
@@ -740,37 +811,56 @@ func listenAddrHost(addr string) (string, bool) {
 	return addr, true
 }
 
-// HTMLDocument wraps content in a full HTML5 document.
-func HTMLDocument(title string, head gosx.Node, body gosx.Node) gosx.Node {
-	return HTMLDocumentWithNonce(title, "", head, body)
+// HTMLDocument renders one complete HTML5 document from a document context.
+//
+// The context is treated as immutable. A nonzero request-prepared Head carries
+// the framework contract and remains authoritative; direct or structurally
+// empty contexts receive exactly one framework-owned contract on a private
+// copy. This keeps custom document wrappers composable without teaching the
+// renderer to inspect or rewrite arbitrary RawHTML supplied by an application.
+func HTMLDocument(doc *DocumentContext) gosx.Node {
+	prepared := prepareDocumentContext(doc)
+	return gosx.RawHTML(renderDocumentHTML(&prepared))
 }
 
-// HTMLDocumentWithNonce wraps content in a full HTML5 document, threading a
-// per-request CSP nonce through GoSX-owned document shell scripts.
-func HTMLDocumentWithNonce(title string, nonce string, head gosx.Node, body gosx.Node) gosx.Node {
-	return gosx.RawHTML(renderDocument(title, nonce, head, body))
-}
-
-func renderDocument(title string, nonce string, head gosx.Node, body gosx.Node) string {
-	return renderDocumentWithContext(&DocumentContext{
-		Title: title,
-		Nonce: nonce,
-		Head:  head,
-		Body:  body,
-	})
-}
-
-func renderDocumentWithContext(doc *DocumentContext) string {
-	title := ""
-	head := gosx.Text("")
-	body := gosx.Text("")
-	if doc != nil {
-		title = doc.Title
-		head = doc.Head
-		body = doc.Body
+func prepareDocumentContext(doc *DocumentContext) DocumentContext {
+	if doc == nil {
+		doc = &DocumentContext{}
 	}
+	prepared := *doc
+	headWasZero := prepared.Head.IsZero()
+	prepared.Head = normalizedDocumentNode(prepared.Head)
+	if !doc.documentContractPrepared || headWasZero {
+		contract := documentContractNode(&prepared)
+		if headWasZero {
+			prepared.Head = contract
+		} else {
+			prepared.Head = gosx.Fragment(prepared.Head, contract)
+		}
+		prepared.documentContractPrepared = true
+	}
+	return prepared
+}
+
+func normalizedDocumentNode(node gosx.Node) gosx.Node {
+	if node.IsZero() {
+		return gosx.Text("")
+	}
+	return node
+}
+
+func renderDocumentHTML(doc *DocumentContext) string {
+	if doc == nil {
+		doc = &DocumentContext{}
+	}
+	title := doc.Title
+	head := normalizedDocumentNode(doc.Head)
+	body := normalizedDocumentNode(doc.Body)
 	htmlAttrs := documentHTMLAttrs(doc)
 	bodyAttrs := documentBodyAttrs(doc)
+	// The viewport is owned and emitted by this document shell. Head remains an
+	// authoritative application-owned node tree; RawHTML is an explicit
+	// structure/trust escape hatch and is never parsed or rewritten here.
 	headHTML := gosx.RenderHTML(HeadOutlet(head))
 	bodyHTML := gosx.RenderHTML(body)
 
@@ -786,7 +876,7 @@ func renderDocumentWithContext(doc *DocumentContext) string {
 	b.WriteString("<meta charset=\"utf-8\">\n")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	b.WriteString("<title>")
-	b.WriteString(title)
+	b.WriteString(html.EscapeString(title))
 	b.WriteString("</title>\n")
 	b.WriteString(headHTML)
 	b.WriteString("\n</head>\n<body")
@@ -834,10 +924,12 @@ func (a *App) observeOperation(event OperationEvent) {
 
 func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
 	ctx = ensurePageContext(ctx)
+	requestNonce := ctx.Nonce()
 	// Drop the nonce before the render when a shared cache may store the body.
 	// One stored copy reaches many clients, so a per-request nonce in that copy
 	// would name a value the next client never received. documentContext drops
-	// the request ID on the same rule.
+	// the request ID on the same rule. Keep requestNonce separately so WriteHTML
+	// can also remove nonce attributes already baked into handler-created nodes.
 	if ctx.cache.SharedCacheable() {
 		ctx.SetNonce("")
 	}
@@ -856,8 +948,8 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 		Request:            ctx.Request,
 		Cache:              ctx.cache,
 		Revalidator:        a.Revalidator(),
-		CacheDigestExclude: []string{ctx.Nonce()},
-		Nonce:              ctx.Nonce(),
+		CacheDigestExclude: []string{requestNonce},
+		Nonce:              requestNonce,
 	})
 }
 
@@ -878,8 +970,8 @@ func ensurePageContext(ctx *Context) *Context {
 // nothing for this request. Decorators run in registration order, after the
 // runtime/navigation head assets (see decoratePageContext), for every page
 // rendered through App.renderPage — islands, engines, hubs, and the
-// navigation script all reach <head> the same way (ctx.runtime.Head() /
-// NavigationScript()); AddHeadDecorator is the same mechanism for
+// framework-owned navigation runtime all reach <head> the same way
+// (ctx.runtime.Head() / App.EnableNavigation()); AddHeadDecorator is the same mechanism for
 // app-supplied content.
 //
 // This exists so an app-level concern that must appear on every page (e.g. a
@@ -913,7 +1005,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 	// Runtime head emission moved into PageState.Head() (lazy, at document
 	// render) so layout-registered engines reach the manifest.
 	if a.navigation {
-		ctx.AddHead(NavigationScriptWithNonce(ctx.Nonce()))
+		ctx.SetNavigationHead(navigationScriptWithNonce)
 	}
 	for _, decorate := range a.headDecorators {
 		if decorate == nil {
@@ -938,7 +1030,7 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 	case a.layout != nil:
 		return renderLegacyLayout(a.layout(pageTitle(ctx, pattern, defaultTitle), renderedBody), ctx.Head())
 	default:
-		return gosx.RawHTML(renderDocumentWithContext(doc))
+		return HTMLDocument(doc)
 	}
 }
 
@@ -1016,20 +1108,32 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
-	cleanPath := path.Clean("/" + r.URL.Path)
-	if cleanPath == "/" {
+	if r.URL.Path == "" || r.URL.Path == "/" {
 		return false
 	}
 
-	name := strings.TrimPrefix(cleanPath, "/")
-	fsPath := filepath.Join(a.publicDir, filepath.FromSlash(name))
-	info, err := os.Stat(fsPath)
-	if err != nil || info.IsDir() {
+	fsPath, ok := bundlepolicy.PublicPath(a.publicDir, r.URL.Path, a.publicPolicy.AllowPublic, a.publicPolicy.Exclude)
+	if !ok {
 		return false
 	}
+	cleanPath := path.Clean("/" + r.URL.Path)
 
 	MarkObservedRequest(r, "public", cleanPath)
-	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	// A version query marks the URL as content-addressed by the app (the
+	// scaffold's publicAsset helper stamps mtime+size), so the response for
+	// that exact URL never changes and a year of immutable caching is safe.
+	// Unversioned URLs keep revalidation: the app may overwrite the file in
+	// place and the next view must see it.
+	if r.URL.Query().Get("v") != "" {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	}
+	if strings.EqualFold(filepath.Ext(fsPath), ".webmanifest") {
+		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+	} else if contentType := mime.TypeByExtension(filepath.Ext(fsPath)); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
 	http.ServeFile(w, r, fsPath)
 	return true
 }
@@ -1433,11 +1537,18 @@ func routeHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bo
 }
 
 func mountHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
-	handler, pattern := mux.Handler(r)
-	if pattern == "" || handler == nil {
+	if !muxMatched(mux, r) {
 		return false
 	}
-	handler.ServeHTTP(w, r)
+	// Dispatch through mux.ServeHTTP, not the handler pulled off mux.Handler:
+	// Handler's own doc comment says it "does not populate named path
+	// wildcards, so r.PathValue will always return the empty string." A
+	// mount pattern with a wildcard segment, e.g. "GET /avatars/{teamID}.png",
+	// needs ServeHTTP's internal findHandler call, which sets r.pat and
+	// r.matches before invoking the handler. muxMatched still does the
+	// match/no-match check via Handler(r), matching the no-match fall-through
+	// contract used by routeHandled, redirectHandled and rewriteHandled.
+	mux.ServeHTTP(w, r)
 	return true
 }
 

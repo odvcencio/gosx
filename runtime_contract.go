@@ -18,19 +18,91 @@ const (
 	ManagedFormAttr      = "data-gosx-form"
 	ManagedFormModeAttr  = "data-gosx-form-mode"
 	ManagedFormStateAttr = "data-gosx-form-state"
+	// ManagedFormProjectAttr controls framework projection of JSON action
+	// messages and field errors. The default is enabled; "off" opts out.
+	ManagedFormProjectAttr = "data-gosx-form-project"
+	// ManagedFormShorthandAttr is a single-attribute alternative to writing
+	// out the ManagedFormAttrs default set by hand on a <form> element. A
+	// .gsx template author writes `<form data-gosx-managed>` (or
+	// `data-gosx-managed="true"`) instead of the five contract attributes.
+	// All three server render paths expand it on a <form> element at
+	// render time: RenderHTML (see expandManagedFormAttrs in node.go) for
+	// the Go Node API, the route package's file-program renderer for .gsx
+	// pages, and the island package's resolved-tree renderer for island
+	// forms. See ManagedFormShorthandTruthy for the shared truthy rule.
+	ManagedFormShorthandAttr = "data-gosx-managed"
+	// ToastHostAttr opts a page into visible managed-action feedback. The
+	// navigation runtime appends accessible, dismissible toast elements to the
+	// first host after an action settles; the application owns their styling.
+	ToastHostAttr = "data-gosx-toast-host"
 
-	ActionAttr           = "data-gosx-action"
-	ActionResetAttr      = "data-gosx-reset"
-	ActionSubmitOnAttr   = "data-gosx-submit-on"
-	ActionEventAttr      = "data-gosx-action-event"
-	ActionSignalAttr     = "data-gosx-action-signal"
-	ActionTargetAttr     = "data-gosx-action-target"
+	ActionAttr         = "data-gosx-action"
+	ActionResetAttr    = "data-gosx-reset"
+	ActionSubmitOnAttr = "data-gosx-submit-on"
+	ActionEventAttr    = "data-gosx-action-event"
+	ActionSignalAttr   = "data-gosx-action-signal"
+	ActionTargetAttr   = "data-gosx-action-target"
+
+	// Disclosure attributes are owned by the framework's accessible browser
+	// substrate. They work with either EnableNavigation's inline runtime or a
+	// fetched bootstrap bundle; loading both still installs one authority.
+	DisclosureAttr             = "data-gosx-disclosure"
+	DisclosureTargetAttr       = "data-gosx-disclosure-target"
+	DisclosureCloseAttr        = "data-gosx-disclosure-close"
+	DisclosureBackdropAttr     = "data-gosx-disclosure-backdrop"
+	DisclosureInitialFocusAttr = "data-gosx-disclosure-initial-focus"
+	DisclosureModalAttr        = "data-gosx-disclosure-modal"
+	// RegionAttr, on a container, marks it a server-fragment region
+	// (gosx#227): the bootstrap runtime fetches RegionURLAttr and swaps the
+	// response in as that container's new children on a signal change
+	// (RegionSignalAttr), a hub event (RegionEventsAttr), or an interval
+	// (RegionIntervalAttr). This REQUIRES THE BOOTSTRAP RUNTIME —
+	// client/runtime/host/regions.ts — which does NOT ship in the lean
+	// framework-owned navigation payload every page gets from
+	// app.EnableNavigation(). A page must additionally call
+	// ctx.Runtime().EnableBootstrap()
+	// (or otherwise opt into a bootstrap bundle — registering an island, an
+	// engine, or a hub on the same page already implies it too; see
+	// PageRuntime's own methods in server/runtime.go). The initial,
+	// server-rendered children inside a RegionAttr element are correct HTML
+	// either way, but without a bootstrap bundle loaded, RegionAttr and
+	// every other data-gosx-region-* attribute is SILENTLY INERT: no error
+	// reaches production, and no build-time or `gosx check`-time diagnostic
+	// can catch it either — whether a page ends up with an active
+	// PageRuntime is a runtime side effect of executing the page's (or its
+	// layout's) own arbitrary Go code, not a property statically knowable
+	// from the compiled template IR `gosx check` inspects, which never even
+	// reads the paired .server.go file. The one line of defense is a
+	// runtime, dev-console warning: checkRegionBootstrapDiagnostic in
+	// navigation.ts (part of the lean payload, so it always loads) warns
+	// once, after the page finishes loading, if it finds a RegionAttr
+	// element but window.__gosx.regions — the marker regions.ts itself
+	// installs — never appeared. See the client runtime guide's
+	// "Live-bound regions" section (the "Periodic region refresh" heading)
+	// for the full contract and a worked EnableBootstrap() example.
 	RegionAttr           = "data-gosx-region"
 	RegionURLAttr        = "data-gosx-region-url"
 	RegionSignalAttr     = "data-gosx-region-signal"
 	RegionEventsAttr     = "data-gosx-region-on"
 	RegionFieldAttr      = "data-gosx-region-field"
 	RegionAllowEmptyAttr = "data-gosx-region-allow-empty"
+	// RegionIntervalAttr declares periodic polling for a data-gosx-region
+	// fragment (gosx#217), composing with its existing signal- and
+	// hub-event-driven triggers rather than replacing them: a region can
+	// refresh on a signal change, a hub event, AND an interval, all backed
+	// by the same RegionURLAttr fetch and swap. The value is the same
+	// whole-seconds/whole-minutes duration subset
+	// NavigationRevalidateIntervalAttr uses ("4s", "2m"). Unlike a
+	// signal or hub trigger — a discrete, user-caused event the region
+	// answers immediately — an interval-triggered refresh skips a tick
+	// entirely, and retries next tick, while the region contains the
+	// document's focused element or an element under an active pointer;
+	// this guard applies only to the interval trigger, never to a signal
+	// or hub-event refresh, so an existing "select an option, region
+	// updates immediately" pattern keeps working unchanged even while that
+	// select retains focus. See the client runtime guide's "Live-bound
+	// regions" section for the full contract.
+	RegionIntervalAttr = "data-gosx-region-interval"
 )
 
 // ProgressiveEnhancementOptions describes a browser enhancement while
@@ -97,6 +169,42 @@ func ManagedFormAttrs(opts ManagedFormOptions) AttrList {
 		Fallback: fallback,
 	})...)
 	return attrs
+}
+
+// ManagedFormShorthandTruthy reports whether a ManagedFormShorthandAttr
+// value opts a <form> element into the managed-form contract. The exact
+// rule: a bare attribute (presence with no value) is truthy; a nil value —
+// the attribute was never found — is falsy; every other value is truthy
+// unless it equals "false" (case-insensitive, surrounding whitespace
+// ignored). This makes `data-gosx-managed`, `data-gosx-managed=""`, and
+// `data-gosx-managed="true"` all opt in; only `data-gosx-managed="false"`
+// opts out. Treating an empty string as truthy mirrors the DOM: a bare
+// HTML boolean attribute and its `=""` spelling parse identically, and the
+// browser-side mirror of this rule (managedFormShorthandTruthy in
+// client/runtime/host/navigation.ts) has no way to tell them apart either,
+// since both read back as the empty string from getAttribute.
+//
+// This is the single definition of the shorthand's truthy rule. All three
+// server render paths call it: node.go's expandManagedFormAttrs for the Go
+// Node API, the route package's file-program renderer for .gsx pages, and
+// the island package's resolved-tree renderer for island forms — so a form
+// written in any surface expands the same way. A caller decides separately
+// whether the attribute is present at all; this function only judges a
+// value already known to exist (or its explicit absence, via a nil value).
+func ManagedFormShorthandTruthy(presence bool, value any) bool {
+	if presence {
+		return true
+	}
+	switch v := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return v
+	case string:
+		return !strings.EqualFold(strings.TrimSpace(v), "false")
+	default:
+		return true
+	}
 }
 
 // RuntimeSurfaceOptions describes the framework-owned attributes on an
@@ -186,10 +294,12 @@ func Action(tag string, opts ActionOptions, args ...any) Node {
 // may refresh after a signal or hub event. The initial children remain the
 // progressive-enhancement fallback.
 type RegionOptions struct {
-	URL        string
-	Signal     string
-	Events     []string
-	Field      string
+	URL      string
+	Signal   string
+	Events   []string
+	Field    string
+	Interval string
+
 	AllowEmpty bool
 }
 
@@ -217,6 +327,9 @@ func RegionAttrs(opts RegionOptions) AttrList {
 	}
 	if value := strings.TrimSpace(opts.Field); value != "" {
 		attrs = append(attrs, Attr(RegionFieldAttr, value))
+	}
+	if value := strings.TrimSpace(opts.Interval); value != "" {
+		attrs = append(attrs, Attr(RegionIntervalAttr, value))
 	}
 	if opts.AllowEmpty {
 		attrs = append(attrs, BoolAttr(RegionAllowEmptyAttr))

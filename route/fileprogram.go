@@ -3,6 +3,9 @@ package route
 import (
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/constant"
+	"go/parser"
 	"html"
 	"math"
 	"net/http"
@@ -10,10 +13,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/strictcomponent"
 	"m31labs.dev/gosx/ir"
 	islandprogram "m31labs.dev/gosx/island/program"
 	gosxscene "m31labs.dev/gosx/scene"
@@ -33,10 +39,116 @@ type fileProgramRenderer struct {
 }
 
 func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (string, bool, error) {
+	// gosx#185: a render profile's validation pass runs before anything is
+	// written, over the whole compiled program, not just the component
+	// being rendered. A non-empty diagnostic list aborts the render here —
+	// fail closed, no output written at all — rather than after the
+	// component below has already produced partial HTML. It also runs
+	// before the "component not found" check just below: a bad component
+	// name and a Validate refusal can both apply to one call, and Validate
+	// wins the race, reporting its diagnostics instead of the not-found
+	// error (gosx#185 n2).
+	if opts.Profile != nil && opts.Profile.Validate != nil {
+		diags, err := runProfileValidate(opts.Profile.Validate, prog)
+		if err != nil {
+			return "", false, err
+		}
+		if len(diags) > 0 {
+			return "", false, &RenderProfileError{Diagnostics: diags}
+		}
+	}
 	renderer := newFileProgramRenderer(prog, opts)
 	comp, ok := renderer.components[component]
 	if !ok {
 		return "", false, fmt.Errorf("component %q not found", component)
+	}
+	entryEnv := opts.EvalEnv
+	if comp.Syntax == ir.ComponentSyntaxStrict && strings.TrimSpace(comp.PropsType) != "" {
+		// gosx#226: a strict component rendered as the render entry (not as a
+		// nested <Component/> call inside some other component's body) has no
+		// caller-side attribute list for localComponentProps to prove props
+		// from. opts.EntryProps is the only other place a typed value can
+		// come from — RenderProgramComponent sets it from
+		// ProgramRenderEnv.Props. A nil EntryProps reproduces the original,
+		// unconditional refusal byte-for-byte: this render entry always
+		// required a props binding, and until a caller supplies one there is
+		// still none to prove.
+		if opts.EntryProps == nil {
+			return "", false, fmt.Errorf("strict render entry %s accepts props %s, but the file renderer has no root props binding; use a zero-props Page/Layout entry", comp.Name, comp.PropsType)
+		}
+		// gosx#248: a file-routed Load hook returns `any`, and every
+		// existing app returns map[string]any from it — the shape
+		// strictSpreadProps below always rejects, because a map cannot
+		// prove field coverage the way a struct's declared fields can. Name
+		// that specific, expected mistake here, before strictSpreadProps'
+		// generic struct-kind check, so the message tells the author what
+		// to return instead of just what was wrong: return a %s value (a
+		// struct or *%s) from Load, not a map. A legacy entry never reaches
+		// this branch (see comp.Syntax above), so a legacy Load hook
+		// returning map[string]any keeps rendering unchanged.
+		if rv, ok := indirectReflectValue(reflect.ValueOf(opts.EntryProps)); ok && rv.Kind() == reflect.Map {
+			return "", false, fmt.Errorf("strict render entry %s accepts props %s, but Load returned %s; return a %s value (a struct or *%s) instead of a map — the strict boundary proves declared struct fields, which a map cannot provide", comp.Name, comp.PropsType, rv.Type(), comp.PropsType, comp.PropsType)
+		}
+		// strictSpreadProps is the exact same boundary proof a nested
+		// <Component {...props}/> call re-runs on every render (see
+		// localComponentProps): reflect kind must be exactly Struct (a map
+		// is rejected — it cannot prove field coverage), and every rendered
+		// field is re-checked against its declared leaf type. Rendering a
+		// strict component as an entry point goes through this same proof,
+		// never around it.
+		props, err := strictSpreadProps(comp, opts.EntryProps)
+		if err != nil {
+			return "", false, fmt.Errorf("render strict entry %s (props %s): %w", comp.Name, comp.PropsType, err)
+		}
+		entryEnv = entryEnv.withValue("props", props)
+	}
+	// gosx#226, gosx#246: a strict component rendered as the render entry has
+	// no caller-side <Component>...</Component> children for writeLocalComponent
+	// to render, the same gap EntryProps closes for props. opts.EntryChildren is
+	// the only other place a children node can come from — RenderProgramComponent
+	// builds it from its own children ...gosx.Node parameter. Checked
+	// independently of the props branch above: a bare strict component (no
+	// PropsType at all) can still declare {children} in its body and accept
+	// them.
+	//
+	// A zero EntryChildren means "no children supplied" (see its doc comment),
+	// so every caller that predates this field — including every file-routed
+	// page and layout, which never sets it — takes no new branch here and
+	// reproduces the prior unresolved-identifier "children" behavior
+	// byte-for-byte, not a bound empty Fragment.
+	if !opts.EntryChildren.IsZero() {
+		if comp.Syntax != ir.ComponentSyntaxStrict {
+			return "", false, fmt.Errorf("render entry %s is not a strict component; children only bind to a strict render entry (see RenderProgramComponent)", comp.Name)
+		}
+		entryEnv = entryEnv.withValue("children", opts.EntryChildren)
+	}
+	// gosx#249: a strict component rendered as the render entry has no
+	// caller-side slot="Name" markup for writeLocalComponent to partition,
+	// the same gap EntryChildren closes for the anonymous children hole.
+	// opts.EntrySlots is the only other place a named-slot value can come
+	// from — RenderProgramComponent builds it from ProgramRenderEnv.Slots.
+	//
+	// A nil or empty EntrySlots means "no slots supplied" — see its doc
+	// comment — so every caller that predates this field takes no new
+	// branch here. A key naming a slot comp's body does not declare fails
+	// closed instead of silently doing nothing, the same arity-rule
+	// precedent validateStrictCalleeChildren (ir/lower.go) sets for a
+	// caller-side children supply the callee cannot place.
+	if len(opts.EntrySlots) > 0 {
+		if comp.Syntax != ir.ComponentSyntaxStrict {
+			return "", false, fmt.Errorf("render entry %s is not a strict component; slots only bind to a strict render entry (see RenderProgramComponent)", comp.Name)
+		}
+		names := make([]string, 0, len(opts.EntrySlots))
+		for name := range opts.EntrySlots {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			if !comp.AcceptsSlot(name) {
+				return "", false, fmt.Errorf("render entry %s declares no slot named %q; declare {%s} in its body or remove this slot from ProgramRenderEnv.Slots", comp.Name, name, strictcomponent.SlotBindingName(name))
+			}
+			entryEnv = entryEnv.withValue(strictcomponent.SlotBindingName(name), opts.EntrySlots[name])
+		}
 	}
 	// One builder carries the whole document. The renderer used to allocate a
 	// fresh strings.Builder per element and let the parent copy the child's
@@ -44,11 +156,29 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 	// allocated 1,085,241 B to emit 5,556 bytes.
 	var b strings.Builder
 	b.Grow(fileProgramRenderSizeHint(prog))
-	renderer.writeNode(&b, comp.Root, opts.EvalEnv)
+	renderer.writeNode(&b, comp.Root, entryEnv)
 	if renderer.err != nil {
 		return "", renderer.replaced, renderer.err
 	}
 	return b.String(), renderer.replaced, nil
+}
+
+// runProfileValidate calls validate and recovers a panic instead of letting
+// it unwind out of RenderProgramComponent and crash the caller's process
+// (gosx#185 m5): a profile is trusted code, but "trusted" should not mean "a
+// bug here takes down the whole render," any more than an AttrWriter bug
+// should (see callAttrWriterSafely). A panic becomes a *RenderProfileError
+// naming the Validate hook, the same fail-closed shape as an ordinary
+// diagnostic refusal.
+func runProfileValidate(validate func(*ir.Program) []ir.Diagnostic, prog *ir.Program) (diags []ir.Diagnostic, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = &RenderProfileError{Diagnostics: []ir.Diagnostic{{
+				Message: fmt.Sprintf("render profile: Validate panicked: %v", rec),
+			}}}
+		}
+	}()
+	return validate(prog), nil
 }
 
 // fileProgramRenderSizeHint estimates the output size from the node count so the
@@ -117,15 +247,57 @@ func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, en
 
 func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
 	tag := html.EscapeString(node.Tag)
-	formContract := fileAutoManagedFormContract(node.Attrs, env, strings.EqualFold(node.Tag, "form"))
+	isForm := strings.EqualFold(node.Tag, "form")
+	formContract := fileAutoManagedFormContract(node.Attrs, env, isForm)
+	// gosx#179: a <form data-gosx-managed> shorthand attribute expands the
+	// same way here as it does through node.go's RenderHTML (Go Node API
+	// path) and the island package's resolved-tree renderer — see
+	// fileManagedFormShorthandTruthy and gosx.ManagedFormShorthandTruthy,
+	// the shared truthy rule all three render paths call. Unlike the
+	// method-based auto-detection above, the shorthand does not set a
+	// mode: the HTML method attribute, if present, stays authoritative
+	// for the navigation runtime.
+	shorthandManaged := isForm && fileManagedFormShorthandTruthy(node.Attrs, env)
+	if shorthandManaged {
+		formContract.Managed = true
+	}
 	b.WriteByte('<')
 	b.WriteString(tag)
 	attrs := node.Attrs
-	if formContract.Managed {
-		attrs = managedFormAttrs(node.Attrs)
+	// excludeSpreadKey filters the shorthand key back out of a
+	// {...extra}-supplied spread map, matching stripManagedFormShorthandAttr's
+	// removal of a directly-written shorthand attribute above (gosx#179 F4).
+	// Only set once the shorthand has actually expanded — an opted-out or
+	// absent shorthand must stay visible in the output exactly as authored.
+	excludeSpreadKey := ""
+	if shorthandManaged {
+		attrs = stripManagedFormShorthandAttr(attrs)
+		excludeSpreadKey = gosx.ManagedFormShorthandAttr
 	}
-	r.renderAttrs(b, attrs, env)
-	r.writeManagedFormContract(b, node.Attrs, env, formContract)
+	if formContract.Managed {
+		attrs = managedFormAttrs(attrs, formContract.Mode)
+	}
+	// gosx#185: a render profile's AttrWriter, when set, sees this same
+	// attrs slice — after the managed-form shorthand attribute is removed
+	// (the hook never sees the shorthand itself, or the runtime-contract
+	// attributes it expands into: those are added afterward, in
+	// writeManagedFormContract, outside AttrWriter's reach entirely),
+	// before renderAttrs' own escaping — and can rewrite, veto, or append
+	// entries. Any author-written copy of a #179 contract attribute name
+	// that IS present here (see renderProfileContractAttrNames) still goes
+	// to the hook, but renderAttrsWithProfile discards whatever the hook's
+	// output does to it and restores the original (gosx#185 B1) — that
+	// reconciled, effective list is what writeManagedFormContractPostHook
+	// below computes contract presence from. No profile, or a profile with
+	// no AttrWriter, takes the original renderAttrs/writeManagedFormContract
+	// path unchanged.
+	if writer := r.profileAttrWriter(); writer != nil {
+		effective := r.renderAttrsWithProfile(b, node.Tag, attrs, env, excludeSpreadKey, writer)
+		r.writeManagedFormContractPostHook(b, effective, formContract)
+	} else {
+		r.renderAttrs(b, attrs, env, excludeSpreadKey)
+		r.writeManagedFormContract(b, node.Attrs, env, formContract)
+	}
 	// Match node.go's renderNodeHTML: only self-close a void element that has
 	// no children. The old branch dropped children silently.
 	if ir.VoidElements[node.Tag] && len(node.Children) == 0 {
@@ -140,6 +312,23 @@ func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, en
 }
 
 func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
+	// Strict calls are type-checked as calls to the same-file declaration. Keep
+	// that declaration authoritative even when its name collides with a layout
+	// replacement or one of the legacy renderer builtins; otherwise generated Go
+	// and file rendering would execute different components.
+	//
+	// A strict ISLAND is excluded here on purpose. Its call site still owns
+	// the same-file declaration, but rendering it inline through
+	// writeLocalComponent would emit its body as ordinary server HTML and
+	// skip env.island entirely — no hydration script, no client VM program,
+	// no props payload. The switch below routes IsIsland to
+	// renderLocalIsland instead, which builds the proven props map through
+	// the same localComponentProps boundary and hands it to env.island.
+	if comp, ok := r.components[node.Tag]; ok && comp.Syntax == ir.ComponentSyntaxStrict && !comp.IsIsland && !comp.IsEngine {
+		r.writeLocalComponent(b, comp, node, env)
+		return
+	}
+
 	if replacement, ok := r.opts.ComponentReplacements[node.Tag]; ok {
 		r.replaced = true
 		if replacement != "" {
@@ -151,6 +340,10 @@ func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, 
 	}
 
 	if r.writeBuiltinComponent(b, node, env) {
+		return
+	}
+
+	if r.writeSharedComponent(b, node, env) {
 		return
 	}
 
@@ -287,7 +480,7 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 		case ir.AttrStatic:
 			writeFileAttrPair(b, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(attr.Value))
 		case ir.AttrExpr:
-			renderFileEvaluatedAttr(b, html.EscapeString(normalizeFileAttrName(attr.Name)), evalFileExpr(attr.Expr, env))
+			renderFileEvaluatedAttr(b, normalizeFileAttrName(attr.Name), evalFileExpr(attr.Expr, env))
 		case ir.AttrBool:
 			writeFileAttrName(b, html.EscapeString(normalizeFileAttrName(attr.Name)))
 		case ir.AttrSpread:
@@ -295,10 +488,12 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 				key := entry.Key
 				value := entry.Value
 				normalized := normalizeFileAttrName(key)
-				if normalized == "" || linkReservedAttr(normalized) {
+				// gosx#189: drop an invalid spread key inertly, same rule
+				// and same shared helper as renderFileSpreadAttrs.
+				if normalized == "" || linkReservedAttr(normalized) || !validRenderAttrName(normalized) {
 					continue
 				}
-				renderFileEvaluatedAttr(b, html.EscapeString(normalized), value)
+				renderFileEvaluatedAttr(b, normalized, value)
 			}
 		}
 	}
@@ -337,12 +532,18 @@ type fileManagedLinkPresence struct {
 func fileCurrentRequestPath(env fileRenderEnv) string {
 	pageBinding, _ := env.lookupValue("page")
 	if pageValue, ok := pageBinding.(map[string]any); ok {
+		if current := strings.TrimSpace(stringValue(pageValue["target"])); current != "" {
+			return current
+		}
 		if current := strings.TrimSpace(stringValue(pageValue["path"])); current != "" {
 			return current
 		}
 	}
 	requestBinding, _ := env.lookupValue("request")
 	if requestValue, ok := requestBinding.(map[string]any); ok {
+		if current := strings.TrimSpace(stringValue(requestValue["target"])); current != "" {
+			return current
+		}
 		if current := strings.TrimSpace(stringValue(requestValue["path"])); current != "" {
 			return current
 		}
@@ -456,13 +657,33 @@ func (r *fileProgramRenderer) writeManagedForm(b *strings.Builder, node *ir.Node
 	if action := strings.TrimSpace(opts.defaultAction); action != "" && attrValue(node.Attrs, env, "action") == nil {
 		fmt.Fprintf(b, ` action="%s"`, html.EscapeString(action))
 	}
-	r.renderAttrs(b, managedFormAttrs(node.Attrs), env)
+	// The <Form>/<ActionForm> builtins are always managed, so an author-
+	// written data-gosx-managed shorthand alongside them is always noise —
+	// strip it (both a directly-written and a {...extra}-supplied copy)
+	// instead of rendering it beside the full contract it did nothing to
+	// produce (gosx#179 F9).
+	attrs := stripManagedFormShorthandAttr(node.Attrs)
+	r.renderAttrs(b, managedFormAttrs(attrs, contract.Mode), env, gosx.ManagedFormShorthandAttr)
 	r.writeManagedFormContract(b, node.Attrs, env, contract)
 	b.WriteByte('>')
 	r.writeChildren(b, node.Children, env)
 	b.WriteString("</form>")
 }
 
+// renderImage renders the <Image> builtin tag. It emits a manifest-backed
+// <picture> (gosx#201) when gosx build's imagepipe stage (gosx#200)
+// recorded build-time variants for this src; otherwise it falls straight
+// through, unchanged, to the #199-fixed server.Image path — the runtime
+// optimizer URL, or a plain passthrough <img> for a source server.Image
+// does not optimize. Dev mode (no prior `gosx build`) always takes the
+// fallback: there is no manifest to read yet, so nothing here ever blocks
+// or changes dev-mode rendering.
+//
+// The format allowlist check runs once, here, before either path, so a bad
+// Format value panics identically regardless of which one a given src
+// would otherwise take (buildManifestImagePicture also declines a src that
+// names an explicit Format, but that decision must never depend on whether
+// the value was valid first).
 func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) string {
 	props := server.ImageProps{
 		Src:           stringValue(attrValue(node.Attrs, env, "src")),
@@ -470,18 +691,27 @@ func (r *fileProgramRenderer) renderImage(node *ir.Node, env fileRenderEnv) stri
 		Width:         int(numericValue(attrValue(node.Attrs, env, "width"))),
 		Height:        int(numericValue(attrValue(node.Attrs, env, "height"))),
 		Widths:        intSliceValue(attrValue(node.Attrs, env, "widths")),
+		Responsive:    truthy(attrValue(node.Attrs, env, "responsive")),
 		Sizes:         stringValue(attrValue(node.Attrs, env, "sizes")),
 		Loading:       stringValue(attrValue(node.Attrs, env, "loading")),
 		Decoding:      stringValue(attrValue(node.Attrs, env, "decoding")),
 		FetchPriority: stringValue(attrValue(node.Attrs, env, "fetchpriority", "fetchPriority")),
+		Priority:      truthy(attrValue(node.Attrs, env, "priority")),
 		Quality:       int(numericValue(attrValue(node.Attrs, env, "quality"))),
 		Format:        stringValue(attrValue(node.Attrs, env, "format")),
+	}
+	if err := server.ValidateProducibleImageFormat(props.Format); err != nil {
+		panic(err)
 	}
 
 	extra := imageExtraAttrs(node.Attrs, env)
 	args := make([]any, 0, len(extra))
 	if len(extra) > 0 {
 		args = append(args, gosx.Attrs(extra...))
+	}
+
+	if picture, ok := buildManifestImagePicture(props, args); ok {
+		return gosx.RenderHTML(picture)
 	}
 	return gosx.RenderHTML(server.Image(props, args...))
 }
@@ -990,13 +1220,121 @@ func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRender
 	return true, defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), childrenHTML)
 }
 
+// writeLocalComponent renders a strict component whose BODY and whose CALL
+// NODE both belong to r.prog — every same-file call today.
+//
+// It renders the children first, on r, and then hands the resulting node to
+// writeLocalComponentWithChildren. The split is not cosmetic. node.Children
+// are ir.NodeID values, and writeNode resolves each one through
+// r.prog.NodeAt: a node ID is an index into ONE program's Nodes slice and
+// means nothing in another. Any caller whose call node and callee body live
+// in different programs must therefore render the children on the renderer
+// that owns the CALL node, and pass the finished node across, rather than
+// hand the whole node to a renderer bound to the callee's program — that
+// would index the wrong slice and render unrelated markup, or panic on an
+// out-of-range index.
+//
+// Attribute expressions carry no such hazard: localComponentProps evaluates
+// them through env, which holds values, funcs, and a scope chain, and no node
+// IDs.
 func (r *fileProgramRenderer) writeLocalComponent(b *strings.Builder, comp *ir.Component, node *ir.Node, env fileRenderEnv) {
 	// Children render into their own string because the component body may
 	// reference them through the `children` binding.
 	childrenNode := gosx.RawHTML(r.renderChildren(node.Children, env))
-	props := componentProps(node.Attrs, env, childrenNode)
+	// gosx#249's caller-side supply: each named slot the lowerer
+	// partitioned out of node.Children (a static slot="Name" attribute on
+	// a direct child — ir/lower.go's partitionCallSlots) renders here too,
+	// on the SAME renderer that owns the call node, for the identical
+	// reason childrenNode does — see this function's own doc comment: a
+	// slot child's NodeID is an index into the CALLER's program, and only
+	// r (bound to that program at this call) can resolve it; the callee's
+	// own renderer, in the cross-program case, cannot.
+	slotNodes := r.renderCallSlots(node.Slots, env)
+	r.writeLocalComponentWithChildren(b, comp, node, env, childrenNode, slotNodes)
+}
+
+// renderCallSlots renders each named-slot child in slots — keyed by slot
+// name, valued by a NodeID into r's own program — into its own gosx.Node,
+// the same way renderChildren renders the default children group: markup
+// the CALLER owns, rendered by the caller's renderer, in the caller's env,
+// against the caller's program, before the callee is entered.
+func (r *fileProgramRenderer) renderCallSlots(slots map[string]ir.NodeID, env fileRenderEnv) map[string]gosx.Node {
+	if len(slots) == 0 {
+		return nil
+	}
+	out := make(map[string]gosx.Node, len(slots))
+	for name, childID := range slots {
+		out[name] = gosx.RawHTML(r.renderChildren([]ir.NodeID{childID}, env))
+	}
+	return out
+}
+
+// writeLocalComponentWithChildren renders comp's body with childrenNode
+// and slotNodes already rendered by whichever renderer owns the call node.
+// r must own comp's BODY, because writeNode resolves comp.Root against
+// r.prog.
+//
+// childrenNode is one opaque gosx.Node. The callee places it and does nothing
+// else with it: it cannot read a field of it, count it, or branch on it.
+// Children are not a prop — they are bound beside props, never inside it, and
+// no boundary proof reads them. slotNodes (gosx#249) is childrenNode's
+// named-plural counterpart, keyed by slot name ("Title", not "slotTitle"):
+// each entry is one opaque gosx.Node the caller already rendered, bound the
+// same way and proved nothing about, the same way.
+func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder, comp *ir.Component, node *ir.Node, env fileRenderEnv, childrenNode gosx.Node, slotNodes map[string]gosx.Node) {
+	props, rawSource, err := localComponentProps(comp, node.Attrs, env, childrenNode)
+	if err != nil {
+		r.err = fmt.Errorf("render strict component %s: %w", comp.Name, err)
+		return
+	}
 	scope := env.withValue("props", props)
 	scope = scope.withValue("children", childrenNode)
+	// gosx#249: each caller-supplied named slot, bound beside children.
+	// validateStrictCalleeSlots (ir/lower.go) already proved every key here
+	// names a slot comp's body declares, so no runtime re-check is needed
+	// — unlike the Go-entry EntrySlots path, which has no compile-time
+	// visibility into a Go caller's map and re-proves it at render time.
+	//
+	// Bound BEFORE the two framework-filled slots below, on purpose: a
+	// later binding shadows an earlier one (fileRenderScope's own doc
+	// comment), so if a caller's markup ever supplies slot="PreloadHints"
+	// or slot="PageHead" — the two reserved, framework-computed names — the
+	// framework's own value still wins. Those two names are never
+	// caller-suppliable in practice (nothing renders such a call from
+	// authored .gsx source), but this ordering keeps the invariant true
+	// regardless.
+	for name, value := range slotNodes {
+		scope = scope.withValue(strictcomponent.SlotBindingName(name), value)
+	}
+	// gosx#249: the two framework-filled named slots, bound only for a
+	// callee that actually declares them (AcceptsSlot) and only when env
+	// carries an island-capable runtime (islandPreloadHints/islandPageHead
+	// non-nil — see newFileRenderEnv). childrenNode above is already fully
+	// rendered by the time this function runs (writeLocalComponent renders
+	// the call site's children BEFORE calling this function — see its own
+	// doc comment), so any island the caller's children registered through
+	// env.renderIsland has already reached the page runtime's manifest.
+	// Computing these two values HERE, after childrenNode but before
+	// r.writeNode walks comp.Root below, is what lets a pure .gsx-to-.gsx
+	// nested call (<Layout>{page content with an island}</Layout>, all in
+	// one compiled program, no Go glue) place an end-of-body island
+	// manifest that reflects every island its children rendered: the
+	// renderer computes and binds the value, the same way it binds
+	// children, so no strict expression ever has to compute a value that
+	// depends on a sibling's render order.
+	if env.islandPreloadHints != nil && comp.AcceptsSlot("PreloadHints") {
+		scope = scope.withValue(strictcomponent.SlotBindingName("PreloadHints"), env.islandPreloadHints())
+	}
+	if env.islandPageHead != nil && comp.AcceptsSlot("PageHead") {
+		scope = scope.withValue(strictcomponent.SlotBindingName("PageHead"), env.islandPageHead())
+	}
+	// Always overwrite, never inherit from env: rawSource is nil unless
+	// THIS call just proved it (single-spread shape), so an explicit-attrs
+	// call correctly clears whatever an enclosing strict frame left set,
+	// rather than leaking it into this unrelated component's own body. The
+	// frame kind is overwritten for the same reason.
+	scope.strictSpreadSource = rawSource
+	scope.propsFrame = componentPropsFrameKind(comp)
 	r.writeNode(b, comp.Root, scope)
 }
 
@@ -1014,6 +1352,14 @@ func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env 
 	}
 
 	props := r.componentAttrMap(node.Attrs, env)
+	if comp := r.components[name]; comp != nil && comp.Syntax == ir.ComponentSyntaxStrict {
+		converted, _, err := localComponentProps(comp, node.Attrs, env, gosx.Node{})
+		if err != nil {
+			r.err = fmt.Errorf("render strict island %s: %w", name, err)
+			return ""
+		}
+		props = converted
+	}
 	return gosx.RenderHTML(env.island(prog, props))
 }
 
@@ -1052,10 +1398,302 @@ func (r *fileProgramRenderer) renderChildren(children []ir.NodeID, env fileRende
 	return b.String()
 }
 
-func (r *fileProgramRenderer) renderAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
+// renderAttrs writes attrs as HTML attribute text. excludeSpreadKey, when
+// non-empty, drops a matching key out of any {...spread} attribute's
+// evaluated map before it renders (gosx#179 F4) — used to keep an already-
+// expanded data-gosx-managed shorthand from surviving into the output when
+// it was only supplied through a spread instead of written directly.
+func (r *fileProgramRenderer) renderAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string) {
 	for _, attr := range attrs {
-		renderFileAttr(b, attr, env)
+		renderFileAttr(b, attr, env, excludeSpreadKey)
 	}
+}
+
+// profileAttrWriter returns the active render profile's AttrWriter, or nil
+// when there is no profile or the profile leaves AttrWriter unset. writeElement
+// uses a nil return to fall through to the original, profile-unaware
+// renderAttrs path — the byte-identical-with-nil-profile guarantee holds for
+// an empty *RenderProfile{} too, not only for a nil *RenderProfile.
+func (r *fileProgramRenderer) profileAttrWriter() AttrWriter {
+	if r.opts.Profile == nil {
+		return nil
+	}
+	return r.opts.Profile.AttrWriter
+}
+
+// renderAttrsWithProfile resolves attrs the same way renderAttrs's
+// per-attribute helpers do — {expr} evaluation, {...spread} expansion and
+// flattening, and the excludeSpreadKey filter all run first — then hands the
+// fully resolved, unescaped list to writer. writer's return goes through
+// resolveContractProtectedAttrs, which discards any add, change, or removal
+// it made to a #179 managed-form contract attribute name and restores the
+// original (gosx#185 B1), before renderResolvedAttrs emits it.
+// renderResolvedAttrs is the only place a RenderAttr produced by writer
+// reaches output, and it escapes every Name and Value unconditionally, so
+// writer cannot inject unescaped HTML through a returned value.
+//
+// The returned []RenderAttr is the same effective, post-reconciliation list
+// that rendered — the caller passes it to writeManagedFormContractPostHook
+// so contract presence is computed from what actually rendered, not from
+// the pre-hook node.Attrs (gosx#185 B1(b)).
+func (r *fileProgramRenderer) renderAttrsWithProfile(b *strings.Builder, tag string, attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string, writer AttrWriter) []RenderAttr {
+	resolved := resolveFileAttrs(attrs, env, excludeSpreadKey)
+	hookOut, err := callAttrWriterSafely(writer, tag, resolved)
+	if err != nil {
+		// A panicking AttrWriter is a bug in trusted profile code, not a
+		// process-fatal event (gosx#185 m5) — same fail-closed shape as an
+		// invalid returned Name (see renderResolvedAttrs) or a refused
+		// Validate pass: the whole render is discarded by the r.err check
+		// in renderFileProgramHTML, so what this call renders here does
+		// not matter; resolved is returned only to keep the type honest.
+		r.profileError(err)
+		return resolved
+	}
+	effective := resolveContractProtectedAttrs(resolved, hookOut)
+	r.renderResolvedAttrs(b, tag, effective)
+	return effective
+}
+
+// callAttrWriterSafely calls writer and recovers a panic instead of letting
+// it unwind into the renderer and crash the process (gosx#185 m5): a
+// profile is trusted code, but a bug in it should fail this one render
+// closed, the same as a reported Validate diagnostic does, not take down
+// whatever process is calling RenderProgramComponent.
+func callAttrWriterSafely(writer AttrWriter, tag string, attrs []RenderAttr) (out []RenderAttr, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = &RenderProfileError{Diagnostics: []ir.Diagnostic{{
+				Message: fmt.Sprintf("render profile: AttrWriter panicked for <%s>: %v", tag, rec),
+			}}}
+		}
+	}()
+	return writer(tag, attrs), nil
+}
+
+// resolveContractProtectedAttrs enforces the gosx#185 B1 rule documented on
+// RenderProfile: an AttrWriter call may see a #179 managed-form contract
+// attribute (see renderProfileContractAttrNames) in original, its resolved,
+// pre-hook input, but its returned copy in hookOut never reaches output
+// unchanged from what the hook did to it. This filters every protected name
+// out of hookOut, then reinserts each one's ORIGINAL RenderAttr value from
+// original at the index it held there: a hook's rewrite or veto of a
+// protected name is discarded and replaced with the true original, and a
+// hook's freshly appended, conflicting copy of a protected name — one with
+// no original in original to restore — is simply dropped, so it can never
+// render at all, let alone before the contract's own copy.
+func resolveContractProtectedAttrs(original, hookOut []RenderAttr) []RenderAttr {
+	if !attrsContainProtectedName(original) && !attrsContainProtectedName(hookOut) {
+		return hookOut
+	}
+	filtered := make([]RenderAttr, 0, len(hookOut))
+	for _, attr := range hookOut {
+		if renderProfileContractAttrNames[attr.Name] {
+			continue
+		}
+		filtered = append(filtered, attr)
+	}
+	for i, attr := range original {
+		if !renderProfileContractAttrNames[attr.Name] {
+			continue
+		}
+		idx := i
+		if idx > len(filtered) {
+			idx = len(filtered)
+		}
+		filtered = append(filtered, RenderAttr{})
+		copy(filtered[idx+1:], filtered[idx:])
+		filtered[idx] = attr
+	}
+	return filtered
+}
+
+func attrsContainProtectedName(attrs []RenderAttr) bool {
+	for _, attr := range attrs {
+		if renderProfileContractAttrNames[attr.Name] {
+			return true
+		}
+	}
+	return false
+}
+
+// renderProfileContractAttrNames is the gosx#179 managed-form runtime-
+// contract attribute vocabulary an AttrWriter cannot weaken (gosx#185 B1):
+// data-gosx-form, its -state/-mode/-project variants, the client-runtime
+// -form-error-describedby wiring attribute, the shared data-gosx-enhance/
+// -enhance-layer/-fallback progressive-enhancement attributes, and the
+// data-gosx-managed shorthand. See resolveContractProtectedAttrs for the
+// enforcement and RenderProfile's doc comment for the full rule.
+var renderProfileContractAttrNames = map[string]bool{
+	server.NavigationFormAttr:         true, // data-gosx-form
+	server.NavigationFormStateAttr:    true, // data-gosx-form-state
+	server.NavigationFormModeAttr:     true, // data-gosx-form-mode
+	server.NavigationFormProjectAttr:  true, // data-gosx-form-project
+	formErrorDescribedbyAttr:          true, // data-gosx-form-error-describedby
+	server.NavigationEnhanceAttr:      true, // data-gosx-enhance
+	server.NavigationEnhanceLayerAttr: true, // data-gosx-enhance-layer
+	server.NavigationFallbackAttr:     true, // data-gosx-fallback
+	gosx.ManagedFormShorthandAttr:     true, // data-gosx-managed
+}
+
+// formErrorDescribedbyAttr names the client runtime's form-level error
+// aria-describedby wiring attribute (client/runtime/host/navigation.ts's
+// FORM_ERROR_DESCRIPTION_ATTR — "data-gosx-form-error-describedby"). No
+// Go code in this repository emits or reads it today, and no Go constant
+// for it exists outside this file, but it is part of the #179 contract
+// vocabulary an author can write by hand, so AttrWriter is barred from
+// touching it the same as every other contract attribute name.
+const formErrorDescribedbyAttr = "data-gosx-form-error-describedby"
+
+// resolveFileAttrs evaluates and flattens attrs into RenderAttr values,
+// mirroring renderFileAttr/renderFileSpreadAttrs' coercion rules exactly but
+// building a slice instead of writing bytes, so a RenderProfile's AttrWriter
+// can inspect and rewrite the list before anything is escaped or emitted.
+//
+// WHY the allocation: this slice is built only on the profile-active path
+// writeElement takes when an AttrWriter is set — the plain, no-profile
+// renderAttrs path below never calls this function, so an inactive profile
+// costs nothing extra (benchmarked; see gosx#185's byte-identity and
+// zero-cost golden tests). A scratch slice reused across sibling elements
+// was considered to cut this allocation further, but writer can retain the
+// slice it is handed past the call (nothing in AttrWriter's contract says
+// it cannot), so reusing a backing array across calls would risk a profile
+// silently reading or corrupting a later element's attributes through a
+// stale reference. Not worth it until profiling on a real profile shows
+// this allocation matters relative to itself.
+func resolveFileAttrs(attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey string) []RenderAttr {
+	out := make([]RenderAttr, 0, len(attrs))
+	for _, attr := range attrs {
+		switch attr.Kind {
+		case ir.AttrStatic:
+			out = append(out, RenderAttr{Name: attr.Name, Value: attr.Value})
+		case ir.AttrExpr:
+			out = appendResolvedAttr(out, attr.Name, evalFileExpr(attr.Expr, env))
+		case ir.AttrBool:
+			out = append(out, RenderAttr{Name: attr.Name, Boolean: true})
+		case ir.AttrSpread:
+			for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
+				normalized := normalizeFileAttrName(entry.Key)
+				// gosx#189: drop an invalid spread key here, before it ever
+				// reaches the render profile's AttrWriter, so spread data
+				// cannot trigger renderResolvedAttrs's fail-closed
+				// *RenderProfileError — that path is reserved for a name
+				// the profile itself introduces or mangles.
+				if normalized == "" || normalized == excludeSpreadKey || !validRenderAttrName(normalized) {
+					continue
+				}
+				out = appendResolvedAttr(out, normalized, entry.Value)
+			}
+		}
+	}
+	return out
+}
+
+// appendResolvedAttr coerces one evaluated attribute value into a RenderAttr
+// using the same rules renderFileEvaluatedAttr applies when writing directly:
+// nil drops the attribute, a bool becomes a presence-only Boolean attribute
+// when the name uses HTML boolean semantics (htmlattr.IsBoolean) and
+// "true"/"false" text otherwise, and every other value takes the same
+// scalar/Stringer/fmt.Sprint fallback chain the non-profile path uses.
+func appendResolvedAttr(out []RenderAttr, name string, value any) []RenderAttr {
+	switch v := value.(type) {
+	case nil:
+		return out
+	case bool:
+		if htmlattr.IsBoolean(name) {
+			if v {
+				return append(out, RenderAttr{Name: name, Boolean: true})
+			}
+			return out
+		}
+		return append(out, RenderAttr{Name: name, Value: strconv.FormatBool(v)})
+	case fmt.Stringer:
+		return append(out, RenderAttr{Name: name, Value: v.String()})
+	default:
+		if text, ok := fileScalarText(value); ok {
+			return append(out, RenderAttr{Name: name, Value: text})
+		}
+		return append(out, RenderAttr{Name: name, Value: fmt.Sprint(v)})
+	}
+}
+
+// renderResolvedAttrs emits attrs as HTML attribute text, escaping every
+// Name and Value unconditionally. See RenderAttr and RenderProfile.AttrWriter
+// for the escape-after-the-hook guarantee this function completes.
+//
+// It also validates every Name before escaping it (gosx#185 M1):
+// html.EscapeString does not escape a space or an "=", so an AttrWriter
+// that returns RenderAttr{Name: "x onmouseover=alert(1) y"} would otherwise
+// smuggle three attributes past one Name field, none of them named
+// anything the profile author wrote down. A profile is trusted code, so an
+// invalid Name is a bug in that profile, not untrusted input to sanitize
+// around: the render fails closed with a *RenderProfileError naming the
+// tag and the offending Name, the same way a reported Validate diagnostic
+// does, instead of emitting whatever the parser would make of it.
+//
+// The identical hole in the {...spread} attribute-name path —
+// normalizeFileAttrName does not reject a name with these characters
+// either — is gosx#189, fixed by sharing this function's validRenderAttrName
+// with every {...spread} call site (renderFileSpreadAttrs,
+// renderLinkAttrs's spread branch, and resolveFileAttrs). The two paths
+// disagree on purpose about what happens next: an invalid Name here is a bug
+// in trusted profile code, so this function still fails the render closed;
+// an invalid name from a spread is commonly untrusted request or database
+// data, so the spread call sites drop it inertly instead — one bad key does
+// not take out the rest of an otherwise-valid render.
+func (r *fileProgramRenderer) renderResolvedAttrs(b *strings.Builder, tag string, attrs []RenderAttr) {
+	for _, attr := range attrs {
+		if !validRenderAttrName(attr.Name) {
+			r.profileErrorf("render profile: AttrWriter for <%s> returned an invalid attribute name %q", tag, attr.Name)
+			continue
+		}
+		name := html.EscapeString(attr.Name)
+		if attr.Boolean {
+			writeFileAttrName(b, name)
+			continue
+		}
+		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
+	}
+}
+
+// validRenderAttrName reports whether name is safe to use as an HTML
+// attribute name on its own: non-empty once whitespace is accounted for,
+// and free of every character that ends an HTML5 attribute-name token
+// early — Unicode whitespace, the control-character range, and the
+// syntax characters `"`, `'`, `>`, `/`, and `=` (gosx#185 M1). An
+// all-whitespace name is caught by the same loop, folding in gosx#185 n4.
+func validRenderAttrName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case unicode.IsSpace(r):
+			return false
+		case r < 0x20 || r == 0x7f:
+			return false
+		case r == '"', r == '\'', r == '>', r == '/', r == '=':
+			return false
+		}
+	}
+	return true
+}
+
+// profileError records the first error a render profile hook causes,
+// mirroring renderError's first-error-wins rule: the whole render is
+// discarded once r.err is non-nil (see renderFileProgramHTML), so only the
+// first failure's message is worth keeping.
+func (r *fileProgramRenderer) profileError(err error) {
+	if err != nil && r.err == nil {
+		r.err = err
+	}
+}
+
+// profileErrorf builds a single-diagnostic *RenderProfileError and records
+// it through profileError.
+func (r *fileProgramRenderer) profileErrorf(format string, args ...any) {
+	r.profileError(&RenderProfileError{Diagnostics: []ir.Diagnostic{{
+		Message: fmt.Sprintf(format, args...),
+	}}})
 }
 
 func (r *fileProgramRenderer) componentAttrMap(attrs []ir.Attr, env fileRenderEnv) map[string]any {
@@ -1094,27 +1732,41 @@ func writeFileAttrName(b *strings.Builder, name string) {
 	b.WriteString(name)
 }
 
-func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv) {
+func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv, excludeSpreadKey string) {
 	name := html.EscapeString(attr.Name)
 	switch attr.Kind {
 	case ir.AttrStatic:
 		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
 	case ir.AttrExpr:
-		renderFileEvaluatedAttr(b, name, evalFileExpr(attr.Expr, env))
+		renderFileEvaluatedAttr(b, attr.Name, evalFileExpr(attr.Expr, env))
 	case ir.AttrBool:
 		writeFileAttrName(b, name)
 	case ir.AttrSpread:
-		renderFileSpreadAttrs(b, evalFileExpr(attr.Expr, env))
+		renderFileSpreadAttrs(b, evalFileExpr(attr.Expr, env), excludeSpreadKey)
 	}
 }
 
-func renderFileSpreadAttrs(b *strings.Builder, value any) {
+// renderFileSpreadAttrs expands a {...spread} attribute's evaluated map into
+// HTML attribute text.
+//
+// Every key is validated with validRenderAttrName before it renders
+// (gosx#189): html.EscapeString does not escape a space or an "=", so a map
+// key like "x onmouseover=alert(1) y" would otherwise smuggle three
+// attributes past one map entry, the same hole gosx#185 M1 closed on the
+// render-profile hook path. A spread key fails INERT here — it is dropped
+// silently, with no attribute emitted and no logger call (nothing in this
+// render path holds a logger) — unlike the profile path's fail-closed
+// *RenderProfileError. The profile path treats an invalid Name as a bug in
+// trusted profile code, worth stopping the whole render over; a spread key
+// commonly carries request or database data an author never wrote down, so
+// one bad key must not take out an otherwise-valid render.
+func renderFileSpreadAttrs(b *strings.Builder, value any, excludeKey string) {
 	for _, entry := range sortedSpreadProps(value) {
 		normalized := normalizeFileAttrName(entry.Key)
-		if normalized == "" {
+		if normalized == "" || normalized == excludeKey || !validRenderAttrName(normalized) {
 			continue
 		}
-		renderFileEvaluatedAttr(b, html.EscapeString(normalized), entry.Value)
+		renderFileEvaluatedAttr(b, normalized, entry.Value)
 	}
 }
 
@@ -1198,21 +1850,26 @@ func plainTextFileEvaluatedExpr(value any) string {
 }
 
 func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
+	safeName := html.EscapeString(name)
 	switch v := value.(type) {
 	case nil:
 		return
 	case bool:
-		if v {
-			writeFileAttrName(b, name)
-		}
-	case fmt.Stringer:
-		writeFileAttrPair(b, name, html.EscapeString(v.String()))
-	default:
-		if text, ok := fileScalarText(value); ok {
-			writeFileAttrPair(b, name, html.EscapeString(text))
+		if htmlattr.IsBoolean(name) {
+			if v {
+				writeFileAttrName(b, safeName)
+			}
 			return
 		}
-		writeFileAttrPair(b, name, html.EscapeString(fmt.Sprint(v)))
+		writeFileAttrPair(b, safeName, strconv.FormatBool(v))
+	case fmt.Stringer:
+		writeFileAttrPair(b, safeName, html.EscapeString(v.String()))
+	default:
+		if text, ok := fileScalarText(value); ok {
+			writeFileAttrPair(b, safeName, html.EscapeString(text))
+			return
+		}
+		writeFileAttrPair(b, safeName, html.EscapeString(fmt.Sprint(v)))
 	}
 }
 
@@ -1292,6 +1949,938 @@ func componentProps(attrs []ir.Attr, env fileRenderEnv, children gosx.Node) map[
 		setComponentProp(props, "Children", children)
 	}
 	return props
+}
+
+// componentPropsFrameKind classifies the render frame a local component
+// call is about to open (gosx#240). See propsFrameKind.
+func componentPropsFrameKind(comp *ir.Component) propsFrameKind {
+	switch {
+	case comp == nil:
+		return propsFrameNone
+	case comp.Syntax == ir.ComponentSyntaxStrict:
+		return propsFrameStrict
+	case comp.PropsTyped:
+		return propsFrameTypedLegacy
+	default:
+		return propsFrameNone
+	}
+}
+
+// typedLegacyComponentProps builds a legacy callee's render-time props map.
+// The map itself is byte-for-byte what componentProps has always built, for
+// a typed and an untyped legacy callee alike: every legacy body reads its
+// props through that map, so gosx#240 widens which compositions compile
+// without changing how any legacy body observes its props.
+//
+// What a TYPED legacy callee gains is the second return value. A
+// single-spread call site hands the raw source value on, so a BARE
+// {...props} forward inside this callee's own body can be proved against
+// the value that built the frame instead of against the flattened map —
+// the same reuse a strict frame has had since gosx#182/#184 M-1. Before
+// this the lowerer rejected that forward outright (gosx#229), so nothing
+// that renders today reaches this.
+//
+// A bare {...props} spread that came from a STRICT caller is retargeted at
+// that caller's raw source, and fails closed when there is none. A strict
+// frame's own props map holds only the fields that frame renders
+// (strictSpreadProps), so forwarding the map itself would hand this callee
+// a value that is silently short of fields rather than one that is wrong in
+// a way anyone can see.
+func typedLegacyComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv, children gosx.Node) (map[string]any, any, error) {
+	if !comp.PropsTyped || len(attrs) != 1 || attrs[0].Kind != ir.AttrSpread {
+		return componentProps(attrs, env, children), nil, nil
+	}
+	source := evalFileExpr(attrs[0].Expr, env)
+	if strings.TrimSpace(attrs[0].Expr) == "props" && env.propsFrame == propsFrameStrict {
+		if env.strictSpreadSource == nil {
+			return nil, nil, fmt.Errorf("typed legacy component %s: the enclosing strict frame's props came from named attributes, so its whole props value is not available to forward; call the enclosing strict component with one {...source} spread", comp.Name)
+		}
+		source = env.strictSpreadSource
+	}
+	props := make(map[string]any, 8)
+	mergeComponentProps(props, source)
+	if !children.IsZero() {
+		setComponentProp(props, "children", children)
+		setComponentProp(props, "Children", children)
+	}
+	return props, structSpreadSource(source), nil
+}
+
+// structSpreadSource returns value when it indirects to a Go struct, and nil
+// otherwise. A legacy call site may spread a map, a slice, or a scalar —
+// none of which the strict boundary can prove — so only a struct is worth
+// carrying forward as this frame's raw source. Returning nil for the rest
+// sends a bare {...props} forward to strictSpreadPropsFromTypedFrame, which
+// proves the frame's own flattened map instead of failing on the kind check
+// with a value that was never going to satisfy it. A strict frame's raw
+// source is already always a struct, because strictSpreadProps rejects
+// every other kind before the frame opens.
+func structSpreadSource(value any) any {
+	if value == nil {
+		return nil
+	}
+	rv, ok := indirectReflectValue(reflect.ValueOf(value))
+	if !ok || rv.Kind() != reflect.Struct {
+		return nil
+	}
+	return value
+}
+
+// localComponentProps builds a strict callee's render-time props map, and
+// also returns the raw source value a single-spread call proved it from —
+// nil for an explicit-attrs call. The caller (writeLocalComponent) threads
+// that raw value into the render env as strictSpreadSource, purely so a
+// BARE {...props} forward inside THIS callee's own body (if it has one) can
+// reuse it — see fileRenderEnv.strictSpreadSource's doc comment
+// (gosx#182/#184 M-1). A legacy callee answers to
+// typedLegacyComponentProps instead.
+func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv, children gosx.Node) (map[string]any, any, error) {
+	if comp == nil {
+		return componentProps(attrs, env, children), nil, nil
+	}
+	if comp.Syntax != ir.ComponentSyntaxStrict {
+		return typedLegacyComponentProps(comp, attrs, env, children)
+	}
+	// The single-spread shape (design spec section 3.1) is the only spread
+	// shape validateStrictComponentCall admits at a strict callee, for
+	// both E2 tiers. strictSpreadProps re-proves it structurally at run
+	// time regardless of which tier produced it: a tier-1 spread's static
+	// proof only guarantees this re-proof can fail closed, not that it is
+	// skippable. This branch runs even when comp.PropsFields is empty
+	// (gosx#182/#184 m-2): a strict callee that reads nothing of its own
+	// still declares a props type, and spec section 3.4 requires a nil,
+	// wrong-kind (e.g. a map or a scalar), or otherwise malformed source
+	// to fail closed here — an empty read set makes every per-field proof
+	// vacuous, not the nil/kind checks themselves.
+	if len(attrs) == 1 && attrs[0].Kind == ir.AttrSpread {
+		bareProps := strings.TrimSpace(attrs[0].Expr) == "props"
+		if bareProps && env.strictSpreadSource == nil && env.propsFrame == propsFrameTypedLegacy {
+			// gosx#240: a TYPED legacy frame reached by named attributes
+			// has no raw source, but it does have a declared struct type,
+			// and the lowerer proved at that declaration that the type
+			// carries every field this callee renders
+			// (validateTypedLegacyPropsForward). The frame's own map is
+			// therefore a faithful reading of a value of that type, so it
+			// is proved key by key here instead of failing the struct-kind
+			// check. This is what keeps the retrofit unconditional: the
+			// same body renders whether its caller spread a struct into it
+			// or named its attributes one by one.
+			frame, _ := evalFileExpr("props", env).(map[string]any)
+			props, err := strictSpreadPropsFromTypedFrame(comp, frame)
+			if err != nil {
+				return nil, nil, err
+			}
+			setStrictComponentChildren(comp, props, children)
+			return props, nil, nil
+		}
+		source := evalFileExpr(attrs[0].Expr, env)
+		if bareProps && env.strictSpreadSource != nil {
+			// A bare props forward: "props" in scope is always the reduced
+			// map[string]any this function built for the CURRENT frame,
+			// which strictSpreadProps below always rejects on the struct-
+			// kind check — even when every field this callee needs was
+			// itself proved into that map. Re-prove against the raw value
+			// that built the current frame's own props instead (see
+			// fileRenderEnv.strictSpreadSource); still fully re-checked by
+			// strictSpreadProps below, so this never skips a proof, only
+			// retargets it at the value that can actually satisfy it.
+			source = env.strictSpreadSource
+		}
+		props, err := strictSpreadProps(comp, source)
+		if err != nil {
+			return nil, nil, err
+		}
+		setStrictComponentChildren(comp, props, children)
+		return props, source, nil
+	}
+	if len(comp.PropsFields) == 0 {
+		// A strict callee with nothing of its own to prove, called by name
+		// (not spread). Known, narrow residual gap: if this callee's own
+		// body bare-forwards {...props} to another same-typed strict
+		// component, strictSpreadSource is nil here (this frame's props
+		// came from N separate attr expressions, not one struct value), so
+		// that forward falls through to the pre-fix map-kind rejection
+		// instead of rendering. Closing it needs the callee's forwarded
+		// requirements folded back into ITS OWN required-props set at
+		// lowering time (cross-component, and potentially cyclic) — out of
+		// scope for this fix. It still fails closed (a clear boundary
+		// error), never silently wrong; no test exercises this shape.
+		return componentProps(attrs, env, children), nil, nil
+	}
+	props := make(map[string]any, len(attrs)+4)
+	for _, attr := range attrs {
+		field, fieldType, rendered := resolvePropsFieldAlias(comp.PropsFields, attr.Name)
+		var value any
+		if rendered {
+			resolved := attr
+			resolved.Name = field
+			converted, err := strictComponentAttrValue(comp, resolved, env, fieldType)
+			if err != nil {
+				return nil, nil, fmt.Errorf("prop %s (%s): %w", attr.Name, fieldType, err)
+			}
+			value = converted
+		} else {
+			value = attrValue([]ir.Attr{attr}, env, attr.Name)
+		}
+		setComponentProp(props, attr.Name, value)
+	}
+	setStrictComponentChildren(comp, props, children)
+	return props, nil, nil
+}
+
+// setStrictComponentChildren writes the children node into a STRICT callee's
+// runtime props map, and refuses to overwrite a field that callee's schema
+// proves.
+//
+// Why the refusal. The "children"/"Children" map keys are the LEGACY
+// components' contract (componentProps). A strict body never reads them:
+// writeLocalComponent binds the node in the render SCOPE, beside props, and
+// {children} resolves there. So for a strict callee this write can never
+// serve the body — it can only collide.
+//
+// The collision is a real proof loss. A callee that declares and reads
+// `Children string` has that field proved against comp.PropsFields, and the
+// unguarded write replaced the proved string with a gosx.Node. The defect
+// predates children (the write ran with an empty RawHTML node even when the
+// call passed none, so the field rendered empty), but admitting children
+// would upgrade it from "renders empty" to "renders the caller's markup
+// where a proved string belongs". Children are not a prop, and this is what
+// makes that statement true rather than nearly true.
+//
+// All three strict props-map builders route through here: the single-spread
+// shape, the explicit-attrs shape, and gosx#240's typed-frame shape. It is
+// deliberately NOT used by componentProps or typedLegacyComponentProps. A
+// LEGACY callee's props.Children is the children, by an older contract that
+// gosx#240 kept on purpose (TestTypedLegacyComponentKeepsItsMapBinding), and
+// componentProps injects that key for the named-attribute shape too — so
+// guarding only the spread shape would make one legacy call shape disagree
+// with the other, which is the opposite of what the retrofit promises.
+func setStrictComponentChildren(comp *ir.Component, props map[string]any, children gosx.Node) {
+	if children.IsZero() {
+		return
+	}
+	for _, name := range []string{"children", "Children"} {
+		if _, _, proved := resolvePropsFieldAlias(comp.PropsFields, name); proved {
+			return
+		}
+	}
+	setComponentProp(props, "children", children)
+	setComponentProp(props, "Children", children)
+}
+
+func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if !strictScalarFieldType(fieldType) {
+		if strings.HasPrefix(strings.TrimSpace(fieldType), "[]") {
+			// A rendered field whose declared type is "[]T" is an <Each of>
+			// loop source (ir.Component.PropsSlices, design spec section
+			// 2.7): T is a same-file element struct, provable at the
+			// boundary type-level (requireStrictSliceValue) without
+			// walking every element.
+			return strictComponentSliceAttrValue(comp, attr, env, fieldType)
+		}
+		// A rendered field whose declared type is not one of the renderer's
+		// exact scalar builtins is a nested-selector root (ir.Component.
+		// PropsPaths): a same-file struct, provable at every strict-call
+		// boundary but not renderable directly (ir/lower.go's
+		// validateStrictRenderedProps only ever admits a struct-typed root
+		// when at least one nested path under it resolves to a scalar leaf).
+		return strictComponentStructAttrValue(comp, attr, env, fieldType)
+	}
+	var value any
+	switch attr.Kind {
+	case ir.AttrStatic:
+		value = attr.Value
+	case ir.AttrBool:
+		value = true
+	case ir.AttrExpr:
+		if literal, ok := strictGoConstant(attr.Expr); ok {
+			return convertStrictConstant(literal, fieldType)
+		}
+		value = evalFileExpr(attr.Expr, env)
+	case ir.AttrSpread:
+		return nil, fmt.Errorf("spread attributes are not supported")
+	}
+	return requireStrictScalarType(value, fieldType)
+}
+
+// strictScalarFieldType reports whether fieldType is one of the renderer's
+// exact scalar builtins. Duplicated from ir.strictRendererScalarType (an
+// unexported ir-package function route cannot import) rather than exported,
+// since it is a small, stable, closed set and this is its only other
+// reference point.
+func strictScalarFieldType(fieldType string) bool {
+	switch fieldType {
+	case "string", "bool",
+		"int", "int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"byte", "rune", "float32", "float64":
+		return true
+	default:
+		return false
+	}
+}
+
+// resolvePropsFieldAlias resolves attr's rendered-prop name against
+// comp.PropsFields, trying an exact match first and then the
+// lowerCamelInitialism alias the lowerer accepts at a same-file strict call
+// site (ir/lower.go's normalizeStrictComponentAttrs and
+// validateStrictComponentCall). A program the lowerer itself compiled
+// already carries the canonical spelling by the time it reaches this
+// boundary — normalizeStrictComponentAttrs rewrites it during lowering —
+// but ir.Program is plain data a generated-Go caller or a hand-built
+// program can also produce directly, without ever running through that
+// rewrite. Without this fallback, an alias-spelled attribute misses the
+// exact-key lookup, rendered comes back false, and the value skips
+// strictComponentAttrValue's whole type-checked boundary (conversion,
+// requireStrictScalarType, requireStrictStructValue) while still landing in
+// the runtime props map under both spellings via setComponentProp — this
+// closes that gap by resolving the alias before the lookup instead.
+func resolvePropsFieldAlias(fields map[string]string, name string) (field, fieldType string, ok bool) {
+	if fieldType, exact := fields[name]; exact {
+		return name, fieldType, true
+	}
+	for candidate, candidateType := range fields {
+		if lowerCamelInitialism(candidate) != name {
+			continue
+		}
+		if field != "" {
+			// Ambiguous: two declared fields alias to the same name. Fail
+			// closed the same way an unresolved attribute already does,
+			// rather than guessing.
+			return "", "", false
+		}
+		field, fieldType = candidate, candidateType
+	}
+	return field, fieldType, field != ""
+}
+
+// lowerCamelInitialism lower-cases a leading initialism run (HTMLFor ->
+// htmlFor, URL -> url) the same way ir's unexported function of the same
+// name does for a strict call site's alias-named attributes. Duplicated
+// rather than exported for the same reason strictScalarFieldType is: a
+// small, stable transform route needs at exactly one other boundary and
+// cannot import from ir (unexported).
+func lowerCamelInitialism(value string) string {
+	if value == "" || value[0] < 'A' || value[0] > 'Z' {
+		return value
+	}
+	end := 1
+	for end < len(value) && value[end] >= 'A' && value[end] <= 'Z' {
+		if end+1 < len(value) && value[end+1] >= 'a' && value[end+1] <= 'z' {
+			break
+		}
+		end++
+	}
+	return strings.ToLower(value[:end]) + value[end:]
+}
+
+// strictComponentStructAttrValue handles a rendered prop whose declared type
+// is a same-file struct. A struct value can only arrive through an AttrExpr
+// — there is no static or boolean spelling for one — so every other
+// attribute kind fails closed with the same shape of error a type mismatch
+// would produce.
+func strictComponentStructAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if attr.Kind != ir.AttrExpr {
+		return nil, fmt.Errorf("value has no struct spelling, want exact struct %s", fieldType)
+	}
+	value := evalFileExpr(attr.Expr, env)
+	return requireStrictStructValue(value, fieldType, strictStructPropsPaths(comp, attr.Name))
+}
+
+// strictStructPropsPaths filters comp.PropsPaths — keyed by the full
+// dot-joined path including its root, e.g. "Player.Name" — down to the
+// sub-paths under one root field, with the root segment removed (e.g.
+// "Name"), for requireStrictStructValue to walk.
+func strictStructPropsPaths(comp *ir.Component, root string) map[string]string {
+	if comp == nil || len(comp.PropsPaths) == 0 {
+		return nil
+	}
+	prefix := root + "."
+	var out map[string]string
+	for path, leafType := range comp.PropsPaths {
+		if sub, ok := strings.CutPrefix(path, prefix); ok {
+			if out == nil {
+				out = make(map[string]string, len(comp.PropsPaths))
+			}
+			out[sub] = leafType
+		}
+	}
+	return out
+}
+
+// requireStrictStructValue is requireStrictScalarType's counterpart for a
+// nested-selector root: value's runtime type must match typeName by name
+// (not a pointer, not an anonymous struct, not a map — PkgPath must be
+// non-empty), and every read path this component resolves under that root
+// (paths, keyed by the dot-joined sub-path with the root segment removed)
+// must resolve to a value of its declared leaf type. The name check is
+// nominal only: it does not compare package paths against this file's own
+// package, since a rendered program's caller can live in any package; the
+// per-path leaf-type walk below is what actually proves the value shape a
+// same-file .gsx struct declares. A mismatch anywhere fails closed; the
+// caller (strictComponentAttrValue, through localComponentProps) wraps the
+// error with the attribute name and field type, matching the scalar
+// boundary's existing error shape.
+func requireStrictStructValue(value any, typeName string, paths map[string]string) (any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	rv := reflect.ValueOf(value)
+	rt := rv.Type()
+	if rt.Kind() != reflect.Struct || rt.PkgPath() == "" || rt.Name() != typeName {
+		return nil, fmt.Errorf("runtime value has type %s, want exact struct %s", rt, typeName)
+	}
+	return proveStrictStructPaths(rv, typeName, paths)
+}
+
+// requireStrictSpreadStructField is requireStrictStructValue's structural
+// counterpart, and gosx#230's relaxation: it proves a nested struct-typed
+// field of a SPREAD source by the fields the renderer reads, not by the
+// declared type's name.
+//
+// Why the two differ. A named attribute at a strict call site has a
+// generated-Go twin — transpile emits CalleeProps{Team: expr}, and the Go
+// compiler proves expr's type is exactly the declared field type. Keeping
+// the nominal check in requireStrictStructValue therefore costs nothing and
+// keeps the file renderer and that twin in step. A spread from a LEGACY
+// caller has no twin at all: full transpile refuses a spread at a strict
+// callee (emitTypedAttrsForType), so this boundary is the only authority,
+// and the declared nested type name proves nothing about the value it is
+// compared against. A spread from a strict caller already had its whole
+// source type proved identical to the callee's props type at compile time
+// (validateStrictToStrictSpreadCall), so every nested field type is
+// identical by construction and the name check is a no-op there.
+//
+// The nominal check was not merely useless for a legacy source; it was a
+// contradiction (gosx#230). A strict component's nested struct type must be
+// declared in its own .gsx file (walkStrictHops resolves hops through the
+// same-file schema only), while this check demanded the runtime value carry
+// that same type name — which only the sibling .go converter can construct.
+// No single type satisfied both rules, so authors flattened nested models
+// into scalar fields to avoid the rule entirely. Proving the nested value by
+// the fields the renderer actually reads removes the contradiction without
+// weakening the proof: paths carries every leaf the renderer reads under
+// this root, each already resolved to its exact declared scalar type, and
+// every one of them must still resolve on the runtime value. A root with no
+// leaves under it is a spread-forward source (the callee, not this read
+// tracker, owns which fields it needs); the strict callee it forwards into
+// re-proves the same value against its own fields at its own boundary, so
+// nothing is accepted unproved, only proved by its consumer.
+func requireStrictSpreadStructField(value any, typeName string, paths map[string]string) (any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	rv := reflect.ValueOf(value)
+	rt := rv.Type()
+	if rt.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("runtime value has type %s, want a struct carrying the fields %s declares", rt, typeName)
+	}
+	return proveStrictStructPaths(rv, typeName, paths)
+}
+
+// proveStrictStructPaths walks every read path under one struct-typed root
+// and proves its leaf against the declared scalar type. It is the shared
+// half of the nominal (requireStrictStructValue) and structural
+// (requireStrictSpreadStructField) boundaries: the two differ only in what
+// they demand of the root value's own type, never in how they prove the
+// fields under it.
+func proveStrictStructPaths(rv reflect.Value, typeName string, paths map[string]string) (any, error) {
+	for subPath, leafType := range paths {
+		fv := rv
+		for _, segment := range strings.Split(subPath, ".") {
+			if fv.Kind() != reflect.Struct {
+				return nil, fmt.Errorf("path %s.%s: value has type %s, want struct", typeName, subPath, fv.Type())
+			}
+			// Resolve through the TYPE first, not Value.FieldByName: the
+			// latter also walks embedded-field promotion and indirects
+			// through any pointer along the way, which panics when that
+			// pointer is nil ("reflect: indirection through nil pointer to
+			// embedded struct") for a value whose runtime shape does not
+			// match what the .gsx schema declared. sf.Index has length 1
+			// for a field declared directly on the struct and length >1 for
+			// a promoted field reached through one or more embeddings — the
+			// lowerer already rejects a promoted field at this same path
+			// shape (ir/lower.go's resolveStrictSelectorPath), so a length
+			// other than 1 here only reaches a caller that fed a struct
+			// value the lowerer never validated.
+			sf, ok := fv.Type().FieldByName(segment)
+			if !ok || !sf.IsExported() {
+				return nil, fmt.Errorf("path %s.%s: field %s not found", typeName, subPath, segment)
+			}
+			if len(sf.Index) != 1 {
+				return nil, fmt.Errorf("path %s.%s: field %s is a promoted (embedded) field; only fields declared directly on the struct resolve here", typeName, subPath, segment)
+			}
+			fv = fv.Field(sf.Index[0])
+		}
+		if _, err := requireStrictScalarType(fv.Interface(), leafType); err != nil {
+			return nil, fmt.Errorf("path %s.%s: %w", typeName, subPath, err)
+		}
+	}
+	return rv.Interface(), nil
+}
+
+// strictComponentSliceAttrValue handles a rendered prop whose declared type
+// is "[]T" (an <Each of> loop source, ir.Component.PropsSlices). A slice
+// value can only arrive through an AttrExpr — there is no static or
+// boolean spelling for one.
+//
+// Unreachable from any source the lowerer admits (gosx#182/#184 minor
+// m-1): a "[]T" PropsFields root is only ever the of source of a strict
+// <Each>, and that source is always consumed as a spread's or a same-
+// component <Each of> read, never as a NAMED attribute at a call site —
+// validateStrictComponentCall never routes a named attr into a slice-typed
+// field. This stays reachable only from a hand-built ir.Program (this
+// package's own boundary-defensive tests, and any other caller that
+// constructs IR directly instead of compiling .gsx source); kept for that
+// coverage, not deleted.
+func strictComponentSliceAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if attr.Kind != ir.AttrExpr {
+		return nil, fmt.Errorf("value has no slice spelling, want exact %s", fieldType)
+	}
+	schema, ok := comp.PropsSlices[attr.Name]
+	if !ok {
+		return nil, fmt.Errorf("strict component %s has no loop schema for slice field %s", comp.Name, attr.Name)
+	}
+	value := evalFileExpr(attr.Expr, env)
+	return requireStrictSliceValue(value, schema)
+}
+
+// requireStrictSliceValue is E1's renderer-boundary check (design spec
+// section 2.7): value's runtime type must be a slice whose element type is
+// exactly the same-file struct schema.Elem — a declared struct type from
+// any package, never an anonymous struct and never a map element — and
+// every read path schema.Reads names must resolve, by FieldByName on the
+// element TYPE (not each element's value), to its exact declared leaf
+// type. The check is O(read paths) once per call, not O(elements): a
+// well-typed Go slice's elements all share one type, so proving the type
+// once proves every element's field access is total. A typed nil slice
+// passes (its Kind is still Slice) and iterates zero times, matching Go.
+//
+// Each hop rejects a promoted field the same way requireStrictStructValue
+// does (gosx#183's M2 fix, applied here to E1's own element walk):
+// reflect.Type.FieldByName also resolves embedded-field promotion, so a
+// bare found check alone would let a promoted field cross this boundary
+// even though the lowerer's walkStrictHops already refuses to compile a
+// loop-binding read through one (gosx#182/#184's generalized B1 fix). This
+// walk is type-level only (never Value.FieldByName), so there is no nil-
+// embedded-pointer panic vector here the way there was for
+// requireStrictStructValue's per-element instance would have had — but the
+// silent-promotion gap is the same, and closes the same way.
+func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	rt := reflect.TypeOf(value)
+	if rt.Kind() != reflect.Slice {
+		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs named %s", rt, schema.Elem)
+	}
+	// This checks Kind(), not Name(): a named slice type (type Rows
+	// []BreakdownRow) passes here exactly as the bare []BreakdownRow the
+	// .gsx source declares would (gosx#182/#184 minor m-5) — deliberate
+	// widening, checked below on the ELEMENT type only, never on the
+	// slice type itself. A tier-1 (strict-caller) source has no way to
+	// reach this with a named slice type at all: <Each of> only admits an
+	// exact "[]T" declared field text (admitStrictEachElemType), so a
+	// named slice type never gets this far from a compiled tier-1 call. A
+	// tier-2 (legacy) source has no compiled Go call to compare against —
+	// there is no "twin" a named slice type could diverge from — so this
+	// widening cannot desync the file renderer from generated Go the way
+	// an unchecked element type would; it is accepted, not tightened.
+	elemType := rt.Elem()
+	if elemType.Kind() != reflect.Struct || elemType.PkgPath() == "" || elemType.Name() != schema.Elem {
+		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs named %s", rt, schema.Elem)
+	}
+	paths := make([]string, 0, len(schema.Reads))
+	for path := range schema.Reads {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		leafType := schema.Reads[path]
+		ft := elemType
+		var field reflect.StructField
+		found := false
+		for _, segment := range strings.Split(path, ".") {
+			if ft.Kind() != reflect.Struct {
+				return nil, fmt.Errorf("slice element %s: field %s is not a struct", schema.Elem, path)
+			}
+			field, found = ft.FieldByName(segment)
+			if !found || !field.IsExported() {
+				return nil, fmt.Errorf("slice element %s has no field %s (%s) required by the renderer", schema.Elem, path, leafType)
+			}
+			if len(field.Index) != 1 {
+				return nil, fmt.Errorf("slice element %s field %s is a promoted (embedded) field; only fields declared directly on the struct resolve here", schema.Elem, path)
+			}
+			ft = field.Type
+		}
+		if want := strictScalarWantName(leafType); ft.PkgPath() != "" || ft.Name() != want {
+			return nil, fmt.Errorf("slice element field %s has type %s, want exact %s", path, ft, leafType)
+		}
+	}
+	return value, nil
+}
+
+// strictSpreadProps re-proves a single spread attribute's source at the
+// strict-callee boundary (design spec section 3.4). It is the render-time
+// authority for both E2 tiers: a tier-1 spread (a strict caller; the
+// lowerer already proved the source's declared type is exactly the
+// callee's props type) can only fail here on caller-side data corruption
+// between compile and render, and a tier-2 spread (a legacy caller,
+// unprovable at compile time because legacy expressions have no declared
+// type) is proved here for the first time. Failure order matches the spec:
+//  1. non-nil after pointer indirection;
+//  2. reflect kind is exactly Struct — map[string]any and every other map
+//     are rejected: a map can omit keys where the generated-Go twin
+//     synthesizes a typed zero value (the same divergence the
+//     explicit-supply rule exists to close); map keys have no canonical
+//     mapping to Go fields; a map has no field types to check ahead of the
+//     values; and no generated-Go call can be spelled from a map, so no
+//     twin exists to match;
+//  3. every rendered read (PropsFields' roots, dispatched by their own
+//     declared type — scalar, "[]T" loop source, or nested-selector
+//     struct) is present on the source with a matching value, never
+//     zero-filled. A nested-selector struct root is proved STRUCTURALLY,
+//     by the leaves the renderer reads under it rather than by the
+//     declared type's name (gosx#230) — see
+//     requireStrictSpreadStructField;
+//  4. the proved values are written through setComponentProp, so body-side
+//     alias resolution behaves exactly as an explicit call does.
+func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
+	rv := reflect.ValueOf(value)
+	rv, ok := indirectReflectValue(rv)
+	if !ok {
+		return nil, fmt.Errorf("spread source is nil")
+	}
+	if rv.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("spread source has type %s; the strict boundary proves struct values with declared fields, and maps cannot prove field coverage", rv.Type())
+	}
+
+	fields := make([]string, 0, len(comp.PropsFields))
+	for field := range comp.PropsFields {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+
+	props := make(map[string]any, len(fields)+4)
+	for _, field := range fields {
+		fieldType := comp.PropsFields[field]
+		// Resolve through the TYPE first, not Value.FieldByName: the latter
+		// also walks embedded-field promotion and indirects through any
+		// pointer along the way, which panics on a nil embedded pointer
+		// (gosx#183's M2 bug, reproduced here for a tier-2 spread source: a
+		// legacy caller's spread value has no declared type at compile
+		// time, so this render-time boundary is the only place a promoted
+		// field on the source struct is ever caught). sf.Index has length 1
+		// for a field declared directly on the struct and length >1 for a
+		// promoted field reached through one or more embeddings — reject
+		// before ever touching the value, the same way
+		// requireStrictStructValue does for a nested-selector root.
+		sf, found := rv.Type().FieldByName(field)
+		if !found || !sf.IsExported() {
+			return nil, fmt.Errorf("spread source %s has no field %s (%s); the renderer reads props.%s", rv.Type(), field, fieldType, field)
+		}
+		if len(sf.Index) != 1 {
+			return nil, fmt.Errorf("spread source %s field %s is a promoted (embedded) field; only fields declared directly on the struct resolve here", rv.Type(), field)
+		}
+		fv := rv.Field(sf.Index[0])
+		raw := fv.Interface()
+		var proved any
+		var err error
+		switch {
+		case strictScalarFieldType(fieldType):
+			proved, err = requireStrictScalarType(raw, fieldType)
+		case strings.HasPrefix(strings.TrimSpace(fieldType), "[]"):
+			if schema, hasSchema := comp.PropsSlices[field]; hasSchema {
+				proved, err = requireStrictSliceValue(raw, schema)
+			} else {
+				err = fmt.Errorf("strict component %s has no loop schema for slice field %s", comp.Name, field)
+			}
+		default:
+			// gosx#230: a nested struct field of a spread source is proved
+			// structurally, the same way this loop already proves every
+			// top-level field — see requireStrictSpreadStructField for why a
+			// spread and a named attribute answer to different rules here.
+			proved, err = requireStrictSpreadStructField(raw, fieldType, strictStructPropsPaths(comp, field))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("prop %s (%s): %w", field, fieldType, err)
+		}
+		setComponentProp(props, field, proved)
+	}
+	return props, nil
+}
+
+// strictSpreadPropsFromTypedFrame is strictSpreadProps' counterpart for the
+// one map source the strict boundary accepts (gosx#240): the flattened
+// props map of an enclosing TYPED legacy frame, forwarded whole by a bare
+// {...props} spread.
+//
+// strictSpreadProps rejects every map because a map can omit a key where
+// the generated-Go twin synthesizes a typed zero, and because a map carries
+// no field types to check ahead of its values. Both objections are answered
+// here, and only here:
+//
+//   - The enclosing frame's props parameter has a struct type declared in
+//     the same .gsx file, and the lowerer proved at that declaration that
+//     the type declares every field this callee renders, with the callee's
+//     own declared type (ir/lower.go's validateTypedLegacyPropsForward). An
+//     absent key therefore means the frame's own caller omitted the
+//     attribute, which is exactly the case where Go supplies the zero
+//     value — so zero-filling a builtin scalar here reproduces the twin
+//     rather than diverging from it.
+//   - Every value present is proved against the callee's declared type by
+//     the same three dispatches strictSpreadProps uses.
+//
+// A field whose declared type is not a builtin scalar cannot be
+// zero-synthesized from a type name alone, so an absent one fails closed
+// with a message that names the field and the remedy. That is the single
+// residual gap, and it is narrower than the strict frame's own
+// (localComponentProps' PropsFields-empty branch): it needs a non-scalar
+// field AND an omitted attribute, not merely a named-attribute call.
+func strictSpreadPropsFromTypedFrame(comp *ir.Component, frame map[string]any) (map[string]any, error) {
+	fields := make([]string, 0, len(comp.PropsFields))
+	for field := range comp.PropsFields {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+
+	props := make(map[string]any, len(fields)+4)
+	for _, field := range fields {
+		fieldType := comp.PropsFields[field]
+		raw, supplied := lookupTemplatePropValue(frame, field)
+		if !supplied {
+			zero, ok := strictScalarZeroValue(fieldType)
+			if !ok {
+				return nil, fmt.Errorf("prop %s (%s): the enclosing typed legacy frame did not receive this field, and only a builtin scalar has a zero value this boundary can synthesize; call the enclosing component with one {...source} spread, or pass %s explicitly", field, fieldType, field)
+			}
+			setComponentProp(props, field, zero)
+			continue
+		}
+		var proved any
+		var err error
+		switch {
+		case strictScalarFieldType(fieldType):
+			proved, err = requireStrictScalarType(raw, fieldType)
+		case strings.HasPrefix(strings.TrimSpace(fieldType), "[]"):
+			if schema, hasSchema := comp.PropsSlices[field]; hasSchema {
+				proved, err = requireStrictSliceValue(raw, schema)
+			} else {
+				err = fmt.Errorf("strict component %s has no loop schema for slice field %s", comp.Name, field)
+			}
+		default:
+			proved, err = requireStrictSpreadStructField(raw, fieldType, strictStructPropsPaths(comp, field))
+		}
+		if err != nil {
+			return nil, fmt.Errorf("prop %s (%s): %w", field, fieldType, err)
+		}
+		setComponentProp(props, field, proved)
+	}
+	return props, nil
+}
+
+// strictScalarZeroValue returns the Go zero value of one of the renderer's
+// exact scalar builtins, typed the way requireStrictScalarType demands it.
+// It reports false for every other type name, including a slice or a
+// same-file struct: those have a zero value in Go, but not one this
+// boundary can build from a type NAME, and guessing would be worse than
+// failing closed.
+func strictScalarZeroValue(fieldType string) (any, bool) {
+	switch strings.TrimSpace(fieldType) {
+	case "string":
+		return "", true
+	case "bool":
+		return false, true
+	case "int":
+		return int(0), true
+	case "int8":
+		return int8(0), true
+	case "int16":
+		return int16(0), true
+	case "int32", "rune":
+		return int32(0), true
+	case "int64":
+		return int64(0), true
+	case "uint":
+		return uint(0), true
+	case "uint8", "byte":
+		return uint8(0), true
+	case "uint16":
+		return uint16(0), true
+	case "uint32":
+		return uint32(0), true
+	case "uint64":
+		return uint64(0), true
+	case "uintptr":
+		return uintptr(0), true
+	case "float32":
+		return float32(0), true
+	case "float64":
+		return float64(0), true
+	default:
+		return nil, false
+	}
+}
+
+func strictGoConstant(source string) (constant.Value, bool) {
+	expr, err := parser.ParseExpr(source)
+	if err != nil {
+		return nil, false
+	}
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		expr = paren.X
+	}
+	switch node := expr.(type) {
+	case *ast.BasicLit:
+		value := constant.MakeFromLiteral(node.Value, node.Kind, 0)
+		return value, value.Kind() != constant.Unknown
+	case *ast.Ident:
+		switch node.Name {
+		case "true":
+			return constant.MakeBool(true), true
+		case "false":
+			return constant.MakeBool(false), true
+		}
+	}
+	return nil, false
+}
+
+func convertStrictConstant(value constant.Value, fieldType string) (any, error) {
+	switch fieldType {
+	case "string":
+		if value.Kind() != constant.String {
+			return nil, fmt.Errorf("constant is %s, not string", value.Kind())
+		}
+		return constant.StringVal(value), nil
+	case "bool":
+		if value.Kind() != constant.Bool {
+			return nil, fmt.Errorf("constant is %s, not bool", value.Kind())
+		}
+		return constant.BoolVal(value), nil
+	case "float32":
+		if value.Kind() != constant.Int && value.Kind() != constant.Float {
+			return nil, fmt.Errorf("constant is %s, not numeric", value.Kind())
+		}
+		converted, _ := constant.Float32Val(value)
+		if math.IsInf(float64(converted), 0) {
+			return nil, fmt.Errorf("constant overflows float32")
+		}
+		return converted, nil
+	case "float64":
+		if value.Kind() != constant.Int && value.Kind() != constant.Float {
+			return nil, fmt.Errorf("constant is %s, not numeric", value.Kind())
+		}
+		converted, _ := constant.Float64Val(value)
+		if math.IsInf(converted, 0) {
+			return nil, fmt.Errorf("constant overflows float64")
+		}
+		return converted, nil
+	}
+
+	integer := constant.ToInt(value)
+	if integer.Kind() == constant.Unknown {
+		return nil, fmt.Errorf("constant is not an exact integer")
+	}
+	switch fieldType {
+	case "int":
+		value, ok := constant.Int64Val(integer)
+		if !ok || (strconv.IntSize == 32 && (value < math.MinInt32 || value > math.MaxInt32)) {
+			return nil, fmt.Errorf("constant overflows int")
+		}
+		return int(value), nil
+	case "int8":
+		value, ok := constant.Int64Val(integer)
+		if !ok || value < math.MinInt8 || value > math.MaxInt8 {
+			return nil, fmt.Errorf("constant overflows int8")
+		}
+		return int8(value), nil
+	case "int16":
+		value, ok := constant.Int64Val(integer)
+		if !ok || value < math.MinInt16 || value > math.MaxInt16 {
+			return nil, fmt.Errorf("constant overflows int16")
+		}
+		return int16(value), nil
+	case "int32", "rune":
+		value, ok := constant.Int64Val(integer)
+		if !ok || value < math.MinInt32 || value > math.MaxInt32 {
+			return nil, fmt.Errorf("constant overflows %s", fieldType)
+		}
+		return int32(value), nil
+	case "int64":
+		value, ok := constant.Int64Val(integer)
+		if !ok {
+			return nil, fmt.Errorf("constant overflows int64")
+		}
+		return value, nil
+	case "uint":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || (strconv.IntSize == 32 && value > math.MaxUint32) {
+			return nil, fmt.Errorf("constant overflows uint")
+		}
+		return uint(value), nil
+	case "uint8", "byte":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || value > math.MaxUint8 {
+			return nil, fmt.Errorf("constant overflows %s", fieldType)
+		}
+		return uint8(value), nil
+	case "uint16":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || value > math.MaxUint16 {
+			return nil, fmt.Errorf("constant overflows uint16")
+		}
+		return uint16(value), nil
+	case "uint32":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || value > math.MaxUint32 {
+			return nil, fmt.Errorf("constant overflows uint32")
+		}
+		return uint32(value), nil
+	case "uint64":
+		value, ok := constant.Uint64Val(integer)
+		if !ok {
+			return nil, fmt.Errorf("constant overflows uint64")
+		}
+		return value, nil
+	case "uintptr":
+		value, ok := constant.Uint64Val(integer)
+		if !ok || (strconv.IntSize == 32 && value > math.MaxUint32) {
+			return nil, fmt.Errorf("constant overflows uintptr")
+		}
+		return uintptr(value), nil
+	default:
+		return nil, fmt.Errorf("type %s is not renderer-safe", fieldType)
+	}
+}
+
+// strictScalarWantName maps a declared field type to the reflect.Type.Name
+// the runtime value must match exactly: byte and rune are aliases (uint8,
+// int32), so a runtime value that alias-resolves to the same underlying
+// predeclared type must show that name, not the alias spelling.
+func strictScalarWantName(fieldType string) string {
+	switch fieldType {
+	case "byte":
+		return "uint8"
+	case "rune":
+		return "int32"
+	default:
+		return fieldType
+	}
+}
+
+func requireStrictScalarType(value any, fieldType string) (any, error) {
+	want := strictScalarWantName(fieldType)
+	if value == nil {
+		return nil, fmt.Errorf("value is nil")
+	}
+	actual := reflect.TypeOf(value)
+	if actual.PkgPath() != "" || actual.Name() != want {
+		return nil, fmt.Errorf("runtime value has type %s, want exact %s", actual, fieldType)
+	}
+	return value, nil
 }
 
 func componentCallArgs(attrs []ir.Attr, env fileRenderEnv) []any {
@@ -1383,11 +2972,54 @@ func normalizeFileAttrName(name string) string {
 	}
 }
 
-func managedFormAttrs(attrs []ir.Attr) []ir.Attr {
+// managedFormAttrs drops the attributes the managed-form contract writes
+// itself so they are not duplicated: actionName (an ActionForm prop, never
+// real HTML) always, and server.NavigationFormModeAttr only when the
+// contract computed its own mode (contractMode != ""), because that mode
+// is about to be written by writeManagedFormContract. When contractMode is
+// "" — the common case for the data-gosx-managed shorthand, which never
+// computes a mode of its own (gosx#179 F1) — an author-written
+// data-gosx-form-mode is left in attrs untouched, so it survives into the
+// output instead of silently disappearing.
+func managedFormAttrs(attrs []ir.Attr, contractMode string) []ir.Attr {
 	out := make([]ir.Attr, 0, len(attrs))
 	for _, attr := range attrs {
 		switch strings.TrimSpace(attr.Name) {
-		case "actionName", server.NavigationFormModeAttr:
+		case "actionName":
+			continue
+		case server.NavigationFormModeAttr:
+			if contractMode != "" {
+				continue
+			}
+		}
+		out = append(out, attr)
+	}
+	return out
+}
+
+// fileManagedFormShorthandTruthy reports whether attrs carries a truthy
+// gosx.ManagedFormShorthandAttr (data-gosx-managed). attrValue already
+// resolves a static value, a dynamic {expr} attribute expression, an
+// AttrBool presence attribute, and a spread attribute to the same "value
+// present or not" shape, so this covers every way the shorthand can appear
+// in a .gsx template. attrValue returns nil when the attribute is absent,
+// or when a dynamic expression evaluated to nil; gosx.ManagedFormShorthandTruthy
+// treats a nil value as "not present" and returns false — the same rule
+// node.go and the island renderer apply, so this function delegates the
+// whole judgment (including the nil case) to the one shared definition
+// instead of special-casing nil here too.
+func fileManagedFormShorthandTruthy(attrs []ir.Attr, env fileRenderEnv) bool {
+	return gosx.ManagedFormShorthandTruthy(false, attrValue(attrs, env, gosx.ManagedFormShorthandAttr))
+}
+
+// stripManagedFormShorthandAttr removes the data-gosx-managed attribute
+// from attrs. Called only once the shorthand has expanded, matching
+// node.go's rule that the shorthand attribute itself does not survive into
+// the rendered output.
+func stripManagedFormShorthandAttr(attrs []ir.Attr) []ir.Attr {
+	out := make([]ir.Attr, 0, len(attrs))
+	for _, attr := range attrs {
+		if attr.Name == gosx.ManagedFormShorthandAttr {
 			continue
 		}
 		out = append(out, attr)
@@ -1456,11 +3088,63 @@ func fileManagedFormPresenceForAttrs(attrs []ir.Attr, env fileRenderEnv) fileMan
 	}
 }
 
+// fileManagedFormPresenceForRenderAttrs computes the same presence shape
+// fileManagedFormPresenceForAttrs does, but from the POST-AttrWriter
+// effective []RenderAttr list instead of the pre-hook []ir.Attr (gosx#185
+// B1(b)). resolveContractProtectedAttrs has already reinserted every
+// contract-owned name's untouched pre-hook value into that list, so a name
+// match here is a plain string comparison — no expression evaluation is
+// needed, unlike attrValue's []ir.Attr walk.
+func fileManagedFormPresenceForRenderAttrs(attrs []RenderAttr) fileManagedFormPresence {
+	var presence fileManagedFormPresence
+	for _, attr := range attrs {
+		switch attr.Name {
+		case server.NavigationFormAttr:
+			presence.Form = true
+		case server.NavigationFormStateAttr:
+			presence.State = true
+		case server.NavigationEnhanceAttr:
+			presence.Enhancement = true
+		case server.NavigationEnhanceLayerAttr:
+			presence.EnhancementLayer = true
+		case server.NavigationFallbackAttr:
+			presence.Fallback = true
+		}
+	}
+	return presence
+}
+
 func (r *fileProgramRenderer) writeManagedFormContract(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv, contract fileManagedFormContract) {
 	if !contract.Managed {
 		return
 	}
-	presence := fileManagedFormPresenceForAttrs(attrs, env)
+	r.writeManagedFormContractBody(b, fileManagedFormPresenceForAttrs(attrs, env), contract)
+}
+
+// writeManagedFormContractPostHook is writeManagedFormContract's
+// render-profile counterpart (gosx#185 B1(b)): it computes contract
+// presence from the POST-AttrWriter effective attribute list instead of the
+// pre-hook node.Attrs. Because resolveContractProtectedAttrs has already
+// reinserted every contract-owned name's untouched pre-hook value into
+// effective, this reads exactly what rendered a moment ago — so an
+// AttrWriter veto of a contract attribute can never make this believe the
+// contract is already satisfied when the actual output no longer has it,
+// and an AttrWriter append of a conflicting copy can never make this skip
+// writing the real one.
+func (r *fileProgramRenderer) writeManagedFormContractPostHook(b *strings.Builder, effective []RenderAttr, contract fileManagedFormContract) {
+	if !contract.Managed {
+		return
+	}
+	r.writeManagedFormContractBody(b, fileManagedFormPresenceForRenderAttrs(effective), contract)
+}
+
+// writeManagedFormContractBody writes the managed-form runtime-contract
+// attributes gosx#179 defines, given a presence already computed for
+// whichever attribute list actually rendered. Both writeManagedFormContract
+// and writeManagedFormContractPostHook are thin presence-computation
+// wrappers around this one writer, so the two callers cannot drift apart on
+// what they emit — only on where presence comes from.
+func (r *fileProgramRenderer) writeManagedFormContractBody(b *strings.Builder, presence fileManagedFormPresence, contract fileManagedFormContract) {
 	if !presence.Form {
 		b.WriteString(" " + server.NavigationFormAttr)
 	}
@@ -1562,11 +3246,13 @@ func imageExtraAttrs(attrs []ir.Attr, env fileRenderEnv) []any {
 		"width":         {},
 		"height":        {},
 		"widths":        {},
+		"responsive":    {},
 		"sizes":         {},
 		"loading":       {},
 		"decoding":      {},
 		"fetchpriority": {},
 		"fetchPriority": {},
+		"priority":      {},
 		"quality":       {},
 		"format":        {},
 	}
@@ -1724,10 +3410,13 @@ func fileNodeAttr(name string, value any) (any, bool) {
 	case nil:
 		return nil, false
 	case bool:
-		if !v {
-			return nil, false
+		if htmlattr.IsBoolean(name) {
+			if !v {
+				return nil, false
+			}
+			return gosx.BoolAttr(name), true
 		}
-		return gosx.BoolAttr(name), true
+		return gosx.Attr(name, v), true
 	default:
 		return gosx.Attr(name, value), true
 	}
@@ -1777,7 +3466,7 @@ func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attr
 			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(attr.Name), html.EscapeString(attr.Value))
 		case ir.AttrExpr:
 			value := evalFileExpr(attr.Expr, env)
-			renderFileEvaluatedAttr(b, html.EscapeString(attr.Name), value)
+			renderFileEvaluatedAttr(b, attr.Name, value)
 		case ir.AttrBool:
 			fmt.Fprintf(b, " %s", html.EscapeString(attr.Name))
 		}
@@ -1874,6 +3563,26 @@ func boolPointerValue(value any) *bool {
 	return &result
 }
 
+// hoistEngineSceneShaderLib deduplicates repeated shader source in a scene that
+// was assembled from JSX children rather than from a typed SceneIR.
+//
+// It runs after canonicalizeEnginePropsMap for two reasons: that pass deep-
+// copies every nested map and slice, so the scene map here is owned by this
+// call and safe to mutate, and it rewrites prop keys, which would otherwise
+// rename the "shaderLib" key this pass adds.
+//
+// A json.RawMessage scene is left alone. Those bytes come from
+// SceneIR.marshalWire, which has already run the typed hoisting pass, so
+// decoding them here would cost a full parse of the largest value in the
+// manifest to discover there is nothing left to hoist.
+func hoistEngineSceneShaderLib(normalized map[string]any) {
+	sceneMap, ok := normalized["scene"].(map[string]any)
+	if !ok {
+		return
+	}
+	gosxscene.ApplyShaderLib(sceneMap)
+}
+
 func marshalEngineProps(props map[string]any) json.RawMessage {
 	if len(props) == 0 {
 		return nil
@@ -1882,6 +3591,7 @@ func marshalEngineProps(props map[string]any) json.RawMessage {
 	if len(normalized) == 0 {
 		return nil
 	}
+	hoistEngineSceneShaderLib(normalized)
 	data, err := json.Marshal(normalized)
 	if err != nil {
 		return nil

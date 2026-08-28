@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -8,6 +10,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/env"
+	"m31labs.dev/gosx/internal/bundlepolicy"
 )
 
 // RunExport prerenders static file-routed pages into dist/static.
@@ -15,6 +18,17 @@ func RunExport(dir string) error {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
+	}
+	if err := checkVersionSkew(absDir); err != nil {
+		return err
+	}
+	cfg, err := loadProjectConfig(absDir)
+	if err != nil {
+		return err
+	}
+	printBundlePolicyWarnings(cfg.Build.Bundle)
+	if diagnostics := bundlepolicy.ValidateProject(absDir, cfg.Build.Bundle); !diagnostics.Empty() {
+		return errors.New(diagnostics.Error())
 	}
 
 	isMain, err := isMainPackage(absDir)
@@ -33,6 +47,13 @@ func RunExport(dir string) error {
 
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
+	}
+	if err := checkStrictProject(context.Background(), absDir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	distDir := filepath.Join(absDir, "dist")
+	if err := os.RemoveAll(distDir); err != nil {
+		return fmt.Errorf("clean output directory: %w", err)
 	}
 	if err := prepareDevAssets(absDir); err != nil {
 		return err
@@ -54,9 +75,10 @@ func RunExport(dir string) error {
 	}
 
 	manifest, err := prerenderStaticBundle(staticExportOptions{
-		AppRoot:    absDir,
-		OutputDir:  filepath.Join(absDir, "dist", "static"),
-		BinaryPath: binaryPath,
+		AppRoot:      absDir,
+		OutputDir:    filepath.Join(distDir, "static"),
+		BinaryPath:   binaryPath,
+		BundlePolicy: cfg.Build.Bundle,
 		StageAssets: func(outputDir string, manifest exportManifest) error {
 			return copyExportRuntime(filepath.Join(absDir, "build"), outputDir, manifest)
 		},
@@ -64,8 +86,14 @@ func RunExport(dir string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeExportManifest(filepath.Join(absDir, "dist", "export.json"), manifest); err != nil {
+	if err := writeExportManifest(filepath.Join(distDir, "export.json"), manifest); err != nil {
 		return err
+	}
+	if err := writeBundlePolicySidecar(distDir, cfg.Build.Bundle); err != nil {
+		return err
+	}
+	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg.Build.Bundle); !diagnostics.Empty() {
+		return errors.New(diagnostics.Error())
 	}
 
 	fmt.Fprintf(os.Stderr, "gosx export: wrote %d pages to %s\n", len(manifest.Pages), filepath.Join(absDir, "dist", "static"))
@@ -99,6 +127,12 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "gosx-runtime.wasm"), true
 	case "/gosx/runtime-islands.wasm":
 		return filepath.Join(buildDir, "gosx-runtime-islands.wasm"), true
+	case "/gosx/runtime-core.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-core.wasm"), true
+	case "/gosx/runtime-engine.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-engine.wasm"), true
+	case "/gosx/runtime-collab.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-collab.wasm"), true
 	case "/gosx/wasm_exec.js":
 		return filepath.Join(buildDir, "wasm_exec.js"), true
 	case "/gosx/standard-go-wasm_exec.js":

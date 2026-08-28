@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos test-docs-deploy perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -105,18 +105,22 @@ test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
 test-cli:
-	$(GO) test ./cmd/gosx
+	$(GO) test -timeout 15m ./cmd/gosx
 
 test-ci-partitions:
 	$(GO) test ./internal/citest
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify
 
 test-race:
-	$(GO) test -race ./...
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test full-race
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test ouroboros-race
 
 # Pull requests exercise the reviewed shared-state surfaces without rerunning
 # CPU-heavy codec and vector kernels under the race detector. Protected-branch
-# pushes still run test-race across every package.
+# pushes race-build every package and run every test except nine explicitly
+# validated real-repository evidence recomputations in perf/ouroboros. The unit
+# lane runs those deterministic tests; the scoped race lane retains a direct
+# concurrent network-capture mutation/snapshot test.
 test-race-pr:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test race
 
@@ -137,10 +141,21 @@ test-fuzz-smoke:
 # budget: nesting it keeps those requires out of the library's go.mod and out of
 # every consumer's module graph. It is invoked from its own directory for the
 # same reason.
-build-bootstrap:
-	cd cmd/buildbootstrap && $(GO) run .
+BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript
 
-# test-js runs three independent checks:
+build-bootstrap:
+	cd cmd/buildbootstrap && $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' .
+
+# test-runtime-types uses the real TypeScript compiler in strict mode for the
+# generated ABI contract. The wider runtime is deliberately
+# guarded by buildbootstrap's typed transpilation, chunk closure and source-graph
+# coverage checks: most legacy script bodies remain JSDoc JavaScript syntax and
+# are not falsely advertised as strict TypeScript yet.
+test-runtime-types:
+	cd client/runtime && npm ci
+	cd client/runtime && npm run typecheck
+
+# test-js runs four independent checks:
 #   1. The unit tests of the bundle builder itself. cmd/buildbootstrap
 #      writes every shipped client bundle, so a defect there corrupts
 #      bootstrap.js, bootstrap-lite.js, bootstrap-runtime.js, every
@@ -156,18 +171,23 @@ build-bootstrap:
 #      without a local go.work.
 #   3. The JS runtime unit tests (`node --test`, stdlib-only, with no
 #      npm dependencies to install), across every *.test.js /
-#      *.test.mjs file. The glob picks up new test files on its own,
-#      so nothing here needs an edit when a suite is added or split.
-#      This includes the 562 client-runtime tests in the
+#      *.test.mjs file under client/js, plus every *.test.js file one
+#      directory below client/runtime (currently
+#      client/runtime/wasm/loader.test.js, the WASM loader's own
+#      suite; it lived here unglobbed and never ran under `make
+#      test-js` or `make ci`). Both globs pick up new test files on
+#      their own, so nothing here needs an edit when a suite is added
+#      or split. This includes the 562 client-runtime tests in the
 #      runtime-NN-*.test.js files (split out of the former
 #      runtime.test.js; their shared setup lives in
 #      client/js/runtime-test-harness.js, which the glob skips
 #      because it is not a *.test.js file) and the size-budget gates
 #      in bootstrap-size.test.mjs.
 test-js:
-	cd cmd/buildbootstrap && GOWORK=off $(GO) test ./...
-	cd cmd/buildbootstrap && GOWORK=off $(GO) run . --check
-	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
+	$(MAKE) test-runtime-types
+	cd cmd/buildbootstrap && GOWORK=off $(GO) test -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
+	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
+	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs ./client/runtime/**/*.test.js
 
 # test-editor builds, vets and tests the nested editor module.
 #
@@ -259,6 +279,11 @@ test-e2e:
 test-perf-browser:
 	GOSX_REQUIRE_CHROME=1 $(GO) test -tags browser -timeout 10m ./perf/...
 
+# Requires OUROBOROS_SMOKE_BASELINE to point at a committed smoke artifact.
+# CI intentionally does not invoke this until that versioned browser capture lands.
+test-ouroboros-smoke:
+	$(SHELL) ./scripts/ouroboros-smoke-ci.sh
+
 # Build the deployable docs bundle and prove the production server can serve
 # the water route and its content-addressed Scene3D runtime assets.
 test-water-prod:
@@ -316,24 +341,32 @@ build-runtime:
 #      go.mod contains ANY replace directive; this is what made v0.27.0 a bad tag.
 #   3. tracked-filename scan - a stray file with a shell-redirect-style name broke
 #      Go module zip creation and forced the v0.29.0 retraction.
-#   4. module-zip smoke (`git archive --format=zip`) - reproduces the exact
+#   4. docs deploy transaction - prevents an overlapping deployment or rollback
+#      from overwriting a newer successful docs release.
+#   5. module-zip smoke (`git archive --format=zip`) - reproduces the exact
 #      operation that broke v0.29.0 so a zip-breaking commit fails fast.
+test-docs-deploy:
+	sh scripts/deploy-gosx-docs-concurrency-test.sh
+	sh scripts/deploy-gosx-docs-public-test.sh
+
 release-gate:
-	@echo "release-gate (1/4): go run ./cmd/gosx release check"
+	@echo "release-gate (1/5): go run ./cmd/gosx release check"
 	$(GO) run ./cmd/gosx release check
-	@echo "release-gate (2/4): go.mod replace-directive scan"
+	@echo "release-gate (2/5): go.mod replace-directive scan"
 	@if grep -E '^replace ' go.mod; then \
 		echo "release-gate: go.mod has a replace directive; 'go run mod@version' fails with any replace present (this is why v0.27.0 was a bad tag). Remove it before release."; \
 		exit 1; \
 	fi
-	@echo "release-gate (3/4): tracked-filename scan"
+	@echo "release-gate (3/5): tracked-filename scan"
 	@bad="$$(git ls-files | grep -E '[:"|<>?*[:cntrl:]]' || true)"; \
 	if [ -n "$$bad" ]; then \
 		echo "release-gate: tracked filenames contain characters Go's module zip format rejects (a file like this broke v0.29.0's module zip and forced its retraction):"; \
 		echo "$$bad"; \
 		exit 1; \
 	fi
-	@echo "release-gate (4/4): module-zip smoke (git archive --format=zip)"
+	@echo "release-gate (4/5): docs deploy transaction regression"
+	@$(MAKE) --no-print-directory test-docs-deploy
+	@echo "release-gate (5/5): module-zip smoke (git archive --format=zip)"
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 

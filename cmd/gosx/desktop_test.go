@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -217,5 +218,28 @@ func TestRunDesktopUnsupportedPlatformShortCircuits(t *testing.T) {
 	err := RunDesktop(".", DesktopRunOptions{})
 	if !errors.Is(err, desktop.ErrUnsupported) {
 		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestDesktopAppInitialStrictGateRunsBeforeAssetWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "desktop-initial-strict-gate")
+	err := prepareDesktopDevProject(context.Background(), dir)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("prepareDesktopDevProject error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Fatalf("desktop strict gate wrote assets before failing: %v", statErr)
+	}
+}
+
+func TestDesktopAppChangeStrictGateStopsUnsafeUpstream(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "desktop-change-strict-gate")
+	runner := &recordingDevStopper{}
+	err := preflightChangedDesktopApp(context.Background(), dir, runner)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("preflightChangedDesktopApp error = %v", err)
+	}
+	if !runner.stopped {
+		t.Fatal("invalid desktop change left the old upstream process running")
 	}
 }

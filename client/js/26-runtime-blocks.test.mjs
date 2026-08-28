@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "26-runtime-blocks.js"),
+  path.join(__dirname, "bootstrap-src", "26-runtime-blocks.ts"),
   "utf8"
 );
 

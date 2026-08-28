@@ -70,8 +70,30 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	if manifest.Routes[0].Path != "/" || manifest.Routes[0].File != "index.html" {
 		t.Fatalf("unexpected root export route %#v", manifest.Routes[0])
 	}
-	if manifest.Routes[0].Capabilities.Navigation || manifest.Routes[0].Capabilities.Bootstrap || manifest.Routes[0].Capabilities.WASM {
-		t.Fatalf("expected exported starter route to stay zero-runtime, got %#v", manifest.Routes[0].Capabilities)
+	// The starter template calls app.EnableNavigation() (see cmd/gosx/init.go),
+	// so the exported route carries the inline navigation script and reports
+	// Navigation: true (gosx#169 — App.Mount now wires that flag through to a
+	// file-routed app instead of silently dropping it). Navigation adds no
+	// WASM or bootstrap asset: it is one inline <script>, so Bootstrap and WASM
+	// stay false and dist/static/gosx stays absent (checked above).
+	if !manifest.Routes[0].Capabilities.Navigation {
+		t.Fatalf("expected exported starter route to report navigation, got %#v", manifest.Routes[0].Capabilities)
+	}
+	if manifest.Routes[0].Capabilities.Bootstrap || manifest.Routes[0].Capabilities.WASM {
+		t.Fatalf("expected exported starter route to stay zero-runtime aside from navigation, got %#v", manifest.Routes[0].Capabilities)
+	}
+}
+
+func TestRunExportStrictGateRunsBeforeAssetOrDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "export-strict-gate")
+	err := RunExport(dir)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("RunExport error = %v", err)
+	}
+	for _, output := range []string{"build", "dist"} {
+		if _, statErr := os.Stat(filepath.Join(dir, output)); !os.IsNotExist(statErr) {
+			t.Fatalf("strict gate wrote %s before failing: %v", output, statErr)
+		}
 	}
 }
 

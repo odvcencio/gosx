@@ -46,7 +46,7 @@ const {
 } = require("./runtime-test-harness.js");
 
 test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
 
   assert.match(webgl, /function sceneWebGLNormalizeCustomShaderSource\(source\)/);
   assert.match(webgl, /precision\s+highp\s+float/);
@@ -967,12 +967,14 @@ test("capability/drift: WebGPU-only capabilities are explicit in backend JSON", 
   // scene/capability/water_shadow_test.go, which reads both renderers.
   assert.equal(webglCaps["water-object-mesh-shadow-pass"], false, "WebGL2 capabilities JSON must declare water-object-mesh-shadow-pass: false (no mesh rasterization in the WebGL2 water renderer)");
   assert.ok("water-object-mesh-shadow-pass" in webglCaps, "water-object-mesh-shadow-pass must be explicit in WebGL2 capabilities JSON (not absent)");
-  // ibl is false on BOTH backends. The WebGL2 path tone maps the environment to
-  // an 8-bit texture and taps it twice; it holds no samplerCube, no
-  // textureCubeLod and no BRDF lookup table. See assetpipe/ibl for the products
-  // a real consumer needs.
-  assert.equal(webglCaps["ibl"], false, "WebGL2 capabilities JSON must declare ibl: false (tone-mapped equirect is not prefiltered IBL)");
-  assert.equal(webgpuCaps["ibl"], false, "WebGPU capabilities JSON must declare ibl: false");
+  // ibl splits by backend. WebGL2 tone maps the environment to an 8-bit
+  // texture and taps it twice; the real samplerCube/textureCubeLod/BRDF-LUT
+  // path only activates at >= 18 fragment texture units, so its unconditional
+  // cell stays false. WebGPU binds all three IBL products (group(0) bindings
+  // 9-12) and loads/validates them at runtime with no texture-unit budget to
+  // negotiate, so its cell is true. See scene/capability/ibl_test.go.
+  assert.equal(webglCaps["ibl"], false, "WebGL2 capabilities JSON must declare ibl: false (gated on >= 18 fragment texture units)");
+  assert.equal(webgpuCaps["ibl"], true, "WebGPU capabilities JSON must declare ibl: true (unconditional split-sum consumer)");
 });
 
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {
@@ -2403,4 +2405,69 @@ test("custom post WebGPU: a module with compilation errors is refused even when 
   const warns = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("passthrough") || m.includes("validation")));
   assert.equal(warns.length, 1, "a module carrying compilation errors must still fail the pass");
   assert.ok(warns[0].includes("expected declaration"), "the warn must carry the module's own compiler message");
+});
+
+test("points authored profile: an INLINE authored material survives scene-state normalization", async () => {
+  // The points normalizer builds its result from an explicit whitelist. That
+  // whitelist carried only `material` (a string naming an entry in
+  // scene.materials), while the mesh, instanced-mesh and model normalizers
+  // all carry the authored shader fields through. A points layer that
+  // authored its shader INLINE — the content starfields, whose entire
+  // motion (twinkle, depth wrap, per-star impulse) lives in that shader —
+  // therefore reached the renderer stripped, and both backends silently drew
+  // it with the BUILTIN points program. Nothing failed loudly: the shader was
+  // never handed to the GPU to fail, and the render loop still ran because
+  // sceneHasTimeDrivenMaterials reads the RAW props scene, so the layer
+  // redrew an identical frame forever. Verified in a real browser: before
+  // this fix the authored starfield GLSL was never passed to gl.shaderSource
+  // and the `time` uniform was never uploaded across 531 draw calls.
+  const api = await makeSceneApiEnv();
+
+  const vert = "#version 300 es\nuniform float time;\nvoid main() { gl_Position = vec4(time); }";
+  const frag = "#version 300 es\nprecision highp float;\nout vec4 c;\nvoid main() { c = vec4(1.0); }";
+
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "starfield-stars",
+          count: 2,
+          positions: [0, 0, 0, 1, 1, 1],
+          color: "#ffffff",
+          blendMode: "additive",
+          customVertex: vert,
+          customFragment: frag,
+          customVertexWGSL: "@vertex fn vertexMain() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }",
+          customFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }",
+          customUniforms: { time: 0 },
+          shaderBackend: "custom",
+          shaderLayout: { material: "StarfieldDepthWrap" },
+        },
+      ],
+    },
+  });
+
+  const point = state.points[0];
+  assert.equal(point.customVertex, vert, "inline customVertex must survive normalization");
+  assert.equal(point.customFragment, frag, "inline customFragment must survive normalization");
+  assert.ok(point.customVertexWGSL, "inline customVertexWGSL must survive normalization");
+  assert.ok(point.customFragmentWGSL, "inline customFragmentWGSL must survive normalization");
+  assert.equal(point.shaderBackend, "custom", "shaderBackend must survive normalization");
+  assert.ok(point.customUniforms && typeof point.customUniforms === "object", "customUniforms must survive");
+  assert.equal(point.customUniforms.time, 0, "the declared time uniform must survive");
+  assert.ok(point.shaderLayout && point.shaderLayout.material === "StarfieldDepthWrap", "shaderLayout must survive");
+
+  // customUniforms is cloned, not aliased: the mount mutates the live bag
+  // per frame (the material clock) and must not write back into props.
+  point.customUniforms.time = 42;
+  const second = api.createSceneState({
+    scene: { points: [{ id: "starfield-stars", count: 1, positions: [0, 0, 0], customUniforms: { time: 0 } }] },
+  });
+  assert.equal(second.points[0].customUniforms.time, 0, "customUniforms must be cloned per normalization");
+
+  // The layer keeps reaching the renderer through the same path a named
+  // material uses, so the draw loop sees one entry either way.
+  const withMaterials = api.sceneStatePointsWithMaterials(state);
+  assert.equal(withMaterials.length, 1);
+  assert.equal(withMaterials[0].customVertex, vert, "inline authored shader must reach the render bundle");
 });

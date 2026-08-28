@@ -20,10 +20,13 @@ concurrency:
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
+# Verification is split into parallel jobs so release wall-clock tracks the
+# slowest partition instead of the serial sum. Platform builds start after
+# validate alone; publish is the gate that requires every test job.
 jobs:
-  verify:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,21 +54,94 @@ jobs:
           curl --fail --silent --show-error 'https://m31labs.dev/gosx?go-get=1' \
             | grep -F 'm31labs.dev/gosx git https://github.com/odvcencio/gosx'
 
+  test-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Keep release verification aligned with the CI package partition.
+      - name: Partition validation and unit tests
+        run: |
+          set -euo pipefail
+          make test-ci-partitions
+          make test-unit
+
+  test-cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
-        run: |
-          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
-          sudo dpkg -i tinygo.deb
-          go install golang.org/dl/go1.25.5@latest
-          go1.25.5 download
-          tinygo version
-
-      - name: Test, vet, and build
+          TINYGO_GO_VERSION: 1.25.5
+          TINYGO_SHA256: 901fbccffc61adb111656d1f907dfc21b6c499ca841b115866a0d6de2d835fbe
+          TINYGO_GO_SHA256: 9e9b755d63b36acf30c12a9a3fc379243714c1c6d3dd72861da637f336ebb35b
         run: |
           set -euo pipefail
-          go test ./...
-          # Generated Danmuji test cases run under go test; vet production files only.
+          work_dir="$(mktemp -d)"
+          trap 'rm -rf -- "${work_dir}"' EXIT
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${work_dir}/tinygo.deb" \
+            "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          printf '%s  %s\n' "${TINYGO_SHA256}" "${work_dir}/tinygo.deb" | sha256sum --check --status
+          sudo dpkg -i "${work_dir}/tinygo.deb"
+          compat_root="${HOME}/sdk/go${TINYGO_GO_VERSION}"
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${work_dir}/go.tar.gz" \
+            "https://dl.google.com/go/go${TINYGO_GO_VERSION}.linux-amd64.tar.gz"
+          printf '%s  %s\n' "${TINYGO_GO_SHA256}" "${work_dir}/go.tar.gz" | sha256sum --check --status
+          mkdir -p "${HOME}/sdk"
+          tar -C "${work_dir}" -xzf "${work_dir}/go.tar.gz"
+          mv "${work_dir}/go" "${compat_root}"
+          GOTOOLCHAIN=local "${compat_root}/bin/go" version
+          printf 'GOSX_TINYGO_GOROOT=%s\n' "${compat_root}" >>"${GITHUB_ENV}"
+          tinygo version
+
+      # cmd/gosx runs real TinyGo production builds and needs the explicit
+      # 15-minute Go timeout carried by test-cli; a plain `go test ./...`
+      # silently restores Go's 10-minute package timeout.
+      - name: CLI production-build tests
+        run: |
+          set -euo pipefail
+          make test-cli
+          CGO_ENABLED=0 go build ./cmd/gosx
+
+  vet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Generated Danmuji test cases run under go test; vet production files only.
+      - name: Vet production files
+        run: |
+          set -euo pipefail
           while IFS= read -r pkg; do
             dir="$(GOFLAGS=-buildvcs=false go list -f '{{.Dir}}' "${pkg}")"
             files="$(GOFLAGS=-buildvcs=false go list -f '{{range .GoFiles}}{{.}}{{"\n"}}{{end}}' "${pkg}")"
@@ -73,10 +149,9 @@ jobs:
               (cd "${dir}" && printf '%s\n' "${files}" | xargs env GOFLAGS=-buildvcs=false go vet)
             fi
           done < <(GOFLAGS=-buildvcs=false go list ./...)
-          CGO_ENABLED=0 go build ./cmd/gosx
 
   build:
-    needs: verify
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -101,17 +176,18 @@ jobs:
           set -euo pipefail
           ext=""
           if [[ "${GOOS}" = "windows" ]]; then ext=".exe"; fi
+          mkdir -p release-artifacts
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
-            -o "gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
+            -o "release-artifacts/gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
 
       - uses: actions/upload-artifact@v4
         with:
           name: gosx-${{ matrix.goos }}-${{ matrix.goarch }}
           retention-days: 7
-          path: gosx-*
+          path: release-artifacts/
 
   publish:
-    needs: build
+    needs: [validate, test-unit, test-cli, vet, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -126,15 +202,33 @@ jobs:
 
       - name: Generate checksums
         run: |
+          set -euo pipefail
           cd artifacts
-          sha256sum gosx-* > checksums.txt
+          expected=(
+            gosx-linux-amd64
+            gosx-linux-arm64
+            gosx-darwin-amd64
+            gosx-darwin-arm64
+            gosx-windows-amd64.exe
+            gosx-windows-arm64.exe
+          )
+          for artifact in "${expected[@]}"; do
+            test -f "${artifact}"
+          done
+          test "$(find . -maxdepth 1 -type f -name 'gosx-*' | wc -l)" -eq "${#expected[@]}"
+          sha256sum "${expected[@]}" > checksums.txt
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: |
-            artifacts/gosx-*
+            artifacts/gosx-linux-amd64
+            artifacts/gosx-linux-arm64
+            artifacts/gosx-darwin-amd64
+            artifacts/gosx-darwin-arm64
+            artifacts/gosx-windows-amd64.exe
+            artifacts/gosx-windows-arm64.exe
             artifacts/checksums.txt
           generate_release_notes: true
 

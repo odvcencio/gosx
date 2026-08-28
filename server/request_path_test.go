@@ -538,6 +538,46 @@ func TestSharedCacheablePageDropsNoncePolicy(t *testing.T) {
 	}
 }
 
+func TestSharedCacheableAppStripsNonceBakedByHandlerScripts(t *testing.T) {
+	app := New()
+	app.EnableSecurityPolicy(SecurityPolicy{
+		ContentSecurityPolicy: "default-src 'self' 'unsafe-inline'; script-src 'nonce-{nonce}'",
+	})
+	var issuedNonce string
+	app.Page("GET /shared-authored-scripts", func(ctx *Context) gosx.Node {
+		issuedNonce = ctx.Nonce()
+		ctx.CachePublic(time.Minute)
+		ctx.AddHead(ctx.InlineScript("window.appHeadScript = true"))
+		return gosx.El("main",
+			ctx.InlineScript("window.appBodyScript = true"),
+			ctx.JSONScript("app-json", map[string]string{"status": "shared"}),
+		)
+	})
+
+	res := httptest.NewRecorder()
+	app.Build().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/shared-authored-scripts", nil))
+
+	if issuedNonce == "" {
+		t.Fatal("expected the handler to observe a request nonce before CachePublic")
+	}
+	if got, want := res.Header().Get("Content-Security-Policy"), "default-src 'self' 'unsafe-inline'; script-src 'none'"; got != want {
+		t.Fatalf("shared policy = %q, want %q", got, want)
+	}
+	body := res.Body.String()
+	if strings.Contains(body, issuedNonce) || strings.Contains(body, "nonce=") {
+		t.Fatalf("shared body retained request nonce %q: %s", issuedNonce, body)
+	}
+	for _, want := range []string{
+		"window.appHeadScript = true",
+		"window.appBodyScript = true",
+		`id="app-json"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("shared body missing %q: %s", want, body)
+		}
+	}
+}
+
 // TestSharedCacheableETagRepeatsAcrossRequests proves that two requests for one
 // shared-cacheable page share a validator. A per-request value left in the body
 // would change the digest on every request.

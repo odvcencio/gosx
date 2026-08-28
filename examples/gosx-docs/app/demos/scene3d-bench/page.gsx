@@ -2,6 +2,7 @@ package docs
 
 func Page() Node {
 	return <section class="scene3d-bench" aria-label="Scene3D render benchmark">
+		<h1 class="visually-hidden">Scene3D Bench</h1>
 		<div class="scene3d-bench__scene">
 			<Scene3D {...data.scene} />
 		</div>

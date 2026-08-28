@@ -111,6 +111,65 @@ func TestPageHeadWithBootstrapOnlyUsesLiteRuntime(t *testing.T) {
 	}
 }
 
+func TestPageHeadCarriesManifestSRIForRuntimeScripts(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		BootstrapLite: buildmanifest.HashedAsset{
+			File:      "bootstrap-lite.11111111.js",
+			Hash:      "11111111",
+			Integrity: "sha256-lite-integrity",
+		},
+		BootstrapRuntime: buildmanifest.HashedAsset{
+			File:      "bootstrap-runtime.22222222.js",
+			Hash:      "22222222",
+			Integrity: "sha256-runtime-integrity",
+		},
+		BootstrapFeatureEngines: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-engines.33333333.js",
+			Hash:      "33333333",
+			Integrity: "sha256-engines-integrity",
+		},
+		BootstrapFeatureScene3D: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-scene3d.44444444.js",
+			Hash:      "44444444",
+			Integrity: "sha256-scene-integrity",
+		},
+		BootstrapFeatureScene3DWebGPU: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-scene3d-webgpu.55555555.js",
+			Hash:      "55555555",
+			Integrity: "sha256-webgpu-integrity",
+		},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.EnableBootstrap()
+
+	liteHTML := gosx.RenderHTML(r.PageHead())
+	for _, want := range []string{
+		`src="/gosx/assets/runtime/bootstrap-lite.11111111.js"`,
+		`integrity="sha256-lite-integrity"`,
+	} {
+		if !strings.Contains(liteHTML, want) {
+			t.Fatalf("expected production lite runtime to include %q in %s", want, liteHTML)
+		}
+	}
+
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	runtimeHTML := gosx.RenderHTML(r.BootstrapScript())
+	for _, want := range []string{
+		`src="/gosx/assets/runtime/bootstrap-runtime.22222222.js"`,
+		`integrity="sha256-runtime-integrity"`,
+		`src="/gosx/assets/runtime/bootstrap-feature-scene3d.44444444.js"`,
+		`integrity="sha256-scene-integrity"`,
+		`s.setAttribute('integrity',"sha256-webgpu-integrity");`,
+	} {
+		if !strings.Contains(runtimeHTML, want) {
+			t.Fatalf("expected production runtime to include %q in %s", want, runtimeHTML)
+		}
+	}
+}
+
 func TestPageHeadWithIslands(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetBundle("main", "/gosx/runtime.wasm")
@@ -548,6 +607,36 @@ func TestBindHubInputAddsManifestInput(t *testing.T) {
 	}
 }
 
+func TestRendererSelectsSmallestPublishedRuntimeVariant(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		WASM:        buildmanifest.HashedAsset{File: "gosx-runtime.full.wasm", Hash: "full", Size: 40},
+		WASMIslands: buildmanifest.HashedAsset{File: "gosx-runtime-islands.wasm", Hash: "islands", Size: 5},
+		WASMVariants: map[string]buildmanifest.RuntimeVariantAsset{
+			"core":   {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-core.wasm", Hash: "core", Size: 10}, Variant: "core", FeatureMask: 17},
+			"engine": {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-engine.wasm", Hash: "engine", Size: 25}, Variant: "engine", FeatureMask: 27},
+			"collab": {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-collab.wasm", Hash: "collab", Size: 28}, Variant: "collab", FeatureMask: 21},
+			"full":   {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-full.wasm", Hash: "full", Size: 40}, Variant: "full", FeatureMask: 31},
+		},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderIsland("Counter", nil, gosx.Text("counter"))
+	if got := r.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-core.wasm" {
+		t.Fatalf("island runtime = %q, want core", got)
+	}
+	if got := r.selectedRuntimeRef().ManifestHash; got == "" {
+		t.Fatal("selected runtime omitted manifest identity")
+	}
+
+	engineNode := r.RenderEngine(engine.Config{Name: "Board", Kind: engine.KindSurface, Runtime: engine.RuntimeShared}, gosx.Node{})
+	_ = engineNode
+	if got := r.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-engine.wasm" {
+		t.Fatalf("island plus engine runtime = %q, want engine", got)
+	}
+}
+
 func TestSetClientIdentityAddsManifestConfig(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetClientIdentity(hydrate.ClientIdentityConfig{
@@ -755,6 +844,12 @@ func TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag(t *testing.T) {
 	}
 	if !strings.Contains(preloads, "bootstrap-feature-engines") {
 		t.Fatalf("engines bundle preload must be preserved (client-side fetched, never a same-document script tag): %s", preloads)
+	}
+
+	path := r.selectedBootstrapFeaturePath("engines")
+	expected := `<link rel="preload" href="` + path + `" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`
+	if !strings.Contains(preloads, expected) {
+		t.Fatalf("regression: preload for engines path %q missing exact link tag (needs crossorigin and referrerpolicy in order)\nwant: %s\ngot:  %s", path, expected, preloads)
 	}
 
 	scripts := gosx.RenderHTML(r.BootstrapScript())
@@ -1075,6 +1170,120 @@ func TestRenderIslandFromProgramRendersDynamicAttrs(t *testing.T) {
 	}
 	if !strings.Contains(html, `About: GoSX is a Go-native web platform.`) {
 		t.Fatalf("expected initial tab content, got %s", html)
+	}
+}
+
+// hasIslandManagedFormAttr reports whether html contains the bare
+// gosx.ManagedFormAttr contract attribute as its own attribute, not merely
+// as a prefix of a longer attribute sharing the same name (for example
+// data-gosx-form-state) — see hasManagedFormAttr in
+// route/managed_form_shorthand_test.go for the same rule applied to the
+// file-program renderer's output.
+func hasIslandManagedFormAttr(html string) bool {
+	return strings.Contains(html, " "+gosx.ManagedFormAttr+" ") ||
+		strings.Contains(html, " "+gosx.ManagedFormAttr+">")
+}
+
+// TestRenderIslandFromProgramExpandsManagedFormShorthand covers gosx#179
+// F2: the island renderer was a third form render surface that never
+// expanded data-gosx-managed. renderResolvedNodeInto (called through
+// RenderIslandFromProgram -> renderProgramHTML -> RenderResolvedHTML) used
+// to copy a resolved <form> node's attributes straight through, so an
+// island form authored with the shorthand served with the raw attribute
+// instead of the managed-form contract, unlike the same shorthand on a
+// .gsx page rendered outside an island (route/fileprogram.go) or through
+// the Go Node API (node.go). The navigation runtime still intercepted the
+// unexpanded form client-side, so this was never a fail-open bug — only a
+// mismatch between what the three render surfaces served.
+func TestRenderIslandFromProgramExpandsManagedFormShorthand(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetProgramDir("/gosx/islands")
+
+	prog := &program.Program{
+		Name: "ShorthandForm",
+		Nodes: []program.Node{
+			{ // 0: form root, bare shorthand
+				Kind: program.NodeElement,
+				Tag:  "form",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "method", Value: "post"},
+					{Kind: program.AttrStatic, Name: "action", Value: "/x/__actions/y"},
+					{Kind: program.AttrBool, Name: "data-gosx-managed"},
+				},
+				Children: []program.NodeID{1},
+			},
+			{ // 1: input
+				Kind: program.NodeElement,
+				Tag:  "input",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "name", Value: "q"},
+				},
+			},
+		},
+		Root: 0,
+	}
+
+	node := r.RenderIslandFromProgram(prog, nil)
+	html := gosx.RenderHTML(node)
+
+	for _, want := range []string{
+		`method="post"`,
+		`action="/x/__actions/y"`,
+		gosx.ManagedFormStateAttr + `="idle"`,
+		gosx.EnhancementAttr + `="form"`,
+		gosx.EnhancementLayerAttr + `="bootstrap"`,
+		gosx.RuntimeFallbackAttr + `="native-form"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("expected %q in island-rendered managed-shorthand form html %q", want, html)
+		}
+	}
+	if !hasIslandManagedFormAttr(html) {
+		t.Fatalf("expected the bare %s attribute in island-rendered form html %q", gosx.ManagedFormAttr, html)
+	}
+	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("expected shorthand attribute removed from island output, got %q", html)
+	}
+	// The shorthand must not add a mode attribute — the HTML method
+	// attribute stays authoritative, matching node.go's and the
+	// file-program renderer's expansion rule.
+	if strings.Contains(html, gosx.ManagedFormModeAttr) {
+		t.Fatalf("expected no %s from the shorthand alone, got %q", gosx.ManagedFormModeAttr, html)
+	}
+}
+
+// TestRenderIslandFromProgramManagedFormShorthandFalseOptsOut is the
+// island-render counterpart to the .gsx and Node-API opt-out tests: a
+// falsy shorthand value must not expand, and must survive unchanged.
+func TestRenderIslandFromProgramManagedFormShorthandFalseOptsOut(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetProgramDir("/gosx/islands")
+
+	prog := &program.Program{
+		Name: "ShorthandFormOptOut",
+		Nodes: []program.Node{
+			{
+				Kind: program.NodeElement,
+				Tag:  "form",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "action", Value: "/x/__actions/y"},
+					{Kind: program.AttrStatic, Name: "data-gosx-managed", Value: "false"},
+				},
+			},
+		},
+		Root: 0,
+	}
+
+	node := r.RenderIslandFromProgram(prog, nil)
+	html := gosx.RenderHTML(node)
+
+	if !strings.Contains(html, `data-gosx-managed="false"`) {
+		t.Fatalf("expected the literal opt-out attribute in island output, got %q", html)
+	}
+	if hasIslandManagedFormAttr(html) {
+		t.Fatalf("expected no expansion for data-gosx-managed=\"false\" in island output, got %q", html)
 	}
 }
 

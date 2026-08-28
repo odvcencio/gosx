@@ -1,0 +1,10 @@
+{
+  "name": "@gosx/runtime-contract",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

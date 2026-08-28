@@ -53,3 +53,29 @@ func TestNumberMatchesCurrent(t *testing.T) {
 		t.Errorf("Current = %q, want a leading %q", Current, "v")
 	}
 }
+
+// TestREADMEDeclaresCurrentRelease pins the README's stated release against
+// Current. Both moved by hand during a release, and a hand edit that misses
+// one is silent: the release bumps a constant, the README keeps advertising
+// the previous tag, and a consumer pinning the new version meets a CLI that
+// reports the old one.
+//
+// This is not hypothetical. v0.46.0 and v0.47.0 both shipped with Current
+// left at v0.45.2, because the bump used a text substitution that matched
+// nothing and reported no error. Downstream projects had to set
+// GOSX_SKIP_VERSION_CHECK to build against their own pinned release.
+func TestREADMEDeclaresCurrentRelease(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("reading README.md: %v", err)
+	}
+	readme := string(raw)
+	if !strings.Contains(readme, "**"+Current+"**") {
+		t.Fatalf("README.md does not advertise %s; update both when releasing", Current)
+	}
+	for _, stale := range regexp.MustCompile(`\*\*v\d+\.\d+\.\d+\*\*`).FindAllString(readme, -1) {
+		if stale != "**"+Current+"**" {
+			t.Errorf("README.md still advertises %s; Current is %s", stale, Current)
+		}
+	}
+}

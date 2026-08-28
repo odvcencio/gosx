@@ -16,8 +16,8 @@ import (
 // must show that the implementation is genuinely absent.
 
 const (
-	webgpuRendererPath = "../../client/js/bootstrap-src/16a-scene-webgpu.js"
-	webglRendererPath  = "../../client/js/bootstrap-src/16-scene-webgl.js"
+	webgpuRendererPath = "../../client/runtime/scene3d/webgpu.ts"
+	webglRendererPath  = "../../client/runtime/scene3d/webgl.ts"
 	sceneGraphPath     = "../scene.go"
 )
 

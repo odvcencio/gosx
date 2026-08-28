@@ -2,15 +2,70 @@ package docs
 
 func Layout() Node {
 	return <div>
-		<a class="skip-link" href="#toc">Skip to table of contents</a>
-		<section class={if data.mode == "light" { "docs-section light" } else { "docs-section" }}>
+		<a class="skip-link" href="#docs-content">Skip to documentation</a>
+		<section class={docsSectionClassName}>
 			<div class="docs-grid">
-				<nav id="toc" class="toc-rail" role="navigation" aria-label="Page contents">
-					<Each of={data.toc} as="entry">
-						<a href={entry.href} class="toc-link">{entry.label}</a>
-					</Each>
-				</nav>
-				<article class="docs-content prose">
+				<aside class="docs-rail" aria-label="Documentation navigation">
+					<nav
+						class="docs-guide-navigation docs-guide-navigation--desktop"
+						aria-label="All documentation guides"
+					>
+						<a href="/docs" data-gosx-link="true" class={docsIndexClassName} aria-current={docsIndexCurrent}>
+							<span>Search &amp; guide index</span>
+							<small>All documentation</small>
+						</a>
+						<Each of={docsNavigation} as="section">
+							<section class="docs-guide-group" aria-label={section.title}>
+								<h2>{section.title}</h2>
+								<Each of={section.entries} as="entry">
+									<a
+										href={entry.href}
+										data-gosx-link="true"
+										class={entry.className}
+										aria-current={entry.ariaCurrent}
+									>{entry.title}</a>
+								</Each>
+							</section>
+						</Each>
+					</nav>
+					<details class="docs-guide-disclosure">
+						<summary>Guide index</summary>
+						<nav
+							class="docs-guide-navigation docs-guide-navigation--mobile"
+							aria-label="All documentation guides"
+						>
+							<a
+								href="/docs"
+								data-gosx-link="true"
+								class={docsIndexClassName}
+								aria-current={docsIndexCurrent}
+							>
+								<span>Search &amp; guide index</span>
+								<small>All documentation</small>
+							</a>
+							<Each of={docsNavigation} as="section">
+								<section class="docs-guide-group" aria-label={section.title}>
+									<h2>{section.title}</h2>
+									<Each of={section.entries} as="entry">
+										<a
+											href={entry.href}
+											data-gosx-link="true"
+											class={entry.className}
+											aria-current={entry.ariaCurrent}
+										>{entry.title}</a>
+									</Each>
+								</section>
+							</Each>
+						</nav>
+					</details>
+					<nav id="toc" class="docs-page-toc" aria-label="On this page">
+						<p>On this page</p>
+						<Each of={data.toc} as="entry">
+							<a href={entry.href} class="toc-link">{entry.label}</a>
+						</Each>
+					</nav>
+				</aside>
+				<article id="docs-content" class="docs-content prose" tabindex="-1">
 					<header class="docs-header">
 						<p class="docs-header__eyebrow kicker">GoSX Docs</p>
 						<h1 class="docs-header__title">{data.title}</h1>
@@ -23,22 +78,24 @@ func Layout() Node {
 					</header>
 					<Slot />
 					<footer class="docs-footer">
-						<If cond={data.prev != nil}>
+						<If cond={docsSourceURL != nil}>
+							<a href={docsSourceURL} rel="noopener" class="docs-footer__source">
+								<span>Page source</span>
+								<code>{docsSourcePath}</code>
+							</a>
+						</If>
+						<If cond={docsPrevious != nil}>
 							<a
-								href={data.prev.href}
+								href={docsPrevious.href}
 								data-gosx-link="true"
 								class="docs-footer__link docs-footer__link--prev"
 							>
-								{data.prev.label}
+								{docsPrevious.label}
 							</a>
 						</If>
-						<If cond={data.next != nil}>
-							<a
-								href={data.next.href}
-								data-gosx-link="true"
-								class="docs-footer__link docs-footer__link--next"
-							>
-								{data.next.label}
+						<If cond={docsNext != nil}>
+							<a href={docsNext.href} data-gosx-link="true" class="docs-footer__link docs-footer__link--next">
+								{docsNext.label}
 							</a>
 						</If>
 					</footer>

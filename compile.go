@@ -3,6 +3,7 @@
 package gosx
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 
@@ -20,7 +21,22 @@ var (
 // SetGrammarBlob preloads the GoSX grammar from a pre-compiled binary blob.
 // Call this before any Compile/Parse calls to skip the 40s grammar generation.
 // The gosx library embeds a default blob, and callers may provide an override.
+//
+// An override that does not match the blob embedded in this gosx version is
+// refused with an error and nothing is loaded, so a later Language() call
+// falls back to the embedded blob. Parse tables from a different grammar
+// version can mis-parse real source with no error node to point at
+// (gosx#139: an app-staged dist/gosx-grammar.blob from an older checkout
+// failed context-dependently on a multi-line self-closing svg path). The
+// trivial smoke parse cannot catch that class, so the byte fingerprint is
+// the gate. A rejected override costs nothing: the embedded blob carries the
+// same grammar this module compiles against.
 func SetGrammarBlob(data []byte) error {
+	if len(embeddedGrammarBlob) > 0 && !bytes.Equal(data, embeddedGrammarBlob) {
+		return fmt.Errorf(
+			"grammar blob override (%d bytes) does not match the blob embedded in this gosx version (%d bytes); ignoring the override — regenerate it with `go run ./cmd/gosx-grammar-blob` or delete it to use the embedded grammar",
+			len(data), len(embeddedGrammarBlob))
+	}
 	var err error
 	gosxLangOnce.Do(func() {
 		gosxLangCached, gosxLangErr = loadGSXLanguageBlob(data)

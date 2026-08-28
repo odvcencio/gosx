@@ -124,20 +124,23 @@ type InteractionProfileIR struct {
 // InstancedGLBMeshIR is the typed compatibility record for one GLB-backed
 // instanced mesh batch — one wire node per (src, material) pair.
 type InstancedGLBMeshIR struct {
-	ID           string           `json:"id"`
-	Src          string           `json:"src"`
-	MaterialKind string           `json:"materialKind,omitempty"`
-	Color        string           `json:"color,omitempty"`
-	Texture      string           `json:"texture,omitempty"`
-	Opacity      *float64         `json:"opacity,omitempty"`
-	Emissive     *float64         `json:"emissive,omitempty"`
-	BlendMode    string           `json:"blendMode,omitempty"`
-	Roughness    float64          `json:"roughness,omitempty"`
-	Metalness    float64          `json:"metalness,omitempty"`
-	Instances    []MeshInstanceIR `json:"instances"`
-	Pickable     *bool            `json:"pickable,omitempty"`
-	Visible      *bool            `json:"visible,omitempty"`
-	Static       *bool            `json:"static,omitempty"`
+	ID                string           `json:"id"`
+	Src               string           `json:"src"`
+	MaterialKind      string           `json:"materialKind,omitempty"`
+	Color             string           `json:"color,omitempty"`
+	Texture           string           `json:"texture,omitempty"`
+	Opacity           *float64         `json:"opacity,omitempty"`
+	Emissive          *float64         `json:"emissive,omitempty"`
+	BlendMode         string           `json:"blendMode,omitempty"`
+	Roughness         float64          `json:"roughness,omitempty"`
+	Metalness         float64          `json:"metalness,omitempty"`
+	SpecularIntensity *float64         `json:"specularIntensity,omitempty"`
+	SpecularColor     *[3]float64      `json:"specularColor,omitempty"`
+	IOR               *float64         `json:"ior,omitempty"`
+	Instances         []MeshInstanceIR `json:"instances"`
+	Pickable          *bool            `json:"pickable,omitempty"`
+	Visible           *bool            `json:"visible,omitempty"`
+	Static            *bool            `json:"static,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
@@ -221,6 +224,9 @@ type ObjectIR struct {
 	Transmission       float64                    `json:"transmission,omitempty"`
 	Iridescence        float64                    `json:"iridescence,omitempty"`
 	Anisotropy         float64                    `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64                   `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64                `json:"specularColor,omitempty"`
+	IOR                *float64                   `json:"ior,omitempty"`
 	NormalMap          string                     `json:"normalMap,omitempty"`
 	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
 	MetalnessMap       string                     `json:"metalnessMap,omitempty"`
@@ -268,6 +274,9 @@ type ObjectIR struct {
 type ModelIR struct {
 	ObjectIR
 	Src                string   `json:"src,omitempty"`
+	PreviewSrc         string   `json:"previewSrc,omitempty"`
+	FullSrc            string   `json:"fullSrc,omitempty"`
+	Progressive        bool     `json:"progressive,omitempty"`
 	ScaleX             float64  `json:"scaleX,omitempty"`
 	ScaleY             float64  `json:"scaleY,omitempty"`
 	ScaleZ             float64  `json:"scaleZ,omitempty"`
@@ -305,6 +314,9 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 	type modelWire struct {
 		objectAlias
 		Src                string   `json:"src,omitempty"`
+		PreviewSrc         string   `json:"previewSrc,omitempty"`
+		FullSrc            string   `json:"fullSrc,omitempty"`
+		Progressive        bool     `json:"progressive,omitempty"`
 		ScaleX             float64  `json:"scaleX,omitempty"`
 		ScaleY             float64  `json:"scaleY,omitempty"`
 		ScaleZ             float64  `json:"scaleZ,omitempty"`
@@ -323,6 +335,9 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 	return json.Marshal(modelWire{
 		objectAlias:        objectAlias(m.ObjectIR),
 		Src:                m.Src,
+		PreviewSrc:         strings.TrimSpace(m.PreviewSrc),
+		FullSrc:            strings.TrimSpace(m.FullSrc),
+		Progressive:        m.Progressive,
 		ScaleX:             m.ScaleX,
 		ScaleY:             m.ScaleY,
 		ScaleZ:             m.ScaleZ,
@@ -489,7 +504,7 @@ type LightIR struct {
 // normalised (kind, stride and size exponent resolved), so the payload is
 // self-describing and does not depend on the client agreeing about defaults.
 //
-// See client/js/bootstrap-src/11b-scene-points-generate.js for the expander
+// See client/js/bootstrap-src/11b-scene-points-generate.ts for the expander
 // and scene/points_generator.go for the determinism contract.
 type PointsGeneratorIR struct {
 	Kind       string  `json:"kind"`
@@ -599,6 +614,9 @@ type InstancedMeshIR struct {
 	Transmission         float64                    `json:"transmission,omitempty"`
 	Iridescence          float64                    `json:"iridescence,omitempty"`
 	Anisotropy           float64                    `json:"anisotropy,omitempty"`
+	SpecularIntensity    *float64                   `json:"specularIntensity,omitempty"`
+	SpecularColor        *[3]float64                `json:"specularColor,omitempty"`
+	IOR                  *float64                   `json:"ior,omitempty"`
 	NormalMap            string                     `json:"normalMap,omitempty"`
 	RoughnessMap         string                     `json:"roughnessMap,omitempty"`
 	MetalnessMap         string                     `json:"metalnessMap,omitempty"`
@@ -974,15 +992,17 @@ type ParticleForceIR struct {
 
 // ParticleMaterialIR describes the material for a GPU particle system.
 type ParticleMaterialIR struct {
-	Color       string  `json:"color,omitempty"`
-	ColorEnd    string  `json:"colorEnd,omitempty"`
-	Style       string  `json:"style,omitempty"`
-	Size        float64 `json:"size,omitempty"`
-	SizeEnd     float64 `json:"sizeEnd,omitempty"`
-	Opacity     float64 `json:"opacity,omitempty"`
-	OpacityEnd  float64 `json:"opacityEnd,omitempty"`
-	BlendMode   string  `json:"blendMode,omitempty"`
-	Attenuation bool    `json:"attenuation,omitempty"`
+	Color        string  `json:"color,omitempty"`
+	ColorEnd     string  `json:"colorEnd,omitempty"`
+	Style        string  `json:"style,omitempty"`
+	Size         float64 `json:"size,omitempty"`
+	SizeEnd      float64 `json:"sizeEnd,omitempty"`
+	Opacity      float64 `json:"opacity,omitempty"`
+	OpacityEnd   float64 `json:"opacityEnd,omitempty"`
+	BlendMode    string  `json:"blendMode,omitempty"`
+	Attenuation  bool    `json:"attenuation,omitempty"`
+	MinPixelSize float64 `json:"minPixelSize,omitempty"`
+	MaxPixelSize float64 `json:"maxPixelSize,omitempty"`
 }
 
 // AnimationClipIR is the typed compatibility record for one procedural
@@ -1020,6 +1040,7 @@ type EnvironmentIR struct {
 	GroundIntensity  float64        `json:"groundIntensity,omitempty"`
 	EnvMap           string         `json:"envMap,omitempty"`
 	IBL              EnvironmentIBL `json:"ibl,omitzero"`
+	Sky              *Sky           `json:"sky,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Exposure         float64        `json:"exposure,omitempty"`
@@ -1940,6 +1961,9 @@ func (item ObjectIR) legacyProps() map[string]any {
 	setNumeric(record, "transmission", item.Transmission)
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
+	setNumericPtr(record, "ior", item.IOR)
+	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
+	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -1995,6 +2019,11 @@ func (item ModelIR) legacyProps() map[string]any {
 		"id":  item.ID,
 		"src": src,
 	}
+	setString(record, "previewSrc", item.PreviewSrc)
+	setString(record, "fullSrc", item.FullSrc)
+	if item.Progressive {
+		record["progressive"] = true
+	}
 	setNumeric(record, "x", item.X)
 	setNumeric(record, "y", item.Y)
 	setNumeric(record, "z", item.Z)
@@ -2032,6 +2061,9 @@ func (item ModelIR) legacyProps() map[string]any {
 	setNumeric(record, "transmission", item.Transmission)
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
+	setNumericPtr(record, "ior", item.IOR)
+	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
+	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -2228,6 +2260,9 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setNumeric(record, "transmission", item.Transmission)
 	setNumeric(record, "iridescence", item.Iridescence)
 	setNumeric(record, "anisotropy", item.Anisotropy)
+	setNumericPtr(record, "ior", item.IOR)
+	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
+	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	setString(record, "normalMap", item.NormalMap)
 	setString(record, "roughnessMap", item.RoughnessMap)
 	setString(record, "metalnessMap", item.MetalnessMap)
@@ -2300,6 +2335,9 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	setString(record, "blendMode", item.BlendMode)
 	setNumeric(record, "roughness", item.Roughness)
 	setNumeric(record, "metalness", item.Metalness)
+	setNumericPtr(record, "ior", item.IOR)
+	setNumericPtr(record, "specularIntensity", item.SpecularIntensity)
+	setColor3Ptr(record, "specularColor", item.SpecularColor)
 	if item.Pickable != nil {
 		record["pickable"] = *item.Pickable
 	}
@@ -2973,6 +3011,7 @@ func (item EnvironmentIR) IsZero() bool {
 		item.GroundIntensity == 0 &&
 		item.EnvMap == "" &&
 		item.IBL.IsZero() &&
+		item.Sky == nil &&
 		item.EnvIntensity == 0 &&
 		item.EnvRotation == 0 &&
 		item.Exposure == 0 &&
@@ -3000,6 +3039,9 @@ func (item EnvironmentIR) legacyProps() map[string]any {
 	if !item.IBL.IsZero() {
 		record["ibl"] = item.IBL
 	}
+	if item.Sky != nil {
+		record["sky"] = item.Sky
+	}
 	setNumeric(record, "envIntensity", item.EnvIntensity)
 	setNumeric(record, "envRotation", item.EnvRotation)
 	setNumeric(record, "exposure", item.Exposure)
@@ -3020,6 +3062,7 @@ func (environment Environment) sceneIR() EnvironmentIR {
 		GroundIntensity:  environment.GroundIntensity,
 		EnvMap:           strings.TrimSpace(environment.EnvironmentMap),
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
+		Sky:              normalizeSky(environment.Sky),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Exposure:         environment.Exposure,
@@ -3057,6 +3100,7 @@ var collectFeatureOrder = []capability.Feature{
 	capability.FeatureWaterSim,
 	capability.FeatureIBL,
 	capability.FeatureEnvironmentMap,
+	capability.FeatureSkyEnvironment,
 	capability.FeatureGPUPicking,
 	capability.FeatureLineDashed,
 	capability.FeatureSkinning,
@@ -3132,16 +3176,30 @@ func collectFeatures(ir SceneIR) []capability.Feature {
 	// ibl and environment-map: the environment carries a non-empty env-map.
 	//
 	// One authored field raises two features because the two questions differ.
-	// ibl asks whether a backend runs a split-sum fit; no backend does, so both
-	// its cells are false. environment-map asks whether a backend opens the
-	// image at all; WebGL2 does and WebGPU does not. Raising only ibl reported
-	// the two backends as equal, and they are not.
+	// ibl asks whether a backend runs a split-sum fit: WebGPU does
+	// (syncEnvironmentIBL consumes the prefiltered products unconditionally);
+	// WebGL2 only above the 18-fragment-texture-unit gate, so its cell stays
+	// false. environment-map asks whether a backend opens the legacy equirect
+	// image at all: both backends do now. See capability.go's ibl and
+	// environment-map rows.
+	//
+	// Pairing a bare EnvMap with ibl is conservative: an env-map-only scene now
+	// degrades on WebGL2 even though it authored no split-sum descriptor. See
+	// the open question this raises in specs/scene3d-parity/cluster-a-
+	// environment.md section 4, Q7; this cluster does not resolve it.
 	if strings.TrimSpace(ir.Environment.EnvMap) != "" {
 		seen[capability.FeatureIBL] = true
 		seen[capability.FeatureEnvironmentMap] = true
 	}
 	if !ir.Environment.IBL.IsZero() {
 		seen[capability.FeatureIBL] = true
+	}
+
+	// sky-environment: the environment mode of an authored Sky. Gradient sky
+	// (the default and the degrade target) draws on every backend and raises
+	// nothing; see the row's doc comment in capability.go.
+	if skyRaisesEnvironmentFeature(ir.Environment.Sky) {
+		seen[capability.FeatureSkyEnvironment] = true
 	}
 
 	// gpu-picking: any ObjectIR or InstancedGLBMeshIR is explicitly pickable.

@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"m31labs.dev/gosx"
@@ -13,15 +14,18 @@ import (
 // PageState carries shared request-scoped page response state used by both
 // server.Context and route.RouteContext.
 type PageState struct {
-	requestPath string
-	headers     http.Header
-	status      int
-	metadata    Metadata
-	head        []gosx.Node
-	deferred    *DeferredRegistry
-	cache       *CacheState
-	runtime     *PageRuntime
-	nonce       string
+	requestPath    string
+	headers        http.Header
+	status         int
+	metadata       Metadata
+	head           []gosx.Node
+	bodyAttrs      gosx.AttrList
+	deferred       *DeferredRegistry
+	cache          *CacheState
+	runtime        *PageRuntime
+	nonce          string
+	language       string
+	navigationHead func(nonce string) gosx.Node
 }
 
 // NewPageState creates an empty shared page-state container.
@@ -168,6 +172,24 @@ func (s *PageState) SetNonce(nonce string) {
 	s.nonce = nonce
 }
 
+// SetLanguage records the BCP 47 language tag for the document shell.
+// Language is request-scoped; PageState deliberately has no implicit global
+// language default so applications can choose the locale they serve.
+func (s *PageState) SetLanguage(language string) {
+	if s == nil {
+		return
+	}
+	s.language = strings.TrimSpace(language)
+}
+
+// Language returns the document language configured for this page.
+func (s *PageState) Language() string {
+	if s == nil {
+		return ""
+	}
+	return s.language
+}
+
 // Nonce returns the per-request Content-Security-Policy script nonce set via
 // SetNonce, or an empty string when none was set.
 func (s *PageState) Nonce() string {
@@ -175,6 +197,19 @@ func (s *PageState) Nonce() string {
 		return ""
 	}
 	return s.nonce
+}
+
+// InlineScript renders request-owned executable JavaScript with the nonce
+// generated for this page. The helper also escapes authored closing script
+// sequences, so callers do not need to hand-build RawHTML.
+func (s *PageState) InlineScript(source string) gosx.Node {
+	return gosx.InlineScript(source, s.Nonce())
+}
+
+// JSONScript renders request-owned JSON data with this page's CSP nonce and
+// safe script-text escaping.
+func (s *PageState) JSONScript(id string, value any) gosx.Node {
+	return gosx.JSONScript(id, s.Nonce(), value)
 }
 
 // SetMetadata merges page metadata into the request context.
@@ -193,7 +228,26 @@ func (s *PageState) MetadataValue() Metadata {
 	return s.metadata
 }
 
-// AddHead appends arbitrary head nodes to the response document.
+// SetNavigationHead registers the framework-owned navigation-runtime head
+// builder. App.EnableNavigation and the route mount seam are the only callers;
+// applications should not add a navigation runtime through AddHead because a
+// second runtime cannot safely share the request nonce or lifecycle state.
+func (s *PageState) SetNavigationHead(fn func(nonce string) gosx.Node) {
+	if s == nil {
+		return
+	}
+	s.navigationHead = fn
+}
+
+// NavigationEnabled reports whether the framework-owned navigation head
+// builder is attached to this page state.
+func (s *PageState) NavigationEnabled() bool {
+	return s != nil && s.navigationHead != nil
+}
+
+// AddHead appends arbitrary head nodes to the response document. The
+// framework-owned navigation runtime is deliberately not inferred from these
+// nodes; SetNavigationHead is its sole owner.
 func (s *PageState) AddHead(nodes ...gosx.Node) {
 	if s == nil {
 		return
@@ -204,6 +258,40 @@ func (s *PageState) AddHead(nodes ...gosx.Node) {
 		}
 		s.head = append(s.head, node)
 	}
+}
+
+// BodyAttrs appends attributes to the rendered <body> element.
+//
+// Multiple calls accumulate rather than clobber, the same rule AddHead
+// follows for head nodes: a layout can set a heartbeat attribute and a
+// nested page can add another, and both reach the final <body> tag.
+// Escaping runs through gosx.RenderAttrs — the same helper El uses for
+// every other element's attributes — so a value set here carries the same
+// guarantees an attribute written directly on a gosx.El node would.
+//
+// This exists because HTMLDocument owns the <body> element; application
+// code never renders it directly, so it has had no supported way to put an
+// attribute there. The first consumer is a body-level
+// NavigationHeartbeatAttr — the client runtime's element scan walks
+// document.body itself, not just its children (see findElement in
+// client/runtime/host/navigation.ts), so an attribute set here is exactly
+// as visible to the runtime as one set on any other element. Before this,
+// the only way to reach <body> was to render the whole page body inside a
+// wrapper gosx.El carrying the attributes and a `display:contents` rule to
+// keep it out of layout — see the migration note on NavigationHeartbeatAttr.
+func (s *PageState) BodyAttrs(pairs ...any) {
+	if s == nil {
+		return
+	}
+	s.bodyAttrs = append(s.bodyAttrs, gosx.Attrs(pairs...)...)
+}
+
+// BodyAttrsValue returns the accumulated body attributes.
+func (s *PageState) BodyAttrsValue() gosx.AttrList {
+	if s == nil {
+		return nil
+	}
+	return s.bodyAttrs
 }
 
 // Head renders metadata and appended head nodes into a fragment.
@@ -222,6 +310,11 @@ func (s *PageState) Head() gosx.Node {
 		nodes = append(nodes, metaHead)
 	}
 	nodes = append(nodes, s.head...)
+	if s.navigationHead != nil {
+		if nav := s.navigationHead(s.nonce); !nav.IsZero() {
+			nodes = append(nodes, nav)
+		}
+	}
 	if s.runtime != nil {
 		if runtimeHead := s.runtime.HeadWithNonce(s.nonce); !runtimeHead.IsZero() {
 			nodes = append(nodes, runtimeHead)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,52 @@ func main() {}
 	}
 	if _, err := os.Stat(out); err != nil {
 		t.Fatalf("expected binary at %s: %v", out, err)
+	}
+}
+
+func TestRunDevStrictGateRunsBeforeAssetWritesOrRunnerStart(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "dev-strict-gate")
+	err := RunDev(dir)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("RunDev error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Fatalf("strict gate wrote dev assets before failing: %v", statErr)
+	}
+}
+
+func TestDevChangeStrictGateRunsBeforeAssetWritesOrRestart(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "dev-change-strict-gate")
+	err := rebuildChangedDevApp(context.Background(), dir, nil, "0", "http://127.0.0.1:0")
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("rebuildChangedDevApp error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Fatalf("strict change gate wrote dev assets before failing: %v", statErr)
+	}
+}
+
+type recordingDevStopper struct {
+	stopped bool
+}
+
+func (s *recordingDevStopper) stop() error {
+	s.stopped = true
+	return nil
+}
+
+func TestDevHotSwapPreflightStopsUnsafeUpstream(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "dev-hotswap-strict-gate")
+	runner := &recordingDevStopper{}
+	err := preflightChangedDevApp(context.Background(), dir, runner)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("preflightChangedDevApp error = %v", err)
+	}
+	if !runner.stopped {
+		t.Fatal("invalid hot swap left the old upstream process running")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Fatalf("hot-swap preflight wrote assets before failing: %v", statErr)
 	}
 }
 

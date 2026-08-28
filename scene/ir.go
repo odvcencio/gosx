@@ -113,6 +113,7 @@ type IREnvironment struct {
 	GroundIntensity  float64        `json:"groundIntensity,omitempty"`
 	EnvMap           string         `json:"envMap,omitempty"`
 	IBL              EnvironmentIBL `json:"ibl,omitzero"`
+	Sky              *Sky           `json:"sky,omitempty"`
 	EnvIntensity     float64        `json:"envIntensity,omitempty"`
 	EnvRotation      float64        `json:"envRotation,omitempty"`
 	Background       string         `json:"background,omitempty"`
@@ -137,6 +138,9 @@ type IRMaterial struct {
 	Transmission       float64                      `json:"transmission,omitempty"`
 	Iridescence        float64                      `json:"iridescence,omitempty"`
 	Anisotropy         float64                      `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64                     `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64                  `json:"specularColor,omitempty"`
+	IOR                *float64                     `json:"ior,omitempty"`
 	Texture            string                       `json:"texture,omitempty"`
 	NormalMap          string                       `json:"normalMap,omitempty"`
 	RoughnessMap       string                       `json:"roughnessMap,omitempty"`
@@ -178,6 +182,9 @@ type IRMaterialVariant struct {
 	Transmission       float64                    `json:"transmission,omitempty"`
 	Iridescence        float64                    `json:"iridescence,omitempty"`
 	Anisotropy         float64                    `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64                   `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64                `json:"specularColor,omitempty"`
+	IOR                *float64                   `json:"ior,omitempty"`
 	Texture            string                     `json:"texture,omitempty"`
 	NormalMap          string                     `json:"normalMap,omitempty"`
 	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
@@ -241,6 +248,9 @@ type IRTransform struct {
 type IRMeshNode struct {
 	Kind               string      `json:"kind,omitempty"`
 	Src                string      `json:"src,omitempty"`
+	PreviewSrc         string      `json:"previewSrc,omitempty"`
+	FullSrc            string      `json:"fullSrc,omitempty"`
+	Progressive        bool        `json:"progressive,omitempty"`
 	Bounds             float64     `json:"bounds,omitempty"`
 	Fit                string      `json:"fit,omitempty"`
 	FitAlign           string      `json:"fitAlign,omitempty"`
@@ -355,15 +365,17 @@ type IRParticleForce struct {
 }
 
 type IRParticleMaterial struct {
-	Color       string  `json:"color,omitempty"`
-	ColorEnd    string  `json:"colorEnd,omitempty"`
-	Style       string  `json:"style,omitempty"`
-	Size        float64 `json:"size,omitempty"`
-	SizeEnd     float64 `json:"sizeEnd,omitempty"`
-	Opacity     float64 `json:"opacity,omitempty"`
-	OpacityEnd  float64 `json:"opacityEnd,omitempty"`
-	BlendMode   string  `json:"blendMode,omitempty"`
-	Attenuation bool    `json:"attenuation,omitempty"`
+	Color        string  `json:"color,omitempty"`
+	ColorEnd     string  `json:"colorEnd,omitempty"`
+	Style        string  `json:"style,omitempty"`
+	Size         float64 `json:"size,omitempty"`
+	SizeEnd      float64 `json:"sizeEnd,omitempty"`
+	Opacity      float64 `json:"opacity,omitempty"`
+	OpacityEnd   float64 `json:"opacityEnd,omitempty"`
+	BlendMode    string  `json:"blendMode,omitempty"`
+	Attenuation  bool    `json:"attenuation,omitempty"`
+	MinPixelSize float64 `json:"minPixelSize,omitempty"`
+	MaxPixelSize float64 `json:"maxPixelSize,omitempty"`
 }
 
 type IRSpriteNode struct {
@@ -817,6 +829,7 @@ func environmentToIR(background string, environment EnvironmentIR) IREnvironment
 		GroundIntensity:  environment.GroundIntensity,
 		EnvMap:           environment.EnvMap,
 		IBL:              normalizeEnvironmentIBL(environment.IBL),
+		Sky:              normalizeSky(environment.Sky),
 		EnvIntensity:     environment.EnvIntensity,
 		EnvRotation:      environment.EnvRotation,
 		Background:       strings.TrimSpace(background),
@@ -888,6 +901,9 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		Transmission:       object.Transmission,
 		Iridescence:        object.Iridescence,
 		Anisotropy:         object.Anisotropy,
+		SpecularIntensity:  object.SpecularIntensity,
+		SpecularColor:      copySpecularColor(object.SpecularColor),
+		IOR:                object.IOR,
 		NormalMap:          object.NormalMap,
 		RoughnessMap:       object.RoughnessMap,
 		MetalnessMap:       object.MetalnessMap,
@@ -922,12 +938,33 @@ func materialFromInstancedIR(mesh InstancedMeshIR) IRMaterial {
 		Emissive:           derefFloat64(mesh.Emissive),
 		Roughness:          mesh.Roughness,
 		Metalness:          mesh.Metalness,
+		Clearcoat:          mesh.Clearcoat,
+		Sheen:              mesh.Sheen,
+		Transmission:       mesh.Transmission,
+		Iridescence:        mesh.Iridescence,
+		Anisotropy:         mesh.Anisotropy,
+		SpecularIntensity:  mesh.SpecularIntensity,
+		SpecularColor:      copySpecularColor(mesh.SpecularColor),
+		IOR:                mesh.IOR,
 		NormalMap:          mesh.NormalMap,
 		RoughnessMap:       mesh.RoughnessMap,
 		MetalnessMap:       mesh.MetalnessMap,
 		OcclusionMap:       mesh.OcclusionMap,
 		EmissiveMap:        mesh.EmissiveMap,
 		TextureDescriptors: mesh.TextureDescriptors,
+		BlendMode:          mesh.BlendMode,
+		RenderPass:         mesh.RenderPass,
+		Wireframe:          mesh.Wireframe,
+		DepthWrite:         mesh.DepthWrite,
+		CustomVertex:       mesh.CustomVertex,
+		CustomFragment:     mesh.CustomFragment,
+		CustomVertexWGSL:   mesh.CustomVertexWGSL,
+		CustomFragmentWGSL: mesh.CustomFragmentWGSL,
+		CustomUniforms:     cloneSceneAnyMap(mesh.CustomUniforms),
+		ShaderBackend:      mesh.ShaderBackend,
+		ShaderLayout:       cloneSceneAnyMap(mesh.ShaderLayout),
+		ShaderSource:       mesh.ShaderSource,
+		ShaderSourceFiles:  cloneSceneStringMap(mesh.ShaderSourceFiles),
 	}
 }
 
@@ -972,6 +1009,9 @@ func modelToIRNode(model ModelIR, materialIndex int) IRNode {
 	node.Transform.ScaleY = model.ScaleY
 	node.Transform.ScaleZ = model.ScaleZ
 	node.Mesh.Src = model.Src
+	node.Mesh.PreviewSrc = model.PreviewSrc
+	node.Mesh.FullSrc = model.FullSrc
+	node.Mesh.Progressive = model.Progressive
 	node.Mesh.Bounds = model.Bounds
 	node.Mesh.Fit = model.Fit
 	node.Mesh.FitAlign = model.FitAlign
@@ -1264,15 +1304,17 @@ func forcesToIR(forces []ParticleForceIR) []IRParticleForce {
 
 func particleMaterialToIR(material ParticleMaterialIR) IRParticleMaterial {
 	return IRParticleMaterial{
-		Color:       material.Color,
-		ColorEnd:    material.ColorEnd,
-		Style:       material.Style,
-		Size:        material.Size,
-		SizeEnd:     material.SizeEnd,
-		Opacity:     material.Opacity,
-		OpacityEnd:  material.OpacityEnd,
-		BlendMode:   material.BlendMode,
-		Attenuation: material.Attenuation,
+		Color:        material.Color,
+		ColorEnd:     material.ColorEnd,
+		Style:        material.Style,
+		Size:         material.Size,
+		SizeEnd:      material.SizeEnd,
+		Opacity:      material.Opacity,
+		OpacityEnd:   material.OpacityEnd,
+		BlendMode:    material.BlendMode,
+		Attenuation:  material.Attenuation,
+		MinPixelSize: material.MinPixelSize,
+		MaxPixelSize: material.MaxPixelSize,
 	}
 }
 
