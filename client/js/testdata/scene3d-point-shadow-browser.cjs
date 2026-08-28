@@ -510,4 +510,16 @@ if (require.main === module) {
     .catch((e) => { clearTimeout(watchdog); console.error('preflight fatal:', e && e.message); process.exit(1); });
 }
 
-module.exports = { __activeDriver: null };
+module.exports = {
+  __activeDriver: null,
+  htmlFor,
+  waitReady,
+  settleFrames,
+  captureRGBA,
+  deltaStats,
+  changedPixels,
+  disposeExpr,
+  PRELOAD,
+  COUNTERS_EXPR,
+  ALL,
+};

@@ -17,12 +17,15 @@ const ALLOWED_BASENAMES = new Set([
   'bootstrap-feature-scene3d-webgpu.js',
   'bootstrap-feature-scene3d-command.js',
   'bootstrap-feature-scene3d.js',
+  'bootstrap-feature-scene3d-gltf.js',
+  'bootstrap-feature-scene3d-animation.js',
 ]);
 
 async function startDriver(opts) {
   const repoRoot = opts.repoRoot;
   const runtimeRoot = opts.runtimeRoot || path.join(repoRoot, 'client', 'js');
   const pages = opts.pages || {};
+  const assets = opts.assets || {};
   const preload = opts.preload || '';
   const errors = [];
   const warnings = [];
@@ -49,6 +52,16 @@ async function startDriver(opts) {
     if (Object.prototype.hasOwnProperty.call(pages, url)) {
       const body = Buffer.from(pages[url]);
       res.writeHead(200, { 'content-type': 'text/html', 'content-length': body.length });
+      res.end(body);
+      return;
+    }
+    if (Object.prototype.hasOwnProperty.call(assets, url)) {
+      const asset = assets[url];
+      const body = Buffer.from(asset.body);
+      res.writeHead(200, {
+        'content-type': asset.contentType || 'application/octet-stream',
+        'content-length': body.length,
+      });
       res.end(body);
       return;
     }
@@ -218,21 +231,32 @@ async function startDriver(opts) {
 
     const wsUrl = await new Promise((resolve, reject) => {
       let buf = '';
-      const t = setTimeout(() => reject(new Error('no DevTools ws URL')), STEP_MS);
-      const onExit = () => { clearTimeout(t); reject(new Error('chrome exited early: ' + buf)); };
-      const onErr = (e) => { clearTimeout(t); reject(new Error('chrome spawn error: ' + e.message)); };
-      chrome.stderr.on('data', (d) => {
+      const child = chrome; // stable handle; chrome may be nulled by cleanup
+      let settled = false;
+      let timer = null;
+      let onExit = null;
+      let onErr = null;
+      const settle = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (onExit) child.removeListener('exit', onExit);
+        if (onErr) child.removeListener('error', onErr);
+        child.stderr.removeListener('data', onData);
+        fn(val);
+      };
+      const onData = (d) => {
+        if (settled) return;
         buf += d.toString();
         const m = buf.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[^\s]+/);
-        if (m) {
-          clearTimeout(t);
-          chrome.removeListener('exit', onExit);
-          chrome.removeListener('error', onErr);
-          resolve(m[0]);
-        }
-      });
-      chrome.once('exit', onExit);
-      chrome.once('error', onErr);
+        if (m) settle(resolve, m[0]);
+      };
+      timer = setTimeout(() => settle(reject, new Error('no DevTools ws URL')), STEP_MS);
+      onExit = () => settle(reject, new Error('chrome exited early: ' + buf));
+      onErr = (e) => settle(reject, new Error('chrome spawn error: ' + e.message));
+      child.stderr.on('data', onData);
+      child.once('exit', onExit);
+      child.once('error', onErr);
     });
 
     ws = new WebSocket(wsUrl);
