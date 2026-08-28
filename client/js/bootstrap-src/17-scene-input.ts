@@ -783,6 +783,16 @@
       var vertexCount = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
       var directPositions = obj.directVertices && obj.vertices && obj.vertices.positions;
       var directUVs = obj.directVertices && obj.vertices && obj.vertices.uvs;
+      // Indexed direct geometry keeps its authored triangle order: the pick
+      // walk dereferences the index stream instead of assuming a flat soup, so
+      // primitiveIndex stays the authored triangle identity and UVs interpolate
+      // across the indexed corner vertices.
+      var directIndices = obj.directVertices && obj.vertices &&
+        obj.vertices.indices instanceof Uint32Array &&
+        obj.vertices.indices.length >= 3 &&
+        obj.vertices.indices.length % 3 === 0
+        ? obj.vertices.indices
+        : null;
       var modelMatrix = obj.directVertices && obj.modelMatrix && obj.modelMatrix.length >= 16
         ? obj.modelMatrix
         : null;
@@ -810,10 +820,14 @@
           : sceneWorldUVAt(uvs, vertexOffset + localIndex);
       }
 
-      for (var tri = 0; tri + 2 < vertexCount; tri += 3) {
-        var v0 = meshPointAt(tri);
-        var v1 = meshPointAt(tri + 1);
-        var v2 = meshPointAt(tri + 2);
+      var pickTriangleCount = directIndices ? directIndices.length : vertexCount;
+      for (var tri = 0; tri + 2 < pickTriangleCount; tri += 3) {
+        var corner0 = directIndices ? directIndices[tri] : tri;
+        var corner1 = directIndices ? directIndices[tri + 1] : tri + 1;
+        var corner2 = directIndices ? directIndices[tri + 2] : tri + 2;
+        var v0 = meshPointAt(corner0);
+        var v1 = meshPointAt(corner1);
+        var v2 = meshPointAt(corner2);
         if (!v0 || !v1 || !v2) continue;
 
         var hit = sceneRayIntersectsTriangle(ray.origin, ray.dir, v0, v1, v2);
@@ -824,9 +838,9 @@
             z: ray.origin.z + ray.dir.z * hit.distance,
           };
           var uv = sceneInterpolatedHitUV(
-            meshUVAt(tri),
-            meshUVAt(tri + 1),
-            meshUVAt(tri + 2),
+            meshUVAt(corner0),
+            meshUVAt(corner1),
+            meshUVAt(corner2),
             hit,
           );
           var triangleIndex = Math.floor(tri / 3);

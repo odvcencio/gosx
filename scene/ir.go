@@ -138,6 +138,9 @@ type IRMaterial struct {
 	Transmission       float64                      `json:"transmission,omitempty"`
 	Iridescence        float64                      `json:"iridescence,omitempty"`
 	Anisotropy         float64                      `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64                     `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64                  `json:"specularColor,omitempty"`
+	IOR                *float64                     `json:"ior,omitempty"`
 	Texture            string                       `json:"texture,omitempty"`
 	NormalMap          string                       `json:"normalMap,omitempty"`
 	RoughnessMap       string                       `json:"roughnessMap,omitempty"`
@@ -179,6 +182,9 @@ type IRMaterialVariant struct {
 	Transmission       float64                    `json:"transmission,omitempty"`
 	Iridescence        float64                    `json:"iridescence,omitempty"`
 	Anisotropy         float64                    `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64                   `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64                `json:"specularColor,omitempty"`
+	IOR                *float64                   `json:"ior,omitempty"`
 	Texture            string                     `json:"texture,omitempty"`
 	NormalMap          string                     `json:"normalMap,omitempty"`
 	RoughnessMap       string                     `json:"roughnessMap,omitempty"`
@@ -895,6 +901,9 @@ func materialFromObjectIR(object ObjectIR) IRMaterial {
 		Transmission:       object.Transmission,
 		Iridescence:        object.Iridescence,
 		Anisotropy:         object.Anisotropy,
+		SpecularIntensity:  object.SpecularIntensity,
+		SpecularColor:      copySpecularColor(object.SpecularColor),
+		IOR:                object.IOR,
 		NormalMap:          object.NormalMap,
 		RoughnessMap:       object.RoughnessMap,
 		MetalnessMap:       object.MetalnessMap,
@@ -929,12 +938,33 @@ func materialFromInstancedIR(mesh InstancedMeshIR) IRMaterial {
 		Emissive:           derefFloat64(mesh.Emissive),
 		Roughness:          mesh.Roughness,
 		Metalness:          mesh.Metalness,
+		Clearcoat:          mesh.Clearcoat,
+		Sheen:              mesh.Sheen,
+		Transmission:       mesh.Transmission,
+		Iridescence:        mesh.Iridescence,
+		Anisotropy:         mesh.Anisotropy,
+		SpecularIntensity:  mesh.SpecularIntensity,
+		SpecularColor:      copySpecularColor(mesh.SpecularColor),
+		IOR:                mesh.IOR,
 		NormalMap:          mesh.NormalMap,
 		RoughnessMap:       mesh.RoughnessMap,
 		MetalnessMap:       mesh.MetalnessMap,
 		OcclusionMap:       mesh.OcclusionMap,
 		EmissiveMap:        mesh.EmissiveMap,
 		TextureDescriptors: mesh.TextureDescriptors,
+		BlendMode:          mesh.BlendMode,
+		RenderPass:         mesh.RenderPass,
+		Wireframe:          mesh.Wireframe,
+		DepthWrite:         mesh.DepthWrite,
+		CustomVertex:       mesh.CustomVertex,
+		CustomFragment:     mesh.CustomFragment,
+		CustomVertexWGSL:   mesh.CustomVertexWGSL,
+		CustomFragmentWGSL: mesh.CustomFragmentWGSL,
+		CustomUniforms:     cloneSceneAnyMap(mesh.CustomUniforms),
+		ShaderBackend:      mesh.ShaderBackend,
+		ShaderLayout:       cloneSceneAnyMap(mesh.ShaderLayout),
+		ShaderSource:       mesh.ShaderSource,
+		ShaderSourceFiles:  cloneSceneStringMap(mesh.ShaderSourceFiles),
 	}
 }
 

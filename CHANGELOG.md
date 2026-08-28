@@ -2,6 +2,111 @@
 
 ## Unreleased
 
+## v0.53.8 (2026-08-24)
+
+### Added: strict bundle boundary and safe staged artifacts
+
+- Production, offline, static, and image stages now consume a freshly staged
+  dist/ tree rather than copying source roots directly.
+- gosx.config.json accepts strict build.bundle allowances for immutable
+  app/ or content/ data, exact anonymous public/ files, and exclusions.
+  Secrets, symlinks, special files, and mutable database/state sidecars are
+  denied by default and cannot be smuggled through exclusions.
+- Existing mutable application state should live outside app/, content/, and
+  public/; configure an explicit runtime volume or external state path instead
+  of placing it in a deployable bundle.
+
+## v0.53.7 (2026-08-23)
+
+### Added: opt-in action redirects can return to the submitted page
+
+- `action.Context.RedirectBackWithMessage` selects the already-sanitized
+  `__gosx_return_to` target when present, otherwise a sanitized root-relative
+  fallback, while carrying the same completion message through native
+  POST-redirect-GET and managed JSON responses. Query strings and fragments are
+  preserved, and invalid or empty targets resolve to the safe root path `/`.
+- The reserved return-target field remains private: it is removed before
+  application handlers observe `Context.FormData` and before values are
+  flashed or emitted in managed JSON.
+
+### Fixed: action redirect output is fail-closed
+
+- Explicit `Result.Redirect` values now pass through the same root-relative
+  sanitizer before native `Location` headers and managed JSON are emitted.
+  Unsafe non-empty redirects deterministically resolve to `/`, preventing an
+  open redirect while preserving valid explicit destinations.
+
+## v0.53.6 (2026-08-23)
+
+### Fixed: relocated production bundles load their own app files
+
+- Generated Go server binaries now use `-trimpath`, so moving a production bundle away from its source checkout does not leave runtime file loading pointed at the build machine.
+- End-to-end coverage proves page and sibling-fragment rendering after relocation, and the component-rendering docs clarify structural props compatibility.
+
+## v0.53.5 (2026-08-23)
+
+### Fixed: layout data contracts follow every real render context
+
+- Strict checking now validates a layout's `data.*` reads against the literal
+  keys returned by the descendant page loader that actually renders through
+  that layout. Nested layouts remain scoped to their own route subtree, and a
+  layout's loader cannot accidentally satisfy its own descendant contract.
+- Error and not-found views are checked with their real layout chains and
+  route patterns, including scoped, nested, per-page, `.gsx`, and `.html`
+  variants. Diagnostics are deterministic and deduplicated by source, route,
+  and render kind.
+- Layouts that author a `Bindings` expression deliberately abstain from this
+  static contract because the binding may replace the inherited page data at
+  runtime. Direct page data checks keep their existing behavior.
+
+## v0.53.4 (2026-08-23)
+
+### Added: native actions can preserve an exact same-origin return target
+
+- `action.ReturnTargetField` exposes the reserved `__gosx_return_to` form
+  field for progressively enhanced mutations that should return to a specific
+  path, query, and fragment. The server accepts only a root-relative,
+  same-origin target, removes the private field before application handlers or
+  feedback can observe it, and uses it ahead of a safe same-site referrer or
+  the action route fallback. Explicit handler redirects remain authoritative.
+
+### Fixed: managed navigation preserves and applies URL fragments
+
+- Authored fragments now survive fetch responses whose `Response.url` omits
+  them, including same-origin HTTP redirects that change the path or query.
+- Same-document fragment changes update history, focus, and scroll without a
+  redundant page fetch. Redirect-backed managed actions invalidate the target
+  page cache and scroll to their destination fragment instead of retaining the
+  outgoing scroll position.
+
+## v0.53.3 (2026-08-23)
+
+### Fixed: typed legacy `<Each>` preserves dynamic selector boundaries
+
+- The v0.53.2 selector guard incorrectly continued static field resolution
+  through map, interface, and `any` projections, treating valid legacy dynamic
+  keys as Go struct selectors and rejecting those views before rendering.
+- Resolution now stops at the dynamic boundary and keeps the projected selector
+  path opaque. Known struct hops before that boundary and real struct-backed
+  item fields remain strict. Focused lowering and strict-check coverage plus an
+  actual Gridiron Draft Room production build verify the corrected contract.
+
+## v0.53.2 (2026-08-23)
+
+### Fixed: typed legacy `<Each>` selectors honor strict field visibility
+
+- Legacy `<Each>` loops whose collection is statically resolvable to a declared
+  struct slice now validate item selectors against the same visible-field rules
+  as strict components. Go-invisible lowercase and snake-case selectors are
+  diagnosed before runtime instead of being silently lost by reflective
+  rendering. This covers expressions and attributes, including default `item`
+  bindings and nested loops.
+- Slice-preserving `.filter(...)` receivers are peeled structurally, so the
+  collection schema remains authoritative even when a predicate references
+  multiple roots or uses comments and spacing. Unresolved expressions,
+  map-like transforms, pointer-backed collections, custom `<Each>` components,
+  and other dynamic legacy shapes retain their existing runtime contract.
+
 ## v0.53.1 (2026-08-22)
 
 ### Fixed: declarative regions retain the last good DOM on HTTP errors

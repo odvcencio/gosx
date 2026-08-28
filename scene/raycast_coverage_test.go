@@ -122,8 +122,8 @@ func TestRaycastSpriteSkipsAnchoredSprites(t *testing.T) {
 }
 
 func TestRaycastDecalHitsItsPlane(t *testing.T) {
-	graph := NewGraph(Decal{ID: "scorch", Width: 4, Height: 4, Position: Vec3(0, 0, -2)})
-	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, 3), Direction: Vec3(0, 0, -1)})
+	graph := NewGraph(Decal{ID: "scorch", Width: 4, Height: 4, Position: Vec3(0, -2, 0)})
+	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 0), Direction: Vec3(0, -1, 0)})
 	if !ok {
 		t.Fatal("expected a decal hit through the mesh plane path")
 	}
@@ -133,9 +133,56 @@ func TestRaycastDecalHitsItsPlane(t *testing.T) {
 	if math.Abs(hit.Distance-5) > 1e-9 {
 		t.Fatalf("expected distance 5, got %v", hit.Distance)
 	}
-	// A ray outside the 4x4 plane must miss.
-	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(3, 0, 3), Direction: Vec3(0, 0, -1)}); ok {
-		t.Fatal("a ray outside the decal plane must miss")
+	// Rays outside the 4x4 extent on X or Z must miss.
+	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(3, 3, 0), Direction: Vec3(0, -1, 0)}); ok {
+		t.Fatal("a ray outside the decal plane on X must miss")
+	}
+	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 3, 3), Direction: Vec3(0, -1, 0)}); ok {
+		t.Fatal("a ray outside the decal plane on Z must miss")
+	}
+}
+
+func TestPlaneRaycastMatchesRenderedXZSurface(t *testing.T) {
+	graph := NewGraph(Mesh{ID: "ground", Geometry: PlaneGeometry{Width: 4, Height: 6}})
+
+	// A downward ray hits the rendered XZ quad at y=0.
+	hit, ok := RaycastGraph(graph, Ray{Origin: Vec3(1, 5, 2), Direction: Vec3(0, -1, 0)})
+	if !ok {
+		t.Fatal("downward ray misses the rendered XZ plane")
+	}
+	if hit.Method != "analytic-plane" || hit.Kind != "plane" {
+		t.Fatalf("expected analytic-plane, got %#v", hit)
+	}
+	if math.Abs(hit.Distance-5) > 1e-9 {
+		t.Fatalf("expected distance 5, got %v", hit.Distance)
+	}
+	if hit.Point.X != 1 || hit.Point.Y != 0 || hit.Point.Z != 2 {
+		t.Fatalf("expected point (1, 0, 2), got %#v", hit.Point)
+	}
+	if hit.Normal != (Vector3{Y: 1}) {
+		t.Fatalf("expected +Y normal from above, got %#v", hit.Normal)
+	}
+
+	// An upward ray from below sees the face-forward -Y normal.
+	up, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, -5, 0), Direction: Vec3(0, 1, 0)})
+	if !ok {
+		t.Fatal("upward ray from below must still hit the plane")
+	}
+	if up.Normal != (Vector3{Y: -1}) {
+		t.Fatalf("expected -Y normal from below, got %#v", up.Normal)
+	}
+
+	// A ray parallel to and coplanar with the XZ surface reports no phantom hit.
+	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 0, -9), Direction: Vec3(0, 0, 1)}); ok {
+		t.Fatal("parallel coplanar ray must not hit the old phantom XY surface")
+	}
+
+	// Width governs X; Height governs Z.
+	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(2.001, 5, 0), Direction: Vec3(0, -1, 0)}); ok {
+		t.Fatal("ray beyond Width on X must miss")
+	}
+	if _, ok := RaycastGraph(graph, Ray{Origin: Vec3(0, 5, 3.001), Direction: Vec3(0, -1, 0)}); ok {
+		t.Fatal("ray beyond Height on Z must miss")
 	}
 }
 
@@ -322,14 +369,18 @@ func TestRaycastCoverageManifest(t *testing.T) {
 	ray := Ray{Origin: Vec3(0, 0, 4), Direction: Vec3(0, 0, -1)}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			trace := TraceGraph(Graph{Nodes: []Node{testCase.node}}, ray)
+			probe := ray
+			if decal, ok := testCase.node.(Decal); ok {
+				probe = Ray{Origin: Vec3(decal.Position.X, decal.Position.Y+4, decal.Position.Z), Direction: Vec3(0, -1, 0)}
+			}
+			trace := TraceGraph(Graph{Nodes: []Node{testCase.node}}, probe)
 			got := trace.Closest != nil
 			if got != testCase.nativeHit {
 				t.Fatalf("native hit = %v, want %v (%s)", got, testCase.nativeHit, testCase.note)
 			}
 			// The accelerator must agree with the walk on every kind.
 			accel := NewSceneAccelerator(Graph{Nodes: []Node{testCase.node}})
-			if _, ok := accel.Raycast(ray); ok != testCase.nativeHit {
+			if _, ok := accel.Raycast(probe); ok != testCase.nativeHit {
 				t.Fatalf("accelerator hit = %v, want %v", ok, testCase.nativeHit)
 			}
 		})

@@ -535,15 +535,37 @@ const budgets = [
   // runtime surface so modal focus, Escape, Tab, inert background, and
   // navigation teardown do not require application JavaScript. Measured:
   // 1_540_600 / 417_606 / 335_287, plus narrow rounding headroom.
-  //
-  // Bumped raw 1_542_000 -> 1_543_200 and brotli 335_900 -> 336_400 for the
-  // declarative-pause loop stop in Scene3D mount.ts (a paused scene drains
-  // its requestAnimationFrame chain instead of spinning at a frozen clock).
-  // Measured before the change 1_542_685 / 418_126 / 335_795 — the raw
-  // ceiling was already breached on the base commit — and after
-  // 1_542_723 / 418_132 / 336_044; the brotli move is lost shared-context
-  // drift from re-minification, not new payload.
-  { file: "bootstrap.js", raw: 1_543_200, gzip: 418_200, brotli: 336_400 },
+  // Indexed BufferGeometry adds uint32 index retention, indexed backend draws,
+  // exact indexed picking, and indexed shadow submission. Measured:
+  // 1_547_149 / 419_508 / 336_549, plus narrow rounding headroom.
+  // Variable-width morph transport measured at raw 1547188 / gzip 419932 / brotli 337252.
+  // Live glTF deformation (skin OR weights OR node-TRS animation playback,
+  // authored-matrix handling) rebuilt assets measured 1_559_039 / 423_270 /
+  // 340_270; all three caps raised with narrow rounding headroom.
+  // Reused glTF mesh node identity rebuild measured 1_559_474 / 423_430 /
+  // 340_185; raw and gzip caps raised with narrow headroom, brotli unchanged
+  // (improved below its 340_300 cap).
+  // Strip/fan topology rebuild (TRIANGLE_STRIP/TRIANGLE_FAN extraction)
+  // measured 1_559_777 / 423_556 / 340_350; all three caps raised with
+  // narrow rounding headroom.
+  // Material IOR authored-key support measured 1_561_091 / 423_972 /
+  // 340_649; caps set from measured bytes plus small headroom.
+  // Authored specular color plumbing (pre-typed-copy) measured
+  // 1_564_667 / 424_753 / 341_352; caps raised with narrow headroom.
+  // Measured: bootstrap.js 1567838/425622/341812 raw/gzip/brotli.
+  // Specular-intensity alpha texture slice measured 1568528/425727/342055;
+  // all three caps raised with narrow rounding headroom.
+  // Specular f32 packing + WGSL updates measured 1571127/426569/342530;
+  // all three caps raised with narrow rounding headroom.
+  // Specular-color decoding measured 1571241/426629/342751; caps set to the
+  // exact measured values.
+  // Specular-color patch measured 1572890/426803/342577; raw and gzip raised
+  // with narrow rounding headroom; brotli cap unchanged.
+  // Initial shadow allocation fix measured
+  // 1573965/427214/342907; all three caps raised with narrow rounding headroom.
+  // Final rebuild removed dead activeShadowCount; measured 343015 brotli,
+  // so the brotli cap was raised with narrow rounding headroom.
+  { file: "bootstrap.js", raw: 1_574_000, gzip: 427_250, brotli: 343_100 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -871,7 +893,17 @@ const budgets = [
   // -> 50_200 for the reserved `time` auto-uniform on the authored
   // points path: the frame clock now overrides the authored placeholder,
   // matching the WGSL packer. Measured: 213_478 / 58_799 / 50_056.
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 214_000, gzip: 59_000, brotli: 50_200 },
+  // Indexed BufferGeometry exact measurement: 215_520 / 59_273 / 50_350.
+  // Measured: WebGL chunk 216900/59714/50773.
+  // Raised for the specular-intensity texture slice (material slot6, shadows
+  // begin7, 19 fragment samplers). Measured: 217769/59923/50835.
+  // Specular-color patch measured 219449/60299/51206; all three caps raised
+  // with narrow rounding headroom.
+  // Initial shadow allocation fix measured 220525/60745/51463; raw and gzip
+  // raised with narrow rounding headroom; brotli cap unchanged.
+  // Final rebuild removed dead activeShadowCount; measured 51554 brotli,
+  // so the brotli cap was raised with narrow rounding headroom.
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 220_750, gzip: 60_800, brotli: 51_600 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -950,14 +982,16 @@ const budgets = [
   // Bumped raw 535_500 -> 537_000, gzip 148_500 -> 148_800, brotli 123_300
   // -> 123_500 for the WebGL loss-recovery watchdog. Measured: 535_969 /
   // 148_477 / 123_144.
-  //
-  // Bumped raw 538_929 -> 539_600, gzip 148_800 -> 149_400, brotli 123_500
-  // -> 123_900 for the declarative-pause loop stop in mount.ts: the paused
-  // gate in sceneAnimationState plus the toggle's stale-timestamp reset.
-  // Measured before the change 539_146 / 149_115 / 123_641 — every ceiling
-  // here was already breached on the base commit — and after
-  // 539_182 / 149_117 / 123_601.
-  { file: "bootstrap-feature-scene3d.js", raw: 539_600, gzip: 149_400, brotli: 123_900 },
+  // Bumped gzip 148_800 -> 148_850 for complete prepared-scene light cache
+  // invalidation. Measured: 538_069 / 148_810 / 123_368.
+  // Indexed BufferGeometry exact measurement: 539_531 / 149_304 / 123_908.
+  // Live glTF deformation rebuild including node-TRS playback measured
+  // 543_190 / 150_137 / 124_474; all three caps raised with narrow headroom.
+  // Material IOR authored-key support measured 543_852 / 150_353 / 124_735;
+  // caps set from measured bytes plus small headroom.
+  // Authored specular color plumbing (pre-typed-copy) measured
+  // 547_422 / 151_079 / 125_285; caps raised with narrow headroom.
+  { file: "bootstrap-feature-scene3d.js", raw: 547_700, gzip: 151_200, brotli: 125_400 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1128,7 +1162,15 @@ const budgets = [
   // 78_800 for the memoized-manifest water shader ingest (ingestManifestValue
   // reads window.__gosx_manifest before falling back to a DOM text re-parse).
   // Measured: 387_272 / 93_709 / 78_460, plus rounding headroom.
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 388_000, gzip: 94_000, brotli: 78_800 },
+  // Indexed BufferGeometry exact measurement: 389_362 / 94_293 / 79_001.
+  // Measured: WebGPU chunk 390659/94660/79194 (only raw exceeded; compressed caps kept).
+  // Specular-intensity alpha texture slice measured 391349/94759/79319
+  // (only raw exceeded again; compressed caps kept).
+  // Specular f32 packing + WGSL updates measured 393946/95539/80043;
+  // all three caps raised with narrow rounding headroom.
+  // Specular-color decoding measured 394066/95596/80055; caps set to the
+  // exact measured values.
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 394_066, gzip: 95_596, brotli: 80_055 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1152,8 +1194,19 @@ const budgets = [
   // (gosx.baseSrc follow + name-keyed patch of colors/positions/sizes) and
   // the quantized _POINT_SIZE decode via extras pointSizeScale. Measured:
   // 31_308 / 11_635 / 10_374, plus rounding headroom.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 32_000, gzip: 11_900, brotli: 10_600 },
-  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_000, gzip: 4_000, brotli: 4_000 },
+  // Budget: cubic-spline channel-width fix measured 10_626 B Brotli (from 10_599); ceiling raised 10_600 -> 10_700; raw/gzip caps unchanged.
+  // Live glTF deformation playback (skins, weights, node TRS) and
+  // authored-matrix handling measured 38_735 / 14_332 / 12_780; all three
+  // caps raised with narrow headroom.
+  // Reused glTF mesh node identity rebuild measured 39_170 / 14_476 /
+  // 12_914; all three caps raised with narrow headroom.
+  // Same strip/fan topology rebuild measured 39_473 / 14_604 / 13_057;
+  // all three caps raised with narrow rounding headroom.
+  // Measured: bootstrap-feature-scene3d-gltf.js 40491/14915/13301 raw/gzip/brotli.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 40_650, gzip: 15_000, brotli: 13_400 },
+  // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
+  // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
+  { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
@@ -1595,17 +1648,23 @@ const routeBudgets = [
     // Measured: 1_048_022 / 290_324 / 246_238.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_051_244 / 291_270 / 247_081, plus narrow headroom.
-    //
-    // Bumped raw 1_052_800 -> 1_053_800 for the declarative-pause loop stop
-    // in Scene3D mount.ts: a paused scene now drains its requestAnimationFrame
-    // chain instead of spinning at a frozen clock, which adds the paused gate
-    // to the animation-source scan plus the toggle's stale-timestamp reset.
-    // Measured before the change 1_053_419 / 291_777 / 247_503 — the raw
-    // ceiling was already breached on the base commit — and after
-    // 1_053_455 / 291_779 / 247_463, so only raw moves.
-    raw: 1_053_800,
-    gzip: 291_800,
-    brotli: 247_600,
+    // Indexed BufferGeometry exact measurement: 1_055_774 / 292_427 / 248_044.
+    // Live glTF deformation rebuild including node-TRS playback measured
+    // 1_059_433 / 293_260 / 248_610; all three caps raised with narrow headroom.
+    // Material IOR authored-key support measured 1_060_409 / 293_610 /
+    // 248_981; caps set from measured bytes plus small headroom.
+    // Authored specular color plumbing (pre-typed-copy) measured
+    // 1_063_979 / 294_336 / 249_531; caps raised with narrow headroom.
+    // Measured: 1065114/294665/249782.
+    // Raised for the specular-intensity texture slice. Measured:
+    // 1066019/294879/249778.
+    // Specular-color patch measured 1067699/295255/250149; all three caps
+    // raised with narrow rounding headroom.
+    // Initial shadow allocation fix measured 1068775/295701/250406; raw and
+    // gzip raised with narrow rounding headroom; brotli cap unchanged.
+    raw: 1_069_000,
+    gzip: 295_750,
+    brotli: 250_500,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1700,14 +1759,30 @@ const routeBudgets = [
     // Measured: 1_435_294 / 384_033 / 324_698.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_438_516 / 384_979 / 325_541, plus narrow headroom.
-    //
-    // Bumped raw 1_440_000 -> 1_441_200 for the declarative-pause loop stop
-    // in Scene3D mount.ts. Measured before the change 1_440_691 / 385_486 /
-    // 325_963 — the raw ceiling was already breached on the base commit —
-    // and after 1_440_727 / 385_488 / 325_923, so only raw moves.
-    raw: 1_441_200,
-    gzip: 385_500,
-    brotli: 326_100,
+    // Indexed BufferGeometry exact measurement: 1_445_136 / 386_720 / 327_045.
+    // Live glTF deformation rebuild including node-TRS playback measured
+    // 1_448_792 / 387_491 / 327_437; raw and gzip raised with narrow headroom;
+    // brotli still under its cap and unchanged.
+    // Material IOR authored-key support measured 1_450_030 / 387_957 /
+    // 327_956; caps set from measured bytes plus small headroom.
+    // Authored specular color plumbing (pre-typed-copy) measured
+    // 1_453_600 / 388_683 / 328_506; caps raised with narrow headroom.
+    // Measured: 1455773/389325/328976.
+    // Specular-intensity alpha texture slice measured 1456499/389429/329035
+    // (only raw exceeded; compressed caps kept).
+    // Chromium WebGPU-device-loss route measured 1459096/390209/329759;
+    // all three caps raised with narrow rounding headroom.
+    // Specular-color decoding measured 1459216/390266/329771; caps set to
+    // the exact measured values.
+    // Specular-color patch measured 1460873/390448/329817; all three caps
+    // raised with narrow rounding headroom.
+    // Initial shadow allocation fix measured 1461949/390894/330074; all
+    // three caps raised with narrow rounding headroom.
+    // Final rebuild removed dead activeShadowCount; measured 330165 brotli,
+    // so the brotli cap was raised with narrow rounding headroom.
+    raw: 1_462_000,
+    gzip: 390_950,
+    brotli: 330_250,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -1808,14 +1883,24 @@ const routeBudgets = [
     // Bumped for the restored client fixes. Measured: 1_069_539 / 281_902 / 236_158.
     // v0.52.0 disclosure authority is part of bootstrap-runtime.js. Measured
     // route total: 1_072_761 / 282_848 / 237_001, plus narrow headroom.
-    //
-    // Bumped raw 1_074_300 -> 1_075_500 for the declarative-pause loop stop
-    // in Scene3D mount.ts. Measured before the change 1_074_864 / 283_342 /
-    // 237_403 — the raw ceiling was already breached on the base commit —
-    // and after 1_074_900 / 283_344 / 237_363, so only raw moves.
-    raw: 1_075_500,
-    gzip: 283_400,
-    brotli: 237_600,
+    // Indexed BufferGeometry exact measurement: 1_077_339 / 284_115 / 238_211.
+    // Live glTF deformation rebuild including node-TRS playback measured
+    // 1_080_995 / 284_886 / 238_603; raw and gzip raised with narrow headroom;
+    // brotli still under its cap and unchanged.
+    // Material IOR authored-key support measured 1_081_919 / 285_218 /
+    // 239_012; caps set from measured bytes plus small headroom.
+    // Authored specular color plumbing (pre-typed-copy) measured
+    // 1_085_489 / 285_944 / 239_562; caps raised with narrow headroom.
+    // Measured: 1086596/286279/239719.
+    // Specular-intensity alpha texture slice measured 1087322/286383/239778
+    // (only raw exceeded; compressed caps kept).
+    // Minimal WebGPU route measured 1089919/287163/240502; all three caps
+    // raised with narrow rounding headroom.
+    // Specular-color decoding measured 1090039/287220/240514; caps set to
+    // the exact measured values.
+    raw: 1_090_039,
+    gzip: 287_220,
+    brotli: 240_514,
   },
 
 ];

@@ -787,8 +787,28 @@
       origin: parsed.origin,
       path: normalizedNavigationPath(parsed.pathname),
       search: String(parsed.search || ""),
+      hash: String(parsed.hash || ""),
       href: parsed.href,
     };
+  }
+
+  // Fetch deliberately omits URL fragments from the request and therefore
+  // from Response.url. Keep the authored fragment attached to the final
+  // same-origin response URL while allowing an HTTP redirect to change the
+  // destination path and query. A response fragment remains authoritative
+  // only when the original request did not name one.
+  function mergeNavigationResponseHash(requestURL, responseURL) {
+    const requested = navigationURLParts(requestURL);
+    const response = navigationURLParts(responseURL || requestURL);
+    if (!response) {
+      return responseURL || requestURL;
+    }
+    if (!requested || !requested.hash || requested.origin !== response.origin) {
+      return response.href;
+    }
+    const merged = new URL(response.href);
+    merged.hash = requested.hash;
+    return merged.href;
   }
 
   function isHTTPNavigationURL(url) {
@@ -2320,7 +2340,7 @@
             revalidate: true,
             mutationBarrier: true,
             replace: redirectsCurrent,
-            preserveScroll: redirectsCurrent,
+            preserveScroll: redirectsCurrent && !redirectURL.hash,
           });
         } catch (err) {
           reportManagedActionResponseFailure("form action redirect", err, redirectURL.href, method);
@@ -2577,6 +2597,21 @@
       }
       if (opts.revalidate) pageCache.delete(target.href);
     }
+    const currentNavigation = currentNavigationURL();
+    const sameDocument = sameNavigationURL(target, currentNavigation);
+    if (!sharesPendingFetch && !opts.force && sameDocument && target.hash !== currentNavigation.hash) {
+      activeNavigationController = null;
+      activeNavigationURL = "";
+      updateHistory(target.href, !!opts.replace);
+      setNavigationState({
+        phase: "idle",
+        currentURL: target.href,
+        pendingURL: "",
+      }, "navigate:fragment");
+      observeNavigation("debug", "navigation fragment changed", { url: target.href });
+      finalizeNavigation(target.href, opts, resolveNavigationA11y(target.href));
+      return true;
+    }
     if (!sharesPendingFetch && !opts.force && sameNavigationURL(target, currentNavigationURL())) {
       activeNavigationController = null;
       activeNavigationURL = "";
@@ -2660,7 +2695,7 @@
 
   async function resolveNavigationPage(url, signal) {
     const page = await fetchPage(url, signal, true);
-    const nextURL = page.url || url;
+    const nextURL = mergeNavigationResponseHash(url, page.url || url);
     return {
       nextURL: nextURL,
       nextDoc: parseDocument(page.html),

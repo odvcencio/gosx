@@ -567,6 +567,47 @@ func TestActiveMaterialCarriesOpacity(t *testing.T) {
 	}
 }
 
+// TestActiveMaterialDielectricF0 exercises the dielectric F0 through the
+// actual activeMaterial reader: no bind group and a short material buffer
+// keep the default 0.04, while a full buffer's lane is honoured verbatim,
+// including an authored zero (IOR 1).
+func TestActiveMaterialDielectricF0(t *testing.T) {
+	materialPass := func(buf *Buffer) *RenderPassEncoder {
+		return &RenderPassEncoder{bindGroups: map[int]*BindGroup{1: &BindGroup{
+			desc: gpu.BindGroupDesc{Entries: []gpu.BindGroupEntry{
+				{Binding: 0, Buffer: buf},
+			}},
+		}}}
+	}
+
+	t.Run("no bind group keeps default", func(t *testing.T) {
+		state := (&RenderPassEncoder{}).activeMaterial()
+		if state.dielectricF0 != 0.04 {
+			t.Fatalf("no-bind-group F0 = %v, want default 0.04", state.dielectricF0)
+		}
+	})
+	t.Run("short material buffer keeps default", func(t *testing.T) {
+		state := materialPass(&Buffer{data: make([]byte, 100)}).activeMaterial()
+		if state.dielectricF0 != 0.04 {
+			t.Fatalf("short-buffer F0 = %v, want default 0.04", state.dielectricF0)
+		}
+	})
+	t.Run("full buffer zero lane is authored IOR 1", func(t *testing.T) {
+		buf := &Buffer{data: make([]byte, 112)}
+		writeFloat32(buf.data, 100, 0)
+		if f0 := materialPass(buf).activeMaterial().dielectricF0; f0 != 0 {
+			t.Fatalf("full-buffer zero lane F0 = %v, want authored 0", f0)
+		}
+	})
+	t.Run("full buffer valued lane is read verbatim", func(t *testing.T) {
+		buf := &Buffer{data: make([]byte, 112)}
+		writeFloat32(buf.data, 100, 0.11)
+		if f0 := materialPass(buf).activeMaterial().dielectricF0; f0 != 0.11 {
+			t.Fatalf("full-buffer lane F0 = %v, want 0.11", f0)
+		}
+	})
+}
+
 // TestBundleFrameLitRespondsToDirectionalLight verifies the D-series
 // approximation still follows scene lighting uniforms instead of rendering
 // all lit geometry at material color.

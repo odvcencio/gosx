@@ -18,6 +18,7 @@ import (
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
@@ -276,11 +277,18 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err := runBuildHookCommands(dir, "pre-build", cfg.Build.Hooks.Pre); err != nil {
 		return err
 	}
+	printBundlePolicyWarnings(cfg.Build.Bundle)
+	if diagnostics := bundlepolicy.ValidateProject(dir, cfg.Build.Bundle); !diagnostics.Empty() {
+		return errors.New(diagnostics.Error())
+	}
 	if err := checkStrictProject(context.Background(), dir); err != nil {
 		return fmt.Errorf("check strict components: %w", err)
 	}
 
 	distDir := filepath.Join(dir, "dist")
+	if err := os.RemoveAll(distDir); err != nil {
+		return fmt.Errorf("clean output directory: %w", err)
+	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
 	islandDir := filepath.Join(distDir, "assets", "islands")
 	cssDir := filepath.Join(distDir, "assets", "css")
@@ -652,7 +660,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err != nil {
 		return fmt.Errorf("build server binary: %w", err)
 	}
-	if err := stageDeploymentBundle(dir, distDir, &manifest, builtServer, serverBinaryPath); err != nil {
+	if err := stageDeploymentBundleWithPolicy(dir, distDir, &manifest, builtServer, serverBinaryPath, cfg.Build.Bundle); err != nil {
 		return fmt.Errorf("stage deployment bundle: %w", err)
 	}
 
@@ -674,9 +682,10 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	staticPages := 0
 	if !opts.Dev && builtServer {
 		exportManifest, err := prerenderStaticBundle(staticExportOptions{
-			AppRoot:    distDir,
-			OutputDir:  filepath.Join(distDir, "static"),
-			BinaryPath: serverBinaryPath,
+			AppRoot:      distDir,
+			OutputDir:    filepath.Join(distDir, "static"),
+			BinaryPath:   serverBinaryPath,
+			BundlePolicy: cfg.Build.Bundle,
 			StageAssets: func(outputDir string, exportManifest exportManifest) error {
 				return stageStaticBuildAssets(distDir, &manifest, outputDir, exportManifest)
 			},
@@ -693,7 +702,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 	if opts.Offline {
-		if err := stageOfflineAssetBundle(dir, distDir); err != nil {
+		if err := stageOfflineAssetBundleWithPolicy(distDir, cfg.Build.Bundle); err != nil {
 			return fmt.Errorf("stage offline asset bundle: %w", err)
 		}
 	}
@@ -762,6 +771,9 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	if err := runBuildHookCommands(dir, "post-build", cfg.Build.Hooks.Post); err != nil {
 		return err
+	}
+	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg.Build.Bundle); !diagnostics.Empty() {
+		return errors.New(diagnostics.Error())
 	}
 
 	return nil
@@ -1019,7 +1031,7 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 		return false, err
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", outputPath, ".")
+	buildCmd := exec.Command("go", goServerBuildArgs(outputPath)...)
 	buildCmd.Dir = dir
 	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
 	buildCmd.Stderr = os.Stderr
@@ -1029,8 +1041,17 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 	return true, nil
 }
 
-func stageDeploymentBundle(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string) error {
-	if err := copyDirIfPresent(filepath.Join(projectDir, "app"), filepath.Join(distDir, "app")); err != nil {
+func goServerBuildArgs(outputPath string) []string {
+	return []string{"build", "-trimpath", "-o", outputPath, "."}
+}
+
+func stageDeploymentBundleWithPolicy(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string, policy bundlepolicy.Config) error {
+	for _, root := range []string{"app", "public"} {
+		if err := os.RemoveAll(filepath.Join(distDir, root)); err != nil {
+			return fmt.Errorf("clean staged %s: %w", root, err)
+		}
+	}
+	if err := bundlepolicy.CopyTree(filepath.Join(projectDir, "app"), filepath.Join(distDir, "app"), bundlepolicy.RootApp, policy); err != nil {
 		return err
 	}
 	// Content collections are runtime inputs for server-rendered and
@@ -1041,10 +1062,10 @@ func stageDeploymentBundle(projectDir, distDir string, manifest *BuildManifest, 
 	if err := os.RemoveAll(contentDistDir); err != nil {
 		return fmt.Errorf("clean staged content: %w", err)
 	}
-	if err := copyDirIfPresent(filepath.Join(projectDir, "content"), contentDistDir); err != nil {
+	if err := bundlepolicy.CopyTree(filepath.Join(projectDir, "content"), contentDistDir, bundlepolicy.RootContent, policy); err != nil {
 		return err
 	}
-	if err := copyDirIfPresent(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public")); err != nil {
+	if err := bundlepolicy.CopyTree(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public"), bundlepolicy.RootPublic, policy); err != nil {
 		return err
 	}
 
@@ -1056,7 +1077,7 @@ func stageDeploymentBundle(projectDir, distDir string, manifest *BuildManifest, 
 	// each rung to WebP (plus its native format) via imagepipe. Those
 	// hashed outputs are what a static export serves in place of the old
 	// passthrough at server/image_resolver.go (issue #200).
-	imageAssets, err := stageImageVariants(projectDir, distDir)
+	imageAssets, err := stageImageVariantsFromPublicDir(filepath.Join(distDir, "public"), distDir)
 	if err != nil {
 		return fmt.Errorf("stage image variants: %w", err)
 	}
@@ -1064,9 +1085,10 @@ func stageDeploymentBundle(projectDir, distDir string, manifest *BuildManifest, 
 		manifest.Images = imageAssets
 	}
 
-	if err := copyFileIfPresent(filepath.Join(projectDir, ".env.example"), filepath.Join(distDir, ".env.example")); err != nil {
+	if err := writeBundlePolicySidecar(distDir, policy); err != nil {
 		return err
 	}
+
 	if err := writeBuildReadme(filepath.Join(distDir, "README.md"), builtServer); err != nil {
 		return err
 	}
@@ -1399,7 +1421,10 @@ func writeBuildReadme(path string, builtServer bool) error {
 		"Deployment notes:",
 		"- Keep `assets/` on immutable caching because filenames are content-hashed.",
 		"- Roll the server binary independently from hashed assets.",
-		"- Provide runtime env vars externally; `.env.example` is copied only when present.",
+		"- Provide runtime env vars externally; root .env.example files are never copied into a bundle.",
 	)
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+}
+func stageDeploymentBundle(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string) error {
+	return stageDeploymentBundleWithPolicy(projectDir, distDir, manifest, builtServer, serverBinaryPath, bundlepolicy.Config{})
 }

@@ -39,11 +39,11 @@ func TestWebGPUConsumesIBLProducts(t *testing.T) {
 		"budget to negotiate, so the cell is unconditionally true.")
 }
 
-// TestWebGL2GatesIBLOnEighteenUnits corroborates the false WebGL2 cell WITH
+// TestWebGL2GatesIBLOnTwentyUnits corroborates the false WebGL2 cell WITH
 // the evidence that the consumer exists and stays gated, not evidence that it
 // is missing. A cell answers an unconditional question; scenePBRHDRIBLAvailable
 // answers a conditional one, and the two must not be conflated.
-func TestWebGL2GatesIBLOnEighteenUnits(t *testing.T) {
+func TestWebGL2GatesIBLOnTwentyUnits(t *testing.T) {
 	webgl := readRenderer(t, webglRendererPath)
 	missingConsumer := missingSymbols(webglRendererPath, webgl,
 		"u_iblIrradiance", "u_iblRadiance", "u_iblBRDFLUT", "GOSX_HDR_IBL",
@@ -53,15 +53,15 @@ func TestWebGL2GatesIBLOnEighteenUnits(t *testing.T) {
 			"'consumer exists, cell stays false, reason is the unit gate': %v", missingConsumer)
 	}
 	missingGate := missingSymbols(webglRendererPath, webgl,
-		"maxUnits >= 18", "scenePBRHDRIBLAvailable",
+		"maxUnits >= 20", "scenePBRHDRIBLAvailable",
 	)
 	if len(missingGate) > 0 {
-		t.Fatalf("the 18 fragment-texture-unit gate moved or was renamed; update this test and the "+
+		t.Fatalf("the 20 fragment-texture-unit gate moved or was renamed; update this test and the "+
 			"Matrix[ibl][webgl] prose together: %v", missingGate)
 	}
 	if Matrix[FeatureIBL][BackendWebGL] {
 		t.Fatal("Matrix[ibl][webgl] is true, but the WebGL2 consumer only activates at " +
-			">= 18 fragment texture units (scenePBRHDRIBLAvailable). An unconditional cell " +
+			">= 20 fragment texture units (scenePBRHDRIBLAvailable). An unconditional cell " +
 			"must answer for the minimum spec device, so it must stay false. Either the gate " +
 			"was removed (flip the cell) or this cell was flipped by mistake (flip it back).")
 	}
@@ -74,9 +74,9 @@ func TestWebGL2GatesIBLOnEighteenUnits(t *testing.T) {
 // than the one PR-8 is committed to.
 func TestWebGL2IBLGateHasSHFallbackReason(t *testing.T) {
 	webgl := strings.ToLower(readRenderer(t, webglRendererPath))
-	if strings.Contains(webgl, "sh-irradiance") && !strings.Contains(webgl, "fragment-texture-units<18 -> sh-irradiance") {
+	if strings.Contains(webgl, "sh-irradiance") && !strings.Contains(webgl, "fragment-texture-units<20 -> sh-irradiance") {
 		t.Fatal(`found a "sh-irradiance" reason string that does not match the pinned spelling ` +
-			`"fragment-texture-units<18 -> sh-irradiance"; keep the diagnostics reason stable so a ` +
+			`"fragment-texture-units<20 -> sh-irradiance"; keep the diagnostics reason stable so a ` +
 			`caller can match on it`)
 	}
 }
