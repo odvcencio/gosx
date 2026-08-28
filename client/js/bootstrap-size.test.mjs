@@ -565,7 +565,12 @@ const budgets = [
   // 1573965/427214/342907; all three caps raised with narrow rounding headroom.
   // Final rebuild removed dead activeShadowCount; measured 343015 brotli,
   // so the brotli cap was raised with narrow rounding headroom.
-  { file: "bootstrap.js", raw: 1_574_000, gzip: 427_250, brotli: 343_100 },
+  // Multi-buffer glTF foundation (buffer-indexed accessors, sparse overlays,
+  // embedded images and mixed GLB/.gltf buffers) measured
+  // 1_578_361 / 428_416 / 343_964. The old 1_574_000 / 427_250 / 343_100
+  // ceilings therefore move to 1_578_550 / 428_500 / 344_050, leaving only
+  // 189 / 84 / 86 bytes of rounding headroom.
+  { file: "bootstrap.js", raw: 1_578_550, gzip: 428_500, brotli: 344_050 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1202,8 +1207,12 @@ const budgets = [
   // 12_914; all three caps raised with narrow headroom.
   // Same strip/fan topology rebuild measured 39_473 / 14_604 / 13_057;
   // all three caps raised with narrow rounding headroom.
-  // Measured: bootstrap-feature-scene3d-gltf.js 40491/14915/13301 raw/gzip/brotli.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 40_650, gzip: 15_000, brotli: 13_400 },
+  // Multi-buffer glTF foundation (buffer-indexed accessors, sparse overlays,
+  // embedded images and mixed GLB/.gltf buffers) measured
+  // 44_944 / 16_128 / 14_351. The old 40_650 / 15_000 / 13_400 ceilings
+  // move to 45_000 / 16_200 / 14_420, leaving 56 / 72 / 69 bytes of
+  // rounding headroom.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 45_000, gzip: 16_200, brotli: 14_420 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   { file: "bootstrap-feature-scene3d-animation.js", raw: 8_500, gzip: 4_000, brotli: 4_000 },
