@@ -61,6 +61,11 @@ function readMorphState(mountId) {
   out.targetVisible = targetRecord.model ? targetRecord.model.visible !== false : false;
   out.targetCastShadow = !!(targetObject && targetObject.castShadow === true);
   out.targetStatic = targetRecord.staticModel === true;
+  out.objectFirstPositionY = (object &&
+    object.vertices &&
+    object.vertices.positions &&
+    typeof object.vertices.positions[1] === 'number' &&
+    isFinite(object.vertices.positions[1])) ? object.vertices.positions[1] : null;
   out.culled = mount.getAttribute('data-gosx-scene3d-webgpu-mesh-view-culled');
   out.dispatches = mount.getAttribute('data-gosx-scene3d-webgpu-computed-morph-dispatches');
   out.nativeMorphDispatches = window.__probeMorphDispatches || 0;

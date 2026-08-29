@@ -378,7 +378,7 @@
     "  outTangents[t] = worldTangent.x;",
     "  outTangents[t + 1u] = worldTangent.y;",
     "  outTangents[t + 2u] = worldTangent.z;",
-    "  outTangents[t + 3u] = select(sourcePacked[packed + 9u], targetPacked[packed + 9u], a >= 0.5);",
+    "  outTangents[t + 3u] = mix(sourcePacked[packed + 9u], targetPacked[packed + 9u], a);",
     "}",
   ].join("\n");
 

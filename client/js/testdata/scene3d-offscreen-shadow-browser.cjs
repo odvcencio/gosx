@@ -3,7 +3,7 @@
 // Native browser regression for offscreen skinned/static shadow fixtures.
 // 7 scenes x 2 backends = 14 exact static captures, plus two live
 // computed-morph cases (one per backend: a baseline capture and a guard/idle
-// pose dispatch each, for 2 baselines and 4 stages). No forged state, no
+// pose dispatch each, for 2 baselines and 8 stages). No forged state, no
 // injected geometry, no fakeGPU, no skip paths: every assertion accumulates
 // and the run is nonzero on any error, warning, notFound, fatal, or short
 // capture count.
@@ -29,7 +29,7 @@ const SCENES = ['empty', 'reference-rest', 'reference-pose', 'skin-rest', 'skin-
 const SCHEMA = 'gosx.offscreen-shadow.fixture.v1';
 const PLANNED_STATIC = SCENES.length * 2;
 const PLANNED_LIVE = 2;          // one morph-live page per backend
-const PLANNED_LIVE_STAGES = 4;   // guard + idle per backend
+const PLANNED_LIVE_STAGES = 8;   // guard + idle + partial-1 + partial-2 per backend
 const MORPH_SETTLE_TIMEOUT_MS = 5 * 1000;
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -211,6 +211,7 @@ async function main() {
   const diagnostics = { pixels: {}, modelRecords: {}, attributes: {} };
   const liveEvidence = {};
   const shots = {};
+  const liveShots = {};
   let executedStatic = 0;
   let executedLive = 0;
   let executedLiveBaselines = 0;
@@ -327,20 +328,21 @@ async function main() {
           assertionErrors.push(label + ': missing reference-rest capture for baseline comparison');
         }
 
-        const runStage = async (stage, pose, targetID, refKey) => {
-          await driver.eval('(' + dispatchMorphPose.toString() + ')(' + JSON.stringify(pose) + ', 1)', true);
+        const runStage = async (stage, pose, targetID, alpha, prev, refKey) => {
+          await driver.eval('(' + dispatchMorphPose.toString() + ')(' + JSON.stringify(pose) + ', ' + alpha + ')', true);
           const deadline = Date.now() + MORPH_SETTLE_TIMEOUT_MS;
           let st = null;
           for (;;) {
             st = await morphRead(lc.mount);
             if (st && st.found && st.pose === pose && st.targetID === targetID &&
                 st.morphObjects > 0 && st.morphVertices > 0 &&
-                st.objectMorphCount > 0 && st.objectMorphAlpha === 1) break;
+                st.objectMorphCount > 0 && st.objectMorphAlpha === alpha) break;
             if (Date.now() > deadline) {
               assertionErrors.push(label + '/' + stage + ': morph pose did not settle within ' + MORPH_SETTLE_TIMEOUT_MS +
                 'ms (pose=' + (st && st.pose) + ' targetID=' + (st && st.targetID) +
                 ' morphObjects=' + (st && st.morphObjects) + ' morphVertices=' + (st && st.morphVertices) +
-                ' objectMorphCount=' + (st && st.objectMorphCount) + ' alpha=' + (st && st.objectMorphAlpha) + ')');
+                ' objectMorphCount=' + (st && st.objectMorphCount) + ' alpha=' + (st && st.objectMorphAlpha) +
+                ' want ' + alpha + ')');
               break;
             }
             await new Promise((r) => setTimeout(r, 200));
@@ -354,9 +356,8 @@ async function main() {
             if (!(st.morphObjects > 0)) assertionErrors.push(label + '/' + stage + ': morphObjects not positive');
             if (!(st.morphVertices > 0)) assertionErrors.push(label + '/' + stage + ': morphVertices not positive');
             if (!(st.objectMorphCount > 0)) assertionErrors.push(label + '/' + stage + ': objectMorphCount not positive');
-            if (st.objectMorphAlpha !== 1) assertionErrors.push(label + '/' + stage + ': objectMorphAlpha ' + st.objectMorphAlpha + ' want 1');
+            if (st.objectMorphAlpha !== alpha) assertionErrors.push(label + '/' + stage + ': objectMorphAlpha ' + st.objectMorphAlpha + ' want ' + alpha);
           }
-          const prev = stage === 'guard' ? base : guardState;
           const delta = {
             glDraws: (st && st.found ? st.glDraws : 0) - (prev && prev.glDraws ? prev.glDraws : 0),
             wgPasses: (st && st.found ? st.wgPasses : 0) - (prev && prev.wgPasses ? prev.wgPasses : 0),
@@ -379,25 +380,64 @@ async function main() {
           }
           const shot = await captureRGBA(driver, lc.mount);
           fs.writeFileSync(path.join(art, lc.mount + '-' + stage + '.png'), shot.png);
+          liveShots[lc.be + '|' + stage] = shot.rgba;
           executedLiveStages += 1;
           ev[stage] = { pose, targetID, delta, pixel: null };
           ev[stage].readback = st;
-          if (shots[refKey]) {
-            const v = maxRGB(shot.rgba, shots[refKey]);
-            ev[stage].pixel = { maxRGB: v, want: 2 };
-            if (!(v <= 2)) assertionErrors.push(label + '/' + stage + ': maxRGB vs ' + refKey.split('|')[1] + ' = ' + v + ' want <=2');
-          } else {
-            assertionErrors.push(label + '/' + stage + ': missing ' + refKey + ' capture for comparison');
+          if (refKey !== null) {
+            if (shots[refKey]) {
+              const v = maxRGB(shot.rgba, shots[refKey]);
+              ev[stage].pixel = { maxRGB: v, want: 2 };
+              if (!(v <= 2)) assertionErrors.push(label + '/' + stage + ': maxRGB vs ' + refKey.split('|')[1] + ' = ' + v + ' want <=2');
+            } else {
+              assertionErrors.push(label + '/' + stage + ': missing ' + refKey + ' capture for comparison');
+            }
           }
           return st;
         };
-        const guardState = await runStage('guard', 'guard', 'morph-caster-guard', lc.be + '|reference-pose');
-        await runStage('idle', 'idle', 'morph-caster', lc.be + '|reference-rest');
+        const guardState = await runStage('guard', 'guard', 'morph-caster-guard', 1, base, lc.be + '|reference-pose');
+        const idleState = await runStage('idle', 'idle', 'morph-caster', 1, guardState, lc.be + '|reference-rest');
+        const partial1State = await runStage('partial-1', 'guard', 'morph-caster-guard', 0.5, idleState, null);
+        const partial2State = await runStage('partial-2', 'guard', 'morph-caster-guard', 0.5, partial1State, null);
+        const idleY = idleState && idleState.found ? idleState.objectFirstPositionY : NaN;
+        const partial1Y = partial1State && partial1State.found ? partial1State.objectFirstPositionY : NaN;
+        const partial2Y = partial2State && partial2State.found ? partial2State.objectFirstPositionY : NaN;
+        if (!Number.isFinite(idleY)) assertionErrors.push(label + '/idle: objectFirstPositionY not finite (' + idleY + ')');
+        if (!Number.isFinite(partial1Y)) assertionErrors.push(label + '/partial-1: objectFirstPositionY not finite (' + partial1Y + ')');
+        if (!Number.isFinite(partial2Y)) assertionErrors.push(label + '/partial-2: objectFirstPositionY not finite (' + partial2Y + ')');
+        if (Number.isFinite(idleY) && Number.isFinite(partial1Y) && Number.isFinite(partial2Y)) {
+          const d1 = Math.abs(partial1Y - idleY);
+          const d2 = Math.abs(partial2Y - idleY);
+          ev.partialProgress = { idle: idleY, partial1: partial1Y, partial2: partial2Y, d1, d2 };
+          if (!(d2 > d1 + 1e-7)) {
+            assertionErrors.push(label + ': partial alpha progress |partial2-idle|=' + d2 + ' not > |partial1-idle|=' + d1 + ' + 1e-7');
+          }
+        } else {
+          ev.partialProgress = { idle: idleY, partial1: partial1Y, partial2: partial2Y };
+        }
 
         liveEvidence[lc.be] = ev;
         const disposed = await driver.eval(disposeExpr('eng-' + lc.mount, lc.mount)) === true;
         if (!disposed) assertionErrors.push(label + ': engine disposal did not clear state');
         executedLive += 1;
+      }
+
+      // ---- Per-backend repeated-step partial-stage pixel check ----
+      // Direct GL/WG maxRGB comparison is invalid: the backends have an
+      // inherent raster offset (maxRGB 6 at partial-1, 11 at partial-2).
+      // Instead assert, independently per backend, that the repeated
+      // partial-1 -> partial-2 step actually animates pixels.
+      liveEvidence.partialPixels = {};
+      for (const be of ['gl', 'wg']) {
+        const partial1Shot = liveShots[be + '|partial-1'];
+        const partial2Shot = liveShots[be + '|partial-2'];
+        if (!partial1Shot || !partial2Shot) {
+          assertionErrors.push('live-partial/' + be + ': missing live capture (partial-1=' + (partial1Shot ? 'present' : 'missing') + ' partial-2=' + (partial2Shot ? 'present' : 'missing') + ')');
+          continue;
+        }
+        const changed = changedPixels(partial1Shot, partial2Shot, ALL);
+        liveEvidence.partialPixels[be] = changed;
+        if (!(changed > 50)) assertionErrors.push('live-partial/' + be + ': partial-1 -> partial-2 changed pixels ' + changed + ' want >50');
       }
     }
   } catch (e) {
