@@ -379,7 +379,7 @@ func Page() Node {
 				<span class="inline-code">detail.element</span>
 				,
 				<span class="inline-code">detail.url</span>
-				) to run your own re-initialization.
+				) to run your own re-initialization. This rescan never restarts the periodic revalidation poll, the heartbeat ping, or a live region's own connection — those keep their own independent timer or connection across every swap.
 			</p>
 		</section>
 		<section id="attention-watcher">

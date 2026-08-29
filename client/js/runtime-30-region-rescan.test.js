@@ -16,10 +16,26 @@
 // harness). This file covers the navigation.ts side: the boot-time listener
 // that re-runs setupPageCountdowns/setupPageWatchers/setupPageFilters
 // whenever that event fires, so an element the swap just introduced
-// registers, and a detached old element simply drops out of the rescan —
-// and setupPageCountdowns' own fix to keep the shared countdown interval's
-// phase across a rescan instead of restarting it (see the dedicated
-// "does not reset the shared countdown interval" test below).
+// registers, and a detached old element simply drops out of the rescan; and
+// three side effects that rescan would otherwise cause on every region swap
+// (a polled region can rescan every second) if the listener simply replayed
+// each setup function's usual boot/soft-navigation behavior unchanged:
+//
+//   - setupPageCountdowns' shared 1-second interval keeping its own phase
+//     across a rescan instead of being torn down and recreated (see "does
+//     not reset the shared countdown interval" below).
+//   - a title flash (data-gosx-watch-effect="title") keeping whatever
+//     on/off phase it currently shows, instead of being stomped back to
+//     its "on" phase on every rescan (see "does not reset an active title
+//     flash's off phase" below).
+//   - setupPageFilters never re-announcing an unchanged "N of M shown"
+//     count to the shared aria-live region on a rescan (see "does not
+//     re-announce" below); a real soft navigation still announces exactly
+//     as before.
+//
+// Deliberately excluded from the rescan entirely: setupPageRevalidation,
+// setupPageHeartbeat, and setupLiveRegions (see the listener's own doc
+// comment in navigation.ts for why).
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -29,9 +45,15 @@ const {
   FakeElement,
   createContext,
   runScript,
+  flushAsyncWork,
   installManualClock,
   installManualTimers,
 } = require("./runtime-test-harness.js");
+
+function lastAnnouncement(env) {
+  const region = env.document.querySelector("[data-gosx-announcer]");
+  return region ? region.textContent : "";
+}
 
 test("a countdown swapped in by a region refetch starts ticking; the detached old one never ticks again", () => {
   const region = new FakeElement("div", null);
@@ -74,10 +96,10 @@ test("a countdown swapped in by a region refetch starts ticking; the detached ol
   clock.advance(1000);
   timers.runInterval(1000);
 
-  assert.match(
+  assert.equal(
     newCountdown.textContent,
-    /^0:5[89]$/,
-    "the newly swapped-in countdown must be registered and ticking",
+    "0:59",
+    "the newly swapped-in countdown must be registered and ticking (60s target - 1s elapsed = 59s = \"0:59\", exact under the manual clock)",
   );
   assert.equal(
     oldCountdown.textContent,
@@ -174,10 +196,10 @@ test("gosx:region:after re-registers a newly swapped-in element on each of sever
   // The LATEST swapped-in element must be the one ticking now — proving
   // each dispatch actually re-registered the current element, not just
   // replayed the very first registration from boot.
-  assert.match(
+  assert.equal(
     current.textContent,
-    /^0:5[89]$/,
-    "the latest swapped-in element must be registered and ticking",
+    "0:59",
+    "the latest swapped-in element must be registered and ticking (exact under the manual clock)",
   );
   // Every earlier, now-detached element must be frozen exactly where this
   // loop left it. If the listener were missing (or only fired once), the
@@ -223,7 +245,7 @@ test("gosx:region:after restarts the shared countdown timer after a swap removes
 
   clock.advance(1000);
   timers.runInterval(1000);
-  assert.match(revived.textContent, /^0:5[89]$/);
+  assert.equal(revived.textContent, "0:59", "exact under the manual clock: 60s target - 1s elapsed = 59s");
 });
 
 test("gosx:region:after does not reset the shared countdown interval: three swaps under 1000ms apart never recreate it or drop a real tick", () => {
@@ -247,28 +269,34 @@ test("gosx:region:after does not reset the shared countdown interval: three swap
   // blind to this bug's real shape on its own — a REAL setInterval(fn,
   // 1000) recreated by a rescan does not fire until a full real 1000ms
   // elapses from ITS OWN creation, so recreating it every ~300ms means the
-  // callback never runs at all in a real browser. Counting the runtime's
-  // own setInterval/clearInterval calls directly is what actually proves
-  // the shared interval's identity — and therefore its phase — survives a
-  // rescan; the tick assertion at the end is the literal "still advances by
-  // ~1s" check on top of that.
+  // callback never runs at all in a real browser.
+  //
+  // Tracking every LIVE 1000ms-interval HANDLE directly — not merely
+  // counting create/clear calls — is what actually proves the shared
+  // interval's IDENTITY, and therefore its phase, survives a rescan:
+  // liveHandles must still contain the exact same handle setInterval
+  // returned at boot, and nothing else. Scoping to delay===1000 (rather
+  // than every interval the runtime creates) means an unrelated 1000ms
+  // interval elsewhere in the runtime — for example the title-flash
+  // effect, which shares this same cadence — could never be mistaken for
+  // the countdown's own.
   const originalSetInterval = env.context.setInterval;
   const originalClearInterval = env.context.clearInterval;
-  let setIntervalCalls = 0;
-  let clearIntervalCalls = 0;
+  const liveHandles = new Set();
   env.context.setInterval = function(cb, delay) {
-    if (Number(delay) === 1000) setIntervalCalls += 1;
-    return originalSetInterval.apply(this, arguments);
+    const handle = originalSetInterval.apply(this, arguments);
+    if (Number(delay) === 1000) liveHandles.add(handle);
+    return handle;
   };
   env.context.clearInterval = function(handle) {
-    clearIntervalCalls += 1;
+    liveHandles.delete(handle);
     return originalClearInterval.apply(this, arguments);
   };
 
   runScript(navigationSource, env.context, "navigation_runtime.js");
   assert.equal(timers.count(), 1);
-  assert.equal(setIntervalCalls, 1, "page boot must create exactly one shared interval");
-  assert.equal(clearIntervalCalls, 0);
+  assert.equal(liveHandles.size, 1, "page boot must create exactly one live 1000ms countdown interval");
+  const bootHandle = liveHandles.values().next().value;
 
   // Three region swaps 300ms apart, well inside the same 1-second window —
   // exactly what an un-rate-limited signal- or hub-event-triggered region
@@ -282,15 +310,10 @@ test("gosx:region:after does not reset the shared countdown interval: three swap
   clock.advance(300);
   env.document.dispatchEvent({ type: "gosx:region:after", detail: { element: region, url: "/c" } });
 
-  assert.equal(
-    setIntervalCalls,
-    1,
-    "three rescans, each still with a live root, must never recreate the shared interval — recreating it would starve every real tick",
-  );
-  assert.equal(
-    clearIntervalCalls,
-    0,
-    "none of the three rescans found zero roots, so the interval must never have been cleared",
+  assert.deepEqual(
+    Array.from(liveHandles),
+    [bootHandle],
+    "three rescans, each still with a live root, must never recreate the shared interval (a new handle) or clear the original one — recreating it would starve every real tick",
   );
   assert.equal(timers.count(), 1);
 
@@ -300,9 +323,94 @@ test("gosx:region:after does not reset the shared countdown interval: three swap
   clock.advance(100);
   timers.runInterval(1000);
 
-  assert.match(
+  assert.equal(
     countdown.textContent,
-    /^1:2[89]$/,
-    "the countdown must have ticked by ~1 second total, not be starved indefinitely",
+    "1:29",
+    "exact under the manual clock: 90s target - 1s elapsed = 89s = \"1:29\"; not starved indefinitely",
+  );
+});
+
+test("gosx:region:after does not reset an active title flash's off phase", () => {
+  const el = new FakeElement("div", null);
+  el.id = "on-clock-panel";
+  el.setAttribute("data-on-clock", "true");
+  el.setAttribute("data-gosx-watch", "data-on-clock=true");
+  el.setAttribute("data-gosx-watch-effect", "title");
+  el.setAttribute("data-gosx-watch-title", "It's your pick!");
+  const env = createContext({ elements: [el] });
+  // Deliberately distinct from the flash message, so a bug that ignores
+  // the flash's own on/off phase (and, say, always shows one or the
+  // other) cannot accidentally read as correct.
+  env.document.title = "Home";
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+
+  assert.equal(
+    env.document.title,
+    "It's your pick!",
+    "an already-true condition fires immediately at boot, in the flash's \"on\" phase",
+  );
+
+  // The flash's own first toggle (WATCH_TITLE_FLASH_INTERVAL_MS === 1000,
+  // the same cadence as the countdown tick) enters the "off" phase.
+  timers.runInterval(1000);
+  assert.equal(env.document.title, "Home", "the flash's own toggle enters the \"off\" phase");
+
+  // A region swap elsewhere on the page rescans every watcher via
+  // gosx:region:after — including this one, whose condition has not
+  // changed. Unlike a real soft navigation, a region swap never touches
+  // document.title, so nothing here should force it back to the message.
+  env.document.dispatchEvent({ type: "gosx:region:after", detail: { element: el, url: "/frag" } });
+
+  assert.equal(
+    env.document.title,
+    "Home",
+    "a gosx:region:after rescan of an unchanged, still-active title flash must not reset its current off phase",
+  );
+
+  // The toggle itself must still be running normally afterward — the fix
+  // must preserve the phase, not freeze the flash outright.
+  timers.runInterval(1000);
+  assert.equal(env.document.title, "It's your pick!", "the toggle keeps alternating normally after the rescan");
+});
+
+test("gosx:region:after rescan does not re-announce a filter's shown count; boot still announces once, exactly as before", async () => {
+  const input = new FakeElement("input", null);
+  input.setAttribute("data-gosx-filter", "pool-list");
+  input.setAttribute("data-gosx-filter-announce", "true");
+  const container = new FakeElement("ul", null);
+  container.id = "pool-list";
+  ["Patrick Mahomes", "Josh Allen", "Joe Burrow"].forEach(function(text) {
+    const row = new FakeElement("li", null);
+    row.setAttribute("data-gosx-filter-text", text);
+    row.textContent = text;
+    container.appendChild(row);
+  });
+
+  const env = createContext({ elements: [input, container] });
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  await flushAsyncWork();
+
+  assert.equal(
+    lastAnnouncement(env),
+    "3 of 3 shown",
+    "boot's own setupPageFilters() call must still announce, exactly as before this fix",
+  );
+
+  // announceNavigation clears the live region's own textContent before
+  // (asynchronously) re-setting it — clearing it here too, between boot's
+  // announcement and the rescan, is what lets this test tell "no new
+  // announcement happened" apart from "the same text got announced
+  // again", which would otherwise look identical.
+  const announcer = env.document.querySelector("[data-gosx-announcer]");
+  announcer.textContent = "";
+
+  env.document.dispatchEvent({ type: "gosx:region:after", detail: { element: container, url: "/frag" } });
+  await flushAsyncWork();
+
+  assert.equal(
+    lastAnnouncement(env),
+    "",
+    "a gosx:region:after rescan must never re-announce the filter's shown count",
   );
 });
