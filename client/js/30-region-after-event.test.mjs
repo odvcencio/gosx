@@ -43,8 +43,13 @@ function makeRegion(attrs) {
 
 // runModule is a trimmed copy of 07-declarative-regions.test.mjs's own
 // helper of the same name, dropped to the pieces this file's assertions
-// need: a fetch fake, and a document.dispatchEvent spy.
-function runModule(regions, payload) {
+// need: a fetch fake, and a document.dispatchEvent spy. opts.replaceRuntimeContent,
+// when given, installs window.__gosx_replace_runtime_content so fetchRegion
+// takes the MANAGED gosxHost.dom.replace(el, html) swap path instead of its
+// unmanaged el.innerHTML fallback (see regions.ts: gosxHostCompatibility.read
+// gates which branch runs) — the event must fire after either one.
+function runModule(regions, payload, opts) {
+  opts = opts || {};
   const dispatchedEvents = [];
   const fetches = [];
   const ctx = {
@@ -89,6 +94,9 @@ function runModule(regions, payload) {
       __gosx_subscribe_shared_signal: () => () => {},
       __gosx_emit: () => {},
       __gosx: { engines: new Map() },
+      ...(opts.replaceRuntimeContent ? {
+        __gosx_replace_runtime_content: opts.replaceRuntimeContent,
+      } : {}),
     },
   };
   ctx.window.document = ctx.document;
@@ -130,4 +138,32 @@ test("a 304 not-modified response never dispatches gosx:region:after — nothing
 
   const events = dispatchedEvents.filter((event) => event.type === "gosx:region:after");
   assert.equal(events.length, 0);
+});
+
+test("a managed gosxHost.dom.replace swap also dispatches gosx:region:after with the swapped element and the fetched URL", async () => {
+  const region = makeRegion({ "data-gosx-region-url": "/tree" });
+  const replaceCalls = [];
+  const { context, dispatchedEvents } = runModule([region], { text: "<p>managed</p>" }, {
+    replaceRuntimeContent: (el, html) => {
+      // Stands in for dom.ts's real replaceRuntimeContent: performs the
+      // swap and reports success, exactly like the real implementation's
+      // contract (see regions.ts's own comment on gosxHost.dom.replace).
+      replaceCalls.push({ el, html });
+      el.innerHTML = html;
+      return true;
+    },
+  });
+
+  await context.window.__gosx.regions.refresh(region);
+
+  assert.equal(
+    replaceCalls.length,
+    1,
+    "the managed __gosx_replace_runtime_content path must have run, not the unmanaged innerHTML fallback",
+  );
+  assert.equal(region.innerHTML, "<p>managed</p>");
+  const events = dispatchedEvents.filter((event) => event.type === "gosx:region:after");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].detail.element, region);
+  assert.equal(events[0].detail.url, "/tree");
 });

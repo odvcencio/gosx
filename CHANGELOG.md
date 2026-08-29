@@ -4,8 +4,10 @@
 
 ### Fixed: countdowns, watchers, and filters keep working after a region swap
 
-- fix(regions): re-register countdowns, watchers, and filters after a
-  region swap; dispatch `gosx:region:after`.
+- navigation: re-register countdowns, watchers, and filters on
+  `gosx:region:after` (dispatched by regions since 0b1f558d), so a
+  countdown inside a refetched region keeps ticking; the shared countdown
+  interval now survives rescans.
 
 ### Changed: the declarative heartbeat pings while hidden, at a slower marked rate
 

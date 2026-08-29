@@ -3999,17 +3999,18 @@
 
   // setupPageCountdowns scans for every data-gosx-countdown element on
   // page boot and after every soft navigation (see finalizeNavigation and
-  // the initial-document replay below) — the same lifecycle
+  // the initial-document replay below), and — gosx:region:after — after
+  // every declarative region swap, the same lifecycle
   // setupPageRevalidation follows just above. It never writes to a
   // countdown element itself: the server-rendered text (or segment
   // values) stays exactly as rendered until the first tick, one second
   // later, moves it.
   function setupPageCountdowns() {
-    // Every call — page boot and every soft navigation — starts a new
-    // generation, even one that ends up finding no countdown roots at
-    // all. See countdownGeneration's declaration for why.
+    // Every call — page boot, every soft navigation, and every
+    // gosx:region:after rescan — starts a new generation, even one that
+    // ends up finding no countdown roots at all. See countdownGeneration's
+    // declaration for why.
     countdownGeneration += 1;
-    teardownPageCountdowns();
     const states = [];
     for (const root of findCountdownRootElements()) {
       // gosx#178 review finding B2, second layer: buildCountdownState (and
@@ -4031,10 +4032,27 @@
       if (state) states.push(state);
     }
     if (!states.length) {
+      teardownPageCountdowns();
       return;
     }
     countdownRoots = states;
-    countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
+    // Keep an already-running shared interval running across this rescan,
+    // rather than unconditionally clearing and recreating it: a fresh
+    // setInterval restarts its own 1-second phase from the moment it is
+    // created, so any two rescans landing under 1000ms apart would push
+    // the next real tick out indefinitely. gosx:region:after is the case
+    // that actually hits this — neither a signal- nor a hub-event-
+    // triggered region rate-limits its own refetch, and a polled region's
+    // own floor is exactly 1000ms — so a page with an active region could
+    // rescan just often enough to starve the tick forever, freezing every
+    // countdown on the page, not only the one inside the region. Only a
+    // rescan that finds zero roots (teardownPageCountdowns above) or
+    // runCountdownTick's own "every countdown finished" branch ever stops
+    // this interval; a later rescan that still (or again) has roots
+    // reuses it unchanged.
+    if (countdownTimerHandle == null) {
+      countdownTimerHandle = setInterval(runCountdownTick, COUNTDOWN_TICK_MS);
+    }
   }
 
   // ---------------------------------------------------------------------
