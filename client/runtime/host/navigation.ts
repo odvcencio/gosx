@@ -6191,6 +6191,25 @@
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", refreshInitialDocumentNavigation, { once: true });
   }
+  // A declarative region (regions.ts) replaces its own subtree with
+  // gosxHost.dom.replace/innerHTML on every refetch, entirely outside the
+  // soft-navigation lifecycle finalizeNavigation and the initial-document
+  // replay above already re-scan through. Without this listener a
+  // countdown, watcher, or filter element swapped in by a region refetch
+  // is never registered at all — the region draft pick clock symptom this
+  // fix targets. Each of the three setup functions tears down its own
+  // records and rescans the WHOLE document from scratch (not just the
+  // swapped region), so this is exactly as safe to call here as it is
+  // from a soft navigation: a detached old element simply drops out (its
+  // root is no longer found by the relevant findXRootElements scan), and
+  // an element newly inside the swapped region registers for the first
+  // time. See regions.ts' own emit("gosx:region:after", ...) call for the
+  // event contract (detail.element, detail.url).
+  document.addEventListener("gosx:region:after", function() {
+    setupPageCountdowns();
+    setupPageWatchers();
+    setupPageFilters();
+  });
 
   const navigationAPI = {
     navigate: navigate,

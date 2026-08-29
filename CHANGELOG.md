@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed: countdowns, watchers, and filters keep working after a region swap
+
+- fix(regions): re-register countdowns, watchers, and filters after a
+  region swap; dispatch `gosx:region:after`.
+
 ### Changed: the declarative heartbeat pings while hidden, at a slower marked rate
 
 - `data-gosx-heartbeat` no longer pauses entirely while the document is

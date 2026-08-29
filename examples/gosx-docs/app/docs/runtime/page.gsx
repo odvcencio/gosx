@@ -370,6 +370,17 @@ func Page() Node {
 				<span class="inline-code">"revalidate"</span>
 				, before the page ever serves.
 			</p>
+			<p>
+				A countdown inside a
+				<span class="inline-code">data-gosx-region</span>
+				keeps ticking after the region refetches: the runtime re-registers countdowns, attention watchers, and filters after every swap. Listen for
+				<span class="inline-code">gosx:region:after</span>
+				(
+				<span class="inline-code">detail.element</span>
+				,
+				<span class="inline-code">detail.url</span>
+				) to run your own re-initialization.
+			</p>
 		</section>
 		<section id="attention-watcher">
 			<h2>Attention watcher</h2>
