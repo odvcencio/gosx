@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.53.9 (2026-08-29)
+
 ### Fixed: countdowns, watchers, and filters keep working after a region swap
 
 - A `data-gosx-countdown`, `data-gosx-watch`, or `data-gosx-filter`

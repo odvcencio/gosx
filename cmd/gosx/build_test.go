@@ -617,7 +617,7 @@ func TestRunBuildRelocatedBundleRendersSiblingFragment(t *testing.T) {
 
 go 1.25
 
-require m31labs.dev/gosx v0.53.8
+require m31labs.dev/gosx v0.53.9
 `)
 	addLocalGoSXReplace(t, sourceDir)
 	mustWriteFile(t, filepath.Join(sourceDir, "main.go"), `package main
