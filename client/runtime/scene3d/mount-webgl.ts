@@ -3367,6 +3367,14 @@ function gosxConfigureSceneScript(script, role, src) {
     return current;
   }
 
+  function sceneComputedPosePriorArray(object, cacheKey, sourceArray) {
+    const cached = object ? object[cacheKey] : null;
+    if (cached && typeof cached.length === "number" && cached.length === sourceArray.length) {
+      return new Float32Array(cached);
+    }
+    return new Float32Array(sourceArray);
+  }
+
   function sceneComputedPoseApplyObjectMorph(object, sourceLocal, targetLocal, model, alpha) {
     if (!object || !object.vertices || !sourceLocal || !targetLocal) {
       return 0;
@@ -3383,31 +3391,28 @@ function gosxConfigureSceneScript(script, role, src) {
     const targetPositions = targetLocal.positions.length === count * 3
       ? targetLocal.positions
       : targetLocal.positions.subarray(0, count * 3);
+    const priorPositions = sceneComputedPosePriorArray(object, "_computedPoseLocalPositions", sourcePositions);
     const morphedPositions = sceneComputedPoseBlendArray(object, "_computedPoseLocalPositions", sourcePositions, targetPositions, 3, alpha, false);
     if (!morphedPositions) {
       return 0;
     }
 
-    object.computedMorph = {
-      sourcePositions,
-      targetPositions,
-      sourceNormals: sourceLocal.normals && sourceLocal.normals.length >= count * 3
-        ? (sourceLocal.normals.subarray ? sourceLocal.normals.subarray(0, count * 3) : sourceLocal.normals)
-        : null,
-      targetNormals: targetLocal.normals && targetLocal.normals.length >= count * 3
-        ? (targetLocal.normals.subarray ? targetLocal.normals.subarray(0, count * 3) : targetLocal.normals)
-        : null,
-      sourceTangents: sourceLocal.tangents && sourceLocal.tangents.length >= count * 4
-        ? (sourceLocal.tangents.subarray ? sourceLocal.tangents.subarray(0, count * 4) : sourceLocal.tangents)
-        : null,
-      targetTangents: targetLocal.tangents && targetLocal.tangents.length >= count * 4
-        ? (targetLocal.tangents.subarray ? targetLocal.tangents.subarray(0, count * 4) : targetLocal.tangents)
-        : null,
-      uvs: sourceLocal.uvs,
-      count,
-      alpha: Math.max(0, Math.min(1, sceneNumber(alpha, 0.45))),
-      modelMatrix: sceneModelTransformMatrix(model),
-    };
+    // Reuse the existing plain object instead of replacing it on every event,
+    // so renderer-owned caches hanging off computedMorph (packed GPU data
+    // buffers, output buffers, bind groups) remain reusable across events.
+    // Every public morph data field is reassigned each event so no stale
+    // source/target/count/alpha/model data leaks through the reused object.
+    let morphData = object.computedMorph;
+    if (!morphData || typeof morphData !== "object") {
+      morphData = {};
+      object.computedMorph = morphData;
+    }
+    morphData.sourcePositions = priorPositions;
+    morphData.targetPositions = targetPositions;
+    morphData.uvs = sourceLocal.uvs;
+    morphData.count = count;
+    morphData.alpha = Math.max(0, Math.min(1, sceneNumber(alpha, 0.45)));
+    morphData.modelMatrix = sceneModelTransformMatrix(model);
 
     object.vertices.positions = sceneModelTransformMeshFloats(morphedPositions, 3, function(x, y, z) {
       return sceneModelTransformPoint({ x: x, y: y, z: z }, model);
@@ -3419,9 +3424,16 @@ function gosxConfigureSceneScript(script, role, src) {
     const targetNormals = targetLocal.normals && targetLocal.normals.length >= count * 3
       ? targetLocal.normals.subarray ? targetLocal.normals.subarray(0, count * 3) : targetLocal.normals
       : null;
+    const priorNormals = sourceNormals
+      ? sceneComputedPosePriorArray(object, "_computedPoseLocalNormals", sourceNormals)
+      : null;
     const morphedNormals = sourceNormals
       ? sceneComputedPoseBlendArray(object, "_computedPoseLocalNormals", sourceNormals, targetNormals || sourceNormals, 3, alpha, true)
       : null;
+    if (object.computedMorph) {
+      object.computedMorph.sourceNormals = priorNormals;
+      object.computedMorph.targetNormals = sourceNormals ? (targetNormals || sourceNormals) : null;
+    }
     if (morphedNormals) {
       object.vertices.normals = sceneModelTransformMeshFloats(morphedNormals, 3, function(x, y, z) {
         return sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));
@@ -3434,9 +3446,16 @@ function gosxConfigureSceneScript(script, role, src) {
     const targetTangents = targetLocal.tangents && targetLocal.tangents.length >= count * 4
       ? targetLocal.tangents.subarray ? targetLocal.tangents.subarray(0, count * 4) : targetLocal.tangents
       : null;
+    const priorTangents = sourceTangents
+      ? sceneComputedPosePriorArray(object, "_computedPoseLocalTangents", sourceTangents)
+      : null;
     const morphedTangents = sourceTangents
       ? sceneComputedPoseBlendArray(object, "_computedPoseLocalTangents", sourceTangents, targetTangents || sourceTangents, 4, alpha, true)
       : null;
+    if (object.computedMorph) {
+      object.computedMorph.sourceTangents = priorTangents;
+      object.computedMorph.targetTangents = sourceTangents ? (targetTangents || sourceTangents) : null;
+    }
     if (morphedTangents) {
       object.vertices.tangents = sceneModelTransformMeshFloats(morphedTangents, 4, function(x, y, z, w) {
         const rotated = sceneNormalizeDirection(sceneModelTransformVector({ x: x, y: y, z: z }, model));

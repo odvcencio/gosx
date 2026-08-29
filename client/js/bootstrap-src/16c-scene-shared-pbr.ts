@@ -138,6 +138,115 @@
 
   // --- Shadow Map Infrastructure ---
 
+  // Point-light cube shadows share one near/far pair across six
+  // 90-degree square perspective faces in fixed order +X, -X, +Y, -Y,
+  // +Z, -Z (cube-face sampler order). Each face is built independently
+  // with the same lookAt convention as the spot builder: right =
+  // forward cross up, with up = +Y for the X/Z faces and up = +Z when
+  // forward is vertical (the up basis swaps instead of re-aiming).
+  // One finite near/far pair is derived once for the whole cube:
+  //
+  //   far = max absolute axis distance from the finite scene bounds to
+  //   the light; 10 when the bounds are absent or degenerate; capped by
+  //   a finite positive Range.
+  //   near = clamp(far * 0.001, 0.01, 0.1), with a far * 0.5 fallback
+  //   when the clamp collapses onto or past the far plane.
+  //
+  // Non-finite or unrepresentable positions and projections return null
+  // instead of a silently broken cube. Inputs are never mutated and the
+  // six face matrices never alias each other. Point lights must NOT
+  // route through sceneShadowLightSpaceMatrix's single-matrix
+  // directional fallback: a cube needs all six faces.
+  function scenePointShadowFaceMatrices(light, sceneBounds) {
+    if (!light || typeof light !== "object") return null;
+    var px = sceneNumber(light.x, NaN);
+    var py = sceneNumber(light.y, NaN);
+    var pz = sceneNumber(light.z, NaN);
+    if (!isFinite(px) || !isFinite(py) || !isFinite(pz)) return null;
+    var range = sceneNumber(light.range, 0);
+
+    var far = 0;
+    if (
+      sceneBounds &&
+      isFinite(sceneBounds.minX) && isFinite(sceneBounds.maxX) &&
+      isFinite(sceneBounds.minY) && isFinite(sceneBounds.maxY) &&
+      isFinite(sceneBounds.minZ) && isFinite(sceneBounds.maxZ)
+    ) {
+      var spanX = Math.max(Math.abs(sceneBounds.minX - px), Math.abs(sceneBounds.maxX - px));
+      var spanY = Math.max(Math.abs(sceneBounds.minY - py), Math.abs(sceneBounds.maxY - py));
+      var spanZ = Math.max(Math.abs(sceneBounds.minZ - pz), Math.abs(sceneBounds.maxZ - pz));
+      far = Math.max(spanX, Math.max(spanY, spanZ));
+      if (!isFinite(far)) return null; // extent overflowed the representable range
+    }
+    if (!(far > 0)) far = 10; // absent/degenerate bounds fallback
+    if (range > 0 && isFinite(range)) far = Math.min(far, range);
+    if (!isFinite(far) || far <= 0) return null;
+    var near = Math.min(0.1, Math.max(0.01, far * 0.001));
+    if (near >= far) near = far * 0.5;
+
+    // The near/far pair feeds Float32 receiver uniforms, so it must
+    // survive the float32 round-trip as a positive near strictly below
+    // far; zero-underflow, non-finite, or collapsed pairs reject the
+    // cube instead of producing a silently broken projection.
+    var near32 = Math.fround(near);
+    var far32 = Math.fround(far);
+    if (!isFinite(near32) || !isFinite(far32) || !(near32 > 0) || near32 >= far32) return null;
+    near = near32;
+    far = far32;
+
+    var rangeInv = 1 / (near - far);
+    if (!isFinite(rangeInv)) return null;
+    var cz = (near + far) * rangeInv;
+    var cw = 2 * near * far * rangeInv;
+
+    // Fixed face order: +X, -X, +Y, -Y, +Z, -Z.
+    var faces = [
+      1, 0, 0,
+      -1, 0, 0,
+      0, 1, 0,
+      0, -1, 0,
+      0, 0, 1,
+      0, 0, -1,
+    ];
+    var matrices = [];
+    for (var face = 0; face < 6; face++) {
+      var fx = faces[face * 3], fy = faces[face * 3 + 1], fz = faces[face * 3 + 2];
+      var upX = 0, upY = 1, upZ = 0;
+      if (fy !== 0) { upX = 0; upY = 0; upZ = 1; }
+      // right = forward cross up (same convention as the spot builder).
+      var rx = fy * upZ - fz * upY;
+      var ry = fz * upX - fx * upZ;
+      var rz = fx * upY - fy * upX;
+      upX = ry * fz - rz * fy;
+      upY = rz * fx - rx * fz;
+      upZ = rx * fy - ry * fx;
+      var tx = -(rx * px + ry * py + rz * pz);
+      var ty = -(upX * px + upY * py + upZ * pz);
+      var tz = fx * px + fy * py + fz * pz;
+
+      // 90-degree square perspective, aspect 1 (tan(45deg) = 1). The
+      // combined proj*view entries are written directly: the w row is
+      // the forward axis, so the eye maps to w = 0 and every point in
+      // front of the face gets w equal to its forward distance, while
+      // the near/far planes map to clip depth -1/+1.
+      var m = new Float32Array(16);
+      m[0] = rx;   m[1] = upX; m[2] = -cz * fx; m[3] = fx;
+      m[4] = ry;   m[5] = upY; m[6] = -cz * fy; m[7] = fy;
+      m[8] = rz;   m[9] = upZ; m[10] = -cz * fz; m[11] = fz;
+      m[12] = tx;  m[13] = ty; m[14] = cz * tz + cw; m[15] = -tz;
+      for (var i = 0; i < 16; i++) {
+        if (!isFinite(m[i])) return null;
+      }
+      matrices.push(m);
+    }
+    return {
+      matrices: matrices,
+      position: [px, py, pz],
+      near: near,
+      far: far,
+    };
+  }
+
   // Build a perspective light-space matrix for ONE authored spot light.
   // Returns null when the spot cannot be projected faithfully; callers treat
   // null as "this spot takes no shadow slot and leaves no stale enabled
@@ -372,7 +481,7 @@
   }
 
   // Compute the AABB of all objects in the bundle.
-  function sceneShadowComputeBounds(bundle, getInstancedGeometry) {
+  function sceneShadowComputeBounds(bundle, getInstancedGeometry, includeAll) {
     var minX = Infinity, minY = Infinity, minZ = Infinity;
     var maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     var positions = bundle.worldMeshPositions;
@@ -380,9 +489,13 @@
 
     for (var i = 0; i < objects.length; i++) {
       var obj = objects[i];
-      if (!obj || obj.viewCulled) continue;
+      // includeAll (point-light cube fits) bypasses viewCulled and
+      // castShadow filtering so receivers and offscreen prepared geometry
+      // widen the bounds; every other filter and all detailed skinned /
+      // retained / instanced bounds math and cache behavior is unchanged.
+      if (!obj || (!includeAll && obj.viewCulled)) continue;
       if (obj.directVertices) {
-        if (!obj.castShadow) continue;
+        if (!includeAll && !obj.castShadow) continue;
         // GPU-skinned casters take precedence over retained bind bounds: the
         // GPU color path recognizes skin + streams, so when a caster carries
         // both, its bind-pose bounds describe the wrong geometry. Skinned
@@ -513,7 +626,7 @@
       var instancedMeshes = Array.isArray(bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       for (var im = 0; im < instancedMeshes.length; im++) {
         var instMesh = instancedMeshes[im];
-        if (!instMesh || !instMesh.castShadow) continue;
+        if (!instMesh || (!includeAll && !instMesh.castShadow)) continue;
         // Read the raw authored transforms (or the carried cached view)
         // directly — no per-frame allocation — and only consider the
         // matrices actually drawn: the authored instance count, floored,

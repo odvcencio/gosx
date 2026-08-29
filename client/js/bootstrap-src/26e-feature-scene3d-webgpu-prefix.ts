@@ -87,6 +87,8 @@
   var normalizeInstancedGeometryKind = sceneApi.normalizeInstancedGeometryKind;
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
+  var scenePointShadowFaceMatrices = sceneApi.scenePointShadowFaceMatrices;
+  var resolvePointShadowSize = sceneApi.resolvePointShadowSize || function() { return 0; };
   // SH light-probe helpers from 16c-scene-shared-pbr.js (base chunk). 16a
   // references them inside packLights; this IIFE cannot see them lexically,
   // so bridge them exactly like the other base symbols above.

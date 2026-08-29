@@ -139,8 +139,11 @@
     "    shadowBias1: f32,",
     "    shadowLightIndex0: i32,",
     "    shadowLightIndex1: i32,",
-    "    _pad0: u32,",
-    "    _pad1: u32,",
+    "    pointFlags0: u32,",
+    "    pointFlags1: u32,",
+    "    pointPosNear0: vec4f,",
+    "    pointPosNear1: vec4f,",
+    "    pointFarSoft: vec4f,",
     "};",
   ].join("\n");
 
@@ -375,7 +378,7 @@
     "  outTangents[t] = worldTangent.x;",
     "  outTangents[t + 1u] = worldTangent.y;",
     "  outTangents[t + 2u] = worldTangent.z;",
-    "  outTangents[t + 3u] = select(sourcePacked[packed + 9u], targetPacked[packed + 9u], a >= 0.5);",
+    "  outTangents[t + 3u] = mix(sourcePacked[packed + 9u], targetPacked[packed + 9u], a);",
     "}",
   ].join("\n");
 
@@ -1635,6 +1638,123 @@
     "    return shadowVal / 4.0;",
     "}",
     "",
+    "// Point-light cube shadows (type 2): analytic per-face projection lets the",
+    "// receiver avoid per-face uniform matrices. delta = worldPos - lightPos; the",
+    "// dominant absolute axis selects the face (ties favor X, then Y, then Z)",
+    "// in fixed order +X,-X,+Y,-Y,+Z,-Z with face-local right/up bases.",
+    "// Depth is the dominant axis length; fragments at/behind the light or",
+    "// outside [near, far] reject BEFORE any division or compare sample.",
+    "// localXY = dot(delta, right/up) / depth maps to tile-local",
+    "// (.5 + .5x, .5 - .5y); projected depth = f/(f-n) * (1 - n/depth).",
+    "// Every hard/PCF tap clamps to the selected tile's half-texel inset so",
+    "// sampling can never bleed into a neighboring face.",
+    "fn pointFaceRight(face: u32) -> vec3f {",
+    "    if (face == 0u) { return vec3f(0.0, 0.0, 1.0); }",
+    "    if (face == 1u) { return vec3f(0.0, 0.0, -1.0); }",
+    "    if (face == 2u) { return vec3f(1.0, 0.0, 0.0); }",
+    "    if (face == 3u) { return vec3f(-1.0, 0.0, 0.0); }",
+    "    if (face == 4u) { return vec3f(-1.0, 0.0, 0.0); }",
+    "    return vec3f(1.0, 0.0, 0.0);",
+    "}",
+    "fn pointFaceUp(face: u32) -> vec3f {",
+    "    if (face == 2u || face == 3u) { return vec3f(0.0, 0.0, 1.0); }",
+    "    return vec3f(0.0, 1.0, 0.0);",
+    "}",
+    "// Returns (localX, localY, face, projDepth); projDepth < 0 rejects.",
+    "fn pointProject(worldPos: vec3f, lightPos: vec3f, nearPlane: f32, farPlane: f32) -> vec4f {",
+    "    let delta = worldPos - lightPos;",
+    "    let ax = abs(delta.x);",
+    "    let ay = abs(delta.y);",
+    "    let az = abs(delta.z);",
+    "    var face = 0u;",
+    "    var depth = ax;",
+    "    if (ax >= ay && ax >= az) {",
+    "        face = select(1u, 0u, delta.x > 0.0);",
+    "        depth = ax;",
+    "    } else if (ay >= az) {",
+    "        face = select(3u, 2u, delta.y > 0.0);",
+    "        depth = ay;",
+    "    } else {",
+    "        face = select(5u, 4u, delta.z > 0.0);",
+    "        depth = az;",
+    "    }",
+    "    if (depth <= 0.0 || depth < nearPlane || depth > farPlane) {",
+    "        return vec4f(0.0, 0.0, f32(face), -1.0);",
+    "    }",
+    "    let right = pointFaceRight(face);",
+    "    let up = pointFaceUp(face);",
+    "    let lx = dot(delta, right) / depth;",
+    "    let ly = dot(delta, up) / depth;",
+    "    let projDepth = farPlane / (farPlane - nearPlane) * (1.0 - nearPlane / depth);",
+    "    return vec4f(lx, ly, f32(face), projDepth);",
+    "}",
+    "// Hard (softness == 0) is one compare; positive softness (clamped to",
+    "    // [0, 1]) runs a bounded 4-tap Poisson PCF, every tap clamped to the",
+    "    // selected tile's half-texel inset.",
+    "fn shadowFactorPoint0(worldPos: vec3f, bias: f32) -> f32 {",
+    "    let pd = shadow.pointPosNear0;",
+    "    let fs = shadow.pointFarSoft;",
+    "    let proj = pointProject(worldPos, pd.xyz, pd.w, fs.x);",
+    "    if (proj.w < 0.0) { return 1.0; }",
+    "    let face = u32(proj.z + 0.5);",
+    "    let tile = vec2f(f32(face % 3u), floor(f32(face) / 3.0));",
+    "    let texDim = textureDimensions(shadowMap0);",
+    "    let faceSize = vec2f(f32(texDim.x) / 3.0, f32(texDim.y) / 2.0);",
+    "    let ht = vec2f(0.5) / faceSize;",
+    "    let localBase = vec2f(0.5 + 0.5 * proj.x, 0.5 - 0.5 * proj.y);",
+    "    let refDepth = clamp(proj.w - bias, 0.0, 1.0);",
+    "    let soft = clamp(fs.y, 0.0, 1.0);",
+    "    if (soft <= 0.0) {",
+    "        let uv = (clamp(localBase, ht, vec2f(1.0) - ht) + tile) / vec2f(3.0, 2.0);",
+    "        return textureSampleCompareLevel(shadowMap0, shadowSampler0, uv, refDepth);",
+    "    }",
+    "    let poissonDisk = array<vec2f, 4>(",
+    "        vec2f(-0.94201624, -0.39906216),",
+    "        vec2f(0.94558609, -0.76890725),",
+    "        vec2f(-0.094184101, -0.92938870),",
+    "        vec2f(0.34495938, 0.29387760),",
+    "    );",
+    "    var shadowVal: f32 = 0.0;",
+    "    for (var i = 0u; i < 4u; i = i + 1u) {",
+    "        let localUV = localBase + poissonDisk[i] * soft * ht * 4.0;",
+    "        let uv = (clamp(localUV, ht, vec2f(1.0) - ht) + tile) / vec2f(3.0, 2.0);",
+    "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap0, shadowSampler0, uv, refDepth);",
+    "    }",
+    "    return shadowVal / 4.0;",
+    "}",
+    "// Slot 1 twin: identical math, distinct depth texture/sampler bindings.",
+    "fn shadowFactorPoint1(worldPos: vec3f, bias: f32) -> f32 {",
+    "    let pd = shadow.pointPosNear1;",
+    "    let fs = shadow.pointFarSoft;",
+    "    let proj = pointProject(worldPos, pd.xyz, pd.w, fs.z);",
+    "    if (proj.w < 0.0) { return 1.0; }",
+    "    let face = u32(proj.z + 0.5);",
+    "    let tile = vec2f(f32(face % 3u), floor(f32(face) / 3.0));",
+    "    let texDim = textureDimensions(shadowMap1);",
+    "    let faceSize = vec2f(f32(texDim.x) / 3.0, f32(texDim.y) / 2.0);",
+    "    let ht = vec2f(0.5) / faceSize;",
+    "    let localBase = vec2f(0.5 + 0.5 * proj.x, 0.5 - 0.5 * proj.y);",
+    "    let refDepth = clamp(proj.w - bias, 0.0, 1.0);",
+    "    let soft = clamp(fs.w, 0.0, 1.0);",
+    "    if (soft <= 0.0) {",
+    "        let uv = (clamp(localBase, ht, vec2f(1.0) - ht) + tile) / vec2f(3.0, 2.0);",
+    "        return textureSampleCompareLevel(shadowMap1, shadowSampler1, uv, refDepth);",
+    "    }",
+    "    let poissonDisk = array<vec2f, 4>(",
+    "        vec2f(-0.94201624, -0.39906216),",
+    "        vec2f(0.94558609, -0.76890725),",
+    "        vec2f(-0.094184101, -0.92938870),",
+    "        vec2f(0.34495938, 0.29387760),",
+    "    );",
+    "    var shadowVal: f32 = 0.0;",
+    "    for (var i = 0u; i < 4u; i = i + 1u) {",
+    "        let localUV = localBase + poissonDisk[i] * soft * ht * 4.0;",
+    "        let uv = (clamp(localUV, ht, vec2f(1.0) - ht) + tile) / vec2f(3.0, 2.0);",
+    "        shadowVal = shadowVal + textureSampleCompareLevel(shadowMap1, shadowSampler1, uv, refDepth);",
+    "    }",
+    "    return shadowVal / 4.0;",
+    "}",
+    "",
     // 4-tap Poisson disk PCF shadow sampling for shadow slot 1.
     "fn shadowFactor1(worldPos: vec3f, lightSpaceMatrix: mat4x4f, bias: f32) -> f32 {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
@@ -2045,11 +2165,19 @@
     // Shadow attenuation for directional (1) and spot (3) lights. The slot
     // index checks below keep the attenuation on the slot's OWN light only.
     "        var shadowAtten: f32 = 1.0;",
-    "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 3u)) {",
+    "        if (material.receiveShadow != 0u && (lightType == 1u || lightType == 2u || lightType == 3u)) {",
     "            if (shadow.hasShadow0 != 0u && i32(i) == shadow.shadowLightIndex0) {",
-    "                shadowAtten = shadowFactor0(in.worldPos, shadow.lightSpaceMatrix0, shadow.shadowBias0);",
+    "                if (shadow.pointFlags0 != 0u) {",
+    "                    shadowAtten = shadowFactorPoint0(in.worldPos, shadow.shadowBias0);",
+    "                } else {",
+    "                    shadowAtten = shadowFactor0(in.worldPos, shadow.lightSpaceMatrix0, shadow.shadowBias0);",
+    "                }",
     "            } else if (shadow.hasShadow1 != 0u && i32(i) == shadow.shadowLightIndex1) {",
-    "                shadowAtten = shadowFactor1(in.worldPos, shadow.lightSpaceMatrix1, shadow.shadowBias1);",
+    "                if (shadow.pointFlags1 != 0u) {",
+    "                    shadowAtten = shadowFactorPoint1(in.worldPos, shadow.shadowBias1);",
+    "                } else {",
+    "                    shadowAtten = shadowFactor1(in.worldPos, shadow.lightSpaceMatrix1, shadow.shadowBias1);",
+    "                }",
     "            }",
     "        }",
     "",
@@ -4311,7 +4439,20 @@
       format: "depth24plus",
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
-    return { texture: texture, view: texture.createView(), size: size };
+    return { texture: texture, view: texture.createView(), size: size, point: false };
+  }
+
+  // Point-light cube shadow atlas: ONE depth24plus texture packing six
+  // 90-degree faces as 3*S by 2*S (face order +X,-X,+Y,-Y,+Z,-Z, tile
+  // col = face % 3, row = floor(face / 3)). The `point` flag keeps slot
+  // reuse from aliasing a square shadow map of the same per-face size.
+  function wgpuCreatePointShadowAtlas(device, size) {
+    var texture = device.createTexture({
+      size: [size * 3, size * 2, 1],
+      format: "depth24plus",
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    return { texture: texture, view: texture.createView(), size: size, point: true };
   }
 
   // -----------------------------------------------------------------------
@@ -7449,7 +7590,7 @@
     var _fogUniformF   = new Float32Array(_fogUniformBuf);
     var _fogUniformU   = new Uint32Array(_fogUniformBuf);
 
-    var _shadowUniformBuf = new ArrayBuffer(160);
+    var _shadowUniformBuf = new ArrayBuffer(208);
     var _shadowUniformF   = new Float32Array(_shadowUniformBuf);
     var _shadowUniformU   = new Uint32Array(_shadowUniformBuf);
     var _shadowUniformI   = new Int32Array(_shadowUniformBuf);
@@ -14449,9 +14590,10 @@
       return out;
     }
 
-    function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights) {
+    function uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, lights, pointData) {
       var lightArray = Array.isArray(lights) ? lights : [];
-      // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + pad(8) = 160. Round up to 256.
+      // ShadowUniforms: mat4(64) + mat4(64) + 6*u32(24) + point flags(8) +
+      // 3*vec4f(48) = 208 bytes CPU staging; the GPU buffer stays 256.
       var f = _shadowUniformF;
       var u = _shadowUniformU;
       var i = _shadowUniformI;
@@ -14484,8 +14626,40 @@
 
       i[36] = shadowLightIndices[0];  // shadowLightIndex0
       i[37] = shadowLightIndices[1];  // shadowLightIndex1
-      u[38] = 0; // pad
-      u[39] = 0; // pad
+      // Point-light slot state. Words 38/39 are the per-slot point flags;
+      // words 40..51 carry position.xyz+near per slot plus far/softness
+      // packed as pointFarSoft = (far0, soft0, far1, soft1). Absent and
+      // non-point slots are cleared EVERY frame so no stale cube survives.
+      var pointSlots = Array.isArray(pointData) ? pointData : [null, null];
+      var point0 = pointSlots[0] && shadowLightMatrices[0] ? pointSlots[0] : null;
+      var point1 = pointSlots[1] && shadowLightMatrices[1] ? pointSlots[1] : null;
+      u[38] = point0 ? 1 : 0;  // pointFlags0
+      u[39] = point1 ? 1 : 0;  // pointFlags1
+
+      if (point0) {
+        f[40] = point0.position[0];
+        f[41] = point0.position[1];
+        f[42] = point0.position[2];
+        f[43] = point0.near;   // pointPosNear0 = (pos.xyz, near)
+        f[48] = point0.far;
+        f[49] = point0.softness;
+      } else {
+        f.fill(0, 40, 44);
+        f[48] = 0;
+        f[49] = 0;
+      }
+      if (point1) {
+        f[44] = point1.position[0];
+        f[45] = point1.position[1];
+        f[46] = point1.position[2];
+        f[47] = point1.near;   // pointPosNear1 = (pos.xyz, near)
+        f[50] = point1.far;
+        f[51] = point1.softness;
+      } else {
+        f.fill(0, 44, 48);
+        f[50] = 0;
+        f[51] = 0;
+      }
 
       device.queue.writeBuffer(shadowUniformBuffer, 0, f);
     }
@@ -15373,7 +15547,7 @@
       return record;
     }
 
-    function updateElioSkinnedMeshes(bundle, encoder) {
+    function updateElioSkinnedMeshes(bundle, encoder, includeOffscreenShadowCasters) {
       var stats = {
         elioSkinningDispatches: 0,
         elioSkinningVertices: 0,
@@ -15383,7 +15557,12 @@
       var pass = null;
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || obj.viewCulled || !webGPUObjectIsSkinned(obj)) continue;
+        if (!obj || !webGPUObjectIsSkinned(obj)) continue;
+        // Default behavior (flag undefined/falsy) is unchanged: viewCulled
+        // objects are always skipped. With the flag set, a viewCulled object
+        // participates only when it is a shadow caster. Object flags are
+        // never mutated here.
+        if (obj.viewCulled && !(includeOffscreenShadowCasters && obj.castShadow)) continue;
         var record = webGPUElioSkinRecord(obj);
         if (!record) continue;
         if (!pass) {
@@ -15511,9 +15690,30 @@
     function webGPUComputedMorphEnsureOutputBuffer(record, slot, count, components) {
       var bytes = Math.max(4, Math.max(0, Math.floor(sceneNumber(count, 0))) * Math.max(1, components) * 4);
       var buffer = record && record[slot];
+      // Cross-renderer staleness guard: scene objects retain their morph
+      // records across renderer rebuilds, but dispose() destroys every buffer
+      // tracked in pointsEntryGPUBuffers. A cached output buffer absent from
+      // THIS renderer's set belongs to a dead device — drop the stale JS
+      // reference WITHOUT calling destroy() again (dispose already destroyed
+      // it), so the alloc path below creates a fresh buffer on the current
+      // device. The bind group is invalidated too: it was created on the dead
+      // device and references the destroyed output buffers, so no cache path
+      // may return with a live-looking bindGroup around a dead buffer.
+      // Mirrors the guard in webGPUElioEnsureOutputBuffer.
+      if (buffer && !pointsEntryGPUBuffers.has(buffer)) {
+        record[slot] = null;
+        record.bindGroup = null;
+        buffer = null;
+      }
       if (buffer && wgpuTrackedBufferSize(buffer) >= bytes) return buffer;
       if (buffer && typeof buffer.destroy === "function") {
         pointsEntryGPUBuffers.delete(buffer);
+        // The live-but-undersized buffer is about to be destroyed and
+        // replaced. Invalidate the cached bind group BEFORE destruction so it
+        // cannot retain a reference to this soon-to-be-destroyed output
+        // buffer; a stale bindGroup around a destroyed buffer must never be
+        // returned by the cache path.
+        record.bindGroup = null;
         buffer.destroy();
       }
       buffer = wgpuCreateTrackedBuffer(GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, bytes);
@@ -15579,7 +15779,7 @@
       return record;
     }
 
-    function updateComputedMorphMeshes(bundle, encoder) {
+    function updateComputedMorphMeshes(bundle, encoder, includeOffscreenShadowCasters) {
       var stats = {
         computedMorphDispatches: 0,
         computedMorphVertices: 0,
@@ -15589,7 +15789,13 @@
       var pass = null;
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || obj.viewCulled || webGPUObjectIsSkinned(obj)) continue;
+        if (!obj) continue;
+        // Default behavior (flag undefined/falsy) is unchanged: viewCulled
+        // objects are always skipped. With the flag set, a viewCulled object
+        // participates only when it is a shadow caster. Object flags are
+        // never mutated here.
+        if (obj.viewCulled && !(includeOffscreenShadowCasters && obj.castShadow)) continue;
+        if (webGPUObjectIsSkinned(obj)) continue;
         var record = webGPUComputedMorphRecord(obj);
         if (!record) continue;
         if (!pass) {
@@ -15827,19 +16033,36 @@
       return typeof cutoff === "number" && Number.isFinite(cutoff) && cutoff >= 0 ? cutoff : null;
     }
 
-    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers) {
+    function renderShadowPass(encoder, lightMatrix, bundle, shadowResource, pbrBuffers, matrixBaseSlot, pointFace) {
       var sp = getShadowPipeline();
       if (!sp) return;
 
+      // Base arena slot for this light's shared light matrix. Defaults to
+      // zero so existing direct callers (and the structural tests) keep the
+      // historical layout. Each shadow light encodes into its own contiguous
+      // arena region: base bindings (soup, skinned, computed morph,
+      // instanced) read the base slot and retained casters start at base+1,
+      // so queue writes recorded for one encoded pass can never be
+      // overwritten by a later light's pass on the same shared
+      // shadowFrameBuffer before the single encoder submission.
+      var baseSlot = Math.max(0, Math.floor(sceneNumber(matrixBaseSlot, 0)));
+      // Optional point-face mode: pointFace >= 0 renders one 90-degree cube
+      // face into its atlas tile (col = face % 3, row = floor(face / 3)),
+      // bypassing ONLY viewCulled filtering so prepared offscreen casters
+      // still draw; authored castShadow is ALWAYS required, even offscreen.
+      // Authored visibility/castShadow are never mutated; directional/spot
+      // behavior is unchanged.
+      var isPointFace = typeof pointFace === "number" && pointFace >= 0;
+      var baseMatrixOffset = baseSlot * shadowFrameBufferStride;
       var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-      // Slot zero carries the shared light matrix. Every retained caster gets
-      // its own aligned slot so queue writes are immutable for the lifetime of
-      // the encoded pass; mutating one shared uniform before submit would make
-      // every draw observe the final caster's matrix.
-      if (!ensureShadowFrameBufferCapacity(objects.length + 1)) return;
+      // The per-pass base slot carries this light's shared light matrix. Every
+      // retained caster gets its own aligned slot so queue writes are immutable
+      // for the lifetime of the encoded pass; mutating one shared uniform
+      // before submit would make every draw observe the final caster's matrix.
+      if (!ensureShadowFrameBufferCapacity(baseSlot + objects.length + 1)) return;
 
-      // Upload light space matrix.
-      device.queue.writeBuffer(shadowFrameBuffer, 0, lightMatrix, 0, 16);
+      // Upload light space matrix into this light's base arena slot.
+      device.queue.writeBuffer(shadowFrameBuffer, baseMatrixOffset, lightMatrix, 0, 16);
 
       var shadowBG = device.createBindGroup({
         layout: shadowBindGroupLayout,
@@ -15852,7 +16075,9 @@
         colorAttachments: [],
         depthStencilAttachment: {
           view: shadowResource.view,
-          depthLoadOp: "clear",
+          // Whole-atlas clear happens on the FIRST face only (attachment
+          // clears ignore scissor); the other five faces load.
+          depthLoadOp: isPointFace && pointFace > 0 ? "load" : "clear",
           depthClearValue: 1.0,
           depthStoreOp: "store",
         },
@@ -15861,13 +16086,22 @@
       if (shadowStamps) shadowPassDescriptor.timestampWrites = shadowStamps;
       var pass = encoder.beginRenderPass(shadowPassDescriptor);
 
-      pass.setBindGroup(0, shadowBG, [0]);
+      if (isPointFace) {
+        var tileX = (pointFace % 3) * shadowResource.size;
+        var tileY = Math.floor(pointFace / 3) * shadowResource.size;
+        pass.setViewport(tileX, tileY, shadowResource.size, shadowResource.size, 0, 1);
+        pass.setScissorRect(tileX, tileY, shadowResource.size, shadowResource.size);
+      }
+
+      pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
       var currentShadowPipeline = "";
-      var retainedShadowMatrixSlot = 1;
+      var retainedShadowMatrixSlot = baseSlot + 1;
 
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
-        if (!obj || obj.viewCulled) continue;
+        if (!obj || (!isPointFace && obj.viewCulled)) continue;
+        // Point-face passes bypass viewCulled only; authored castShadow
+        // always gates, on every face, for every object kind.
         if (!obj.castShadow) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
 
@@ -15882,7 +16116,7 @@
               pass.setPipeline(getShadowMaskedPipeline());
               currentShadowPipeline = "masked-static";
             }
-            pass.setBindGroup(0, shadowBG, [0]);
+            pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
             pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
             pass.setVertexBuffer(0, skinnedPositionBuffer);
             var skinnedMaskedUVs = webGPUDefaultAttributeData(obj, "uvs", obj.vertexCount, 2, [0, 0]);
@@ -15896,7 +16130,7 @@
             pass.setPipeline(sp);
             currentShadowPipeline = "static";
           }
-          pass.setBindGroup(0, shadowBG, [0]);
+          pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
           pass.setVertexBuffer(0, skinnedPositionBuffer);
           var skinnedShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
           if (skinnedShadowIndexCount > 0) pass.drawIndexed(skinnedShadowIndexCount);
@@ -15911,7 +16145,7 @@
               pass.setPipeline(getShadowMaskedPipeline());
               currentShadowPipeline = "masked-static";
             }
-            pass.setBindGroup(0, shadowBG, [0]);
+            pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
             pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
             if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
             if (!webGPUBindSceneMeshVertexBuffer(pass, 1, pbrBuffers && pbrBuffers.uvs, obj.vertexOffset, obj.vertexCount)) continue;
@@ -15924,7 +16158,7 @@
             pass.setPipeline(sp);
             currentShadowPipeline = "static";
           }
-          pass.setBindGroup(0, shadowBG, [0]);
+          pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
           if (!webGPUBindComputedMorphBuffer(pass, 0, computedMorphRecord.positionBuffer, obj.vertexCount, 3)) continue;
           var morphShadowIndexCount = webGPUBindRetainedMeshIndexBuffer(pass, obj);
           if (morphShadowIndexCount > 0) pass.drawIndexed(morphShadowIndexCount);
@@ -15993,7 +16227,7 @@
             pass.setPipeline(getShadowMaskedPipeline());
             currentShadowPipeline = "masked-static";
           }
-          pass.setBindGroup(0, shadowBG, [0]);
+          pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
           pass.setBindGroup(1, createMaterialBindGroup(shadowMaterial, false, shadowMaterial || obj));
           if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
           if (!webGPUBindSceneMeshVertexBuffer(pass, 1, pbrBuffers && pbrBuffers.uvs, obj.vertexOffset, obj.vertexCount)) continue;
@@ -16006,13 +16240,13 @@
           currentShadowPipeline = "static";
         }
 
-        pass.setBindGroup(0, shadowBG, [0]);
+        pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
         if (!webGPUBindSceneMeshVertexBuffer(pass, 0, pbrBuffers && pbrBuffers.positions, obj.vertexOffset, obj.vertexCount)) continue;
         pass.draw(obj.vertexCount);
       }
 
-      pass.setBindGroup(0, shadowBG, [0]);
-      drawInstancedShadowMeshes(pass, bundle);
+      pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+      drawInstancedShadowMeshes(pass, bundle, isPointFace);
       pass.end();
     }
 
@@ -16509,12 +16743,15 @@
       return bounds;
     }
 
-    function webGPUShadowComputeBounds(bundle) {
-      var bounds = typeof sceneShadowComputeBounds === "function" ? sceneShadowComputeBounds(bundle) : null;
+    function webGPUShadowComputeBounds(bundle, includeAll) {
+      var bounds = typeof sceneShadowComputeBounds === "function"
+        ? sceneShadowComputeBounds(bundle, null, includeAll === true)
+        : null;
       var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       for (var i = 0; i < meshes.length; i++) {
         var mesh = meshes[i];
-        if (!mesh || mesh.viewCulled) continue;
+        if (!mesh) continue;
+        if (!(includeAll === true) && mesh.viewCulled) continue;
         var count = instancedMeshCount(mesh);
         var transforms = instancedMeshTransformData(mesh, count);
         if (!transforms) continue;
@@ -16523,13 +16760,15 @@
       return bounds || { minX: -10, minY: -10, minZ: -10, maxX: 10, maxY: 10, maxZ: 10 };
     }
 
-    function drawInstancedShadowMeshes(pass, bundle) {
+    function drawInstancedShadowMeshes(pass, bundle, includeAll) {
       var meshes = Array.isArray(bundle && bundle.instancedMeshes) ? bundle.instancedMeshes : [];
       var materials = bundle && bundle.materials;
       var drewPipeline = "";
       for (var i = 0; i < meshes.length; i++) {
         var mesh = meshes[i];
-        if (!mesh || mesh.viewCulled || !mesh.castShadow) continue;
+        // includeAll (point-face passes) bypasses viewCulled only; authored
+        // castShadow is always required, even for offscreen geometry.
+        if (!mesh || (!includeAll && mesh.viewCulled) || !mesh.castShadow) continue;
         var instanceCount = instancedMeshCount(mesh);
         var transformData = instancedMeshTransformData(mesh, instanceCount);
         if (!transformData) continue;
@@ -18406,9 +18645,102 @@
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
       selenaFrame.time = frameTimeSeconds; // feed auto time uniform; set before every selena draw this frame
+      var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
+      var sceneBounds = null;
+      var pointBounds = null;
+      var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
+
+      // Per-light arena region size: one base matrix slot plus worst-case
+      // retained caster slots (one per mesh object).
+      var shadowArenaSlotsPerLight =
+        (Array.isArray(bundle.meshObjects) ? bundle.meshObjects.length : 0) + 1;
+      // Pass 1: collect up to two VALID shadow candidates. Malformed spot
+      // angles, non-projectable matrices and invalid point cubes are
+      // rejected here BEFORE consuming a slot or any pixel budget.
+      var shadowCandidates = [];
+      for (var li = 0; li < lightArray.length && shadowCandidates.length < 2; li++) {
+        var light = lightArray[li];
+        if (!light || !light.castShadow) continue;
+        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
+        var isSpot = kind === "spot";
+        var isPoint = kind === "point";
+        if (kind !== "directional" && !isSpot && !isPoint) continue;
+        // Defensive check on the raw angle here; callers going through the
+        // public normalizeSceneLight get zero/nonpositive-angle defaults
+        // before the shadow helper, so a cone empty at this point shades
+        // nothing and casts no shadow.
+        if (isSpot && !(sceneNumber(light.angle, 0) > 0)) continue;
+
+        // Resolve and carry the shadow map size here, BEFORE the candidate
+        // consumes one of the two slots: a zero-sized candidate (point
+        // shadows disabled by the pixel budget or device limits) is skipped
+        // now so it can never crowd out a valid directional/spot light.
+        var candShadowSize;
+        if (isPoint) {
+          candShadowSize = resolvePointShadowSize(
+            sceneNumber(light.shadowSize, 1024),
+            shadowMaxPixels,
+            device && device.limits && device.limits.maxTextureDimension2D
+          );
+        } else {
+          candShadowSize = sceneNumber(light.shadowSize, 1024);
+          candShadowSize = Math.max(256, Math.min(4096, candShadowSize));
+          candShadowSize = resolveShadowSize(candShadowSize, shadowMaxPixels);
+        }
+        if (!(candShadowSize > 0)) continue;
+
+        if (isPoint) {
+          // Point bounds include receivers and offscreen prepared geometry,
+          // not only casters: includeAll bypasses viewCulled/castShadow in
+          // the shared bounds math; all detailed bounds handling is kept.
+          if (!pointBounds) pointBounds = webGPUShadowComputeBounds(bundle, true);
+          var pointCube = scenePointShadowFaceMatrices(light, pointBounds);
+          if (!pointCube) continue;
+          shadowCandidates.push({ light: light, index: li, isPoint: true, cube: pointCube, passCount: 6, shadowSize: candShadowSize });
+        } else {
+          if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
+          // A malformed/non-projectable spot (non-finite position or
+          // direction, zero direction, Angle >= pi/2) returns null and is
+          // rejected BEFORE it consumes one of the two slots or any budget.
+          var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
+          if (!rawLightMatrix) continue;
+          shadowCandidates.push({ light: light, index: li, isPoint: false, rawMatrix: rawLightMatrix, passCount: 1, shadowSize: candShadowSize });
+        }
+      }
+
+      // Reserve the persistent shadow uniform arena ONCE before any shadow
+      // pass is encoded, sized for every candidate pass (six per point, one
+      // per directional/spot), so no later renderShadowPass in this frame
+      // can grow or destroy the arena buffer after this encoder referenced
+      // it. Each face/light below gets a distinct matrixBaseSlot.
+      var totalShadowPasses = 0;
+      for (var ci = 0; ci < shadowCandidates.length; ci++) {
+        totalShadowPasses += shadowCandidates[ci].passCount;
+      }
+      if (totalShadowPasses > 0 && !ensureShadowFrameBufferCapacity(shadowArenaSlotsPerLight * totalShadowPasses)) {
+        shadowCandidates.length = 0;
+      }
+
+      // Derive the offscreen shadow-caster flag from the ACTUALLY admitted
+      // candidates, AFTER any arena failure has cleared the list: only a
+      // surviving admitted point light (kind === "point") justifies letting
+      // offscreen casters participate in the morph/skin compute
+      // passes this frame.
+      var includeOffscreenShadowCasters = false;
+      for (var sci = 0; sci < shadowCandidates.length; sci++) {
+        var flagCand = shadowCandidates[sci];
+        if (flagCand && flagCand.light) {
+          var flagKind = typeof flagCand.light.kind === "string" ? flagCand.light.kind.toLowerCase() : "";
+          if (flagCand.isPoint === true || flagKind === "point") {
+            includeOffscreenShadowCasters = true;
+            break;
+          }
+        }
+      }
+
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
-      var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
-      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
+      var computedMorphStats = updateComputedMorphMeshes(bundle, encoder, includeOffscreenShadowCasters);
+      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder, includeOffscreenShadowCasters);
       var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
       activePickMeshPositions = pbrSceneBuffers;
       if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
@@ -18427,52 +18759,72 @@
       var instancedCullMap = updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
-      var lightArray = Array.isArray(bundle.lights) ? bundle.lights : [];
-      var sceneBounds = null;
-      var shadowMaxPixels = (typeof bundle.shadowMaxPixels === "number") ? bundle.shadowMaxPixels : 0;
-
-      for (var li = 0; li < lightArray.length && activeShadowCount < 2; li++) {
-        var light = lightArray[li];
-        if (!light || !light.castShadow) continue;
-        var kind = typeof light.kind === "string" ? light.kind.toLowerCase() : "";
-        var isSpot = kind === "spot";
-        if (kind !== "directional" && !isSpot) continue;
-        // Defensive check on the raw angle here; callers going through the
-        // public normalizeSceneLight get zero/nonpositive-angle defaults
-        // before the shadow helper, so a cone empty at this point shades
-        // nothing and casts no shadow.
-        if (isSpot && !(sceneNumber(light.angle, 0) > 0)) continue;
-
-        if (!sceneBounds) sceneBounds = webGPUShadowComputeBounds(bundle);
-
-        // A malformed/non-projectable spot (non-finite position or direction,
-        // zero direction, Angle >= pi/2) returns null and is rejected BEFORE
-        // it consumes one of the two slots or any budget, so a valid third
-        // light is never excluded by invalid ones. The validated matrix is
-        // cached and converted once; this spot's slot state simply stays
-        // cleared this frame (matrices/indices reset per frame above).
-        var rawLightMatrix = sceneShadowLightSpaceMatrix(light, sceneBounds);
-        if (!rawLightMatrix) continue;
-
+      var nextMatrixSlot = 0;
+      var pointShadowData = [null, null];
+      for (var ci = 0; ci < shadowCandidates.length && activeShadowCount < 2; ci++) {
+        var cand = shadowCandidates[ci];
         var slot = activeShadowCount;
-        var shadowSize = sceneNumber(light.shadowSize, 1024);
-        shadowSize = Math.max(256, Math.min(4096, shadowSize));
-        shadowSize = resolveShadowSize(shadowSize, shadowMaxPixels);
+        var faceCount = cand.isPoint ? 6 : 1;
+        // Size was resolved and carried during collection; zero-sized
+        // candidates never became shadowCandidates, so no duplicate size
+        // math or re-check happens during rendering.
+        var shadowSize = cand.shadowSize;
 
-        if (!shadowSlots[slot] || shadowSlots[slot].size !== shadowSize) {
+        var wantPoint = cand.isPoint;
+        // Resource reuse must distinguish a point atlas from a square map
+        // at the same per-face size; removed/replaced slots destroy once.
+        if (
+          !shadowSlots[slot] ||
+          shadowSlots[slot].size !== shadowSize ||
+          (shadowSlots[slot].point === true) !== wantPoint
+        ) {
           if (shadowSlots[slot]) shadowSlots[slot].texture.destroy();
-          shadowSlots[slot] = wgpuCreateShadowMap(device, shadowSize);
+          shadowSlots[slot] = wantPoint
+            ? wgpuCreatePointShadowAtlas(device, shadowSize)
+            : wgpuCreateShadowMap(device, shadowSize);
         }
 
-        var lightMatrix = sceneWebGPUShadowDepthMatrix(rawLightMatrix);
-        shadowLightMatrices[slot] = lightMatrix;
-        shadowLightIndices[slot] = li;
+        var faceMatrices;
+        if (wantPoint) {
+          faceMatrices = [];
+          for (var face = 0; face < 6; face++) {
+            faceMatrices.push(sceneWebGPUShadowDepthMatrix(cand.cube.matrices[face]));
+          }
+          pointShadowData[slot] = {
+            position: cand.cube.position,
+            near: cand.cube.near,
+            far: cand.cube.far,
+            softness: Math.max(0, Math.min(1, sceneNumber(cand.light.shadowSoftness, 0))),
+          };
+        } else {
+          faceMatrices = [sceneWebGPUShadowDepthMatrix(cand.rawMatrix)];
+        }
 
-        renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot], pbrSceneBuffers);
+        // hasShadow stays driven by the first converted face matrix.
+        shadowLightMatrices[slot] = faceMatrices[0];
+        shadowLightIndices[slot] = cand.index;
+
+        for (var face = 0; face < faceCount; face++) {
+          var lightMatrix = faceMatrices[face];
+          renderShadowPass(encoder, lightMatrix, bundle, shadowSlots[slot], pbrSceneBuffers,
+            nextMatrixSlot, wantPoint ? face : -1);
+          nextMatrixSlot += shadowArenaSlotsPerLight;
+        }
         activeShadowCount++;
       }
 
-      uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights);
+      // Destroy and null stale slots beyond the active count so a frame with
+      // fewer shadow lights never leaves stale shadow textures reachable;
+      // flags/indices are already reset. Runs exactly once per frame,
+      // before the frame bind group below is created.
+      for (var si = activeShadowCount; si < shadowSlots.length; si++) {
+        if (shadowSlots[si]) {
+          shadowSlots[si].texture.destroy();
+          shadowSlots[si] = null;
+        }
+      }
+
+      uploadShadowUniforms(shadowLightMatrices, shadowLightIndices, bundle.lights, pointShadowData);
 
       // Create frame bind group.
       var shadowView0 = shadowSlots[0] ? shadowSlots[0].view : null;

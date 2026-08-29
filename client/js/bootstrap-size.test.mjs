@@ -596,7 +596,13 @@ const budgets = [
   // 1_615_272 / 437_705 / 350_871 raw/gzip/brotli; all three caps raised to
   // 1_615_400 / 437_800 / 351_000 with narrow rounding headroom.
   // measured raw/gzip/brotli: 1617438/438502/351377; caps rounded to 100 for spot-shadow support
-  { file: "bootstrap.js", raw: 1_617_500, gzip: 438_600, brotli: 351_400 },
+  // multi-light shadow uniform isolation measured 1617592/438620/351825; breached caps raised to 1617600/438700/351900
+  // six-face point-shadow geometry/API bridge measured 1619355/439303/351995; breached caps raised to 1619400/439400/352000
+  // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 1632175/442471/354787; all three caps raised to 1632200/442500/354800
+  // WebGPU offscreen-caster compute flag measured 1632414/442664/354729; breached raw/gzip caps raised to 1632500/442700 (brotli unchanged)
+  // computed-morph prior-state/tangent parity rebuild measured 1632859/442771/354849; breached caps raised to 1632900/442800/354900
+  // computed-morph cache reuse plus dead-device/live-resize output-buffer recovery measured 1632554/442757/354951; only brotli breached, raised to 355000 (raw/gzip unchanged)
+  { file: "bootstrap.js", raw: 1_632_900, gzip: 442_800, brotli: 355_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -943,7 +949,9 @@ const budgets = [
   // SH light-probe irradiance measured 235307/64182/54176; all three caps
   // raised with narrow rounding headroom.
   // measured raw/gzip/brotli: 235668/64318/54342; caps rounded to 100 for spot-shadow support
-  { file: "bootstrap-feature-scene3d-webgl.js", raw: 235_700, gzip: 64_400, brotli: 54_400 },
+  // six-face point-shadow geometry/API bridge measured 235753/64344/54478; breached raw/brotli caps raised to 235800/54500 (gzip unchanged)
+  // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 240846/65603/55489; breached caps raised to 240900/65700/55500
+  { file: "bootstrap-feature-scene3d-webgl.js", raw: 240_900, gzip: 65_700, brotli: 55_500 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1047,7 +1055,10 @@ const budgets = [
   // SH light-probe irradiance measured 559335/154843/128091; all three caps
   // raised with narrow rounding headroom.
   // measured raw/gzip/brotli: 560706/155511/128547; caps rounded to 100 for spot-shadow support
-  { file: "bootstrap-feature-scene3d.js", raw: 560_800, gzip: 155_600, brotli: 128_600 },
+  // six-face point-shadow geometry/API bridge measured 562475/156130/128966; breached caps raised to 562500/156200/129000
+  // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 562488/156137/129018; only brotli breached, raised to 129100 (raw/gzip unchanged)
+  // computed-morph rebuild measured 562943/156266/128915; breached raw/gzip caps raised to 563000/156300 (brotli unchanged)
+  { file: "bootstrap-feature-scene3d.js", raw: 563_000, gzip: 156_300, brotli: 129_100 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1235,7 +1246,13 @@ const budgets = [
   // SH light-probe irradiance measured 403033/97232/81186; all three caps
   // raised with narrow rounding headroom.
   // measured raw/gzip/brotli: 403448/97303/81318; caps rounded to 100 for spot-shadow support
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 403_500, gzip: 97_400, brotli: 81_400 },
+  // multi-light shadow uniform isolation measured 403588/97355/81396; breached raw cap raised to 403600 (gzip/brotli unchanged)
+  // six-face point-shadow geometry/API bridge measured 403674/97370/81414; breached raw/brotli caps raised to 403700/81500 (gzip unchanged)
+  // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 411354/99399/83068; breached caps raised to 411400/99400/83100
+  // WebGPU offscreen-caster compute flag measured 411606/99499/83087; breached raw/gzip caps raised to 411700/99500 (brotli unchanged)
+  // computed-morph rebuild measured 411596/99495/83159; only brotli breached, raised to 83200 (raw/gzip unchanged)
+  // computed-morph cache reuse plus dead-device/live-resize output-buffer recovery measured 411664/99511/83129; only gzip breached, raised to 99600 (raw/brotli unchanged)
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 411_700, gzip: 99_600, brotli: 83_200 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1752,9 +1769,12 @@ const routeBudgets = [
     // SH light-probe irradiance measured 1095365/302875/256053; all three
     // caps raised with narrow rounding headroom.
     // Spot-shadow runtime measured 1097097/303679/256675.
-    raw: 1_097_100,
-    gzip: 303_700,
-    brotli: 256_700,
+    // six-face point-shadow geometry/API bridge measured 1098951/304324/257230; breached caps raised to 1099000/304400/257300
+    // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 1104057/305590/258293; breached caps raised to 1104100/305600/258300
+    // Safari and Firefox WebGL-with-labels route measured 1104512/305719/258190; breached raw/gzip caps raised to 1104600/305800 (brotli unchanged)
+    raw: 1_104_600,
+    gzip: 305_800,
+    brotli: 258_300,
   },
   {
     // Worst case for a Chromium page: the WebGPU device dies and the fallback
@@ -1893,9 +1913,14 @@ const routeBudgets = [
     // SH light-probe irradiance measured 1498398/400107/337239; all three
     // caps raised with narrow rounding headroom.
     // Spot-shadow runtime measured 1500545/400982/337993.
-    raw: 1_500_600,
-    gzip: 401_000,
-    brotli: 338_000,
+    // multi-light shadow uniform isolation measured 1500685/401034/338071; breached caps raised to 1500700/401100/338100
+    // six-face point-shadow geometry/API bridge measured 1502625/401694/338644; breached caps raised to 1502700/401700/338700
+    // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 1515411/404989/341361; breached caps raised to 1515500/405000/341400
+    // WebGPU offscreen-caster compute flag measured 1515663/405089/341380; breached raw/gzip caps raised to 1515700/405100 (brotli unchanged)
+    // computed-morph rebuild measured 1516108/405214/341349; breached raw/gzip caps raised to 1516200/405300 (brotli unchanged)
+    raw: 1_516_200,
+    gzip: 405_300,
+    brotli: 341_400,
   },
   {
     // The minimal Scene3D page: a WebGPU hero or product view with no islands,
@@ -2034,9 +2059,14 @@ const routeBudgets = [
     // SH light-probe irradiance measured 1110814/292593/244579; all three
     // caps raised with narrow rounding headroom.
     // Spot-shadow runtime measured 1112600/293332/245167.
-    raw: 1_112_600,
-    gzip: 293_400,
-    brotli: 245_200,
+    // multi-light shadow uniform isolation measured 1112740/293384/245245; breached raw/brotli caps raised to 1112800/245300 (gzip unchanged)
+    // six-face point-shadow geometry/API bridge measured 1114595/294018/245682; breached caps raised to 1114600/294100/245700
+    // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 1122288/296054/247388; breached caps raised to 1122300/296100/247400
+    // WebGPU offscreen-caster compute flag measured 1122540/296154/247407; all three breached caps raised to 1122600/296200/247500
+    // computed-morph rebuild measured 1122985/296279/247376; breached raw/gzip caps raised to 1123000/296300 (brotli unchanged)
+    raw: 1_123_000,
+    gzip: 296_300,
+    brotli: 247_500,
   },
 
 ];

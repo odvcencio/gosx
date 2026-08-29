@@ -1151,16 +1151,20 @@ type DirectionalLight struct {
 
 // PointLight adds a positioned scene light with optional range falloff.
 type PointLight struct {
-	ID         string
-	Color      string
-	Intensity  float64
-	Position   Vector3
-	Range      float64
-	Decay      float64
-	Transition Transition
-	InState    *LightProps
-	OutState   *LightProps
-	Live       []string
+	ID             string
+	Color          string
+	Intensity      float64
+	Position       Vector3
+	Range          float64
+	Decay          float64
+	CastShadow     bool
+	ShadowBias     float64
+	ShadowSize     int
+	ShadowSoftness float64
+	Transition     Transition
+	InState        *LightProps
+	OutState       *LightProps
+	Live           []string
 }
 
 // SpotLight adds a positioned cone light with falloff.
@@ -3636,19 +3640,23 @@ func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worl
 func (l *graphLowerer) lowerPointLight(light PointLight, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
 	l.lights = append(l.lights, LightIR{
-		ID:         l.nextSceneLightID("point-light", light.ID),
-		Kind:       "point",
-		Color:      strings.TrimSpace(light.Color),
-		Intensity:  light.Intensity,
-		X:          world.Position.X,
-		Y:          world.Position.Y,
-		Z:          world.Position.Z,
-		Range:      light.Range,
-		Decay:      light.Decay,
-		Transition: lowerTransition(light.Transition),
-		InState:    light.InState.legacyProps(),
-		OutState:   light.OutState.legacyProps(),
-		Live:       normalizeLive(light.Live),
+		ID:             l.nextSceneLightID("point-light", light.ID),
+		Kind:           "point",
+		Color:          strings.TrimSpace(light.Color),
+		Intensity:      light.Intensity,
+		X:              world.Position.X,
+		Y:              world.Position.Y,
+		Z:              world.Position.Z,
+		Range:          light.Range,
+		Decay:          light.Decay,
+		CastShadow:     light.CastShadow,
+		ShadowBias:     light.ShadowBias,
+		ShadowSize:     light.ShadowSize,
+		ShadowSoftness: normalizeShadowSoftness(light.ShadowSoftness),
+		Transition:     lowerTransition(light.Transition),
+		InState:        light.InState.legacyProps(),
+		OutState:       light.OutState.legacyProps(),
+		Live:           normalizeLive(light.Live),
 	})
 }
 

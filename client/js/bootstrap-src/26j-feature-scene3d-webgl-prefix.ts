@@ -148,6 +148,7 @@
   // scene-hdr.js ship here, beside the only renderer that reads them.
   var resolvePostFXFactor = sceneApi.resolvePostFXFactor || function() { return 1; };
   var resolveShadowSize = sceneApi.resolveShadowSize || function(s) { return s; };
+  var resolvePointShadowSize = sceneApi.resolvePointShadowSize || function() { return 0; };
 
   // --- Backend-agnostic PBR helpers (16c-scene-shared-pbr.js). These stayed
   // in the base chunk because 15b, 10-runtime-scene-core and the WebGPU chunk
@@ -164,6 +165,7 @@
   var scenePBRProjectionMatrixForCamera = sceneApi.scenePBRProjectionMatrixForCamera;
   var sceneShadowLightSpaceMatrix = sceneApi.sceneShadowLightSpaceMatrix;
   var sceneShadowComputeBounds = sceneApi.sceneShadowComputeBounds;
+  var scenePointShadowFaceMatrices = sceneApi.scenePointShadowFaceMatrices;
   var scenePBRObjectRenderPass = sceneApi.scenePBRObjectRenderPass;
   var scenePBRDepthSort = sceneApi.scenePBRDepthSort;
   var generateInstancedGeometry = sceneApi.generateInstancedGeometry;
