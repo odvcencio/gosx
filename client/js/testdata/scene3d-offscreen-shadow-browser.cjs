@@ -363,6 +363,7 @@ async function main() {
             wgPasses: (st && st.found ? st.wgPasses : 0) - (prev && prev.wgPasses ? prev.wgPasses : 0),
             wgSubmits: (st && st.found ? st.wgSubmits : 0) - (prev && prev.wgSubmits ? prev.wgSubmits : 0),
             nativeMorphDispatches: (st && st.found ? st.nativeMorphDispatches : 0) - (prev && prev.nativeMorphDispatches ? prev.nativeMorphDispatches : 0),
+            gpuBufferCreates: (st && st.found ? st.gpuBufferCreates : 0) - (prev && prev.gpuBufferCreates ? prev.gpuBufferCreates : 0),
           };
           if (lc.be === 'gl') {
             if (!(st && st.found && st.glDraws > prev.glDraws)) {
@@ -372,6 +373,15 @@ async function main() {
             if (!(st && st.found && st.wgPasses > prev.wgPasses && st.wgSubmits > prev.wgSubmits &&
                   st.nativeMorphDispatches > prev.nativeMorphDispatches)) {
               assertionErrors.push(label + '/' + stage + ': WG passes/submits/computed-morph dispatches did not advance');
+            }
+            if (stage === 'guard' && !(st && st.found && delta.gpuBufferCreates >= 1)) {
+              assertionErrors.push(label + '/' + stage + ': expected >=1 GPU buffer creation on first guard stage (got ' + (st && st.found ? delta.gpuBufferCreates : 'n/a') + ')');
+            }
+            if (stage === 'idle' || stage === 'partial-1' || stage === 'partial-2') {
+              const coldBufferCreates = guardState.gpuBufferCreates - base.gpuBufferCreates;
+              if (!(st && st.found && delta.gpuBufferCreates <= 1 && delta.gpuBufferCreates < coldBufferCreates)) {
+                assertionErrors.push(label + '/' + stage + ': expected GPU buffer creations within warm tolerance (current ' + (st && st.found ? delta.gpuBufferCreates : 'n/a') + ', cold ' + coldBufferCreates + ')');
+              }
             }
             const culled = st ? parseInt(st.culled, 10) : NaN;
             if (!(culled >= 1)) assertionErrors.push(label + '/' + stage + ': published culled count ' + (st ? st.culled : 'n/a') + ' want >=1');

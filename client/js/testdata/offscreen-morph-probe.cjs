@@ -7,7 +7,15 @@
 
 const MORPH_PRELOAD = [
   'window.__probeMorphDispatches=0;',
+  'window.__probeGPUBufferCreates=0;',
   '(function(){',
+  'if(typeof GPUDevice!=="undefined"&&GPUDevice.prototype&&typeof GPUDevice.prototype.createBuffer==="function"){',
+  '  var ob=GPUDevice.prototype.createBuffer;',
+  '  GPUDevice.prototype.createBuffer=function(){',
+  '    window.__probeGPUBufferCreates+=1;',
+  '    return ob.apply(this,arguments);',
+  '  };',
+  '}',
   'if(typeof GPUCommandEncoder==="undefined"||!GPUCommandEncoder.prototype||',
   '    !GPUCommandEncoder.prototype.beginComputePass)return;',
   'var oc=GPUCommandEncoder.prototype.beginComputePass;',
@@ -69,6 +77,7 @@ function readMorphState(mountId) {
   out.culled = mount.getAttribute('data-gosx-scene3d-webgpu-mesh-view-culled');
   out.dispatches = mount.getAttribute('data-gosx-scene3d-webgpu-computed-morph-dispatches');
   out.nativeMorphDispatches = window.__probeMorphDispatches || 0;
+  out.gpuBufferCreates = window.__probeGPUBufferCreates || 0;
   out.glDraws = window.__probeGLDraws || 0;
   out.wgPasses = window.__probeWGPasses || 0;
   out.wgSubmits = window.__probeWGSubmits || 0;

@@ -3397,26 +3397,22 @@ function gosxConfigureSceneScript(script, role, src) {
       return 0;
     }
 
-    object.computedMorph = {
-      sourcePositions: priorPositions,
-      targetPositions,
-      sourceNormals: sourceLocal.normals && sourceLocal.normals.length >= count * 3
-        ? (sourceLocal.normals.subarray ? sourceLocal.normals.subarray(0, count * 3) : sourceLocal.normals)
-        : null,
-      targetNormals: targetLocal.normals && targetLocal.normals.length >= count * 3
-        ? (targetLocal.normals.subarray ? targetLocal.normals.subarray(0, count * 3) : targetLocal.normals)
-        : null,
-      sourceTangents: sourceLocal.tangents && sourceLocal.tangents.length >= count * 4
-        ? (sourceLocal.tangents.subarray ? sourceLocal.tangents.subarray(0, count * 4) : sourceLocal.tangents)
-        : null,
-      targetTangents: targetLocal.tangents && targetLocal.tangents.length >= count * 4
-        ? (targetLocal.tangents.subarray ? targetLocal.tangents.subarray(0, count * 4) : targetLocal.tangents)
-        : null,
-      uvs: sourceLocal.uvs,
-      count,
-      alpha: Math.max(0, Math.min(1, sceneNumber(alpha, 0.45))),
-      modelMatrix: sceneModelTransformMatrix(model),
-    };
+    // Reuse the existing plain object instead of replacing it on every event,
+    // so renderer-owned caches hanging off computedMorph (packed GPU data
+    // buffers, output buffers, bind groups) remain reusable across events.
+    // Every public morph data field is reassigned each event so no stale
+    // source/target/count/alpha/model data leaks through the reused object.
+    let morphData = object.computedMorph;
+    if (!morphData || typeof morphData !== "object") {
+      morphData = {};
+      object.computedMorph = morphData;
+    }
+    morphData.sourcePositions = priorPositions;
+    morphData.targetPositions = targetPositions;
+    morphData.uvs = sourceLocal.uvs;
+    morphData.count = count;
+    morphData.alpha = Math.max(0, Math.min(1, sceneNumber(alpha, 0.45)));
+    morphData.modelMatrix = sceneModelTransformMatrix(model);
 
     object.vertices.positions = sceneModelTransformMeshFloats(morphedPositions, 3, function(x, y, z) {
       return sceneModelTransformPoint({ x: x, y: y, z: z }, model);

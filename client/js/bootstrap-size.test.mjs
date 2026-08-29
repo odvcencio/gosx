@@ -601,7 +601,8 @@ const budgets = [
   // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 1632175/442471/354787; all three caps raised to 1632200/442500/354800
   // WebGPU offscreen-caster compute flag measured 1632414/442664/354729; breached raw/gzip caps raised to 1632500/442700 (brotli unchanged)
   // computed-morph prior-state/tangent parity rebuild measured 1632859/442771/354849; breached caps raised to 1632900/442800/354900
-  { file: "bootstrap.js", raw: 1_632_900, gzip: 442_800, brotli: 354_900 },
+  // computed-morph cache reuse plus dead-device/live-resize output-buffer recovery measured 1632554/442757/354951; only brotli breached, raised to 355000 (raw/gzip unchanged)
+  { file: "bootstrap.js", raw: 1_632_900, gzip: 442_800, brotli: 355_000 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1250,7 +1251,8 @@ const budgets = [
   // point-atlas renderer (six-face depth atlas in the point shadow pass) measured 411354/99399/83068; breached caps raised to 411400/99400/83100
   // WebGPU offscreen-caster compute flag measured 411606/99499/83087; breached raw/gzip caps raised to 411700/99500 (brotli unchanged)
   // computed-morph rebuild measured 411596/99495/83159; only brotli breached, raised to 83200 (raw/gzip unchanged)
-  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 411_700, gzip: 99_500, brotli: 83_200 },
+  // computed-morph cache reuse plus dead-device/live-resize output-buffer recovery measured 411664/99511/83129; only gzip breached, raised to 99600 (raw/brotli unchanged)
+  { file: "bootstrap-feature-scene3d-webgpu.js", raw: 411_700, gzip: 99_600, brotli: 83_200 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
