@@ -31,8 +31,18 @@ go.work.sum
 # cmd/gosx source directory.
 /gosx
 /gosx.exe
+/gosx-docs
+/gosx-docs.exe
+
+# Compiled bootstrap helper. Build it from cmd/buildbootstrap when needed; do
+# not track the local binary.
+/cmd/buildbootstrap/buildbootstrap
+/cmd/buildbootstrap/buildbootstrap.exe
 
 # Compiled binary from 'go build ./examples/ouroboros-corpus' run at the
 # repository root. Anchored with a leading slash to keep the source
 # directory examples/ouroboros-corpus/ tracked.
 /ouroboros-corpus
+
+# Local scratch and verification artifacts belong outside the repository index.
+/tmp/
