@@ -52,6 +52,8 @@
   var sceneColorRGBA = sceneApi.sceneColorRGBA || function() { return [0, 0, 0, 1]; };
   var sceneMat4Multiply = sceneApi.sceneMat4Multiply;
   var sceneMat4MultiplyInto = sceneApi.sceneMat4MultiplyInto;
+  var sceneAffineDeterminant = sceneApi.sceneAffineDeterminant || function() { return 1; };
+  var sceneAffineNormalMatrix = sceneApi.sceneAffineNormalMatrix;
   var sceneEulerMatrixInto = sceneApi.sceneEulerMatrixInto;
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };
   var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };

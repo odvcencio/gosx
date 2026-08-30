@@ -23,3 +23,5 @@
   var SCENE_IDENTITY_MAT4 = sceneApi.SCENE_IDENTITY_MAT4;
   var sceneMat4Multiply = sceneApi.sceneMat4Multiply;
   var sceneTRSToMat4 = sceneApi.sceneTRSToMat4;
+  var sceneAffineDeterminant = sceneApi.sceneAffineDeterminant || function() { return 1; };
+  var sceneAffineNormalMatrix = sceneApi.sceneAffineNormalMatrix;

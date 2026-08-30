@@ -31,15 +31,21 @@ func TestInstanceCullRadiusFollowsTransformScale(t *testing.T) {
 		model mat4
 		want  float32
 	}{
-		{"identity", matrixForInstance(identityTransform(), 0), 1},
-		{"uniform 10x", matrixForInstance(scaledTransform(10, 0, 0, 0), 0), 10},
-		{"uniform 0.25x", matrixForInstance(scaledTransform(0.25, 0, 0, 0), 0), 0.25},
-		{"non-uniform takes the largest axis", mat4{
+		{"identity", matrixForInstance(identityTransform(), 0), float32(math.Sqrt(3))},
+		{"uniform 10x", matrixForInstance(scaledTransform(10, 0, 0, 0), 0), float32(10 * math.Sqrt(3))},
+		{"uniform 0.25x", matrixForInstance(scaledTransform(0.25, 0, 0, 0), 0), float32(0.25 * math.Sqrt(3))},
+		{"non-uniform Frobenius bound", mat4{
 			2, 0, 0, 0,
 			0, 7, 0, 0,
 			0, 0, 3, 0,
 			0, 0, 0, 1,
-		}, 7},
+		}, float32(math.Sqrt(62))},
+		{"shear exceeds every column", mat4{
+			1.5, 0.5, 0, 0,
+			-1.5, 0.5, 0, 0,
+			0, 0, 1, 0,
+			0, 0, 0, 1,
+		}, float32(math.Sqrt(6))},
 		{"degenerate zero scale keeps the base radius", mat4{}, 1},
 	}
 	for _, tc := range cases {
@@ -55,9 +61,9 @@ func TestInstanceCullRadiusFollowsTransformScale(t *testing.T) {
 // matrix columns and multiplies the uniform radius by their largest length.
 func TestCullShaderScalesRadiusPerInstance(t *testing.T) {
 	for _, want := range []string{
-		"length(m[0].xyz)",
-		"length(m[1].xyz)",
-		"length(m[2].xyz)",
+		"dot(m[0].xyz, m[0].xyz)",
+		"dot(m[1].xyz, m[1].xyz)",
+		"dot(m[2].xyz, m[2].xyz)",
 		"radius = radius * scale",
 		"d < -radius",
 	} {

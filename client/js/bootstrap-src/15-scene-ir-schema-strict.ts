@@ -620,6 +620,15 @@
           return;
         }
       }
+      var scale = 0;
+      for (var column = 0; column < 3; column += 1) for (var row = 0; row < 3; row += 1) scale = Math.max(scale, Math.abs(matrix[column * 4 + row]));
+      var a = matrix[0] / scale, b = matrix[4] / scale, c = matrix[8] / scale;
+      var d = matrix[1] / scale, e = matrix[5] / scale, f = matrix[9] / scale;
+      var g = matrix[2] / scale, h = matrix[6] / scale, i = matrix[10] / scale;
+      var det = a * (e * i - f * h) + b * (f * g - d * i) + c * (d * h - e * g);
+      if (matrix[3] !== 0 || matrix[7] !== 0 || matrix[11] !== 0 || matrix[15] !== 1 || !scale || !Number.isFinite(1 / scale) || !Number.isFinite(det) || Math.abs(det) <= 1e-12) {
+        pushSceneStrictDiagnostic(diagnostics, "error", "scene.transform.invalid_parent_matrix", "parentMatrix must be a finite, nonsingular affine 4x4 matrix", path, id);
+      }
     }
 
     function validateSceneStrictNonNegativeScalars(diagnostics, object, path, names, code, message) {

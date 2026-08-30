@@ -50,22 +50,32 @@ func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera,
 	clip := objectClipTRS(object, objIndex, nodeIndex, animations, timeSeconds, spinSc)
 	baseRGBA := sceneColorRGBA(material.Color, [4]float64{1, 1, 1, 1})
 	vertexOffset := len(bundle.WorldMeshPositions) / 3
+	orientation := sceneObjectTransformOrientation(object, clip)
 
 	for i := 0; i+2 < len(expanded.Positions); i += 3 {
-		localPoint := point3{X: expanded.Positions[i], Y: expanded.Positions[i+1], Z: expanded.Positions[i+2]}
+		source := i
+		if orientation < 0 {
+			switch (i / 3) % 3 {
+			case 1:
+				source += 3
+			case 2:
+				source -= 3
+			}
+		}
+		localPoint := point3{X: expanded.Positions[source], Y: expanded.Positions[source+1], Z: expanded.Positions[source+2]}
 		world := translatePoint(localPoint, object, spinQ, clip, timeSeconds)
 		bundle.WorldMeshPositions = append(bundle.WorldMeshPositions, world.X, world.Y, world.Z)
 		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, world)
 
 		normal := sceneObjectWorldNormal(object, localPoint, spinQ, clip)
-		if i+2 < len(expanded.Normals) {
+		if source+2 < len(expanded.Normals) {
 			normal = sceneObjectLocalNormalToWorld(object, point3{
-				X: expanded.Normals[i], Y: expanded.Normals[i+1], Z: expanded.Normals[i+2],
+				X: expanded.Normals[source], Y: expanded.Normals[source+1], Z: expanded.Normals[source+2],
 			}, spinQ, clip)
 		}
 		bundle.WorldMeshNormals = append(bundle.WorldMeshNormals, normal.X, normal.Y, normal.Z)
 
-		uvIndex := (i / 3) * 2
+		uvIndex := (source / 3) * 2
 		if uvIndex+1 < len(expanded.UVs) {
 			bundle.WorldMeshUVs = append(bundle.WorldMeshUVs, expanded.UVs[uvIndex], expanded.UVs[uvIndex+1])
 		} else {
@@ -1498,6 +1508,13 @@ func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ moti
 	// and no drift offset is applied. Rotation composition mirrors translatePoint
 	// (base -> clipR -> spin) so lit normals stay consistent with vertex positions.
 	normal = applySceneObjectInverseScaleToNormal(object, normal)
+	if clip.HasS {
+		if clip.S[0] == 0 || clip.S[1] == 0 || clip.S[2] == 0 {
+			normal = normalizePoint3(normal)
+		} else {
+			normal = normalizePoint3(point3{X: normal.X / clip.S[0], Y: normal.Y / clip.S[1], Z: normal.Z / clip.S[2]})
+		}
+	}
 	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
 	if clip.HasR {
 		cx, cy, cz := motion.RotateVec3(clip.R, rotated.X, rotated.Y, rotated.Z)
@@ -1953,7 +1970,7 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	// value (all Has* false) and this path is byte-identical to the pre-clip code.
 	local = applySceneObjectScale(local, object)
 	if clip.HasS {
-		local = point3{X: point.X * clip.S[0], Y: point.Y * clip.S[1], Z: point.Z * clip.S[2]}
+		local = point3{X: local.X * clip.S[0], Y: local.Y * clip.S[1], Z: local.Z * clip.S[2]}
 	}
 	// Base orientation via the existing intrinsic Euler rotation.
 	rotated := rotatePoint(local, object.RotationX, object.RotationY, object.RotationZ)
@@ -2009,22 +2026,55 @@ func applySceneParentNormal(object sceneObject, normal point3) point3 {
 		return normalizePoint3(normal)
 	}
 	matrix := object.ParentMatrix
-	a, b, c := matrix[0], matrix[4], matrix[8]
-	d, e, f := matrix[1], matrix[5], matrix[9]
-	g, h, i := matrix[2], matrix[6], matrix[10]
+	scale := sceneParentLinearMaxAbs(matrix)
+	if scale == 0 || math.IsInf(1/scale, 0) {
+		return normalizePoint3(normal)
+	}
+	a, b, c := matrix[0]/scale, matrix[4]/scale, matrix[8]/scale
+	d, e, f := matrix[1]/scale, matrix[5]/scale, matrix[9]/scale
+	g, h, i := matrix[2]/scale, matrix[6]/scale, matrix[10]/scale
 	c00, c01, c02 := e*i-f*h, f*g-d*i, d*h-e*g
 	c10, c11, c12 := c*h-b*i, a*i-c*g, b*g-a*h
 	c20, c21, c22 := b*f-c*e, c*d-a*f, a*e-b*d
 	determinant := a*c00 + b*c01 + c*c02
-	orientation := 1.0
-	if determinant < 0 {
-		orientation = -1
+	if math.Abs(determinant) <= 1e-12 {
+		return normalizePoint3(normal)
 	}
+	orientation := math.Copysign(1, determinant)
 	return normalizePoint3(point3{
 		X: orientation * (c00*normal.X + c01*normal.Y + c02*normal.Z),
 		Y: orientation * (c10*normal.X + c11*normal.Y + c12*normal.Z),
 		Z: orientation * (c20*normal.X + c21*normal.Y + c22*normal.Z),
 	})
+}
+
+func sceneObjectTransformOrientation(object sceneObject, clip clipTRS) float64 {
+	determinant := resolvedSceneObjectScale(object.ScaleX) * resolvedSceneObjectScale(object.ScaleY) * resolvedSceneObjectScale(object.ScaleZ)
+	if clip.HasS {
+		determinant *= clip.S[0] * clip.S[1] * clip.S[2]
+	}
+	if object.HasParentMatrix {
+		matrix := object.ParentMatrix
+		determinant *= matrix[0]*(matrix[5]*matrix[10]-matrix[9]*matrix[6]) +
+			matrix[4]*(matrix[9]*matrix[2]-matrix[1]*matrix[10]) +
+			matrix[8]*(matrix[1]*matrix[6]-matrix[5]*matrix[2])
+	}
+	return math.Copysign(1, determinant)
+}
+
+func resolvedSceneObjectScale(value float64) float64 {
+	if value == 0 {
+		return 1
+	}
+	return value
+}
+
+func sceneParentLinearMaxAbs(matrix [16]float64) float64 {
+	maximum := 0.0
+	for _, index := range [...]int{0, 1, 2, 4, 5, 6, 8, 9, 10} {
+		maximum = math.Max(maximum, math.Abs(matrix[index]))
+	}
+	return maximum
 }
 
 // applySceneObjectScale applies the static leaf scale (ObjectIR scaleX/Y/Z)

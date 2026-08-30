@@ -281,22 +281,6 @@
     return ax * bx + ay * by + az * bz;
   }
 
-  // Flat cross product — writes into out array at offset.
-  function sceneCross3Into(out, offset, ax, ay, az, bx, by, bz) {
-    out[offset] = ay * bz - az * by;
-    out[offset + 1] = az * bx - ax * bz;
-    out[offset + 2] = ax * by - ay * bx;
-  }
-
-  // Flat normalize — returns length, writes normalized into out.
-  function sceneNormalize3Into(out, offset, x, y, z) {
-    var len = Math.sqrt(x * x + y * y + z * z);
-    if (len < 1e-10) { out[offset] = 0; out[offset + 1] = 0; out[offset + 2] = 0; return 0; }
-    var inv = 1 / len;
-    out[offset] = x * inv; out[offset + 1] = y * inv; out[offset + 2] = z * inv;
-    return len;
-  }
-
   // Ray intersection utilities for raycast-based scene picking.
 
   function sceneRayIntersectsAABB(rayOrigin, rayDir, boundsMin, boundsMax) {
@@ -426,6 +410,44 @@
     if (translate) {
       out.x += matrix[12]; out.y += matrix[13]; out.z += matrix[14];
     }
+    return out;
+  }
+
+  function sceneAffineDeterminant(matrix, base, out) {
+    base = base || 0;
+    if (!matrix || matrix.length < base + 16) return 0;
+    for (var n = 0; n < 16; n++) if (!Number.isFinite(matrix[base + n])) return 0;
+    if (matrix[base + 3] !== 0 || matrix[base + 7] !== 0 || matrix[base + 11] !== 0 || matrix[base + 15] !== 1) return 0;
+    var s = 0;
+    for (var k = 0; k < 3; k++) for (var j = 0; j < 3; j++) s = Math.max(s, Math.abs(matrix[base + k * 4 + j]));
+    if (!s || !Number.isFinite(1 / s)) return 0;
+    var a = matrix[base] / s, b = matrix[base + 4] / s, c = matrix[base + 8] / s;
+    var d = matrix[base + 1] / s, e = matrix[base + 5] / s, f = matrix[base + 9] / s;
+    var g = matrix[base + 2] / s, h = matrix[base + 6] / s, i = matrix[base + 10] / s;
+    var c00 = e * i - f * h, c01 = f * g - d * i, c02 = d * h - e * g;
+    var det = a * c00 + b * c01 + c * c02;
+    if (!Number.isFinite(det) || Math.abs(det) <= 1e-12) return 0;
+    if (out) {
+      var q = 1 / (det * s);
+      out[0] = c00 * q; out[1] = c01 * q; out[2] = c02 * q; out[3] = 0;
+      out[4] = (c * h - b * i) * q; out[5] = (a * i - c * g) * q; out[6] = (b * g - a * h) * q; out[7] = 0;
+      out[8] = (b * f - c * e) * q; out[9] = (c * d - a * f) * q; out[10] = (a * e - b * d) * q; out[11] = 0;
+      if (!out.every(Number.isFinite)) return 0;
+    }
+    return det;
+  }
+
+  // Column-major inverse-transpose of the affine linear part. Singular or
+  // non-finite matrices preserve the authored local basis instead of
+  // manufacturing NaNs, matching the GPU shader fallback.
+  var _sceneAffineInverseScratch = new Float64Array(12);
+  function sceneAffineNormalMatrix(matrix, out) {
+    out = out || Array(9);
+    if (!sceneAffineDeterminant(matrix, 0, _sceneAffineInverseScratch)) {
+      out.fill(0); out[0] = out[4] = out[8] = 1;
+      return out;
+    }
+    for (var n = 0; n < 9; n++) out[n] = _sceneAffineInverseScratch[n % 3 * 4 + (n / 3 | 0)];
     return out;
   }
 
@@ -576,6 +598,8 @@
       SCENE_IDENTITY_MAT4,
       sceneMat4Multiply,
       sceneMat4MultiplyInto,
+      sceneAffineDeterminant,
+      sceneAffineNormalMatrix,
       sceneEulerMatrixInto,
       sceneTRSToMat4,
       sceneTRSToMat4Into,
@@ -799,7 +823,12 @@
     var cx = transforms[base + 12];
     var cy = transforms[base + 13];
     var cz = transforms[base + 14];
-    var r  = (typeof radius === "number" && radius > 0) ? radius : 2.0;
+    var sum = 0;
+    for (var k = 0; k < 3; k++) for (var j = 0; j < 3; j++) {
+      var value = transforms[base + k * 4 + j];
+      sum += value * value;
+    }
+    var r  = ((typeof radius === "number" && radius > 0) ? radius : 2.0) * (Math.sqrt(sum) || 1);
     for (var p = 0; p < 6; p++) {
       var pl = planes[p];
       var d  = pl[0] * cx + pl[1] * cy + pl[2] * cz + pl[3];

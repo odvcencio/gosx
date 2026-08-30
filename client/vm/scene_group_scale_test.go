@@ -72,6 +72,53 @@ func TestSceneParentMatrixResolverCopiesAndRejectsInvalidValues(t *testing.T) {
 	if _, ok := sceneParentMatrixFromAny(values[:15]); ok {
 		t.Fatal("15-value parent matrix accepted")
 	}
+	values[0] = "1"
+	if _, ok := sceneParentMatrixFromAny(values); ok {
+		t.Fatal("numeric string in parent matrix accepted")
+	}
+	values[0] = 1.0
+	values[3] = 1.0
+	if _, ok := sceneParentMatrixFromAny(values); ok {
+		t.Fatal("non-affine bottom row accepted")
+	}
+	values[3] = 0.0
+	values[4], values[5], values[6] = values[0], values[1], values[2]
+	if _, ok := sceneParentMatrixFromAny(values); ok {
+		t.Fatal("singular parent matrix accepted")
+	}
+}
+
+func TestReflectedParentBakeKeepsAuthoredFrontFaceAndNormal(t *testing.T) {
+	matrix := []any{
+		-2.0, 0.0, 0.0, 0.0,
+		1.0, 3.0, 0.0, 0.0,
+		0.0, 0.0, 1.0, 0.0,
+		0.0, 0.0, 0.0, 1.0,
+	}
+	node := resolvedNode{Kind: "mesh", Props: map[string]any{
+		"id": "reflected", "geometry": "box", "width": 2.0, "height": 2.0, "depth": 2.0,
+		"parentMatrix": matrix, "wireframe": false,
+	}}
+	bundle := buildRenderBundle(map[string]any{}, []resolvedNode{node}, 320, 240, 0, newSpinScratch())
+	if len(bundle.MeshObjects) != 1 || len(bundle.WorldMeshPositions) < 9 || len(bundle.WorldMeshNormals) < 3 {
+		t.Fatalf("reflected mesh was not baked: %#v", bundle.MeshObjects)
+	}
+	p := func(vertex int) point3 {
+		base := vertex * 3
+		return point3{X: bundle.WorldMeshPositions[base], Y: bundle.WorldMeshPositions[base+1], Z: bundle.WorldMeshPositions[base+2]}
+	}
+	p0, p1, p2 := p(0), p(1), p(2)
+	e1 := point3{X: p1.X - p0.X, Y: p1.Y - p0.Y, Z: p1.Z - p0.Z}
+	e2 := point3{X: p2.X - p0.X, Y: p2.Y - p0.Y, Z: p2.Z - p0.Z}
+	face := normalizePoint3(point3{
+		X: e1.Y*e2.Z - e1.Z*e2.Y,
+		Y: e1.Z*e2.X - e1.X*e2.Z,
+		Z: e1.X*e2.Y - e1.Y*e2.X,
+	})
+	normal := point3{X: bundle.WorldMeshNormals[0], Y: bundle.WorldMeshNormals[1], Z: bundle.WorldMeshNormals[2]}
+	if dotPoint3(face, normal) < 0.999 {
+		t.Fatalf("reflected triangle winding and inverse-transpose normal disagree: face=%#v normal=%#v", face, normal)
+	}
 }
 
 func assertPointNear(t *testing.T, got, want point3, tolerance float64) {

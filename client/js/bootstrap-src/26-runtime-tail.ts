@@ -257,34 +257,6 @@
     });
   }
 
-  function setSharedSignalJSON(name, valueJSON) {
-    const signalName = String(name || "").trim();
-    if (!signalName) {
-      return null;
-    }
-
-    const setSharedSignal = window.__gosx_set_shared_signal;
-    if (typeof setSharedSignal === "function") {
-      try {
-        const result = setSharedSignal(signalName, valueJSON);
-        if (typeof result === "string" && result !== "") {
-          console.error("[gosx] shared signal update error (" + signalName + "):", result);
-          gosxNotifySharedSignal(signalName, valueJSON);
-        }
-        return result;
-      } catch (error) {
-        console.error("[gosx] shared signal update error (" + signalName + "):", error);
-      }
-    }
-
-    gosxNotifySharedSignal(signalName, valueJSON);
-    return null;
-  }
-
-  function setSharedSignalValue(name, value) {
-    return setSharedSignalJSON(name, JSON.stringify(value == null ? null : value));
-  }
-
   function ensureManifestFeatures(manifest) {
     const names = manifestFeatureNames(manifest);
     if (manifestNeedsTextLayoutFeature(names)) {

@@ -887,21 +887,11 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneModelLineObject(object, model, prefix, nodeAnimSource) {
-    const scaleX = sceneNumber(model && model.scaleX, 1);
-    const scaleY = sceneNumber(model && model.scaleY, 1);
-    const scaleZ = sceneNumber(model && model.scaleZ, 1);
-    const scaled = sceneScaleModelLinePoints(object.points, scaleX, scaleY, scaleZ);
-    const positioned = sceneModelTransform({ x: object.x, y: object.y, z: object.z }, model, 0);
     const instanced = Object.assign({}, object, {
       id: prefix + "/" + (object.id || "object"),
-      points: scaled,
+      points: object.points,
       lineSegments: sceneCloneModelLineSegments(object.lineSegments),
-      x: positioned.x,
-      y: positioned.y,
-      z: positioned.z,
-      rotationX: sceneNumber(object.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
-      rotationY: sceneNumber(object.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
-      rotationZ: sceneNumber(object.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+      parentMatrix: sceneModelTransformMatrix(model),
     });
     if (model && model.static !== null) {
       instanced.static = Boolean(model.static);
@@ -944,37 +934,10 @@ function gosxConfigureSceneScript(script, role, src) {
     return normalized;
   }
 
-  function sceneScaleModelLinePoints(points, scaleX, scaleY, scaleZ) {
-    return Array.isArray(points) ? points.map(function(point) {
-      return {
-        x: sceneNumber(point && point.x, 0) * scaleX,
-        y: sceneNumber(point && point.y, 0) * scaleY,
-        z: sceneNumber(point && point.z, 0) * scaleZ,
-      };
-    }) : [];
-  }
-
   function sceneCloneModelLineSegments(segments) {
     return Array.isArray(segments) ? segments.map(function(pair) {
       return Array.isArray(pair) ? pair.slice(0, 2) : pair;
     }) : [];
-  }
-
-  function sceneScaleModelPointPositions(positions, scaleX, scaleY, scaleZ) {
-    const source = positions instanceof Float32Array ? positions : sceneTypedFloatArray(positions);
-    if (!source.length) {
-      return source;
-    }
-    if (Math.abs(scaleX - 1) < 0.000001 && Math.abs(scaleY - 1) < 0.000001 && Math.abs(scaleZ - 1) < 0.000001) {
-      return source;
-    }
-    const scaled = new Float32Array(source.length);
-    for (let i = 0; i + 2 < source.length; i += 3) {
-      scaled[i] = source[i] * scaleX;
-      scaled[i + 1] = source[i + 1] * scaleY;
-      scaled[i + 2] = source[i + 2] * scaleZ;
-    }
-    return scaled;
   }
 
   function sceneApplyModelPointOverride(point, model) {
@@ -1013,20 +976,11 @@ function gosxConfigureSceneScript(script, role, src) {
     const source = sceneApplyModelPointOverride(rawPoint, model);
     const nodeAnimSource = rawPoint && rawPoint._nodeAnim ? rawPoint._nodeAnim : null;
     const normalized = normalizeScenePointsEntry(source, index, null);
-    const scaleX = sceneNumber(model && model.scaleX, 1);
-    const scaleY = sceneNumber(model && model.scaleY, 1);
-    const scaleZ = sceneNumber(model && model.scaleZ, 1);
-    const positions = sceneScaleModelPointPositions(normalized._cachedPos || normalized.positions, scaleX, scaleY, scaleZ);
-    const positioned = sceneModelTransform({ x: normalized.x, y: normalized.y, z: normalized.z }, model, 0);
+    const positions = normalized._cachedPos || normalized.positions;
     const instanced = Object.assign({}, normalized, {
       id: prefix + "/" + normalized.id,
       positions,
-      x: positioned.x,
-      y: positioned.y,
-      z: positioned.z,
-      rotationX: sceneNumber(normalized.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
-      rotationY: sceneNumber(normalized.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
-      rotationZ: sceneNumber(normalized.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+      parentMatrix: sceneModelTransformMatrix(model),
     });
     if (positions instanceof Float32Array) {
       instanced._cachedPos = positions;
@@ -1106,8 +1060,30 @@ function gosxConfigureSceneScript(script, role, src) {
     return typed;
   }
 
-  function sceneCloneModelMeshIndices(indices) {
-    return indices instanceof Uint32Array ? new Uint32Array(indices) : null;
+  function sceneCloneModelMeshIndices(indices, reverseTriangles, count) {
+    let out = indices instanceof Uint32Array ? new Uint32Array(indices) : null;
+    if (!out && reverseTriangles) {
+      out = new Uint32Array(count);
+      for (let i = 0; i < out.length; i += 1) out[i] = i;
+    }
+    if (out && reverseTriangles) for (let i = 0; i + 2 < out.length; i += 3) {
+      const swap = out[i + 1]; out[i + 1] = out[i + 2]; out[i + 2] = swap;
+    }
+    return out;
+  }
+
+  function sceneModelTransformTangents(values, normals, model, orientation) {
+    const out = sceneModelTransformMeshFloats(values, 4, function(x, y, z, w) {
+      const tangent = sceneModelTransform({ x: x, y: y, z: z }, model, 1);
+      return { x: tangent.x, y: tangent.y, z: tangent.z, w: sceneNumber(w, 1) * orientation };
+    });
+    for (let i = 0; i + 3 < out.length; i += 4) {
+      const n = i / 4 * 3;
+      const dot = out[i] * normals[n] + out[i + 1] * normals[n + 1] + out[i + 2] * normals[n + 2];
+      const tangent = sceneNormalizeDirection({ x: out[i] - normals[n] * dot, y: out[i + 1] - normals[n + 1] * dot, z: out[i + 2] - normals[n + 2] * dot });
+      out[i] = tangent.x; out[i + 1] = tangent.y; out[i + 2] = tangent.z;
+    }
+    return out;
   }
 
   function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource) {
@@ -1134,9 +1110,11 @@ function gosxConfigureSceneScript(script, role, src) {
       driftPhase: 0,
     });
     const hasSkin = instanced.skin && typeof instanced.skin === "object";
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(vertices.count, 0)));
+    const modelOrientation = sceneAffineDeterminant(sceneModelTransformMatrix(model), 0) < 0 ? -1 : 1;
     if (hasSkin) {
       instanced.vertices = {
-        count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+        count: vertexCount,
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
         normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
@@ -1146,22 +1124,20 @@ function gosxConfigureSceneScript(script, role, src) {
         indices: sceneCloneModelMeshIndices(vertices.indices),
       };
     } else {
+      const transformedNormals = sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
+        return sceneNormalizeDirection(sceneObjectTransformNormal(model, { x: x, y: y, z: z }, 0));
+      });
       instanced.vertices = {
-        count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+        count: vertexCount,
         positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
           return sceneModelTransform({ x: x, y: y, z: z }, model, 0);
         }),
-        normals: sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
-          return sceneNormalizeDirection(sceneObjectTransformNormal(model, { x: x, y: y, z: z }, 0));
-        }),
+        normals: transformedNormals,
         uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
-        tangents: sceneModelTransformMeshFloats(vertices.tangents, 4, function(x, y, z, w) {
-          const rotated = sceneNormalizeDirection(sceneModelTransform({ x: x, y: y, z: z }, model, 1));
-          return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
-        }),
+        tangents: sceneModelTransformTangents(vertices.tangents, transformedNormals, model, modelOrientation),
         joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
         weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
-        indices: sceneCloneModelMeshIndices(vertices.indices),
+        indices: sceneCloneModelMeshIndices(vertices.indices, modelOrientation < 0, vertexCount),
       };
     }
     if (model && model.static !== null) {
@@ -1238,40 +1214,6 @@ function gosxConfigureSceneScript(script, role, src) {
       };
     }
     return normalized;
-  }
-
-  function sceneSkinnedModelLocalBounds(vertices) {
-    if (!vertices || !vertices.positions || !vertices.count) {
-      return null;
-    }
-    const cached = vertices._skinnedLocalBounds;
-    if (cached) {
-      return cached;
-    }
-    const positions = vertices.positions instanceof Float32Array ? vertices.positions : sceneTypedFloatArray(vertices.positions);
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    const limit = Math.min(positions.length, Math.max(0, Math.floor(sceneNumber(vertices.count, 0))) * 3);
-    for (let index = 0; index + 2 < limit; index += 3) {
-      const x = positions[index];
-      const y = positions[index + 1];
-      const z = positions[index + 2];
-      if (x < minX) minX = x;
-      if (y < minY) minY = y;
-      if (z < minZ) minZ = z;
-      if (x > maxX) maxX = x;
-      if (y > maxY) maxY = y;
-      if (z > maxZ) maxZ = z;
-    }
-    const bounds = Number.isFinite(minX)
-      ? { minX, minY, minZ, maxX, maxY, maxZ }
-      : { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 1, maxZ: 1 };
-    vertices._skinnedLocalBounds = bounds;
-    return bounds;
   }
 
   function sceneInstantiateModelLabel(rawLabel, model, prefix, index) {
@@ -3190,6 +3132,7 @@ function gosxConfigureSceneScript(script, role, src) {
       if (!object || !object.vertices || !local || !local.positions) {
         continue;
       }
+      const orientation = sceneAffineDeterminant(sceneModelTransformMatrix(record.model), 0) < 0 ? -1 : 1;
       object.vertices.positions = sceneModelTransformMeshFloats(local.positions, 3, function(x, y, z) {
         return sceneModelTransform({ x: x, y: y, z: z }, record.model, 0);
       });
@@ -3199,12 +3142,10 @@ function gosxConfigureSceneScript(script, role, src) {
         });
       }
       if (local.tangents && local.tangents.length) {
-        object.vertices.tangents = sceneModelTransformMeshFloats(local.tangents, 4, function(x, y, z, w) {
-          const rotated = sceneNormalizeDirection(sceneModelTransform({ x: x, y: y, z: z }, record.model, 1));
-          return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
-        });
+        object.vertices.tangents = sceneModelTransformTangents(local.tangents, object.vertices.normals, record.model, orientation);
       }
       object.vertices.uvs = local.uvs;
+      object.vertices.indices = sceneCloneModelMeshIndices(local.indices, orientation < 0, local.count);
       object.vertices.count = local.count;
       object.static = false;
       sceneApplyModelObjectHiddenState(object, record.model);
@@ -3369,6 +3310,7 @@ function gosxConfigureSceneScript(script, role, src) {
       modelMatrix: sceneModelTransformMatrix(model),
     };
 
+    const orientation = sceneAffineDeterminant(sceneModelTransformMatrix(model), 0) < 0 ? -1 : 1;
     object.vertices.positions = sceneModelTransformMeshFloats(morphedPositions, 3, function(x, y, z) {
       return sceneModelTransform({ x: x, y: y, z: z }, model, 0);
     });
@@ -3398,13 +3340,11 @@ function gosxConfigureSceneScript(script, role, src) {
       ? sceneComputedPoseBlendArray(object, "_computedPoseLocalTangents", sourceTangents, targetTangents || sourceTangents, 4, alpha, true)
       : null;
     if (morphedTangents) {
-      object.vertices.tangents = sceneModelTransformMeshFloats(morphedTangents, 4, function(x, y, z, w) {
-        const rotated = sceneNormalizeDirection(sceneModelTransform({ x: x, y: y, z: z }, model, 1));
-        return { x: rotated.x, y: rotated.y, z: rotated.z, w: sceneNumber(w, 1) };
-      });
+      object.vertices.tangents = sceneModelTransformTangents(morphedTangents, object.vertices.normals, model, orientation);
     }
 
     object.vertices.uvs = sourceLocal.uvs;
+    object.vertices.indices = sceneCloneModelMeshIndices(sourceLocal.indices, orientation < 0, count);
     object.vertices.count = count;
     object.static = false;
     sceneApplyModelObjectHiddenState(object, model);

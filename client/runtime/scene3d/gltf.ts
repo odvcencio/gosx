@@ -1195,9 +1195,9 @@
     // Compute tangents if not provided by the asset.
     var tangents = tangentsRaw || gltfComputeTangents(positions, normals, uvs);
 
-    if (morphMeta && !tangentsRaw) {
-      // Computed tangents are re-derived per pose change from the same UVs,
-      // so keep the post-texture-transform UVs the load-time pass used.
+    if (morphMeta) {
+      // Pose changes reorder reflected triangles as complete vertex tuples,
+      // so retain the exact post-texture-transform UV stream too.
       morphMeta.baseUVs = new Float32Array(uvs);
     }
 
@@ -1296,41 +1296,63 @@
   // load-time/static model-transform path (sceneApplyStaticModel
   // ObjectTransform): positions through the full transform, normals through
   // the inverse-transpose 3x3 (correct under non-uniform scale), tangent
-  // xyz as directions through the linear 3x3 with renormalization, tangent
-  // w preserved. Uses only this chunk's glTF matrix helpers — no
+  // xyz as directions through the linear 3x3 with Gram-Schmidt correction.
+  // Reflections reverse every expanded triangle and tangent handedness. Uses
+  // only this chunk's glTF matrix helpers — no
   // sceneModelTransform*/sceneNormalizeDirection cross-chunk calls.
   function gltfTransformMorphedStreams(streams, worldTransform) {
     var outPositions = new Float32Array(streams.positions.length);
-    for (var p = 0; p < streams.positions.length; p += 3) {
+    var orientation = sceneAffineDeterminant(worldTransform, 0) < 0 ? -1 : 1;
+    var vertexCount = Math.floor(streams.positions.length / 3);
+    for (var vertex = 0; vertex < vertexCount; vertex++) {
+      var sourceVertex = orientation < 0 && vertex % 3 ? vertex + (vertex % 3 === 1 ? 1 : -1) : vertex;
+      var p = sourceVertex * 3;
+      var outP = vertex * 3;
       var point = gltfTransformPoint(worldTransform, streams.positions[p], streams.positions[p + 1], streams.positions[p + 2]);
-      outPositions[p] = point.x;
-      outPositions[p + 1] = point.y;
-      outPositions[p + 2] = point.z;
+      outPositions[outP] = point.x;
+      outPositions[outP + 1] = point.y;
+      outPositions[outP + 2] = point.z;
     }
-    var normalMatrix = gltfNormalMatrix(worldTransform);
+    var normalMatrix = sceneAffineNormalMatrix(worldTransform);
     var outNormals = new Float32Array(streams.normals.length);
-    for (var n = 0; n < streams.normals.length; n += 3) {
+    for (vertex = 0; vertex < vertexCount; vertex++) {
+      sourceVertex = orientation < 0 && vertex % 3 ? vertex + (vertex % 3 === 1 ? 1 : -1) : vertex;
+      var n = sourceVertex * 3;
+      var outN = vertex * 3;
       var normal = gltfTransformNormal(normalMatrix, streams.normals[n], streams.normals[n + 1], streams.normals[n + 2]);
-      outNormals[n] = normal.x;
-      outNormals[n + 1] = normal.y;
-      outNormals[n + 2] = normal.z;
+      outNormals[outN] = normal.x;
+      outNormals[outN + 1] = normal.y;
+      outNormals[outN + 2] = normal.z;
+    }
+    var outUVs = streams.uvs ? new Float32Array(streams.uvs.length) : null;
+    if (outUVs) for (vertex = 0; vertex < vertexCount; vertex++) {
+      sourceVertex = orientation < 0 && vertex % 3 ? vertex + (vertex % 3 === 1 ? 1 : -1) : vertex;
+      outUVs[vertex * 2] = streams.uvs[sourceVertex * 2];
+      outUVs[vertex * 2 + 1] = streams.uvs[sourceVertex * 2 + 1];
     }
     var outTangents = new Float32Array(streams.tangents.length);
-    for (var t = 0; t < streams.tangents.length; t += 4) {
+    for (vertex = 0; vertex < vertexCount; vertex++) {
+      sourceVertex = orientation < 0 && vertex % 3 ? vertex + (vertex % 3 === 1 ? 1 : -1) : vertex;
+      var t = sourceVertex * 4;
+      var outT = vertex * 4;
       var tangent = gltfTransformDirection(worldTransform, streams.tangents[t], streams.tangents[t + 1], streams.tangents[t + 2]);
+      var dot = tangent.x * outNormals[vertex * 3] + tangent.y * outNormals[vertex * 3 + 1] + tangent.z * outNormals[vertex * 3 + 2];
+      tangent.x -= outNormals[vertex * 3] * dot;
+      tangent.y -= outNormals[vertex * 3 + 1] * dot;
+      tangent.z -= outNormals[vertex * 3 + 2] * dot;
       var tangentLen = Math.sqrt(tangent.x * tangent.x + tangent.y * tangent.y + tangent.z * tangent.z);
       if (tangentLen > 1e-8) {
         tangent.x /= tangentLen;
         tangent.y /= tangentLen;
         tangent.z /= tangentLen;
       }
-      outTangents[t] = tangent.x;
-      outTangents[t + 1] = tangent.y;
-      outTangents[t + 2] = tangent.z;
+      outTangents[outT] = tangent.x;
+      outTangents[outT + 1] = tangent.y;
+      outTangents[outT + 2] = tangent.z;
       var w = streams.tangents[t + 3];
-      outTangents[t + 3] = typeof w === "number" && isFinite(w) ? w : 1;
+      outTangents[outT + 3] = (typeof w === "number" && isFinite(w) ? w : 1) * orientation;
     }
-    return { positions: outPositions, normals: outNormals, tangents: outTangents };
+    return { positions: outPositions, normals: outNormals, uvs: outUVs, tangents: outTangents };
   }
 
   // Cache keys the bounds/snapshot layers attach to vertices objects.
@@ -1362,9 +1384,8 @@
   // rootNodes); it always contains every node, so a stopped or reset mixer
   // yields the authored pose. The model/root transform is applied exactly
   // once (mesh entries via entry.modelMatrix refreshed from the record's
-  // live root transform each tick; points/lines mirror the mount's split
-  // scale/rotate/translate instantiation semantics using the captured
-  // pre-model base fields plus the live model values). No cached asset
+  // live root transform each tick; points/lines keep that same exact affine
+  // as parentMatrix outside their node-local rebuilt positions). No cached asset
   // input is ever mutated: every changed frame writes fresh output arrays,
   // so point/line render caches receive genuinely new positions and
   // re-upload. Nothing is ever reconstructed by inverting a baked transform
@@ -1405,6 +1426,7 @@
         var base = {
           positions: meta.basePositions,
           normals: meta.baseNormals,
+          uvs: meta.baseUVs,
           tangents: meta.baseTangents,
         };
         // gltfTransformMorphedStreams: positions through the full transform,
@@ -1418,10 +1440,12 @@
         entry.vertices.positions = finalStreams.positions;
         entry.vertices.normals = finalStreams.normals;
         entry.vertices.tangents = finalStreams.tangents;
+        entry.vertices.uvs = finalStreams.uvs;
         if (entry.modelLocalVertices && entry.modelLocalVertices.positions) {
           entry.modelLocalVertices.positions = local.positions;
           entry.modelLocalVertices.normals = local.normals;
           entry.modelLocalVertices.tangents = local.tangents;
+          entry.modelLocalVertices.uvs = local.uvs;
           entry.modelLocalVertices.count = meta.vertexCount;
         }
         gltfDropVertexCaches(entry.vertices);
@@ -1431,17 +1455,14 @@
         var source = entry.basePositions || null;
         var target = entry.object;
         if (source && source.length >= 3 && nodeMatrix) {
-          var modelScaleX = gltfAnimNumber(entry.model && entry.model.scaleX, 1);
-          var modelScaleY = gltfAnimNumber(entry.model && entry.model.scaleY, 1);
-          var modelScaleZ = gltfAnimNumber(entry.model && entry.model.scaleZ, 1);
           var count3 = Math.floor(source.length / 3) * 3;
           if (entry.kind === "points") {
             var outPositions = new Float32Array(count3);
             for (var v = 0; v < count3; v += 3) {
               var pt = gltfTransformPoint(nodeMatrix, source[v], source[v + 1], source[v + 2]);
-              outPositions[v] = pt.x * modelScaleX;
-              outPositions[v + 1] = pt.y * modelScaleY;
-              outPositions[v + 2] = pt.z * modelScaleZ;
+              outPositions[v] = pt.x;
+              outPositions[v + 1] = pt.y;
+              outPositions[v + 2] = pt.z;
             }
             // Fresh array identity every rebuilt frame: the static point VBO
             // cache keys on the typed array, so this forces a real upload.
@@ -1451,42 +1472,20 @@
             var linePoints = new Array(count3 / 3);
             for (var lv = 0; lv < count3; lv += 3) {
               var lp = gltfTransformPoint(nodeMatrix, source[lv], source[lv + 1], source[lv + 2]);
-              linePoints[lv / 3] = { x: lp.x * modelScaleX, y: lp.y * modelScaleY, z: lp.z * modelScaleZ };
+              linePoints[lv / 3] = { x: lp.x, y: lp.y, z: lp.z };
             }
             target.points = linePoints;
           }
         }
-        // Model translate/rotate split, mirroring the mount instantiation:
-        // positions above carry the model scale only and rotation rides the
-        // object fields. The base origin is NOT simply additive with the
-        // model translation: the mount runs sceneModelTransformPoint on the
-        // captured base (scale, then rotate, then translate). gltf.ts
-        // cannot call that mount-local helper, but entry.modelMatrix is the
-        // live model root transform, so transforming the base origin
-        // through it reproduces the exact same semantics self-contained.
-        // No double application: the per-vertex streams above never see
-        // the model translation or rotation.
+        // Keep the exact model affine outside the animated node-local stream.
         var basePose = entry.modelBase || null;
-        var liveModel = entry.model || null;
-        var poseModelMatrix = entry.modelMatrix || null;
-        if (basePose && poseModelMatrix) {
-          var origin = gltfTransformPoint(
-            poseModelMatrix,
-            gltfAnimNumber(basePose.x, 0),
-            gltfAnimNumber(basePose.y, 0),
-            gltfAnimNumber(basePose.z, 0)
-          );
-          target.x = origin.x;
-          target.y = origin.y;
-          target.z = origin.z;
-        } else {
-          target.x = (basePose ? gltfAnimNumber(basePose.x, 0) : 0) + gltfAnimNumber(liveModel && liveModel.x, 0);
-          target.y = (basePose ? gltfAnimNumber(basePose.y, 0) : 0) + gltfAnimNumber(liveModel && liveModel.y, 0);
-          target.z = (basePose ? gltfAnimNumber(basePose.z, 0) : 0) + gltfAnimNumber(liveModel && liveModel.z, 0);
-        }
-        target.rotationX = (basePose ? gltfAnimNumber(basePose.rotationX, 0) : 0) + gltfAnimNumber(liveModel && liveModel.rotationX, 0);
-        target.rotationY = (basePose ? gltfAnimNumber(basePose.rotationY, 0) : 0) + gltfAnimNumber(liveModel && liveModel.rotationY, 0);
-        target.rotationZ = (basePose ? gltfAnimNumber(basePose.rotationZ, 0) : 0) + gltfAnimNumber(liveModel && liveModel.rotationZ, 0);
+        target.x = basePose ? gltfAnimNumber(basePose.x, 0) : 0;
+        target.y = basePose ? gltfAnimNumber(basePose.y, 0) : 0;
+        target.z = basePose ? gltfAnimNumber(basePose.z, 0) : 0;
+        target.rotationX = basePose ? gltfAnimNumber(basePose.rotationX, 0) : 0;
+        target.rotationY = basePose ? gltfAnimNumber(basePose.rotationY, 0) : 0;
+        target.rotationZ = basePose ? gltfAnimNumber(basePose.rotationZ, 0) : 0;
+        target.parentMatrix = entry.modelMatrix ? Array.from(entry.modelMatrix) : null;
       }
     }
   }
@@ -1565,15 +1564,18 @@
       }
       // Node stage → model-local asset-space geometry (the _modelLocalVertices
       // contract: node transform INCLUDED). Model stage → world, once.
-      var local = nodeMatrix ? gltfTransformMorphedStreams(folded, nodeMatrix) : folded;
+      var foldedStreams = { positions: folded.positions, normals: folded.normals, tangents: folded.tangents, uvs: meta.baseUVs };
+      var local = nodeMatrix ? gltfTransformMorphedStreams(foldedStreams, nodeMatrix) : foldedStreams;
       var finalStreams = modelMatrix ? gltfTransformMorphedStreams(local, modelMatrix) : local;
       entry.vertices.positions = finalStreams.positions;
       entry.vertices.normals = finalStreams.normals;
       entry.vertices.tangents = finalStreams.tangents;
+      entry.vertices.uvs = finalStreams.uvs;
       if (entry.modelLocalVertices && entry.modelLocalVertices.positions) {
         entry.modelLocalVertices.positions = local.positions;
         entry.modelLocalVertices.normals = local.normals;
         entry.modelLocalVertices.tangents = local.tangents;
+        entry.modelLocalVertices.uvs = local.uvs;
         entry.modelLocalVertices.count = meta.vertexCount;
       }
       gltfDropVertexCaches(entry.vertices);
@@ -1616,39 +1618,6 @@
       y: m[1] * x + m[5] * y + m[9]  * z,
       z: m[2] * x + m[6] * y + m[10] * z,
     };
-  }
-
-  // Compute the 3x3 normal matrix (inverse-transpose of upper-left 3x3).
-  // For uniform-scale transforms, the upper-left 3x3 itself works, but
-  // for non-uniform scale we need the proper inverse-transpose.
-  function gltfNormalMatrix(m) {
-    var a00 = m[0], a01 = m[1], a02 = m[2];
-    var a10 = m[4], a11 = m[5], a12 = m[6];
-    var a20 = m[8], a21 = m[9], a22 = m[10];
-
-    var det = a00 * (a11 * a22 - a12 * a21)
-            - a01 * (a10 * a22 - a12 * a20)
-            + a02 * (a10 * a21 - a11 * a20);
-
-    if (Math.abs(det) < 1e-10) {
-      // Degenerate — return identity 3x3 as fallback.
-      return [1, 0, 0, 0, 1, 0, 0, 0, 1];
-    }
-
-    var invDet = 1.0 / det;
-
-    // Cofactor matrix (already transposed for inverse-transpose).
-    return [
-      (a11 * a22 - a12 * a21) * invDet,
-      (a12 * a20 - a10 * a22) * invDet,
-      (a10 * a21 - a11 * a20) * invDet,
-      (a02 * a21 - a01 * a22) * invDet,
-      (a00 * a22 - a02 * a20) * invDet,
-      (a01 * a20 - a00 * a21) * invDet,
-      (a01 * a12 - a02 * a11) * invDet,
-      (a02 * a10 - a00 * a12) * invDet,
-      (a00 * a11 - a01 * a10) * invDet,
-    ];
   }
 
   function gltfTransformNormal(nm, x, y, z) {
@@ -2080,7 +2049,6 @@
     var animateMorph = nodeIndex != null && gltfNodeHasWeightAnimation(gltf, nodeIndex);
     var animateTRS = animateTRSFlag === true;
 
-    var normalMat = gltfNormalMatrix(worldTransform);
     var skin = skinIndex != null && result.skins ? result.skins[skinIndex] : null;
     var isSkinned = !!skin;
 
@@ -2210,42 +2178,11 @@
         objectNormals = new Float32Array(geometry.normals);
         objectTangents = new Float32Array(geometry.tangents);
       } else {
-        // Apply world transform to positions and normals.
-        objectPositions = new Float32Array(vertCount * 3);
-        objectNormals = new Float32Array(vertCount * 3);
-        for (var v = 0; v < vertCount; v++) {
-          var px = geometry.positions[v * 3];
-          var py = geometry.positions[v * 3 + 1];
-          var pz = geometry.positions[v * 3 + 2];
-          var wp = gltfTransformPoint(worldTransform, px, py, pz);
-          objectPositions[v * 3]     = wp.x;
-          objectPositions[v * 3 + 1] = wp.y;
-          objectPositions[v * 3 + 2] = wp.z;
-
-          var tnx = geometry.normals[v * 3];
-          var tny = geometry.normals[v * 3 + 1];
-          var tnz = geometry.normals[v * 3 + 2];
-          var wn = gltfTransformNormal(normalMat, tnx, tny, tnz);
-          objectNormals[v * 3]     = wn.x;
-          objectNormals[v * 3 + 1] = wn.y;
-          objectNormals[v * 3 + 2] = wn.z;
-        }
-
-        // Transform tangent directions by the upper-left 3x3.
-        objectTangents = new Float32Array(vertCount * 4);
-        for (var tv = 0; tv < vertCount; tv++) {
-          var ttx = geometry.tangents[tv * 4];
-          var tty = geometry.tangents[tv * 4 + 1];
-          var ttz = geometry.tangents[tv * 4 + 2];
-          var tw  = geometry.tangents[tv * 4 + 3];
-          var wt = gltfTransformDirection(worldTransform, ttx, tty, ttz);
-          var tlen = Math.sqrt(wt.x * wt.x + wt.y * wt.y + wt.z * wt.z);
-          if (tlen > 1e-8) { wt.x /= tlen; wt.y /= tlen; wt.z /= tlen; }
-          objectTangents[tv * 4]     = wt.x;
-          objectTangents[tv * 4 + 1] = wt.y;
-          objectTangents[tv * 4 + 2] = wt.z;
-          objectTangents[tv * 4 + 3] = tw;
-        }
+        var transformed = gltfTransformMorphedStreams(geometry, worldTransform);
+        objectPositions = transformed.positions;
+        objectNormals = transformed.normals;
+        objectTangents = transformed.tangents;
+        geometry.uvs = transformed.uvs;
       }
 
       // Determine render pass from material alpha mode.
@@ -2307,6 +2244,7 @@
           basePositions: new Float32Array(geometry.positions),
           baseNormals: new Float32Array(geometry.normals),
           baseTangents: new Float32Array(geometry.tangents),
+          baseUVs: new Float32Array(geometry.uvs),
         };
       }
 

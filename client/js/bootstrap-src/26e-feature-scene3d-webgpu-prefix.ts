@@ -58,6 +58,8 @@
     }
     return out;
   };
+  var sceneAffineDeterminant = sceneApi.sceneAffineDeterminant || function() { return 1; };
+  var sceneAffineNormalMatrix = sceneApi.sceneAffineNormalMatrix;
   var sceneEulerMatrixInto = sceneApi.sceneEulerMatrixInto;
   var scenePointStyleCode = sceneApi.scenePointStyleCode || function() { return 0; };
   var sceneRenderCamera = sceneApi.sceneRenderCamera || function(c) { return c; };

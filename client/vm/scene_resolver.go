@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/internal/sceneaffine"
 	"m31labs.dev/gosx/motion"
 )
 
@@ -598,18 +599,40 @@ func numberSliceFromAny(value any) []float64 {
 }
 
 func sceneParentMatrixFromAny(value any) ([16]float64, bool) {
-	values := numberSliceFromAny(value)
-	if len(values) != 16 {
-		return [16]float64{}, false
-	}
 	var matrix [16]float64
-	for index, number := range values {
+	if values, ok := value.([]float64); ok {
+		if len(values) != 16 {
+			return matrix, false
+		}
+		copy(matrix[:], values)
+		return matrix, sceneaffine.ValidParentMatrix(matrix[:])
+	}
+	items, ok := value.([]any)
+	if !ok || len(items) != 16 {
+		return matrix, false
+	}
+	for index, item := range items {
+		var number float64
+		switch typed := item.(type) {
+		case float64:
+			number = typed
+		case float32:
+			number = float64(typed)
+		case int:
+			number = float64(typed)
+		case int32:
+			number = float64(typed)
+		case int64:
+			number = float64(typed)
+		default:
+			return [16]float64{}, false
+		}
 		if math.IsNaN(number) || math.IsInf(number, 0) {
 			return [16]float64{}, false
 		}
 		matrix[index] = number
 	}
-	return matrix, true
+	return matrix, sceneaffine.ValidParentMatrix(matrix[:])
 }
 
 func sceneCameraFromProps(props map[string]any) sceneCamera {

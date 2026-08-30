@@ -44,7 +44,7 @@ func TestSkinningImplementedOnBothGPUBackends(t *testing.T) {
 		`"in vec4 a_joints;",`,
 		`"in vec4 a_weights;",`,
 		`"uniform mat4 u_jointMatrices[64];",`,
-		`"        pos = skinMatrix * pos;",`,
+		`"mat4 model=u_modelMatrix*skinMatrix;vec4 worldPos=model*vec4(a_position,1.0);",`,
 		"function createScenePBRSkinnedProgram(gl) {",
 	} {
 		if !strings.Contains(webgl, symbol) {
@@ -83,13 +83,13 @@ func TestSkinningImplementedOnBothGPUBackends(t *testing.T) {
 //
 //  1. The WGSL kernel blends positions AND shading vectors with the joint
 //     palette and writes three packed regions per vertex: positions at float
-//     i*3, renormalized normals at paddedCount*3, tangents (w preserved) at
-//     paddedCount*6.
+//     i*3, inverse-transpose normals at paddedCount*3, and orthogonalized
+//     tangents (w corrected for reflection) at paddedCount*6.
 //  2. webGPUBindElioSkinnedBuffers binds those regions to vertex slots 1 and
 //     3 of the SAME output buffer that feeds slot 0, at byte offsets
 //     paddedCount*12 and paddedCount*24.
-//  3. WebGL2 still skins both shading vectors via mat3(skinMatrix), matching
-//     WebGPU's attribute coverage on the shading vectors.
+//  3. WebGL2 composes model and skin first, then applies the same
+//     inverse-transpose/orthogonalized tangent-frame rule in its vertex shader.
 func TestSkinnedNormalsAndTangentsReachTheDraw(t *testing.T) {
 	webgpu := readRenderer(t, webgpuRendererPath)
 	kernel := webgpuElioSkinKernel(t, webgpu)
@@ -102,19 +102,21 @@ func TestSkinnedNormalsAndTangentsReachTheDraw(t *testing.T) {
 		"out[posBase] = skinned.x;",
 		"out[posBase + 1u] = skinned.y;",
 		"out[posBase + 2u] = skinned.z;",
-		// normals: joint-blend, renormalize, write at paddedCount*3
-		"let rawNormal = (m * vec4f(v.nx, v.ny, v.nz, 0.0)).xyz;",
+		// normals: inverse-transpose the joint blend, write at paddedCount*3
+		"let an = gosxAffineNormal(m, vec3f(v.nx, v.ny, v.nz));",
+		"let rn = an.xyz;",
 		"let normBase = (paddedCount * 3u) + posBase;",
 		"out[normBase] = sn.x;",
 		"out[normBase + 1u] = sn.y;",
 		"out[normBase + 2u] = sn.z;",
-		// tangents: joint-blend, renormalize, preserve w, write at paddedCount*6
-		"let rawTangent = (m * vec4f(v.tx, v.ty, v.tz, 0.0)).xyz;",
+		// tangents: joint-blend, orthogonalize, correct reflected w, write at paddedCount*6
+		"let rt = (m * vec4f(v.tx, v.ty, v.tz, 0.0)).xyz;",
+		"let ot = rt - sn * dot(sn, rt);",
 		"let tanBase = (paddedCount * 6u) + (i * 4u);",
 		"out[tanBase] = st.x;",
 		"out[tanBase + 1u] = st.y;",
 		"out[tanBase + 2u] = st.z;",
-		"out[tanBase + 3u] = v.tw;",
+		"out[tanBase + 3u] = v.tw * an.w;",
 	} {
 		if !strings.Contains(kernel, write) {
 			t.Errorf("the WebGPU skin kernel lost %q; re-read what it writes now", write)
@@ -135,12 +137,15 @@ func TestSkinnedNormalsAndTangentsReachTheDraw(t *testing.T) {
 		}
 	}
 
-	// Link 3: WebGL2 remains the coverage reference — it skins both shading
-	// vectors with the same blended matrix as the position.
+	// Link 3: WebGL2 remains the coverage reference — it composes skinning with
+	// the object model, inverse-transposes normals, orthogonalizes tangents, and
+	// carries determinant sign into tangent handedness.
 	webgl := readRenderer(t, webglRendererPath)
 	for _, symbol := range []string{
-		`"        norm = mat3(skinMatrix) * norm;",`,
-		`"        tang = mat3(skinMatrix) * tang;",`,
+		`"mat4 model=u_modelMatrix*skinMatrix;vec4 worldPos=model*vec4(a_position,1.0);",`,
+		`"mat3 m=mat3(model);vec4 q=gosxAffineNormal(m,a_normal);",`,
+		`"vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",`,
+		`"vec3 B=cross(N,T)*a_tangent.w*q.w;",`,
 	} {
 		if !strings.Contains(webgl, symbol) {
 			t.Errorf("expected %q in %s: WebGL2 skinning normals and tangents "+

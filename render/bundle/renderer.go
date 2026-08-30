@@ -1757,7 +1757,7 @@ func (r *Renderer) buildLitPipeline() error {
 		},
 		Primitive: gpu.PrimitiveState{
 			Topology:  gpu.TopologyTriangleList,
-			CullMode:  gpu.CullBack,
+			CullMode:  gpu.CullNone,
 			FrontFace: gpu.FrontFaceCCW,
 		},
 		DepthStencil: &gpu.DepthStencilState{
@@ -1837,7 +1837,7 @@ func (r *Renderer) buildSkinnedLitPipeline() error {
 		},
 		Primitive: gpu.PrimitiveState{
 			Topology:  gpu.TopologyTriangleList,
-			CullMode:  gpu.CullBack,
+			CullMode:  gpu.CullNone,
 			FrontFace: gpu.FrontFaceCCW,
 		},
 		DepthStencil: &gpu.DepthStencilState{
@@ -1884,11 +1884,11 @@ func (r *Renderer) buildShadowPipeline() error {
 				}},
 			},
 		},
-		// No fragment stage — depth-only.
-		Fragment: gpu.FragmentStageDesc{},
+		// Fragment classification discards the authored back face without writing color.
+		Fragment: gpu.FragmentStageDesc{Module: shader, EntryPoint: "fs_main"},
 		Primitive: gpu.PrimitiveState{
 			Topology:  gpu.TopologyTriangleList,
-			CullMode:  gpu.CullBack,
+			CullMode:  gpu.CullNone,
 			FrontFace: gpu.FrontFaceCCW,
 		},
 		DepthStencil: &gpu.DepthStencilState{

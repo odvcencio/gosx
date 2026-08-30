@@ -61,15 +61,15 @@ var shadowSharedTerms = []sharedTerm{
 	{
 		id:     "transform-order-light-then-model-then-position",
 		effect: "Shadow depth is computed in the wrong space, so shadows detach from their casters.",
-		goPat:  `return [A-Za-z0-9_.]+ \* model \* vec4f\([A-Za-z0-9_.]+, (1\.0)\);`,
-		jsPat:  `return [A-Za-z0-9_.]+ \* model \* vec4f\([A-Za-z0-9_.]+, (1\.0)\);`,
+		goPat:  `out\.position = [A-Za-z0-9_.]+ \* model \* vec4f\([A-Za-z0-9_.]+, (1\.0)\);`,
+		jsPat:  `out\.clipPos = [A-Za-z0-9_.]+ \* model \* vec4f\([A-Za-z0-9_.]+, (1\.0)\);`,
 		want:   "1.0",
 	},
 	{
-		id:     "vertex-entry-returns-only-clip-position",
-		effect: "The pass starts producing an interpolant, which changes the pipeline layout.",
-		goPat:  `\) -> @builtin\(position\) vec4f \{`,
-		jsPat:  `\) -> @builtin\(position\) vec4f \{`,
+		id:     "vertex-entry-produces-clip-position",
+		effect: "The pass stops producing a clip-space position.",
+		goPat:  `\) -> ShadowOut \{`,
+		jsPat:  `\) -> VertexOutput \{`,
 	},
 }
 
@@ -99,21 +99,19 @@ func TestShadowWGSLDepthContractMatchesJSWebGPU(t *testing.T) {
 
 // TestShadowWGSLDepthOnlyPass pins that neither copy writes colour.
 //
-// A PASS PROVES: the Go shadow module declares no fragment entry point, and the
-// browser fragment entry point has an empty body and no return type. A colour
-// write added to either copy fails here.
+// A PASS PROVES: native's determinant-aware fragment and the browser fragment
+// both have no color return. Native may discard the authored back face.
 //
 // A PASS DOES NOT PROVE: that the render pass attaches no colour target. That is
 // a pipeline setting, not shader text.
 func TestShadowWGSLDepthOnlyPass(t *testing.T) {
-	if strings.Contains(shadowWGSL, "@fragment") {
-		t.Errorf("%s now declares a fragment entry point. The shadow pass writes depth only; a colour write there costs bandwidth and changes the pipeline layout.", goShadowWhere)
+	if !strings.Contains(shadowWGSL, "@fragment") || !strings.Contains(shadowWGSL, "discard;") || strings.Contains(shadowWGSL, "@location(0) color") {
+		t.Errorf("%s must use a determinant-aware, depth-only fragment classifier", goShadowWhere)
 	}
 	jsFragment := normalizeWGSLSyntax(jsShaderSource(t, readJSWebGPURenderer(t), shadowJSFragmentName))
-	const want = "@fragment fn fragmentMain() {}"
-	if strings.TrimSpace(jsFragment) != want {
-		t.Errorf("%s %s is now %q, pinned form is %q. The browser shadow pass must stay depth only.",
-			jsWebGPURendererFile, shadowJSFragmentName, jsFragment, want)
+	if !strings.Contains(jsFragment, "@fragment") || !strings.Contains(jsFragment, "discard;") || strings.Contains(jsFragment, "@location(0) color") {
+		t.Errorf("%s %s must use a determinant-aware, depth-only fragment classifier; got %q",
+			jsWebGPURendererFile, shadowJSFragmentName, jsFragment)
 	}
 }
 
@@ -172,8 +170,8 @@ var shadowSharedGuardMutations = []litGuardMutation{
 	{
 		name:    "native renderer reverses the light and model multiplication",
 		side:    "go",
-		from:    "return shadowU.lightViewProj * model * vec4f(pos, 1.0);",
-		to:      "return model * shadowU.lightViewProj * vec4f(pos, 1.0);",
+		from:    "out.position = shadowU.lightViewProj * model * vec4f(pos, 1.0);",
+		to:      "out.position = model * shadowU.lightViewProj * vec4f(pos, 1.0);",
 		wantRow: "transform-order-light-then-model-then-position",
 	},
 	{
@@ -358,12 +356,12 @@ var browserShadowCullSites = []shadowCullSite{
 		want:    "front",
 	},
 	{
-		id:      "webgpu-instanced-shadow-pipeline-culls-front",
+		id:      "webgpu-instanced-shadow-pipeline-classifies-orientation",
 		where:   "16a-scene-webgpu.js wgpuCreateShadowInstancedPipeline",
 		effect:  "The instanced shadow draw stops agreeing with the plain one, so two copies of one authored mesh cast two different shadows.",
 		source:  "webgpu",
 		pattern: `label: "gosx-shadow-instanced",[\s\S]{0,800}?cullMode: "([a-z]+)"`,
-		want:    "front",
+		want:    "none",
 	},
 	{
 		id:     "webgl-shadow-pass-culls-front",
@@ -420,28 +418,23 @@ func checkBrowserShadowCullSites(sites []shadowCullSite, webgpu, webglShadowPass
 	return problems
 }
 
-// browserFrontFaceSetting matches an expression that would override the default
-// front face on either browser renderer. Both files must contain none, because
-// the cull mode above only selects the intended face while the default holds.
-//
-// The pattern demands the punctuation of a real call or a real descriptor key,
-// so the word "frontFace" inside a comment does not trip it. Comments in both
-// files discuss the default on purpose.
-var browserFrontFaceSetting = regexp.MustCompile(`frontFace\s*:|gl\.frontFace\(`)
-
-// checkBrowserFrontFaceDefaults returns a problem when either browser renderer
-// starts setting a front face.
-func checkBrowserFrontFaceDefaults(webgpu, webgl string) []string {
+// checkBrowserReflectionFrontFaceContract pins the two determinant-aware
+// strategies. Retained casters select a CW/CCW static pipeline per draw;
+// instanced casters disable fixed culling and classify front_facing in the
+// depth-only fragment because one batch may contain both determinant signs.
+func checkBrowserReflectionFrontFaceContract(webgpu, webgl string) []string {
+	requirements := []struct{ id, where, source, needle string }{
+		{"webgpu-static-front-face-option", jsWebGPURendererFile, webgpu, `primitive: { topology: "triangle-list", cullMode: "front", frontFace: frontFace || "ccw" }`},
+		{"webgpu-reflected-static-cw", jsWebGPURendererFile, webgpu, `shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "cw")`},
+		{"webgpu-instanced-orientation", jsWebGPURendererFile, webgpu, `out.orientation = gosxAffineNormal(model, vec3f(0.0,0.0,1.0)).w;`},
+		{"webgpu-instanced-fragment-classifier", jsWebGPURendererFile, webgpu, `if (frontFacing != (in.orientation > 0.0)) { discard; }`},
+		{"webgl-reflected-static-front-face", jsWebGLRendererFile, webgl, `gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);`},
+		{"webgl-front-face-restore", jsWebGLRendererFile, webgl, `gl.frontFace(gl.CCW);`},
+	}
 	var problems []string
-	for _, side := range []struct{ where, src string }{
-		{jsWebGPURendererFile, webgpu},
-		{jsWebGLRendererFile, webgl},
-	} {
-		if hits := browserFrontFaceSetting.FindAllString(side.src, -1); len(hits) != 0 {
-			problems = append(problems, fmt.Sprintf("%s now sets a front face (%d occurrence(s), first %q).\n"+
-				"Both browser renderers relied on the counter-clockwise default, and the shadow cull mode above was chosen against it. "+
-				"Say which face the shadow pass keeps now, and update browserShadowCullSites in the same change.",
-				side.where, len(hits), hits[0]))
+	for _, requirement := range requirements {
+		if !strings.Contains(requirement.source, requirement.needle) {
+			problems = append(problems, fmt.Sprintf("%s: %s lost %q", requirement.id, requirement.where, requirement.needle))
 		}
 	}
 	return problems
@@ -451,7 +444,7 @@ func checkBrowserFrontFaceDefaults(webgpu, webgl string) []string {
 // pipeline. Read the verdict above browserShadowCullSites before changing it.
 var nativeShadowPrimitive = gpu.PrimitiveState{
 	Topology:  gpu.TopologyTriangleList,
-	CullMode:  gpu.CullBack,
+	CullMode:  gpu.CullNone,
 	FrontFace: gpu.FrontFaceCCW,
 }
 
@@ -493,8 +486,7 @@ func checkNativeShadowPrimitive(got gpu.PrimitiveState) []string {
 	var problems []string
 	if got.CullMode != nativeShadowPrimitive.CullMode {
 		problems = append(problems, fmt.Sprintf("cull-mode: the bundle.shadow pipeline now culls %s, pinned value is %s.\n"+
-			"CullBack keeps the lit face, so the native map holds the near surface and the 0.003 plus 0.003 per cascade bias in litWGSL fits it. "+
-			"CullFront would hold the far surface, which is between 1.2 and 12 times that whole bias away. Re-tune the bias and regenerate the shadow fixtures in the same change, or revert.",
+			"CullNone is required because one batch may contain both determinant signs; shadowWGSL discards each instance's authored back face in its fragment classifier.",
 			cullModeName(got.CullMode), cullModeName(nativeShadowPrimitive.CullMode)))
 	}
 	if got.FrontFace != nativeShadowPrimitive.FrontFace {
@@ -553,7 +545,8 @@ func TestNativeShadowPipelineKeepsTheLitFace(t *testing.T) {
 	}
 }
 
-// TestBrowserShadowPassesKeepTheUnlitFace pins both browser shadow cull sites.
+// TestBrowserShadowPassesKeepTheUnlitFace pins both browser shadow cull sites
+// and their determinant-aware reflection strategy.
 //
 // A PASS PROVES: the two WebGPU shadow pipelines still set cullMode "front", the
 // WebGL2 shadow pass still calls gl.cullFace(gl.FRONT), and neither browser
@@ -571,7 +564,7 @@ func TestBrowserShadowPassesKeepTheUnlitFace(t *testing.T) {
 	for _, problem := range checkBrowserShadowCullSites(browserShadowCullSites, webgpu, jsFunctionBody(t, jsWebGLRendererFile, webgl, webglShadowPassFunc)) {
 		t.Error(problem)
 	}
-	for _, problem := range checkBrowserFrontFaceDefaults(webgpu, webgl) {
+	for _, problem := range checkBrowserReflectionFrontFaceContract(webgpu, webgl) {
 		t.Error(problem)
 	}
 }
@@ -595,11 +588,11 @@ var shadowCullGuardMutations = []shadowCullMutation{
 		wantRow: "webgpu-plain-shadow-pipeline-culls-front",
 	},
 	{
-		name:    "browser WebGPU stops culling on the instanced shadow pipeline",
+		name:    "browser WebGPU reintroduces fixed culling on the mixed-sign instanced shadow pipeline",
 		side:    "webgpu",
-		from:    "label: \"gosx-shadow-instanced\",\n      layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),",
-		to:      "label: \"gosx-shadow-instanced\",\n      layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),\n      primitive: { topology: \"triangle-list\", cullMode: \"none\" },",
-		wantRow: "webgpu-instanced-shadow-pipeline-culls-front",
+		from:    `primitive: { topology: "triangle-list", cullMode: "none", frontFace: "ccw" }`,
+		to:      `primitive: { topology: "triangle-list", cullMode: "front", frontFace: "ccw" }`,
+		wantRow: "webgpu-instanced-shadow-pipeline-classifies-orientation",
 	},
 	{
 		name:    "browser WebGL2 restores the pre-winding-change cull face in the shadow pass",
@@ -609,18 +602,18 @@ var shadowCullGuardMutations = []shadowCullMutation{
 		wantRow: "webgl-shadow-pass-culls-front",
 	},
 	{
-		name:    "browser WebGL2 declares a clockwise front face",
+		name:    "browser WebGL2 drops determinant-aware retained winding",
 		side:    "webgl",
-		from:    "gl.enable(gl.CULL_FACE);\n    gl.cullFace(gl.FRONT);",
-		to:      "gl.enable(gl.CULL_FACE);\n    gl.frontFace(gl.CW);\n    gl.cullFace(gl.FRONT);",
-		wantRow: "now sets a front face",
+		from:    "gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);",
+		to:      "gl.frontFace(gl.CCW);",
+		wantRow: "webgl-reflected-static-front-face",
 	},
 	{
-		name:    "browser WebGPU declares a clockwise front face on the shadow pipeline",
+		name:    "browser WebGPU maps reflected retained casters to CCW",
 		side:    "webgpu",
-		from:    "primitive: { topology: \"triangle-list\", cullMode: \"front\" },",
-		to:      "primitive: { topology: \"triangle-list\", cullMode: \"front\", frontFace: \"cw\" },",
-		wantRow: "now sets a front face",
+		from:    `shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "cw")`,
+		to:      `shadowReflectedPipeline = wgpuCreateShadowPipeline(device, shadowBindGroupLayout, shadowVertexModule, "ccw")`,
+		wantRow: "webgpu-reflected-static-cw",
 	},
 }
 
@@ -640,8 +633,8 @@ func TestShadowCullGuardsDetectMutation(t *testing.T) {
 		t.Fatalf("the browser shadow cull table must pass on the shipped sources before the mutation check means anything; got %d problems:\n%s",
 			len(problems), strings.Join(problems, "\n"))
 	}
-	if problems := checkBrowserFrontFaceDefaults(webgpu, webgl); len(problems) != 0 {
-		t.Fatalf("both browser renderers must set no front face before the mutation check means anything; got:\n%s",
+	if problems := checkBrowserReflectionFrontFaceContract(webgpu, webgl); len(problems) != 0 {
+		t.Fatalf("the browser reflection front-face contract must pass before the mutation check means anything; got:\n%s",
 			strings.Join(problems, "\n"))
 	}
 	shipped := nativeShadowPipelinePrimitive(t)
@@ -669,7 +662,7 @@ func TestShadowCullGuardsDetectMutation(t *testing.T) {
 					t.Fatalf("mutation %q names side %q; the browser cases accept only webgpu and webgl", mut.name, mut.side)
 				}
 				problems := checkBrowserShadowCullSites(browserShadowCullSites, mutGPU, jsFunctionBody(t, jsWebGLRendererFile, mutGL, webglShadowPassFunc))
-				problems = append(problems, checkBrowserFrontFaceDefaults(mutGPU, mutGL)...)
+				problems = append(problems, checkBrowserReflectionFrontFaceContract(mutGPU, mutGL)...)
 				assertShadowCullProblemNames(t, problems, mut)
 			})
 		}
@@ -687,8 +680,8 @@ func TestShadowCullGuardsDetectMutation(t *testing.T) {
 				names: "cull-mode",
 			},
 			{
-				name:  "native renderer stops culling in the shadow pass",
-				state: gpu.PrimitiveState{Topology: gpu.TopologyTriangleList, CullMode: gpu.CullNone, FrontFace: gpu.FrontFaceCCW},
+				name:  "native renderer reintroduces fixed back-face culling",
+				state: gpu.PrimitiveState{Topology: gpu.TopologyTriangleList, CullMode: gpu.CullBack, FrontFace: gpu.FrontFaceCCW},
 				names: "cull-mode",
 			},
 			{

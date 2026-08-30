@@ -53,21 +53,24 @@ func TestGPUCullRendererEvidence(t *testing.T) {
 // whose transform scales it up, so the instance disappears while it is plainly on
 // screen. The desktop renderer had the identical defect and fixed it in cullWGSL
 // (render/bundle/cull.go) and instanceCullRadius (render/bundle/primitive.go).
-// The browser kernel must carry the same three column lengths.
+// The browser kernel must carry the same Frobenius bound over all three
+// columns. Unlike max-column length, that bound remains conservative when the
+// instance matrix contains shear.
 //
-// Removing any of the three length() calls fails this test.
+// Removing any of the three squared-column terms fails this test.
 func TestGPUCullScalesRadiusPerInstance(t *testing.T) {
 	compute := readRenderer(t, webgpuComputePath)
 
 	for _, term := range []string{
-		"length(m[0].xyz)",
-		"length(m[1].xyz)",
-		"length(m[2].xyz)",
+		"dot(m[0].xyz, m[0].xyz)",
+		"dot(m[1].xyz, m[1].xyz)",
+		"dot(m[2].xyz, m[2].xyz)",
+		"let scale = sqrt(",
 		"radius = radius * scale",
 		"if (d < -radius) { return; }",
 	} {
 		if !strings.Contains(compute, term) {
-			t.Errorf("the built-in cull kernel must contain %q; without it a scaled instance vanishes", term)
+			t.Errorf("the built-in cull kernel must contain %q; without the full conservative affine bound a scaled or sheared instance can vanish", term)
 		}
 	}
 

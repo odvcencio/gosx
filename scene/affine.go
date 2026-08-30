@@ -1,6 +1,10 @@
 package scene
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/internal/sceneaffine"
+)
 
 // affineMatrix is a column-major 4x4 affine transform. Group hierarchy scale
 // uses the exact matrix form because non-uniform scale followed by rotation can
@@ -86,17 +90,18 @@ func affineVector(matrix affineMatrix, vector Vector3) Vector3 {
 }
 
 func inverseAffine(matrix affineMatrix) (affineMatrix, bool) {
-	a, b, c := matrix[0], matrix[4], matrix[8]
-	d, e, f := matrix[1], matrix[5], matrix[9]
-	g, h, i := matrix[2], matrix[6], matrix[10]
+	if !validAffineMatrix(matrix) {
+		return affineMatrix{}, false
+	}
+	scale := affineLinearMaxAbs(matrix)
+	a, b, c := matrix[0]/scale, matrix[4]/scale, matrix[8]/scale
+	d, e, f := matrix[1]/scale, matrix[5]/scale, matrix[9]/scale
+	g, h, i := matrix[2]/scale, matrix[6]/scale, matrix[10]/scale
 	c00, c01, c02 := e*i-f*h, f*g-d*i, d*h-e*g
 	c10, c11, c12 := c*h-b*i, a*i-c*g, b*g-a*h
 	c20, c21, c22 := b*f-c*e, c*d-a*f, a*e-b*d
 	determinant := a*c00 + b*c01 + c*c02
-	if math.Abs(determinant) <= 1e-15 || math.IsNaN(determinant) || math.IsInf(determinant, 0) {
-		return affineMatrix{}, false
-	}
-	invDet := 1 / determinant
+	invDet := 1 / (determinant * scale)
 	out := affineMatrix{
 		c00 * invDet, c01 * invDet, c02 * invDet, 0,
 		c10 * invDet, c11 * invDet, c12 * invDet, 0,
@@ -105,6 +110,11 @@ func inverseAffine(matrix affineMatrix) (affineMatrix, bool) {
 	}
 	translation := affineVector(out, Vector3{X: matrix[12], Y: matrix[13], Z: matrix[14]})
 	out[12], out[13], out[14] = -translation.X, -translation.Y, -translation.Z
+	for _, value := range out {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return affineMatrix{}, false
+		}
+	}
 	return out, true
 }
 
@@ -154,11 +164,25 @@ func affineFromValues(values []float64) (affineMatrix, bool) {
 		return affineMatrix{}, false
 	}
 	var out affineMatrix
-	for index, value := range values {
-		if math.IsNaN(value) || math.IsInf(value, 0) {
-			return affineMatrix{}, false
-		}
-		out[index] = value
+	copy(out[:], values)
+	return out, validAffineMatrix(out)
+}
+
+// ValidParentMatrix reports whether values encode the exact affine contract
+// accepted by every Scene3D boundary: a finite column-major 4x4 matrix with
+// bottom row [0, 0, 0, 1] and a scale-invariant, safely invertible linear part.
+func ValidParentMatrix(values []float64) bool {
+	return sceneaffine.ValidParentMatrix(values)
+}
+
+func validAffineMatrix(matrix affineMatrix) bool {
+	return sceneaffine.ValidParentMatrix(matrix[:])
+}
+
+func affineLinearMaxAbs(matrix affineMatrix) float64 {
+	maximum := 0.0
+	for _, index := range [...]int{0, 1, 2, 4, 5, 6, 8, 9, 10} {
+		maximum = math.Max(maximum, math.Abs(matrix[index]))
 	}
-	return out, true
+	return maximum
 }

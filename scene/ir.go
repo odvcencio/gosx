@@ -553,15 +553,8 @@ func validateIRNode(index int, node IRNode, materialCount int) []string {
 		}
 	}
 	if matrix := node.Transform.ParentMatrix; matrix != nil {
-		if len(matrix) != 16 {
-			problems = append(problems, fmt.Sprintf("nodes[%d].transform.parentMatrix must contain 16 values", index))
-		} else {
-			for _, value := range matrix {
-				if math.IsNaN(value) || math.IsInf(value, 0) {
-					problems = append(problems, fmt.Sprintf("nodes[%d].transform.parentMatrix values must be finite", index))
-					break
-				}
-			}
+		if !ValidParentMatrix(matrix) {
+			problems = append(problems, fmt.Sprintf("nodes[%d].transform.parentMatrix must be a finite, nonsingular affine 4x4 matrix", index))
 		}
 	}
 

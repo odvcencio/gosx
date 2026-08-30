@@ -529,47 +529,6 @@
     };
   }
 
-  function sceneDebugRoundedNumber(value) {
-    const number = sceneNumber(value, 0);
-    return Math.round(number * 1000) / 1000;
-  }
-
-  function sceneDebugBounds(bounds) {
-    if (!bounds || typeof bounds !== "object") {
-      return null;
-    }
-    return {
-      minX: sceneDebugRoundedNumber(bounds.minX),
-      minY: sceneDebugRoundedNumber(bounds.minY),
-      minZ: sceneDebugRoundedNumber(bounds.minZ),
-      maxX: sceneDebugRoundedNumber(bounds.maxX),
-      maxY: sceneDebugRoundedNumber(bounds.maxY),
-      maxZ: sceneDebugRoundedNumber(bounds.maxZ),
-    };
-  }
-
-  function sceneDebugMaterialSample(bundle, materialIndex) {
-    const index = Math.floor(sceneNumber(materialIndex, -1));
-    const materials = Array.isArray(bundle && bundle.materials) ? bundle.materials : [];
-    if (index < 0 || index >= materials.length) {
-      return null;
-    }
-    const material = materials[index] || {};
-    return {
-      kind: typeof material.kind === "string" ? material.kind : "",
-      color: typeof material.color === "string" ? material.color : "",
-      texture: typeof material.texture === "string" ? material.texture : "",
-      opacity: sceneDebugRoundedNumber(material.opacity == null ? 1 : material.opacity),
-      emissive: sceneDebugRoundedNumber(material.emissive),
-      roughness: sceneDebugRoundedNumber(material.roughness),
-      metalness: sceneDebugRoundedNumber(material.metalness),
-      wireframe: Boolean(material.wireframe),
-      shaderSource: typeof material.shaderSource === "string" ? material.shaderSource : "",
-      shaderSourceFiles: sceneIsPlainObject(material.shaderSourceFiles) ? sceneDebugClone(material.shaderSourceFiles, 2) : null,
-      key: typeof material.key === "string" ? material.key : "",
-    };
-  }
-
   function sceneDebugFeatureMatrix(bundle, state, rendererKind) {
     const features = {};
     sceneDebugAddFeature(features, sceneDebugKindFeature("backend", rendererKind, ""), 1);

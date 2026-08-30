@@ -296,10 +296,6 @@
     return props && props.scene && typeof props.scene === "object" ? props.scene : null;
   }
 
-  function sceneObjectList(value) {
-    return Array.isArray(value) && value.length > 0 ? value : null;
-  }
-
   function sceneCloneData(value) {
     if (Array.isArray(value)) {
       return value.map(sceneCloneData);
@@ -678,8 +674,7 @@
 
   function sceneNormalizeParentMatrix(value, fallback) {
     const source = value === undefined ? fallback : value;
-    const out = source && source.length === 16 ? Array.from(source) : [];
-    return out.length && out.every(Number.isFinite) ? out : null;
+    return source && source.length === 16 && sceneAffineDeterminant(source, 0) ? Array.from(source) : null;
   }
 
 
@@ -4812,7 +4807,6 @@
 	  const _objectMatrixYScratch = { x: 0, y: 0, z: 0 };
 	  const _objectMatrixZScratch = { x: 0, y: 0, z: 0 };
 	  const _sceneObjectModelMatrixCache = new WeakMap();
-	  const _sceneObjectModelScaleSignsCache = new WeakMap();
 	  const _sceneObjectMeshBakeLinearStateCache = new WeakMap();
 	  const _sceneMeshLocalBoundsCache = new WeakMap();
 
@@ -4854,17 +4848,9 @@
 	    return out;
 	  }
 
-	  // Build the normal transform and orientation for the world-baked mesh
-	  // fallback from the exact linear part of the object matrix. The first nine
-	  // entries are a column-major inverse-transpose up to one positive scalar;
-	  // normalization at the call site makes that scalar irrelevant. Computing
-	  // cofactors instead of dividing by the determinant also keeps a useful,
-	  // finite direction for a near-singular scale.
-	  //
-	  // The cofactor matrix is det(M) * inverseTranspose(M). Multiplying it by
-	  // sign(det(M)) therefore removes the orientation sign while retaining the
-	  // inverse-transpose direction. Entry 9 carries that sign for triangle
-	  // winding and tangent-frame handedness.
+	  // Build the exact inverse-transpose normal transform and orientation for
+	  // the world-baked mesh fallback. Entry 9 carries the determinant sign for
+	  // triangle winding and tangent-frame handedness.
 	  function sceneObjectMeshBakeLinearState(object, modelMatrix) {
 	    let out = object && typeof object === "object"
 	      ? _sceneObjectMeshBakeLinearStateCache.get(object)
@@ -4876,54 +4862,15 @@
 	      }
 	    }
 
-	    const a = modelMatrix[0], b = modelMatrix[4], c = modelMatrix[8];
-	    const d = modelMatrix[1], e = modelMatrix[5], f = modelMatrix[9];
-	    const g = modelMatrix[2], h = modelMatrix[6], i = modelMatrix[10];
-	    const c00 = e * i - f * h;
-	    const c01 = f * g - d * i;
-	    const c02 = d * h - e * g;
-	    const c10 = c * h - b * i;
-	    const c11 = a * i - c * g;
-	    const c12 = b * g - a * h;
-	    const c20 = b * f - c * e;
-	    const c21 = c * d - a * f;
-	    const c22 = a * e - b * d;
-	    const determinant = a * c00 + b * c01 + c * c02;
-	    const orientation = determinant < -1e-12 ? -1 : 1;
-
-	    out[0] = c00 * orientation;
-	    out[1] = c10 * orientation;
-	    out[2] = c20 * orientation;
-	    out[3] = c01 * orientation;
-	    out[4] = c11 * orientation;
-	    out[5] = c21 * orientation;
-	    out[6] = c02 * orientation;
-	    out[7] = c12 * orientation;
-	    out[8] = c22 * orientation;
-	    out[9] = orientation;
+	    const determinant = sceneAffineDeterminant(modelMatrix, 0);
+	    sceneAffineNormalMatrix(modelMatrix, out);
+	    out[9] = determinant < 0 ? -1 : 1;
 	    return out;
 	  }
 
 	  function sceneObjectTransformNormal(object, normal, timeSeconds) {
 	    const transform = sceneObjectMeshBakeLinearState(object, sceneObjectModelMatrix(object, timeSeconds));
 	    return sceneMatrixTransformInto({}, transform, normal.x, normal.y, normal.z, 3, false);
-	  }
-
-	  function sceneObjectModelScaleSigns(object) {
-	    let out = object && typeof object === "object"
-	      ? _sceneObjectModelScaleSignsCache.get(object)
-	      : null;
-	    if (!out) {
-	      out = new Float32Array(4);
-	      if (object && typeof object === "object") {
-	        _sceneObjectModelScaleSignsCache.set(object, out);
-	      }
-	    }
-	    out[0] = sceneNumber(object && object.scaleX, 1) < 0 ? -1 : 1;
-	    out[1] = sceneNumber(object && object.scaleY, 1) < 0 ? -1 : 1;
-	    out[2] = sceneNumber(object && object.scaleZ, 1) < 0 ? -1 : 1;
-	    out[3] = 0;
-	    return out;
 	  }
 
 	  function sceneMeshGeometryRevision(object, vertices) {
@@ -5147,15 +5094,6 @@
       typeof object.vertices.count === "number" &&
       object.vertices.count >= 3
     );
-  }
-
-  function sceneMeshVertexPoint(vertices, index) {
-    const offset = index * 3;
-    return {
-      x: sceneNumber(vertices && vertices.positions && vertices.positions[offset], 0),
-      y: sceneNumber(vertices && vertices.positions && vertices.positions[offset + 1], 0),
-      z: sceneNumber(vertices && vertices.positions && vertices.positions[offset + 2], 0),
-    };
   }
 
   function sceneMeshVertexNormal(vertices, index) {
@@ -5479,7 +5417,6 @@
           resourceOwner: object,
           geometryRevision,
           modelMatrix,
-          modelScaleSigns: sceneObjectModelScaleSigns(object),
           vertexOffset: 0,
           vertexCount,
         });
