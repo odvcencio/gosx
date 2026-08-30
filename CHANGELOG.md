@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.53.10 (2026-08-29)
 
 ### Added: live binds that need no fetch, attributes and classes, and regions that grow
 - `data-gosx-live-bind-attr` sets a named attribute from a bind key; `data-gosx-live-bind-class` toggles a named class from a boolean. An attribute bind passes a POSITIVE allowlist: never an `on*` handler, `style`, `srcdoc`, a script or data URL, or a runtime `data-gosx-*` attribute other than `data-gosx-countdown` (refused on a node that also declares `data-gosx-countdown-then`). `hidden` and `disabled` toggle by attribute presence, not by writing the text `"true"`/`"false"`.
