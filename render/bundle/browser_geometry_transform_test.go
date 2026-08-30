@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 func readBrowserSceneSource(t *testing.T, name string) string {
@@ -12,9 +14,9 @@ func readBrowserSceneSource(t *testing.T, name string) string {
 	path := filepath.Join("..", "..", "client", "js", "bootstrap-src", name)
 	switch name {
 	case "16-scene-webgl.js":
-		path = filepath.Join("..", "..", "client", "runtime", "scene3d", "webgl.ts")
+		return scene3drenderersource.ReadBackend(t, "webgl")
 	case "16a-scene-webgpu.js":
-		path = filepath.Join("..", "..", "client", "runtime", "scene3d", "webgpu.ts")
+		return scene3drenderersource.ReadBackend(t, "webgpu")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

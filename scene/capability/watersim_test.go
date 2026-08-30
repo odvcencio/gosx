@@ -3,6 +3,8 @@ package capability
 import (
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 // This file corroborates the water-simulation row in full.
@@ -152,4 +154,4 @@ func TestWaterSimStaysRequired(t *testing.T) {
 // webglMountChunkPath resolves the WebGL2 water renderer at mount time. A
 // definition nobody reaches is a promise, not an implementation, so the true
 // WebGL2 cell rests on this file as much as on the renderer.
-const webglMountChunkPath = "../../client/runtime/scene3d/mount-webgl.ts"
+var webglMountChunkPath = scene3drenderersource.ProtectedSourceLabel("../runtime/scene3d/mount-webgl")

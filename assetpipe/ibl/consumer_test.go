@@ -5,21 +5,18 @@ import (
 	"strings"
 	"testing"
 
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 	"m31labs.dev/gosx/scene/capability"
 )
 
-const (
-	webglRendererPath  = "../../client/runtime/scene3d/webgl.ts"
-	webgpuRendererPath = "../../client/runtime/scene3d/webgpu.ts"
+var (
+	webglRendererPath  = scene3drenderersource.BackendLabel("webgl")
+	webgpuRendererPath = scene3drenderersource.BackendLabel("webgpu")
 )
 
-func readRenderer(t *testing.T, path string) string {
+func readRenderer(t *testing.T, label string) string {
 	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return string(data)
+	return scene3drenderersource.ReadSource(t, label)
 }
 
 // TestWebGLEnvironmentPathConsumesPrefilteredIBL corroborates the real,

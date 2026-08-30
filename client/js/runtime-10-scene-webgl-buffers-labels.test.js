@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // WebGL2 buffer reuse and invalidation, pass caches, native Scene3D engines,
 // projected labels, renderer preference and the custom post-effect passes.
 //
@@ -2048,7 +2050,7 @@ test("WebGL customPost receives reserved auto-uniforms: time is nonzero and adva
 });
 
 test("WebGL post processor is constructed with the Selena uniform resolver injected", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
   // The injection is what supplies reserved auto-uniforms to custom post
   // passes; without it applyCustomPost silently falls back to author values
   // only. Mirrors the WebGPU side's wgpuCreatePostProcessor(..., sceneSelenaUniformData).

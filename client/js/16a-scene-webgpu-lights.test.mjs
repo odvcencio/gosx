@@ -24,6 +24,9 @@ import path from "node:path";
 import vm from "node:vm";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -32,8 +35,8 @@ function readSource(name) {
   return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const webgpuSource = readSource("../runtime/scene3d/webgpu.ts");
-const webglSource = readSource("../runtime/scene3d/webgl.ts");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
+const webglSource = readSceneRendererBackendSrc("webgl");
 
 // --- Bundle-shaped VM context ----------------------------------------------
 

@@ -21,6 +21,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -282,7 +285,7 @@ function createContext() {
   vm.runInContext(prelude, context, { filename: "prelude.js" });
   vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
   vm.runInContext(readSource("17-scene-input.ts"), context, { filename: "17-scene-input.ts" });
-  vm.runInContext(readSource("../runtime/scene3d/webgpu.ts"), context, { filename: "webgpu.ts" });
+  vm.runInContext(readSceneRendererBackendSrc("webgpu"), context, { filename: "webgpu.ts" });
   return { context, sandbox };
 }
 
