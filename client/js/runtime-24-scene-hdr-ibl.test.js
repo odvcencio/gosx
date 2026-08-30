@@ -1,5 +1,7 @@
 "use strict";
 
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
+
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -221,7 +223,7 @@ test("scene state and render bundles keep both specular texture slots distinct o
 });
 
 test("WebGL HDR IBL compiles the bounded variant and consumes split-sum products in linear space", () => {
-  const source = readRuntimeSource("webgl.ts");
+  const source = readSceneRendererBackendSrc("webgl");
   const vertexStart = source.indexOf("const SCENE_PBR_VERTEX_SOURCE");
   const fragmentStart = source.indexOf("const SCENE_PBR_FRAGMENT_SOURCE");
   const fragmentEnd = source.indexOf("const SCENE_PBR_INSTANCED_VERTEX_SOURCE");
@@ -252,7 +254,7 @@ test("WebGL HDR IBL compiles the bounded variant and consumes split-sum products
 });
 
 test("WebGPU consumes the same split-sum contract and keeps color/data texture formats distinct", () => {
-  const source = readRuntimeSource("webgpu.ts");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, new RegExp(BRDF_MODEL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(source, /textureSampleLevel\(iblRadiance, iblSampler, Rr, roughness \* maxLod\)/);

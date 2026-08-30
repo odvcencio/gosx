@@ -3,6 +3,7 @@ package docs
 import (
 	"encoding/json"
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/scene"
 	"m31labs.dev/selena/bindings"
@@ -257,10 +258,6 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read managed water controls runtime: %v", err)
 	}
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/runtime/scene3d/webgpu.ts"))
-	if err != nil {
-		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
-	}
 	programBytes, err := os.ReadFile(filepath.Join(dir, "program.go"))
 	if err != nil {
 		t.Fatalf("read program.go: %v", err)
@@ -268,7 +265,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	page := string(pageBytes)
 	css := string(cssBytes)
 	runtimeSource := string(runtimeBytes)
-	webgpuSource := string(webgpuBytes)
+	webgpuSource := scene3drenderersource.ReadBackend(t, "webgpu")
 	program := string(programBytes)
 	if got := strings.Count(page, `y={10}`); got != 2 {
 		t.Fatalf("water page hidden object y count = %d, want 2 eagerly authored inactive meshes", got)
@@ -838,11 +835,8 @@ func readWaterWebGPURuntimeSource(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	dir := filepath.Dir(file)
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/runtime/scene3d/webgpu.ts"))
-	if err != nil {
-		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
-	}
-	return string(webgpuBytes)
+	_ = dir
+	return scene3drenderersource.ReadBackend(t, "webgpu")
 }
 
 // TestWaterAtRestGatingEmitsStatsAttr is the M5 (water-parity-campaign)

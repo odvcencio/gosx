@@ -1,11 +1,11 @@
 package boardgpu
 
 import (
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"testing"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 // TestBoardTextJSWGSLMatchesGo guards the single source of truth for the glyph
@@ -17,22 +17,13 @@ import (
 // JS stale (wrong bindings/offsets → broken glyphs or a silent pipeline-create
 // fallback). This test fails when the two diverge.
 func TestBoardTextJSWGSLMatchesGo(t *testing.T) {
-	jsPath := filepath.Join("..", "..", "client", "runtime", "scene3d", "webgpu.ts")
-	data, err := os.ReadFile(jsPath)
-	if err != nil {
-		// Fail, never skip. This is the only Go-to-JavaScript shader drift guard
-		// in the repository, so a stale relative path or a moved source file
-		// deletes the guard and still reports a green run. A missing input is a
-		// broken test, not an absent one.
-		t.Fatalf("cannot read %s (%v); the JS↔Go BoardText drift guard needs this file — fix the path or restore the file",
-			jsPath, err)
-	}
+	data := scene3drenderersource.ReadBackend(t, "webgpu")
 	re := regexp.MustCompile(`var BOARD_TEXT_WGSL = ("(?:[^"\\]|\\.)*");`)
-	m := re.FindSubmatch(data)
+	m := re.FindStringSubmatch(data)
 	if m == nil {
 		t.Fatal("BOARD_TEXT_WGSL literal not found in 16a-scene-webgpu.js — was it renamed?")
 	}
-	jsWGSL, err := strconv.Unquote(string(m[1]))
+	jsWGSL, err := strconv.Unquote(m[1])
 	if err != nil {
 		t.Fatalf("could not unquote BOARD_TEXT_WGSL: %v", err)
 	}

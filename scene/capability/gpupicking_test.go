@@ -3,6 +3,8 @@ package capability
 import (
 	"os"
 	"testing"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 // TestGPUPickingVerdictTracksMatrix pins the required-feature behavior without
@@ -52,12 +54,8 @@ func TestGPUPickingVerdictTracksMatrix(t *testing.T) {
 // re-introducing the original defect — a false cell over a working picker —
 // would have deleted this check instead of failing it.
 func TestGPUPickingRendererEvidence(t *testing.T) {
-	const rendererPath = "../../client/runtime/scene3d/webgpu.ts"
-	data, err := os.ReadFile(rendererPath)
-	if err != nil {
-		t.Fatalf("read WebGPU renderer at %s: %v", rendererPath, err)
-	}
-	source := string(data)
+	rendererPath := scene3drenderersource.BackendLabel("webgpu")
+	source := scene3drenderersource.ReadBackend(t, "webgpu")
 
 	evidenceFor(t, FeatureGPUPicking, BackendWebGPU).
 		needs(rendererPath, source,

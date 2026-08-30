@@ -24,10 +24,13 @@ import path from "node:path";
 import vm from "node:vm";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
-const webgpuSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
 
 // loadShaderVariants evaluates the preamble helper and the two shader bodies out
 // of the shipped source, then builds all four variants exactly as the renderer

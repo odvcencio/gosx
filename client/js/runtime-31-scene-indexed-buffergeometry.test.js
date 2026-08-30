@@ -1,5 +1,7 @@
 "use strict";
 
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
+
 // Indexed BufferGeometry end-to-end slice: unique vertex streams plus an
 // authored triangle index stream survive Scene3D bundle construction, both the
 // direct and the retained object path, malformed streams fail closed, and the
@@ -458,7 +460,7 @@ test("exact CPU picking misses off the indexed quad", () => {
 // --- Source-level backend contract ------------------------------------------
 
 test("backends wire uint32 index buffers and indexed draws for indexed direct meshes", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
   assert.match(webgl, /function bindScenePBRDirectIndexBuffer\(/);
   assert.match(webgl, /gl\.ELEMENT_ARRAY_BUFFER/);
   assert.match(webgl, /gl\.drawElements\(gl\.TRIANGLES, selenaIndexCount, gl\.UNSIGNED_INT, 0\)/);
@@ -466,7 +468,7 @@ test("backends wire uint32 index buffers and indexed draws for indexed direct me
   assert.match(webgl, /gl\.drawElements\(gl\.TRIANGLES, casterIndexCount, gl\.UNSIGNED_INT, 0\)/);
   assert.match(webgl, /uniform mat4 u_modelMatrix;/, "shadow depth shader transforms model-space casters");
 
-  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   assert.match(webgpu, /function webGPUBindRetainedMeshIndexBuffer\(/);
   assert.match(webgpu, /pass\.setIndexBuffer\(record\.buffer, "uint32"\)/);
   assert.match(webgpu, /pass\.drawIndexed\(pbrIndexCount\)/);

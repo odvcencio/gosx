@@ -1,11 +1,11 @@
 package bundle
 
 import (
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 // This file holds the reader that the *_drift_test.go guards in this package
@@ -21,19 +21,12 @@ import (
 // jsWebGPURendererFile is the browser WebGPU renderer, relative to this package
 // directory. Go runs a test with its package directory as the working
 // directory, so this path is stable.
-var jsWebGPURendererFile = filepath.Join("..", "..", "client", "runtime", "scene3d", "webgpu.ts")
+var jsWebGPURendererFile = scene3drenderersource.BackendLabel("webgpu")
 
 // readJSWebGPURenderer returns the whole browser WebGPU renderer source.
 func readJSWebGPURenderer(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(jsWebGPURendererFile)
-	if err != nil {
-		t.Fatalf("read %s: %v\nThe Go-to-JS shader drift guards in render/bundle need this file. Fix the path; do not skip the guard.", jsWebGPURendererFile, err)
-	}
-	if len(data) == 0 {
-		t.Fatalf("%s is empty; the drift guards cannot compare against nothing", jsWebGPURendererFile)
-	}
-	return string(data)
+	return scene3drenderersource.ReadBackend(t, "webgpu")
 }
 
 // jsWebGLRendererFile is the browser WebGL2 renderer, relative to this package
@@ -41,19 +34,12 @@ func readJSWebGPURenderer(t *testing.T) string {
 // shadow pass decides which face fills the map with a gl.cullFace call rather
 // than with shader text, and the tone-map table guard, because WebGL2 carries
 // two name-to-number tables where WebGPU carries one.
-var jsWebGLRendererFile = filepath.Join("..", "..", "client", "runtime", "scene3d", "webgl.ts")
+var jsWebGLRendererFile = scene3drenderersource.BackendLabel("webgl")
 
 // readJSWebGLRenderer returns the whole browser WebGL2 renderer source.
 func readJSWebGLRenderer(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(jsWebGLRendererFile)
-	if err != nil {
-		t.Fatalf("read %s: %v\nThe Go-to-JS drift guards in render/bundle need this file. Fix the path; do not skip the guard.", jsWebGLRendererFile, err)
-	}
-	if len(data) == 0 {
-		t.Fatalf("%s is empty; the drift guards cannot compare against nothing", jsWebGLRendererFile)
-	}
-	return string(data)
+	return scene3drenderersource.ReadBackend(t, "webgl")
 }
 
 // jsShaderSource resolves one shader constant in the browser WebGPU renderer to

@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Scene3D material IOR slice: numeric contract, normalization carry-through,
 // profile cache key differentiation, named-material/model/instanced plumbing,
 // planner signature invalidation, and the PBR shader uniform wiring for the
@@ -426,7 +428,7 @@ test("planner CSS input signature invalidates when authored ior changes", () => 
 // --- WebGL PBR ----------------------------------------------------------------
 
 test("WebGL PBR shaders upload and consume the effective specular factors", () => {
-  const source = readRuntimeSource("webgl.ts");
+  const source = readSceneRendererBackendSrc("webgl");
 
   // The dead u_dielectricF0 uniform is fully removed: declaration, cache
   // slot and upload. Shading reads only the effective uniforms.
@@ -564,7 +566,7 @@ test("WebGL PBR shaders upload and consume the effective specular factors", () =
 // --- WebGPU PBR ---------------------------------------------------------------
 
 test("WebGPU material uniform packing carries the effective specular factors without moving existing slots", () => {
-  const source = readRuntimeSource("webgpu.ts");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   // The WebGPU struct keeps its legacy trailing dielectricF0 scalar at f40
   // for layout compatibility, then packs the live effective specular F0 as

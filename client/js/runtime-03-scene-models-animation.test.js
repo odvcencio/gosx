@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Declarative Scene3D model loading: glTF and GLB parsing, point and line
 // primitives, skinning, animation playback and the Selena skin material.
 //
@@ -988,7 +990,7 @@ test("bootstrap renders a skinned GLB through the Selena material (default flip 
 });
 
 test("scenePBRSelenaSkinAugmentVertex renames position/normal, injects joint-skin GPU code, and validates as GLSL", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
   const match = webgl.match(/function scenePBRSelenaSkinAugmentVertex\(source\)\s*\{([\s\S]*?)\n  \}/);
   assert.ok(match, "scenePBRSelenaSkinAugmentVertex must be extractable from 16-scene-webgl.js source");
 

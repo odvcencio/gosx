@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Authored shader payloads: compute particles, authored point pipelines, the
 // shaderLib reference inflation and the custom post-effect passes.
 //
@@ -16,7 +18,7 @@ const {
   bootstrapRuntimeSource,
   bootstrapFeatureEnginesSource,
   bootstrapFeatureScene3DSource,
-  bootstrapScene3DWebGPUSourceFile,
+  scene3DWebGPUBackendSource,
   bootstrapScene3DInputSourceFile,
   bootstrapScene3DMountSourceFile,
   FakeWebGLContext,
@@ -46,7 +48,7 @@ const {
 } = require("./runtime-test-harness.js");
 
 test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   assert.match(webgl, /function sceneWebGLNormalizeCustomShaderSource\(source\)/);
   assert.match(webgl, /precision\s+highp\s+float/);
@@ -897,11 +899,11 @@ test("normalizeSceneInstancedMeshEntry preserves cullKernelWGSL/cullKernelEntry/
 });
 
 test("WebGPU water sampled state only uses the defined ping-pong textures", () => {
-  assert.doesNotMatch(bootstrapScene3DWebGPUSourceFile, /stateTexture:\s*stateTexture[,\n]/);
-  assert.doesNotMatch(bootstrapScene3DWebGPUSourceFile, /system\.stateTexture(?![A-Z])/);
-  assert.match(bootstrapScene3DWebGPUSourceFile, /stateTextureA:\s*stateTextureA/);
-  assert.match(bootstrapScene3DWebGPUSourceFile, /stateTextureB:\s*stateTextureB/);
-  assert.match(bootstrapScene3DWebGPUSourceFile, /function syncWaterSampledState\(/);
+  assert.doesNotMatch(scene3DWebGPUBackendSource, /stateTexture:\s*stateTexture[,\n]/);
+  assert.doesNotMatch(scene3DWebGPUBackendSource, /system\.stateTexture(?![A-Z])/);
+  assert.match(scene3DWebGPUBackendSource, /stateTextureA:\s*stateTextureA/);
+  assert.match(scene3DWebGPUBackendSource, /stateTextureB:\s*stateTextureB/);
+  assert.match(scene3DWebGPUBackendSource, /function syncWaterSampledState\(/);
 });
 
 test("Scene3D raycast returns the exact nearest non-uniformly scaled instance", async () => {

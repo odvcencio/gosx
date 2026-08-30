@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Scene3D authored specular render slice: the KHR specularIntensity /
 // specularColor factors must actually shade, not just normalize. This file
 // drives the production WebGL uploadMaterial and the production WebGPU
@@ -81,7 +83,7 @@ function expectedDielectricF0(ior) {
 // --- WebGL -------------------------------------------------------------------
 
 function setupWebGLRenderer() {
-  const source = readRuntimeSource("webgl.ts");
+  const source = readSceneRendererBackendSrc("webgl");
   const context = createSceneCoreContext();
   runFragment(context, [
     "function sceneFiniteNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }",
@@ -435,7 +437,7 @@ test("WebGL frame layout threads real GL unit limits", () => {
 
 test("WebGL HDR IBL guard needs 20 sampler units", () => {
   const { context } = setupWebGLRenderer();
-  const source = readRuntimeSource("webgl.ts");
+  const source = readSceneRendererBackendSrc("webgl");
   assert.match(source, /fragment-texture-units<20/);
   assert.doesNotMatch(source, /fragment-texture-units<19/);
   assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(16))"), false);
@@ -445,7 +447,7 @@ test("WebGL HDR IBL guard needs 20 sampler units", () => {
 });
 
 test("WebGL PBR shader consumes the uploaded factors in direct and IBL paths", () => {
-  const source = readRuntimeSource("webgl.ts");
+  const source = readSceneRendererBackendSrc("webgl");
   // The dedicated uniforms are declared, cached and uploaded.
   assert.match(source, /uniform vec3 u_specularF0;/);
   assert.match(source, /uniform float u_specularF90;/);
@@ -685,7 +687,7 @@ test("WebGL specular-color late load takes effect and the loaded cache short-cir
 });
 
 test("WebGL PBR shader samples the specular-color map RGB-only before the metallic mix", () => {
-  const source = readRuntimeSource("webgl.ts");
+  const source = readSceneRendererBackendSrc("webgl");
   assert.match(source, /uniform sampler2D u_specularColorMap;/);
   assert.match(source, /uniform bool u_hasSpecularColorMap;/);
   assert.match(source, /uniform vec3 u_specularColorLog;/);
@@ -720,7 +722,7 @@ test("WebGL PBR shader samples the specular-color map RGB-only before the metall
 // --- WebGPU ------------------------------------------------------------------
 
 function setupWebGPURenderer() {
-  const source = readRuntimeSource("webgpu.ts");
+  const source = readSceneRendererBackendSrc("webgpu");
   const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
   const context = createSceneCoreContext();
   runFragment(context, [
@@ -827,7 +829,7 @@ test("WebGPU materialUniformData packs finite effective specular factors", () =>
 });
 
 test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => {
-  const source = readRuntimeSource("webgpu.ts");
+  const source = readSceneRendererBackendSrc("webgpu");
   assert.match(source, /"    specularF0: vec3f,",/);
   assert.match(source, /"    specularF90: f32,",/);
   // Production uses a mutable var because the color-texture slice updates
@@ -896,7 +898,7 @@ test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => 
 // --- WebGPU recording-boundary material binding ------------------------------
 
 function setupWebGPUMaterialBinding() {
-  const source = readRuntimeSource("webgpu.ts");
+  const source = readSceneRendererBackendSrc("webgpu");
   const context = createSceneCoreContext();
   const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
   runFragment(context, [
@@ -1055,7 +1057,7 @@ test("WebGPU specular-intensity late load and new view invalidate the cached bin
 });
 
 test("WebGPU material bind group layout declares specular-intensity texture and sampler at 13/14", () => {
-  const source = readRuntimeSource("webgpu.ts");
+  const source = readSceneRendererBackendSrc("webgpu");
   const context = createSceneCoreContext();
   context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2 };
   runFragment(context,

@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // The WebGPU adapter and device probe: optional-feature negotiation, retry
 // after an empty or failed device request, and lost-device reacquisition.
 //
@@ -35,8 +37,8 @@ test("Scene3D animation loop supports foreground frame caps", () => {
 
 test("Scene3D resource readiness is canvas-scoped and detach-safe", () => {
   const mount = readSceneMountSrc();
-  const webgl = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgl.ts"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(mount, /target\.addEventListener\("gosx:scene3d:resource-ready", onSceneResourceReady\)/);
   assert.match(mount, /target\.removeEventListener\("gosx:scene3d:resource-ready", onSceneResourceReady\)/);
@@ -46,7 +48,7 @@ test("Scene3D resource readiness is canvas-scoped and detach-safe", () => {
 });
 
 test("Scene3D instanced meshes are WebGPU-native", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const mount = readSceneMountSrc();
 
   assert.match(webgpu, /var WGSL_PBR_INSTANCED_VERTEX = \[/);
@@ -63,7 +65,7 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
 });
 
 test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /function wgpuCreatePBRPipeline/);
   assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
@@ -74,7 +76,7 @@ test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
 });
 
 test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // getSelenaPipeline's own default stays "back" (unchanged) when the
   // caller passes no cullMode option -- drawPBRObjects is the caller that
@@ -86,7 +88,7 @@ test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none
 });
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const mount = readSceneMountSrc();
 
   assert.match(webgpu, /var WGSL_SCENE_WORLD_COLOR_VERTEX = \[/);
@@ -115,7 +117,7 @@ test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
 });
 
 test("Scene3D WebGPU supports tiered MSAA render targets", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const mount = readSceneMountSrc();
   const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.ts"), "utf8");
 

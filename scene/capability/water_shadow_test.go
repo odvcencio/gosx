@@ -8,7 +8,7 @@ import (
 // webglWaterShadowPath and webgpuWaterShadowPath name the two renderers that
 // own the water shadow passes. webglRendererPath and webgpuRendererPath come
 // from lights_test.go, and readRenderer reads either one.
-const (
+var (
 	webglWaterShadowPath  = webglRendererPath
 	webgpuWaterShadowPath = webgpuRendererPath
 )

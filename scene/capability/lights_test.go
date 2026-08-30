@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 // These tests corroborate every light-related Matrix cell against renderer
@@ -15,17 +17,20 @@ import (
 // added here must name the symbols that make it true, and a cell left false
 // must show that the implementation is genuinely absent.
 
-const (
-	webgpuRendererPath = "../../client/runtime/scene3d/webgpu.ts"
-	webglRendererPath  = "../../client/runtime/scene3d/webgl.ts"
+var (
+	webgpuRendererPath = scene3drenderersource.BackendLabel("webgpu")
+	webglRendererPath  = scene3drenderersource.BackendLabel("webgl")
 	sceneGraphPath     = "../scene.go"
 )
 
-func readRenderer(t *testing.T, path string) string {
+func readRenderer(t *testing.T, label string) string {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	if strings.HasPrefix(label, "scene3d-") {
+		return scene3drenderersource.ReadSource(t, label)
+	}
+	data, err := os.ReadFile(label)
 	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
+		t.Fatalf("read %s: %v", label, err)
 	}
 	return string(data)
 }

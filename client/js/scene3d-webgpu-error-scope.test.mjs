@@ -36,6 +36,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -45,7 +48,7 @@ function readSrc(name) {
 }
 
 const computeSource = readSrc("../runtime/scene3d/compute.ts");
-const webgpuSource = readSrc("../runtime/scene3d/webgpu.ts");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
 const sharedSource = readSrc("15a-scene-postfx-shared.ts");
 
 const GOOD_KERNEL = "@compute @workgroup_size(64) fn simulate() {}";

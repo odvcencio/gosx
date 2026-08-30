@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Selective feature-bundle loading, browser capability gates, the engine
 // factory contract, backend honesty gating and the video sync parity vector.
 //
@@ -864,7 +866,7 @@ test("Scene3D fallbackSceneRenderer honors window.__gosx_scene3d_require_gpu wit
 });
 
 test("Scene3D WebGPU water debug gates isolate update and draw stages", () => {
-  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "webgpu.ts"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
   assert.match(source, /new URLSearchParams\(window\.location\.search\)\.get\("gosx-water-debug"\)/);
   assert.match(source, /function sceneWebGPUWaterDebugSkipsUpdate\(mode\) \{[\s\S]*no-water[\s\S]*no-update/);
   assert.match(source, /function sceneWebGPUWaterDebugSkipsDraw\(mode\) \{[\s\S]*compute-only[\s\S]*no-draw/);
