@@ -1,0 +1,980 @@
+'use strict';
+/* Real-browser acceptance for the Scene3D generic adapter/hydrate seam.
+ *
+ * The proof builds and boots the genuine standard-Go client/wasm runtime in
+ * Chrome, then mounts one shared-runtime Scene3D generation on native WebGL2
+ * and one on WebGPU. For each backend a forwarding wrapper delays only the
+ * first real hydrate result. A second same-ID mount hydrates a different real
+ * VM program and wins; releasing the first result must not mutate or publish.
+ * The winning version-1 scene3d.commands envelope must render a nonblank frame
+ * with intact rest pixels before a hub-wire transform command is delivered
+ * through the public targeted command bridge. Native WebGL/WebGPU calls are
+ * observed only through forwarding wrappers.
+ *
+ * The bounded hub test invoked below also proves an ordinary diff round-trips
+ * while a mixed remount-required diff returns no commands and mutates nothing.
+ * Native WebGL2 and WebGPU are both required: no fallback and no skip.
+ * Every request is constrained to an exact loopback allowlist; warnings,
+ * errors, HTTP failures, unaccounted aborts, and cleanup failures fail.
+ *
+ * Usage:
+ *   node scene3d-adapter-hydrate-browser.cjs <repoRoot> <artifactDir>
+ */
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const http = require('http');
+const crypto = require('crypto');
+const { spawn, execFileSync } = require('child_process');
+
+const REPO = path.resolve(process.argv[2] || '');
+const ART = path.resolve(process.argv[3] || '');
+if (!process.argv[2] || !process.argv[3]) {
+  console.error('usage: node scene3d-adapter-hydrate-browser.cjs <repoRoot> <artifactDir>');
+  process.exit(2);
+}
+try {
+  if (!fs.statSync(ART).isDirectory()) throw new Error('not a directory');
+} catch (e) {
+  console.error('artifact dir not usable: ' + ART + ' (' + e.message + ')');
+  process.exit(2);
+}
+
+const errors = [];
+const warnings = [];
+const fail = (message) => { errors.push(String(message)); };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const W = 320;
+const H = 180;
+const FG_THRESHOLD = 12;
+const FG_COVERAGE = 0.01;
+const REST_COVERAGE = 0.5;
+const STEP_MS = 20000;
+const MOUNT_MS = 40000;
+const OVERALL_MS = 420000;
+const BUILD_MS = 240000;
+
+const CASES = [
+  { name: 'gl', webgpu: false, engine: 'gosx-engine-adapter-gl', mount: 'scene-adapter-gl' },
+  { name: 'wg', webgpu: true, engine: 'gosx-engine-adapter-wg', mount: 'scene-adapter-wg' },
+];
+
+function expr(op, value, type) {
+  return { op, operands: null, value: String(value), type };
+}
+
+function program(name, engineNodes, exprs) {
+  return JSON.stringify({
+    name,
+    props: [],
+    nodes: [],
+    root: 0,
+    exprs,
+    signals: [],
+    computeds: [],
+    handlers: [],
+    static_mask: [],
+    engineNodes,
+  });
+}
+
+// Generation A owns object 0. Generation B owns camera 0, mesh 1, and light
+// 2. If A applies after B, object key "0" appears in B's object map.
+const PROGRAM_A = program('AdapterStaleA', [
+  {
+    kind: 'mesh', geometry: 'box', material: 'flat', static: false,
+    props: { x: 0, y: 1, z: 2, width: 3, height: 4, depth: 5, color: 6 },
+  },
+], [
+  expr(2, -2, 2), expr(2, 0, 2), expr(2, 0, 2),
+  expr(2, 1, 2), expr(2, 1, 2), expr(2, 1, 2), expr(0, '#ff3355', 0),
+]);
+
+const PROGRAM_B = program('AdapterWinnerB', [
+  { kind: 'camera', props: { z: 0, fov: 1 } },
+  {
+    kind: 'mesh', geometry: 'box', material: 'flat', static: false,
+    props: { x: 2, y: 3, z: 4, width: 5, height: 6, depth: 7, color: 8 },
+  },
+  {
+    kind: 'light', static: false,
+    props: { kind: 9, intensity: 10, directionX: 11, directionY: 12, directionZ: 13 },
+  },
+], [
+  expr(2, 6, 2), expr(2, 55, 2),
+  expr(2, 0, 2), expr(2, 0, 2), expr(2, 0, 2),
+  expr(2, 2.4, 2), expr(2, 2.4, 2), expr(2, 2.4, 2), expr(0, '#8de1ff', 0),
+  expr(0, 'directional', 0), expr(2, 1.2, 2),
+  expr(2, -0.4, 2), expr(2, -0.7, 2), expr(2, -1, 2),
+]);
+
+const ASSETS = new Map([
+  ['/bootstrap.js', path.join(REPO, 'client', 'js', 'bootstrap.js')],
+  ['/gosx/bootstrap-feature-scene3d-webgl.js', path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-webgl.js')],
+  ['/gosx/bootstrap-feature-scene3d-webgpu.js', path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-webgpu.js')],
+  ['/gosx/bootstrap-feature-scene3d-command.js', path.join(REPO, 'client', 'js', 'bootstrap-feature-scene3d-command.js')],
+]);
+for (const asset of ASSETS.values()) {
+  if (!fs.existsSync(asset)) {
+    console.error('missing generated browser asset: ' + asset);
+    process.exit(2);
+  }
+}
+
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'gosx-adapter-hydrate-'));
+const wasmPath = path.join(scratch, 'client.wasm');
+let wasmExecPath = '';
+let runtimeArtifact = null;
+let hubGate = null;
+
+try {
+  const goRoot = execFileSync('go', ['env', 'GOROOT'], {
+    cwd: REPO, encoding: 'utf8', timeout: 15000,
+  }).trim();
+  for (const candidate of [
+    path.join(goRoot, 'lib', 'wasm', 'wasm_exec.js'),
+    path.join(goRoot, 'misc', 'wasm', 'wasm_exec.js'),
+  ]) {
+    if (fs.existsSync(candidate)) { wasmExecPath = candidate; break; }
+  }
+  if (!wasmExecPath) throw new Error('version-matched wasm_exec.js not found under GOROOT');
+
+  const hubCommand = ['test', './hub/scene3d', '-run',
+    '^(TestDiffScenePreservesOrdinaryAndEmptyBehavior|TestDiffSceneRejectsMixedDiffAtomically)$',
+    '-count=1'];
+  const hubOutput = execFileSync('go', hubCommand, {
+    cwd: REPO, encoding: 'utf8', timeout: 120000,
+  });
+  hubGate = {
+    command: 'go ' + hubCommand.join(' '),
+    ordinaryRoundTrip: true,
+    remountAtomicReject: true,
+    output: hubOutput.trim(),
+  };
+
+  execFileSync('go', ['build', '-o', wasmPath, './client/wasm'], {
+    cwd: REPO,
+    env: Object.assign({}, process.env, { GOOS: 'js', GOARCH: 'wasm', CGO_ENABLED: '0' }),
+    timeout: BUILD_MS,
+  });
+  const bytes = fs.readFileSync(wasmPath);
+  if (bytes.length < 64) throw new Error('built WASM runtime is empty or suspiciously small');
+  runtimeArtifact = {
+    source: 'GOOS=js GOARCH=wasm CGO_ENABLED=0 go build -o <scratch>/client.wasm ./client/wasm',
+    bytes: bytes.length,
+    sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+    wasmExec: wasmExecPath,
+  };
+} catch (e) {
+  try { fs.rmSync(scratch, { recursive: true, force: true }); } catch (_cleanupError) {}
+  console.error('adapter proof setup failed: ' + (e && e.message ? e.message : e));
+  process.exit(2);
+}
+
+function manifestFor(c) {
+  return JSON.stringify({
+    runtime: { path: '/runtime.wasm' },
+    engines: [{
+      id: c.engine,
+      component: 'GoSXScene3D',
+      kind: 'surface',
+      mountId: c.mount,
+      runtime: 'shared',
+      programRef: '/program/' + c.name + '.json',
+      props: {
+        width: W,
+        height: H,
+        responsive: false,
+        maxDevicePixelRatio: 1,
+        background: '#08151f',
+        forceWebGL: !c.webgpu,
+        requireWebGL: !c.webgpu,
+        preferWebGPU: Boolean(c.webgpu),
+      },
+    }],
+  });
+}
+
+const BOOT = `
+window.__adapterBootErrors = [];
+window.__adapterRuntimeReady = false;
+window.__adapterRuntimeExited = false;
+window.__adapterRuntimeReadyCalls = 0;
+window.__adapterHydrates = [];
+window.__adapterDisposeCalls = [];
+window.__adapterFirstPending = false;
+window.__adapterSSR = document.querySelector('[data-adapter-ssr]');
+window.__gosx_runtime_ready = function () { window.__adapterRuntimeReadyCalls += 1; };
+(async function () {
+  try {
+    if (typeof Go !== 'function') throw new Error('wasm_exec.js did not publish Go');
+    var go = new Go();
+    var response = await fetch('/runtime.wasm');
+    if (!response.ok) throw new Error('runtime.wasm HTTP ' + response.status);
+    var bytes = await response.arrayBuffer();
+    var built = await WebAssembly.instantiate(bytes, go.importObject);
+    var runPromise = go.run(built.instance);
+    runPromise.then(function () { window.__adapterRuntimeExited = true; }, function (error) {
+      window.__adapterBootErrors.push('go.run rejected: ' + String(error && (error.stack || error.message) || error));
+    });
+    var deadline = Date.now() + 20000;
+    while (typeof window.__gosx_hydrate !== 'function' ||
+           typeof window.__gosx_engine_dispose !== 'function' ||
+           typeof window.__gosx_render_engine !== 'function') {
+      if (Date.now() > deadline) throw new Error('real Go runtime exports were not ready in time');
+      await new Promise(function (resolve) { setTimeout(resolve, 20); });
+    }
+    var abi = window.__gosx && window.__gosx.runtime && window.__gosx.runtime.abi;
+    window.__adapterHandshake = abi && typeof abi.handshake === 'function' ? abi.handshake() : null;
+    var realHydrate = window.__gosx_hydrate;
+    var realDispose = window.__gosx_engine_dispose;
+    window.__adapterRealHydrate = realHydrate;
+    window.__adapterRealDispose = realDispose;
+    window.__gosx_hydrate = function () {
+      var args = Array.prototype.slice.call(arguments);
+      var output = realHydrate.apply(this, args);
+      var generation = window.__adapterHydrates.length + 1;
+      var envelope = null;
+      try { envelope = JSON.parse(JSON.stringify(output)); } catch (_copyError) {}
+      var parsedProgram = null;
+      try { parsedProgram = JSON.parse(String(args[4] || '')); } catch (_programError) {}
+      window.__adapterHydrates.push({
+        generation: generation,
+        argCount: args.length,
+        surfaceKind: args[0],
+        targetId: args[1],
+        component: args[2],
+        propsJSON: args[3],
+        programName: parsedProgram && parsedProgram.name || '',
+        programBytes: String(args[4] || '').length,
+        format: args[5],
+        envelope: envelope
+      });
+      if (generation === 1) {
+        window.__adapterFirstPending = true;
+        return new Promise(function (resolve) {
+          window.__adapterReleaseFirst = function () {
+            window.__adapterFirstPending = false;
+            resolve(output);
+          };
+        });
+      }
+      return output;
+    };
+    window.__gosx_engine_dispose = function () {
+      window.__adapterDisposeCalls.push(Array.prototype.slice.call(arguments));
+      return realDispose.apply(this, arguments);
+    };
+    window.__adapterRuntimeReady = true;
+    var script = document.createElement('script');
+    script.src = '/bootstrap.js';
+    script.onerror = function () { window.__adapterBootErrors.push('bootstrap.js failed to load'); };
+    document.body.appendChild(script);
+  } catch (error) {
+    window.__adapterBootErrors.push(String(error && (error.stack || error.message) || error));
+  }
+})();
+`;
+
+function htmlFor(c) {
+  return '<!doctype html><html><head><meta charset="utf-8">' +
+    '<link rel="icon" href="data:,"><style>html,body{margin:0;background:#08151f;overflow:hidden}</style>' +
+    '</head><body><div id="' + c.mount + '" width="' + W + '" height="' + H + '">' +
+    '<span data-adapter-ssr="true">server fallback</span></div>' +
+    '<script type="application/json" id="gosx-manifest">' + manifestFor(c) + '</script>' +
+    '<script src="/wasm_exec.js"></script><script>' + BOOT + '</script></body></html>';
+}
+
+const programRequests = new Map();
+const unexpectedRequests = [];
+const notFound = [];
+const networkFailures = [];
+const intentionalNoContent = [];
+const networkRequests = new Map();
+let BASE = '';
+
+function requestAllowed(method, pathname, search) {
+  if (search !== '') return false;
+  if (method === 'POST') return pathname === '/_gosx/client-events';
+  if (method !== 'GET') return false;
+  if (pathname === '/' || pathname === '/runtime.wasm' || pathname === '/wasm_exec.js') return true;
+  if (pathname === '/case/gl' || pathname === '/case/wg') return true;
+  if (pathname === '/program/gl.json' || pathname === '/program/wg.json') return true;
+  return ASSETS.has(pathname);
+}
+
+function sendResponse(res, status, body, type) {
+  res.writeHead(status, { 'content-type': type, 'content-length': body.length });
+  res.end(body);
+}
+
+const server = http.createServer((req, res) => {
+  const method = String(req.method || 'GET').toUpperCase();
+  const parsed = new URL(req.url || '/', 'http://127.0.0.1');
+  if (!requestAllowed(method, parsed.pathname, parsed.search)) {
+    const detail = method + ' ' + parsed.pathname + parsed.search;
+    unexpectedRequests.push(detail);
+    notFound.push(detail);
+    fail('unexpected browser request: ' + detail);
+    req.resume();
+    sendResponse(res, 404, Buffer.from('unexpected request'), 'text/plain');
+    return;
+  }
+  if (method === 'POST') {
+    req.once('error', (error) => fail('client-events request failed: ' + error.message));
+    req.once('end', () => { res.writeHead(204); res.end(); });
+    req.resume();
+    return;
+  }
+  if (parsed.pathname === '/') {
+    sendResponse(res, 200, Buffer.from('<!doctype html><link rel="icon" href="data:,"><title>adapter proof origin</title>'), 'text/html');
+    return;
+  }
+  const foundCase = CASES.find((c) => parsed.pathname === '/case/' + c.name);
+  if (foundCase) {
+    sendResponse(res, 200, Buffer.from(htmlFor(foundCase)), 'text/html');
+    return;
+  }
+  if (parsed.pathname === '/runtime.wasm') {
+    sendResponse(res, 200, fs.readFileSync(wasmPath), 'application/wasm');
+    return;
+  }
+  if (parsed.pathname === '/wasm_exec.js') {
+    sendResponse(res, 200, fs.readFileSync(wasmExecPath), 'text/javascript');
+    return;
+  }
+  if (parsed.pathname.startsWith('/program/')) {
+    const count = (programRequests.get(parsed.pathname) || 0) + 1;
+    programRequests.set(parsed.pathname, count);
+    sendResponse(res, 200, Buffer.from(count === 1 ? PROGRAM_A : PROGRAM_B), 'application/json');
+    return;
+  }
+  try {
+    sendResponse(res, 200, fs.readFileSync(ASSETS.get(parsed.pathname)), 'text/javascript');
+  } catch (e) {
+    fail('allowlisted browser asset unavailable: ' + parsed.pathname + ': ' + e.message);
+    sendResponse(res, 500, Buffer.from('asset unavailable'), 'text/plain');
+  }
+});
+
+let ws = null;
+let chrome = null;
+let profile = null;
+let msgID = 0;
+const pending = new Map();
+const listeners = [];
+
+function cdpSend(method, params, sessionId, timeoutMs) {
+  if (!ws) return Promise.reject(new Error('CDP connection closed'));
+  const id = ++msgID;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error('CDP timeout: ' + method));
+    }, timeoutMs || STEP_MS);
+    pending.set(id, { resolve, reject, timer });
+    ws.send(JSON.stringify(Object.assign({ id, method }, params ? { params } : {},
+      sessionId ? { sessionId } : {})));
+  });
+}
+
+function waitForEvent(name, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const entry = { name, resolve, timer: setTimeout(() => {
+      const index = listeners.indexOf(entry);
+      if (index >= 0) listeners.splice(index, 1);
+      reject(new Error('event timeout: ' + name));
+    }, timeoutMs || STEP_MS) };
+    listeners.push(entry);
+  });
+}
+
+function networkFail(message) {
+  networkFailures.push(message);
+  fail('network failure: ' + message);
+}
+
+function inspectNetwork(rawURL, method) {
+  let parsed;
+  try { parsed = new URL(rawURL); } catch (_error) {
+    networkFail(String(method || 'GET') + ' invalid URL ' + rawURL);
+    return;
+  }
+  if (parsed.protocol === 'about:' || parsed.protocol === 'data:') return;
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    networkFail(String(method || 'GET') + ' unsupported URL ' + rawURL);
+    return;
+  }
+  if (!BASE || parsed.origin !== BASE) {
+    networkFail(String(method || 'GET') + ' escaped loopback origin: ' + rawURL);
+    return;
+  }
+  if (!requestAllowed(String(method || 'GET').toUpperCase(), parsed.pathname, parsed.search)) {
+    networkFail(String(method || 'GET') + ' outside exact allowlist: ' + rawURL);
+  }
+}
+
+function dispatch(raw) {
+  let message;
+  try { message = JSON.parse(raw); } catch (_error) { return; }
+  if (message.id && pending.has(message.id)) {
+    const record = pending.get(message.id);
+    pending.delete(message.id);
+    clearTimeout(record.timer);
+    if (message.error) record.reject(new Error(message.error.message));
+    else if (message.result && message.result.exceptionDetails) {
+      const details = message.result.exceptionDetails;
+      record.reject(new Error('Runtime.evaluate exception: ' +
+        ((details.exception && details.exception.description) || details.text)));
+    } else record.resolve(message.result);
+    return;
+  }
+  if (!message.method) return;
+  for (let index = listeners.length - 1; index >= 0; index -= 1) {
+    if (listeners[index].name === message.method) {
+      const entry = listeners[index];
+      clearTimeout(entry.timer);
+      listeners.splice(index, 1);
+      entry.resolve(message.params || {});
+    }
+  }
+  const params = message.params || {};
+  if (message.method === 'Runtime.consoleAPICalled' && params.args) {
+    const text = params.args.map((arg) => arg.value !== undefined ? String(arg.value) : (arg.description || '')).join(' ');
+    if (params.type === 'error') errors.push('console.error: ' + text);
+    else if (params.type === 'warning') warnings.push('console.warning: ' + text);
+  } else if (message.method === 'Runtime.exceptionThrown' && params.exceptionDetails) {
+    errors.push('page exception: ' + ((params.exceptionDetails.exception &&
+      params.exceptionDetails.exception.description) || params.exceptionDetails.text));
+  } else if (message.method === 'Network.requestWillBeSent' && params.request) {
+    networkRequests.set(params.requestId, { method: params.request.method, url: params.request.url });
+    inspectNetwork(params.request.url, params.request.method);
+  } else if (message.method === 'Network.responseReceived' && params.response) {
+    const request = networkRequests.get(params.requestId);
+    if (request) request.responseStatus = Number(params.response.status);
+    inspectNetwork(params.response.url, request ? request.method : 'GET');
+    if (Number(params.response.status) >= 400) networkFail('HTTP ' + params.response.status + ' for ' + params.response.url);
+  } else if (message.method === 'Network.loadingFailed') {
+    const request = networkRequests.get(params.requestId);
+    let allowedAbort = false;
+    if (request && request.method === 'POST' && request.responseStatus === 204 &&
+        params.errorText === 'net::ERR_ABORTED' && params.canceled === true) {
+      try {
+        const parsed = new URL(request.url);
+        allowedAbort = parsed.origin === BASE && parsed.pathname === '/_gosx/client-events' && parsed.search === '';
+      } catch (_error) {}
+    }
+    if (allowedAbort) intentionalNoContent.push({ method: 'POST', path: '/_gosx/client-events', status: 204 });
+    else networkFail('loadingFailed ' + (request ? request.method + ' ' + request.url : params.requestId) +
+      ': ' + (params.errorText || 'unknown') + (params.canceled ? ' (canceled)' : ''));
+    networkRequests.delete(params.requestId);
+  } else if (message.method === 'Network.loadingFinished') {
+    networkRequests.delete(params.requestId);
+  } else if (message.method === 'Log.entryAdded' && params.entry) {
+    if (params.entry.level === 'error') errors.push('browser log error: ' + params.entry.text);
+    else if (params.entry.level === 'warning') warnings.push('browser log warning: ' + params.entry.text);
+  }
+}
+
+async function evalSend(send, expression, extra) {
+  const response = await send('Runtime.evaluate', Object.assign({ expression, returnByValue: true }, extra || {}));
+  return response && response.result && response.result.value;
+}
+
+async function poll(send, expression, label, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || MOUNT_MS);
+  let value = null;
+  while (Date.now() < deadline) {
+    value = await evalSend(send, expression);
+    if (value) return value;
+    await sleep(50);
+  }
+  throw new Error('timeout waiting for ' + label + ' (last=' + JSON.stringify(value) + ')');
+}
+
+const PRELOAD = `
+window.__adapterGLDraws = 0;
+window.__adapterGLContext = '';
+window.__adapterWGPasses = 0;
+window.__adapterWGSubmits = 0;
+(function () {
+  function wrapGL(proto) {
+    if (!proto) return;
+    ['drawArrays', 'drawElements'].forEach(function (name) {
+      var original = proto[name];
+      if (!original) return;
+      proto[name] = function () {
+        window.__adapterGLDraws += 1;
+        window.__adapterGLContext = this instanceof WebGL2RenderingContext ? 'webgl2' : 'webgl';
+        return original.apply(this, arguments);
+      };
+    });
+  }
+  wrapGL(typeof WebGLRenderingContext !== 'undefined' ? WebGLRenderingContext.prototype : null);
+  wrapGL(typeof WebGL2RenderingContext !== 'undefined' ? WebGL2RenderingContext.prototype : null);
+  if (typeof GPUCommandEncoder !== 'undefined' && GPUCommandEncoder.prototype.beginRenderPass) {
+    var originalPass = GPUCommandEncoder.prototype.beginRenderPass;
+    GPUCommandEncoder.prototype.beginRenderPass = function () {
+      window.__adapterWGPasses += 1;
+      return originalPass.apply(this, arguments);
+    };
+  }
+  if (typeof GPUQueue !== 'undefined' && GPUQueue.prototype.submit) {
+    var originalSubmit = GPUQueue.prototype.submit;
+    GPUQueue.prototype.submit = function () {
+      window.__adapterWGSubmits += 1;
+      return originalSubmit.apply(this, arguments);
+    };
+  }
+})();
+`;
+
+const CAPS_EXPR = `(async function () {
+  var canvas = document.createElement('canvas');
+  var webgl2 = false;
+  try { webgl2 = !!canvas.getContext('webgl2'); } catch (_error) {}
+  var adapter = navigator.gpu && navigator.gpu.requestAdapter ? await navigator.gpu.requestAdapter() : null;
+  return { webgl2: webgl2, webgpu: !!adapter };
+})()`;
+
+function preflightExpr(c) {
+  return `(function () {
+    var mount = document.getElementById(${JSON.stringify(c.mount)});
+    var result = {
+      bootErrors: (window.__adapterBootErrors || []).slice(),
+      runtimeReady: window.__adapterRuntimeReady === true,
+      runtimeExited: window.__adapterRuntimeExited === true,
+      handshake: window.__adapterHandshake || null,
+      hydrates: (window.__adapterHydrates || []).slice(),
+      firstPending: window.__adapterFirstPending === true,
+      ssrIdentity: !!(mount && mount.firstChild === window.__adapterSSR),
+      childCount: mount ? mount.childNodes.length : -1,
+      canvasCount: mount ? mount.querySelectorAll('canvas').length : -1,
+      hasState: !!(mount && mount.__gosxScene3DState),
+      hasHandle: !!(mount && mount.__gosxScene3DHandle),
+      registered: !!(window.__gosx && window.__gosx.engines && window.__gosx.engines.has(${JSON.stringify(c.engine)}))
+    };
+    return result.firstPending || result.bootErrors.length ? result : null;
+  })()`;
+}
+
+function winnerExpr(c, remember) {
+  return `(function () {
+    var mount = document.getElementById(${JSON.stringify(c.mount)});
+    var state = mount && mount.__gosxScene3DState;
+    var handle = mount && mount.__gosxScene3DHandle;
+    var record = window.__gosx && window.__gosx.engines && window.__gosx.engines.get(${JSON.stringify(c.engine)});
+    if (!mount || !state || !handle || !record) return null;
+    ${remember ? 'window.__adapterWinnerRefs={mount:mount,state:state,handle:handle,canvas:mount.querySelector("canvas"),record:record};' : ''}
+    var keys = [];
+    if (state.objects && state.objects.forEach) state.objects.forEach(function (_value, key) { keys.push(String(key)); });
+    keys.sort();
+    var mesh = state.objects && state.objects.get('1');
+    return {
+      hydrates: (window.__adapterHydrates || []).slice(),
+      disposes: (window.__adapterDisposeCalls || []).map(function (args) { return args.slice(); }),
+      keys: keys,
+      mesh: mesh ? { id: String(mesh.id), x: mesh.x, color: mesh.color, kind: mesh.kind } : null,
+      lights: state.lights ? state.lights.size : -1,
+      handleReady: handle.__gosxScene3DCommandReady === true,
+      registrySameHandle: record.handle === handle,
+      mounted: mount.getAttribute('data-gosx-scene3d-mounted'),
+      renderer: mount.getAttribute('data-gosx-scene3d-renderer'),
+      fallback: mount.getAttribute('data-gosx-scene3d-renderer-fallback'),
+      commandReady: mount.getAttribute('data-gosx-scene3d-command-ready'),
+      glDraws: window.__adapterGLDraws,
+      glContext: window.__adapterGLContext,
+      wgPasses: window.__adapterWGPasses,
+      wgSubmits: window.__adapterWGSubmits
+    };
+  })()`;
+}
+
+function identityExpr(c) {
+  return `(function () {
+    var refs = window.__adapterWinnerRefs;
+    var mount = document.getElementById(${JSON.stringify(c.mount)});
+    var record = window.__gosx && window.__gosx.engines && window.__gosx.engines.get(${JSON.stringify(c.engine)});
+    var state = mount && mount.__gosxScene3DState;
+    var keys = [];
+    if (state && state.objects && state.objects.forEach) state.objects.forEach(function (_value, key) { keys.push(String(key)); });
+    keys.sort();
+    return refs && {
+      sameMount: refs.mount === mount,
+      sameState: refs.state === state,
+      sameHandle: refs.handle === (mount && mount.__gosxScene3DHandle),
+      sameCanvas: refs.canvas === (mount && mount.querySelector('canvas')),
+      sameRecord: refs.record === record,
+      keys: keys,
+      disposes: (window.__adapterDisposeCalls || []).map(function (args) { return args.slice(); })
+    };
+  })()`;
+}
+
+function hubCommandExpr(c) {
+  return `(async function () {
+    var mount = document.getElementById(${JSON.stringify(c.mount)});
+    var state = mount && mount.__gosxScene3DState;
+    var handle = mount && mount.__gosxScene3DHandle;
+    var before = state && state.objects && state.objects.get('1');
+    var beforeX = before && before.x;
+    var result = await window.__gosx.scene3d.dispatchCommands(
+      ${JSON.stringify(c.engine)},
+      [{kind:2,objectId:'1',data:{x:1.25}}],
+      {engineID:${JSON.stringify(c.engine)},timeoutMS:5000}
+    );
+    var after = state && state.objects && state.objects.get('1');
+    return {
+      result: result,
+      beforeX: beforeX,
+      afterX: after && after.x,
+      sameState: state === mount.__gosxScene3DState,
+      sameHandle: handle === mount.__gosxScene3DHandle,
+      revision: mount.getAttribute('data-gosx-scene3d-command-revision'),
+      appliedRevision: mount.getAttribute('data-gosx-scene3d-command-applied-revision')
+    };
+  })()`;
+}
+
+function settleFramesExpr(count) {
+  return `(function () { return new Promise(function (resolve) {
+    var left = ${count};
+    function frame() { if (left-- <= 0) { resolve(true); return; } requestAnimationFrame(frame); }
+    requestAnimationFrame(frame);
+  }); })()`;
+}
+
+async function capture(send, c, name) {
+  const rect = await evalSend(send, `(function () {
+    var mount=document.getElementById(${JSON.stringify(c.mount)});
+    var canvas=mount&&mount.querySelector('canvas');
+    if(!canvas)return null;
+    var box=canvas.getBoundingClientRect();
+    return {x:box.x,y:box.y,width:box.width,height:box.height,dpr:window.devicePixelRatio||1};
+  })()`);
+  if (!rect) throw new Error('canvas rect unavailable for ' + c.name);
+  const shot = await send('Page.captureScreenshot', {
+    format: 'png', fromSurface: true,
+    clip: { x: rect.x, y: rect.y, width: rect.width, height: rect.height, scale: rect.dpr },
+  });
+  if (!shot || !shot.data) throw new Error('screenshot failed for ' + c.name);
+  fs.writeFileSync(path.join(ART, c.name + '-' + name + '.png'), Buffer.from(shot.data, 'base64'));
+  const metrics = await evalSend(send, `new Promise(function (resolve) {
+    var image=new Image();
+    image.onload=function () { try {
+      var canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;
+      var context=canvas.getContext('2d');context.drawImage(image,0,0);
+      var data=context.getImageData(0,0,canvas.width,canvas.height).data;
+      var corners=[[0,0],[canvas.width-4,0],[0,canvas.height-4],[canvas.width-4,canvas.height-4]];
+      var red=0,green=0,blue=0,samples=0;
+      for(var corner=0;corner<corners.length;corner+=1){for(var y=0;y<4;y+=1){for(var x=0;x<4;x+=1){
+        var offset=((corners[corner][1]+y)*canvas.width+corners[corner][0]+x)*4;
+        red+=data[offset];green+=data[offset+1];blue+=data[offset+2];samples+=1;
+      }}}
+      var background=[Math.round(red/samples),Math.round(green/samples),Math.round(blue/samples)];
+      var foreground=0,rest=0,maxDelta=0,total=data.length/4;
+      for(var index=0;index<data.length;index+=4){
+        var delta=Math.max(Math.abs(data[index]-background[0]),Math.abs(data[index+1]-background[1]),Math.abs(data[index+2]-background[2]));
+        if(delta>=${FG_THRESHOLD})foreground+=1;else rest+=1;
+        if(delta>maxDelta)maxDelta=delta;
+      }
+      resolve({width:canvas.width,height:canvas.height,background:background,foreground:foreground,
+        foregroundFraction:foreground/total,rest:rest,restFraction:rest/total,maxDelta:maxDelta});
+    } catch(error){resolve({error:String(error&&error.message||error)});} };
+    image.onerror=function(){resolve({error:'image decode failed'});};
+    image.src='data:image/png;base64,${shot.data}';
+  })`, { awaitPromise: true });
+  return { rect, metrics };
+}
+
+async function waitNetworkIdle(label) {
+  const deadline = Date.now() + 10000;
+  let idleSince = 0;
+  while (Date.now() < deadline) {
+    if (networkRequests.size === 0) {
+      if (!idleSince) idleSince = Date.now();
+      if (Date.now() - idleSince >= 100) return;
+    } else idleSince = 0;
+    await sleep(25);
+  }
+  fail('[' + label + '] network did not become idle: ' + JSON.stringify(Array.from(networkRequests.values())));
+}
+
+function assertEnvelope(call, c, generation, programName, commandIDs) {
+  if (!call) { fail('[' + c.name + '] missing hydrate generation ' + generation); return; }
+  const envelope = call.envelope;
+  if (call.generation !== generation || call.argCount !== 6 || call.surfaceKind !== 'scene3d' ||
+      call.targetId !== c.engine || call.component !== 'GoSXScene3D' || call.format !== 'json' ||
+      call.programName !== programName) {
+    fail('[' + c.name + '] hydrate call identity mismatch: ' + JSON.stringify(call));
+  }
+  if (!envelope || envelope.version !== 1 || envelope.surfaceKind !== 'scene3d' ||
+      envelope.outputKind !== 'scene3d.commands' || envelope.targetId !== c.engine ||
+      envelope.mode !== 'initial' || !Array.isArray(envelope.commands)) {
+    fail('[' + c.name + '] invalid real WASM envelope: ' + JSON.stringify(envelope));
+    return;
+  }
+  const gotIDs = envelope.commands.map((command) => command.objectId);
+  const gotKinds = envelope.commands.map((command) => command.kind);
+  if (JSON.stringify(gotIDs) !== JSON.stringify(commandIDs) || gotKinds.some((kind) => kind !== 0)) {
+    fail('[' + c.name + '] command count/order mismatch: IDs=' + JSON.stringify(gotIDs) +
+      ' kinds=' + JSON.stringify(gotKinds));
+  }
+}
+
+async function runCase(send, c) {
+  const evidence = { name: c.name, backend: c.webgpu ? 'webgpu' : 'webgl2' };
+  const loaded = waitForEvent('Page.loadEventFired', MOUNT_MS);
+  await send('Page.navigate', { url: BASE + '/case/' + c.name });
+  await loaded;
+
+  evidence.preflight = await poll(send, preflightExpr(c), c.name + ' first blocked hydrate');
+  const pre = evidence.preflight;
+  if (pre.bootErrors.length || !pre.runtimeReady || pre.runtimeExited || !pre.firstPending) {
+    fail('[' + c.name + '] runtime/preflight state invalid: ' + JSON.stringify(pre));
+  }
+  if (!pre.handshake || pre.handshake.abiVersion !== 3 || pre.handshake.variant !== 'full') {
+    fail('[' + c.name + '] ABI 3 full handshake missing: ' + JSON.stringify(pre.handshake));
+  }
+  if (!pre.ssrIdentity || pre.childCount !== 1 || pre.canvasCount !== 0 || pre.hasState || pre.hasHandle || pre.registered) {
+    fail('[' + c.name + '] blocked generation mutated SSR/mount/registry: ' + JSON.stringify(pre));
+  }
+  assertEnvelope(pre.hydrates[0], c, 1, 'AdapterStaleA', [0]);
+
+  await evalSend(send, 'window.__gosx_runtime_ready(); true');
+  evidence.winner = await poll(send, winnerExpr(c, true), c.name + ' winning generation');
+  assertEnvelope(evidence.winner.hydrates[1], c, 2, 'AdapterWinnerB', [0, 1, 2]);
+  const winner = evidence.winner;
+  const expectedRenderer = c.webgpu ? 'webgpu' : 'webgl';
+  if (!winner.keys.includes('1') || winner.keys.includes('0') || !winner.mesh || winner.mesh.id !== 'scene-object-1' ||
+      winner.mesh.color !== '#8de1ff' || winner.lights !== 1) {
+    fail('[' + c.name + '] winning commands not present exactly: ' + JSON.stringify(winner));
+  }
+  if (!winner.handleReady || !winner.registrySameHandle || winner.renderer !== expectedRenderer ||
+      winner.fallback || winner.commandReady !== 'true') {
+    fail('[' + c.name + '] winning handle/backend not ready: ' + JSON.stringify(winner));
+  }
+  if (winner.disposes.length !== 1 || winner.disposes[0][0] !== c.engine) {
+    fail('[' + c.name + '] replaced adapter disposal mismatch: ' + JSON.stringify(winner.disposes));
+  }
+
+  await evalSend(send, 'window.__adapterReleaseFirst(); true');
+  await evalSend(send, settleFramesExpr(12), { awaitPromise: true });
+  evidence.afterStaleRelease = await evalSend(send, identityExpr(c));
+  const identity = evidence.afterStaleRelease;
+  if (!identity || !identity.sameMount || !identity.sameState || !identity.sameHandle ||
+      !identity.sameCanvas || !identity.sameRecord || !identity.keys.includes('1') || identity.keys.includes('0') ||
+      identity.disposes.length !== 1) {
+    fail('[' + c.name + '] stale output applied or republished: ' + JSON.stringify(identity));
+  }
+
+  evidence.firstFrame = await capture(send, c, 'first-frame');
+  const metrics = evidence.firstFrame.metrics;
+  if (!metrics || metrics.error || metrics.width !== W || metrics.height !== H ||
+      !(metrics.foregroundFraction >= FG_COVERAGE) || !(metrics.maxDelta >= FG_THRESHOLD) ||
+      !(metrics.restFraction >= REST_COVERAGE)) {
+    fail('[' + c.name + '] nonblank/rest-pixel integrity failed: ' + JSON.stringify(metrics));
+  }
+  const drawState = await evalSend(send, winnerExpr(c, false));
+  evidence.nativeRenderer = {
+    mounted: drawState.mounted,
+    glDraws: drawState.glDraws,
+    glContext: drawState.glContext,
+    webgpuPasses: drawState.wgPasses,
+    webgpuSubmits: drawState.wgSubmits,
+  };
+  if (drawState.mounted !== 'true') {
+    fail('[' + c.name + '] first frame never published mounted readiness: ' + JSON.stringify(evidence.nativeRenderer));
+  }
+  if (!c.webgpu && (!(drawState.glDraws > 0) || drawState.glContext !== 'webgl2')) {
+    fail('[gl] native WebGL2 draw evidence missing: ' + JSON.stringify(evidence.nativeRenderer));
+  }
+  if (c.webgpu && (!(drawState.wgPasses > 0) || !(drawState.wgSubmits > 0))) {
+    fail('[wg] native WebGPU render evidence missing: ' + JSON.stringify(evidence.nativeRenderer));
+  }
+
+  evidence.hubCommand = await evalSend(send, hubCommandExpr(c), { awaitPromise: true });
+  if (!evidence.hubCommand || evidence.hubCommand.beforeX !== 0 || evidence.hubCommand.afterX !== 1.25 ||
+      !evidence.hubCommand.sameState || !evidence.hubCommand.sameHandle ||
+      !evidence.hubCommand.revision || evidence.hubCommand.revision !== evidence.hubCommand.appliedRevision) {
+    fail('[' + c.name + '] explicit hub-wire command did not reach winning handle: ' +
+      JSON.stringify(evidence.hubCommand));
+  }
+  await evalSend(send, settleFramesExpr(4), { awaitPromise: true });
+  evidence.afterHub = await capture(send, c, 'after-hub-command');
+
+  evidence.disposed = await evalSend(send, `(function () {
+    window.__gosx_dispose_engine(${JSON.stringify(c.engine)});
+    var mount=document.getElementById(${JSON.stringify(c.mount)});
+    return {
+      noState:!mount.__gosxScene3DState,
+      noHandle:!mount.__gosxScene3DHandle,
+      noRecord:!window.__gosx.engines.has(${JSON.stringify(c.engine)}),
+      disposes:(window.__adapterDisposeCalls||[]).map(function(args){return args.slice();})
+    };
+  })()`);
+  if (!evidence.disposed.noState || !evidence.disposed.noHandle || !evidence.disposed.noRecord ||
+      evidence.disposed.disposes.length !== 2) {
+    fail('[' + c.name + '] final disposal mismatch: ' + JSON.stringify(evidence.disposed));
+  }
+
+  await evalSend(send, `(async function () {
+    if(typeof window.__gosx_telemetry_flush!=='function'||typeof window.__gosx_telemetry_snapshot!=='function')return null;
+    window.__gosx_telemetry_flush({drain:true});
+    var deadline=Date.now()+10000,last=null;
+    while(Date.now()<deadline){last=window.__gosx_telemetry_snapshot();
+      if(last&&last.queueDepth===0&&last.pendingRequests===0)return last;
+      await new Promise(function(resolve){setTimeout(resolve,25);});}
+    return last;
+  })()`, { awaitPromise: true });
+  await waitNetworkIdle(c.name);
+  return evidence;
+}
+
+const caseEvidence = [];
+let nativeCaps = null;
+let finished = false;
+let reportWriteFailed = false;
+
+function writeReport(extra) {
+  const report = Object.assign({
+    contract: 'gosx.scene3d.adapter-hydrate/v1',
+    abi: 3,
+    runtimeArtifact,
+    hubGate,
+    nativeCaps,
+    cases: caseEvidence,
+    errors,
+    warnings,
+    notFound,
+    unexpectedRequests,
+    networkFailures,
+    intentionalNoContent,
+    programRequests: Object.fromEntries(programRequests),
+  }, extra || {});
+  try {
+    fs.writeFileSync(path.join(ART, 'report.json'), JSON.stringify(report, null, 2));
+  } catch (e) {
+    reportWriteFailed = true;
+    console.error('failed to write report.json: ' + e.message);
+  }
+}
+
+async function cleanup() {
+  for (const record of pending.values()) clearTimeout(record.timer);
+  pending.clear();
+  for (const entry of listeners) clearTimeout(entry.timer);
+  listeners.length = 0;
+  networkRequests.clear();
+  try { if (ws) ws.close(); } catch (_error) {}
+  if (chrome) {
+    const exited = new Promise((resolve) => chrome.once('exit', resolve));
+    try { chrome.kill('SIGKILL'); } catch (_error) {}
+    await Promise.race([exited, sleep(5000)]);
+  }
+  if (profile) {
+    try { fs.rmSync(profile, { recursive: true, force: true }); }
+    catch (e) { fail('profile cleanup failed: ' + e.message); }
+  }
+  try { fs.rmSync(scratch, { recursive: true, force: true }); }
+  catch (e) { fail('WASM scratch cleanup failed: ' + e.message); }
+  await new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    const timer = setTimeout(finish, 3000);
+    try { server.close(() => { clearTimeout(timer); finish(); }); }
+    catch (_error) { clearTimeout(timer); finish(); }
+  });
+}
+
+process.on('exit', () => { try { if (chrome) chrome.kill('SIGKILL'); } catch (_error) {} });
+
+const watchdog = setTimeout(() => {
+  if (finished) return;
+  finished = true;
+  fail('overall watchdog exceeded ' + OVERALL_MS + 'ms');
+  writeReport({ fatal: 'overall watchdog' });
+  cleanup().then(() => process.exit(1));
+  setTimeout(() => process.exit(1), 5000).unref();
+}, OVERALL_MS);
+
+(async () => {
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  BASE = 'http://127.0.0.1:' + server.address().port;
+
+  profile = fs.mkdtempSync(path.join(os.tmpdir(), 'gosx-adapter-chrome-'));
+  const chromeBin = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
+  if (!fs.existsSync(chromeBin)) throw new Error('chrome binary not found: ' + chromeBin);
+  chrome = spawn(chromeBin, [
+    '--headless=new', '--no-sandbox', '--use-gl=angle', '--use-angle=gl-egl',
+    '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader', '--enable-unsafe-webgpu',
+    '--disable-dev-shm-usage', '--user-data-dir=' + profile,
+    '--remote-debugging-port=0', 'about:blank',
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+
+  const wsURL = await new Promise((resolve, reject) => {
+    let stderr = '';
+    const timer = setTimeout(() => reject(new Error('no DevTools WebSocket URL')), 20000);
+    const onExit = () => { clearTimeout(timer); reject(new Error('Chrome exited early: ' + stderr)); };
+    chrome.once('exit', onExit);
+    chrome.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      const match = stderr.match(/ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[^\s]+/);
+      if (match) {
+        clearTimeout(timer);
+        chrome.removeListener('exit', onExit);
+        resolve(match[0]);
+      }
+    });
+  });
+
+  ws = new WebSocket(wsURL);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('CDP WebSocket connect timeout')), 20000);
+    ws.onopen = () => { clearTimeout(timer); resolve(); };
+    ws.onerror = () => { clearTimeout(timer); reject(new Error('CDP WebSocket error')); };
+  });
+  ws.onmessage = (event) => dispatch(event.data);
+
+  const target = await cdpSend('Target.createTarget', { url: 'about:blank' });
+  const attached = await cdpSend('Target.attachToTarget', { targetId: target.targetId, flatten: true });
+  const send = (method, params, timeout) => cdpSend(method, params, attached.sessionId, timeout || STEP_MS);
+  await send('Page.enable');
+  await send('Runtime.enable');
+  await send('Network.enable');
+  await send('Log.enable');
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD });
+
+  const capsLoaded = waitForEvent('Page.loadEventFired', STEP_MS);
+  await send('Page.navigate', { url: BASE + '/' });
+  await capsLoaded;
+  nativeCaps = await evalSend(send, CAPS_EXPR, { awaitPromise: true });
+  if (!nativeCaps || nativeCaps.webgl2 !== true || nativeCaps.webgpu !== true) {
+    throw new Error('native WebGL2 and WebGPU are both required; got ' + JSON.stringify(nativeCaps));
+  }
+
+  for (const c of CASES) caseEvidence.push(await runCase(send, c));
+  for (const c of CASES) {
+    if (programRequests.get('/program/' + c.name + '.json') !== 2) {
+      fail('[' + c.name + '] expected exactly two program fetches, got ' +
+        (programRequests.get('/program/' + c.name + '.json') || 0));
+    }
+  }
+})().catch((e) => {
+  fail(String(e && (e.stack || e.message) || e));
+}).then(async () => {
+  if (!finished) {
+    finished = true;
+    clearTimeout(watchdog);
+  }
+  await cleanup();
+  writeReport({});
+  const exitCode = errors.length || warnings.length || notFound.length || unexpectedRequests.length ||
+    networkFailures.length || reportWriteFailed ? 1 : 0;
+  setTimeout(() => process.exit(exitCode), 50);
+});

@@ -61,6 +61,8 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
           geometry: "sphere",
           material: "flat",
           props: { x: 0, y: 0, z: 0, radius: 1.2, color: "#8de1ff", spinY: 0.35 },
+          children: [],
+          static: false,
         },
       },
     ]),
@@ -129,6 +131,15 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
+  assert.equal(env.hydrateCalls.length, 1);
+  assert.deepEqual(env.hydrateCalls[0], [
+    "scene3d",
+    "gosx-engine-rt",
+    "GoSXScene3D",
+    '{"width":640,"height":360,"background":"#08151f"}',
+    '{"name":"GeometryZoo"}',
+    "json",
+  ]);
   assert.equal(env.engineHydrateCalls.length, 1);
   assert.deepEqual(env.engineHydrateCalls[0].slice(0, 3), [
     "gosx-engine-rt",
@@ -571,12 +582,14 @@ test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fa
       { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
       {
         kind: 0,
-        objectId: "cube",
+        objectId: 1,
         data: {
           kind: "box",
           geometry: "box",
           material: "flat",
           props: { x: 0, y: 0, z: 0, width: 3, height: 0.4, depth: 0.4, color: "#8de1ff" },
+          children: [],
+          static: false,
         },
       },
     ]),
@@ -584,7 +597,7 @@ test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fa
   });
   // Exports present but the opt-in flag is deliberately NOT set.
   env.context.__gosx_motion_load = () => 1;
-  env.context.__gosx_motion_refs = () => ({ target: ["cube"], prop: ["rotation"] });
+  env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["rotation"] });
   env.context.__gosx_motion_tick = tick;
   env.context.__gosx_motion_unload = () => {};
 
@@ -606,7 +619,7 @@ test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fa
 test("Scene3D WASM material-motion seam writes evaluated color into customUniforms (sceneState fall-through path)", async () => {
   const { state, color } = await mountMaterialMotionScene(true);
   assert.ok(state && state.objects && typeof state.objects.get === "function", "expected a live sceneState handle on the mount");
-  const obj = state.objects.get("glow-cube");
+  const obj = state.objects.get("1");
   assert.ok(obj, "expected the glow-cube object in sceneState");
   assert.ok(obj.customUniforms && typeof obj.customUniforms === "object", "expected customUniforms on glow-cube");
   // Decode → customUniforms write: the Color record (arity 5 → width 4) lands
@@ -618,7 +631,7 @@ test("Scene3D WASM material-motion seam writes evaluated color into customUnifor
 test("Scene3D WASM material-motion seam stays inert when the flag is unset (sceneState fall-through path)", async () => {
   const { state, tickCalls } = await mountMaterialMotionScene(false);
   assert.equal(tickCalls(), 0, "material-motion tick must not run when the flag is unset");
-  const obj = state.objects.get("glow-cube");
+  const obj = state.objects.get("1");
   assert.ok(obj, "expected the glow-cube object in sceneState");
   // customUniforms.emissive stays at its hydrated default — proving non-breaking
   // inert behavior with the exports present but the opt-in flag absent.

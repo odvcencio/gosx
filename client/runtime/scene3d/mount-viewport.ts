@@ -104,17 +104,6 @@
     };
   }
 
-  function sceneViewportChanged(prev, next) {
-    if (!prev || !next) {
-      return true;
-    }
-    return prev.cssWidth !== next.cssWidth
-      || prev.cssHeight !== next.cssHeight
-      || prev.pixelWidth !== next.pixelWidth
-      || prev.pixelHeight !== next.pixelHeight
-      || Math.abs(sceneNumber(prev.devicePixelRatio, 1) - sceneNumber(next.devicePixelRatio, 1)) > 0.001;
-  }
-
   function sceneViewportEnvironmentSignature(environment) {
     if (!environment || typeof environment !== "object") {
       return "";

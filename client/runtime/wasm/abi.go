@@ -16,7 +16,7 @@ import (
 const (
 	// ABIVersion changes whenever the direct browser/WASM contract changes in a
 	// way that cannot be handled by a compatibility reader.
-	ABIVersion uint32 = 2
+	ABIVersion uint32 = 3
 
 	// MailboxVersion is independent from the export ABI.  It lets the mailbox
 	// codec evolve while the direct function surface remains compatible.

@@ -218,32 +218,22 @@ const (
 	SurfaceKindCanvas2D = "canvas2d"
 )
 
-// HydrateReconciler is the unified hydrate entry point introduced in Phase 1d.
-// It dispatches by surfaceKind to the appropriate adapter constructor:
+// HydrateReconciler is the compatibility, error-only generic hydrate entry
+// point. It dispatches DOM and Canvas2D through HydrateReconcilerOutput.
 //
 //   - "dom"      → existing island path (DOM patches via HydrateIsland)
-//   - "scene3d"  → existing scene-engine path (engine commands via HydrateEngine)
+//   - "scene3d"  → rejected before mutation because its output is required
 //   - "canvas2d" → CanvasBoardAdapter path (Phase 2 — <CanvasBoard> primitive)
 //
 // The scene3d and canvas2d paths are gated by build tag — in islands-only
 // builds they return an error rather than pulling in the engine reconciler.
 // See bridge_reconciler_full.go vs bridge_reconciler_islands.go.
-//
-// Engine commands produced by the scene3d / canvas2d paths are discarded
-// here; the legacy HydrateEngine remains for callers that need the initial
-// command stream. Phase 2 will widen the return shape if needed.
 func (b *Bridge) HydrateReconciler(surfaceKind, id, componentName, propsJSON string, programData []byte, format string) error {
-	switch surfaceKind {
-	case SurfaceKindDOM:
-		return b.HydrateIsland(id, componentName, propsJSON, programData, format)
-	case SurfaceKindScene3D:
-		return b.hydrateScene3D(id, componentName, propsJSON, programData, format)
-	case SurfaceKindCanvas2D:
-		return b.hydrateCanvas2D(id, componentName, propsJSON, programData, format)
-	default:
-		return fmt.Errorf("unknown surfaceKind %q (expected one of: %q, %q, %q)",
-			surfaceKind, SurfaceKindDOM, SurfaceKindScene3D, SurfaceKindCanvas2D)
+	if surfaceKind == SurfaceKindScene3D {
+		return fmt.Errorf("scene3d hydration requires HydrateReconcilerOutput")
 	}
+	_, err := b.HydrateReconcilerOutput(surfaceKind, id, componentName, propsJSON, programData, format)
+	return err
 }
 
 // HydrateIsland creates and registers an island from a program and props.

@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"html"
 	"strings"
 	"syscall/js"
@@ -730,10 +731,8 @@ func Counter() Node {
 	}
 }
 
-// TestRuntimeUnifiedHydrateDispatcherRoutesScene3D covers Phase 1d Task A3.1:
-// the unified __gosx_hydrate entry, called with surfaceKind="scene3d", routes
-// through the engine reconciler path. The legacy __gosx_hydrate_engine remains
-// for callers that need the initial command stream.
+// TestRuntimeUnifiedHydrateDispatcherRoutesScene3D proves the output-bearing
+// generic hydrate boundary returns a real JavaScript envelope.
 func TestRuntimeUnifiedHydrateDispatcherRoutesScene3D(t *testing.T) {
 	prog := &rootengine.Program{
 		Name: "GeometryZooU",
@@ -765,12 +764,96 @@ func TestRuntimeUnifiedHydrateDispatcherRoutesScene3D(t *testing.T) {
 	hydrateRet := js.Global().Get("__gosx_hydrate").Invoke(
 		"scene3d", "engine-u", prog.Name, `{}`, string(data), "json",
 	)
-	if !hydrateRet.IsNull() {
-		t.Fatalf("expected null hydrate result, got %q", hydrateRet.String())
+	if hydrateRet.Type() != js.TypeObject || hydrateRet.IsNull() {
+		t.Fatalf("expected object hydrate result, got %v", hydrateRet.Type())
+	}
+	if got := hydrateRet.Get("version").Int(); got != 1 {
+		t.Fatalf("version = %d, want 1", got)
+	}
+	if got := hydrateRet.Get("surfaceKind").String(); got != "scene3d" {
+		t.Fatalf("surfaceKind = %q", got)
+	}
+	if got := hydrateRet.Get("outputKind").String(); got != "scene3d.commands" {
+		t.Fatalf("outputKind = %q", got)
+	}
+	if got := hydrateRet.Get("targetId").String(); got != "engine-u" {
+		t.Fatalf("targetId = %q", got)
+	}
+	if got := hydrateRet.Get("mode").String(); got != "initial" {
+		t.Fatalf("mode = %q", got)
+	}
+	commands := hydrateRet.Get("commands")
+	if !commands.InstanceOf(js.Global().Get("Array")) || commands.Length() != 1 {
+		t.Fatalf("commands must be an array with one command, got %v length=%d", commands.Type(), commands.Length())
+	}
+	if got := commands.Index(0).Get("data").Get("kind").String(); got != "mesh" {
+		t.Fatalf("nested command data kind = %q", got)
 	}
 	if b.EngineCount() != 1 {
 		t.Fatalf("expected 1 engine, got %d", b.EngineCount())
 	}
+}
+
+func TestRuntimeUnifiedHydrateScene3DConversionFailureDisposesAdapter(t *testing.T) {
+	prog := &rootengine.Program{Name: "ConversionFailure"}
+	data, err := rootengine.EncodeProgramJSON(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	setGlobalFunc(t, "__gosx_apply_patches", func(this js.Value, args []js.Value) any { return nil })
+	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
+
+	t.Run("marshal", func(t *testing.T) {
+		b := bridge.New()
+		registerRuntime(b)
+		previous := marshalHydrateEnvelope
+		marshalHydrateEnvelope = func(any) ([]byte, error) { return nil, errors.New("forced marshal failure") }
+		t.Cleanup(func() { marshalHydrateEnvelope = previous })
+
+		ret := js.Global().Get("__gosx_hydrate").Invoke("scene3d", "marshal-fail", prog.Name, `{}`, string(data), "json")
+		if ret.Type() != js.TypeString || !strings.Contains(ret.String(), "forced marshal failure") {
+			t.Fatalf("expected marshal error string, got %v %q", ret.Type(), ret.String())
+		}
+		if b.EngineCount() != 0 || b.ReconcilerCount() != 0 {
+			t.Fatalf("marshal failure leaked adapter: engines=%d reconcilers=%d", b.EngineCount(), b.ReconcilerCount())
+		}
+	})
+
+	t.Run("parse", func(t *testing.T) {
+		b := bridge.New()
+		registerRuntime(b)
+		jsonObject := js.Global().Get("JSON")
+		previousParse := jsonObject.Get("parse")
+		throwingParse := js.Global().Get("Function").New("throw new Error('forced parse failure')")
+		jsonObject.Set("parse", throwingParse)
+		t.Cleanup(func() { jsonObject.Set("parse", previousParse) })
+
+		ret := js.Global().Get("__gosx_hydrate").Invoke("scene3d", "parse-fail", prog.Name, `{}`, string(data), "json")
+		if ret.Type() != js.TypeString || !strings.Contains(ret.String(), "forced parse failure") {
+			t.Fatalf("expected parse error string, got %v %q", ret.Type(), ret.String())
+		}
+		if b.EngineCount() != 0 || b.ReconcilerCount() != 0 {
+			t.Fatalf("parse failure leaked adapter: engines=%d reconcilers=%d", b.EngineCount(), b.ReconcilerCount())
+		}
+	})
+
+	t.Run("non-object parse result", func(t *testing.T) {
+		b := bridge.New()
+		registerRuntime(b)
+		jsonObject := js.Global().Get("JSON")
+		previousParse := jsonObject.Get("parse")
+		arrayParse := js.Global().Get("Function").New("return []")
+		jsonObject.Set("parse", arrayParse)
+		t.Cleanup(func() { jsonObject.Set("parse", previousParse) })
+
+		ret := js.Global().Get("__gosx_hydrate").Invoke("scene3d", "array-fail", prog.Name, `{}`, string(data), "json")
+		if ret.Type() != js.TypeString || !strings.Contains(ret.String(), "did not return an object") {
+			t.Fatalf("expected conversion error string, got %v %q", ret.Type(), ret.String())
+		}
+		if b.EngineCount() != 0 || b.ReconcilerCount() != 0 {
+			t.Fatalf("conversion failure leaked adapter: engines=%d reconcilers=%d", b.EngineCount(), b.ReconcilerCount())
+		}
+	})
 }
 
 // TestRuntimeUnifiedHydrateDispatcherCanvas2D covers the canvas2d branch of the

@@ -12,6 +12,58 @@
 // telemetry globals (20h) are now files. Four of them are gate candidates:
 // the server already knows whether a scene needs them.
 
+  function scene3DHydrateRecord(value) {
+    if (!sceneIsPlainObject(value)) return false;
+    const proto = Object.getPrototypeOf(value);
+    if (proto === null) return true;
+    const constructor = Object.prototype.hasOwnProperty.call(proto, "constructor") && proto.constructor;
+    return Object.getPrototypeOf(proto) === null && typeof constructor === "function" &&
+      Function.prototype.toString.call(constructor) === Function.prototype.toString.call(Object);
+  }
+
+  function scene3DHydrateShape(value, keys) {
+    if (!scene3DHydrateRecord(value)) return false;
+    const actual = Object.keys(value);
+    return actual.length === keys.length && keys.every(function(key) {
+      return actual.indexOf(key) !== -1;
+    });
+  }
+
+  function scene3DHydrateFail() {
+    throw new Error("invalid Scene3D hydrate envelope");
+  }
+
+  function decodeScene3DInitialHydrateEnvelope(value, targetID) {
+    if (!scene3DHydrateShape(value, ["version", "surfaceKind", "outputKind", "targetId", "mode", "commands"]) ||
+        value.version !== 1 || value.surfaceKind !== "scene3d" ||
+        value.outputKind !== "scene3d.commands" || value.targetId !== targetID ||
+        value.mode !== "initial" || !Array.isArray(value.commands)) scene3DHydrateFail();
+    for (let index = 0; index < value.commands.length; index += 1) {
+      const command = value.commands[index];
+      const kind = command && command.kind;
+      if (!scene3DHydrateShape(command, kind === 1 ? ["kind", "objectId"] : ["kind", "objectId", "data"]) ||
+          !Number.isInteger(kind) || kind < 0 || kind > 6 ||
+          !Number.isInteger(command.objectId) || command.objectId < 0) scene3DHydrateFail();
+      if (kind === 1) continue;
+      if (command.kind === 6) {
+        if (!scene3DHydrateRecord(command.data) && !(Array.isArray(command.data) && command.data.every(scene3DHydrateRecord))) {
+          scene3DHydrateFail();
+        }
+        continue;
+      }
+      if (!scene3DHydrateRecord(command.data)) scene3DHydrateFail();
+      if (command.kind === 0) {
+        const data = command.data;
+        if (!scene3DHydrateShape(data, ["kind", "geometry", "material", "props", "children", "static"]) ||
+            typeof data.kind !== "string" || !data.kind || typeof data.geometry !== "string" ||
+            typeof data.material !== "string" || data.props !== null && !scene3DHydrateRecord(data.props) ||
+            data.children !== null && (!Array.isArray(data.children) || !data.children.every(function(child) { return Number.isInteger(child) && child >= 0; })) ||
+            typeof data.static !== "boolean") scene3DHydrateFail();
+      }
+    }
+    return value.commands;
+  }
+
 /**
  * @typedef {object} GoSXSceneEngineMountContext
  * @property {HTMLElement} mount
@@ -26,6 +78,16 @@
     }
 
     const props = ctx.props || {};
+    const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
+    let initialRuntimeCommands = null;
+    if (runtimeScene) {
+      ctx._ssr = true;
+      if (!ctx.runtime || !ctx.runtime.available()) scene3DHydrateFail();
+      const output = await ctx.runtime.hydrateFromProgramRef();
+      if (typeof ctx.isCurrent === "function" && !ctx.isCurrent()) return {};
+      initialRuntimeCommands = decodeScene3DInitialHydrateEnvelope(output, ctx.id);
+      ctx._ssr = false;
+    }
     const sceneAttr = name => "data-gosx-scene3d-" + name;
     const capability = sceneCapabilityProfile(props);
     const viewportBase = sceneViewportBase(props);
@@ -76,7 +138,6 @@
         failureStage: "unexpected",
       };
     });
-    const runtimeScene = ctx.runtimeMode === "shared" && Boolean(ctx.programRef);
     const lifecycle = initialSceneLifecycleState();
     const motion = initialSceneMotionState(props);
     let sceneCSSAnimationUntil = 0;
@@ -2673,12 +2734,9 @@
         })
       : function() {};
 
-    if (runtimeScene) {
-      if (ctx.runtime && ctx.runtime.available()) {
-        await applySceneCommands(sceneState, await ctx.runtime.hydrateFromProgramRef());
-      } else {
-        console.warn("[gosx] shared engine runtime unavailable");
-      }
+    if (initialRuntimeCommands) {
+      await applySceneCommands(sceneState, initialRuntimeCommands);
+      initialRuntimeCommands = null;
     }
 
     // WASM motion seam (P2.4b): lazy-load the scene's motion program once, then

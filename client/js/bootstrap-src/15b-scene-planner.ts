@@ -109,11 +109,6 @@
     return prepared;
   }
 
-  function sceneResolveCSSBundle(source, cssContext) {
-    const css = sceneCSSResolverContext(cssContext);
-    return sceneResolveCSSBundleWithContext(source, css, sceneCSSInputSignature(source));
-  }
-
   function sceneResolveCSSBundleWithContext(source, css, inputSignature) {
     sceneCSSDebugLog("[gosx:css-transition] FRESH RESOLVE revision=" + css.revision + " prevCache=" + Boolean(css.prevCache));
     const prevCache = css.prevCache || null;

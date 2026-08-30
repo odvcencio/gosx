@@ -70,7 +70,7 @@ dashboards, and interactive scenes. Its supported boundary is:
 | `hub-command-diff` | enforced | Diffable fields produce a lossless command stream. |
 | `hub-remount-atomic-reject` | enforced | Remount fields reject before mutation or watcher notification. |
 | `scene-p95-budget-route` | blocked | Add a dedicated corpus route and measured p95/p99 evidence. |
-| `generic-adapter-command-envelope` | blocked | Generic hydration must return or apply Scene3D commands instead of discarding them. |
+| `generic-adapter-command-envelope` | enforced | ABI 3 returns a strict versioned initial-command envelope; real WebGL2/WebGPU WASM mounts prove stale suppression, targeted hub application, and atomic remount rejection. |
 
 ## Explicit non-goals
 
