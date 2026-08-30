@@ -349,6 +349,17 @@ jobs:
           CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: make perf-budget-ci
 
+      - name: Upload perf budget failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-budget-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/perf-report.json
+            build/perf-server.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   # test: kept as the lightweight aggregate required-check surface. It must
   # include release-gate so branch protection on the aggregate `test` check also
   # gates release policy and governed workflow topology.
